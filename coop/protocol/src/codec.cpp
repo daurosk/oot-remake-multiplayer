@@ -15,10 +15,17 @@ constexpr std::size_t kMaxU16 = std::numeric_limits<std::uint16_t>::max();
 
 // ---------------------------------------------------------------- strings
 
-// Number of code points in valid UTF-8, or nothing if `s` is not valid UTF-8
-// (overlong forms, surrogates and values past U+10FFFF are refused).
-std::optional<std::size_t> utf8_length(std::string_view s) {
-  std::size_t count = 0;
+// Control characters: C0 (U+0000 to U+001F), DEL and C1 (U+0080 to U+009F).
+// No string field has a use for them, and a nickname or chat line with a NUL,
+// a newline or a terminal escape in it could cut or forge what others see.
+bool is_control(std::uint32_t cp) { return cp < 0x20 || (cp >= 0x7F && cp <= 0x9F); }
+
+enum class Utf8 { ok, bad, control };
+
+// Counts the code points of `s` into `count`. Bad UTF-8 (overlong forms,
+// surrogates, values past U+10FFFF) and control characters are refused.
+Utf8 utf8_length(std::string_view s, std::size_t& count) {
+  count = 0;
   std::size_t i = 0;
   while (i < s.size()) {
     const auto c = static_cast<unsigned char>(s[i]);
@@ -41,28 +48,33 @@ std::optional<std::size_t> utf8_length(std::string_view s) {
       cp = c & 0x07u;
       min = 0x10000;
     } else {
-      return std::nullopt;
+      return Utf8::bad;
     }
-    if (extra > s.size() - i - 1) return std::nullopt;
+    if (extra > s.size() - i - 1) return Utf8::bad;
     for (std::size_t k = 1; k <= extra; ++k) {
       const auto cc = static_cast<unsigned char>(s[i + k]);
-      if ((cc & 0xC0u) != 0x80u) return std::nullopt;
+      if ((cc & 0xC0u) != 0x80u) return Utf8::bad;
       cp = (cp << 6) | (cc & 0x3Fu);
     }
     if (cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
-      return std::nullopt;
+      return Utf8::bad;
     }
+    if (is_control(cp)) return Utf8::control;
     i += extra + 1;
     ++count;
   }
-  return count;
+  return Utf8::ok;
 }
 
 Error check_string(std::string_view s, std::size_t max_chars) {
   if (s.size() > max_chars * 4) return Error::string_too_long;
-  const auto chars = utf8_length(s);
-  if (!chars) return Error::bad_utf8;
-  if (*chars > max_chars) return Error::string_too_long;
+  std::size_t chars = 0;
+  switch (utf8_length(s, chars)) {
+    case Utf8::ok: break;
+    case Utf8::bad: return Error::bad_utf8;
+    case Utf8::control: return Error::bad_value;
+  }
+  if (chars > max_chars) return Error::string_too_long;
   return Error::none;
 }
 
@@ -217,9 +229,12 @@ Error encode_body(const Hello& m, Writer& w) {
 
 Error encode_body(const Welcome& m, Writer& w) {
   if (!valid_player(m.player_number)) return Error::bad_value;
+  if (m.tick_rate == 0) return Error::bad_value;
   if (m.players.size() > kMaxPlayers) return Error::bad_value;
+  std::uint32_t taken = 1u << m.player_number;
   for (const auto& p : m.players) {
-    if (!valid_player(p.number)) return Error::bad_value;
+    if (!valid_player(p.number) || (taken & (1u << p.number))) return Error::bad_value;
+    taken |= 1u << p.number;
     COOP_TRY(check_string(p.nickname, kMaxNicknameChars));
     if (p.nickname.empty()) return Error::bad_value;
   }
@@ -346,14 +361,18 @@ Error decode_body(Reader& r, Welcome& m) {
   if (!valid_player(m.player_number)) return Error::bad_value;
   COOP_READ(r.u64(m.server_time_us));
   COOP_READ(r.u16(m.tick_rate));
+  if (m.tick_rate == 0) return Error::bad_value;
   std::uint8_t count = 0;
   COOP_READ(r.u8(count));
   if (count > kMaxPlayers) return Error::bad_value;
   m.players.clear();
   m.players.resize(count);
+  // The new player and those already in each have their own number.
+  std::uint32_t taken = 1u << m.player_number;
   for (auto& p : m.players) {
     COOP_READ(r.u8(p.number));
-    if (!valid_player(p.number)) return Error::bad_value;
+    if (!valid_player(p.number) || (taken & (1u << p.number))) return Error::bad_value;
+    taken |= 1u << p.number;
     COOP_TRY(r.str(p.nickname, kMaxNicknameChars));
     if (p.nickname.empty()) return Error::bad_value;
   }

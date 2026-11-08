@@ -24,7 +24,8 @@ inline constexpr std::size_t kHeaderSize = 4;
 inline constexpr std::size_t kComponentHeaderSize = 4;
 
 // Maximum lengths of string fields, in Unicode characters (code points).
-// A string may also never be longer than 4 bytes per character.
+// A string may also never be longer than 4 bytes per character, must be valid
+// UTF-8 and holds no control characters (U+0000-U+001F, U+007F-U+009F).
 inline constexpr std::size_t kMaxBuildIdChars = 64;
 inline constexpr std::size_t kMaxGameBuildIdChars = 32;
 inline constexpr std::size_t kMaxGameVersionChars = 16;

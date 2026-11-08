@@ -245,6 +245,44 @@ TEST_CASE("values out of range are refused") {
   }
 }
 
+TEST_CASE("a WELCOME a client could trip over is refused") {
+  // Tick rate 0 would make a client divide by zero.
+  CHECK(encode(Message{Welcome{1, 0, 0, {}}}) == std::nullopt);
+  // The same player twice, or the new player in the list of those already in.
+  CHECK(encode(Message{Welcome{1, 0, 60, {{2, "a"}, {2, "b"}}}}) == std::nullopt);
+  CHECK(encode(Message{Welcome{1, 0, 60, {{1, "a"}}}}) == std::nullopt);
+
+  SUBCASE("on the wire") {
+    Bytes b = must_encode(Welcome{1, 0, 60, {{2, "a"}, {3, "b"}}});
+    // header 4, player 1, time 8, tick 2, count 1, then (number, u16 len, 'a')
+    const std::size_t first = kHeaderSize + 1 + 8 + 2 + 1;
+    const std::size_t second = first + 1 + 2 + 1;
+    Bytes dup = b;
+    dup[second] = 2;
+    CHECK(decode_bytes(dup) == Error::bad_value);
+    Bytes self = b;
+    self[first] = 1;
+    CHECK(decode_bytes(self) == Error::bad_value);
+    Bytes zero_tick = b;
+    zero_tick[kHeaderSize + 1 + 8] = 0;
+    CHECK(decode_bytes(zero_tick) == Error::bad_value);
+  }
+}
+
+TEST_CASE("control characters are refused in every string") {
+  CHECK(encode(Message{Chat{0, std::string("a\0b", 3)}}) == std::nullopt);
+  CHECK(encode(Message{Chat{0, "line\nbreak"}}) == std::nullopt);
+  CHECK(encode(Message{Chat{0, "esc\x1B[2J"}}) == std::nullopt);
+  CHECK(encode(Message{Chat{0, "del\x7F"}}) == std::nullopt);
+  CHECK(encode(Message{Chat{0, "c1 \xC2\x9B"}}) == std::nullopt);  // U+009B
+  CHECK(encode(Message{PlayerJoined{1, "Na\tvi"}}) == std::nullopt);
+  CHECK(encode(Message{Chat{0, "plain \xC2\xA0 text"}}) != std::nullopt);  // U+00A0
+
+  Bytes b = must_encode(PlayerJoined{1, "Navi"});
+  b.back() = 0x00;  // "Nav\0" on the wire
+  CHECK(decode_bytes(b) == Error::bad_value);
+}
+
 TEST_CASE("a sample needs its time component, once") {
   SUBCASE("missing") {
     Bytes b;

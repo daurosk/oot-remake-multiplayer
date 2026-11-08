@@ -1,6 +1,14 @@
+# The wire protocol: plain bytes in, plain structs out. No ENet, so the
+# server, the client, Lichii and the recomp can all share it.
+add_library(coop_protocol STATIC
+  protocol/src/codec.cpp
+)
+target_include_directories(coop_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/protocol/include")
+target_link_libraries(coop_protocol PRIVATE coop_warnings)
+
 # The co-op library: protocol and networking, filled in by later stage 0 steps.
 add_library(coop STATIC
   src/version.cpp
 )
 target_include_directories(coop PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(coop PUBLIC enet PRIVATE coop_warnings)
+target_link_libraries(coop PUBLIC enet coop_protocol PRIVATE coop_warnings)

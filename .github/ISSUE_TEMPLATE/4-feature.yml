@@ -1,0 +1,11 @@
+name: Feature request
+description: An idea for co-op.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What should co-op do, and why would it make playing together better?
+    validations:
+      required: true

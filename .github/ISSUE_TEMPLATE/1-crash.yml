@@ -1,0 +1,27 @@
+name: Crash
+description: The game or the co-op build closes, freezes or shows an error.
+labels: [bug, crash]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach or link game files, keys, firmware or builds that contain them. Issues that do are closed.
+  - type: input
+    id: version
+    attributes:
+      label: Co-op build and game version
+      description: For example "coop-v3, game 1.1.1".
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What happened
+      description: What you were doing, and what happened instead of what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Paste the end of the emulator log, or attach the log file.
+      render: text

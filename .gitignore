@@ -1,0 +1,35 @@
+# Build output
+build/
+out/
+dist/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+
+# Game content: never commit
+*.nsp
+*.xci
+*.nup
+*.nca
+*.nso
+*.nro
+*.keys
+romfs/
+exefs/
+nand/
+keys/
+*.sav
+
+# Emulator data and caches
+shader/
+*.bin
+*.log
+
+# Editors and tools
+.vs/
+.vscode/
+.idea/
+.claude/settings.local.json
+__pycache__/

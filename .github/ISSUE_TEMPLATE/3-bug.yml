@@ -1,0 +1,20 @@
+name: Bug
+description: Something in co-op works wrongly but nothing crashed.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Co-op build and game version
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen again

@@ -1,0 +1,34 @@
+name: Desync
+description: Players see different things, such as a player, enemy, door or chest in a different state.
+labels: [bug, desync]
+body:
+  - type: markdown
+    attributes:
+      value: Desyncs need logs from every player in the session, taken right after it happened.
+  - type: input
+    id: version
+    attributes:
+      label: Co-op build and game version for each player
+    validations:
+      required: true
+  - type: input
+    id: players
+    attributes:
+      label: Number of players and how you connected
+      description: For example "2 players, LAN" or "3 players, Tailscale".
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What each player saw
+      description: Where you were (area, child or adult), and what was different between the games.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs from every player
+      description: Attach one log file per player and say whose is whose.
+    validations:
+      required: true

@@ -164,8 +164,12 @@ struct Chat {
   bool operator==(const Chat&) const = default;
 };
 
+// The time of a sample is on the server clock, not the sender's: the server
+// relays it unchanged, and a receiver can place it only on a clock everyone
+// shares. The sender works it out from its own clock and its offset estimate
+// (coop::net::Client::server_now_us or to_server_time).
 struct SampleTime {
-  std::uint64_t sender_time_us = 0;
+  std::uint64_t server_time_us = 0;
   std::uint32_t sequence = 0;
   bool operator==(const SampleTime&) const = default;
 };

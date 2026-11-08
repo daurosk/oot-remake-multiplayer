@@ -197,7 +197,7 @@ void Probe::on_message(const proto::Message& message, std::uint8_t channel) {
     r.samples.add(sample->time.sequence);
     if (sample->position && sample->velocity) {
       PathPoint p;
-      p.time_us = sample->time.sender_time_us;
+      p.time_us = sample->time.server_time_us;
       for (std::size_t k = 0; k < 3; ++k) {
         p.position[k] = (*sample->position)[k];
         p.velocity[k] = (*sample->velocity)[k];

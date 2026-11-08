@@ -320,7 +320,7 @@ Error encode_body(const PlayerSample& m, Writer& w) {
 
   w.u8(m.player_number);
   component(SampleComponent::time, [&] {
-    w.u64(m.time.sender_time_us);
+    w.u64(m.time.server_time_us);
     w.u32(m.time.sequence);
   });
   if (m.position) component(SampleComponent::position, [&] { for (float f : *m.position) w.f32(f); });
@@ -442,7 +442,7 @@ Error decode_component(SampleComponent id, Reader& c, PlayerSample& m, bool& kno
   known = true;
   switch (id) {
     case SampleComponent::time:
-      COOP_READ(c.u64(m.time.sender_time_us));
+      COOP_READ(c.u64(m.time.server_time_us));
       COOP_READ(c.u32(m.time.sequence));
       return Error::none;
     case SampleComponent::position:

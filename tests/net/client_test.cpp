@@ -263,6 +263,16 @@ TEST_CASE("client: handshake, ping, clock offset and messages") {
   CHECK(error < 50'000);
   const std::uint64_t client_now = client.now_us();
   CHECK(client.to_client_time(client.to_server_time(client_now)) == client_now);
+  // A sample is stamped with this (docs/protocol.md, "Encoding", times): the
+  // client's time plus the offset, so the server's clock, not the client's.
+  const std::int64_t offset = *client.clock_offset_us();
+  CHECK(client.to_server_time(client_now) ==
+        client_now + static_cast<std::uint64_t>(offset));
+  const std::uint64_t before_stamp = client.now_us();
+  const std::uint64_t stamp = client.server_now_us();
+  const std::uint64_t after_stamp = client.now_us();
+  CHECK(stamp >= before_stamp + static_cast<std::uint64_t>(offset));
+  CHECK(stamp <= after_stamp + static_cast<std::uint64_t>(offset));
 
   // A second ping comes about 250 ms later.
   const std::size_t after_first = ping_at + 1;

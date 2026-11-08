@@ -69,8 +69,8 @@ std::optional<std::uint8_t> sender_of(const Message& message);
 bool set_sender(Message& message, std::uint8_t player);
 
 // The server's handshake check of a decoded HELLO: the reason to refuse it,
-// or nothing when its protocol version and game build match. Server full and
-// name taken are for the server to decide.
+// or nothing when its protocol version and game build match. Server full, name
+// taken and bad name are for the server to decide.
 std::optional<RefuseReason> check_hello(const Hello& hello,
                                         std::string_view expected_game_build_id);
 

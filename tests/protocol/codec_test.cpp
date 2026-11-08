@@ -4,6 +4,7 @@
 #include <limits>
 #include <ostream>  // doctest prints string_view through it
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
@@ -299,6 +300,21 @@ TEST_CASE("a sample needs its time component, once") {
     b.insert(b.end(), time_component.begin(), time_component.end());
     fix_length(b);
     CHECK(decode_bytes(b) == Error::duplicate_component);
+  }
+}
+
+TEST_CASE("every refuse reason has its number on the wire and round trips") {
+  const std::pair<RefuseReason, std::uint8_t> reasons[] = {
+      {RefuseReason::wrong_protocol_version, 1}, {RefuseReason::wrong_game_build, 2},
+      {RefuseReason::server_full, 3},            {RefuseReason::name_taken, 4},
+      {RefuseReason::bad_name, 5}};
+  for (const auto& [reason, number] : reasons) {
+    Bytes b = must_encode(Refused{reason});
+    REQUIRE(b.size() == 5);
+    CHECK(b.back() == number);
+    Message m;
+    REQUIRE(decode(b, m) == Error::none);
+    CHECK(std::get<Refused>(m).reason == reason);
   }
 }
 

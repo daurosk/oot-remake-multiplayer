@@ -33,6 +33,7 @@ Each rule answers a way the TotK online sync was seen to break.
 
 - Each message type has its channel, and each is sent by the client, the server or both (table below). A receiver refuses a message that came on the wrong channel or from a side that may not send it (`check_received` in the code).
 - The server relays and decides; it never runs the game. The host player's game is the source of truth for shared progress (stage 4).
+- The server holds each player to at most 60 messages a second on channels 0 to 2 and 240 on channels 3 and 4, with bursts of twice that, and drops the rest without a word. A packet longer than any message can be (4 + 65535 bytes) is thrown away unread.
 
 ## Encoding
 
@@ -51,7 +52,7 @@ Each rule answers a way the TotK online sync was seen to break.
 1. The client connects and sends `HELLO`: protocol version (`u16`), build id (string, up to 64 characters: emulator or recomp, and its version), game build id (string, up to 32, for example `e0f3ccfaf50065ae`), game version (string, up to 16, for example `1.1.1`), nickname (string, 1 to 16 characters). The protocol version is the first 2 bytes of the body in every version of the protocol, so a server can read it, and refuse with the right reason, even from a `HELLO` whose rest it cannot read.
 2. The server answers `WELCOME` or `REFUSED`.
    - `WELCOME`: `u8` the player's number (1 to 4), `u64` server time, `u16` tick rate (not 0), `u8` count (at most 4), then for each player already in: `u8` number, nickname. Every number in it is different, and the new player's own is not in the list.
-   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken. A reason the client does not know is kept and shown as unknown.
+   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces). A reason the client does not know is kept and shown as unknown.
 3. No `HELLO` within 10 seconds: the server drops the connection.
 
 ## Keep-alive and clock

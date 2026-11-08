@@ -106,6 +106,7 @@ enum class RefuseReason : std::uint8_t {
   wrong_game_build = 2,
   server_full = 3,
   name_taken = 4,
+  bad_name = 5,  // empty or nothing but spaces
 };
 
 struct Refused {

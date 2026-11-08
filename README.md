@@ -11,7 +11,7 @@ Both stages share one design, one wire protocol and one server, so what is learn
 
 ## Status
 
-Planning. No co-op code yet. The plan is in [docs/plan.md](docs/plan.md).
+Planning. No co-op code yet. The plan is in [docs/plan.md](docs/plan.md) and the wire protocol in [docs/protocol.md](docs/protocol.md). Stage 0 needs no game and no emulator, so it can start before the Lichii code comes in.
 
 | Stage | State |
 |---|---|

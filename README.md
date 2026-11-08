@@ -24,6 +24,10 @@ Planning. No co-op code yet. The plan is in [docs/plan.md](docs/plan.md).
 | 6. Chat, player list, reconnects | Not started |
 | Recomp port of stages 0 to 6 | Waits for a playable recomp |
 
+## Building
+
+Needs CMake 3.24 or newer and a C++20 compiler (Visual Studio 2022 on Windows). ENet and doctest are fetched by CMake at pinned versions. `cmake -S . -B build`, then `cmake --build build --config Release` and `ctest --test-dir build -C Release`.
+
 ## What you need
 
 - Your own legally obtained copy of the game, dumped from your own console. This repository has no game files, keys or firmware and never will.

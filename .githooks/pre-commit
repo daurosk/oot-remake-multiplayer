@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs the content guard before each commit. Enable with:
+#   git config core.hooksPath .githooks
+root=$(git rev-parse --show-toplevel)
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys" >/dev/null 2>&1; then
+    exec "$py" "$root/tools/check_content.py"
+  fi
+done
+echo "pre-commit: no Python found; run tools/check_content.py by hand before committing." >&2
+exit 1

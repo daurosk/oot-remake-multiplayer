@@ -9,6 +9,8 @@ The goal of this project is working multiplayer in two stages:
 
 Both stages share one design, one wire protocol and one server, so what is learned on the emulator carries straight over to the recomp.
 
+**Discord:** https://discord.gg/GwtRKAqng5, for players, testers and contributors.
+
 ## Status
 
 Planning. No co-op code yet. The plan is in [docs/plan.md](docs/plan.md) and the wire protocol in [docs/protocol.md](docs/protocol.md). Stage 0 needs no game and no emulator, so it can start before the Lichii code comes in.
@@ -32,6 +34,10 @@ Needs CMake 3.24 or newer and a C++20 compiler (Visual Studio 2022 on Windows). 
 
 - Your own legally obtained copy of the game, dumped from your own console. This repository has no game files, keys or firmware and never will.
 - Every player needs the same game version and the same co-op build.
+
+## Contributing
+
+Contributions are welcome: fork, branch, pull request. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Questions go to [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or [Discord](https://discord.gg/GwtRKAqng5).
 
 ## Rules for this repository
 

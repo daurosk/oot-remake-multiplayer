@@ -17,6 +17,7 @@
 #include <ostream>  // doctest prints string_view through it
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "coop/net/client.hpp"
@@ -414,4 +415,128 @@ TEST_CASE("client: no answer to HELLO counts as a failed attempt and retries") {
   CHECK(server.connects == 2);
   REQUIRE(wait_event(client, server, events, EventKind::welcomed));
   CHECK(client.failed_attempts() == 0);
+}
+
+TEST_CASE("client: a packet bigger than any message is never assembled") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+
+  // 100 KB: more than the 4 + 65535 bytes any message can take. ENet must
+  // refuse its fragments, so it never reaches decode (or the heap).
+  const std::size_t rejected = client.rejected_count();
+  std::vector<std::uint8_t> big(100'000, 0);
+  big[0] = 0x09;
+  server.send_bytes(big, proto::kChannelSession);
+  pump(client, server, [] { return false; }, 300);
+  CHECK(client.rejected_count() == rejected);
+  CHECK(client.state() == State::connected);
+}
+
+TEST_CASE("client: one service() handles a bounded number of events") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.max_events_per_service = 8;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+  events.all.clear();
+
+  constexpr int kSent = 40;
+  for (int i = 0; i < kSent; ++i) {
+    server.send(proto::Chat{1, std::to_string(i)}, proto::kChannelSession);
+  }
+  // Let all of it land in the client's socket before one service().
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  client.service(0);
+  events.drain(client);
+  CHECK(events.count(EventKind::message) <= 8);
+  CHECK(events.count(EventKind::message) >= 1);
+
+  // The rest comes in later calls, in order.
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return events.count(EventKind::message) == kSent;
+  }));
+  int n = 0;
+  for (const auto& e : events.all) {
+    if (e.kind != EventKind::message) continue;
+    CHECK(e.message == proto::Message{proto::Chat{1, std::to_string(n)}});
+    ++n;
+  }
+}
+
+TEST_CASE("client: a PING flood gets a bounded number of PONGs") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+
+  const std::size_t before = server.received.size();
+  for (std::uint64_t i = 1; i <= 50; ++i) {
+    server.send(proto::Ping{i}, proto::kChannelSession);
+  }
+  pump(client, server, [] { return false; }, 200);
+  int pongs = 0;
+  for (std::size_t i = before; i < server.received.size(); ++i) {
+    pongs += std::holds_alternative<proto::Pong>(server.received[i].message) ? 1 : 0;
+  }
+  CHECK(pongs >= 1);
+  CHECK(pongs <= 6);  // a burst of 4, then one each 125 ms
+  CHECK(client.state() == State::connected);
+}
+
+TEST_CASE("client: a server that welcomes and drops at once does not reset the backoff") {
+  FakeServer server;
+  Client client(config_for(server));  // retries 50 ms doubling to 400 ms
+  Events events;
+  REQUIRE(client.start());
+
+  std::chrono::milliseconds last_gap{0};
+  std::size_t hello_from = 0;
+  for (int cycle = 0; cycle < 4; ++cycle) {
+    welcome_client(client, server, 0, hello_from);
+    REQUIRE(wait_event(client, server, events,
+                       cycle == 0 ? EventKind::welcomed : EventKind::reconnected));
+    server.drop();
+    REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+    const auto dropped_at = std::chrono::steady_clock::now();
+    const int connects = server.connects;
+    hello_from = server.received.size();
+    REQUIRE(pump(client, server, [&] { return server.connects > connects; }));
+    last_gap = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - dropped_at);
+  }
+  // 50, 100, 200, 400: the fourth wait is the longest, not 50 again.
+  CHECK(last_gap.count() >= 300);
+}
+
+TEST_CASE("client: an injected clock that steps back does not end the attempt") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  std::uint64_t fake_now = 1'000'000'000'000;
+  config.now_us = [&fake_now] { return fake_now; };
+  config.handshake_timeout_ms = 1000;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+
+  fake_now -= 1000;
+  pump(client, server, [] { return false; }, 200);
+  events.drain(client);
+  CHECK(events.count(EventKind::connect_failed) == 0);
+  CHECK(client.state() == State::handshaking);
+
+  fake_now += 2'000'000;
+  REQUIRE(wait_event(client, server, events, EventKind::connect_failed));
+  CHECK(events.all[*events.find(EventKind::connect_failed)].drop_reason ==
+        DropReason::handshake_timeout);
 }

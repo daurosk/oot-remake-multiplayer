@@ -31,6 +31,27 @@ constexpr std::uint64_t ms_to_us(std::uint32_t ms) {
   return static_cast<std::uint64_t>(ms) * 1000u;
 }
 
+// The longest packet a message can fill: the 4-byte header and a body of
+// at most 65535 bytes. ENet refuses anything longer before assembling it.
+constexpr std::size_t kMaxPacketBytes = 4 + 0xffff;
+
+// PONGs answer at most this many PINGs at once, then one per interval.
+constexpr std::uint64_t kPongBurst = 4;
+constexpr std::uint64_t kPongIntervalUs = 125'000;
+
+// Time passed since `then`; 0 when an injected clock stepped back.
+constexpr std::uint64_t elapsed(std::uint64_t now, std::uint64_t then) {
+  return now >= then ? now - then : 0;
+}
+
+ClientConfig sanitised(ClientConfig config) {
+  config.retry_first_ms = std::max<std::uint32_t>(config.retry_first_ms, 1);
+  config.retry_max_ms = std::max(config.retry_max_ms, config.retry_first_ms);
+  config.max_events_per_service =
+      std::max<std::uint32_t>(config.max_events_per_service, 1);
+  return config;
+}
+
 // Channels 0 to 2 are reliable and ordered, 3 and 4 unreliable and sequenced
 // (ENet's default for a packet without flags).
 enet_uint32 packet_flags(std::uint8_t channel) {
@@ -74,7 +95,7 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
   return "unknown reason";
 }
 
-Client::Client(ClientConfig config) : config_(std::move(config)) {}
+Client::Client(ClientConfig config) : config_(sanitised(std::move(config))) {}
 
 Client::~Client() {
   stop();
@@ -105,6 +126,7 @@ bool Client::start() {
   enet_started_ = true;
   host_ = enet_host_create(nullptr, 1, proto::kChannelCount, 0, 0);
   if (host_ == nullptr) return false;
+  host_->maximumPacketSize = kMaxPacketBytes;
   begin_attempt();
   return true;
 }
@@ -122,11 +144,17 @@ void Client::begin_attempt() {
   attempt_started_us_ = now_us();
   ENetAddress address{};
   address.port = config_.port;
-  if (enet_address_set_host(&address, config_.host.c_str()) != 0) {
-    state_ = State::connecting;
-    end_attempt(DropReason::no_route);
-    return;
+  if (!address_known_) {
+    // May block on a DNS name; an IP is read at once. Kept once it works.
+    if (enet_address_set_host(&address, config_.host.c_str()) != 0) {
+      state_ = State::connecting;
+      end_attempt(DropReason::no_route);
+      return;
+    }
+    address_host_ = address.host;
+    address_known_ = true;
   }
+  address.host = address_host_;
   peer_ = enet_host_connect(host_, &address, proto::kChannelCount, 0);
   if (peer_ == nullptr) {
     state_ = State::connecting;
@@ -149,12 +177,16 @@ void Client::end_attempt(DropReason reason) {
   push(std::move(event));
 
   ++failed_attempts_;
-  if (was_connected || retry_delay_ms_ == 0) {
+  // Only a connection that lasted starts the delays over; one that a server
+  // drops right after WELCOME counts as one more failure.
+  const bool stable = was_connected &&
+      elapsed(now_us(), welcomed_us_) >= ms_to_us(config_.stable_after_ms);
+  if (stable || retry_delay_ms_ == 0) {
     retry_delay_ms_ = config_.retry_first_ms;
   } else {
-    retry_delay_ms_ = std::min(retry_delay_ms_ * 2, config_.retry_max_ms);
+    retry_delay_ms_ = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        static_cast<std::uint64_t>(retry_delay_ms_) * 2, config_.retry_max_ms));
   }
-  retry_delay_ms_ = std::min(retry_delay_ms_, config_.retry_max_ms);
   retry_at_us_ = now_us() + ms_to_us(retry_delay_ms_);
   state_ = State::waiting_retry;
 }
@@ -167,7 +199,10 @@ void Client::service(std::uint32_t wait_ms) {
 
   ENetEvent event;
   std::uint32_t wait = wait_ms;
-  while (enet_host_service(host_, &event, wait) > 0) {
+  // Bounded, so a flood from the server cannot keep service() from returning.
+  for (std::uint32_t handled = 0; handled < config_.max_events_per_service &&
+                                  enet_host_service(host_, &event, wait) > 0;
+       ++handled) {
     wait = 0;
     switch (event.type) {
       case ENET_EVENT_TYPE_CONNECT:
@@ -207,7 +242,7 @@ void Client::service(std::uint32_t wait_ms) {
   switch (state_) {
     case State::connecting:
     case State::handshaking:
-      if (now - attempt_started_us_ >= ms_to_us(config_.handshake_timeout_ms)) {
+      if (elapsed(now, attempt_started_us_) >= ms_to_us(config_.handshake_timeout_ms)) {
         end_attempt(DropReason::handshake_timeout);
       }
       break;
@@ -240,8 +275,17 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
   }
 
   // The server pings from its side too; answer whenever there is a peer.
+  // At most kPongBurst at once, then one per kPongIntervalUs: a PING flood
+  // cannot fill the reliable send queue.
   if (const auto* ping = std::get_if<proto::Ping>(&message)) {
-    send_raw(proto::Pong{ping->sender_time_us, now_us()}, proto::kChannelSession);
+    const std::uint64_t now = now_us();
+    const std::uint64_t due = std::max(pong_due_us_, now);
+    if (due - now > (kPongBurst - 1) * kPongIntervalUs) {
+      ++rejected_;
+      return;
+    }
+    pong_due_us_ = due + kPongIntervalUs;
+    send_raw(proto::Pong{ping->sender_time_us, now}, proto::kChannelSession);
     return;
   }
 
@@ -301,9 +345,9 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
 void Client::on_welcome(const proto::Welcome& welcome) {
   const std::uint64_t now = now_us();
   state_ = State::connected;
+  welcomed_us_ = now;
   player_number_ = welcome.player_number;
   failed_attempts_ = 0;
-  retry_delay_ms_ = 0;
 
   // HELLO out and WELCOME back are a first round trip: a rough first sample
   // until the PINGs give better ones.

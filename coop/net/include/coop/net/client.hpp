@@ -12,6 +12,25 @@
 // - checks every received message with check_received(msg, Sender::server,
 //   channel) and drops the ones that fail (counted in rejected_count());
 // - after a drop, tries again with a growing delay and sends HELLO again.
+//
+// Against a hostile or broken server:
+// - ENet refuses any packet longer than the longest message (4 + 65535
+//   bytes) before assembling it;
+// - one service() handles at most max_events_per_service ENet events, so a
+//   flood cannot keep it from returning; the rest wait for the next call;
+// - PINGs are answered at most 4 at once and then one per 125 ms; the others
+//   are dropped and counted;
+// - the retry delay goes back to the first one only after a connection that
+//   lasted stable_after_ms, so a server that welcomes and drops at once is
+//   retried ever more slowly;
+// - the client retries for as long as it runs; the host decides when to give
+//   up (failed_attempts(), then stop()).
+// The event queue grows only by what one service() handles, so a host that
+// drains next_event() after every service() keeps it small.
+//
+// The host name is resolved by the first attempt that succeeds and kept for
+// later ones. A DNS name makes that attempt block inside service() for as
+// long as the lookup takes; pass an IP address to never block.
 
 #include <cstddef>
 #include <cstdint>
@@ -30,7 +49,7 @@ struct _ENetPeer;
 namespace coop::net {
 
 struct ClientConfig {
-  std::string host = "127.0.0.1";  // a name is resolved once per attempt
+  std::string host = "127.0.0.1";  // an IP, or a name (see above)
   std::uint16_t port = protocol::kDefaultPort;
   protocol::Hello hello;  // sent as is on every connection
 
@@ -40,10 +59,17 @@ struct ClientConfig {
   // Give up on an attempt with no WELCOME or REFUSED by then.
   std::uint32_t handshake_timeout_ms = 10000;
   // Delay before the next attempt: doubles from the first to the most.
+  // The first is at least 1 ms and the most at least the first.
   std::uint32_t retry_first_ms = 250;
   std::uint32_t retry_max_ms = 5000;
+  // A welcomed connection that lasted this long sets the delay back to the
+  // first one when it drops; a shorter one keeps doubling it.
+  std::uint32_t stable_after_ms = 10000;
+  // ENet events handled in one service() at most (at least 1).
+  std::uint32_t max_events_per_service = 256;
 
   // The client's clock in microseconds. Empty means std::chrono::steady_clock.
+  // It must not go backwards by much: a step back only pauses the timers.
   std::function<std::uint64_t()> now_us;
 };
 
@@ -150,8 +176,13 @@ class Client {
   bool ever_welcomed_ = false;
   std::uint8_t player_number_ = 0;
 
+  bool address_known_ = false;
+  std::uint32_t address_host_ = 0;  // ENet's form, network byte order
+
   std::uint64_t attempt_started_us_ = 0;
   std::uint64_t hello_sent_us_ = 0;
+  std::uint64_t welcomed_us_ = 0;
+  std::uint64_t pong_due_us_ = 0;  // PONG budget: the next free slot's time
   std::uint64_t next_ping_us_ = 0;
   std::uint64_t retry_at_us_ = 0;
   std::uint32_t retry_delay_ms_ = 0;

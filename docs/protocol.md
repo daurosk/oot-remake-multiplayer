@@ -8,7 +8,7 @@ Each rule answers a way the TotK online sync was seen to break.
 
 | Rule | What it prevents |
 |---|---|
-| Every state sample carries the sender's time and a sequence number. | Receivers timing samples by arrival, so network jitter becomes motion jitter. |
+| Every state sample carries its time on the server clock and a sequence number. | Receivers timing samples by arrival, so network jitter becomes motion jitter. |
 | Every moving thing's sample carries a velocity. | Copies that can only snap or slide, never predict. |
 | Senders keep sending while still, at a low rate (a keep-alive sample). | Silence that could mean "still" or "late". |
 | Every component inside a message carries its own length. | A reader that meets an unknown part cannot skip it. |
@@ -45,7 +45,7 @@ Each rule answers a way the TotK online sync was seen to break.
 - Strings are `u16 length` + UTF-8 bytes, no terminator, with a maximum per field counted in characters (code points). The UTF-8 must be valid (no overlong forms, no surrogates, nothing past U+10FFFF) and hold no control characters (U+0000 to U+001F, U+007F to U+009F). A string is also never more than 4 bytes a character.
 - Floats must be finite: NaN and infinity are refused.
 - Player numbers are 1 to 4. `PLAYER_STATUS`, `CHAT` and `PLAYER_SAMPLE` start with a `u8` player field: a client always sends 0 ("me"), and the server writes in the sender's number (1 to 4), which it knows from the connection, before relaying to the others. A client message with any other value there, or a server one with 0, is refused.
-- Times are `u64` microseconds on the sender's clock. Each client estimates the offset to the server clock from the heartbeat (below) and converts.
+- Times are `u64` microseconds. `PING` and `PONG` carry the sender's own clock, which is how the offset is found (below). Every other time is on the server clock: `WELCOME` carries the server's own, and a sample (`PLAYER_SAMPLE`, and later `OBJECT_SAMPLE`) carries the sender's estimate of the server clock when the state was taken, worked out from its own clock and its offset. The server relays samples with their time unchanged, so a receiver places another player's sample on the same time line as its own estimate of the server clock. A client sends no sample before it has an offset; the `WELCOME` time gives a first, rough one.
 
 ## Handshake
 
@@ -83,7 +83,7 @@ Type numbers are never reused or renumbered; new types are added at the end.
 
 | Id | Name | Data | Length |
 |---|---|---|---|
-| 1 | `time` | `u64` sender time, `u32` sequence | 12 |
+| 1 | `time` | `u64` server time (the sender's estimate, above), `u32` sequence | 12 |
 | 2 | `position` | 3 x f32 | 12 |
 | 3 | `velocity` | 3 x f32, metres a second | 12 |
 | 4 | `rotation` | 4 x f32 quaternion, x y z w (the game's 3x3 matrix converted on send) | 16 |
@@ -99,7 +99,7 @@ A player sends `PLAYER_SAMPLE` every frame it moves (up to 60 a second) and at l
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` asks for a warp to another player's scene.
 - **Stage 4:** `FLAG_SET` (flag hash, value) from any player goes to the host; the host's `FLAG_STATE` is the answer everyone applies. A full flag snapshot is sent on join.
-- **Stage 5:** `OWNER_CLAIM`, `OWNER_GRANT` (with the last state, life included), `OBJECT_SAMPLE`, `DAMAGE` (target, amount, kind, source), `OBJECT_REMOVE` (owner only). Groups for bosses. The hold times and margins are measured before they are fixed.
+- **Stage 5:** `OWNER_CLAIM`, `OWNER_GRANT` (with the last state, life included), `OBJECT_SAMPLE` (timed on the server clock, as `PLAYER_SAMPLE`), `DAMAGE` (target, amount, kind, source), `OBJECT_REMOVE` (owner only). Groups for bosses. The hold times and margins are measured before they are fixed.
 
 ## Versioning
 

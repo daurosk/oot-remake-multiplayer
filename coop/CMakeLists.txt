@@ -6,9 +6,17 @@ add_library(coop_protocol STATIC
 target_include_directories(coop_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/protocol/include")
 target_link_libraries(coop_protocol PRIVATE coop_warnings)
 
+# The client over ENet that the test tool, Lichii and the recomp use.
+add_library(coop_net STATIC
+  net/src/clock.cpp
+  net/src/client.cpp
+)
+target_include_directories(coop_net PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/net/include")
+target_link_libraries(coop_net PUBLIC coop_protocol PRIVATE enet coop_warnings)
+
 # The co-op library: protocol and networking, filled in by later stage 0 steps.
 add_library(coop STATIC
   src/version.cpp
 )
 target_include_directories(coop PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(coop PUBLIC enet coop_protocol PRIVATE coop_warnings)
+target_link_libraries(coop PUBLIC enet coop_protocol coop_net PRIVATE coop_warnings)

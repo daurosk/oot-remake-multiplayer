@@ -8,7 +8,7 @@ How the AI sessions that build co-op are organised. The live state (who is runni
 |---|---|---|---|
 | Owner (Caleb) | 1 | Decides the open questions, approves merges, starts the first coordinator. | |
 | Coordinator | 1 at a time | Reports to the owner. Starts, steers, replaces and stops every worker. Keeps the handoff and the worker table current. Reviews worker results and opens pull requests for the owner. | Writes product code. Reads whole diffs or long logs (it sends a worker instead). Lets two workers touch the same files. |
-| Worker | Up to 3 at once to start | One task from one brief, in its own worktree on its own branch (`agent/<task>`). Reports to the coordinator once, when done or when it reaches its context limit. | Starts other sessions or subagents. Merges. Edits `main` or another worker's files. Talks to the owner instead of the coordinator, unless the coordinator is gone. |
+| Worker | As many as the work needs | One task from one brief, in its own worktree on its own branch (`agent/<task>`). Reports to the coordinator once, when done or when it reaches its context limit. | Starts other sessions or subagents. Merges. Edits `main` or another worker's files. Talks to the owner instead of the coordinator, unless the coordinator is gone. |
 
 Only the coordinator starts and stops sessions. A worker that needs help, a decision or a replacement asks the coordinator.
 
@@ -50,7 +50,7 @@ If the old coordinator is gone before step 2 (crashed, stopped, out of usage), t
 
 1. Check own context. Read new messages and reports.
 2. Check each running worker's context and state.
-3. For each finished worker: read its report (not its whole diff), send a review worker if the change is large, open the pull request for the owner, start whatever that unblocks.
+3. For each finished worker: read its report (not its whole diff), send a review worker if the change is large, open the pull request for the owner, start whatever that unblocks. Archive every session that has finished its work.
 4. Update `WORKERS.md`; rewrite `HANDOFF.md` if anything changed.
 5. Tell the owner, in a few lines: what finished, what started, what needs their decision.
 

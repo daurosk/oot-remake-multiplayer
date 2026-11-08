@@ -91,6 +91,7 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::wrong_game_build: return "wrong game build";
     case proto::RefuseReason::server_full: return "server full";
     case proto::RefuseReason::name_taken: return "name taken";
+    case proto::RefuseReason::bad_name: return "bad name";
   }
   return "unknown reason";
 }

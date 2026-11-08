@@ -6,6 +6,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
@@ -200,17 +201,25 @@ TEST_CASE("a game build other than the session's is refused") {
   }
 }
 
-TEST_CASE("a nickname in use or blank is refused as name taken") {
+TEST_CASE("a nickname in use is refused as name taken, a blank one as bad name") {
   Harness h;
   h.join(1, "Link");
   h.clear();
-  for (const char* name : {"Link", "LINK", "   "}) {
-    ConnectionId id = static_cast<ConnectionId>(h.sent.size() + 10);
+  const std::pair<const char*, RefuseReason> cases[] = {
+      {"Link", RefuseReason::name_taken},
+      {"LINK", RefuseReason::name_taken},
+      {" ", RefuseReason::bad_name},
+      {"   ", RefuseReason::bad_name}};
+  ConnectionId id = 10;
+  for (const auto& [name, reason] : cases) {
+    CAPTURE(name);
+    ++id;
     h.connect(id);
     h.receive(id, hello_from(name), kChannelSession);
     const auto refused = only_message_to<Refused>(h, id);
     REQUIRE(refused.has_value());
-    CHECK(refused->reason == RefuseReason::name_taken);
+    CHECK(refused->reason == reason);
+    h.clear();
   }
   CHECK(h.session.player_count() == 1);
 }
@@ -387,6 +396,73 @@ TEST_CASE("no HELLO within 10 seconds drops the connection") {
   h.collect();
   CHECK(h.dropped == std::vector<ConnectionId>{1});
   CHECK(h.sent.empty());
+}
+
+TEST_CASE("a refused connection that keeps sending is still dropped after the grace time") {
+  Harness h;
+  h.connect(1);
+  Hello wrong = hello_from("Link");
+  wrong.protocol_version = kProtocolVersion + 1;
+  h.receive(1, wrong, kChannelSession);
+  REQUIRE(h.dropped == std::vector<ConnectionId>{1});
+  h.clear();
+  // The peer never lets the transport close it and keeps talking.
+  for (int i = 0; i < 100; ++i) {
+    h.now += 100'000;
+    h.receive(1, Ping{h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  CHECK(h.dropped == std::vector<ConnectionId>{1});
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().after_refused == 100);
+  // Gone from the session: what it sends now is not even counted.
+  h.receive(1, Ping{h.now}, kChannelSession);
+  CHECK(h.session.stats().after_refused == 100);
+}
+
+TEST_CASE("a player flooding reliable messages is held to the rate, after a burst") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // 60 a second with bursts of 120: 200 at once lets 120 through.
+  for (int i = 0; i < 200; ++i) h.receive(1, Chat{0, "spam"}, kChannelSession);
+  CHECK(h.to(2).size() == 120);
+  CHECK(h.session.stats().rate_limited == 80);
+  // Half a second later, 30 more.
+  h.clear();
+  h.now += 500'000;
+  for (int i = 0; i < 100; ++i) h.receive(1, Chat{0, "spam"}, kChannelSession);
+  CHECK(h.to(2).size() == 30);
+  // PINGs share the budget, so a flood of them gets no flood of PONGs.
+  h.clear();
+  h.receive(1, Ping{1}, kChannelSession);
+  CHECK(h.to(1).empty());
+  // The other player and the unreliable channel are not affected.
+  h.receive(2, Chat{0, "hi"}, kChannelSession);
+  h.receive(1, TestPayload{1, {}}, kChannelPlayerSamples);
+  CHECK(h.to(1).size() == 1);
+  CHECK(h.to(2).size() == 1);
+}
+
+TEST_CASE("a player flooding samples is held to the unreliable rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  PlayerSample sample;
+  sample.time = {1, 1};
+  for (int i = 0; i < 1000; ++i) h.receive(1, sample, kChannelPlayerSamples);
+  CHECK(h.to(2).size() == 480);
+  // A player at the protocol's own rate, 60 samples a second, is never cut.
+  h.clear();
+  h.now += 10'000'000;
+  for (int i = 0; i < 600; ++i) {
+    h.now += 16'667;
+    h.receive(1, sample, kChannelPlayerSamples);
+  }
+  CHECK(h.to(2).size() == 600);
 }
 
 TEST_CASE("a player silent for 10 seconds is dropped as timed out") {

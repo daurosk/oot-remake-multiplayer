@@ -32,6 +32,16 @@ struct SessionConfig {
   std::uint64_t hello_timeout_us = 10'000'000;    // connect to HELLO
   std::uint64_t silence_timeout_us = 10'000'000;  // nothing heard from a player
   std::uint64_t ping_interval_us = 250'000;
+  // A refused connection the transport has not closed this long after the
+  // REFUSED is dropped again, however much it still sends.
+  std::uint64_t refused_grace_us = 10'000'000;
+  // Most messages a player may send a second, with bursts of up to twice
+  // that; the rest are dropped and counted, so one player cannot flood the
+  // others through the relay. Reliable is channels 0 to 2 (PING included),
+  // unreliable 3 and 4. The protocol's own rates (60 samples and a few other
+  // messages a second) stay well under them.
+  std::uint32_t reliable_per_second = 60;
+  std::uint32_t unreliable_per_second = 240;
   // Called with one line for each join, leave and refusal. May be empty.
   std::function<void(const std::string&)> log;
 };
@@ -59,6 +69,7 @@ struct Stats {
   std::uint64_t before_welcome = 0;  // anything but HELLO before WELCOME
   std::uint64_t repeated_hello = 0;  // HELLO from a player already in
   std::uint64_t after_refused = 0;   // packets from a connection being closed
+  std::uint64_t rate_limited = 0;    // over a player's message rate
   std::uint64_t relayed = 0;         // messages passed on (once per message)
 
   std::uint64_t errors(protocol::Error e) const {
@@ -102,6 +113,11 @@ class Session {
     std::uint64_t connected_at = 0;
     std::uint64_t last_heard = 0;
     std::uint64_t last_ping = 0;
+    std::uint64_t refused_at = 0;
+    // Message budgets for the rate limits, in messages, refilled with time.
+    double reliable_budget = 0;
+    double unreliable_budget = 0;
+    std::uint64_t budget_time = 0;
     std::uint8_t number = 0;  // 1 to 4 once joined
     std::string nickname;
   };
@@ -110,7 +126,9 @@ class Session {
                 std::uint64_t now_us);
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::uint64_t now_us);
-  void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason);
+  bool within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us);
+  void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
+              std::uint64_t now_us);
   void remove_player(ConnectionId id, protocol::LeaveReason reason);
   bool name_in_use(const std::string& nickname) const;
   std::uint8_t free_number() const;

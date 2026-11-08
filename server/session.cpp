@@ -29,7 +29,7 @@ bool blank_name(const std::string& name) {
 }  // namespace
 
 std::uint64_t Stats::dropped() const {
-  std::uint64_t total = before_welcome + repeated_hello + after_refused;
+  std::uint64_t total = before_welcome + repeated_hello + after_refused + rate_limited;
   for (std::uint64_t n : by_error) total += n;
   return total;
 }
@@ -60,7 +60,7 @@ void Session::received(ConnectionId id, std::uint8_t channel,
   if (c.state == State::awaiting_hello) {
     if (auto version = hello_protocol_version(bytes);
         version && *version != kProtocolVersion) {
-      refuse(id, c, RefuseReason::wrong_protocol_version);
+      refuse(id, c, RefuseReason::wrong_protocol_version, now_us);
       return;
     }
   }
@@ -91,16 +91,19 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
     expected = player_count() == 0 ? hello.game_build_id : session_game_build_;
   }
   if (auto reason = check_hello(hello, expected)) {
-    refuse(id, c, *reason);
+    refuse(id, c, *reason, now_us);
     return;
   }
   if (player_count() >= kMaxPlayers) {
-    refuse(id, c, RefuseReason::server_full);
+    refuse(id, c, RefuseReason::server_full, now_us);
     return;
   }
-  // The protocol has no "bad name" reason yet; name taken is the nearest.
-  if (blank_name(hello.nickname) || name_in_use(hello.nickname)) {
-    refuse(id, c, RefuseReason::name_taken);
+  if (blank_name(hello.nickname)) {
+    refuse(id, c, RefuseReason::bad_name, now_us);
+    return;
+  }
+  if (name_in_use(hello.nickname)) {
+    refuse(id, c, RefuseReason::name_taken, now_us);
     return;
   }
 
@@ -119,6 +122,9 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
   c.number = welcome.player_number;
   c.nickname = hello.nickname;
   c.last_ping = now_us;
+  c.reliable_budget = 2.0 * config_.reliable_per_second;
+  c.unreliable_budget = 2.0 * config_.unreliable_per_second;
+  c.budget_time = now_us;
   if (player_count() == 1) session_game_build_ = hello.game_build_id;
 
   send(id, kChannelSession, welcome);
@@ -128,11 +134,15 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
 
 void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                                 Message& message, std::uint64_t now_us) {
+  if (std::holds_alternative<Pong>(message)) return;  // our PING answered
+  if (!within_rate(c, channel, now_us)) {
+    ++stats_.rate_limited;
+    return;
+  }
   if (const auto* ping = std::get_if<Ping>(&message)) {
     send(id, kChannelSession, Pong{ping->sender_time_us, now_us});
     return;
   }
-  if (std::holds_alternative<Pong>(message)) return;  // our PING answered
   if (std::holds_alternative<Hello>(message)) {
     ++stats_.repeated_hello;
     return;
@@ -146,10 +156,26 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   ++stats_.relayed;
 }
 
-void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason) {
+bool Session::within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us) {
+  double seconds = static_cast<double>(now_us - c.budget_time) / 1e6;
+  c.budget_time = now_us;
+  auto refill = [seconds](double& budget, std::uint32_t per_second) {
+    budget = std::min(budget + seconds * per_second, 2.0 * per_second);
+  };
+  refill(c.reliable_budget, config_.reliable_per_second);
+  refill(c.unreliable_budget, config_.unreliable_per_second);
+  double& budget = channel <= kChannelOwnership ? c.reliable_budget : c.unreliable_budget;
+  if (budget < 1.0) return false;
+  budget -= 1.0;
+  return true;
+}
+
+void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason,
+                     std::uint64_t now_us) {
   send(id, kChannelSession, Refused{reason});
   actions_.push_back(DisconnectAction{id});
   c.state = State::closing;
+  c.refused_at = now_us;
   log("refused a connection, reason " + std::to_string(static_cast<int>(reason)));
 }
 
@@ -180,7 +206,7 @@ void Session::tick(std::uint64_t now_us) {
         now_us - c.connected_at >= config_.hello_timeout_us) {
       late_hello.push_back(id);
     } else if (c.state == State::closing &&
-               now_us - c.last_heard >= config_.hello_timeout_us) {
+               now_us - c.refused_at >= config_.refused_grace_us) {
       late_hello.push_back(id);  // refused, but the transport never closed it
     } else if (c.state == State::joined) {
       if (now_us - c.last_heard >= config_.silence_timeout_us) {

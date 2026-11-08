@@ -53,6 +53,12 @@ void print_server(const coop::server::EnetServer& server) {
               static_cast<unsigned long long>(s.rate_limited));
 }
 
+void print_loop(const Spread& loop_ms) {
+  std::printf("loop: pass every min %.3f avg %.3f max %.3f ms (%llu passes)\n", loop_ms.min,
+              loop_ms.avg(), loop_ms.max, static_cast<unsigned long long>(loop_ms.count));
+  std::fflush(stdout);
+}
+
 // Reliable messages a local sender sent to `receiver` that never came: the
 // gaps inside what arrived are counted by the receiver itself; this adds the
 // ones after the last that arrived. Only meaningful once the traffic drained.
@@ -149,6 +155,7 @@ int run_clients(const Options& options, coop::server::EnetServer* server) {
               static_cast<unsigned long long>(kShowDelayUs / 1000));
   std::fflush(stdout);
 
+  Spread loop_ms;  // time from one pass over everything to the next
   auto step_all = [&](bool sending) {
     if (server != nullptr) server->service(0);
     for (auto& probe : probes) probe->step(sending);
@@ -156,13 +163,17 @@ int run_clients(const Options& options, coop::server::EnetServer* server) {
 
   const Clock::time_point start = Clock::now();
   Clock::time_point next_report = start + std::chrono::seconds(options.report_every);
+  Clock::time_point last_pass = start;
   while (!g_stop) {
     step_all(true);
     const Clock::time_point now = Clock::now();
+    loop_ms.add(std::chrono::duration<double, std::milli>(now - last_pass).count());
+    last_pass = now;
     if (options.seconds != 0 && now - start >= std::chrono::seconds(options.seconds)) break;
     if (options.report_every != 0 && now >= next_report) {
       next_report += std::chrono::seconds(options.report_every);
       print_report("interim", start, probes, server, false);
+      print_loop(loop_ms);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -175,6 +186,7 @@ int run_clients(const Options& options, coop::server::EnetServer* server) {
   }
 
   print_report("final", start, probes, server, true);
+  print_loop(loop_ms);
   const bool ok = passed(probes);
   std::printf("result: %s\n", ok ? "PASS" : "FAIL");
   std::fflush(stdout);

@@ -20,6 +20,7 @@ include(cmake/enet.cmake)
 
 add_subdirectory(coop)
 add_subdirectory(server)
+add_subdirectory(tools/coop_test)
 
 if(COOP_BUILD_TESTS)
   enable_testing()

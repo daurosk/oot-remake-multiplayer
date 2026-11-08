@@ -540,3 +540,13 @@ TEST_CASE("client: an injected clock that steps back does not end the attempt") 
   CHECK(events.all[*events.find(EventKind::connect_failed)].drop_reason ==
         DropReason::handshake_timeout);
 }
+
+TEST_CASE("client: every refusal reason the protocol has is named") {
+  CHECK(refuse_reason_text(proto::RefuseReason::wrong_protocol_version) ==
+        "wrong protocol version");
+  CHECK(refuse_reason_text(proto::RefuseReason::wrong_game_build) == "wrong game build");
+  CHECK(refuse_reason_text(proto::RefuseReason::server_full) == "server full");
+  CHECK(refuse_reason_text(proto::RefuseReason::name_taken) == "name taken");
+  CHECK(refuse_reason_text(proto::RefuseReason::bad_name) == "bad name");
+  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(6)) == "unknown reason");
+}

@@ -356,7 +356,83 @@ TEST_CASE("encode leaves the buffer alone on an error") {
 }
 
 TEST_CASE("every error has a name") {
-  for (int e = 0; e <= static_cast<int>(Error::too_large); ++e) {
+  for (int e = 0; e <= static_cast<int>(Error::wrong_sender); ++e) {
     CHECK(to_string(static_cast<Error>(e)) != "unknown error");
   }
+}
+
+TEST_CASE("channel of a message type") {
+  CHECK(channel_of(MessageType::hello) == kChannelSession);
+  CHECK(channel_of(MessageType::player_sample) == kChannelPlayerSamples);
+  CHECK(channel_of(MessageType::test_payload) == kChannelPlayerSamples);
+  for (const Message& m : test::every_message()) {
+    CHECK(channel_of(type_of(m)) == channel_of(m));
+    CHECK(allowed_on_channel(type_of(m), channel_of(m)));
+  }
+  CHECK(allowed_on_channel(MessageType::test_payload, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::chat, kChannelPlayerSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::player_sample, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::hello, kChannelCount));
+  CHECK_FALSE(allowed_on_channel(static_cast<MessageType>(999), kChannelSession));
+}
+
+TEST_CASE("who may send what") {
+  CHECK(may_send(Sender::client, MessageType::hello));
+  CHECK_FALSE(may_send(Sender::server, MessageType::hello));
+  for (MessageType t : {MessageType::welcome, MessageType::refused,
+                        MessageType::player_joined, MessageType::player_left}) {
+    CHECK(may_send(Sender::server, t));
+    CHECK_FALSE(may_send(Sender::client, t));
+  }
+  for (MessageType t : {MessageType::ping, MessageType::pong, MessageType::player_status,
+                        MessageType::chat, MessageType::player_sample,
+                        MessageType::test_payload}) {
+    CHECK(may_send(Sender::client, t));
+    CHECK(may_send(Sender::server, t));
+  }
+  CHECK_FALSE(may_send(Sender::client, static_cast<MessageType>(999)));
+}
+
+TEST_CASE("check_received checks direction, channel and player field") {
+  CHECK(check_received(Chat{0, "hi"}, Sender::client, kChannelSession) == Error::none);
+  CHECK(check_received(Chat{2, "hi"}, Sender::server, kChannelSession) == Error::none);
+  // A client may not claim to be someone; the server always says who.
+  CHECK(check_received(Chat{2, "hi"}, Sender::client, kChannelSession) == Error::wrong_sender);
+  CHECK(check_received(Chat{0, "hi"}, Sender::server, kChannelSession) == Error::wrong_sender);
+  CHECK(check_received(PlayerStatus{3, 0}, Sender::client, kChannelSession) ==
+        Error::wrong_sender);
+  CHECK(check_received(test::full_sample(), Sender::client, kChannelPlayerSamples) ==
+        Error::wrong_sender);
+  // Only the server sends these.
+  CHECK(check_received(Welcome{1, 0, 60, {}}, Sender::client, kChannelSession) ==
+        Error::wrong_sender);
+  CHECK(check_received(Hello{}, Sender::server, kChannelSession) == Error::wrong_sender);
+  // Wrong channel.
+  CHECK(check_received(Chat{0, "hi"}, Sender::client, kChannelPlayerSamples) ==
+        Error::wrong_channel);
+  CHECK(check_received(PlayerSample{}, Sender::client, kChannelSession) == Error::wrong_channel);
+  CHECK(check_received(TestPayload{}, Sender::client, kChannelSession) == Error::none);
+  CHECK(check_received(Ping{}, Sender::server, kChannelSession) == Error::none);
+}
+
+TEST_CASE("the server stamps the sender on a relayed message") {
+  Message m = Chat{0, "hi"};
+  CHECK(sender_of(m) == std::optional<std::uint8_t>{0});
+  CHECK(set_sender(m, 3));
+  CHECK(std::get<Chat>(m).player_number == 3);
+  CHECK(sender_of(m) == std::optional<std::uint8_t>{3});
+  CHECK_FALSE(set_sender(m, 0));
+  CHECK_FALSE(set_sender(m, 5));
+  CHECK(std::get<Chat>(m).player_number == 3);
+
+  Message s = PlayerSample{};
+  CHECK(set_sender(s, 4));
+  CHECK(std::get<PlayerSample>(s).player_number == 4);
+  Message st = PlayerStatus{};
+  CHECK(set_sender(st, 1));
+  CHECK(std::get<PlayerStatus>(st).player_number == 1);
+
+  Message p = Ping{};
+  CHECK_FALSE(set_sender(p, 1));
+  CHECK(sender_of(p) == std::nullopt);
 }

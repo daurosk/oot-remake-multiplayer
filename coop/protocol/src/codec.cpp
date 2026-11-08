@@ -5,6 +5,7 @@
 #include <iterator>
 #include <limits>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace coop::protocol {
@@ -541,6 +542,8 @@ std::string_view to_string(Error error) {
     case Error::duplicate_component: return "duplicate component";
     case Error::unknown_type: return "unknown message type";
     case Error::too_large: return "too large";
+    case Error::wrong_channel: return "wrong channel";
+    case Error::wrong_sender: return "wrong sender";
   }
   return "unknown error";
 }
@@ -556,12 +559,100 @@ MessageType type_of(const Message& message) {
   return kTypes[message.index()];
 }
 
-std::uint8_t channel_of(const Message& message) {
-  if (std::holds_alternative<PlayerSample>(message) ||
-      std::holds_alternative<TestPayload>(message)) {
-    return kChannelPlayerSamples;
+std::uint8_t channel_of(const Message& message) { return channel_of(type_of(message)); }
+
+std::uint8_t channel_of(MessageType type) {
+  switch (type) {
+    case MessageType::player_sample:
+    case MessageType::test_payload:
+      return kChannelPlayerSamples;
+    default:
+      return kChannelSession;
   }
-  return kChannelSession;
+}
+
+bool allowed_on_channel(MessageType type, std::uint8_t channel) {
+  switch (type) {
+    case MessageType::hello:
+    case MessageType::welcome:
+    case MessageType::refused:
+    case MessageType::player_joined:
+    case MessageType::player_left:
+    case MessageType::ping:
+    case MessageType::pong:
+    case MessageType::player_status:
+    case MessageType::chat:
+      return channel == kChannelSession;
+    case MessageType::player_sample:
+      return channel == kChannelPlayerSamples;
+    case MessageType::test_payload:
+      return channel == kChannelSession || channel == kChannelPlayerSamples;
+  }
+  return false;
+}
+
+bool may_send(Sender from, MessageType type) {
+  switch (type) {
+    case MessageType::hello:
+      return from == Sender::client;
+    case MessageType::welcome:
+    case MessageType::refused:
+    case MessageType::player_joined:
+    case MessageType::player_left:
+      return from == Sender::server;
+    case MessageType::ping:
+    case MessageType::pong:
+    case MessageType::player_status:
+    case MessageType::chat:
+    case MessageType::player_sample:
+    case MessageType::test_payload:
+      return true;
+  }
+  return false;
+}
+
+namespace {
+
+// The player field of the relayed messages, or null.
+template <typename M>
+auto* player_field(M& message) {
+  using Field = std::conditional_t<std::is_const_v<M>, const std::uint8_t, std::uint8_t>;
+  Field* field = nullptr;
+  std::visit(
+      [&field](auto& m) {
+        using T = std::remove_cvref_t<decltype(m)>;
+        if constexpr (std::is_same_v<T, PlayerStatus> || std::is_same_v<T, Chat> ||
+                      std::is_same_v<T, PlayerSample>) {
+          field = &m.player_number;
+        }
+      },
+      message);
+  return field;
+}
+
+}  // namespace
+
+Error check_received(const Message& message, Sender from, std::uint8_t channel) {
+  const MessageType type = type_of(message);
+  if (!may_send(from, type)) return Error::wrong_sender;
+  if (!allowed_on_channel(type, channel)) return Error::wrong_channel;
+  if (const std::uint8_t* player = player_field(message)) {
+    const bool ok = from == Sender::client ? *player == kPlayerSelf : valid_player(*player);
+    if (!ok) return Error::wrong_sender;
+  }
+  return Error::none;
+}
+
+std::optional<std::uint8_t> sender_of(const Message& message) {
+  if (const std::uint8_t* player = player_field(message)) return *player;
+  return std::nullopt;
+}
+
+bool set_sender(Message& message, std::uint8_t player) {
+  std::uint8_t* field = player_field(message);
+  if (field == nullptr || !valid_player(player)) return false;
+  *field = player;
+  return true;
 }
 
 Error encode(const Message& message, std::vector<std::uint8_t>& out) {

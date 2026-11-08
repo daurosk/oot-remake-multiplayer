@@ -215,5 +215,21 @@ MessageType type_of(const Message& message);
 // The channel a message is sent on. TEST_PAYLOAD may go on 0 or 3; this
 // returns 3 and the test tool picks for itself.
 std::uint8_t channel_of(const Message& message);
+std::uint8_t channel_of(MessageType type);
+
+// Whether a message of this type may arrive on this channel. False for a type
+// this build does not know.
+bool allowed_on_channel(MessageType type, std::uint8_t channel);
+
+// The two ends of a connection.
+enum class Sender : std::uint8_t {
+  client,
+  server,
+};
+
+// Whether this side may send this message type. HELLO is client only;
+// WELCOME, REFUSED, PLAYER_JOINED and PLAYER_LEFT are server only; the rest go
+// both ways. False for a type this build does not know.
+bool may_send(Sender from, MessageType type);
 
 }  // namespace coop::protocol

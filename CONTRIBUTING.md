@@ -1,26 +1,51 @@
 # Contributing
 
-## How work lands
+Anyone can contribute: code, testing, desync reports, docs. Fork the repository, make your change on a branch, and open a pull request. Questions and ideas are welcome in [Discussions](https://github.com/daurosk/oot-remake-multiplayer/discussions) or on [Discord](https://discord.gg/GwtRKAqng5).
 
-- `main` is the only long-lived branch. It must always build and pass the content guard.
-- Every change, by a person or an AI agent, goes on its own short branch and arrives through a pull request.
-- A pull request merges only when its checks pass and the owner approves it.
+## The one hard rule
 
-## Several agents at once
+Nothing that came out of the game goes into the repository: no game files, keys, firmware, saves, extracted data, shaders, shader caches, audio, movies or builds that contain them. Not in commits, not in issues, not in pull requests. Only information about the game goes in: addresses, offsets, hashes, and code we wrote.
 
-AI agents can work on this repository at the same time when each one follows these rules:
+Two checks enforce this:
 
-1. **One task, one branch, one worktree.** Each agent works in its own git worktree on its own branch (`agent/<short-task-name>`), never directly in another agent's checkout or on `main`.
-2. **One owner per area.** Before starting, an agent claims its area in its pull request title or draft pull request (for example "transport", "server", "presence overlay"). Two agents never edit the same files at the same time.
-3. **Small pull requests, merged often.** Rebase on `main` before asking for review, so conflicts stay small.
-4. **One build at a time on a shared PC.** Builds take a lock (`mkdir build.lock`, removed when done) so two large builds never run at once.
-5. **Only the owner runs the game** for tests, and every run is written down with what it was meant to show.
-6. **Plain-English reports.** Each pull request says what changed, how it was tested, and what is not yet proven.
+- CI runs `tools/check_content.py` on every push and pull request.
+- The same check runs before each local commit once you enable the hook:
 
-## Before every commit
+  ```sh
+  git config core.hooksPath .githooks
+  ```
 
-```bash
-python tools/check_content.py
-```
+A failing check is never bypassed with `--no-verify`. If it flags a file by mistake, change the check in a separate pull request and say why.
 
-It fails if game files, keys, saves, shader caches or other large binaries are staged.
+Links to game files, keys or firmware in issues or pull requests get the issue closed and the content removed.
+
+## Code from other projects
+
+Code may be copied only from projects whose licence is compatible with GPL-3.0 (MIT, BSD, ISC, zlib, Apache-2.0, or GPL-3.0 itself). Each copy keeps its original header and is credited in the pull request and next to the code.
+
+Closed projects (the TOTK Online mod and its server) may be studied for how they behave, but nothing from them is copied.
+
+## Reporting bugs and desyncs
+
+Use the issue forms. Include the co-op build version, the emulator or recomp version, the game version, how many players, who hosted, and the steps to reproduce. For a desync, say what each player saw; clips from both sides help the most. Logs are welcome; recordings of long play sessions are not needed.
+
+## Pull requests
+
+- One topic per pull request. Small ones are reviewed faster.
+- Describe the problem, then what changed.
+- Say how you tested it: which build, how many clients, how long. Fill in the pull request template's "Not yet proven" part honestly.
+- The build and the unit tests pass (see "Building" in the [README](README.md)).
+- If you change a message layout, change [docs/protocol.md](docs/protocol.md) in the same pull request.
+- Commit messages are plain sentences, without `feat:` or other prefixes.
+- AI-assisted code is welcome. You are responsible for having read and run it.
+
+By opening a pull request you agree that your contribution is licensed under GPL-3.0, the licence of this project.
+
+## Code and docs
+
+- Code, comments, commit messages and documentation are in English.
+- Plain words over jargon in docs and pull requests.
+
+## AI sessions working on this repository
+
+The maintainer's own AI sessions follow [docs/workflow.md](docs/workflow.md): one task, one branch, one worktree; one owner per area; small pull requests merged often.

@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/daurosk/oot-remake-multiplayer/discussions
+    about: Ask a question or share an idea in Discussions.
+  - name: Discord
+    url: https://discord.gg/GwtRKAqng5
+    about: Talk with players, testers and contributors, and get help setting up.

@@ -74,8 +74,11 @@ One block per client, then the server's counts when the server is in the same pr
 | `samples` | the same for `PLAYER_SAMPLE` |
 | `shown error` | 60 times a second, the distance in game units between where the client shows each other player and where that player's circle really was then; how many of those frames were interpolated, extrapolated (past the last sample, up to 150 ms) or held (further than that) |
 | `server` | players in, messages relayed, dropped, and dropped by the rate limit |
+| `loop` | how long the tool took from one pass over its clients (and the server, in one process) to the next, in ms; about 2 on an idle PC |
 
 Losses are counted from the first sequence number a receiver saw from each sender, so a client that joined later is not charged for what was sent before. After the last send the tool waits a second for what is still in flight. In one process it also checks that every reliable message each local client sent reached every other; between processes only the gaps are counted.
+
+Unreliable loss and a large shown error come from load on the PC, not from the tool. ENet slows a peer's unreliable sending when its round trip rises above its recent average, and drops what it holds back; a busy PC makes the round trip jump. On an idle PC 4 clients lose nothing in one process or split; with the CPU busy both lose 1-3 %. For numbers worth comparing, run on an idle PC (no build) and look at the round trip and `loop` lines first.
 
 A pass needs: no reliable message lost, no client refused or dropped, every client connected at the end, and every client hearing from every other in its process.
 

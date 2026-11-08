@@ -209,3 +209,40 @@ TEST_CASE("loopback: a wrong protocol version gets REFUSED and is disconnected")
   CHECK(refused->reason == RefuseReason::wrong_protocol_version);
   CHECK(server.session().player_count() == 0);
 }
+
+TEST_CASE("loopback: a packet longer than any message is thrown away by ENet unread") {
+  EnetLife enet;
+  ServerOptions options;
+  options.port = 0;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client c;
+  c.connect(server.port());
+  REQUIRE(pump_until(server, {&c}, [&] { return c.connected; }));
+  c.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&c}, [&] { return c.find<Welcome>() != nullptr; }));
+
+  // 100 kB in fragments, more than a u16 body length can say. Unreliable
+  // fragments, so ENet does not send them again and again, and their loss
+  // does not hold up the PING behind them.
+  std::vector<std::uint8_t> big(100'000, 0);
+  big[0] = static_cast<std::uint8_t>(MessageType::test_payload);
+  ENetPacket* p =
+      enet_packet_create(big.data(), big.size(), ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+  REQUIRE(enet_peer_send(c.peer, kChannelPlayerSamples, p) == 0);
+  // Out on its own: ENet throws away the rest of a datagram after a fragment
+  // it refuses, and the PING must not share one.
+  enet_host_flush(c.host);
+  c.send(Ping{5}, kChannelSession);
+  REQUIRE(pump_until(server, {&c}, [&] { return c.find<Pong>() != nullptr; }));
+  auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+  while (std::chrono::steady_clock::now() < settle) {
+    server.service(1);
+    c.pump();
+  }
+  // Had ENet put it together, the session would have counted it refused.
+  CHECK(server.session().stats().dropped() == 0);
+  CHECK(server.session().player_count() == 1);
+  CHECK_FALSE(c.disconnected);
+}

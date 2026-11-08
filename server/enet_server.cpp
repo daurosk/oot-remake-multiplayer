@@ -1,5 +1,6 @@
 #include "enet_server.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <utility>
@@ -10,6 +11,13 @@ namespace {
 
 // docs/protocol.md: ENet drops a peer after 10 seconds of nothing.
 constexpr enet_uint32 kPeerTimeoutMs = 10'000;
+
+// ENet would otherwise put together packets of up to 32 MB from a peer's
+// fragments before we see them. No message is longer than its header and a
+// u16 body length, so anything bigger is thrown away by ENet unread.
+constexpr std::size_t kMaxPacketBytes = protocol::kHeaderSize + 0xFFFF;
+// And at most this much a peer's received data may wait to be handled.
+constexpr std::size_t kMaxWaitingBytes = 1 << 20;
 
 ConnectionId id_of(const ENetPeer* peer) {
   return static_cast<ConnectionId>(reinterpret_cast<std::uintptr_t>(peer->data));
@@ -33,7 +41,10 @@ bool EnetServer::start() {
   address.port = options_.port;
   host_ = enet_host_create(&address, options_.max_connections,
                            protocol::kChannelCount, 0, 0);
-  return host_ != nullptr;
+  if (host_ == nullptr) return false;
+  host_->maximumPacketSize = kMaxPacketBytes;
+  host_->maximumWaitingData = kMaxWaitingBytes;
+  return true;
 }
 
 std::uint16_t EnetServer::port() const {

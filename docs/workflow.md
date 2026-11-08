@@ -41,7 +41,7 @@ The coordinator also checks each running worker's context every round. A worker 
 
 1. The old coordinator writes a fresh `HANDOFF.md` (replace it, do not append), updates `WORKERS.md`, and starts the new coordinator with the coordinator brief and the handoff.
 2. The new coordinator reads them, checks every worker in `WORKERS.md` is where the table says, writes its own session id into the `COORDINATOR` file and messages the old one: "taken over".
-3. The old coordinator forwards anything that reached it during the swap, tells the owner who the new coordinator is, then stops. It does nothing else after "taken over".
+3. The old coordinator forwards anything that reached it during the swap, then detaches every session it started (each worker and the new coordinator) so their reports stop reaching it. It tells the owner who the new coordinator is, then stops. It does nothing else after "taken over". The new coordinator checks that every worker was detached and detaches any that were not.
 4. Workers always read the `COORDINATOR` file at report time, never earlier, so their reports reach whoever is coordinating at that moment.
 
 If the old coordinator is gone before step 2 (crashed, stopped, out of usage), the owner starts a new one from the same brief; the handoff and the worker table are enough to carry on.

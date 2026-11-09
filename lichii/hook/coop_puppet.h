@@ -245,6 +245,7 @@ private:
         std::array<std::string, 5> worn;    // equipped on it, by gear index
         std::size_t equip_index = 0;        // the equip being made
         std::string equip_name;
+        std::uint64_t gear_log_ms = 0;      // last gear line (debug anim)
     };
     enum class Pending { none, malloc, create, take, drop, remove, play, frame, sync, equip };
 
@@ -254,7 +255,8 @@ private:
     std::optional<Call> Create(Slot& slot, const Target& target, Guest& guest);
     std::uint64_t Resolve(Slot& slot, Guest& guest);
     std::optional<Call> Animate(Slot& slot, const Target& target, Guest& guest);
-    std::optional<Call> Equip(Slot& slot, const Target& target, Guest& guest);
+    std::optional<Call> Equip(Slot& slot, const Target& target, Guest& guest,
+                              std::uint64_t now_ms);
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);

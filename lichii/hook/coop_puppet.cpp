@@ -377,7 +377,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             pending_ = Pending::remove;
             return c;
         }
-        if (auto c = Equip(slot, *t, guest)) {
+        if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
         }
         return Animate(slot, *t, guest);
@@ -451,7 +451,24 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
 // One equip call for a live puppet whose player's gear differs from what it
 // wears, or none. An empty name (nothing in that slot) is not taken off yet:
 // how to clear a slot is not proven (0x2e01a90 with "" is a guess).
-std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest) {
+std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest,
+                                    std::uint64_t now_ms) {
+    if (anim_ && now_ms - slot.gear_log_ms >= 2000) {
+        slot.gear_log_ms = now_ms;
+        std::uint64_t parts = 0;
+        std::uint64_t eu = 0;
+        ReadValue(guest, slot.actor + addr::kActorParts, parts);
+        if (parts != 0) {
+            ReadValue(guest, parts + addr::kPartsEquipmentUser, eu);
+        }
+        std::string line = "P" + std::to_string(slot.number) + " gear: eu " + Hex(eu);
+        for (std::size_t i = 0; i < target.gear.size(); ++i) {
+            line += std::string(", ") + kGearNames[i] + " " +
+                    (target.gear[i] ? "'" + *target.gear[i] + "'" : std::string("?")) +
+                    (slot.worn[i].empty() ? "" : " (worn)");
+        }
+        Say(line);
+    }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];
         if (!want || want->empty() || *want == slot.worn[i] ||

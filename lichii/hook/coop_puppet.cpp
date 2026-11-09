@@ -395,6 +395,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
         }
+        if (CoopPose::Drives(slot.number, now_ms)) {
+            return std::nullopt;  // the pose copy moves it
+        }
         return Animate(slot, *t, guest);
     default:
         return std::nullopt;

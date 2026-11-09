@@ -263,6 +263,7 @@ struct State {
     std::mutex mutex;
     std::function<void(const std::string&)> log;
     bool debug = false;
+    bool no_as = false;
     // The local skeleton: the first read and which parts have moved since.
     std::vector<LocalMtx> first;
     std::vector<std::uint8_t> moving;  // pose_part bits, sticky
@@ -383,11 +384,20 @@ bool WritePose(State& s, CoopPuppet::Guest& guest, std::uint64_t actor, const Po
 
 }  // namespace
 
-void SetLog(std::function<void(const std::string&)> log, bool debug) {
+void SetLog(std::function<void(const std::string&)> log, bool debug, bool no_as) {
     State& s = S();
     std::lock_guard lock(s.mutex);
     s.log = std::move(log);
     s.debug = debug;
+    s.no_as = no_as;
+}
+
+bool Drives(std::uint8_t number, std::uint64_t now_ms) {
+    State& s = S();
+    std::lock_guard lock(s.mutex);
+    if (!s.no_as || number == 0 || number >= s.tracks.size()) return false;
+    const std::uint64_t last = s.tracks[number].last_ms();
+    return last != 0 && now_ms - std::min(now_ms, last) < kFreshMs;
 }
 
 void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,

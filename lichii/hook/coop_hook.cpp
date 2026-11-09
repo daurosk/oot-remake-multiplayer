@@ -203,7 +203,7 @@ public:
             CoopObjects::OnEvent(event);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
-                         EnvFlag("LICHII_COOP_DEBUG_POSE"));
+                         EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_NO_AS"));
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
         return true;

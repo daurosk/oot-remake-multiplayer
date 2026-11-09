@@ -385,6 +385,8 @@ A second `Player_Child` model object is in memory (not reached from the player a
 3. A received pose goes to that player's track. Each frame the puppet shows the last two blended (normalised lerp of the rotations, lerp of the rest), one send interval behind, so 30 a second plays smooth at 60 frames.
 4. For each live puppet with the same bone count, the shown pose is written into its local transforms: the rows of the rotation, the translation and scale, and the flag bits. Bones not in the pose are left as the puppet's own animation has them.
 
+`LICHII_COOP_POSE_NO_AS=1`: while a player's poses arrive (the last within 1 s), the director plays no AS command on that player's puppet, so only the pose copy moves it. For the case where the puppet's own animation writes over the copy.
+
 The debug puppet (`LICHII_COOP_DEBUG_PUPPET=1`) copies our own pose when `LICHII_COOP_DEBUG_POSE=1` is set too, so one game shows whether the copy works.
 
 `LICHII_COOP_DEBUG_POSE=1` logs a line a second: `pose: <bones> bones, <n> moving; <s> sent/s, <r> received/s, <w> written/s, <x> refused/s; last write kept <k>, overwritten <o>`. "Kept" and "overwritten" compare one written bone with what the puppet holds a frame later: overwritten means the game's own animation writes the local transforms after our write, and the copy cannot show.

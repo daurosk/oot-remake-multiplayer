@@ -1,7 +1,9 @@
 # Builds a co-op test kit: one folder (and a zip of it) to copy to each test PC.
 # It holds the server, a copy of the patched emulator with an empty portable user\ folder,
-# play.cmd, start-server.cmd, collect-logs.cmd, VERSION.txt and TESTING.md.
-# No game files, keys or firmware go in: each PC adds its own (docs/testing.md).
+# play.cmd, start-server.cmd, collect-logs.cmd, make-puppet-pack.cmd with tools\puppet_pack,
+# coop-options.ini (debug and feature switches, all off), VERSION.txt and TESTING.md.
+# No game files, keys or firmware go in, and no puppet pack: each PC adds its own and
+# builds the pack from its own romfs (docs/testing.md).
 #
 #   powershell -ExecutionPolicy Bypass -File tools\release\make_kit.ps1
 #
@@ -12,13 +14,18 @@
 # -Port         the default server port written into the kit (27510)
 # -IncludePdb   also copy lichii.pdb (about 60 MB) for crash dumps with symbols
 # -NoZip        skip the zip
+# -Python       a python.exe that has the zstandard package: its Python (without other
+#               packages) and zstandard are copied into the kit's python\ folder, so
+#               make-puppet-pack.cmd runs on a PC without Python (about 60 MB more).
+#               Without it, each PC needs Python 3 and zstandard of its own.
 param(
     [string]$EmulatorBin = '',
     [string]$BuildDir = '',
     [string]$OutRoot = '',
     [ValidateRange(1, 65535)][int]$Port = 27510,
     [switch]$IncludePdb,
-    [switch]$NoZip
+    [switch]$NoZip,
+    [string]$Python = ''
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -135,8 +142,38 @@ if ($crt) {
     }
 }
 
-foreach ($f in 'start-server.cmd', 'play.cmd', 'collect-logs.cmd') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
-foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+foreach ($f in 'start-server.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
+foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+
+# The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
+# scene-placing test helper stay out.
+$packTool = Join-Path $repo 'tools\puppet_pack'
+foreach ($f in 'build.py', '__init__.py', 'byml.py', 'rstb.py', 'sarc.py', 'zs.py') {
+    Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
+}
+
+# Optionally a Python for it.
+$pythonNote = 'not included (each PC needs Python 3 and zstandard)'
+if ($Python) {
+    $info = & $Python -I -c 'import sys, os, zstandard; print(sys.base_prefix); print(os.path.dirname(zstandard.__file__)); print(sys.version.split()[0])' 2>$null
+    if ($LASTEXITCODE -ne 0 -or $info.Count -lt 3) { throw "$Python is not a Python with the zstandard package." }
+    $pyHome = $info[0].Trim(); $zstd = $info[1].Trim(); $pyVersion = $info[2].Trim()
+    $pyOut = Join-Path $kit 'python'
+    # Python's own files, without other packages, tests, Tk, headers or pip.
+    $leaveOut = 'Lib\site-packages', 'Lib\test', 'Lib\idlelib', 'Lib\tkinter', 'Lib\ensurepip', 'tcl', 'include', 'libs', 'Scripts' |
+        ForEach-Object { Join-Path $pyHome $_ }
+    & robocopy $pyHome $pyOut /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP /XD @leaveOut __pycache__ | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Copying Python failed (robocopy $LASTEXITCODE)." }
+    $site = Join-Path $pyOut 'Lib\site-packages'
+    & robocopy $zstd (Join-Path $site 'zstandard') /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP /XD __pycache__ | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Copying zstandard failed (robocopy $LASTEXITCODE)." }
+    # Its licence travels with it (in the dist-info folder).
+    Get-ChildItem (Split-Path -Parent $zstd) -Directory -Filter 'zstandard-*.dist-info' |
+        ForEach-Object { Copy-Item $_.FullName $site -Recurse }
+    & (Join-Path $pyOut 'python.exe') -I -c 'import zstandard' 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "The kit's Python cannot import zstandard." }
+    $pythonNote = "Python $pyVersion from $pyHome, zstandard from $zstd"
+}
 Copy-Text (Join-Path $here 'kit\coop.ini.template') (Join-Path $kit 'scripts\coop.ini.template')
 New-Item -ItemType Directory -Force -Path (Join-Path $kit 'logs') | Out-Null
 Copy-Text (Join-Path $repo 'docs\testing.md') (Join-Path $kit 'TESTING.md')
@@ -157,6 +194,8 @@ $version = @(
     "lichii.exe: $((Get-Item $lichii).LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')), $((Get-FileHash $lichii -Algorithm SHA256).Hash.Substring(0, 16)) (sha256, first 16)",
     "coop_server.exe: $((Get-Item $server).LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')), $((Get-FileHash $server -Algorithm SHA256).Hash.Substring(0, 16)) (sha256, first 16)",
     "visual c++ runtime: $(if ($crt) { $crt.FullName } else { 'not included' })",
+    "puppet pack tool: tools\puppet_pack from the co-op repo above; packs are built on each PC",
+    "python: $pythonNote",
     "default port: $Port"
 )
 [System.IO.File]::WriteAllLines((Join-Path $kit 'VERSION.txt'), [string[]]$version)

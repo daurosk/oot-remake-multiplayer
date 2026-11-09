@@ -10,6 +10,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
+. (Join-Path $PSScriptRoot 'kit-paths.ps1')
 $kit = Split-Path -Parent $PSScriptRoot
 $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
@@ -54,6 +55,24 @@ if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction S
 }
 $running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
 if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
+
+# A copied kit: point the emulator's saved folders at this copy (kit-paths.ps1).
+$fixed = Repair-KitPaths $user
+if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
+
+# Switches from coop-options.ini, all off unless a line is turned on there.
+$options = Read-KitOptions (Join-Path $kit 'coop-options.ini')
+foreach ($key in $options.Keys) {
+    $value = $options[$key]
+    if ($value -and -not [System.IO.Path]::IsPathRooted($value) -and (Test-Path -LiteralPath (Join-Path $kit $value))) {
+        $value = [System.IO.Path]::GetFullPath((Join-Path $kit $value))
+    }
+    Set-Item -Path "env:$key" -Value $value
+    Write-Host "Option: $key=$value"
+}
+$pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
+if (Test-Path -LiteralPath $pack) { Write-Host 'Puppet pack: found.' }
+else { Write-Host 'Puppet pack: not made yet (make-puppet-pack.cmd; TESTING.md says how).' }
 
 Start-Process -FilePath $exe -WorkingDirectory $emu | Out-Null
 Write-Host 'Emulator started. Load the game; the co-op panel is in the top-left corner of the game.'

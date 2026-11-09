@@ -24,6 +24,9 @@ $picked += Get-ChildItem (Join-Path $user 'log') -File -ErrorAction SilentlyCont
 $picked += @((Join-Path $user 'config\coop.ini'), 'emulator\coop.ini')
 $picked += Get-ChildItem (Join-Path $kit 'logs') -Filter '*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "server\$($_.Name)") }
 $picked += @((Join-Path $kit 'VERSION.txt'), 'VERSION.txt')
+$picked += @((Join-Path $kit 'coop-options.ini'), 'coop-options.ini')
+# What the puppet pack was built from (file names and hashes only, no game data).
+$picked += @((Join-Path $user 'load\0400486024DEC000\coop-puppet\coop_puppet.json'), 'emulator\coop_puppet.json')
 $picked += Get-ChildItem (Join-Path $user 'crash_dumps') -File -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 2 | ForEach-Object { @($_.FullName, "emulator\crash_dumps\$($_.Name)") }
 

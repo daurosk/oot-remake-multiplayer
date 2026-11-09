@@ -260,6 +260,10 @@ public:
 
     static constexpr int kMaxCallsPerFrame = 8;      // the cave allows 16
     static constexpr std::uint64_t kCreateTimeoutMs = 10000;
+    // A create the game refuses (it returns 0: the scene is still being
+    // unloaded or loaded) made nothing; it is asked again after this, not
+    // after the create timeout and the 5 s wait.
+    static constexpr std::uint64_t kRefusedRetryMs = 1000;
     // A live puppet whose player drops out of the plan in the same scene
     // (a stalled or late peer fades to 0 for a moment) is kept this long
     // before it is deleted, so a hiccup does not delete and create it again.

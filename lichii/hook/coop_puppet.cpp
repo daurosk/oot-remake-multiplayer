@@ -283,6 +283,13 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::create:
         Say(who + ": create " + slot.actor_name + " requested (returned " +
             Hex(result & 0xffffffff) + "), handle slot " + Hex(slot.handle));
+        if ((result & 0xffffffff) == 0) {
+            // Refused (seen right after a load deleted the puppet, while the
+            // old scene goes): nothing was made, so ask again soon.
+            Say(who + ": create refused; trying again in 1 s");
+            slot.phase = Phase::idle;
+            slot.retry_ms = now_ms + kRefusedRetryMs;
+        }
         break;
     case Pending::take:
         slot.take = false;

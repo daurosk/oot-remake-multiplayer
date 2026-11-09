@@ -196,12 +196,18 @@ function Stop-Server {
 function Start-Game([string]$x) {
     $s = $st[$x]
     if ($Exe -and -not $s.Copied) { Copy-Item $Exe (Join-Path $s.Emu 'lichii.exe') -Force; $s.Copied = $true }
-    Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $s.Emu 'lichii.exe') } | Stop-Process -Force
+    $left = @(Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $s.Emu 'lichii.exe') })
+    $left | Stop-Process -Force
+    $left | ForEach-Object { [void]$_.WaitForExit(15000) }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') "server = 127.0.0.1`r`nport = $Port`r`nname = $x"
     Set-Content -Encoding ascii $s.Script ''
     if (Test-Path $s.Log) {
         if ($s.Runs -gt 0) { Copy-Item $s.Log "$out\eden_log-$x-$($s.Runs).txt" }
-        Remove-Item $s.Log -Force
+        # A game just ended may hold its log a moment longer.
+        for ($t = 0; ; $t++) {
+            try { Remove-Item $s.Log -Force -ErrorAction Stop; break }
+            catch { if ($t -ge 40) { throw }; Start-Sleep -Milliseconds 250 }
+        }
     }
     $s.Runs++
     $old = @{}
@@ -295,9 +301,9 @@ function Run-Steps([string]$file) {
             }
             'close' {
                 $p = $st[$rest[0]].Proc
-                if ($p -and -not $p.HasExited) { [void]$p.CloseMainWindow(); if (-not $p.WaitForExit(20000)) { Stop-Process -Id $p.Id -Force } }
+                if ($p -and -not $p.HasExited) { [void]$p.CloseMainWindow(); if (-not $p.WaitForExit(20000)) { Write-Host "game $($rest[0]) did not close: ended"; Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
             }
-            'kill' { $p = $st[$rest[0]].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+            'kill' { $p = $st[$rest[0]].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
             'server' { if ($rest[0] -eq 'stop') { Stop-Server } else { Start-Server } }
             'sleep' { Start-Sleep -Seconds ([double]$rest[0]) }
             'shot' { Shot-Both "s$n-$($rest[0])" }

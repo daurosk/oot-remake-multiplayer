@@ -330,8 +330,41 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         break;
     case Pending::equip:
         slot.worn[slot.equip_index] = slot.equip_name;
+        if (const int s = kGearSlots[slot.equip_index]; s >= 0) {
+            // A new piece is worn put away, whatever the old one was.
+            slot.in_hand = static_cast<std::uint8_t>(slot.in_hand & ~(1u << s));
+            slot.hold_known = static_cast<std::uint8_t>(slot.hold_known & ~(1u << s));
+        }
         Say(who + " wears " + kGearNames[slot.equip_index] + " '" + slot.equip_name +
             "' (returned " + Hex(result & 0xff) + ")");
+        break;
+    case Pending::hold: {
+        // Taken when the slot's byte shows the state asked for.
+        std::uint64_t parts = 0;
+        std::uint64_t eu = 0;
+        std::uint8_t bits = 0;
+        const bool read = ReadValue(guest, slot.actor + addr::kActorParts, parts) && parts != 0 &&
+                          ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) && eu != 0 &&
+                          ReadValue(guest, eu + addr::kEquipSlotBits + slot.hold_slot, bits);
+        const std::uint8_t want = slot.hold_in_hand ? addr::kEquipBitInHand : addr::kEquipBitAway;
+        const auto bit = static_cast<std::uint8_t>(1u << slot.hold_slot);
+        if (read && (bits & want) != 0) {
+            slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
+            slot.in_hand = static_cast<std::uint8_t>(slot.hold_in_hand ? (slot.in_hand | bit)
+                                                                       : (slot.in_hand & ~bit));
+            Say(who + " equipment slot " + std::to_string(slot.hold_slot) +
+                (slot.hold_in_hand ? " in hand" : " put away"));
+        } else {
+            slot.hold_retry_ms = now_ms + 250;  // the piece is not ready: ask again
+            if (anim_) {
+                Say(who + " equipment slot " + std::to_string(slot.hold_slot) +
+                    (slot.hold_in_hand ? " in hand" : " put away") + " not taken (byte " +
+                    Hex(bits) + ")");
+            }
+        }
+        break;
+    }
+    case Pending::move:
         break;
     case Pending::none:
         break;
@@ -424,6 +457,14 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
         }
+        if (auto c = Hold(slot, *t, guest, now_ms)) {
+            return c;
+        }
+        if (matrix_call_ && t->show != Show::hold) {
+            if (auto c = Move(slot, guest)) {
+                return c;
+            }
+        }
         if (pose_copy_ && CoopPose::Drives(slot.number, now_ms)) {
             return std::nullopt;  // the pose copy moves it
         }
@@ -507,6 +548,9 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.held_frame.reset();
     slot.sync_next = 0;
     slot.worn = {};
+    slot.in_hand = 0;
+    slot.hold_known = 0;
+    slot.hold_retry_ms = 0;
     pending_ = Pending::create;
     return c;
 }
@@ -566,6 +610,71 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
         return c;
     }
     return std::nullopt;
+}
+
+// One change of an equipment slot's state for a live puppet: a worn piece
+// its player holds in the hand while the puppet's is put away, or the other
+// way round. A piece just worn is put away, so only "in hand" is asked then.
+std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& guest,
+                                   std::uint64_t now_ms) {
+    if (!target.drawn || now_ms < slot.hold_retry_ms) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
+        const int s = kGearSlots[i];
+        if (s < 0 || slot.worn[i].empty()) {
+            continue;
+        }
+        const auto bit = static_cast<std::uint8_t>(1u << s);
+        const bool want = (*target.drawn & bit) != 0;
+        if ((slot.hold_known & bit) != 0 && want == ((slot.in_hand & bit) != 0)) {
+            continue;
+        }
+        if ((slot.hold_known & bit) == 0 && !want) {
+            // Worn put away, as wanted: nothing to ask.
+            slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
+            continue;
+        }
+        std::uint64_t parts = 0;
+        std::uint64_t eu = 0;
+        std::uint32_t id = 0;
+        if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+            !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0 ||
+            !ReadValue(guest,
+                       eu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId,
+                       id) ||
+            id == 0xFFFFFFFFu) {
+            continue;  // the piece is not there (yet)
+        }
+        slot.hold_slot = s;
+        slot.hold_in_hand = want;
+        Call c;
+        c.function = input_.main_base + addr::kEquipChangeState;
+        c.x[0] = eu;
+        c.x[1] = static_cast<std::uint64_t>(s);
+        c.x[2] = want ? addr::kEquipStateInHand : addr::kEquipStateAway;
+        pending_ = Pending::hold;
+        return c;
+    }
+    return std::nullopt;
+}
+
+// The game's own setter, once a frame, after Pose wrote the transform.
+std::optional<Call> Director::Move(Slot& slot, Guest& guest) {
+    (void)guest;
+    if (slot.moved_frame == frames_) {
+        return std::nullopt;
+    }
+    slot.moved_frame = frames_;
+    if (slot.vtable != input_.main_base + addr::kActorVtable) {
+        return std::nullopt;  // not the actor class the setter is known for
+    }
+    Call c;
+    c.function = input_.main_base + addr::kSetMatrix;
+    c.x[0] = slot.actor;
+    c.x[1] = 0;
+    pending_ = Pending::move;
+    return c;
 }
 
 // The AS controller of an actor; 0 when the chain is not there.
@@ -826,7 +935,8 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
 Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                     const std::optional<Vec3>& position, bool local_event,
                     const std::vector<Remote>& remotes, std::uint64_t now_ms,
-                    const std::array<std::optional<std::string>, 5>& own_gear) {
+                    const std::array<std::optional<std::string>, 5>& own_gear,
+                    std::optional<std::uint8_t> own_drawn) {
     Input in;
     if (main_base == 0) {
         return in;
@@ -872,6 +982,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
+        t.drawn = r.drawn;
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -885,6 +996,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.actor = ActorFor(false);
         t.position = *debug_spot_;
         t.gear = own_gear;
+        t.drawn = own_drawn;
         in.targets.push_back(std::move(t));
     }
     return in;
@@ -912,6 +1024,7 @@ struct Received {
 std::mutex g_anim_mutex;
 std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
 std::array<std::array<std::optional<std::string>, 5>, 5> g_gear;  // the same; guarded
+std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
 
 } // namespace
 
@@ -924,10 +1037,12 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         g_anims = {};
         g_gear = {};
+        g_drawn = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
         g_gear[event.player] = {};
+        g_drawn[event.player].reset();
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -935,6 +1050,7 @@ void OnEvent(const coop::net::Event& event) {
                          e.weapon.value_or("?") + "', shield '" + e.shield.value_or("?") + "'");
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = {e.weapon, e.shield, e.head, e.armor, e.boots};
+        g_drawn[event.player] = e.drawn;
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -972,9 +1088,11 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     }
     std::vector<Remote> remotes;
     std::array<std::optional<std::string>, 5> own_gear;
+    std::optional<std::uint8_t> own_drawn;
     if (session != nullptr) {
         if (const auto& e = session->sampler().last_equipment()) {
             own_gear = {e->weapon, e->shield, e->head, e->armor, e->boots};
+            own_drawn = e->drawn;
         }
     }
     if (session != nullptr && server_now_us != 0) {
@@ -1006,6 +1124,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             }
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
+                r.drawn = g_drawn[r.number];
             }
         }
     }
@@ -1013,7 +1132,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear);
+    auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn);
     // The camera as the hook's markers judge it (kCameraStale there).
     static bool camera_seen = false;           // the present thread only
     static std::uint64_t drawn_since_ms = 0;

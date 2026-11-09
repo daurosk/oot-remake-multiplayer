@@ -140,6 +140,8 @@ struct Glue {
         director = std::make_unique<CoopPuppet::Director>(
             [](const std::string& line) { LOG_INFO(Core, "fairy {}", line); },
             puppet_settings.debug);
+        // Navi has a physics body: a plain write of her place is undone.
+        director->SetMatrixCall(true);
         planner = std::make_unique<CoopPuppet::Planner>(puppet_settings);
         follower = std::make_unique<Follower>(std::move(settings));
         CoopSvc::AddCaller(kCallerOrder,

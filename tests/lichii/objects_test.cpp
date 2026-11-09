@@ -627,6 +627,8 @@ TEST_CASE("objects: one game rolls Stalchild, the others delete theirs and make 
     CHECK(poses[0].position[0] == doctest::Approx(8.0f));
 
     // A's Stalchild dies and goes: A sends OBJECT_REMOVE; B deletes its copy.
+    // Gone only after two walks in a row miss it (kMissedWalks).
+    CHECK(All<proto::ObjectRemove>(Tick(a, 450 * kMs, {}, 1)).empty());
     const Step gone = Tick(a, 500 * kMs, {}, 1);
     const auto removes = All<proto::ObjectRemove>(gone);
     REQUIRE(removes.size() == 1);

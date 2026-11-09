@@ -58,11 +58,20 @@ struct Settings {
   bool edge_arrows = true;
   float edge_reach = 1.0f;
   float edge_margin = 16.0f;
+  // Fading with distance: alpha is 1 up to fade_start (depth, world
+  // units), falls to 0 at fade_end, and a player beyond fade_end is skipped
+  // as too_far. fade_end 0 turns it off. Edge arrows never fade below
+  // edge_min_alpha (times the presence fade), so an off-screen player can
+  // always be found.
+  float fade_start = 0.0f;
+  float fade_end = 0.0f;
+  float edge_min_alpha = 0.6f;
 };
 
 // True when every setting is finite, near_distance > 0, far_distance >
-// near_distance, the sizes are above 0 with min_size <= max_size, and the
-// gaps and reach are not negative.
+// near_distance, the sizes are above 0 with min_size <= max_size, the
+// gaps and reach are not negative, fade_end is 0 or above fade_start (not
+// negative), and edge_min_alpha is 0 to 1.
 bool valid(const Settings& settings);
 
 // One player to draw, as presence shows it.
@@ -72,6 +81,9 @@ struct Shown {
   Vec3 position{};
   std::optional<std::string> scene;  // none: not known, so not drawn
   float fade = 1.0f;                 // presence's fade, 1 shown, 0 gone
+  // The top of the head, in world units above `position` (the feet). Above
+  // 0, the name tag floats just over the head instead of over the marker.
+  float head = 0.0f;
 };
 
 // The players presence shows at `server_now_us`, lowest number first.
@@ -91,13 +103,15 @@ struct NameTag {
   float y = 0.0f;
   bool below = false;  // the tag would leave the top of the screen, so it
                        // is anchored under the marker (top centre) instead
+  bool head = false;   // anchored over the projected head (Shown::head)
 };
 
 struct DrawItem {
   std::uint8_t number = 0;
   Marker marker;
   NameTag tag;
-  float alpha = 1.0f;  // for both marker and tag, 0 to 1
+  float alpha = 1.0f;  // for both marker and tag, 0 to 1: presence fade
+                       // times the distance fade
   // The player is off screen: the marker sits on the screen edge and
   // should be drawn as an arrow pointing at arrow_angle (radians, screen
   // space: 0 right, pi/2 down).
@@ -112,7 +126,8 @@ enum class Why : std::uint8_t {
   other_scene,  // not in the local scene, or its scene is not known
   behind,       // behind the camera (clip w 0 or below)
   too_near,     // nearer than Settings::near_distance
-  too_far,      // further than Settings::far_distance
+  too_far,      // further than Settings::far_distance, or faded out by
+                //  distance (Settings::fade_end)
   off_screen,   // off screen, and too far off (or edge arrows are off)
 };
 

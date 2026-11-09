@@ -82,7 +82,15 @@ The player name and the server are set in `coop.ini` (see [Settings](#settings))
 
 ## Markers
 
-When the renderer has found the game's camera, the other players are also drawn in the world: a blue dot with the name tag above it, or an arrow at the screen edge for a player just off screen (`coop_overlay` decides what, see [overlay.md](overlay.md)). A second see-through tool window the size of the render area draws them, refreshed every 16 ms and only repainted when they move. Without a camera it hides and the panel is all there is.
+When the renderer has found the game's camera, the other players are also drawn in the world: a name tag floating over the player's head, or an arrow at the screen edge with the name beside it for a player just off screen (`coop_overlay` decides what, see [overlay.md](overlay.md)). A second see-through tool window the size of the render area draws them, refreshed every 16 ms and only repainted when they move. Without a camera it hides and the panel is all there is.
+
+### Name tags
+
+- **Where:** the tag's bottom sits 4 px above the top of the head. The head height comes from the player's age, which every sample carries: 1.35 units above the feet for child Link, 1.9 for adult (`kHeadChild`, `kHeadAdult` in `coop_hook.cpp`). The puppet's skeleton is not read for this; the pose copy (docs/puppet.md, Pose) only has bone-local transforms.
+- **Look:** bold white text with a dark outline, 3.5% of the picture's height (14 to 32 px), so it reads on sky and on grass. There is no dot under a tag on screen. Yourself (`LICHII_COOP_DEBUG_CAMERA=1`) is tagged `you` in yellow.
+- **Distance:** solid up to 10 units of depth (about the width of a room), fading out by 40 and not drawn beyond (`MarkerSettings`).
+- **Off screen:** just off screen, a blue arrow at the edge points at the player, with the name beside it. It fades with distance too, but never below 60%.
+- **Off the top:** a tag that would leave the top of the screen goes under the player instead.
 
 ### Where the camera comes from
 

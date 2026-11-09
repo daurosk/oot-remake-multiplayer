@@ -169,6 +169,52 @@ TEST_CASE("overlay: the name tag sits above the marker") {
   CHECK(r.items[0].tag.text == "P3");
 }
 
+TEST_CASE("overlay: with a head height the tag floats over the head") {
+  Shown p = player(2, {1, 0, -10});
+  p.head = 2.0f;
+  Result r = build({p});
+  REQUIRE(r.items.size() == 1);
+  const auto& item = r.items[0];
+  CHECK(item.tag.head);
+  CHECK_FALSE(item.tag.below);
+  // 2 above at depth 10 is a fifth of the half screen up: 400 - 80, then the gap.
+  CHECK(item.tag.x == doctest::Approx(440));
+  CHECK(item.tag.y == doctest::Approx(400 - 80 - 6));
+  CHECK(item.marker.y == doctest::Approx(400));  // the marker stays at the feet
+
+  // The head off the top of the screen: under the marker instead.
+  p.position = {0, 9, -10};
+  r = build({p});
+  REQUIRE(r.items.size() == 1);
+  CHECK(r.items[0].tag.below);
+  CHECK_FALSE(r.items[0].tag.head);
+
+  // Off screen: an edge arrow, the tag by the arrow as before.
+  p.position = {15, 0, -10};
+  r = build({p});
+  REQUIRE(r.items.size() == 1);
+  CHECK(r.items[0].edge);
+  CHECK_FALSE(r.items[0].tag.head);
+}
+
+TEST_CASE("overlay: fading with distance") {
+  Settings s;
+  s.fade_start = 20;
+  s.fade_end = 40;
+  Shown off = player(5, {45, 0, -30});  // off screen, depth 30
+  Result r = build({player(2, {0, 0, -10}), player(3, {0, 0, -30}, 0.5f), player(4, {0, 0, -50}), off}, s);
+  REQUIRE(r.items.size() == 3);
+  for (const auto& item : r.items) {
+    if (item.number == 2) CHECK(item.alpha == doctest::Approx(1.0f));
+    if (item.number == 3) CHECK(item.alpha == doctest::Approx(0.25f));  // half way, times 0.5
+    if (item.number == 5) {
+      CHECK(item.edge);
+      CHECK(item.alpha == doctest::Approx(0.6f));  // edge_min_alpha
+    }
+  }
+  CHECK(why(r, 4) == Why::too_far);
+}
+
 TEST_CASE("overlay: fade passes through as alpha; faded out is skipped") {
   Result r = build({player(2, {0, 0, -10}, 0.4f), player(3, {0, 0, -20}, 0.0f),
                     player(4, {0, 0, -30}, 1.0f)});
@@ -244,6 +290,15 @@ TEST_CASE("overlay: bad settings draw nothing") {
   s = {};
   s.marker_size = kNaN;
   CHECK_FALSE(valid(s));
+  s = {};
+  s.fade_start = 10;
+  s.fade_end = 5;  // not above fade_start
+  CHECK_FALSE(valid(s));
+  s = {};
+  s.edge_min_alpha = 2;
+  CHECK_FALSE(valid(s));
+  s = {};
+  s.marker_size = kNaN;
   Result r = build({player(2, {0, 0, -10})}, s);
   CHECK(r.error == Error::settings);
   CHECK(r.items.empty());

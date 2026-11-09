@@ -47,6 +47,7 @@ struct Marker {
     std::string tag;           // the name tag
     float tag_x = 0.0f, tag_y = 0.0f;  // bottom centre of the text, or top when below
     bool tag_below = false;
+    bool tag_head = false;     // over the player's head: drawn as a name tag, no dot
 };
 struct Markers {
     float width = 0.0f, height = 0.0f;

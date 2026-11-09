@@ -37,7 +37,10 @@ param(
     # Skip load.txt (the games are expected to be in the world already: never, unless testing).
     [switch]$NoLoad,
     # Leave the games and server running at the end.
-    [switch]$KeepOpen
+    [switch]$KeepOpen,
+    # Copy the screen where each game is instead of asking the window to print itself, so the
+    # co-op overlay windows on top (name tags, chat) are in the screenshots too.
+    [switch]$ScreenCopy
 )
 $ErrorActionPreference = 'Stop'
 
@@ -84,14 +87,14 @@ public class AutotestWin {
  // The game's client area only (no title bar or border). PrintWindow with
  // PW_CLIENTONLY|PW_RENDERFULLCONTENT first; if it gives a black picture (Vulkan),
  // copy the screen where the client area is instead.
- public static string Shot(IntPtr h, string path) {
+ public static string Shot(IntPtr h, string path, bool screen) {
   RECT r; GetClientRect(h, out r);
   POINT o = new POINT(); ClientToScreen(h, ref o);
   int w = Math.Max(1, r.R - r.L), ht = Math.Max(1, r.B - r.T);
   using (var b = new Bitmap(w, ht)) {
-   using (var g = Graphics.FromImage(b)) { var dc = g.GetHdc(); PrintWindow(h, dc, 3); g.ReleaseHdc(dc); }
    string how = "print";
-   if (Dark(b)) { using (var g = Graphics.FromImage(b)) g.CopyFromScreen(o.X, o.Y, 0, 0, new Size(w, ht)); how = "screen"; }
+   if (!screen) { using (var g = Graphics.FromImage(b)) { var dc = g.GetHdc(); PrintWindow(h, dc, 3); g.ReleaseHdc(dc); } }
+   if (screen || Dark(b)) { using (var g = Graphics.FromImage(b)) g.CopyFromScreen(o.X, o.Y, 0, 0, new Size(w, ht)); how = "screen"; }
    int sw = Math.Max(1, w * 2 / 3), sh = Math.Max(1, ht * 2 / 3);
    using (var s = new Bitmap(b, sw, sh)) s.Save(path, System.Drawing.Imaging.ImageFormat.Png);
    return how;
@@ -134,7 +137,7 @@ function Shot-Both([string]$name) {
         $p = $st[$x].Proc
         if ($p -and -not $p.HasExited) {
             $p.Refresh()
-            [void][AutotestWin]::Shot($p.MainWindowHandle, (Join-Path $out "$name-$x.png"))
+            [void][AutotestWin]::Shot($p.MainWindowHandle, (Join-Path $out "$name-$x.png"), [bool]$ScreenCopy)
         }
     }
 }

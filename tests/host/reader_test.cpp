@@ -282,3 +282,125 @@ TEST_CASE("host reader: matrix to quaternion") {
         Mat3{{{std::numeric_limits<float>::infinity(), 0, 0}, {0, 1, 0}, {0, 0, 1}}}));
   }
 }
+
+namespace {
+
+// The AS controller of the player actor, with `name` playing in slot 0.
+struct AnimationLayout {
+  std::uint64_t components = 0x80100000;
+  std::uint64_t as = 0x80110000;
+  std::uint64_t inner = 0x80120000;
+  std::uint64_t controller = 0x80130000;
+  std::uint64_t slots = 0x80140000;
+  std::uint64_t slot0 = 0x80150000;
+  std::uint64_t name = 0x80160000;
+};
+
+AnimationLayout put_animation(FakeMemory& m, const Layout& l, const std::string& name,
+                              float frame, float rate) {
+  const AnimationLayout a;
+  m.put_u64(l.actor1 + addr::kActorComponents, a.components);
+  m.put_u64(a.components + addr::kComponentsAs, a.as);
+  m.put_u64(a.as + addr::kAsComponentInner, a.inner);
+  m.put_u64(a.inner + addr::kAsInnerController, a.controller);
+  m.put_u32(a.controller + addr::kAsSlotCount, 3);
+  m.put_u64(a.controller + addr::kAsSlotArray, a.slots);
+  m.put_u64(a.slots, a.slot0);
+  m.put_u64(a.slot0 + addr::kAsSlotCommandName, a.name);
+  m.put_f32(a.slot0 + addr::kAsSlotFrame, frame);
+  m.put_f32(a.slot0 + addr::kAsSlotRate, rate);
+  // Mapped to the next 16-byte boundary, as real memory is mapped in pages.
+  std::string bytes = name;
+  bytes.resize((name.size() + 16) / 16 * 16, '\0');
+  m.put(a.name, bytes.data(), bytes.size());
+  return a;
+}
+
+}  // namespace
+
+TEST_CASE("host reader: the AS command in the main slot") {
+  FakeMemory m;
+  const Layout l = make_game(m);
+  PlayerReader reader(m);
+
+  SUBCASE("no AS controller: no animation, the reading stays") {
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK_FALSE(r->animation);
+  }
+  SUBCASE("a healthy command") {
+    put_animation(m, l, "Wait", 12.5f, 1.0f);
+    const auto r = reader.read();
+    REQUIRE(r);
+    REQUIRE(r->animation);
+    CHECK(r->animation->name == "Wait");
+    CHECK(r->animation->frame == 12.5f);
+    CHECK(r->animation->rate == 1.0f);
+  }
+  SUBCASE("a name that ends right at a page end still reads") {
+    const auto a = put_animation(m, l, "x", 0.0f, 1.0f);
+    // Move the name so its terminator is the last byte before unmapped memory.
+    const std::string name = "Run_Loop_Long_Name";
+    const std::uint64_t at = 0x80171000 - (name.size() + 1);
+    m.put(at, name.c_str(), name.size() + 1);
+    m.put_u64(a.slot0 + addr::kAsSlotCommandName, at);
+    const auto anim = reader.read_animation();
+    REQUIRE(anim);
+    CHECK(anim->name == name);
+  }
+  SUBCASE("the longest name allowed, and one more") {
+    put_animation(m, l, std::string(proto::kMaxAnimationChars, 'a'), 0.0f, 1.0f);
+    REQUIRE(reader.read_animation());
+    CHECK(reader.read_animation()->name.size() == proto::kMaxAnimationChars);
+    put_animation(m, l, std::string(proto::kMaxAnimationChars + 1, 'a'), 0.0f, 1.0f);
+    CHECK_FALSE(reader.read_animation());
+  }
+  SUBCASE("bad parts give no animation") {
+    const auto a = put_animation(m, l, "Wait", 3.0f, 1.0f);
+    REQUIRE(reader.read_animation());
+    SUBCASE("empty name: nothing plays") {
+      m.put_u8(a.name, 0);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("a control byte in the name") {
+      m.put_u8(a.name + 1, 0x07);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("an unterminated name") {
+      m.erase(a.name + 4, 1);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("a null name pointer") {
+      m.put_u64(a.slot0 + addr::kAsSlotCommandName, 0);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("no slots") {
+      m.put_u32(a.controller + addr::kAsSlotCount, 0);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("a negative slot count") {
+      m.put_u32(a.controller + addr::kAsSlotCount, 0xffffffffu);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("no controller") {
+      m.put_u64(a.inner + addr::kAsInnerController, 0);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("a NaN frame") {
+      m.put_f32(a.slot0 + addr::kAsSlotFrame, std::numeric_limits<float>::quiet_NaN());
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("an absurd rate") {
+      m.put_f32(a.slot0 + addr::kAsSlotRate, 1.0e9f);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("an unreadable rate") {
+      m.erase(a.slot0 + addr::kAsSlotRate, 4);
+      CHECK_FALSE(reader.read_animation());
+    }
+    SUBCASE("the player actor is gone") {
+      m.put_u32(l.actor1 + addr::kActorState, 7);
+      CHECK_FALSE(reader.read_animation());
+    }
+  }
+}

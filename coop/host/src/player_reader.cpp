@@ -1,7 +1,9 @@
 #include "coop/host/player_reader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <span>
 #include <vector>
 
 #include "addresses.hpp"
@@ -133,6 +135,62 @@ std::optional<bool> PlayerReader::read_event_running() {
   return *running != 0;
 }
 
+std::optional<protocol::Animation> PlayerReader::read_animation() {
+  const auto actor = find_player_actor();
+  if (!actor) return std::nullopt;
+  const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
+  if (!components) return std::nullopt;
+  const auto as = read_ptr(memory_, *components + addr::kComponentsAs);
+  if (!as) return std::nullopt;
+  const auto inner = read_ptr(memory_, *as + addr::kAsComponentInner);
+  if (!inner) return std::nullopt;
+  const auto controller = read_ptr(memory_, *inner + addr::kAsInnerController);
+  if (!controller) return std::nullopt;
+  const auto count = read_u32(memory_, *controller + addr::kAsSlotCount);
+  // A signed count, as the game compares it.
+  if (!count || static_cast<std::int32_t>(*count) <= static_cast<std::int32_t>(addr::kAsMainSlot)) {
+    return std::nullopt;
+  }
+  const auto array = read_ptr(memory_, *controller + addr::kAsSlotArray);
+  if (!array) return std::nullopt;
+  const auto slot = read_ptr(memory_, *array + addr::kAsMainSlot * addr::kAsSlotStride);
+  if (!slot) return std::nullopt;
+  const auto name_at = read_ptr(memory_, *slot + addr::kAsSlotCommandName);
+  if (!name_at) return std::nullopt;
+
+  // The name, in 16-byte reads that never cross a 16-byte boundary, so a
+  // name near the end of a mapped page still reads.
+  std::string name;
+  std::uint64_t at = *name_at;
+  bool terminated = false;
+  while (!terminated && name.size() <= protocol::kMaxAnimationChars) {
+    std::array<std::uint8_t, 16> chunk{};
+    const std::size_t size = 16 - static_cast<std::size_t>(at & 15);
+    if (!memory_.read(at, std::span(chunk.data(), size))) return std::nullopt;
+    for (std::size_t i = 0; i < size; ++i) {
+      if (chunk[i] == 0) {
+        terminated = true;
+        break;
+      }
+      name.push_back(static_cast<char>(chunk[i]));
+    }
+    at += size;
+  }
+  if (!terminated || name.empty() || name.size() > protocol::kMaxAnimationChars) {
+    return std::nullopt;
+  }
+  for (const char c : name) {
+    if (c < 0x20 || c > 0x7e) return std::nullopt;
+  }
+
+  const auto frame = read_f32(memory_, *slot + addr::kAsSlotFrame);
+  const auto rate = read_f32(memory_, *slot + addr::kAsSlotRate);
+  if (!frame || !rate) return std::nullopt;
+  if (!std::isfinite(*frame) || std::fabs(*frame) > kMaxAnimationFrame) return std::nullopt;
+  if (!std::isfinite(*rate) || std::fabs(*rate) > kMaxAnimationRate) return std::nullopt;
+  return protocol::Animation{std::move(name), *frame, *rate};
+}
+
 std::optional<PlayerReading> PlayerReader::read() {
   const auto position = read_position();
   if (!position) return std::nullopt;
@@ -142,6 +200,7 @@ std::optional<PlayerReading> PlayerReader::read() {
   reading.age = read_age();
   reading.scene = read_scene();
   reading.event_running = read_event_running();
+  reading.animation = read_animation();
   return reading;
 }
 

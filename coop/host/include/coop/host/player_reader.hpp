@@ -19,6 +19,9 @@ using Mat3 = std::array<std::array<float, 3>, 3>;  // [row][column]
 
 // Positions further than this from the origin, in game units, are refused.
 inline constexpr float kMaxCoordinate = 1.0e6f;
+// Animation frames and rates beyond these are refused as garbage.
+inline constexpr float kMaxAnimationFrame = 1.0e6f;
+inline constexpr float kMaxAnimationRate = 100.0f;
 
 // One frame's reading. The position is required; without it there is no
 // reading. Each other field is nothing when its own read failed or was
@@ -29,6 +32,7 @@ struct PlayerReading {
   std::optional<protocol::Age> age;
   std::optional<std::string> scene;     // for example "spot00"
   std::optional<bool> event_running;    // an event (cutscene) has control
+  std::optional<protocol::Animation> animation;  // AS command in the main slot
   bool operator==(const PlayerReading&) const = default;
 };
 
@@ -45,6 +49,11 @@ class PlayerReader {
   std::optional<protocol::Age> read_age();
   std::optional<std::string> read_scene();
   std::optional<bool> read_event_running();
+  // The AS command playing in the player's main slot, its frame and rate.
+  // Nothing when no command plays, or the name is not 1 to
+  // protocol::kMaxAnimationChars printable ASCII characters, or the frame or
+  // rate is not finite or out of range.
+  std::optional<protocol::Animation> read_animation();
   // The player actor's guest address, after the link choice and id test.
   std::optional<std::uint64_t> find_player_actor();
 

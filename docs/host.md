@@ -29,6 +29,7 @@ sampler.reset();
 - **Age**: GameUI is-child, 1 child, 0 adult.
 - **Scene**: the Banc path's file name, cut at the first `.` (as the game's 0x58aac0 does).
 - **Event running**: event manager +0x68 not zero.
+- **Animation**: the AS command playing in slot 0 of the player's AS controller, with its frame and rate ([puppet.md](puppet.md#animation)).
 
 The player actor is found as the game does (0x37cca0): Scene module, table, player manager (index 15), then the first link whose holder id matches and whose actor is in state 4, else the second link.
 
@@ -41,6 +42,7 @@ Every read is checked, and a bad one gives nothing rather than garbage:
 | rotation | a NaN or infinity, or not a rotation: rows not of length 1 or not at right angles, or determinant not +1 (all within 0.05), so mirrors and scaled matrices are refused |
 | age | a byte other than 0 or 1 |
 | scene | Banc +0x38 null, capacity 0, no terminator within the capacity (at most 256 bytes read), an empty name, more than 64 characters, or anything but printable ASCII |
+| animation | no AS controller, slot count not above 0, an empty name (nothing plays), no terminator within 65 bytes (read in 16-byte pieces that stay inside a 16-byte block), more than 64 characters, anything but printable ASCII, a frame not finite or beyond 1e6, a rate not finite or beyond 100 |
 | actor | table count under 0x10, manager +0x30 not set, link id empty (~0), holder id not the link's, state not 4 |
 
 A field other than the position that fails is left out of the reading; the rest is still sent.
@@ -50,7 +52,7 @@ A field other than the position that fails is left out of the reading; the rest 
 `Sampler::frame` returns encoded messages, the status first:
 
 - `PLAYER_STATUS` on the first frame with a reading, on every change, and again after `reset()`. Only bit 2 (in cutscene) is set from the game so far, from "event running". When the event state cannot be read, the last flags stand. The other bits are left for later steps.
-- `PLAYER_SAMPLE` every frame the player moves (more than `still_distance` from the last sample sent), turns, or changes scene or age; once more on the first still frame after moving, so receivers stop extrapolating; and otherwise every `keepalive_us` (200 ms, so at least 4 a second even with late frames). Each carries time (the server time given), a sequence that counts up, position, rotation, scene and age when known, and velocity.
+- `PLAYER_SAMPLE` every frame the player moves (more than `still_distance` from the last sample sent), turns, or changes scene, age, AS command or animation rate (not just the frame: receivers run it on from the rate); once more on the first still frame after moving, so receivers stop extrapolating; and otherwise every `keepalive_us` (200 ms, so at least 4 a second even with late frames). Each carries time (the server time given), a sequence that counts up, position, rotation, scene, age and animation when known, and velocity.
 - Velocity is the change since the last frame's reading, in metres a second (`units_per_metre`, 1 until a run measures the game's unit). Movement under `still_distance` is a velocity of exactly 0. No velocity is sent for the first reading, after a frame with no reading, across a gap over `max_velocity_gap_us` (250 ms), across a scene change, when the server time did not move on, or above `max_speed` (200 m/s: a warp).
 
 No reading this frame means no messages, and velocity starts afresh at the next reading.
@@ -61,6 +63,7 @@ All addresses and offsets are in [`coop/host/src/addresses.hpp`](../coop/host/sr
 
 - `docs/plan.md`, "Game facts we start from".
 - `..\integration\docs\player-state-map.md` (the stage 2 project's map). Most of it was read from the code and not checked in a run; Run 1 there saw the event state and the GameUI and first-link positions agree.
+- The AS controller offsets were read from the dump for this repo ([puppet.md](puppet.md#animation)); not checked in a run.
 
 Not confirmed yet, to check in the first run:
 
@@ -71,6 +74,7 @@ Not confirmed yet, to check in the first run:
 - What the two player links stand for; the second was unreadable in Run 1.
 - The type check of the player manager against 0x4c7f8a0 is not done here.
 - The game's unit of length (`units_per_metre`).
+- That AS slot 0 is Link's whole-body animation, that slot +0xd4 is the rate and +0xe8 the frame, and that the command name at slot +0x10 changes as Link moves.
 
 ## Shared flags
 

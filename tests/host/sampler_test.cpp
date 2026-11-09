@@ -254,3 +254,31 @@ TEST_CASE("host sampler: straight from guest memory") {
   REQUIRE(d.samples[0].velocity);
   CHECK((*d.samples[0].velocity)[0] == doctest::Approx(0.5 / (kFrameUs / 1e6)));
 }
+
+TEST_CASE("host sampler: animation goes in the sample; a new command sends, a new frame does not") {
+  Sampler s;
+  std::uint64_t now = kStart;
+  auto r = at(1.0f);
+  r.animation = proto::Animation{"Wait", 0.0f, 1.0f};
+  auto d = decode(s.frame(r, now));
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].animation == r.animation);
+  s.frame(r, now += kFrameUs);  // the first still frame after the first sample
+  auto next = [&](const PlayerReading& reading) {
+    return decode(s.frame(reading, now += kFrameUs)).samples;
+  };
+  r.animation->frame = 2.0f;
+  CHECK(next(r).empty());  // the frame runs on by itself
+  r.animation->name = "Wait_Look";
+  auto sent = next(r);
+  REQUIRE(sent.size() == 1);
+  CHECK(sent[0].animation->name == "Wait_Look");
+  CHECK(next(r).empty());
+  r.animation->rate = 0.5f;
+  CHECK(next(r).size() == 1);
+  r.animation.reset();
+  sent = next(r);
+  REQUIRE(sent.size() == 1);
+  CHECK_FALSE(sent[0].animation);
+  CHECK(next(r).empty());
+}

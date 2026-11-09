@@ -180,8 +180,13 @@ try {
     $i = 0
     foreach ($x in $kits.Keys) {
         $s = $st[$x]
-        if ($Exe) { Copy-Item $Exe (Join-Path $s.Emu 'lichii.exe') -Force }
-        Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $s.Emu 'lichii.exe') } | Stop-Process -Force
+        # A game left from an earlier run holds the exe: close it and wait before copying.
+        Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $s.Emu 'lichii.exe') } | ForEach-Object { Stop-Process -Id $_.Id -Force; $_.WaitForExit(10000) | Out-Null }
+        if ($Exe) {
+            for ($try = 0; ; $try++) {
+                try { Copy-Item $Exe (Join-Path $s.Emu 'lichii.exe') -Force; break } catch { if ($try -ge 20) { throw }; Start-Sleep -Milliseconds 500 }
+            }
+        }
         Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') "server = 127.0.0.1`r`nport = $Port`r`nname = $x"
         Set-Content -Encoding ascii $s.Script ''
         if (Test-Path $s.Log) { Remove-Item $s.Log -Force }

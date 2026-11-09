@@ -1,17 +1,54 @@
-# bomb: A picks bombs with quick select (R until the item slot shows bombs), pulls one (ZR)
-# NOT CHECKED: the auto kits' save has no bombs (R left the slingshot in the item slot).
-# and throws it (A); B watches. The save needs bombs; the auto kits' save has none yet.
+# bomb: A puts bombs on ZR in the Items page, turns away from the other player, pulls one
+# NOT CHECKED end to end (2026-11-09): bombs reached the ZR slot (Items page path below);
+# the throw is not seen yet, and the menu path is timing-sensitive (one run stayed on System).
+# (ZR) and throws it (ZR again; A would talk to the puppet stand-in); B watches.
+# Run with LICHII_COOP_OBJECTS_CHEAT=1 (gives the bomb bag and 20 bombs; the auto save has none):
+#   run.ps1 -Scenario bomb -Switches LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OBJECTS_CHEAT=1
+# The first time, a "Bomb" help box shows (take out ZR, throw ZR) and holds all input until
+# A closes it (it shows on every run: the save is never written).
+# Items page (2026-11-09): the cursor starts on the slingshot (row 1, column 2); bombs are
+# column 1, row 3. Quick select (R pressed) did not change the item slot.
 # Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
 # ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
 # dash (hold), B put away, X jump, Y attack, right stick camera.
 mark start
+stick 0 -1 70           # first walk away from B's puppet (A near it talks to it)
+wait 50                # the cheat fills the pouch about a second after the scene loads
+press PLUS
+wait 90
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
 press R
 wait 30
+press R
+wait 45
+mark items-page
+press DLEFT
+wait 20
+press DDOWN
+wait 20
+press DDOWN
+wait 20
+mark on-bombs
+press A
+wait 45
 mark selected
+press PLUS
+wait 90
+mark slot
+press A                 # close the help box
+wait 45
+mark help-closed
 press ZR
 wait 45
 mark pulled
-press A
+press ZR
 wait 30
 mark thrown
 wait 150

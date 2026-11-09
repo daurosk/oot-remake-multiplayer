@@ -1,10 +1,19 @@
-# sword: A targets the nearest enemy (ZL) and swings the sword (Y) three times; B watches.
-# Checked 2026-11-09: Y and ZL reach the game, but no swing was seen: the save point has no
-# enemy and the other player's stand-in covers Link. Start from a save near an enemy.
+# sword: A walks into the graveyard, looks around for an enemy, targets (ZL) and swings (Y).
+# NOT PROVABLE on the auto kits' Graveyard save: no enemy there (walked to the gravekeeper's hut).
+# Needs a save in Hyrule Field at night (Stalchild).
+# 2026-11-09: no Stalchild was seen on the path to the first gravestone sign (evening).
 # Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
 # ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
 # dash (hold), B put away, X jump, Y attack, right stick camera.
 mark start
+stick 0 1 300           # up the steps to the gravestone sign
+mark in-yard
+stick 0.7 0.7 120
+mark looked-1
+rstick 1 0 90           # turn the camera all the way round
+mark looked-2
+rstick 1 0 90
+mark looked-3
 hold ZL 30
 hold ZL+Y 8
 hold ZL 20
@@ -14,5 +23,3 @@ hold ZL 20
 hold ZL+Y 8
 hold ZL 30
 mark swings
-press B
-wait 60

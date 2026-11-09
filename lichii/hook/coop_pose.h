@@ -38,7 +38,7 @@ using Rows = std::array<float, 9>;  // 3x3 rotation as the game stores it, rows
 namespace addr {
 // Actor -> skeleton object: read a pointer at each offset in turn. The model
 // object sits inline at +0x120 of the fourth, its skeleton pointer at +0x20.
-inline constexpr std::array<std::uint64_t, 5> kSkeletonPath{0x270, 0x0, 0x60, 0x18, 0x140};
+inline constexpr std::array<std::uint64_t, 5> kSkeletonPath{0x270, 0x8, 0x18, 0x18, 0x140};
 inline constexpr std::uint64_t kModelResource = 0x120;  // of the fourth: "FMDL"
 inline constexpr std::uint64_t kBoneCount = 0x48;       // u16 in the skeleton object
 inline constexpr std::uint64_t kLocalArray = 0x18;      // pointer to the local transforms

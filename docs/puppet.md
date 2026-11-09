@@ -364,7 +364,7 @@ Read with the emulator's debug server (`EDEN_NX2_DEBUG_SERVER`, `read_memory` an
 
 | Item | Where | Status |
 |---|---|---|
-| Model object (nn::g3d `ModelObj`) | actor +0x270, then +0x0, +0x60, +0x18; the model object sits inline at +0x120 of that, its first word points to the model resource (`FMDL`, name `Player_Child`) | Checked |
+| Model object (nn::g3d `ModelObj`) | actor +0x270 (component table), then +0x8 (the component with vtable main+0x4c61020), +0x18 (the model unit, vtable main+0x4c088a0), +0x18; the model object sits inline at +0x120 of that, its first word points to the model resource (`FMDL`, name `Player_Child`) | Checked on the player and on `CoopPuppet_Child`. The player also has it through component +0x0, +0x60, but the puppet does not, so that way is not used |
 | Skeleton object | model object +0x20; its first word points to the skeleton resource (`FSKL`) | Checked |
 | Bone count | skeleton object +0x48, u16: 309 for `Player_Child` (the resource has it at +0x38) | Checked |
 | Local transforms | skeleton object +0x18, a pointer to bone count entries of 0x60 bytes | Checked |

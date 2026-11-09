@@ -23,6 +23,18 @@
 //   goto -7.5 71.1 1.5 600 ... within 1.5 m, giving up after 600 ticks
 //   toward -7.5 71.1 8     push the stick toward that point for 8 ticks
 //                          (Link turns to face it)
+//   warp KakarikoVillage_Child Kakariko_WellSide
+//                          test only: changes scene the way the game's own
+//                          sequence does (Sequence_ReservedNextBanc), to the
+//                          start position given (StartPos names in the
+//                          scene's Banc) or the scene's own. The game takes
+//                          it only during an event, such as the one after a
+//                          save loads: put the warp before the presses that
+//                          load the save (the hook asks again every 0.5 s
+//                          for up to 90 s, until Link is in that scene)
+//   give bombs             test only: gives an item through coop_cheats
+//                          (needs LICHII_COOP_CHEATS=1): bombs, bow, hookshot,
+//                          or any item flag name coop_cheats knows
 //   mark walk-start        writes "coop: test mark walk-start" to the log
 //
 // goto and toward steer from Link's position, read each frame. The stick is
@@ -43,6 +55,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace Core {
@@ -85,6 +98,8 @@ enum class Kind {
     mark,
     go,      // goto
     toward,
+    warp,    // test only: scene change
+    give,    // test only: an item
 };
 
 struct Step {
@@ -93,7 +108,8 @@ struct Step {
     std::uint64_t buttons = 0;
     std::optional<Stick> left;   // unset: the real stick
     std::optional<Stick> right;
-    std::string mark;
+    std::string mark;  // mark: its name; warp: the scene; give: the item
+    std::string start; // warp: the start position name (empty: the scene's own)
     float x = 0.0f;  // goto and toward: the world point (x, z)
     float z = 0.0f;
     float radius = 1.0f;
@@ -138,6 +154,13 @@ public:
     void Advance(double now_s, std::optional<std::array<float, 2>> player,
                  std::vector<std::string>& log, std::optional<Camera> camera = std::nullopt);
     const Output& Current() const { return out_; }
+    // The warp and give steps reached since the last call, for the hook.
+    struct Request {
+        Kind kind = Kind::warp;
+        std::string name;
+        std::string start;
+    };
+    std::vector<Request> TakeRequests() { return std::exchange(requests_, {}); }
     bool Done() const { return index_ >= script_.steps.size(); }
     std::size_t StepCount() const { return script_.steps.size(); }
     // Steering now (goto or toward), for the log.
@@ -158,6 +181,7 @@ private:
     void Learn(double now_s, std::optional<std::array<float, 2>> player);
     void Steer(const Step& step, double now_s, std::optional<std::array<float, 2>> player);
     std::optional<Camera> camera_;  // this frame's, when given
+    std::vector<Request> requests_;
     void Hold(std::optional<double> stick_angle, double now_s);
 
     Script script_;

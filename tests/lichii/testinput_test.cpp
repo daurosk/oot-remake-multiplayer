@@ -263,3 +263,29 @@ TEST_CASE("testinput: goto with the game's camera, which turns behind Link as he
         CHECK(std::hypot(link.pos[0] + 3.0f, link.pos[1] - 4.0f) <= 0.6f);
     }
 }
+
+TEST_CASE("testinput: warp and give are handed to the hook once, in order") {
+    std::string error;
+    CHECK_FALSE(Parse("warp\n", error));
+    CHECK_FALSE(Parse("warp A B C\n", error));
+    CHECK_FALSE(Parse("give\n", error));
+    Runner r(Must("warp KakarikoVillage_Child Kakariko_WellSide\ngive bombs\nwait 10\n"
+                  "warp WaterTemple\nmark after\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::warp);
+    CHECK(requests[0].name == "KakarikoVillage_Child");
+    CHECK(requests[0].start == "Kakariko_WellSide");
+    CHECK(requests[1].kind == Kind::give);
+    CHECK(requests[1].name == "bombs");
+    CHECK(r.TakeRequests().empty());
+    r.Advance(Tick(11), std::nullopt, log);
+    requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].name == "WaterTemple");
+    CHECK(requests[0].start.empty());
+    REQUIRE(log.size() == 1);
+    CHECK(log[0] == "mark after");
+}

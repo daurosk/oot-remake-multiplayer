@@ -234,6 +234,21 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             if (w.size() == 5 && !Keys(w[4], step, bad)) {
                 return fail("unknown key " + bad);
             }
+        } else if (cmd == "WARP") {
+            if (w.size() < 2 || w.size() > 3) {
+                return fail("want: warp SCENE [START]");
+            }
+            step.kind = Kind::warp;
+            step.mark = std::string(w[1]);
+            if (w.size() == 3) {
+                step.start = std::string(w[2]);
+            }
+        } else if (cmd == "GIVE") {
+            if (w.size() != 2) {
+                return fail("want: give ITEM");
+            }
+            step.kind = Kind::give;
+            step.mark = std::string(w[1]);
         } else if (cmd == "MARK") {
             if (w.size() != 2) {
                 return fail("want: mark NAME (one word)");
@@ -326,6 +341,11 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
         if (s.kind == Kind::mark) {
             log.push_back("mark " + s.mark);
             ++index_;  // the next step starts when this one did
+            continue;
+        }
+        if (s.kind == Kind::warp || s.kind == Kind::give) {
+            requests_.push_back(Request{s.kind, s.mark, s.start});
+            ++index_;
             continue;
         }
         if (s.kind == Kind::go) {
@@ -448,7 +468,10 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include <sstream>
 
 #include "common/logging.h"
+#include "coop/host/flags.hpp"
+#include "coop/host/game_flags.hpp"
 #include "coop/host/player_reader.hpp"
+#include "coop_cheats.h"
 #include "coop_camera.h"
 #include "coop_flags.h"
 #include "core/arm/debug.h"
@@ -465,6 +488,7 @@ namespace CoopTestInput {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr double kWarpGiveUpS = 90.0;
 
 // What the injector gives the pad: written on the present thread, read on
 // the input thread.
@@ -490,6 +514,14 @@ struct State {
     Kernel::KProcess* process = nullptr;
     u64 main = 0;
     std::optional<Running> running;
+    struct PendingWarp {
+        std::string scene;
+        std::string start;
+        double since = 0.0;
+        double asked = 0.0;
+        std::optional<std::array<float, 2>> from;  // Link before the warp
+    };
+    std::optional<PendingWarp> warp;
 } g_state;  // only touched on the present thread
 
 std::filesystem::path EnvPath() {
@@ -568,6 +600,57 @@ std::optional<Runner::Camera> CameraXZ() {
         return std::nullopt;
     }
     return Runner::Camera{m[12] / fl, m[14] / fl, m[0] / rl, m[2] / rl};
+}
+
+// warp: asks the game's own sequence for a scene change. ChangeBancOnMain
+// changes scene when Sequence_ReservedNextBanc is set (and clears it);
+// ChangeBancOnEvent also reads Sequence_ReservedNextStartPosName. The start
+// name is written first, so it is there when the scene is read.
+void Warp(Core::System& system, const std::string& scene, const std::string& start) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    coop::host::GameFlags flags(memory);
+    const auto banc = coop::host::flag_hash("Sequence_ReservedNextBanc");
+    const auto start_name = coop::host::flag_hash("Sequence_ReservedNextStartPosName");
+    const auto position = coop::host::flag_hash("Sequence_ReservedNextPosition");
+    const auto start_type = flags.find_type(start_name);
+    bool start_ok = start.empty();
+    if (!start.empty() && start_type == 16) {
+        start_ok = coop::host::GameFlags::set_string64_now(memory, start_name, start);
+    }
+    const bool banc_ok = coop::host::GameFlags::set_string64_now(memory, banc, scene);
+    LOG_INFO(Core,
+             "coop: test warp to {} (start {}): scene {} (type {}), start {} (type {}), "
+             "position type {}",
+             scene, start.empty() ? "-" : start, banc_ok ? "set" : "NOT set",
+             flags.find_type(banc).value_or(-1), start_ok ? "set" : "NOT set",
+             start_type.value_or(-1), flags.find_type(position).value_or(-1));
+}
+
+// give: bombs, bow and hookshot are the item flags of each; any other name is
+// given as it is. Needs LICHII_COOP_CHEATS=1 (applied on the co-op frame).
+void Give(const std::string& item) {
+    std::vector<std::string> names;
+    if (item == "bombs") {
+        names = {"PouchData.Item_BombBag_Small.StockNum", "PouchData.Item_Bomb.StockNum"};
+    } else if (item == "bow") {
+        names = {"PouchData.Weapon_Range_Bow.StockNum", "PouchData.Item_Quiver_Small.StockNum",
+                 "PouchData.Item_Arrow_Normal.StockNum"};
+    } else if (item == "hookshot") {
+        names = {"PouchData.Item_Hookshot.StockNum"};
+    } else {
+        names = {item};
+    }
+    const auto known = CoopCheats::Items();
+    for (const auto& name : names) {
+        const bool listed = std::find(known.begin(), known.end(), name) != known.end();
+        if (listed && CoopCheats::On()) {
+            CoopCheats::Give(name);
+        }
+        LOG_INFO(Core, "coop: test give {}: {}", name,
+                 !CoopCheats::On() ? "NOT given (LICHII_COOP_CHEATS is off)"
+                 : listed          ? "queued"
+                                   : "NOT given (unknown item flag)");
+    }
 }
 
 void StopRunning() {
@@ -676,9 +759,39 @@ void OnFrame(Core::System& system) {
     for (const auto& line : log) {
         LOG_INFO(Core, "coop: test {}", line);
     }
+    for (const auto& request : r.runner->TakeRequests()) {
+        if (request.kind == Kind::warp) {
+            Warp(system, request.name, request.start);
+            g_state.warp = State::PendingWarp{request.name, request.start, now, now, player};
+        } else {
+            Give(request.name);
+        }
+    }
+    // A warp is asked again every 0.5 s until Link is in that scene: the game
+    // takes the request only while an event runs (the one after a save is
+    // loaded, a talk), so a warp is best asked before the save is loaded.
+    if (g_state.warp) {
+        State::PendingWarp& w = *g_state.warp;
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+        coop::host::PlayerReader reader(memory);
+        const auto scene = reader.read_scene();
+        if (scene && *scene == w.scene) {
+            LOG_INFO(Core, "coop: test warp done after {:.1f} s, Link at {:.2f} {:.2f}", now - w.since,
+                     player ? (*player)[0] : 0.0f, player ? (*player)[1] : 0.0f);
+            g_state.warp.reset();
+        } else if (now - w.since > kWarpGiveUpS) {
+            LOG_ERROR(Core, "coop: test warp to {} did not happen in {} s (scene {})", w.scene,
+                      kWarpGiveUpS, scene.value_or("?"));
+            g_state.warp.reset();
+        } else if (now - w.asked >= 0.5) {
+            Warp(system, w.scene, w.start);
+            w.asked = now;
+        }
+    }
+    Output out = r.runner->Current();
     {
         std::lock_guard lock(r.shared->mutex);
-        r.shared->out = r.runner->Current();
+        r.shared->out = out;
     }
     if (r.runner->Done()) {
         LOG_INFO(Core, "coop: test script done");

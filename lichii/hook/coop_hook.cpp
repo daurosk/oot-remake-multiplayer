@@ -49,9 +49,11 @@
 #include "coop_chat.h"
 #include "coop_cheats.h"
 #include "coop_flags.h"
+#include "coop_fairy.h"
 #include "coop_objects.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
+#include "coop_testinput.h"
 
 namespace CoopHook {
 namespace {
@@ -238,6 +240,8 @@ public:
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position,
+                           report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
         Place(view);
@@ -813,6 +817,7 @@ void Start() {
 
 void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
+    CoopTestInput::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.

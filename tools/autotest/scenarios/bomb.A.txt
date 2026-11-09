@@ -1,0 +1,18 @@
+# bomb: A picks bombs with quick select (R until the item slot shows bombs), pulls one (ZR)
+# NOT CHECKED: the auto kits' save has no bombs (R left the slingshot in the item slot).
+# and throws it (A); B watches. The save needs bombs; the auto kits' save has none yet.
+# Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
+# ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
+# dash (hold), B put away, X jump, Y attack, right stick camera.
+mark start
+press R
+wait 30
+mark selected
+press ZR
+wait 45
+mark pulled
+press A
+wait 30
+mark thrown
+wait 150
+mark exploded

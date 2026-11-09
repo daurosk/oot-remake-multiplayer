@@ -1,6 +1,7 @@
 #include "session.hpp"
 
 #include <algorithm>
+#include <set>
 #include <utility>
 
 namespace coop::server {
@@ -30,7 +31,7 @@ bool blank_name(const std::string& name) {
 
 std::uint64_t Stats::dropped() const {
   std::uint64_t total = before_welcome + repeated_hello + after_refused + rate_limited +
-                        join_dropped + flag_refused;
+                        join_dropped + flag_refused + object_refused + damage_dropped;
   for (std::uint64_t n : by_error) total += n;
   return total;
 }
@@ -204,6 +205,24 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_flag_snapshot(id, c, *part);
     return;
   }
+  if (const auto* present = std::get_if<ObjectPresent>(&message)) {
+    on_object_present(id, c, *present);
+    return;
+  }
+  if (auto* d = std::get_if<Damage>(&message)) {
+    on_damage(id, c, *d);
+    return;
+  }
+  if (std::holds_alternative<ObjectSpawn>(message) ||
+      std::holds_alternative<ObjectSample>(message) ||
+      std::holds_alternative<ObjectRemove>(message) ||
+      std::holds_alternative<HandoverState>(message)) {
+    on_object_message(id, c, channel, message);
+    return;
+  }
+  if (const auto* sample = std::get_if<PlayerSample>(&message); sample && sample->scene) {
+    set_scene(id, c, *sample->scene);
+  }
   if (sender_of(message)) set_sender(message, c.number);
   send_to_others(id, channel, message);
   ++stats_.relayed;
@@ -316,6 +335,220 @@ void Session::send_snapshot(ConnectionId to) {
   for (const FlagSnapshot& p : *parts) send(to, kChannelProgress, p);
 }
 
+// ---------------------------------------------------------------- objects
+// docs/objects.md "Server": the first game to report a placed object owns it;
+// only the owner of the current epoch is relayed, to the players in the
+// object's scene; DAMAGE goes to the owner alone. When the owner unloads it,
+// leaves the scene or leaves the session, the next game that has it loaded
+// (lowest number) takes it with epoch + 1 and the last relayed state. Made
+// objects (projectiles) stay with their maker and go when it lets go of them.
+
+void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPresent& p) {
+  set_scene(id, c, p.scene);
+  std::set<ObjectId> listed;
+  for (const ObjectPresence& e : p.objects) listed.insert(e.id);
+  const std::set<ObjectId> before = c.present;
+  for (const ObjectId& oid : before) {
+    if (!listed.count(oid)) {
+      c.present.erase(oid);
+      drop_presence(id, c.number, oid);
+    }
+  }
+  for (const ObjectId& oid : listed) {
+    if (oid.kind != ObjectKind::placed) continue;  // made ones come by OBJECT_SPAWN
+    auto it = objects_.find(oid);
+    if (it == objects_.end()) {
+      if (objects_.size() >= config_.max_objects) {
+        ++stats_.object_table_full;
+        continue;
+      }
+      Object& o = objects_[oid];
+      o.scene = p.scene;
+      o.present.insert(id);
+      o.owner = id;
+      c.present.insert(oid);
+      announce_owner(oid, o);
+      continue;
+    }
+    Object& o = it->second;
+    if (o.scene != p.scene) continue;  // the same hash in another scene: not ours
+    c.present.insert(oid);
+    if (!o.present.insert(id).second) continue;  // already had it
+    // Tell the newcomer who owns it and the epoch to send with. An object
+    // nobody has is forgotten, so a known placed one always has an owner or
+    // was removed.
+    std::uint8_t owner = 0;
+    if (o.owner) owner = connections_.at(*o.owner).number;
+    send(id, kChannelOwnership, ObjectOwner{oid, owner, o.epoch, 0});
+  }
+}
+
+void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t channel,
+                                Message& message) {
+  ObjectId oid;
+  if (const auto* spawn = std::get_if<ObjectSpawn>(&message)) {
+    oid = spawn->id;
+    if (spawn->id.maker != c.number || objects_.count(oid)) {
+      ++stats_.object_refused;
+      return;
+    }
+    if (objects_.size() >= config_.max_objects) {
+      ++stats_.object_table_full;
+      return;
+    }
+    Object& o = objects_[oid];
+    o.scene = c.scene;
+    o.owner = id;
+    o.made = true;
+    o.last_state = spawn->state;
+  } else {
+    std::uint16_t epoch = 0;
+    if (const auto* sample = std::get_if<ObjectSample>(&message)) {
+      oid = sample->id;
+      epoch = sample->epoch;
+    } else if (const auto* remove = std::get_if<ObjectRemove>(&message)) {
+      oid = remove->id;
+      epoch = remove->epoch;
+    }
+    auto it = objects_.find(oid);
+    // HANDOVER_STATE answers a HANDOVER_ASK, which this server does not send
+    // yet: refused like anything not from the owner of the current epoch.
+    if (std::holds_alternative<HandoverState>(message) || it == objects_.end() ||
+        it->second.owner != id || it->second.epoch != epoch) {
+      ++stats_.object_refused;
+      return;
+    }
+    Object& o = it->second;
+    if (const auto* sample = std::get_if<ObjectSample>(&message)) {
+      o.last_state = sample->state;
+    } else if (o.made) {  // OBJECT_REMOVE
+      const std::string scene = o.scene;
+      objects_.erase(it);
+      set_sender(message, c.number);
+      send_to_scene(scene, id, channel, message);
+      ++stats_.relayed;
+      ++stats_.object_relayed;
+      return;
+    } else {
+      // Kept, owned by nobody, until no game has it loaded, so a copy still
+      // listed cannot bring it back under a new owner.
+      o.removed = true;
+      o.owner.reset();
+      o.last_state.reset();
+    }
+  }
+  set_sender(message, c.number);
+  send_to_scene(objects_.at(oid).scene, id, channel, message);
+  ++stats_.relayed;
+  ++stats_.object_relayed;
+}
+
+// To the owner alone, whatever epoch the hitter knew: the hit was real.
+void Session::on_damage(ConnectionId id, Connection& c, Damage& d) {
+  auto it = objects_.find(d.id);
+  if (it == objects_.end() || !it->second.owner || *it->second.owner == id) {
+    ++stats_.damage_dropped;
+    return;
+  }
+  d.player_number = c.number;
+  send(*it->second.owner, kChannelOwnership, d);
+  ++stats_.relayed;
+  ++stats_.damage_relayed;
+}
+
+void Session::set_scene(ConnectionId id, Connection& c, const std::string& scene) {
+  if (c.scene == scene) return;
+  const std::set<ObjectId> present = std::exchange(c.present, {});
+  c.scene = scene;
+  drop_all_objects(id, c.number, present);
+}
+
+void Session::drop_all_objects(ConnectionId id, std::uint8_t number,
+                               const std::set<ObjectId>& present) {
+  for (const ObjectId& oid : present) drop_presence(id, number, oid);
+  std::vector<ObjectId> made;
+  for (const auto& [oid, o] : objects_) {
+    if (o.made && o.owner == id) made.push_back(oid);
+  }
+  for (const ObjectId& oid : made) drop_presence(id, number, oid);
+}
+
+void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId& oid) {
+  auto it = objects_.find(oid);
+  if (it == objects_.end()) return;
+  Object& o = it->second;
+  o.present.erase(id);
+  if (o.made) {
+    if (o.owner != id) return;
+    // The maker let go of its projectile: it is gone on every screen.
+    ObjectRemove r{number, oid, o.epoch, RemoveReason::gone, {}};
+    if (o.last_state && o.last_state->position) r.position = *o.last_state->position;
+    const std::string scene = o.scene;
+    objects_.erase(it);
+    send_to_scene(scene, id, kChannelOwnership, r);
+    return;
+  }
+  if (o.present.empty()) {
+    objects_.erase(it);  // nobody has it loaded: forgotten
+    return;
+  }
+  if (o.owner == id) hand_over(oid, o, number);
+}
+
+void Session::hand_over(const ObjectId& oid, Object& o, std::uint8_t old_owner) {
+  std::optional<ConnectionId> next;
+  std::uint8_t next_number = 0;
+  for (ConnectionId other : o.present) {
+    auto it = connections_.find(other);
+    if (it == connections_.end() || it->second.state != State::joined) continue;
+    if (!next || it->second.number < next_number) {
+      next = other;
+      next_number = it->second.number;
+    }
+  }
+  o.owner = next;
+  o.last_owner = old_owner;
+  ++o.epoch;
+  ++stats_.owner_changes;
+  // The state first, then the news: the new owner has it before it starts.
+  if (next && o.last_state) {
+    send(*next, kChannelOwnership, HandoverState{old_owner, oid, o.epoch, *o.last_state});
+  }
+  announce_owner(oid, o);
+}
+
+void Session::announce_owner(const ObjectId& oid, const Object& o) {
+  std::uint8_t owner = 0;
+  if (o.owner) {
+    auto it = connections_.find(*o.owner);
+    if (it != connections_.end()) owner = it->second.number;
+  }
+  send_to_scene(o.scene, std::nullopt, kChannelOwnership, ObjectOwner{oid, owner, o.epoch, 0});
+}
+
+void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
+                            std::uint8_t channel, const Message& m) {
+  std::vector<std::uint8_t> bytes;
+  if (encode(m, bytes) != Error::none) return;
+  for (const auto& [id, c] : connections_) {
+    if (id == except || c.state != State::joined) continue;
+    if (!scene.empty() && c.scene != scene) continue;
+    actions_.push_back(SendAction{id, channel, bytes});
+  }
+}
+
+std::optional<std::pair<std::uint8_t, std::uint16_t>> Session::object_owner(
+    const ObjectId& id) const {
+  auto it = objects_.find(id);
+  if (it == objects_.end()) return std::nullopt;
+  std::uint8_t owner = 0;
+  if (it->second.owner) {
+    auto c = connections_.find(*it->second.owner);
+    if (c != connections_.end()) owner = c->second.number;
+  }
+  return std::make_pair(owner, it->second.epoch);
+}
+
 std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
   for (const auto& [id, c] : connections_) {
     if (c.state == State::joined && c.number == number) return id;
@@ -360,12 +593,16 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
   connections_.erase(it);
   if (c.state != State::joined) return;
   send_to_others(id, kChannelSession, PlayerLeft{c.number, reason});
+  // After PLAYER_LEFT, so the others learn the owner left before the new
+  // owner is announced; the leaver is out of connections_ by now.
+  drop_all_objects(id, c.number, c.present);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
       (reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
     session_game_build_.clear();
     host_.reset();
     flags_.clear();
+    objects_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before

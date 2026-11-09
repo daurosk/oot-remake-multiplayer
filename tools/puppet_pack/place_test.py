@@ -2,7 +2,11 @@
 
     python -m puppet_pack.place_test --romfs <romfs> --mod-dir <mod folder> \
         --banc Banc/KakarikoVillage/KakarikoVillage_Child_Dynamic.bcett.byml.zs \
-        --place CoopPuppet_Child -117.1 96.7 58.7 --place Animal_Cow -121.1 96.7 58.7
+        --place CoopPuppet_Child -117.1 96.7 58.7 --place Animal_Cow -121.1 96.7 58.7         --param CoopPuppet_Child EquipmentUser_Weapon Weapon_Sword_Kokiri
+
+--param puts a string into the placement's `Dynamic` table (instance parameters) of
+every placement of that actor. No scene of the game sets EquipmentUser_* this way, so
+whether the engine reads them from a placement is what such a test finds out.
 
 For a load test only, in a throwaway mod folder: the scene file it writes is the
 game's own with extra actors, and it raises that file's size-table entry in the
@@ -21,7 +25,7 @@ if __package__ in (None, ""):
 from . import build, byml, rstb, zs  # noqa: E402
 
 
-def placement(actor, pos, used):
+def placement(actor, pos, used, params=None):
     h = zlib.crc32(f"coop-test/{actor}/{pos}".encode()) | (0xC00F << 48)
     while h in used:
         h += 1
@@ -34,23 +38,23 @@ def placement(actor, pos, used):
         "Rotate": [0.0, 0.0, 0.0],
         "SRTHash": byml.UInt(srt),
         "Translate": [float(p) for p in pos],
-    }
+    } | ({"Dynamic": dict(params)} if params else {})
 
 
-def add_actors(banc_doc, places):
+def add_actors(banc_doc, places, params=None):
     actors = banc_doc["Actors"]
     used = {a["Hash"].v for a in actors if isinstance(a.get("Hash"), byml.UInt64)}
     for actor, pos in places:
-        actors.append(placement(actor, pos, used))
+        actors.append(placement(actor, pos, used, (params or {}).get(actor)))
     return banc_doc
 
 
-def place(romfs, mod_dir, banc_rel, places, log=print):
+def place(romfs, mod_dir, banc_rel, places, log=print, params=None):
     dicts = zs.Dicts.from_romfs(romfs)
     src = os.path.join(romfs, banc_rel)
     raw = build.read(src)
     old = dicts.decompress(raw)
-    new = byml.dumps(add_actors(byml.loads(old), places))
+    new = byml.dumps(add_actors(byml.loads(old), places, params))
     out_romfs = os.path.join(mod_dir, "romfs")
     rs_rel = build.rel(romfs, build.find_one(romfs, "System/Resource/ResourceSizeTable.Product.*.rsizetable.zs"))
     rs_mod = os.path.join(out_romfs, rs_rel)
@@ -74,10 +78,15 @@ def main(argv=None):
     ap.add_argument("--banc", required=True, help="scene file, romfs-relative, ending in .bcett.byml.zs")
     ap.add_argument("--place", nargs=4, action="append", required=True,
                     metavar=("ACTOR", "X", "Y", "Z"))
+    ap.add_argument("--param", nargs=3, action="append", default=[],
+                    metavar=("ACTOR", "KEY", "VALUE"), help="a Dynamic string for that actor's placements")
     a = ap.parse_args(argv)
     places = [(p[0], tuple(float(x) for x in p[1:])) for p in a.place]
+    params = {}
+    for actor, key, value in a.param:
+        params.setdefault(actor, {})[key] = value
     try:
-        place(a.romfs, a.mod_dir, a.banc, places)
+        place(a.romfs, a.mod_dir, a.banc, places, params=params)
     except build.BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

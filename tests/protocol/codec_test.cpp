@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <ostream>  // doctest prints string_view through it
@@ -185,7 +186,10 @@ TEST_CASE("truncated buffers are refused at every length") {
         if (e == Error::none) {
           const bool may_shrink = std::holds_alternative<TestPayload>(m) ||
                                   std::holds_alternative<PlayerSample>(m) ||
-                                  std::holds_alternative<PlayerEquip>(m);
+                                  std::holds_alternative<PlayerEquip>(m) ||
+                                  std::holds_alternative<HandoverState>(m) ||
+                                  std::holds_alternative<ObjectSpawn>(m) ||
+                                  std::holds_alternative<ObjectSample>(m);
           CHECK(may_shrink);
         }
       }
@@ -862,7 +866,7 @@ TEST_CASE("a reader without the new types skips them") {
   CHECK(stage0_decode(must_encode(Chat{0, "hi"}), back) == Error::none);
   // And this build in turn skips a type newer than itself.
   Bytes future;
-  put_u16(future, 18);
+  put_u16(future, 26);
   put_u16(future, 0);
   CHECK(decode_bytes(future) == Error::unknown_type);
 }
@@ -968,4 +972,92 @@ TEST_CASE("merge_equipment keeps what a message leaves out") {
   CHECK(e.shield == "");
   CHECK(e.drawn == 0);
   CHECK_FALSE(e.boots);
+}
+
+TEST_CASE("object messages have their numbers, channels and senders") {
+  CHECK(static_cast<int>(MessageType::object_present) == 18);
+  CHECK(static_cast<int>(MessageType::damage) == 25);
+  CHECK(channel_of(MessageType::object_sample) == kChannelObjectSamples);
+  CHECK(channel_of(MessageType::damage) == kChannelOwnership);
+  CHECK(channel_of(MessageType::object_owner) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::object_sample, kChannelOwnership));
+  CHECK_FALSE(allowed_on_channel(MessageType::object_spawn, kChannelSession));
+  CHECK_FALSE(may_send(Sender::client, MessageType::object_owner));
+  CHECK_FALSE(may_send(Sender::client, MessageType::handover_ask));
+  CHECK(may_send(Sender::client, MessageType::damage));
+  Message d = Damage{0, test::kPlacedId, 1, 2, 1, {}};
+  CHECK(check_received(d, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(set_sender(d, 3));
+  CHECK(sender_of(d) == 3);
+  CHECK(check_received(d, Sender::server, kChannelOwnership) == Error::none);
+}
+
+TEST_CASE("object id layout on the wire") {
+  const Bytes b = must_encode(ObjectOwner{test::kMadeId, 2, 0x0102, 0x0a0b0c0d});
+  REQUIRE(b.size() == kHeaderSize + 10 + 1 + 2 + 4);
+  CHECK(b[4] == 1);  // made
+  CHECK(b[5] == 2);  // maker
+  CHECK(b[6] == 7);  // counter, little-endian
+  CHECK(b[14] == 2);  // owner
+  CHECK(b[15] == 0x02);
+  CHECK(b[16] == 0x01);
+}
+
+TEST_CASE("bad object messages are refused") {
+  Bytes out;
+  // A placed id names no maker; a made id names one.
+  CHECK(encode(ObjectOwner{{ObjectKind::placed, 1, 5}, 1, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(ObjectOwner{{ObjectKind::made, 0, 5}, 1, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(ObjectOwner{{ObjectKind::made, 5, 5}, 1, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(ObjectOwner{test::kPlacedId, 5, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(HandoverAsk{test::kPlacedId, 0, 0}, out) == Error::bad_value);
+  // A spawn is always of a made object and names its actor.
+  CHECK(encode(ObjectSpawn{0, test::kPlacedId, "NormalArrow", 0, {}}, out) == Error::bad_value);
+  CHECK(encode(ObjectSpawn{0, test::kMadeId, "", 0, {}}, out) == Error::bad_value);
+  CHECK(encode(ObjectSpawn{0, test::kMadeId, std::string(65, 'a'), 0, {}}, out) ==
+        Error::string_too_long);
+  CHECK(encode(Damage{0, test::kPlacedId, 0, -1, 0, {}}, out) == Error::bad_value);
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  CHECK(encode(ObjectRemove{0, test::kMadeId, 0, RemoveReason::hit, {nan, 0, 0}}, out) ==
+        Error::bad_value);
+  CHECK(encode(ObjectRemove{0, test::kMadeId, 0, static_cast<RemoveReason>(5), {}}, out) ==
+        Error::bad_value);
+  ObjectSample s{0, test::kMadeId, 0, {}};
+  s.state.fuse = nan;
+  CHECK(encode(s, out) == Error::bad_value);
+  // The same id twice in one presence list.
+  ObjectPresent twice{0, "Scene", {{test::kPlacedId, 0}, {test::kPlacedId, 1}}};
+  CHECK(encode(twice, out) == Error::bad_value);
+  ObjectPresent many{0, "Scene", {}};
+  for (std::uint64_t i = 0; i <= kMaxPresentObjects; ++i) many.objects.push_back({{ObjectKind::placed, 0, i}, 0});
+  CHECK(encode(many, out) == Error::bad_value);
+  CHECK(out.empty());
+
+  // On the wire: kind 2, and a present list with a duplicate.
+  Bytes b = must_encode(ObjectOwner{test::kPlacedId, 1, 0, 0});
+  b[4] = 2;
+  CHECK(decode_bytes(b) == Error::bad_value);
+  Bytes p = must_encode(ObjectPresent{0, "S", {{test::kPlacedId, 0}, {test::kMadeId, 0}}});
+  // Copy the first entry (11 bytes after u8 player, str "S", u16 count) over the second.
+  const std::size_t first = kHeaderSize + 1 + 2 + 1 + 2;
+  std::copy(p.begin() + first, p.begin() + first + 11, p.begin() + first + 11);
+  CHECK(decode_bytes(p) == Error::bad_value);
+}
+
+TEST_CASE("an object sample needs its time component, and skips unknown ones") {
+  Bytes b = must_encode(ObjectSample{0, test::kMadeId, 1, {}});
+  // Unknown component 30 with 2 bytes: skipped.
+  put_u16(b, 30);
+  put_u16(b, 2);
+  b.push_back(0xaa);
+  b.push_back(0xbb);
+  fix_length(b);
+  Message m;
+  REQUIRE(decode(b, m) == Error::none);
+  // Drop the time component (4 + 12 bytes after player, id and epoch).
+  Bytes no_time = must_encode(ObjectSample{0, test::kMadeId, 1, {}});
+  const std::size_t at = kHeaderSize + 1 + 10 + 2;
+  no_time.erase(no_time.begin() + at, no_time.begin() + at + 16);
+  fix_length(no_time);
+  CHECK(decode_bytes(no_time) == Error::missing_component);
 }

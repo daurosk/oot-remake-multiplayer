@@ -76,17 +76,20 @@ Most of these were read from the code and not yet checked in a run.
 
 The same stages in a native recomp of the game, once it is playable. The runtime owns the sockets and can hook game functions at build time, so stages 1 to 5 move from emulator hooks to build-time hooks; the protocol and server stay as they are, and emulator and recomp players can play together.
 
-## Open decisions
+## Decisions
 
-These are Caleb's to make. Each has a suggested answer that the plan assumes until decided.
+Caleb's calls, taken 2026-11-09 (the suggested answers this plan assumed, plus the item rules).
 
-| Question | Suggested |
+| Question | Decided |
 |---|---|
-| Inventory, hearts and magic: shared or per player? | Per player. Shared world flags only. |
+| Inventory, hearts and magic: shared or per player? | Per player, with shared world flags. Key items, empty bottles and one-time pickups (Gold Skulltulas, heart pieces) are shared; rupees, ammunition and bottle contents stay per player. Rules per item in [items.md](items.md). |
 | Who hosts: a player's game, or a server anyone can run? | Either: the server program runs on its own or inside a player's build, and the first player in is the host. |
 | What happens when the host leaves? | The next player becomes host; progress stays with the server. |
 | Do players need to own the same save? | No. Each player keeps their own save; shared flags are added to it while in a session. |
-| Branch protection on `main`? | Require the content guard and the build to pass before a merge. |
+| Branch protection on `main`? | On: a pull request needs the checks `check`, `windows`, `linux (gcc)`, `linux (clang)`, `sanitize (clang, asan + ubsan)` and `sanitize (clang, tsan)` to pass. Admins are not held to it. |
+| Half-open connections from one address | At most 4 at a time. |
+| Times in `PLAYER_SAMPLE` | Server time. ENet's throttle stays at its default. |
+| Player colours (tunic by slot) | Later release. |
 
 ## Risks
 

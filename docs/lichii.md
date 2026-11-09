@@ -52,6 +52,34 @@ P4 Darunia: no position             (grey: no sample yet, or faded)
 
 Distances are in game units (`units_per_metre` is still 1, see [host.md](host.md)). The panel is a frameless tool window, like the emulator's performance overlay, because a child widget would sit under the native render surface.
 
+## Chat and player list
+
+Two keys, taken only while the game's render window has the keyboard (in the game list or a dialog they do what they always did) and only with no Ctrl, Alt or Shift held, so the emulator's hotkeys still work:
+
+| Key | What |
+|---|---|
+| Enter | Opens a one-line chat box at the bottom left of the game. Enter sends and closes it, Esc closes it, and so does clicking back on the game. While it is open it has the keyboard, so the game gets no input (the render window lets go of every held key when it loses focus). A message that could not be sent (not connected, or characters chat does not allow) turns the box red and stays in it. At most 200 characters. |
+| Tab (hold) | Shows the player list in the upper middle of the game while held. |
+
+Neither key is a button in the emulator's default keymap (A, B, X, Y, the stick clicks, L, R, ZL and ZR are C X V Z F G Q E R T, + and - are M and N, the d-pad the arrow keys, the sticks WASD and IJKL): Enter and Tab only reach the emulated USB keyboard, which Ocarina does not read. Both are eaten, so they do not reach it either. T, which many games use for chat, is ZR here.
+
+Chat lines show at the bottom left, above where the box opens: chat as `Saria: hello`, your own as `you: hello` (the server does not echo chat back), and room notices in yellow: `Saria joined`, `Saria left`, `joined as player 1`, `connection lost, reconnecting`, `reconnected as player 1`, `server refused: ...`. Each line shows for 8 s, then fades out over 1 s; the last 6 are kept, and all 6 show again while the chat box is open. The lines come from `coop_chat.h`, filled on the network thread from the client's events.
+
+The player list:
+
+```
+#   Player        State       Ping    Scene
+P1  Saria (you)   connected   12 ms   KokiriForest_Child
+P2  Mido          connected   ~45 ms  KokiriForest_Child
+P3  Darunia       quiet       ~1840 ms HyruleField_Child   (grey)
+```
+
+- Ping is your own round trip to the server. Nobody's ping to the server is sent to the others, so for them it is marked `~`: how old their newest sample is on the shared clock, which is their way to the server, the relay, your way from it, and up to one sample interval.
+- State, for you: `connected`, then `reconnecting` after a lost connection (the room is then not known, so the list shows only you), or the client's own state before the first welcome (`connecting`, `handshaking`, `waiting_retry`, `refused`). For the others: `connected`, `quiet` when their newest sample is a second old or more (a menu, a load, or a connection the server has not timed out yet), `no samples` before the first, `joining` before presence knows them.
+- Scene is the scene name from their samples; yours from your own game.
+
+The player name and the server are set in `coop.ini` (see [Settings](#settings)); there is no window for them.
+
 ## Markers
 
 When the renderer has found the game's camera, the other players are also drawn in the world: a blue dot with the name tag above it, or an arrow at the screen edge for a player just off screen (`coop_overlay` decides what, see [overlay.md](overlay.md)). A second see-through tool window the size of the render area draws them, refreshed every 16 ms and only repainted when they move. Without a camera it hides and the panel is all there is.

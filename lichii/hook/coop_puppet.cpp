@@ -762,7 +762,8 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
 
 Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                     const std::optional<Vec3>& position, bool local_event,
-                    const std::vector<Remote>& remotes, std::uint64_t now_ms) {
+                    const std::vector<Remote>& remotes, std::uint64_t now_ms,
+                    const std::array<std::optional<std::string>, 5>& own_gear) {
     Input in;
     if (main_base == 0) {
         return in;
@@ -820,6 +821,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.number = 0;
         t.actor = ActorFor(false);
         t.position = *debug_spot_;
+        t.gear = own_gear;
         in.targets.push_back(std::move(t));
     }
     return in;
@@ -866,6 +868,8 @@ void OnEvent(const coop::net::Event& event) {
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
+        g_director->Note("P" + std::to_string(event.player) + " PLAYER_EQUIP: weapon '" +
+                         e.weapon.value_or("?") + "', shield '" + e.shield.value_or("?") + "'");
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = {e.weapon, e.shield, e.head, e.armor, e.boots};
     } else if (event.kind == EventKind::message) {
@@ -903,6 +907,12 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         return;  // puppets are off
     }
     std::vector<Remote> remotes;
+    std::array<std::optional<std::string>, 5> own_gear;
+    if (session != nullptr) {
+        if (const auto& e = session->sampler().last_equipment()) {
+            own_gear = {e->weapon, e->shield, e->head, e->armor, e->boots};
+        }
+    }
     if (session != nullptr && server_now_us != 0) {
         session->with_presence([&](coop::presence::Presence& p) {
             for (const std::uint8_t n : p.players()) {
@@ -939,7 +949,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    g_director->SetInput(g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms));
+    g_director->SetInput(g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear));
 }
 
 } // namespace CoopPuppet

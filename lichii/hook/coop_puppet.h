@@ -201,6 +201,7 @@ public:
     };
     std::vector<SlotView> Slots() const;  // the calc thread, or tests
     std::uint64_t Frames() const { return frames_; }
+    void Note(const std::string& text) const { Say(text); }  // any thread
 
     static constexpr int kMaxCallsPerFrame = 8;      // the cave allows 16
     static constexpr std::uint64_t kCreateTimeoutMs = 10000;
@@ -305,7 +306,8 @@ struct PlannerSettings {
     // player's age (LICHII_COOP_PUPPET_ACTOR overrides it).
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
-    bool debug = false;           // LICHII_COOP_DEBUG_PUPPET: one more, beside you
+    bool debug = false;           // LICHII_COOP_DEBUG_PUPPET: one more, beside you,
+                                  // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
     Vec3 debug_offset{2.0f, 0.0f, 0.0f};  // from you, in game units (about metres)
 };
@@ -316,7 +318,8 @@ public:
     // `local_event`: our own cutscene runs (it hides every puppet).
     Input Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                const std::optional<Vec3>& position, bool local_event,
-               const std::vector<Remote>& remotes, std::uint64_t now_ms);
+               const std::vector<Remote>& remotes, std::uint64_t now_ms,
+               const std::array<std::optional<std::string>, 5>& own_gear = {});
     std::string ActorFor(bool adult) const;
     const PlannerSettings& settings() const { return settings_; }
 

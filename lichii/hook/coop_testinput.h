@@ -110,6 +110,7 @@ struct Step {
     std::optional<Stick> right;
     std::string mark;  // mark: its name; warp: the scene; give: the item
     std::string start; // warp: the start position name (empty: the scene's own)
+    std::optional<std::array<float, 3>> position;  // warp: the point to land on
     float x = 0.0f;  // goto and toward: the world point (x, z)
     float z = 0.0f;
     float radius = 1.0f;
@@ -159,6 +160,8 @@ public:
         Kind kind = Kind::warp;
         std::string name;
         std::string start;
+        std::optional<std::array<float, 3>> position;
+        float offset = 48.0f;
     };
     std::vector<Request> TakeRequests() { return std::exchange(requests_, {}); }
     bool Done() const { return index_ >= script_.steps.size(); }

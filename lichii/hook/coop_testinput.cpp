@@ -7,6 +7,8 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <span>
 #include <utility>
 
 namespace CoopTestInput {
@@ -235,13 +237,26 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
                 return fail("unknown key " + bad);
             }
         } else if (cmd == "WARP") {
-            if (w.size() < 2 || w.size() > 3) {
-                return fail("want: warp SCENE [START]");
+            if (w.size() != 2 && w.size() != 3 && w.size() != 6 && w.size() != 7) {
+                return fail("want: warp SCENE [START [X Y Z]]");
             }
             step.kind = Kind::warp;
             step.mark = std::string(w[1]);
-            if (w.size() == 3) {
+            if (w.size() >= 3) {
                 step.start = std::string(w[2]);
+            }
+            if (w.size() >= 6) {
+                std::array<float, 3> at{};
+                if (!Number(w[3], at[0]) || !Number(w[4], at[1]) || !Number(w[5], at[2])) {
+                    return fail("want: warp SCENE [START [X Y Z]]");
+                }
+                step.position = at;
+                float off = 0.0f;  // research: where in the entry the value is written
+                if (w.size() == 7 && Number(w[6], off)) {
+                    step.radius = off;
+                } else {
+                    step.radius = 48.0f;
+                }
             }
         } else if (cmd == "GIVE") {
             if (w.size() != 2) {
@@ -344,7 +359,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             continue;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give) {
-            requests_.push_back(Request{s.kind, s.mark, s.start});
+            requests_.push_back(Request{s.kind, s.mark, s.start, s.position, s.radius});
             ++index_;
             continue;
         }
@@ -520,6 +535,8 @@ struct State {
         double since = 0.0;
         double asked = 0.0;
         std::optional<std::array<float, 2>> from;  // Link before the warp
+        std::optional<std::array<float, 3>> position;
+        float offset = 48.0f;
     };
     std::optional<PendingWarp> warp;
 } g_state;  // only touched on the present thread
@@ -606,7 +623,8 @@ std::optional<Runner::Camera> CameraXZ() {
 // changes scene when Sequence_ReservedNextBanc is set (and clears it);
 // ChangeBancOnEvent also reads Sequence_ReservedNextStartPosName. The start
 // name is written first, so it is there when the scene is read.
-void Warp(Core::System& system, const std::string& scene, const std::string& start) {
+void Warp(Core::System& system, const std::string& scene, const std::string& start,
+          const std::optional<std::array<float, 3>>& at, float value_offset) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
     coop::host::GameFlags flags(memory);
     const auto banc = coop::host::flag_hash("Sequence_ReservedNextBanc");
@@ -618,88 +636,56 @@ void Warp(Core::System& system, const std::string& scene, const std::string& sta
         start_ok = coop::host::GameFlags::set_string64_now(memory, start_name, start);
     }
     const bool banc_ok = coop::host::GameFlags::set_string64_now(memory, banc, scene);
-    // Research for a position warp: the Vector3 table (type 10, M + 0x3d0)
-    // and where Sequence_ReservedNextPosition sits in it. Logged once.
-    static bool dumped = false;
-    if (!dumped) {
-        dumped = true;
-        const auto mgr = coop::host::read_ptr(memory, memory.main_base() + 0x4e842a8);
-        if (mgr) {
-            const auto count = coop::host::read_u32(memory, *mgr + 0x3d0);
-            const auto entries = coop::host::read_ptr(memory, *mgr + 0x3d8);
-            const auto slots = coop::host::read_ptr(memory, *mgr + 0x3e0);
-            const auto cap = coop::host::read_u32(memory, *mgr + 0x3ec);
-            std::optional<std::uint32_t> index;
-            if (slots && cap && *cap) {
-                for (std::uint32_t i = position % *cap, n = 0; n < *cap; ++n, i = (i + 1) % *cap) {
-                    const auto h = coop::host::read_u32(memory, *slots + 8ull * i);
-                    if (!h || *h == 0) break;
-                    if (*h == position) {
-                        index = coop::host::read_u32(memory, *slots + 8ull * i + 4);
-                        break;
-                    }
+    // Research for a position warp: the Vector3 table (type 10, M + 0x3d0),
+    // entries of 0x40. Every entry is logged when it changes, and the asked
+    // position is written into Sequence_ReservedNextPosition at value_offset.
+    if (const auto mgr = coop::host::read_ptr(memory, memory.main_base() + 0x4e842a8)) {
+        const auto count = coop::host::read_u32(memory, *mgr + 0x3d0);
+        const auto entries = coop::host::read_ptr(memory, *mgr + 0x3d8);
+        const auto slots = coop::host::read_ptr(memory, *mgr + 0x3e0);
+        const auto cap = coop::host::read_u32(memory, *mgr + 0x3ec);
+        std::optional<std::uint32_t> index;
+        if (slots && cap && *cap) {
+            for (std::uint32_t i = position % *cap, n = 0; n < *cap; ++n, i = (i + 1) % *cap) {
+                const auto h = coop::host::read_u32(memory, *slots + 8ull * i);
+                if (!h || *h == 0) break;
+                if (*h == position) {
+                    index = coop::host::read_u32(memory, *slots + 8ull * i + 4);
+                    break;
                 }
             }
-            LOG_INFO(Core, "coop: test vector3 table: count {}, entries {:#x}, index of next position {}",
-                     count.value_or(0), entries.value_or(0), index ? static_cast<int>(*index) : -1);
-            // The hashes of entries 0-3 (from the slots), then where each
-            // sits in the entries: the stride and the hash offset.
-            std::array<std::uint32_t, 4> hash_of{};
-            if (slots && cap) {
-                for (std::uint32_t i = 0; i < *cap; ++i) {
-                    const auto h = coop::host::read_u32(memory, *slots + 8ull * i);
-                    const auto at = coop::host::read_u32(memory, *slots + 8ull * i + 4);
-                    if (h && *h != 0 && at && *at < 4) {
-                        hash_of[*at] = *h;
-                    }
-                }
+        }
+        if (entries && index && at && count && *index < *count) {
+            const std::uint64_t to =
+                *entries + 0x40ull * *index + static_cast<std::uint64_t>(value_offset);
+            std::array<std::uint8_t, 12> bytes{};
+            std::memcpy(bytes.data(), at->data(), 12);
+            const bool ok = memory.write(to, std::span<const std::uint8_t>(bytes.data(), 12));
+            static bool said = false;
+            if (!said) {
+                said = true;
+                LOG_INFO(Core, "coop: test vector3 write {:.2f} {:.2f} {:.2f} at entry {} +{:#x}: {}",
+                         (*at)[0], (*at)[1], (*at)[2], *index,
+                         static_cast<std::uint64_t>(value_offset), ok ? "ok" : "FAILED");
             }
-            std::array<std::int64_t, 4> found{-1, -1, -1, -1};
-            if (entries) {
-                for (std::uint64_t off = 0; off < 0x800; off += 4) {
-                    const auto w = coop::host::read_u32(memory, *entries + off);
-                    for (int k = 0; k < 4; ++k) {
-                        if (w && hash_of[k] != 0 && *w == hash_of[k] && found[k] < 0) {
-                            found[k] = static_cast<std::int64_t>(off);
-                        }
-                    }
+        }
+        static std::array<std::array<std::uint32_t, 16>, 32> last{};
+        static int lines = 0;
+        if (entries && count) {
+            for (std::uint32_t e = 0; e < *count && e < 32; ++e) {
+                std::array<std::uint32_t, 16> w{};
+                for (int k = 0; k < 16; ++k) {
+                    w[k] = coop::host::read_u32(memory, *entries + 0x40ull * e + 4 * k)
+                               .value_or(0xdeadbeef);
                 }
-            }
-            LOG_INFO(Core, "coop: test vector3 hashes {:08x} {:08x} {:08x} {:08x} at {} {} {} {}",
-                     hash_of[0], hash_of[1], hash_of[2], hash_of[3], found[0], found[1], found[2],
-                     found[3]);
-            std::uint64_t stride = 0;
-            if (found[0] >= 0 && found[1] > found[0]) {
-                stride = static_cast<std::uint64_t>(found[1] - found[0]);
-            }
-            const std::uint64_t base =
-                entries ? *entries + (index && stride ? stride * *index : 0) : 0;
-            if (entries) {
-                for (std::uint64_t off = 0; off < 0x80; off += 0x10) {
-                    std::array<std::uint32_t, 4> w{};
-                    for (int k = 0; k < 4; ++k) {
-                        w[k] = coop::host::read_u32(memory, base + off + 4 * k).value_or(0xdeadbeef);
-                    }
-                    LOG_INFO(Core, "coop: test vector3 entry (stride {:#x}) +{:#04x}: {:08x} {:08x} {:08x} {:08x}",
-                             stride, off, w[0], w[1], w[2], w[3]);
-                }
-                // What the entry's pointers point at (a value kept elsewhere).
-                for (std::uint64_t off = 0; off < 0x80; off += 8) {
-                    const auto p = coop::host::read_ptr(memory, base + off);
-                    if (!p || *p < 0x1000000) {
-                        continue;
-                    }
-                    std::array<std::uint32_t, 4> w{};
-                    bool ok = true;
-                    for (int k = 0; k < 4; ++k) {
-                        const auto v = coop::host::read_u32(memory, *p + 4 * k);
-                        ok = ok && v.has_value();
-                        w[k] = v.value_or(0);
-                    }
-                    if (ok) {
-                        LOG_INFO(Core, "coop: test vector3 entry +{:#04x} -> {:#x}: {:08x} {:08x} {:08x} {:08x}",
-                                 off, *p, w[0], w[1], w[2], w[3]);
-                    }
+                if (w != last[e] && lines < 400) {
+                    last[e] = w;
+                    ++lines;
+                    LOG_INFO(Core,
+                             "coop: test vector3 e{}{}: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                             "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                             e, index && *index == e ? "*" : "", w[0], w[1], w[2], w[3], w[4], w[5],
+                             w[6], w[7], w[8], w[9], w[10], w[11], w[12], w[13], w[14], w[15]);
                 }
             }
         }
@@ -847,8 +833,9 @@ void OnFrame(Core::System& system) {
     }
     for (const auto& request : r.runner->TakeRequests()) {
         if (request.kind == Kind::warp) {
-            Warp(system, request.name, request.start);
-            g_state.warp = State::PendingWarp{request.name, request.start, now, now, player};
+            Warp(system, request.name, request.start, request.position, request.offset);
+            g_state.warp = State::PendingWarp{request.name, request.start, now, now, player,
+                                              request.position, request.offset};
         } else {
             Give(request.name);
         }
@@ -870,7 +857,7 @@ void OnFrame(Core::System& system) {
                       kWarpGiveUpS, scene.value_or("?"));
             g_state.warp.reset();
         } else if (now - w.asked >= 0.5) {
-            Warp(system, w.scene, w.start);
+            Warp(system, w.scene, w.start, w.position, w.offset);
             w.asked = now;
         }
     }

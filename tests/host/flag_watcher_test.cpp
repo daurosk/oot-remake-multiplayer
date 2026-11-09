@@ -21,7 +21,7 @@ constexpr FlagKey kHearts{0x4000u, 0};  // in the game, not shared
 
 proto::FlagEntry entry(FlagKey key, std::uint32_t value,
                        proto::FlagKind kind = proto::FlagKind::boolean) {
-  return {key.hash, key.index, kind, value};
+  return {key, kind, value};
 }
 
 // The game's flags, as the emulator would give them.
@@ -109,7 +109,7 @@ TEST_CASE("flag watcher: the game's changes go out as one FLAG_SET") {
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kDoor, 0, proto::FlagKind::int32)});
 }
 
-TEST_CASE("flag watcher: more than 4096 changes are split into several messages") {
+TEST_CASE("flag watcher: more than kMaxFlagEntries changes are split into several messages") {
   std::vector<FlagKey> keys;
   FakeStore store;
   for (std::uint32_t i = 0; i < 5000; ++i) {
@@ -121,8 +121,8 @@ TEST_CASE("flag watcher: more than 4096 changes are split into several messages"
   for (FlagKey k : keys) store.set(k, 1);
   const auto messages = decode(w.frame(store));
   REQUIRE(messages.size() == 2);
-  CHECK(std::get<proto::FlagSet>(messages[0]).flags.size() == 4096);
-  CHECK(std::get<proto::FlagSet>(messages[1]).flags.size() == 904);
+  CHECK(std::get<proto::FlagSet>(messages[0]).flags.size() == proto::kMaxFlagEntries);
+  CHECK(std::get<proto::FlagSet>(messages[1]).flags.size() == 5000 - proto::kMaxFlagEntries);
 }
 
 TEST_CASE("flag watcher: a FLAG_STATE is written and not sent back") {
@@ -143,6 +143,40 @@ TEST_CASE("flag watcher: a FLAG_STATE is written and not sent back") {
   CHECK(w.receive(*bytes));
   CHECK(w.frame(store).empty());
   CHECK(store.get(kDoor) == 0);
+}
+
+TEST_CASE("flag watcher: 64-bit keys go out, come in and fill a snapshot") {
+  const FlagKey box_a = FlagKey::key64_flag(0x2fa4c1d09b7e6a35ull);
+  const FlagKey box_b = FlagKey::key64_flag(0x1000u);  // same number as kChest
+  const FlagKey pot = FlagKey::key64_flag(0x77u);       // in the game, not shared
+  FakeStore store = game();
+  for (FlagKey k : {box_a, box_b, pot}) store.set(k, 0);
+  const SharedFlags list({kChest, box_a, box_b});
+  FlagWatcher w(list, FlagRole::player);
+  w.frame(store);
+
+  store.set(box_a, 1);
+  store.set(pot, 1);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(box_a, 1)});
+  CHECK(w.pending() == 1);
+
+  // The host's answer over the wire, with box_b opened by someone else.
+  const auto bytes = proto::encode(state({entry(box_a, 1), entry(box_b, 1), entry(pot, 0)}));
+  REQUIRE(bytes);
+  CHECK(w.receive(*bytes));
+  CHECK(w.frame(store).empty());
+  CHECK(w.pending() == 0);
+  CHECK(store.get(box_b) == 1);
+  CHECK(store.get(kChest) == 0);  // the named flag with the same number is untouched
+  CHECK(store.get(pot) == 1);     // not shared: left alone
+
+  // As host, the snapshot holds both kinds.
+  FlagWatcher h(list, FlagRole::host);
+  h.request_snapshot();
+  const auto parts = decode(h.frame(store));
+  REQUIRE(parts.size() == 1);
+  CHECK(std::get<proto::FlagSnapshot>(parts[0]).flags ==
+        std::vector{entry(kChest, 0), entry(box_b, 1), entry(box_a, 1)});
 }
 
 TEST_CASE("flag watcher: a local change is kept until the host answers") {
@@ -345,7 +379,7 @@ TEST_CASE("flag watcher, host: the whole table as FLAG_SNAPSHOT when asked") {
   REQUIRE(parts.size() == 3);
   CHECK(std::get<proto::FlagSnapshot>(parts[2]).part == 2);
   CHECK(std::get<proto::FlagSnapshot>(parts[2]).part_count == 3);
-  CHECK(std::get<proto::FlagSnapshot>(parts[2]).flags.size() == 9000 - 2 * 4096);
+  CHECK(std::get<proto::FlagSnapshot>(parts[2]).flags.size() == 9000 - 2 * proto::kMaxFlagEntries);
 }
 
 TEST_CASE("flag watcher: a snapshot fills a player's game, which a new host then sends") {

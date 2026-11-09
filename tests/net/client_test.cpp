@@ -776,6 +776,10 @@ proto::FlagEntry bool_flag(std::uint32_t hash, bool value, std::uint16_t index =
   return {hash, index, proto::FlagKind::boolean, value ? 1u : 0u};
 }
 
+proto::FlagEntry key64_flag(std::uint64_t key, bool value) {
+  return {proto::FlagKey::key64_flag(key), proto::FlagKind::boolean, value ? 1u : 0u};
+}
+
 proto::FlagEntry s32_flag(std::uint32_t hash, std::int32_t value) {
   return {hash, 0, proto::FlagKind::int32, static_cast<std::uint32_t>(value)};
 }
@@ -953,7 +957,7 @@ TEST_CASE("client flags: the host answers FLAG_SET through its callback") {
   client.set_flag_answer([&](std::uint8_t player, const proto::FlagEntry& asked)
                              -> std::optional<proto::FlagEntry> {
     askers.push_back(player);
-    switch (asked.hash) {
+    switch (asked.key.hash) {
       case 6: return s32_flag(6, 100);
       case 5: return std::nullopt;
       case 20: return std::nullopt;
@@ -1035,6 +1039,63 @@ TEST_CASE("client flags: the host answers FLAG_SET through its callback") {
   CHECK(snap.part == 0);
   CHECK(snap.part_count == 2);
   CHECK(server.received[*part0].channel == proto::kChannelProgress);
+}
+
+TEST_CASE("client flags: 64-bit keys are set, stored and answered like named flags") {
+  constexpr std::uint64_t kBox = 0x2fa4c1d09b7e6a35ull;
+  SUBCASE("as a player") {
+    FakeServer server;
+    Client client(config_for(server));
+    Events events;
+    REQUIRE(client.start());
+    welcome_as(client, server, events, 2, {{1, "Saria"}});
+
+    std::size_t from = server.received.size();
+    CHECK(client.set_flags(std::vector{key64_flag(kBox, true), bool_flag(1, true)}));
+    const std::size_t at = wait_received<proto::FlagSet>(client, server, from);
+    CHECK(std::get<proto::FlagSet>(server.received[at].message).flags ==
+          std::vector{key64_flag(kBox, true), bool_flag(1, true)});
+    CHECK(client.pending_flags().contains(proto::FlagKey::key64_flag(kBox)));
+    // A 64-bit key is always a bool.
+    CHECK_FALSE(client.set_flag({proto::FlagKey::key64_flag(kBox), proto::FlagKind::int32, 1}));
+
+    server.send(proto::FlagState{1, {key64_flag(kBox, true), key64_flag(1, false)}},
+                proto::kChannelProgress);
+    REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+    CHECK(client.find_flag(proto::FlagKey::key64_flag(kBox)) == key64_flag(kBox, true));
+    CHECK(client.find_flag(proto::FlagKey::key64_flag(1)) == key64_flag(1, false));
+    CHECK_FALSE(client.find_flag(1).has_value());  // the named flag 1 is another
+    CHECK_FALSE(client.pending_flags().contains(proto::FlagKey::key64_flag(kBox)));
+    CHECK(client.pending_flags().contains(proto::FlagKey{1u, 0}));
+  }
+  SUBCASE("as host") {
+    FakeServer server;
+    Client client(config_for(server));
+    Events events;
+    REQUIRE(client.start());
+    welcome_as(client, server, events, 1, {{2, "Saria"}});
+    REQUIRE(client.is_host());
+    std::size_t from = server.received.size();
+    server.send(proto::FlagSet{2, {key64_flag(kBox, true)}}, proto::kChannelProgress);
+    std::size_t at = wait_received<proto::FlagState>(client, server, from);
+    CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+          std::vector{key64_flag(kBox, true)});
+
+    // An answer for another key keeps the asked key; one that is not a bool
+    // is refused and the table's value goes back.
+    client.set_flag_answer([&](std::uint8_t, const proto::FlagEntry& asked)
+                               -> std::optional<proto::FlagEntry> {
+      if (asked.key.key == kBox) return proto::FlagEntry{asked.key, proto::FlagKind::int32, 0};
+      return key64_flag(999, false);
+    });
+    from = server.received.size();
+    server.send(proto::FlagSet{2, {key64_flag(kBox, false), key64_flag(7, true)}},
+                proto::kChannelProgress);
+    at = wait_received<proto::FlagState>(client, server, from);
+    CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+          std::vector{key64_flag(kBox, true), key64_flag(7, false)});
+    CHECK(client.find_flag(proto::FlagKey::key64_flag(7)) == key64_flag(7, false));
+  }
 }
 
 TEST_CASE("client flags: who hosts, and a non-host refuses FLAG_SET") {

@@ -47,10 +47,10 @@ struct SessionConfig {
   // one machine cannot fill every transport slot with silent connections.
   // One more is refused at once (see connected). 0: no limit.
   std::size_t max_half_open_per_address = 4;
-  // Most (hash, index) keys the server's flag table holds, so a host cannot
+  // Most keys (named and key64) the server's flag table holds, so a host cannot
   // grow it without end. Values past it are still relayed but not kept (and
   // so not in a joiner's snapshot); each such entry is counted in
-  // flag_table_full. 262,144 is 64 snapshot parts, far past OoT's flags.
+  // flag_table_full. 262,144 is 73 snapshot parts, far past OoT's flags.
   // 0 keeps nothing; more than 65535 parts' worth counts as 65535 parts.
   std::size_t max_flags = 262'144;
   // A HELLO whose name a player already holds takes that player's place
@@ -202,9 +202,9 @@ class Session {
   std::map<ConnectionId, Connection> connections_;
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
-  // Every shared flag value the host has sent, by (hash, index). Kept when
+  // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
-  std::map<std::pair<std::uint32_t, std::uint16_t>, protocol::FlagEntry> flags_;
+  std::map<protocol::FlagKey, protocol::FlagEntry> flags_;
   std::vector<Action> actions_;
   Stats stats_;
 };

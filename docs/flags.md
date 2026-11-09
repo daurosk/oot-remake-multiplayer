@@ -82,8 +82,7 @@ So writing the live byte directly would skip the saved copy and the save-file ma
 
 ## What this means for shared progress
 
-- A 64-bit key does not fit the protocol's `FlagKey` (u32 hash, u16 index), and chests, small-key chests and heart pieces in the world are 64-bit keys. Sharing them needs a protocol change (a kind or a message for 64-bit keys). `GameFlags::get_key64` and `set_key64` are ready for it. This is the coordinator's decision.
-- `GameFlagStore` gives `FlagWatcher` the named Bool and Int flags now.
+- Chests, small-key chests and heart pieces in the world are 64-bit keys. The protocol's flag key has a 64-bit kind for them (`protocol.md`, "Shared flags"), and `GameFlagStore` gives `FlagWatcher` the named Bool and Int flags and the 64-bit keys (table 0, through `get_key64` and `set_key64`).
 - The emulator must implement `WritableGameMemory`: a write and a 32-bit compare-and-swap that is atomic against the game's threads (or run them while the guest is paused).
 - The list of shared flags should take only persistent keys (reset type 24), or a pot broken by one player would break for everyone.
 

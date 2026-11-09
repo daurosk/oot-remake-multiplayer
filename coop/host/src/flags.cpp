@@ -46,6 +46,23 @@ std::optional<std::uint16_t> parse_index(std::string_view text) {
   return static_cast<std::uint16_t>(value);
 }
 
+// A 64-bit key after "key64:": 0x and 1 to 16 hex digits, or decimal.
+std::optional<std::uint64_t> parse_key64(std::string_view text) {
+  std::uint64_t value = 0;
+  int base = 10;
+  if (const auto digits = hex_digits(text)) {
+    if (digits->size() > 16) return std::nullopt;
+    text = *digits;
+    base = 16;
+  }
+  if (text.empty()) return std::nullopt;
+  const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), value, base);
+  if (ec != std::errc() || end != text.data() + text.size()) return std::nullopt;
+  return value;
+}
+
+constexpr std::string_view kKey64Prefix = "key64:";
+
 }  // namespace
 
 SharedFlags::SharedFlags(std::vector<FlagKey> keys) : keys_(std::move(keys)) {
@@ -74,6 +91,15 @@ std::optional<SharedFlags> SharedFlags::parse(std::string_view text, std::string
     if (parts.empty()) continue;
     if (parts.size() > 2) return fail("more than a flag and an index");
 
+    if (parts[0].starts_with(kKey64Prefix)) {
+      if (parts.size() != 1) return fail("a 64-bit key has no index");
+      const auto key = parse_key64(parts[0].substr(kKey64Prefix.size()));
+      if (!key) return fail("a 64-bit key is 0x and 1 to 16 hex digits, or decimal");
+      if (keys.size() + 1 > kMaxFlags) return fail("too many flags");
+      keys.push_back(FlagKey::key64_flag(*key));
+      continue;
+    }
+
     std::uint32_t hash = 0;
     if (const auto digits = hex_digits(parts[0])) {
       if (digits->size() > 8) return fail("a hash has at most 8 hex digits");
@@ -99,7 +125,7 @@ std::optional<SharedFlags> SharedFlags::parse(std::string_view text, std::string
     }
     if (keys.size() + (last - first) + 1u > kMaxFlags) return fail("too many flags");
     for (std::uint32_t i = first; i <= last; ++i) {
-      keys.push_back({hash, static_cast<std::uint16_t>(i)});
+      keys.push_back(FlagKey{hash, static_cast<std::uint16_t>(i)});
     }
   }
   return SharedFlags(std::move(keys));

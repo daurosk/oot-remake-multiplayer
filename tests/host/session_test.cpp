@@ -30,7 +30,7 @@ constexpr FlagKey kDoor{0x2000u, 0};
 constexpr FlagKey kKey{0x3000u, 2};
 
 proto::FlagEntry entry(FlagKey key, std::uint32_t value) {
-  return {key.hash, key.index, proto::FlagKind::boolean, value};
+  return {key, proto::FlagKind::boolean, value};
 }
 
 // The game's flags. Only the emulator thread touches it.

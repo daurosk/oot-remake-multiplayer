@@ -201,3 +201,21 @@ TEST_CASE("game flag store: kinds for FlagWatcher") {
   CHECK(store.write({0x22, 0, protocol::FlagKind::int32, static_cast<std::uint32_t>(-1)}));
   CHECK(store.read({0x22, 0})->value == 0xffffffffu);
 }
+
+TEST_CASE("game flag store: 64-bit keys for FlagWatcher") {
+  auto w = game();
+  GameFlagStore store(w);
+  const auto chest = protocol::FlagKey::key64_flag(0x8c44828386468bfull);
+  CHECK(store.read(chest) == protocol::FlagEntry{chest, protocol::FlagKind::boolean, 0});
+  CHECK_FALSE(store.read(protocol::FlagKey::key64_flag(6)));  // not in the table
+  CHECK_FALSE(store.read(protocol::FlagKey::key64_flag(0x8c44828386468bfull, 1)));  // no table 1
+
+  CHECK(store.write({chest, protocol::FlagKind::boolean, 1}));
+  CHECK(coop::host::read_u32(w.mem, kKeyQueue + 4) == 2u);  // queued by record index
+  CHECK(store.read(chest)->value == 1);
+  CHECK_FALSE(store.write({chest, protocol::FlagKind::boolean, 2}));
+  CHECK_FALSE(store.write({chest, protocol::FlagKind::int32, 1}));
+  CHECK_FALSE(store.write({protocol::FlagKey::key64_flag(6), protocol::FlagKind::boolean, 1}));
+  CHECK_FALSE(store.write({protocol::FlagKey::key64_flag(0x8c44828386468bfull, 1),
+                           protocol::FlagKind::boolean, 1}));
+}

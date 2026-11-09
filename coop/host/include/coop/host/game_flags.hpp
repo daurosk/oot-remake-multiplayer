@@ -61,9 +61,11 @@ class GameFlags {
   GameMemory& memory_;
 };
 
-// FlagStore over the game's tables, for FlagWatcher. Index 0: a Bool flag
-// (kind boolean) or else an Int flag (kind int32). Index > 0: an element of a
-// BoolArray flag, read only. 64-bit keys do not fit FlagKey (docs/flags.md).
+// FlagStore over the game's tables, for FlagWatcher. A named key with index
+// 0: a Bool flag (kind boolean) or else an Int flag (kind int32). Index > 0:
+// an element of a BoolArray flag, read only. A key64 key: a Bool64bitKey
+// flag (kind boolean) in table 0, the game's one table; any other table is
+// unknown.
 class GameFlagStore final : public FlagStore {
  public:
   explicit GameFlagStore(WritableGameMemory& memory) : memory_(memory) {}

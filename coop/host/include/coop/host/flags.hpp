@@ -23,17 +23,15 @@ namespace coop::host {
 using protocol::flag_hash;
 
 // One flag: its name hash and, for an array flag, the element (0 for a plain
-// flag). The key of a FlagEntry.
-struct FlagKey {
-  std::uint32_t hash = 0;
-  std::uint16_t index = 0;
-  auto operator<=>(const FlagKey&) const = default;
-};
+// flag), or a 64-bit key (chests and other placed actors). The key of a
+// FlagEntry.
+using protocol::FlagKey;
+using protocol::FlagKeyKind;
 
-inline FlagKey key_of(const protocol::FlagEntry& entry) { return {entry.hash, entry.index}; }
+inline FlagKey key_of(const protocol::FlagEntry& entry) { return entry.key; }
 
 // What the emulator (or later the recomp) implements: read and write one flag
-// in the running game by its hash and index. The game's own get and set
+// in the running game by its key. The game's own get and set
 // functions are not located yet (docs/host.md); until they are, an
 // implementation may go through the flag tables in memory.
 class FlagStore {
@@ -57,9 +55,17 @@ class FlagStore {
 //   0x15b67d0e            a hash, 0x and 1 to 8 hex digits
 //   SomeArrayFlag 3       one element of an array flag
 //   SomeArrayFlag 0-7     elements 0 to 7
+//   key64:0x2fa4c1d09b7e6a35   a 64-bit-key flag, 1 to 16 hex digits
+//   key64:3433081917669272117  the same key in decimal, as Banc files give it
 //
 // A name is printable ASCII with no spaces. A token of 0x and hex digits only
-// is always read as a hash.
+// is always read as a hash, and one that starts with key64: always as a
+// 64-bit key (in the game's one Bool64bitKey table).
+//
+// Only persistent 64-bit keys belong in the list: ResetTypeValue 24 in the
+// game's flag list (chests). Pots and enemies (88, 280) reset on a scene
+// change; shared, one player's broken pot would break for everyone
+// (docs/flags.md).
 class SharedFlags {
  public:
   // Most flags one list may hold; a longer list is refused.

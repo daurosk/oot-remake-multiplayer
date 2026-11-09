@@ -5,6 +5,7 @@
 // turns them into bytes and back.
 
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -256,10 +257,42 @@ struct JoinPartner {
   bool operator==(const JoinPartner&) const = default;
 };
 
-// One shared world flag. The hash is Murmur3 x86 32-bit, seed 0, of the
-// flag's name in the game (flag_hash in codec.hpp). Array flags give the
-// element in index; a plain flag has index 0. The value is 4 bytes on the
-// wire, read by kind.
+// One shared world flag. Two kinds of key (docs/protocol.md):
+// - named: the Murmur3 x86 32-bit hash, seed 0, of the flag's name in the
+//   game (flag_hash in codec.hpp), and for an array flag the element in
+//   index (0 for a plain flag).
+// - key64: a 64-bit-key flag (the game's Bool64bitKey: chests, pots, rupees,
+//   Gold Skulltula tokens, enemies), keyed by the placement's 64-bit hash.
+//   table names the Bool64bitKey table by its hash; 0 is the game's one
+//   table, the only one so far. Always a bool.
+// The fields a kind does not use are 0. The value is 4 bytes on the wire,
+// read by kind.
+enum class FlagKeyKind : std::uint8_t {
+  named = 0,
+  key64 = 1,
+};
+
+struct FlagKey {
+  FlagKeyKind kind = FlagKeyKind::named;
+  std::uint32_t hash = 0;   // named only
+  std::uint16_t index = 0;  // named only
+  std::uint64_t key = 0;    // key64 only
+  std::uint32_t table = 0;  // key64 only; 0 = the game's one table
+
+  constexpr FlagKey() = default;
+  // A named flag.
+  constexpr FlagKey(std::uint32_t name_hash, std::uint16_t element)
+      : hash(name_hash), index(element) {}
+  static constexpr FlagKey key64_flag(std::uint64_t key, std::uint32_t table = 0) {
+    FlagKey k;
+    k.kind = FlagKeyKind::key64;
+    k.key = key;
+    k.table = table;
+    return k;
+  }
+  auto operator<=>(const FlagKey&) const = default;
+};
+
 enum class FlagKind : std::uint8_t {
   boolean = 0,   // value 0 or 1
   int32 = 1,     // two's complement
@@ -268,22 +301,32 @@ enum class FlagKind : std::uint8_t {
 };
 
 struct FlagEntry {
-  std::uint32_t hash = 0;
-  std::uint16_t index = 0;
+  FlagKey key;
   FlagKind kind = FlagKind::boolean;
   std::uint32_t value = 0;  // raw bits; see FlagKind
+
+  constexpr FlagEntry() = default;
+  constexpr FlagEntry(FlagKey k, FlagKind value_kind, std::uint32_t v)
+      : key(k), kind(value_kind), value(v) {}
+  // A named flag.
+  constexpr FlagEntry(std::uint32_t hash, std::uint16_t index, FlagKind value_kind,
+                      std::uint32_t v)
+      : key(hash, index), kind(value_kind), value(v) {}
   bool operator==(const FlagEntry&) const = default;
 };
 
-// Bytes of one flag entry on the wire: u32 hash, u16 index, u8 kind, u32 value.
-inline constexpr std::size_t kFlagEntrySize = 11;
+// Bytes of one flag entry on the wire: u8 key kind, the key (named: u32
+// hash, u16 index; key64: u64 key, u32 table), u8 kind, u32 value.
+inline constexpr std::size_t kFlagEntrySize = 12;       // named
+inline constexpr std::size_t kFlagEntryKey64Size = 18;  // key64
 // Most entries one FLAG_SET, FLAG_STATE or FLAG_SNAPSHOT may carry. Keeps a
-// message under 45 KB; a larger snapshot is split (split_snapshot).
-inline constexpr std::size_t kMaxFlagEntries = 4096;
+// message of key64 entries in the u16 body length (3600 x 18 + 5 bytes); a
+// larger snapshot is split (split_snapshot).
+inline constexpr std::size_t kMaxFlagEntries = 3600;
 
 // FLAG_SET: a player's game changed shared flags. Goes to the server, which
-// relays it to the host only. 1 to kMaxFlagEntries entries, each (hash,
-// index) at most once.
+// relays it to the host only. 1 to kMaxFlagEntries entries, each key at most
+// once.
 struct FlagSet {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
   std::vector<FlagEntry> flags;
@@ -302,8 +345,8 @@ struct FlagState {
 // FLAG_SNAPSHOT: every shared flag, in parts 0 to part_count - 1, sent in
 // order on the progress channel. The server sends it to a player who joins;
 // a new host sends it to the server to start the table. An empty table is
-// one part with no entries. 0 to kMaxFlagEntries entries per part, each
-// (hash, index) at most once in a part.
+// one part with no entries. 0 to kMaxFlagEntries entries per part, each key
+// at most once in a part.
 struct FlagSnapshot {
   std::uint16_t part = 0;
   std::uint16_t part_count = 1;  // at least 1, more than part

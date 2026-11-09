@@ -1,8 +1,9 @@
 # A made-up list of shared flags, for the tests only. Real lists come from
 # the user and are never committed. One flag a line: a name or a 0x hash,
-# then for an array flag an index or a range.
+# then for an array flag an index or a range; or key64: and a 64-bit key.
 
 Example.ChestOpened
 0x0000beef          # a hash given directly
 Example.DoorUnlocked 2
 Example.KeysUsed 0-3
+key64:0x2fa4c1d09b7e6a35  # a made-up chest key

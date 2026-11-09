@@ -621,6 +621,10 @@ FlagEntry flag(std::uint32_t hash, std::uint32_t value, std::uint16_t index = 0)
   return FlagEntry{hash, index, FlagKind::uint32, value};
 }
 
+FlagEntry key64(std::uint64_t key, std::uint32_t value) {
+  return FlagEntry{FlagKey::key64_flag(key), FlagKind::boolean, value};
+}
+
 std::vector<FlagEntry> many(std::uint32_t first, std::size_t n) {
   std::vector<FlagEntry> out;
   for (std::size_t i = 0; i < n; ++i) out.push_back(flag(first + static_cast<std::uint32_t>(i), 1));
@@ -901,6 +905,40 @@ TEST_CASE("a new host's snapshot merges in; on a clash the server's value stays"
   auto snap = messages_of<FlagSnapshot>(h, 4);
   REQUIRE(snap.size() == 1);
   CHECK(snap[0].flags == std::vector<FlagEntry>{flag(1, 1), flag(2, 7), flag(3, 4)});
+}
+
+TEST_CASE("64-bit keys are kept, merged and sent to joiners beside named flags") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // Key 5 and named hash 5 are two flags.
+  h.receive(1, FlagState{0, {flag(5, 1), key64(5, 1), key64(0x2fa4c1d09b7e6a35ull, 0)}},
+            kChannelProgress);
+  CHECK(h.session.flag_count() == 3);
+  auto st = only_message_to<FlagState>(h, 2);
+  REQUIRE(st.has_value());
+  CHECK(st->flags.size() == 3);
+
+  h.receive(1, FlagState{0, {key64(0x2fa4c1d09b7e6a35ull, 1)}}, kChannelProgress);
+  CHECK(h.session.flag_count() == 3);
+
+  // Player 1 leaves; player 2's save clashes on one key and adds another.
+  h.session.disconnected(1, h.now);
+  h.collect();
+  REQUIRE(h.session.host() == std::optional<std::uint8_t>{2});
+  h.clear();
+  h.receive(2, FlagSnapshot{0, 1, {key64(5, 0), key64(6, 1)}}, kChannelProgress);
+  auto to_host = messages_of<FlagState>(h, 2);
+  REQUIRE(to_host.size() == 1);
+  CHECK(to_host[0] == FlagState{2, {key64(5, 1)}});
+  CHECK(h.session.flag_count() == 4);
+
+  h.join(3, "Saria");
+  auto snap = messages_of<FlagSnapshot>(h, 3);
+  REQUIRE(snap.size() == 1);
+  CHECK(snap[0].flags == std::vector<FlagEntry>{flag(5, 1), key64(5, 1), key64(6, 1),
+                                                key64(0x2fa4c1d09b7e6a35ull, 1)});
 }
 
 TEST_CASE("the table is kept while anyone is in and forgotten when the session empties") {

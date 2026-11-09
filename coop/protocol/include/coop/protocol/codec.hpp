@@ -82,10 +82,14 @@ std::optional<RefuseReason> check_hello(const Hello& hello,
 // name's bytes.
 std::uint32_t flag_hash(std::string_view name);
 
+// The rules for one flag entry: a known key kind with only its own fields
+// set, a known value kind and a value it allows (a bool 0 or 1, an f32
+// finite), and a key64 flag a bool.
+bool valid_flag(const FlagEntry& entry);
+
 // Splits a whole flag table into FLAG_SNAPSHOT parts of at most
 // kMaxFlagEntries entries each, in order. An empty table gives one empty part.
-// Nothing when the table needs more than 65535 parts or holds a (hash, index)
-// twice.
+// Nothing when the table needs more than 65535 parts or holds a key twice.
 std::optional<std::vector<FlagSnapshot>> split_snapshot(
     std::span<const FlagEntry> flags);
 

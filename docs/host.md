@@ -108,7 +108,7 @@ While `holding()` is true a snapshot is coming in parts; the emulator should hol
 
 ### The flag list
 
-Which flags are shared is a plain text file the user supplies; no list from the game is in this repository. One flag a line: a name (hashed with `flag_hash`, Murmur3 x86 32-bit, seed 0) or a hash as `0x` and up to 8 hex digits, then for an array flag an index or a range (`0-7`). `#` starts a comment. A made-up example is [`tests/host/shared_flags.example.txt`](../tests/host/shared_flags.example.txt). A bad line refuses the whole file, with its line number.
+Which flags are shared is a plain text file the user supplies; no list from the game is in this repository. One flag a line: a name (hashed with `flag_hash`, Murmur3 x86 32-bit, seed 0) or a hash as `0x` and up to 8 hex digits, then for an array flag an index or a range (`0-7`); or a 64-bit key (chests and other placed actors) as `key64:` and the key, `0x` and up to 16 hex digits or decimal. Only persistent 64-bit keys belong in it (`ResetTypeValue` 24, [`protocol.md`](protocol.md)). `#` starts a comment. A made-up example is [`tests/host/shared_flags.example.txt`](../tests/host/shared_flags.example.txt). A bad line refuses the whole file, with its line number.
 
 **Choice:** the list holds world flags only, the suggested answer in the plan's open decisions: chests, small keys, doors, heart pieces collected, songs learned, dungeon state, events seen. Inventory, rupees, hearts, magic and equipment stay per player and are left out of the list. A flag that comes in but is not in the local list is not written (`stats().not_shared`), so a host with a longer list cannot change a player's per-player flags. Caleb has not decided this yet; changing it is a change to the list, not to the code.
 
@@ -119,7 +119,7 @@ Which flags are shared is a plain text file the user supplies; no list from the 
    - Player: a `FLAG_STATE` is written into the game and clears the local change waiting for that flag (the host's answer wins, even "no"). `FLAG_SNAPSHOT` parts are kept until the last one (part = part count - 1), then written all together; a flag with a local change still waiting is not overwritten. A `FLAG_STATE` that comes while a snapshot is held is written after it. A part out of order or missing drops the snapshot (`stats().bad_snapshots`).
    - Host: each `FLAG_SET` is written, read back, and answered with the value that came out, so a refused write is answered with the game's value.
 3. Unless a snapshot is held, reads every shared flag and compares it with last frame. The first good read of a flag is its baseline and sends nothing. A failed read is skipped and the flag keeps its last value. What the watcher wrote itself is already its last value, so it is never sent back.
-4. Sends the changes: a player as `FLAG_SET` (kept as waiting for an answer), the host as `FLAG_STATE` together with its answers. At most 4096 entries a message; more go in several.
+4. Sends the changes: a player as `FLAG_SET` (kept as waiting for an answer), the host as `FLAG_STATE` together with its answers. At most 3600 entries a message; more go in several.
 5. Host, when asked: reads the whole list and sends it as `FLAG_SNAPSHOT` parts (`split_snapshot`). Flags that cannot be read are left out.
 
 A player takes no `FLAG_SET` and a host no `FLAG_SNAPSHOT`; those are ignored. Both take `FLAG_STATE`: as host it is the client's own answer to a `FLAG_SET` (or the server's value on a clash), which the host's game must take too. After `reset()` changes still waiting for an answer are sent again.

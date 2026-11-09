@@ -1,4 +1,4 @@
-# adult: A loads straight into the Graveyard as adult (Graveyard_Adult) with the test-only warp; B stays child.
+# adult: A loads straight into the Graveyard as adult (Graveyard_Adult; the test warp also sets Sequence_IsChildhood), then walks, runs, turns and swings; B stays child.
 # Run with -NoLoad: the warp is asked before the save is loaded, because the game takes it
 # only during an event (the one after a save loads), and this file loads the save itself.
 mark start
@@ -14,5 +14,21 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400                # the save loads, then the warp lands (about 30 s)
 mark after
-wait 300
+wait 600                # B lands too and backs off
+mark start-walk
+stick 0 0.4 90          # walk forward slowly
+mark walk
+stick 0 0.4 40
+mark walk2
+hold LSTICK_UP+B 30     # run (B held)
+mark run
+stick 0 -1 30           # turn and come back
+mark back
+wait 40
+press Y 8               # sword swing
+wait 6
+mark attack
+wait 10
+mark attack2
+wait 60
 mark end

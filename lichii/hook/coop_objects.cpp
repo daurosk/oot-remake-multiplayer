@@ -1078,7 +1078,7 @@ private:
             const auto value = LifeValue(r, enemy);
             const s32 life = value ? r.Get<s32>(value->first + 8).value_or(0) : 0;
             if (life > 1) {
-                WriteLife(memory, r, {enemy, life - 1, hurt_ ? 1 : 0});
+                WriteLife(memory, r, {enemy, life - 1, hurt_ ? 1 : 0, {}});
             }
         }
     }

@@ -492,7 +492,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // life is written as the owner has it.
         if (o.hurt_until != 0 && now_us >= o.hurt_until) {
             if (o.life && *o.life != o.hurt_target) {
-                writes.push_back({o.address, o.hurt_target, 0});
+                writes.push_back({o.address, o.hurt_target, 0, {}});
                 o.life = o.hurt_target;
                 ++hurt_missed_;
             }
@@ -662,7 +662,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         return nullptr;
     };
     const auto write = [&writes](Object& o, std::int32_t life) {
-        writes.push_back({o.address, life, 0});
+        writes.push_back({o.address, life, 0, {}});
         o.life = life;
         o.hurt_left = 0;
         o.hurt_until = 0;
@@ -792,7 +792,7 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
     // Only enemies take a hit through the game (they flinch, lose a head, are
     // knocked back); a pot, a crate or an animal gets its life written.
     if (!hurt_ || !o.reacts) {
-        writes.push_back({o.address, life, 0});
+        writes.push_back({o.address, life, 0, {}});
         o.life = life;
         return;
     }

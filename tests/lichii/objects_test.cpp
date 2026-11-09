@@ -717,3 +717,94 @@ TEST_CASE("objects: a Gold Skulltula shaken out of a tree is announced and copie
     Tick(c, 100 * kMs, {Enemy(0x300, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 3);
     CHECK(c.Creates().empty());
 }
+
+TEST_CASE("objects: a hurt carries the hitter's place; an animal's life is written") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f, "Animal_Cucco")});
+    const proto::ObjectId enemy = *sync.IdOf(0x100);
+    const proto::ObjectId animal = *sync.IdOf(0x200);
+    Own(sync, enemy, 1);
+    Own(sync, animal, 1);
+    proto::PlayerSample p = Where(2, kScene, 5 * kMs);
+    p.position = proto::Vec3{7.0f, 0.0f, -3.0f};
+    sync.Receive(p);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = enemy;
+    d.amount = 1;
+    sync.Receive(d);
+    d.id = animal;
+    sync.Receive(d);
+    const std::vector<Seen> seen{Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f, "Animal_Cucco")};
+    const auto step = Tick(sync, 10 * kMs, seen);
+    REQUIRE(step.writes.size() == 2);
+    for (const auto& w : step.writes) {
+        CHECK(w.life == 1);
+        if (w.address == 0x100) {
+            CHECK(w.hurt == 1);  // through the game: it reacts
+            REQUIRE(w.from.has_value());
+            CHECK((*w.from)[0] == doctest::Approx(7.0f));
+            CHECK((*w.from)[2] == doctest::Approx(-3.0f));
+        } else {
+            CHECK(w.hurt == 0);
+            CHECK(!w.from.has_value());
+        }
+    }
+    // A place not heard of for over 2 s is not used.
+    d.id = enemy;
+    sync.Receive(d);
+    const auto late = Tick(sync, 3000 * kMs, {Enemy(0x100, 0x11, 1), seen[1]});
+    REQUIRE(late.writes.size() == 1);
+    CHECK(late.writes[0].hurt == 1);
+    CHECK(!late.writes[0].from.has_value());
+}
+
+TEST_CASE("objects: after our hit on a copy the owner's old animation waits for its reaction") {
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 2);
+    e.animation = proto::Animation{"Walk", 10.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 2);
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(1020 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    // Our sword hits the copy: its own game plays the flinch, 'Walk' waits.
+    c.life = proto::ObjectLife{1, 2};
+    Tick(copy, 1100 * kMs, {c}, 2);
+    plays.clear();
+    copy.Plays(1110 * kMs, plays);
+    CHECK(plays.empty());
+    // The owner's reaction to our DAMAGE is played at once.
+    s.state.animation = proto::Animation{"Damage_Head", 2.0f, 1.0f};
+    s.state.life = proto::ObjectLife{1, 2};
+    s.state.time = {1250 * kMs, 2};
+    copy.Receive(s);
+    Tick(copy, 1260 * kMs, {c}, 2);
+    plays.clear();
+    copy.Plays(1270 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Damage_Head");
+    // And 'Walk' again once the hold is over, had the owner never reacted.
+    s.state.animation = proto::Animation{"Walk", 3.0f, 1.0f};
+    s.state.time = {1900 * kMs, 3};
+    copy.Receive(s);
+    Tick(copy, 1910 * kMs, {c}, 2);
+    plays.clear();
+    copy.Plays(1920 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Walk");
+}

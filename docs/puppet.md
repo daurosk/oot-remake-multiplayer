@@ -355,6 +355,22 @@ Kakariko Village (child), Fritchii v5 coop build, two local instances on one ser
 
 Not yet seen: animation (the puppet stands in its default pose), rotation in the picture, a scene change with two instances, adult Link. Animation playback and the scene filter are built since (unit tests on fake memory); not yet run in the game.
 
+## Fairy
+
+Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii/hook/coop_fairy.*`).
+
+| Piece | What |
+|---|---|
+| Actor | `Dm_Npc_Navi`, the cutscene Navi from the game's own pack: its own model and glow (`XLink/Npc_Navi`), `ActorLogicSimpleActor`, the generic name `Dm_Npc_Base`. `Npc_Navi` is not used: it is the player's partner, with an AI that follows the player and a name the game looks up, so a second one would clash. `LICHII_COOP_FAIRY_ACTOR=<pack>` picks another (`Npc_Fairy` is the next to try). |
+| Create and delete | A second `CoopPuppet::Director`, the same create, take and delete path as the puppet. It registers with the svc cave as caller 20 (`CoopSvc::AddCaller`, after the puppets and CoopSpawn), on the first `CoopFairy::Publish`; the cave asks each caller in turn, each with its own frame and its own call results. Each director takes at most 4 calls a frame, the cave allows 16. Its log lines start with `fairy`. |
+| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
+| Pose | Written into the actor every game frame by the director, like the puppet's. The Navi AI is not pointed at the puppet. |
+| On and off | On with the puppets (`LICHII_COOP_PUPPET` or `LICHII_COOP_DEBUG_PUPPET`); `LICHII_COOP_FAIRY=0` turns it off. |
+
+The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
+
+**Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.
@@ -362,4 +378,5 @@ Not yet seen: animation (the puppet stands in its default pose), rotation in the
 3. The run slots of `ExecuteActorForceSetMtx` and `OneShotActorRequestSetMtx`, if a direct pose write does not hold.
 4. ~~What the handle slot holds~~ (a create request, see [Spawn and move](#spawn-and-move-what-is-built)); the meaning of `w4`, the stack arguments and create argument +0x40.
 5. Whether the engine accepts an uncompressed pack, and whether the size table needs entries for new packs.
-6. Animation playback and the scene filter are built and tested on fake memory, not yet run; equipment is from the dump only; spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).
+6. Follow, upper-body animation and equipment (worn and changed) are proven in game (2026-11-09); leg speed, scene changes and adult Link are not run. Spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).
+7. A puppet created while its player is far away (about 47 units, 2026-11-09) is not drawn when the player comes near; its fairy is. Recreated nearby, it is drawn. Not looked into.

@@ -18,10 +18,12 @@ add_executable(coop_tests
   lichii/camera_test.cpp
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
+  lichii/fairy_test.cpp
   lichii/objects_test.cpp
   lichii/testinput_test.cpp
   # These hook files have no emulator code, so they are tested on their own.
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp

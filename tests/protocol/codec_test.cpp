@@ -1083,19 +1083,25 @@ TEST_CASE("player pose has its number, channel and layout") {
 }
 
 TEST_CASE("bad player poses are refused") {
+  const auto bone = [](std::size_t n) {
+    PoseBone b;
+    b.bone = static_cast<std::uint16_t>(n);
+    return b;
+  };
   Bytes out;
   PlayerPose p;
   p.bones.resize(kMaxPoseBones + 1);
   for (std::size_t i = 0; i < p.bones.size(); ++i) p.bones[i].bone = static_cast<std::uint16_t>(i);
   CHECK(encode(p, out) == Error::bad_value);
-  p.bones = {PoseBone{2}, PoseBone{2}};  // not increasing
+  p.bones = {bone(2), bone(2)};  // not increasing
   CHECK(encode(p, out) == Error::bad_value);
-  p.bones = {PoseBone{static_cast<std::uint16_t>(kMaxPoseBones)}};
+  p.bones = {bone(kMaxPoseBones)};
   CHECK(encode(p, out) == Error::bad_value);
-  p.bones = {PoseBone{1, 0, std::array<std::int16_t, 4>{std::numeric_limits<std::int16_t>::min(), 0, 0, 0}}};
+  p.bones = {bone(1)};
+  p.bones[0].rotation = std::array<std::int16_t, 4>{std::numeric_limits<std::int16_t>::min(), 0, 0, 0};
   CHECK(encode(p, out) == Error::bad_value);
   // An unknown part bit is refused on decode.
-  p.bones = {PoseBone{1}};
+  p.bones = {bone(1)};
   Bytes b = must_encode(p);
   b[kHeaderSize + 21] = 0x08;
   Message m;

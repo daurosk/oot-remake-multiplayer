@@ -34,12 +34,26 @@ Use the issue forms. Include the co-op build version, the emulator or recomp ver
 - One topic per pull request. Small ones are reviewed faster.
 - Describe the problem, then what changed.
 - Say how you tested it: which build, how many clients, how long. Fill in the pull request template's "Not yet proven" part honestly.
-- The build and the unit tests pass (see "Building" in the [README](README.md)).
+- The build and the unit tests pass (see "Building" in the [README](README.md)), and `tools/check_content.py` passes. Run both before you push.
 - If you change a message layout, change [docs/protocol.md](docs/protocol.md) in the same pull request.
 - Commit messages are plain sentences, without `feat:` or other prefixes.
 - AI-assisted code is welcome. You are responsible for having read and run it.
 
 By opening a pull request you agree that your contribution is licensed under GPL-3.0, the licence of this project.
+
+## Review
+
+Every pull request is reviewed by a review session before it is merged. This holds for everyone: outside contributors, the maintainer, and the project's own workers. Nothing merges unreviewed, however small.
+
+A review session is one of the maintainer's AI sessions, started only to review that pull request ([docs/workflow.md](docs/workflow.md)). It did not write the change. It writes what it found on the pull request; you answer or push fixes to the same branch, and it looks again.
+
+A review checks that:
+
+- the change builds, and the unit tests and `tools/check_content.py` pass (CI runs them too);
+- it does what the pull request says, and stays on its one topic;
+- a changed message layout or meaning comes with a new protocol version and with [docs/protocol.md](docs/protocol.md) changed in the same pull request;
+- no game files, keys, firmware, saves or anything else that came out of the game are in it, and no copied code without a compatible licence and credit;
+- what was tested and what is not yet proven is said honestly.
 
 ## Code and docs
 
@@ -48,4 +62,4 @@ By opening a pull request you agree that your contribution is licensed under GPL
 
 ## AI sessions working on this repository
 
-The maintainer's own AI sessions follow [docs/workflow.md](docs/workflow.md): one task, one branch, one worktree; one owner per area; small pull requests merged often.
+The maintainer's own AI sessions follow [docs/workflow.md](docs/workflow.md): one task, one branch, one worktree; one owner per area; small pull requests, each reviewed by a review worker, merged often.

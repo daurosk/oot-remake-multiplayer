@@ -954,3 +954,76 @@ TEST_CASE("puppet join: the wanted actor must settle before a create (age read w
     CHECK(calls[0].function == kBase + addr::kCreate);
     CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
 }
+
+TEST_CASE("puppet gear: a piece the game made anew is put into the hand again") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    const std::uint64_t sword_id = kEu + addr::kEquipSlots + addr::kEquipSlotId;
+    const std::uint64_t record = kEu + addr::kEquipRecords + addr::kEquipRecordInHand;
+    g.guest.Set(sword_id, std::uint32_t{3});
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.drawn = std::uint8_t{0x01};
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 2);  // worn, then into the hand
+    CHECK(calls[1].function == kBase + addr::kEquipChangeState);
+    // The request byte is clear already; the slot record says it is in the hand.
+    CHECK(Frame(d, g, 300).size() == 1);  // not taken yet: asked again
+    g.guest.Set(record, std::uint8_t{1});
+    CHECK(Frame(d, g, 600).size() == 1);
+    CHECK(Frame(d, g, 900).empty());  // taken by the record
+
+    // The game makes the sword again (another id): the new one is put away.
+    g.guest.Set(sword_id, std::uint32_t{9});
+    calls = Frame(d, g, 910);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+}
+
+TEST_CASE("puppet gear: the debug log lists every slot that holds a piece") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); }, false, true);
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    constexpr std::uint64_t kPiece = kParts + 0x2800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    for (std::uint32_t s = 0; s < 8; ++s) {
+        g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId,
+                    std::uint32_t{0xFFFFFFFF});
+    }
+    // A piece in slot 2 (not one of the drawable ones), 1 above the puppet.
+    const std::uint64_t link = kEu + addr::kEquipSlots + addr::kEquipSlotStride * 2;
+    g.guest.Set(link + addr::kEquipSlotId, std::uint32_t{0x21});
+    g.guest.Set(link + addr::kEquipSlotHolder, kPiece);  // holder and piece in one place
+    g.guest.Set(kPiece + addr::kHolderActor, kPiece + 0x100);
+    g.guest.Set(kPiece + 0x100 + addr::kActorState, std::uint32_t{4});
+    CoopPuppet::Vec3 own{};
+    g.guest.Read(kActor + addr::kActorPosition, &own, sizeof(own));
+    g.guest.Set(kPiece + 0x100 + addr::kActorPosition, CoopPuppet::Vec3{own[0], own[1] + 1.0f, own[2]});
+    g.guest.Set(kEu + addr::kEquipRecords + addr::kEquipRecordStride * 2 + addr::kEquipRecordFlags,
+                std::uint32_t{0x800});
+    Frame(d, g, 5000);
+    std::string slots;
+    for (const auto& line : log) {
+        if (line.find("slots (puppet") != std::string::npos) {
+            slots = line;
+        }
+    }
+    CHECK(slots.find("slot 2: id 0x21") != std::string::npos);
+    CHECK(slots.find(" state 4 up ") != std::string::npos);
+    CHECK(slots.find("flags 0x800") != std::string::npos);
+    CHECK(slots.find("slot 0:") == std::string::npos);
+}

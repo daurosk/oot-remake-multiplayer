@@ -565,6 +565,62 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     return c;
 }
 
+namespace {
+// The eight equipment slots of an actor's EquipmentUser, for the debug log:
+// for each slot that holds a piece its id, actor, state, place (height over
+// the wearer and distance on the ground), the request byte, and the slot
+// record's in-hand byte and flags (u32 at +0xa0: "put away" 0xe34c70 sets
+// 0x800, "in hand" 0x6b6820 clears it; read from the dump, not run).
+std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint8_t> wanted) {
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    if (!ReadValue(guest, actor + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+        return "no equipment user";
+    }
+    Vec3 own{};
+    ReadValue(guest, actor + addr::kActorPosition, own);
+    std::string text = "eu " + Hex(eu);
+    for (std::uint32_t s = 0; s < 8; ++s) {
+        const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
+        std::uint32_t id = 0xFFFFFFFFu;
+        std::uint64_t holder = 0;
+        std::uint64_t piece = 0;
+        std::uint32_t state = 0;
+        std::uint8_t request = 0xff;
+        std::uint8_t hand = 0xff;
+        std::uint32_t flags = 0;
+        Vec3 at{};
+        ReadValue(guest, link + addr::kEquipSlotId, id);
+        ReadValue(guest, eu + addr::kEquipSlotBits + s, request);
+        if (id == 0xFFFFFFFFu && (request == 0 || request == 0xff)) {
+            continue;  // nothing in this slot
+        }
+        ReadValue(guest, link + addr::kEquipSlotHolder, holder);
+        if (holder != 0) {
+            ReadValue(guest, holder + addr::kHolderActor, piece);
+        }
+        if (piece != 0) {
+            ReadValue(guest, piece + addr::kActorState, state);
+            ReadValue(guest, piece + addr::kActorPosition, at);
+        }
+        const std::uint64_t record = eu + addr::kEquipRecords + addr::kEquipRecordStride * s;
+        ReadValue(guest, record + addr::kEquipRecordInHand, hand);
+        ReadValue(guest, record + addr::kEquipRecordFlags, flags);
+        char place[64];
+        std::snprintf(place, sizeof(place), "up %.2f off %.2f", static_cast<double>(at[1] - own[1]),
+                      static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
+        text += "; slot " + std::to_string(s) + ": id " + Hex(id) + " actor " + Hex(piece) +
+                " state " + std::to_string(state) + " " + place + " request " + Hex(request) +
+                " record " + Hex(hand) + " flags " + Hex(flags);
+        if (wanted) {
+            text += std::string(" want ") + (((*wanted >> s) & 1u) != 0 ? "hand" : "away");
+        }
+    }
+    return text;
+}
+}  // namespace
+
 // One equip call for a live puppet whose player's gear differs from what it
 // wears, or none. An empty name (nothing in that slot) is not taken off yet:
 // how to clear a slot is not proven (0x2e01a90 with "" is a guess).
@@ -584,45 +640,15 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
                     (target.gear[i] ? "'" + *target.gear[i] + "'" : std::string("?")) +
                     (slot.worn[i].empty() ? "" : " (worn)");
         }
-        // Each drawable slot as the game has it: the piece, its actor, state
-        // and height over the puppet, the request byte and the record's byte.
-        for (std::size_t i = 0; eu != 0 && i < kGearSlots.size(); ++i) {
-            const int s = kGearSlots[i];
-            if (s < 0) {
-                continue;
-            }
-            const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
-            std::uint32_t id = 0xFFFFFFFFu;
-            std::uint64_t holder = 0;
-            std::uint64_t piece = 0;
-            std::uint32_t state = 0;
-            std::uint8_t request = 0xff;
-            std::uint8_t hand = 0xff;
-            Vec3 at{};
-            Vec3 own{};
-            ReadValue(guest, link + addr::kEquipSlotId, id);
-            ReadValue(guest, link + addr::kEquipSlotHolder, holder);
-            if (holder != 0) {
-                ReadValue(guest, holder + addr::kHolderActor, piece);
-            }
-            if (piece != 0) {
-                ReadValue(guest, piece + addr::kActorState, state);
-                ReadValue(guest, piece + addr::kActorPosition, at);
-            }
-            ReadValue(guest, slot.actor + addr::kActorPosition, own);
-            ReadValue(guest, eu + addr::kEquipSlotBits + s, request);
-            ReadValue(guest,
-                      eu + addr::kEquipRecords + addr::kEquipRecordStride * s +
-                          addr::kEquipRecordInHand,
-                      hand);
-            char up[32];
-            std::snprintf(up, sizeof(up), "%.2f", static_cast<double>(at[1] - own[1]));
-            line += "; slot " + std::to_string(s) + ": id " + Hex(id) + " actor " + Hex(piece) +
-                    " state " + std::to_string(state) + " up " + up + " request " +
-                    Hex(request) + " record " + Hex(hand) + " want " +
-                    (target.drawn ? (((*target.drawn >> s) & 1u) != 0 ? "hand" : "away") : "?");
-        }
         Say(line);
+        // Every equipment slot as the game has it, and the local player's
+        // beside it: what differs between the two is what does not show.
+        Say("P" + std::to_string(slot.number) + " slots (puppet " + Hex(slot.actor) +
+            "): " + SlotsText(guest, slot.actor, target.drawn));
+        if (const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base)) {
+            Say("P" + std::to_string(slot.number) + " slots (local player " + Hex(player) +
+                "): " + SlotsText(guest, player, std::nullopt));
+        }
     }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];

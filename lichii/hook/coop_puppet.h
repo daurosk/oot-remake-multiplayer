@@ -118,6 +118,7 @@ inline constexpr std::uint8_t kEquipBitAway = 0x4;
 inline constexpr std::uint64_t kEquipRecords = 0x4b0;
 inline constexpr std::uint64_t kEquipRecordStride = 0xa8;
 inline constexpr std::uint64_t kEquipRecordInHand = 0xa4;
+inline constexpr std::uint64_t kEquipRecordFlags = 0xa0;  // u32; 0x800 while put away
 // The game's own way to move an actor that has a physics body, as the AI
 // node ExecuteActorForceSetMtx (run 0x2622e50): write +0x31c..+0x34b, then
 // call vtable slot 0x218, which is 0x4c6580(actor, 0) for the vtable every

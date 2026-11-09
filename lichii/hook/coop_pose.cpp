@@ -238,6 +238,8 @@ std::optional<Skeleton> FindSkeleton(CoopPuppet::Guest& guest, std::uint64_t act
     return s;
 }
 
+}  // namespace
+
 // The local player's actor, as coop::host::PlayerReader finds it (addresses.hpp).
 std::uint64_t FindPlayer(CoopPuppet::Guest& guest, std::uint64_t main_base) {
     std::uint64_t scene = 0, table = 0, array = 0, manager = 0, must = 0;
@@ -261,6 +263,8 @@ std::uint64_t FindPlayer(CoopPuppet::Guest& guest, std::uint64_t main_base) {
     }
     return 0;
 }
+
+namespace {
 
 bool Moved(const float* a, const float* b, std::size_t n) {
     for (std::size_t i = 0; i < n; ++i) {

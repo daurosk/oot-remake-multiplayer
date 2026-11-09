@@ -1,18 +1,23 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 8 Nov 2026 15:53:31 -0900
-Subject: [PATCH] coop: optional per-frame hook for OoT co-op
+Subject: [PATCH] coop: optional hooks for OoT co-op
 
 Adds LICHII_COOP (off by default). When on, the build adds the co-op
-libraries from LICHII_COOP_DIR (an oot-remake-multiplayer checkout),
-links them into core, and calls CoopHook::OnFrame once per guest present,
-in both present paths (nx2 and nvdisp), after the speed limiter.
+libraries from LICHII_COOP_DIR (an oot-remake-multiplayer checkout) and
+includes its lichii/hook/core.cmake and qt.cmake, which build the hook into
+core and the co-op panel into the Qt frontend. CoopHook::OnFrame runs once
+per guest present, in both present paths (nx2 and nvdisp), after the speed
+limiter. The main window starts co-op once the render window exists and
+stops it when it closes.
 ---
  CMakeLists.txt                                      | 12 ++++++++++++
- src/core/CMakeLists.txt                             |  7 +++++++
+ src/core/CMakeLists.txt                             |  4 ++++
  src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp |  6 ++++++
  src/core/hle/service/nx2_gsv.h                      |  6 ++++++
- 4 files changed, 31 insertions(+)
+ src/yuzu/CMakeLists.txt                             |  4 ++++
+ src/yuzu/main_window.cpp                            | 10 ++++++++++
+ 6 files changed, 42 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 6f2a86b708..d1123df305 100644
@@ -38,18 +43,15 @@ index 6f2a86b708..d1123df305 100644
  
  if (ENABLE_DEBUG_TOOLS)
 diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
-index d2393ea078..517fec57d9 100644
+index d2393ea078..1dc7d9e846 100644
 --- a/src/core/CMakeLists.txt
 +++ b/src/core/CMakeLists.txt
-@@ -1316,4 +1316,11 @@ elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS_RELEA
+@@ -1316,4 +1316,8 @@ elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS_RELEA
      set_source_files_properties(${lichii_kernel_sources} PROPERTIES COMPILE_OPTIONS -fno-lto)
  endif()
  
 +if (LICHII_COOP)
-+    target_sources(core PRIVATE "${LICHII_COOP_DIR}/lichii/hook/coop_hook.cpp")
-+    target_include_directories(core PRIVATE "${LICHII_COOP_DIR}/lichii/hook")
-+    target_compile_definitions(core PRIVATE LICHII_COOP)
-+    target_link_libraries(core PRIVATE coop)
++    include("${LICHII_COOP_DIR}/lichii/hook/core.cmake")
 +endif()
 +
  create_target_directory_groups(core)
@@ -101,3 +103,51 @@ index aaae47868f..2aa931f792 100644
      }
  
      // EDEN_NX2_FRAME_CAPTURE=<dir>: every 120th present, save what the renderer shows as
+diff --git a/src/yuzu/CMakeLists.txt b/src/yuzu/CMakeLists.txt
+index 751193c459..47ae0c2cc1 100644
+--- a/src/yuzu/CMakeLists.txt
++++ b/src/yuzu/CMakeLists.txt
+@@ -484,4 +484,8 @@ endif()
+ # Remember that the linker is incredibly stupid.
+ target_link_libraries(yuzu PRIVATE OpenSSL::SSL OpenSSL::Crypto SDL3::SDL3)
+ 
++if (LICHII_COOP)
++    include("${LICHII_COOP_DIR}/lichii/hook/qt.cmake")
++endif()
++
+ create_target_directory_groups(yuzu)
+diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
+index 649bbe29a2..7c45a00e98 100644
+--- a/src/yuzu/main_window.cpp
++++ b/src/yuzu/main_window.cpp
+@@ -15,6 +15,10 @@
+ #include "common/settings_enums.h"
+ #include "frontend_common/settings_generator.h"
+ #include "render/performance_overlay.h"
++#ifdef LICHII_COOP
++#include "coop_hook.h"
++#include "coop_window.h"
++#endif
+ #ifdef HAS_RESHADE
+ #include "configuration/configure_post_processing.h"
+ #include "video_core/post_processing/fx_preset.h"
+@@ -1080,6 +1084,9 @@ void MainWindow::WebBrowserRequestExit() {
+ void MainWindow::InitializeWidgets() {
+     render_window = new GRenderWindow(this, input_subsystem);
+     render_window->hide();
++#ifdef LICHII_COOP
++    CoopWindow::Attach(this, render_window);
++#endif
+ 
+     game_list = new GameList(QtCommon::vfs, QtCommon::provider.get(), *play_time_manager,
+                              *QtCommon::system, this);
+@@ -5335,6 +5342,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
+         return;
+     }
+     LOG_INFO(Frontend, "Closing frontend after emulation cleanup");
++#ifdef LICHII_COOP
++    CoopHook::Shutdown();
++#endif
+ 
+     UpdateUISettings();
+     game_list->SaveInterfaceLayout();

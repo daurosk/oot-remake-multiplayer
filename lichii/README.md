@@ -7,7 +7,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `PIN` | Repo URL, release tag and commit we build against. |
 | `fetch.ps1` | Clones or updates the source to the pin and applies `patches/*.patch` in order. |
 | `patches/0001-coop-hook.patch` | The hook points, nothing else. |
-| `hook/` | The co-op code the patch builds into the emulator. It lives here, so changing it needs no new patch. |
+| `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
 ## Fetch and patch
 
@@ -46,7 +46,9 @@ With `LICHII_COOP` off (the default) the patch changes nothing in the build.
 | File | Change |
 |---|---|
 | `CMakeLists.txt` | The `LICHII_COOP` option and `LICHII_COOP_DIR`. When on, adds this repo with `add_subdirectory` (no tests, no server, no test tool) before `src/`. |
-| `src/core/CMakeLists.txt` | When on, builds `hook/coop_hook.cpp` into `core` and links our `coop` library. |
+| `src/core/CMakeLists.txt` | When on, includes `hook/core.cmake`: the hook and its settings built into `core`, linked with our `coop`, `coop_net`, `coop_host`, `coop_presence` and `coop_overlay`. |
+| `src/yuzu/CMakeLists.txt` | When on, includes `hook/qt.cmake`: the co-op panel (`hook/coop_window.cpp`) built into the Qt frontend. |
+| `src/yuzu/main_window.cpp` | Starts co-op and its panel once the render window exists (`CoopWindow::Attach`), and stops it when the window closes (`CoopHook::Shutdown`). |
 | `src/core/hle/service/nx2_gsv.h` | In `Composite` (the Switch 2 present path, the one Ocarina uses), calls `CoopHook::OnFrame` after the speed limiter and the frame-time stats. |
 | `src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp` | The same in `nvdisp_disp0::Composite` (the Switch 1 present path). |
 
@@ -56,10 +58,12 @@ Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same
 
 `OnFrame` has to run once per emulated frame, in the emulator, not in the game. Both `Composite` functions run once for each frame the game presents, on the thread that handles the present, and they already end the frame for the emulator's own bookkeeping (speed limiting, `PerfStats::EndSystemFrame`). Calling the hook there ties it to the game's real frame rate (30 or 60), not to the host's display or the GPU thread, and it needs no game address. The renderer's `RendererFrameEndNotify` was not used: it runs on the GPU thread, after the frame has been drawn, which is later and on a thread that should not wait on co-op work.
 
-For now `OnFrame` only logs `coop: loaded (ENet x.y.z)` once, through the emulator's log, which proves the co-op library is linked and called.
+`coop: loaded (ENet x.y.z)` in the emulator's log at start proves the co-op code is linked; `coop: on` or `coop: off` follows with the settings it found.
 
 ## A new Fritchii release
 
 1. Change `PIN` to the new tag and commit.
 2. Run `fetch.ps1`. If a patch no longer applies, apply it by hand on the new commit, commit, and replace the file with `git format-patch -1 --zero-commit --no-signature --stdout`.
 3. Build with `LICHII_COOP=ON` and check the log for `coop: loaded`.
+
+The patch stays at 6 files and about 40 lines; everything else is in `hook/`.

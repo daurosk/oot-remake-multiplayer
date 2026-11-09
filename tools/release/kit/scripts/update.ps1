@@ -201,6 +201,19 @@ function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
 
 # --- Installing -------------------------------------------------------------------------
 
+# Why a kit's emulator must not be installed, or ''. A kit holds only the co-op build of the
+# emulator: never a plain Fritchii (no co-op), and never one with Fritchii's own updater,
+# which would offer to swap the co-op build for a plain one.
+function Test-KitEmulator([string]$Exe) {
+    if (-not (Test-Path -LiteralPath $Exe)) { return 'it has no emulator\lichii.exe' }
+    $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($Exe))
+    if (-not $text.Contains('coop: loaded')) { return 'its emulator is not the co-op build' }
+    foreach ($s in 'Check for Updates', 'update-old') {
+        if ($text.Contains($s)) { return 'its emulator has Fritchii''s own updater' }
+    }
+    return ''
+}
+
 function Get-KitRunning([string]$KitDir) {
     $root = [System.IO.Path]::GetFullPath($KitDir).TrimEnd('\') + '\'
     return @(Get-Process -Name lichii, coop_server -ErrorAction SilentlyContinue | Where-Object {
@@ -361,6 +374,8 @@ function Invoke-KitUpdate {
         }
         $newKit = Get-KitUnpackedRoot $unpacked
         if (-not (Test-Path -LiteralPath (Join-Path $newKit 'emulator'))) { throw 'The release zip holds no kit. Nothing changed.' }
+        $why = Test-KitEmulator (Join-Path $newKit 'emulator\lichii.exe')
+        if ($why) { throw "The release zip is not a co-op kit ($why). Nothing changed." }
 
         $backup = Join-Path $dir ('backup-' + $(if ($mine) { $mine } else { 'old' }))
         if (Test-Path -LiteralPath $backup) { $backup += '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') }

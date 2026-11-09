@@ -98,11 +98,19 @@ try {
         Write-File "$Dir\coop-options.ini" "LICHII_COOP_PUPPET=0`r`n"
         Write-File "$Dir\MANIFEST.txt" "# Files`r`nHost.bat`r`nemulator\lichii.exe`r`ntools\gone.txt`r`nVERSION.txt`r`n"
     }
+    # --- The emulator a kit may bring
+    Write-File "$tmp\exe\coop.exe" 'xx coop: loaded xx'
+    Write-File "$tmp\exe\plain.exe" 'xx plain Fritchii xx'
+    Write-File "$tmp\exe\updater.exe" 'xx coop: loaded xx Check for Updates... xx'
+    Check ((Test-KitEmulator "$tmp\exe\coop.exe") -eq '') 'the co-op emulator may be installed'
+    Check ((Test-KitEmulator "$tmp\exe\plain.exe") -match 'not the co-op build') 'a plain Fritchii is refused'
+    Check ((Test-KitEmulator "$tmp\exe\updater.exe") -match 'own updater') 'an emulator with Fritchii''s updater is refused'
+    Check ((Test-KitEmulator "$tmp\exe\none.exe") -match 'no emulator') 'a kit with no emulator is refused'
     $newKit = Join-Path $tmp 'src\oot-coop-v0.1.0-test3'
     Write-File "$newKit\VERSION.txt" "kit: oot-coop-v0.1.0-test3 (release v0.1.0-test3)`r`n"
     Write-File "$newKit\Host.bat" 'new host'
     Write-File "$newKit\Update.bat" 'new updater'
-    Write-File "$newKit\emulator\lichii.exe" 'new exe'
+    Write-File "$newKit\emulator\lichii.exe" 'new exe coop: loaded'
     Write-File "$newKit\emulator\user\config\coop.ini" 'name = '
     Write-File "$newKit\scripts\new.ps1" 'new script'
     Write-File "$newKit\coop-options.ini" "LICHII_COOP_PUPPET=1`r`n# Time of day. To turn it off:`r`n# LICHII_COOP_TIME=0`r`n"
@@ -145,7 +153,7 @@ try {
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
     Check ($LASTEXITCODE -eq 0) "update ran ($(($out | Select-Object -Last 2) -join ' / '))"
     Check ((Read-File "$kit\Host.bat") -eq 'new host') 'a kit file is replaced'
-    Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe') 'the emulator is replaced'
+    Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'the emulator is replaced'
     Check ((Read-File "$kit\scripts\new.ps1") -eq 'new script') 'a new kit file is added'
     Check ((Read-File "$kit\Update.bat") -eq 'new updater') 'Update.bat is replaced too'
     Check (-not (Test-Path "$kit\tools\gone.txt")) 'a kit file the new kit dropped is removed'
@@ -196,7 +204,7 @@ try {
     Copy-Item $good (Join-Path $spaced 'releases.json')
     $out = cmd /c "`"$kit\Update.bat`" -Yes -Api `"$spaced\releases.json`" < NUL" 2>&1
     Check ($LASTEXITCODE -eq 0) "Update.bat ran ($(($out | Select-Object -Last 2) -join ' / '))"
-    Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe') 'Update.bat updated the kit'
+    Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'Update.bat updated the kit'
     Check ((Read-File "$kit\Update.bat") -eq 'new updater') 'and replaced itself'
     Test-PlayerKept $kit 'Update.bat'
 } finally {

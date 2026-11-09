@@ -29,15 +29,45 @@
 // The event queue grows only by what one service() handles, so a host that
 // drains next_event() after every service() keeps it small.
 //
+// Shared flags (stage 1 step 4, docs/protocol.md):
+// - set_flags() sends one FLAG_SET for the call (FLAG_STATE when this client
+//   is the host, which is the truth). The game keeps its own change until a
+//   FLAG_STATE says otherwise.
+// - Every FLAG_STATE received goes into flags() and gives a `flag_state`
+//   event; the game applies those values, even over its own change.
+// - FLAG_SNAPSHOT parts are collected; when the last one is in they replace
+//   flags() and give one `flag_snapshot` event. Until then synced() is false,
+//   so the game can hold. A part out of order is refused and the collection
+//   waits for the next part 0.
+// - The host answers each FLAG_SET it receives with a FLAG_STATE, through
+//   set_flag_answer() (default: accept every value). That FLAG_STATE goes
+//   into flags() too and gives a `flag_state` event for the host's game.
+// - Who hosts: is_host(). The protocol has no host notice yet, so it is the
+//   lowest player number in the room, as the plan has it (first player in).
+//
+// Join partner (stage 1 step 3): request_join() asks to warp to a player and
+// returns the request id; its answer gives `join_accepted` or `join_refused`,
+// and no answer in join_timeout_ms gives `join_timed_out`. Only the latest
+// request is open: a newer one, a drop or stop() ends it, and an answer that
+// is not for it is dropped (stale_join_answers()). A request from another
+// player gives `join_request`; answer it with accept_join() or refuse_join()
+// within join_timeout_ms (the asker gives up then).
+//
+// A drop (the `disconnected` event) clears the flags, synced(), snapshot
+// parts and every join request, ours and theirs, with no further event.
+//
 // The host name is resolved by the first attempt that succeeds and kept for
 // later ones. A DNS name makes that attempt block inside service() for as
 // long as the lookup takes; pass an IP address to never block.
 
 #include <cstddef>
+#include <compare>
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -69,6 +99,9 @@ struct ClientConfig {
   std::uint32_t stable_after_ms = 10000;
   // ENet events handled in one service() at most (at least 1).
   std::uint32_t max_events_per_service = 256;
+  // Our join request ends with `join_timed_out` after this long with no
+  // answer; a request from another player can be answered for as long.
+  std::uint32_t join_timeout_ms = 5000;
 
   // The client's clock in microseconds. Empty means std::chrono::steady_clock.
   // It must not go backwards by much: a step back only pauses the timers.
@@ -101,6 +134,17 @@ enum class EventKind : std::uint8_t {
   player_joined,   // `player`, `nickname`
   player_left,     // `player`, `nickname` (as it was), `leave_reason`
   player_status,   // `player`, `status_flags`
+  // Shared flags. flag_state follows the `message` event of a FLAG_STATE
+  // (`player` = the host), or of a FLAG_SET this host answered (`player` =
+  // our own number); `flags` holds the values to apply, flags() is updated.
+  flag_state,      // `player`, `flags`
+  flag_snapshot,   // the last FLAG_SNAPSHOT part is in: `flags` = the table
+  // Join partner. The first three follow the `message` event of their
+  // JOIN_PARTNER; join_timed_out has none.
+  join_request,    // `player` asks to join us: `request_id`
+  join_accepted,   // `player` accepted our `request_id`: `join_target`
+  join_refused,    // `player` refused our `request_id`: `join_reason`
+  join_timed_out,  // no answer from `player` to our `request_id` in time
 };
 
 std::string_view to_string(EventKind kind);
@@ -125,7 +169,25 @@ struct Event {
   std::string nickname;               // player_joined, player_left
   protocol::LeaveReason leave_reason{};  // player_left; raw value kept
   std::uint8_t status_flags = 0;      // player_status; unknown bits kept
+  std::vector<protocol::FlagEntry> flags;    // flag_state, flag_snapshot
+  std::uint16_t request_id = 0;              // join_*
+  protocol::JoinTarget join_target;          // join_accepted
+  protocol::JoinRefuseReason join_reason{};  // join_refused; raw value kept
 };
+
+// A shared flag's place in the table: its name's hash and array index.
+struct FlagKey {
+  std::uint32_t hash = 0;
+  std::uint16_t index = 0;
+  auto operator<=>(const FlagKey&) const = default;
+};
+
+// The host's answer to one flag of a FLAG_SET from `player`: the value to
+// keep (as asked or changed; hash and index stay as asked), or nothing to
+// refuse it. A refused flag already in flags() is sent back with that value,
+// so the asker's game goes back to it.
+using FlagAnswer = std::function<std::optional<protocol::FlagEntry>(
+    std::uint8_t player, const protocol::FlagEntry& asked)>;
 
 // One player in the room, this client included.
 struct Player {
@@ -174,6 +236,47 @@ class Client {
   // connected. The server does not echo it back; show it locally.
   bool send_chat(std::string_view text);
 
+  // Sends the flags our game changed: FLAG_SET for the call (one message per
+  // kMaxFlagEntries), or FLAG_STATE as the host, which also goes into
+  // flags() with no event (our game already has it). A flag given twice
+  // keeps its last value. False when not connected, for none, or for a value
+  // the protocol refuses (a bool not 0 or 1, a non-finite float, a bad kind);
+  // then nothing is sent.
+  bool set_flags(std::span<const protocol::FlagEntry> flags);
+  bool set_flag(const protocol::FlagEntry& flag) { return set_flags({&flag, 1}); }
+  // The host's whole table to the server, as FLAG_SNAPSHOT parts, when it
+  // starts a session or takes over. flags() is not changed. False when not
+  // connected, not the host, or the table cannot be split or sent.
+  bool send_flag_snapshot(std::span<const protocol::FlagEntry> flags);
+  // How the host answers a FLAG_SET; empty means accept every value.
+  void set_flag_answer(FlagAnswer answer) { flag_answer_ = std::move(answer); }
+
+  // The shared flags as the host last gave them: snapshot, then FLAG_STATEs.
+  const std::map<FlagKey, protocol::FlagEntry>& flags() const { return flags_; }
+  std::optional<protocol::FlagEntry> find_flag(std::uint32_t hash,
+                                               std::uint16_t index = 0) const;
+  // True once the last FLAG_SNAPSHOT part of this connection is in.
+  bool synced() const { return synced_; }
+  // Whether this client hosts: connected and the lowest number in the room.
+  bool is_host() const;
+
+  // Asks to warp to `player`'s scene. The request id, or nothing when not
+  // connected, `player` is not in the room or is us, or it could not be sent.
+  // Ends any request still open, whose answer is then stale.
+  std::optional<std::uint16_t> request_join(std::uint8_t player);
+  // Our open request's id, if any.
+  std::optional<std::uint16_t> join_request_id() const;
+  // Answers the latest request from `player` (a `join_request` event) with
+  // its id: accept with where we stand, or refuse. False when no such
+  // request is open, the target is one the protocol refuses (a scene of 0 or
+  // more than 64 characters, non-finite numbers), or it could not be sent.
+  bool accept_join(std::uint8_t player, std::uint16_t request_id,
+                   const protocol::JoinTarget& target);
+  bool refuse_join(std::uint8_t player, std::uint16_t request_id,
+                   protocol::JoinRefuseReason reason);
+  // Answers dropped because they were not for our open request.
+  std::size_t stale_join_answers() const { return stale_join_; }
+
   // Who is in the room, this client included, by player number. Built from
   // WELCOME and kept current by PLAYER_JOINED, PLAYER_LEFT and
   // PLAYER_STATUS. Empty until WELCOME and again after a drop (the
@@ -218,6 +321,15 @@ class Client {
   bool apply_room(const protocol::Message& message, std::uint8_t channel,
                   std::optional<Event>& out);
   Player* player_entry(std::uint8_t number);
+  // FLAG_* and JOIN_PARTNER: checks and updates, as apply_room.
+  bool apply_shared(const protocol::Message& message, std::uint8_t channel,
+                    std::optional<Event>& out);
+  bool is_other_player(std::uint8_t number) const;
+  void store_flags(std::span<const protocol::FlagEntry> flags);
+  bool send_flags(std::span<const protocol::FlagEntry> flags, bool as_state);
+  bool answer_join(protocol::JoinPartner answer);
+  void clear_shared();
+  void check_join_timeouts(std::uint64_t now);
 
   ClientConfig config_;
   bool enet_started_ = false;
@@ -243,6 +355,23 @@ class Client {
   std::vector<Player> players_;  // sorted by number
   std::deque<Event> events_;
   std::size_t rejected_ = 0;
+
+  std::map<FlagKey, protocol::FlagEntry> flags_;
+  bool synced_ = false;
+  std::vector<protocol::FlagEntry> snapshot_flags_;  // parts collected so far
+  std::uint16_t snapshot_next_ = 0;   // the part expected next
+  std::uint16_t snapshot_count_ = 0;  // 0 while no collection is open
+  FlagAnswer flag_answer_;
+
+  struct OpenJoin {
+    std::uint8_t player = 0;
+    std::uint16_t request_id = 0;
+    std::uint64_t at_us = 0;
+  };
+  std::optional<OpenJoin> our_join_;
+  std::vector<OpenJoin> their_joins_;  // at most one per asker
+  std::uint16_t next_request_id_ = 1;
+  std::size_t stale_join_ = 0;
 };
 
 }  // namespace coop::net

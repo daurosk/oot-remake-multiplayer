@@ -67,7 +67,8 @@ bool IsBreakable(std::string_view name) {
 namespace {
 
 constexpr std::uint64_t kFoliageModule = 0x4e22540;  // main + this: game::foliage::Module*
-constexpr int kBlockLines = 60;                      // per block
+constexpr int kBlockLines = 60;                      // per block and scene
+constexpr int kNoisy = 6;  // a word that changed this often is a counter: no more lines for it
 constexpr int kAllLines = 1500;                      // per session
 
 bool LooksLikePointer(std::uint64_t v) {
@@ -91,6 +92,7 @@ void FoliageProbe::Compare(const ReadWord& read, const std::string& key, std::ui
     if (b.lines >= kBlockLines || lines_ >= kAllLines) {
         b.address = address;
         b.words = std::move(now);
+        b.changes.assign(count, 0);
         return;
     }
     char text[64];
@@ -98,18 +100,24 @@ void FoliageProbe::Compare(const ReadWord& read, const std::string& key, std::ui
     if (b.address != address || b.words.size() != count) {
         std::snprintf(text, sizeof text, " at %#llx:", static_cast<unsigned long long>(address));
         line = "foliage: " + key + text;
+        b.changes.assign(count, 0);
         for (const std::uint64_t w : now) {
             std::snprintf(text, sizeof text, " %llx", static_cast<unsigned long long>(w));
             line += text;
         }
     } else {
         for (std::size_t i = 0; i < count; ++i) {
-            if (now[i] != b.words[i]) {
+            if (now[i] == b.words[i] || ++b.changes[i] > kNoisy + 1) {
+                continue;
+            }
+            if (b.changes[i] == kNoisy + 1) {
+                std::snprintf(text, sizeof text, " +%#zx:noisy", 8 * i);
+            } else {
                 std::snprintf(text, sizeof text, " +%#zx:%llx>%llx", 8 * i,
                               static_cast<unsigned long long>(b.words[i]),
                               static_cast<unsigned long long>(now[i]));
-                line += text;
             }
+            line += text;
         }
         if (line.empty()) {
             return;
@@ -130,19 +138,22 @@ std::vector<std::string> FoliageProbe::Look(const ReadWord& read, std::uint64_t 
         return out;
     }
     const auto module = read(main + kFoliageModule);
+    const std::uint64_t flags = module && *module ? read(*module + 0x30).value_or(0) & 0xff : 0;
+    // As the game's own 0x2c013c0: with bit 0 of the module's byte +0x30 set there is no scene.
+    const bool off = (flags & 1) != 0;
     const auto holder = module && *module ? read(*module + 0xf0) : std::nullopt;
-    const auto scene = holder && *holder ? read(*holder + 0x338) : std::nullopt;
+    const auto scene = !off && holder && *holder ? read(*holder + 0x338) : std::nullopt;
     const std::uint64_t s = scene.value_or(0);
     char text[160];
     if (s != scene_) {
         scene_ = s;
         blocks_.clear();
-        std::snprintf(text, sizeof text, "foliage: module %#llx flags %#llx holder %#llx scene %#llx",
+        std::snprintf(text, sizeof text,
+                      "foliage: module %#llx flags %#llx holder %#llx scene %#llx%s",
                       static_cast<unsigned long long>(module.value_or(0)),
-                      static_cast<unsigned long long>(
-                          module && *module ? read(*module + 0x30).value_or(0) & 0xff : 0),
+                      static_cast<unsigned long long>(flags),
                       static_cast<unsigned long long>(holder.value_or(0)),
-                      static_cast<unsigned long long>(s));
+                      static_cast<unsigned long long>(s), off ? " (off)" : "");
         out.emplace_back(text);
     }
     if (s == 0) {
@@ -154,8 +165,9 @@ std::vector<std::string> FoliageProbe::Look(const ReadWord& read, std::uint64_t 
                       (*link)[2]);
         where = text;
     }
-    // The scene around the field: SsboGrassCut is +0x58, SsboGather +0x88.
-    Compare(read, "scene+0x40", s + 0x40, 16, where, out);
+    // The scene's first 0x400 bytes: SsboGrassCut is +0x58, SsboGather +0x88. A cut that
+    // lands in a field this walk does not follow still shows here.
+    Compare(read, "scene", s, 128, where, out);
     for (std::uint64_t field = 0x58; field < 0x88; field += 8) {
         const auto p = read(s + field);
         if (!p || !LooksLikePointer(*p)) {

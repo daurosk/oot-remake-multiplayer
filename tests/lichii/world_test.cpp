@@ -266,7 +266,7 @@ TEST_CASE("world: the foliage probe logs the cut buffer once, then only what cha
     };
     fill(module, 64);
     fill(holder, 128);
-    fill(scene, 64);
+    fill(scene, 128);
     fill(buffer, 64);
     memory[main + 0x4e22540] = module;
     memory[module + 0xf0] = holder;
@@ -298,6 +298,31 @@ TEST_CASE("world: the foliage probe logs the cut buffer once, then only what cha
     look();
     REQUIRE(lines.size() == 1);
     CHECK(lines[0] == "foliage: cut+0x58 changed +0x10:0>3f800000 | Link 1.00 2.00 3.00");
+    // A word that changes on every look is a counter: six lines, one "noisy", then quiet.
+    for (int i = 1; i <= 9; ++i) {
+        memory[buffer + 0x18] = i;
+        look();
+        if (i <= 6) {
+            REQUIRE(lines.size() == 1);
+            CHECK(lines[0].find("+0x18:") != std::string::npos);
+        } else if (i == 7) {
+            REQUIRE(lines.size() == 1);
+            CHECK(lines[0].find("+0x18:noisy") != std::string::npos);
+        } else {
+            CHECK(lines.empty());
+        }
+    }
+    memory[buffer + 0x20] = 5;  // a quiet word next to it still shows
+    look();
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("+0x20:0>5") != std::string::npos);
+    memory[module + 0x30] = 1;  // the module says off: no scene, as the game reads it
+    look();
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("scene 0 (off)") != std::string::npos);
+    memory[module + 0x30] = 0;
+    look();
+    REQUIRE(lines.size() == 3);  // back: the path and both blocks again
     memory[main + 0x4e22540] = 0;  // scene gone
     look();
     REQUIRE(lines.size() == 1);

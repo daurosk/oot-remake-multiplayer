@@ -43,6 +43,7 @@ private:
     struct Block {
         std::uint64_t address = 0;
         std::vector<std::uint64_t> words;
+        std::vector<int> changes;  // per word; a word that changes all the time is left out
         int lines = 0;
     };
     void Compare(const ReadWord& read, const std::string& key, std::uint64_t address,

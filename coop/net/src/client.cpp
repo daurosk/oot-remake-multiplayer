@@ -55,7 +55,7 @@ ClientConfig sanitised(ClientConfig config) {
 // Channels 0 to 2 are reliable and ordered, 3 and 4 unreliable and sequenced
 // (ENet's default for a packet without flags).
 enet_uint32 packet_flags(std::uint8_t channel) {
-  return channel < proto::kChannelPlayerSamples ? ENET_PACKET_FLAG_RELIABLE : 0u;
+  return channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
 }
 
 }  // namespace

@@ -26,3 +26,11 @@ if(MSVC)
 else()
   target_compile_options(enet PRIVATE -w)
 endif()
+
+# ENet finds header offsets by member access through a null pointer
+# (protocol.c, "& ((ENetProtocolHeader *) 0) -> sentTime"), an old offsetof
+# idiom that UBSan reports. Turn off only that check, only for ENet; ASan and
+# the rest of UBSan still cover it.
+if(COOP_SANITIZE)
+  target_compile_options(enet PRIVATE -fno-sanitize=null)
+endif()

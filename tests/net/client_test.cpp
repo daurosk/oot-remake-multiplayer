@@ -99,14 +99,16 @@ class FakeServer {
 
   void send(const proto::Message& message, std::uint8_t channel) {
     REQUIRE(last_peer != nullptr);
-    send_bytes(*proto::encode(message), channel);
+    const auto bytes = proto::encode(message);
+    REQUIRE(bytes.has_value());  // a test sends only messages that encode
+    send_bytes(*bytes, channel);
   }
 
   void send_bytes(const std::vector<std::uint8_t>& bytes, std::uint8_t channel) {
     REQUIRE(last_peer != nullptr);
     ENetPacket* packet = enet_packet_create(
         bytes.data(), bytes.size(),
-        channel < proto::kChannelPlayerSamples ? ENET_PACKET_FLAG_RELIABLE : 0u);
+        channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u);
     REQUIRE(enet_peer_send(last_peer, channel, packet) == 0);
     enet_host_flush(host_);
   }
@@ -294,7 +296,7 @@ TEST_CASE("client: handshake, ping, clock offset and messages") {
   server.send(proto::Chat{1, "hey"}, proto::kChannelSession);
   server.send(proto::Chat{0, "no player"}, proto::kChannelSession);  // wrong sender
   server.send(proto::Chat{1, "wrong channel"}, proto::kChannelPlayerSamples);
-  server.send(proto::Hello{}, proto::kChannelSession);  // client-only type
+  server.send(config_for(server).hello, proto::kChannelSession);  // client-only type
   server.send_bytes({0xff, 0xff, 0x00, 0x00}, proto::kChannelSession);  // unknown type
   server.send_bytes({0x09, 0x00}, proto::kChannelSession);  // truncated
   REQUIRE(wait_event(client, server, events, EventKind::message));

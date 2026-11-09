@@ -275,7 +275,7 @@ What it does:
 3. Plays `scenarios\<name>.A.txt` in A and `<name>.B.txt` in B (none: B stands still), and captures both windows every `-Every` seconds (default 3) and at each `mark` line.
 4. Closes both games and the server, copies the emulator and server logs beside the screenshots, and prints the folder: `coop-kit\shots\<scenario>\<date-time>\` (outside the repo: game screenshots are never committed). A run that went wrong leaves `FAILED.txt` there with the reason.
 
-The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`.
+The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`. Give them as one comma list, `-Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS_CHEAT=1"`: with `powershell -File` that is how several arrive anyway (before 2026-11-09 such a list was set as one wrong variable, so the switches were silently off). The list replaces the default, and the runner prints each switch it sets.
 
 ### Input scripts
 

@@ -250,11 +250,11 @@ private:
     bool Ready(Core::System& system) {
         auto* process = system.ApplicationProcess();
         if (process == nullptr || system.GetApplicationProcessProgramID() != kOcarinaProgramId) {
-            return;
+            return false;
         }
         const auto& build = system.GetApplicationProcessBuildID();
         if (std::memcmp(build.data(), kGameBuildId.data(), kGameBuildId.size()) != 0) {
-            return;
+            return false;
         }
         if (process != process_) {
             process_ = process;

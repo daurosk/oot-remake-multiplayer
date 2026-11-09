@@ -466,3 +466,43 @@ TEST_CASE("objects: a pickup another game took is removed here") {
     REQUIRE(present.size() == 1);
     CHECK(present[0].objects.size() == 1);
 }
+
+TEST_CASE("objects: the owner sends its enemy's animation; a copy is asked to play it") {
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 2);
+    e.animation = proto::Animation{"Wait", 3.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.animation);
+    CHECK(samples[0].state.animation->name == "Wait");
+    // A new animation alone is a change worth a sample.
+    e.animation = proto::Animation{"Damage", 0.0f, 1.0f};
+    samples = All<proto::ObjectSample>(Tick(owner, 70 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    CHECK(samples[0].state.animation->name == "Damage");
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 2);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 0, {c});
+    Own(copy, id, 1);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(1020 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x200);
+    CHECK(plays[0].name == "Damage");
+    // Once it shows it, nothing more is asked.
+    c.animation = proto::Animation{"Damage", 2.0f, 1.0f};
+    Tick(copy, 1040 * kMs, {c}, 2);
+    plays.clear();
+    copy.Plays(1050 * kMs, plays);
+    CHECK(plays.empty());
+}

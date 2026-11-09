@@ -100,6 +100,29 @@ constexpr u64 kActorVtable = 0x4b25e18;
 constexpr u64 kSetMatrix = 0x4c6580;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 constexpr unsigned kMoverCallerOrder = 20;  // after the puppets and spawn copies (10)
+// Animations (docs/puppet.md "Animation"): the AS controller is
+// [[[actor + 0x270] + 0x40] + 0x18] + 0x18; slot 0 is [controller + 0x20];
+// its command name char* +0x10, rate f32 +0xd4, frame f32 +0xe8. The play
+// request for 0x2022a0: +0 actor, +8 name, +0x10 slot, +0x14 rate, +0x18 and
+// +0x1c -1.0, +0x20 skip-if-same, +0x28 node.
+constexpr u64 kComponentsAs = 0x40;
+constexpr u64 kAsInner = 0x18;
+constexpr u64 kAsController = 0x18;
+constexpr u64 kAsSlotCount = 0x18;
+constexpr u64 kAsSlotArray = 0x20;
+constexpr u64 kAsSlotName = 0x10;
+constexpr u64 kAsSlotRate = 0xd4;
+constexpr u64 kAsSlotFrame = 0xe8;
+constexpr u64 kPlayAs = 0x2022a0;
+constexpr u64 kMalloc = 0x14c6c90;
+// The mover's block from the game's malloc: the play request, then one
+// fixed cell per animation name (a slot may keep the name's pointer).
+constexpr u64 kBlockRequest = 0x0;
+constexpr u64 kBlockNames = 0x40;
+constexpr u64 kNameCell = 0x50;
+constexpr u64 kNameCells = 400;
+constexpr u64 kBlockSize = kBlockNames + kNameCell * kNameCells;
+constexpr u64 kReplayMs = 250;  // the copy's own AI took over: play again at most this often
 constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
 constexpr u64 kComponentLife = 0x2b8;
@@ -226,25 +249,44 @@ public:
         bool rotation = false;              // false: keep the actor's own
     };
 
-    void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes) {
+    void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes,
+              std::vector<PlayWish> plays) {
         std::lock_guard lock(mutex_);
         main_ = main;
         poses_ = std::move(poses);
         removes_ = std::move(removes);
+        plays_ = std::move(plays);
     }
 
     // Calls made since the last ask (for the 5 s log line).
-    std::pair<std::size_t, std::size_t> TakeCounts() {
+    std::array<std::size_t, 3> TakeCounts() {
         std::lock_guard lock(mutex_);
-        const auto counts = std::pair{moved_, deleted_};
+        const std::array<std::size_t, 3> counts{moved_, deleted_, played_};
         moved_ = 0;
         deleted_ = 0;
+        played_ = 0;
         return counts;
     }
 
-    std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call) {
+    std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call,
+                                         std::uint64_t result, std::uint64_t now_ms) {
         std::lock_guard lock(mutex_);
+        if (after_call && allocating_) {
+            allocating_ = false;
+            block_ = result;
+            return std::nullopt;  // next frame
+        }
         if (!after_call) {
+            if (block_ == 0 && main_ != 0 && !allocating_ && !plays_.empty() && !alloc_tried_) {
+                allocating_ = true;
+                alloc_tried_ = true;
+                CoopPuppet::Call c;
+                c.function = main_ + kMalloc;
+                c.x[0] = kBlockSize;
+                return c;
+            }
+            work_plays_ = plays_;
+            next_play_ = 0;
             work_ = poses_;
             work_removes_.clear();
             for (const u64 a : removes_) {
@@ -278,6 +320,39 @@ public:
             c.x[1] = 0;
             return c;
         }
+        while (next_play_ < work_plays_.size() && block_ != 0) {
+            const PlayWish& p = work_plays_[next_play_++];
+            if (!Alive(guest, p.address)) {
+                continue;
+            }
+            auto& last = played_at_[p.address];
+            if (last.first == p.name && now_ms - last.second < kReplayMs) {
+                continue;
+            }
+            const u64 text = Cell(guest, p.name);
+            if (text == 0) {
+                continue;
+            }
+            std::array<std::uint8_t, 0x30> request{};
+            const float rate = p.rate;
+            const float unset = -1.0f;
+            const std::int32_t index = 0;
+            std::memcpy(request.data() + 0x00, &p.address, 8);
+            std::memcpy(request.data() + 0x08, &text, 8);
+            std::memcpy(request.data() + 0x10, &index, 4);
+            std::memcpy(request.data() + 0x14, &rate, 4);
+            std::memcpy(request.data() + 0x18, &unset, 4);
+            std::memcpy(request.data() + 0x1c, &unset, 4);
+            if (!guest.Write(block_ + kBlockRequest, request.data(), request.size())) {
+                continue;
+            }
+            last = {p.name, now_ms};
+            ++played_;
+            CoopPuppet::Call c;
+            c.function = main_ + kPlayAs;
+            c.x[0] = block_ + kBlockRequest;
+            return c;
+        }
         while (next_remove_ < work_removes_.size()) {
             const u64 a = work_removes_[next_remove_++];
             asked_.insert(a);
@@ -295,6 +370,25 @@ public:
     }
 
 private:
+    // The fixed cell holding `name` in the block (written once), or 0 when
+    // the block is full or the name too long.
+    u64 Cell(CoopPuppet::Guest& guest, const std::string& name) {
+        if (const auto it = cells_.find(name); it != cells_.end()) {
+            return it->second;
+        }
+        if (name.size() >= kNameCell || cells_.size() >= kNameCells) {
+            return 0;
+        }
+        const u64 at = block_ + kBlockNames + kNameCell * cells_.size();
+        std::array<char, kNameCell> text{};
+        std::memcpy(text.data(), name.data(), name.size());
+        if (!guest.Write(at, text.data(), text.size())) {
+            return 0;
+        }
+        cells_.emplace(name, at);
+        return at;
+    }
+
     // On the game thread, so the list cannot change under us: still on the
     // actor list (its node points back at it), awake, and an actor.
     bool Alive(CoopPuppet::Guest& guest, u64 a) {
@@ -310,6 +404,15 @@ private:
     u64 main_ = 0;
     std::vector<Pose> poses_;
     std::vector<u64> removes_;
+    std::vector<PlayWish> plays_;
+    std::vector<PlayWish> work_plays_;
+    std::size_t next_play_ = 0;
+    std::size_t played_ = 0;
+    std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
+    std::unordered_map<std::string, u64> cells_;
+    u64 block_ = 0;
+    bool allocating_ = false;
+    bool alloc_tried_ = false;
     std::vector<Pose> work_;
     std::vector<u64> work_removes_;
     std::unordered_set<u64> asked_;  // deletes asked once
@@ -375,8 +478,10 @@ public:
         if (!sharing_) {
             static const bool registered = [] {
                 CoopSvc::AddCaller(kMoverCallerOrder,
-                                   [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
-                                      std::uint64_t) { return TheMover().Step(guest, after_call); });
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t now_ms) {
+                                       return TheMover().Step(guest, after_call, result, now_ms);
+                                   });
                 return true;
             }();
             (void)registered;
@@ -491,6 +596,7 @@ private:
                 if (const auto m = r.Get<std::array<float, 9>>(a + kActorRotation)) {
                     s.rotation = *m;
                 }
+                s.animation = Animation(r, a);
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);
                     const auto max = r.Get<s32>(value->second + 8);
@@ -504,6 +610,43 @@ private:
         }
         names_ = std::move(names);
         return true;
+    }
+
+    // AS slot 0 of an actor: command name, frame, rate (as PlayerReader).
+    std::optional<coop::protocol::Animation> Animation(Reader& r, u64 a) {
+        const auto table = r.Ptr(a + kActorComponents);
+        const auto as = table ? r.Ptr(*table + kComponentsAs) : std::nullopt;
+        const auto inner = as ? r.Ptr(*as + kAsInner) : std::nullopt;
+        const auto controller = inner ? r.Ptr(*inner + kAsController) : std::nullopt;
+        if (!controller || static_cast<s32>(r.Get<u32>(*controller + kAsSlotCount).value_or(0)) < 1) {
+            return std::nullopt;
+        }
+        const auto array = r.Ptr(*controller + kAsSlotArray);
+        const auto slot = array ? r.Ptr(*array) : std::nullopt;
+        const auto name_at = slot ? r.Ptr(*slot + kAsSlotName) : std::nullopt;
+        if (!name_at) {
+            return std::nullopt;
+        }
+        const auto chunk = r.Get<std::array<char, 64>>(*name_at);
+        if (!chunk) {
+            return std::nullopt;
+        }
+        const std::size_t n = strnlen(chunk->data(), chunk->size());
+        if (n == 0 || n >= chunk->size()) {
+            return std::nullopt;
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            if ((*chunk)[i] < 0x20 || (*chunk)[i] > 0x7e) {
+                return std::nullopt;
+            }
+        }
+        const float frame = r.Get<float>(*slot + kAsSlotFrame).value_or(0.0f);
+        const float rate = r.Get<float>(*slot + kAsSlotRate).value_or(1.0f);
+        if (!std::isfinite(frame) || !std::isfinite(rate) || std::fabs(frame) > 1e5f ||
+            std::fabs(rate) > 100.0f) {
+            return std::nullopt;
+        }
+        return coop::protocol::Animation{std::string(chunk->data(), n), frame, rate};
     }
 
     // The life and max value entries ([life + 0x1c10], [life + 0x1c18]).
@@ -642,17 +785,19 @@ private:
             placed.emplace(w.address, w.position);
         }
         placed_ = std::move(placed);
-        TheMover().Want(main_, std::move(wish), sync_.Removes());
+        std::vector<PlayWish> plays;
+        sync_.Plays(now_us, plays);
+        TheMover().Want(main_, std::move(wish), sync_.Removes(), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
-            const auto [moved, deleted] = TheMover().TakeCounts();
-            if (drift_count_ > 0 || moved > 0 || deleted > 0 ||
+            const auto [moved, deleted, played] = TheMover().TakeCounts();
+            if (drift_count_ > 0 || moved > 0 || deleted > 0 || played > 0 ||
                 sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {
                 LOG_INFO(Core,
                          "coop: objects: share placed {} copies; off from where we put them "
-                         "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes; "
-                         "hurts taken {} missed {}",
+                         "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes, {} "
+                         "plays; hurts taken {} missed {}",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
-                         drift_max_, drift_count_, moved, deleted, sync_.HurtsTaken(),
+                         drift_max_, drift_count_, moved, deleted, played, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
             }
             drift_at_ = now_us;

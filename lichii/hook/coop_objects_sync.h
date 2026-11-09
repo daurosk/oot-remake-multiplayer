@@ -45,6 +45,14 @@ struct Seen {
     std::optional<coop::protocol::ObjectLife> life;
     coop::protocol::Vec3 position{};
     std::optional<std::array<float, 9>> rotation;  // actor +0x328, rows of 3
+    std::optional<coop::protocol::Animation> animation;  // AS slot 0
+};
+
+// An animation a copy should play (the owner's AS slot 0 command).
+struct PlayWish {
+    std::uint64_t address = 0;
+    std::string name;
+    float rate = 1.0f;
 };
 
 using Mat3 = std::array<float, 9>;
@@ -115,6 +123,10 @@ public:
     // Present thread, every frame: where each copy we do not own should be.
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
 
+    // Present thread: for each copy we do not own, the owner's latest
+    // animation, when the copy shows another one.
+    void Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const;
+
     // The loaded actors whose pickup another game took: to delete.
     std::vector<std::uint64_t> Removes() const;
 
@@ -144,6 +156,7 @@ private:
         coop::protocol::Vec3 position{};
         std::optional<coop::protocol::Quat> rotation;
         std::optional<coop::protocol::Vec3> velocity;
+        std::optional<coop::protocol::Animation> animation;
     };
     struct Object {
         coop::protocol::ObjectId id;
@@ -152,6 +165,7 @@ private:
         std::int32_t max = 0;
         coop::protocol::Vec3 position{};
         std::optional<Mat3> rotation;
+        std::optional<coop::protocol::Animation> animation;
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
         std::string name;
@@ -162,6 +176,7 @@ private:
         std::optional<coop::protocol::ObjectLife> sent_life;
         coop::protocol::Vec3 sent_position{};
         std::optional<coop::protocol::Quat> sent_rotation;
+        std::string sent_animation;
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;

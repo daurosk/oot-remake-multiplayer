@@ -205,6 +205,7 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     state.time = {now_us, ++o.sequence};
     state.position = o.position;
     state.velocity = o.velocity;
+    state.animation = o.animation;
     if (o.rotation) {
         state.rotation = QuatOf(*o.rotation);
     }
@@ -255,6 +256,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.seen_at = now_us;
         o.position = s.position;
         o.rotation = s.rotation;
+        o.animation = s.animation;
         if (s.life) {
             if (o.life && s.life->life < *o.life) {
                 o.fight_until = now_us + kFightUs;
@@ -297,6 +299,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.address = s->address;
         o.position = s->position;
         o.rotation = s->rotation;
+        o.animation = s->animation;
         o.seen_at = now_us;
         o.name = s->name;
         if (s->life) {
@@ -349,8 +352,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.life ? std::optional(proto::ObjectLife{*o.life, o.max}) : std::nullopt;
             const std::optional<proto::Quat> rotation =
                 o.rotation ? std::optional(QuatOf(*o.rotation)) : std::nullopt;
+            const std::string animation = o.animation ? o.animation->name : std::string();
             const bool changed = life != o.sent_life || Moved(o.position, o.sent_position) ||
-                                 Turned(rotation, o.sent_rotation);
+                                 Turned(rotation, o.sent_rotation) ||
+                                 animation != o.sent_animation;
             if (!o.sent_once || changed || now_us - o.sent_at >= kStillEveryUs) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -362,6 +367,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.sent_life = life;
                 o.sent_position = o.position;
                 o.sent_rotation = rotation;
+                o.sent_animation = animation;
             }
         }
     }
@@ -443,8 +449,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (sample->state.position && Finite(*sample->state.position)) {
                 const std::uint64_t t = sample->state.time.server_time_us;
                 if (o->received.empty() || t > o->received.back().time) {
-                    o->received.push_back(
-                        {t, *sample->state.position, sample->state.rotation, sample->state.velocity});
+                    o->received.push_back({t, *sample->state.position, sample->state.rotation,
+                                           sample->state.velocity, sample->state.animation});
                     while (o->received.size() > kKeepSamples) {
                         o->received.pop_front();
                     }
@@ -561,6 +567,25 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
             w.rotation = MatOf(*rotation);
         }
         out.push_back(w);
+    }
+}
+
+void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
+    for (const auto& [address, o] : objects_) {
+        if (o.received.empty() || now_us < o.received.back().time ||
+            now_us - o.received.back().time > kPoseStaleUs) {
+            continue;
+        }
+        const auto owner = owners_.find(o.id);
+        if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
+            continue;
+        }
+        const auto& wanted = o.received.back().animation;
+        if (!wanted || wanted->name.empty() || (o.animation && o.animation->name == wanted->name)) {
+            continue;
+        }
+        out.push_back({address, wanted->name,
+                       std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f});
     }
 }
 

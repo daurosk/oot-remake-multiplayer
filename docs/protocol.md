@@ -207,7 +207,18 @@ How it moves:
 
 ### Objects (stage 5)
 
-Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). Codec only so far: the server and the hook do not use these yet.
+Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). The server keeps an object table (below); the hook does not send these yet.
+
+The server's rules today (`server/session.cpp`):
+
+- A player's scene is the one of its latest `OBJECT_PRESENT` or `PLAYER_SAMPLE` scene. Changing scene lets go of everything it had loaded or made in the old one.
+- `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. Made ids in the list are ignored.
+- `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` only from the maker named in the id, once. Anything else is dropped.
+- `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner.
+- When the owner of a placed object unloads it, changes scene or leaves, the game with the lowest number that still has it takes it with epoch + 1: it gets `HANDOVER_STATE` with the last relayed sample (player field: the old owner) when there was one, then everyone in the scene gets `OBJECT_OWNER`. Nobody left: the object is forgotten.
+- A made object goes when its maker lets go of it: the others in the scene get `OBJECT_REMOVE` (gone, at its last position) from the server.
+- A removed placed object stays, owned by nobody, until no game lists it, so a copy that is still loaded cannot bring it back.
+- Not yet: `HANDOVER_ASK` (a client's `HANDOVER_STATE` is dropped), the fight lock, the distance hand-over and groups.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|

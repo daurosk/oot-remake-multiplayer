@@ -11,6 +11,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -59,6 +60,10 @@ struct SessionConfig {
   // name taken. The server pings every 250 ms and a live build answers, so a
   // live player is never this quiet. 0: never take over.
   std::uint64_t rejoin_stale_us = 1'000'000;
+  // Most shared objects (enemies, projectiles) the server keeps track of.
+  // Objects past it are not owned by anyone and nothing about them is
+  // relayed; each one turned away is counted in object_table_full.
+  std::size_t max_objects = 4096;
   // Called with one line for each join, leave and refusal. May be empty.
   std::function<void(const std::string&)> log;
 };
@@ -109,6 +114,15 @@ struct Stats {
   std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
   std::uint64_t flag_clashes = 0;     // host snapshot entries that differed (server kept)
   std::uint64_t flag_table_full = 0;  // entries not kept: max_flags reached
+  // Objects (stage 5). Relayed ones count in relayed too.
+  std::uint64_t object_relayed = 0;  // SPAWN, SAMPLE, REMOVE passed on
+  // SPAWN, SAMPLE, REMOVE or HANDOVER_STATE not from the owner of the
+  // object's current epoch, or for an object the server does not know.
+  std::uint64_t object_refused = 0;
+  std::uint64_t owner_changes = 0;      // owner set or moved (not first owner)
+  std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
+  std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
+  std::uint64_t object_table_full = 0;  // objects turned away: max_objects
 
   std::uint64_t errors(protocol::Error e) const {
     return by_error[static_cast<std::size_t>(e)];
@@ -154,6 +168,11 @@ class Session {
   // Connections from `address` still waiting for HELLO.
   std::size_t half_open_count(std::uint32_t address) const;
   std::optional<std::uint8_t> player_number(ConnectionId id) const;
+  // Shared objects the server keeps track of.
+  std::size_t object_count() const { return objects_.size(); }
+  // An object's owner (0: nobody) and epoch; none when it is not known.
+  std::optional<std::pair<std::uint8_t, std::uint16_t>> object_owner(
+      const protocol::ObjectId& id) const;
 
  private:
   enum class State : std::uint8_t { awaiting_hello, joined, closing };
@@ -171,6 +190,25 @@ class Session {
     std::optional<std::uint32_t> address;
     std::uint8_t number = 0;  // 1 to 4 once joined
     std::string nickname;
+    // The scene the player is in, from its latest OBJECT_PRESENT or
+    // PLAYER_SAMPLE scene; empty while not known.
+    std::string scene;
+    // The placed objects it has loaded in that scene. Its own made objects
+    // are not listed here: they are found by owner.
+    std::set<protocol::ObjectId> present;
+  };
+
+  // One shared object (docs/objects.md "Server").
+  struct Object {
+    std::string scene;
+    std::set<ConnectionId> present;     // games that have it loaded
+    std::optional<ConnectionId> owner;  // none: nobody, or removed
+    std::uint16_t epoch = 0;
+    bool made = false;     // made by a player (OBJECT_SPAWN): never handed over
+    bool removed = false;  // its owner removed it; kept until nobody has it
+    std::uint8_t last_owner = 0;  // the player who owned it before, 0: none
+    // The last state relayed from its owner, for a hand-over with no answer.
+    std::optional<protocol::ObjectState> last_state;
   };
 
   void on_hello(ConnectionId id, Connection& c, const protocol::Hello& hello,
@@ -184,6 +222,24 @@ class Session {
   // Keeps an entry in the table; false when it is new and the table is full.
   bool keep_flag(const protocol::FlagEntry& e);
   void send_snapshot(ConnectionId to);
+  void on_object_present(ConnectionId id, Connection& c, const protocol::ObjectPresent& p);
+  void on_object_message(ConnectionId id, Connection& c, std::uint8_t channel,
+                         protocol::Message& message);
+  void on_damage(ConnectionId id, Connection& c, protocol::Damage& d);
+  // The player is in `scene` now; leaving another scene lets go of its objects.
+  void set_scene(ConnectionId id, Connection& c, const std::string& scene);
+  // The player no longer has the object loaded (unload, scene change, leave):
+  // a made object of its own is removed, a placed one it owns handed over.
+  void drop_presence(ConnectionId id, std::uint8_t number, const protocol::ObjectId& oid);
+  // Lets go of everything the player has loaded or made.
+  void drop_all_objects(ConnectionId id, std::uint8_t number,
+                        const std::set<protocol::ObjectId>& present);
+  // Gives the object to the next present player (lowest number), or nobody.
+  void hand_over(const protocol::ObjectId& oid, Object& o, std::uint8_t old_owner);
+  void announce_owner(const protocol::ObjectId& oid, const Object& o);
+  // To every joined player in `scene` but `except`; empty scene: everyone.
+  void send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
+                     std::uint8_t channel, const protocol::Message& m);
   std::optional<ConnectionId> connection_of(std::uint8_t number) const;
   bool within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us);
   void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
@@ -205,6 +261,8 @@ class Session {
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;
+  // Shared objects, by id. Forgotten when no game has them loaded.
+  std::map<protocol::ObjectId, Object> objects_;
   std::vector<Action> actions_;
   Stats stats_;
 };

@@ -146,12 +146,21 @@ def fake_player_pack(variant):
             "ActorNameRef": "?ActorSystem/ActorName/Player.engine__actor__ActorName.bgyml",
             "PhysicsRef": "?Component/Physics/P.engine__component__PhysicsParam.bgyml",
             "LODRef": "?Component/LODParam/Shared.engine__component__LODParam.bgyml",
+            "BlackboardRef": "?Component/Blackboard/BlackboardInfo/P.engine__component__BlackboardInfo.bgyml",
         }
     }
     child = {
         "$parent": "Work/Actor/Player_Base.engine__actor__ActorParam.gyml",
-        "Components": {"ModelInfoRef": f"?Component/ModelInfo/{variant}.engine__component__ModelInfo.bgyml"},
+        "Components": {
+            "ModelInfoRef": f"?Component/ModelInfo/{variant}.engine__component__ModelInfo.bgyml",
+            "EquipmentUserRef": f"?Component/EquipmentUserParam/{variant}.game__component__EquipmentUserParam.bgyml",
+        },
     }
+    eu = "Component/EquipmentUserParam/"
+    bb = "Component/Blackboard/BlackboardParamTable/"
+
+    def key(k, inst=True):
+        return {"BBKey": k, "InitValConverted": "", "IsInstanceParam": inst, "StringParamType": "String256"}
     asinfo_parent = {"NumSlots": 4}
     files = {
         "Actor/Player_Base.engine__actor__ActorParam.bgyml": byml.dumps(base),
@@ -164,6 +173,24 @@ def fake_player_pack(variant):
         "Component/AnimationParam/P.engine__component__AnimationParam.bgyml": byml.dumps({"A": []}),
         "Component/Physics/P.engine__component__PhysicsParam.bgyml": byml.dumps({"Rigid": 1}),
         "AI/Player.root.ainb": b"AIB " + b"\0" * 8,
+        f"{eu}{variant}.game__component__EquipmentUserParam.bgyml": byml.dumps(
+            {"$parent": f"Work/{eu}Player.game__component__EquipmentUserParam.gyml", "AccessoryBindBoneName1": "Pod_B"}),
+        f"{eu}Player.game__component__EquipmentUserParam.bgyml": byml.dumps(
+            {"$parent": f"Work/{eu}Default.game__component__EquipmentUserParam.gyml",
+             "BlackboardTableRef": f"Work/{bb}Player.engine__component__BlackboardParamTable.gyml"}),
+        f"{eu}Default.game__component__EquipmentUserParam.bgyml": byml.dumps(
+            {"BlackboardTableRef": f"Work/{bb}EquipmentUser.engine__component__BlackboardParamTable.gyml"}),
+        f"{bb}Player.engine__component__BlackboardParamTable.bgyml": byml.dumps(
+            {"$parent": f"Work/{bb}WeaponUser.engine__component__BlackboardParamTable.gyml",
+             "BlackboardParamStringArray": [key("EquipmentUser_ArmorUpper"), key("EquipmentUser_Bow")]}),
+        f"{bb}WeaponUser.engine__component__BlackboardParamTable.bgyml": byml.dumps(
+            {"BlackboardParamStringArray": [key("EquipmentUser_Weapon"), key("EquipmentUser_Shield"),
+                                            key("EquipmentUser_Bow", inst=False)],
+             "BlackboardParamS32Array": [{"BBKey": "WeaponUser_CurrentEquipDrawnWeaponType", "InitVal": 0,
+                                          "IsInstanceParam": False}]}),
+        f"{bb}EquipmentUser.engine__component__BlackboardParamTable.bgyml": byml.dumps(
+            {"BlackboardParamStringArray": [key("EquipmentUser_SubWeapon")]}),
+        "Component/Blackboard/BlackboardInfo/P.engine__component__BlackboardInfo.bgyml": byml.dumps({"T": []}),
     }
     return files
 
@@ -171,7 +198,7 @@ def fake_player_pack(variant):
 class BuildPackTest(unittest.TestCase):
     def test_pack_contents(self):
         members = fake_player_pack("Child")
-        pack, ap, names = build.build_pack(members, "Child")
+        pack, ap, names, keys = build.build_pack(members, "Child")
         out = sarc.read(pack)
         doc = byml.loads(out["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])
         comps = doc["Components"]
@@ -189,6 +216,41 @@ class BuildPackTest(unittest.TestCase):
         self.assertNotIn("AI/Player.root.ainb", out)
         self.assertNotIn("Actor/Player_Base.engine__actor__ActorParam.bgyml", out)
         self.assertEqual(sorted(out), names)
+        # Equipment: the EquipmentUserParam chain and the blackboard table it names come
+        # along; the player's own BlackboardRef does not.
+        self.assertEqual(comps["EquipmentUserRef"],
+                         "?Component/EquipmentUserParam/Child.game__component__EquipmentUserParam.bgyml")
+        self.assertNotIn("BlackboardRef", comps)
+        for p in ("Component/EquipmentUserParam/Child.game__component__EquipmentUserParam.bgyml",
+                  "Component/EquipmentUserParam/Player.game__component__EquipmentUserParam.bgyml",
+                  "Component/EquipmentUserParam/Default.game__component__EquipmentUserParam.bgyml",
+                  "Component/Blackboard/BlackboardParamTable/Player.engine__component__BlackboardParamTable.bgyml",
+                  "Component/Blackboard/BlackboardParamTable/WeaponUser.engine__component__BlackboardParamTable.bgyml"):
+            self.assertIn(p, out)
+        self.assertNotIn("Component/Blackboard/BlackboardInfo/P.engine__component__BlackboardInfo.bgyml", out)
+        # The first BlackboardTableRef in the chain wins (Player, not Default), child
+        # entries override the $parent's (Bow is an instance key again).
+        self.assertEqual(keys, ["EquipmentUser_ArmorUpper", "EquipmentUser_Bow",
+                                "EquipmentUser_Shield", "EquipmentUser_Weapon"])
+
+    def test_no_equipment_fails(self):
+        members = fake_player_pack("Child")
+        ap = "Actor/Player_Child.engine__actor__ActorParam.bgyml"
+        doc = byml.loads(members[ap])
+        del doc["Components"]["EquipmentUserRef"]
+        members[ap] = byml.dumps(doc)
+        with self.assertRaises(build.BuildError):
+            build.build_pack(members, "Child")
+
+    def test_equipment_without_table_fails(self):
+        members = fake_player_pack("Child")
+        for name in ("Player", "Default"):
+            p = f"Component/EquipmentUserParam/{name}.game__component__EquipmentUserParam.bgyml"
+            doc = byml.loads(members[p])
+            doc.pop("BlackboardTableRef")
+            members[p] = byml.dumps(doc)
+        with self.assertRaises(build.BuildError):
+            build.build_pack(members, "Child")
 
     def test_missing_parent_fails(self):
         members = fake_player_pack("Child")
@@ -292,6 +354,9 @@ class FullBuildTest(unittest.TestCase):
         self.assertGreaterEqual(t.get("RSDB/ActorInfo.Product.999.rstbl.byml"), 1000)
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
+        for a in man["actors"]:
+            self.assertIn("EquipmentUser_Weapon", a["equipment_keys"])
+            self.assertIn("EquipmentUser_Shield", a["equipment_keys"])
         # Running again gives the same files.
         first = {r: build.read(os.path.join(out, r)) for r in
                  ("RSDB/ActorInfo.Product.999.rstbl.byml.zs", "Pack/Actor/CoopPuppet_Child.pack.zs")}
@@ -313,6 +378,14 @@ class FullBuildTest(unittest.TestCase):
         doc = byml.loads(d.decompress(build.read(os.path.join(mod, "romfs", banc))))
         self.assertEqual([a["Gyaml"] for a in doc["Actors"]], ["Animal", "CoopPuppet_Child"])
         self.assertEqual(doc["Actors"][1]["Translate"], [1.0, 2.0, 3.0])
+        self.assertNotIn("Dynamic", doc["Actors"][1])
+        # Instance parameters go into the placement's Dynamic table, only for that actor.
+        place_test.place(self.romfs, mod, banc, [("CoopPuppet_Child", (1, 2, 3)), ("Animal", (4, 5, 6))],
+                         log=lambda *_: None,
+                         params={"CoopPuppet_Child": {"EquipmentUser_Weapon": "Weapon_Sword_Kokiri"}})
+        doc = byml.loads(d.decompress(build.read(os.path.join(mod, "romfs", banc))))
+        self.assertEqual(doc["Actors"][1]["Dynamic"], {"EquipmentUser_Weapon": "Weapon_Sword_Kokiri"})
+        self.assertNotIn("Dynamic", doc["Actors"][2])
 
     def test_not_a_romfs(self):
         with self.assertRaises(build.BuildError):

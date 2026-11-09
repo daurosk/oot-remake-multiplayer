@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 19:30:00 -0900
+Subject: [PATCH] coop: hand svc 0xf4 and Ocarina's main to the co-op hook
+
+With LICHII_COOP on, two calls into the co-op hook (lichii/hook/coop_svc.cpp
+in oot-remake-multiplayer):
+
+- PatchManager::PatchNSO calls CoopSvc::PatchMain after the built-in
+  patches. It writes the puppet code cave into Ocarina's main, checked
+  against the original words, only when LICHII_COOP_PUPPET=1 or
+  LICHII_COOP_DEBUG_PUPPET=1.
+- Kernel::Svc::Call asks CoopSvc::Call first. It handles svc 0xf4 from
+  Ocarina (the cave's call into the emulator) and returns false for
+  everything else, which goes on as before.
+---
+ src/core/file_sys/patch_manager.cpp | 6 ++++++
+ src/core/hle/kernel/svc.cpp         | 8 ++++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/src/core/file_sys/patch_manager.cpp b/src/core/file_sys/patch_manager.cpp
+index 02d0298e8a..ad16015096 100644
+--- a/src/core/file_sys/patch_manager.cpp
++++ b/src/core/file_sys/patch_manager.cpp
+@@ -36,6 +36,9 @@
+ #include "core/loader/loader.h"
+ #include "core/loader/nso.h"
+ #include "core/memory/cheat_engine.h"
++#ifdef LICHII_COOP
++#include "coop_svc.h"
++#endif
+ 
+ namespace FileSys {
+ namespace {
+@@ -643,6 +646,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
+         LOG_INFO(Loader, "    - Applying built-in patch \"{}\" ({} records) to {}", patch.name,
+                  patch.records.size(), name);
+     }
++#ifdef LICHII_COOP
++    CoopSvc::PatchMain(title_id, name, build_id, nso, out);
++#endif
+ 
+     if (out.size() < sizeof(Loader::NSOHeader)) {
+         return nso;
+diff --git a/src/core/hle/kernel/svc.cpp b/src/core/hle/kernel/svc.cpp
+index 2648f77fbb..c374ef5d4f 100644
+--- a/src/core/hle/kernel/svc.cpp
++++ b/src/core/hle/kernel/svc.cpp
+@@ -15,6 +15,9 @@
+ #include "core/hle/kernel/k_process.h"
+ #include "core/hle/kernel/svc.h"
+ #include "core/hle/kernel/svc/svc_nx2_oot_poll.h"
++#ifdef LICHII_COOP
++#include "coop_svc.h"
++#endif
+ #include "core/hle/kernel/k_readable_event.h"
+ #include "core/hle/service/kernel_helpers.h"
+ 
+@@ -2542,6 +2545,11 @@ void Call(Core::System& system, u32 imm) {
+             LOG_INFO(Kernel_SVC, "svc 0x18 t{} waits on{}", GetCurrentThread(kernel).GetThreadId(), list);
+         }
+     }
++#ifdef LICHII_COOP
++    if (CoopSvc::Call(system, imm, args)) {
++        // OoT co-op puppets (svc 0xF4, the co-op hook's coop_svc.cpp).
++    } else
++#endif
+     if (CallNx2OotPollBackoff(system, imm)) {
+         // Ocarina of Time resource poll backoff (svc 0xF3, svc_nx2_oot_poll.cpp); the arguments
+         // go back unchanged.

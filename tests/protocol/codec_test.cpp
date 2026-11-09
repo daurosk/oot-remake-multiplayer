@@ -648,13 +648,49 @@ TEST_CASE("64-bit-key flags") {
   }
 }
 
+TEST_CASE("count deltas: FLAG_SET only, named keys only") {
+  auto refused = [](const Message& m) { return encode(m) == std::nullopt; };
+  const FlagEntry minus_one{0x90237092u, 0, FlagKind::count_delta, 0xFFFFFFFFu};
+  CHECK(static_cast<int>(FlagKind::count_delta) == 4);
+  CHECK(valid_flag(minus_one));
+  CHECK_FALSE(valid_flag({FlagKey::key64_flag(5), FlagKind::count_delta, 1}));
+
+  // Layout: kind 4, then the change as s32.
+  const Bytes b = must_encode(FlagSet{0, {minus_one}});
+  CHECK(b == Bytes{13, 0, 15, 0, 0, 1, 0, 0, 0x92, 0x70, 0x23, 0x90, 0, 0, 4, 0xFF, 0xFF,
+                   0xFF, 0xFF});
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<FlagSet>(back) == FlagSet{0, {minus_one}});
+
+  // An answer or a snapshot carries totals, never a change.
+  CHECK(refused(FlagState{0, {minus_one}}));
+  CHECK(refused(FlagSnapshot{0, 1, {minus_one}}));
+  CHECK(refused(FlagSet{0, {{FlagKey::key64_flag(5), FlagKind::count_delta, 1}}}));
+  // A delta and a total of the same key in one list is still the key twice.
+  CHECK(refused(FlagSet{0, {minus_one, {0x90237092u, 0, FlagKind::int32, 2}}}));
+
+  SUBCASE("on decode") {
+    Bytes s = must_encode(FlagState{0, {{0x90237092u, 0, FlagKind::int32, 2}}});
+    const std::size_t kind = kHeaderSize + 1 + 2 + 7;
+    REQUIRE(s[kind] == 1);
+    s[kind] = 4;
+    CHECK(decode_bytes(s) == Error::bad_value);
+    Bytes p = must_encode(FlagSnapshot{0, 1, {{0x90237092u, 0, FlagKind::int32, 2}}});
+    p[kHeaderSize + 4 + 2 + 7] = 4;
+    CHECK(decode_bytes(p) == Error::bad_value);
+    s[0] = 13;  // the same bytes as FLAG_SET are fine
+    CHECK(decode_bytes(s) == Error::none);
+  }
+}
+
 TEST_CASE("bad flag messages are refused") {
   auto refused = [](const Message& m) { return encode(m) == std::nullopt; };
   CHECK(refused(FlagSet{0, {}}));  // a change of nothing
   CHECK(refused(FlagState{0, {}}));
   CHECK(refused(FlagSet{5, {test::flag_entries()[0]}}));
   CHECK(refused(FlagSet{0, {{1, 0, FlagKind::boolean, 2}}}));
-  CHECK(refused(FlagSet{0, {{1, 0, static_cast<FlagKind>(4), 0}}}));
+  CHECK(refused(FlagSet{0, {{1, 0, static_cast<FlagKind>(5), 0}}}));
   CHECK(refused(FlagSet{0, {{1, 0, FlagKind::float32, 0x7F800000u}}}));  // infinity
   CHECK(refused(FlagSet{0, {{1, 0, FlagKind::float32, 0x7FC00000u}}}));  // NaN
   CHECK(refused(FlagState{0, {{1, 2, FlagKind::int32, 5}, {1, 2, FlagKind::int32, 6}}}));
@@ -664,7 +700,7 @@ TEST_CASE("bad flag messages are refused") {
 
   SUBCASE("on decode") {
     Bytes b = must_encode(FlagSet{0, {{1, 0, FlagKind::boolean, 1}}});
-    b[kHeaderSize + 1 + 2 + 7] = 4;  // kind
+    b[kHeaderSize + 1 + 2 + 7] = 5;  // kind (4 is a count delta)
     CHECK(decode_bytes(b) == Error::bad_value);
     b[kHeaderSize + 1 + 2 + 7] = 0;
     b[kHeaderSize + 1 + 2 + 8] = 2;  // a boolean of 2

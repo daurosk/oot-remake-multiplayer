@@ -316,6 +316,10 @@ enum class FlagKind : std::uint8_t {
   int32 = 1,     // two's complement
   float32 = 2,   // IEEE-754 bits, finite
   uint32 = 3,    // an enum flag's hash, or any other unsigned value
+  // A change to a count (small keys, Gold Skulltula tokens, heart pieces),
+  // two's complement: +1 got, -1 used. FLAG_SET only, named keys only; the
+  // host adds it to its value and answers FLAG_STATE with the int32 total.
+  count_delta = 4,
 };
 
 struct FlagEntry {

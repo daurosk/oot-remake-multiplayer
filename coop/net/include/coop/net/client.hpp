@@ -52,6 +52,14 @@
 //   knew we host). Those are answered with the table's value where it has
 //   one (we have stated it since), else the asked value, and set_flag_answer()
 //   is not asked: our own changes as host are the truth.
+// - Count deltas (FlagKind::count_delta, docs/protocol.md "Counts"): a
+//   player's are sent in FLAG_SET; unanswered ones for the same flag add up
+//   in pending_flags() for a resend, and are dropped when we become host
+//   (our game holds them). The host does not answer a delta: it is added to
+//   the end of the `flag_state` event's flags for our game, which adds it
+//   and states the total; set_flag_answer() is not asked, flags() never
+//   holds one, and our own echoed delta is not handed over. As host,
+//   set_flags() drops deltas (our count goes out as its total).
 // - Who hosts: the server's HOST message. host_number() and is_host() follow
 //   it, and every change gives a `host_changed` event, the first HOST
 //   included. A client that becomes host sends its table with

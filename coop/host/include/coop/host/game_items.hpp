@@ -38,9 +38,8 @@ struct ItemFlag {
   std::uint32_t hash;       // flag_hash(name)
   protocol::FlagKind kind;  // boolean or int32
   ItemRule rule;
-  // False for rules not turned on yet: count (needs a "count delta" flag
-  // kind in the protocol, docs/items.md) and the heart rules (how pieces
-  // become containers is not checked in a run).
+  // False for a rule not turned on yet. All are on now: counts travel as
+  // count deltas (docs/protocol.md, "Counts").
   bool on;
 };
 
@@ -73,12 +72,18 @@ class ItemFlagStore final : public FlagStore {
   // that changes the value (true, without a write, when it does not). A
   // per-player flag or a kind that does not match the table is refused.
   // When the game's value cannot be read, writes `entry` as it came.
+  // A count delta (FlagKind::count_delta) on a count item is added to the
+  // game's value, held to 0 and up; it is refused on anything else, or when
+  // the game's value cannot be read.
   bool write(const protocol::FlagEntry& entry) override;
+  // A named count item (ItemRule::count).
+  bool is_count(FlagKey key) override;
 
   struct Stats {
     std::uint64_t merged = 0;   // item writes that changed the game's value
     std::uint64_t kept = 0;     // item writes that left the game's value as it was
     std::uint64_t refused = 0;  // item writes with the wrong kind, or per player
+    std::uint64_t added = 0;    // count deltas added to the game's value
   };
   const Stats& stats() const { return stats_; }
 

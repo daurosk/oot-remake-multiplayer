@@ -21,13 +21,13 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_PocketCucco.StockNum", 0x0165e7ca, K::int32, R::mirror, true},
   {"IsGet.Item_Melody_ZeldaLullaby", 0x01c20002, K::boolean, R::any, true},
   {"IsGet.Item_Melody_TimeSong", 0x03b3450e, K::boolean, R::any, true},
-  {"PouchData.Item_Token_Gold.StockNum", 0x04735978, K::int32, R::count, false},
+  {"PouchData.Item_Token_Gold.StockNum", 0x04735978, K::int32, R::count, true},
   {"DungeonInfo.InsideTheDekuTree.IsGetCompass", 0x06c51ff2, K::boolean, R::any, true},
   {"IsGet.Armor_Child_Mask_Amiibo0", 0x06f13bb2, K::boolean, R::any, true},
   {"PouchData.Item_OddMushroom.StockNum", 0x07de3e6f, K::int32, R::mirror, true},
   {"PouchData.Item_PocketEgg.StockNum", 0x07f10aaf, K::int32, R::mirror, true},
   {"PouchData.Weapon_Shield_Hylian.StockNum", 0x08befd3a, K::int32, R::max, true},
-  {"DungeonInfo.InsideTheDekuTree.SmallKeyNum", 0x0914ba07, K::int32, R::count, false},
+  {"DungeonInfo.InsideTheDekuTree.SmallKeyNum", 0x0914ba07, K::int32, R::count, true},
   {"IsGet.Pouch_Range_BowAndArrow_Ice", 0x0989e62d, K::boolean, R::any, true},
   {"IsGet.Armor_Child_Mask_Amiibo1", 0x09df9d25, K::boolean, R::any, true},
   {"IsGet.Item_Quiver_Small", 0x0a550531, K::boolean, R::any, true},
@@ -43,7 +43,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_Scale_Silver.StockNum", 0x1240044b, K::int32, R::max, true},
   {"PlayerStatus.MPMax", 0x12d63a97, K::int32, R::max, true},
   {"IsGet.Item_Medal_Shadow", 0x12d63ac6, K::boolean, R::any, true},
-  {"DungeonInfo.InsideJabuJabuBelly.SmallKeyNum", 0x1470a816, K::int32, R::count, false},
+  {"DungeonInfo.InsideJabuJabuBelly.SmallKeyNum", 0x1470a816, K::int32, R::count, true},
   {"IsGet.Item_AlarmCucco", 0x14909166, K::boolean, R::any, true},
   {"IsGet.Item_Melody_SunSong", 0x165dd1ad, K::boolean, R::any, true},
   {"DungeonInfo.SpiritTemple.IsGetBossKey", 0x1984c03f, K::boolean, R::any, true},
@@ -51,7 +51,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_Hammer.StockNum", 0x1aafdb66, K::int32, R::max, true},
   {"PouchData.Item_Wallet_Small.StockNum", 0x1d74617e, K::int32, R::max, true},
   {"IsGet.Item_Ocarina_Time", 0x1da2c511, K::boolean, R::any, true},
-  {"DungeonInfo.FireTemple.SmallKeyNum", 0x1df11487, K::int32, R::count, false},
+  {"DungeonInfo.FireTemple.SmallKeyNum", 0x1df11487, K::int32, R::count, true},
   {"DungeonInfo.ShadowTemple.IsGetCompass", 0x1e2feec5, K::boolean, R::any, true},
   {"IsGet.Weapon_Sword_Giant", 0x1e824efa, K::boolean, R::any, true},
   {"PlayerStatus.AssignableItem.BottleInfo.BottleB.BottleItem", 0x1edd164a, K::uint32, R::per_player, true},
@@ -83,12 +83,12 @@ constexpr ItemFlag kItems[] = {
   {"PlayerStatus.AssignableItem.BottleInfo.BottleE.BottleItem", 0x365e1953, K::uint32, R::per_player, true},
   {"IsGet.Item_Longshot", 0x38aea3bb, K::boolean, R::any, true},
   {"PouchData.Weapon_Sword_Giant.StockNum", 0x396a5c02, K::int32, R::max, true},
-  {"DungeonInfo.GerudoFortress.SmallKeyNum", 0x3a28b6a4, K::int32, R::count, false},
+  {"DungeonInfo.GerudoFortress.SmallKeyNum", 0x3a28b6a4, K::int32, R::count, true},
   {"PouchData.Item_Quiver_Medium.StockNum", 0x3bb370e1, K::int32, R::max, true},
   {"DungeonInfo.GerudoTrainingGround.IsGetCompass", 0x3d9a2750, K::boolean, R::any, true},
   {"IsGet.Armor_Adult_Gauntlet_Gold", 0x3ef15ec4, K::boolean, R::any, true},
   {"IsGet.Item_Melody_WaterSerenade", 0x3fa63986, K::boolean, R::any, true},
-  {"DungeonInfo.DodongoCavern.SmallKeyNum", 0x3fdbc3d0, K::int32, R::count, false},
+  {"DungeonInfo.DodongoCavern.SmallKeyNum", 0x3fdbc3d0, K::int32, R::count, true},
   {"IsGet.Weapon_Sword_Kokiri", 0x405d8a0f, K::boolean, R::any, true},
   {"PouchData.Item_Arrow_Ice.StockNum", 0x40735a8d, K::int32, R::max, true},
   {"PouchData.Armor_Adult_Gauntlet_Gold.StockNum", 0x40ae1183, K::int32, R::max, true},
@@ -110,7 +110,7 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Armor_Adult_Zora", 0x4f5a929c, K::boolean, R::any, true},
   {"PouchData.Item_Arrow_Normal.StockNum", 0x518ec74b, K::int32, R::per_player, true},
   {"PouchData.Item_CojiroCucco.StockNum", 0x51d89ef0, K::int32, R::mirror, true},
-  {"PouchData.Obj_Heart_Piece.StockNum", 0x51ec97b3, K::int32, R::count, false},
+  {"PouchData.Obj_Heart_Piece.StockNum", 0x51ec97b3, K::int32, R::count, true},
   {"IsGet.Weapon_Shield_Deku", 0x5217da1e, K::boolean, R::any, true},
   {"PouchData.BottleD.StockNum", 0x5324f9d3, K::int32, R::any, true},
   {"PouchData.Item_Ocarina_Time.StockNum", 0x54e2a3d1, K::int32, R::max, true},
@@ -127,7 +127,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_FairyBless_MP.StockNum", 0x5e671d92, K::int32, R::per_player, true},
   {"IsGet.Item_Melody_ScarecrowSong", 0x5e86fb4d, K::boolean, R::any, true},
   {"DungeonInfo.GerudoFortress.IsGetCompass", 0x5eb80679, K::boolean, R::any, true},
-  {"DungeonInfo.ShadowTemple.SmallKeyNum", 0x5edda9e3, K::int32, R::count, false},
+  {"DungeonInfo.ShadowTemple.SmallKeyNum", 0x5edda9e3, K::int32, R::count, true},
   {"PouchData.Item_FairyBless_MPDouble.StockNum", 0x5f043856, K::int32, R::per_player, true},
   {"IsGet.Armor_Adult_HeavyBoot", 0x5fa190e6, K::boolean, R::any, true},
   {"PouchData.Item_DekuSeed.StockNum", 0x5fadf7fc, K::int32, R::per_player, true},
@@ -151,13 +151,13 @@ constexpr ItemFlag kItems[] = {
   {"PlayerStatus.MP", 0x76b18200, K::int32, R::per_player, true},
   {"DungeonInfo.BottomOfTheWell.IsGetMap", 0x77c47ec9, K::boolean, R::any, true},
   {"DungeonInfo.WaterTemple.IsGetBossKey", 0x79daf80a, K::boolean, R::any, true},
-  {"DungeonInfo.SpiritTemple.SmallKeyNum", 0x79eeec8e, K::int32, R::count, false},
+  {"DungeonInfo.SpiritTemple.SmallKeyNum", 0x79eeec8e, K::int32, R::count, true},
   {"IsGet.Weapon_Sword_Master", 0x7ae38e5b, K::boolean, R::any, true},
   {"PouchData.Item_BulletBag_Large.StockNum", 0x7b9673f5, K::int32, R::max, true},
   {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::max, true},
   {"PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem", 0x7d48df76, K::uint32, R::per_player, true},
   {"PouchData.Item_Stone_Fire.StockNum", 0x7d69ad47, K::int32, R::max, true},
-  {"DungeonInfo.BottomOfTheWell.SmallKeyNum", 0x7dd79d10, K::int32, R::count, false},
+  {"DungeonInfo.BottomOfTheWell.SmallKeyNum", 0x7dd79d10, K::int32, R::count, true},
   {"PouchData.Armor_Child_Mask_Bunny.StockNum", 0x7e607033, K::int32, R::max, true},
   {"IsGet.Item_Boomerang", 0x7f4ce38d, K::boolean, R::any, true},
   {"IsGet.Armor_GlassTruth", 0x7fe2a5b2, K::boolean, R::any, true},
@@ -168,7 +168,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_Hookshot.StockNum", 0x8573d2cd, K::int32, R::max, true},
   {"IsGet.Item_Arrow_Light", 0x8637bab4, K::boolean, R::any, true},
   {"DungeonInfo.FinalBattleField.IsGetCompass", 0x874493ce, K::boolean, R::any, true},
-  {"DungeonInfo.WaterTemple.SmallKeyNum", 0x877bdcee, K::int32, R::count, false},
+  {"DungeonInfo.WaterTemple.SmallKeyNum", 0x877bdcee, K::int32, R::count, true},
   {"IsGet.Item_FairyBless_MPDouble", 0x87ca4826, K::boolean, R::any, true},
   {"IsGet.Armor_Adult_Gauntlet_Silver", 0x87e58de3, K::boolean, R::any, true},
   {"IsGet.Item_PoacherSaw", 0x888d5059, K::boolean, R::any, true},
@@ -180,7 +180,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.DodongoCavern.IsGetCompass", 0x8b93edf9, K::boolean, R::any, true},
   {"PouchData.Weapon_Sword_BrokenGiant.StockNum", 0x8d02f5ea, K::int32, R::max, true},
   {"IsGet.Item_EyeballFrog", 0x8e02d1ca, K::boolean, R::any, true},
-  {"DungeonInfo.ForestTemple.SmallKeyNum", 0x90237092, K::int32, R::count, false},
+  {"DungeonInfo.ForestTemple.SmallKeyNum", 0x90237092, K::int32, R::count, true},
   {"IsGet.Item_Medal_Light", 0x9026c187, K::boolean, R::any, true},
   {"PouchData.Item_EyeballFrog.StockNum", 0x919ea324, K::int32, R::mirror, true},
   {"PouchData.Armor_Child_Mask_Zora.StockNum", 0x924e9a46, K::int32, R::max, true},
@@ -200,7 +200,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.SpiritTemple.IsGetCompass", 0x9bd1181c, K::boolean, R::any, true},
   {"DungeonInfo.BottomOfTheWell.IsGetCompass", 0x9d6efaac, K::boolean, R::any, true},
   {"IsGet.Item_Quiver_Medium", 0x9d872202, K::boolean, R::any, true},
-  {"DungeonInfo.FinalBattleField.SmallKeyNum", 0xa04bfd48, K::int32, R::count, false},
+  {"DungeonInfo.FinalBattleField.SmallKeyNum", 0xa04bfd48, K::int32, R::count, true},
   {"IsGet.Item_StickBag_Large", 0xa10f2dcf, K::boolean, R::any, true},
   {"PouchData.Item_Boomerang.StockNum", 0xa1d76d31, K::int32, R::max, true},
   {"DungeonInfo.DodongoCavern.IsGetMap", 0xa52c3a19, K::boolean, R::any, true},
@@ -279,7 +279,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.ForestTemple.IsGetMap", 0xe704f9b4, K::boolean, R::any, true},
   {"IsGet.Item_PocketCucco", 0xe82e6413, K::boolean, R::any, true},
   {"DungeonInfo.IceCavern.IsGetCompass", 0xea1846e6, K::boolean, R::any, true},
-  {"DungeonInfo.GerudoTrainingGround.SmallKeyNum", 0xea9786f5, K::int32, R::count, false},
+  {"DungeonInfo.GerudoTrainingGround.SmallKeyNum", 0xea9786f5, K::int32, R::count, true},
   {"PouchData.Item_NutBag_Medium.StockNum", 0xeaa1785e, K::int32, R::max, true},
   {"IsGet.Item_PocketEgg", 0xec9c3136, K::boolean, R::any, true},
   {"PouchData.Weapon_Sword_Kokiri.StockNum", 0xeeb495b9, K::int32, R::max, true},
@@ -301,11 +301,11 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Obj_Armor_Child_Normal", 0xf9594156, K::boolean, R::any, true},
   {"IsGet.Pouch_Range_BowAndArrow_Fire", 0xf9fe4ffc, K::boolean, R::any, true},
   {"IsGet.Item_DinFire", 0xfa04e611, K::boolean, R::any, true},
-  {"DungeonInfo.IceCavern.SmallKeyNum", 0xfa5d133d, K::int32, R::count, false},
+  {"DungeonInfo.IceCavern.SmallKeyNum", 0xfa5d133d, K::int32, R::count, true},
   {"DungeonInfo.DodongoCavern.IsGetBossKey", 0xfaabc084, K::boolean, R::any, true},
   {"IsGet.Item_CojiroCucco", 0xfb4442de, K::boolean, R::any, true},
-  {"PlayerStatus.MaxLife", 0xfbe01da1, K::int32, R::max, false},
-  {"DungeonInfo.InsideGanonCastle.SmallKeyNum", 0xfbfd2910, K::int32, R::count, false},
+  {"PlayerStatus.MaxLife", 0xfbe01da1, K::int32, R::max, true},
+  {"DungeonInfo.InsideGanonCastle.SmallKeyNum", 0xfbfd2910, K::int32, R::count, true},
   {"PouchData.Armor_Child_Mask_Goron.StockNum", 0xfc508da7, K::int32, R::max, true},
   {"PouchData.BottleB.StockNum", 0xfca29a04, K::int32, R::any, true},
   {"DungeonInfo.InsideJabuJabuBelly.IsGetMap", 0xfcadd210, K::boolean, R::any, true},
@@ -367,6 +367,24 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const FlagKey key = key_of(entry);
   const bool named = key.kind == protocol::FlagKeyKind::named && key.index == 0;
   const ItemFlag* item = named ? find_item(key.hash) : nullptr;
+  if (entry.kind == protocol::FlagKind::count_delta) {
+    // A change, not a value: added to what the game holds, which must be known.
+    const auto now = item != nullptr && item->rule == ItemRule::count &&
+                             item->kind == protocol::FlagKind::int32
+                         ? inner_.read(key)
+                         : std::nullopt;
+    if (!now || now->kind != protocol::FlagKind::int32) {
+      ++stats_.refused;
+      return false;
+    }
+    const std::int64_t sum = std::int64_t{as_int(now->value)} + as_int(entry.value);
+    protocol::FlagEntry total = *now;
+    total.key = key;
+    total.value = as_bits(std::max<std::int64_t>(sum, 0));  // a count is never below 0
+    if (total.value != now->value && !inner_.write(total)) return false;
+    ++stats_.added;
+    return true;
+  }
   if (item == nullptr) return inner_.write(entry);
   if (entry.kind != item->kind || item->rule == ItemRule::per_player) {
     ++stats_.refused;
@@ -383,6 +401,12 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   if (!inner_.write(merged)) return false;
   ++stats_.merged;
   return true;
+}
+
+bool ItemFlagStore::is_count(FlagKey key) {
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  return item != nullptr && item->on && item->rule == ItemRule::count;
 }
 
 }  // namespace coop::host

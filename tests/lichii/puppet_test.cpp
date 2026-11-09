@@ -345,6 +345,30 @@ TEST_CASE("puppet: a scene change deletes what survived it, then creates anew") 
     CHECK(calls[0].function == kBase + addr::kCreate);
 }
 
+TEST_CASE("puppet: a player who changes age gets the other puppet, in the same scene") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // Now an adult: the child puppet is deleted at once, no leave grace.
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")}));
+    calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+    CHECK(calls[0].x[0] == kActor);
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{9});
+    calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Adult");
+}
+
 TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
     Game g;
     Director d;

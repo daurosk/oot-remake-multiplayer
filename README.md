@@ -13,17 +13,17 @@ Both stages share one design, one wire protocol and one server, so what is learn
 
 ## Status
 
-Stage 0 is done and stage 1 (presence in the emulator) is in progress. Nothing has been tested with the game running yet; the first test release for two PCs is being put together. The plan is in [docs/plan.md](docs/plan.md) and the wire protocol in [docs/protocol.md](docs/protocol.md).
+Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part is checked on one PC with the real game in two emulator instances, and the two-PC test comes once stage 1 is complete. The plan is in [docs/plan.md](docs/plan.md), the wire protocol in [docs/protocol.md](docs/protocol.md), and what a test kit can show in [docs/testing.md](docs/testing.md).
 
 | Stage | State |
 |---|---|
 | 0. Transport, server and two clients on one PC | Done: ENet server and client, wire protocol, `tools/coop_test` (10 minute soak runs pass on one PC). Two-PC run not yet done. |
-| 1. Presence: other players shown as markers | In progress: player sampling, smoothing and extrapolation ([docs/presence.md](docs/presence.md)), the emulator hook with `coop.ini` settings and a status panel, and markers drawn from the game's camera ([docs/lichii.md](docs/lichii.md)). Not yet checked in game. |
-| 2. Puppet Link in the world | Not started |
-| 3. Scenes, following and cutscenes | Not started |
-| 4. Shared progress (chests, keys, doors, songs) | Started: server host choice and flag table, client flag sync and a flag watcher ([docs/host.md](docs/host.md)). The game's flag addresses are not yet found. |
-| 5. Shared enemies and objects | Not started |
-| 6. Chat, player list, reconnects | Started: chat, player list and join/leave events in the client; the host moves to another player when one leaves. |
+| 1. Presence: other players shown as markers | Done on one PC: player sampling and smoothing ([docs/presence.md](docs/presence.md)), the emulator hook with `coop.ini` settings, a status panel and markers drawn from the game's camera ([docs/lichii.md](docs/lichii.md)). |
+| 2. Puppet Link in the world | In progress: Link's animation is read and sent; the puppet pack is built from the player's own game files ([docs/puppet.md](docs/puppet.md)) and loads in game; spawning it where the other player stands works on a branch, animation not yet. What each player wears is read and sent. |
+| 3. Scenes, following and cutscenes | In progress |
+| 4. Shared progress (chests, keys, doors, songs) | In progress: world flags shared through the host, checked live between two games (a chest opened in one is open in the other, [docs/flags.md](docs/flags.md)); counts that add up across players (small keys, Skulltula tokens, heart pieces) in the protocol and server; which items are shared and which stay per player is set ([docs/items.md](docs/items.md)), the emulator side on a branch. |
+| 5. Shared enemies and objects | In progress: the game's actor list, life and damage read live ([docs/objects.md](docs/objects.md)); sync not yet. |
+| 6. Chat, player list, reconnects | Mostly done: reconnects and rejoining after a crash are in; the host moves to another player when one leaves; the chat box and player list work on a branch. |
 | Recomp port of stages 0 to 6 | Waits for a playable recomp |
 
 The emulator side is a small patch on Frizti's Fritchii, pinned in [lichii/PIN](lichii/PIN); `lichii/fetch.ps1` fetches that source and applies the patches. See [lichii/README.md](lichii/README.md).

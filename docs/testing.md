@@ -1,16 +1,31 @@
 # Testing co-op on two PCs
 
-How to test the co-op build with the test kit: the server on one PC, the patched emulator on both, each with its own copy of the game. The kit is made by `tools/release/make_kit.ps1` (below); in the kit this file is `TESTING.md`.
+How to test the co-op build with the test kit: the server on one PC, the patched emulator on both, each with its own copy of the game. The kit is made by `tools/release/make_kit.ps1` ([Making the kit](#making-the-kit)); in the kit this file is `TESTING.md`.
 
-What this test shows (plan stage 1, presence): the two emulators join one server, each lists the other player, and the scene and distance follow as you move. Nothing else is shared yet: no puppet Link, no shared progress.
+## What a kit can show
+
+Which features are in `main`, and so in a kit built from it, as of 2026-11-09. A feature that is not merged yet has no check to do: skip its rows in the [checklist](#checklist) and write "not in this kit". `VERSION.txt` in the kit says which commit it was built from.
+
+| Feature | In `main` | Proven so far | Rows |
+|---|---|---|---|
+| Server, join, leave, rejoin, reconnect | Yes | One PC, two instances (2026-11-08) | 1-3, 20-24 |
+| Presence: the other player's name, scene and distance in the panel, a marker where they stand | Yes | One PC, two instances | 4-7 |
+| Shared world flags (a chest opened by one is open for both) | Yes, with a shared flags file ([below](#shared-flags-file)) | One PC: a Bool chest flag crossed from A to B | 8-9 |
+| Chat box and player list (Enter, Tab) | **Not merged** (branch `polish`) | One PC | 10-11 |
+| Items: key items, bottles, one-time pickups shared; rupees and the rest per player | **Not merged** (branch `items-live`); the protocol and server part is in `main` | Not yet | 12-14 |
+| Counts that add up (small keys, Skulltula tokens, heart pieces) | Protocol and server in `main`; the emulator side **not merged** (with items) | Server tests only | 13-14 |
+| Puppet Link standing and moving where the other player is | Pack tool in `main`; the spawn **not merged** (branch `puppet-spawn`) | One PC: the puppet loads from the pack; spawn shown, animation not yet | 15-17 |
+| Equipment shown on the puppet (sword, shield, tunic, boots) | Reading and sending in `main`; drawing needs the puppet | One PC: slots read live | 18 |
+| Scenes: puppets only in your scene, join-partner warp, hidden in cutscenes | **Not merged** (in progress) | Not yet | 19 |
+| Shared enemies and projectiles | **Not merged** (in progress); research in [objects.md](objects.md) | Actor list and damage read live on one PC | (none yet) |
 
 ## One PC first
 
-Two copies of the kit on one PC show most of it before the two-PC test (done on 2026-11-08; see [docs/lichii.md](lichii.md#the-first-run-2026-11-08-one-pc-two-instances)):
+Two copies of the kit on one PC show most of it before the two-PC test (done on 2026-11-08; see [lichii.md](lichii.md#the-first-run-2026-11-08-one-pc-two-instances)):
 
-1. Unzip the kit twice, for example `local-A` and `local-B`, and fill each `emulator\user\` as below (keys, firmware, a save).
+1. Unzip the kit twice, for example `local-A` and `local-B`, and fill each `emulator\user\` as below (keys, firmware, a save). Copying a kit folder that has already run is fine too: `play.cmd` points the copy's saved folders at itself.
 2. Start the server once (`start-server.cmd` in either copy).
-3. In each copy, `play.cmd` with server `127.0.0.1` and a different name (`A`, `B`). To see the markers on yourself too, `set LICHII_COOP_DEBUG_CAMERA=1` in a Command Prompt and start `emulator\lichii.exe` from it.
+3. In each copy, `play.cmd` with server `127.0.0.1` and a different name (`A`, `B`). To see the markers on yourself too, turn on `LICHII_COOP_DEBUG_CAMERA=1` in that copy's `coop-options.ini`.
 4. Load the same save in both and put the two windows side by side. The keyboard goes only to the window that has focus, so each Link can be moved alone.
 
 Each panel lists the other (`P1 A: KakarikoVillage_Child, 1 units away`), the other's dot is where that Link stands in the other window, and the distance follows as one walks. Close each emulator with its own close button (it asks first). A killed emulator keeps its name taken on the server for a while: the next start with that name is refused (`name taken`) until the server notices, or restart the server.
@@ -19,13 +34,17 @@ Each panel lists the other (`P1 A: KakarikoVillage_Child, 1 units away`), the ot
 
 ```
 oot-coop-<date>\
-  start-server.cmd     starts the server (one PC only)
-  play.cmd             asks for the server address and your name once, then starts the emulator
-  collect-logs.cmd     zips the logs to send back
-  emulator\            the patched emulator; user\ is its portable data folder
-  server\              coop_server.exe
-  logs\                the server's logs
-  VERSION.txt          which builds these are
+  start-server.cmd       starts the server (one PC only)
+  play.cmd               asks for the server address and your name once, then starts the emulator
+  make-puppet-pack.cmd   builds the puppet Link from this PC's own game files (once per PC)
+  coop-options.ini       extra switches (shared flags file, puppet, debug logging), all off
+  collect-logs.cmd       zips the logs to send back
+  emulator\              the patched emulator; user\ is its portable data folder
+  server\                coop_server.exe
+  tools\puppet_pack\     the pack builder make-puppet-pack.cmd runs
+  python\                a Python for it (only if the kit was made with -Python)
+  logs\                  the server's logs
+  VERSION.txt            which builds these are
 ```
 
 Copy the whole folder (or the zip, then unzip it) to each PC, anywhere you can write to, for example the desktop. Both PCs must use the same kit.
@@ -39,7 +58,7 @@ The kit has no game files, keys or firmware. Each PC uses its own, from its own 
 | Keys (`prod.keys`, `title.keys`) | `keys\` |
 | Firmware | `nand\system\Contents\registered\` (or start `play.cmd` once and use the emulator's Tools > Install Firmware) |
 | Game updates you installed | `nand\user\Contents\registered\` (or File > Install Files to NAND) |
-| Saves (optional; a new save works for the test) | `nand\user\save\` |
+| Saves (optional; a new save works for most checks) | `nand\user\save\` |
 | The game dump itself | Anywhere. Load it with File > Load File, or add its folder to the game list. |
 
 If a PC already runs Lichii or Fritchii normally, all of that is in `%APPDATA%\eden`. Copy (do not move) from there into `emulator\user\`:
@@ -53,6 +72,31 @@ The kit's emulator never reads or writes `%APPDATA%\eden`: because `emulator\use
 Both PCs need the same game version. Co-op only reads and sends for build id `e0f3ccfaf50065ae`; the emulator log says which build is running (below).
 
 The Visual C++ runtime is in the kit, beside each program. If Windows still says `MSVCP140.dll` or `VCRUNTIME140.dll` is missing, install the Microsoft Visual C++ 2015-2022 Redistributable (x64).
+
+### The puppet pack
+
+The puppet Link is a small actor pack made from the game's own Link model and animations, so it cannot be in the kit: each PC builds it from its own game, once.
+
+1. Dump the game's romfs: start `play.cmd`, add the game's folder to the game list if it is not there, right-click the game and choose **Dump RomFS** (full). It writes `emulator\user\dump\0400486024DEC000\romfs\` (several GB). Any other romfs of the same game version works too: the folder that holds `Pack`, `Model`, `AS`, `RSDB` and `System`.
+2. Close the emulator and double-click `make-puppet-pack.cmd`. It finds the dumped romfs (or asks for the folder) and writes the mod `emulator\user\load\0400486024DEC000\coop-puppet\`. It takes under a minute.
+3. It needs Python 3 with the `zstandard` package. A kit made with `-Python` brings its own; otherwise install Python 3 from python.org and run `py -m pip install zstandard` once. The script says which is missing.
+
+Keep the kit in a short folder (the desktop or `C:\oot-coop`): the pack's longest file path must stay under 260 characters, and the script stops with a message if the kit is too deep. Running it again is safe (it rebuilds the same files). The romfs dump can be deleted afterwards. When the emulator loads the game with the pack, its log has `RomFS: LayeredFS patches applied successfully`. `play.cmd` says `Puppet pack: found.` or `not made yet` each time it starts.
+
+The step this needs in the emulator (Dump RomFS on a `.nup`) has not been checked in a kit yet; `make-puppet-pack.cmd` itself has (2026-11-09, in a kit with its own Python, from a romfs dumped on the build PC): its packs are byte for byte the ones that loaded in game.
+
+### Shared flags file
+
+The emulator shares only the world flags it is told to. Until a full list exists, the two-PC test uses one known chest: the flower-grave chest in the Kakariko graveyard (child), Bool flag `0x39e4b7ec` ([flags.md](flags.md#live-check)).
+
+1. In the kit folder, make a text file `shared_flags.txt` with the one line `0x39e4b7ec`. More flags go one a line, in the format of [host.md](host.md) (a name, a `0x` hash, or `key64:` and a 64-bit key).
+2. In `coop-options.ini`, remove the `#` from `# LICHII_COOP_FLAGS=shared_flags.txt`.
+
+Do both on both PCs. `play.cmd` prints `Option: LICHII_COOP_FLAGS=...` when it is on.
+
+### coop-options.ini
+
+Extra switches, one `NAME=value` a line, all off (commented out) in a new kit. Turn one on by removing its `#`, then close the emulator and start `play.cmd` again; it prints each switch it sets. A file path may be relative to the kit folder. The debug switches only add lines to the emulator log; turn them on when a check fails and send the logs. What each does is in [lichii.md](lichii.md) and the file itself.
 
 ## The network
 
@@ -75,14 +119,15 @@ netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in act
 netsh advfirewall firewall delete rule name="OoT co-op server UDP 27510"
 ```
 
-PC 2 needs no rule: the emulator only connects out.
+PC 2 needs no rule: the emulator only connects out. Only UDP is used; no TCP port needs to be open.
 
 ## Steps
 
-1. **PC 1:** double-click `start-server.cmd` (or `start-server.cmd 27600` for another port). It shows `coop_server: listening on port 27510` and the addresses to use. Leave the window open.
-2. **PC 1:** double-click `play.cmd`. Server address: `127.0.0.1` (the server is on this PC). Name: anything, 1 to 16 characters, for example `Saria`.
-3. **PC 2:** double-click `play.cmd`. Server address: PC 1's LAN or Tailscale address from step 1. Name: a different one, for example `Mido`.
-4. Load the game in both emulators and get into the world on both (load a save or start a new file).
+1. **Both PCs:** unzip the same kit, fill `emulator\user\` (above), run `make-puppet-pack.cmd` if the kit has the puppet, and set up the [shared flags file](#shared-flags-file).
+2. **PC 1:** double-click `start-server.cmd` (or `start-server.cmd 27600` for another port). It shows `coop_server: listening on port 27510` and the addresses to use. Leave the window open.
+3. **PC 1:** double-click `play.cmd`. Server address: `127.0.0.1` (the server is on this PC). Name: anything, 1 to 16 characters, for example `Saria`.
+4. **PC 2:** double-click `play.cmd`. Server address: PC 1's LAN or Tailscale address from step 2. Name: a different one, for example `Mido`.
+5. Load the game in both emulators and get into the world on both. For the flag and puppet checks, use a child save that can reach Kakariko Village and its graveyard; the flower-grave chest must still be closed on both saves.
 
 `play.cmd` asks only the first time; after that it reuses the answers. `play.cmd change` asks again. The answers are in `emulator\user\config\coop.ini`.
 
@@ -97,13 +142,83 @@ PC 2 needs no rule: the emulator only connects out.
   P2 Mido: KokiriForest_Child, 412 units away
   ```
 
-  The other player's line is grey while they are in another scene or have not sent a position yet.
+  The other player's line is grey while they are in another scene or have not sent a position yet. A coloured dot with their name marks where they stand when they are in view.
 - When either player walks, the distance changes. When one goes through a door or a loading zone, the scene name changes on both panels.
 - The emulator log, `emulator\user\log\eden_log.txt`, has (in this order):
   - `coop: loaded (ENet 1.3.18)` and `coop: on, server ..., name '...'` at start;
   - `coop: welcomed as player N on ...`;
   - `coop: player M '...' joined` for the other player;
   - after the game loads, `coop: game build e0f3ccfaf50065ae, main at 0x...`.
+
+## Checklist
+
+Write down pass, fail or "not in this kit" for each, and the time, so the logs can be matched. Rows for a feature that is not in the kit ([table above](#what-a-kit-can-show)) are skipped.
+
+**Connection**
+
+| # | Check | Pass |
+|---|---|---|
+| 1 | Server starts and shows `listening on port ...` | |
+| 2 | PC 1's emulator starts; log has `coop: welcomed as player 1` | |
+| 3 | PC 2's emulator starts; log has `coop: welcomed as player 2`; the server shows both joined | |
+
+**Presence**
+
+| # | Check | Pass |
+|---|---|---|
+| 4 | With the game loaded on both, each panel lists the other player by name | |
+| 5 | Both in the same scene: the distance goes down as you walk towards each other and up as you walk away; the marker sits where the other Link stands | |
+| 6 | One player changes scene: both panels show the new scene, and the line goes grey | |
+| 7 | Ping on the panel stays under about 100 ms (LAN: a few ms) | |
+
+**Shared world flags** (both PCs with the shared flags file)
+
+| # | Check | Pass |
+|---|---|---|
+| 8 | Both in the Kakariko graveyard. PC 1 opens the flower-grave chest. PC 2's player walks there: that chest is already open. PC 2's log (with `LICHII_COOP_DEBUG_FLAGS=1`) has `bool 0x39e4b7ec ... 0 -> 1` | |
+| 9 | PC 2 closes its emulator and starts again (or joins late): after loading, the chest is still open on PC 2 | |
+
+**Chat and player list**
+
+| # | Check | Pass |
+|---|---|---|
+| 10 | Enter on PC 1, type `hello`, Enter: PC 2 shows `Saria: hello` at the bottom left; PC 1 shows `you: hello`. The other way round too | |
+| 11 | Hold Tab: the player list shows both players | |
+
+**Items and counts**
+
+| # | Check | Pass |
+|---|---|---|
+| 12 | PC 1 gets a key item (for example the slingshot, a bottle, a song): PC 2 has it too. PC 1 picks up rupees: PC 2's rupees do not change | |
+| 13 | PC 1 picks up a small key in a dungeon: PC 2's key count for that dungeon goes up by one. Each uses one: the count goes down for both | |
+| 14 | PC 1 gets a Gold Skulltula token or a heart piece: PC 2's token count or heart pieces go up by one. (That the Skulltula or heart piece is also gone in PC 2's world needs its 64-bit key in the shared flags file; those keys are not mapped yet, [items.md](items.md#one-time-pickups-caleb-2026-11-09).) | |
+
+**Puppet Link** (both PCs ran `make-puppet-pack.cmd`; `LICHII_COOP_PUPPET=1` in `coop-options.ini` if the build asks for it)
+
+| # | Check | Pass |
+|---|---|---|
+| 15 | Both in the same scene: each sees a second Link where the other player stands | |
+| 16 | The other walks, runs, rolls and jumps: the puppet follows smoothly and plays the same moves, not a T-pose | |
+| 17 | Child on one PC and adult on the other (if a save allows): each puppet has the right age | |
+| 18 | The other changes sword, shield, tunic or boots (or draws the sword): the puppet changes too | |
+
+**Scenes**
+
+| # | Check | Pass |
+|---|---|---|
+| 19 | The puppet shows only when both are in the same scene; it is hidden in a cutscene; the join-partner warp takes you to the other player's scene | |
+
+**Leaving, rejoining, reconnecting**
+
+| # | Check | Pass |
+|---|---|---|
+| 20 | PC 2 closes its emulator: the server shows `player 2 left`, PC 1's log has `coop: player 2 '...' left`, the line (and puppet) goes from PC 1 | |
+| 21 | PC 2 starts `play.cmd` again and loads the game: welcomed again, and both panels list each other again | |
+| 22 | Stop the server (Ctrl+C) and start it again: both logs show `connection lost; reconnecting`, then welcomed again, without restarting the emulators | |
+| 23 | Both emulators close without an error or a crash dump | |
+| 24 | Ten minutes of play together with no drop (no `connection lost` in either log) | |
+
+After the test, run `collect-logs.cmd` on both PCs anyway and send both zips, even if everything passed.
 
 ## If something is wrong
 
@@ -114,39 +229,33 @@ PC 2 needs no rule: the emulator only connects out.
 | `name taken` or refused in the log | Both players used the same name: `play.cmd change` on one. |
 | `coop: game build ... is not e0f3ccfaf50065ae` | That PC has another game version; co-op reads nothing there. |
 | The other player's line never gets a scene or distance | Both must be in the game world, not the title screen. Then send the logs. |
+| A chest is not shared | Both PCs have `shared_flags.txt` and the `LICHII_COOP_FLAGS` line on; `play.cmd` printed it. Turn on `LICHII_COOP_DEBUG_FLAGS=1`, try again and send the logs. |
+| No puppet | `play.cmd` said `Puppet pack: found.`; the log has `LayeredFS patches applied`. Turn on `LICHII_COOP_DEBUG_PUPPET=1`, try again and send the logs. |
+| Saves or mods of another kit folder show up | The kit was copied after a run; `play.cmd` fixes that by itself at start (it prints `This kit was copied`). Starting `lichii.exe` directly skips that fix. |
 | The emulator crashes or freezes | Send the logs. |
 
-On each PC with a problem, close the emulator (the log is complete only after it closes), then double-click `collect-logs.cmd`. It writes `coop-logs-<PC name>-<date>.zip` in the kit folder with the emulator log, `coop.ini`, the server logs (on PC 1), `VERSION.txt`, the newest crash dumps and a note of the PC's Windows, GPU and addresses. Send that zip back. It has no keys, saves or game files.
-
-## Checklist
-
-Write down pass or fail for each, and the time, so the logs can be matched.
-
-| # | Check | Pass |
-|---|---|---|
-| 1 | Server starts and shows `listening on port ...` | |
-| 2 | PC 1's emulator starts; log has `coop: welcomed as player 1` | |
-| 3 | PC 2's emulator starts; log has `coop: welcomed as player 2`; the server shows both joined | |
-| 4 | With the game loaded on both, each panel lists the other player by name | |
-| 5 | Both in the same scene: the distance goes down as you walk towards each other and up as you walk away | |
-| 6 | One player changes scene: both panels show the new scene, and the line goes grey | |
-| 7 | Ping on the panel stays under about 100 ms (LAN: a few ms) | |
-| 8 | PC 2 closes its emulator: the server shows `player 2 left`, PC 1's log has `coop: player 2 '...' left`, the line goes from PC 1's panel | |
-| 9 | PC 2 starts `play.cmd` again and loads the game: welcomed again, and both panels list each other again | |
-| 10 | Stop the server (Ctrl+C) and start it again: both logs show `connection lost; reconnecting`, then welcomed again, without restarting the emulators | |
-| 11 | Both emulators close without an error or a crash dump | |
-| 12 | Ten minutes of play together with no drop (no `connection lost` in either log) | |
-
-After the test, run `collect-logs.cmd` on both PCs anyway and send both zips, even if everything passed.
+On each PC with a problem, close the emulator (the log is complete only after it closes), then double-click `collect-logs.cmd`. It writes `coop-logs-<PC name>-<date>.zip` in the kit folder with the emulator log, `coop.ini`, `coop-options.ini`, the puppet pack's `coop_puppet.json` (file names and hashes only), the server logs (on PC 1), `VERSION.txt`, the newest crash dumps and a note of the PC's Windows, GPU and addresses. Send that zip back. It has no keys, saves or game files.
 
 ## Making the kit
 
-On the PC that builds (needs the patched emulator built as [lichii/README.md](../lichii/README.md) says, and this repo's server built Release):
+On the PC that builds (needs the patched emulator built from this repo's `main` as [lichii/README.md](../lichii/README.md) says, and this repo's server built Release):
 
 ```powershell
 cmake -S . -B build
 cmake --build build --config Release --target coop_server
-powershell -ExecutionPolicy Bypass -File tools\release\make_kit.ps1
+powershell -ExecutionPolicy Bypass -File tools\release\make_kit.ps1 -Python <python.exe with zstandard>
 ```
 
-It writes `..\coop-kit\oot-coop-<yyyymmdd-hhmm>\` and a zip of it beside the main checkout. Options: `-EmulatorBin <folder>` (default `..\fritchii-src\build\coop\bin`), `-BuildDir <folder>` (default `build`), `-OutRoot <folder>`, `-Port <n>` (the default port written into the kit, 27510), `-IncludePdb` (adds `lichii.pdb`, about 60 MB, for crash dumps with symbols), `-NoZip`. It refuses an emulator built without co-op and a Debug server, and writes which commits went in to `VERSION.txt`.
+It writes `..\coop-kit\oot-coop-<yyyymmdd-hhmm>\` and a zip of it beside the main checkout. Options:
+
+| Option | What |
+|---|---|
+| `-EmulatorBin <folder>` | The patched emulator's `bin` folder (default `..\fritchii-src\build\coop\bin`). Its hook folder (`LICHII_COOP_DIR`) should be a checkout of `main`; `VERSION.txt` records which. |
+| `-BuildDir <folder>` | This repo's CMake build folder with `coop_server` (default `build`). |
+| `-OutRoot <folder>` | Where the kit goes (default `..\coop-kit`); never inside the repo. |
+| `-Port <n>` | The default port written into the kit (27510). |
+| `-Python <python.exe>` | A Python that has `zstandard`: its own files (no other packages, no tests or Tk) and `zstandard` with its licence go into the kit's `python\`, about 60 MB, so `make-puppet-pack.cmd` runs on a PC without Python. Without it each PC needs its own. |
+| `-IncludePdb` | Adds `lichii.pdb` (about 60 MB) for crash dumps with symbols. |
+| `-NoZip` | No zip. |
+
+It refuses an emulator built without co-op and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).

@@ -498,10 +498,16 @@ The remote player's real Navi position is not sent: the fairy is placed from the
 
 **Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
 
-**Frozen in a hand test (2026-11-09, v0.1.0-test1).** The fairies stayed where they were created and did not animate. Read from the dump and the romfs, not run:
+**Frozen in a hand test (2026-11-09, v0.1.0-test1), fixed (branch `fairy-anim`).** The fairies stayed where they were created and did not animate. Two causes:
 
-- `Dm_Npc_Navi` has a physics body (a character controller), so the plain write of its place is undone, as for the shared objects ([objects.md](objects.md)). The fairy's director now also calls the game's own setter `0x4c6580(actor, 0)` once a frame after the write (`Director::SetMatrixCall`, `Director::Move`; only for an actor whose vtable is 0x4b25e18). **Not proven in game**: check that each fairy stays at its puppet's shoulder while the player walks (`fairy ... pose:` lines with `LICHII_COOP_DEBUG_ANIM`).
-- It does not flap: its animation file (`Dm_Npc_Navi.root.asb`, 330 bytes) has no animation commands. `Npc_Navi.root.asb` has `Wait`, `Dash`, `Fly_*` and `Talk`. Not done: a pack with the `Dm_Npc_Navi` model and `Npc_Navi`'s animations (then play `Wait`), or a copy of the local Navi's skeleton pose onto it each frame, as the pose copy does for Link.
+- **Place.** `Dm_Npc_Navi` has a physics body (a character controller), so a plain write of its place is undone, as for the shared objects ([objects.md](objects.md)). The fairy's director calls the game's own setter `0x4c6580(actor, 0)` once a frame after the write (`Director::SetMatrixCall`, `Director::Move`; only for an actor whose vtable is 0x4b25e18).
+- **Wings.** Its animation file (`Dm_Npc_Navi.root.asb`, 330 bytes) has no animation commands, so the actor plays nothing. `Npc_Navi.root.asb` has `Wait`, `Dash`, `Fly_*` and `Talk`. The two share one skeleton (22 bones). So each frame, at the start of the fairy director's cave turn, the local player's own `Npc_Navi` is found on the actor list (`CoopFairy::FindActor`, looked up again every 0.5 s while she is missing) and her skeleton's local transforms are copied onto every live fairy (`CoopFairy::Wings`, `CoopPose::CopySkeleton`, same bone count only). Each fairy so beats its wings and turns as the local Navi does. `LICHII_COOP_FAIRY_WINGS=0` turns the copy off. Log: `fairy wings: copying Npc_Navi <actor> onto the fairies`, then one `fairy wings: fairy <actor> copied Npc_Navi 22 bones -> Dm_Npc_Navi 22 bones` per fairy.
+
+**Proven in game (2026-11-09, `tools\autotest\run.ps1 -Scenario fairy`, `LICHII_COOP_PUPPET=1`).** Graveyard, both child, auto kits with kitfinal-A's server (shots `coop-kit\shots\fairy\20261109-144820`). Both games log the 22-bone copy. B takes a screenshot every 0.1 s:
+- While A stands, the fairy at A's puppet shows a different wing shape in each frame (spread, folded, edge-on), glows, and bobs.
+- While A walks into view, it trails behind the puppet, catches up, and then stays at the puppet's shoulder.
+
+The wing beat is the local Navi's, not the other player's own: the remote Navi's pose and colour are not sent (no protocol change).
 
 ## Not done
 

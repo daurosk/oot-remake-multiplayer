@@ -1,6 +1,10 @@
 # fairy: B stands still and takes a burst of screenshots every 6 ticks
-# (0.1 s) while A stands, then while A walks.
-wait 300
+# (0.1 s) while A stands, then while A walks. B first turns right, towards
+# where A stands after stepping off the cow, and puts the camera behind.
+wait 120
+stick 1 0 8             # face right
+press ZL                # camera behind B
+wait 170
 mark still-00
 wait 6
 mark still-01

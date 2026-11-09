@@ -3,6 +3,9 @@
 // (coop_objects_sync.cpp, Flush). No emulator code.
 #include <doctest/doctest.h>
 
+#include <array>
+#include <map>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -250,4 +253,53 @@ TEST_CASE("world: a crate gone unmoved within sword reach of our Link was broken
     REQUIRE(last.size() == 1);
     REQUIRE(last[0].state.life);
     CHECK(last[0].state.life->life == 0);
+}
+
+TEST_CASE("world: the foliage probe logs the cut buffer once, then only what changed") {
+    const std::uint64_t main = 0x8000000, module = 0x2100000000, holder = 0x2100001000,
+                        scene = 0x2100002000, buffer = 0x2100003000;
+    std::map<std::uint64_t, std::uint64_t> memory;
+    const auto fill = [&](std::uint64_t at, std::size_t words) {
+        for (std::size_t i = 0; i < words; ++i) {
+            memory.try_emplace(at + 8 * i, 0);
+        }
+    };
+    fill(module, 64);
+    fill(holder, 128);
+    fill(scene, 64);
+    fill(buffer, 64);
+    memory[main + 0x4e22540] = module;
+    memory[module + 0xf0] = holder;
+    memory[holder + 0x338] = scene;
+    memory[scene + 0x58] = buffer;
+    const CoopWorld::FoliageProbe::ReadWord read =
+        [&](std::uint64_t at) -> std::optional<std::uint64_t> {
+        const auto it = memory.find(at);
+        return it == memory.end() ? std::nullopt : std::optional<std::uint64_t>(it->second);
+    };
+    CoopWorld::FoliageProbe probe;
+    const std::optional<std::array<float, 3>> link{{1.0f, 2.0f, 3.0f}};
+    std::vector<std::string> lines;
+    const auto look = [&] {
+        lines.clear();
+        for (int i = 0; i < 4; ++i) {  // it looks on every fourth call
+            for (auto& line : probe.Look(read, main, link)) {
+                lines.push_back(std::move(line));
+            }
+        }
+    };
+    look();
+    REQUIRE(lines.size() == 3);  // the path, the scene header, the buffer
+    CHECK(lines[0].find("scene 0x2100002000") != std::string::npos);
+    CHECK(lines[2].find("cut+0x58 at 0x2100003000") != std::string::npos);
+    look();
+    CHECK(lines.empty());
+    memory[buffer + 0x10] = 0x3f800000;
+    look();
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0] == "foliage: cut+0x58 changed +0x10:0>3f800000 | Link 1.00 2.00 3.00");
+    memory[main + 0x4e22540] = 0;  // scene gone
+    look();
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("scene 0") != std::string::npos);
 }

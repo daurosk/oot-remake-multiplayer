@@ -59,3 +59,17 @@ Most switch states are 64-bit-key flags of the switch's placement ([flags.md](fl
 ## Testing
 
 `tools/autotest/run.ps1 -Scenario rock`: A walks to the Graveyard's liftable rock with `goto` ([testing.md](testing.md), "Input scripts"), lifts and throws it; B stands 6.5 m away facing it. The `coop: objects: share gone` and `share life` lines in the two logs and B's screenshots show the break on both. `sign` (Kakariko signpost, cut with the sword) and `crate` are there for the cases above that are not shared yet.
+
+## Field grass (not an actor): research, not shared yet
+
+Read from the plain `main` of build e0f3ccfaf50065ae with `nso_index.py` (integration's tool); the game was not run.
+
+- The grass of the fields is drawn by `game::foliage::Module`. Its turf shader binds a buffer named `SsboGrassCut` (the code at main+0x2c02600), next to `SsboUnitPlacement`, `SsboGather` and `SsboVegeBehaviour`. So a cut is an entry in a buffer the shader reads, not an actor.
+- Path, checked in the code: the module pointer is at main+0x4e22540; when its byte +0x30 has bit 0 clear, `[module+0xf0]+0x338` is the foliage scene (the game's own 0x2c013c0). `SsboGrassCut` is the 0x30 bytes at scene+0x58, `SsboGather` at scene+0x88.
+- Other names in the binary: `OneshotTryCutFoliage` (an AI one-shot, name used at 0x296776c), `PlayerCutGrass`, `IsCutGrass`, `FoliageCutRadius` (0xa03484, 0x30fee8c), `EnableGrassCut`, `GrassCutBoost`, `GrassCutEffectEmitRate` (foliage parameters), `game__drop__FoliageDropParam`.
+- Not known: the layout inside the buffer (one entry per cut, a grid, a ring), what writes it, and whether writing an entry from outside is enough for the shader to hide the grass (the buffer may be a copy of a list kept elsewhere).
+
+`LICHII_COOP_DEBUG_OBJECTS=1` logs it (`CoopWorld::FoliageProbe`, `coop: foliage:` lines): the path once, then every 8-byte word that changes in scene+0x40..0xc0 and in what the six words of `SsboGrassCut` point to, two pointers deep (0x200 bytes each), with where our Link stood. At most 60 lines per block, 1,500 per session.
+
+Next: one run where grass is cut (steps in the coordinator's notes), then read which words changed and how they relate to where Link stood. From that: the entry layout, then a GRASS_CUT message (protocol 4 or 5) that carries a cut's position and size and is written into the other games' buffers, or replayed through the game's own cut call if the buffer turns out to be a copy.
+

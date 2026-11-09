@@ -31,7 +31,9 @@ C++20 and CMake, the same as Lichii, so the co-op code builds inside it and insi
 | `server/` | The headless server program. |
 | `tools/coop_test/` | The stage 0 test tool: starts a server and clients in one process or several. |
 | `tests/` | Unit tests for the protocol (round trips, unknown components skipped, bad lengths refused). |
-| `lichii/` | Later: the hook points inside Lichii, kept as small as possible. |
+| `lichii/` | The emulator pin (`PIN`), `fetch.ps1` that fetches and patches it, the patches (hook points only, as small as possible) and `hook/`, the co-op code the patch builds into the emulator. See [lichii/README.md](../lichii/README.md). |
+
+Lichii is now Frizti's Fritchii (github.com/Frizti/Fritchii, GPL-3.0). Decided 2026-11-08: its source is not committed here and not forked on GitHub. `lichii/fetch.ps1` clones it at the pinned commit to `fritchii-src` beside this repo (outside every repo) and applies our patches as local commits. A new Fritchii release means a new pin and, if they no longer apply, refreshed patches.
 
 ENet comes in as a pinned git submodule or CMake `FetchContent` at a fixed version, never copied into the tree.
 

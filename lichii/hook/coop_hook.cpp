@@ -51,6 +51,7 @@
 #include "coop_cheats.h"
 #include "coop_flags.h"
 #include "coop_fairy.h"
+#include "coop_dungeon.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
@@ -192,6 +193,7 @@ public:
         coop::host::SessionSettings session;
         std::string flag_error;
         session.shared = LoadShared(flag_error);
+        if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }

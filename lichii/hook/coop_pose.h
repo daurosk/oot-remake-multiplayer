@@ -102,6 +102,9 @@ private:
     std::uint64_t newest_ms_ = 0;
 };
 
+// The local player's actor, as coop::host::PlayerReader finds it; 0 none.
+std::uint64_t FindPlayer(CoopPuppet::Guest& guest, std::uint64_t main_base);
+
 // Calc thread, once a frame: read the local player's skeleton and write the
 // shown pose onto each live puppet. puppets: (player number, actor); the
 // debug puppet (number 0) copies the local player's own pose.

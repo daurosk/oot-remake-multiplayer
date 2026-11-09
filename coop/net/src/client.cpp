@@ -7,7 +7,9 @@
 #include <enet/enet.h>
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <span>
 #include <utility>
@@ -67,6 +69,21 @@ enet_uint32 packet_flags(std::uint8_t channel) {
   return channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
 }
 
+// Whether the protocol takes this flag value: a known kind, a bool of 0 or
+// 1, a finite float.
+bool valid_flag(const proto::FlagEntry& flag) {
+  switch (flag.kind) {
+    case proto::FlagKind::boolean: return flag.value <= 1;
+    case proto::FlagKind::int32:
+    case proto::FlagKind::uint32: return true;
+    case proto::FlagKind::float32:
+      return std::isfinite(std::bit_cast<float>(flag.value));
+  }
+  return false;
+}
+
+FlagKey key_of(const proto::FlagEntry& flag) { return {flag.hash, flag.index}; }
+
 }  // namespace
 
 std::string_view to_string(State state) {
@@ -94,6 +111,12 @@ std::string_view to_string(EventKind kind) {
     case EventKind::player_joined: return "player joined";
     case EventKind::player_left: return "player left";
     case EventKind::player_status: return "player status";
+    case EventKind::flag_state: return "flag state";
+    case EventKind::flag_snapshot: return "flag snapshot";
+    case EventKind::join_request: return "join request";
+    case EventKind::join_accepted: return "join accepted";
+    case EventKind::join_refused: return "join refused";
+    case EventKind::join_timed_out: return "join timed out";
   }
   return "unknown";
 }
@@ -153,6 +176,7 @@ void Client::stop() {
   }
   if (state_ != State::idle) state_ = State::stopped;
   players_.clear();
+  clear_shared();
 }
 
 void Client::begin_attempt() {
@@ -187,6 +211,7 @@ void Client::end_attempt(DropReason reason) {
   }
   const bool was_connected = state_ == State::connected;
   players_.clear();
+  clear_shared();
   Event event;
   event.kind = was_connected ? EventKind::disconnected : EventKind::connect_failed;
   event.drop_reason = reason;
@@ -267,6 +292,7 @@ void Client::service(std::uint32_t wait_ms) {
         send_raw(proto::Ping{now}, proto::kChannelSession);
         next_ping_us_ = now + ms_to_us(config_.ping_interval_ms);
       }
+      check_join_timeouts(now);
       break;
     case State::waiting_retry:
       if (now >= retry_at_us_) begin_attempt();
@@ -356,6 +382,19 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
     ++rejected_;
     return;
   }
+  if (!room) {
+    if (const auto* join = std::get_if<proto::JoinPartner>(&message);
+        join != nullptr && join->kind != proto::JoinKind::request &&
+        (!our_join_ || join->request_id != our_join_->request_id ||
+         join->player_number != our_join_->player)) {
+      ++stale_join_;  // an answer to a request that is no longer open
+      return;
+    }
+    if (!apply_shared(message, channel, room)) {
+      ++rejected_;
+      return;
+    }
+  }
   Event event;
   event.kind = EventKind::message;
   event.message = std::move(message);
@@ -405,6 +444,7 @@ bool Client::apply_room(const proto::Message& message, std::uint8_t channel,
     event.nickname = known->nickname;
     event.leave_reason = left->reason;
     std::erase_if(players_, [&](const Player& p) { return p.number == left->player_number; });
+    std::erase_if(their_joins_, [&](const OpenJoin& j) { return j.player == left->player_number; });
   } else if (const auto* status = std::get_if<proto::PlayerStatus>(&message)) {
     Player* known = player_entry(status->player_number);
     if (known == nullptr || known->self) return false;
@@ -433,6 +473,7 @@ void Client::on_welcome(const proto::Welcome& welcome) {
   failed_attempts_ = 0;
 
   players_.clear();
+  clear_shared();
   Player self;
   self.number = welcome.player_number;
   self.nickname = config_.hello.nickname;
@@ -510,5 +551,249 @@ bool Client::send_raw(const proto::Message& message, std::uint8_t channel) {
 }
 
 void Client::push(Event event) { events_.push_back(std::move(event)); }
+
+bool Client::is_other_player(std::uint8_t number) const {
+  const Player* known = find_player(number);
+  return known != nullptr && !known->self;
+}
+
+bool Client::is_host() const {
+  return state_ == State::connected && !players_.empty() &&
+         players_.front().number == player_number_;
+}
+
+std::optional<proto::FlagEntry> Client::find_flag(std::uint32_t hash,
+                                                  std::uint16_t index) const {
+  const auto it = flags_.find(FlagKey{hash, index});
+  if (it == flags_.end()) return std::nullopt;
+  return it->second;
+}
+
+void Client::store_flags(std::span<const proto::FlagEntry> flags) {
+  for (const proto::FlagEntry& flag : flags) flags_[key_of(flag)] = flag;
+}
+
+void Client::clear_shared() {
+  flags_.clear();
+  synced_ = false;
+  snapshot_flags_.clear();
+  snapshot_next_ = 0;
+  snapshot_count_ = 0;
+  our_join_.reset();
+  their_joins_.clear();
+}
+
+bool Client::send_flags(std::span<const proto::FlagEntry> flags, bool as_state) {
+  // Every part is checked first, so a refused one sends nothing at all.
+  std::vector<proto::Message> messages;
+  for (std::size_t at = 0; at < flags.size(); at += proto::kMaxFlagEntries) {
+    const auto part = flags.subspan(at, std::min(proto::kMaxFlagEntries, flags.size() - at));
+    std::vector<proto::FlagEntry> list(part.begin(), part.end());
+    proto::Message message;
+    if (as_state) {
+      message = proto::FlagState{proto::kPlayerSelf, std::move(list)};
+    } else {
+      message = proto::FlagSet{proto::kPlayerSelf, std::move(list)};
+    }
+    if (proto::check_received(message, proto::Sender::client,
+                              proto::kChannelProgress) != proto::Error::none) {
+      return false;
+    }
+    messages.push_back(std::move(message));
+  }
+  for (const proto::Message& message : messages) {
+    if (!send_raw(message, proto::kChannelProgress)) return false;
+  }
+  return true;
+}
+
+bool Client::set_flags(std::span<const proto::FlagEntry> flags) {
+  if (state_ != State::connected || flags.empty()) return false;
+  // One entry per (hash, index) with the last value given, in first-seen order.
+  std::vector<proto::FlagEntry> list;
+  std::map<FlagKey, std::size_t> seen;
+  for (const proto::FlagEntry& flag : flags) {
+    if (!valid_flag(flag)) return false;
+    const auto [it, fresh] = seen.try_emplace(key_of(flag), list.size());
+    if (fresh) {
+      list.push_back(flag);
+    } else {
+      list[it->second] = flag;
+    }
+  }
+  const bool host = is_host();
+  if (!send_flags(list, host)) return false;
+  if (host) store_flags(list);
+  return true;
+}
+
+bool Client::send_flag_snapshot(std::span<const proto::FlagEntry> flags) {
+  if (!is_host()) return false;
+  const auto parts = proto::split_snapshot(flags);
+  if (!parts) return false;
+  for (const proto::FlagSnapshot& part : *parts) {
+    if (proto::check_received(part, proto::Sender::client,
+                              proto::kChannelProgress) != proto::Error::none) {
+      return false;
+    }
+  }
+  for (const proto::FlagSnapshot& part : *parts) {
+    if (!send_raw(part, proto::kChannelProgress)) return false;
+  }
+  return true;
+}
+
+std::optional<std::uint16_t> Client::join_request_id() const {
+  if (!our_join_) return std::nullopt;
+  return our_join_->request_id;
+}
+
+std::optional<std::uint16_t> Client::request_join(std::uint8_t player) {
+  if (state_ != State::connected || !is_other_player(player)) return std::nullopt;
+  const std::uint16_t id = next_request_id_;
+  proto::JoinPartner request;
+  request.other_player = player;
+  request.request_id = id;
+  request.kind = proto::JoinKind::request;
+  if (!send(request)) return std::nullopt;
+  next_request_id_ = static_cast<std::uint16_t>(id + 1);
+  if (next_request_id_ == 0) next_request_id_ = 1;
+  our_join_ = OpenJoin{player, id, now_us()};
+  return id;
+}
+
+bool Client::answer_join(proto::JoinPartner answer) {
+  const auto open = std::find_if(their_joins_.begin(), their_joins_.end(), [&](const OpenJoin& j) {
+    return j.player == answer.other_player && j.request_id == answer.request_id;
+  });
+  if (open == their_joins_.end()) return false;
+  if (elapsed(now_us(), open->at_us) >= ms_to_us(config_.join_timeout_ms)) {
+    their_joins_.erase(open);  // the asker has given up by now
+    return false;
+  }
+  if (!send(answer)) return false;
+  their_joins_.erase(open);
+  return true;
+}
+
+bool Client::accept_join(std::uint8_t player, std::uint16_t request_id,
+                         const proto::JoinTarget& target) {
+  proto::JoinPartner answer;
+  answer.other_player = player;
+  answer.request_id = request_id;
+  answer.kind = proto::JoinKind::accept;
+  answer.target = target;
+  return answer_join(std::move(answer));
+}
+
+bool Client::refuse_join(std::uint8_t player, std::uint16_t request_id,
+                         proto::JoinRefuseReason reason) {
+  proto::JoinPartner answer;
+  answer.other_player = player;
+  answer.request_id = request_id;
+  answer.kind = proto::JoinKind::refuse;
+  answer.reason = reason;
+  return answer_join(std::move(answer));
+}
+
+void Client::check_join_timeouts(std::uint64_t now) {
+  const std::uint64_t timeout = ms_to_us(config_.join_timeout_ms);
+  if (our_join_ && elapsed(now, our_join_->at_us) >= timeout) {
+    Event event;
+    event.kind = EventKind::join_timed_out;
+    event.player = our_join_->player;
+    event.request_id = our_join_->request_id;
+    our_join_.reset();
+    push(std::move(event));
+  }
+  std::erase_if(their_joins_, [&](const OpenJoin& j) {
+    return elapsed(now, j.at_us) >= timeout;
+  });
+}
+
+bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
+                          std::optional<Event>& out) {
+  Event event;
+  event.channel = channel;
+  if (const auto* state = std::get_if<proto::FlagState>(&message)) {
+    if (!is_other_player(state->player_number)) return false;
+    store_flags(state->flags);
+    event.kind = EventKind::flag_state;
+    event.player = state->player_number;
+    event.flags = state->flags;
+  } else if (const auto* set = std::get_if<proto::FlagSet>(&message)) {
+    // The server relays FLAG_SET to the host only.
+    if (!is_other_player(set->player_number) || !is_host()) return false;
+    std::vector<proto::FlagEntry> answer;
+    for (const proto::FlagEntry& asked : set->flags) {
+      std::optional<proto::FlagEntry> kept =
+          flag_answer_ ? flag_answer_(set->player_number, asked) : asked;
+      if (kept) {
+        kept->hash = asked.hash;
+        kept->index = asked.index;
+      }
+      // Refused, or a value the protocol would refuse: the table's value.
+      if (!kept || !valid_flag(*kept)) kept = find_flag(asked.hash, asked.index);
+      if (kept) answer.push_back(*kept);
+    }
+    if (answer.empty() || !send_flags(answer, true)) return true;
+    store_flags(answer);
+    event.kind = EventKind::flag_state;
+    event.player = player_number_;
+    event.flags = std::move(answer);
+  } else if (const auto* part = std::get_if<proto::FlagSnapshot>(&message)) {
+    if (part->part == 0) {
+      snapshot_flags_.clear();
+      snapshot_next_ = 0;
+      snapshot_count_ = part->part_count;
+    }
+    if (snapshot_count_ == 0 || part->part != snapshot_next_ ||
+        part->part_count != snapshot_count_) {
+      snapshot_flags_.clear();  // out of order: wait for a new part 0
+      snapshot_next_ = 0;
+      snapshot_count_ = 0;
+      return false;
+    }
+    snapshot_flags_.insert(snapshot_flags_.end(), part->flags.begin(), part->flags.end());
+    ++snapshot_next_;
+    if (snapshot_next_ < snapshot_count_) return true;
+    // The snapshot is the whole table: it replaces what was there.
+    flags_.clear();
+    store_flags(snapshot_flags_);
+    synced_ = true;
+    event.kind = EventKind::flag_snapshot;
+    event.flags = std::move(snapshot_flags_);
+    snapshot_flags_.clear();
+    snapshot_next_ = 0;
+    snapshot_count_ = 0;
+  } else if (const auto* join = std::get_if<proto::JoinPartner>(&message)) {
+    if (join->kind == proto::JoinKind::request) {
+      if (!is_other_player(join->player_number) || join->other_player != player_number_) {
+        return false;
+      }
+      std::erase_if(their_joins_, [&](const OpenJoin& j) { return j.player == join->player_number; });
+      their_joins_.push_back(OpenJoin{join->player_number, join->request_id, now_us()});
+      event.kind = EventKind::join_request;
+    } else {
+      // on_receive has matched it to our open request. The server's own
+      // not_there answer names the player asked, who is not in the room.
+      if (join->kind == proto::JoinKind::accept && !join->target) return false;
+      our_join_.reset();
+      if (join->kind == proto::JoinKind::accept) {
+        event.kind = EventKind::join_accepted;
+        event.join_target = *join->target;
+      } else {
+        event.kind = EventKind::join_refused;
+        event.join_reason = join->reason;
+      }
+    }
+    event.player = join->player_number;
+    event.request_id = join->request_id;
+  } else {
+    return true;  // nothing shared
+  }
+  out = std::move(event);
+  return true;
+}
 
 }  // namespace coop::net

@@ -186,6 +186,12 @@ void Probe::handle(const net::Event& event) {
     case net::EventKind::player_joined:
     case net::EventKind::player_left:
     case net::EventKind::player_status:
+    case net::EventKind::flag_state:
+    case net::EventKind::flag_snapshot:
+    case net::EventKind::join_request:
+    case net::EventKind::join_accepted:
+    case net::EventKind::join_refused:
+    case net::EventKind::join_timed_out:
       break;  // the `message` event before each one is enough here
   }
 }

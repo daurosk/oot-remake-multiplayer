@@ -850,7 +850,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         Show show = Show::show;
         switch (coop::host::visibility(in.scene, local_event, theirs, r.status)) {
         case coop::host::Visibility::hide:
-            if (!coop::host::same_scene(in.scene, theirs)) {
+            if (!coop::host::same_place(in.scene, theirs)) {
                 continue;  // not here: no puppet (one made is deleted)
             }
             show = Show::hide;  // our cutscene: kept, out of sight

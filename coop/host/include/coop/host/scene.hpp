@@ -19,6 +19,26 @@ inline bool same_scene(std::optional<std::string_view> a,
   return a && b && !a->empty() && *a == *b;
 }
 
+// The place a scene shows, without the era: "Graveyard_Adult" and
+// "Graveyard_Child" are the same graveyard seven years apart. Only a trailing
+// "_Child" or "_Adult" is dropped.
+inline std::string_view place_of(std::string_view scene) {
+  for (const std::string_view era : {std::string_view("_Child"), std::string_view("_Adult")}) {
+    if (scene.size() > era.size() && scene.substr(scene.size() - era.size()) == era) {
+      return scene.substr(0, scene.size() - era.size());
+    }
+  }
+  return scene;
+}
+
+// True when both scenes are known and show the same place, in either era: a
+// child and an adult player in the two Graveyards see each other's puppet.
+// Shared objects and flags still need the same scene (same_scene).
+inline bool same_place(std::optional<std::string_view> a,
+                       std::optional<std::string_view> b) {
+  return a && b && !a->empty() && place_of(*a) == place_of(*b);
+}
+
 // The "in cutscene" bit of a PLAYER_STATUS flags byte. The sender sets it
 // from "event running" (event manager +0x68 not zero, sampler.cpp).
 inline bool in_cutscene(std::uint8_t status_flags) {
@@ -32,7 +52,7 @@ enum class Visibility : std::uint8_t {
 };
 
 // What to do with one remote player this frame.
-// - Different or unknown scene: hide.
+// - Different or unknown place (same_place: either era counts): hide.
 // - Our own cutscene running: hide every puppet, so none walks into the
 //   game's staged shot (puppets are not actors the event knows about).
 // - Their cutscene running: hold, since their samples would show them
@@ -41,7 +61,7 @@ inline Visibility visibility(std::optional<std::string_view> local_scene,
                              bool local_in_cutscene,
                              std::optional<std::string_view> remote_scene,
                              std::uint8_t remote_status_flags) {
-  if (!same_scene(local_scene, remote_scene)) return Visibility::hide;
+  if (!same_place(local_scene, remote_scene)) return Visibility::hide;
   if (local_in_cutscene) return Visibility::hide;
   if (in_cutscene(remote_status_flags)) return Visibility::hold;
   return Visibility::show;

@@ -52,4 +52,7 @@ add_library(coop_overlay STATIC
   overlay/src/overlay.cpp
 )
 target_include_directories(coop_overlay PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/overlay/include")
+# Header only: the scene rules (coop/host/scene.hpp), so a marker shows in the
+# same places as a puppet.
+target_include_directories(coop_overlay PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/host/include")
 target_link_libraries(coop_overlay PUBLIC coop_presence PRIVATE coop_warnings)

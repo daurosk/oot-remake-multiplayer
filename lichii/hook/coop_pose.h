@@ -15,6 +15,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -40,6 +41,7 @@ namespace addr {
 // object sits inline at +0x120 of the fourth, its skeleton pointer at +0x20.
 inline constexpr std::array<std::uint64_t, 5> kSkeletonPath{0x270, 0x8, 0x18, 0x18, 0x140};
 inline constexpr std::uint64_t kModelResource = 0x120;  // of the fourth: "FMDL"
+inline constexpr std::uint64_t kModelName = 0x8;  // FMDL: pointer to u16 length + chars
 inline constexpr std::uint64_t kBoneCount = 0x48;       // u16 in the skeleton object
 inline constexpr std::uint64_t kLocalArray = 0x18;      // pointer to the local transforms
 inline constexpr std::uint64_t kLocalStride = 0x60;
@@ -78,9 +80,11 @@ Vec3 UnpackUnit(const std::array<std::int16_t, 3>& v);
 // Shortest-path normalised lerp from a to b; t in [0, 1].
 Quat Nlerp(const Quat& a, const Quat& b, float t);
 
-// A skeleton's id: the bone count (the two skeletons the puppet can have,
-// child and adult, differ in it).
-std::uint32_t SkeletonId(std::uint32_t bone_count);
+// A skeleton's id, sent with every pose: the bone count in the low 9 bits and
+// a hash of the model's name ("Player_Child", "Player_Adult") above it, so a
+// puppet applies only a pose of its own model.
+std::uint32_t SkeletonId(std::uint32_t bone_count, std::string_view model_name);
+std::uint32_t BoneCountOf(std::uint32_t skeleton);
 
 // The newest poses of one remote player, and the blend shown now.
 class Track {

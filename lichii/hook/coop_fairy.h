@@ -38,6 +38,9 @@ struct Settings {
     // Where it hovers, in the puppet's own frame (x right, y up, z forward),
     // in game units (about metres): by the right shoulder, a little behind.
     Vec3 offset{0.35f, 1.05f, -0.25f};
+    // An adult puppet (actor name ending in _Adult) is taller: the offset is
+    // scaled by this, so the fairy stays by its shoulder.
+    float adult_scale = 1.45f;
     float bob = 0.06f;          // up and down, units
     float bob_hz = 0.7f;
     float circle = 0.08f;       // a small loop in the horizontal plane, units

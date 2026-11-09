@@ -7,6 +7,8 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
+#include <string_view>
 #include <utility>
 
 namespace CoopTestInput {
@@ -617,13 +619,27 @@ void Warp(Core::System& system, const std::string& scene, const std::string& sta
     if (!start.empty() && start_type == 16) {
         start_ok = coop::host::GameFlags::set_string64_now(memory, start_name, start);
     }
+    // A scene of the other era (X_Adult, X_Child) also asks for that age:
+    // Sequence_IsChildhood (a bool in GameDataList) is set through the game's
+    // queue before the scene change is asked, so Link loads at that age.
+    const auto childhood = coop::host::flag_hash("Sequence_IsChildhood");
+    const std::string_view name = scene;
+    std::optional<bool> child;
+    if (name.size() > 6 && name.substr(name.size() - 6) == "_Adult") {
+        child = false;
+    } else if (name.size() > 6 && name.substr(name.size() - 6) == "_Child") {
+        child = true;
+    }
+    const bool era_ok = child && coop::host::GameFlags::set_bool(memory, childhood, *child);
     const bool banc_ok = coop::host::GameFlags::set_string64_now(memory, banc, scene);
     LOG_INFO(Core,
              "coop: test warp to {} (start {}): scene {} (type {}), start {} (type {}), "
-             "position type {}",
+             "position type {}, childhood {} {} (type {})",
              scene, start.empty() ? "-" : start, banc_ok ? "set" : "NOT set",
              flags.find_type(banc).value_or(-1), start_ok ? "set" : "NOT set",
-             start_type.value_or(-1), flags.find_type(position).value_or(-1));
+             start_type.value_or(-1), flags.find_type(position).value_or(-1),
+             !child ? "-" : *child ? "child" : "adult", era_ok ? "set" : "NOT set",
+             flags.find_type(childhood).value_or(-1));
 }
 
 // give: bombs, bow and hookshot are the item flags of each; any other name is

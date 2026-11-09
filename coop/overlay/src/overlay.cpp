@@ -4,6 +4,8 @@
 #include <cmath>
 #include <utility>
 
+#include "coop/host/scene.hpp"
+
 namespace coop::overlay {
 
 namespace {
@@ -34,7 +36,7 @@ Vec4d transform(const Mat4& m, const Vec4d& v) {
 bool valid(const Settings& s) {
   const float all[] = {s.near_distance,     s.far_distance,      s.marker_size, s.reference_distance, s.min_size,
                        s.max_size, s.tag_gap, s.edge_reach,  s.edge_margin,
-                       s.fade_start,        s.fade_end,          s.edge_min_alpha};
+                       s.fade_start,        s.fade_end,          s.edge_min_alpha,    s.adult_lift};
   for (float v : all) {
     if (!finite(v)) return false;
   }
@@ -56,6 +58,7 @@ std::vector<Shown> collect(presence::Presence& presence, std::uint64_t server_no
     if (p != nullptr) {
       s.name = p->nickname();
       s.scene = p->scene();
+      s.adult = p->age() == presence::Age::adult;
     }
     s.position = pose->position;
     s.fade = pose->fade;
@@ -97,12 +100,16 @@ Result Overlay::build(const Camera& camera, std::string_view local_scene,
       skip(Why::faded);
       continue;
     }
-    if (!p.scene || *p.scene != local_scene) {
+    const std::optional<std::string_view> theirs =
+        p.scene ? std::optional<std::string_view>(*p.scene) : std::nullopt;
+    if (!coop::host::same_place(theirs, local_scene)) {  // either era
       skip(Why::other_scene);
       continue;
     }
 
-    const Vec4d clip = transform(view_projection, {p.position[0], p.position[1], p.position[2], 1.0});
+    const double lift = p.adult ? s.adult_lift : 0.0;
+    const Vec4d clip =
+        transform(view_projection, {p.position[0], p.position[1] + lift, p.position[2], 1.0});
     const double w = clip[3];
     if (!std::isfinite(w) || !std::isfinite(clip[0]) || !std::isfinite(clip[1])) {
       skip(Why::invalid);

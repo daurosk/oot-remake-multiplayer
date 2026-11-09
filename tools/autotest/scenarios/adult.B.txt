@@ -1,0 +1,24 @@
+# adult: B loads straight into the Graveyard as child (Graveyard_Child), backs off and watches A, the adult puppet.
+# Run with -NoLoad: the warp is asked before the save is loaded, because the game takes it
+# only during an event (the one after a save loads), and this file loads the save itself.
+mark start
+warp Graveyard_Child
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400                # the save loads, then the warp lands (about 30 s)
+mark after
+wait 200
+stick 0 -0.6 30         # walk back toward the camera
+stick 0 0.3 8           # turn to face up the path
+press ZL                # camera behind B
+wait 60
+mark ready
+wait 900                # stands still watching A (the adult puppet) walk
+mark end

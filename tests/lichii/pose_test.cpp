@@ -5,6 +5,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "coop_pose.h"
@@ -142,7 +143,7 @@ constexpr std::uint32_t kBones = 8;
 namespace paddr = CoopPose::addr;
 
 // An actor whose skeleton has kBones identity bones; returns the local array.
-std::uint64_t MakeActor(FakeGuest& g, std::uint64_t actor) {
+std::uint64_t MakeActor(FakeGuest& g, std::uint64_t actor, std::string_view model = {}) {
     const std::uint64_t parts = actor + 0x1000, first = actor + 0x2000, second = actor + 0x3000,
                         holder = actor + 0x4000, skel = actor + 0x5000, local = actor + 0x6000,
                         res = actor + 0x7000;
@@ -156,6 +157,12 @@ std::uint64_t MakeActor(FakeGuest& g, std::uint64_t actor) {
     g.Put(holder + paddr::kSkeletonPath[4], skel);
     g.Put(holder + paddr::kModelResource, res);
     g.Put(res, std::array<char, 4>{'F', 'M', 'D', 'L'});
+    if (!model.empty()) {
+        const std::uint64_t name = res + 0x100;
+        g.Put(res + paddr::kModelName, name);
+        g.Put(name, static_cast<std::uint16_t>(model.size()));
+        REQUIRE(g.Write(name + 2, model.data(), model.size()));
+    }
     g.Put(skel + paddr::kBoneCount, static_cast<std::uint16_t>(kBones));
     g.Put(skel + paddr::kLocalArray, local);
     for (std::uint32_t i = 0; i < kBones; ++i) {
@@ -224,4 +231,26 @@ TEST_CASE("pose: the local skeleton's moving bones reach the debug puppet") {
     CHECK(lines.back().find("8 bones, 1 moving") != std::string::npos);
     CHECK(lines.back().find("kept 1, overwritten 0") != std::string::npos);
     CoopPose::SetLog({}, false);
+}
+
+TEST_CASE("pose: a pose of another model is not written") {
+    FakeGuest g;
+    const std::uint64_t player = 0x600000000, puppet = 0x700000000;
+    const std::uint64_t mine = MakeActor(g, player, "Player_Child");
+    const std::uint64_t theirs = MakeActor(g, puppet, "Player_Adult");
+    MakePlayerChain(g, player);
+    std::vector<std::string> lines;
+    CoopPose::SetLog([&](const std::string& l) { lines.push_back(l); }, true);
+    const std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets{{0, puppet}};
+    CoopPose::OnCalcFrame(g, kMain, puppets, 5000);
+    g.Put(mine + 2 * paddr::kLocalStride + 0x50, CoopPose::Vec3{0.5f, 0, 0});
+    CoopPose::OnCalcFrame(g, kMain, puppets, 5016);
+    CHECK(g.Get<float>(theirs + 2 * paddr::kLocalStride + 0x50) == 0.0f);  // untouched
+    CoopPose::OnCalcFrame(g, kMain, puppets, 6100);
+    REQUIRE_FALSE(lines.empty());
+    CHECK(lines.back().find("Player_Child 8 bones") != std::string::npos);
+    CHECK(lines.back().find("0 written/s") != std::string::npos);
+    CoopPose::SetLog({}, false);
+    CHECK(CoopPose::SkeletonId(309, "Player_Child") != CoopPose::SkeletonId(309, "Player_Adult"));
+    CHECK(CoopPose::BoneCountOf(CoopPose::SkeletonId(309, "Player_Adult")) == 309);
 }

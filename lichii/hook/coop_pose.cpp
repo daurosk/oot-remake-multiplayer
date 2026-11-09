@@ -105,8 +105,16 @@ Quat Nlerp(const Quat& a, const Quat& b, float t) {
     return Normalised(q);
 }
 
-std::uint32_t SkeletonId(std::uint32_t bone_count) {
-    return bone_count;
+std::uint32_t SkeletonId(std::uint32_t bone_count, std::string_view model_name) {
+    std::uint32_t hash = 2166136261u;  // FNV-1a
+    for (const char c : model_name) {
+        hash = (hash ^ static_cast<std::uint8_t>(c)) * 16777619u;
+    }
+    return (bone_count & 0x1ffu) | (hash << 9);
+}
+
+std::uint32_t BoneCountOf(std::uint32_t skeleton) {
+    return skeleton & 0x1ffu;
 }
 
 namespace {
@@ -193,6 +201,7 @@ Rows RowsOf(const LocalMtx& b) {
 struct Skeleton {
     std::uint64_t local = 0;
     std::uint32_t count = 0;
+    std::string model;  // "Player_Child", "Player_Adult"
 };
 
 // Actor -> its skeleton's local transform array, checking the model is one.
@@ -219,6 +228,13 @@ std::optional<Skeleton> FindSkeleton(CoopPuppet::Guest& guest, std::uint64_t act
         return std::nullopt;
     }
     s.count = count;
+    std::uint64_t name = 0;
+    std::uint16_t length = 0;
+    char text[64]{};
+    if (ReadValue(guest, resource + addr::kModelName, name) && ReadValue(guest, name, length) &&
+        length > 0 && length < sizeof(text) && guest.Read(name + 2, text, length)) {
+        s.model.assign(text, length);
+    }
     return s;
 }
 
@@ -265,6 +281,7 @@ struct State {
     std::function<void(const std::string&)> log;
     bool debug = false;
     bool no_as = false;
+    std::string local_model;  // our skeleton's model, for the debug line
     // The local skeleton: the first read and which parts have moved since.
     std::vector<LocalMtx> first;
     std::vector<std::uint8_t> moving;  // pose_part bits, sticky
@@ -304,12 +321,13 @@ std::optional<Pose> ReadLocal(State& s, CoopPuppet::Guest& guest, std::uint64_t 
     for (const LocalMtx& b : bones) {
         if (!std::isfinite(b.rows[0]) || !std::isfinite(b.translation[0])) return std::nullopt;
     }
-    if (s.first.size() != bones.size()) {
+    if (s.first.size() != bones.size() || s.local_model != skel->model) {  // a new skeleton (age)
         s.first = bones;
         s.moving.assign(bones.size(), 0);
     }
     Pose pose;
-    pose.skeleton = SkeletonId(skel->count);
+    pose.skeleton = SkeletonId(skel->count, skel->model);
+    s.local_model = skel->model;
     for (std::size_t i = 0; i < bones.size(); ++i) {
         const LocalMtx& b = bones[i];
         const LocalMtx& f = s.first[i];
@@ -336,7 +354,7 @@ std::optional<Pose> ReadLocal(State& s, CoopPuppet::Guest& guest, std::uint64_t 
 // Calc thread, under the lock: the pose onto a puppet's skeleton.
 bool WritePose(State& s, CoopPuppet::Guest& guest, std::uint64_t actor, const Pose& pose) {
     const auto skel = FindSkeleton(guest, actor);
-    if (!skel || SkeletonId(skel->count) != pose.skeleton) return false;
+    if (!skel || SkeletonId(skel->count, skel->model) != pose.skeleton) return false;
     std::vector<LocalMtx> bones(skel->count);
     if (!guest.Read(skel->local, bones.data(), bones.size() * sizeof(LocalMtx))) return false;
 
@@ -447,7 +465,8 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
         for (const auto& [number, actor] : puppets) {
             facing += ", P" + std::to_string(number) + " " + YawText(guest, actor);
         }
-        Say(s, std::to_string(s.first.size()) + " bones, " + std::to_string(s.last_size) +
+        Say(s, (s.local_model.empty() ? std::string("?") : s.local_model) + " " +
+                   std::to_string(s.first.size()) + " bones, " + std::to_string(s.last_size) +
                    " moving; " + std::to_string(s.sent) + " sent/s, " +
                    std::to_string(s.received) + " received/s, " + std::to_string(s.written) +
                    " written/s, " + std::to_string(s.refused) + " refused/s; last write kept " +

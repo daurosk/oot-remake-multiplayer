@@ -391,11 +391,23 @@ The debug puppet (`LICHII_COOP_DEBUG_PUPPET=1`) copies our own pose when `LICHII
 
 `LICHII_COOP_DEBUG_POSE=1` logs a line a second: `pose: <bones> bones, <n> moving; <s> sent/s, <r> received/s, <w> written/s, <x> refused/s; last write kept <k>, overwritten <o>`. "Kept" and "overwritten" compare one written bone with what the puppet holds a frame later: overwritten means the game's own animation writes the local transforms after our write, and the copy cannot show.
 
+### Proven in game (2026-11-09)
+
+Two local games in the Graveyard (child), autotest scenario `pose` (`tools/autotest/scenarios/pose.A.txt`, `pose.B.txt`: B steps back down the path, A walks, runs, turns, rolls and swings in front of it), `LICHII_COOP_DEBUG_POSE=1`:
+
+- Both games read 309 bones; about 300 count as moving once Link has walked. Each sends 30 poses a second and receives the other's 30.
+- B writes the pose on its puppet every frame (about 40 written a second at the game's 40 fps) and every write is still there a frame later (`kept 41, overwritten 0`): the puppet's own AS commands do not write its local transforms, so a write at the start of the frame holds.
+- B's screenshots show the puppet in A's poses at the same moments: walking, mid-run, turning to run back, and a hunched pose with hands on the knees that the AS route never showed.
+- With `LICHII_COOP_POSE_NO_AS=1` no AS command is played on the puppet at all, and it still moves through every pose: the copy alone drives the whole body.
+
+The first two-game run had every write refused: the player reaches its model through component +0x0, +0x60 as well, but the puppet does not; component +0x8 works for both.
+
 ### Not done (pose)
 
-1. Run in the game: does the write show (kept, and the puppet matches in screenshots), with and without the AS command also played on the puppet.
+1. Default is still to play the AS command as well (a build without the pose copy on the other side still animates the puppet). Whether to switch it off by default (`LICHII_COOP_POSE_NO_AS`) is open; both look the same.
 2. The skeleton id is only the bone count; child and adult differ in it, which is what a mismatch would be.
 3. Adult Link's skeleton was not read (only `Player_Child`).
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.

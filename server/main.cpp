@@ -77,6 +77,14 @@ int main(int argc, char** argv) {
                   static_cast<unsigned long long>(stats.relayed),
                   static_cast<unsigned long long>(stats.dropped()),
                   static_cast<unsigned long long>(stats.half_open_limited));
+      std::printf("coop_server: flags relayed %llu, refused %llu, clashes %llu; "
+                  "join relayed %llu, not there %llu, dropped %llu\n",
+                  static_cast<unsigned long long>(stats.flag_relayed),
+                  static_cast<unsigned long long>(stats.flag_refused),
+                  static_cast<unsigned long long>(stats.flag_clashes),
+                  static_cast<unsigned long long>(stats.join_relayed),
+                  static_cast<unsigned long long>(stats.join_not_there),
+                  static_cast<unsigned long long>(stats.join_dropped));
     }
   }
   enet_deinitialize();

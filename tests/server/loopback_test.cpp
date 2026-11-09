@@ -1,11 +1,12 @@
-// The real server on 127.0.0.1 with two clients written in raw ENet.
-// Single-threaded: the test pumps the server and both clients in turn.
+// The real server on 127.0.0.1 with clients written in raw ENet.
+// Single-threaded: the test pumps the server and every client in turn.
 
 #include <doctest/doctest.h>
 
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -285,4 +286,95 @@ TEST_CASE("loopback: a fifth half-open connection from one address is cut at onc
   for (Client* c : kept) CHECK(c->find<Welcome>() != nullptr);
   CHECK(cut() == 1);
   CHECK(server.session().stats().half_open_limited == 1);
+}
+
+TEST_CASE("loopback: three clients share a flag through the host and join a partner") {
+  EnetLife enet;
+  ServerOptions options;
+  options.port = 0;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client a;
+  Client b;
+  Client c;
+  std::vector<Client*> all{&a, &b, &c};
+  const char* names[] = {"Link", "Zelda", "Saria"};
+  // One at a time, so the numbers are 1, 2 and 3 in order.
+  for (std::size_t i = 0; i < all.size(); ++i) {
+    Client* cl = all[i];
+    cl->connect(server.port());
+    REQUIRE(pump_until(server, all, [&] { return cl->connected; }));
+    cl->send(hello_from(names[i]), kChannelSession);
+    REQUIRE(pump_until(server, all, [&] {
+      return cl->find<Welcome>() != nullptr && cl->find<FlagSnapshot>() != nullptr;
+    }));
+    CHECK(cl->find<Welcome>()->player_number == i + 1);
+    REQUIRE(cl->find<Host>() != nullptr);
+    CHECK(*cl->find<Host>() == Host{1});
+    CHECK(*cl->find<FlagSnapshot>() == FlagSnapshot{0, 1, {}});
+  }
+
+  // Player 2 sets a flag: it goes to the host (player 1) only.
+  const FlagEntry chest{flag_hash("chest"), 3, FlagKind::boolean, 1};
+  b.send(FlagSet{0, {chest}}, kChannelProgress);
+  REQUIRE(pump_until(server, all, [&] { return a.find<FlagSet>() != nullptr; }));
+  CHECK(*a.find<FlagSet>() == FlagSet{2, {chest}});
+  // The host answers with the state, which reaches everyone else.
+  a.send(FlagState{0, {chest}}, kChannelProgress);
+  REQUIRE(pump_until(server, all, [&] {
+    return b.find<FlagState>() != nullptr && c.find<FlagState>() != nullptr;
+  }));
+  CHECK(*b.find<FlagState>() == FlagState{1, {chest}});
+  CHECK(*c.find<FlagState>() == FlagState{1, {chest}});
+  CHECK(b.find<FlagSet>() == nullptr);
+  CHECK(c.find<FlagSet>() == nullptr);
+  CHECK(a.find<FlagState>() == nullptr);
+
+  // Player 3 asks to join player 2, who accepts.
+  c.send(JoinPartner{0, 2, 41, JoinKind::request, std::nullopt}, kChannelSession);
+  REQUIRE(pump_until(server, all, [&] { return b.find<JoinPartner>() != nullptr; }));
+  const JoinPartner ask = *b.find<JoinPartner>();
+  CHECK(ask.player_number == 3);
+  CHECK(ask.request_id == 41);
+  CHECK(ask.kind == JoinKind::request);
+  JoinTarget where{"spot04", {10.0f, 0.0f, -2.5f}, {0.0f, 0.0f, 0.0f, 1.0f}};
+  b.send(JoinPartner{0, 3, 41, JoinKind::accept, where}, kChannelSession);
+  REQUIRE(pump_until(server, all, [&] { return c.find<JoinPartner>() != nullptr; }));
+  CHECK(*c.find<JoinPartner>() == JoinPartner{2, 3, 41, JoinKind::accept, where});
+  CHECK(a.find<JoinPartner>() == nullptr);
+
+  // Asking for a player who is not there is refused by the server.
+  c.inbox.clear();
+  c.send(JoinPartner{0, 4, 42, JoinKind::request, std::nullopt}, kChannelSession);
+  REQUIRE(pump_until(server, all, [&] { return c.find<JoinPartner>() != nullptr; }));
+  const JoinPartner no = *c.find<JoinPartner>();
+  CHECK(no.player_number == 4);
+  CHECK(no.request_id == 42);
+  CHECK(no.kind == JoinKind::refuse);
+  CHECK(no.reason == JoinRefuseReason::not_there);
+
+  // The host leaves: player 2 hosts, and the flag stays on the server.
+  b.inbox.clear();
+  c.inbox.clear();
+  enet_peer_disconnect(a.peer, 0);
+  REQUIRE(pump_until(server, all, [&] {
+    return b.find<Host>() != nullptr && c.find<Host>() != nullptr;
+  }));
+  CHECK(*b.find<Host>() == Host{2});
+  CHECK(*c.find<Host>() == Host{2});
+  CHECK(server.session().flag_count() == 1);
+
+  Client d;
+  all.push_back(&d);
+  d.connect(server.port());
+  REQUIRE(pump_until(server, all, [&] { return d.connected; }));
+  d.send(hello_from("Darunia"), kChannelSession);
+  REQUIRE(pump_until(server, all, [&] { return d.find<FlagSnapshot>() != nullptr; }));
+  CHECK(*d.find<Host>() == Host{2});
+  CHECK(*d.find<FlagSnapshot>() == FlagSnapshot{0, 1, {chest}});
+  CHECK(server.session().stats().flag_relayed == 2);
+  CHECK(server.session().stats().join_relayed == 2);
+  CHECK(server.session().stats().join_not_there == 1);
+  CHECK(server.session().stats().dropped() == 0);
 }

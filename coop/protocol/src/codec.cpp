@@ -452,6 +452,12 @@ Error encode_body(const FlagSnapshot& m, Writer& w) {
   return Error::none;
 }
 
+Error encode_body(const Host& m, Writer& w) {
+  if (!valid_player(m.player_number)) return Error::bad_value;
+  w.u8(m.player_number);
+  return Error::none;
+}
+
 // ---------------------------------------------------------------- bodies: decode
 
 Error decode_body(Reader& r, Hello& m) {
@@ -695,6 +701,12 @@ Error decode_body(Reader& r, FlagSnapshot& m) {
   return read_flags(r, m.flags, 0);
 }
 
+Error decode_body(Reader& r, Host& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player(m.player_number)) return Error::bad_value;
+  return Error::none;
+}
+
 template <typename T>
 Error decode_as(Reader& body, Message& out) {
   T value{};
@@ -735,7 +747,7 @@ MessageType type_of(const Message& message) {
       MessageType::pong,          MessageType::player_status, MessageType::chat,
       MessageType::player_sample, MessageType::test_payload,
       MessageType::join_partner,  MessageType::flag_set,    MessageType::flag_state,
-      MessageType::flag_snapshot,
+      MessageType::flag_snapshot, MessageType::host,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -751,6 +763,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::flag_set:
     case MessageType::flag_state:
     case MessageType::flag_snapshot:
+    case MessageType::host:
       return kChannelProgress;
     default:
       return kChannelSession;
@@ -773,6 +786,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::flag_set:
     case MessageType::flag_state:
     case MessageType::flag_snapshot:
+    case MessageType::host:
       return channel == kChannelProgress;
     case MessageType::player_sample:
       return channel == kChannelPlayerSamples;
@@ -790,6 +804,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::refused:
     case MessageType::player_joined:
     case MessageType::player_left:
+    case MessageType::host:
       return from == Sender::server;
     case MessageType::ping:
     case MessageType::pong:
@@ -899,6 +914,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_set: return decode_as<FlagSet>(body, out);
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
+    case MessageType::host: return decode_as<Host>(body, out);
   }
   return Error::unknown_type;
 }

@@ -29,7 +29,8 @@ bool blank_name(const std::string& name) {
 }  // namespace
 
 std::uint64_t Stats::dropped() const {
-  std::uint64_t total = before_welcome + repeated_hello + after_refused + rate_limited;
+  std::uint64_t total = before_welcome + repeated_hello + after_refused + rate_limited +
+                        join_dropped + flag_refused;
   for (std::uint64_t n : by_error) total += n;
   return total;
 }
@@ -144,6 +145,12 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
 
   send(id, kChannelSession, welcome);
   send_to_others(id, kChannelSession, PlayerJoined{c.number, c.nickname});
+  // The first player in hosts. The joiner learns who hosts, then gets the
+  // whole flag table, both on the progress channel and so before any
+  // FLAG_STATE relayed after this.
+  if (!host_) host_ = id;
+  send(id, kChannelProgress, Host{connections_.at(*host_).number});
+  send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
 
@@ -166,9 +173,134 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   // it from the connection, never trusting the message. TEST_PAYLOAD has no
   // player field and goes on as it came. check_received has already refused
   // every server-only type, so nothing else reaches here.
+  if (auto* j = std::get_if<JoinPartner>(&message)) {
+    on_join_partner(id, c, *j);
+    return;
+  }
+  if (std::holds_alternative<FlagSet>(message)) {
+    on_flag_set(c, message);
+    return;
+  }
+  if (std::holds_alternative<FlagState>(message)) {
+    on_flag_state(id, c, message);
+    return;
+  }
+  if (const auto* part = std::get_if<FlagSnapshot>(&message)) {
+    on_flag_snapshot(id, c, *part);
+    return;
+  }
   if (sender_of(message)) set_sender(message, c.number);
   send_to_others(id, channel, message);
   ++stats_.relayed;
+}
+
+// To the named player only. The codec has made sure the player field is 0
+// and the other player is 1 to 4.
+void Session::on_join_partner(ConnectionId id, Connection& c, JoinPartner& j) {
+  if (j.other_player == c.number) {  // set_sender refuses it too
+    ++stats_.join_dropped;
+    return;
+  }
+  auto target = connection_of(j.other_player);
+  if (!target) {
+    if (j.kind != JoinKind::request) {  // an answer to someone who left
+      ++stats_.join_dropped;
+      return;
+    }
+    JoinPartner answer;
+    answer.player_number = j.other_player;
+    answer.other_player = c.number;
+    answer.request_id = j.request_id;
+    answer.kind = JoinKind::refuse;
+    answer.reason = JoinRefuseReason::not_there;
+    send(id, kChannelSession, answer);
+    ++stats_.join_not_there;
+    return;
+  }
+  Message m = std::move(j);
+  set_sender(m, c.number);
+  send(*target, kChannelSession, m);
+  ++stats_.join_relayed;
+  ++stats_.relayed;
+}
+
+// To the host only, the host itself included: a host's own FLAG_SET comes
+// back to it, so its build answers every FLAG_SET the same way.
+void Session::on_flag_set(Connection& c, Message& message) {
+  set_sender(message, c.number);
+  send(*host_, kChannelProgress, message);
+  ++stats_.flag_relayed;
+  ++stats_.relayed;
+}
+
+void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
+  if (id != host_) {
+    ++stats_.flag_refused;
+    return;
+  }
+  for (const FlagEntry& e : std::get<FlagState>(message).flags) keep_flag(e);
+  set_sender(message, c.number);
+  send_to_others(id, kChannelProgress, message);
+  ++stats_.flag_relayed;
+  ++stats_.relayed;
+}
+
+// A host's table, merged in part by part. A flag the server lacks is kept and
+// sent to everyone else as FLAG_STATE. On a clash the server's value wins (it
+// is what every other player already has, and it may hold progress made
+// while this player was away): the host is sent it as FLAG_STATE, which it
+// applies like any other.
+void Session::on_flag_snapshot(ConnectionId id, Connection& c, const FlagSnapshot& part) {
+  if (id != host_) {
+    ++stats_.flag_refused;
+    return;
+  }
+  ++stats_.snapshot_parts;
+  FlagState added{c.number, {}};
+  FlagState kept{c.number, {}};
+  for (const FlagEntry& e : part.flags) {
+    auto it = flags_.find({e.hash, e.index});
+    if (it == flags_.end()) {
+      if (keep_flag(e)) added.flags.push_back(e);
+    } else if (!(it->second == e)) {
+      ++stats_.flag_clashes;
+      kept.flags.push_back(it->second);
+    }
+  }
+  if (!added.flags.empty()) send_to_others(id, kChannelProgress, added);
+  if (!kept.flags.empty()) send(id, kChannelProgress, kept);
+}
+
+bool Session::keep_flag(const FlagEntry& e) {
+  auto key = std::make_pair(e.hash, e.index);
+  auto it = flags_.find(key);
+  if (it != flags_.end()) {
+    it->second = e;
+    return true;
+  }
+  if (flags_.size() >= config_.max_flags) {
+    ++stats_.flag_table_full;
+    return false;
+  }
+  flags_.emplace(key, e);
+  return true;
+}
+
+void Session::send_snapshot(ConnectionId to) {
+  std::vector<FlagEntry> table;
+  table.reserve(flags_.size());
+  for (const auto& entry : flags_) table.push_back(entry.second);
+  // Fails only past 65535 parts, which max_flags would have to allow.
+  auto parts = split_snapshot(table);
+  if (!parts) return;
+  for (const FlagSnapshot& p : *parts) send(to, kChannelProgress, p);
+}
+
+std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
+  for (const auto& [id, c] : connections_) {
+    if (c.state == State::joined && c.number == number) return id;
+  }
+  return std::nullopt;
 }
 
 bool Session::within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us) {
@@ -208,9 +340,27 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
   connections_.erase(it);
   if (c.state != State::joined) return;
   send_to_others(id, kChannelSession, PlayerLeft{c.number, reason});
-  if (player_count() == 0) session_game_build_.clear();
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
       (reason == LeaveReason::timed_out ? " (timed out)" : ""));
+  if (player_count() == 0) {
+    session_game_build_.clear();
+    host_.reset();
+    flags_.clear();
+  } else if (host_ == id) {
+    // The remaining player with the lowest number takes over. Everyone is
+    // told on the progress channel, so the new host learns it hosts before
+    // any FLAG_SET relayed to it.
+    std::optional<ConnectionId> next;
+    for (const auto& [other, oc] : connections_) {
+      if (oc.state == State::joined && (!next || oc.number < connections_.at(*next).number)) {
+        next = other;
+      }
+    }
+    host_ = next;
+    const std::uint8_t number = connections_.at(*host_).number;
+    send_to_others(id, kChannelProgress, Host{number});
+    log("player " + std::to_string(number) + " hosts now");
+  }
 }
 
 void Session::tick(std::uint64_t now_us) {
@@ -248,6 +398,11 @@ std::size_t Session::player_count() const {
   return static_cast<std::size_t>(std::count_if(
       connections_.begin(), connections_.end(),
       [](const auto& entry) { return entry.second.state == State::joined; }));
+}
+
+std::optional<std::uint8_t> Session::host() const {
+  if (!host_) return std::nullopt;
+  return connections_.at(*host_).number;
 }
 
 std::optional<std::uint8_t> Session::player_number(ConnectionId id) const {

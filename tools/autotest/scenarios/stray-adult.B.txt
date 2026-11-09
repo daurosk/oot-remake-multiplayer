@@ -1,0 +1,13 @@
+# stray: B loads the save straight into the Graveyard as adult Link (test warp; the game
+# takes it only during the event after a save loads, so this file loads the save itself).
+warp Graveyard_Adult
+wait 1200               # the title screen
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark adult

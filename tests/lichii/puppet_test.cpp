@@ -79,6 +79,7 @@ private:
 // request that is not filled in until Spawn().
 struct Game {
     FakeGuest guest;
+    std::uint64_t create_result = 1;  // what the game's create returns
     Game() {
         guest.Map(kBase + addr::kActorManagerPtr, 8);
         guest.Map(kBase + addr::kGotCreateDefault, 8);
@@ -131,7 +132,7 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
         if (call->function == kBase + addr::kMalloc) {
             result = kHeap;
         } else if (call->function == kBase + addr::kCreate) {
-            result = 1;
+            result = g.create_result;
         } else if (call->function == kBase + addr::kRequestDelete) {
             result = 1;
         } else if (call->function == kBase + addr::kTakeCreated) {
@@ -1086,4 +1087,21 @@ TEST_CASE("puppet gear: nothing is worn while parked; a piece left behind is wor
     CHECK(Frame(d, g, 70).empty());
     CHECK(Frame(d, g, 900).empty());
     CHECK(Frame(d, g, 1100).size() == 1);
+}
+
+TEST_CASE("puppet: a create the game refuses is asked again after 1 s") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    g.create_result = 0;  // the old scene is still going
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);  // the block, the create
+    CHECK(calls[1].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(Frame(d, g, Director::kRefusedRetryMs - 1).empty());
+    g.create_result = 1;
+    calls = Frame(d, g, Director::kRefusedRetryMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].phase == Phase::creating);
 }

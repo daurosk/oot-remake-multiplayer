@@ -365,7 +365,8 @@ std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t l
 
 bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const FlagKey key = key_of(entry);
-  const ItemFlag* item = key.index == 0 ? find_item(key.hash) : nullptr;
+  const bool named = key.kind == protocol::FlagKeyKind::named && key.index == 0;
+  const ItemFlag* item = named ? find_item(key.hash) : nullptr;
   if (item == nullptr) return inner_.write(entry);
   if (entry.kind != item->kind || item->rule == ItemRule::per_player) {
     ++stats_.refused;

@@ -126,7 +126,7 @@ Enemy damage is set in each pack's `Life/DamageParameters` (`IsMergeSameFrameHit
 | Placed (enemies, pots, chests, switches) | the u64 placement hash | Both games load the same Banc placement, and the hash is the key the flag store already uses ([flags.md](flags.md)) |
 | Made by a player's game (projectiles, an enemy a player's action spawned) | the maker's player number and a u32 counter of its own | Nothing else names it on both sides; the maker says "I made 7" and everyone calls it (2, 7) |
 | Made by an enemy (bullets, summons) | the same, made by the enemy's owner | The enemy's owner is the only game whose copy really fires |
-| Made by the scene with no hash (spawners, waves) | not shared at first | Each game makes its own. If that shows (doubled waves, for example) it gets a rule of its own |
+| Made by the scene with no hash (spawners, waves, the night Stalchild of Hyrule Field and the Graveyard) | kind placed, value = `SceneSpawnId(scene, actor name, order)`: FNV-1a 64 of the three with the top bit set. `order` counts the enemies of that name seen in this scene visit, first seen first (one walk ordered by x, then z) | Stalchild were seen with hash ~0 (Caleb's test, 2026-11-09). The n-th Stalchild in game A and the n-th in game B get the same id, so a hit on one shows on the other, even when each game spawned its own near its own Link. Positions are not shared yet, so the two may stand in different places; a later rule can make the scene host's game the only spawner and hide the others' extras |
 
 A placed id is only good inside one scene, since a scene can be loaded on one game and not the other. Messages that name a placed object say its scene once, in `OBJECT_PRESENT`.
 
@@ -165,6 +165,19 @@ One path for every kind of hit, as TotK's `TOTK_SYNC_DAMAGE` found worked best (
 - Hits that change no life (a Deku nut's stun, a boomerang's stun, a hookshot pull) are not seen by a life read. They need the cause sent instead: `DAMAGE` with amount 0 and the cause, applied by whatever the game does for that cause. Not found yet.
 - Projectiles hit only on their maker's screen, so a remote player's arrow reaches a copy on the maker's game, and that game forwards the drop. Copies of projectiles never hit.
 - Players are not hurt by each other, and puppets have no life. Enemy attacks on a puppet do nothing; an enemy attacks the player of its owner's game. Whether enemies should target puppets is a later question.
+
+## The hook side (first cut)
+
+`LICHII_COOP_OBJECTS=1` turns it on (off by default). `lichii/hook/coop_objects_sync.cpp` holds the rules, tested in `tests/lichii/objects_test.cpp`; `coop_objects.cpp` walks the actor list every second frame and writes lives. Only actors whose name starts with `Enemy_` are shared.
+
+- `OBJECT_PRESENT` lists the enemies loaded in our scene (the scene of `PLAYER_SAMPLE`), on every change and every 2 s. A new scene forgets every id.
+- The owner sends `OBJECT_SAMPLE` (time, position, life) at most 20 times a second while life or place changes, once a second while still.
+- On a game that does not own an enemy, a drop of its life is our hit: the drops over 100 ms go to the owner as one `DAMAGE` (cause unknown). The owner writes life minus the amount (not below 0) into its enemy, and its next sample carries it.
+- A copy takes the owner's life from samples: a lower life at once, a higher one only when none of our hits is in flight (500 ms after our `DAMAGE`), so it does not heal back between our hit and the owner's answer. `HANDOVER_STATE` gives a new owner the last life.
+- Not yet: positions and poses of copies, projectiles, the fight lock and bosses. Copies are not hidden when the other game's enemy is elsewhere.
+
+**Two-game test (Caleb, 2026-11-09, Hyrule Field at night, child saves).** Two Stalchild spawned in each game (hash ~0, so ids by the scene rule). Game A owned both; each sword hit in A lowered life in B, 2 to 1 to 0 (`coop: objects: share life` lines in B), and both died on both screens. Seen as not done yet: B shows no flinch and no head knocked off on the first hit (only the life value is written, not the hit reaction), and each game's Stalchild chase their own Link (positions are not written into copies).
+
 
 ## Protocol proposal
 

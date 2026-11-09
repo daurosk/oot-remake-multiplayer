@@ -70,6 +70,9 @@ public:
     static constexpr std::uint64_t kCopyLifeUs = 20'000'000; // no remove came: dropped
     static constexpr float kClaimDistance = 1.5f;            // a fresh copy found on the list
     static constexpr unsigned kGoneWalks = 2;
+    // A bomb gone sooner than this did not explode: taking one out the first
+    // time makes a bomb that lasts about 0.1 s while the game shows its help.
+    static constexpr std::uint64_t kExplodeMinUs = 1'000'000;
 
     // Network thread: OBJECT_SPAWN, OBJECT_SAMPLE, OBJECT_REMOVE. Applied on
     // the next Tick.
@@ -97,6 +100,7 @@ private:
         std::uint64_t sent_at = 0;
         std::uint32_t sequence = 0;
         unsigned missed = 0;
+        std::uint64_t made_at = 0;
     };
     struct Remote {
         std::uint64_t key = 0;

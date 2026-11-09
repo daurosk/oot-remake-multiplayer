@@ -1,31 +1,69 @@
 # spawn-bomb (spawn sync, docs/spawns.md): A pulls a bomb and throws it; B, at
 # the same save spot, should show the bomb copy and its explosion at the same
-# time. Needs LICHII_COOP_OBJECTS_CHEAT=1 (bomb bag and bombs). Waits 15 s
-# first so a slower B has finished loading the scene, then walks A a little to
-# the right (away from the save spot's cow). R is quick select: it moves the
-# item slot from the slingshot to the bombs.
+# time. Needs LICHII_COOP_OBJECTS_CHEAT=1 (bomb bag and 20 bombs; the auto save
+# has none). Waits 15 s first so a slower B has loaded the scene and the cheat
+# has filled the pouch. The menu path is s6-autotest's (bomb.A.txt): PLUS, the
+# Items page, bombs at column 1 row 3 (the cursor starts on the slingshot), A
+# puts them on ZR. The first ZR opens a "Bomb" help box (and makes a bomb
+# that is gone in 0.1 s) that holds input until A. Then ZR pulls, ZR throws.
+# A first walks right, away from the cow at the save spot (A next to it talks
+# to it), so that B, looking ahead, sees the throw.
 mark start
 wait 900
 mark ready
-stick 1 0 40
-wait 20
-mark turned
+stick 1 0 50
+wait 30
+mark moved
+press PLUS
+wait 90
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
 press R
 wait 30
-mark selected
+press R
+wait 45
+mark items-page
+press DLEFT
+wait 20
+press DDOWN
+wait 20
+press DDOWN
+wait 20
+mark on-bombs
+press A
+wait 45
+press PLUS
+wait 90
+mark slot
+press ZR
+wait 60
+mark help
+press A
+wait 45
+mark help-closed
 press ZR
 wait 45
 mark pulled
-press A
+press ZR
 wait 20
 mark thrown
-wait 40
+wait 30
 mark flying
-wait 40
+wait 30
 mark landed
-wait 40
-mark fuse
-wait 40
-mark exploded
+wait 30
+mark fuse1
+wait 30
+mark fuse2
+wait 30
+mark fuse3
+wait 30
+mark fuse4
 wait 60
 mark end

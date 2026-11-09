@@ -240,6 +240,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         m.name = s.name;
         m.position = m.sent_position = s.position;
         m.seen_at = m.sent_at = now_us;
+        m.made_at = now_us;
         proto::ObjectSpawn out;
         out.id = m.id;
         out.actor = s.name;
@@ -258,8 +259,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         proto::ObjectRemove out;
         out.id = it->second.id;
-        out.reason = Explodes(it->second.name) ? proto::RemoveReason::exploded
-                                               : proto::RemoveReason::gone;
+        out.reason = Explodes(it->second.name) && now_us - it->second.made_at >= kExplodeMinUs
+                         ? proto::RemoveReason::exploded
+                         : proto::RemoveReason::gone;
         out.position = it->second.position;
         send.emplace_back(out);
         it = mine_.erase(it);

@@ -129,6 +129,10 @@ TEST_CASE("spawn: our bomb is spawned, sampled and removed as exploded") {
     CHECK((*samples[0].state.position)[0] == doctest::Approx(4.0f));
     CHECK((*samples[0].state.velocity)[0] == doctest::Approx(25.0f));
 
+    // The fuse burns (a bomb lasts a few seconds) without moving.
+    now += 3'000 * kMs;
+    sync.Tick(kScene, 1, now, {Made(0x5000, 0.0f), Made(0x6000, 4.0f)}, none, send, copies);
+
     // Gone for two walks: removed, exploded, where it was last.
     send.clear();
     sync.Tick(kScene, 1, now + 33 * kMs, {Made(0x5000, 0.0f)}, none, send, copies);
@@ -140,6 +144,25 @@ TEST_CASE("spawn: our bomb is spawned, sampled and removed as exploded") {
     CHECK(removes[0].reason == proto::RemoveReason::exploded);
     CHECK(removes[0].position[0] == doctest::Approx(4.0f));
     CHECK(sync.Mine() == 0);
+}
+
+TEST_CASE("spawn: a bomb gone within a second did not explode") {
+    // Taking out a bomb the first time makes one that lasts about 0.1 s while
+    // the game shows its help box: the copy must not blow up.
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Made(0x6000, 3.0f)}, none, send, copies);
+    REQUIRE(Of<proto::ObjectSpawn>(send).size() == 1);
+    sync.Tick(kScene, 1, now + 33 * kMs, {}, none, send, copies);
+    sync.Tick(kScene, 1, now + 66 * kMs, {}, none, send, copies);
+    const auto removes = Of<proto::ObjectRemove>(send);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
 }
 
 TEST_CASE("spawn: a seed is removed as gone, and other actors are not shared") {

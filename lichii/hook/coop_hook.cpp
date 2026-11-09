@@ -53,6 +53,7 @@
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_testinput.h"
 
 namespace CoopHook {
 namespace {
@@ -816,6 +817,7 @@ void Start() {
 
 void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
+    CoopTestInput::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.

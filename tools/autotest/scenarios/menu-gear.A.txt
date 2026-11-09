@@ -1,0 +1,30 @@
+# menu-gear: A opens the menu (PLUS), goes to the Equipment page (L to the first page,
+# Checked 2026-11-09: the Deku Shield is equipped and worn after the menu closes.
+# Collection, then R), moves to the shields and equips one (A), closes the menu; B watches.
+# Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
+# ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
+# dash (hold), B put away, X jump, Y attack, right stick camera.
+mark start
+press PLUS
+wait 60
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+mark first-page
+press R
+wait 45
+mark equipment
+# The cursor starts on the worn shield (Hylian); the Deku Shield is to its left.
+press DLEFT
+wait 30
+press A
+wait 45
+mark equipped
+press PLUS
+wait 90
+mark closed

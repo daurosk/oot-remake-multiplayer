@@ -4,7 +4,7 @@ How to test the co-op build with the test kit: the server on one PC, the patched
 
 ## What a kit can show
 
-Which features are in `main`, and so in a kit built from it, as of 2026-11-09. A feature that is not merged yet has no check to do: skip its rows in the [checklist](#checklist) and write "not in this kit". `VERSION.txt` in the kit says which commit it was built from.
+Which features are in `main`, and so in a kit built from it, as of 2026-11-09 (for players: [known-issues.md](known-issues.md)). A feature that is not merged yet has no check to do: skip its rows in the [checklist](#checklist) and write "not in this kit". `VERSION.txt` in the kit says which commit it was built from.
 
 | Feature | In `main` | Proven so far | Rows |
 |---|---|---|---|
@@ -14,10 +14,13 @@ Which features are in `main`, and so in a kit built from it, as of 2026-11-09. A
 | Chat box and player list (Enter, Tab) | Yes | One PC, two instances: chat both ways, Tab list with ping, join and leave lines, Esc closes the box | 10-11 |
 | Items: key items, bottles, songs, one-time pickups shared; rupees and the rest per player | Yes. `LICHII_COOP_CHEATS=1` opens a debug window that gives any shared item, for checking without playing to it | One PC, two instances: Hookshot, Song of Storms and a boss key crossed and showed | 12-14 |
 | Counts that add up (small keys, Skulltula tokens, heart pieces) | Yes (with items) | One PC: tokens, heart pieces and Forest Temple keys ended on the same totals in both games. Heart pieces add to the count but make no new heart | 13-14 |
-| Puppet Link standing and moving where the other player is | Yes: spawn, follow and removal. Needs the puppet pack and `LICHII_COOP_PUPPET=1` with `LICHII_COOP_PUPPET_ACTOR=CoopPuppet_Child` (or `_Adult`); without the actor line a stand-in cow is used | One PC: each game shows the other's Link, it follows, and it goes when the other closes. It stands in a T-pose: animation is **not merged** (branch `puppet-live`) | 15, 17 (16 fails: T-pose) |
-| Equipment shown on the puppet (sword, shield, tunic, boots) | Reading and sending in `main`; the pack carries the game's equipment tables. Putting the gear on the puppet is **not merged** | One PC: slots read live; the puppet wears only a Deku shield | 18 (not yet) |
-| Scenes: puppets only in your scene, hidden in cutscenes | The rule is in `main` (server tests); the puppet does not use it yet (**not merged**, branch `puppet-live`). The join-partner warp was dropped | Unit tests only | 19 (not yet) |
-| Shared enemies (`Enemy_` actors: life and kills) | Yes, off by default: `LICHII_COOP_OBJECTS=1` on both PCs. Positions, hit reactions and projectiles are not shared yet ([objects.md](objects.md)) | One PC, two games: Stalchild hit in A lost life in B and died on both screens; each game's copy still chases its own Link | 25 |
+| Puppet Link where the other player is | Yes (on by default; needs the puppet pack): follows live, copies the whole skeleton pose each frame, child or adult by the save | One PC, two games (autotest): walk, run, turn and sword stance match in screenshots of both windows | 15-17 |
+| Equipment shown on the puppet | Sword and shield; tunic, boots and masks not yet | One PC (autotest): Kokiri Sword and Hylian Shield worn; a menu swap to the Deku Shield followed | 18 |
+| Navi on each puppet | Yes (with the puppet; `LICHII_COOP_FAIRY=0` turns it off) | One PC, two games: a Navi at each puppet's shoulder | 15 |
+| Scenes: puppets only in your scene, hidden in cutscenes | Yes | Unit tests only | 19 |
+| Shared enemies, townspeople and animals (position, animation, life, kills) | Yes (`LICHII_COOP_OBJECTS=1`, on in the kit) | One PC, two games: copies hold the owner's place exactly; a Stalchild hit in A dies in both; Kakariko townspeople stand the same. Hit reactions (flinch, flash) not yet | 25 |
+| Objects a player makes (seeds, nuts; bombs, arrows built) | Yes (`LICHII_COOP_SPAWN=1`, on in the kit) | One PC, two games, logs: seeds and a Deku Nut copied. No bomb thrown or arrow shot in a test yet | (none yet) |
+| Dungeon switches, doors, cleared rooms, water levels | Yes (on unless `LICHII_COOP_DUNGEON=0`) | Unit tests and the shared flag path; not played through a dungeon | (none yet) |
 
 ## One PC first
 

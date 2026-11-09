@@ -11,18 +11,26 @@ Both stages share one design, one wire protocol and one server, so what is learn
 
 **Discord:** https://discord.gg/GwtRKAqng5, for players, testers and contributors.
 
+## Play the test release
+
+A very early test build is on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page: the patched emulator, the server and start scripts in one zip. You bring your own game dump and keys.
+
+1. [Setting up](docs/setup.md): unzip, your keys and firmware, the puppet pack, first start.
+2. Play on the [same network (LAN)](docs/play-lan.md), or [over the internet](docs/play-online.md) with port forwarding or a virtual LAN such as Radmin VPN.
+3. [Known issues](docs/known-issues.md): what works in this build and what does not yet.
+
 ## Status
 
-Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part is checked on one PC with the real game in two emulator instances, and the two-PC test comes once stage 1 is complete. The plan is in [docs/plan.md](docs/plan.md), the wire protocol in [docs/protocol.md](docs/protocol.md), and what a test kit can show in [docs/testing.md](docs/testing.md).
+Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part is checked on one PC with the real game in two emulator instances, and an early test release ([above](#play-the-test-release)) is for the first tests on two PCs. The plan is in [docs/plan.md](docs/plan.md), the wire protocol in [docs/protocol.md](docs/protocol.md), and what a test kit can show in [docs/testing.md](docs/testing.md).
 
 | Stage | State |
 |---|---|
 | 0. Transport, server and two clients on one PC | Done: ENet server and client, wire protocol, `tools/coop_test` (10 minute soak runs pass on one PC). Two-PC run not yet done. |
 | 1. Presence: other players shown as markers | Done on one PC: player sampling and smoothing ([docs/presence.md](docs/presence.md)), the emulator hook with `coop.ini` settings, a status panel and markers drawn from the game's camera ([docs/lichii.md](docs/lichii.md)). |
-| 2. Puppet Link in the world | In progress: the puppet pack is built from the player's own game files ([docs/puppet.md](docs/puppet.md)); each game shows the other player's Link where they stand, it follows them and goes when they leave (checked in game on one PC). It stands still in a T-pose: playing Link's animation is on a branch. What each player wears is read and sent, not yet put on the puppet. |
-| 3. Scenes, following and cutscenes | In progress: the rule (puppets only in your scene, held or hidden in cutscenes) is in and tested; the puppet uses it on a branch. The join-partner warp was dropped. |
-| 4. Shared progress (chests, keys, doors, songs) | Done on one PC: world flags shared through the host ([docs/flags.md](docs/flags.md)); items, songs and one-time pickups shared while rupees and the rest stay per player ([docs/items.md](docs/items.md)); small keys, Skulltula tokens and heart pieces add up across players. Checked live between two games. |
-| 5. Shared enemies and objects | In progress: the game's actor list, life and damage read live ([docs/objects.md](docs/objects.md)); enemies' life and kills are shared between two games (checked on one PC; off by default). Positions, hit reactions and projectiles not yet. |
+| 2. Puppet Link in the world | Done on one PC: the puppet pack is built from the player's own game files ([docs/puppet.md](docs/puppet.md)); each game shows the other players as Link, following them live, copying their whole pose every frame and wearing their sword and shield, with Navi beside them. Tunic, boots and masks not yet. |
+| 3. Scenes, following and cutscenes | Built: puppets only in your scene, hidden or held in cutscenes (unit-tested, not yet checked in game). The join-partner warp was dropped. |
+| 4. Shared progress (chests, keys, doors, songs) | Done on one PC: world flags shared through the host ([docs/flags.md](docs/flags.md)); items, songs and one-time pickups shared while rupees and the rest stay per player ([docs/items.md](docs/items.md)); small keys, Skulltula tokens and heart pieces add up; a late joiner gets them; dungeon switches, doors, cleared rooms and water levels shared ([docs/dungeon.md](docs/dungeon.md)). Heart containers not yet. |
+| 5. Shared enemies and objects | In progress: enemies, townspeople and animals move, animate and die the same in every game, owned by one player ([docs/objects.md](docs/objects.md)); seeds and nuts a player makes appear in the other games ([docs/spawns.md](docs/spawns.md)). Bombs and explosions, hit reactions and breakable pots and rocks not yet. |
 | 6. Chat, player list, reconnects | Done on one PC: reconnects and rejoining after a crash; the host moves to another player when one leaves; an in-game chat box (Enter) and player list (Tab). |
 | Recomp port of stages 0 to 6 | Waits for a playable recomp |
 

@@ -589,6 +589,45 @@ TEST_CASE("puppet animation: the other slots synced from slot 0; pose request wr
     CHECK(calls[3].function == kBase + addr::kSyncAsSlot);
 }
 
+TEST_CASE("puppet gear: each known piece worn once, on its own name cell") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.gear[1] = "Weapon_Shield_Deku";
+    t.gear[2] = "";  // nothing: left as it is
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 20).empty());  // no EquipmentUser yet
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 2);
+    for (std::size_t i = 0; i < 2; ++i) {
+        CHECK(calls[i].function == kBase + addr::kEquip);
+        CHECK(calls[i].x[0] == kEu);
+        CHECK(calls[i].x[1] == CoopPuppet::kGearKinds[i]);
+        CHECK(calls[i].x[2] == kHeap + block::kGearPtr + 8 * i);
+        CHECK(calls[i].x[3] == 2u);
+        CHECK(calls[i].x[4] == 0xFFFFFFFFu);
+        CHECK(calls[i].x[5] == 1u);
+        const auto text = g.guest.Get<std::uint64_t>(calls[i].x[2]);
+        CHECK(text == kHeap + block::kGearText + block::kGearCapacity * i);
+        std::array<char, block::kGearCapacity> name{};
+        g.guest.Read(text, name.data(), name.size());
+        CHECK(std::string(name.data()) == *t.gear[i]);
+    }
+    CHECK(Frame(d, g, 40).empty());  // worn: not again
+    t.gear[1] = "Weapon_Shield_Hylian";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 50);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 6u);
+}
+
 TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
     Game g;
     Director d;

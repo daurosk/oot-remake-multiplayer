@@ -304,6 +304,11 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         }
         ++slot.sync_next;
         break;
+    case Pending::equip:
+        slot.worn[slot.equip_index] = slot.equip_name;
+        Say(who + " wears " + kGearNames[slot.equip_index] + " '" + slot.equip_name +
+            "' (returned " + Hex(result & 0xff) + ")");
+        break;
     case Pending::none:
         break;
     }
@@ -372,6 +377,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             pending_ = Pending::remove;
             return c;
         }
+        if (auto c = Equip(slot, *t, guest)) {
+            return c;
+        }
         return Animate(slot, *t, guest);
     default:
         return std::nullopt;
@@ -435,8 +443,49 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.frame_to_set.reset();
     slot.held_frame.reset();
     slot.sync_next = 0;
+    slot.worn = {};
     pending_ = Pending::create;
     return c;
+}
+
+// One equip call for a live puppet whose player's gear differs from what it
+// wears, or none. An empty name (nothing in that slot) is not taken off yet:
+// how to clear a slot is not proven (0x2e01a90 with "" is a guess).
+std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest) {
+    for (std::size_t i = 0; i < target.gear.size(); ++i) {
+        const auto& want = target.gear[i];
+        if (!want || want->empty() || *want == slot.worn[i] ||
+            want->size() >= block::kGearCapacity) {
+            continue;
+        }
+        std::uint64_t parts = 0;
+        std::uint64_t eu = 0;
+        if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+            !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+            return std::nullopt;  // not set up (yet)
+        }
+        const std::uint64_t text = slot.block + block::kGearText + block::kGearCapacity * i;
+        const std::uint64_t cell = slot.block + block::kGearPtr + 8 * i;
+        std::array<char, block::kGearCapacity> name{};
+        std::memcpy(name.data(), want->data(), want->size());
+        if (!guest.Write(text, name.data(), name.size()) || !WriteValue(guest, cell, text)) {
+            return std::nullopt;
+        }
+        slot.equip_index = i;
+        slot.equip_name = *want;
+        Call c;
+        c.function = input_.main_base + addr::kEquip;
+        c.x[0] = eu;
+        c.x[1] = kGearKinds[i];
+        c.x[2] = cell;
+        c.x[3] = 2;
+        c.x[4] = 0xFFFFFFFF;
+        c.x[5] = 1;
+        c.x[6] = 0;
+        pending_ = Pending::equip;
+        return c;
+    }
+    return std::nullopt;
 }
 
 // The AS controller of an actor; 0 when the chain is not there.
@@ -741,6 +790,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.show = show;
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
+        t.gear = r.gear;
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -779,6 +829,7 @@ struct Received {
 };
 std::mutex g_anim_mutex;
 std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
+std::array<std::array<std::optional<std::string>, 5>, 5> g_gear;  // the same; guarded
 
 } // namespace
 
@@ -790,9 +841,16 @@ void OnEvent(const coop::net::Event& event) {
     if (event.kind == EventKind::disconnected) {
         std::lock_guard lock(g_anim_mutex);
         g_anims = {};
+        g_gear = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
+        g_gear[event.player] = {};
+    } else if (event.kind == EventKind::player_equip && event.player != 0 &&
+               event.player < g_gear.size()) {
+        const auto& e = event.equipment;
+        std::lock_guard lock(g_anim_mutex);
+        g_gear[event.player] = {e.weapon, e.shield, e.head, e.armor, e.boots};
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -854,6 +912,9 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             if (r.number < g_anims.size() && g_anims[r.number]) {
                 r.anim = g_anims[r.number]->anim;
                 r.anim_serial = g_anims[r.number]->serial;
+            }
+            if (r.number < g_gear.size()) {
+                r.gear = g_gear[r.number];
             }
         }
     }

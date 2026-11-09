@@ -86,11 +86,24 @@ inline constexpr std::uint64_t kSlotFrame = 0xe8;
 // partial slots are filled this way from slot 0.
 inline constexpr std::uint64_t kSyncAsSlot = 0x3abec10;
 inline constexpr std::int32_t kMaxAsSlots = 8;  // slots synced from slot 0
+
+// Gear (docs/puppet.md, Equipment): the EquipmentUser is [[actor + 0x270] +
+// 0x200]; 0x2df7b20(eu, kind, &char*, state 2, -1, 1, 0) wears the named
+// piece in a slot kind, as the game's own GameData path does.
+inline constexpr std::uint64_t kEquip = 0x2df7b20;
+inline constexpr std::uint64_t kActorParts = 0x270;
+inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 }  // namespace addr
+
+// The slot kinds the puppet wears, in Target::gear order: weapon, shield,
+// head, armor, boots (reports/s2-equip-create: kinds 0, 6, 7, 8, 9).
+inline constexpr std::array<std::uint32_t, 5> kGearKinds{0, 6, 7, 8, 9};
+inline constexpr std::array<const char*, 5> kGearNames{"weapon", "shield", "head", "armor",
+                                                       "boots"};
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x300;
+inline constexpr std::uint64_t kSize = 0x500;
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -104,6 +117,11 @@ inline constexpr std::uint64_t kPlayRequest = 0x200;  // 0x30 bytes
 // given, and a new name in the same buffer would look like the same one.
 inline constexpr std::uint64_t kAnimText = 0x240;
 inline constexpr std::uint64_t kAnimCapacity = 0x50;  // 64 characters and the 0
+// One name cell per gear kind (kGearKinds order), and the char* to each that
+// the equip call is given.
+inline constexpr std::uint64_t kGearText = 0x300;
+inline constexpr std::uint64_t kGearCapacity = 0x40;
+inline constexpr std::uint64_t kGearPtr = 0x440;  // 5 x 8 bytes
 }  // namespace block
 
 // Guest memory, as the director sees it. Failures are quiet.
@@ -141,6 +159,9 @@ struct Target {
     Show show = Show::show;   // hold: frozen as it is; hide: parked out of sight
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;  // goes up with each received animation
+    // What the player wears, in kGearKinds order; unset: not known yet,
+    // "" nothing (not taken off yet; the puppet keeps what it has).
+    std::array<std::optional<std::string>, 5> gear;
 };
 
 struct Input {
@@ -221,8 +242,11 @@ private:
         std::uint32_t play_serial = 0;
         std::int32_t sync_next = 0;         // next slot to sync from slot 0; 0 none
         std::uint64_t pose_log_ms = 0;      // last read-back line (debug anim)
+        std::array<std::string, 5> worn;    // equipped on it, by gear index
+        std::size_t equip_index = 0;        // the equip being made
+        std::string equip_name;
     };
-    enum class Pending { none, malloc, create, take, drop, remove, play, frame, sync };
+    enum class Pending { none, malloc, create, take, drop, remove, play, frame, sync, equip };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms);
@@ -230,6 +254,7 @@ private:
     std::optional<Call> Create(Slot& slot, const Target& target, Guest& guest);
     std::uint64_t Resolve(Slot& slot, Guest& guest);
     std::optional<Call> Animate(Slot& slot, const Target& target, Guest& guest);
+    std::optional<Call> Equip(Slot& slot, const Target& target, Guest& guest);
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
@@ -270,6 +295,7 @@ struct Remote {
     bool adult = false;
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;
+    std::array<std::optional<std::string>, 5> gear;  // as Target::gear
 };
 
 struct PlannerSettings {
@@ -311,7 +337,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
              coop::host::Session* session, std::uint64_t server_now_us);
 
 // The session's on_event (network thread): keeps each remote player's latest
-// animation from PLAYER_SAMPLE field 7.
+// animation from PLAYER_SAMPLE field 7 and gear from PLAYER_EQUIP.
 void OnEvent(const coop::net::Event& event);
 
 } // namespace CoopPuppet

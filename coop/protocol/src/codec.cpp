@@ -1179,6 +1179,27 @@ Error read_s16s(Reader& r, std::array<std::int16_t, N>& v) {
   return Error::none;
 }
 
+// u8 player, u32 seconds since midnight (below one day), u8 flags (bit 0
+// jump, the others 0).
+Error encode_body(const TimeOfDay& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if (m.seconds >= kSecondsPerDay || (m.flags & ~time_of_day::jump) != 0) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u32(m.seconds);
+  w.u8(m.flags);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, TimeOfDay& m) {
+  m = TimeOfDay{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_READ(r.u32(m.seconds));
+  COOP_READ(r.u8(m.flags));
+  if (m.seconds >= kSecondsPerDay || (m.flags & ~time_of_day::jump) != 0) return Error::bad_value;
+  return Error::none;
+}
+
 Error decode_body(Reader& r, PlayerPose& m) {
   m = PlayerPose{};
   COOP_READ(r.u8(m.player_number));
@@ -1259,6 +1280,7 @@ MessageType type_of(const Message& message) {
       MessageType::object_present, MessageType::object_owner, MessageType::handover_ask,
       MessageType::handover_state, MessageType::object_spawn, MessageType::object_sample,
       MessageType::object_remove, MessageType::damage, MessageType::player_pose,
+      MessageType::time_of_day,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1305,6 +1327,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::chat:
     case MessageType::join_partner:
     case MessageType::player_equip:
+    case MessageType::time_of_day:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1360,6 +1383,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::object_sample:
     case MessageType::object_remove:
     case MessageType::damage:
+    case MessageType::time_of_day:
       return true;
   }
   return false;
@@ -1381,7 +1405,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PlayerEquip> || std::is_same_v<T, ObjectPresent> ||
                       std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
-                      std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose>) {
+                      std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose> ||
+                      std::is_same_v<T, TimeOfDay>) {
           field = &m.player_number;
         }
       },
@@ -1472,6 +1497,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::object_remove: return decode_as<ObjectRemove>(body, out);
     case MessageType::damage: return decode_as<Damage>(body, out);
     case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
+    case MessageType::time_of_day: return decode_as<TimeOfDay>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;

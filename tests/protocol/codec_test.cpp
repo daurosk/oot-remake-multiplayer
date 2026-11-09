@@ -866,7 +866,7 @@ TEST_CASE("a reader without the new types skips them") {
   CHECK(stage0_decode(must_encode(Chat{0, "hi"}), back) == Error::none);
   // And this build in turn skips a type newer than itself.
   Bytes future;
-  put_u16(future, 27);
+  put_u16(future, 28);
   put_u16(future, 0);
   CHECK(decode_bytes(future) == Error::unknown_type);
 }
@@ -1109,5 +1109,36 @@ TEST_CASE("bad player poses are refused") {
   Bytes b = must_encode(p);
   b[kHeaderSize + 21] = 0x08;
   Message m;
+  CHECK(decode(b, m) == Error::bad_value);
+}
+
+TEST_CASE("time of day has its number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::time_of_day) == 27);
+  CHECK(channel_of(MessageType::time_of_day) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::time_of_day, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::time_of_day));
+  CHECK(may_send(Sender::server, MessageType::time_of_day));
+  Message t = TimeOfDay{0, 6 * 3600, time_of_day::jump};
+  CHECK(check_received(t, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(t, 2));
+  CHECK(sender_of(t) == 2);
+  const Bytes b = must_encode(TimeOfDay{0, 0x01020304 % kSecondsPerDay, 1});
+  REQUIRE(b.size() == kHeaderSize + 1 + 4 + 1);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<TimeOfDay>(back).seconds == 0x01020304 % kSecondsPerDay);
+}
+
+TEST_CASE("bad times of day are refused") {
+  Bytes out;
+  CHECK(encode(TimeOfDay{0, kSecondsPerDay, 0}, out) == Error::bad_value);
+  CHECK(encode(TimeOfDay{0, 10, 2}, out) == Error::bad_value);
+  CHECK(encode(TimeOfDay{5, 10, 0}, out) == Error::bad_value);
+  Bytes b = must_encode(TimeOfDay{0, 10, 0});
+  b[kHeaderSize + 5] = 0x80;  // an unknown flag
+  Message m;
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(TimeOfDay{0, 10, 0});
+  b[kHeaderSize + 4] = 0xff;  // seconds past one day
   CHECK(decode(b, m) == Error::bad_value);
 }

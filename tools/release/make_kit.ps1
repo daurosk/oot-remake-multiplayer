@@ -1,10 +1,10 @@
 # Builds a co-op test kit: one folder (and a zip of it) to copy to each test PC.
 # It holds the server, a copy of the patched emulator with an empty portable user\ folder,
-# Host.bat, Join.bat, play.cmd, start-server.cmd, collect-logs.cmd, make-puppet-pack.cmd
-# with tools\puppet_pack, coop-options.ini (feature switches on, debug off), the player
+# Host.bat, Join.bat, play.cmd, start-server.cmd, collect-logs.cmd, Update.bat
+# (make_update_bat.ps1), make-puppet-pack.cmd with tools\puppet_pack, coop-options.ini (feature switches on, debug off), the player
 # guides (SETUP.md, PLAY-LAN.md, PLAY-ONLINE.md, KNOWN-ISSUES.md), TESTING.md, the licence
-# texts (licenses\, THIRD_PARTY_NOTICES.md), SOURCE.txt (where this build's source is) and
-# VERSION.txt.
+# texts (licenses\, THIRD_PARTY_NOTICES.md), SOURCE.txt (where this build's source is),
+# MANIFEST.txt (the kit's own files, for Update.bat) and VERSION.txt.
 # No game files, keys or firmware go in, and no puppet pack: each PC adds its own and
 # builds the pack from its own romfs (docs/testing.md).
 #
@@ -89,6 +89,11 @@ if (($OutRoot + '\').StartsWith($repo + '\', [StringComparison]::OrdinalIgnoreCa
 $lichii = Join-Path $EmulatorBin 'lichii.exe'
 if (-not (Test-Path $lichii)) { throw "No lichii.exe in $EmulatorBin. Build it as lichii/README.md says, or pass -EmulatorBin." }
 if (-not (Test-BinaryHas $lichii 'coop: loaded')) { throw "$lichii is not a co-op build (built without -DLICHII_COOP=ON)." }
+# Fritchii's own updater would offer a plain Fritchii in place of this co-op build. Kits are
+# built with -DENABLE_UPDATE_CHECKER=OFF; Update.bat is the kit's only updater.
+foreach ($text in 'Check for Updates', 'update-old') {
+    if (Test-BinaryHas $lichii $text) { throw "$lichii has Fritchii's updater ('$text'). Build it with -DENABLE_UPDATE_CHECKER=OFF." }
+}
 $emuBuild = Split-Path -Parent $EmulatorBin
 $emuType = Read-CMakeCache $emuBuild 'CMAKE_BUILD_TYPE'
 if ($emuType -and $emuType -ne 'Release') { Write-Warning "The emulator build type is $emuType, not Release." }
@@ -149,7 +154,9 @@ if ($crt) {
 }
 
 foreach ($f in 'Host.bat', 'Join.bat', 'start-server.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
-foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1', 'update.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+# Update.bat: the updater in one file (the same file is attached to each release for old kits).
+& (Join-Path $here 'make_update_bat.ps1') -Out (Join-Path $kit 'Update.bat')
 
 # The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
 # scene-placing test helper stay out.
@@ -256,6 +263,13 @@ $banned = Get-ChildItem $kit -Recurse -File | Where-Object {
 }
 if ($banned) { throw "The kit holds files that must not ship: $(($banned | Select-Object -First 5 | ForEach-Object FullName) -join ', ')" }
 
+# MANIFEST.txt: the kit's own files. The next Update.bat removes those of them the newer kit
+# no longer has; the player's files (emulator\user\, logs\, coop-options.ini) are not listed.
+$kitRoot = [System.IO.Path]::GetFullPath($kit).TrimEnd('\') + '\'
+$own = @(Get-ChildItem $kit -Recurse -File | ForEach-Object { $_.FullName.Substring($kitRoot.Length) } |
+    Where-Object { $_ -notmatch '^(?i)(emulator\\user\\|logs\\|coop-options\.ini$)' } | Sort-Object)
+[System.IO.File]::WriteAllLines((Join-Path $kit 'MANIFEST.txt'), [string[]](@("# Files of $name, for Update.bat. Do not edit.", 'MANIFEST.txt') + $own))
+
 $size = (Get-ChildItem $kit -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ('Folder: {0:N0} MB' -f ($size / 1MB))
 if (-not $NoZip) {
@@ -263,4 +277,10 @@ if (-not $NoZip) {
     & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $OutRoot $name
     if ($LASTEXITCODE -ne 0) { throw "Zipping failed (tar $LASTEXITCODE)." }
     Write-Host ('Zip: {0} ({1:N0} MB)' -f $zip, ((Get-Item $zip).Length / 1MB))
+    # The checksum Update.bat checks the download against: attach it to the release beside the zip.
+    $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
+    Write-Host "SHA-256: $hash ($zip.sha256)"
+    Copy-Item -LiteralPath (Join-Path $kit 'Update.bat') -Destination (Join-Path $OutRoot 'Update.bat') -Force
+    Write-Host "Release assets: $name.zip, $name.zip.sha256 and Update.bat (for kits from before the updater), all in $OutRoot"
 }

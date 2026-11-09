@@ -242,8 +242,9 @@ class Session {
                      std::uint8_t channel, const protocol::Message& m);
   std::optional<ConnectionId> connection_of(std::uint8_t number) const;
   bool within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us);
+  // why: more for the server's log (which version is older), or empty.
   void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
-              std::uint64_t now_us);
+              std::uint64_t now_us, const std::string& why = {});
   void remove_player(ConnectionId id, protocol::LeaveReason reason);
   std::optional<ConnectionId> holder_of(const std::string& nickname) const;
   std::uint8_t free_number(std::uint8_t preferred = 0) const;

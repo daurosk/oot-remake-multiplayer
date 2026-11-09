@@ -194,7 +194,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             continue;
         }
         if (auto it = mine_.find(s.address); it != mine_.end() && it->second.name == s.name) {
-            Mine& m = it->second;
+            Own& m = it->second;
             const double dt = double(now_us - m.seen_at) / 1e6;
             if (dt > 0.0) {
                 for (int i = 0; i < 3; ++i) {
@@ -235,7 +235,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (counter_ == 0) {
             counter_ = now_us;  // ids stay unique across reconnects
         }
-        Mine m;
+        Own m;
         m.id = {proto::ObjectKind::made, self, ++counter_};
         m.name = s.name;
         m.position = m.sent_position = s.position;

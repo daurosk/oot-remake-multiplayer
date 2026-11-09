@@ -87,7 +87,7 @@ public:
     std::size_t Copies() const { return copies_.size(); }
 
 private:
-    struct Mine {
+    struct Own {
         coop::protocol::ObjectId id;
         std::string name;
         Vec3 position{};
@@ -114,7 +114,7 @@ private:
     std::string scene_;
     bool first_walk_ = true;
     std::set<std::uint64_t> old_;  // on the list at the first walk of a scene
-    std::map<std::uint64_t, Mine> mine_;  // by address
+    std::map<std::uint64_t, Own> mine_;  // by address
     std::map<coop::protocol::ObjectId, Remote> copies_;
     std::set<std::uint64_t> copy_addresses_;
     std::uint64_t counter_ = 0;

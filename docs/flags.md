@@ -1,0 +1,95 @@
+# The game's flag store
+
+Where Ocarina of Time keeps its world flags, and how `coop_host` reads and writes them (`coop/host/include/coop/host/game_flags.hpp`). Game: main module of build e0f3ccfaf50065ae (1.1.1). Guest address = main base (0x7100000000 in the runs so far) + offset.
+
+Sources: the integration project's `actor-map.md` (section 4), `player-state-map.md` and `save-format.md`, plus a static read of `main` for this page. **Checked** means read from the instructions. **Not run** means no live game confirmed it. Nothing on this page is confirmed in a run yet; see "Not done".
+
+## Summary
+
+- One object, `gmd::GameDataMgr`, holds every flag. Its pointer is at **main + 0x4e842a8**. Checked: the 272 code references load it through GOT slot 0x4c7e180.
+- Named flags are keyed by the **Murmur3 x86 32-bit hash, seed 0** of their name (`player-state-map.md`). Each type has its own table.
+- Chests, pots, enemies and other placed actors are **64-bit-key flags** (`Bool64bitKey`), keyed by the placement's 64-bit `Hash` in the Banc files, not by a name.
+- Setters do not write the value. They queue the write, and the GameData module applies the queue on its next update.
+
+## Layout
+
+`M` is the manager. Type `t` (the save type ids of `save-format.md`) has its table at `M + 0x10 + 0x60 × t`:
+
+| Offset in the table | Field |
+|---|---|
+| +0x00 | u32 entry count |
+| +0x08 | Pointer to the entries |
+| +0x10 | Pointer to the hash slots: 8 bytes each, {u32 hash, u32 entry index}, hash 0 = empty |
+| +0x1c | u32 slot count |
+| +0x20 | u32 queue size (slots) |
+| +0x28 | Pointer to the queue |
+| +0x30 | u32 queue word |
+
+A lookup starts at `hash % slot count` and steps forward by one, wrapping, until it finds the hash or an empty slot. An entry index of the entry count or more is taken as 0 by the game. Checked at 0x833920.
+
+| Type | Table | Entry size | Live value | Queue slot |
+|---|---|---|---|---|
+| Bool (0) | M + 0x10 | 0x18 | u8 at +0x16; saved copy at +0x17 | 8 bytes: u8 value at +0, u32 hash at +4 |
+| BoolArray (1) | M + 0x70 | 0x40, has a vtable | bits at `*(+0x28)` in u32 words, lowest bit first; element count u32 at +0x20 | not read |
+| Int (2) | M + 0xd0 | 0x28 | u32 at +0x1c | 12 bytes: u32 value at +0, u32 hash at +4 |
+
+All checked in the getters and setters below. The BoolArray element count at +0x20 is from a bounds test in the applier, so its meaning is inferred.
+
+64-bit keys are separate, at **M + 0xc58**:
+
+| Offset | Field |
+|---|---|
+| M + 0xc58 | u32 record count |
+| M + 0xc60 | Pointer to the records, **sorted by key**, 16 bytes each: u64 key +0, u32 save-file mask +8, u8 live value +0xc, s8 file index +0xd, u8 flags +0xe (bit 1 is the saved copy) |
+| M + 0xc68 | u32 queue size |
+| M + 0xc70 | Pointer to the queue, 8 bytes a slot: u8 value +0, u32 **record index** +4, empty = 0xffffffff |
+| M + 0xc78 | u32 queue word |
+
+Checked at 0x838960 (binary search, value at +0xc) and 0xba24b0 (applier). The save-file mask and file index are as `save-format.md` reads them.
+
+### The queue word
+
+Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back to 0 after 255), bits 28–31 are a round number that the applier moves on (wrapping after 14) each time it empties the queue. A setter takes a slot with compare-and-swap on the word, writes the slot, then counts it finished with a second compare-and-swap. When the round changed between the two, or the queue was full, it calls 0x34fc280 (not read). Checked at 0x682b20.
+
+## Functions
+
+| Address | What | Status |
+|---|---|---|
+| 0x833920, 0x20d9c0 | Bool get (M, out, hash). Bool table, then BoolArray element 0 | Checked |
+| 0x20fd90 | Bool get that first looks through the queue, newest first | Checked |
+| 0x682b20 | Bool set (M, value, hash): queues | Checked |
+| 0x837070 | Int get | Checked |
+| 0x163b70 | Int set: queues | Checked |
+| 0x838960, 0x3761680 | 64-bit key get (M, out, key) | Checked |
+| 0x3761720 | 64-bit key set (M, value, key): finds the record, then 0xf071c0 queues it | Checked |
+| 0xb99980 | Applies the queues (M). Called from 0x3b500a0, in the GameData module | Checked for Bool and 64-bit keys |
+| 0xba24b0 | Applies the 64-bit key queue, from 0xb99980 | Checked |
+| 0x1739e0 | Flag name hash (string, seed) | `player-state-map.md` |
+
+What the applier does for a Bool slot: when the value differs, it stores the live byte (+0x16), the saved copy (+0x17, unless entry +0x10 bit 31 is set or M + 0xd0c is not 0), marks the entry changed (+0xc = 1, +0x14 = 0), ORs the entry's file mask (+8) into M + 0x60, and adds the hash to a change ring at M + 0x48. It stops at the first empty slot, clears the slots it walked, and moves the round on. For a 64-bit key slot it stores +0xc, the saved bit in +0xe (when the file index is not negative), and ORs the mask into M + 0xca8. Checked.
+
+So writing the live byte directly would skip the saved copy and the save-file mask: the change would be lost on save. `game_flags` queues instead, exactly as the setters do, and its reads look through the queue first, as 0x20fd90 does, so a value read straight after a write is the new one.
+
+## Which flags are which
+
+| Kind | Where | Evidence |
+|---|---|---|
+| Chest opened | 64-bit key = the chest's placement `Hash` | Of the Banc placements whose `Hash` is a Bool64bitKey, 235 are `Obj_TBox_*`. A chest's blackboard has `IsOpened`. Checked statically, **not run** |
+| Pots, rupees, Gold Skulltula tokens, rocks, enemies | 64-bit keys, same way | The other placements in the key list (`Obj_Pot` 511, `Obj_Rupee` 170, `Obj_RupeeToken` 85, enemies). Checked statically |
+| Events seen, songs, dungeon state | Named Bool and Int flags | Names hash into the Bool table (`player-state-map.md`). Which name is which was not mapped |
+
+`ResetTypeValue` in the flag list tells persistent keys from ones reset on a scene change: chests are 24 (0x18), most pots and enemies 88 or 280. Which value means what is inferred, not read.
+
+## What this means for shared progress
+
+- A 64-bit key does not fit the protocol's `FlagKey` (u32 hash, u16 index), and chests, small-key chests and heart pieces in the world are 64-bit keys. Sharing them needs a protocol change (a kind or a message for 64-bit keys). `GameFlags::get_key64` and `set_key64` are ready for it. This is the coordinator's decision.
+- `GameFlagStore` gives `FlagWatcher` the named Bool and Int flags now.
+- The emulator must implement `WritableGameMemory`: a write and a 32-bit compare-and-swap that is atomic against the game's threads (or run them while the guest is paused).
+- The list of shared flags should take only persistent keys (reset type 24), or a pot broken by one player would break for everyone.
+
+## Not done
+
+1. **A live check.** Read `M + 0xc60` before and after opening a chest, find the chest's key, see +0xc go from 0 to 1. Then write a key through the queue and see the chest open on reload. Not done: no save near a chest in a portable kit, and no memory reader in the emulator yet.
+2. Float, UInt, Enum and the other types: their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
+3. 0x34fc280, called when a write is late or the queue is full.
+4. BoolArray writes, Struct (+0xc20) and BoolExp (+0xc48).

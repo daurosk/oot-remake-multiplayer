@@ -292,3 +292,5 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 | `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
 
 Buttons: `A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK DUP DDOWN DLEFT DRIGHT`, and full stick directions `LSTICK_UP` (`_DOWN`, `_LEFT`, `_RIGHT`) and `RSTICK_...`. `#` starts a comment. At the end the log has `coop: test script done`; a bad line is logged as `coop: test script <file>: line N: why` and nothing is played.
+
+Scenarios: `walk` is checked (2026-11-09: both saves load, A walks, runs and turns, B sees the puppet move). `sword`, `slingshot`, `bomb` and `menu-gear` are written but their buttons are guesses still to be checked against the screenshots (the Switch version's item and menu buttons are not the N64 ones). Screenshots use the screen where each window is (the windows are put side by side), so leave the two games uncovered while a run plays.

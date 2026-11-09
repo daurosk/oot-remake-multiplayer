@@ -1,0 +1,22 @@
+# menu-gear: A opens the menu (PLUS), goes to the equipment page (R), moves to the shields and
+# NOT CHECKED YET: the buttons are guesses. Checked 2026-11-09: X does not take out the slingshot,
+# and PLUS then R opens the Load page, not the equipment. Look at the run's screenshots and fix.
+# equips the next one (A), then closes the menu; B watches A's puppet change shield.
+mark start
+press PLUS
+wait 60
+mark menu
+press R
+wait 45
+mark equipment
+press DDOWN
+wait 15
+press DRIGHT
+wait 15
+mark shield
+press A
+wait 30
+mark equipped
+press PLUS
+wait 90
+mark closed

@@ -1,0 +1,16 @@
+# slingshot: A takes out the slingshot (its item button) and fires straight ahead; B watches.
+# NOT CHECKED YET: the buttons are guesses. Checked 2026-11-09: X does not take out the slingshot,
+# and PLUS then R opens the Load page, not the equipment. Look at the run's screenshots and fix.
+# The save has the slingshot on X (top-right of the HUD).
+mark start
+press X
+wait 60
+mark aiming
+press X
+wait 30
+mark fired
+press X
+wait 30
+press B
+wait 60
+mark end

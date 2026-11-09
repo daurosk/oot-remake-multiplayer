@@ -69,20 +69,9 @@ enet_uint32 packet_flags(std::uint8_t channel) {
   return channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
 }
 
-// Whether the protocol takes this flag value: a known kind, a bool of 0 or
-// 1, a finite float.
-bool valid_flag(const proto::FlagEntry& flag) {
-  switch (flag.kind) {
-    case proto::FlagKind::boolean: return flag.value <= 1;
-    case proto::FlagKind::int32:
-    case proto::FlagKind::uint32: return true;
-    case proto::FlagKind::float32:
-      return std::isfinite(std::bit_cast<float>(flag.value));
-  }
-  return false;
-}
+using proto::valid_flag;
 
-FlagKey key_of(const proto::FlagEntry& flag) { return {flag.hash, flag.index}; }
+FlagKey key_of(const proto::FlagEntry& flag) { return flag.key; }
 
 }  // namespace
 
@@ -577,9 +566,8 @@ bool Client::is_host() const {
          host_number_ == player_number_;
 }
 
-std::optional<proto::FlagEntry> Client::find_flag(std::uint32_t hash,
-                                                  std::uint16_t index) const {
-  const auto it = flags_.find(FlagKey{hash, index});
+std::optional<proto::FlagEntry> Client::find_flag(const FlagKey& key) const {
+  const auto it = flags_.find(key);
   if (it == flags_.end()) return std::nullopt;
   return it->second;
 }
@@ -779,18 +767,17 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
       // Our own, sent before we knew we host. We have stated what is in the
       // table since; the rest is our own change, which is the truth.
       for (const proto::FlagEntry& asked : set->flags) {
-        answer.push_back(find_flag(asked.hash, asked.index).value_or(asked));
+        answer.push_back(find_flag(asked.key).value_or(asked));
       }
     } else {
       for (const proto::FlagEntry& asked : set->flags) {
         std::optional<proto::FlagEntry> kept =
             flag_answer_ ? flag_answer_(set->player_number, asked) : asked;
         if (kept) {
-          kept->hash = asked.hash;
-          kept->index = asked.index;
+          kept->key = asked.key;
         }
         // Refused, or a value the protocol would refuse: the table's value.
-        if (!kept || !valid_flag(*kept)) kept = find_flag(asked.hash, asked.index);
+        if (!kept || !valid_flag(*kept)) kept = find_flag(asked.key);
         if (kept) answer.push_back(*kept);
       }
     }

@@ -28,6 +28,9 @@ inline std::vector<FlagEntry> flag_entries() {
       {0x12345678u, 0, FlagKind::int32, 0xFFFFFFFFu},  // -1
       {0x9abcdef0u, 0, FlagKind::float32, 0x3FC00000u},  // 1.5
       {0x0badf00du, 7, FlagKind::uint32, 0xDEADBEEFu},
+      {FlagKey::key64_flag(0x0123456789abcdefull), FlagKind::boolean, 1},  // a chest
+      {FlagKey::key64_flag(0x0123456789abcdefull, 0x55u), FlagKind::boolean, 0},  // other table
+      {FlagKey::key64_flag(0x248bfa47u), FlagKind::boolean, 1},  // not the named 0x248bfa47
   };
 }
 

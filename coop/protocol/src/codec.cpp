@@ -346,34 +346,20 @@ Error encode_body(const TestPayload& m, Writer& w) {
   return Error::none;
 }
 
-// A (hash, index) pair as one number, to find a flag given twice.
-std::uint64_t flag_key(const FlagEntry& e) {
-  return (static_cast<std::uint64_t>(e.hash) << 16) | e.index;
-}
-
 Error check_flag(const FlagEntry& e) {
-  switch (e.kind) {
-    case FlagKind::boolean:
-      return e.value <= 1 ? Error::none : Error::bad_value;
-    case FlagKind::int32:
-    case FlagKind::uint32:
-      return Error::none;
-    case FlagKind::float32:
-      return std::isfinite(std::bit_cast<float>(e.value)) ? Error::none : Error::bad_value;
-  }
-  return Error::bad_value;
+  return valid_flag(e) ? Error::none : Error::bad_value;
 }
 
 bool has_duplicate(std::span<const FlagEntry> flags) {
-  std::vector<std::uint64_t> keys;
+  std::vector<FlagKey> keys;
   keys.reserve(flags.size());
-  for (const auto& e : flags) keys.push_back(flag_key(e));
+  for (const auto& e : flags) keys.push_back(e.key);
   std::sort(keys.begin(), keys.end());
   return std::adjacent_find(keys.begin(), keys.end()) != keys.end();
 }
 
 // The rules every flag list follows: min_count to kMaxFlagEntries entries,
-// each valid, no (hash, index) twice.
+// each valid, no key twice.
 Error check_flags(const std::vector<FlagEntry>& flags, std::size_t min_count) {
   if (flags.size() > kMaxFlagEntries) return Error::too_large;
   if (flags.size() < min_count) return Error::bad_value;
@@ -385,8 +371,14 @@ Error check_flags(const std::vector<FlagEntry>& flags, std::size_t min_count) {
 void write_flags(const std::vector<FlagEntry>& flags, Writer& w) {
   w.u16(static_cast<std::uint16_t>(flags.size()));
   for (const auto& e : flags) {
-    w.u32(e.hash);
-    w.u16(e.index);
+    w.u8(static_cast<std::uint8_t>(e.key.kind));
+    if (e.key.kind == FlagKeyKind::key64) {
+      w.u64(e.key.key);
+      w.u32(e.key.table);
+    } else {
+      w.u32(e.key.hash);
+      w.u16(e.key.index);
+    }
     w.u8(static_cast<std::uint8_t>(e.kind));
     w.u32(e.value);
   }
@@ -670,9 +662,22 @@ Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count
   if (r.left() < count * kFlagEntrySize) return Error::truncated;
   flags.resize(count);
   for (auto& e : flags) {
+    std::uint8_t key_kind = 0;
     std::uint8_t kind = 0;
-    COOP_READ(r.u32(e.hash));
-    COOP_READ(r.u16(e.index));
+    COOP_READ(r.u8(key_kind));
+    switch (static_cast<FlagKeyKind>(key_kind)) {
+      case FlagKeyKind::named:
+        COOP_READ(r.u32(e.key.hash));
+        COOP_READ(r.u16(e.key.index));
+        break;
+      case FlagKeyKind::key64:
+        e.key.kind = FlagKeyKind::key64;
+        COOP_READ(r.u64(e.key.key));
+        COOP_READ(r.u32(e.key.table));
+        break;
+      default:
+        return Error::bad_value;  // the rest of the list cannot be read
+    }
     COOP_READ(r.u8(kind));
     COOP_READ(r.u32(e.value));
     e.kind = static_cast<FlagKind>(kind);
@@ -985,6 +990,30 @@ std::uint32_t flag_hash(std::string_view name) {
   h *= 0xc2b2ae35;
   h ^= h >> 16;
   return h;
+}
+
+bool valid_flag(const FlagEntry& e) {
+  switch (e.key.kind) {
+    case FlagKeyKind::named:
+      if (e.key.key != 0 || e.key.table != 0) return false;
+      break;
+    case FlagKeyKind::key64:
+      if (e.key.hash != 0 || e.key.index != 0) return false;
+      if (e.kind != FlagKind::boolean) return false;
+      break;
+    default:
+      return false;
+  }
+  switch (e.kind) {
+    case FlagKind::boolean:
+      return e.value <= 1;
+    case FlagKind::int32:
+    case FlagKind::uint32:
+      return true;
+    case FlagKind::float32:
+      return std::isfinite(std::bit_cast<float>(e.value));
+  }
+  return false;
 }
 
 std::optional<std::vector<FlagSnapshot>> split_snapshot(

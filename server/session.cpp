@@ -259,7 +259,7 @@ void Session::on_flag_snapshot(ConnectionId id, Connection& c, const FlagSnapsho
   FlagState added{c.number, {}};
   FlagState kept{c.number, {}};
   for (const FlagEntry& e : part.flags) {
-    auto it = flags_.find({e.hash, e.index});
+    auto it = flags_.find(e.key);
     if (it == flags_.end()) {
       // Sent on even past max_flags, as a FLAG_STATE past it would be.
       keep_flag(e);
@@ -274,7 +274,7 @@ void Session::on_flag_snapshot(ConnectionId id, Connection& c, const FlagSnapsho
 }
 
 bool Session::keep_flag(const FlagEntry& e) {
-  auto key = std::make_pair(e.hash, e.index);
+  const FlagKey key = e.key;
   auto it = flags_.find(key);
   if (it != flags_.end()) {
     it->second = e;

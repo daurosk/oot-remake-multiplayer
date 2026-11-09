@@ -119,7 +119,7 @@ struct ClientConfig {
   std::uint32_t join_timeout_ms = 5000;
   // Progress-channel messages (HOST, FLAG_*) kept while waiting for WELCOME;
   // more are dropped and counted in rejected_count(). The server's largest
-  // table (262,144 flags) is 64 snapshot parts.
+  // table (262,144 flags) is 73 snapshot parts.
   std::uint32_t max_early_messages = 1024;
 
   // The client's clock in microseconds. Empty means std::chrono::steady_clock.
@@ -197,15 +197,12 @@ struct Event {
   protocol::JoinRefuseReason join_reason{};  // join_refused; raw value kept
 };
 
-// A shared flag's place in the table: its name's hash and array index.
-struct FlagKey {
-  std::uint32_t hash = 0;
-  std::uint16_t index = 0;
-  auto operator<=>(const FlagKey&) const = default;
-};
+// A shared flag's place in the table: a name's hash and array index, or a
+// 64-bit key (protocol::FlagKey).
+using FlagKey = protocol::FlagKey;
 
 // The host's answer to one flag of a FLAG_SET from `player`: the value to
-// keep (as asked or changed; hash and index stay as asked), or nothing to
+// keep (as asked or changed; the key stays as asked), or nothing to
 // refuse it. A refused flag already in flags() is sent back with that value,
 // so the asker's game goes back to it.
 using FlagAnswer = std::function<std::optional<protocol::FlagEntry>(
@@ -275,8 +272,11 @@ class Client {
 
   // The shared flags as the host last gave them: snapshot, then FLAG_STATEs.
   const std::map<FlagKey, protocol::FlagEntry>& flags() const { return flags_; }
+  std::optional<protocol::FlagEntry> find_flag(const FlagKey& key) const;
   std::optional<protocol::FlagEntry> find_flag(std::uint32_t hash,
-                                               std::uint16_t index = 0) const;
+                                               std::uint16_t index = 0) const {
+    return find_flag(FlagKey{hash, index});
+  }
   // True once the last FLAG_SNAPSHOT part of this connection is in.
   bool synced() const { return synced_; }
   // Whether this client hosts: connected and named by the last HOST.

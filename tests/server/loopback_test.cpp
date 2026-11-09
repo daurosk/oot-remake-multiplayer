@@ -317,16 +317,17 @@ TEST_CASE("loopback: three clients share a flag through the host and join a part
 
   // Player 2 sets a flag: it goes to the host (player 1) only.
   const FlagEntry chest{flag_hash("chest"), 3, FlagKind::boolean, 1};
-  b.send(FlagSet{0, {chest}}, kChannelProgress);
+  const FlagEntry chest64{FlagKey::key64_flag(0x2fa4c1d09b7e6a35ull), FlagKind::boolean, 1};
+  b.send(FlagSet{0, {chest, chest64}}, kChannelProgress);
   REQUIRE(pump_until(server, all, [&] { return a.find<FlagSet>() != nullptr; }));
-  CHECK(*a.find<FlagSet>() == FlagSet{2, {chest}});
+  CHECK(*a.find<FlagSet>() == FlagSet{2, {chest, chest64}});
   // The host answers with the state, which reaches everyone else.
-  a.send(FlagState{0, {chest}}, kChannelProgress);
+  a.send(FlagState{0, {chest, chest64}}, kChannelProgress);
   REQUIRE(pump_until(server, all, [&] {
     return b.find<FlagState>() != nullptr && c.find<FlagState>() != nullptr;
   }));
-  CHECK(*b.find<FlagState>() == FlagState{1, {chest}});
-  CHECK(*c.find<FlagState>() == FlagState{1, {chest}});
+  CHECK(*b.find<FlagState>() == FlagState{1, {chest, chest64}});
+  CHECK(*c.find<FlagState>() == FlagState{1, {chest, chest64}});
   CHECK(b.find<FlagSet>() == nullptr);
   CHECK(c.find<FlagSet>() == nullptr);
   CHECK(a.find<FlagState>() == nullptr);
@@ -363,7 +364,7 @@ TEST_CASE("loopback: three clients share a flag through the host and join a part
   }));
   CHECK(*b.find<Host>() == Host{2});
   CHECK(*c.find<Host>() == Host{2});
-  CHECK(server.session().flag_count() == 1);
+  CHECK(server.session().flag_count() == 2);
 
   Client d;
   all.push_back(&d);
@@ -372,14 +373,15 @@ TEST_CASE("loopback: three clients share a flag through the host and join a part
   d.send(hello_from("Darunia"), kChannelSession);
   REQUIRE(pump_until(server, all, [&] { return d.find<FlagSnapshot>() != nullptr; }));
   CHECK(*d.find<Host>() == Host{2});
-  CHECK(*d.find<FlagSnapshot>() == FlagSnapshot{0, 1, {chest}});
+  CHECK(*d.find<FlagSnapshot>() == FlagSnapshot{0, 1, {chest, chest64}});
   CHECK(server.session().stats().flag_relayed == 2);
   CHECK(server.session().stats().join_relayed == 2);
   CHECK(server.session().stats().join_not_there == 1);
   CHECK(server.session().stats().dropped() == 0);
 }
 
-// Full 4096-entry messages (45 KB, 33 ENet fragments) both ways. ENet 1.3
+// Full-size messages of 64-bit keys (3600 entries, 65 KB, about 48 ENet
+// fragments) both ways. ENet 1.3
 // shifts `1 << 31` on an int for the 32nd fragment; the sanitizer build
 // passes this only because cmake/enet.cmake turns off that one check.
 TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size parts") {
@@ -401,7 +403,8 @@ TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size p
   // Two full parts from the host, then one full FLAG_STATE.
   std::vector<FlagEntry> table;
   for (std::uint32_t i = 0; i < 2 * kMaxFlagEntries; ++i) {
-    table.push_back(FlagEntry{i + 1, 0, FlagKind::int32, i});
+    table.push_back(FlagEntry{FlagKey::key64_flag(0x8000'0000'0000'0000ull + i),
+                              FlagKind::boolean, i & 1u});
   }
   const auto parts = split_snapshot(table);
   REQUIRE(parts.has_value());
@@ -434,7 +437,7 @@ TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size p
   CHECK(got == table);
 
   std::vector<FlagEntry> changed(table.begin(), table.begin() + kMaxFlagEntries);
-  for (FlagEntry& e : changed) e.value += 1;
+  for (FlagEntry& e : changed) e.value ^= 1u;
   host.send(FlagState{0, changed}, kChannelProgress);
   REQUIRE(pump_until(server, all, [&] { return joiner.find<FlagState>() != nullptr; }));
   CHECK(*joiner.find<FlagState>() == FlagState{1, changed});

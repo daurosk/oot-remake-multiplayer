@@ -220,7 +220,15 @@ bool GameFlags::set_key64(WritableGameMemory& m, std::uint64_t key, bool value) 
 
 std::optional<protocol::FlagEntry> GameFlagStore::read(FlagKey key) {
   GameFlags flags(memory_);
-  protocol::FlagEntry e{key.hash, key.index, protocol::FlagKind::boolean, 0};
+  protocol::FlagEntry e{key, protocol::FlagKind::boolean, 0};
+  if (key.kind == FlagKeyKind::key64) {
+    if (key.table != 0) return std::nullopt;  // the game has one table
+    const auto v = flags.get_key64(key.key);
+    if (!v) return std::nullopt;
+    e.value = *v ? 1 : 0;
+    return e;
+  }
+  if (key.kind != FlagKeyKind::named) return std::nullopt;
   if (key.index > 0) {
     const auto v = flags.get_bool_array(key.hash, key.index);
     if (!v) return std::nullopt;
@@ -240,13 +248,20 @@ std::optional<protocol::FlagEntry> GameFlagStore::read(FlagKey key) {
 }
 
 bool GameFlagStore::write(const protocol::FlagEntry& entry) {
-  if (entry.index != 0) return false;
+  const FlagKey& key = entry.key;
+  if (key.kind == FlagKeyKind::key64) {
+    if (key.table != 0 || entry.kind != protocol::FlagKind::boolean || entry.value > 1) {
+      return false;
+    }
+    return GameFlags::set_key64(memory_, key.key, entry.value != 0);
+  }
+  if (key.kind != FlagKeyKind::named || key.index != 0) return false;
   switch (entry.kind) {
     case protocol::FlagKind::boolean:
       if (entry.value > 1) return false;
-      return GameFlags::set_bool(memory_, entry.hash, entry.value != 0);
+      return GameFlags::set_bool(memory_, key.hash, entry.value != 0);
     case protocol::FlagKind::int32:
-      return GameFlags::set_int(memory_, entry.hash, static_cast<std::int32_t>(entry.value));
+      return GameFlags::set_int(memory_, key.hash, static_cast<std::int32_t>(entry.value));
     default:
       return false;
   }

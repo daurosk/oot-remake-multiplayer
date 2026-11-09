@@ -78,9 +78,9 @@ Each rule answers a way the TotK online sync was seen to break.
 | 10 | `PLAYER_SAMPLE` | 3 | both | `u8` player field, then the components below |
 | 11 | `TEST_PAYLOAD` | 0 or 3 | both | `u32` sequence number, then the rest of the body is filler; used only by the stage 0 test tool |
 | 12 | `JOIN_PARTNER` | 0 | both | `u8` player field, `u8` other player, `u16` request id, `u8` kind, then by kind (below) |
-| 13 | `FLAG_SET` | 1 | both | `u8` player field, a flag list of 1 to 4096 entries (below) |
-| 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 4096 entries |
-| 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 4096 entries |
+| 13 | `FLAG_SET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries (below) |
+| 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries |
+| 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 
 Type numbers are never reused or renumbered; new types are added at the end.
@@ -129,16 +129,25 @@ The first player in hosts. When the host leaves, the remaining player with the l
 
 Only world flags are shared (chests, small keys, doors, heart pieces, songs, dungeon state). Inventory, hearts and magic stay per player, the suggested answer in the plan's open decisions.
 
-A flag list is `u16` count, then that many entries of 11 bytes each:
+The game keeps world flags under two kinds of key (`docs/flags.md`): named flags, by the hash of their name, and 64-bit-key flags (the game's `Bool64bitKey`), by the 64-bit `Hash` of an actor's placement. Chests, pots, rupees, Gold Skulltula tokens and enemies are 64-bit keys.
+
+A flag list is `u16` count, then that many entries. An entry is its key, then its value:
 
 | Field | Type | What |
 |---|---|---|
-| hash | `u32` | Murmur3 x86 32-bit, seed 0, of the flag's name in the game (`flag_hash` in the code) |
-| index | `u16` | the element of an array flag; 0 for a plain flag |
+| key kind | `u8` | 0 named, 1 64-bit key. Any other is refused, since the rest of the list cannot be read |
+| key | 6 or 12 bytes | by key kind, below |
 | kind | `u8` | 0 bool, 1 s32, 2 f32, 3 u32 (an enum flag's hash, or any unsigned value); other kinds are refused |
 | value | 4 bytes | the value as that kind: a bool is 0 or 1, an f32 is finite |
 
-A list holds the same (hash, index) at most once. A list of more than 4096 entries is refused (that keeps a message under 45 KB).
+| Key kind | Fields | Entry size |
+|---|---|---|
+| 0 named | `u32` hash: Murmur3 x86 32-bit, seed 0, of the flag's name in the game (`flag_hash` in the code); `u16` index: the element of an array flag, 0 for a plain flag | 12 bytes |
+| 1 64-bit key | `u64` key: the placement's `Hash`; `u32` table: the hash naming the `Bool64bitKey` table, 0 for the game's one table (the only one found so far) | 18 bytes |
+
+A 64-bit-key flag is always a bool; any other kind with key kind 1 is refused. A list holds the same key at most once: a named flag and a 64-bit key are different flags even with the same number, and so are the same 64-bit key in two tables. A list of more than 3600 entries is refused (that keeps a message of 64-bit keys, 3600 × 18 + 5 bytes, within the `u16` body length).
+
+Only persistent 64-bit keys are shared: `ResetTypeValue` 24 in the game's flag list (chests). Pots and enemies (88, 280) come back on a scene change; shared, a pot one player broke would break for everyone. The list of shared flags is the user's (`SharedFlags` in `coop_host`), so this is a rule for that list, not a check in the codec.
 
 How flags move:
 
@@ -147,8 +156,8 @@ How flags move:
 - On join, the server sends the joining player its whole table as `FLAG_SNAPSHOT`, before any `FLAG_STATE` that comes after: the channel is ordered, so nothing is missed between them. The joiner holds its game until the last part has come (part = part count − 1) and then applies them all.
 - A host that starts a session, or takes over from one who left, sends its table to the server as `FLAG_SNAPSHOT` the same way. The server merges it in. A flag the server lacks is kept and sent to everyone else as `FLAG_STATE`. On a clash the server's value stays (it is what every other player already has): the server sends it to the host as `FLAG_STATE`, which the host applies like any other. The server drops a `FLAG_SNAPSHOT` from anyone but the host.
 - The server keeps the table while anyone is in and forgets it when the last player leaves. It holds at most 262,144 flags (a server setting); a value for a new flag past that, in a `FLAG_STATE` or a host's `FLAG_SNAPSHOT`, is still relayed but not kept, so a later joiner does not get it.
-- A table of more than 4096 flags is split into parts in order, each up to 4096 entries (`split_snapshot` in the code). An empty table is one part with no entries. A table can have at most 65535 parts.
-- The server holds a host sending its table to the same limit as any message on channels 0 to 2 (60 a second, bursts of 120), so a host table of up to about 100 parts (over 400,000 flags) fits one burst. The server's own sends have no such limit.
+- A table of more than 3600 flags is split into parts in order, each up to 3600 entries (`split_snapshot` in the code). An empty table is one part with no entries. A table can have at most 65535 parts.
+- The server holds a host sending its table to the same limit as any message on channels 0 to 2 (60 a second, bursts of 120), so a host table of up to about 100 parts (over 360,000 flags) fits one burst. The server's own sends have no such limit.
 
 ## Later stages (outline only)
 
@@ -161,3 +170,4 @@ How flags move:
 - The protocol version goes up whenever a message layout changes in a way an older reader cannot skip.
 - Adding a component or a message type that old readers may ignore does not change the version.
 - Types 12 to 16 (`JOIN_PARTNER`, the flag messages and `HOST`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags.
+- The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.

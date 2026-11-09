@@ -562,9 +562,88 @@ TEST_CASE("join partner is relayed with the asker stamped in") {
 
 TEST_CASE("flag entry layout on the wire") {
   const Bytes b = must_encode(FlagSet{0, {{0x04030201u, 0x0605, FlagKind::int32, 0x0A090807u}}});
-  CHECK(b == Bytes{13, 0, 14, 0, 0, 1, 0, 1, 2, 3, 4, 5, 6, 1, 7, 8, 9, 10});
+  CHECK(b == Bytes{13, 0, 15, 0, 0, 1, 0, 0, 1, 2, 3, 4, 5, 6, 1, 7, 8, 9, 10});
   const Bytes s = must_encode(FlagSnapshot{1, 2, {}});
   CHECK(s == Bytes{15, 0, 6, 0, 1, 0, 2, 0, 0, 0});
+  // A 64-bit key: key kind 1, u64 key, u32 table, then kind and value.
+  const Bytes k = must_encode(FlagState{
+      0, {{FlagKey::key64_flag(0x0807060504030201ull, 0x0C0B0A09u), FlagKind::boolean, 1}}});
+  CHECK(k == Bytes{14, 0, 21, 0, 0, 1, 0, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0,
+                   1, 0, 0, 0});
+  CHECK(k.size() == kHeaderSize + 3 + kFlagEntryKey64Size);
+}
+
+TEST_CASE("64-bit-key flags") {
+  auto refused = [](const Message& m) { return encode(m) == std::nullopt; };
+  const FlagKey chest = FlagKey::key64_flag(0x2fa4c1d09b7e6a35ull);
+  CHECK(chest.kind == FlagKeyKind::key64);
+  CHECK(chest.hash == 0);
+  CHECK(chest.index == 0);
+  CHECK(chest.table == 0);
+  CHECK(valid_flag({chest, FlagKind::boolean, 1}));
+  CHECK(valid_flag({0x1234u, 0, FlagKind::int32, 5}));
+
+  // Always a bool, 0 or 1.
+  CHECK(refused(FlagSet{0, {{chest, FlagKind::boolean, 2}}}));
+  CHECK(refused(FlagSet{0, {{chest, FlagKind::int32, 1}}}));
+  CHECK(refused(FlagSet{0, {{chest, FlagKind::uint32, 1}}}));
+  CHECK(refused(FlagSet{0, {{chest, FlagKind::float32, 0}}}));
+  // The fields of the other kind stay 0, so one flag has one key.
+  FlagKey stray = chest;
+  stray.hash = 1;
+  CHECK(refused(FlagSet{0, {{stray, FlagKind::boolean, 1}}}));
+  stray = chest;
+  stray.index = 1;
+  CHECK(refused(FlagSet{0, {{stray, FlagKind::boolean, 1}}}));
+  FlagKey named{0x10u, 0};
+  named.key = 5;
+  CHECK(refused(FlagSet{0, {{named, FlagKind::boolean, 1}}}));
+  named = FlagKey{0x10u, 0};
+  named.table = 5;
+  CHECK(refused(FlagSet{0, {{named, FlagKind::boolean, 1}}}));
+  FlagKey unknown = chest;
+  unknown.kind = static_cast<FlagKeyKind>(2);
+  CHECK(refused(FlagSet{0, {{unknown, FlagKind::boolean, 1}}}));
+
+  // The same key twice is refused; the same key in another table, or a
+  // named flag with the same number, is another flag.
+  CHECK(refused(FlagState{0, {{chest, FlagKind::boolean, 1}, {chest, FlagKind::boolean, 0}}}));
+  CHECK(split_snapshot(std::vector<FlagEntry>{{chest, FlagKind::boolean, 1},
+                                              {chest, FlagKind::boolean, 0}}) == std::nullopt);
+  CHECK_FALSE(refused(FlagState{0, {{chest, FlagKind::boolean, 1},
+                                    {FlagKey::key64_flag(chest.key, 7), FlagKind::boolean, 1},
+                                    {FlagKey::key64_flag(1), FlagKind::boolean, 0},
+                                    {1u, 0, FlagKind::boolean, 0}}}));
+
+  // Named and 64-bit keys mixed in one list survive a round trip.
+  const FlagSnapshot mixed{0, 1, {{0x99u, 3, FlagKind::int32, 7}, {chest, FlagKind::boolean, 1}}};
+  Message back;
+  REQUIRE(decode(must_encode(mixed), back) == Error::none);
+  CHECK(std::get<FlagSnapshot>(back) == mixed);
+
+  SUBCASE("on decode") {
+    Bytes b = must_encode(FlagSet{0, {{chest, FlagKind::boolean, 1}}});
+    const std::size_t entry = kHeaderSize + 1 + 2;
+    b[entry] = 2;  // an unknown key kind: the rest cannot be read
+    CHECK(decode_bytes(b) == Error::bad_value);
+    b[entry] = 1;
+    b[entry + 13] = 1;  // kind int32
+    CHECK(decode_bytes(b) == Error::bad_value);
+    b[entry + 13] = 0;
+    b[entry + 14] = 2;  // a boolean of 2
+    CHECK(decode_bytes(b) == Error::bad_value);
+    b[entry + 14] = 1;
+    CHECK(decode_bytes(b) == Error::none);
+    // A key64 entry cut short: the count says one, the bytes hold less.
+    Bytes cut = b;
+    cut.resize(cut.size() - 3);
+    fix_length(cut);
+    CHECK(decode_bytes(cut) == Error::truncated);
+    // A named entry read as a key64 one runs past the body.
+    Bytes named_as64 = must_encode(FlagSet{0, {{1u, 0, FlagKind::boolean, 1}}});
+    named_as64[entry] = 1;
+    CHECK(decode_bytes(named_as64) == Error::truncated);
+  }
 }
 
 TEST_CASE("bad flag messages are refused") {
@@ -583,10 +662,10 @@ TEST_CASE("bad flag messages are refused") {
 
   SUBCASE("on decode") {
     Bytes b = must_encode(FlagSet{0, {{1, 0, FlagKind::boolean, 1}}});
-    b[kHeaderSize + 1 + 2 + 6] = 4;  // kind
+    b[kHeaderSize + 1 + 2 + 7] = 4;  // kind
     CHECK(decode_bytes(b) == Error::bad_value);
-    b[kHeaderSize + 1 + 2 + 6] = 0;
-    b[kHeaderSize + 1 + 2 + 7] = 2;  // a boolean of 2
+    b[kHeaderSize + 1 + 2 + 7] = 0;
+    b[kHeaderSize + 1 + 2 + 8] = 2;  // a boolean of 2
     CHECK(decode_bytes(b) == Error::bad_value);
     b = must_encode(FlagSet{0, {{1, 0, FlagKind::boolean, 1}}});
     set_u16(b, kHeaderSize + 1, 0);  // count 0, an entry left over
@@ -599,7 +678,7 @@ TEST_CASE("bad flag messages are refused") {
     CHECK(decode_bytes(b) == Error::trailing_bytes);
     // The same flag twice.
     b = must_encode(FlagSet{0, {{1, 0, FlagKind::boolean, 1}, {2, 0, FlagKind::boolean, 1}}});
-    b[kHeaderSize + 1 + 2 + kFlagEntrySize] = 1;
+    b[kHeaderSize + 1 + 2 + kFlagEntrySize + 1] = 1;  // the second hash, past its key kind
     CHECK(decode_bytes(b) == Error::bad_value);
     // A part number past the part count, and a part count of 0.
     b = must_encode(FlagSnapshot{1, 2, {}});
@@ -637,7 +716,18 @@ TEST_CASE("a flag message holds at most kMaxFlagEntries") {
   CHECK(encode(FlagSet{0, over}, out) == Error::too_large);
   CHECK(out.empty());
 
-  // A hand-made oversize snapshot: count 4097 with all its entries.
+  // A full message of 64-bit keys still fits the u16 body length.
+  std::vector<FlagEntry> keys(kMaxFlagEntries);
+  for (std::size_t i = 0; i < keys.size(); ++i) {
+    keys[i] = {FlagKey::key64_flag(0xffff'0000'0000'0000ull + i), FlagKind::boolean, 1};
+  }
+  const Bytes k = must_encode(FlagSnapshot{0, 1, keys});
+  CHECK(k.size() == kHeaderSize + 6 + kMaxFlagEntries * kFlagEntryKey64Size);
+  CHECK(k.size() - kHeaderSize <= 0xffffu);
+  REQUIRE(decode(k, back) == Error::none);
+  CHECK(std::get<FlagSnapshot>(back).flags == keys);
+
+  // A hand-made oversize snapshot: one entry past the limit, all there.
   Bytes big;
   put_u16(big, static_cast<std::uint16_t>(MessageType::flag_snapshot));
   put_u16(big, 0);

@@ -93,8 +93,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     if (const auto known = last_.find(key); known != last_.end()) {
       std::optional<FlagEntry> now = store.read(key);
       if (now) {
-        now->hash = key.hash;
-        now->index = key.index;
+        now->key = key;
         if (*now != known->second) {
           unwritten_.erase(key);
           continue;
@@ -228,8 +227,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     // Answer with what the game holds now, which may not be what was asked.
     std::optional<FlagEntry> now = store.read(key);
     if (now) {
-      now->hash = key.hash;
-      now->index = key.index;
+      now->key = key;
     } else {
       ++stats_.read_failures;
       if (written) now = entry;
@@ -261,8 +259,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       ++stats_.read_failures;
       continue;
     }
-    now->hash = key.hash;
-    now->index = key.index;
+    now->key = key;
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first || it->second == *now) continue;  // first read is the baseline
     it->second = *now;
@@ -282,8 +279,7 @@ void FlagWatcher::send_snapshot(FlagStore& store, std::vector<Outgoing>& out) {
       ++stats_.read_failures;
       continue;
     }
-    now->hash = key.hash;
-    now->index = key.index;
+    now->key = key;
     table.push_back(*now);
   }
   if (auto parts = protocol::split_snapshot(table)) {

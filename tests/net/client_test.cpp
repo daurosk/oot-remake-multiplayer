@@ -555,7 +555,8 @@ TEST_CASE("client: an injected clock that steps back does not end the attempt") 
 
 TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::wrong_protocol_version) ==
-        "wrong protocol version");
+        "wrong protocol version: this game and the server are different releases; "
+        "run Update.bat in every kit, the host's too");
   CHECK(refuse_reason_text(proto::RefuseReason::wrong_game_build) == "wrong game build");
   CHECK(refuse_reason_text(proto::RefuseReason::server_full) == "server full");
   CHECK(refuse_reason_text(proto::RefuseReason::name_taken) == "name taken");

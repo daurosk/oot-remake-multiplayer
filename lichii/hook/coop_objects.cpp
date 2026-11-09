@@ -31,8 +31,9 @@
 // - a life a copy must lose is given to the game as damage (added to the s32
 //   at Life + 0x228, which the Life step 0x49d8c0 sums into Life + 0x1cb0 and
 //   takes off life), so the game reacts to it as to a hit;
-//   off by default (LICHII_COOP_OBJECTS_HURT=1 tries it): the game needs a
-//   whole hit record there, so life is written directly.
+//   that alone is not taken (LICHII_COOP_OBJECTS_HURT=1 still tries it), so
+//   an enemy gets a whole hit record (kHitTemplate; on by default,
+//   LICHII_COOP_OBJECTS_HIT_REPLAY=0 writes life directly instead);
 // LICHII_COOP_OBJECTS_TEST_DRIVE=1 (two-game tests only): on the game that
 // LICHII_COOP_OBJECTS_TEST_TAKE=<hex key> (tests only): on player 2's game,
 // 3 s after sharing starts, acts as if that 64-bit placement key arrived
@@ -154,6 +155,7 @@ constexpr std::array<u32, 0x98 / 4> kHitTemplate{
     0x03010102, 0x00030000,                          // +0x2d0
 };
 constexpr u64 kHitRecord = 0x240;
+constexpr u64 kHitLateMs = 200;  // under Sync::kHurtWaitUs
 constexpr u64 kHitHeader = 0x1f8;
 constexpr u64 kHitAmount = 0x224;
 constexpr u64 kLastHitId = 0x1b18;
@@ -323,7 +325,8 @@ public:
         u64 attacker = 0;   // our player
         s32 amount = 0;
         std::array<float, 3> at{};    // the copy's place
-        std::array<float, 3> from{};  // our player's place
+        std::array<float, 3> from{};  // the hitter's place (ours when not known)
+        u64 asked_ms = 0;             // set by AddHit
     };
 
     // Present thread: hits to replay at the next game frame.
@@ -331,6 +334,7 @@ public:
         std::lock_guard lock(mutex_);
         if (hits_.size() < 64) {
             hits_.push_back(hit);
+            hits_.back().asked_ms = SteadyMs();
         }
     }
 
@@ -383,7 +387,11 @@ public:
             work_plays_ = plays_;
             next_play_ = 0;
             for (const Hit& h : hits_) {
-                Replay(guest, h);
+                // A hit that waited too long (no game frame ran) is dropped:
+                // by then its life has been written directly.
+                if (now_ms < h.asked_ms + kHitLateMs) {
+                    Replay(guest, h);
+                }
             }
             hits_.clear();
             work_ = poses_;
@@ -995,6 +1003,10 @@ private:
                 h.amount = w.hurt;
                 h.at = r.Get<std::array<float, 3>>(w.address + kActorPosition).value_or(h.at);
                 h.from = r.Get<std::array<float, 3>>(player + kActorPosition).value_or(h.at);
+                if (w.from) {
+                    // The player who hit, so the enemy is knocked away from them.
+                    h.from = *w.from;
+                }
                 TheMover().AddHit(h);
                 return;  // the game takes the life; Sync writes it after 400 ms if not
             }
@@ -1074,7 +1086,7 @@ private:
             const auto value = LifeValue(r, enemy);
             const s32 life = value ? r.Get<s32>(value->first + 8).value_or(0) : 0;
             if (life > 1) {
-                WriteLife(memory, r, {enemy, life - 1, hurt_ ? 1 : 0});
+                WriteLife(memory, r, {enemy, life - 1, hurt_ ? 1 : 0, {}});
             }
         }
     }
@@ -1322,9 +1334,11 @@ Objects& Instance() {
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
-        // Off by default: the live test (2026-11-09) showed the game does not
-        // take an amount alone from Life + 0x228 (it needs a whole hit record).
-        objects.replay_ = EnvFlag("LICHII_COOP_OBJECTS_HIT_REPLAY");
+        // On by default (=0 turns it off): a life an enemy must lose is given
+        // to the game as a whole hit, so it flinches, is knocked back and a
+        // Stalchild loses its head on every screen. An amount alone at
+        // Life + 0x228 is not taken (live test, 2026-11-09).
+        objects.replay_ = EnvOn("LICHII_COOP_OBJECTS_HIT_REPLAY");
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT") || objects.replay_;
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");

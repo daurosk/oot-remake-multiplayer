@@ -177,6 +177,27 @@ TEST_CASE("a wrong protocol version is refused, even when the rest cannot be rea
   CHECK(h.session.player_count() == 0);
 }
 
+TEST_CASE("the server's log says which side of a version refusal is older") {
+  std::vector<std::string> lines;
+  SessionConfig config;
+  config.log = [&lines](const std::string& line) { lines.push_back(line); };
+  Harness h(config);
+  h.connect(1);
+  Bytes older = {1, 0, 2, 0, 1, 0};  // a HELLO of protocol 1
+  h.receive_raw(1, older, kChannelSession);
+  REQUIRE(lines.size() == 1);
+  CHECK(lines[0].find("protocol 1, older than this server's") != std::string::npos);
+  CHECK(lines[0].find("that player runs Update.bat") != std::string::npos);
+
+  h.connect(2);
+  const auto newer = static_cast<std::uint8_t>(kProtocolVersion + 1);
+  Bytes b = {1, 0, 2, 0, newer, 0};
+  h.receive_raw(2, b, kChannelSession);
+  REQUIRE(lines.size() == 2);
+  CHECK(lines[1].find("newer than this server's") != std::string::npos);
+  CHECK(lines[1].find("run Update.bat in this kit") != std::string::npos);
+}
+
 TEST_CASE("a game build other than the session's is refused") {
   SUBCASE("set on the command line") {
     SessionConfig config;

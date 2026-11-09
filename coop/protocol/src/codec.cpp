@@ -664,6 +664,41 @@ Error encode_body(const Damage& m, Writer& w) {
   return Error::none;
 }
 
+
+// Bones in increasing order; per bone u16 bone, u8 parts, u8 flags, then the
+// parts it has: rotation 4 x s16, translation 3 x s16, scale 3 x s16. -32768
+// is refused in a rotation, so each value fits [-1, 1].
+Error encode_body(const PlayerPose& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if (m.bones.size() > kMaxPoseBones) return Error::bad_value;
+  for (std::size_t i = 0; i < m.bones.size(); ++i) {
+    const PoseBone& b = m.bones[i];
+    if (b.bone >= kMaxPoseBones) return Error::bad_value;
+    if (i > 0 && b.bone <= m.bones[i - 1].bone) return Error::bad_value;
+    if (b.rotation) {
+      for (std::int16_t v : *b.rotation) {
+        if (v == std::numeric_limits<std::int16_t>::min()) return Error::bad_value;
+      }
+    }
+  }
+  w.u8(m.player_number);
+  w.u64(m.time.server_time_us);
+  w.u32(m.time.sequence);
+  w.u32(m.skeleton);
+  w.u16(static_cast<std::uint16_t>(m.bones.size()));
+  for (const PoseBone& b : m.bones) {
+    const std::uint8_t parts =
+        (b.rotation ? pose_part::rotation : 0) | (b.translation ? pose_part::translation : 0) |
+        (b.scale ? pose_part::scale : 0);
+    w.u16(b.bone);
+    w.u8(parts);
+    w.u8(b.flags);
+    if (b.rotation) for (std::int16_t v : *b.rotation) w.u16(static_cast<std::uint16_t>(v));
+    if (b.translation) for (std::int16_t v : *b.translation) w.u16(static_cast<std::uint16_t>(v));
+    if (b.scale) for (std::int16_t v : *b.scale) w.u16(static_cast<std::uint16_t>(v));
+  }
+  return Error::none;
+}
 // ---------------------------------------------------------------- bodies: decode
 
 Error decode_body(Reader& r, Hello& m) {
@@ -1136,6 +1171,52 @@ Error decode_body(Reader& r, Damage& m) {
   return read_floats(r, m.position);
 }
 
+template <std::size_t N>
+Error read_s16s(Reader& r, std::array<std::int16_t, N>& v) {
+  for (std::int16_t& x : v) {
+    std::uint16_t raw = 0;
+    if (!r.u16(raw)) return Error::truncated;
+    x = static_cast<std::int16_t>(raw);
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PlayerPose& m) {
+  m = PlayerPose{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_READ(r.u64(m.time.server_time_us));
+  COOP_READ(r.u32(m.time.sequence));
+  COOP_READ(r.u32(m.skeleton));
+  std::uint16_t count = 0;
+  COOP_READ(r.u16(count));
+  if (count > kMaxPoseBones) return Error::bad_value;
+  if (r.left() < std::size_t{count} * 4) return Error::truncated;
+  m.bones.resize(count);
+  for (std::size_t i = 0; i < m.bones.size(); ++i) {
+    PoseBone& b = m.bones[i];
+    std::uint8_t parts = 0;
+    COOP_READ(r.u16(b.bone));
+    COOP_READ(r.u8(parts));
+    COOP_READ(r.u8(b.flags));
+    if (b.bone >= kMaxPoseBones || (i > 0 && b.bone <= m.bones[i - 1].bone)) {
+      return Error::bad_value;
+    }
+    if ((parts & ~(pose_part::rotation | pose_part::translation | pose_part::scale)) != 0) {
+      return Error::bad_value;
+    }
+    if (parts & pose_part::rotation) {
+      COOP_TRY(read_s16s(r, b.rotation.emplace()));
+      for (std::int16_t v : *b.rotation) {
+        if (v == std::numeric_limits<std::int16_t>::min()) return Error::bad_value;
+      }
+    }
+    if (parts & pose_part::translation) COOP_TRY(read_s16s(r, b.translation.emplace()));
+    if (parts & pose_part::scale) COOP_TRY(read_s16s(r, b.scale.emplace()));
+  }
+  return Error::none;
+}
+
 template <typename T>
 Error decode_as(Reader& body, Message& out) {
   T value{};
@@ -1179,7 +1260,7 @@ MessageType type_of(const Message& message) {
       MessageType::flag_snapshot, MessageType::host, MessageType::player_equip,
       MessageType::object_present, MessageType::object_owner, MessageType::handover_ask,
       MessageType::handover_state, MessageType::object_spawn, MessageType::object_sample,
-      MessageType::object_remove, MessageType::damage,
+      MessageType::object_remove, MessageType::damage, MessageType::player_pose,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1190,6 +1271,7 @@ std::uint8_t channel_of(const Message& message) { return channel_of(type_of(mess
 std::uint8_t channel_of(MessageType type) {
   switch (type) {
     case MessageType::player_sample:
+    case MessageType::player_pose:
     case MessageType::test_payload:
       return kChannelPlayerSamples;
     case MessageType::flag_set:
@@ -1232,6 +1314,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::host:
       return channel == kChannelProgress;
     case MessageType::player_sample:
+    case MessageType::player_pose:
       return channel == kChannelPlayerSamples;
     case MessageType::object_sample:
       return channel == kChannelObjectSamples;
@@ -1266,6 +1349,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::player_status:
     case MessageType::chat:
     case MessageType::player_sample:
+    case MessageType::player_pose:
     case MessageType::test_payload:
     case MessageType::join_partner:
     case MessageType::flag_set:
@@ -1299,7 +1383,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PlayerEquip> || std::is_same_v<T, ObjectPresent> ||
                       std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
-                      std::is_same_v<T, Damage>) {
+                      std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose>) {
           field = &m.player_number;
         }
       },
@@ -1389,6 +1473,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::object_sample: return decode_as<ObjectSample>(body, out);
     case MessageType::object_remove: return decode_as<ObjectRemove>(body, out);
     case MessageType::damage: return decode_as<Damage>(body, out);
+    case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;

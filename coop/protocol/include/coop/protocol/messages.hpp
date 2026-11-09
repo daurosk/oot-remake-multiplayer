@@ -70,6 +70,7 @@ enum class MessageType : std::uint16_t {
   object_sample = 23,
   object_remove = 24,
   damage = 25,
+  player_pose = 26,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -617,12 +618,45 @@ struct Damage {
   bool operator==(const Damage&) const = default;
 };
 
+// PLAYER_POSE: the sender's Link skeleton after its animation, for the
+// puppet to copy bone by bone (docs/puppet.md, "Pose"). Only the bones that
+// move are listed, in increasing bone order, each with the parts it carries:
+// the local rotation (quaternion x, y, z, w scaled by 32767), translation
+// and scale (both scaled by kPoseUnit, so +-4). flags is the game's own bone
+// flag byte, passed on unread. skeleton names the skeleton (bone count and a
+// check of its layout); a puppet with another skeleton ignores the message.
+inline constexpr std::size_t kMaxPoseBones = 512;
+inline constexpr float kPoseUnit = 8192.0f;
+
+namespace pose_part {
+inline constexpr std::uint8_t rotation = 1u << 0;
+inline constexpr std::uint8_t translation = 1u << 1;
+inline constexpr std::uint8_t scale = 1u << 2;
+}  // namespace pose_part
+
+struct PoseBone {
+  std::uint16_t bone = 0;
+  std::uint8_t flags = 0;
+  std::optional<std::array<std::int16_t, 4>> rotation;
+  std::optional<std::array<std::int16_t, 3>> translation;
+  std::optional<std::array<std::int16_t, 3>> scale;
+  bool operator==(const PoseBone&) const = default;
+};
+
+struct PlayerPose {
+  std::uint8_t player_number = kPlayerSelf;
+  SampleTime time;
+  std::uint32_t skeleton = 0;
+  std::vector<PoseBone> bones;
+  bool operator==(const PlayerPose&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
-                             ObjectSample, ObjectRemove, Damage>;
+                             ObjectSample, ObjectRemove, Damage, PlayerPose>;
 
 MessageType type_of(const Message& message);
 

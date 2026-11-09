@@ -1,0 +1,8 @@
+# turn: B backs off down the path, turns to face up it again and centres the
+# camera, then stands still watching A (the puppet) turn.
+wait 700               # B is often still loading
+stick 0 -0.6 30          # walk back toward the camera
+stick 0 0.3 8           # turn to face up the path
+press ZL                # camera behind B
+wait 60
+mark ready

@@ -79,12 +79,26 @@ constexpr std::uint64_t kDebugLogFrames = 120;
 // The overlay's defaults are for centimetres; Ocarina's world unit is about a
 // metre (the first run: a child Link walks about 2.5 units a second and the
 // camera follows him about 4 units behind). So markers are 24 px across at
-// 10 units, and nothing nearer than half a unit is drawn.
+// 10 units, and nothing nearer than half a unit is drawn. Name tags are
+// solid up to 10 units away, fade out by 40 and are not drawn beyond; the
+// edge arrow for an off-screen player stays (docs/lichii.md, Name tags).
 coop::overlay::Settings MarkerSettings() {
     coop::overlay::Settings s;
     s.reference_distance = 10.0f;
     s.near_distance = 0.5f;
+    s.tag_gap = 4.0f;
+    s.fade_start = 10.0f;
+    s.fade_end = 40.0f;
     return s;
+}
+
+// The top of Link's head above his feet, in world units, by age: the name
+// tag floats just over it (measured on screen, docs/lichii.md, Name tags).
+constexpr float kHeadChild = 1.35f;
+constexpr float kHeadAdult = 1.9f;
+
+float HeadHeight(std::optional<coop::protocol::Age> age) {
+    return age == coop::protocol::Age::adult ? kHeadAdult : kHeadChild;
 }
 
 // An environment variable that is set and not "0".
@@ -151,6 +165,7 @@ struct FrameView {
     std::string game_note;           // why not, when not
     std::optional<coop::protocol::Vec3> position;
     std::optional<std::string> scene;
+    std::optional<coop::protocol::Age> age;
     std::vector<coop::overlay::Shown> others;
     std::vector<std::uint8_t> hidden;  // others with no marker (scene.hpp: hide)
     std::optional<Markers> markers;  // none: no camera
@@ -257,6 +272,10 @@ public:
             const bool event = reading && reading->event_running.value_or(false);
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
                 auto shown = coop::overlay::collect(p, report.server_now_us);
+                for (auto& s : shown) {
+                    const auto* player = p.player(s.number);
+                    s.head = HeadHeight(player ? player->age() : std::nullopt);
+                }
                 // The same rule as the puppet: no marker for a player in
                 // another scene or while our own cutscene runs.
                 for (const auto& s : shown) {
@@ -436,7 +455,7 @@ private:
             return std::find(view.hidden.begin(), view.hidden.end(), s.number) != view.hidden.end();
         });
         if (debug_camera_ && view.position) {
-            players.push_back({0, "you", *view.position, view.scene, 1.0f});
+            players.push_back({0, "you", *view.position, view.scene, 1.0f, HeadHeight(view.age)});
         }
         const auto result = overlay_.build(c, view.scene.value_or(""), players);
         if (result.error != coop::overlay::Error::none) {
@@ -467,6 +486,7 @@ private:
             m.tag_x = item.tag.x;
             m.tag_y = item.tag.y;
             m.tag_below = item.tag.below;
+            m.tag_head = item.tag.head;
             markers.items.push_back(std::move(m));
         }
         view.markers = std::move(markers);
@@ -568,6 +588,7 @@ private:
         if (reading) {
             view.position = reading->position;
             view.scene = reading->scene;
+            view.age = reading->age;
         }
         return reading;
     }

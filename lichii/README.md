@@ -8,6 +8,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `fetch.ps1` | Clones or updates the source to the pin and applies `patches/*.patch` in order. |
 | `patches/0001-coop-hook.patch` | The hook points, nothing else. |
 | `patches/0002-coop-camera.patch` | One call per draw in the Vulkan renderer that hands the game's camera to the hook, for markers. |
+| `patches/0003-coop-puppet.patch` | Two calls for the puppets: the code cave written into Ocarina's `main` when it is loaded, and the cave's `svc 0xf4` handed to the hook. |
 | `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
 ## Fetch and patch
@@ -38,7 +39,7 @@ cmake --build build/coop --target yuzu -j 8
 
 The program is `build\coop\bin\lichii.exe`. Leave out the two `LICHII_COOP` options for the plain emulator.
 
-`_CL_` is needed with MSVC (found at `fritchii-v4.1`; `fritchii-v5` keeps the same flags in `src/CMakeLists.txt`, and was built with it): the emulator turns the four "declaration hides another" warnings (C4456 to C4459) into errors, and `src/common/frizti_settings.cpp`, `src/video_core/engines/kepler_compute.cpp`, `maxwell_3d.cpp` and `renderer_vulkan/vk_rasterizer.cpp` trip them. MSVC appends `_CL_` after every other flag, so this switches those four off without changing the emulator's source.
+`_CL_` is needed with MSVC (found at `fritchii-v4.1`; `fritchii-v5` and `fritchii-v5.5` keep the same flags in `src/CMakeLists.txt`, and was built with it): the emulator turns the four "declaration hides another" warnings (C4456 to C4459) into errors, and `src/common/frizti_settings.cpp`, `src/video_core/engines/kepler_compute.cpp`, `maxwell_3d.cpp` and `renderer_vulkan/vk_rasterizer.cpp` trip them. MSVC appends `_CL_` after every other flag, so this switches those four off without changing the emulator's source.
 
 ## What the patch touches
 
@@ -46,13 +47,15 @@ With `LICHII_COOP` off (the default) the patch changes nothing in the build.
 
 | File | Change |
 |---|---|
-| `CMakeLists.txt` | The `LICHII_COOP` option and `LICHII_COOP_DIR`. When on, adds this repo with `add_subdirectory` (no tests, no server, no test tool) before `src/`. |
+| `CMakeLists.txt` | The `LICHII_COOP` option and `LICHII_COOP_DIR`. Stops the configure when `ENABLE_UPDATE_CHECKER` is on as well (see "The emulator's own updater"). When on, adds this repo with `add_subdirectory` (no tests, no server, no test tool) before `src/`. |
 | `src/core/CMakeLists.txt` | When on, includes `hook/core.cmake`: the hook and its settings built into `core`, linked with our `coop`, `coop_net`, `coop_host`, `coop_presence` and `coop_overlay`. |
 | `src/yuzu/CMakeLists.txt` | When on, includes `hook/qt.cmake`: the co-op panel (`hook/coop_window.cpp`) built into the Qt frontend. |
 | `src/yuzu/main_window.cpp` | Starts co-op and its panel once the render window exists (`CoopWindow::Attach`), and stops it when the window closes (`CoopHook::Shutdown`). |
 | `src/core/hle/service/nx2_gsv.h` | In `Composite` (the Switch 2 present path, the one Ocarina uses), calls `CoopHook::OnFrame` after the speed limiter and the frame-time stats. |
 | `src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp` | The same in `nvdisp_disp0::Composite` (the Switch 1 present path). |
 | `src/video_core/renderer_vulkan/vk_rasterizer.cpp` | (0002) After each draw's pipeline is configured, calls `CoopCamera::Track` (`hook/coop_camera_track.h`), which looks for the game's camera buffer as the DLSS path does, without DLSS. `video_core` sees the hook folder and `LICHII_COOP` because `core.cmake` makes both public on `core`, which `video_core` links. |
+| `src/core/file_sys/patch_manager.cpp` | (0003) In `PatchNSO`, after the built-in patches, calls `CoopSvc::PatchMain`, which writes the puppet code cave into Ocarina's `main` (checked against the original words; only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`). |
+| `src/core/hle/kernel/svc.cpp` | (0003) `Kernel::Svc::Call` asks `CoopSvc::Call` first: it handles `svc 0xf4` from the cave and returns false for every other call, which goes on as before. |
 
 Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same ENet 1.3.18) when one exists, so there is one ENet in the program.
 
@@ -68,4 +71,8 @@ Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same
 2. Run `fetch.ps1`. If a patch no longer applies, apply it by hand on the new commit, commit, and replace that file with `git format-patch -1 --zero-commit --no-signature --stdout` of its commit.
 3. Build with `LICHII_COOP=ON` and check the log for `coop: loaded`.
 
-The patches stay at 7 files and about 50 lines; everything else is in `hook/`.
+The patches stay at 9 files and about 70 lines; everything else is in `hook/`.
+
+Last move: `fritchii-v5` to `fritchii-v5.5` (2026-11-09, 37 commits, mostly the Vulkan renderer, shaders and settings). All three patches applied as they were, at new line numbers; nothing our hook reads changed (the present paths, `svc.cpp`, the kernel and memory code are the same).
+
+

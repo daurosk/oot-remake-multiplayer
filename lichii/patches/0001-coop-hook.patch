@@ -11,19 +11,19 @@ per guest present, in both present paths (nx2 and nvdisp), after the speed
 limiter. The main window starts co-op once the render window exists and
 stops it when it closes.
 ---
- CMakeLists.txt                                      | 12 ++++++++++++
- src/core/CMakeLists.txt                             |  4 ++++
- src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp |  6 ++++++
- src/core/hle/service/nx2_gsv.h                      |  6 ++++++
- src/yuzu/CMakeLists.txt                             |  4 ++++
- src/yuzu/main_window.cpp                            | 10 ++++++++++
- 6 files changed, 42 insertions(+)
+ CMakeLists.txt                                   | 16 ++++++++++++++++
+ src/core/CMakeLists.txt                          |  4 ++++
+ .../hle/service/nvdrv/devices/nvdisp_disp0.cpp   |  6 ++++++
+ src/core/hle/service/nx2_gsv.h                   |  6 ++++++
+ src/yuzu/CMakeLists.txt                          |  4 ++++
+ src/yuzu/main_window.cpp                         | 10 ++++++++++
+ 6 files changed, 46 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e847462b0..e4058e94ef 100644
+index 8e847462b0..cc4ab7bdce 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -728,6 +728,18 @@ if (MSVC AND CXX_CLANG)
+@@ -728,6 +728,22 @@ if (MSVC AND CXX_CLANG)
      link_libraries(llvm-mingw-runtime)
  endif()
  
@@ -33,6 +33,10 @@ index 8e847462b0..e4058e94ef 100644
 +    set(LICHII_COOP_DIR "" CACHE PATH "Checkout of oot-remake-multiplayer")
 +    if (NOT EXISTS "${LICHII_COOP_DIR}/lichii/hook/coop_hook.cpp")
 +        message(FATAL_ERROR "LICHII_COOP_DIR must point at an oot-remake-multiplayer checkout")
++    endif()
++    # Fritchii's updater would install a plain release over the co-op build.
++    if (ENABLE_UPDATE_CHECKER)
++        message(FATAL_ERROR "LICHII_COOP needs ENABLE_UPDATE_CHECKER=OFF")
 +    endif()
 +    set(COOP_BUILD_TESTS OFF)
 +    set(COOP_BUILD_PROGRAMS OFF)

@@ -1041,6 +1041,91 @@ TEST_CASE("client flags: the host answers FLAG_SET through its callback") {
   CHECK(server.received[*part0].channel == proto::kChannelProgress);
 }
 
+TEST_CASE("client flags: count deltas go to the host's game, never into the table") {
+  auto delta = [](std::uint32_t hash, std::int32_t change) {
+    return proto::FlagEntry{hash, 0, proto::FlagKind::count_delta,
+                            static_cast<std::uint32_t>(change)};
+  };
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+
+  SUBCASE("as host") {
+    welcome_as(client, server, events, 1, {{2, "Saria"}, {3, "Zelda"}});
+    REQUIRE(client.is_host());
+    // A delta with a value: the value is answered, the delta is handed to
+    // our game in the event, whose watcher sends the total.
+    std::size_t from = server.received.size();
+    server.send(proto::FlagSet{2, {delta(7, 1), s32_flag(6, 3)}}, proto::kChannelProgress);
+    const std::size_t at = wait_received<proto::FlagState>(client, server, from);
+    CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+          std::vector<proto::FlagEntry>{s32_flag(6, 3)});
+    const std::size_t seen_first = events.all.size();
+    REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+    const auto& first = events.all[*events.find(EventKind::flag_state, seen_first)];
+    CHECK(first.player == 1);
+    CHECK(first.flags == std::vector<proto::FlagEntry>{s32_flag(6, 3), delta(7, 1)});
+    CHECK_FALSE(client.find_flag(7).has_value());
+
+    // Deltas only: no FLAG_STATE from the client, still an event.
+    const int states = events.count(EventKind::flag_state);
+    from = server.received.size();
+    server.send(proto::FlagSet{3, {delta(7, -1)}}, proto::kChannelProgress);
+    const std::size_t seen = events.all.size();
+    REQUIRE(pump(client, server, [&] {
+      events.drain(client);
+      return events.count(EventKind::flag_state) > states;
+    }));
+    CHECK(events.all[*events.find(EventKind::flag_state, seen)].flags == std::vector<proto::FlagEntry>{delta(7, -1)});
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+
+    // Our own delta echoed back: it is in our game already, not added again.
+    server.send(proto::FlagSet{1, {delta(8, 1)}}, proto::kChannelProgress);
+    settle(client, server, events, 200);
+    CHECK(events.count(EventKind::flag_state) == states + 1);
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+
+    // As host our own count goes out as its total; a delta is dropped.
+    CHECK(client.set_flag(delta(9, 1)));
+    settle(client, server, events, 200);
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+    CHECK_FALSE(server.find<proto::FlagSet>(from).has_value());
+  }
+
+  SUBCASE("as player") {
+    welcome_as(client, server, events, 2, {{1, "Saria"}, {3, "Zelda"}});
+    std::size_t from = server.received.size();
+    // Two keys in a call and one more later: each call one FLAG_SET; the
+    // unanswered ones add up for a resend.
+    CHECK(client.set_flags(std::vector<proto::FlagEntry>{delta(7, 1), delta(7, 1)}));
+    CHECK(client.set_flag(delta(7, 1)));
+    REQUIRE(pump(client, server, [&] { return count_received<proto::FlagSet>(server, from) == 2; }));
+    CHECK(std::get<proto::FlagSet>(server.received[*server.find<proto::FlagSet>(from)].message)
+              .flags == std::vector<proto::FlagEntry>{delta(7, 2)});
+    REQUIRE(client.pending_flags().size() == 1);
+    CHECK(client.pending_flags().begin()->second == delta(7, 3));
+
+    // Host 1 leaves: the sum goes to the new host, once.
+    from = server.received.size();
+    server.send(proto::Host{3}, proto::kChannelProgress);
+    REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+    const std::size_t at = wait_received<proto::FlagSet>(client, server, from);
+    CHECK(std::get<proto::FlagSet>(server.received[at].message).flags ==
+          std::vector<proto::FlagEntry>{delta(7, 3)});
+
+    // We host next: our game holds the keys already; nothing is stated for
+    // them and nothing waits.
+    from = server.received.size();
+    server.send(proto::Host{2}, proto::kChannelProgress);
+    REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+    settle(client, server, events, 200);
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+    CHECK(client.pending_flags().empty());
+    CHECK_FALSE(client.find_flag(7).has_value());
+  }
+}
+
 TEST_CASE("client flags: 64-bit keys are set, stored and answered like named flags") {
   constexpr std::uint64_t kBox = 0x2fa4c1d09b7e6a35ull;
   SUBCASE("as a player") {

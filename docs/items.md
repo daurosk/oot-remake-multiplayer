@@ -45,7 +45,7 @@ Not part of the inventory: `PlayerStatus` also holds position, retry and UI stat
 Choices made here:
 
 - **Small keys** use the delta rule per dungeon (as Anchor does): one player opening a door spends the key for everyone, and a key picked up counts for everyone. The chest itself is a 64-bit-key flag ([flags.md](flags.md)) and must be shared too, or the key could be taken twice.
-- **Heart containers and pieces** are key items. `MaxLife` uses max; `Obj_Heart_Piece.StockNum` uses the delta rule. Whether the game turns four pieces into a container by raising `MaxLife` and resetting the count is not known: check it live before turning the heart rules on. `Life` stays per player.
+- **Heart containers and pieces** are key items. `MaxLife` uses max; `Obj_Heart_Piece.StockNum` uses the delta rule. Whether the game turns four pieces into a container by raising `MaxLife` and resetting the count is not known: the rules are on; check it live. `Life` stays per player.
 - **Bottles**: `PouchData.Bottle<A–E>.StockNum` and `BottleInfo.Bottle<X>.IsValid` are shared (OR); `BottleItem` stays per player. A bottle given to a player who did not have it arrives empty.
 - **Ammo**: the bag, quiver and wallet tiers are shared (max); the count in them is per player.
 - **Magic**: `MPMax` and the spells are shared (max); `MP` is per player.
@@ -201,22 +201,33 @@ From the event flows, not traced in code:
 
 For a shared item the cheapest notice is our own overlay line ("Player 2 got the Hookshot"). Using the game's own window would mean starting `Dm_SY_Get_WithoutPlayer` with the item as the guest actor, which needs the event system from the host; not tried.
 
+## One-time pickups (Caleb, 2026-11-09)
+
+Caleb: Gold Skulltulas "should be sync'd since they are a one time thing to grab". So every one-time pickup in the world is shared: once any player takes it, it is gone for everyone, and what it gives counts for everyone.
+
+| Pickup | The pickup itself (gone for everyone) | What it gives (everyone) |
+|---|---|---|
+| Gold Skulltula | its placement's 64-bit key (`Obj_RupeeToken`, 85 placements, [flags.md](flags.md)) | `PouchData.Item_Token_Gold.StockNum`, count (delta), on |
+| Heart piece in the world | its placement's 64-bit key | `PouchData.Obj_Heart_Piece.StockNum`, count (delta), on |
+| Heart container (boss) | its placement's 64-bit key, if it has one | `PlayerStatus.MaxLife`, max, on |
+| Small key lying in the world or in a chest | its placement's (or chest's) 64-bit key | the dungeon's `SmallKeyNum`, count (delta), on |
+
+The "what it gives" flags are named and on in `item_shared_flags()`. The pickups are 64-bit keys, which this repository does not list (no game data here): they go in the user's shared-flags file ([host.md](host.md)), each as `key64:`, **whatever its `ResetTypeValue`** (the rule for chests and pots is persistent keys only; a one-time pickup is in the list even when its type is not 24). Not mapped yet, needs the keys read from the Banc placements or live: which `Obj_RupeeToken` key is which Skulltula, and the placement actor names and keys of heart pieces and heart containers. Also to check live: whether a Skulltula's key is set when it is killed or when its token is picked up (if killed, a player who kills it and leaves before taking the token takes it from everyone).
+
 ## In the code
 
-`coop/host/game_items.hpp` holds the tables above as data: 300 flags, each with its kind and rule, and a test hashes every name. `item_shared_flags()` is the shared list built from it (265 flags: every rule but per player, without the ones not on yet). `ItemFlagStore` wraps the game's `GameFlagStore` and merges on write: max, OR and mirror as in the rules table, per-player flags and a wrong kind refused, anything that is not an item passed through. The host's `FlagWatcher` answers a `FLAG_SET` with what its game holds after the write, so the merged value is what everyone gets; a player's game takes the host's `FLAG_STATE` through the same store, so an item it has is not taken away by an answer that lacks it.
+`coop/host/game_items.hpp` holds the tables above as data: 300 flags, each with its kind and rule, and a test hashes every name. `item_shared_flags()` is the shared list built from it (282 flags: every rule but per player). `ItemFlagStore` wraps the game's `GameFlagStore` and merges on write: max, OR and mirror as in the rules table, per-player flags and a wrong kind refused, anything that is not an item passed through. The host's `FlagWatcher` answers a `FLAG_SET` with what its game holds after the write, so the merged value is what everyone gets; a player's game takes the host's `FLAG_STATE` through the same store, so an item it has is not taken away by an answer that lacks it.
 
 To use it, the emulator hands `Session::frame` an `ItemFlagStore` over its `GameFlagStore` and adds `item_shared_flags()` to the shared list. Not wired in `lichii/hook` yet.
 
-Not on yet, in the table with `on = false`:
+Counts (small keys, Gold Skulltula tokens, heart pieces) travel as count deltas ([protocol.md](protocol.md), "Counts"): a player's `FlagWatcher` sends its change (kind 4) when `FlagStore::is_count` says so, which `ItemFlagStore` does for every count item; the host's `ItemFlagStore` adds a delta to the game's value (never below 0) and the host's watcher sends the total; a player writes a total on top of any change of its own not sent yet. So two players gaining at once both count (tested on fake games: two players and the host gaining and spending in the same frame end on the same total). Every rule is on now, `MaxLife` (max) too.
 
-- **Count rules** (small keys, Gold Skulltulas, heart pieces). Flags carry absolute values, and the host cannot tell which of its values a player's change started from: the host spends a key (2 → 1) while a player gets one (2 → 3); the player's 3 means +1 only if the host knows it was based on 2. `merge_item` has the count rule with that base. The proposed protocol change: a flag kind "count delta" (`FlagKind` 4, `int32` change) allowed in `FLAG_SET` only. The player's watcher sends its own change as a delta from the last value it had from the host; the host adds it to its value and answers with `FLAG_STATE` of the result as a plain `int32`. Needs the coordinator: `coop/protocol` belongs to another task.
-- **MaxLife** (max): until it is known how heart pieces turn into containers.
+Still to check in a run for hearts: whether the game turns four pieces into a container by raising `MaxLife` and setting the piece count back. If it does, the deltas carry it (+1 and then −4 to the piece count, `MaxLife` by max).
 
 Effects of max to know about: an item a player loses (a shield burnt or eaten, the Giant's Knife breaking) comes back, because the host keeps the highest value. `LiftGrade` (Enum) and `DiveDepth` (Float) are not in the table yet; if the game reads strength from them and not from the gauntlet items, a shared gauntlet does not lift for the other player. Check in a run.
 
 ## Not done
 
-1. Count delta in the protocol (above), then turn the count rules on.
-2. A live check: rupees and one key item changing in a run, with `ItemFlagStore` wired into the hook.
-3. What `StockNum` holds for an owned item (1?) and how heart pieces turn into containers.
-4. The unnamed structs and dungeon members above.
+1. A live check: rupees, one key item and one small key changing in a run, with `ItemFlagStore` wired into the hook.
+2. What `StockNum` holds for an owned item (1?) and how heart pieces turn into containers.
+3. The unnamed structs and dungeon members above.

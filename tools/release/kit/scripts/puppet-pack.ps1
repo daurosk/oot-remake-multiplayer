@@ -61,4 +61,4 @@ if ($longest.Length -gt 259) {
 Write-Host "Building the puppet packs into $loadDir ..."
 & $exe @pre -I $tool --romfs $Romfs --user-dir $user
 if ($LASTEXITCODE -ne 0) { Write-Host "The pack build failed ($LASTEXITCODE)."; exit 1 }
-Write-Host 'Done. Start play.cmd; the emulator log shows "LayeredFS patches applied" when it loads the game.'
+Write-Host 'Done. Start Host.bat or Join.bat; the emulator log shows "LayeredFS patches applied" when it loads the game.'

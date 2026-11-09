@@ -53,7 +53,7 @@ if (-not (Test-CoopName $Name)) { Write-Host "Bad name: $Name"; exit 1 }
 if ($Port -notmatch '^\d{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) { Write-Host "Bad port: $Port"; exit 1 }
 
 Write-CoopIni $template $ini $Server $Port $Name
-Write-Host "Co-op: server $Server, port $Port, name $Name   (play.cmd change to change them)"
+Write-Host "Co-op: server $Server, port $Port, name $Name   (play.cmd change to change the name)"
 
 $user = Join-Path $emu 'user'
 if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {

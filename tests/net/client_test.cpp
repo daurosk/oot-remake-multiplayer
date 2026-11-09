@@ -645,8 +645,8 @@ TEST_CASE("client: the player list follows joins, statuses, leaves and reconnect
   welcome_client(client, server);  // we are 2, Saria is 1
   REQUIRE(wait_event(client, server, events, EventKind::welcomed));
 
-  const Player saria{1, "Saria", std::nullopt, false};
-  const Player link{2, "Link", std::nullopt, true};
+  const Player saria{1, "Saria", std::nullopt, false, std::nullopt};
+  const Player link{2, "Link", std::nullopt, true, std::nullopt};
   CHECK(client.players() == std::vector<Player>{saria, link});
   CHECK(client.find_player(4) == nullptr);
 
@@ -657,7 +657,7 @@ TEST_CASE("client: the player list follows joins, statuses, leaves and reconnect
   CHECK(joined.player == 3);
   CHECK(joined.nickname == "Zelda");
   REQUIRE(client.players().size() == 3);
-  CHECK(client.players()[2] == Player{3, "Zelda", std::nullopt, false});
+  CHECK(client.players()[2] == Player{3, "Zelda", std::nullopt, false, std::nullopt});
 
   // Status, theirs received and ours sent; unknown bits are kept.
   const std::uint8_t flags = proto::status::paused | 0x80;
@@ -690,7 +690,7 @@ TEST_CASE("client: the player list follows joins, statuses, leaves and reconnect
   CHECK(left.player == 3);
   CHECK(left.nickname == "Zelda");
   CHECK(static_cast<int>(left.leave_reason) == 9);
-  CHECK(client.players() == std::vector<Player>{saria, Player{2, "Link", proto::status::loading, true}});
+  CHECK(client.players() == std::vector<Player>{saria, Player{2, "Link", proto::status::loading, true, std::nullopt}});
 
   // A join for a number already in the room replaces that player.
   const std::size_t before = events.all.size();

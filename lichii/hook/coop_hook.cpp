@@ -2,20 +2,21 @@
 //
 // Threads:
 // - the present thread calls OnFrame: it reads the local player from guest
-//   memory (coop_host), queues PLAYER_STATUS and PLAYER_SAMPLE, and works out
-//   where the other players are shown (coop_presence);
-// - the network thread owns the coop::net::Client: it sends what OnFrame
-//   queued, runs ENet and feeds what comes in to presence;
+//   memory and hands it to coop::host::Session::frame, which queues
+//   PLAYER_STATUS and PLAYER_SAMPLE; then it works out where the other players
+//   are shown from the session's presence;
+// - the network thread runs Session::service: it sends what frame() queued,
+//   runs ENet and feeds what comes in to presence (docs/host.md, "Session");
 // - the Qt co-op window reads OverlayLines() a few times a second.
-// Lock order: net_mutex, then presence_mutex, then view_mutex. OnFrame never
-// holds two at once.
+// Lock order: the session's network lock, then its presence lock, then
+// view_mutex. OnFrame never holds two at once.
 
 #include "coop_hook.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -34,11 +35,10 @@
 
 #include "coop/host/game_memory.hpp"
 #include "coop/host/player_reader.hpp"
-#include "coop/host/sampler.hpp"
+#include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop/overlay/overlay.hpp"
 #include "coop/presence/presence.hpp"
-#include "coop/protocol/codec.hpp"
 #include "coop/version.hpp"
 #include "coop_camera.h"
 #include "coop_settings.h"
@@ -50,7 +50,7 @@ namespace {
 constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
 constexpr const char* kGameBuildId = "e0f3ccfaf50065ae";
 constexpr const char* kGameVersion = "1.1.1";
-constexpr const char* kBuildId = "lichii fritchii-v4.1 coop";
+constexpr const char* kBuildId = "lichii fritchii-v5 coop";
 
 // A frame older than this means the game is not running (stopped, paused).
 constexpr auto kFrameStale = std::chrono::seconds(1);
@@ -180,6 +180,12 @@ public:
             client_.reset();
             return false;
         }
+        coop::host::SessionSettings session;
+        // Called by service() on the network thread, with the client.
+        session.on_event = [this](const coop::net::Event& event, coop::net::Client&) {
+            Log(event);
+        };
+        session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
         return true;
     }
@@ -187,12 +193,11 @@ public:
     // `quiet`: no logging, for the end of the program, when the log may be gone.
     void End(bool quiet) {
         CoopCamera::SetWanted(false);
-        {
-            std::lock_guard lock(net_mutex_);
-            stop_ = true;
-            quiet_ = quiet;
+        quiet_ = quiet;
+        stop_ = true;
+        if (session_) {
+            session_->wake();
         }
-        wake_.notify_all();
         if (thread_.joinable()) {
             thread_.join();
         }
@@ -203,38 +208,12 @@ public:
         view.at = Clock::now();
         const auto reading = Read(system, view);
 
-        std::optional<std::uint64_t> now;
-        bool reset = false;
-        {
-            std::lock_guard lock(net_mutex_);
-            if (client_ && client_->state() == coop::net::State::connected) {
-                now = client_->server_now_us();
-                reset = std::exchange(reset_sampler_, false);
-            }
-        }
-
-        if (now) {
-            if (reset) {
-                sampler_.reset();
-            }
-            std::vector<coop::protocol::Message> out;
-            for (auto& m : sampler_.frame(reading, *now)) {
-                coop::protocol::Message message;
-                if (coop::protocol::decode(m.bytes, message) == coop::protocol::Error::none) {
-                    out.push_back(std::move(message));
-                }
-            }
-            if (!out.empty()) {
-                {
-                    std::lock_guard lock(net_mutex_);
-                    for (auto& m : out) {
-                        outbox_.push_back(std::move(m));
-                    }
-                }
-                wake_.notify_one();
-            }
-            std::lock_guard lock(presence_mutex_);
-            view.others = coop::overlay::collect(presence_, *now);
+        // No shared flags yet: the hook has no FlagStore for the game.
+        const auto report = session_->frame(reading, nullptr);
+        if (report.connected) {
+            view.others = session_->with_presence([&](coop::presence::Presence& p) {
+                return coop::overlay::collect(p, report.server_now_us);
+            });
         }
         Place(view);
 
@@ -405,7 +384,6 @@ private:
         if (process != process_) {
             process_ = process;
             base_ = FindMain(process);
-            sampler_.reset();
             LOG_INFO(Core, "coop: game build {}, main at {:#x}", build, base_);
         }
         view.game = true;
@@ -430,68 +408,51 @@ private:
     }
 
     void Run() {
-        std::unique_lock lock(net_mutex_);
         auto last_state = coop::net::State::idle;
         while (!stop_) {
-            for (const auto& m : outbox_) {
-                client_->send(m);
-            }
-            outbox_.clear();
-            client_->service(0);
-            while (auto event = client_->next_event()) {
-                Handle(*event);
-            }
-            if (client_->state() != last_state) {
-                last_state = client_->state();
+            session_->service();
+            RoomView room = session_->with_client([&](coop::net::Client& c) {
+                return RoomView{c.state(), c.player_number(), c.round_trip_us(), c.players(),
+                                note_};
+            });
+            if (room.state != last_state) {
+                last_state = room.state;
                 LOG_INFO(Core, "coop: {}", coop::net::to_string(last_state));
             }
             {
                 std::lock_guard view(view_mutex_);
-                room_.state = client_->state();
-                room_.self = client_->player_number();
-                room_.round_trip_us = client_->round_trip_us();
-                room_.players = client_->players();
-                room_.note = note_;
+                room_ = std::move(room);
             }
-            wake_.wait_for(lock, std::chrono::milliseconds(2),
-                           [this] { return stop_ || !outbox_.empty(); });
+            session_->wait(2);
         }
-        client_->stop();
-        client_->service(0);
+        session_->with_client([](coop::net::Client& c) {
+            c.stop();
+            c.service(0);
+        });
         if (!quiet_) {
             LOG_INFO(Core, "coop: stopped");
         }
     }
 
-    void Handle(const coop::net::Event& event) {
+    // What the session handled, for the log and the panel. Network thread,
+    // under the session's network lock: it must not call with_client.
+    void Log(const coop::net::Event& event) {
         using coop::net::EventKind;
         switch (event.kind) {
         case EventKind::welcomed:
-        case EventKind::reconnected: {
+        case EventKind::reconnected:
             LOG_INFO(Core, "coop: welcomed as player {} on {}:{}", event.welcome.player_number,
                      settings_.server, settings_.port);
             note_.clear();
-            reset_sampler_ = true;
-            std::lock_guard lock(presence_mutex_);
-            presence_.on_welcome(event.welcome);
             break;
-        }
         case EventKind::refused:
             note_ = "refused: " +
                     std::string(coop::net::refuse_reason_text(event.refuse_reason));
             LOG_WARNING(Core, "coop: server {}", note_);
             break;
-        case EventKind::disconnected: {
+        case EventKind::disconnected:
             LOG_WARNING(Core, "coop: connection lost; reconnecting");
-            std::lock_guard lock(presence_mutex_);
-            presence_.clear();
             break;
-        }
-        case EventKind::message: {
-            std::lock_guard lock(presence_mutex_);
-            presence_.apply(event.message);
-            break;
-        }
         case EventKind::player_joined:
             LOG_INFO(Core, "coop: player {} '{}' joined", event.player, event.nickname);
             break;
@@ -578,25 +539,18 @@ private:
     coop::overlay::Overlay overlay_;
     bool camera_seen_ = false;
     std::uint64_t frames_ = 0;
-    coop::host::Sampler sampler_;
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
     bool build_warned_ = false;
 
-    // Guarded by net_mutex_.
-    std::mutex net_mutex_;
-    std::condition_variable wake_;
+    // Set by Begin before the network thread starts; the session borrows the
+    // client and locks it, so neither is touched directly after that.
     std::unique_ptr<coop::net::Client> client_;
-    std::vector<coop::protocol::Message> outbox_;
-    bool stop_ = false;
-    bool quiet_ = false;
-    bool reset_sampler_ = false;
+    std::unique_ptr<coop::host::Session> session_;
+    std::atomic<bool> stop_ = false;
+    std::atomic<bool> quiet_ = false;
     std::string note_;  // network thread only
     std::thread thread_;
-
-    // Guarded by presence_mutex_.
-    std::mutex presence_mutex_;
-    coop::presence::Presence presence_;
 
     // Guarded by view_mutex_.
     std::mutex view_mutex_;

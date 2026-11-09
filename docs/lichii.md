@@ -25,8 +25,8 @@ Any mistake (an unknown key, a bad port, a name too long) is written to the log 
 | Thread | What |
 |---|---|
 | Qt (GUI) | At start, `CoopWindow::Attach` reads the settings and starts co-op. A small see-through panel in the top-left corner of the game lists the players. On close, `CoopHook::Shutdown` says goodbye to the server. |
-| Network | Owns the `coop::net::Client`: connects, reconnects, sends what the frame queued, feeds what comes in to `coop_presence`. Wakes every 2 ms or as soon as something is queued. |
-| Present (`OnFrame`) | Once per emulated frame: reads the local player through `coop_host` (`PlayerReader` over guest memory), runs the `Sampler`, queues `PLAYER_STATUS` and `PLAYER_SAMPLE`, asks presence where the others are shown, and projects them with the camera the GPU thread found. |
+| Network | Runs `coop::host::Session::service` ([host.md](host.md#session)) for the `coop::net::Client`: connects, reconnects, sends what the frame queued, feeds what comes in to presence. Wakes every 2 ms or as soon as something is queued. |
+| Present (`OnFrame`) | Once per emulated frame: reads the local player through `coop_host` (`PlayerReader` over guest memory) and hands it to `Session::frame`, which runs the `Sampler` and queues `PLAYER_STATUS` and `PLAYER_SAMPLE`; then asks the session's presence where the others are shown, and projects them with the camera the GPU thread found. No shared flags yet (no `FlagStore` for the game). |
 | GPU (draws) | Per draw, only while Ocarina runs with co-op on: looks for the game's camera buffer (see [Markers](#markers)) and hands the matrix over. |
 
 The connection is made when the emulator starts, before any game, and lasts until it closes, so players stay in the room across game restarts. Nothing is read or sent unless the running game is Ocarina of Time (program 0400486024DEC000) with build id `e0f3ccfaf50065ae`, the build the addresses in `coop/host` are for. A build that does not match is logged once.

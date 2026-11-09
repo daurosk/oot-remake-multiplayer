@@ -45,6 +45,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_camera.h"
+#include "coop_cheats.h"
 #include "coop_flags.h"
 #include "coop_objects.h"
 #include "coop_settings.h"
@@ -214,8 +215,13 @@ public:
         if (view.game) {
             memory.emplace(system.ApplicationMemory(), base_);
             flag_debug_.Frame(*memory);
-            if (sharing_) {
+            if (sharing_ || cheats_) {
                 game_store.emplace(*memory);
+            }
+            if (cheats_) {
+                CoopCheats::Frame(*game_store);
+            }
+            if (sharing_) {
                 store.emplace(*game_store);
             }
         }
@@ -597,6 +603,8 @@ private:
     // client and locks it, so neither is touched directly after that.
     std::unique_ptr<coop::net::Client> client_;
     std::unique_ptr<coop::host::Session> session_;
+    // Debug item cheats (coop_cheats.h, LICHII_COOP_CHEATS).
+    const bool cheats_ = CoopCheats::On();
     std::atomic<bool> stop_ = false;
     std::atomic<bool> quiet_ = false;
     std::string note_;  // network thread only

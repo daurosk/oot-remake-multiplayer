@@ -124,7 +124,9 @@ std::string_view to_string(EventKind kind) {
 
 std::string_view refuse_reason_text(proto::RefuseReason reason) {
   switch (reason) {
-    case proto::RefuseReason::wrong_protocol_version: return "wrong protocol version";
+    case proto::RefuseReason::wrong_protocol_version:
+      return "wrong protocol version: this game and the server are different releases; "
+             "run Update.bat in every kit, the host's too";
     case proto::RefuseReason::wrong_game_build: return "wrong game build";
     case proto::RefuseReason::server_full: return "server full";
     case proto::RefuseReason::name_taken: return "name taken";

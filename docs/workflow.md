@@ -8,7 +8,7 @@ How the AI sessions that build co-op are organised. The live state (who is runni
 |---|---|---|---|
 | Owner (Caleb) | 1 | Decides the open questions, approves merges, starts the first coordinator. | |
 | Coordinator | 1 at a time | Reports to the owner. Starts, steers, replaces and stops every worker. Keeps the handoff and the worker table current. Reviews worker results and opens pull requests for the owner. | Writes product code. Reads whole diffs or long logs (it sends a worker instead). Lets two workers touch the same files. |
-| Worker | As many as the work needs | One task from one brief, in its own worktree on its own branch (`agent/<task>`). Reports to the coordinator once, when done or when it reaches its context limit. | Starts other sessions or subagents. Merges. Edits `main` or another worker's files. Talks to the owner instead of the coordinator, unless the coordinator is gone. |
+| Worker | As many as the work needs | One task from one brief, in its own worktree on its own branch, named by its topic in lowercase with hyphens (`host-sampler`). Reports to the coordinator once, when done or when it reaches its context limit. | Starts other sessions or subagents. Merges. Edits `main` or another worker's files. Talks to the owner instead of the coordinator, unless the coordinator is gone. |
 
 Only the coordinator starts and stops sessions. A worker that needs help, a decision or a replacement asks the coordinator.
 

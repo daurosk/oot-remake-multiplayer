@@ -1156,3 +1156,274 @@ TEST_CASE("rejoin_stale_us 0 turns the takeover off") {
   CHECK(refused_reason(hello_on(h, 9, "Link", kHomePc)) == RefuseReason::name_taken);
   CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
 }
+
+// ---------------------------------------------------------------- objects
+
+namespace {
+
+ObjectId placed(std::uint64_t hash) { return ObjectId{ObjectKind::placed, 0, hash}; }
+
+using OwnerEpoch = std::optional<std::pair<std::uint8_t, std::uint16_t>>;
+
+OwnerEpoch owned(std::uint8_t owner, std::uint16_t epoch) {
+  return std::make_pair(owner, epoch);
+}
+
+ObjectPresent present_in(const std::string& scene, std::vector<ObjectId> ids) {
+  ObjectPresent p;
+  p.scene = scene;
+  for (const ObjectId& id : ids) p.objects.push_back({id, 0});
+  return p;
+}
+
+ObjectState state_at(float x, std::int32_t life) {
+  ObjectState s;
+  s.time.server_time_us = 5;
+  s.position = Vec3{x, 0, 0};
+  s.life = ObjectLife{life, 12};
+  return s;
+}
+
+template <typename T>
+std::vector<T> messages_to(const Harness& h, ConnectionId id) {
+  std::vector<T> out;
+  for (const Sent& s : h.to(id)) {
+    if (const auto* m = std::get_if<T>(&s.message)) out.push_back(*m);
+  }
+  return out;
+}
+
+// Three players in, nothing sent yet about objects.
+struct ObjectHarness : Harness {
+  ObjectHarness() {
+    join(1, "Link");
+    join(2, "Zelda");
+    join(3, "Saria");
+    clear();
+  }
+};
+
+}  // namespace
+
+TEST_CASE("the first game to report a placed object owns it, epoch 0") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  // Only player 1 is known to be in the Graveyard: only it is told.
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 1);
+  CHECK(h.sent[0].channel == kChannelOwnership);
+  CHECK(std::get<ObjectOwner>(h.sent[0].message) == ObjectOwner{placed(7), 1, 0, 0});
+
+  // A second game reporting it is told the owner; the owner stays.
+  h.clear();
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 2);
+  CHECK(std::get<ObjectOwner>(h.sent[0].message) == ObjectOwner{placed(7), 1, 0, 0});
+  // OBJECT_PRESENT itself is not relayed.
+  CHECK(h.session.stats().relayed == 0);
+}
+
+TEST_CASE("object samples go only from the owner of the current epoch, to its scene") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(3, present_in("Market", {}), kChannelOwnership);
+  h.clear();
+
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(1, 12)}, kChannelObjectSamples);
+  REQUIRE(h.sent.size() == 1);  // not to 3, in the Market
+  CHECK(h.sent[0].to == 2);
+  CHECK(h.sent[0].channel == kChannelObjectSamples);
+  CHECK(std::get<ObjectSample>(h.sent[0].message) ==
+        ObjectSample{1, placed(7), 0, state_at(1, 12)});
+
+  h.clear();
+  h.receive(2, ObjectSample{0, placed(7), 0, state_at(2, 12)}, kChannelObjectSamples);  // not owner
+  h.receive(1, ObjectSample{0, placed(7), 3, state_at(2, 12)}, kChannelObjectSamples);  // old epoch
+  h.receive(1, ObjectSample{0, placed(8), 0, state_at(2, 12)}, kChannelObjectSamples);  // unknown
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().object_refused == 3);
+  CHECK(h.session.stats().object_relayed == 1);
+}
+
+TEST_CASE("damage goes to the owner alone, whatever epoch the hitter knew") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.clear();
+
+  const Damage hit{0, placed(7), 9, 2, static_cast<std::uint8_t>(DamageCause::sword), {1, 2, 3}};
+  h.receive(2, hit, kChannelOwnership);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 1);
+  CHECK(h.sent[0].channel == kChannelOwnership);
+  Damage expected = hit;
+  expected.player_number = 2;
+  CHECK(std::get<Damage>(h.sent[0].message) == expected);
+
+  h.clear();
+  h.receive(1, hit, kChannelOwnership);                                // from the owner itself
+  h.receive(2, Damage{0, placed(8), 0, 2, 0, {}}, kChannelOwnership);  // unknown object
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().damage_relayed == 1);
+  CHECK(h.session.stats().damage_dropped == 2);
+}
+
+TEST_CASE("when the owner leaves, the next game takes it with epoch + 1 and the last sample") {
+  ObjectHarness h;
+  h.receive(3, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(3, ObjectSample{0, placed(7), 0, state_at(4, 6)}, kChannelObjectSamples);
+  h.clear();
+
+  h.session.disconnected(3, h.now);
+  h.collect();
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 1));
+  // Player 1 (the lowest) gets the left news, the last state, then the owner.
+  const auto to1 = h.to(1);
+  REQUIRE(to1.size() == 3);
+  CHECK(std::holds_alternative<PlayerLeft>(to1[0].message));
+  CHECK(std::get<HandoverState>(to1[1].message) ==
+        HandoverState{3, placed(7), 1, state_at(4, 6)});
+  CHECK(std::get<ObjectOwner>(to1[2].message) == ObjectOwner{placed(7), 1, 1, 0});
+  CHECK(messages_to<ObjectOwner>(h, 2) == std::vector<ObjectOwner>{{placed(7), 1, 1, 0}});
+  CHECK(messages_to<HandoverState>(h, 2).empty());
+
+  // A sample of the old epoch is refused, even from the new owner.
+  h.clear();
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(5, 6)}, kChannelObjectSamples);
+  CHECK(h.sent.empty());
+  h.receive(1, ObjectSample{0, placed(7), 1, state_at(5, 6)}, kChannelObjectSamples);
+  CHECK(h.sent.size() == 1);
+  CHECK(h.session.stats().owner_changes == 1);
+}
+
+TEST_CASE("unloading or leaving the scene hands it over; nobody left forgets it") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.clear();
+
+  // Player 1 unloads 7: player 2 takes it, with no state to pass (no sample yet).
+  h.receive(1, present_in("Graveyard", {placed(8)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  CHECK(messages_to<HandoverState>(h, 2).empty());
+  CHECK(messages_to<ObjectOwner>(h, 2) == std::vector<ObjectOwner>{{placed(7), 2, 1, 0}});
+
+  // Player 1 walks into the Market (the scene of its player sample): 8 had
+  // nobody else, so it is forgotten.
+  h.clear();
+  PlayerSample walk;
+  walk.time.server_time_us = 1;
+  walk.scene = "Market";
+  h.receive(1, walk, kChannelPlayerSamples);
+  CHECK_FALSE(h.session.object_owner(placed(8)).has_value());
+  CHECK(h.session.object_count() == 1);
+  CHECK(messages_to<ObjectOwner>(h, 1).empty());
+}
+
+TEST_CASE("a removed enemy stays owned by nobody until no game has it, then is forgotten") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.clear();
+
+  h.receive(1, ObjectRemove{0, placed(7), 0, RemoveReason::dead, {1, 1, 1}}, kChannelOwnership);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 2);
+  CHECK(std::get<ObjectRemove>(h.sent[0].message) ==
+        ObjectRemove{1, placed(7), 0, RemoveReason::dead, {1, 1, 1}});
+  CHECK(h.session.object_owner(placed(7)) == owned(0, 0));
+
+  // Player 2's copy, still listed, does not take it; damage to it goes nowhere.
+  h.clear();
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 2, 0, {}}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  // Player 1 leaves the scene: a removed object is not handed over.
+  h.receive(1, present_in("Market", {}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(0, 0));
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
+  CHECK(h.session.object_count() == 0);
+}
+
+TEST_CASE("a made object belongs to its maker; it goes on every screen when the maker leaves") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
+  h.clear();
+
+  const ObjectId bomb{ObjectKind::made, 1, 1};
+  ObjectSpawn spawn{0, bomb, "Bomb", object_spawn::projectile, state_at(3, 1)};
+  h.receive(1, spawn, kChannelOwnership);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 2);
+  spawn.player_number = 1;
+  CHECK(std::get<ObjectSpawn>(h.sent[0].message) == spawn);
+  CHECK(h.session.object_owner(bomb) == owned(1, 0));
+
+  // Not twice, and not with another maker's number.
+  h.clear();
+  h.receive(1, ObjectSpawn{0, bomb, "Bomb", 0, state_at(3, 1)}, kChannelOwnership);
+  h.receive(2, ObjectSpawn{0, ObjectId{ObjectKind::made, 1, 2}, "Bomb", 0, state_at(3, 1)},
+            kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().object_refused == 2);
+  // Player 2 listing it does not make it an owner when the maker goes.
+  h.receive(2, present_in("Graveyard", {bomb}), kChannelOwnership);
+  CHECK(h.sent.empty());
+
+  h.session.disconnected(1, h.now);
+  h.collect();
+  const auto removes = messages_to<ObjectRemove>(h, 2);
+  REQUIRE(removes.size() == 1);
+  CHECK(removes[0] == ObjectRemove{1, bomb, 0, RemoveReason::gone, {3, 0, 0}});
+  CHECK(h.session.object_count() == 0);
+}
+
+TEST_CASE("the maker's remove of a made object is relayed and forgets it") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
+  const ObjectId arrow{ObjectKind::made, 1, 5};
+  h.receive(1, ObjectSpawn{0, arrow, "Arrow", object_spawn::projectile, state_at(0, 1)},
+            kChannelOwnership);
+  h.clear();
+  h.receive(1, ObjectRemove{0, arrow, 0, RemoveReason::hit, {}}, kChannelOwnership);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 2);
+  CHECK(h.session.object_count() == 0);
+}
+
+TEST_CASE("handover state from a client is refused: the server does not ask for one yet") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.clear();
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 1)}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().object_refused == 1);
+}
+
+TEST_CASE("the object table has a size limit") {
+  SessionConfig config;
+  config.max_objects = 2;
+  Harness h(config);
+  h.join(1, "Link");
+  h.clear();
+  h.receive(1, present_in("Graveyard", {placed(1), placed(2), placed(3)}), kChannelOwnership);
+  CHECK(h.session.object_count() == 2);
+  CHECK(h.session.stats().object_table_full == 1);
+}
+
+TEST_CASE("objects are forgotten when the session empties") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.session.disconnected(1, h.now);
+  h.session.disconnected(2, h.now);
+  h.session.disconnected(3, h.now);
+  CHECK(h.session.object_count() == 0);
+}

@@ -53,6 +53,43 @@ inline PlayerEquip equip_message() {
   return m;
 }
 
+inline ObjectState full_object_state() {
+  ObjectState s;
+  s.time = {123456789, 42};
+  s.position = Vec3{1.5f, -2.0f, 3.25f};
+  s.velocity = Vec3{0.0f, 9.8f, -1.0f};
+  s.rotation = Quat{0.0f, 0.0f, 0.0f, 1.0f};
+  s.animation = Animation{"Wait", 3.0f, 1.0f};
+  s.life = ObjectLife{5, 12};
+  s.fuse = 2.5f;
+  s.state = object_state::in_fight | object_state::held;
+  return s;
+}
+
+inline const ObjectId kPlacedId{ObjectKind::placed, 0, 0xf9b880ab096a9cd6ull};
+inline const ObjectId kMadeId{ObjectKind::made, 2, 7};
+
+inline std::vector<Message> object_messages() {
+  std::vector<Message> all;
+  all.push_back(ObjectPresent{0, "Kakariko_Graveyard",
+                              {{kPlacedId, object_presence::awake | object_presence::in_fight},
+                               {kMadeId, 0}}});
+  all.push_back(ObjectPresent{3, "", {}});
+  all.push_back(ObjectOwner{kPlacedId, 2, 9, 4});
+  all.push_back(ObjectOwner{kMadeId, 0, 0, 0});
+  all.push_back(HandoverAsk{kPlacedId, 9, 3});
+  all.push_back(HandoverState{0, kPlacedId, 9, full_object_state()});
+  all.push_back(ObjectSpawn{0, kMadeId, "NormalArrow", object_spawn::projectile, full_object_state()});
+  all.push_back(ObjectSample{1, kPlacedId, 65535, full_object_state()});
+  ObjectSample minimal;
+  minimal.id = kMadeId;
+  minimal.state.time = {1, 2};
+  all.push_back(minimal);
+  all.push_back(ObjectRemove{0, kMadeId, 0, RemoveReason::exploded, {1.0f, 2.0f, 3.0f}});
+  all.push_back(Damage{4, kPlacedId, 3, 2, static_cast<std::uint8_t>(DamageCause::sword), {0.5f, 0.0f, -0.5f}});
+  return all;
+}
+
 inline std::vector<Message> every_message() {
   std::vector<Message> all;
   all.push_back(Hello{kProtocolVersion, "lichii 0.1.0", "e0f3ccfaf50065ae", "1.1.1", "Navi"});
@@ -77,6 +114,7 @@ inline std::vector<Message> every_message() {
   all.push_back(Host{2});
   all.push_back(equip_message());
   all.push_back(PlayerEquip{3, {}});
+  for (Message& m : object_messages()) all.push_back(std::move(m));
   return all;
 }
 

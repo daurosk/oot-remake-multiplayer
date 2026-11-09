@@ -43,9 +43,10 @@ private:
     u64 base_;
 };
 
-// The shared flag list from LICHII_COOP_FLAGS (a file, coop::host::SharedFlags
-// format). Nothing when it is not set; `error` is set when it is and the file
-// is bad (then flags are not shared).
+// The shared flag list: the player's items (coop::host::item_shared_flags,
+// docs/items.md; off with LICHII_COOP_ITEMS=0) and the flags in the file
+// LICHII_COOP_FLAGS (coop::host::SharedFlags format). Nothing when both are
+// off; `error` is set when the file is bad (then flags are not shared).
 std::optional<coop::host::SharedFlags> LoadShared(std::string& error);
 
 // The debug side, from environment variables (docs/lichii.md):

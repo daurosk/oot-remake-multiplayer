@@ -36,6 +36,7 @@
 #include "core/loader/loader.h"
 #include "core/memory.h"
 
+#include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop/host/session.hpp"
@@ -207,12 +208,15 @@ public:
 
         // The game's flags, when it is the right game and a list is shared.
         std::optional<EmulatorMemory> memory;
-        std::optional<coop::host::GameFlagStore> store;
+        // Item flags are merged, not overwritten (ItemFlagStore, docs/items.md).
+        std::optional<coop::host::GameFlagStore> game_store;
+        std::optional<coop::host::ItemFlagStore> store;
         if (view.game) {
             memory.emplace(system.ApplicationMemory(), base_);
             flag_debug_.Frame(*memory);
             if (sharing_) {
-                store.emplace(*memory);
+                game_store.emplace(*memory);
+                store.emplace(*game_store);
             }
         }
         const auto report = session_->frame(reading, store ? &*store : nullptr);

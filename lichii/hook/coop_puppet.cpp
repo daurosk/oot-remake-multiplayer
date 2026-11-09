@@ -341,6 +341,12 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
 
 std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_ms) {
     const Target* t = Wanted(slot.number);
+    if (t == nullptr) {
+        slot.wanted_actor.clear();
+    } else if (t->actor != slot.wanted_actor) {
+        slot.wanted_actor = t->actor;
+        slot.wanted_since_ms = now_ms;
+    }
     switch (slot.phase) {
     case Phase::no_block:
         if (t != nullptr && now_ms >= slot.retry_ms) {
@@ -357,6 +363,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         // different one (the player's age was read wrong while loading) at once.
         if (t != nullptr && slot.block != 0 && !input_.scene.empty() &&
             (now_ms >= slot.retry_ms || t->actor != slot.actor_name)) {
+            if (now_ms - slot.wanted_since_ms < input_.settle_ms) {
+                return std::nullopt;  // the age may still change (Input::settle_ms)
+            }
             if (!Drawn(slot, now_ms)) {
                 if (!slot.wait_said) {
                     slot.wait_said = true;
@@ -1019,6 +1028,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     camera_seen = camera_seen || drawn;
     input.camera = camera_seen;
     input.drawn_since_ms = drawn_since_ms;
+    input.settle_ms = 1000;
     g_director->SetInput(std::move(input));
 }
 

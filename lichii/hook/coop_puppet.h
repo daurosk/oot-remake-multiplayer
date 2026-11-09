@@ -175,6 +175,10 @@ struct Input {
     // (no camera, or a test) creates at once, as before.
     bool camera = false;
     std::uint64_t drawn_since_ms = 0;  // the current unbroken run of drawn frames; 0 none
+    // A create waits until the wanted actor has stayed the same this long:
+    // while the other game loads, its age reads adult for a moment, and a
+    // wrong-age puppet is made and dropped. 0 (a test) creates at once.
+    std::uint64_t settle_ms = 0;
 };
 
 Mat3 QuatToMatrix(const Quat& q);  // rows; normalises q, identity if it is 0
@@ -250,6 +254,8 @@ private:
         std::uint64_t missing_ms = 0; // when its player left the plan; 0 wanted
         std::uint64_t lost_ms = 0;    // when the engine deleted it (a load, often)
         bool wait_said = false;       // "waiting for the game to draw" logged
+        std::string wanted_actor;     // the actor its target asked for, last seen
+        std::uint64_t wanted_since_ms = 0;  // since when (Input::settle_ms)
         std::string anim_name;        // played on it; "" none yet
         std::uint32_t anim_serial = 0;
         std::uint64_t anim_buffer = 0;  // which name buffer is next

@@ -809,3 +809,25 @@ TEST_CASE("puppet join: a dropped create of the wrong age is followed by the rig
     CHECK(calls[0].function == kBase + addr::kCreate);
     CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
 }
+
+TEST_CASE("puppet join: the wanted actor must settle before a create (age read while loading)") {
+    Game g;
+    Director d;
+    auto in = Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")});
+    in.settle_ms = 1000;
+    d.SetInput(in);
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 1);  // the block only
+    CHECK(calls[0].function == kBase + addr::kMalloc);
+    CHECK(Frame(d, g, 500).empty());
+    // The age is read right at 600: the wait starts again, no adult is made.
+    in = Wants({At(1, 0, 0, 0, "CoopPuppet_Child")});
+    in.settle_ms = 1000;
+    d.SetInput(in);
+    CHECK(Frame(d, g, 600).empty());
+    CHECK(Frame(d, g, 1599).empty());
+    calls = Frame(d, g, 1600);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
+}

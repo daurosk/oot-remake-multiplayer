@@ -429,3 +429,46 @@ TEST_CASE("objects: a hurt the game does not take is written as life after 400 m
     CHECK(step.writes[0].life == 0);
     CHECK(sync.HurtsMissed() == 1);
 }
+
+TEST_CASE("objects: a pickup another game took is hidden here") {
+    Sync sync;
+    Seen token;
+    token.address = 0x300;
+    token.name = "Obj_RupeeToken";
+    token.hash = 0x6a8d9b2373d08fc9;
+    token.position = {5.0f, 2.0f, 1.0f};
+    CHECK_FALSE(sync.Taken(token.hash));
+    Tick(sync, 0, {token, Enemy(0x100, 0x11, 2)});
+
+    proto::FlagState state;
+    state.player_number = 2;
+    state.flags.push_back(proto::FlagEntry(proto::FlagKey::key64_flag(token.hash),
+                                           proto::FlagKind::boolean, 1));
+    state.flags.push_back(proto::FlagEntry(proto::FlagKey::key64_flag(0x77),
+                                           proto::FlagKind::boolean, 0));
+    sync.Receive(state);
+    Tick(sync, 10 * kMs, {token, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Taken(token.hash));
+    CHECK_FALSE(sync.Taken(0x77));
+
+    Tick(sync, 20 * kMs, {token, Enemy(0x100, 0x11, 2)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    sync.Poses(30 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].address == 0x300);
+    CHECK(poses[0].position[1] == doctest::Approx(2.0f - CoopObjects::kHideDrop));
+    // Where it was is kept, not the hidden place read back.
+    token.position[1] -= CoopObjects::kHideDrop;
+    Tick(sync, 40 * kMs, {token, Enemy(0x100, 0x11, 2)});
+    poses.clear();
+    sync.Poses(50 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[1] == doctest::Approx(2.0f - CoopObjects::kHideDrop));
+    // A taken enemy is not shared (not in OBJECT_PRESENT).
+    token.name = "Enemy_Skulltula_Gold";
+    token.address = 0x400;
+    const auto step = Tick(sync, 3000 * kMs, {token, Enemy(0x100, 0x11, 2)});
+    const auto present = All<proto::ObjectPresent>(step);
+    REQUIRE(present.size() == 1);
+    CHECK(present[0].objects.size() == 1);
+}

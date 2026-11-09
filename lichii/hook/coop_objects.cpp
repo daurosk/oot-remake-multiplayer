@@ -328,7 +328,8 @@ private:
                 const auto placement = r.Ptr(a + kActorPlacement);
                 known.second = placement ? r.Get<u64>(*placement + kPlacementHash).value_or(0) : 0;
             }
-            if (IsShared(known.first)) {
+            if (IsShared(known.first) ||
+                (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
                 Seen s;
                 s.address = a;
                 s.name = known.first;

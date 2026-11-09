@@ -150,7 +150,8 @@ void Sync::Receive(const proto::Message& message) {
             using T = std::decay_t<decltype(m)>;
             return std::is_same_v<T, proto::ObjectOwner> || std::is_same_v<T, proto::ObjectSample> ||
                    std::is_same_v<T, proto::HandoverAsk> || std::is_same_v<T, proto::HandoverState> ||
-                   std::is_same_v<T, proto::Damage>;
+                   std::is_same_v<T, proto::Damage> || std::is_same_v<T, proto::FlagSet> ||
+                   std::is_same_v<T, proto::FlagState> || std::is_same_v<T, proto::FlagSnapshot>;
         },
         message);
     if (!wanted) {
@@ -165,6 +166,7 @@ void Sync::Receive(const proto::Message& message) {
 void Sync::Reset() {
     scene_.clear();
     objects_.clear();
+    hidden_.clear();
     order_.clear();
     owners_.clear();
     present_sent_.clear();
@@ -212,9 +214,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     // What this walk shows: new enemies get ids, known ones their life and
     // place; a drop of life on a copy we do not own is our hit.
+    // A pickup taken elsewhere (taken_, from the last Apply) is hidden.
     std::map<std::uint64_t, const Seen*> now_seen;
     std::vector<const Seen*> fresh;
+    std::map<std::uint64_t, proto::Vec3> hidden;
     for (const Seen& s : seen) {
+        if (s.hash != 0 && s.hash != kNoHash && taken_.contains(s.hash)) {
+            const auto was = hidden_.find(s.address);
+            hidden[s.address] = was != hidden_.end() ? was->second : s.position;
+            continue;  // gone for everyone: not shared, not sent
+        }
         if (!IsShared(s.name)) {
             continue;
         }
@@ -265,6 +274,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             o.max = s.life->max;
         }
     }
+    hidden_ = std::move(hidden);
     for (auto it = objects_.begin(); it != objects_.end();) {
         it = now_seen.contains(it->first) ? std::next(it) : objects_.erase(it);
     }
@@ -391,8 +401,22 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         o.hurt_left = 0;
         o.hurt_until = 0;
     };
+    const auto flags = [this](const std::vector<proto::FlagEntry>& entries) {
+        for (const proto::FlagEntry& f : entries) {
+            if (f.key.kind == proto::FlagKeyKind::key64 && f.kind == proto::FlagKind::boolean &&
+                f.value == 1) {
+                taken_.insert(f.key.key);
+            }
+        }
+    };
     for (const proto::Message& m : inbox) {
-        if (const auto* owner = std::get_if<proto::ObjectOwner>(&m)) {
+        if (const auto* set = std::get_if<proto::FlagSet>(&m)) {
+            flags(set->flags);
+        } else if (const auto* state = std::get_if<proto::FlagState>(&m)) {
+            flags(state->flags);
+        } else if (const auto* snapshot = std::get_if<proto::FlagSnapshot>(&m)) {
+            flags(snapshot->flags);
+        } else if (const auto* owner = std::get_if<proto::ObjectOwner>(&m)) {
             owners_[owner->id] = {owner->owner, owner->epoch};
             if (owner->owner == self) {
                 if (Object* o = find(owner->id)) {
@@ -526,6 +550,9 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
             w.rotation = MatOf(*rotation);
         }
         out.push_back(w);
+    }
+    for (const auto& [address, at] : hidden_) {
+        out.push_back({address, {at[0], at[1] - kHideDrop, at[2]}, std::nullopt});
     }
 }
 

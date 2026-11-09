@@ -28,6 +28,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,6 +52,11 @@ using Mat3 = std::array<float, 9>;
 // A rotation matrix (rows of 3) as a unit quaternion (x, y, z, w), and back.
 coop::protocol::Quat QuatOf(const Mat3& m);
 Mat3 MatOf(const coop::protocol::Quat& q);
+
+// One-time pickups (docs/items.md): a 64-bit placement key that another game
+// set to 1 hides the actor with that placement hash here (a Gold Skulltula
+// and its Obj_RupeeToken), so it cannot be taken twice.
+inline constexpr float kHideDrop = 1000.0f;  // metres below where it was
 
 // A pose to write into a copy (+0x31c and +0x328).
 struct PoseWrite {
@@ -107,8 +113,13 @@ public:
               const std::vector<Seen>& seen, std::vector<coop::protocol::Message>& send,
               std::vector<LifeWrite>& writes);
 
-    // Present thread, every frame: where each copy we do not own should be.
+    // Present thread, every frame: where each copy we do not own should be,
+    // and each taken pickup (far below the world).
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
+
+    // Present thread: a placement key set to 1 by a flag message. Collect
+    // asks this for actors that are not shared, to report them too.
+    bool Taken(std::uint64_t hash) const { return taken_.contains(hash); }
 
     // Present thread: not connected or the game went away. Forgets everything.
     void Reset();
@@ -175,6 +186,8 @@ private:
     bool present_once_ = false;
     bool hurt_ = false;
     std::uint8_t self_ = 0;
+    std::set<std::uint64_t> taken_;             // key64 flags seen set to 1
+    std::map<std::uint64_t, coop::protocol::Vec3> hidden_;  // actor: where it was
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_missed_ = 0;  // hurts written directly after the wait
 

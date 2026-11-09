@@ -348,7 +348,16 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
                           ReadValue(guest, eu + addr::kEquipSlotBits + slot.hold_slot, bits);
         const std::uint8_t want = slot.hold_in_hand ? addr::kEquipBitInHand : addr::kEquipBitAway;
         const auto bit = static_cast<std::uint8_t>(1u << slot.hold_slot);
-        if (read && (bits & want) != 0) {
+        // The setter leaves the byte alone when the piece is in that state
+        // already: then the slot record's byte tells.
+        std::uint8_t hand = 0xff;
+        if (read) {
+            ReadValue(guest,
+                      eu + addr::kEquipRecords + addr::kEquipRecordStride * slot.hold_slot +
+                          addr::kEquipRecordInHand,
+                      hand);
+        }
+        if (read && ((bits & want) != 0 || hand == (slot.hold_in_hand ? 1 : 0))) {
             slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
             slot.in_hand = static_cast<std::uint8_t>(slot.hold_in_hand ? (slot.in_hand | bit)
                                                                        : (slot.in_hand & ~bit));
@@ -359,7 +368,7 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
             if (anim_) {
                 Say(who + " equipment slot " + std::to_string(slot.hold_slot) +
                     (slot.hold_in_hand ? " in hand" : " put away") + " not taken (byte " +
-                    Hex(bits) + ")");
+                    Hex(bits) + ", record " + Hex(hand) + ")");
             }
         }
         break;
@@ -551,6 +560,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.in_hand = 0;
     slot.hold_known = 0;
     slot.hold_retry_ms = 0;
+    slot.hold_id = {};
     pending_ = Pending::create;
     return c;
 }
@@ -573,6 +583,44 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
             line += std::string(", ") + kGearNames[i] + " " +
                     (target.gear[i] ? "'" + *target.gear[i] + "'" : std::string("?")) +
                     (slot.worn[i].empty() ? "" : " (worn)");
+        }
+        // Each drawable slot as the game has it: the piece, its actor, state
+        // and height over the puppet, the request byte and the record's byte.
+        for (std::size_t i = 0; eu != 0 && i < kGearSlots.size(); ++i) {
+            const int s = kGearSlots[i];
+            if (s < 0) {
+                continue;
+            }
+            const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
+            std::uint32_t id = 0xFFFFFFFFu;
+            std::uint64_t holder = 0;
+            std::uint64_t piece = 0;
+            std::uint32_t state = 0;
+            std::uint8_t request = 0xff;
+            std::uint8_t hand = 0xff;
+            Vec3 at{};
+            Vec3 own{};
+            ReadValue(guest, link + addr::kEquipSlotId, id);
+            ReadValue(guest, link + addr::kEquipSlotHolder, holder);
+            if (holder != 0) {
+                ReadValue(guest, holder + addr::kHolderActor, piece);
+            }
+            if (piece != 0) {
+                ReadValue(guest, piece + addr::kActorState, state);
+                ReadValue(guest, piece + addr::kActorPosition, at);
+            }
+            ReadValue(guest, slot.actor + addr::kActorPosition, own);
+            ReadValue(guest, eu + addr::kEquipSlotBits + s, request);
+            ReadValue(guest,
+                      eu + addr::kEquipRecords + addr::kEquipRecordStride * s +
+                          addr::kEquipRecordInHand,
+                      hand);
+            char up[32];
+            std::snprintf(up, sizeof(up), "%.2f", static_cast<double>(at[1] - own[1]));
+            line += "; slot " + std::to_string(s) + ": id " + Hex(id) + " actor " + Hex(piece) +
+                    " state " + std::to_string(state) + " up " + up + " request " +
+                    Hex(request) + " record " + Hex(hand) + " want " +
+                    (target.drawn ? (((*target.drawn >> s) & 1u) != 0 ? "hand" : "away") : "?");
         }
         Say(line);
     }
@@ -627,14 +675,6 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
         }
         const auto bit = static_cast<std::uint8_t>(1u << s);
         const bool want = (*target.drawn & bit) != 0;
-        if ((slot.hold_known & bit) != 0 && want == ((slot.in_hand & bit) != 0)) {
-            continue;
-        }
-        if ((slot.hold_known & bit) == 0 && !want) {
-            // Worn put away, as wanted: nothing to ask.
-            slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
-            continue;
-        }
         std::uint64_t parts = 0;
         std::uint64_t eu = 0;
         std::uint32_t id = 0;
@@ -645,6 +685,22 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
                        id) ||
             id == 0xFFFFFFFFu) {
             continue;  // the piece is not there (yet)
+        }
+        if (id != slot.hold_id[i]) {
+            // Another piece than the one last set: the game makes a worn
+            // piece again a moment after the equip call (seen 2026-11-09),
+            // and the new one is put away whatever the old one was.
+            slot.hold_id[i] = id;
+            slot.hold_known = static_cast<std::uint8_t>(slot.hold_known & ~bit);
+            slot.in_hand = static_cast<std::uint8_t>(slot.in_hand & ~bit);
+        }
+        if ((slot.hold_known & bit) != 0 && want == ((slot.in_hand & bit) != 0)) {
+            continue;
+        }
+        if ((slot.hold_known & bit) == 0 && !want) {
+            // Worn put away, as wanted: nothing to ask.
+            slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
+            continue;
         }
         slot.hold_slot = s;
         slot.hold_in_hand = want;

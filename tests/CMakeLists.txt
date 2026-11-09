@@ -13,6 +13,7 @@ add_executable(coop_tests
   host/game_flags_test.cpp
   host/game_items_test.cpp
   host/session_test.cpp
+  host/scene_test.cpp
   overlay/overlay_test.cpp
   lichii/camera_test.cpp
   lichii/settings_test.cpp

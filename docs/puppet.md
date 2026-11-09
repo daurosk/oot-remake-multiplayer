@@ -320,7 +320,7 @@ Not yet seen: animation (the puppet stands in its default pose), rotation in the
 
 ## Fairy
 
-Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii/hook/coop_fairy.*`). Not yet run in game when this was written.
+Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii/hook/coop_fairy.*`).
 
 | Piece | What |
 |---|---|
@@ -332,6 +332,8 @@ Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii
 
 The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
 
+**Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.
@@ -340,3 +342,4 @@ The remote player's real Navi position is not sent: the fairy is placed from the
 4. ~~What the handle slot holds~~ (a create request, see [Spawn and move](#spawn-and-move-what-is-built)); the meaning of `w4`, the stack arguments and create argument +0x40.
 5. Whether the engine accepts an uncompressed pack, and whether the size table needs entries for new packs.
 6. Animation, equipment and scene changes on the puppet are from the dump and not yet run; spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).
+7. A puppet created while its player is far away (about 47 units, 2026-11-09) is not drawn when the player comes near; its fairy is. Recreated nearby, it is drawn. Not looked into.

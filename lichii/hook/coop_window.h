@@ -1,7 +1,9 @@
 // The co-op window: a small see-through panel over the game in the top-left
 // corner of the render area, listing the other players (name, scene,
-// distance), and markers over the players when the camera is known. Built
-// into the Qt frontend only when LICHII_COOP is on.
+// distance), and markers over the players when the camera is known; chat
+// lines with a chat box (Enter) and a player list (Tab held), see
+// docs/lichii.md, "Chat and player list". Built into the Qt frontend only when
+// LICHII_COOP is on.
 #pragma once
 
 class QWidget;

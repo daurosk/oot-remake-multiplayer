@@ -2,6 +2,7 @@
 // emulator's core library only when LICHII_COOP is on.
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -54,5 +55,30 @@ struct Markers {
 // The markers for the last frame, or nothing when the game's camera is not
 // known (the panel is then all there is). Any thread.
 std::optional<Markers> CurrentMarkers();
+
+// Chat and the player list, for the co-op window. Any thread.
+//
+// Sends `text` as chat. False when co-op is off, not connected, or the text
+// is refused (empty, too long, control characters); then nothing is added.
+// The server does not echo chat, so a sent line is added here as "you: ...".
+bool SendChat(const std::string& text);
+// The last chat lines and room notices (coop_chat.h), oldest first; text and
+// when it came.
+struct ChatLine {
+    std::string text;
+    bool notice = false;  // "Saria joined", "connection lost", not chat
+    std::uint64_t age_ms = 0;
+};
+std::vector<ChatLine> ChatLines();
+// Everyone in the room, this player first, then by number.
+struct PlayerRow {
+    std::uint8_t number = 0;
+    std::string name;
+    bool self = false;
+    std::string state;                  // connected, reconnecting, quiet, ...
+    std::optional<std::uint32_t> ms;    // self: round trip; others: sample delay
+    std::optional<std::string> scene;
+};
+std::vector<PlayerRow> PlayerList();
 
 } // namespace CoopHook

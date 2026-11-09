@@ -13,6 +13,7 @@
 
 #include "coop_hook.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -44,6 +45,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_camera.h"
+#include "coop_chat.h"
 #include "coop_flags.h"
 #include "coop_objects.h"
 #include "coop_puppet.h"
@@ -180,9 +182,10 @@ public:
         }
         sharing_ = session.shared.has_value();
         // Called by service() on the network thread, with the client.
-        session.on_event = [this](const coop::net::Event& event, coop::net::Client&) {
+        session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
             Log(event);
             CoopPuppet::OnEvent(event);
+            Chat(event, client);
         };
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
@@ -249,6 +252,85 @@ public:
             frame = frame_;
         }
         return Compose(room, frame);
+    }
+
+    // Chat and the player list (coop_hook.h). Any thread.
+    bool SendChat(const std::string& text) {
+        const bool sent =
+            session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
+        if (sent) {
+            chat_.Add("you: " + text, false);
+        }
+        return sent;
+    }
+
+    std::vector<ChatLine> ChatLines() const {
+        std::vector<ChatLine> out;
+        const auto now = CoopChat::Clock::now();
+        for (auto& l : chat_.Lines()) {
+            const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - l.at);
+            out.push_back({std::move(l.text), l.notice, static_cast<std::uint64_t>(age.count())});
+        }
+        return out;
+    }
+
+    std::vector<PlayerRow> PlayerList() {
+        struct Net {
+            coop::net::State state;
+            std::optional<std::uint64_t> round_trip_us;
+            std::uint64_t server_now_us;
+            std::vector<coop::net::Player> players;
+        };
+        // One lock at a time: the network lock, then the presence lock.
+        const Net net = session_->with_client([](coop::net::Client& c) {
+            const bool on = c.state() == coop::net::State::connected;
+            return Net{c.state(), c.round_trip_us(), on ? c.server_now_us() : 0, c.players()};
+        });
+        std::optional<std::string> own_scene;
+        {
+            std::lock_guard lock(view_mutex_);
+            if (Clock::now() - frame_.at < kFrameStale) {
+                own_scene = frame_.scene;
+            }
+        }
+        std::vector<PlayerRow> rows;
+        const bool on = net.state == coop::net::State::connected;
+        session_->with_presence([&](coop::presence::Presence& p) {
+            for (const auto& player : net.players) {
+                PlayerRow row{player.number, player.nickname, player.self};
+                if (player.self) {
+                    row.state = on ? "connected" : "?";
+                    if (net.round_trip_us) {
+                        row.ms = static_cast<std::uint32_t>(*net.round_trip_us / 1000);
+                    }
+                    row.scene = own_scene;
+                } else if (const auto* other = p.player(player.number)) {
+                    row.scene = other->scene();
+                    row.state = "no samples";
+                    if (!other->samples().empty() && net.server_now_us) {
+                        const auto t = other->samples().back().time.server_time_us;
+                        const auto d = net.server_now_us > t ? net.server_now_us - t : 0;
+                        row.ms = static_cast<std::uint32_t>(std::min<std::uint64_t>(d / 1000, 99999));
+                        row.state = d < 1'000'000 ? "connected" : "quiet";
+                    }
+                } else {
+                    row.state = "joining";
+                }
+                rows.push_back(std::move(row));
+            }
+        });
+        std::stable_sort(rows.begin(), rows.end(),
+                         [](const PlayerRow& a, const PlayerRow& b) { return a.self && !b.self; });
+        if (!on) {
+            // The client drops the room on a lost connection; still show ourselves.
+            PlayerRow self{0, settings_.name, true};
+            self.state = welcomed_once_ && net.state != coop::net::State::refused
+                             ? "reconnecting"
+                             : std::string(coop::net::to_string(net.state));
+            self.scene = own_scene;
+            rows.assign(1, std::move(self));
+        }
+        return rows;
     }
 
 private:
@@ -513,6 +595,49 @@ private:
         }
     }
 
+    // Chat and room notices for the window's chat lines. Same thread and lock
+    // as Log.
+    void Chat(const coop::net::Event& event, const coop::net::Client& client) {
+        using coop::net::EventKind;
+        const auto name = [&](std::uint8_t number, const std::string& known) {
+            if (!known.empty()) {
+                return known;
+            }
+            for (const auto& p : client.players()) {
+                if (p.number == number && !p.nickname.empty()) {
+                    return p.nickname;
+                }
+            }
+            return "P" + std::to_string(number);
+        };
+        switch (event.kind) {
+        case EventKind::welcomed:
+            welcomed_once_ = true;
+            chat_.Add("joined as player " + std::to_string(event.welcome.player_number), true);
+            break;
+        case EventKind::reconnected:
+            chat_.Add("reconnected as player " + std::to_string(event.welcome.player_number), true);
+            break;
+        case EventKind::disconnected:
+            chat_.Add("connection lost, reconnecting", true);
+            break;
+        case EventKind::refused:
+            chat_.Add("server " + note_, true);
+            break;
+        case EventKind::chat:
+            chat_.Add(name(event.player, {}) + ": " + event.text, false);
+            break;
+        case EventKind::player_joined:
+            chat_.Add(name(event.player, event.nickname) + " joined", true);
+            break;
+        case EventKind::player_left:
+            chat_.Add(name(event.player, event.nickname) + " left", true);
+            break;
+        default:
+            break;
+        }
+    }
+
     static std::vector<OverlayLine> Compose(const RoomView& room, const FrameView& frame) {
         std::vector<OverlayLine> lines;
         char buf[160];
@@ -601,6 +726,8 @@ private:
     std::atomic<bool> stop_ = false;
     std::atomic<bool> quiet_ = false;
     std::string note_;  // network thread only
+    CoopChat::Log chat_;  // locks itself
+    std::atomic<bool> welcomed_once_ = false;
     std::thread thread_;
 
     // Guarded by view_mutex_.
@@ -697,6 +824,25 @@ std::optional<Markers> CurrentMarkers() {
         return coop->CurrentMarkers();
     }
     return std::nullopt;
+}
+
+bool SendChat(const std::string& text) {
+    auto* coop = Get();
+    return coop && coop->SendChat(text);
+}
+
+std::vector<ChatLine> ChatLines() {
+    if (auto* coop = Get()) {
+        return coop->ChatLines();
+    }
+    return {};
+}
+
+std::vector<PlayerRow> PlayerList() {
+    if (auto* coop = Get()) {
+        return coop->PlayerList();
+    }
+    return {};
 }
 
 } // namespace CoopHook

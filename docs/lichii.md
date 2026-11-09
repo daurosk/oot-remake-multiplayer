@@ -33,7 +33,7 @@ Any mistake (an unknown key, a bad port, a name too long) is written to the log 
 
 The connection is made when the emulator starts, before any game, and lasts until it closes, so players stay in the room across game restarts. Nothing is read or sent unless the running game is Ocarina of Time (program 0400486024DEC000) with build id `e0f3ccfaf50065ae`, the build the addresses in `coop/host` are for. A build that does not match is logged once.
 
-Guest memory: `main` is found by name in the process's module list (`Core::FindModules`), else as the emulator's own `FindMainModuleEntrypoint`. Each read checks the range first (`IsValidVirtualAddressRange`) and uses `ReadBlockUnsafe`, so an unmapped address fails quietly and the present thread never waits on the GPU.
+Guest memory: `main` is found by name in the loader's own module list (`AppLoader::ReadNSOModules`, as Fritchii's own Ocarina code does), else in the modules found in memory (`Core::FindModules`), else as the emulator's `FindMainModuleEntrypoint`. On Fritchii v5 only the loader's list works: the memory search finds nothing and the last fallback gives the code region start (0x8000000), not `main`, which is loaded at a different address each run (0x80702000, 0x80993000). Each read checks the range first (`IsValidVirtualAddressRange`) and uses `ReadBlockUnsafe`, so an unmapped address fails quietly and the present thread never waits on the GPU.
 
 ## The panel
 
@@ -66,24 +66,19 @@ The largest such target of a frame wins (reflections and half-size passes use th
 
 `coop: camera found (WxH, clip y up|down), markers on` is logged when it is first found, and `coop: camera lost, markers off` when it is gone for 250 ms (menus, loading).
 
-### Not checked yet: the first run
+### The first run (2026-11-08, one PC, two instances)
 
-Whether the positions `coop_host` reads are in the same world space as that matrix is not known; nothing has been run with the game. To check it with one emulator (a `coop_server` must be set so co-op is on, but no second player is needed):
+Checked with `LICHII_COOP_DEBUG_CAMERA=1` (it marks yourself in yellow, labelled `you`, and every 120 frames logs `coop: camera debug: you at (x, y, z) clip (...) at px,py of WxH` and one `P<n> at (x, y, z) at px,py` line per other player), both instances in Kakariko Village:
 
-```bat
-set LICHII_COOP_DEBUG_CAMERA=1
-lichii.exe
-```
+- The camera is found (`camera found (2560x1440, clip y up)`); no flip is needed.
+- The `you` dot sits on Link's feet and stays there when the camera turns (an edge arrow at the bottom when his feet are just off screen).
+- The other player's dot sits where that player stands in their own game, stays there when the camera turns, and moves and shrinks as they walk away. With both at the same spot, the two lines match to the pixel: `you at (-119.1, 96.7, 58.7) at 1280,1253` and `P2 at (-119.1, 96.7, 58.7) at 1280,1253`.
+- The world unit is about a metre (a child Link walks about 2.5 units a second; the camera is about 4 behind him). The markers are 24 px across at 10 units and not drawn nearer than 0.5 (`MarkerSettings` in `coop_hook.cpp`; the overlay's own defaults are for centimetres).
 
-Load a save and walk around. Look for:
-
-1. The panel says `markers: on (camera ..., debug)`. If it says `markers: no camera`, the buffer checks did not match: the log has no `coop: camera found`.
-2. A yellow dot labelled `you` sits on Link (at his feet: the position is his origin) and stays on him when the camera turns. That proves the matrix and the positions agree, and other players' markers will be right.
-3. Every 120 frames (2 to 4 seconds) the log has `coop: camera debug: you at (x, y, z) clip (cx, cy, cz, cw) at px,py of WxH`, or `skipped: <why>`.
-
-If the dot is mirrored top to bottom (right left and right, wrong up and down), set `LICHII_COOP_CAMERA_FLIP_Y=1` as well and say so, so the default can be changed. If it is far off or `skipped: behind the camera`, send the log lines: the positions and the matrix are in different spaces (camera-relative, or other units), which the clip numbers show.
+To check again, set `LICHII_COOP_DEBUG_CAMERA=1` before starting the emulator. If the dot is ever mirrored top to bottom, `LICHII_COOP_CAMERA_FLIP_Y=1` turns it.
 
 ## Not proven yet
 
-- Nothing has run with the game: the reads, the samples, the panel's player lines, the distances, the camera and the markers are untested against a live game.
-- The emulator was started without a game with co-op on and connected to a local `coop_server`; that proves the settings, the start, the connection and the clean stop only.
+- Two PCs over a real network (the first run was two instances on one PC).
+- Other scenes than Kakariko Village, adult Link, and scene changes on the panel.
+- No other Link is drawn yet (no puppet): the dot marks where the other player is.

@@ -4,6 +4,17 @@ How to test the co-op build with the test kit: the server on one PC, the patched
 
 What this test shows (plan stage 1, presence): the two emulators join one server, each lists the other player, and the scene and distance follow as you move. Nothing else is shared yet: no puppet Link, no shared progress.
 
+## One PC first
+
+Two copies of the kit on one PC show most of it before the two-PC test (done on 2026-11-08; see [docs/lichii.md](lichii.md#the-first-run-2026-11-08-one-pc-two-instances)):
+
+1. Unzip the kit twice, for example `local-A` and `local-B`, and fill each `emulator\user\` as below (keys, firmware, a save).
+2. Start the server once (`start-server.cmd` in either copy).
+3. In each copy, `play.cmd` with server `127.0.0.1` and a different name (`A`, `B`). To see the markers on yourself too, `set LICHII_COOP_DEBUG_CAMERA=1` in a Command Prompt and start `emulator\lichii.exe` from it.
+4. Load the same save in both and put the two windows side by side. The keyboard goes only to the window that has focus, so each Link can be moved alone.
+
+Each panel lists the other (`P1 A: KakarikoVillage_Child, 1 units away`), the other's dot is where that Link stands in the other window, and the distance follows as one walks. Close each emulator with its own close button (it asks first). A killed emulator keeps its name taken on the server for a while: the next start with that name is refused (`name taken`) until the server notices, or restart the server.
+
 ## The kit
 
 ```

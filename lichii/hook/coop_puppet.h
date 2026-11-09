@@ -181,6 +181,9 @@ public:
     // `verbose`: a status line per puppet every second (LICHII_COOP_DEBUG_PUPPET).
     // `anim`: a line for each animation played or frame set (LICHII_COOP_DEBUG_ANIM).
     explicit Director(Log log = {}, bool verbose = false, bool anim = false);
+    // The Link puppets' director runs the pose copy (coop_pose.h); others, such
+    // as the fairies', do not.
+    void SetPoseCopy(bool on) { pose_copy_ = on; }
 
     // Any thread. The next frame of the cave uses it.
     void SetInput(Input input);
@@ -273,6 +276,7 @@ private:
     Log log_;
     bool verbose_;
     bool anim_;
+    bool pose_copy_ = false;
 
     mutable std::mutex input_mutex_;
     Input next_input_;  // guarded

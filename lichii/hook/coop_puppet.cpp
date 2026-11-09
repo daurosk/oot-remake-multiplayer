@@ -149,6 +149,9 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
 // Once a frame, the full-body pose copy (coop_pose.cpp): our skeleton is
 // read and each live puppet's is written.
 void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
+    if (!pose_copy_) {
+        return;
+    }
     std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets;
     for (const auto& slot : slots_) {
         if (slot.phase == Phase::live && slot.actor != 0) {
@@ -395,7 +398,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
         }
-        if (CoopPose::Drives(slot.number, now_ms)) {
+        if (pose_copy_ && CoopPose::Drives(slot.number, now_ms)) {
             return std::nullopt;  // the pose copy moves it
         }
         return Animate(slot, *t, guest);
@@ -908,6 +911,7 @@ void OnEvent(const coop::net::Event& event) {
 void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
+        g_director->SetPoseCopy(true);
         g_planner = std::make_unique<Planner>(std::move(settings));
         g_configured = true;
     });

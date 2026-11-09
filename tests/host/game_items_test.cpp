@@ -99,7 +99,7 @@ void queue(FakeMemory& m, std::uint64_t base, std::uint64_t buf, std::uint64_t s
 
 const std::vector<std::uint32_t> kBools{kHookshotGet, kBottleAValid, kWorldBool};
 const std::vector<std::uint32_t> kInts{kHookshot,   kPocketEgg,  kRupees, kBottleA,
-                                       kBottleAItem, kForestKeys, kWorldInt};
+                                       kBottleAItem, kForestKeys, kWorldInt, kMaxLife};
 
 std::size_t at(const std::vector<std::uint32_t>& v, std::uint32_t h) {
   for (std::size_t i = 0; i < v.size(); ++i)
@@ -457,4 +457,62 @@ TEST_CASE("game items: the host adds deltas its client hands over") {
   CHECK(player.receive(protocol::Message{protocol::FlagState{1, {delta(kForestKeys, 1)}}}));
   CHECK(player.frame(ps).empty());
   CHECK(keys(pw) == 2);
+}
+
+TEST_CASE("game items: a late joiner gets the host's items and keeps its own") {
+  // The host has played on: the Hookshot, 3 Forest Temple keys, a heart
+  // container. The joiner comes in with only a bottle the host lacks. The
+  // server hands the joiner the host's table as FLAG_SNAPSHOT; here the
+  // host's own snapshot stands in for the server's copy of it.
+  for (const bool joiner_first_frame : {true, false}) {
+    CAPTURE(joiner_first_frame);
+    auto hw = game(), jw = game();
+    GameFlagStore hg(hw), jg(jw);
+    ItemFlagStore hs(hg), js(jg);
+    hold_int(hw, kHookshot, 1);
+    hold_bool(hw, kHookshotGet, true);
+    hold_int(hw, kForestKeys, 3);
+    hold_int(hw, kMaxLife, 16);
+    hold_int(hw, kRupees, 50);
+    hold_int(jw, kMaxLife, 12);
+    hold_int(jw, kBottleA, 1);
+    hold_bool(jw, kBottleAValid, true);
+    hold_int(jw, kRupees, 10);
+    FlagWatcher host(item_shared_flags(), FlagRole::host);
+    FlagWatcher joiner(item_shared_flags(), FlagRole::player);
+    CHECK(host.frame(hs).empty());
+    // The joiner's game may or may not have run a frame before the snapshot.
+    if (joiner_first_frame) CHECK(joiner.frame(js).empty());
+
+    host.request_snapshot();
+    const auto snapshot = host.frame(hs);
+    REQUIRE_FALSE(snapshot.empty());
+    CHECK(std::holds_alternative<protocol::FlagSnapshot>(decoded(snapshot)[0]));
+    deliver(joiner, snapshot);
+    const auto from_joiner = joiner.frame(js);
+
+    GameFlags jf(jw);
+    CHECK(jf.get_int(kHookshot) == 1);
+    CHECK(jf.get_bool(kHookshotGet) == true);
+    CHECK(jf.get_int(kForestKeys) == 3);   // the host's total
+    CHECK(jf.get_int(kMaxLife) == 16);     // max
+    CHECK(jf.get_int(kBottleA) == 1);      // its own bottle stays
+    CHECK(jf.get_bool(kBottleAValid) == true);
+    CHECK(jf.get_int(kRupees) == 10);      // per player, not in the table
+
+    // The joiner's bottle goes to the host.
+    const auto sent = decoded(from_joiner);
+    REQUIRE(sent.size() == 1);
+    const auto& set = std::get<protocol::FlagSet>(sent[0]);
+    CHECK(set.flags == std::vector{i(kBottleA, 1), b(kBottleAValid, true)});
+    deliver(host, from_joiner);
+    const auto answer = host.frame(hs);
+    GameFlags hf(hw);
+    CHECK(hf.get_int(kBottleA) == 1);
+    CHECK(hf.get_bool(kBottleAValid) == true);
+    CHECK(hf.get_int(kRupees) == 50);
+    deliver(joiner, answer);
+    CHECK(joiner.frame(js).empty());
+    CHECK(host.frame(hs).empty());
+  }
 }

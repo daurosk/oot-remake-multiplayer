@@ -278,9 +278,13 @@ TEST_CASE("objects: every message it sends passes the client's own check") {
     }
 }
 
-TEST_CASE("objects: animals are shared too (hits on a cucco)") {
+TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK(CoopObjects::IsShared("Animal_Cucco"));
-    CHECK_FALSE(CoopObjects::IsShared("Npc_Talon"));
+    CHECK(CoopObjects::IsShared("Npc_Hylia_051"));
+    CHECK_FALSE(CoopObjects::IsShared("CoopPuppet_Child"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Navi"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Equipment_002"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
 }
 
 TEST_CASE("objects: a rotation matrix goes to a quaternion and back") {

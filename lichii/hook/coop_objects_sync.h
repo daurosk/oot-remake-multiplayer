@@ -82,7 +82,8 @@ struct LifeWrite {
 };
 
 // Shared at first: enemies only.
-// Enemies and animals (a cucco is Animal_Cucco).
+// Enemies, animals (a cucco is Animal_Cucco) and townspeople (Npc_, but not
+// Navi, held equipment or invisible helpers).
 bool IsShared(std::string_view name);
 
 // The id of an enemy the scene made without a placement hash: the scene, the

@@ -76,6 +76,12 @@ bool Finite(const proto::Vec3& v) {
 } // namespace
 
 bool IsShared(std::string_view name) {
+    if (name.starts_with("Npc_")) {
+        // Each player's own: Navi (the fairy sync has her), the equipment
+        // a player or NPC holds, and invisible helpers.
+        return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
+               !name.starts_with("Npc_Invisible");
+    }
     return name.starts_with("Enemy_") || name.starts_with("Animal_");
 }
 

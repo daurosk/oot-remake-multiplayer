@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "coop/protocol/codec.hpp"
 #include "coop_objects_sync.h"
 
 namespace proto = coop::protocol;

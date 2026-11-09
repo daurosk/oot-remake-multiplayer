@@ -19,7 +19,30 @@
 //   stick 0.5 1.0 60       left stick at x 0.5, y 1.0 (each -1..1) for 60
 //   stick 0 1 60 B         the same with buttons held too
 //   rstick -1 0 30         right stick (the camera) the same way
+//   goto -7.5 71.1         walk Link to world x -7.5, z 71.1 (within 1 m),
+//   goto -7.5 71.1 1.5 600 ... within 1.5 m, giving up after 600 ticks
+//   toward -7.5 71.1 8     push the stick toward that point for 8 ticks
+//                          (Link turns to face it)
+//   warp KakarikoVillage_Child Kakariko_WellSide
+//                          test only: changes scene the way the game's own
+//                          sequence does (Sequence_ReservedNextBanc), to the
+//                          start position given (StartPos names in the
+//                          scene's Banc) or the scene's own. The game takes
+//                          it only during an event, such as the one after a
+//                          save loads: put the warp before the presses that
+//                          load the save (the hook asks again every 0.5 s
+//                          for up to 90 s, until Link is in that scene)
+//   give bombs             test only: gives an item through coop_cheats
+//                          (needs LICHII_COOP_CHEATS=1): bombs, bow, hookshot,
+//                          or any item flag name coop_cheats knows
 //   mark walk-start        writes "coop: test mark walk-start" to the log
+//
+// goto and toward steer from Link's position, read each frame. The stick is
+// relative to the camera, which turns as Link walks: the hook gives the
+// stepper the camera's ground directions from the game's camera matrix each
+// frame (without them it learns them from how Link moves). A push that gets
+// nowhere for a second steps aside. A goto that gives up logs
+// "coop: test goto timed out" and the script goes on.
 //
 // Buttons: A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK, the d-pad DUP DDOWN
 // DLEFT DRIGHT, and full stick directions LSTICK_UP LSTICK_DOWN LSTICK_LEFT
@@ -27,10 +50,12 @@
 // When the last step ends the hook writes "coop: test script done".
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace Core {
@@ -65,33 +90,120 @@ enum Button : std::uint64_t {
 struct Stick {
     std::int32_t x = 0;
     std::int32_t y = 0;
+    bool operator==(const Stick&) const = default;
+};
+
+enum class Kind {
+    timed,   // wait, hold, press, stick, rstick
+    mark,
+    go,      // goto
+    toward,
+    warp,    // test only: scene change
+    give,    // test only: an item
 };
 
 struct Step {
-    std::uint32_t ticks = 0;  // 0 only for a mark
+    Kind kind = Kind::timed;
+    std::uint32_t ticks = 0;  // timed and toward; goto: the give-up time
     std::uint64_t buttons = 0;
     std::optional<Stick> left;   // unset: the real stick
     std::optional<Stick> right;
-    std::string mark;  // set: a mark, written to the log when reached
-    int line = 0;      // the script line it came from
+    std::string mark;  // mark: its name; warp: the scene; give: the item
+    std::string start; // warp: the start position name (empty: the scene's own)
+    float x = 0.0f;  // goto and toward: the world point (x, z)
+    float z = 0.0f;
+    float radius = 1.0f;
+    int line = 0;  // the script line it came from
 };
 
 struct Script {
     std::vector<Step> steps;
-    std::uint64_t total_ticks = 0;
 };
 
 // Reads a script. On a bad line returns nothing and sets `error` to
 // "line N: why".
 std::optional<Script> Parse(std::string_view text, std::string& error);
 
-// The step (not a mark) that holds at `tick` from the start, or nullptr
-// once the script is over.
-const Step* At(const Script& script, std::uint64_t tick);
+// What the pad gets now.
+struct Output {
+    std::uint64_t buttons = 0;
+    std::optional<Stick> left;
+    std::optional<Stick> right;
+    bool operator==(const Output&) const = default;
+};
 
-// The marks whose time is in (`from`, `to`], in order. `from` is -1 at the
-// start so marks at tick 0 count.
-std::vector<const Step*> MarksBetween(const Script& script, std::int64_t from, std::int64_t to);
+// Plays a script step by step. No emulator code: the hook calls Advance once
+// a frame with the time since the start and Link's position (x, z) when it
+// can read it, and gives Current() to the pad.
+class Runner {
+public:
+    explicit Runner(Script script);
+
+    // The camera on the ground: unit vectors (x, z) of where stick up and
+    // stick right walk Link. From the game's camera matrix when the hook has
+    // it; without it the stepper learns them from how Link moves.
+    struct Camera {
+        float forward_x = 0.0f;
+        float forward_z = 0.0f;
+        float right_x = 0.0f;
+        float right_z = 0.0f;
+    };
+
+    // Moves on to the step for `now_s`. Appends to `log` the marks reached
+    // and "goto timed out" lines, in order.
+    void Advance(double now_s, std::optional<std::array<float, 2>> player,
+                 std::vector<std::string>& log, std::optional<Camera> camera = std::nullopt);
+    const Output& Current() const { return out_; }
+    // The warp and give steps reached since the last call, for the hook.
+    struct Request {
+        Kind kind = Kind::warp;
+        std::string name;
+        std::string start;
+    };
+    std::vector<Request> TakeRequests() { return std::exchange(requests_, {}); }
+    bool Done() const { return index_ >= script_.steps.size(); }
+    std::size_t StepCount() const { return script_.steps.size(); }
+    // Steering now (goto or toward), for the log.
+    bool Steering() const;
+    std::optional<double> Heading() const { return heading_; }
+    double Mirror() const { return mirror_; }
+
+    // Link turns before he walks: movement is learnt from only after the
+    // stick has held one direction this long, and a steering stick is
+    // re-aimed at most this often, so such windows happen.
+    static constexpr double kSettleS = 0.3;
+    static constexpr double kAimEveryS = 0.5;
+    // No 0.3 m of progress in kStuckS: push a quarter turn aside for kDetourS.
+    static constexpr double kStuckS = 1.0;
+    static constexpr double kDetourS = 0.7;
+
+private:
+    void Learn(double now_s, std::optional<std::array<float, 2>> player);
+    void Steer(const Step& step, double now_s, std::optional<std::array<float, 2>> player);
+    std::optional<Camera> camera_;  // this frame's, when given
+    std::vector<Request> requests_;
+    void Hold(std::optional<double> stick_angle, double now_s);
+
+    Script script_;
+    std::size_t index_ = 0;
+    double step_start_ = 0.0;  // the script starts at time 0
+    Output out_;
+    // The camera model: stick up moves Link along world angle `heading_`
+    // (radians, atan2 of z and x); `mirror_` is -1 when stick right turns the
+    // other way round. Learnt from Link's movement while the stick is held.
+    std::optional<double> heading_;
+    double mirror_ = 1.0;
+    bool mirror_known_ = false;
+    std::optional<double> stick_angle_;  // the left stick's direction now (none: let go)
+    double stick_since_ = 0.0;           // when it took that direction
+    std::optional<std::array<float, 2>> window_pos_;  // where a steady window began
+    std::optional<std::array<float, 2>> prev_player_;  // last frame's position
+    double aimed_at_ = -1.0;             // when Steer last chose a direction
+    std::optional<std::array<float, 2>> progress_pos_;  // stuck check
+    double progress_at_ = 0.0;
+    double detour_until_ = -1.0;
+    double detour_side_ = -1.0;
+};
 
 // Called once per emulated frame by the hook. Does nothing unless
 // LICHII_COOP_TEST_SCRIPT is set. Only in the emulator build.

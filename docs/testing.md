@@ -4,20 +4,23 @@ How to test the co-op build with the test kit: the server on one PC, the patched
 
 ## What a kit can show
 
-Which features are in `main`, and so in a kit built from it, as of 2026-11-09. A feature that is not merged yet has no check to do: skip its rows in the [checklist](#checklist) and write "not in this kit". `VERSION.txt` in the kit says which commit it was built from.
+Which features are in `main`, and so in a kit built from it, as of 2026-11-09 (for players: [known-issues.md](known-issues.md)). A feature that is not merged yet has no check to do: skip its rows in the [checklist](#checklist) and write "not in this kit". `VERSION.txt` in the kit says which commit it was built from.
 
 | Feature | In `main` | Proven so far | Rows |
 |---|---|---|---|
 | Server, join, leave, rejoin, reconnect | Yes | One PC, two instances (2026-11-08) | 1-3, 20-24 |
 | Presence: the other player's name, scene and distance in the panel, a marker where they stand | Yes | One PC, two instances | 4-7 |
 | Shared world flags (a chest opened by one is open for both) | Yes, with a shared flags file ([below](#shared-flags-file)) | One PC: a Bool chest flag crossed from A to B | 8-9 |
-| Chat box and player list (Enter, Tab) | **Not merged** (branch `polish`) | One PC | 10-11 |
-| Items: key items, bottles, one-time pickups shared; rupees and the rest per player | **Not merged** (branch `items-live`); the protocol and server part is in `main` | Not yet | 12-14 |
-| Counts that add up (small keys, Skulltula tokens, heart pieces) | Protocol and server in `main`; the emulator side **not merged** (with items) | Server tests only | 13-14 |
-| Puppet Link standing and moving where the other player is | Pack tool in `main`; the spawn **not merged** (branch `puppet-spawn`) | One PC: the puppet loads from the pack; spawn shown, animation not yet | 15-17 |
-| Equipment shown on the puppet (sword, shield, tunic, boots) | Reading and sending in `main`; drawing needs the puppet | One PC: slots read live | 18 |
-| Scenes: puppets only in your scene, join-partner warp, hidden in cutscenes | **Not merged** (in progress) | Not yet | 19 |
-| Shared enemies and projectiles | **Not merged** (in progress); research in [objects.md](objects.md) | Actor list and damage read live on one PC | (none yet) |
+| Chat box and player list (Enter, Tab) | Yes | One PC, two instances: chat both ways, Tab list with ping, join and leave lines, Esc closes the box | 10-11 |
+| Items: key items, bottles, songs, one-time pickups shared; rupees and the rest per player | Yes. `LICHII_COOP_CHEATS=1` opens a debug window that gives any shared item, for checking without playing to it | One PC, two instances: Hookshot, Song of Storms and a boss key crossed and showed | 12-14 |
+| Counts that add up (small keys, Skulltula tokens, heart pieces) | Yes (with items) | One PC: tokens, heart pieces and Forest Temple keys ended on the same totals in both games. Heart pieces add to the count but make no new heart | 13-14 |
+| Puppet Link where the other player is | Yes (on by default; needs the puppet pack): follows live, copies the whole skeleton pose each frame, child or adult by the save | One PC, two games (autotest): walk, run, turn and sword stance match in screenshots of both windows | 15-17 |
+| Equipment shown on the puppet | Sword and shield; tunic, boots and masks not yet | One PC (autotest): Kokiri Sword and Hylian Shield worn; a menu swap to the Deku Shield followed | 18 |
+| Navi on each puppet | Yes (with the puppet; `LICHII_COOP_FAIRY=0` turns it off) | One PC, two games: a Navi at each puppet's shoulder | 15 |
+| Scenes: puppets only in your scene, hidden in cutscenes | Yes | Unit tests only | 19 |
+| Shared enemies, townspeople and animals (position, animation, life, kills) | Yes (`LICHII_COOP_OBJECTS=1`, on in the kit) | One PC, two games: copies hold the owner's place exactly; a Stalchild hit in A dies in both; Kakariko townspeople stand the same. Hit reactions (flinch, flash) not yet | 25 |
+| Objects a player makes (seeds, nuts; bombs, arrows built) | Yes (`LICHII_COOP_SPAWN=1`, on in the kit) | One PC, two games, logs: seeds and a Deku Nut copied. No bomb thrown or arrow shot in a test yet | (none yet) |
+| Dungeon switches, doors, cleared rooms, water levels | Yes (on unless `LICHII_COOP_DUNGEON=0`) | Unit tests and the shared flag path; not played through a dungeon | (none yet) |
 
 ## One PC first
 
@@ -193,7 +196,7 @@ Write down pass, fail or "not in this kit" for each, and the time, so the logs c
 | 13 | PC 1 picks up a small key in a dungeon: PC 2's key count for that dungeon goes up by one. Each uses one: the count goes down for both | |
 | 14 | PC 1 gets a Gold Skulltula token or a heart piece: PC 2's token count or heart pieces go up by one. (That the Skulltula or heart piece is also gone in PC 2's world needs its 64-bit key in the shared flags file; those keys are not mapped yet, [items.md](items.md#one-time-pickups-caleb-2026-11-09).) | |
 
-**Puppet Link** (both PCs ran `make-puppet-pack.cmd`; `LICHII_COOP_PUPPET=1` in `coop-options.ini` if the build asks for it)
+**Puppet Link** (both PCs ran `make-puppet-pack.cmd`; `LICHII_COOP_PUPPET=1` and `LICHII_COOP_PUPPET_ACTOR=CoopPuppet_Child` turned on in `coop-options.ini`, or `CoopPuppet_Adult` for an adult save)
 
 | # | Check | Pass |
 |---|---|---|
@@ -206,7 +209,13 @@ Write down pass, fail or "not in this kit" for each, and the time, so the logs c
 
 | # | Check | Pass |
 |---|---|---|
-| 19 | The puppet shows only when both are in the same scene; it is hidden in a cutscene; the join-partner warp takes you to the other player's scene | |
+| 19 | The puppet shows only when both are in the same scene; it is hidden in a cutscene | |
+
+**Shared enemies** (`LICHII_COOP_OBJECTS=1` on both PCs; add `LICHII_COOP_DEBUG_OBJECTS=1` for the log lines)
+
+| # | Check | Pass |
+|---|---|---|
+| 25 | Both in Hyrule Field at night, near each other. PC 1 hits a Stalchild with the sword: on PC 2 the same Stalchild dies when it dies on PC 1 (PC 2's log has `coop: objects: share life`) | |
 
 **Leaving, rejoining, reconnecting**
 
@@ -289,8 +298,16 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 | `press A` / `press ZR+A 10` | hold, then let go, 6 ticks each (or the number given) |
 | `stick 0.5 1.0 60 [KEYS]` | left stick at x, y (each -1 to 1), with buttons if given |
 | `rstick -1 0 30` | right stick (camera) the same way |
+| `goto -7.5 71.1` / `goto X Z 1.5 600` | walk Link to world x, z (within 1 m, or the radius given; gives up after 10 s, or the ticks given, logging `coop: test goto timed out`) |
+| `toward X Z 8 [KEYS]` | push the stick toward that point for 8 ticks, with buttons if given: Link turns to face it |
+| `warp KakarikoVillage_Child Kakariko_WellSide` | test only: changes scene the game's own way (the String64 flag `Sequence_ReservedNextBanc`, and `Sequence_ReservedNextStartPosName` for the start position, a `StartPos` name in the scene's Banc). The game takes it only during an event, such as the one right after a save loads, so a warp scenario loads the save itself (run with `-NoLoad`) and asks for the warp first; the hook asks again every 0.5 s until Link is in that scene (up to 90 s) and logs `coop: test warp done` |
+| `give bombs` | test only: gives `bombs`, `bow`, `hookshot` or any item flag `coop_cheats` knows (needs `LICHII_COOP_CHEATS=1` in `-Switches`) |
 | `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
 
+`goto` and `toward` steer from Link's position and the game camera's ground directions (from its world-to-clip matrix), read each frame; a push that gets nowhere for a second steps aside. Positions are the ones the objects debug log prints (`at x y z`, y is height), or the `Translate` of a placement in the romfs Banc files.
+
 Buttons: `A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK DUP DDOWN DLEFT DRIGHT`, and full stick directions `LSTICK_UP` (`_DOWN`, `_LEFT`, `_RIGHT`) and `RSTICK_...`. `#` starts a comment. At the end the log has `coop: test script done`; a bad line is logged as `coop: test script <file>: line N: why` and nothing is played.
+
+Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at the well) and `water` (both load into the Water Temple entrance; checked 2026-11-09: both logs `warp done` after about 50 s, screenshots in the temple). Warping a game that is already playing works only while an event runs.
 
 Scenarios (checked 2026-11-09 unless said): `walk` (A walks, dashes, turns; B sees it move), `slingshot` (aims and fires a seed), `menu-gear` (equips the Deku Shield in the menu), `sword` (target and swing; no enemy at the save point, so no hit seen yet), `bomb` (not checked: the auto kits' save has no bombs), `buttons` (presses each button with a screenshot after it). The bindings are the game's own (pause menu > System > Basic Controls): ZL target, ZR use item, L/R quick select, MINUS map, PLUS menu (L/R change page), A actions and dash (hold), B put away, X jump, Y attack. Screenshots are the screen under each game's client area: the runner keeps both windows on top, side by side, at real pixels (DPI-aware).

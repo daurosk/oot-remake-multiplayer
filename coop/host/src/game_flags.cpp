@@ -1,8 +1,10 @@
 #include "coop/host/game_flags.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstring>
+#include <span>
 
 // Offsets: docs/flags.md, read from main of build e0f3ccfaf50065ae.
 namespace coop::host {
@@ -223,6 +225,38 @@ std::optional<std::string> GameFlags::get_string64(std::uint32_t hash) {
     out.push_back(static_cast<char>(bytes[i]));
   }
   return std::nullopt;  // not terminated within the buffer
+}
+
+bool GameFlags::set_string64_now(WritableGameMemory& m, std::uint32_t hash,
+                                 std::string_view text) {
+  if (text.size() + 1 > kMaxString64Bytes) return false;
+  for (const char ch : text) {
+    if (ch < 0x20 || ch > 0x7e) return false;
+  }
+  const auto mgr = manager(m);
+  if (!mgr) return false;
+  const auto index = find(m, *mgr, kString64, hash);
+  if (!index) return false;
+  const auto entries = read_ptr(m, *mgr + kString64.entries);
+  if (!entries) return false;
+  const std::uint64_t entry = *entries + kString64.stride * *index;
+  const auto buffer = read_ptr(m, entry + kStringText);
+  const auto size = read_u32(m, entry + kStringSize);
+  if (!buffer || !size || *size < text.size() + 1 || *size > kMaxString64Bytes) return false;
+  std::array<std::uint8_t, kMaxString64Bytes> bytes{};
+  std::copy(text.begin(), text.end(), bytes.begin());
+  return m.write(*buffer, std::span<const std::uint8_t>(bytes.data(), text.size() + 1));
+}
+
+std::optional<int> GameFlags::find_type(std::uint32_t hash) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  for (int type = 0; type <= 25; ++type) {
+    const std::uint64_t base = 0x10 + 0x60ull * static_cast<std::uint64_t>(type);
+    const Table t{base, base + 8, base + 0x10, base + 0x1c, 0, 0, 0, 0, 0, 0};
+    if (find(memory_, *mgr, t, hash)) return type;
+  }
+  return std::nullopt;
 }
 
 bool GameFlags::set_bool(WritableGameMemory& m, std::uint32_t hash, bool value) {

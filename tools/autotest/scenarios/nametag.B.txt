@@ -1,0 +1,12 @@
+# nametag: B turns left and puts the camera behind him, so A (standing to the
+# right) is off screen: the edge arrow. Then back.
+wait 300
+mark b-still
+stick -1 0 10           # face left
+press ZL                # camera behind B
+wait 60
+mark b-edge
+stick 1 0 20            # face right
+press ZL
+wait 60
+mark b-back

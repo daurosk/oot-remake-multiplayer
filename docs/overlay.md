@@ -32,8 +32,8 @@ For each player, in order:
 4. Screen position from the normalised device coordinates: pixels from the top left, y down. A point exactly on the edge is on screen.
 5. Just off screen (within `edge_reach` normalised units of the edge, 1 by default, so up to half a screen beyond it) the marker is moved along the line from the screen centre onto a rectangle `edge_margin` pixels inside the edges, with `edge = true` and `arrow_angle` (radians in screen space, 0 right, pi/2 down) pointing towards the player. Further off, or with `edge_arrows` off, it is skipped as `off_screen`.
 6. Marker size is `marker_size * reference_distance / depth`, kept within `min_size` and `max_size`.
-7. The name tag (the nickname, or `P<number>` when there is none) is anchored at the bottom centre of the text, `tag_gap` pixels above the marker's top. When that would be above the top of the screen it goes below the marker instead (`below = true`, anchor at the top centre of the text).
-8. `alpha` is the presence fade (kept at 1 at most), for both marker and tag.
+7. The name tag (the nickname, or `P<number>` when there is none) is anchored at the bottom centre of the text, `tag_gap` pixels above the marker's top. When the player has a head height (`Shown::head` above 0, world units above the feet) and is on screen, the tag is instead anchored `tag_gap` pixels above that projected point (`head = true`), so it floats over the head while the marker stays at the feet. When either would be above the top of the screen it goes below the marker instead (`below = true`, anchor at the top centre of the text).
+8. `alpha` is the presence fade (kept at 1 at most), for both marker and tag, times the distance fade: 1 up to `fade_start` depth, falling to 0 at `fade_end`. A player on screen beyond `fade_end` is skipped as `too_far`; an edge arrow never goes below `edge_min_alpha`, so an off-screen player can still be found. `fade_end` 0 (the default) turns the distance fade off.
 
 Items are sorted far to near (by depth), then lowest player number first, so drawing them in order puts nearer players on top. `Result::skipped` says why each other player was left out. A camera with a NaN or infinite entry or a viewport not above 0 gives `Error::camera`, and invalid settings `Error::settings`; both draw nothing.
 
@@ -50,6 +50,8 @@ Items are sorted far to near (by depth), then lowest player number first, so dra
 | `edge_arrows` | on | draw players just off screen as edge arrows |
 | `edge_reach` | 1 | how far off screen (normalised units) still gets an arrow |
 | `edge_margin` | 16 px | how far inside the screen edge the arrow sits |
+| `fade_start`, `fade_end` | 0, 0 (off) | depth where the distance fade starts and where it reaches 0 |
+| `edge_min_alpha` | 0.6 | the least alpha an edge arrow fades to with distance |
 
 The distances are in the game's world units, which are not yet measured (see [host.md](host.md), `units_per_metre`); the defaults are guesses to tune in a run.
 

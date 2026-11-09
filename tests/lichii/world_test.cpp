@@ -197,13 +197,54 @@ TEST_CASE("world: a breakable gone unmoved, far away, or with no Link seen is no
         if (which != 2) {
             sync.SetPlayer(proto::Vec3{which == 1 ? 50.0f : 0.0f, 2.0f, 0.0f});
         }
-        Tick(sync, 0, {At(Pot(0x100, 0x11, 1, "Obj_LiftRock_A_03"), 1.0f, 1.0f)});
+        Tick(sync, 0, {At(Pot(0x100, 0x11, 1, "Obj_LiftRock_A_03"), which == 0 ? 4.0f : 1.0f, 1.0f)});
         sync.Receive(proto::ObjectOwner{*sync.IdOf(0x100), 1, 0, 0});
-        const float moved = which == 0 ? 1.2f : 4.0f;  // 0: under 0.5 m, unmoved
+        // 0: under 0.5 m, unmoved, and 4 m from Link (beyond sword reach).
+        const float moved = which == 0 ? 4.2f : 8.0f;
         Tick(sync, 10 * kMs, {At(Pot(0x100, 0x11, 1, "Obj_LiftRock_A_03"), moved, 1.0f)});
         Tick(sync, 15 * kMs, {});
         const auto step = Tick(sync, 20 * kMs, {});
         CHECK(All<proto::ObjectSample>(step).empty());
         CHECK(All<proto::Damage>(step).empty());
     }
+}
+
+TEST_CASE("world: a crate whose life cannot be read any more has died") {
+    Sync sync;
+    Seen crate = Pot(0x100, 0x11, 1, "Obj_BrokenBox_A_01");
+    Tick(sync, 0, {crate});
+    const auto id = *sync.IdOf(0x100);
+    sync.Receive(proto::ObjectOwner{id, 1, 0, 0});
+    Tick(sync, 10 * kMs, {crate});
+    crate.life.reset();  // still in the list, its life object gone
+    const auto samples = All<proto::ObjectSample>(Tick(sync, 100 * kMs, {crate}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.life);
+    CHECK(samples[0].state.life->life == 0);
+
+    // On a copy the same is our hit, sent to the owner.
+    Sync copy;
+    Seen c2 = Pot(0x200, 0x11, 3, "Obj_BrokenBox_A_01");
+    Tick(copy, 0, {c2}, 2);
+    copy.Receive(proto::ObjectOwner{*copy.IdOf(0x200), 1, 0, 0});
+    Tick(copy, 10 * kMs, {c2}, 2);
+    c2.life.reset();
+    Tick(copy, 20 * kMs, {c2}, 2);
+    const auto damage = All<proto::Damage>(Tick(copy, 200 * kMs, {c2}, 2));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 3);
+}
+
+TEST_CASE("world: a crate gone unmoved within sword reach of our Link was broken") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 2.0f, 0.0f});
+    const Seen crate = At(Pot(0x100, 0x11, 1, "Obj_BrokenBox_A_01"), 1.3f, 0.2f);
+    Tick(sync, 0, {crate});
+    sync.Receive(proto::ObjectOwner{*sync.IdOf(0x100), 1, 0, 0});
+    Tick(sync, 10 * kMs, {crate});
+    Tick(sync, 15 * kMs, {});
+    const auto last = All<proto::ObjectSample>(Tick(sync, 20 * kMs, {}));
+    REQUIRE(last.size() == 1);
+    REQUIRE(last[0].state.life);
+    CHECK(last[0].state.life->life == 0);
 }

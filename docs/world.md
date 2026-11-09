@@ -28,7 +28,7 @@ The breakables ride on the enemy sharing (`coop_objects_sync.cpp`, [objects.md](
 
 - **A breaks it on the owner's game.** Life goes to 0, the owner's sample carries 0, every copy has 0 written, and each game runs its own break (pieces, sound, drop).
 - **A breaks a copy.** The drop of life on the copy goes to the owner as `DAMAGE`; the owner writes life minus that, its game breaks it, and its sample breaks every other copy.
-- **Broken without a life read.** A thrown rock is removed from the actor list the moment it lands, with its life never read at 0 (live, 2026-11-09). So a breakable that has been moved (lifted, carried, thrown: over 0.5 m from where it was first seen) and then leaves the list within 8 m of our own Link counts as broken here (`Sync::Flush`): the owner sends life 0, a copy sends its whole life as `DAMAGE` at once. One that leaves unmoved or further away was unloaded and sends nothing. An object counts as gone only after two walks in a row miss it.
+- **Broken without a life read.** A thrown rock is removed from the actor list the moment it lands, and a crate 0.15 s after its life reaches 0, while the walks fail on the pieces it spawns; neither life 0 is seen by the sync (live, 2026-11-09). So a breakable that leaves the list near our own Link counts as broken here (`Sync::Flush`): within 8 m when it was moved first (lifted, carried, thrown: over 0.5 m from where it was first seen), within 3 m (sword reach) when not. The owner sends life 0, a copy sends its whole life as `DAMAGE` at once. One that leaves further away was unloaded and sends nothing. An object counts as gone only after two walks in a row miss it, and a breakable whose life can no longer be read (its life object freed after death) reads as 0.
 - **Gone before it was sent.** A break whose life 0 was read on the last walk before the actor went is still sent: the owner's life 0 as a last sample, a copy's hit as `DAMAGE` at once, not after the 100 ms sum.
 - The hook logs each shared object that leaves: `coop: objects: share gone <id> owner N life L moved M from Link D: broken here` (or `left`).
 
@@ -40,7 +40,8 @@ Scenario `rock` (Graveyard, child saves): A walks to the liftable rock with `got
 
 Seen on the way:
 - Signposts (`Obj_GuidePost_*`, `Obj_SignBoard_*`) cut by the sword keep their life (100) and stay in the list: the cut is a state of the same actor. Life sharing does not carry them; they need their own state read (not found yet).
-- `Obj_BrokenBox_*` crates have life 5. Not broken in a run yet (none on the Graveyard path; the Kakariko one needs a route).
+- Scenario `pots` (Kakariko, crate south of the Graveyard gate, life 5): each of A's sword hits shows on B at once, `share life 5 -> 4 ... 1 -> 0` in B's log, and B's crate is removed (about 4.6 s after its life 0, against 0.15 s in A, where it breaks and drops a rupee: the death by a written life is slower than by a hit). **Pass** in three runs, through the life path and through the reach rule.
+- Pots: the nearest (`Obj_Pot_A_08`, two at -16.6, 30.7 in KakarikoVillage_Child_Static) are inside a house whose door (`Obj_Kakariko_Door_A_09`, west side) the stepper could not reach: walls stop it at x -20.4. Not broken in a run yet; they take the same paths as the crate (life 1).
 - The Kakariko side of the gate loads its own actors only after the scene change, so Graveyard objects are shared only while both players are in `Graveyard_Child`.
 
 ### Not done yet

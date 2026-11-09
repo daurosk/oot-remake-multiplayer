@@ -75,11 +75,13 @@ public:
 
     // Present thread, before Tick: our own Link's position, when the walk saw
     // it. A breakable that leaves the list within kBreakNearM of it after it
-    // was moved (lifted, carried, thrown) was broken: a thrown rock is
-    // removed with its life never read at 0. One that leaves unmoved or
-    // further away was unloaded.
+    // was moved (lifted, carried, thrown), or within kBreakReachM unmoved,
+    // was broken: a thrown rock, and a crate cut by the sword, are removed
+    // with their life never read at 0. One that leaves further away was
+    // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
     static constexpr float kBreakNearM = 8.0f;
+    static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
     static constexpr int kMissedWalks = 2;
 
     // Present thread: not connected or the game went away. Forgets everything.

@@ -129,8 +129,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         Object& o = it->second;
         o.position = s.position;
-        if (s.life) {
-            if (o.life && s.life->life < *o.life) {
+        // A breakable's life can no longer be read once it has died (a crate
+        // at 0 for one frame, then its life object is gone): read that as 0.
+        std::optional<proto::ObjectLife> life = s.life;
+        if (!life && o.breakable && o.life && *o.life > 0) {
+            life = proto::ObjectLife{0, o.max};
+        }
+        if (life) {
+            if (o.life && life->life < *o.life) {
                 o.fight_until = now_us + kFightUs;
                 const auto owner = owners_.find(o.id);
                 if (owner != owners_.end() && owner->second.player != 0 &&
@@ -138,11 +144,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     if (o.hit_sum == 0) {
                         o.hit_since = now_us;
                     }
-                    o.hit_sum += *o.life - s.life->life;
+                    o.hit_sum += *o.life - life->life;
                 }
             }
-            o.life = s.life->life;
-            o.max = s.life->max;
+            o.life = life->life;
+            o.max = life->max;
         }
     }
     // Gone only when two walks in a row miss it: an actor drops out of the
@@ -251,9 +257,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 // Objects that left our walk. A break read just before it went (a pot's life
 // 0, then the pot is removed a few frames later) still reaches the others:
 // the owner's last life 0 as a sample, a copy's unsent hit as DAMAGE. A
-// breakable that was moved (lifted, thrown) and is gone near our Link was
-// broken here even when its life never read 0 (a thrown rock is removed at
-// once): the same, with all its life.
+// breakable gone near our Link was broken here even when its life never
+// read 0 (a thrown rock is removed where it lands, a crate a moment after its
+// life reaches 0): within kBreakNearM when it was moved (lifted, thrown),
+// within kBreakReachM (sword reach) when not. The same, with all its life.
 void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
                  std::vector<proto::Message>& send) {
     for (Object& o : gone) {
@@ -270,7 +277,8 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             const float my = o.position[1] - o.first_position[1];
             const float mz = o.position[2] - o.first_position[2];
             const bool moved = std::sqrt(mx * mx + my * my + mz * mz) >= 0.5f;
-            broken_here = moved && std::sqrt(dx * dx + dy * dy + dz * dz) <= kBreakNearM;
+            const float from_link = std::sqrt(dx * dx + dy * dy + dz * dz);
+            broken_here = from_link <= (moved ? kBreakNearM : kBreakReachM);
         }
         {
             float near = -1.0f;

@@ -317,7 +317,8 @@ void Runner::Learn(double now_s, std::optional<std::array<float, 2>> player) {
 }
 
 void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
-                     std::vector<std::string>& log) {
+                     std::vector<std::string>& log, std::optional<Camera> camera) {
+    camera_ = camera;
     Learn(now_s, player);
     while (index_ < script_.steps.size()) {
         const Step& s = script_.steps[index_];
@@ -376,7 +377,9 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
     // Keep the last aim for a while so Link walks one way long enough to
     // learn from; a toward step aims once.
     const double dist = std::hypot(step.x - (*player)[0], step.z - (*player)[1]);
-    const double every = dist > 2.5 ? kAimEveryS : 0.1;  // close: no overshooting
+    // With the camera given, aim every frame (it turns as Link walks); else
+    // keep an aim long enough to learn from, shorter when close.
+    const double every = camera_ ? 0.0 : (dist > 2.5 ? kAimEveryS : 0.1);
     const bool keep = aimed_at_ >= 0.0 && out_.left && now_s >= detour_until_ &&
                       (step.kind == Kind::toward || now_s - aimed_at_ < every);
     if (keep) {
@@ -395,6 +398,28 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
         progress_at_ = now_s;
     }
     const double detour = now_s < detour_until_ ? detour_side_ * kPi / 2 : 0.0;
+    if (camera_) {
+        // Straight from the camera: the stick that walks Link toward the point.
+        double wx = step.x - (*player)[0];
+        double wz = step.z - (*player)[1];
+        const double len = std::hypot(wx, wz);
+        if (len > 1e-6) {
+            wx /= len;
+            wz /= len;
+        }
+        double sx = wx * camera_->right_x + wz * camera_->right_z;
+        double sy = wx * camera_->forward_x + wz * camera_->forward_z;
+        double angle = std::atan2(sy, sx) + detour;
+        const double magnitude = (step.kind == Kind::go && detour == 0.0)
+                                     ? std::clamp(dist / 2.0, kMinMagnitude, 1.0)
+                                     : 1.0;
+        out_.left = Stick{
+            static_cast<std::int32_t>(std::lround(std::cos(angle) * magnitude * kStickMax)),
+            static_cast<std::int32_t>(std::lround(std::sin(angle) * magnitude * kStickMax))};
+        aimed_at_ = now_s;
+        Hold(angle, now_s);
+        return;
+    }
     // No camera model yet: stick up, then stick right once, and learn from both.
     double angle = (!heading_ ? kPi / 2 : 0.0) + detour;
     double magnitude = 1.0;
@@ -424,6 +449,7 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 
 #include "common/logging.h"
 #include "coop/host/player_reader.hpp"
+#include "coop_camera.h"
 #include "coop_flags.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
@@ -527,6 +553,23 @@ std::optional<std::array<float, 2>> PlayerXZ(Core::System& system) {
     return std::array<float, 2>{(*p)[0], (*p)[2]};
 }
 
+// The camera's ground directions from the last frame's world-to-clip matrix
+// (row-major): clip w grows along the view (row 3), clip x to the right
+// (row 0). Nothing when there is no recent camera or it looks straight down.
+std::optional<Runner::Camera> CameraXZ() {
+    const auto frame = CoopCamera::Latest();
+    if (!frame || Clock::now() - frame->at > std::chrono::milliseconds(500)) {
+        return std::nullopt;
+    }
+    const auto& m = frame->clip_from_world;
+    const float fl = std::hypot(m[12], m[14]);
+    const float rl = std::hypot(m[0], m[2]);
+    if (fl < 1e-4f || rl < 1e-4f) {
+        return std::nullopt;
+    }
+    return Runner::Camera{m[12] / fl, m[14] / fl, m[0] / rl, m[2] / rl};
+}
+
 void StopRunning() {
     if (g_state.running && g_state.running->controller) {
         g_state.running->controller->SetInputInjector({});
@@ -618,11 +661,15 @@ void OnFrame(Core::System& system) {
     const double now = std::chrono::duration<double>(Clock::now() - r.start).count();
     std::vector<std::string> log;
     const auto player = PlayerXZ(system);
-    r.runner->Advance(now, player, log);
+    const auto camera = CameraXZ();
+    r.runner->Advance(now, player, log, camera);
     if (r.runner->Steering() && g_state.frame % 15 == 0) {
         const auto& out = r.runner->Current();
-        LOG_INFO(Core, "coop: test steer at {:.2f} {:.2f}, heading {:.2f}, mirror {}, stick {} {}",
+        LOG_INFO(Core,
+                 "coop: test steer at {:.2f} {:.2f}, camera {:.2f} {:.2f}, heading {:.2f}, "
+                 "mirror {}, stick {} {}",
                  player ? (*player)[0] : 0.0f, player ? (*player)[1] : 0.0f,
+                 camera ? camera->forward_x : 0.0f, camera ? camera->forward_z : 0.0f,
                  r.runner->Heading().value_or(99.0), r.runner->Mirror(),
                  out.left ? out.left->x : 0, out.left ? out.left->y : 0);
     }

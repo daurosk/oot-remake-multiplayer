@@ -26,9 +26,11 @@
 //   mark walk-start        writes "coop: test mark walk-start" to the log
 //
 // goto and toward steer from Link's position, read each frame. The stick is
-// relative to the camera, so the stepper learns the camera's direction from
-// how Link moves: it pushes up first, then corrects as he walks. A goto that
-// gives up logs "coop: test goto timed out" and the script goes on.
+// relative to the camera, which turns as Link walks: the hook gives the
+// stepper the camera's ground directions from the game's camera matrix each
+// frame (without them it learns them from how Link moves). A push that gets
+// nowhere for a second steps aside. A goto that gives up logs
+// "coop: test goto timed out" and the script goes on.
 //
 // Buttons: A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK, the d-pad DUP DDOWN
 // DLEFT DRIGHT, and full stick directions LSTICK_UP LSTICK_DOWN LSTICK_LEFT
@@ -121,10 +123,20 @@ class Runner {
 public:
     explicit Runner(Script script);
 
+    // The camera on the ground: unit vectors (x, z) of where stick up and
+    // stick right walk Link. From the game's camera matrix when the hook has
+    // it; without it the stepper learns them from how Link moves.
+    struct Camera {
+        float forward_x = 0.0f;
+        float forward_z = 0.0f;
+        float right_x = 0.0f;
+        float right_z = 0.0f;
+    };
+
     // Moves on to the step for `now_s`. Appends to `log` the marks reached
     // and "goto timed out" lines, in order.
     void Advance(double now_s, std::optional<std::array<float, 2>> player,
-                 std::vector<std::string>& log);
+                 std::vector<std::string>& log, std::optional<Camera> camera = std::nullopt);
     const Output& Current() const { return out_; }
     bool Done() const { return index_ >= script_.steps.size(); }
     std::size_t StepCount() const { return script_.steps.size(); }
@@ -145,6 +157,7 @@ public:
 private:
     void Learn(double now_s, std::optional<std::array<float, 2>> player);
     void Steer(const Step& step, double now_s, std::optional<std::array<float, 2>> player);
+    std::optional<Camera> camera_;  // this frame's, when given
     void Hold(std::optional<double> stick_angle, double now_s);
 
     Script script_;

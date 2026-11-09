@@ -207,6 +207,9 @@ public:
         std::vector<coop::protocol::Message> send;
         std::vector<LifeWrite> writes;
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        for (const auto& note : sync_.TakeNotes()) {
+            LOG_INFO(Core, "coop: objects: share {}", note);
+        }
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
@@ -275,6 +278,7 @@ private:
         if (!List(r, actors)) {
             return false;
         }
+        std::optional<coop::protocol::Vec3> player;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
         for (const u64 a : actors) {
             auto it = names_.find(a);
@@ -285,6 +289,13 @@ private:
                 known.first = r.Name(a);
                 const auto placement = r.Ptr(a + kActorPlacement);
                 known.second = placement ? r.Get<u64>(*placement + kPlacementHash).value_or(0) : 0;
+            }
+            if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
+                coop::protocol::Vec3 at{};
+                for (std::size_t i = 0; i < 3; ++i) {
+                    at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                player = at;
             }
             if (IsShared(known.first)) {
                 Seen s;
@@ -306,6 +317,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        sync_.SetPlayer(player);
         return true;
     }
 

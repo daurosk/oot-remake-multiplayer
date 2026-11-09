@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -72,11 +73,23 @@ public:
               const std::vector<Seen>& seen, std::vector<coop::protocol::Message>& send,
               std::vector<LifeWrite>& writes);
 
+    // Present thread, before Tick: our own Link's position, when the walk saw
+    // it. A breakable that leaves the list within kBreakNearM of it after it
+    // was moved (lifted, carried, thrown) was broken: a thrown rock is
+    // removed with its life never read at 0. One that leaves unmoved or
+    // further away was unloaded.
+    void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
+    static constexpr float kBreakNearM = 8.0f;
+    static constexpr int kMissedWalks = 2;
+
     // Present thread: not connected or the game went away. Forgets everything.
     void Reset();
 
     // For tests and logs.
     std::size_t Count() const { return objects_.size(); }
+    // What Flush decided for each shared object that left the walk, as log
+    // lines; taken (and cleared) by the caller.
+    std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
 
@@ -102,6 +115,9 @@ private:
         std::int32_t hit_sum = 0;
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
+        bool breakable = false;    // coop_world.h
+        coop::protocol::Vec3 first_position{};  // where it was first seen
+        int missed = 0;                         // walks in a row without it
     };
 
     void Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
@@ -111,6 +127,8 @@ private:
     coop::protocol::ObjectState StateOf(Object& o, std::uint64_t now_us);
 
     std::string scene_;
+    std::optional<coop::protocol::Vec3> player_;
+    std::vector<std::string> notes_;
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::map<std::string, unsigned> order_;    // next order per name, this scene visit
     std::map<coop::protocol::ObjectId, Owner> owners_;

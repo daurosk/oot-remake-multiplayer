@@ -236,3 +236,30 @@ TEST_CASE("testinput: goto gets round a short wall in the way") {
         CHECK(log[0] == "mark there");
     }
 }
+
+TEST_CASE("testinput: goto with the game's camera, which turns behind Link as he walks") {
+    for (const bool mirrored : {false, true}) {
+        CAPTURE(mirrored);
+        Runner r(Must("goto 8 -6 0.6\nmark there\ngoto -3 4 0.6\n"));
+        FakeLink link{0.4, mirrored};
+        std::vector<std::string> log;
+        const double dt = 1.0 / 30;
+        bool done = false;
+        for (double t = 0; t < 20.0 && !done; t += dt) {
+            const double c = link.camera;
+            const double side = mirrored ? 1.0 : -1.0;  // where stick right walks
+            Runner::Camera cam{static_cast<float>(std::cos(c)), static_cast<float>(std::sin(c)),
+                               static_cast<float>(std::cos(c + side * 1.5707963)),
+                               static_cast<float>(std::sin(c + side * 1.5707963))};
+            r.Advance(t, link.pos, log, cam);
+            done = r.Done();
+            link.Step(r.Current(), dt);
+            // The camera swings round behind Link at 1.5 radians a second.
+            const double behind = std::remainder(link.facing - link.camera, 2 * 3.14159265358979);
+            link.camera += std::clamp(behind, -1.5 * dt, 1.5 * dt);
+        }
+        REQUIRE(done);
+        REQUIRE(log.size() == 1);
+        CHECK(std::hypot(link.pos[0] + 3.0f, link.pos[1] - 4.0f) <= 0.6f);
+    }
+}

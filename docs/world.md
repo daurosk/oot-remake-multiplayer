@@ -28,15 +28,26 @@ The breakables ride on the enemy sharing (`coop_objects_sync.cpp`, [objects.md](
 
 - **A breaks it on the owner's game.** Life goes to 0, the owner's sample carries 0, every copy has 0 written, and each game runs its own break (pieces, sound, drop).
 - **A breaks a copy.** The drop of life on the copy goes to the owner as `DAMAGE`; the owner writes life minus that, its game breaks it, and its sample breaks every other copy.
-- **Gone before it was sent.** A pot is removed from the actor list soon after it breaks. A break read on the last walk before that is still sent (`Sync::Flush`): the owner's life 0 as a last sample, a copy's hit as `DAMAGE` at once, not after the 100 ms sum. An object that leaves with life left (unloaded by distance or a scene change) sends nothing.
+- **Broken without a life read.** A thrown rock is removed from the actor list the moment it lands, with its life never read at 0 (live, 2026-11-09). So a breakable that has been moved (lifted, carried, thrown: over 0.5 m from where it was first seen) and then leaves the list within 8 m of our own Link counts as broken here (`Sync::Flush`): the owner sends life 0, a copy sends its whole life as `DAMAGE` at once. One that leaves unmoved or further away was unloaded and sends nothing. An object counts as gone only after two walks in a row miss it.
+- **Gone before it was sent.** A break whose life 0 was read on the last walk before the actor went is still sent: the owner's life 0 as a last sample, a copy's hit as `DAMAGE` at once, not after the 100 ms sum.
+- The hook logs each shared object that leaves: `coop: objects: share gone <id> owner N life L moved M from Link D: broken here` (or `left`).
 
 No new message: `OBJECT_PRESENT`, `OBJECT_OWNER`, `OBJECT_SAMPLE` and `DAMAGE` as for enemies.
+
+### Live result (2026-11-09, two games on one PC, `tools/autotest`)
+
+Scenario `rock` (Graveyard, child saves): A walks to the liftable rock with `goto`, lifts it (A) and throws it (ZR). A's log: `share gone 79b54c39a122b910 owner 1 life 1 moved 4.10 from Link 4.44: broken here`. B's log, at once: `share life ...: 1 -> 0`, and B's game removes its rock 0.1 s later. B's screenshots show the rock on the ground beside A's puppet, then gone with its pieces, while B stands 6.5 m away. **Pass** for a thrown rock.
+
+Seen on the way:
+- Signposts (`Obj_GuidePost_*`, `Obj_SignBoard_*`) cut by the sword keep their life (100) and stay in the list: the cut is a state of the same actor. Life sharing does not carry them; they need their own state read (not found yet).
+- `Obj_BrokenBox_*` crates have life 5. Not broken in a run yet (none on the Graveyard path; the Kakariko one needs a route).
+- The Kakariko side of the gate loads its own actors only after the scene change, so Graveyard objects are shared only while both players are in `Graveyard_Child`.
 
 ### Not done yet
 
 - Drops: each game runs its own death, so each drops its own rupee or heart. Caleb wants one drop for one player (the one who broke it). Next: hold the copy's drop (the drop component, or remove the dropped `Obj_Rupee_*` that appears where a copy died).
-- A breakable that is removed in the same walk it breaks in (life never read at 0) is missed. Seen live: not yet.
-- Lifted and carried objects (a pot or rock in Link's hands) are not moved on the other screen; the throw breaks it there only through life. Movables are the step after switches.
+- Signposts (above), and pots and grass cut by the sword: not seen in a run yet. A pot that breaks with its life read at 0 goes through the life path; one removed at once goes through the gone rule, which needs it to have moved: a pot cut where it stands would be missed. Next live check: a pot.
+- Lifted and carried objects (a pot or rock in Link's hands) are not moved on the other screen; only the break is shared. Movables are the step after switches.
 - Grass and signs cut by the other player: the owner may be a game where that grass is far away. Works the same way, not checked.
 
 ## Switches and doors (next)
@@ -45,4 +56,4 @@ Most switch states are 64-bit-key flags of the switch's placement ([flags.md](fl
 
 ## Testing
 
-`tools/autotest/run.ps1 -Scenario sign`: both games walk from the Graveyard save into Kakariko; A walks to the signpost by the Graveyard path with `goto` ([testing.md](testing.md), "Input scripts") and cuts it; B faces the post. Screenshots of both and the logs (`coop: objects: share` and `life` lines) show whether B's post was cut too.
+`tools/autotest/run.ps1 -Scenario rock`: A walks to the Graveyard's liftable rock with `goto` ([testing.md](testing.md), "Input scripts"), lifts and throws it; B stands 6.5 m away facing it. The `coop: objects: share gone` and `share life` lines in the two logs and B's screenshots show the break on both. `sign` (Kakariko signpost, cut with the sword) and `crate` are there for the cases above that are not shared yet.

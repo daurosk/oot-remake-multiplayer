@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <tuple>
 #include <type_traits>
 #include <variant>
@@ -144,9 +145,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             o.max = s.life->max;
         }
     }
+    // Gone only when two walks in a row miss it: an actor drops out of the
+    // list for a moment when it is lifted or changes hands.
     std::vector<Object> gone;
     for (auto it = objects_.begin(); it != objects_.end();) {
         if (now_seen.contains(it->first)) {
+            it->second.missed = 0;
+            ++it;
+            continue;
+        }
+        if (++it->second.missed < kMissedWalks) {
             ++it;
             continue;
         }
@@ -162,6 +170,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         Object o;
         o.address = s->address;
         o.position = s->position;
+        o.breakable = CoopWorld::IsBreakable(s->name);
+        o.first_position = s->position;
         if (s->life) {
             o.life = s->life->life;
             o.max = s->life->max;
@@ -240,7 +250,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
 // Objects that left our walk. A break read just before it went (a pot's life
 // 0, then the pot is removed a few frames later) still reaches the others:
-// the owner's last life 0 as a sample, a copy's unsent hit as DAMAGE.
+// the owner's last life 0 as a sample, a copy's unsent hit as DAMAGE. A
+// breakable that was moved (lifted, thrown) and is gone near our Link was
+// broken here even when its life never read 0 (a thrown rock is removed at
+// once): the same, with all its life.
 void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
                  std::vector<proto::Message>& send) {
     for (Object& o : gone) {
@@ -248,7 +261,40 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
         if (owner == owners_.end() || owner->second.player == 0) {
             continue;
         }
+        bool broken_here = false;
+        if (o.breakable && player_ && (!o.life || *o.life > 0)) {
+            const float dx = o.position[0] - (*player_)[0];
+            const float dy = o.position[1] - (*player_)[1];
+            const float dz = o.position[2] - (*player_)[2];
+            const float mx = o.position[0] - o.first_position[0];
+            const float my = o.position[1] - o.first_position[1];
+            const float mz = o.position[2] - o.first_position[2];
+            const bool moved = std::sqrt(mx * mx + my * my + mz * mz) >= 0.5f;
+            broken_here = moved && std::sqrt(dx * dx + dy * dy + dz * dz) <= kBreakNearM;
+        }
+        {
+            float near = -1.0f;
+            if (player_) {
+                const float dx = o.position[0] - (*player_)[0];
+                const float dy = o.position[1] - (*player_)[1];
+                const float dz = o.position[2] - (*player_)[2];
+                near = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            const float mx = o.position[0] - o.first_position[0];
+            const float my = o.position[1] - o.first_position[1];
+            const float mz = o.position[2] - o.first_position[2];
+            char line[200];
+            std::snprintf(line, sizeof line,
+                          "gone %016llx owner %u life %d moved %.2f from Link %.2f: %s",
+                          static_cast<unsigned long long>(o.id.value), owner->second.player,
+                          o.life.value_or(-1), std::sqrt(mx * mx + my * my + mz * mz), near,
+                          broken_here ? "broken here" : "left");
+            notes_.emplace_back(line);
+        }
         if (owner->second.player == self) {
+            if (broken_here) {
+                o.life = 0;
+            }
             if (o.life && *o.life <= 0 && (!o.sent_life || o.sent_life->life > 0)) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -256,11 +302,11 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
                 sample.state = StateOf(o, now_us);
                 send.emplace_back(sample);
             }
-        } else if (o.hit_sum > 0) {
+        } else if (o.hit_sum > 0 || broken_here) {
             proto::Damage d;
             d.id = o.id;
             d.epoch = owner->second.epoch;
-            d.amount = o.hit_sum;
+            d.amount = broken_here ? std::max(o.life.value_or(1), o.hit_sum) : o.hit_sum;
             d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
             d.position = o.position;
             send.emplace_back(d);

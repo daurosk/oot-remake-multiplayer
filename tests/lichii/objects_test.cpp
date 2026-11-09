@@ -98,7 +98,9 @@ TEST_CASE("objects: OBJECT_PRESENT on a change and every 2 s, and a new scene st
     CHECK(present[0].objects[0].flags == proto::object_presence::awake);
 
     CHECK(All<proto::ObjectPresent>(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2)})).empty());
-    present = All<proto::ObjectPresent>(Tick(sync, 600 * kMs, {Enemy(0x100, 0x11, 2)}));
+    // One walk without an enemy is not enough: it is gone after two.
+    CHECK(All<proto::ObjectPresent>(Tick(sync, 600 * kMs, {Enemy(0x100, 0x11, 2)})).empty());
+    present = All<proto::ObjectPresent>(Tick(sync, 610 * kMs, {Enemy(0x100, 0x11, 2)}));
     REQUIRE(present.size() == 1);
     CHECK(present[0].objects.size() == 1);
     CHECK(All<proto::ObjectPresent>(Tick(sync, 2700 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);

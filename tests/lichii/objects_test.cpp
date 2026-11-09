@@ -77,12 +77,12 @@ TEST_CASE("objects: a scene's own enemy gets the same id on both games") {
     // another order still give each enemy the same id (by x within a walk).
     Sync one;
     Sync two;
-    Tick(one, 0, {Enemy(0x100, ~0ULL, 2, 1.0f), Enemy(0x200, ~0ULL, 2, 5.0f)});
-    Tick(two, 0, {Enemy(0x900, 0, 2, 5.0f), Enemy(0x800, ~0ULL, 2, 1.0f)});
+    Tick(one, 0, {Enemy(0x100, ~0ULL, 2, 1.0f, "Enemy_Keese"), Enemy(0x200, ~0ULL, 2, 5.0f, "Enemy_Keese")});
+    Tick(two, 0, {Enemy(0x900, 0, 2, 5.0f, "Enemy_Keese"), Enemy(0x800, ~0ULL, 2, 1.0f, "Enemy_Keese")});
     CHECK(*one.IdOf(0x100) == *two.IdOf(0x800));
     CHECK(*one.IdOf(0x200) == *two.IdOf(0x900));
     // A placed enemy keeps its placement hash.
-    Tick(one, 10 * kMs, {Enemy(0x100, ~0ULL, 2, 1.0f), Enemy(0x200, ~0ULL, 2, 5.0f),
+    Tick(one, 10 * kMs, {Enemy(0x100, ~0ULL, 2, 1.0f, "Enemy_Keese"), Enemy(0x200, ~0ULL, 2, 5.0f, "Enemy_Keese"),
                          Enemy(0x300, 0x1234, 2)});
     CHECK(one.IdOf(0x300)->value == 0x1234);
     CHECK(one.IdOf(0x300)->kind == proto::ObjectKind::placed);
@@ -549,4 +549,167 @@ TEST_CASE("objects: a copy's animation frame follows the owner's, shown 100 ms l
     copy.Plays(2000 * kMs, plays);
     REQUIRE(plays.size() == 1);
     CHECK(plays[0].frame == doctest::Approx(19.0f));
+}
+
+namespace {
+proto::PlayerSample Where(std::uint8_t player, const std::string& scene, std::uint64_t now) {
+    proto::PlayerSample p;
+    p.player_number = player;
+    p.time = {now, 1};
+    p.scene = scene;
+    return p;
+}
+} // namespace
+
+TEST_CASE("objects: one game rolls Stalchild, the others delete theirs and make the decided ones") {
+    CHECK(CoopObjects::IsRolled("Enemy_Stalchild"));
+    CHECK(CoopObjects::IsRolled("Enemy_Stalchild_Big"));
+    CHECK_FALSE(CoopObjects::IsRolled("Enemy_Stalchild_Dictionary"));
+
+    Sync a;  // player 1: decides
+    Sync b;  // player 2
+    a.Receive(Where(2, kScene, 0));
+    b.Receive(Where(1, kScene, 0));
+
+    // A's game rolls a Stalchild: it is shared as a made id.
+    const Step rolled = Tick(a, 100 * kMs, {Enemy(0x100, ~0ULL, 2, 7.0f)}, 1);
+    CHECK(a.Decider() == 1);
+    const auto spawns = All<proto::ObjectSpawn>(rolled);
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].id.kind == proto::ObjectKind::made);
+    CHECK(spawns[0].id.maker == 1);
+    CHECK(spawns[0].actor == "Enemy_Stalchild");
+    CHECK((*spawns[0].state.position)[0] == doctest::Approx(7.0f));
+    CHECK(a.OwnerOf(spawns[0].id) == 1);
+    CHECK(a.Removes().empty());
+
+    // B's game rolls its own: it is not shared, and B deletes it.
+    const Step own = Tick(b, 100 * kMs, {Enemy(0x500, ~0ULL, 2, -30.0f)}, 2);
+    CHECK(b.Decider() == 1);
+    CHECK(All<proto::ObjectSpawn>(own).empty());
+    CHECK_FALSE(b.IdOf(0x500));
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x500});
+    CHECK(b.Refused() == 1);
+
+    // A's spawn reaches B: B asks the director for it, where A's one is.
+    b.Receive(spawns[0]);
+    Tick(b, 150 * kMs, {}, 2);
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == "Enemy_Stalchild");
+    CHECK(creates[0].position[0] == doctest::Approx(7.0f));
+    CHECK_FALSE(creates[0].removed);
+    CHECK(b.OwnerOf(spawns[0].id) == 1);
+
+    // The director's actor shows up before the director lists it: it is near
+    // the decided place, so B waits instead of deleting it.
+    Tick(b, 200 * kMs, {Enemy(0x600, ~0ULL, 2, 7.5f)}, 2);
+    CHECK_FALSE(b.IdOf(0x600));
+    CHECK(b.Removes().empty());
+
+    // Listed: it takes A's id and follows A's samples.
+    b.Bind({{creates[0].key, 0x600}});
+    Tick(b, 250 * kMs, {Enemy(0x600, ~0ULL, 2, 7.5f)}, 2);
+    REQUIRE(b.IdOf(0x600));
+    CHECK(*b.IdOf(0x600) == spawns[0].id);
+    proto::ObjectSample sample;
+    sample.id = spawns[0].id;
+    sample.state.time = {240 * kMs, 1};
+    sample.state.position = proto::Vec3{8.0f, 0.0f, 0.0f};
+    b.Receive(sample);
+    b.Bind({{creates[0].key, 0x600}});
+    Tick(b, 300 * kMs, {Enemy(0x600, ~0ULL, 2, 7.5f)}, 2);
+    std::vector<CoopObjects::PoseWrite> poses;
+    b.Poses(400 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(8.0f));
+
+    // A's Stalchild dies and goes: A sends OBJECT_REMOVE; B deletes its copy.
+    const Step gone = Tick(a, 500 * kMs, {}, 1);
+    const auto removes = All<proto::ObjectRemove>(gone);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == spawns[0].id);
+    b.Receive(removes[0]);
+    b.Bind({{creates[0].key, 0x600}});
+    Tick(b, 550 * kMs, {Enemy(0x600, ~0ULL, 2, 7.5f)}, 2);
+    creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].removed);
+    b.Bind({});
+    Tick(b, 600 * kMs, {}, 2);
+    CHECK(b.Creates().empty());
+}
+
+TEST_CASE("objects: alone or first in the scene, a game rolls its own Stalchild") {
+    Sync b;
+    // Player 1 is elsewhere, or its scene is old news: B decides.
+    b.Receive(Where(1, "Spot_Field", 0));
+    const Step s = Tick(b, 0, {Enemy(0x500, ~0ULL, 2)}, 2);
+    CHECK(b.Decider() == 2);
+    CHECK(All<proto::ObjectSpawn>(s).size() == 1);
+
+    Sync c;
+    c.Receive(Where(1, kScene, 0));
+    Tick(c, Sync::kSceneStaleUs + kMs, {Enemy(0x700, ~0ULL, 2)}, 3);
+    CHECK(c.Decider() == 3);
+    CHECK(c.Removes().empty());
+
+    // A higher player in the scene does not take it from a lower one.
+    Sync a;
+    a.Receive(Where(3, kScene, 0));
+    Tick(a, 0, {}, 1);
+    CHECK(a.Decider() == 1);
+}
+
+TEST_CASE("objects: a Gold Skulltula shaken out of a tree is announced and copied where missing") {
+    constexpr std::uint64_t kHash = 0x32f42f523be6425ULL;
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    Sync a;
+    // Loaded with the scene: not announced, even when owned.
+    Tick(a, 0, {Enemy(0x100, 0x1111, 1, 0.0f, "Enemy_Skulltula_Gold")}, 1);
+    Own(a, {proto::ObjectKind::placed, 0, 0x1111}, 1);
+    CHECK(All<proto::ObjectSpawn>(Tick(a, 100 * kMs, {Enemy(0x100, 0x1111, 1, 0.0f, "Enemy_Skulltula_Gold")}, 1)).empty());
+
+    // Out of a tree 5 s later: announced once we own it, once.
+    const std::vector<Seen> both = {Enemy(0x100, 0x1111, 1, 0.0f, "Enemy_Skulltula_Gold"),
+                                    Enemy(0x200, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")};
+    CHECK(All<proto::ObjectSpawn>(Tick(a, 5000 * kMs, both, 1)).empty());
+    Own(a, id, 1, 3);
+    const auto spawns = All<proto::ObjectSpawn>(Tick(a, 5100 * kMs, both, 1));
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].id == id);
+    CHECK(spawns[0].actor == "Enemy_Skulltula_Gold");
+    CHECK(All<proto::ObjectSpawn>(Tick(a, 5200 * kMs, both, 1)).empty());
+
+    // B lacks it: a copy is made and takes the placed id.
+    Sync b;
+    Tick(b, 0, {}, 2);
+    proto::ObjectSpawn relayed = spawns[0];
+    relayed.player_number = 1;
+    b.Receive(relayed);
+    Tick(b, 5300 * kMs, {}, 2);
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].position[0] == doctest::Approx(9.0f));
+    CHECK(b.OwnerOf(id) == 1);
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 5400 * kMs, {Enemy(0x900, ~0ULL, 1, 9.0f, "Enemy_Skulltula_Gold")}, 2);
+    REQUIRE(b.IdOf(0x900));
+    CHECK(*b.IdOf(0x900) == id);
+
+    // B shakes the same tree: its own one comes, the copy goes.
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 5500 * kMs, {Enemy(0x900, ~0ULL, 1, 9.0f, "Enemy_Skulltula_Gold"),
+                         Enemy(0x950, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 2);
+    CHECK(*b.IdOf(0x950) == id);
+    CHECK_FALSE(b.IdOf(0x900));
+    REQUIRE(b.Creates().size() == 1);
+    CHECK(b.Creates()[0].removed);
+
+    // C has it loaded already: no copy.
+    Sync c;
+    Tick(c, 0, {Enemy(0x300, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 3);
+    c.Receive(relayed);
+    Tick(c, 100 * kMs, {Enemy(0x300, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 3);
+    CHECK(c.Creates().empty());
 }

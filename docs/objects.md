@@ -126,9 +126,33 @@ Enemy damage is set in each pack's `Life/DamageParameters` (`IsMergeSameFrameHit
 | Placed (enemies, pots, chests, switches) | the u64 placement hash | Both games load the same Banc placement, and the hash is the key the flag store already uses ([flags.md](flags.md)) |
 | Made by a player's game (projectiles, an enemy a player's action spawned) | the maker's player number and a u32 counter of its own | Nothing else names it on both sides; the maker says "I made 7" and everyone calls it (2, 7) |
 | Made by an enemy (bullets, summons) | the same, made by the enemy's owner | The enemy's owner is the only game whose copy really fires |
-| Made by the scene with no hash (spawners, waves, the night Stalchild of Hyrule Field and the Graveyard) | kind placed, value = `SceneSpawnId(scene, actor name, order)`: FNV-1a 64 of the three with the top bit set. `order` counts the enemies of that name seen in this scene visit, first seen first (one walk ordered by x, then z) | Stalchild were seen with hash ~0 (Caleb's test, 2026-11-09). The n-th Stalchild in game A and the n-th in game B get the same id, so a hit on one shows on the other, even when each game spawned its own near its own Link. Positions are not shared yet, so the two may stand in different places; a later rule can make the scene host's game the only spawner and hide the others' extras |
+| Made by the scene with no hash (spawners, waves; the night Stalchild now go by "Rolled spawns" below) | kind placed, value = `SceneSpawnId(scene, actor name, order)`: FNV-1a 64 of the three with the top bit set. `order` counts the enemies of that name seen in this scene visit, first seen first (one walk ordered by x, then z) | Stalchild were seen with hash ~0 (Caleb's test, 2026-11-09). The n-th Stalchild in game A and the n-th in game B get the same id, so a hit on one shows on the other, even when each game spawned its own near its own Link. Positions are not shared yet, so the two may stand in different places; a later rule can make the scene host's game the only spawner and hide the others' extras |
 
 A placed id is only good inside one scene, since a scene can be loaded on one game and not the other. Messages that name a placed object say its scene once, in `OBJECT_PRESENT`.
+
+### Rolled spawns (the night Stalchild)
+
+Caleb (2026-11-09): every player must see the same Stalchild rise out of the ground at the same spot, at the same time. The scene-order ids above paired each game's own rolls, which rose in different places and chased their own Link.
+
+**The spawner** (static reading of main, build e0f3ccfaf50065ae; not yet run):
+
+| What | Where | Status |
+|---|---|---|
+| The spawner is the scene component `AutoPlacementMgr`, not an AI module. Its parameters are `Work/Scene/Component/AutoPlacementMgrParam/Enemy_Stalchild.game__scene__AutoPlacementMgrParam.gyml` (child Hyrule Field; the adult field also has `Enemy_Stalchild_Big_Adult`), named by `GameBancParam/HyruleField_Child`. The field's logic modules `HyruleField_Level_StalchildArea_Walking` and `_Riding` turn it on by area | romfs | Read |
+| Scene component 0x23: the AI nodes get it with 0xb2af20 (scene) and 0xb2b7b0(scene, 0x23). Created by 0xf45d30 (0x96c8 bytes), vtable 0x4ba0628 | 0x28b7e20 (`OneShotAutoPlacementMgrRequestDisappearAll`'s run, which writes 0x11940 to mgr +0x74), 0x32b5424 | Read |
+| Its spot rule is in C++, read from the parameter file: `StalchildFrontSpawnDirRand`, `StalchildBackSpawnAddBaseDir`, `StalchildBackSpawnRandDirOnBase`, `StalchildLineSpawnNearDistance`, `...MinGap`, `...MaxGap`, `...MaxAngleCamZ`, `StalchildBigCreateDistance`, `MaxCreateStalchildByFixedSpawn`: a Stalchild rises in front of or behind Link, or several in a line, at a random distance and angle | the reader 0x325fb2c | Names read; the code that rolls was not traced |
+| One spawn: 0x326e140(request, element) builds the create argument (name at request +0x1818, place at +0x14ac) and calls `requestCreateActorAsync` (0x372a70) at 0x326e874 | | Read |
+| The Stalchild asks the manager which rise to play (`OneshotAutoPlacementMgrReturnStalchildAnimeIndex`) | node name only | Not traced |
+| The game's own ways to stop it: `ExecuteAutoPlacementMgrSetManualForbidAutoPlacementArea` (run 0x262b2c0) works on components of the player actor, not on the manager; `ForbidAutoPlacementArea` actors and the `StalchildAutoPlacementStopMask` tag stop it by area. No plain on/off byte like TotK's (`mgr+0x1a`) was found | | Read; not used |
+
+**The rule** (branch `objects-6`, `coop_objects_sync.cpp`, tested in `objects_test.cpp`):
+
+- Each game knows the others' scenes from their `PLAYER_SAMPLE`s (a scene older than 5 s does not count). The **decider** of a scene is the lowest player number in it. Only the decider's rolls are kept.
+- On the decider, a new hashless `Enemy_Stalchild` or `Enemy_Stalchild_Big` gets a made id (maker = the decider, its own counter) and is sent once as `OBJECT_SPAWN` (name, place, rotation, animation, life); then samples as for any enemy it owns, and `OBJECT_REMOVE` (dead or gone) when it leaves the list.
+- On every other game in the scene, its own roll is deleted on the next walk with the game's delete request (0xa6490), the same way as a taken pickup, and counted. The spawner is not stopped, so it may roll again and be deleted again: the log line `rolls decided by player N, C copies to make, R own rolls deleted` shows how often.
+- The decider's `OBJECT_SPAWN` makes the spawn director (`CoopSpawn::Director::SetEnemies`, keys with the top bit set, `place` off) create the same actor by name at the decider's spot. When it is on the list it takes the decided id; from then on the Mover places it where the decider's one is and plays the decider's animation at its frame (so the rise from the ground is the decider's rise). A fresh Stalchild within 4 m of a copy still being made is not deleted for 3 s, since it is likely that copy before the director lists it. At the decider's `OBJECT_REMOVE` the director deletes the copy.
+- The director needs the svc cave (`LICHII_COOP_PUPPET` or `LICHII_COOP_SPAWN`), as the Mover does.
+- Not done: a decider who leaves the scene (its made ones are then gone for the server too, and the next player starts rolling); the copy's rise starts when `OBJECT_SPAWN` arrives, so it is about one round trip later than the decider's (the Mover then sets it to the decider's frame).
 
 ## Design
 

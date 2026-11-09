@@ -75,6 +75,7 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
+#include "coop_spawn.h"
 
 namespace CoopObjects {
 namespace {
@@ -103,6 +104,8 @@ constexpr u32 kStateAlive = 4;
 constexpr u64 kActorVtable = 0x4b25e18;
 constexpr u64 kSetMatrix = 0x4c6580;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
+// Rolled enemies' copies in the spawn director: their keys have the top bit.
+constexpr u64 kEnemyKey = u64{1} << 63;
 constexpr unsigned kMoverCallerOrder = 30;  // after the puppets, spawn copies (10) and fairies (20)
 // Animations (docs/puppet.md "Animation"): the AS controller is
 // [[[actor + 0x270] + 0x40] + 0x18] + 0x18; slot 0 is [controller + 0x20];
@@ -715,6 +718,7 @@ public:
                 return true;
             }();
             (void)registered;
+            CoopSpawn::UseDirector();  // makes the rolled enemies another game decided
             sync_.SetHurt(hurt_);
             take_at_ = server_now_us + 3'000'000;
             LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
@@ -724,7 +728,37 @@ public:
         sharing_ = true;
         std::vector<coop::protocol::Message> send;
         std::vector<LifeWrite> writes;
+        {
+            std::map<std::uint64_t, std::uint64_t> live;
+            for (const auto& [key, actor] : CoopSpawn::TheDirector().Live()) {
+                if ((key & kEnemyKey) != 0) {
+                    live[key & ~kEnemyKey] = actor;
+                }
+            }
+            sync_.Bind(live);
+        }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        {
+            std::vector<CoopSpawn::Copy> enemies;
+            for (const EnemyCopy& e : sync_.Creates()) {
+                CoopSpawn::Copy c;
+                c.key = e.key | kEnemyKey;
+                c.actor = e.name;
+                c.position = e.position;
+                c.act = e.removed ? CoopSpawn::Act::remove : CoopSpawn::Act::show;
+                c.place = false;
+                enemies.push_back(std::move(c));
+            }
+            if (enemies.size() != enemies_logged_ || sync_.Refused() != refused_logged_ ||
+                sync_.Decider() != decider_logged_) {
+                enemies_logged_ = enemies.size();
+                refused_logged_ = sync_.Refused();
+                decider_logged_ = sync_.Decider();
+                LOG_INFO(Core, "coop: objects: rolls decided by player {}, {} copies to make, {} own rolls deleted",
+                         decider_logged_, enemies_logged_, refused_logged_);
+            }
+            CoopSpawn::TheDirector().SetEnemies(main_, std::move(enemies));
+        }
         for (const Seen& s : seen) {
             if (!s.animation || !IsShared(s.name)) {
                 continue;
@@ -750,7 +784,13 @@ public:
         session->with_client([&](coop::net::Client& c) {
             for (const auto& m : send) {
                 const bool sent = c.send(m);
-                if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
+                if (const auto* sp = std::get_if<coop::protocol::ObjectSpawn>(&m)) {
+                    LOG_INFO(Core, "coop: objects: rolled {} shared as made {}{}", sp->actor,
+                             sp->id.value, sent ? "" : " (not sent)");
+                } else if (const auto* rm = std::get_if<coop::protocol::ObjectRemove>(&m)) {
+                    LOG_INFO(Core, "coop: objects: rolled made {} gone{}", rm->id.value,
+                             sent ? "" : " (not sent)");
+                } else if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
                     LOG_INFO(Core, "coop: objects: share damage {} to {:#x} epoch {}{}", d->amount,
                              d->id.value, d->epoch, sent ? "" : " (not sent)");
                 } else if (const auto* p = std::get_if<coop::protocol::ObjectPresent>(&m);
@@ -1244,6 +1284,9 @@ private:
     unsigned share_frame_ = 0;
     bool sharing_ = false;
     std::size_t present_logged_ = ~std::size_t{0};
+    std::size_t enemies_logged_ = 0;
+    std::size_t refused_logged_ = 0;
+    std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;

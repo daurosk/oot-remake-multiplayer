@@ -1,5 +1,6 @@
 #include "coop/protocol/codec.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <iterator>
@@ -345,6 +346,112 @@ Error encode_body(const TestPayload& m, Writer& w) {
   return Error::none;
 }
 
+// A (hash, index) pair as one number, to find a flag given twice.
+std::uint64_t flag_key(const FlagEntry& e) {
+  return (static_cast<std::uint64_t>(e.hash) << 16) | e.index;
+}
+
+Error check_flag(const FlagEntry& e) {
+  switch (e.kind) {
+    case FlagKind::boolean:
+      return e.value <= 1 ? Error::none : Error::bad_value;
+    case FlagKind::int32:
+    case FlagKind::uint32:
+      return Error::none;
+    case FlagKind::float32:
+      return std::isfinite(std::bit_cast<float>(e.value)) ? Error::none : Error::bad_value;
+  }
+  return Error::bad_value;
+}
+
+bool has_duplicate(std::span<const FlagEntry> flags) {
+  std::vector<std::uint64_t> keys;
+  keys.reserve(flags.size());
+  for (const auto& e : flags) keys.push_back(flag_key(e));
+  std::sort(keys.begin(), keys.end());
+  return std::adjacent_find(keys.begin(), keys.end()) != keys.end();
+}
+
+// The rules every flag list follows: min_count to kMaxFlagEntries entries,
+// each valid, no (hash, index) twice.
+Error check_flags(const std::vector<FlagEntry>& flags, std::size_t min_count) {
+  if (flags.size() > kMaxFlagEntries) return Error::too_large;
+  if (flags.size() < min_count) return Error::bad_value;
+  for (const auto& e : flags) COOP_TRY(check_flag(e));
+  if (has_duplicate(flags)) return Error::bad_value;
+  return Error::none;
+}
+
+void write_flags(const std::vector<FlagEntry>& flags, Writer& w) {
+  w.u16(static_cast<std::uint16_t>(flags.size()));
+  for (const auto& e : flags) {
+    w.u32(e.hash);
+    w.u16(e.index);
+    w.u8(static_cast<std::uint8_t>(e.kind));
+    w.u32(e.value);
+  }
+}
+
+Error encode_body(const JoinPartner& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if (!valid_player(m.other_player) || m.other_player == m.player_number) {
+    return Error::bad_value;
+  }
+  switch (m.kind) {
+    case JoinKind::request:
+    case JoinKind::refuse:
+      if (m.target) return Error::bad_value;
+      break;
+    case JoinKind::accept:
+      if (!m.target) return Error::bad_value;
+      COOP_TRY(check_string(m.target->scene, kMaxSceneChars));
+      if (m.target->scene.empty()) return Error::bad_value;
+      if (!all_finite(m.target->position) || !all_finite(m.target->rotation)) {
+        return Error::bad_value;
+      }
+      break;
+    default:
+      return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.u8(m.other_player);
+  w.u16(m.request_id);
+  w.u8(static_cast<std::uint8_t>(m.kind));
+  if (m.kind == JoinKind::accept) {
+    w.str(m.target->scene);
+    for (float f : m.target->position) w.f32(f);
+    for (float f : m.target->rotation) w.f32(f);
+  } else if (m.kind == JoinKind::refuse) {
+    w.u8(static_cast<std::uint8_t>(m.reason));
+  }
+  return Error::none;
+}
+
+Error encode_body(const FlagSet& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_flags(m.flags, 1));
+  w.u8(m.player_number);
+  write_flags(m.flags, w);
+  return Error::none;
+}
+
+Error encode_body(const FlagState& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_flags(m.flags, 1));
+  w.u8(m.player_number);
+  write_flags(m.flags, w);
+  return Error::none;
+}
+
+Error encode_body(const FlagSnapshot& m, Writer& w) {
+  if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
+  COOP_TRY(check_flags(m.flags, 0));
+  w.u16(m.part);
+  w.u16(m.part_count);
+  write_flags(m.flags, w);
+  return Error::none;
+}
+
 // ---------------------------------------------------------------- bodies: decode
 
 Error decode_body(Reader& r, Hello& m) {
@@ -515,6 +622,79 @@ Error decode_body(Reader& r, TestPayload& m) {
   return Error::none;
 }
 
+Error decode_body(Reader& r, JoinPartner& m) {
+  m = JoinPartner{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_READ(r.u8(m.other_player));
+  if (!valid_player(m.other_player) || m.other_player == m.player_number) {
+    return Error::bad_value;
+  }
+  COOP_READ(r.u16(m.request_id));
+  std::uint8_t kind = 0;
+  COOP_READ(r.u8(kind));
+  switch (static_cast<JoinKind>(kind)) {
+    case JoinKind::request:
+      break;
+    case JoinKind::accept: {
+      auto& t = m.target.emplace();
+      COOP_TRY(r.str(t.scene, kMaxSceneChars));
+      if (t.scene.empty()) return Error::bad_value;
+      COOP_TRY(read_floats(r, t.position));
+      COOP_TRY(read_floats(r, t.rotation));
+      break;
+    }
+    case JoinKind::refuse: {
+      std::uint8_t v = 0;
+      COOP_READ(r.u8(v));
+      m.reason = static_cast<JoinRefuseReason>(v);
+      break;
+    }
+    default:
+      return Error::bad_value;  // the rest of the body cannot be read
+  }
+  m.kind = static_cast<JoinKind>(kind);
+  return Error::none;
+}
+
+Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count) {
+  std::uint16_t count = 0;
+  COOP_READ(r.u16(count));
+  if (count > kMaxFlagEntries || count < min_count) return Error::bad_value;
+  if (r.left() < count * kFlagEntrySize) return Error::truncated;
+  flags.resize(count);
+  for (auto& e : flags) {
+    std::uint8_t kind = 0;
+    COOP_READ(r.u32(e.hash));
+    COOP_READ(r.u16(e.index));
+    COOP_READ(r.u8(kind));
+    COOP_READ(r.u32(e.value));
+    e.kind = static_cast<FlagKind>(kind);
+    COOP_TRY(check_flag(e));
+  }
+  if (has_duplicate(flags)) return Error::bad_value;
+  return Error::none;
+}
+
+Error decode_body(Reader& r, FlagSet& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  return read_flags(r, m.flags, 1);
+}
+
+Error decode_body(Reader& r, FlagState& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  return read_flags(r, m.flags, 1);
+}
+
+Error decode_body(Reader& r, FlagSnapshot& m) {
+  COOP_READ(r.u16(m.part));
+  COOP_READ(r.u16(m.part_count));
+  if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
+  return read_flags(r, m.flags, 0);
+}
+
 template <typename T>
 Error decode_as(Reader& body, Message& out) {
   T value{};
@@ -554,6 +734,8 @@ MessageType type_of(const Message& message) {
       MessageType::player_joined, MessageType::player_left, MessageType::ping,
       MessageType::pong,          MessageType::player_status, MessageType::chat,
       MessageType::player_sample, MessageType::test_payload,
+      MessageType::join_partner,  MessageType::flag_set,    MessageType::flag_state,
+      MessageType::flag_snapshot,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -566,6 +748,10 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::player_sample:
     case MessageType::test_payload:
       return kChannelPlayerSamples;
+    case MessageType::flag_set:
+    case MessageType::flag_state:
+    case MessageType::flag_snapshot:
+      return kChannelProgress;
     default:
       return kChannelSession;
   }
@@ -582,7 +768,12 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::pong:
     case MessageType::player_status:
     case MessageType::chat:
+    case MessageType::join_partner:
       return channel == kChannelSession;
+    case MessageType::flag_set:
+    case MessageType::flag_state:
+    case MessageType::flag_snapshot:
+      return channel == kChannelProgress;
     case MessageType::player_sample:
       return channel == kChannelPlayerSamples;
     case MessageType::test_payload:
@@ -606,6 +797,10 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::chat:
     case MessageType::player_sample:
     case MessageType::test_payload:
+    case MessageType::join_partner:
+    case MessageType::flag_set:
+    case MessageType::flag_state:
+    case MessageType::flag_snapshot:
       return true;
   }
   return false;
@@ -622,7 +817,8 @@ auto* player_field(M& message) {
       [&field](auto& m) {
         using T = std::remove_cvref_t<decltype(m)>;
         if constexpr (std::is_same_v<T, PlayerStatus> || std::is_same_v<T, Chat> ||
-                      std::is_same_v<T, PlayerSample>) {
+                      std::is_same_v<T, PlayerSample> || std::is_same_v<T, JoinPartner> ||
+                      std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState>) {
           field = &m.player_number;
         }
       },
@@ -651,6 +847,10 @@ std::optional<std::uint8_t> sender_of(const Message& message) {
 bool set_sender(Message& message, std::uint8_t player) {
   std::uint8_t* field = player_field(message);
   if (field == nullptr || !valid_player(player)) return false;
+  // A player cannot ask to join itself or answer itself.
+  if (const auto* j = std::get_if<JoinPartner>(&message); j && j->other_player == player) {
+    return false;
+  }
   *field = player;
   return true;
 }
@@ -695,6 +895,10 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::chat: return decode_as<Chat>(body, out);
     case MessageType::player_sample: return decode_as<PlayerSample>(body, out);
     case MessageType::test_payload: return decode_as<TestPayload>(body, out);
+    case MessageType::join_partner: return decode_as<JoinPartner>(body, out);
+    case MessageType::flag_set: return decode_as<FlagSet>(body, out);
+    case MessageType::flag_state: return decode_as<FlagState>(body, out);
+    case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
   }
   return Error::unknown_type;
 }
@@ -720,6 +924,68 @@ std::optional<RefuseReason> check_hello(const Hello& hello,
     return RefuseReason::wrong_game_build;
   }
   return std::nullopt;
+}
+
+}  // namespace coop::protocol
+
+namespace coop::protocol {
+
+std::uint32_t flag_hash(std::string_view name) {
+  // MurmurHash3_x86_32 (Austin Appleby, public domain), seed 0, written out
+  // here so every build hashes a name the same way, whatever the host.
+  constexpr std::uint32_t c1 = 0xcc9e2d51;
+  constexpr std::uint32_t c2 = 0x1b873593;
+  const auto* p = reinterpret_cast<const unsigned char*>(name.data());
+  const std::size_t n = name.size();
+  std::uint32_t h = 0;
+  std::size_t i = 0;
+  for (; i + 4 <= n; i += 4) {
+    std::uint32_t k = static_cast<std::uint32_t>(p[i]) |
+                      (static_cast<std::uint32_t>(p[i + 1]) << 8) |
+                      (static_cast<std::uint32_t>(p[i + 2]) << 16) |
+                      (static_cast<std::uint32_t>(p[i + 3]) << 24);
+    k *= c1;
+    k = std::rotl(k, 15);
+    k *= c2;
+    h ^= k;
+    h = std::rotl(h, 13);
+    h = h * 5 + 0xe6546b64;
+  }
+  std::uint32_t k = 0;
+  switch (n & 3) {
+    case 3: k ^= static_cast<std::uint32_t>(p[i + 2]) << 16; [[fallthrough]];
+    case 2: k ^= static_cast<std::uint32_t>(p[i + 1]) << 8; [[fallthrough]];
+    case 1:
+      k ^= p[i];
+      k *= c1;
+      k = std::rotl(k, 15);
+      k *= c2;
+      h ^= k;
+  }
+  h ^= static_cast<std::uint32_t>(n);
+  h ^= h >> 16;
+  h *= 0x85ebca6b;
+  h ^= h >> 13;
+  h *= 0xc2b2ae35;
+  h ^= h >> 16;
+  return h;
+}
+
+std::optional<std::vector<FlagSnapshot>> split_snapshot(
+    std::span<const FlagEntry> flags) {
+  const std::size_t parts =
+      flags.empty() ? 1 : (flags.size() + kMaxFlagEntries - 1) / kMaxFlagEntries;
+  if (parts > kMaxU16 || has_duplicate(flags)) return std::nullopt;
+  std::vector<FlagSnapshot> out(parts);
+  for (std::size_t i = 0; i < parts; ++i) {
+    out[i].part = static_cast<std::uint16_t>(i);
+    out[i].part_count = static_cast<std::uint16_t>(parts);
+    const std::size_t from = i * kMaxFlagEntries;
+    const std::size_t to = std::min(flags.size(), from + kMaxFlagEntries);
+    out[i].flags.assign(flags.begin() + static_cast<std::ptrdiff_t>(from),
+                        flags.begin() + static_cast<std::ptrdiff_t>(to));
+  }
+  return out;
 }
 
 }  // namespace coop::protocol

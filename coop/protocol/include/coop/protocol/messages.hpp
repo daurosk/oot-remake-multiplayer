@@ -55,6 +55,10 @@ enum class MessageType : std::uint16_t {
   chat = 9,
   player_sample = 10,
   test_payload = 11,
+  join_partner = 12,
+  flag_set = 13,
+  flag_state = 14,
+  flag_snapshot = 15,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -211,9 +215,105 @@ struct TestPayload {
   bool operator==(const TestPayload&) const = default;
 };
 
+// JOIN_PARTNER: a warp to another player's scene, in three steps.
+//   1. The asker sends kind request, other = the player to join.
+//   2. The server relays it to that player, with the asker in the player field.
+//   3. That player answers with kind accept (where it stands) or refuse,
+//      other = the asker; the server relays it back the same way.
+// The server itself answers refuse / not_there when the player to join is
+// not in the session. The request id is the asker's own; the answer echoes
+// it, so a late answer to an older request can be told apart.
+enum class JoinKind : std::uint8_t {
+  request = 0,
+  accept = 1,
+  refuse = 2,
+};
+
+// Kept as a raw number on decode, so a newer build's reason still arrives.
+enum class JoinRefuseReason : std::uint8_t {
+  busy = 1,         // loading, in a cutscene, in a menu or dead
+  declined = 2,     // the player said no
+  cannot_warp = 3,  // a place nobody may warp into (a boss fight, for example)
+  not_there = 4,    // sent by the server: that player is not in the session
+};
+
+// Where the answering player stands, for kind accept.
+struct JoinTarget {
+  std::string scene;  // the game's scene name, 1 to 64 characters
+  Vec3 position{};
+  Quat rotation{};  // x, y, z, w, as in PLAYER_SAMPLE
+  bool operator==(const JoinTarget&) const = default;
+};
+
+struct JoinPartner {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::uint8_t other_player = 1;  // 1 to 4: who to join, or who asked
+  std::uint16_t request_id = 0;
+  JoinKind kind = JoinKind::request;
+  std::optional<JoinTarget> target;  // set only for kind accept
+  JoinRefuseReason reason = JoinRefuseReason::busy;  // read only for kind refuse
+  bool operator==(const JoinPartner&) const = default;
+};
+
+// One shared world flag. The hash is Murmur3 x86 32-bit, seed 0, of the
+// flag's name in the game (flag_hash in codec.hpp). Array flags give the
+// element in index; a plain flag has index 0. The value is 4 bytes on the
+// wire, read by kind.
+enum class FlagKind : std::uint8_t {
+  boolean = 0,   // value 0 or 1
+  int32 = 1,     // two's complement
+  float32 = 2,   // IEEE-754 bits, finite
+  uint32 = 3,    // an enum flag's hash, or any other unsigned value
+};
+
+struct FlagEntry {
+  std::uint32_t hash = 0;
+  std::uint16_t index = 0;
+  FlagKind kind = FlagKind::boolean;
+  std::uint32_t value = 0;  // raw bits; see FlagKind
+  bool operator==(const FlagEntry&) const = default;
+};
+
+// Bytes of one flag entry on the wire: u32 hash, u16 index, u8 kind, u32 value.
+inline constexpr std::size_t kFlagEntrySize = 11;
+// Most entries one FLAG_SET, FLAG_STATE or FLAG_SNAPSHOT may carry. Keeps a
+// message under 45 KB; a larger snapshot is split (split_snapshot).
+inline constexpr std::size_t kMaxFlagEntries = 4096;
+
+// FLAG_SET: a player's game changed shared flags. Goes to the server, which
+// relays it to the host only. 1 to kMaxFlagEntries entries, each (hash,
+// index) at most once.
+struct FlagSet {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::vector<FlagEntry> flags;
+  bool operator==(const FlagSet&) const = default;
+};
+
+// FLAG_STATE: the host's answer, which every player applies, the host
+// included. Sent by the host; the server keeps the values and relays it to
+// everyone else. Same rules for the entries as FLAG_SET.
+struct FlagState {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the host, 1 to 4 relayed
+  std::vector<FlagEntry> flags;
+  bool operator==(const FlagState&) const = default;
+};
+
+// FLAG_SNAPSHOT: every shared flag, in parts 0 to part_count - 1, sent in
+// order on the progress channel. The server sends it to a player who joins;
+// a new host sends it to the server to start the table. An empty table is
+// one part with no entries. 0 to kMaxFlagEntries entries per part, each
+// (hash, index) at most once in a part.
+struct FlagSnapshot {
+  std::uint16_t part = 0;
+  std::uint16_t part_count = 1;  // at least 1, more than part
+  std::vector<FlagEntry> flags;
+  bool operator==(const FlagSnapshot&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
-                             TestPayload>;
+                             TestPayload, JoinPartner, FlagSet, FlagState,
+                             FlagSnapshot>;
 
 MessageType type_of(const Message& message);
 

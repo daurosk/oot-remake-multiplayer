@@ -54,18 +54,22 @@ std::optional<std::uint16_t> hello_protocol_version(
 
 // Checks a decoded message against where it came from, before acting on it:
 // that side may send this type (may_send), on this channel
-// (allowed_on_channel), and the player field of PLAYER_STATUS, CHAT and
-// PLAYER_SAMPLE is 0 from a client and 1 to 4 from the server. The server
-// still knows who the client is from the connection, never from the message.
+// (allowed_on_channel), and the player field of PLAYER_STATUS, CHAT,
+// PLAYER_SAMPLE, JOIN_PARTNER, FLAG_SET and FLAG_STATE is 0 from a client and
+// 1 to 4 from the server; a JOIN_PARTNER from the server also names a player
+// other than its sender. The server still knows who the client is from the
+// connection, never from the message. Who is host (FLAG_STATE) is for the
+// server and client to check, not the codec.
 Error check_received(const Message& message, Sender from, std::uint8_t channel);
 
-// The player field of PLAYER_STATUS, CHAT or PLAYER_SAMPLE; nothing for the
-// other messages.
+// The player field of PLAYER_STATUS, CHAT, PLAYER_SAMPLE, JOIN_PARTNER,
+// FLAG_SET or FLAG_STATE; nothing for the other messages.
 std::optional<std::uint8_t> sender_of(const Message& message);
 
-// For the server, before relaying PLAYER_STATUS, CHAT or PLAYER_SAMPLE: writes
+// For the server, before relaying a message with a player field (above): writes
 // the sending player's number (1 to 4) into the player field. False, and the
-// message unchanged, for any other message or a number out of range.
+// message unchanged, for any other message, a number out of range, or a
+// JOIN_PARTNER whose other player is that same number.
 bool set_sender(Message& message, std::uint8_t player);
 
 // The server's handshake check of a decoded HELLO: the reason to refuse it,
@@ -73,5 +77,16 @@ bool set_sender(Message& message, std::uint8_t player);
 // taken and bad name are for the server to decide.
 std::optional<RefuseReason> check_hello(const Hello& hello,
                                         std::string_view expected_game_build_id);
+
+// The hash of a flag name for FlagEntry: Murmur3 x86 32-bit, seed 0, over the
+// name's bytes.
+std::uint32_t flag_hash(std::string_view name);
+
+// Splits a whole flag table into FLAG_SNAPSHOT parts of at most
+// kMaxFlagEntries entries each, in order. An empty table gives one empty part.
+// Nothing when the table needs more than 65535 parts or holds a (hash, index)
+// twice.
+std::optional<std::vector<FlagSnapshot>> split_snapshot(
+    std::span<const FlagEntry> flags);
 
 }  // namespace coop::protocol

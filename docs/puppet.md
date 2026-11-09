@@ -173,6 +173,44 @@ The pose is written from the handler itself, straight into the puppet's +0x31c a
 
 Option (b) was to draw a Link model over the picture from the emulator. It needs a renderer of our own for a skinned model, the model and animations read from the game files at run time, the game's depth buffer for anything to hide behind, and the game's lighting to not look pasted on. The overlay today draws flat markers in a separate window ([overlay.md](overlay.md)). That is far more work for a worse result, and it never gives the puppet a place in the world that later steps (shared enemies, hits) can use. It stays as the markers we already have.
 
+## Pack
+
+`tools/puppet_pack` builds the two puppet packs on the player's PC from their own game files. Nothing from the game is in the repository: the tool reads the romfs and writes a LayeredFS mod.
+
+```
+<repo venv python> tools/puppet_pack/build.py --romfs <extracted romfs> --user-dir <emulator>\user
+```
+
+That writes the mod `user\load\0400486024DEC000\coop-puppet\` (`--mod-dir` picks another folder, `--mod-name` another name). Python 3 with the `zstandard` package. It never changes the romfs, and it rebuilds the tables from the game's copies each time, so running it again is safe.
+
+| Mod file (under `romfs\`) | What |
+|---|---|
+| `Pack\Actor\CoopPuppet_Child.pack.zs` | 10 files: our ActorParam and the player's own component files it refers to |
+| `Pack\Actor\CoopPuppet_Adult.pack.zs` | 9 files, the same for adult Link |
+| `RSDB\ActorInfo.Product.111.rstbl.byml.zs` | The game's table plus a row for each puppet |
+| `RSDB\GameActorInfo.Product.111.rstbl.byml.zs` | The game's table plus a row `{__RowId}` for each |
+| `System\Resource\ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs` | The game's size table plus the new entries |
+| `..\coop_puppet.json` | What was made, from which files (with their SHA-256) |
+
+The puppet's ActorParam has no `$parent`: it is `Player_<Child|Adult>` merged with `Player_Base`, keeping only `ASRef`, `ASInfoRef`, `ASOptimize`, `AnimationRef`, `ModelInfoRef`, `ModelBindRef`, `BoneBindRef`, `LODRef` and `LocalDepthShadowRef`. It adds the shared defaults the simple event actors use (`ActorLogicSimpleActor`, `PreActorSetting/ActorOnly`, `ActorSystemSetting/GameActorDefault`, `WorldInfoParam/Default`, `XLink/ActorBasic`). Left out: input, camera target, physics, equipment, life, AI, the `Player` actor name, ELink and SLink (effects and sound; add later if wanted). The child puppet uses `AS/Player_Child.root.asb` and the `Player_Child` model, the adult one `AS/Player_Adult.root.asb` and `Player_Adult`, with the player's own animation resource lists.
+
+What the game needs for a new actor, read from the files (**checked**) and the TotK engine (**inferred**):
+
+| Item | Finding | Status |
+|---|---|---|
+| Pack format | SARC, zstd with the `pack.zsdic` dictionary (id 4 in this game; the tool picks it by name and the frame's id, never a fixed number). Members sorted by name hash, data aligned to 8. A SARC the tool writes from a game pack's members is byte-identical to the game's | Checked |
+| What a pack holds | The actor's ActorParam and every component file it refers to that is not shared. Shared defaults (`LODParam/Default`, `XLink/ActorBasic` and the like) are in no actor pack. Models, AS and animations are loose romfs files (`Model/`, `AS/`) found by name | Checked |
+| `RSDB/ActorInfo` | Every actor has a row (8,363 rows, sorted by `__RowId`): model name, animation resources, radii, `InstanceHeapSize`. The puppet's row is the player's with `ActorName`, `ELinkUserName` and `SLinkUserName` removed, `CalcRadius` 100000 and `CoreUsedLevel` 0 | Checked as data; that a create fails without a row is inferred from TotK |
+| `RSDB/GameActorInfo` | Every actor has a row too (8,363); `Player_Event` has only `__RowId` | Checked as data |
+| Size table | `RESTBL` v1: (crc32 of the path without `.zs`, size) rows sorted by crc, then 10 named rows for colliding paths. Packs are listed as `Pack/Actor/<name>.pack` with about the unpacked size plus 330 bytes; an ActorParam with about 6 to 8 KB. New entries: the pack (unpacked size rounded up plus 4 KB) and our ActorParam (the player's value). The two RSDB tables' entries are raised by their growth plus 4 KB | Checked as data; that the game needs them is inferred from TotK |
+| RSDB and size table compression | zstd without a dictionary | Checked |
+| BYML | Version 7. The tool's writer gives the same size as the game's for ActorInfo and GameActorInfo (byte-identical for GameActorInfo and the pack members) because equal nodes are written once | Checked |
+| Uncompressed `.pack` | Not tried: the tool writes `.pack.zs` like the game | |
+
+**Load test.** `tools/puppet_pack/place_test.py` adds actors to one scene file of a built mod (a throwaway one), for example both puppets and a cow as a control in `Banc/KakarikoVillage/KakarikoVillage_Child_Dynamic.bcett.byml.zs`. Run once (2026-11-08) in a portable copy of the kit (Fritchii v5 coop build, `.nup` loaded with `-g`): the game booted and played with the mod, but **the mod was not applied at all**. The log has `Patching RomFS` and never `RomFS: LayeredFS patches applied successfully`, and a second run with a deliberately broken 64-byte `ActorInfo` in the mod folder also booted into Kakariko with every actor. So on this build `user\load\<title id>\<mod>\romfs` does nothing for a `.nup`, even though `RomFSFactory::OpenCurrentProcess` calls `PatchRomFS` for it; which early return in `ApplyLayeredFS` it takes was not found. Until the emulator applies LayeredFS to a `.nup` (a `lichii` patch, or loading the game another way), the packs cannot be proven in game.
+
+What is proven: the packs, tables and size table parse back with the tool's readers, the tables keep their sort order, and the tool's own tests (`tools/puppet_pack/tests/test_puppet_pack.py`, synthetic data) pass.
+
 ## Next step
 
 Prove the create path with the smallest patch, before the pack exists:

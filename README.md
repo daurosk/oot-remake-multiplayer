@@ -19,11 +19,11 @@ Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part
 |---|---|
 | 0. Transport, server and two clients on one PC | Done: ENet server and client, wire protocol, `tools/coop_test` (10 minute soak runs pass on one PC). Two-PC run not yet done. |
 | 1. Presence: other players shown as markers | Done on one PC: player sampling and smoothing ([docs/presence.md](docs/presence.md)), the emulator hook with `coop.ini` settings, a status panel and markers drawn from the game's camera ([docs/lichii.md](docs/lichii.md)). |
-| 2. Puppet Link in the world | In progress: Link's animation is read and sent; the puppet pack is built from the player's own game files ([docs/puppet.md](docs/puppet.md)) and loads in game; spawning it where the other player stands works on a branch, animation not yet. What each player wears is read and sent. |
-| 3. Scenes, following and cutscenes | In progress |
-| 4. Shared progress (chests, keys, doors, songs) | In progress: world flags shared through the host, checked live between two games (a chest opened in one is open in the other, [docs/flags.md](docs/flags.md)); counts that add up across players (small keys, Skulltula tokens, heart pieces) in the protocol and server; which items are shared and which stay per player is set ([docs/items.md](docs/items.md)), the emulator side on a branch. |
-| 5. Shared enemies and objects | In progress: the game's actor list, life and damage read live ([docs/objects.md](docs/objects.md)); sync not yet. |
-| 6. Chat, player list, reconnects | Mostly done: reconnects and rejoining after a crash are in; the host moves to another player when one leaves; the chat box and player list work on a branch. |
+| 2. Puppet Link in the world | In progress: the puppet pack is built from the player's own game files ([docs/puppet.md](docs/puppet.md)); each game shows the other player's Link where they stand, it follows them and goes when they leave (checked in game on one PC). It stands still in a T-pose: playing Link's animation is on a branch. What each player wears is read and sent, not yet put on the puppet. |
+| 3. Scenes, following and cutscenes | In progress: the rule (puppets only in your scene, held or hidden in cutscenes) is in and tested; the puppet uses it on a branch. The join-partner warp was dropped. |
+| 4. Shared progress (chests, keys, doors, songs) | Done on one PC: world flags shared through the host ([docs/flags.md](docs/flags.md)); items, songs and one-time pickups shared while rupees and the rest stay per player ([docs/items.md](docs/items.md)); small keys, Skulltula tokens and heart pieces add up across players. Checked live between two games. |
+| 5. Shared enemies and objects | In progress: the game's actor list, life and damage read live ([docs/objects.md](docs/objects.md)); the protocol and server (owner and damage routing) are in; the emulator side is on a branch. |
+| 6. Chat, player list, reconnects | Done on one PC: reconnects and rejoining after a crash; the host moves to another player when one leaves; an in-game chat box (Enter) and player list (Tab). |
 | Recomp port of stages 0 to 6 | Waits for a playable recomp |
 
 The emulator side is a small patch on Frizti's Fritchii, pinned in [lichii/PIN](lichii/PIN); `lichii/fetch.ps1` fetches that source and applies the patches. See [lichii/README.md](lichii/README.md).

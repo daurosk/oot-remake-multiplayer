@@ -20,6 +20,13 @@ $ini = Join-Path $emu 'user\config\coop.ini'
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
+# A newer release? One short question to GitHub; nothing is shown when there is none or no
+# network. Update.bat does the update.
+$updater = Join-Path $PSScriptRoot 'update.ps1'
+if (Test-Path $updater) {
+    try { & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $updater -Check -Kit $kit } catch { }
+}
+
 $current = Read-CoopIni $ini
 $ask = $Mode -eq 'change'
 $serverGiven = [bool]$Server

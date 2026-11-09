@@ -90,6 +90,11 @@ class Session {
     return frame(reader.read(), flags);
   }
 
+  // Emulator thread: the game process changed (a new game, or the same game
+  // started again). The next connected frame() sends the status again and
+  // starts velocity afresh, as after a WELCOME; the connection is kept.
+  void reset() { reset_sampler_ = true; }
+
   // Network thread: sends what frame() queued, runs the client once without
   // waiting, and handles every event that came.
   void service();

@@ -26,11 +26,14 @@
 #include <string_view>
 #include <thread>
 
+#include <fmt/format.h>
+
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/loader/loader.h"
 #include "core/memory.h"
 
 #include "coop/host/game_memory.hpp"
@@ -58,6 +61,17 @@ constexpr auto kFrameStale = std::chrono::seconds(1);
 constexpr auto kCameraStale = std::chrono::milliseconds(250);
 // With LICHII_COOP_DEBUG_CAMERA, how often the local player's projection is logged.
 constexpr std::uint64_t kDebugLogFrames = 120;
+
+// The overlay's defaults are for centimetres; Ocarina's world unit is about a
+// metre (the first run: a child Link walks about 2.5 units a second and the
+// camera follows him about 4 units behind). So markers are 24 px across at
+// 10 units, and nothing nearer than half a unit is drawn.
+coop::overlay::Settings MarkerSettings() {
+    coop::overlay::Settings s;
+    s.reference_distance = 10.0f;
+    s.near_distance = 0.5f;
+    return s;
+}
 
 // An environment variable that is set and not "0".
 bool EnvFlag(const char* name) {
@@ -323,6 +337,23 @@ private:
 
         if (log) {
             LogSelf(view, *camera, c, result);
+            for (const auto& other : view.others) {
+                std::string where = "not drawn";
+                for (const auto& item : result.items) {
+                    if (item.number == other.number) {
+                        where = fmt::format("at {:.0f},{:.0f}{}", item.marker.x, item.marker.y,
+                                            item.edge ? " (edge arrow)" : "");
+                    }
+                }
+                for (const auto& skipped : result.skipped) {
+                    if (skipped.number == other.number) {
+                        where = std::string("skipped: ") + WhyText(skipped.why);
+                    }
+                }
+                LOG_INFO(Core, "coop: camera debug: P{} at ({:.1f}, {:.1f}, {:.1f}) {}",
+                         other.number, other.position[0], other.position[1], other.position[2],
+                         where);
+            }
         }
     }
 
@@ -383,8 +414,15 @@ private:
         }
         if (process != process_) {
             process_ = process;
-            base_ = FindMain(process);
+            base_ = FindMain(system, process);
             LOG_INFO(Core, "coop: game build {}, main at {:#x}", build, base_);
+            if (debug_camera_) {
+                for (const auto& [address, name] : Modules(system, process)) {
+                    LOG_INFO(Core, "coop: debug: module {} at {:#x}", name, address);
+                }
+            }
+            // A new game process: its first status goes again.
+            session_->reset();
         }
         view.game = true;
         EmulatorMemory memory(system.ApplicationMemory(), base_);
@@ -397,9 +435,22 @@ private:
         return reading;
     }
 
-    static u64 FindMain(Kernel::KProcess* process) {
-        const auto modules = Core::FindModules(process);
-        for (const auto& [address, name] : modules) {
+    // The loader's own list (the NSOs it loaded, by file name), else the
+    // modules found in memory by their path names. Fritchii v5 maps Ocarina's
+    // code so that the memory search finds nothing, and the emulator's
+    // FindMainModuleEntrypoint then gives the code region start (0x8000000),
+    // not main; its own Ocarina code (svc_nx2_oot_present.cpp) does the same.
+    static Loader::AppLoader::Modules Modules(Core::System& system, Kernel::KProcess* process) {
+        Loader::AppLoader::Modules modules;
+        if (system.GetAppLoader().ReadNSOModules(modules) != Loader::ResultStatus::Success ||
+            modules.empty()) {
+            modules = Core::FindModules(process);
+        }
+        return modules;
+    }
+
+    static u64 FindMain(Core::System& system, Kernel::KProcess* process) {
+        for (const auto& [address, name] : Modules(system, process)) {
             if (name == "main" || name.starts_with("main.")) {
                 return address;
             }
@@ -536,7 +587,7 @@ private:
     const bool flip_y_;        // LICHII_COOP_CAMERA_FLIP_Y: if markers are upside down
 
     // Present thread only.
-    coop::overlay::Overlay overlay_;
+    coop::overlay::Overlay overlay_{MarkerSettings()};
     bool camera_seen_ = false;
     std::uint64_t frames_ = 0;
     Kernel::KProcess* process_ = nullptr;

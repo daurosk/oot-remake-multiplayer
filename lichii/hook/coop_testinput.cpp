@@ -1,6 +1,6 @@
 // Scripted controller input for automatic tests; see coop_testinput.h.
-// The parser has no emulator code (the tests build it alone); the part that
-// drives the emulated pad is only built with LICHII_COOP.
+// The parser and the stepper have no emulator code (the tests build them
+// alone); the part that drives the emulated pad is only built with LICHII_COOP.
 #include "coop_testinput.h"
 
 #include <algorithm>
@@ -126,6 +126,33 @@ bool Keys(std::string_view word, Step& step, std::string& bad) {
     return true;
 }
 
+bool Number(std::string_view word, float& out) {
+    const std::string s(word);
+    char* end = nullptr;
+    const double v = std::strtod(s.c_str(), &end);
+    if (s.empty() || end != s.c_str() + s.size() || !std::isfinite(v) || std::fabs(v) > 1e6) {
+        return false;
+    }
+    out = static_cast<float>(v);
+    return true;
+}
+
+constexpr double kPi = 3.14159265358979323846;
+
+double Wrap(double a) {
+    while (a > kPi) {
+        a -= 2 * kPi;
+    }
+    while (a < -kPi) {
+        a += 2 * kPi;
+    }
+    return a;
+}
+
+constexpr std::uint32_t kGotoTicks = 600;  // 10 s
+constexpr float kMovedM = 0.4f;            // movement that teaches the camera model
+constexpr double kMinMagnitude = 0.45;     // slower near the point, never a crawl
+
 } // namespace
 
 std::optional<Script> Parse(std::string_view text, std::string& error) {
@@ -190,18 +217,48 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
                 return fail("unknown key " + bad);
             }
             (cmd == "STICK" ? step.left : step.right) = s;
+        } else if (cmd == "GOTO") {
+            step.kind = Kind::go;
+            step.ticks = kGotoTicks;
+            if (w.size() < 3 || w.size() > 5 || !Number(w[1], step.x) || !Number(w[2], step.z) ||
+                (w.size() >= 4 && (!Number(w[3], step.radius) || step.radius < 0.2f)) ||
+                (w.size() == 5 && !Ticks(w[4], step.ticks))) {
+                return fail("want: goto X Z [RADIUS] [TICKS], radius at least 0.2");
+            }
+        } else if (cmd == "TOWARD") {
+            step.kind = Kind::toward;
+            if (w.size() < 4 || w.size() > 5 || !Number(w[1], step.x) || !Number(w[2], step.z) ||
+                !Ticks(w[3], step.ticks)) {
+                return fail("want: toward X Z TICKS [KEYS]");
+            }
+            if (w.size() == 5 && !Keys(w[4], step, bad)) {
+                return fail("unknown key " + bad);
+            }
+        } else if (cmd == "WARP") {
+            if (w.size() < 2 || w.size() > 3) {
+                return fail("want: warp SCENE [START]");
+            }
+            step.kind = Kind::warp;
+            step.mark = std::string(w[1]);
+            if (w.size() == 3) {
+                step.start = std::string(w[2]);
+            }
+        } else if (cmd == "GIVE") {
+            if (w.size() != 2) {
+                return fail("want: give ITEM");
+            }
+            step.kind = Kind::give;
+            step.mark = std::string(w[1]);
         } else if (cmd == "MARK") {
             if (w.size() != 2) {
                 return fail("want: mark NAME (one word)");
             }
+            step.kind = Kind::mark;
             step.mark = std::string(w[1]);
         } else {
             return fail("unknown command " + std::string(w[0]));
         }
         script.steps.push_back(std::move(step));
-    }
-    for (const Step& s : script.steps) {
-        script.total_ticks += s.ticks;
     }
     if (script.steps.empty()) {
         error = "no steps";
@@ -210,30 +267,193 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
     return script;
 }
 
-const Step* At(const Script& script, std::uint64_t tick) {
-    std::uint64_t start = 0;
-    for (const Step& s : script.steps) {
-        if (s.ticks == 0) {
-            continue;
-        }
-        if (tick < start + s.ticks) {
-            return &s;
-        }
-        start += s.ticks;
-    }
-    return nullptr;
+Runner::Runner(Script script) : script_(std::move(script)) {}
+
+bool Runner::Steering() const {
+    return index_ < script_.steps.size() && (script_.steps[index_].kind == Kind::go ||
+                                             script_.steps[index_].kind == Kind::toward);
 }
 
-std::vector<const Step*> MarksBetween(const Script& script, std::int64_t from, std::int64_t to) {
-    std::vector<const Step*> marks;
-    std::int64_t start = 0;
-    for (const Step& s : script.steps) {
-        if (s.ticks == 0 && start > from && start <= to) {
-            marks.push_back(&s);
-        }
-        start += s.ticks;
+// The left stick now points at `stick_angle` (none: centred or not ours).
+// A new direction starts a new window to learn from.
+void Runner::Hold(std::optional<double> stick_angle, double now_s) {
+    const bool same = stick_angle && stick_angle_ &&
+                      std::fabs(Wrap(*stick_angle - *stick_angle_)) < 0.2;
+    if (!same) {
+        stick_since_ = now_s;
+        window_pos_.reset();
     }
-    return marks;
+    stick_angle_ = stick_angle;
+}
+
+// Learns the camera from how Link moved while the stick held one direction:
+// from kSettleS after it took that direction, every 0.4 m walked.
+void Runner::Learn(double now_s, std::optional<std::array<float, 2>> player) {
+    if (player && prev_player_ &&
+        std::hypot((*player)[0] - (*prev_player_)[0], (*player)[1] - (*prev_player_)[1]) > 3.0f) {
+        // A jump: a new scene or a warp, with a new camera. Learn again.
+        heading_.reset();
+        mirror_known_ = false;
+        mirror_ = 1.0;
+        window_pos_.reset();
+    }
+    if (player) {
+        prev_player_ = player;
+    }
+    if (!player || !stick_angle_ || now_s - stick_since_ < kSettleS) {
+        return;
+    }
+    if (!window_pos_) {
+        window_pos_ = player;
+        return;
+    }
+    const float dx = (*player)[0] - (*window_pos_)[0];
+    const float dz = (*player)[1] - (*window_pos_)[1];
+    if (std::hypot(dx, dz) < kMovedM) {
+        return;
+    }
+    const double seen = std::atan2(dz, dx);
+    const double stick = *stick_angle_ - kPi / 2;
+    if (heading_ && !mirror_known_) {
+        // The probe: stick off up (right first). Unmirrored, Link walks the
+        // stick's turn from heading; mirrored, the same turn the other way.
+        if (std::fabs(stick) > 0.7) {  // any stick well off up tells the two apart
+            const double plain = std::fabs(Wrap(seen - (*heading_ + stick)));
+            const double flipped = std::fabs(Wrap(seen - (*heading_ - stick)));
+            mirror_ = plain <= flipped ? 1.0 : -1.0;
+            mirror_known_ = true;
+        }
+        window_pos_ = player;
+        return;
+    }
+    const double fresh = Wrap(seen - mirror_ * stick);
+    heading_ = heading_ ? Wrap(*heading_ + 0.5 * Wrap(fresh - *heading_)) : fresh;
+    window_pos_ = player;
+}
+
+void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
+                     std::vector<std::string>& log, std::optional<Camera> camera) {
+    camera_ = camera;
+    Learn(now_s, player);
+    while (index_ < script_.steps.size()) {
+        const Step& s = script_.steps[index_];
+        const double length = static_cast<double>(s.ticks) / kTicksPerSecond;
+        if (s.kind == Kind::mark) {
+            log.push_back("mark " + s.mark);
+            ++index_;  // the next step starts when this one did
+            continue;
+        }
+        if (s.kind == Kind::warp || s.kind == Kind::give) {
+            requests_.push_back(Request{s.kind, s.mark, s.start});
+            ++index_;
+            continue;
+        }
+        if (s.kind == Kind::go) {
+            const bool there =
+                player && std::hypot(s.x - (*player)[0], s.z - (*player)[1]) <= s.radius;
+            if (there || now_s - step_start_ >= length) {
+                if (!there) {
+                    log.push_back("goto timed out at line " + std::to_string(s.line));
+                }
+                ++index_;
+                step_start_ = now_s;
+                aimed_at_ = -1.0;
+                progress_pos_.reset();
+                continue;
+            }
+            Steer(s, now_s, player);
+            return;
+        }
+        if (now_s - step_start_ >= length) {
+            ++index_;
+            step_start_ += length;  // timed steps keep exact time between them
+            aimed_at_ = -1.0;
+            continue;
+        }
+        if (s.kind == Kind::toward) {
+            Steer(s, now_s, player);
+            return;
+        }
+        out_ = Output{s.buttons, s.left, s.right};
+        std::optional<double> angle;
+        if (s.left && (s.left->x != 0 || s.left->y != 0)) {
+            angle = std::atan2(static_cast<double>(s.left->y), s.left->x);
+        }
+        Hold(angle, now_s);
+        return;
+    }
+    out_ = Output{};
+    Hold(std::nullopt, now_s);
+}
+
+void Runner::Steer(const Step& step, double now_s, std::optional<std::array<float, 2>> player) {
+    out_.buttons = step.buttons;
+    out_.right.reset();
+    if (!player) {
+        out_.left = Stick{0, 0};
+        Hold(std::nullopt, now_s);
+        return;
+    }
+    // Keep the last aim for a while so Link walks one way long enough to
+    // learn from; a toward step aims once.
+    const double dist = std::hypot(step.x - (*player)[0], step.z - (*player)[1]);
+    // With the camera given, aim every frame (it turns as Link walks); else
+    // keep an aim long enough to learn from, shorter when close.
+    const double every = camera_ ? 0.0 : (dist > 2.5 ? kAimEveryS : 0.1);
+    const bool keep = aimed_at_ >= 0.0 && out_.left && now_s >= detour_until_ &&
+                      (step.kind == Kind::toward || now_s - aimed_at_ < every);
+    if (keep) {
+        return;
+    }
+    // Stuck (a wall, the other player's puppet): no progress for kStuckS
+    // turns the push a quarter turn, the other side each time, for a moment.
+    if (!progress_pos_ || std::hypot((*player)[0] - (*progress_pos_)[0],
+                                     (*player)[1] - (*progress_pos_)[1]) >= 0.3f) {
+        progress_pos_ = player;
+        progress_at_ = now_s;
+    } else if (now_s - progress_at_ >= kStuckS) {
+        detour_until_ = now_s + kDetourS;
+        detour_side_ = -detour_side_;
+        progress_pos_ = player;
+        progress_at_ = now_s;
+    }
+    const double detour = now_s < detour_until_ ? detour_side_ * kPi / 2 : 0.0;
+    if (camera_) {
+        // Straight from the camera: the stick that walks Link toward the point.
+        double wx = step.x - (*player)[0];
+        double wz = step.z - (*player)[1];
+        const double len = std::hypot(wx, wz);
+        if (len > 1e-6) {
+            wx /= len;
+            wz /= len;
+        }
+        double sx = wx * camera_->right_x + wz * camera_->right_z;
+        double sy = wx * camera_->forward_x + wz * camera_->forward_z;
+        double angle = std::atan2(sy, sx) + detour;
+        const double magnitude = (step.kind == Kind::go && detour == 0.0)
+                                     ? std::clamp(dist / 2.0, kMinMagnitude, 1.0)
+                                     : 1.0;
+        out_.left = Stick{
+            static_cast<std::int32_t>(std::lround(std::cos(angle) * magnitude * kStickMax)),
+            static_cast<std::int32_t>(std::lround(std::sin(angle) * magnitude * kStickMax))};
+        aimed_at_ = now_s;
+        Hold(angle, now_s);
+        return;
+    }
+    // No camera model yet: stick up, then stick right once, and learn from both.
+    double angle = (!heading_ ? kPi / 2 : 0.0) + detour;
+    double magnitude = 1.0;
+    if (heading_ && mirror_known_) {
+        const double want = std::atan2(step.z - (*player)[1], step.x - (*player)[0]);
+        angle = kPi / 2 + mirror_ * Wrap(want - *heading_) + detour;
+        if (step.kind == Kind::go && detour == 0.0) {
+            magnitude = std::clamp(dist / 2.0, kMinMagnitude, 1.0);
+        }
+    }
+    out_.left = Stick{static_cast<std::int32_t>(std::lround(std::cos(angle) * magnitude * kStickMax)),
+                      static_cast<std::int32_t>(std::lround(std::sin(angle) * magnitude * kStickMax))};
+    aimed_at_ = now_s;
+    Hold(angle, now_s);
 }
 
 } // namespace CoopTestInput
@@ -244,10 +464,21 @@ std::vector<const Step*> MarksBetween(const Script& script, std::int64_t from, s
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 
 #include "common/logging.h"
+#include "coop/host/flags.hpp"
+#include "coop/host/game_flags.hpp"
+#include "coop/host/player_reader.hpp"
+#include "coop_cheats.h"
+#include "coop_camera.h"
+#include "coop_flags.h"
+#include "core/arm/debug.h"
 #include "core/core.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/loader/loader.h"
+#include "core/memory.h"
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
 #include "hid_core/hid_types.h"
@@ -258,10 +489,17 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+// What the injector gives the pad: written on the present thread, read on
+// the input thread.
+struct Shared {
+    std::mutex mutex;
+    Output out;
+};
+
 struct Running {
-    std::shared_ptr<const Script> script;
+    std::unique_ptr<Runner> runner;
+    std::shared_ptr<Shared> shared;
     Clock::time_point start;
-    std::int64_t last_tick = -1;
     Core::HID::EmulatedController* controller = nullptr;
 };
 
@@ -272,6 +510,8 @@ struct State {
     std::uintmax_t seen_size = 0;
     bool seen = false;
     unsigned frame = 0;
+    Kernel::KProcess* process = nullptr;
+    u64 main = 0;
     std::optional<Running> running;
 } g_state;  // only touched on the present thread
 
@@ -291,11 +531,6 @@ std::filesystem::path EnvPath() {
 #endif
 }
 
-std::int64_t TickNow(const Running& r) {
-    const auto elapsed = std::chrono::duration<double>(Clock::now() - r.start).count();
-    return static_cast<std::int64_t>(elapsed * kTicksPerSecond);
-}
-
 Core::HID::EmulatedController* PickController(Core::System& system) {
     auto& hid = system.HIDCore();
     auto* player1 = hid.GetEmulatedController(Core::HID::NpadIdType::Player1);
@@ -307,6 +542,106 @@ Core::HID::EmulatedController* PickController(Core::System& system) {
         return handheld;
     }
     return nullptr;
+}
+
+// Link's position (x, z), for goto and toward.
+std::optional<std::array<float, 2>> PlayerXZ(Core::System& system) {
+    auto* process = system.ApplicationProcess();
+    if (process == nullptr) {
+        return std::nullopt;
+    }
+    if (process != g_state.process) {
+        g_state.process = process;
+        Loader::AppLoader::Modules modules;
+        if (system.GetAppLoader().ReadNSOModules(modules) != Loader::ResultStatus::Success ||
+            modules.empty()) {
+            modules = Core::FindModules(process);
+        }
+        g_state.main = 0;
+        for (const auto& [address, name] : modules) {
+            if (name == "main" || name.starts_with("main.")) {
+                g_state.main = address;
+            }
+        }
+        if (g_state.main == 0) {
+            g_state.main = GetInteger(Core::FindMainModuleEntrypoint(process));
+        }
+    }
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    coop::host::PlayerReader reader(memory);
+    const auto p = reader.read_position();
+    if (!p) {
+        return std::nullopt;
+    }
+    return std::array<float, 2>{(*p)[0], (*p)[2]};
+}
+
+// The camera's ground directions from the last frame's world-to-clip matrix
+// (row-major): clip w grows along the view (row 3), clip x to the right
+// (row 0). Nothing when there is no recent camera or it looks straight down.
+std::optional<Runner::Camera> CameraXZ() {
+    const auto frame = CoopCamera::Latest();
+    if (!frame || Clock::now() - frame->at > std::chrono::milliseconds(500)) {
+        return std::nullopt;
+    }
+    const auto& m = frame->clip_from_world;
+    const float fl = std::hypot(m[12], m[14]);
+    const float rl = std::hypot(m[0], m[2]);
+    if (fl < 1e-4f || rl < 1e-4f) {
+        return std::nullopt;
+    }
+    return Runner::Camera{m[12] / fl, m[14] / fl, m[0] / rl, m[2] / rl};
+}
+
+// warp: asks the game's own sequence for a scene change. ChangeBancOnMain
+// changes scene when Sequence_ReservedNextBanc is set (and clears it);
+// ChangeBancOnEvent also reads Sequence_ReservedNextStartPosName. The start
+// name is written first, so it is there when the scene is read.
+void Warp(Core::System& system, const std::string& scene, const std::string& start) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    coop::host::GameFlags flags(memory);
+    const auto banc = coop::host::flag_hash("Sequence_ReservedNextBanc");
+    const auto start_name = coop::host::flag_hash("Sequence_ReservedNextStartPosName");
+    const auto position = coop::host::flag_hash("Sequence_ReservedNextPosition");
+    const auto start_type = flags.find_type(start_name);
+    bool start_ok = start.empty();
+    if (!start.empty() && start_type == 16) {
+        start_ok = coop::host::GameFlags::set_string64_now(memory, start_name, start);
+    }
+    const bool banc_ok = coop::host::GameFlags::set_string64_now(memory, banc, scene);
+    LOG_INFO(Core,
+             "coop: test warp to {} (start {}): scene {} (type {}), start {} (type {}), "
+             "position type {}",
+             scene, start.empty() ? "-" : start, banc_ok ? "set" : "NOT set",
+             flags.find_type(banc).value_or(-1), start_ok ? "set" : "NOT set",
+             start_type.value_or(-1), flags.find_type(position).value_or(-1));
+}
+
+// give: bombs, bow and hookshot are the item flags of each; any other name is
+// given as it is. Needs LICHII_COOP_CHEATS=1 (applied on the co-op frame).
+void Give(const std::string& item) {
+    std::vector<std::string> names;
+    if (item == "bombs") {
+        names = {"PouchData.Item_BombBag_Small.StockNum", "PouchData.Item_Bomb.StockNum"};
+    } else if (item == "bow") {
+        names = {"PouchData.Weapon_Range_Bow.StockNum", "PouchData.Item_Quiver_Small.StockNum",
+                 "PouchData.Item_Arrow_Normal.StockNum"};
+    } else if (item == "hookshot") {
+        names = {"PouchData.Item_Hookshot.StockNum"};
+    } else {
+        names = {item};
+    }
+    const auto known = CoopCheats::Items();
+    for (const auto& name : names) {
+        const bool listed = std::find(known.begin(), known.end(), name) != known.end();
+        if (listed && CoopCheats::On()) {
+            CoopCheats::Give(name);
+        }
+        LOG_INFO(Core, "coop: test give {}: {}", name,
+                 !CoopCheats::On() ? "NOT given (LICHII_COOP_CHEATS is off)"
+                 : listed          ? "queued"
+                                   : "NOT given (unknown item flag)");
+    }
 }
 
 void StopRunning() {
@@ -324,29 +659,28 @@ void Begin(Core::System& system, Script script) {
         return;
     }
     Running r;
-    r.script = std::make_shared<const Script>(std::move(script));
+    r.runner = std::make_unique<Runner>(std::move(script));
+    r.shared = std::make_shared<Shared>();
     r.start = Clock::now();
     r.controller = controller;
-    controller->SetInputInjector([script = r.script, start = r.start]()
-                                     -> std::optional<Core::HID::InjectedInput> {
-        const auto elapsed = std::chrono::duration<double>(Clock::now() - start).count();
-        const Step* step =
-            At(*script, static_cast<std::uint64_t>(elapsed * kTicksPerSecond));
-        if (step == nullptr) {
-            return std::nullopt;
-        }
-        Core::HID::InjectedInput in;
-        in.buttons = static_cast<Core::HID::NpadButton>(step->buttons);
-        if (step->left) {
-            in.left = Core::HID::AnalogStickState{step->left->x, step->left->y};
-        }
-        if (step->right) {
-            in.right = Core::HID::AnalogStickState{step->right->x, step->right->y};
-        }
-        return in;
-    });
-    LOG_INFO(Core, "coop: test script started: {} steps, {:.1f} s", r.script->steps.size(),
-             static_cast<double>(r.script->total_ticks) / kTicksPerSecond);
+    controller->SetInputInjector(
+        [shared = r.shared]() -> std::optional<Core::HID::InjectedInput> {
+            Output out;
+            {
+                std::lock_guard lock(shared->mutex);
+                out = shared->out;
+            }
+            Core::HID::InjectedInput in;
+            in.buttons = static_cast<Core::HID::NpadButton>(out.buttons);
+            if (out.left) {
+                in.left = Core::HID::AnalogStickState{out.left->x, out.left->y};
+            }
+            if (out.right) {
+                in.right = Core::HID::AnalogStickState{out.right->x, out.right->y};
+            }
+            return in;
+        });
+    LOG_INFO(Core, "coop: test script started: {} steps", r.runner->StepCount());
     g_state.running = std::move(r);
 }
 
@@ -398,12 +732,36 @@ void OnFrame(Core::System& system) {
         return;
     }
     Running& r = *g_state.running;
-    const std::int64_t now = TickNow(r);
-    for (const Step* m : MarksBetween(*r.script, r.last_tick, now)) {
-        LOG_INFO(Core, "coop: test mark {}", m->mark);
+    const double now = std::chrono::duration<double>(Clock::now() - r.start).count();
+    std::vector<std::string> log;
+    const auto player = PlayerXZ(system);
+    const auto camera = CameraXZ();
+    r.runner->Advance(now, player, log, camera);
+    if (r.runner->Steering() && g_state.frame % 15 == 0) {
+        const auto& out = r.runner->Current();
+        LOG_INFO(Core,
+                 "coop: test steer at {:.2f} {:.2f}, camera {:.2f} {:.2f}, heading {:.2f}, "
+                 "mirror {}, stick {} {}",
+                 player ? (*player)[0] : 0.0f, player ? (*player)[1] : 0.0f,
+                 camera ? camera->forward_x : 0.0f, camera ? camera->forward_z : 0.0f,
+                 r.runner->Heading().value_or(99.0), r.runner->Mirror(),
+                 out.left ? out.left->x : 0, out.left ? out.left->y : 0);
     }
-    r.last_tick = now;
-    if (now >= static_cast<std::int64_t>(r.script->total_ticks)) {
+    for (const auto& line : log) {
+        LOG_INFO(Core, "coop: test {}", line);
+    }
+    for (const auto& request : r.runner->TakeRequests()) {
+        if (request.kind == Kind::warp) {
+            Warp(system, request.name, request.start);
+        } else {
+            Give(request.name);
+        }
+    }
+    {
+        std::lock_guard lock(r.shared->mutex);
+        r.shared->out = r.runner->Current();
+    }
+    if (r.runner->Done()) {
         LOG_INFO(Core, "coop: test script done");
         StopRunning();
     }

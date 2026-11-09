@@ -289,7 +289,11 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 | `press A` / `press ZR+A 10` | hold, then let go, 6 ticks each (or the number given) |
 | `stick 0.5 1.0 60 [KEYS]` | left stick at x, y (each -1 to 1), with buttons if given |
 | `rstick -1 0 30` | right stick (camera) the same way |
+| `goto -7.5 71.1` / `goto X Z 1.5 600` | walk Link to world x, z (within 1 m, or the radius given; gives up after 10 s, or the ticks given, logging `coop: test goto timed out`) |
+| `toward X Z 8 [KEYS]` | push the stick toward that point for 8 ticks, with buttons if given: Link turns to face it |
 | `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
+
+`goto` and `toward` steer from Link's position and the game camera's ground directions (from its world-to-clip matrix), read each frame; a push that gets nowhere for a second steps aside. Positions are the ones the objects debug log prints (`at x y z`, y is height), or the `Translate` of a placement in the romfs Banc files.
 
 Buttons: `A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK DUP DDOWN DLEFT DRIGHT`, and full stick directions `LSTICK_UP` (`_DOWN`, `_LEFT`, `_RIGHT`) and `RSTICK_...`. `#` starts a comment. At the end the log has `coop: test script done`; a bad line is logged as `coop: test script <file>: line N: why` and nothing is played.
 

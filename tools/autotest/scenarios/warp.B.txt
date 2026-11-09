@@ -1,0 +1,10 @@
+# warp: checks the test-only warp. Both games change scene the game's own way to the same
+# start position, then stand. Here: Kakariko, at the well (Kakariko_WellSide).
+mark start
+wait 120
+mark before
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 600
+mark after
+wait 120
+mark end

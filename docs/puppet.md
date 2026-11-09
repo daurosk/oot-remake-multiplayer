@@ -271,7 +271,7 @@ Approach (a), in `lichii/hook/` and one small emulator patch. Not yet run with t
 | Piece | Where | What |
 |---|---|---|
 | Patch | `lichii/patches/0003-coop-puppet.patch` | Two calls in the emulator: `PatchManager::PatchNSO` calls `CoopSvc::PatchMain` after its built-in patches, and `Kernel::Svc::Call` asks `CoopSvc::Call` before any other SVC. |
-| Code patch | `CoopSvc::PatchMain` (`coop_svc.cpp`) | Only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`, for main of build `E0F3CCFA...3348`. Checks that main+0x6e6dd8 holds 0x94d19d4a and that 0x3c46280 to 0x3c47000 is zero, in the original and in what the other patches made, then writes `bl 0x3c46280` (0x94d57d2a) there and the cave. Logs `Applying "coop puppet"` or why not. |
+| Code patch | `CoopSvc::PatchMain` (`coop_svc.cpp`) | Only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`, for main of build `E0F3CCFA...3348`. moduleCalc_ calls the frame function 0x3b4e300 from two places: main+0x6e70f8 (0x94d19c82), the one that runs every frame, and main+0x6e6dd8 (0x94d19d4a), a rare branch. Checks that both hold those words and that 0x3c46280 to 0x3c47000 is zero, in the original and in what the other patches made, then writes `bl 0x3c46280` at both and the cave. Logs `Applying "coop puppet"` or why not. |
 | Cave | `coop_svc.s`, bytes in `coop_svc.h` | 124 bytes at 0x3c46280. Keeps the game's `x0` and `s0`, takes 0x100 bytes of stack, and loops: `svc #0xf4` with the buffer, then, while the emulator says so, calls the function it put in the buffer with `x0` to `x7` and the stack arguments from it, and hands the result back at the next SVC. At most 16 calls a frame. Then it branches to 0x3b4e300 as the game would have called it. |
 | SVC | `CoopSvc::Call` | 0xf4 from Ocarina only. Hands the SVC to the director and writes the call it wants into the buffer. |
 | Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x200-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (as the walker does: position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, +0x48 = 0x10001), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Each frame it reads the handle (a link, else a holder, else the actor; what it was is logged once). At state 4 the puppet is live and its +0x31c and +0x328 are written every frame. |
@@ -291,7 +291,7 @@ lichii.exe
 
 In the log, in order:
 
-1. `Applying "coop puppet": bl 0x3c46280 at main+0x6e6dd8, 124 bytes of cave` and `coop: puppets on, actor Animal_Cow_LinkHouse, debug puppet beside you`.
+1. `Applying "coop puppet": bl 0x3c46280 at main+0x6e6dd8 and main+0x6e70f8, 124 bytes of cave` and `coop: puppets on, actor Animal_Cow_LinkHouse, debug puppet beside you`.
 2. Every second, `coop: puppet: <n> cave frames/s, scene '...', <k> wanted`: the cave runs once per game frame (30 or 60).
 3. `P0: block at ...`, `P0: create Animal_Cow_LinkHouse requested (returned ...), handle slot ...`.
 4. `P0: handle ... holds ..., taken as a link; it holds ...` and `P0 Animal_Cow_LinkHouse spawned after <ms> ms: handle ..., actor ... (handle read as a link), state 4, at (x, y, z)`.

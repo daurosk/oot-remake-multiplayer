@@ -15,14 +15,23 @@ class System;
 namespace CoopSvc {
 
 inline constexpr std::uint32_t kPuppetSvc = 0xf4;
-inline constexpr std::uint64_t kHookOffset = 0x6e6dd8;     // in main
-inline constexpr std::uint32_t kHookOriginal = 0x94d19d4a; // bl 0x3b4e300
+// The two places in main (both in moduleCalc_) that call the frame function
+// 0x3b4e300; 0x6e70f8 is the one that runs every frame, 0x6e6dd8 the rare one.
+// Both become `bl kCaveOffset`; the cave ends in `b 0x3b4e300`.
+struct Hook {
+    std::uint64_t offset;   // in main
+    std::uint32_t original; // bl 0x3b4e300
+};
+inline constexpr std::array<Hook, 2> kHooks{{
+    {0x6e6dd8, 0x94d19d4a},
+    {0x6e70f8, 0x94d19c82},
+}};
 inline constexpr std::uint64_t kCaveOffset = 0x3c46280;
 inline constexpr std::uint64_t kCaveEnd = 0x3c47000;       // rodata starts here
 
-// `bl kCaveOffset` at kHookOffset.
-constexpr std::uint32_t HookWord() {
-    return 0x94000000u | static_cast<std::uint32_t>(((kCaveOffset - kHookOffset) >> 2) & 0x3ffffff);
+// `bl kCaveOffset` at `offset`.
+constexpr std::uint32_t HookWord(std::uint64_t offset) {
+    return 0x94000000u | static_cast<std::uint32_t>(((kCaveOffset - offset) >> 2) & 0x3ffffff);
 }
 
 // coop_svc.s, assembled at kCaveOffset (the commands are in that file).

@@ -151,12 +151,19 @@ void CheckPosition(FakeGuest& guest, std::uint64_t at, float x, float y, float z
 }  // namespace
 
 TEST_CASE("puppet cave: the call and the cave decode to the right places") {
-    CHECK(CoopSvc::HookWord() == 0x94d57d2au);
-    // bl: imm26 * 4 from the hook lands on the cave.
-    const std::uint32_t bl = CoopSvc::HookWord();
-    std::int64_t imm = bl & 0x3ffffff;
-    if (imm & 0x2000000) imm -= 0x4000000;
-    CHECK(CoopSvc::kHookOffset + imm * 4 == CoopSvc::kCaveOffset);
+    CHECK(CoopSvc::HookWord(0x6e6dd8) == 0x94d57d2au);
+    for (const auto& h : CoopSvc::kHooks) {
+        // The game's word is bl 0x3b4e300, ours lands on the cave.
+        auto target = [&](std::uint32_t word) {
+            REQUIRE((word & 0xfc000000u) == 0x94000000u);
+            std::int64_t imm = word & 0x3ffffff;
+            if (imm & 0x2000000) imm -= 0x4000000;
+            return static_cast<std::uint64_t>(static_cast<std::int64_t>(h.offset) + imm * 4);
+        };
+        CHECK(target(h.original) == 0x3b4e300);
+        CHECK(target(CoopSvc::HookWord(h.offset)) == CoopSvc::kCaveOffset);
+    }
+    CHECK(CoopSvc::kHooks[1].offset == 0x6e70f8);
 
     const auto& cave = CoopSvc::kCave;
     CHECK(CoopSvc::kCaveOffset >= 0x3c46278);  // after Dynamic FPS

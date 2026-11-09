@@ -106,18 +106,20 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
         return;
     }
     constexpr std::size_t header = sizeof(Loader::NSOHeader);
-    const std::size_t hook = header + kHookOffset;
     const std::size_t cave = header + kCaveOffset;
     if (original.size() < header + kCaveEnd || out.size() < header + kCaveEnd) {
         LOG_WARNING(Loader, "    - Skipping \"coop puppet\": main is too small");
         return;
     }
-    if (Word(original, hook) != kHookOriginal || Word(out, hook) != kHookOriginal) {
-        LOG_WARNING(Loader,
-                    "    - Skipping \"coop puppet\": main+{:#x} holds {:#010x} (patched {:#010x}), "
-                    "expected {:#010x}",
-                    kHookOffset, Word(original, hook), Word(out, hook), kHookOriginal);
-        return;
+    for (const auto& h : kHooks) {
+        const std::size_t at = header + h.offset;
+        if (Word(original, at) != h.original || Word(out, at) != h.original) {
+            LOG_WARNING(Loader,
+                        "    - Skipping \"coop puppet\": main+{:#x} holds {:#010x} (patched "
+                        "{:#010x}), expected {:#010x}",
+                        h.offset, Word(original, at), Word(out, at), h.original);
+            return;
+        }
     }
     for (std::size_t i = cave; i < header + kCaveEnd; ++i) {
         if (original[i] != 0 || out[i] != 0) {
@@ -126,11 +128,15 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
             return;
         }
     }
-    const std::uint32_t call = HookWord();
-    std::memcpy(out.data() + hook, &call, sizeof(call));
+    for (const auto& h : kHooks) {
+        const std::uint32_t call = HookWord(h.offset);
+        std::memcpy(out.data() + header + h.offset, &call, sizeof(call));
+    }
     std::memcpy(out.data() + cave, kCave.data(), kCave.size());
-    LOG_INFO(Loader, "    - Applying \"coop puppet\": bl {:#x} at main+{:#x}, {} bytes of cave",
-             kCaveOffset, kHookOffset, kCave.size());
+    LOG_INFO(Loader,
+             "    - Applying \"coop puppet\": bl {:#x} at main+{:#x} and main+{:#x}, {} bytes "
+             "of cave",
+             kCaveOffset, kHooks[0].offset, kHooks[1].offset, kCave.size());
     ConfigurePuppets();
 }
 

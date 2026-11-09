@@ -34,6 +34,9 @@
 //   off by default (LICHII_COOP_OBJECTS_HURT=1 tries it): the game needs a
 //   whole hit record there, so life is written directly.
 // LICHII_COOP_OBJECTS_TEST_DRIVE=1 (two-game tests only): on the game that
+// LICHII_COOP_OBJECTS_TEST_TAKE=<hex key> (tests only): on player 2's game,
+// 10 s after sharing starts, acts as if that 64-bit placement key arrived
+// set to 1, so the actor with that placement hash is deleted here.
 // owns it (player 1 only), one enemy (a ReDead if there is one) is held 3 m in front of our
 // player, swaying 1.5 m side to side, and hurt by 1 every 4 s through the
 // damage field. The other game's copy should do the same on its screen.
@@ -171,6 +174,23 @@ bool EnvFlag(const char* name) {
 #else
     const char* value = std::getenv(name);
     return value != nullptr && value[0] != '\0' && std::string_view(value) != "0";
+#endif
+}
+
+// The variable as a hex number (0 when unset or not one).
+u64 EnvHex(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return 0;
+    }
+    const u64 n = std::strtoull(value, nullptr, 16);
+    std::free(value);
+    return n;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr ? 0 : std::strtoull(value, nullptr, 16);
 #endif
 }
 
@@ -474,6 +494,16 @@ public:
         if (!Ready(system)) {
             return;
         }
+        if (test_take_ != 0 && sharing_ && self_ == 2 && take_at_ != 0 &&
+            server_now_us >= take_at_) {
+            take_at_ = 0;
+            coop::protocol::FlagState state;
+            state.player_number = 1;
+            state.flags.push_back(coop::protocol::FlagEntry(
+                coop::protocol::FlagKey::key64_flag(test_take_), coop::protocol::FlagKind::boolean, 1));
+            sync_.Receive(state);
+            LOG_INFO(Core, "coop: objects: test take {:#x}", test_take_);
+        }
         if (drive_ && sharing_) {
             Drive(system, server_now_us);
         }
@@ -504,6 +534,7 @@ public:
             }();
             (void)registered;
             sync_.SetHurt(hurt_);
+            take_at_ = server_now_us + 10'000'000;
             LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
                      hurt_ ? "through the game" : "written as life");
         }
@@ -568,6 +599,8 @@ public:
     bool pose_ = true;
     bool hurt_ = true;
     bool drive_ = false;
+    u64 test_take_ = 0;
+    u64 take_at_ = 0;
     int drive_mode_ = 0;
 
 private:
@@ -1028,6 +1061,7 @@ Objects& Instance() {
         // take an amount alone from Life + 0x228 (it needs a whole hit record).
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT");
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
+        objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         return true;
     }();

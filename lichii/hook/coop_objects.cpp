@@ -747,8 +747,9 @@ private:
         if (!at || !m || r.Get<u32>(enemy + kActorState).value_or(0) != kStateAlive) {
             return;
         }
-        // Rows of the player's rotation: row 0 is his side, row 2 the way he
-        // faces (two-game test 2026-11-09: column 2 put the enemy behind him).
+        // Columns of the player's rotation: column 0 is his side, column 2
+        // the way he faces (two-game test 2026-11-09: row 2 put the enemy
+        // between him and the camera).
         // Mode 2: still, 2 m ahead, no hurts (for real sword hits).
         const bool still = drive_mode_ == 2;
         const float t = static_cast<float>(now_us % 4'000'000) / 4'000'000.0f;
@@ -756,8 +757,8 @@ private:
         const float ahead = still ? 2.0f : 3.0f;
         Mover::Pose pose;
         pose.actor = enemy;
-        pose.transform = {(*at)[0] + ahead * (*m)[6] + sway * (*m)[0], (*at)[1],
-                          (*at)[2] + ahead * (*m)[8] + sway * (*m)[2]};
+        pose.transform = {(*at)[0] + ahead * (*m)[2] + sway * (*m)[0], (*at)[1],
+                          (*at)[2] + ahead * (*m)[8] + sway * (*m)[6]};
         drive_pose_ = pose;
         if (now_us - drive_log_at_ >= 2'000'000) {
             drive_log_at_ = now_us;

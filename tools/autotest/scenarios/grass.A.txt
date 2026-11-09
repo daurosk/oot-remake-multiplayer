@@ -1,0 +1,51 @@
+# grass, A: both games load into Hyrule Field (child) in front of Kakariko (HyruleField_FrontOfKakarikoVillage,
+# 200.4 19.3) with the test-only warp. Run with -NoLoad and LICHII_COOP_DEBUG_OBJECTS=1 in both games.
+# A cuts field grass (not an actor: the foliage module's SsboGrassCut buffer, docs/world.md) in three
+# places, standing still before and after each swing, then a spin attack, then three of the 13 grass
+# tufts that are actors (Land_kokiri_Plant_A_02_DropFixed_03 at about 164 27); B watches the tufts.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark arrived
+wait 600                # stand still 10 s
+goto 190 24 1.0 900     # place 1
+wait 300
+mark cut1-before
+hold Y 8
+wait 300
+mark cut1-after
+goto 184 36 1.0 900     # place 2
+wait 300
+mark cut2-before
+hold Y 8
+wait 300
+mark cut2-after
+goto 178 14 1.0 900     # place 3: a spin attack (hold Y, then let go)
+wait 300
+mark spin-before
+hold Y 90
+wait 300
+mark spin-after
+goto 166.5 26.5 0.5 1200 # beside the tufts at 164.84 25.95, 164.15 26.18, 163.37 26.04
+wait 300
+mark tufts-before
+toward 164.5 26.1 15
+hold Y 8
+wait 60
+toward 164.2 26.2 15
+hold Y 8
+wait 60
+toward 163.4 26.0 15
+hold Y 8
+wait 300
+mark tufts-after
+wait 300

@@ -1,0 +1,20 @@
+# grass, B: loads into the same place as A, walks to about 6 m east of the 13 grass tufts and
+# faces them, then stands still and watches A cut them (and the field grass on the way).
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark arrived
+goto 171 28 1.0 1200
+toward 164 27 15
+mark watching
+wait 3000
+mark end

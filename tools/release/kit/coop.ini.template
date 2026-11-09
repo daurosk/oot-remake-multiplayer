@@ -1,0 +1,10 @@
+# Co-op settings for this emulator. play.cmd writes this file; you can also edit it.
+# Comments go on their own line: a '#' after a value is read as part of the value.
+#
+# server: the address of the PC that runs start-server.cmd (LAN or Tailscale IP),
+#         or 127.0.0.1 when it is this PC. Co-op is off while no server is set.
+# port:   the server's UDP port.
+# name:   1 to 16 characters, different for each player.
+server = @SERVER@
+port = @PORT@
+name = @NAME@

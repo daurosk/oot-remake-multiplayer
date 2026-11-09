@@ -17,7 +17,7 @@ Which features are in `main`, and so in a kit built from it, as of 2026-11-09. A
 | Puppet Link standing and moving where the other player is | Yes: spawn, follow and removal. Needs the puppet pack and `LICHII_COOP_PUPPET=1` with `LICHII_COOP_PUPPET_ACTOR=CoopPuppet_Child` (or `_Adult`); without the actor line a stand-in cow is used | One PC: each game shows the other's Link, it follows, and it goes when the other closes. It stands in a T-pose: animation is **not merged** (branch `puppet-live`) | 15, 17 (16 fails: T-pose) |
 | Equipment shown on the puppet (sword, shield, tunic, boots) | Reading and sending in `main`; the pack carries the game's equipment tables. Putting the gear on the puppet is **not merged** | One PC: slots read live; the puppet wears only a Deku shield | 18 (not yet) |
 | Scenes: puppets only in your scene, hidden in cutscenes | The rule is in `main` (server tests); the puppet does not use it yet (**not merged**, branch `puppet-live`). The join-partner warp was dropped | Unit tests only | 19 (not yet) |
-| Shared enemies and projectiles | Protocol and server in `main` (owner and damage routing); the emulator side **not merged** (branch `objects`). Research in [objects.md](objects.md) | Actor list and damage read live on one PC; server tests | (none yet) |
+| Shared enemies (`Enemy_` actors: life and kills) | Yes, off by default: `LICHII_COOP_OBJECTS=1` on both PCs. Positions, hit reactions and projectiles are not shared yet ([objects.md](objects.md)) | One PC, two games: Stalchild hit in A lost life in B and died on both screens; each game's copy still chases its own Link | 25 |
 
 ## One PC first
 
@@ -207,6 +207,12 @@ Write down pass, fail or "not in this kit" for each, and the time, so the logs c
 | # | Check | Pass |
 |---|---|---|
 | 19 | The puppet shows only when both are in the same scene; it is hidden in a cutscene | |
+
+**Shared enemies** (`LICHII_COOP_OBJECTS=1` on both PCs; add `LICHII_COOP_DEBUG_OBJECTS=1` for the log lines)
+
+| # | Check | Pass |
+|---|---|---|
+| 25 | Both in Hyrule Field at night, near each other. PC 1 hits a Stalchild with the sword: on PC 2 the same Stalchild dies when it dies on PC 1 (PC 2's log has `coop: objects: share life`) | |
 
 **Leaving, rejoining, reconnecting**
 

@@ -106,7 +106,7 @@ class FakeServer {
     REQUIRE(last_peer != nullptr);
     ENetPacket* packet = enet_packet_create(
         bytes.data(), bytes.size(),
-        channel < proto::kChannelPlayerSamples ? ENET_PACKET_FLAG_RELIABLE : 0u);
+        channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u);
     REQUIRE(enet_peer_send(last_peer, channel, packet) == 0);
     enet_host_flush(host_);
   }

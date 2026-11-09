@@ -1,0 +1,28 @@
+# back: A walks ahead and stands with its back to B for 10 s, everything put away; then draws
+# the sword (Y) 5 s, guards (ZL) 5 s, puts away (B) 5 s. B watches A's puppet from behind.
+# Run with LICHII_COOP_DEBUG_ANIM=1 to get the "P<n> slots (puppet ..)" lines in B's log.
+mark start
+stick 0 0.6 100
+# a step to the right, so B's own Link does not hide A, then face away again
+stick 0.7 0 30
+stick 0 0.4 12
+wait 60
+mark back-0s
+wait 300
+mark back-5s
+wait 300
+mark back-10s
+press Y
+wait 150
+mark sword-out
+wait 150
+mark sword-out-5s
+hold ZL 150
+mark guard
+hold ZL 150
+mark guard-5s
+press B
+wait 150
+mark put-away
+wait 150
+mark put-away-5s

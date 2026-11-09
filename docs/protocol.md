@@ -44,7 +44,7 @@ Each rule answers a way the TotK online sync was seen to break.
 - A body made of components lists them as `u16 component_id`, `u16 length`, data. A reader skips any id it does not know. A known component must have exactly its length (below) and may appear only once.
 - Strings are `u16 length` + UTF-8 bytes, no terminator, with a maximum per field counted in characters (code points). The UTF-8 must be valid (no overlong forms, no surrogates, nothing past U+10FFFF) and hold no control characters (U+0000 to U+001F, U+007F to U+009F). A string is also never more than 4 bytes a character.
 - Floats must be finite: NaN and infinity are refused.
-- Player numbers are 1 to 4. `PLAYER_STATUS`, `CHAT`, `PLAYER_SAMPLE` and `PLAYER_EQUIP` start with a `u8` player field: a client always sends 0 ("me"), and the server writes in the sender's number (1 to 4), which it knows from the connection, before relaying to the others. A client message with any other value there, or a server one with 0, is refused.
+- Player numbers are 1 to 4. `PLAYER_STATUS`, `CHAT`, `PLAYER_SAMPLE`, `PLAYER_EQUIP` and the object messages a client sends start with a `u8` player field: a client always sends 0 ("me"), and the server writes in the sender's number (1 to 4), which it knows from the connection, before relaying to the others. A client message with any other value there, or a server one with 0, is refused.
 - Times are `u64` microseconds. `PING` and `PONG` carry the sender's own clock, which is how the offset is found (below). Every other time is on the server clock: `WELCOME` carries the server's own, and a sample (`PLAYER_SAMPLE`, and later `OBJECT_SAMPLE`) carries the sender's estimate of the server clock when the state was taken, worked out from its own clock and its offset. The server relays samples with their time unchanged, so a receiver places another player's sample on the same time line as its own estimate of the server clock. A client sends no sample before it has an offset; the `WELCOME` time gives a first, rough one.
 
 ## Handshake
@@ -205,16 +205,37 @@ How it moves:
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field. It keeps nothing.
 - Every build keeps the last one it sent, and sends it again when a `PLAYER_JOINED` arrives, so a newcomer sees what everyone already wears.
 
+### Objects (stage 5)
+
+Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). Codec only so far: the server and the hook do not use these yet.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 18 | `OBJECT_PRESENT` | 2 | both | `u8` player field, scene (string, up to 64), `u16` count (up to 1024), then per object: object id, `u8` flags (bit 0 awake, bit 1 in a fight, bit 2 targeting our player). No id twice |
+| 19 | `OBJECT_OWNER` | 2 | server | object id, `u8` owner (0 none, else 1 to 4), `u16` epoch, `u32` group (0 none) |
+| 20 | `HANDOVER_ASK` | 2 | server | object id, `u16` epoch, `u8` to player (1 to 4) |
+| 21 | `HANDOVER_STATE` | 2 | both | `u8` player field, object id, `u16` epoch, then object components |
+| 22 | `OBJECT_SPAWN` | 2 | both | `u8` player field, object id (kind made only), actor name (string, 1 to 64), `u8` flags (bit 0 projectile), then object components |
+| 23 | `OBJECT_SAMPLE` | 4 | both | `u8` player field, object id, `u16` epoch, then object components |
+| 24 | `OBJECT_REMOVE` | 2 | both | `u8` player field, object id, `u16` epoch, `u8` reason (0 gone, 1 dead, 2 exploded, 3 hit, 4 picked up), position (3 x f32) |
+| 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32) |
+
+An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 4 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
+
+Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length, unknown ids skipped, each known id at most once, `time` required): 1 `time` (12), 2 `position` (12), 3 `velocity` (12), 4 `rotation` (16), 7 `animation` (as in `PLAYER_SAMPLE`), 16 `life` (`s32` life, `s32` max, 8), 17 `fuse` (f32 seconds left, 4), 18 `state` (`u8`: bit 0 in a fight, bit 1 held, bit 2 asleep, 1). Floats must be finite.
+
+The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
 - **Stage 4:** `FLAG_SET`, `FLAG_STATE` and `FLAG_SNAPSHOT` (above) share world flags through the host.
-- **Stage 5:** `OWNER_CLAIM`, `OWNER_GRANT` (with the last state, life included), `OBJECT_SAMPLE` (timed on the server clock, as `PLAYER_SAMPLE`), `DAMAGE` (target, amount, kind, source), `OBJECT_REMOVE` (owner only). Groups for bosses. The hold times and margins are measured before they are fixed.
+- **Stage 5:** the object messages (below). The server's ownership rules and the hold times are not in a build yet.
 
 ## Versioning
 
 - The protocol version goes up whenever a message layout changes in a way an older reader cannot skip.
 - Adding a component or a message type that old readers may ignore does not change the version.
-- Types 12 to 17 (`JOIN_PARTNER`, the flag messages, `HOST` and `PLAYER_EQUIP`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
+- Types 12 to 25 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP` and the object messages) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.
 - Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.

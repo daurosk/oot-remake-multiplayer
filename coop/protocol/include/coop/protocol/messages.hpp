@@ -62,6 +62,14 @@ enum class MessageType : std::uint16_t {
   flag_snapshot = 15,
   host = 16,
   player_equip = 17,
+  object_present = 18,
+  object_owner = 19,
+  handover_ask = 20,
+  handover_state = 21,
+  object_spawn = 22,
+  object_sample = 23,
+  object_remove = 24,
+  damage = 25,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -434,10 +442,187 @@ struct PlayerEquip {
   bool operator==(const PlayerEquip&) const = default;
 };
 
+// ---------------------------------------------------------------- objects
+// Shared enemies and projectiles (docs/objects.md, docs/protocol.md "Objects").
+
+enum class ObjectKind : std::uint8_t {
+  placed = 0,  // value is the placement hash; maker is 0
+  made = 1,    // value is the maker's own counter; maker is 1 to 4
+};
+
+// 10 bytes on the wire: u8 kind, u8 maker, u64 value.
+struct ObjectId {
+  ObjectKind kind = ObjectKind::placed;
+  std::uint8_t maker = 0;
+  std::uint64_t value = 0;
+  auto operator<=>(const ObjectId&) const = default;
+  bool operator==(const ObjectId&) const = default;
+};
+
+// OBJECT_SAMPLE component ids. 1 to 4 and 7 are laid out as in PLAYER_SAMPLE.
+enum class ObjectComponent : std::uint16_t {
+  time = 1,
+  position = 2,
+  velocity = 3,
+  rotation = 4,
+  animation = 7,
+  life = 16,
+  fuse = 17,
+  state = 18,
+};
+
+struct ObjectLife {
+  std::int32_t life = 0;
+  std::int32_t max = 0;
+  bool operator==(const ObjectLife&) const = default;
+};
+
+namespace object_state {
+inline constexpr std::uint8_t in_fight = 1u << 0;
+inline constexpr std::uint8_t held = 1u << 1;
+inline constexpr std::uint8_t asleep = 1u << 2;
+}  // namespace object_state
+
+// The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
+// always sent; the others when the sender has them. Floats must be finite.
+struct ObjectState {
+  SampleTime time;
+  std::optional<Vec3> position;
+  std::optional<Vec3> velocity;  // metres a second
+  std::optional<Quat> rotation;
+  std::optional<Animation> animation;
+  std::optional<ObjectLife> life;
+  std::optional<float> fuse;          // seconds left
+  std::optional<std::uint8_t> state;  // object_state bits
+  bool operator==(const ObjectState&) const = default;
+};
+
+namespace object_presence {
+inline constexpr std::uint8_t awake = 1u << 0;
+inline constexpr std::uint8_t in_fight = 1u << 1;
+inline constexpr std::uint8_t targeting = 1u << 2;  // targeting our player
+}  // namespace object_presence
+
+struct ObjectPresence {
+  ObjectId id;
+  std::uint8_t flags = 0;  // object_presence bits
+  bool operator==(const ObjectPresence&) const = default;
+};
+
+// Most objects in one OBJECT_PRESENT.
+inline constexpr std::size_t kMaxPresentObjects = 1024;
+inline constexpr std::size_t kMaxActorNameChars = 64;
+
+// OBJECT_PRESENT: the shared objects the sender has loaded in a scene. It
+// replaces the sender's previous list for that scene. No id twice.
+struct ObjectPresent {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::vector<ObjectPresence> objects;
+  bool operator==(const ObjectPresent&) const = default;
+};
+
+// OBJECT_OWNER (server only): who owns an object now. owner 0: nobody.
+struct ObjectOwner {
+  ObjectId id;
+  std::uint8_t owner = 0;
+  std::uint16_t epoch = 0;
+  std::uint32_t group = 0;  // 0: none
+  bool operator==(const ObjectOwner&) const = default;
+};
+
+// HANDOVER_ASK (server only, to the owner): let go of it to `to_player`.
+struct HandoverAsk {
+  ObjectId id;
+  std::uint16_t epoch = 0;
+  std::uint8_t to_player = 1;
+  bool operator==(const HandoverAsk&) const = default;
+};
+
+// HANDOVER_STATE: the old owner's last state, relayed to the new owner.
+struct HandoverState {
+  std::uint8_t player_number = kPlayerSelf;
+  ObjectId id;
+  std::uint16_t epoch = 0;
+  ObjectState state;
+  bool operator==(const HandoverState&) const = default;
+};
+
+namespace object_spawn {
+inline constexpr std::uint8_t projectile = 1u << 0;
+}  // namespace object_spawn
+
+// OBJECT_SPAWN: the maker made it (kind made, maker = the sender's number).
+// Owner is implied: the maker, epoch 0.
+struct ObjectSpawn {
+  std::uint8_t player_number = kPlayerSelf;
+  ObjectId id;
+  std::string actor;  // the game's actor name, up to 64 characters
+  std::uint8_t flags = 0;  // object_spawn bits
+  ObjectState state;
+  bool operator==(const ObjectSpawn&) const = default;
+};
+
+// OBJECT_SAMPLE, on the object samples channel.
+struct ObjectSample {
+  std::uint8_t player_number = kPlayerSelf;
+  ObjectId id;
+  std::uint16_t epoch = 0;
+  ObjectState state;
+  bool operator==(const ObjectSample&) const = default;
+};
+
+enum class RemoveReason : std::uint8_t {
+  gone = 0,
+  dead = 1,
+  exploded = 2,
+  hit = 3,
+  picked_up = 4,
+};
+
+struct ObjectRemove {
+  std::uint8_t player_number = kPlayerSelf;
+  ObjectId id;
+  std::uint16_t epoch = 0;
+  RemoveReason reason = RemoveReason::gone;
+  Vec3 position{};
+  bool operator==(const ObjectRemove&) const = default;
+};
+
+// Causes in DAMAGE. Other values are kept and passed on unchanged.
+enum class DamageCause : std::uint8_t {
+  unknown = 0,
+  sword = 1,
+  arrow = 2,
+  fire_arrow = 3,
+  ice_arrow = 4,
+  light_arrow = 5,
+  seed = 6,
+  bomb = 7,
+  nut = 8,
+  boomerang = 9,
+  hookshot = 10,
+  hammer = 11,
+  magic = 12,
+};
+
+// DAMAGE: life lost on a copy, for the owner to take off. Amount 0 or more.
+struct Damage {
+  std::uint8_t player_number = kPlayerSelf;
+  ObjectId id;
+  std::uint16_t epoch = 0;  // the epoch the hitter knew
+  std::int32_t amount = 0;
+  std::uint8_t cause = 0;  // DamageCause
+  Vec3 position{};
+  bool operator==(const Damage&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
-                             FlagSnapshot, Host, PlayerEquip>;
+                             FlagSnapshot, Host, PlayerEquip, ObjectPresent,
+                             ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
+                             ObjectSample, ObjectRemove, Damage>;
 
 MessageType type_of(const Message& message);
 

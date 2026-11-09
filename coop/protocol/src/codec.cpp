@@ -495,6 +495,175 @@ Error encode_body(const PlayerEquip& m, Writer& w) {
   return Error::none;
 }
 
+// ---------------------------------------------------------------- objects: encode
+
+Error check_object_id(const ObjectId& id) {
+  switch (id.kind) {
+    case ObjectKind::placed: return id.maker == 0 ? Error::none : Error::bad_value;
+    case ObjectKind::made: return valid_player(id.maker) ? Error::none : Error::bad_value;
+  }
+  return Error::bad_value;
+}
+
+void write_object_id(const ObjectId& id, Writer& w) {
+  w.u8(static_cast<std::uint8_t>(id.kind));
+  w.u8(id.maker);
+  w.u64(id.value);
+}
+
+Error check_object_state(const ObjectState& s) {
+  if (s.position && !all_finite(*s.position)) return Error::bad_value;
+  if (s.velocity && !all_finite(*s.velocity)) return Error::bad_value;
+  if (s.rotation && !all_finite(*s.rotation)) return Error::bad_value;
+  if (s.fuse && !std::isfinite(*s.fuse)) return Error::bad_value;
+  if (s.animation) {
+    COOP_TRY(check_string(s.animation->name, kMaxAnimationChars));
+    if (!std::isfinite(s.animation->frame) || !std::isfinite(s.animation->rate)) {
+      return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+void write_object_state(const ObjectState& s, Writer& w) {
+  auto component = [&w](ObjectComponent id, auto&& write) {
+    w.u16(static_cast<std::uint16_t>(id));
+    const std::size_t at = w.begin_length();
+    write();
+    w.finish_length(at);
+  };
+  component(ObjectComponent::time, [&] {
+    w.u64(s.time.server_time_us);
+    w.u32(s.time.sequence);
+  });
+  if (s.position) component(ObjectComponent::position, [&] { for (float f : *s.position) w.f32(f); });
+  if (s.velocity) component(ObjectComponent::velocity, [&] { for (float f : *s.velocity) w.f32(f); });
+  if (s.rotation) component(ObjectComponent::rotation, [&] { for (float f : *s.rotation) w.f32(f); });
+  if (s.animation) {
+    component(ObjectComponent::animation, [&] {
+      w.str(s.animation->name);
+      w.f32(s.animation->frame);
+      w.f32(s.animation->rate);
+    });
+  }
+  if (s.life) {
+    component(ObjectComponent::life, [&] {
+      w.u32(static_cast<std::uint32_t>(s.life->life));
+      w.u32(static_cast<std::uint32_t>(s.life->max));
+    });
+  }
+  if (s.fuse) component(ObjectComponent::fuse, [&] { w.f32(*s.fuse); });
+  if (s.state) component(ObjectComponent::state, [&] { w.u8(*s.state); });
+}
+
+bool has_duplicate_id(const std::vector<ObjectPresence>& objects) {
+  std::vector<ObjectId> ids;
+  ids.reserve(objects.size());
+  for (const ObjectPresence& o : objects) ids.push_back(o.id);
+  std::sort(ids.begin(), ids.end());
+  return std::adjacent_find(ids.begin(), ids.end()) != ids.end();
+}
+
+Error encode_body(const ObjectPresent& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  if (m.objects.size() > kMaxPresentObjects) return Error::bad_value;
+  for (const ObjectPresence& o : m.objects) COOP_TRY(check_object_id(o.id));
+  if (has_duplicate_id(m.objects)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u16(static_cast<std::uint16_t>(m.objects.size()));
+  for (const ObjectPresence& o : m.objects) {
+    write_object_id(o.id, w);
+    w.u8(o.flags);
+  }
+  return Error::none;
+}
+
+Error encode_body(const ObjectOwner& m, Writer& w) {
+  COOP_TRY(check_object_id(m.id));
+  if (!valid_player_or_self(m.owner)) return Error::bad_value;
+  write_object_id(m.id, w);
+  w.u8(m.owner);
+  w.u16(m.epoch);
+  w.u32(m.group);
+  return Error::none;
+}
+
+Error encode_body(const HandoverAsk& m, Writer& w) {
+  COOP_TRY(check_object_id(m.id));
+  if (!valid_player(m.to_player)) return Error::bad_value;
+  write_object_id(m.id, w);
+  w.u16(m.epoch);
+  w.u8(m.to_player);
+  return Error::none;
+}
+
+Error encode_body(const HandoverState& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_object_id(m.id));
+  COOP_TRY(check_object_state(m.state));
+  w.u8(m.player_number);
+  write_object_id(m.id, w);
+  w.u16(m.epoch);
+  write_object_state(m.state, w);
+  return Error::none;
+}
+
+Error encode_body(const ObjectSpawn& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  COOP_TRY(check_object_id(m.id));
+  COOP_TRY(check_string(m.actor, kMaxActorNameChars));
+  if (m.actor.empty()) return Error::bad_value;
+  COOP_TRY(check_object_state(m.state));
+  w.u8(m.player_number);
+  write_object_id(m.id, w);
+  w.str(m.actor);
+  w.u8(m.flags);
+  write_object_state(m.state, w);
+  return Error::none;
+}
+
+Error encode_body(const ObjectSample& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_object_id(m.id));
+  COOP_TRY(check_object_state(m.state));
+  w.u8(m.player_number);
+  write_object_id(m.id, w);
+  w.u16(m.epoch);
+  write_object_state(m.state, w);
+  return Error::none;
+}
+
+Error encode_body(const ObjectRemove& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_object_id(m.id));
+  if (static_cast<std::uint8_t>(m.reason) > static_cast<std::uint8_t>(RemoveReason::picked_up)) {
+    return Error::bad_value;
+  }
+  if (!all_finite(m.position)) return Error::bad_value;
+  w.u8(m.player_number);
+  write_object_id(m.id, w);
+  w.u16(m.epoch);
+  w.u8(static_cast<std::uint8_t>(m.reason));
+  for (float f : m.position) w.f32(f);
+  return Error::none;
+}
+
+Error encode_body(const Damage& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_object_id(m.id));
+  if (m.amount < 0 || !all_finite(m.position)) return Error::bad_value;
+  w.u8(m.player_number);
+  write_object_id(m.id, w);
+  w.u16(m.epoch);
+  w.u32(static_cast<std::uint32_t>(m.amount));
+  w.u8(m.cause);
+  for (float f : m.position) w.f32(f);
+  return Error::none;
+}
+
 // ---------------------------------------------------------------- bodies: decode
 
 Error decode_body(Reader& r, Hello& m) {
@@ -800,6 +969,173 @@ Error decode_body(Reader& r, PlayerEquip& m) {
   return Error::none;
 }
 
+// ---------------------------------------------------------------- objects: decode
+
+Error read_object_id(Reader& r, ObjectId& id) {
+  std::uint8_t kind = 0;
+  COOP_READ(r.u8(kind));
+  COOP_READ(r.u8(id.maker));
+  COOP_READ(r.u64(id.value));
+  if (kind > 1) return Error::bad_value;
+  id.kind = static_cast<ObjectKind>(kind);
+  return check_object_id(id);
+}
+
+Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& known) {
+  known = true;
+  switch (id) {
+    case ObjectComponent::time:
+      COOP_READ(c.u64(s.time.server_time_us));
+      COOP_READ(c.u32(s.time.sequence));
+      return Error::none;
+    case ObjectComponent::position:
+      return read_floats(c, s.position.emplace());
+    case ObjectComponent::velocity:
+      return read_floats(c, s.velocity.emplace());
+    case ObjectComponent::rotation:
+      return read_floats(c, s.rotation.emplace());
+    case ObjectComponent::animation: {
+      auto& a = s.animation.emplace();
+      COOP_TRY(c.str(a.name, kMaxAnimationChars));
+      COOP_READ(c.f32(a.frame));
+      COOP_READ(c.f32(a.rate));
+      if (!std::isfinite(a.frame) || !std::isfinite(a.rate)) return Error::bad_value;
+      return Error::none;
+    }
+    case ObjectComponent::life: {
+      std::uint32_t life = 0;
+      std::uint32_t max = 0;
+      COOP_READ(c.u32(life));
+      COOP_READ(c.u32(max));
+      s.life = ObjectLife{static_cast<std::int32_t>(life), static_cast<std::int32_t>(max)};
+      return Error::none;
+    }
+    case ObjectComponent::fuse:
+      COOP_READ(c.f32(s.fuse.emplace()));
+      return std::isfinite(*s.fuse) ? Error::none : Error::bad_value;
+    case ObjectComponent::state:
+      COOP_READ(c.u8(s.state.emplace()));
+      return Error::none;
+  }
+  known = false;
+  return Error::none;
+}
+
+// The rest of the body: components, as in PLAYER_SAMPLE. time is required.
+Error read_object_state(Reader& r, ObjectState& s) {
+  s = ObjectState{};
+  std::uint32_t seen = 0;
+  while (r.left() > 0) {
+    std::uint16_t id = 0;
+    std::uint16_t length = 0;
+    COOP_READ(r.u16(id));
+    COOP_READ(r.u16(length));
+    std::span<const std::uint8_t> data;
+    if (!r.take(length, data)) return Error::bad_length;
+    const bool may_be_known = id >= 1 && id <= 31;
+    if (may_be_known && (seen & (1u << id))) return Error::duplicate_component;
+    Reader c(data);
+    bool known = false;
+    const Error e = decode_component(static_cast<ObjectComponent>(id), c, s, known);
+    if (!known) continue;  // unknown component: skipped by its length
+    if (e == Error::truncated) return Error::bad_length;
+    if (e != Error::none) return e;
+    if (c.left() != 0) return Error::bad_length;
+    seen |= 1u << id;
+  }
+  if (!(seen & (1u << static_cast<unsigned>(ObjectComponent::time)))) {
+    return Error::missing_component;
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, ObjectPresent& m) {
+  m = ObjectPresent{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  std::uint16_t count = 0;
+  COOP_READ(r.u16(count));
+  if (count > kMaxPresentObjects) return Error::bad_value;
+  if (r.left() < std::size_t{count} * 11) return Error::truncated;
+  m.objects.resize(count);
+  for (ObjectPresence& o : m.objects) {
+    COOP_TRY(read_object_id(r, o.id));
+    COOP_READ(r.u8(o.flags));
+  }
+  if (has_duplicate_id(m.objects)) return Error::bad_value;
+  return Error::none;
+}
+
+Error decode_body(Reader& r, ObjectOwner& m) {
+  COOP_TRY(read_object_id(r, m.id));
+  COOP_READ(r.u8(m.owner));
+  COOP_READ(r.u16(m.epoch));
+  COOP_READ(r.u32(m.group));
+  if (!valid_player_or_self(m.owner)) return Error::bad_value;
+  return Error::none;
+}
+
+Error decode_body(Reader& r, HandoverAsk& m) {
+  COOP_TRY(read_object_id(r, m.id));
+  COOP_READ(r.u16(m.epoch));
+  COOP_READ(r.u8(m.to_player));
+  if (!valid_player(m.to_player)) return Error::bad_value;
+  return Error::none;
+}
+
+Error decode_body(Reader& r, HandoverState& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(read_object_id(r, m.id));
+  COOP_READ(r.u16(m.epoch));
+  return read_object_state(r, m.state);
+}
+
+Error decode_body(Reader& r, ObjectSpawn& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(read_object_id(r, m.id));
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  COOP_TRY(r.str(m.actor, kMaxActorNameChars));
+  if (m.actor.empty()) return Error::bad_value;
+  COOP_READ(r.u8(m.flags));
+  return read_object_state(r, m.state);
+}
+
+Error decode_body(Reader& r, ObjectSample& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(read_object_id(r, m.id));
+  COOP_READ(r.u16(m.epoch));
+  return read_object_state(r, m.state);
+}
+
+Error decode_body(Reader& r, ObjectRemove& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(read_object_id(r, m.id));
+  COOP_READ(r.u16(m.epoch));
+  std::uint8_t reason = 0;
+  COOP_READ(r.u8(reason));
+  if (reason > static_cast<std::uint8_t>(RemoveReason::picked_up)) return Error::bad_value;
+  m.reason = static_cast<RemoveReason>(reason);
+  return read_floats(r, m.position);
+}
+
+Error decode_body(Reader& r, Damage& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(read_object_id(r, m.id));
+  COOP_READ(r.u16(m.epoch));
+  std::uint32_t amount = 0;
+  COOP_READ(r.u32(amount));
+  m.amount = static_cast<std::int32_t>(amount);
+  if (m.amount < 0) return Error::bad_value;
+  COOP_READ(r.u8(m.cause));
+  return read_floats(r, m.position);
+}
+
 template <typename T>
 Error decode_as(Reader& body, Message& out) {
   T value{};
@@ -841,6 +1177,9 @@ MessageType type_of(const Message& message) {
       MessageType::player_sample, MessageType::test_payload,
       MessageType::join_partner,  MessageType::flag_set,    MessageType::flag_state,
       MessageType::flag_snapshot, MessageType::host, MessageType::player_equip,
+      MessageType::object_present, MessageType::object_owner, MessageType::handover_ask,
+      MessageType::handover_state, MessageType::object_spawn, MessageType::object_sample,
+      MessageType::object_remove, MessageType::damage,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -858,6 +1197,16 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::flag_snapshot:
     case MessageType::host:
       return kChannelProgress;
+    case MessageType::object_sample:
+      return kChannelObjectSamples;
+    case MessageType::object_present:
+    case MessageType::object_owner:
+    case MessageType::handover_ask:
+    case MessageType::handover_state:
+    case MessageType::object_spawn:
+    case MessageType::object_remove:
+    case MessageType::damage:
+      return kChannelOwnership;
     default:
       return kChannelSession;
   }
@@ -884,6 +1233,16 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
       return channel == kChannelProgress;
     case MessageType::player_sample:
       return channel == kChannelPlayerSamples;
+    case MessageType::object_sample:
+      return channel == kChannelObjectSamples;
+    case MessageType::object_present:
+    case MessageType::object_owner:
+    case MessageType::handover_ask:
+    case MessageType::handover_state:
+    case MessageType::object_spawn:
+    case MessageType::object_remove:
+    case MessageType::damage:
+      return channel == kChannelOwnership;
     case MessageType::test_payload:
       return channel == kChannelSession || channel == kChannelPlayerSamples;
   }
@@ -899,6 +1258,8 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::player_joined:
     case MessageType::player_left:
     case MessageType::host:
+    case MessageType::object_owner:
+    case MessageType::handover_ask:
       return from == Sender::server;
     case MessageType::ping:
     case MessageType::pong:
@@ -911,6 +1272,12 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::flag_state:
     case MessageType::flag_snapshot:
     case MessageType::player_equip:
+    case MessageType::object_present:
+    case MessageType::handover_state:
+    case MessageType::object_spawn:
+    case MessageType::object_sample:
+    case MessageType::object_remove:
+    case MessageType::damage:
       return true;
   }
   return false;
@@ -929,7 +1296,10 @@ auto* player_field(M& message) {
         if constexpr (std::is_same_v<T, PlayerStatus> || std::is_same_v<T, Chat> ||
                       std::is_same_v<T, PlayerSample> || std::is_same_v<T, JoinPartner> ||
                       std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState> ||
-                      std::is_same_v<T, PlayerEquip>) {
+                      std::is_same_v<T, PlayerEquip> || std::is_same_v<T, ObjectPresent> ||
+                      std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
+                      std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
+                      std::is_same_v<T, Damage>) {
           field = &m.player_number;
         }
       },
@@ -1011,6 +1381,14 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
+    case MessageType::object_present: return decode_as<ObjectPresent>(body, out);
+    case MessageType::object_owner: return decode_as<ObjectOwner>(body, out);
+    case MessageType::handover_ask: return decode_as<HandoverAsk>(body, out);
+    case MessageType::handover_state: return decode_as<HandoverState>(body, out);
+    case MessageType::object_spawn: return decode_as<ObjectSpawn>(body, out);
+    case MessageType::object_sample: return decode_as<ObjectSample>(body, out);
+    case MessageType::object_remove: return decode_as<ObjectRemove>(body, out);
+    case MessageType::damage: return decode_as<Damage>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;

@@ -162,7 +162,7 @@ Every piece is **an actor of its own**, created by the wearer's EquipmentUser co
 `PlayerReader::read_equipment()` fills `PLAYER_EQUIP`:
 
 - The eight `PlayerStatus.Equip*` flags ([items.md](items.md)) are String64 flags. Their table is GameData type 16 at manager + 0x610 (the pattern of [flags.md](flags.md)): entries of 0x108 bytes, `char*` to the text at +0x68, `s32` buffer size (64) at +0x70, as the getter **0x3758110** reads them. `GameFlags::get_string64` reads the table, not the write queue, so a change shows one GameData update later. A text that is not printable ASCII or not ended within its buffer is dropped.
-- `drawn` is bit *i* for slot *i* of the player's EquipmentUser, set when the slot holds a live actor and its byte has bit 1. Seen in the game: 0x01 sword drawn, 0x10 shield raised, 0x08 held item out, 0x00 all put away.
+- `drawn` is bit *i* for slot *i* of the player's EquipmentUser, set when the slot holds a live actor whose last change of state was into the hand (the byte's bit 1 is a request that lasts a moment; see [In hand or put away](#in-hand-or-put-away-built-not-run-in-the-game)). Seen in the game: 0x01 sword drawn, 0x10 shield raised, 0x08 held item out, 0x00 all put away.
 - Seen in the game: `weapon` `Weapon_Sword_Kokiri`, `shield` `Weapon_Shield_Hylian` / `Weapon_Shield_Deku`, `ocarina` `Item_Ocarina_Fairy`; the other five flags are "" for a child with nothing there. Before a save loads every flag is "" and `drawn` is nothing (no player actor).
 - Not read: the held item's name (which tool is in slot 3). The flags name the ocarina and the arrow kind, not what is in hand.
 - The sampler sends it on the first frame and on every change; the client sends it again to every newcomer. Age comes from `PLAYER_SAMPLE`.
@@ -204,7 +204,16 @@ What the director does (`Director::Hold`), for a live puppet, after its gear is 
 - After the call the slot's byte is read: with the wanted bit set the change is taken and logged, `P<n> equipment slot <s> in hand` or `put away`. Otherwise the call is made again after 250 ms (`not taken (byte ..)` with `LICHII_COOP_DEBUG_ANIM`).
 - Where the piece sits (hand bone, arm, guard) is the game's own: the state picks the bone, and the pose copy moves the arm.
 
-**Not proven in game.** It compiles and the unit tests cover the calls (`puppet_test.cpp`: hold, move); no game was run with it. To check with two players: one draws the sword (Y), guards (ZL), puts away (B); the other watches the puppet and the log lines above. Autotest scenario: `hold`. If `not taken` repeats, the state numbers or the byte's bits are wrong for that slot.
+**Two-player run (Caleb, 2026-11-09, main 2e3f68b): "swords and equipment didn't show".** What the logs of that run say:
+
+- Each time a player drew the sword, the other game logged `P<n> equipment slot 0 in hand` and, about 40 ms later, `put away`. So the call is taken, but the player's `drawn` bit lasted one or two frames. The byte at +0x13bc is a **request**, not the state: the setters write it (0x6b6820 writes 2, 0xe34c70 writes 4, also when a piece is created) and the game clears it when the change is done. 0xce7ab0 reads the state from the piece itself once the byte is 0. "Bit 1 is set while the piece is out" (above) was wrong.
+- Fix (`PlayerReader::read_drawn`): the reader remembers the last request seen for each slot (2: in hand; 4 or 1: not) until the next one. It also follows the byte both setters keep in the user's slot record (EquipmentUser +0x4b0 + 0xa8 * slot + 0xa4: 1 in hand, 0 put away; read from the dump, not run), so a request that passed between two frames is not lost. The readers of all frames share one `PlayerReader::DrawnState` (the hook and `Session` keep it).
+- The object log of the same run shows every Link, puppets too, with three pieces: `Weapon_Sword_Kokiri`, `Weapon_Sheath_Kokiri` and `Weapon_Shield_Hylian`, all in state 4, the sword 0.88 above the feet on the player and on the puppet alike. About 90 ms after the equip calls the game makes the three again and removes the first set. So a change of state is now made again when the piece in the slot is another one (`Slot::hold_id`).
+- Also changed: a change counts as taken when the slot record's byte shows it, since a setter leaves the request byte alone when the piece is in that state already.
+
+**Not known: why a worn sword is not seen on the puppet's back.** The actors are there, at the right height. With `LICHII_COOP_DEBUG_ANIM=1` the `gear:` line (every 2 s) now ends with each slot as the game has it: `slot 0: id .. actor .. state .. up <height over the puppet> request .. record .. want hand|away`. Compare a puppet's line with what is seen on the screen.
+
+**Not proven in game** (no game was run with this fix). To check with two players: one draws the sword (Y), guards (ZL), puts away (B); the other watches the puppet. The log must show `in hand` when the sword comes out and `put away` only when it goes back. Autotest scenario: `hold`.
 
 ### Not done (equipment)
 

@@ -117,9 +117,21 @@ inline constexpr std::uint64_t kComponentsEquipmentUser = 0x200;
 // holding a link to the equipment actor (holder pointer +0x8, u32 id +0x10,
 // ~0 empty; the holder as in the player link above). A byte per slot at
 // +0x13bc, bit 1 = drawn. 0x4a33c0 walks them so, skipping a slot whose
-// actor is in state 7 to 11 (gone). Checked. Run (2026-11-09): bit 1 is set
-// while the piece is out (sword drawn, shield raised, held item out) and
-// clear when it is put away; bit 2 is set while a piece is being created.
+// actor is in state 7 to 11 (gone). Checked.
+// The byte is a request, not the state (two-player run, 2026-11-09: a drawn
+// sword showed bit 1 for about 40 ms only). The setters write it and the
+// game clears it when the change is done: 0x6b6820 (in hand) writes 2,
+// 0xe34c70 (put away, also when a piece is created) writes 4, 0x2dfdee0
+// writes 1; 0xce7ab0 reads the state from the piece itself once the byte is
+// 0. Both setters also keep a byte per slot in the user's slot records
+// (+0x4b0, 0xa8 bytes each, byte at +0xa4): 1 in hand, 0 put away. [dump],
+// not run: so the reader takes the requests as they pass and a change of
+// that byte, and remembers the last one (PlayerReader::read_drawn).
+inline constexpr std::uint8_t kEquipRequestNone = 0x1;
+inline constexpr std::uint8_t kEquipRequestAway = 0x4;
+inline constexpr std::uint64_t kEquipRecords = 0x4b0;
+inline constexpr std::uint64_t kEquipRecordStride = 0xa8;
+inline constexpr std::uint64_t kEquipRecordInHand = 0xa4;
 inline constexpr std::uint64_t kEquipSlots = 0x20;
 inline constexpr std::uint64_t kEquipSlotStride = 0x18;
 inline constexpr std::uint32_t kEquipSlotCount = 8;

@@ -543,4 +543,54 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e->drawn == 0x08);
     CHECK_FALSE(e->weapon);
   }
+  SUBCASE("a request lasts a moment: the last one stands") {
+    put_user(m, l);
+    const std::uint64_t request = kUser + 0x13bc;
+    const std::uint64_t record = kUser + 0x4b0 + 0xa4;  // slot 0's in-hand byte
+    put_equipped(m, 0, 40, 4, 0x4);  // just made: put away
+    m.put_u8(record, 0);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    m.put_u8(request, 0x2);  // drawn
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u8(request, 0);  // the game took the request: still drawn
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u8(request, 0x4);  // put away
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    m.put_u8(request, 0);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    // A request that was missed: the record's byte changed.
+    m.put_u8(record, 1);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u8(record, 0);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    // Another piece in the slot starts from its record.
+    m.put_u8(request, 0x2);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u8(request, 0);
+    put_equipped(m, 0, 41, 4, 0x0);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    // The piece gone: nothing is remembered.
+    m.put_u8(request, 0x2);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u8(request, 0);
+    m.put_u32(kEquipActors + 0x2c, 8);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    m.put_u32(kEquipActors + 0x2c, 4);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+  }
+  SUBCASE("readers of different frames share a state") {
+    put_user(m, l);
+    put_equipped(m, 0, 40, 4, 0x2);
+    PlayerReader::DrawnState state{};
+    {
+      PlayerReader first(m, &state);
+      CHECK(first.read_equipment()->drawn == 0x01);
+    }
+    m.put_u8(kUser + 0x13bc, 0);
+    PlayerReader second(m, &state);
+    CHECK(second.read_equipment()->drawn == 0x01);
+    PlayerReader alone(m);
+    CHECK(alone.read_equipment()->drawn == 0x00);
+  }
 }

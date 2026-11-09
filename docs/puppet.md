@@ -40,7 +40,8 @@ The create argument is about 0x100 bytes on the caller's stack. Fields the calle
 | +0x0 | Position, 3 floats; zero from the default at 0x3ee4f8c | Checked as stores; meaning inferred |
 | +0xc | Rotation, 3×3 floats, copied from the identity at 0x3ee4f9c | Checked |
 | +0x30 | Scale, 3 floats, (1, 1, 1) from 0x3ee5008 | Checked |
-| +0x40 | Pointer, set to 0x3ee4f8c (an empty default) | Checked; meaning not read |
+| +0x40 | `const char*`, default `""`: 0x3ee4f8c is the empty string between `ToPlayerDeg` and `PlayerToTargetDiffDeg` in rodata, and the GOT entry 0x4c7dad0 the director copies is the same kind of empty-string default (2669 uses in main, picked with `csel` against a real string). Not an instance-parameter block | Checked (SeqExecuteCreateActor 0x32bca58..0x32bca80) |
+| +0x60 | Pointer; SeqExecuteCreateActor copies `[[node +0x60]]` here when it is not null, else 0. The likeliest carrier of the node's instance parameters (EquipmentUser_* for gear at create) | Store checked; meaning not read |
 | +0x48 | Word 0x10001 | Checked; meaning not read |
 | +0x4f to +0x55 | Zero | Checked |
 | +0x58 | 0x41 bytes cleared | Checked |
@@ -307,6 +308,8 @@ The planner runs `coop::host::visibility` (`coop/host/scene.hpp`) for each remot
 | hide, our cutscene | Kept, written 500 units below its spot (`kHideDrop`), no animation calls, so it is not deleted and made again for every cutscene |
 | hold, their cutscene | Kept where it is, no pose write; slot 0's frame from the start of the hold is set again once a frame, so it stands frozen |
 | show | Pose written every frame, animation as above |
+
+The overlay markers follow the same rule: `Coop::Frame` (`coop_hook.cpp`) notes each player `visibility` hides, and `Place` builds no marker for them. Hold and show keep the marker.
 
 ### The first run
 

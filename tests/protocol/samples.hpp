@@ -43,6 +43,16 @@ inline std::vector<JoinPartner> join_messages() {
   return {ask, yes, no};
 }
 
+inline PlayerEquip equip_message() {
+  PlayerEquip m;
+  m.equipment.weapon = "Weapon_Sword_Kokiri";
+  m.equipment.shield = "Weapon_Shield_Deku";
+  m.equipment.armor = "";  // nothing in that slot
+  m.equipment.head = "Armor_Child_Mask_Keaton";
+  m.equipment.drawn = 0x05;
+  return m;
+}
+
 inline std::vector<Message> every_message() {
   std::vector<Message> all;
   all.push_back(Hello{kProtocolVersion, "lichii 0.1.0", "e0f3ccfaf50065ae", "1.1.1", "Navi"});
@@ -65,6 +75,8 @@ inline std::vector<Message> every_message() {
   all.push_back(FlagSnapshot{0, 1, flag_entries()});
   all.push_back(FlagSnapshot{2, 3, {}});
   all.push_back(Host{2});
+  all.push_back(equip_message());
+  all.push_back(PlayerEquip{3, {}});
   return all;
 }
 

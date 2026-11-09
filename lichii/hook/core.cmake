@@ -4,7 +4,9 @@
 set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
     "${_coop_hook}/coop_camera.cpp"
+    "${_coop_hook}/coop_flags.cpp"
     "${_coop_hook}/coop_hook.cpp"
+    "${_coop_hook}/coop_objects.cpp"
     "${_coop_hook}/coop_settings.cpp"
 )
 # Public, so video_core (which links core) sees them: the patched

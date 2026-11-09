@@ -20,6 +20,8 @@ A `#` or `;` starts a comment at the start of a line or after a space or tab; on
 
 Two more environment variables are for checking the markers (see [the first run](#not-checked-yet-the-first-run)): `LICHII_COOP_DEBUG_CAMERA=1` marks yourself too and logs where, `LICHII_COOP_CAMERA_FLIP_Y=1` turns the markers upside down.
 
+Shared flags (plan stage 1 step 4, [flags.md](flags.md)): `LICHII_COOP_FLAGS=<file>` names the list of shared flags, one a line in the `SharedFlags` format ([host.md](host.md)). Without it no flags are shared. A bad list is logged and turns flag sharing off, not co-op. For checking flags (see [flags.md, "Live check"](flags.md#live-check)): `LICHII_COOP_DEBUG_FLAGS=1` logs every change in the game's Bool, Int and 64-bit-key tables a few times a second, `LICHII_COOP_DEBUG_KEY64=<hex>` and `LICHII_COOP_DEBUG_BOOL=<hex>` log one 64-bit key or Bool flag, `LICHII_COOP_SET_KEY64=<hex>` and `LICHII_COOP_SET_BOOL=<hex>` set one key or Bool flag to 1 once the game is up, and `LICHII_COOP_SET_AFTER=<seconds>` waits that long first (a write before the save has loaded is lost).
+
 Any mistake (an unknown key, a bad port, a name too long) is written to the log and turns co-op off, so a typo never connects somewhere unintended. The log shows `coop: on, server ...` or `coop: off (...)` at start.
 
 ## What runs where
@@ -28,7 +30,7 @@ Any mistake (an unknown key, a bad port, a name too long) is written to the log 
 |---|---|
 | Qt (GUI) | At start, `CoopWindow::Attach` reads the settings and starts co-op. A small see-through panel in the top-left corner of the game lists the players. On close, `CoopHook::Shutdown` says goodbye to the server. |
 | Network | Runs `coop::host::Session::service` ([host.md](host.md#session)) for the `coop::net::Client`: connects, reconnects, sends what the frame queued, feeds what comes in to presence. Wakes every 2 ms or as soon as something is queued. |
-| Present (`OnFrame`) | Once per emulated frame: reads the local player through `coop_host` (`PlayerReader` over guest memory) and hands it to `Session::frame`, which runs the `Sampler` and queues `PLAYER_STATUS` and `PLAYER_SAMPLE`; then asks the session's presence where the others are shown, and projects them with the camera the GPU thread found. No shared flags yet (no `FlagStore` for the game). |
+| Present (`OnFrame`) | Once per emulated frame: reads the local player through `coop_host` (`PlayerReader` over guest memory) and hands it to `Session::frame`, which runs the `Sampler` and queues `PLAYER_STATUS` and `PLAYER_SAMPLE`; then asks the session's presence where the others are shown, and projects them with the camera the GPU thread found. With a shared flag list, `Session::frame` also gets a `GameFlagStore` over guest memory (`lichii/hook/coop_flags.cpp`), so the flag watcher reads and writes the game's flags in the same call. |
 | GPU (draws) | Per draw, only while Ocarina runs with co-op on: looks for the game's camera buffer (see [Markers](#markers)) and hands the matrix over. |
 
 The connection is made when the emulator starts, before any game, and lasts until it closes, so players stay in the room across game restarts. Nothing is read or sent unless the running game is Ocarina of Time (program 0400486024DEC000) with build id `e0f3ccfaf50065ae`, the build the addresses in `coop/host` are for. A build that does not match is logged once.

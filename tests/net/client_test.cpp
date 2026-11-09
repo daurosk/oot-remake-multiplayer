@@ -645,8 +645,8 @@ TEST_CASE("client: the player list follows joins, statuses, leaves and reconnect
   welcome_client(client, server);  // we are 2, Saria is 1
   REQUIRE(wait_event(client, server, events, EventKind::welcomed));
 
-  const Player saria{1, "Saria", std::nullopt, false};
-  const Player link{2, "Link", std::nullopt, true};
+  const Player saria{1, "Saria", std::nullopt, false, std::nullopt};
+  const Player link{2, "Link", std::nullopt, true, std::nullopt};
   CHECK(client.players() == std::vector<Player>{saria, link});
   CHECK(client.find_player(4) == nullptr);
 
@@ -657,7 +657,7 @@ TEST_CASE("client: the player list follows joins, statuses, leaves and reconnect
   CHECK(joined.player == 3);
   CHECK(joined.nickname == "Zelda");
   REQUIRE(client.players().size() == 3);
-  CHECK(client.players()[2] == Player{3, "Zelda", std::nullopt, false});
+  CHECK(client.players()[2] == Player{3, "Zelda", std::nullopt, false, std::nullopt});
 
   // Status, theirs received and ours sent; unknown bits are kept.
   const std::uint8_t flags = proto::status::paused | 0x80;
@@ -690,7 +690,7 @@ TEST_CASE("client: the player list follows joins, statuses, leaves and reconnect
   CHECK(left.player == 3);
   CHECK(left.nickname == "Zelda");
   CHECK(static_cast<int>(left.leave_reason) == 9);
-  CHECK(client.players() == std::vector<Player>{saria, Player{2, "Link", proto::status::loading, true}});
+  CHECK(client.players() == std::vector<Player>{saria, Player{2, "Link", proto::status::loading, true, std::nullopt}});
 
   // A join for a number already in the room replaces that player.
   const std::size_t before = events.all.size();
@@ -1039,6 +1039,91 @@ TEST_CASE("client flags: the host answers FLAG_SET through its callback") {
   CHECK(snap.part == 0);
   CHECK(snap.part_count == 2);
   CHECK(server.received[*part0].channel == proto::kChannelProgress);
+}
+
+TEST_CASE("client flags: count deltas go to the host's game, never into the table") {
+  auto delta = [](std::uint32_t hash, std::int32_t change) {
+    return proto::FlagEntry{hash, 0, proto::FlagKind::count_delta,
+                            static_cast<std::uint32_t>(change)};
+  };
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+
+  SUBCASE("as host") {
+    welcome_as(client, server, events, 1, {{2, "Saria"}, {3, "Zelda"}});
+    REQUIRE(client.is_host());
+    // A delta with a value: the value is answered, the delta is handed to
+    // our game in the event, whose watcher sends the total.
+    std::size_t from = server.received.size();
+    server.send(proto::FlagSet{2, {delta(7, 1), s32_flag(6, 3)}}, proto::kChannelProgress);
+    const std::size_t at = wait_received<proto::FlagState>(client, server, from);
+    CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+          std::vector<proto::FlagEntry>{s32_flag(6, 3)});
+    const std::size_t seen_first = events.all.size();
+    REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+    const auto& first = events.all[*events.find(EventKind::flag_state, seen_first)];
+    CHECK(first.player == 1);
+    CHECK(first.flags == std::vector<proto::FlagEntry>{s32_flag(6, 3), delta(7, 1)});
+    CHECK_FALSE(client.find_flag(7).has_value());
+
+    // Deltas only: no FLAG_STATE from the client, still an event.
+    const int states = events.count(EventKind::flag_state);
+    from = server.received.size();
+    server.send(proto::FlagSet{3, {delta(7, -1)}}, proto::kChannelProgress);
+    const std::size_t seen = events.all.size();
+    REQUIRE(pump(client, server, [&] {
+      events.drain(client);
+      return events.count(EventKind::flag_state) > states;
+    }));
+    CHECK(events.all[*events.find(EventKind::flag_state, seen)].flags == std::vector<proto::FlagEntry>{delta(7, -1)});
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+
+    // Our own delta echoed back: it is in our game already, not added again.
+    server.send(proto::FlagSet{1, {delta(8, 1)}}, proto::kChannelProgress);
+    settle(client, server, events, 200);
+    CHECK(events.count(EventKind::flag_state) == states + 1);
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+
+    // As host our own count goes out as its total; a delta is dropped.
+    CHECK(client.set_flag(delta(9, 1)));
+    settle(client, server, events, 200);
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+    CHECK_FALSE(server.find<proto::FlagSet>(from).has_value());
+  }
+
+  SUBCASE("as player") {
+    welcome_as(client, server, events, 2, {{1, "Saria"}, {3, "Zelda"}});
+    std::size_t from = server.received.size();
+    // Two keys in a call and one more later: each call one FLAG_SET; the
+    // unanswered ones add up for a resend.
+    CHECK(client.set_flags(std::vector<proto::FlagEntry>{delta(7, 1), delta(7, 1)}));
+    CHECK(client.set_flag(delta(7, 1)));
+    REQUIRE(pump(client, server, [&] { return count_received<proto::FlagSet>(server, from) == 2; }));
+    CHECK(std::get<proto::FlagSet>(server.received[*server.find<proto::FlagSet>(from)].message)
+              .flags == std::vector<proto::FlagEntry>{delta(7, 2)});
+    REQUIRE(client.pending_flags().size() == 1);
+    CHECK(client.pending_flags().begin()->second == delta(7, 3));
+
+    // Host 1 leaves: the sum goes to the new host, once.
+    from = server.received.size();
+    server.send(proto::Host{3}, proto::kChannelProgress);
+    REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+    const std::size_t at = wait_received<proto::FlagSet>(client, server, from);
+    CHECK(std::get<proto::FlagSet>(server.received[at].message).flags ==
+          std::vector<proto::FlagEntry>{delta(7, 3)});
+
+    // We host next: our game holds the keys already; nothing is stated for
+    // them and nothing waits.
+    from = server.received.size();
+    server.send(proto::Host{2}, proto::kChannelProgress);
+    REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+    settle(client, server, events, 200);
+    CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+    CHECK(client.pending_flags().empty());
+    CHECK_FALSE(client.find_flag(7).has_value());
+  }
 }
 
 TEST_CASE("client flags: 64-bit keys are set, stored and answered like named flags") {
@@ -1526,4 +1611,63 @@ TEST_CASE("client: the flag and join event kinds are named") {
   CHECK(to_string(EventKind::join_refused) == "join refused");
   CHECK(to_string(EventKind::join_timed_out) == "join timed out");
   CHECK(to_string(EventKind::host_changed) == "host changed");
+}
+
+TEST_CASE("client: equipment is kept per player and ours goes to each newcomer") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);  // we are 2, Saria is 1
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+
+  // Theirs: a later message keeps what it leaves out.
+  proto::Equipment saria;
+  saria.weapon = "Weapon_Sword_Kokiri";
+  saria.drawn = 1;
+  server.send(proto::PlayerEquip{1, saria}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::player_equip));
+  const Event first = events.all[*events.find(EventKind::player_equip)];
+  CHECK(first.player == 1);
+  CHECK(first.equipment == saria);
+  const std::size_t before = events.all.size();
+  proto::Equipment sheathed;
+  sheathed.drawn = 0;
+  server.send(proto::PlayerEquip{1, sheathed}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return events.find(EventKind::player_equip, before).has_value();
+  }));
+  REQUIRE(client.find_player(1)->equipment);
+  CHECK(client.find_player(1)->equipment->weapon == "Weapon_Sword_Kokiri");
+  CHECK(client.find_player(1)->equipment->drawn == 0);
+
+  // Refused: equipment for nobody, or for us.
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::PlayerEquip{4, saria}, proto::kChannelSession);
+  server.send(proto::PlayerEquip{2, saria}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 2; }));
+
+  // Ours: kept when sent, and sent again when someone joins.
+  proto::Equipment link;
+  link.armor = "Armor_Adult_Zora";
+  const std::size_t from = server.received.size();
+  REQUIRE(client.send(proto::PlayerEquip{0, link}));
+  CHECK(client.find_player(2)->equipment == link);
+  auto count_equips = [&] {
+    std::size_t n = 0;
+    for (std::size_t i = from; i < server.received.size(); ++i) {
+      if (const auto* e = std::get_if<proto::PlayerEquip>(&server.received[i].message)) {
+        CHECK(e->equipment == link);
+        CHECK(server.received[i].channel == proto::kChannelSession);
+        ++n;
+      }
+    }
+    return n;
+  };
+  REQUIRE(pump(client, server, [&] { return count_equips() == 1; }));
+  server.send(proto::PlayerJoined{3, "Zelda"}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return count_equips() == 2; }));
+  CHECK(to_string(EventKind::player_equip) == "player equip");
+  client.stop();
 }

@@ -358,12 +358,23 @@ bool has_duplicate(std::span<const FlagEntry> flags) {
   return std::adjacent_find(keys.begin(), keys.end()) != keys.end();
 }
 
+// Which lists may carry a count delta: FLAG_SET only.
+enum class Deltas : bool { refused, allowed };
+
+Error check_delta(const FlagEntry& e, Deltas deltas) {
+  return e.kind == FlagKind::count_delta && deltas == Deltas::refused ? Error::bad_value
+                                                                      : Error::none;
+}
+
 // The rules every flag list follows: min_count to kMaxFlagEntries entries,
-// each valid, no key twice.
-Error check_flags(const std::vector<FlagEntry>& flags, std::size_t min_count) {
+// each valid, a count delta only where allowed, no key twice.
+Error check_flags(const std::vector<FlagEntry>& flags, std::size_t min_count, Deltas deltas) {
   if (flags.size() > kMaxFlagEntries) return Error::too_large;
   if (flags.size() < min_count) return Error::bad_value;
-  for (const auto& e : flags) COOP_TRY(check_flag(e));
+  for (const auto& e : flags) {
+    COOP_TRY(check_flag(e));
+    COOP_TRY(check_delta(e, deltas));
+  }
   if (has_duplicate(flags)) return Error::bad_value;
   return Error::none;
 }
@@ -421,7 +432,7 @@ Error encode_body(const JoinPartner& m, Writer& w) {
 
 Error encode_body(const FlagSet& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  COOP_TRY(check_flags(m.flags, 1));
+  COOP_TRY(check_flags(m.flags, 1, Deltas::allowed));
   w.u8(m.player_number);
   write_flags(m.flags, w);
   return Error::none;
@@ -429,7 +440,7 @@ Error encode_body(const FlagSet& m, Writer& w) {
 
 Error encode_body(const FlagState& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  COOP_TRY(check_flags(m.flags, 1));
+  COOP_TRY(check_flags(m.flags, 1, Deltas::refused));
   w.u8(m.player_number);
   write_flags(m.flags, w);
   return Error::none;
@@ -437,7 +448,7 @@ Error encode_body(const FlagState& m, Writer& w) {
 
 Error encode_body(const FlagSnapshot& m, Writer& w) {
   if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
-  COOP_TRY(check_flags(m.flags, 0));
+  COOP_TRY(check_flags(m.flags, 0, Deltas::refused));
   w.u16(m.part);
   w.u16(m.part_count);
   write_flags(m.flags, w);
@@ -447,6 +458,40 @@ Error encode_body(const FlagSnapshot& m, Writer& w) {
 Error encode_body(const Host& m, Writer& w) {
   if (!valid_player(m.player_number)) return Error::bad_value;
   w.u8(m.player_number);
+  return Error::none;
+}
+
+// The name fields of Equipment, in component order.
+struct EquipName {
+  EquipComponent id;
+  std::optional<std::string> Equipment::*field;
+};
+constexpr EquipName kEquipNames[] = {
+    {EquipComponent::weapon, &Equipment::weapon},   {EquipComponent::shield, &Equipment::shield},
+    {EquipComponent::armor, &Equipment::armor},     {EquipComponent::boots, &Equipment::boots},
+    {EquipComponent::head, &Equipment::head},       {EquipComponent::hand, &Equipment::hand},
+    {EquipComponent::ocarina, &Equipment::ocarina}, {EquipComponent::arrow, &Equipment::arrow},
+};
+
+Error encode_body(const PlayerEquip& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  for (const EquipName& n : kEquipNames) {
+    if (const auto& name = m.equipment.*n.field) COOP_TRY(check_string(*name, kMaxEquipNameChars));
+  }
+  w.u8(m.player_number);
+  for (const EquipName& n : kEquipNames) {
+    const auto& name = m.equipment.*n.field;
+    if (!name) continue;
+    w.u16(static_cast<std::uint16_t>(n.id));
+    const std::size_t at = w.begin_length();
+    w.str(*name);
+    w.finish_length(at);
+  }
+  if (m.equipment.drawn) {
+    w.u16(static_cast<std::uint16_t>(EquipComponent::drawn));
+    w.u16(1);
+    w.u8(*m.equipment.drawn);
+  }
   return Error::none;
 }
 
@@ -655,7 +700,8 @@ Error decode_body(Reader& r, JoinPartner& m) {
   return Error::none;
 }
 
-Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count) {
+Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count,
+                 Deltas deltas) {
   std::uint16_t count = 0;
   COOP_READ(r.u16(count));
   if (count > kMaxFlagEntries || count < min_count) return Error::bad_value;
@@ -682,6 +728,7 @@ Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count
     COOP_READ(r.u32(e.value));
     e.kind = static_cast<FlagKind>(kind);
     COOP_TRY(check_flag(e));
+    COOP_TRY(check_delta(e, deltas));
   }
   if (has_duplicate(flags)) return Error::bad_value;
   return Error::none;
@@ -690,25 +737,66 @@ Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count
 Error decode_body(Reader& r, FlagSet& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  return read_flags(r, m.flags, 1);
+  return read_flags(r, m.flags, 1, Deltas::allowed);
 }
 
 Error decode_body(Reader& r, FlagState& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  return read_flags(r, m.flags, 1);
+  return read_flags(r, m.flags, 1, Deltas::refused);
 }
 
 Error decode_body(Reader& r, FlagSnapshot& m) {
   COOP_READ(r.u16(m.part));
   COOP_READ(r.u16(m.part_count));
   if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
-  return read_flags(r, m.flags, 0);
+  return read_flags(r, m.flags, 0, Deltas::refused);
 }
 
 Error decode_body(Reader& r, Host& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player(m.player_number)) return Error::bad_value;
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PlayerEquip& m) {
+  m = PlayerEquip{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+
+  std::uint32_t seen = 0;  // bit per known component id
+  while (r.left() > 0) {
+    std::uint16_t id = 0;
+    std::uint16_t length = 0;
+    COOP_READ(r.u16(id));
+    COOP_READ(r.u16(length));
+    std::span<const std::uint8_t> data;
+    if (!r.take(length, data)) return Error::bad_length;
+
+    Reader c(data);
+    std::optional<std::string>* name = nullptr;
+    for (const EquipName& n : kEquipNames) {
+      if (static_cast<std::uint16_t>(n.id) == id) name = &(m.equipment.*n.field);
+    }
+    const bool is_drawn = id == static_cast<std::uint16_t>(EquipComponent::drawn);
+    if (name == nullptr && !is_drawn) continue;  // unknown: skipped by its length
+    if (seen & (1u << id)) return Error::duplicate_component;
+    seen |= 1u << id;
+
+    Error e = Error::none;
+    if (name != nullptr) {
+      e = c.str(name->emplace(), kMaxEquipNameChars);
+    } else {
+      std::uint8_t bits = 0;
+      e = c.u8(bits) ? Error::none : Error::truncated;
+      m.equipment.drawn = bits;
+    }
+    // A known component's fields running past its length means its length
+    // is wrong, not that the message was cut short.
+    if (e == Error::truncated) return Error::bad_length;
+    if (e != Error::none) return e;
+    if (c.left() != 0) return Error::bad_length;
+  }
   return Error::none;
 }
 
@@ -752,7 +840,7 @@ MessageType type_of(const Message& message) {
       MessageType::pong,          MessageType::player_status, MessageType::chat,
       MessageType::player_sample, MessageType::test_payload,
       MessageType::join_partner,  MessageType::flag_set,    MessageType::flag_state,
-      MessageType::flag_snapshot, MessageType::host,
+      MessageType::flag_snapshot, MessageType::host, MessageType::player_equip,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -787,6 +875,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::player_status:
     case MessageType::chat:
     case MessageType::join_partner:
+    case MessageType::player_equip:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -821,6 +910,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::flag_set:
     case MessageType::flag_state:
     case MessageType::flag_snapshot:
+    case MessageType::player_equip:
       return true;
   }
   return false;
@@ -838,7 +928,8 @@ auto* player_field(M& message) {
         using T = std::remove_cvref_t<decltype(m)>;
         if constexpr (std::is_same_v<T, PlayerStatus> || std::is_same_v<T, Chat> ||
                       std::is_same_v<T, PlayerSample> || std::is_same_v<T, JoinPartner> ||
-                      std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState>) {
+                      std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState> ||
+                      std::is_same_v<T, PlayerEquip>) {
           field = &m.player_number;
         }
       },
@@ -920,6 +1011,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
+    case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;
 }
@@ -1009,6 +1101,7 @@ bool valid_flag(const FlagEntry& e) {
       return e.value <= 1;
     case FlagKind::int32:
     case FlagKind::uint32:
+    case FlagKind::count_delta:  // key64 is refused above: always a bool
       return true;
     case FlagKind::float32:
       return std::isfinite(std::bit_cast<float>(e.value));

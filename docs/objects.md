@@ -2,15 +2,71 @@
 
 Plan stage 5 ([plan.md](plan.md)): bombs, arrows and other projectiles seen on every screen, one owner per enemy with a real hand-over, and hits on a copy sent to the owner as damage events. This page says which actors the game uses, where their state is, how an actor is told apart on two games, and proposes the messages and the ownership rules. No product code yet.
 
-Addresses are offsets into `main` of build `e0f3ccfaf50065ae` (1.1.1). **Checked** means read from the instructions or the data files. **Inferred** means taken from a name, a shape or the engine family. The game was not run for this page; see "Not done".
+Addresses are offsets into `main` of build `e0f3ccfaf50065ae` (1.1.1). **Checked** means read from the instructions or the data files. **Inferred** means taken from a name, a shape or the engine family. **Live** means seen in the running game; see "Live check", the only part that was run.
 
 ## Results
 
 - Every player projectile is its own actor, created through the same function as everything else (0x372a70, [puppet.md](puppet.md)). Shot ones go through the shootable create at **0xc16cf0**, which passes the blackboard values `Shootable_KeyHash` and `Shootable_OverrideParamNum` with the request.
 - The actors: `NormalArrow` (arrows, also the actor fire, ice and light arrows are shot as: inferred), `Shootable_DekuSeed` (slingshot), `Shootable_Hook` and `Shootable_HookLong` (hookshot and longshot tip), `Item_Bomb`, `Item_Bombchu`, `Item_DekuNut`, `Weapon_Boomerang`. The `Obj_*` and `Item_Arrow_*` packs of the same names are pick-ups.
 - An actor's name is a `char*` at actor **+0x260**. Its life is an s32 at **`*(Life + 0x1c10) + 8`**, its maximum at `*(Life + 0x1c18) + 8`, where Life is component-table entry **+0x2b8** (table at actor +0x270).
-- A placed actor's 64-bit placement hash, the key of its flag in [flags.md](flags.md), is a u64 at **`*(actor + 0x3d8) + 0x88`**. A game-made actor has 0 there.
+- A placed actor's 64-bit placement hash, the key of its flag in [flags.md](flags.md), is a u64 at **`*(actor + 0x3d8) + 0x88`**. A game-made actor has `0xffffffffffffffff` there (live).
+- Live (2026-11-08): the actor list is found (`[[main + 0x4e91888] + 0x118] + 0x670`, node at actor + 0x538); `Shootable_DekuSeed` is confirmed; the life chain reads right on every enemy; damage is applied by the Life component's step 0x49d8c0, and writing life directly holds and runs the game's own death.
 - Proposal: projectiles stay with the game that made them for their whole life and are drawn elsewhere as harmless copies; enemies have one owner with a fight lock and a hand-over that carries the state; any life lost on a copy goes to the owner as `DAMAGE`. Eight new messages (below).
+
+## Live check (2026-11-08)
+
+One portable instance of the patched emulator, a child save in the Graveyard at night (slingshot, 48 seeds; no bombs, bow, boomerang or hookshot yet). Memory was read through the emulator's debug server (`EDEN_NX2_DEBUG_SERVER`, `read_memory` and `search_memory`) and written and watched through its GDB stub. The hook's own reader, `lichii/hook/coop_objects.cpp` (`LICHII_COOP_DEBUG_OBJECTS=1`), does the same walk and logs what is below; it compiles with the emulator's flags but has not yet run in a build.
+
+### The live actor list (found)
+
+| What | Where | Seen |
+|---|---|---|
+| List head | `[[main + 0x4e91888] + 0x118] + 0x670` | One circular doubly linked list of every actor: 242 to 740 entries in the Graveyard as areas loaded |
+| Length | u32 at head + 0x10 | Equal to the walked length every time it was read still |
+| Node | `{next +0, prev +8, owner +0x10}` | The actor's own node is at **actor + 0x538**. A handful of non-actor objects (3 of 312) share the list with the node at owner + 0x3a0 or + 0x3a8; skip any node whose owner + 0x538 is not the node |
+
+It was found by searching the heap for the player actor's address: one hit is the player's own +0x548, a node whose owner field points back at the player. The list changes while it is read from another thread: a walk sees actors drop out and come back within 0.1 s. The hook's reader drops any walk whose length is not the head's count and calls an actor gone only after two walks without it.
+
+Watching the list stands in for hooking 0x372a70: an actor made by a create shows up in the list a frame or two later, so names and positions are the same; only the create's arguments (the shooter, the override list) are not seen. That needs the SVC hook.
+
+### Projectiles (one of eight confirmed)
+
+| Action | Actors that appeared | Notes |
+|---|---|---|
+| Draw the slingshot (ZR held) | `Weapon_Range_SlingShot` at Link's hand, and `Shootable_DekuSeed` at the same place | The seed is made when it is nocked, before it flies |
+| Each shot | the flying `Shootable_DekuSeed` goes 0.1 to 0.5 s later; a new one is made at once for the next shot | 48 to 45 seeds over three shots |
+
+| Throw a Deku nut | `Item_DekuNut` at Link's hand | Gone 1 to 4 s later |
+
+**Confirmed: `Shootable_DekuSeed` and `Item_DekuNut`.** `NormalArrow`, `Item_Bomb`, `Item_Bombchu`, `Weapon_Boomerang`, `Shootable_Hook` and `Shootable_HookLong` are still from the data files only: the save has none of them.
+
+### Life chain (confirmed)
+
+`*(*(*(actor + 0x270) + 0x2b8) + 0x1c10) + 8` reads life and the 0x1c18 twin reads max on every enemy and on Link:
+
+| Actor | Life / max |
+|---|---|
+| `Enemy_ReDead` (5 of them) | 12 / 12 |
+| `Enemy_Keese` (4) | 1 / 1 |
+| `Enemy_Skulltula_Gold` | 1 / 1 |
+| `Enemy_Poe` (made by the game near the graves) | 3 / 3 |
+| `Player_Child`, 4 hearts | 16 / 16 (4 a heart) |
+
+### Damage (how life changes)
+
+- **The function.** The Life component's step **0x49d8c0** applies damage. Each frame it sums what was dealt to the actor into **Life + 0x1cb0** (from **Life + 0x228**, **Life + 0x1350** and one more term), then sets life with a compare-and-swap at **0x49dcf8**: life minus that sum, at most max, never below 0. A GDB write watchpoint on an enemy's life stops there every frame, with sum 0 when nothing hit.
+- **Life + 0x228** is a per-frame damage accumulator: 0xaa920 (called from 0x2c23e28) swaps it to 0 each frame. What adds a hit into it was not found: there is no atomic add to that offset in the code, so it is written through a base other than the Life component. A watchpoint cannot follow it live: the field is written several hundred times a second and each stop starves the frame loop (52,000 stops, no frame shown, in 90 s).
+- **Life + 0x1ca8 and + 0x1cac** are a mirror of life and max, rewritten 1 to 2.5 s after life changes (0x8d96a0). They read -1 for an instant now and then. They do not guard life.
+- **A real hit.** A player killed a Poe with the Kokiri Sword while a logger read it: life 3 to 2 to 1 to 0, one per hit, and the sum at Life + 0x1cb0 read 1 after each. 2 s after life reached 0 the Poe left the list and `Obj_Spirit_Poe` (its soul) appeared; its lantern `Weapon_PoeCantera` went with it. That Poe was made by the game near a dug-up grave (hash `0xffffffffffffffff`), so it is a game-made enemy: the "Made by the scene with no hash" row of the id table applies to it.
+- **A direct write holds and kills.** Through the GDB stub: a ReDead's life 12 to 5 stayed 5, and its mirror followed. 5 to 0: 2.4 s later an `Obj_Rupee_Green` appeared at the ReDead's place, the game's own death drop. The ReDead stayed in the list in state 4, life 0, for the 20 s it was watched. So the owner can apply `DAMAGE` by writing life (the proposal's plan), and the game's own death follows; a copy's life must not be written to 0 by anyone but its owner.
+
+### Placement hash (confirmed)
+
+`*(actor + 0x3d8) + 0x88` is a u64 on every placed enemy, and the same after a reload: ReDead `0xf9b880ab096a9cd6`, Gold Skulltula `0x32f42f523be6425`, Keese `0x62a0218c021047f1`, `0x9b68efc6a861c030`, `0x30843dad7976f0fa`, `0xb8a209d8a2f24c4d`. Actors the game made (Link, the camera, the Poe) have **`0xffffffffffffffff`** there, not 0.
+
+### States seen
+
+4 for every awake actor. The Gold Skulltula went to **6** while Link was about 25 m away and left the list later, with life still 1 before that; whether 6 is asleep or out of range, and why it was then removed, is not known.
 
 ## The projectile actors
 
@@ -55,11 +111,11 @@ So a remote player's arrow can be made on this screen the same way the puppet is
 | Component table | +0x270 | Checked |
 | Life component | table +0x2b8 | Checked: 0x833e00, used by `QueryActorLife` |
 | Life, max life | s32 at `*(Life + 0x1c10) + 8` and `*(Life + 0x1c18) + 8` | Checked: `QueryActorLife` 0x29afbc0 reads both and divides them; 0x8d8c50 copies max into life (a reset) |
-| A copy of life, max life | Life +0x1ca8, +0x1cac, written at 0x8d96a0 | Checked as stores; meaning inferred (the last values seen) |
+| A copy of life, max life | Life +0x1ca8, +0x1cac, written at 0x8d96a0 | Live: a mirror that follows life 1 to 2.5 s later |
 | Placement hash | u64 at `*(actor + 0x3d8) + 0x88` | Checked: `OneShotInstanceGameDataSetBool` (0x28e64c4) passes it to the 64-bit-key setter 0x3761720, and uses an `InstanceGameParameter_%llu` name when it is 0 |
 | The AI's actor | node +8, +8, +0x1f0 | Checked: 0xc70e70 and 0x833d60 |
 
-The value at `*(Life + 0x1c10)` is an object of its own, not a plain field: its pointer is loaded at 103 places in 97 functions but written directly only by the reset. So damage is applied through some other function, not found yet (see "Not done").
+The value at `*(Life + 0x1c10)` is an object of its own, not a plain field: its pointer is loaded at 103 places in 97 functions but written directly only by the reset. So damage is applied through some other function. Live: it is the Life component's step 0x49d8c0, which writes life with a compare-and-swap (see "Live check").
 
 Enemy damage is set in each pack's `Life/DamageParameters` (`IsMergeSameFrameHitInfo`, guard angles, burn, shock, freeze, impulse damage) and life in `Life/LifeParameters` (`MaxLife`; `Enemy_Bari` has 2). The game's damage pipeline has the AI queries `QueryGetLastExternalDamageData`, `QueryIsDamageTypeBomb`, `QueryDamageCalculatorIsOnDamageTypeAny` and others, all reading an external damage calculator. Names checked; the calculator was not read.
 
@@ -156,21 +212,21 @@ The server's per-player limits (60 a second on channels 0 to 2, 240 on 3 and 4) 
 
 In order, each its own branch:
 
-1. **Live check (needs a run).** In the s1 hook, log every 0x372a70 call's name (`x1`) for a minute in Kokiri Forest while shooting the slingshot and in Dodongo's Cavern while throwing bombs: confirms the actor names. Read an enemy's +0x260, its life through the chain above and its placement hash; hit it and see life drop by the attack.
+1. **Live check, the rest.** Done for the slingshot, the nut, life, a sword kill, hashes and the list (above). Left: the other six projectiles, which need a save with them (run with `LICHII_COOP_DEBUG_OBJECTS=1` and read the `coop: objects:` lines), and the hook's reader run once in a build.
 2. **Protocol.** Add the eight messages and the components to `coop/protocol/` with round-trip and refusal tests, and the rules to [protocol.md](protocol.md).
 3. **Server.** The ownership table and rules, with tests driven by fake presence lists and positions: first owner, fight lock, out-of-fight hand-over with the hold, owner leaving, a hand-over whose old owner never answers, stale epochs dropped, damage only to the owner.
-4. **The actor list (research).** The host needs every live actor each frame, or the creates as they happen. Not found: the Actor module (0x4e91920) and its step 0x3adf1f0 are where to look. Without it, the hook can record what 0x372a70 fills into each handle slot.
+4. **The actor list.** Found (see "Live check"). The host library gets a reader for it, with the same guards as `coop_objects.cpp`.
 5. **Projectile copies.** The `CoopShot_*` packs, spawned through the puppet's create command; the maker's side sends spawn, samples and remove.
 6. **Enemy copies and damage.** Pose and life written into non-owned enemies from samples; the life-drop forwarding; the owner applying `DAMAGE`.
 7. **Bosses.** Group lists per boss, tried one fight at a time.
 
 ## Not done
 
-1. Nothing here was run. The brief allows one portable instance to confirm actor names when a bomb is thrown; that needs step 1's create log, which the hook does not have yet.
-2. The function that takes damage off life, and the stun paths of nuts and the boomerang. Writing life straight into `*(Life + 0x1c10) + 8` worked for TotK's owner side, but here life is behind an object of its own and has a second copy at Life +0x1ca8, so a direct write may be undone or skip the death.
+1. Only the slingshot's seed and the Deku nut were seen live; the other projectile names are from the data files. The hook's reader has not run in a build yet.
+2. What adds a hit into Life + 0x228 (the step that applies it, 0x49d8c0, is found), and the stun paths of nuts and the boomerang. A direct life write is enough for the owner (live check), so this is only needed to learn the cause of a hit.
 3. Where `ExecuteBarrelBombAI` keeps the remaining fuse.
 4. The rest of 0xc16cf0's argument (the shooter, the start position and velocity), and how the shooter gives a new projectile its velocity.
 5. The explosion effect and sound names, for copies.
-6. The live actor list.
+6. When the game removes a dead enemy from the list (a ReDead at life 0 stayed for 20 s), and what actor state 6 means.
 7. World effects of projectiles that are not saved flags (timed switches, torches, webs burnt).
 8. Whether a placement hash is unique across scenes, or only within one.

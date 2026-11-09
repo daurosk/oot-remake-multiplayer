@@ -1,6 +1,7 @@
 #include "coop/host/flag_watcher.hpp"
 
 #include <algorithm>
+#include <limits>
 
 #include "coop/protocol/codec.hpp"
 
@@ -13,6 +14,16 @@ void push(std::vector<Outgoing>& out, const protocol::Message& message) {
   if (auto bytes = protocol::encode(message)) {
     out.push_back({protocol::channel_of(message), std::move(*bytes)});
   }
+}
+
+bool is_delta(const FlagEntry& e) { return e.kind == protocol::FlagKind::count_delta; }
+
+std::int64_t as_int(std::uint32_t bits) { return static_cast<std::int32_t>(bits); }
+
+std::uint32_t as_bits(std::int64_t v) {
+  v = std::clamp<std::int64_t>(v, std::numeric_limits<std::int32_t>::min(),
+                               std::numeric_limits<std::int32_t>::max());
+  return static_cast<std::uint32_t>(static_cast<std::int32_t>(v));
 }
 
 // FLAG_SET or FLAG_STATE messages for `table`, at most kMaxFlagEntries each.
@@ -90,7 +101,9 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   // game's change is newer, and the diff below sends it.
   const Table retry = unwritten_;
   for (const auto& [key, entry] : retry) {
-    if (const auto known = last_.find(key); known != last_.end()) {
+    // A count total is written on top of the game's own change (write()),
+    // so it is never dropped for one.
+    if (const auto known = last_.find(key); known != last_.end() && !store.is_count(key)) {
       std::optional<FlagEntry> now = store.read(key);
       if (now) {
         now->key = key;
@@ -102,6 +115,9 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     }
     write(store, entry);
   }
+  const auto deltas = std::move(unadded_);
+  unadded_.clear();
+  for (const auto& [key, entry] : deltas) add(store, entry);
 
   Table answers;  // host: FLAG_STATE entries answering a FLAG_SET
   auto queue = std::move(queue_);
@@ -116,6 +132,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     }
     diff(store, changes);
   }
+  restate_.clear();
 
   if (role_ == FlagRole::player) {
     push_list<protocol::FlagSet>(out, changes);
@@ -188,6 +205,16 @@ void FlagWatcher::apply_state(FlagStore& store, const std::vector<FlagEntry>& fl
       ++stats_.not_shared;
       continue;
     }
+    if (is_delta(entry)) {
+      // A player's count change, handed over by the host's client: the host
+      // adds it, and diff() sends the total. A player takes totals only.
+      if (role_ == FlagRole::host) {
+        add(store, entry);
+      } else {
+        ++stats_.ignored_messages;
+      }
+      continue;
+    }
     // This is the host's answer: it wins over the local change.
     pending_.erase(key);
     write(store, entry);
@@ -230,7 +257,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       now->key = key;
     } else {
       ++stats_.read_failures;
-      if (written) now = entry;
+      if (written && !is_delta(entry)) now = entry;
     }
     if (!now) continue;  // no answer: neither written nor readable
     last_[key] = *now;
@@ -241,7 +268,20 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
 
 bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   const FlagKey key = key_of(entry);
-  if (!store.write(entry)) {
+  FlagEntry to_write = entry;
+  if (entry.kind == protocol::FlagKind::int32 && store.is_count(key)) {
+    // A count total from the host. A change the game made since last frame
+    // is not in it (diff() has not sent it yet): write the total plus that
+    // change, and keep the total as last seen, so diff() still sends it.
+    const auto known = last_.find(key);
+    const std::optional<FlagEntry> now = store.read(key);
+    if (known != last_.end() && now && known->second.kind == protocol::FlagKind::int32 &&
+        now->kind == protocol::FlagKind::int32) {
+      to_write.value = as_bits(as_int(entry.value) + as_int(now->value) -
+                               as_int(known->second.value));
+    }
+  }
+  if (!store.write(to_write)) {
     ++stats_.write_failures;
     unwritten_[key] = entry;
     return false;
@@ -250,6 +290,27 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   unwritten_.erase(key);
   last_[key] = entry;  // so the next diff does not send it back
   return true;
+}
+
+void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
+  const FlagKey key = key_of(delta);
+  if (!store.is_count(key)) {
+    ++stats_.not_shared;
+    return;
+  }
+  if (!store.write(delta)) {
+    ++stats_.write_failures;
+    // Tried again next frame, with any other change to the same count.
+    auto [it, fresh] = unadded_.try_emplace(key, delta);
+    if (!fresh) it->second.value = as_bits(as_int(it->second.value) + as_int(delta.value));
+    return;
+  }
+  ++stats_.applied;
+  ++stats_.deltas_added;
+  // last_ is left as it was, so diff() sees the new total and sends it; and
+  // sends it even when it did not change (the host spent what the player
+  // got), as the player waits for it.
+  restate_.insert(key);
 }
 
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
@@ -261,12 +322,23 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     }
     now->key = key;
     const auto [it, first] = last_.try_emplace(key, *now);
-    if (first || it->second == *now) continue;  // first read is the baseline
+    if (first) continue;  // the first read is the baseline
+    if (it->second == *now && !restate_.contains(key)) continue;
+    const FlagEntry before = it->second;
     it->second = *now;
+    ++stats_.changes_sent;
+    if (role_ == FlagRole::player && store.is_count(key) &&
+        before.kind == protocol::FlagKind::int32 && now->kind == protocol::FlagKind::int32) {
+      // A count: the change, so a gain here and one elsewhere both count.
+      // Not pending: the host's total answers it, and a total written later
+      // keeps any change not sent yet (write()).
+      changes[key] = FlagEntry{key, protocol::FlagKind::count_delta,
+                               as_bits(as_int(now->value) - as_int(before.value))};
+      continue;
+    }
     changes[key] = *now;
     unwritten_.erase(key);  // the game's own change is newer
     if (role_ == FlagRole::player) pending_[key] = *now;
-    ++stats_.changes_sent;
   }
 }
 

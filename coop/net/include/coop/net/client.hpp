@@ -52,6 +52,14 @@
 //   knew we host). Those are answered with the table's value where it has
 //   one (we have stated it since), else the asked value, and set_flag_answer()
 //   is not asked: our own changes as host are the truth.
+// - Count deltas (FlagKind::count_delta, docs/protocol.md "Counts"): a
+//   player's are sent in FLAG_SET; unanswered ones for the same flag add up
+//   in pending_flags() for a resend, and are dropped when we become host
+//   (our game holds them). The host does not answer a delta: it is added to
+//   the end of the `flag_state` event's flags for our game, which adds it
+//   and states the total; set_flag_answer() is not asked, flags() never
+//   holds one, and our own echoed delta is not handed over. As host,
+//   set_flags() drops deltas (our count goes out as its total).
 // - Who hosts: the server's HOST message. host_number() and is_host() follow
 //   it, and every change gives a `host_changed` event, the first HOST
 //   included. A client that becomes host sends its table with
@@ -59,6 +67,10 @@
 // - Channels are not ordered against each other, so HOST and FLAG_* (channel
 //   1) can come before WELCOME. Up to max_early_messages of them are kept
 //   while waiting for WELCOME and handled right after it.
+//
+// Equipment: a PLAYER_EQUIP from another player updates its players() entry
+// and gives `player_equip`. The last one we sent is sent again to the server
+// whenever another player joins, so the newcomer's puppet of us is dressed.
 //
 // Join partner (stage 1 step 3): request_join() asks to warp to a player and
 // returns the request id; its answer gives `join_accepted` or `join_refused`,
@@ -167,6 +179,9 @@ enum class EventKind : std::uint8_t {
   // HOST named a new host, `player`. Follows HOST's `message` event, after
   // our pending flags went out again.
   host_changed,
+  // PLAYER_EQUIP from `player`: `equipment` is what that player now wears,
+  // the fields the message left out kept from before (also in players()).
+  player_equip,
 };
 
 std::string_view to_string(EventKind kind);
@@ -195,6 +210,7 @@ struct Event {
   std::uint16_t request_id = 0;              // join_*
   protocol::JoinTarget join_target;          // join_accepted
   protocol::JoinRefuseReason join_reason{};  // join_refused; raw value kept
+  protocol::Equipment equipment;             // player_equip
 };
 
 // A shared flag's place in the table: a name's hash and array index, or a
@@ -216,6 +232,10 @@ struct Player {
   // sent for ourselves. Nothing until the first.
   std::optional<std::uint8_t> status;
   bool self = false;
+  // What the player wears: the last PLAYER_EQUIP, received or (ours) sent,
+  // each field kept until a message carries it again. Nothing until the
+  // first. Ours is sent again to every player who joins, so they see it.
+  std::optional<protocol::Equipment> equipment;
   bool operator==(const Player&) const = default;
 };
 

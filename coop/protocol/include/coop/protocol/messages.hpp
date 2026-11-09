@@ -61,6 +61,7 @@ enum class MessageType : std::uint16_t {
   flag_state = 14,
   flag_snapshot = 15,
   host = 16,
+  player_equip = 17,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -73,6 +74,23 @@ enum class SampleComponent : std::uint16_t {
   age = 6,
   animation = 7,
 };
+
+// PLAYER_EQUIP component ids. 1 to 8 are the game's equipped actor names
+// (PlayerStatus.Equip*), 9 the drawn bits.
+enum class EquipComponent : std::uint16_t {
+  weapon = 1,
+  shield = 2,
+  armor = 3,
+  boots = 4,
+  head = 5,
+  hand = 6,
+  ocarina = 7,
+  arrow = 8,
+  drawn = 9,
+};
+
+// Longest equipped actor name: the game keeps each in a String64 flag.
+inline constexpr std::size_t kMaxEquipNameChars = 64;
 
 // Player numbers are 1 to 4. In PLAYER_STATUS, CHAT and PLAYER_SAMPLE a
 // client sends 0 ("me"); the server fills in the sender's number when it
@@ -298,6 +316,10 @@ enum class FlagKind : std::uint8_t {
   int32 = 1,     // two's complement
   float32 = 2,   // IEEE-754 bits, finite
   uint32 = 3,    // an enum flag's hash, or any other unsigned value
+  // A change to a count (small keys, Gold Skulltula tokens, heart pieces),
+  // two's complement: +1 got, -1 used. FLAG_SET only, named keys only; the
+  // host adds it to its value and answers FLAG_STATE with the int32 total.
+  count_delta = 4,
 };
 
 struct FlagEntry {
@@ -364,10 +386,58 @@ struct Host {
   bool operator==(const Host&) const = default;
 };
 
+// What a player wears and holds (docs/puppet.md, "Equipment"). Each name is
+// the game's actor name of that piece, for example "Weapon_Sword_Kokiri" or
+// "Armor_Adult_Goron"; an empty name is nothing in that slot. A field that is
+// not set is unknown: the sender could not read it, and the receiver keeps
+// what it had.
+struct Equipment {
+  std::optional<std::string> weapon;   // sword
+  std::optional<std::string> shield;
+  std::optional<std::string> armor;    // tunic
+  std::optional<std::string> boots;
+  std::optional<std::string> head;     // mask (child), or head armor
+  std::optional<std::string> hand;     // gauntlets
+  std::optional<std::string> ocarina;
+  std::optional<std::string> arrow;    // arrow kind for the bow
+  // Bit i set: the game's equipment slot i is drawn (in hand), not sheathed.
+  // Slots 0 to 7; see docs/puppet.md for which slot is which.
+  std::optional<std::uint8_t> drawn;
+  bool operator==(const Equipment&) const = default;
+};
+
+// `now` with each field it does not carry taken from `before`: what a
+// receiver keeps after a PLAYER_EQUIP, and what a sender sends after a read
+// that failed for one frame.
+inline Equipment merge_equipment(const Equipment& before, const Equipment& now) {
+  Equipment e = now;
+  auto keep = [](auto& field, const auto& old) {
+    if (!field) field = old;
+  };
+  keep(e.weapon, before.weapon);
+  keep(e.shield, before.shield);
+  keep(e.armor, before.armor);
+  keep(e.boots, before.boots);
+  keep(e.head, before.head);
+  keep(e.hand, before.hand);
+  keep(e.ocarina, before.ocarina);
+  keep(e.arrow, before.arrow);
+  keep(e.drawn, before.drawn);
+  return e;
+}
+
+// PLAYER_EQUIP: a player's equipment, sent reliably on every change and again
+// when another player joins. Same player field rules as PLAYER_SAMPLE.
+struct PlayerEquip {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  Equipment equipment;
+  bool operator==(const PlayerEquip&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
-                             FlagSnapshot, Host>;
+                             FlagSnapshot, Host, PlayerEquip>;
 
 MessageType type_of(const Message& message);
 

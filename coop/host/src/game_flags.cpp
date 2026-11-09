@@ -21,6 +21,12 @@ struct Table {
 };
 constexpr Table kBool{0x10, 0x18, 0x20, 0x2c, 0x18, 0x16, 0x30, 0x38, 0x40, 8};
 constexpr Table kInt{0xd0, 0xd8, 0xe0, 0xec, 0x28, 0x1c, 0xf0, 0xf8, 0x100, 12};
+// String64 (type 16, M + 0x610): entries of 0x108, char* to the text at
+// +0x68, s32 buffer size at +0x70 (0x3758110). Queue not read.
+constexpr Table kString64{0x610, 0x618, 0x620, 0x62c, 0x108, 0, 0, 0, 0, 0};
+constexpr std::uint64_t kStringText = 0x68, kStringSize = 0x70;
+// The game's String64 buffers hold 64 bytes; more is not a String64.
+constexpr std::uint32_t kMaxString64Bytes = 64;
 // BoolArray: entries of 0x40, element count u32 at +0x20, bits at *(+0x28).
 constexpr Table kBoolArray{0x70, 0x78, 0x80, 0x8c, 0x40, 0, 0, 0, 0, 0};
 constexpr std::uint64_t kArraySize = 0x20, kArrayBits = 0x28;
@@ -193,6 +199,30 @@ std::optional<bool> GameFlags::get_bool_array(std::uint32_t hash, std::uint32_t 
   const auto word = read_u32(memory_, *bits + 4ull * (index / 32));
   if (!word) return std::nullopt;
   return ((*word >> (index % 32)) & 1) != 0;
+}
+
+std::optional<std::string> GameFlags::get_string64(std::uint32_t hash) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  const auto entry_index = find(memory_, *mgr, kString64, hash);
+  if (!entry_index) return std::nullopt;
+  const auto entries = read_ptr(memory_, *mgr + kString64.entries);
+  if (!entries) return std::nullopt;
+  const std::uint64_t entry = *entries + kString64.stride * *entry_index;
+  const auto text = read_ptr(memory_, entry + kStringText);
+  const auto size = read_u32(memory_, entry + kStringSize);
+  // The game ends the text at size - 1 itself; a size of 0 or a huge one
+  // is not a String64 buffer.
+  if (!text || !size || *size == 0 || *size > kMaxString64Bytes) return std::nullopt;
+  std::array<std::uint8_t, kMaxString64Bytes> bytes{};
+  if (!memory_.read(*text, std::span(bytes.data(), *size))) return std::nullopt;
+  std::string out;
+  for (std::uint32_t i = 0; i < *size; ++i) {
+    if (bytes[i] == 0) return out;
+    if (bytes[i] < 0x20 || bytes[i] > 0x7e) return std::nullopt;
+    out.push_back(static_cast<char>(bytes[i]));
+  }
+  return std::nullopt;  // not terminated within the buffer
 }
 
 bool GameFlags::set_bool(WritableGameMemory& m, std::uint32_t hash, bool value) {

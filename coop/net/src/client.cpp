@@ -23,6 +23,16 @@ namespace proto = coop::protocol;
 
 namespace {
 
+bool is_delta(const proto::FlagEntry& flag) { return flag.kind == proto::FlagKind::count_delta; }
+
+// Two count deltas as one, held to the s32 range.
+std::uint32_t add_delta(std::uint32_t a, std::uint32_t b) {
+  const std::int64_t sum = std::int64_t{static_cast<std::int32_t>(a)} + static_cast<std::int32_t>(b);
+  const auto held = std::clamp<std::int64_t>(sum, std::numeric_limits<std::int32_t>::min(),
+                                             std::numeric_limits<std::int32_t>::max());
+  return static_cast<std::uint32_t>(static_cast<std::int32_t>(held));
+}
+
 std::uint64_t steady_now_us() {
   const auto since = std::chrono::steady_clock::now().time_since_epoch();
   return static_cast<std::uint64_t>(
@@ -107,6 +117,7 @@ std::string_view to_string(EventKind kind) {
     case EventKind::join_refused: return "join refused";
     case EventKind::join_timed_out: return "join timed out";
     case EventKind::host_changed: return "host changed";
+    case EventKind::player_equip: return "player equip";
   }
   return "unknown";
 }
@@ -436,6 +447,11 @@ bool Client::apply_room(const proto::Message& message, std::uint8_t channel,
     event.kind = EventKind::player_joined;
     event.player = joined->player_number;
     event.nickname = joined->nickname;
+    // The newcomer has not seen what we wear.
+    if (const Player* self = find_player(player_number_); self && self->equipment) {
+      send_raw(proto::PlayerEquip{proto::kPlayerSelf, *self->equipment},
+               proto::channel_of(proto::MessageType::player_equip));
+    }
   } else if (const auto* left = std::get_if<proto::PlayerLeft>(&message)) {
     const Player* known = find_player(left->player_number);
     if (known == nullptr || known->self) return false;
@@ -452,6 +468,14 @@ bool Client::apply_room(const proto::Message& message, std::uint8_t channel,
     event.kind = EventKind::player_status;
     event.player = status->player_number;
     event.status_flags = status->flags;
+  } else if (const auto* equip = std::get_if<proto::PlayerEquip>(&message)) {
+    Player* known = player_entry(equip->player_number);
+    if (known == nullptr || known->self) return false;
+    known->equipment = proto::merge_equipment(known->equipment.value_or(proto::Equipment{}),
+                                              equip->equipment);
+    event.kind = EventKind::player_equip;
+    event.player = equip->player_number;
+    event.equipment = *known->equipment;
   } else if (const auto* chat = std::get_if<proto::Chat>(&message)) {
     const Player* known = find_player(chat->player_number);
     if (known == nullptr || known->self) return false;
@@ -531,6 +555,12 @@ bool Client::send_on(const proto::Message& message, std::uint8_t channel) {
   if (const auto* status = std::get_if<proto::PlayerStatus>(&message)) {
     if (Player* self = player_entry(player_number_)) self->status = status->flags;
   }
+  if (const auto* equip = std::get_if<proto::PlayerEquip>(&message)) {
+    if (Player* self = player_entry(player_number_)) {
+      self->equipment = proto::merge_equipment(self->equipment.value_or(proto::Equipment{}),
+                                               equip->equipment);
+    }
+  }
   return true;
 }
 
@@ -573,7 +603,10 @@ std::optional<proto::FlagEntry> Client::find_flag(const FlagKey& key) const {
 }
 
 void Client::store_flags(std::span<const proto::FlagEntry> flags) {
-  for (const proto::FlagEntry& flag : flags) flags_[key_of(flag)] = flag;
+  // The table holds values; a count delta is a change, never a value.
+  for (const proto::FlagEntry& flag : flags) {
+    if (flag.kind != proto::FlagKind::count_delta) flags_[key_of(flag)] = flag;
+  }
 }
 
 void Client::clear_shared() {
@@ -600,7 +633,13 @@ bool Client::on_host(std::uint8_t number) {
   list.reserve(pending_.size());
   for (const auto& entry : pending_) list.push_back(entry.second);
   if (number == player_number_) {
-    // We are the truth now: what our game asked for is what it keeps.
+    // We are the truth now: what our game asked for is what it keeps. Our
+    // count deltas are in our game already; our snapshot carries them.
+    std::erase_if(list, is_delta);
+    if (list.empty()) {
+      pending_.clear();
+      return true;
+    }
     if (send_flags(list, true)) {
       store_flags(list);
       pending_.clear();
@@ -645,16 +684,31 @@ bool Client::set_flags(std::span<const proto::FlagEntry> flags) {
     const auto [it, fresh] = seen.try_emplace(key_of(flag), list.size());
     if (fresh) {
       list.push_back(flag);
+    } else if (is_delta(flag) && is_delta(list[it->second])) {
+      list[it->second].value = add_delta(list[it->second].value, flag.value);
     } else {
       list[it->second] = flag;
     }
   }
   const bool host = is_host();
+  // As host our game is the truth: a count change in it goes out as its
+  // total (the watcher does that once it knows it hosts), never as a delta.
+  if (host) std::erase_if(list, is_delta);
+  if (list.empty()) return true;
   if (!send_flags(list, host)) return false;
   if (host) {
     store_flags(list);
   } else {
-    for (const proto::FlagEntry& flag : list) pending_[key_of(flag)] = flag;
+    for (const proto::FlagEntry& flag : list) {
+      auto [it, fresh] = pending_.try_emplace(key_of(flag), flag);
+      if (fresh) continue;
+      if (is_delta(flag) && is_delta(it->second)) {
+        // Both unanswered: a resend must carry both.
+        it->second.value = add_delta(it->second.value, flag.value);
+      } else {
+        it->second = flag;
+      }
+    }
   }
   return true;
 }
@@ -763,14 +817,26 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
     // answer is for everyone, so it is still given.
     if (!is_host()) return false;
     std::vector<proto::FlagEntry> answer;
+    std::vector<proto::FlagEntry> deltas;
     if (set->player_number == player_number_) {
       // Our own, sent before we knew we host. We have stated what is in the
       // table since; the rest is our own change, which is the truth.
+      // A count delta of ours is in our game already: never added twice.
       for (const proto::FlagEntry& asked : set->flags) {
-        answer.push_back(find_flag(asked.key).value_or(asked));
+        if (const auto known = find_flag(asked.key)) {
+          answer.push_back(*known);
+        } else if (!is_delta(asked)) {
+          answer.push_back(asked);
+        }
       }
     } else {
       for (const proto::FlagEntry& asked : set->flags) {
+        // A count delta goes to our game, which adds it; the watcher sends
+        // the total as FLAG_STATE (docs/protocol.md, "Counts").
+        if (is_delta(asked)) {
+          deltas.push_back(asked);
+          continue;
+        }
         std::optional<proto::FlagEntry> kept =
             flag_answer_ ? flag_answer_(set->player_number, asked) : asked;
         if (kept) {
@@ -781,12 +847,19 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
         if (kept) answer.push_back(*kept);
       }
     }
-    if (answer.empty() || !send_flags(answer, true)) return true;
-    store_flags(answer);
-    settle_pending(answer);
+    if (!answer.empty()) {
+      if (send_flags(answer, true)) {
+        store_flags(answer);
+        settle_pending(answer);
+      } else {
+        answer.clear();
+      }
+    }
+    if (answer.empty() && deltas.empty()) return true;
     event.kind = EventKind::flag_state;
     event.player = player_number_;
     event.flags = std::move(answer);
+    event.flags.insert(event.flags.end(), deltas.begin(), deltas.end());
   } else if (const auto* part = std::get_if<proto::FlagSnapshot>(&message)) {
     if (part->part == 0) {
       snapshot_flags_.clear();

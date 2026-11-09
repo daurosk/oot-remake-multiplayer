@@ -27,7 +27,7 @@ enum class Error : std::uint8_t {
   bad_utf8,             // a string that is not valid UTF-8
   bad_value,            // a value out of range (player number, enum, non-finite float)
   missing_component,    // PLAYER_SAMPLE without its time component
-  duplicate_component,  // PLAYER_SAMPLE with a known component twice
+  duplicate_component,  // PLAYER_SAMPLE or PLAYER_EQUIP with a known component twice
   unknown_type,         // a message type this build does not know; skip it
   too_large,            // encode only: the message does not fit a u16 length
   wrong_channel,        // check_received: not a channel this type goes on
@@ -55,7 +55,7 @@ std::optional<std::uint16_t> hello_protocol_version(
 // Checks a decoded message against where it came from, before acting on it:
 // that side may send this type (may_send), on this channel
 // (allowed_on_channel), and the player field of PLAYER_STATUS, CHAT,
-// PLAYER_SAMPLE, JOIN_PARTNER, FLAG_SET and FLAG_STATE is 0 from a client and
+// PLAYER_SAMPLE, JOIN_PARTNER, FLAG_SET, FLAG_STATE and PLAYER_EQUIP is 0 from a client and
 // 1 to 4 from the server; a JOIN_PARTNER from the server also names a player
 // other than its sender. The server still knows who the client is from the
 // connection, never from the message. Who is host (FLAG_STATE) is for the
@@ -63,7 +63,7 @@ std::optional<std::uint16_t> hello_protocol_version(
 Error check_received(const Message& message, Sender from, std::uint8_t channel);
 
 // The player field of PLAYER_STATUS, CHAT, PLAYER_SAMPLE, JOIN_PARTNER,
-// FLAG_SET or FLAG_STATE; nothing for the other messages.
+// FLAG_SET, FLAG_STATE or PLAYER_EQUIP; nothing for the other messages.
 std::optional<std::uint8_t> sender_of(const Message& message);
 
 // For the server, before relaying a message with a player field (above): writes

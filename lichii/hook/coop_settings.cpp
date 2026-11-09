@@ -17,6 +17,18 @@ std::string_view Trim(std::string_view s) {
     return s;
 }
 
+// Drops a trailing comment: '#' or ';' after a space or tab, as in
+// "server = 192.168.1.20  # IP". One without a space before it stays part of
+// the value, so a name like "Link#2" is kept.
+std::string_view StripComment(std::string_view value) {
+    for (std::size_t i = 1; i < value.size(); ++i) {
+        if ((value[i] == '#' || value[i] == ';') && (value[i - 1] == ' ' || value[i - 1] == '\t')) {
+            return Trim(value.substr(0, i));
+        }
+    }
+    return value;
+}
+
 std::optional<std::uint16_t> ParsePort(std::string_view s) {
     if (s.empty() || s.size() > 5) {
         return std::nullopt;
@@ -121,7 +133,8 @@ void ApplyIni(std::string_view text, Settings& settings, std::vector<std::string
             errors.push_back(where + ": expected key = value");
             continue;
         }
-        Set(Trim(line.substr(0, eq)), Trim(line.substr(eq + 1)), where, settings, errors);
+        Set(Trim(line.substr(0, eq)), StripComment(Trim(line.substr(eq + 1))), where, settings,
+            errors);
     }
 }
 

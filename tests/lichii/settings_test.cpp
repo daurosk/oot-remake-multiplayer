@@ -76,6 +76,25 @@ TEST_CASE("settings: ini values") {
   CHECK(s.name == "Saria");
 }
 
+TEST_CASE("settings: comments after a value, as in the docs' example") {
+  Settings s;
+  std::vector<std::string> errors;
+  ApplyIni("server = 192.168.1.20      # IP or host name; host:port also works\n"
+           "port = 27510\t; optional, the default\n"
+           "name = Saria               # 1 to 16 characters, different for each player\n",
+           s, errors);
+  CHECK(errors.empty());
+  CHECK(s.enabled());
+  CHECK(s.server == "192.168.1.20");
+  CHECK(s.port == 27510);
+  CHECK(s.name == "Saria");
+
+  // A '#' or ';' with no space before it is part of the value.
+  ApplyIni("name = Link#2;b", s, errors);
+  CHECK(errors.empty());
+  CHECK(s.name == "Link#2;b");
+}
+
 TEST_CASE("settings: host:port in server, last line wins") {
   Settings s;
   std::vector<std::string> errors;

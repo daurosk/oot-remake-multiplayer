@@ -1,0 +1,45 @@
+# spawn-nut (spawn sync, docs/spawns.md): A throws a Deku Nut; B, at the same
+# save spot, should show the copy (the nut is an actor for about 0.3 s, then
+# flashes). Waits 15 s first so a slower B has loaded the scene, then walks A
+# right, away from the cow at the save spot. R (quick select) opens a carousel
+# with the cursor on the Deku Nut. NOT CHECKED: neither letting go of R nor
+# pushing the stick down while R is held put the nut on ZR (2026-11-09; ZR
+# stayed the slingshot). A mark every 0.1 s after the throw.
+mark start
+wait 900
+mark ready
+stick 1 0 50
+wait 30
+mark moved
+hold R 20
+stick 0 -1 20 R
+wait 30
+mark selected
+press ZR 4
+mark thrown
+wait 6
+mark nut01
+wait 6
+mark nut02
+wait 6
+mark nut03
+wait 6
+mark nut04
+wait 6
+mark nut05
+wait 6
+mark nut06
+wait 6
+mark nut07
+wait 6
+mark nut08
+wait 6
+mark nut09
+wait 6
+mark nut10
+wait 6
+mark nut11
+wait 6
+mark nut12
+wait 60
+mark end

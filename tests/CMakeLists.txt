@@ -20,6 +20,7 @@ add_executable(coop_tests
   lichii/puppet_test.cpp
   lichii/fairy_test.cpp
   lichii/objects_test.cpp
+  lichii/spawn_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_spawn.cpp
   lichii/pose_test.cpp
   lichii/testinput_test.cpp
   # These hook files have no emulator code, so they are tested on their own.

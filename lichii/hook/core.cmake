@@ -13,6 +13,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_pose.cpp"
     "${_coop_hook}/coop_puppet.cpp"
     "${_coop_hook}/coop_settings.cpp"
+    "${_coop_hook}/coop_spawn.cpp"
     "${_coop_hook}/coop_svc.cpp"
     "${_coop_hook}/coop_testinput.cpp"
 )

@@ -55,6 +55,7 @@
 #include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
+#include "coop_spawn.h"
 #include "coop_testinput.h"
 
 namespace CoopHook {
@@ -202,6 +203,7 @@ public:
             CoopPose::OnEvent(event, SteadyMs());
             Chat(event, client);
             CoopObjects::OnEvent(event);
+            CoopSpawn::OnEvent(event);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -274,6 +276,7 @@ public:
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
+        CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);

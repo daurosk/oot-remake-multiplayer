@@ -1,0 +1,2 @@
+# Keep patches byte for byte, so git am applies them on any checkout.
+*.patch -text

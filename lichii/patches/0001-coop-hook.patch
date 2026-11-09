@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 15:53:31 -0900
+Subject: [PATCH] coop: optional per-frame hook for OoT co-op
+
+Adds LICHII_COOP (off by default). When on, the build adds the co-op
+libraries from LICHII_COOP_DIR (an oot-remake-multiplayer checkout),
+links them into core, and calls CoopHook::OnFrame once per guest present,
+in both present paths (nx2 and nvdisp), after the speed limiter.
+---
+ CMakeLists.txt                                      | 12 ++++++++++++
+ src/core/CMakeLists.txt                             |  7 +++++++
+ src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp |  6 ++++++
+ src/core/hle/service/nx2_gsv.h                      |  6 ++++++
+ 4 files changed, 31 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 6f2a86b708..d1123df305 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -728,6 +728,18 @@ if (MSVC AND CXX_CLANG)
+     link_libraries(llvm-mingw-runtime)
+ endif()
+ 
++# OoT co-op (github.com/daurosk/oot-remake-multiplayer). Off unless asked for.
++option(LICHII_COOP "Build in the OoT co-op hook from LICHII_COOP_DIR" OFF)
++if (LICHII_COOP)
++    set(LICHII_COOP_DIR "" CACHE PATH "Checkout of oot-remake-multiplayer")
++    if (NOT EXISTS "${LICHII_COOP_DIR}/lichii/hook/coop_hook.cpp")
++        message(FATAL_ERROR "LICHII_COOP_DIR must point at an oot-remake-multiplayer checkout")
++    endif()
++    set(COOP_BUILD_TESTS OFF)
++    set(COOP_BUILD_PROGRAMS OFF)
++    add_subdirectory("${LICHII_COOP_DIR}" "${CMAKE_BINARY_DIR}/coop" EXCLUDE_FROM_ALL)
++endif()
++
+ add_subdirectory(src)
+ 
+ if (ENABLE_DEBUG_TOOLS)
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index d2393ea078..517fec57d9 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -1316,4 +1316,11 @@ elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS_RELEA
+     set_source_files_properties(${lichii_kernel_sources} PROPERTIES COMPILE_OPTIONS -fno-lto)
+ endif()
+ 
++if (LICHII_COOP)
++    target_sources(core PRIVATE "${LICHII_COOP_DIR}/lichii/hook/coop_hook.cpp")
++    target_include_directories(core PRIVATE "${LICHII_COOP_DIR}/lichii/hook")
++    target_compile_definitions(core PRIVATE LICHII_COOP)
++    target_link_libraries(core PRIVATE coop)
++endif()
++
+ create_target_directory_groups(core)
+diff --git a/src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp b/src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp
+index b8a8979315..b7c3d805df 100644
+--- a/src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp
++++ b/src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp
+@@ -16,6 +16,9 @@
+ #include "core/hle/service/nvdrv/devices/nvdisp_disp0.h"
+ #include "core/perf_stats.h"
+ #include "video_core/gpu.h"
++#ifdef LICHII_COOP
++#include "coop_hook.h"
++#endif
+ 
+ namespace Service::Nvidia::Devices {
+ 
+@@ -92,6 +95,9 @@ void nvdisp_disp0::Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers
+     system.SpeedLimiter().DoSpeedLimiting(system.CoreTiming().GetGlobalTimeUs());
+     system.GetPerfStats().EndSystemFrame();
+     system.GetPerfStats().BeginSystemFrame();
++#ifdef LICHII_COOP
++    CoopHook::OnFrame(system);
++#endif
+ }
+ 
+ void nvdisp_disp0::WaitForComposite() {
+diff --git a/src/core/hle/service/nx2_gsv.h b/src/core/hle/service/nx2_gsv.h
+index aaae47868f..2aa931f792 100644
+--- a/src/core/hle/service/nx2_gsv.h
++++ b/src/core/hle/service/nx2_gsv.h
+@@ -79,6 +79,9 @@
+ #include "core/hle/service/sm/sm.h"
+ #include "core/hle/service/server_manager.h"
+ #include "core/hle/service/service.h"
++#ifdef LICHII_COOP
++#include "coop_hook.h"
++#endif
+ 
+ namespace Service {
+ 
+@@ -2260,6 +2263,9 @@ private:
+         system.SpeedLimiter().DoSpeedLimiting(system.CoreTiming().GetGlobalTimeUs());
+         system.GetPerfStats().EndSystemFrame();
+         system.GetPerfStats().BeginSystemFrame();
++#ifdef LICHII_COOP
++        CoopHook::OnFrame(system);
++#endif
+     }
+ 
+     // EDEN_NX2_FRAME_CAPTURE=<dir>: every 120th present, save what the renderer shows as

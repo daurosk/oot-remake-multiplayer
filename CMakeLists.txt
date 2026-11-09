@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(oot_coop VERSION 0.0.1 LANGUAGES C CXX)
 
 option(COOP_BUILD_TESTS "Build the unit tests" ON)
+option(COOP_BUILD_PROGRAMS "Build the server and tools/coop_test" ON)
 option(COOP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC or Clang)" OFF)
 option(COOP_TSAN "Build with ThreadSanitizer (GCC or Clang; not with COOP_SANITIZE)" OFF)
 
@@ -40,11 +41,21 @@ if(COOP_TSAN)
   add_link_options(-fsanitize=thread)
 endif()
 
-include(cmake/enet.cmake)
+# The emulator brings its own ENet target (the same v1.3.18); use that one
+# when it is there, so the two do not clash. It sets the include path itself.
+if(TARGET enet)
+  if(WIN32)
+    target_link_libraries(enet INTERFACE ws2_32 winmm)
+  endif()
+else()
+  include(cmake/enet.cmake)
+endif()
 
 add_subdirectory(coop)
-add_subdirectory(server)
-add_subdirectory(tools/coop_test)
+if(COOP_BUILD_PROGRAMS)
+  add_subdirectory(server)
+  add_subdirectory(tools/coop_test)
+endif()
 
 if(COOP_BUILD_TESTS)
   enable_testing()

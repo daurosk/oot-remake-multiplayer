@@ -54,6 +54,7 @@ Each rule answers a way the TotK online sync was seen to break.
    - `WELCOME`: `u8` the player's number (1 to 4), `u64` server time, `u16` tick rate (not 0), `u8` count (at most 4), then for each player already in: `u8` number, nickname. Every number in it is different, and the new player's own is not in the list.
    - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces). A reason the client does not know is kept and shown as unknown.
 3. No `HELLO` within 10 seconds: the server drops the connection.
+4. One address may hold at most 4 connections that have not sent `HELLO` yet (a server option; 0 for no limit). The server drops one more at once, without `REFUSED`.
 
 ## Keep-alive and clock
 

@@ -246,3 +246,43 @@ TEST_CASE("loopback: a packet longer than any message is thrown away by ENet unr
   CHECK(server.session().player_count() == 1);
   CHECK_FALSE(c.disconnected);
 }
+
+TEST_CASE("loopback: a fifth half-open connection from one address is cut at once") {
+  EnetLife enet;
+  ServerOptions options;
+  options.port = 0;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  // All at the same moment, as the one-PC 4-client test does.
+  Client clients[5];
+  for (Client& c : clients) c.connect(server.port());
+  std::vector<Client*> all;
+  for (Client& c : clients) all.push_back(&c);
+  auto cut = [&] {
+    int n = 0;
+    for (Client& c : clients) n += c.disconnected ? 1 : 0;
+    return n;
+  };
+  REQUIRE(pump_until(server, all, [&] {
+    int connected = 0;
+    for (Client& c : clients) connected += c.connected ? 1 : 0;
+    return connected == 5 && cut() == 1;
+  }));
+  CHECK(server.session().stats().half_open_limited == 1);
+
+  // The 4 left send HELLO and are all let in.
+  const char* names[] = {"Link", "Zelda", "Saria", "Darunia"};
+  std::vector<Client*> kept;
+  for (Client& c : clients) {
+    if (!c.disconnected) kept.push_back(&c);
+  }
+  REQUIRE(kept.size() == 4);
+  for (std::size_t i = 0; i < kept.size(); ++i) {
+    kept[i]->send(hello_from(names[i]), kChannelSession);
+  }
+  REQUIRE(pump_until(server, kept, [&] { return server.session().player_count() == 4; }));
+  for (Client* c : kept) CHECK(c->find<Welcome>() != nullptr);
+  CHECK(cut() == 1);
+  CHECK(server.session().stats().half_open_limited == 1);
+}

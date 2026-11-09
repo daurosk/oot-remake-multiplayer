@@ -36,11 +36,26 @@ std::uint64_t Stats::dropped() const {
 
 Session::Session(SessionConfig config) : config_(std::move(config)) {}
 
-void Session::connected(ConnectionId id, std::uint64_t now_us) {
+bool Session::connected(ConnectionId id, std::uint64_t now_us,
+                        std::optional<std::uint32_t> address) {
+  if (address && config_.max_half_open_per_address != 0 &&
+      half_open_count(*address) >= config_.max_half_open_per_address) {
+    ++stats_.half_open_limited;
+    return false;
+  }
   Connection c;
   c.connected_at = now_us;
   c.last_heard = now_us;
+  c.address = address;
   connections_[id] = std::move(c);
+  return true;
+}
+
+std::size_t Session::half_open_count(std::uint32_t address) const {
+  return static_cast<std::size_t>(
+      std::count_if(connections_.begin(), connections_.end(), [&](const auto& entry) {
+        return entry.second.state == State::awaiting_hello && entry.second.address == address;
+      }));
 }
 
 void Session::received(ConnectionId id, std::uint8_t channel,

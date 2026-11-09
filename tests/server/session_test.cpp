@@ -521,3 +521,93 @@ TEST_CASE("an empty session forgets the game build the first player set") {
   REQUIRE(msgs.size() == 1);
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
 }
+
+TEST_CASE("one address may hold only 4 connections without HELLO; one more is refused") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0100007F;  // 127.0.0.1 as ENet keeps it
+  constexpr std::uint32_t kAway = 0x0200000A;
+  for (ConnectionId id = 1; id <= 4; ++id) CHECK(h.session.connected(id, h.now, kHome));
+  CHECK(h.session.half_open_count(kHome) == 4);
+
+  CHECK_FALSE(h.session.connected(5, h.now, kHome));
+  CHECK_FALSE(h.session.connected(6, h.now, kHome));
+  CHECK(h.session.stats().half_open_limited == 2);
+  CHECK(h.session.half_open_count(kHome) == 4);
+  // The refused ones get nothing and are not in the session: their packets
+  // are the transport's mistake, a HELLO from them never welcomed.
+  h.collect();
+  CHECK(h.sent.empty());
+  CHECK(h.dropped.empty());
+  h.receive(5, hello_from("Ghost"), kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(!h.session.player_number(5).has_value());
+
+  // Another address is not affected, nor a connection with no address.
+  for (ConnectionId id = 10; id <= 13; ++id) CHECK(h.session.connected(id, h.now, kAway));
+  CHECK(h.session.connected(20, h.now));
+  CHECK(h.session.stats().half_open_limited == 2);
+  CHECK(h.session.stats().dropped() == 0);  // connections, not packets
+}
+
+TEST_CASE("a HELLO, a refusal or a drop frees a half-open place") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0100007F;
+  for (ConnectionId id = 1; id <= 4; ++id) REQUIRE(h.session.connected(id, h.now, kHome));
+  REQUIRE_FALSE(h.session.connected(5, h.now, kHome));
+
+  h.receive(1, hello_from("Link"), kChannelSession);
+  REQUIRE(h.session.player_number(1) == 1);
+  CHECK(h.session.half_open_count(kHome) == 3);
+  CHECK(h.session.connected(6, h.now, kHome));
+
+  h.receive(2, hello_from("link"), kChannelSession);  // name taken: refused
+  CHECK(h.session.half_open_count(kHome) == 3);
+  CHECK(h.session.connected(7, h.now, kHome));
+
+  h.session.disconnected(3, h.now);
+  CHECK(h.session.connected(8, h.now, kHome));
+  CHECK_FALSE(h.session.connected(9, h.now, kHome));
+  CHECK(h.session.stats().half_open_limited == 2);
+}
+
+TEST_CASE("4 players from one address joining at the same moment are all let in") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0100007F;
+  for (ConnectionId id = 1; id <= 4; ++id) REQUIRE(h.session.connected(id, h.now, kHome));
+  const char* names[] = {"Link", "Zelda", "Saria", "Darunia"};
+  for (ConnectionId id = 1; id <= 4; ++id) {
+    h.receive(id, hello_from(names[id - 1]), kChannelSession);
+  }
+  CHECK(h.session.player_count() == 4);
+  // With all of them in, the address may again open 4 more (a fifth player
+  // is then told the server is full, not cut silently).
+  for (ConnectionId id = 5; id <= 8; ++id) CHECK(h.session.connected(id, h.now, kHome));
+  CHECK(h.session.stats().half_open_limited == 0);
+}
+
+TEST_CASE("the half-open limit is a setting, and 0 turns it off") {
+  SessionConfig two;
+  two.max_half_open_per_address = 2;
+  Harness h(two);
+  CHECK(h.session.connected(1, h.now, 7u));
+  CHECK(h.session.connected(2, h.now, 7u));
+  CHECK_FALSE(h.session.connected(3, h.now, 7u));
+
+  SessionConfig off;
+  off.max_half_open_per_address = 0;
+  Harness unlimited(off);
+  for (ConnectionId id = 1; id <= 64; ++id) CHECK(unlimited.session.connected(id, unlimited.now, 7u));
+  CHECK(unlimited.session.stats().half_open_limited == 0);
+}
+
+TEST_CASE("the HELLO timeout still drops half-open connections, freeing their places") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0100007F;
+  for (ConnectionId id = 1; id <= 4; ++id) REQUIRE(h.session.connected(id, h.now, kHome));
+  h.now += 10'000'000;
+  h.session.tick(h.now);
+  h.collect();
+  CHECK(h.dropped.size() == 4);
+  CHECK(h.session.half_open_count(kHome) == 0);
+  CHECK(h.session.connected(5, h.now, kHome));
+}

@@ -78,10 +78,16 @@ void EnetServer::handle(const ENetEvent& event) {
   switch (event.type) {
     case ENET_EVENT_TYPE_CONNECT: {
       ConnectionId id = next_id_++;
+      if (!session_.connected(id, now_us(), event.peer->address.host)) {
+        // Too many connections from this address without HELLO: drop it at
+        // once, freeing its ENet slot. ENet reports no DISCONNECT for it.
+        event.peer->data = nullptr;
+        enet_peer_disconnect_now(event.peer, 0);
+        break;
+      }
       event.peer->data = reinterpret_cast<void*>(static_cast<std::uintptr_t>(id));
       enet_peer_timeout(event.peer, 0, kPeerTimeoutMs, kPeerTimeoutMs);
       peers_[id] = event.peer;
-      session_.connected(id, now_us());
       break;
     }
     case ENET_EVENT_TYPE_RECEIVE: {

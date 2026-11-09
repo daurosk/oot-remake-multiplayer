@@ -1,0 +1,17 @@
+# nametag: A walks off the cow and stands by B (B turns away and back, see
+# nametag.B.txt), then walks away and back, so B sees A's name tag over the
+# puppet's head, fading with distance. With LICHII_COOP_DEBUG_CAMERA=1 each
+# game also tags its own Link "you".
+stick 1 0 50            # off the cow at the save spot
+wait 120
+mark near
+wait 600                # B turns away and back
+stick 0 1 120           # walk away
+mark mid
+hold LSTICK_UP+A 240    # dash further
+mark far
+stick 0 -1 30           # turn back
+hold LSTICK_DOWN+A 240  # dash back
+mark back
+wait 120
+mark end

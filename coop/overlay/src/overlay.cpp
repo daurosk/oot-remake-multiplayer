@@ -33,13 +33,16 @@ Vec4d transform(const Mat4& m, const Vec4d& v) {
 
 bool valid(const Settings& s) {
   const float all[] = {s.near_distance,     s.far_distance,      s.marker_size, s.reference_distance, s.min_size,
-                       s.max_size, s.tag_gap, s.edge_reach,  s.edge_margin};
+                       s.max_size, s.tag_gap, s.edge_reach,  s.edge_margin,
+                       s.fade_start,        s.fade_end,          s.edge_min_alpha};
   for (float v : all) {
     if (!finite(v)) return false;
   }
   return s.near_distance > 0.0f && s.far_distance > s.near_distance && s.marker_size > 0.0f &&
          s.reference_distance > 0.0f && s.min_size > 0.0f && s.min_size <= s.max_size &&
-         s.tag_gap >= 0.0f && s.edge_reach >= 0.0f && s.edge_margin >= 0.0f;
+         s.tag_gap >= 0.0f && s.edge_reach >= 0.0f && s.edge_margin >= 0.0f && s.fade_start >= 0.0f &&
+         (s.fade_end == 0.0f || s.fade_end > s.fade_start) && s.edge_min_alpha >= 0.0f &&
+         s.edge_min_alpha <= 1.0f;
 }
 
 std::vector<Shown> collect(presence::Presence& presence, std::uint64_t server_now_us) {
@@ -86,7 +89,7 @@ Result Overlay::build(const Camera& camera, std::string_view local_scene,
 
   for (const Shown& p : players) {
     auto skip = [&](Why why) { result.skipped.push_back({p.number, why}); };
-    if (!finite(p.position) || !finite(p.fade)) {
+    if (!finite(p.position) || !finite(p.fade) || !finite(p.head)) {
       skip(Why::invalid);
       continue;
     }
@@ -116,6 +119,10 @@ Result Overlay::build(const Camera& camera, std::string_view local_scene,
     if (w > s.far_distance) {
       skip(Why::too_far);
       continue;
+    }
+    double near_fade = 1.0;
+    if (s.fade_end > 0.0f && w > s.fade_start) {
+      near_fade = std::max(0.0, (s.fade_end - w) / (double(s.fade_end) - s.fade_start));
     }
 
     const double nx = clip[0] / w;
@@ -148,14 +155,34 @@ Result Overlay::build(const Camera& camera, std::string_view local_scene,
     const double size =
         std::clamp(double(s.marker_size) * s.reference_distance / w, double(s.min_size), double(s.max_size));
     item.marker = {float(x), float(y), float(w), float(size)};
-    item.alpha = std::min(p.fade, 1.0f);
+    const double fade = std::min(p.fade, 1.0f);
+    if (off) {
+      item.alpha = float(fade * std::max(near_fade, double(s.edge_min_alpha)));
+    } else if (near_fade <= 0.0) {
+      skip(Why::too_far);
+      continue;
+    } else {
+      item.alpha = float(fade * near_fade);
+    }
 
     item.tag.text = p.name.empty() ? "P" + std::to_string(p.number) : p.name;
     item.tag.x = float(x);
-    const double above = y - size / 2.0 - s.tag_gap;
+    double above = y - size / 2.0 - s.tag_gap;
+    if (!off && p.head > 0.0f) {
+      // Over the head: project the point `head` above the feet.
+      const Vec4d top =
+          transform(view_projection, {p.position[0], double(p.position[1]) + p.head, p.position[2], 1.0});
+      if (std::isfinite(top[0]) && std::isfinite(top[1]) && top[3] > 0.0) {
+        item.tag.x = float((top[0] / top[3] * 0.5 + 0.5) * width);
+        above = (0.5 - top[1] / top[3] * 0.5) * height - s.tag_gap;
+        item.tag.head = true;
+      }
+    }
     if (above < 0.0) {
       item.tag.below = true;
+      item.tag.head = false;
       item.tag.y = float(y + size / 2.0 + s.tag_gap);
+      item.tag.x = float(x);
     } else {
       item.tag.y = float(above);
     }

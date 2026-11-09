@@ -282,21 +282,31 @@ TEST_CASE("puppet: malloc, create, live, follow, delete") {
     CHECK(g.guest.Get<float>(kActor + addr::kActorRotation + 4 * 2) ==
           doctest::Approx(moved.rotation[2]));
 
-    // The player leaves: one delete request, with the actor.
+    // A moment out of the plan (a stalled peer) deletes nothing, and coming
+    // back resets the wait.
     d.SetInput(Wants({}));
-    calls = Frame(d, g, 500);
+    CHECK(Frame(d, g, 410).empty());
+    CHECK(Frame(d, g, 410 + Director::kLeaveGraceMs - 1).empty());
+    CHECK(d.Slots()[0].phase == Phase::live);
+    d.SetInput(Wants({moved}));
+    CHECK(Frame(d, g, 2500).empty());
+
+    // The player leaves: after the grace, one delete request, with the actor.
+    d.SetInput(Wants({}));
+    CHECK(Frame(d, g, 2510).empty());
+    calls = Frame(d, g, 2510 + Director::kLeaveGraceMs);
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kRequestDelete);
     CHECK(calls[0].x[0] == kActor);
     CHECK(calls[0].x[1] == 0);
     CHECK(d.Slots()[0].phase == Phase::deleting);
     g.guest.Set(kActor + addr::kActorState, std::uint32_t{8});
-    CHECK(Frame(d, g, 600).empty());
+    CHECK(Frame(d, g, 4600).empty());
     CHECK(d.Slots()[0].phase == Phase::idle);
 
     // Back again: the block is kept, only a create, in a new handle slot.
     d.SetInput(Wants({At(2, 0, 0, 0)}));
-    calls = Frame(d, g, 700);
+    calls = Frame(d, g, 4700);
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kCreate);
     CHECK(calls[0].x[3] != handle);

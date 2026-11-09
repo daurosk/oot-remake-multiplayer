@@ -1,6 +1,6 @@
 # Puppet Link: research
 
-Plan stage 1 step 2 ([plan.md](plan.md)): show each remote player as a second Link in the world, driven by their samples. This file says where the game creates actors, which actor to spawn, where its pose and animation live, where to hook a frame, and how the emulator gets code to run there. Nothing here has been run yet.
+Plan stage 1 step 2 ([plan.md](plan.md)): show each remote player as a second Link in the world, driven by their samples. This file says where the game creates actors, which actor to spawn, where its pose and animation live, where to hook a frame, and how the emulator gets code to run there. The spawn, follow and delete were run in game later: see [Proven in game](#proven-in-game-2026-11-08).
 
 Addresses are offsets into `main` of build `e0f3ccfaf50065ae`. **Checked** means read from the instructions or the data files. **Inferred** means taken from a name, a shape or the engine family. The game was not run for this file.
 
@@ -274,8 +274,8 @@ Approach (a), in `lichii/hook/` and one small emulator patch. Not yet run with t
 | Code patch | `CoopSvc::PatchMain` (`coop_svc.cpp`) | Only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`, for main of build `E0F3CCFA...3348`. moduleCalc_ calls the frame function 0x3b4e300 from two places: main+0x6e70f8 (0x94d19c82), the one that runs every frame, and main+0x6e6dd8 (0x94d19d4a), a rare branch. Checks that both hold those words and that 0x3c46280 to 0x3c47000 is zero, in the original and in what the other patches made, then writes `bl 0x3c46280` at both and the cave. Logs `Applying "coop puppet"` or why not. |
 | Cave | `coop_svc.s`, bytes in `coop_svc.h` | 124 bytes at 0x3c46280. Keeps the game's `x0` and `s0`, takes 0x100 bytes of stack, and loops: `svc #0xf4` with the buffer, then, while the emulator says so, calls the function it put in the buffer with `x0` to `x7` and the stack arguments from it, and hands the result back at the next SVC. At most 16 calls a frame. Then it branches to 0x3b4e300 as the game would have called it. |
 | SVC | `CoopSvc::Call` | 0xf4 from Ocarina only. Hands the SVC to the director and writes the call it wants into the buffer. |
-| Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x200-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (as the walker does: position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, +0x48 = 0x10001), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Each frame it reads the handle (a link, else a holder, else the actor; what it was is logged once). At state 4 the puppet is live and its +0x31c and +0x328 are written every frame. |
-| Delete | 0xa6490 | The run of `OneShotGenericDeleteThisActor` (its node's last vtable slot, 0xc706f0) calls 0xa6490 with the actor and 0. It returns at once for an actor in state 7 to 11. The director asks for it when the player leaves, changes model, or the local scene is not the one the puppet was made in. An actor the engine deleted itself (state 7 to 11, or a holder whose id no longer matches) is noticed and made again. |
+| Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x200-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, and as SeqExecuteCreateActor does at 0x32bca40..0x32bcaa0: +0x48 = 0, +0x98 = 1), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Create fills the handle slot with a 0x30-byte **create request**: +0 low 16 bits the state, +8 the actor. State 3 = ready: the director takes the actor with **0x36fbd0(request, 1, 0)**, as SeqExecuteCreateActor's check (0x32bcb30) does, and clears the slot; state 4 is dropped with 0x36fde0(request), 5 and 6 are failures. Once the actor is in state 4 the puppet is live and its +0x31c and +0x328 are written every frame. (With the walker's +0x48 = 0x10001 the request stayed in state 2.) |
+| Delete | 0xa6490 | The run of `OneShotGenericDeleteThisActor` (its node's last vtable slot, 0xc706f0) calls 0xa6490 with the actor and 0. It returns at once for an actor in state 7 to 11. The director asks for it when the player has been out of the plan for 2 s (`kLeaveGraceMs`: a stalled peer fades to 0 for a moment, and without the wait the puppet was deleted and made again), changes model, or the local scene is not the one the puppet was made in. An actor the engine deleted itself (state 7 to 11, or a holder whose id no longer matches) is noticed and made again. |
 | Planner | `coop_puppet.cpp`, present thread | `CoopPuppet::Publish`, from `CoopHook::OnFrame`: every remote player that presence shows in your scene and has not faded becomes a target, at its shown position and rotation (`QuatToMatrix`, the inverse of the reader's). With `LICHII_COOP_DEBUG_PUPPET=1` one more, 2 units along x from where you stood 3 s after the scene was known, staying there. Nothing is planned while the scene is not known (loading). |
 
 The actor is `Animal_Cow_LinkHouse` until the puppet pack exists; `LICHII_COOP_PUPPET_ACTOR=<pack name>` changes it.
@@ -294,16 +294,28 @@ In the log, in order:
 1. `Applying "coop puppet": bl 0x3c46280 at main+0x6e6dd8 and main+0x6e70f8, 124 bytes of cave` and `coop: puppets on, actor Animal_Cow_LinkHouse, debug puppet beside you`.
 2. Every second, `coop: puppet: <n> cave frames/s, scene '...', <k> wanted`: the cave runs once per game frame (30 or 60).
 3. `P0: block at ...`, `P0: create Animal_Cow_LinkHouse requested (returned ...), handle slot ...`.
-4. `P0: handle ... holds ..., taken as a link; it holds ...` and `P0 Animal_Cow_LinkHouse spawned after <ms> ms: handle ..., actor ... (handle read as a link), state 4, at (x, y, z)`.
+4. `P0: took actor ... from request ...` and `P0 Animal_Cow_LinkHouse spawned after <ms> ms: request ..., actor ..., state 4, at (x, y, z)`.
 5. Then each second `P0 live actor ... state 4 at (...), wanted at (...)`: the two agree when the pose write holds.
 
 For following: two instances ([testing.md](testing.md)) with `LICHII_COOP_PUPPET=1` (or the debug flag) in B; B's log shows `P1` live, at A's position.
+
+### Proven in game (2026-11-08)
+
+Kakariko Village (child), Fritchii v5 coop build, two local instances on one server, no one playing (keys posted to the windows):
+
+- The cave runs every frame (`60 cave frames/s`).
+- `Animal_Cow_LinkHouse` spawns 109 ms after the request, state 4, at the asked place, and is seen in the game.
+- `LICHII_COOP_PUPPET_ACTOR=CoopPuppet_Child`: our pack spawns as a standing child Link with the player's model, 190 to 360 ms after the request (about 1.1 s in the instance that was loading too).
+- Each instance makes a `CoopPuppet_Child` for the other player (A's P2, B's P1). A walked a few steps; B's P1 moved with him, `live ... at` equal to `wanted at`.
+- A closed: B logs `P1: delete requested`, `P1 deleted (state 7)`, and the puppet is gone from B's screen.
+
+Not yet seen: animation (the puppet stands in its default pose), rotation in the picture, a scene change with two instances, adult Link.
 
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.
 2. ~~The engine's actor delete request.~~ Found: 0xa6490 (see [Spawn and move](#spawn-and-move-what-is-built)).
 3. The run slots of `ExecuteActorForceSetMtx` and `OneShotActorRequestSetMtx`, if a direct pose write does not hold.
-4. What the handle slot holds, and the meaning of `w4`, the stack arguments and create argument +0x40 and +0x48.
+4. ~~What the handle slot holds~~ (a create request, see [Spawn and move](#spawn-and-move-what-is-built)); the meaning of `w4`, the stack arguments and create argument +0x40.
 5. Whether the engine accepts an uncompressed pack, and whether the size table needs entries for new packs.
-6. Everything here is from the dump. None of it has been run.
+6. Animation, equipment and scene changes on the puppet are from the dump and not yet run; spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).

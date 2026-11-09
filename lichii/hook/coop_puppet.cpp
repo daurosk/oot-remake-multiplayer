@@ -321,7 +321,18 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (input_.scene.empty() || slot.actor == 0) {
             return std::nullopt;  // loading: wait and see what is left
         }
+        if (t != nullptr) {
+            slot.missing_ms = 0;
+        } else if (input_.scene == slot.scene) {
+            if (slot.missing_ms == 0) {
+                slot.missing_ms = now_ms;
+            }
+            if (now_ms - slot.missing_ms < kLeaveGraceMs) {
+                return std::nullopt;  // maybe a hiccup: keep it a moment
+            }
+        }
         if (t == nullptr || t->actor != slot.actor_name || input_.scene != slot.scene) {
+            slot.missing_ms = 0;
             Call c;
             c.function = input_.main_base + addr::kRequestDelete;
             c.x[0] = slot.actor;

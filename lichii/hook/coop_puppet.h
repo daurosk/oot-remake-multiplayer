@@ -133,6 +133,10 @@ public:
 
     static constexpr int kMaxCallsPerFrame = 4;      // the cave allows 16
     static constexpr std::uint64_t kCreateTimeoutMs = 10000;
+    // A live puppet whose player drops out of the plan in the same scene
+    // (a stalled or late peer fades to 0 for a moment) is kept this long
+    // before it is deleted, so a hiccup does not delete and create it again.
+    static constexpr std::uint64_t kLeaveGraceMs = 2000;
 
 private:
     struct Slot {
@@ -151,6 +155,7 @@ private:
         std::string scene;          // where it was created
         std::uint64_t since_ms = 0; // when the phase began
         std::uint64_t retry_ms = 0; // no new malloc or create before this
+        std::uint64_t missing_ms = 0; // when its player left the plan; 0 wanted
     };
     enum class Pending { none, malloc, create, take, drop, remove };
 

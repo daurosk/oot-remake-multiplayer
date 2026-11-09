@@ -432,8 +432,32 @@ The first two-game run had every write refused: the player reaches its model thr
 ### Not done (pose)
 
 1. The AS commands stop only while poses arrive; if poses stop for more than 1 s the next sample's animation is played again (the slot's last command keeps playing until then).
-2. The skeleton id is only the bone count; child and adult differ in it, which is what a mismatch would be.
-3. Adult Link's skeleton was not read (only `Player_Child`).
+2. Adult Link's skeleton was not read in a running game (only `Player_Child`): see [Adult](#adult).
+
+## Adult
+
+Caleb (2026-11-09): adult Link is synced like child Link. Everything here is built and unit tested; **none of it was run in a game** (in-game tests were stopped on 2026-11-09 before the adult run). What to check is listed at the end.
+
+| Piece | What | Status |
+|---|---|---|
+| Which puppet | The sample's age chooses `CoopPuppet_Child` or `CoopPuppet_Adult`. When a player's age changes (the pedestal), the planner's actor name changes, and the director deletes the puppet and creates it again at the new age | Unit tested (planner and director); not run |
+| Mixed ages | A child scene and its adult twin (`Graveyard_Child`, `Graveyard_Adult`) count as the same place for puppets, fairies and the overlay markers (`coop::host::same_place`, which drops a trailing `_Child` or `_Adult`). Shared objects and flags still need the very same scene | Unit tested; not run |
+| Pose | The skeleton id sent with every `PLAYER_POSE` is the bone count (low 9 bits) with a hash (FNV-1a) of the model's name above it. The name is read from the model resource (`FMDL` +0x8: pointer to a u16 length and the characters): `Player_Child` or `Player_Adult`. A puppet takes only a pose of its own model, so a pose that arrives around an age change is dropped, not written on the wrong skeleton. The wire format did not change. A change of our own model starts the moving-bone sets again | Unit tested on fake memory; the adult skeleton was not read in a game. If the path to the skeleton differs for `Player_Adult`, the debug line shows `?` for the model or counts refused writes |
+| Gear | Nothing in the gear code is for the child only: it sends the names in `PlayerStatus.Equip*` and equips them by name, so the Master Sword, Biggoron's Sword, the Hylian and Mirror Shield, tunics, boots and the held bow, hookshot or hammer go the same way. The adult's bones are in [Equipment](#equipment) | Not run: adult slots and names were never seen in a game |
+| Fairy | The fairy's shoulder offset is scaled by 1.45 (`CoopFairy::Settings::adult_scale`) for a puppet whose actor ends in `_Adult` | Unit tested; the factor is a guess from the two heights |
+| Name tag | The tag floats over the head at 1.35 (child) or 1.9 (adult) world units, by the sample's age (`coop_hook.cpp`, from the name tags work) | Heights not checked on an adult |
+
+Age in the game: the player actor itself is `Player_Child` or `Player_Adult` (0x4b6db0, `QueryPlayerIsChild`, reads the actor's parameters). The save's era is the bool flag `Sequence_IsChildhood` (hash 0xcea220d3, in `GameDataList`); `main` also has the names `IsChildWhenChangeBanc`, `IsChildWhenInitializingScene`, `IsCreateChildPlayer`, `ChangeEra` and `IsSetCurrentEra`, not read.
+
+For tests without an adult save: the autotest `warp` to a scene ending in `_Adult` or `_Child` also queues `Sequence_IsChildhood` (false or true) before it asks for the scene ([testing.md](testing.md)). Whether the game then creates `Player_Adult` is **not known**: it was never run. Scenario `adult` (`tools/autotest/scenarios/adult.A.txt`, `adult.B.txt`, run with `-NoLoad`) warps A into `Graveyard_Adult` and B into `Graveyard_Child`; A walks, runs, turns and swings while B watches.
+
+To check in a game (with `LICHII_COOP_DEBUG_POSE=1`):
+
+1. An adult player: its pose line starts `pose: Player_Adult <n> bones` with no refused writes; the other game logs `CoopPuppet_Adult spawned` and shows an adult puppet that walks in the player's poses.
+2. Child and adult in the twin scenes see each other, each at the right age and place.
+3. Pulling or returning the Master Sword: the other game's puppet is replaced by one of the new age within a second or two.
+4. Adult gear on the puppet: Master Sword, a shield on the back and raised, a tunic, boots, the bow or hookshot in hand.
+5. The fairy by the adult puppet's shoulder and the name tag just over its head.
 
 ## Fairy
 
@@ -443,7 +467,7 @@ Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii
 |---|---|
 | Actor | `Dm_Npc_Navi`, the cutscene Navi from the game's own pack: its own model and glow (`XLink/Npc_Navi`), `ActorLogicSimpleActor`, the generic name `Dm_Npc_Base`. `Npc_Navi` is not used: it is the player's partner, with an AI that follows the player and a name the game looks up, so a second one would clash. `LICHII_COOP_FAIRY_ACTOR=<pack>` picks another (`Npc_Fairy` is the next to try). |
 | Create and delete | A second `CoopPuppet::Director`, the same create, take and delete path as the puppet. It registers with the svc cave as caller 20 (`CoopSvc::AddCaller`, after the puppets and CoopSpawn), on the first `CoopFairy::Publish`; the cave asks each caller in turn, each with its own frame and its own call results. Each director takes at most 4 calls a frame, the cave allows 16. Its log lines start with `fairy`. |
-| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
+| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. For an adult puppet the offset is scaled by 1.45 ([Adult](#adult)). It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
 | Pose | Written into the actor every game frame by the director, like the puppet's. The Navi AI is not pointed at the puppet. |
 | On and off | On with the puppets (`LICHII_COOP_PUPPET` or `LICHII_COOP_DEBUG_PUPPET`); `LICHII_COOP_FAIRY=0` turns it off. |
 

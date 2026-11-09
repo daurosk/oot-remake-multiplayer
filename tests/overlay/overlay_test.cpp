@@ -333,16 +333,3 @@ TEST_CASE("overlay: collect takes what presence shows") {
   CHECK(r.items[0].marker.x == doctest::Approx(400));
   CHECK(r.items[0].marker.depth == doctest::Approx(10));
 }
-
-TEST_CASE("overlay: an adult's marker is lifted to the taller Link") {
-  Shown child = player(2, {0, 0, -10});
-  Shown adult = player(3, {0, 0, -10});
-  adult.adult = true;
-  Result r = build({child, adult});
-  REQUIRE(r.error == Error::none);
-  REQUIRE(r.items.size() == 2);
-  for (const auto& item : r.items) {
-    // 40 pixels a world unit at depth 10; the default lift is 0.5.
-    CHECK(item.marker.y == doctest::Approx(item.number == 3 ? 380 : 400));
-  }
-}

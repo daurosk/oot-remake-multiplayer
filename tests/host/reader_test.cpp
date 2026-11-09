@@ -2,7 +2,11 @@
 
 #include <cmath>
 #include <limits>
+#include <string>
+#include <utility>
+#include <vector>
 
+#include "coop/protocol/codec.hpp"
 #include "fake_memory.hpp"
 
 using namespace coop::host;
@@ -402,5 +406,141 @@ TEST_CASE("host reader: the AS command in the main slot") {
       m.put_u32(l.actor1 + addr::kActorState, 7);
       CHECK_FALSE(reader.read_animation());
     }
+  }
+}
+
+namespace {
+
+// A GameDataMgr with only the String64 table (docs/flags.md layout, type 16
+// at M + 0x610: count, entries, hash slots, slot count; entries of 0x108
+// with char* +0x68 and s32 size +0x70), offsets written out again here.
+constexpr std::uint64_t kGameData = 0x90000000, kStrEntries = 0x90100000,
+                        kStrSlots = 0x90200000, kStrText = 0x90300000;
+constexpr std::uint32_t kStrCap = 17;
+
+void put_strings(FakeMemory& m, const std::vector<std::pair<std::uint32_t, std::string>>& flags) {
+  m.put_u64(FakeMemory::kBase + 0x4e842a8, kGameData);
+  m.put_u32(kGameData + 0x610, static_cast<std::uint32_t>(flags.size()));
+  m.put_u64(kGameData + 0x618, kStrEntries);
+  m.put_u64(kGameData + 0x620, kStrSlots);
+  m.put_u32(kGameData + 0x62c, kStrCap);
+  for (std::uint32_t i = 0; i < kStrCap; ++i) m.put_u64(kStrSlots + 8 * i, 0);
+  for (std::uint32_t i = 0; i < flags.size(); ++i) {
+    const auto& [hash, text] = flags[i];
+    std::uint32_t s = hash % kStrCap;
+    while (*read_u32(m, kStrSlots + 8 * s) != 0) s = (s + 1) % kStrCap;
+    m.put_u32(kStrSlots + 8 * s, hash);
+    m.put_u32(kStrSlots + 8 * s + 4, i);
+    const std::uint64_t entry = kStrEntries + 0x108ull * i;
+    const std::uint64_t buffer = kStrText + 0x40ull * i;
+    m.put_u64(entry + 0x68, buffer);
+    m.put_u32(entry + 0x70, 64);
+    std::string bytes = text;
+    bytes.resize(64, '\0');
+    m.put(buffer, bytes.data(), bytes.size());
+  }
+}
+
+// The player's EquipmentUser (component table +0x200): 8 slots of 0x18 at
+// +0x20 (holder +8, id +0x10), a state byte per slot at +0x13bc.
+constexpr std::uint64_t kComponents = 0x91000000, kUser = 0x91100000,
+                        kEquipHolders = 0x91200000, kEquipActors = 0x91300000;
+
+void put_user(FakeMemory& m, const Layout& l) {
+  m.put_u64(l.actor1 + addr::kActorComponents, kComponents);
+  m.put_u64(kComponents + 0x200, kUser);
+  for (std::uint32_t i = 0; i < 8; ++i) {
+    m.put_u64(kUser + 0x20 + 0x18 * i + 8, kEquipHolders + 0x100 * i);
+    m.put_u32(kUser + 0x20 + 0x18 * i + 0x10, 0xffffffffu);
+    m.put_u8(kUser + 0x13bc + i, 0);
+  }
+}
+
+void put_equipped(FakeMemory& m, std::uint32_t slot, std::uint32_t id, std::uint32_t state,
+                  std::uint8_t bits) {
+  const std::uint64_t holder = kEquipHolders + 0x100 * slot;
+  const std::uint64_t actor = kEquipActors + 0x1000 * slot;
+  m.put_u32(kUser + 0x20 + 0x18 * slot + 0x10, id);
+  m.put_u64(holder + 0x40, actor);
+  m.put_u32(holder + 0x48, id);
+  m.put_u32(actor + 0x2c, state);
+  m.put_u8(kUser + 0x13bc + slot, bits);
+}
+
+}  // namespace
+
+TEST_CASE("host reader: equipment flag hashes are the names' hashes") {
+  CHECK(addr::kEquipWeapon == proto::flag_hash("PlayerStatus.EquipWeapon"));
+  CHECK(addr::kEquipShield == proto::flag_hash("PlayerStatus.EquipShield"));
+  CHECK(addr::kEquipArmor == proto::flag_hash("PlayerStatus.EquipArmor"));
+  CHECK(addr::kEquipBoot == proto::flag_hash("PlayerStatus.EquipBoot"));
+  CHECK(addr::kEquipHeadArmor == proto::flag_hash("PlayerStatus.EquipHeadArmor"));
+  CHECK(addr::kEquipHandArmor == proto::flag_hash("PlayerStatus.EquipHandArmor"));
+  CHECK(addr::kEquipOcarina == proto::flag_hash("PlayerStatus.EquipOcarina"));
+  CHECK(addr::kEquipArrow == proto::flag_hash("PlayerStatus.EquipArrow"));
+}
+
+TEST_CASE("host reader: what the player wears") {
+  FakeMemory m;
+  const Layout l = make_game(m);
+  PlayerReader reader(m);
+
+  SUBCASE("no game data and no equipment user: no equipment, the reading stays") {
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK_FALSE(r->equipment);
+  }
+  SUBCASE("names and drawn slots") {
+    put_strings(m, {{addr::kEquipWeapon, "Weapon_Sword_Master"},
+                    {addr::kEquipShield, "Weapon_Shield_Hylian"},
+                    {addr::kEquipArmor, "Armor_Adult_Goron"},
+                    {addr::kEquipBoot, "Armor_Adult_HoverBoot"},
+                    {addr::kEquipHeadArmor, ""},
+                    {addr::kEquipOcarina, "Item_Ocarina_Time"}});
+    put_user(m, l);
+    put_equipped(m, 0, 40, 4, 0x2);  // sword drawn
+    put_equipped(m, 2, 41, 4, 0x0);  // shield on the back
+    put_equipped(m, 4, 42, 8, 0x2);  // drawn, but its actor is gone
+    put_equipped(m, 5, 43, 4, 0x2);
+    m.put_u32(kEquipHolders + 0x100 * 5 + 0x48, 99);  // a stale holder
+    const auto r = reader.read();
+    REQUIRE(r);
+    REQUIRE(r->equipment);
+    const proto::Equipment& e = *r->equipment;
+    CHECK(e.weapon == "Weapon_Sword_Master");
+    CHECK(e.shield == "Weapon_Shield_Hylian");
+    CHECK(e.armor == "Armor_Adult_Goron");
+    CHECK(e.boots == "Armor_Adult_HoverBoot");
+    CHECK(e.head == "");
+    CHECK_FALSE(e.hand);  // not in the table
+    CHECK(e.ocarina == "Item_Ocarina_Time");
+    CHECK_FALSE(e.arrow);
+    CHECK(e.drawn == 0x01);
+  }
+  SUBCASE("bad strings are dropped") {
+    put_strings(m, {{addr::kEquipWeapon, "Weapon_Sword_Kokiri"}, {addr::kEquipShield, "x"}});
+    const std::uint64_t shield_text = kStrText + 0x40;
+    SUBCASE("a control byte") {
+      m.put_u8(shield_text, 0x07);
+      CHECK_FALSE(reader.read_equipment()->shield);
+    }
+    SUBCASE("no terminator within the buffer") {
+      std::string full(64, 'a');
+      m.put(shield_text, full.data(), full.size());
+      CHECK_FALSE(reader.read_equipment()->shield);
+    }
+    SUBCASE("a size that is not a String64") {
+      m.put_u32(kStrEntries + 0x108 + 0x70, 4096);
+      CHECK_FALSE(reader.read_equipment()->shield);
+    }
+    CHECK(reader.read_equipment()->weapon == "Weapon_Sword_Kokiri");
+  }
+  SUBCASE("drawn alone, when the game data is not up") {
+    put_user(m, l);
+    put_equipped(m, 3, 50, 4, 0x2);
+    const auto e = reader.read_equipment();
+    REQUIRE(e);
+    CHECK(e->drawn == 0x08);
+    CHECK_FALSE(e->weapon);
   }
 }

@@ -1527,3 +1527,62 @@ TEST_CASE("client: the flag and join event kinds are named") {
   CHECK(to_string(EventKind::join_timed_out) == "join timed out");
   CHECK(to_string(EventKind::host_changed) == "host changed");
 }
+
+TEST_CASE("client: equipment is kept per player and ours goes to each newcomer") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);  // we are 2, Saria is 1
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+
+  // Theirs: a later message keeps what it leaves out.
+  proto::Equipment saria;
+  saria.weapon = "Weapon_Sword_Kokiri";
+  saria.drawn = 1;
+  server.send(proto::PlayerEquip{1, saria}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::player_equip));
+  const Event first = events.all[*events.find(EventKind::player_equip)];
+  CHECK(first.player == 1);
+  CHECK(first.equipment == saria);
+  const std::size_t before = events.all.size();
+  proto::Equipment sheathed;
+  sheathed.drawn = 0;
+  server.send(proto::PlayerEquip{1, sheathed}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return events.find(EventKind::player_equip, before).has_value();
+  }));
+  REQUIRE(client.find_player(1)->equipment);
+  CHECK(client.find_player(1)->equipment->weapon == "Weapon_Sword_Kokiri");
+  CHECK(client.find_player(1)->equipment->drawn == 0);
+
+  // Refused: equipment for nobody, or for us.
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::PlayerEquip{4, saria}, proto::kChannelSession);
+  server.send(proto::PlayerEquip{2, saria}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 2; }));
+
+  // Ours: kept when sent, and sent again when someone joins.
+  proto::Equipment link;
+  link.armor = "Armor_Adult_Zora";
+  const std::size_t from = server.received.size();
+  REQUIRE(client.send(proto::PlayerEquip{0, link}));
+  CHECK(client.find_player(2)->equipment == link);
+  auto count_equips = [&] {
+    std::size_t n = 0;
+    for (std::size_t i = from; i < server.received.size(); ++i) {
+      if (const auto* e = std::get_if<proto::PlayerEquip>(&server.received[i].message)) {
+        CHECK(e->equipment == link);
+        CHECK(server.received[i].channel == proto::kChannelSession);
+        ++n;
+      }
+    }
+    return n;
+  };
+  REQUIRE(pump(client, server, [&] { return count_equips() == 1; }));
+  server.send(proto::PlayerJoined{3, "Zelda"}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return count_equips() == 2; }));
+  CHECK(to_string(EventKind::player_equip) == "player equip");
+  client.stop();
+}

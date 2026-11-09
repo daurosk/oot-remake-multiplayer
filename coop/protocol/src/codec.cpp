@@ -450,6 +450,40 @@ Error encode_body(const Host& m, Writer& w) {
   return Error::none;
 }
 
+// The name fields of Equipment, in component order.
+struct EquipName {
+  EquipComponent id;
+  std::optional<std::string> Equipment::*field;
+};
+constexpr EquipName kEquipNames[] = {
+    {EquipComponent::weapon, &Equipment::weapon},   {EquipComponent::shield, &Equipment::shield},
+    {EquipComponent::armor, &Equipment::armor},     {EquipComponent::boots, &Equipment::boots},
+    {EquipComponent::head, &Equipment::head},       {EquipComponent::hand, &Equipment::hand},
+    {EquipComponent::ocarina, &Equipment::ocarina}, {EquipComponent::arrow, &Equipment::arrow},
+};
+
+Error encode_body(const PlayerEquip& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  for (const EquipName& n : kEquipNames) {
+    if (const auto& name = m.equipment.*n.field) COOP_TRY(check_string(*name, kMaxEquipNameChars));
+  }
+  w.u8(m.player_number);
+  for (const EquipName& n : kEquipNames) {
+    const auto& name = m.equipment.*n.field;
+    if (!name) continue;
+    w.u16(static_cast<std::uint16_t>(n.id));
+    const std::size_t at = w.begin_length();
+    w.str(*name);
+    w.finish_length(at);
+  }
+  if (m.equipment.drawn) {
+    w.u16(static_cast<std::uint16_t>(EquipComponent::drawn));
+    w.u16(1);
+    w.u8(*m.equipment.drawn);
+  }
+  return Error::none;
+}
+
 // ---------------------------------------------------------------- bodies: decode
 
 Error decode_body(Reader& r, Hello& m) {
@@ -712,6 +746,47 @@ Error decode_body(Reader& r, Host& m) {
   return Error::none;
 }
 
+Error decode_body(Reader& r, PlayerEquip& m) {
+  m = PlayerEquip{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+
+  std::uint32_t seen = 0;  // bit per known component id
+  while (r.left() > 0) {
+    std::uint16_t id = 0;
+    std::uint16_t length = 0;
+    COOP_READ(r.u16(id));
+    COOP_READ(r.u16(length));
+    std::span<const std::uint8_t> data;
+    if (!r.take(length, data)) return Error::bad_length;
+
+    Reader c(data);
+    std::optional<std::string>* name = nullptr;
+    for (const EquipName& n : kEquipNames) {
+      if (static_cast<std::uint16_t>(n.id) == id) name = &(m.equipment.*n.field);
+    }
+    const bool is_drawn = id == static_cast<std::uint16_t>(EquipComponent::drawn);
+    if (name == nullptr && !is_drawn) continue;  // unknown: skipped by its length
+    if (seen & (1u << id)) return Error::duplicate_component;
+    seen |= 1u << id;
+
+    Error e = Error::none;
+    if (name != nullptr) {
+      e = c.str(name->emplace(), kMaxEquipNameChars);
+    } else {
+      std::uint8_t bits = 0;
+      e = c.u8(bits) ? Error::none : Error::truncated;
+      m.equipment.drawn = bits;
+    }
+    // A known component's fields running past its length means its length
+    // is wrong, not that the message was cut short.
+    if (e == Error::truncated) return Error::bad_length;
+    if (e != Error::none) return e;
+    if (c.left() != 0) return Error::bad_length;
+  }
+  return Error::none;
+}
+
 template <typename T>
 Error decode_as(Reader& body, Message& out) {
   T value{};
@@ -752,7 +827,7 @@ MessageType type_of(const Message& message) {
       MessageType::pong,          MessageType::player_status, MessageType::chat,
       MessageType::player_sample, MessageType::test_payload,
       MessageType::join_partner,  MessageType::flag_set,    MessageType::flag_state,
-      MessageType::flag_snapshot, MessageType::host,
+      MessageType::flag_snapshot, MessageType::host, MessageType::player_equip,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -787,6 +862,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::player_status:
     case MessageType::chat:
     case MessageType::join_partner:
+    case MessageType::player_equip:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -821,6 +897,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::flag_set:
     case MessageType::flag_state:
     case MessageType::flag_snapshot:
+    case MessageType::player_equip:
       return true;
   }
   return false;
@@ -838,7 +915,8 @@ auto* player_field(M& message) {
         using T = std::remove_cvref_t<decltype(m)>;
         if constexpr (std::is_same_v<T, PlayerStatus> || std::is_same_v<T, Chat> ||
                       std::is_same_v<T, PlayerSample> || std::is_same_v<T, JoinPartner> ||
-                      std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState>) {
+                      std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState> ||
+                      std::is_same_v<T, PlayerEquip>) {
           field = &m.player_number;
         }
       },
@@ -920,6 +998,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
+    case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;
 }

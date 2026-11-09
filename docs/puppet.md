@@ -135,8 +135,49 @@ Age: the sample's age field (GameUI +0x5c0) chooses `CoopPuppet_Child` or `CoopP
 ### Not done (animation)
 
 1. Nothing here was run. To check: slot 0's name changes between standing, walking, running and rolling, and the frame counts up at the rate. Needs a debug log of `read_animation()` in the hook (a `lichii/**` change).
-2. Held item, sword and shield shown: not looked for. The node `ExecuteEquipmentSyncASCommandWithEquipmentUser` (string 0x3cef911, referenced at 0x26a94a4) is the place to start.
+2. Held item, sword and shield shown: see Equipment below.
 3. The other slots (upper body, face) and partial animations; and whether 0x2022a0 copes with a name from a heap block (it compares by pointer first, then by bytes).
+
+## Equipment
+
+Caleb (2026-11-09): the puppet wears the remote player's tunic, boots, sword, shield and mask, and holds what they hold, drawn or sheathed. Read from the dump and the romfs for this section; **nothing here was run**. Message: `PLAYER_EQUIP` ([protocol.md](protocol.md)).
+
+### How the game shows equipment
+
+Every piece is **an actor of its own**, created by the wearer's EquipmentUser component and bound to the wearer's bones. Nothing is a texture or a flag on the Link model.
+
+| Item | Finding | Status |
+|---|---|---|
+| Pieces are actors | `Weapon_Sword_Kokiri`, `Weapon_Shield_Deku`, `Armor_Adult_Goron`, `Armor_Child_Mask_Keaton`, `Item_Ocarina_Time` and so on each have their own pack in `Pack/Actor/`. Weapons have `ModelBindRef` `EquipmentCommon`; armor has `ArmorRef`, `SameBoneModelBindRef` (bound bone for bone onto the body) and its own model, so a tunic is a second model laid over Link's | Checked (romfs) |
+| The wearer's EquipmentUser | Actor component table (+0x270) **+0x200**: 0x7f7690 reads it, used by `OneShotPlayerEquipDynamicEquipmentFromGameData` (run 0x290b1b0) and `QueryEquipmentUserIsEquipStateDrawnAny` (0x29f1f90) | Checked |
+| Its slots | EquipmentUser +0x20: 8 slots of 0x18 bytes, each a link to the equipment actor (holder pointer +0x8, u32 id +0x10, ~0 empty; holder +0x40 the actor, +0x48 its id, the same shape as the player link). A byte per slot at +0x13bc; **bit 1 = drawn**. 0x4a33c0 walks them so and skips a slot whose actor is in state 7 to 11 | Checked; that bit 1 is "drawn, not sheathed" is inferred from the query's name |
+| Which slot is which | The EquipmentUser's blackboard names its dynamic slots, in this order: `EquipmentUser_Weapon`, `_SubWeapon`, `_Shield`, `_Bow`, `_Tool`, `_SubTool`, `_Accessory1` (`Component/Blackboard/BlackboardParamTable/EquipmentUser`). So slot 0 sword, 2 shield, 3 bow or slingshot, 4 the held tool (hookshot, boomerang, bombs, ocarina...) | Inferred from the order; the 8th slot is unnamed |
+| Bones | `Player_Adult`'s EquipmentUserParam: sword in hand `Weapon_L`, shield in hand `Weapon_R` and on the back `Pod_A`, bow `Weapon_R`, sheathed sword `Pod_B`; `HiddenMaterialGroupList` names the body materials an armor hides (`G_Body`, `G_Boots`, `G_Glove`, ...) | Checked (romfs) |
+| Animation | The node `ExecuteEquipmentSyncASCommandWithEquipmentUser` (run 0x26a92b0) runs on the equipment actor: its component +0x1f8 holds a link (+0x20) to the wearer, and it plays the wearer's slot-0 AS command on the piece, so a sword or shield animates with Link | Checked |
+| Equip from game data | 0x2df6c80(EquipmentUser, slot kind): reads `PlayerStatus.Equip*` from the GameData manager and calls **0x2df7b20**(EquipmentUser, slot, name, ...), which equips the named actor into a slot (slot below 0x12; state at +0x12d4 + 8 × slot) | Checked as calls; 0x2df7b20's arguments past the name were not read |
+
+### What is read and sent
+
+`PlayerReader::read_equipment()` fills `PLAYER_EQUIP`:
+
+- The eight `PlayerStatus.Equip*` flags ([items.md](items.md)) are String64 flags. Their table is GameData type 16 at manager + 0x610 (the pattern of [flags.md](flags.md)): entries of 0x108 bytes, `char*` to the text at +0x68, `s32` buffer size (64) at +0x70, as the getter **0x3758110** reads them. `GameFlags::get_string64` reads the table, not the write queue, so a change shows one GameData update later. A text that is not printable ASCII or not ended within its buffer is dropped.
+- `drawn` is bit *i* for slot *i* of the player's EquipmentUser, set when the slot holds a live actor and its byte has bit 1.
+- The sampler sends it on the first frame and on every change; the client sends it again to every newcomer. Age comes from `PLAYER_SAMPLE`.
+
+### How the puppet applies it (for the puppet spawner)
+
+1. **The pack.** Give `CoopPuppet_Child` and `CoopPuppet_Adult` the player's `EquipmentUserRef` (`Component/EquipmentUserParam/Player_<Child|Adult>`, as `Player_Event` has it) and its blackboard table. Without it the puppet has nowhere to put a piece. A change to `tools/puppet_pack` (`KEEP_COMPONENTS`).
+2. **Weapons, shield, bow, tool at creation.** The EquipmentUser's slot names are blackboard **instance** parameters (`IsInstanceParam`), so the create request can carry them, as event scenes do for `Player_Event`: `EquipmentUser_Weapon` = the received `weapon`, `EquipmentUser_Shield` = `shield`. Where the create argument holds instance parameters (+0x40, +0x48 in the table at the top) is not read yet.
+3. **A change after creation** (a new sword, a shield taken off): the plain way is to delete and create the puppet again with the new names, as an age change does. Faster later: call 0x2df7b20 on the puppet's EquipmentUser with the slot and name from the hook routine (a fourth command kind beside create and play), once its arguments are read.
+4. **Armor** (tunic, boots, mask, gauntlets): the same 0x2df7b20 path with the armor slot kinds 0x2df6c80 uses; the blackboard has no keys for armor, so this needs the call, not a creation parameter. Until then the puppet shows the default Kokiri tunic.
+5. **Drawn or sheathed**: the equipment state comes with the AS commands the puppet already plays (the game draws the sword in the draw animation), and `OneShotEquipmentUserRequestChangeState` and `OneShotPlayerRequestAllEquipmentSheathed` are the nodes that set it; their run slots were not read. Use `drawn` to check the puppet matches, and to correct it once the change-state call is known.
+
+### Not done (equipment)
+
+1. Nothing was run. To check: equip the Goron tunic and the Hylian shield, read the flags and the drawn byte while drawing and sheathing.
+2. The name of the actor in each slot (for a held tool such as the hookshot or bombs, which are not in `PlayerStatus.Equip*`): the actor's name field was not found. The item buttons are `PlayerStatus.AssignableItem.*` (an enum, [items.md](items.md)).
+3. 0x2df7b20's other arguments, the armor slot kinds, the change-state call, and where a create request carries blackboard instance parameters.
+4. String64 flags still in the write queue (the getter checks an object at manager + 0x608 first).
 
 ## The frame hook
 

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "addresses.hpp"
+#include "coop/host/game_flags.hpp"
 
 namespace coop::host {
 namespace {
@@ -191,6 +192,53 @@ std::optional<protocol::Animation> PlayerReader::read_animation() {
   return protocol::Animation{std::move(name), *frame, *rate};
 }
 
+std::optional<protocol::Equipment> PlayerReader::read_equipment() {
+  protocol::Equipment e;
+  GameFlags flags(memory_);
+  e.weapon = flags.get_string64(addr::kEquipWeapon);
+  e.shield = flags.get_string64(addr::kEquipShield);
+  e.armor = flags.get_string64(addr::kEquipArmor);
+  e.boots = flags.get_string64(addr::kEquipBoot);
+  e.head = flags.get_string64(addr::kEquipHeadArmor);
+  e.hand = flags.get_string64(addr::kEquipHandArmor);
+  e.ocarina = flags.get_string64(addr::kEquipOcarina);
+  e.arrow = flags.get_string64(addr::kEquipArrow);
+  e.drawn = read_drawn();
+  if (e == protocol::Equipment{}) return std::nullopt;
+  return e;
+}
+
+std::optional<std::uint8_t> PlayerReader::read_drawn() {
+  const auto actor = find_player_actor();
+  if (!actor) return std::nullopt;
+  const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
+  if (!components) return std::nullopt;
+  const auto user = read_ptr(memory_, *components + addr::kComponentsEquipmentUser);
+  if (!user) return std::nullopt;
+  std::uint8_t drawn = 0;
+  for (std::uint32_t i = 0; i < addr::kEquipSlotCount; ++i) {
+    const std::uint64_t slot = *user + addr::kEquipSlots + addr::kEquipSlotStride * i;
+    const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
+    if (!id) return std::nullopt;
+    if (*id == addr::kEmptyId) continue;
+    // As 0x4a33c0: the holder must still hold this id and its actor must
+    // not be gone.
+    const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder);
+    if (!holder) continue;
+    const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
+    if (!holder_id || *holder_id != *id) continue;
+    const auto equipment = read_ptr(memory_, *holder + addr::kHolderActor);
+    if (!equipment) continue;
+    const auto state = read_u32(memory_, *equipment + addr::kActorState);
+    if (!state) continue;
+    if (*state >= addr::kActorStateGoneFirst && *state <= addr::kActorStateGoneLast) continue;
+    const auto bits = read_u8(memory_, *user + addr::kEquipSlotState + i);
+    if (!bits) return std::nullopt;
+    if (*bits & addr::kEquipSlotDrawnBit) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
+  }
+  return drawn;
+}
+
 std::optional<PlayerReading> PlayerReader::read() {
   const auto position = read_position();
   if (!position) return std::nullopt;
@@ -201,6 +249,7 @@ std::optional<PlayerReading> PlayerReader::read() {
   reading.scene = read_scene();
   reading.event_running = read_event_running();
   reading.animation = read_animation();
+  reading.equipment = read_equipment();
   return reading;
 }
 

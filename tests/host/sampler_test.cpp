@@ -30,6 +30,7 @@ PlayerReading at(float x, std::optional<bool> event = false) {
 struct Decoded {
   std::vector<proto::PlayerSample> samples;
   std::vector<proto::PlayerStatus> statuses;
+  std::vector<proto::PlayerEquip> equips;
 };
 
 // Decodes what one frame returned, checking each message's channel.
@@ -45,6 +46,9 @@ Decoded decode(const std::vector<Outgoing>& out) {
     } else if (auto* st = std::get_if<proto::PlayerStatus>(&m)) {
       CHECK(o.channel == proto::kChannelSession);
       d.statuses.push_back(*st);
+    } else if (auto* e = std::get_if<proto::PlayerEquip>(&m)) {
+      CHECK(o.channel == proto::kChannelSession);
+      d.equips.push_back(*e);
     } else {
       FAIL("unexpected message");
     }
@@ -281,4 +285,44 @@ TEST_CASE("host sampler: animation goes in the sample; a new command sends, a ne
   REQUIRE(sent.size() == 1);
   CHECK_FALSE(sent[0].animation);
   CHECK(next(r).empty());
+}
+
+TEST_CASE("host sampler: equipment on every change, not every frame") {
+  Sampler sampler;
+  std::uint64_t now = kStart;
+  PlayerReading r = at(0.0f);
+  r.equipment.emplace();
+  r.equipment->weapon = "Weapon_Sword_Kokiri";
+  r.equipment->drawn = 0;
+
+  auto d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].player_number == proto::kPlayerSelf);
+  CHECK(d.equips[0].equipment == *r.equipment);
+
+  // The same again: nothing.
+  now += kFrameUs;
+  CHECK(decode(sampler.frame(r, now)).equips.empty());
+
+  // A read that fails for one frame is no change.
+  PlayerReading failed = r;
+  failed.equipment->weapon.reset();
+  now += kFrameUs;
+  CHECK(decode(sampler.frame(failed, now)).equips.empty());
+  failed.equipment.reset();
+  now += kFrameUs;
+  CHECK(decode(sampler.frame(failed, now)).equips.empty());
+
+  // Drawing the sword is.
+  r.equipment->drawn = 1;
+  now += kFrameUs;
+  d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.drawn == 1);
+  CHECK(sampler.last_equipment() == r.equipment);
+
+  // After a reconnect it goes out again.
+  sampler.reset();
+  now += kFrameUs;
+  CHECK(decode(sampler.frame(r, now)).equips.size() == 1);
 }

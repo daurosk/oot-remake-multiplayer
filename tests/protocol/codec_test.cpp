@@ -180,10 +180,12 @@ TEST_CASE("truncated buffers are refused at every length") {
         Message back;
         const Error e = decode(fixed, back);
         // A TEST_PAYLOAD filler or an optional sample component can be cut
-        // off cleanly; anything else must be refused.
+        // off cleanly, and so can any PLAYER_EQUIP component; anything else must
+        // be refused.
         if (e == Error::none) {
           const bool may_shrink = std::holds_alternative<TestPayload>(m) ||
-                                  std::holds_alternative<PlayerSample>(m);
+                                  std::holds_alternative<PlayerSample>(m) ||
+                                  std::holds_alternative<PlayerEquip>(m);
           CHECK(may_shrink);
         }
       }
@@ -824,7 +826,7 @@ TEST_CASE("a reader without the new types skips them") {
   CHECK(stage0_decode(must_encode(Chat{0, "hi"}), back) == Error::none);
   // And this build in turn skips a type newer than itself.
   Bytes future;
-  put_u16(future, 17);
+  put_u16(future, 18);
   put_u16(future, 0);
   CHECK(decode_bytes(future) == Error::unknown_type);
 }
@@ -851,4 +853,83 @@ TEST_CASE("host names the hosting player, from the server on the progress channe
   // A stage 0 reader skips it like the other new types.
   Message old;
   CHECK(stage0_decode(b, old) == Error::unknown_type);
+}
+
+TEST_CASE("player equip: number, channel, senders and layout") {
+  CHECK(static_cast<int>(MessageType::player_equip) == 17);
+  CHECK(channel_of(MessageType::player_equip) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::player_equip, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::player_equip));
+  CHECK(may_send(Sender::server, MessageType::player_equip));
+
+  PlayerEquip m;
+  m.equipment.weapon = "Ab";
+  m.equipment.armor = "";
+  m.equipment.drawn = 0x81;
+  const Bytes b = must_encode(m);
+  // type 17, length; player 0; weapon (1) "Ab"; armor (3) ""; drawn (9) 0x81.
+  CHECK(b == Bytes{17, 0, 20, 0, 0,
+                   1, 0, 4, 0, 2, 0, 'A', 'b',
+                   3, 0, 2, 0, 0, 0,
+                   9, 0, 1, 0, 0x81});
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back) == m);
+  CHECK(check_received(back, Sender::client, kChannelSession) == Error::none);
+  CHECK(check_received(back, Sender::server, kChannelSession) == Error::wrong_sender);
+  CHECK(check_received(back, Sender::client, kChannelProgress) == Error::wrong_channel);
+  REQUIRE(set_sender(back, 2));
+  CHECK(sender_of(back) == 2);
+  CHECK(check_received(back, Sender::server, kChannelSession) == Error::none);
+
+  const PlayerEquip full = test::equip_message();
+  REQUIRE(decode(must_encode(full), back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back) == full);
+  // Nothing known is also a message: the player field alone.
+  CHECK(must_encode(PlayerEquip{}) == Bytes{17, 0, 1, 0, 0});
+}
+
+TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
+  Message back;
+  // An unknown component 12 between two known ones.
+  CHECK(decode(Bytes{17, 0, 18, 0, 0, 2, 0, 3, 0, 1, 0, 'x', 12, 0, 1, 0, 7, 9, 0, 1, 0, 2},
+               back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back).equipment.shield == "x");
+  CHECK(std::get<PlayerEquip>(back).equipment.drawn == 2);
+  // The same component twice.
+  CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 9, 0, 1, 0, 1}) ==
+        Error::duplicate_component);
+  // Drawn of two bytes, and a name whose string runs past its component.
+  CHECK(decode_bytes(Bytes{17, 0, 7, 0, 0, 9, 0, 2, 0, 1, 1}) == Error::bad_length);
+  CHECK(decode_bytes(Bytes{17, 0, 8, 0, 0, 1, 0, 3, 0, 5, 0, 'a'}) == Error::bad_length);
+  // A component longer than the body.
+  CHECK(decode_bytes(Bytes{17, 0, 6, 0, 0, 1, 0, 9, 0, 0}) == Error::bad_length);
+  // Player 5, a control character, a name over 64 characters.
+  CHECK(decode_bytes(Bytes{17, 0, 1, 0, 5}) == Error::bad_value);
+  CHECK(decode_bytes(Bytes{17, 0, 8, 0, 0, 1, 0, 3, 0, 1, 0, 0x01}) == Error::bad_value);
+  Bytes out;
+  PlayerEquip big;
+  big.equipment.ocarina = std::string(kMaxEquipNameChars + 1, 'o');
+  CHECK(encode(big, out) == Error::string_too_long);
+  big.equipment.ocarina = std::string(kMaxEquipNameChars, 'o');
+  CHECK(encode(big, out) == Error::none);
+  CHECK(encode(PlayerEquip{5, {}}, out) == Error::bad_value);
+  // A stage 0 reader skips it like the other new types.
+  Message old;
+  CHECK(stage0_decode(must_encode(test::equip_message()), old) == Error::unknown_type);
+}
+
+TEST_CASE("merge_equipment keeps what a message leaves out") {
+  Equipment before;
+  before.weapon = "Weapon_Sword_Kokiri";
+  before.shield = "Weapon_Shield_Deku";
+  before.drawn = 1;
+  Equipment now;
+  now.shield = "";  // took the shield off
+  now.drawn = 0;
+  const Equipment e = merge_equipment(before, now);
+  CHECK(e.weapon == "Weapon_Sword_Kokiri");
+  CHECK(e.shield == "");
+  CHECK(e.drawn == 0);
+  CHECK_FALSE(e.boots);
 }

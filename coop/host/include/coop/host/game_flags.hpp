@@ -1,0 +1,77 @@
+#pragma once
+// The game's own flag store (gmd::GameDataMgr), read and written over guest
+// memory. Layout and functions: docs/flags.md. Bool and Int flags by name
+// hash, and the 64-bit-key flags (chests and other placed actors, keyed by the
+// placement's 64-bit hash).
+//
+// Writes go into the game's own write queues, as the game's setters do, so
+// the game applies them on its next GameData update with its own bookkeeping
+// (saved copy, save-file mask). Reads see a queued write that is not applied
+// yet, as the game's 0x20fd90 does.
+#include <cstdint>
+#include <optional>
+#include <span>
+
+#include "coop/host/flags.hpp"
+#include "coop/host/game_memory.hpp"
+
+namespace coop::host {
+
+// Guest memory that can also be written. The emulator implements it.
+class WritableGameMemory : public GameMemory {
+ public:
+  // Copies `data` to guest address `address`. False when any byte cannot be
+  // written. Must not throw.
+  virtual bool write(std::uint64_t address, std::span<const std::uint8_t> data) = 0;
+  // Atomically: when the u32 at `address` equals `expected`, stores
+  // `desired`. Returns the value that was there (equal to `expected` on
+  // success), nothing when it cannot be accessed. The game's threads use
+  // AArch64 CAS on the same words, so this must be atomic against them (or
+  // run while the guest is paused).
+  virtual std::optional<std::uint32_t> compare_exchange_u32(std::uint64_t address,
+                                                            std::uint32_t expected,
+                                                            std::uint32_t desired) = 0;
+};
+
+// Reads and writes flags in the running game. Holds no state: every call
+// follows the manager pointer again, so it is safe across scene changes and
+// before the GameData module is up (calls then fail).
+class GameFlags {
+ public:
+  explicit GameFlags(GameMemory& memory) : memory_(memory) {}
+
+  // The flag's value, or nothing when the manager is not up, the hash is not
+  // in that table, or memory cannot be read. Hash 0 is never a flag.
+  std::optional<bool> get_bool(std::uint32_t hash);
+  std::optional<std::int32_t> get_int(std::uint32_t hash);
+  // A 64-bit-key flag (Bool64bitKey). A key not in the table is nothing,
+  // not false: the table holds every key the game knows.
+  std::optional<bool> get_key64(std::uint64_t key);
+  // Element `index` of a BoolArray flag. Read only.
+  std::optional<bool> get_bool_array(std::uint32_t hash, std::uint32_t index);
+
+  // Queues a write as the game's setter does. False when the flag is
+  // unknown, the queue is full, the game applied the queue while this was
+  // being written (try again next frame), or memory fails.
+  static bool set_bool(WritableGameMemory& memory, std::uint32_t hash, bool value);
+  static bool set_int(WritableGameMemory& memory, std::uint32_t hash, std::int32_t value);
+  static bool set_key64(WritableGameMemory& memory, std::uint64_t key, bool value);
+
+ private:
+  GameMemory& memory_;
+};
+
+// FlagStore over the game's tables, for FlagWatcher. Index 0: a Bool flag
+// (kind boolean) or else an Int flag (kind int32). Index > 0: an element of a
+// BoolArray flag, read only. 64-bit keys do not fit FlagKey (docs/flags.md).
+class GameFlagStore final : public FlagStore {
+ public:
+  explicit GameFlagStore(WritableGameMemory& memory) : memory_(memory) {}
+  std::optional<protocol::FlagEntry> read(FlagKey key) override;
+  bool write(const protocol::FlagEntry& entry) override;
+
+ private:
+  WritableGameMemory& memory_;
+};
+
+}  // namespace coop::host

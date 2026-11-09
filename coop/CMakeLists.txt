@@ -34,6 +34,7 @@ target_link_libraries(coop_presence PUBLIC coop_protocol PRIVATE coop_warnings)
 add_library(coop_host STATIC
   host/src/flags.cpp
   host/src/flag_watcher.cpp
+  host/src/game_flags.cpp
   host/src/game_memory.cpp
   host/src/player_reader.cpp
   host/src/sampler.cpp

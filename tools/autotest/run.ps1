@@ -68,19 +68,29 @@ Add-Type -ReferencedAssemblies System.Drawing @"
 using System; using System.Runtime.InteropServices; using System.Drawing;
 public class AutotestWin {
  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
- [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
- [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int ht, bool repaint);
+ [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
+ [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref POINT p);
+ [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+ [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int ht, uint f);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
  public struct RECT { public int L,T,R,B; }
- // PrintWindow with PW_RENDERFULLCONTENT works when the window is covered; if it gives
- // a black picture, copy the screen where the window is instead.
+ public struct POINT { public int X,Y; }
+ // Real pixels: without this a scaled desktop gives rects in scaled units and the copy
+ // misses part of the window.
+ public static void DpiAware() { SetProcessDPIAware(); }
+ // Moves the window and keeps it above other windows, so a screen copy sees the game.
+ public static void Place(IntPtr h, int x, int y, int w, int ht) { SetWindowPos(h, new IntPtr(-1), x, y, w, ht, 0x40); }
+ // The game's client area only (no title bar or border). PrintWindow with
+ // PW_CLIENTONLY|PW_RENDERFULLCONTENT first; if it gives a black picture (Vulkan),
+ // copy the screen where the client area is instead.
  public static string Shot(IntPtr h, string path) {
-  RECT r; GetWindowRect(h, out r);
+  RECT r; GetClientRect(h, out r);
+  POINT o = new POINT(); ClientToScreen(h, ref o);
   int w = Math.Max(1, r.R - r.L), ht = Math.Max(1, r.B - r.T);
   using (var b = new Bitmap(w, ht)) {
-   using (var g = Graphics.FromImage(b)) { var dc = g.GetHdc(); PrintWindow(h, dc, 2); g.ReleaseHdc(dc); }
+   using (var g = Graphics.FromImage(b)) { var dc = g.GetHdc(); PrintWindow(h, dc, 3); g.ReleaseHdc(dc); }
    string how = "print";
-   if (Dark(b)) { using (var g = Graphics.FromImage(b)) g.CopyFromScreen(r.L, r.T, 0, 0, new Size(w, ht)); how = "screen"; }
+   if (Dark(b)) { using (var g = Graphics.FromImage(b)) g.CopyFromScreen(o.X, o.Y, 0, 0, new Size(w, ht)); how = "screen"; }
    int sw = Math.Max(1, w * 2 / 3), sh = Math.Max(1, ht * 2 / 3);
    using (var s = new Bitmap(b, sw, sh)) s.Save(path, System.Drawing.Imaging.ImageFormat.Png);
    return how;
@@ -94,6 +104,7 @@ public class AutotestWin {
  }
 }
 "@
+[AutotestWin]::DpiAware()
 
 $kits = [ordered]@{ A = $KitA; B = $KitB }
 $st = @{}
@@ -122,8 +133,7 @@ function Shot-Both([string]$name) {
         $p = $st[$x].Proc
         if ($p -and -not $p.HasExited) {
             $p.Refresh()
-            $how = [AutotestWin]::Shot($p.MainWindowHandle, (Join-Path $out "$name-$x.png"))
-            if ($how -ne 'print') { Write-Host "  $name-$x ($how)" }
+            [void][AutotestWin]::Shot($p.MainWindowHandle, (Join-Path $out "$name-$x.png"))
         }
     }
 }
@@ -197,7 +207,7 @@ try {
     }
     # Side by side on the main screen, so a screen copy works too.
     $i = 0
-    foreach ($x in $kits.Keys) { [void][AutotestWin]::ShowWindow($st[$x].Proc.MainWindowHandle, 9); [void][AutotestWin]::MoveWindow($st[$x].Proc.MainWindowHandle, 960 * $i, 0, 960, 600, $true); $i++ }
+    foreach ($x in $kits.Keys) { [void][AutotestWin]::ShowWindow($st[$x].Proc.MainWindowHandle, 9); [AutotestWin]::Place($st[$x].Proc.MainWindowHandle, 960 * $i, 0, 960, 600); $i++ }
     Write-Host "both joined"
     Shot-Both 'joined'
 

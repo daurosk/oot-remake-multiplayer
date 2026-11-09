@@ -1,16 +1,15 @@
-# slingshot: A takes out the slingshot (its item button) and fires straight ahead; B watches.
-# NOT CHECKED YET: the buttons are guesses. Checked 2026-11-09: X does not take out the slingshot,
-# and PLUS then R opens the Load page, not the equipment. Look at the run's screenshots and fix.
-# The save has the slingshot on X (top-right of the HUD).
+# slingshot: A aims the slingshot (ZR, the item slot shows it) and fires on release; B watches.
+# Checked 2026-11-09: Link aims (Shoot Seed), the seed count drops 43 to 42.
+# Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
+# ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
+# dash (hold), B put away, X jump, Y attack, right stick camera.
 mark start
-press X
-wait 60
+hold ZR 60
 mark aiming
-press X
-wait 30
+hold ZR 30
+wait 20
 mark fired
-press X
-wait 30
+wait 40
 press B
 wait 60
 mark end

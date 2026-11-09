@@ -181,7 +181,7 @@ Option (b) was to draw a Link model over the picture from the emulator. It needs
 <repo venv python> tools/puppet_pack/build.py --romfs <extracted romfs> --user-dir <emulator>\user
 ```
 
-That writes the mod `user\load\0400486024DEC000\coop-puppet\` (`--mod-dir` picks another folder, `--mod-name` another name). Python 3 with the `zstandard` package. It never changes the romfs, and it rebuilds the tables from the game's copies each time, so running it again is safe.
+That writes the mod `<load folder>\0400486024DEC000\coop-puppet\` (`--mod-dir` picks another folder, `--mod-name` another name). The load folder is the one the emulator's settings name (`load_directory` in `user\config\qt-config.ini`), else `user\load`: the emulator saves that setting as an absolute path, so a copied or moved emulator folder keeps reading the old folder's mods. Python 3 with the `zstandard` package. It never changes the romfs, and it rebuilds the tables from the game's copies each time, so running it again is safe.
 
 | Mod file (under `romfs\`) | What |
 |---|---|
@@ -207,7 +207,9 @@ What the game needs for a new actor, read from the files (**checked**) and the T
 | BYML | Version 7. The tool's writer gives the same size as the game's for ActorInfo and GameActorInfo (byte-identical for GameActorInfo and the pack members) because equal nodes are written once | Checked |
 | Uncompressed `.pack` | Not tried: the tool writes `.pack.zs` like the game | |
 
-**Load test.** `tools/puppet_pack/place_test.py` adds actors to one scene file of a built mod (a throwaway one), for example both puppets and a cow as a control in `Banc/KakarikoVillage/KakarikoVillage_Child_Dynamic.bcett.byml.zs`. Run once (2026-11-08) in a portable copy of the kit (Fritchii v5 coop build, `.nup` loaded with `-g`): the game booted and played with the mod, but **the mod was not applied at all**. The log has `Patching RomFS` and never `RomFS: LayeredFS patches applied successfully`, and a second run with a deliberately broken 64-byte `ActorInfo` in the mod folder also booted into Kakariko with every actor. So on this build `user\load\<title id>\<mod>\romfs` does nothing for a `.nup`, even though `RomFSFactory::OpenCurrentProcess` calls `PatchRomFS` for it; which early return in `ApplyLayeredFS` it takes was not found. Until the emulator applies LayeredFS to a `.nup` (a `lichii` patch, or loading the game another way), the packs cannot be proven in game.
+**Load test.** `tools/puppet_pack/place_test.py` adds actors to one scene file of a built mod (a throwaway one), for example both puppets and a cow as a control in `Banc/KakarikoVillage/KakarikoVillage_Child_Dynamic.bcett.byml.zs`. **Proven in game (2026-11-08).** Fritchii v5 (coop build, `.nup` loaded with `-g`) applies LayeredFS to a `.nup` with no patch: the log has `Patching RomFS for title_id=0400486024DEC000` and then `RomFS: LayeredFS patches applied successfully`. With both puppets and a control `Animal_Cow` placed at Link's Kakariko save position (about -119, 96.7, 58.7, from `LICHII_COOP_DEBUG_CAMERA`), the game shows the cow and a second, standing child Link: `CoopPuppet_Child` loads, with the player's model, from the pack alone. `CoopPuppet_Adult` was placed too but was not seen in that child-era scene.
+
+An earlier run that saw no mod at all had copied the kit folder: its `qt-config.ini` still had `load_directory` (and the NAND and SD folders) pointing at the original kit, so the emulator never read the copy's `user\load`. The log's `LoadDir:` line shows the folder actually used. `build.py --user-dir` now follows that setting.
 
 What is proven: the packs, tables and size table parse back with the tool's readers, the tables keep their sort order, and the tool's own tests (`tools/puppet_pack/tests/test_puppet_pack.py`, synthetic data) pass.
 

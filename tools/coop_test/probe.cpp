@@ -182,6 +182,11 @@ void Probe::handle(const net::Event& event) {
     case net::EventKind::message:
       on_message(event.message, event.channel);
       break;
+    case net::EventKind::chat:
+    case net::EventKind::player_joined:
+    case net::EventKind::player_left:
+    case net::EventKind::player_status:
+      break;  // the `message` event before each one is enough here
   }
 }
 

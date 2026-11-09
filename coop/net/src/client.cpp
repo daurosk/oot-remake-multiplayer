@@ -52,6 +52,15 @@ ClientConfig sanitised(ClientConfig config) {
   return config;
 }
 
+// Characters (code points) in UTF-8 text: the bytes that do not continue one.
+std::size_t utf8_chars(std::string_view text) {
+  std::size_t n = 0;
+  for (const char c : text) {
+    n += (static_cast<unsigned char>(c) & 0xc0u) != 0x80u ? 1 : 0;
+  }
+  return n;
+}
+
 // Channels 0 to 2 are reliable and ordered, 3 and 4 unreliable and sequenced
 // (ENet's default for a packet without flags).
 enet_uint32 packet_flags(std::uint8_t channel) {
@@ -81,6 +90,10 @@ std::string_view to_string(EventKind kind) {
     case EventKind::disconnected: return "disconnected";
     case EventKind::reconnected: return "reconnected";
     case EventKind::message: return "message";
+    case EventKind::chat: return "chat";
+    case EventKind::player_joined: return "player joined";
+    case EventKind::player_left: return "player left";
+    case EventKind::player_status: return "player status";
   }
   return "unknown";
 }
@@ -139,6 +152,7 @@ void Client::stop() {
     peer_ = nullptr;
   }
   if (state_ != State::idle) state_ = State::stopped;
+  players_.clear();
 }
 
 void Client::begin_attempt() {
@@ -172,6 +186,7 @@ void Client::end_attempt(DropReason reason) {
     peer_ = nullptr;
   }
   const bool was_connected = state_ == State::connected;
+  players_.clear();
   Event event;
   event.kind = was_connected ? EventKind::disconnected : EventKind::connect_failed;
   event.drop_reason = reason;
@@ -336,11 +351,78 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
     return;
   }
 
+  std::optional<Event> room;
+  if (!apply_room(message, channel, room)) {
+    ++rejected_;
+    return;
+  }
   Event event;
   event.kind = EventKind::message;
   event.message = std::move(message);
   event.channel = channel;
   push(std::move(event));
+  if (room) push(std::move(*room));
+}
+
+const Player* Client::find_player(std::uint8_t number) const {
+  for (const Player& p : players_) {
+    if (p.number == number) return &p;
+  }
+  return nullptr;
+}
+
+Player* Client::player_entry(std::uint8_t number) {
+  for (Player& p : players_) {
+    if (p.number == number) return &p;
+  }
+  return nullptr;
+}
+
+bool Client::apply_room(const proto::Message& message, std::uint8_t channel,
+                        std::optional<Event>& out) {
+  Event event;
+  event.channel = channel;
+  if (const auto* joined = std::get_if<proto::PlayerJoined>(&message)) {
+    if (joined->player_number == player_number_) return false;
+    Player player;
+    player.number = joined->player_number;
+    player.nickname = joined->nickname;
+    if (Player* known = player_entry(joined->player_number)) {
+      *known = std::move(player);  // a leave we never heard of: a new player
+    } else {
+      const auto at = std::find_if(players_.begin(), players_.end(),
+                                   [&](const Player& p) { return p.number > player.number; });
+      players_.insert(at, std::move(player));
+    }
+    event.kind = EventKind::player_joined;
+    event.player = joined->player_number;
+    event.nickname = joined->nickname;
+  } else if (const auto* left = std::get_if<proto::PlayerLeft>(&message)) {
+    const Player* known = find_player(left->player_number);
+    if (known == nullptr || known->self) return false;
+    event.kind = EventKind::player_left;
+    event.player = left->player_number;
+    event.nickname = known->nickname;
+    event.leave_reason = left->reason;
+    std::erase_if(players_, [&](const Player& p) { return p.number == left->player_number; });
+  } else if (const auto* status = std::get_if<proto::PlayerStatus>(&message)) {
+    Player* known = player_entry(status->player_number);
+    if (known == nullptr || known->self) return false;
+    known->status = status->flags;
+    event.kind = EventKind::player_status;
+    event.player = status->player_number;
+    event.status_flags = status->flags;
+  } else if (const auto* chat = std::get_if<proto::Chat>(&message)) {
+    const Player* known = find_player(chat->player_number);
+    if (known == nullptr || known->self) return false;
+    event.kind = EventKind::chat;
+    event.player = chat->player_number;
+    event.text = chat->text;
+  } else {
+    return true;  // not a room message
+  }
+  out = std::move(event);
+  return true;
 }
 
 void Client::on_welcome(const proto::Welcome& welcome) {
@@ -349,6 +431,22 @@ void Client::on_welcome(const proto::Welcome& welcome) {
   welcomed_us_ = now;
   player_number_ = welcome.player_number;
   failed_attempts_ = 0;
+
+  players_.clear();
+  Player self;
+  self.number = welcome.player_number;
+  self.nickname = config_.hello.nickname;
+  self.self = true;
+  players_.push_back(std::move(self));
+  for (const proto::PlayerInfo& info : welcome.players) {
+    if (info.number == welcome.player_number) continue;  // the codec refuses it
+    Player player;
+    player.number = info.number;
+    player.nickname = info.nickname;
+    players_.push_back(std::move(player));
+  }
+  std::sort(players_.begin(), players_.end(),
+            [](const Player& a, const Player& b) { return a.number < b.number; });
 
   // HELLO out and WELCOME back are a first round trip: a rough first sample
   // until the PINGs give better ones.
@@ -384,7 +482,17 @@ bool Client::send_on(const proto::Message& message, std::uint8_t channel) {
       proto::Error::none) {
     return false;
   }
-  return send_raw(message, channel);
+  if (!send_raw(message, channel)) return false;
+  if (const auto* status = std::get_if<proto::PlayerStatus>(&message)) {
+    if (Player* self = player_entry(player_number_)) self->status = status->flags;
+  }
+  return true;
+}
+
+bool Client::send_chat(std::string_view text) {
+  const std::size_t chars = utf8_chars(text);
+  if (chars == 0 || chars > kMaxChatChars) return false;
+  return send(proto::Chat{proto::kPlayerSelf, std::string(text)});
 }
 
 bool Client::send_raw(const proto::Message& message, std::uint8_t channel) {

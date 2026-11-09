@@ -27,7 +27,11 @@
 //                          test only: changes scene the way the game's own
 //                          sequence does (Sequence_ReservedNextBanc), to the
 //                          start position given (StartPos names in the
-//                          scene's Banc) or the scene's own
+//                          scene's Banc) or the scene's own. The game takes
+//                          it only during an event, such as the one after a
+//                          save loads: put the warp before the presses that
+//                          load the save (the hook asks again every 0.5 s
+//                          for up to 90 s, until Link is in that scene)
 //   give bombs             test only: gives an item through coop_cheats
 //                          (needs LICHII_COOP_CHEATS=1): bombs, bow, hookshot,
 //                          or any item flag name coop_cheats knows

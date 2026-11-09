@@ -488,6 +488,7 @@ namespace CoopTestInput {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr double kWarpGiveUpS = 90.0;
 
 // What the injector gives the pad: written on the present thread, read on
 // the input thread.
@@ -513,6 +514,14 @@ struct State {
     Kernel::KProcess* process = nullptr;
     u64 main = 0;
     std::optional<Running> running;
+    struct PendingWarp {
+        std::string scene;
+        std::string start;
+        double since = 0.0;
+        double asked = 0.0;
+        std::optional<std::array<float, 2>> from;  // Link before the warp
+    };
+    std::optional<PendingWarp> warp;
 } g_state;  // only touched on the present thread
 
 std::filesystem::path EnvPath() {
@@ -753,13 +762,36 @@ void OnFrame(Core::System& system) {
     for (const auto& request : r.runner->TakeRequests()) {
         if (request.kind == Kind::warp) {
             Warp(system, request.name, request.start);
+            g_state.warp = State::PendingWarp{request.name, request.start, now, now, player};
         } else {
             Give(request.name);
         }
     }
+    // A warp is asked again every 0.5 s until Link is in that scene: the game
+    // takes the request only while an event runs (the one after a save is
+    // loaded, a talk), so a warp is best asked before the save is loaded.
+    if (g_state.warp) {
+        State::PendingWarp& w = *g_state.warp;
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+        coop::host::PlayerReader reader(memory);
+        const auto scene = reader.read_scene();
+        if (scene && *scene == w.scene) {
+            LOG_INFO(Core, "coop: test warp done after {:.1f} s, Link at {:.2f} {:.2f}", now - w.since,
+                     player ? (*player)[0] : 0.0f, player ? (*player)[1] : 0.0f);
+            g_state.warp.reset();
+        } else if (now - w.since > kWarpGiveUpS) {
+            LOG_ERROR(Core, "coop: test warp to {} did not happen in {} s (scene {})", w.scene,
+                      kWarpGiveUpS, scene.value_or("?"));
+            g_state.warp.reset();
+        } else if (now - w.asked >= 0.5) {
+            Warp(system, w.scene, w.start);
+            w.asked = now;
+        }
+    }
+    Output out = r.runner->Current();
     {
         std::lock_guard lock(r.shared->mutex);
-        r.shared->out = r.runner->Current();
+        r.shared->out = out;
     }
     if (r.runner->Done()) {
         LOG_INFO(Core, "coop: test script done");

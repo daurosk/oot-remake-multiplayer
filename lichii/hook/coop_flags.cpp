@@ -160,9 +160,18 @@ FlagDebug::FlagDebug()
     if (const auto b = Hex("LICHII_COOP_SET_BOOL"); b && *b != 0 && *b <= 0xffffffffu) {
         set_bool_ = static_cast<std::uint32_t>(*b);
     }
-    if (on_ || watch_key_ || set_key_ || set_bool_) {
-        LOG_INFO(Core, "coop: flags debug {}{}{}{}", on_ ? "on" : "off",
+    if (const auto b = Hex("LICHII_COOP_DEBUG_BOOL"); b && *b != 0 && *b <= 0xffffffffu) {
+        watch_bool_ = static_cast<std::uint32_t>(*b);
+    }
+    if (const auto after = Env("LICHII_COOP_SET_AFTER")) {
+        set_after_ = std::chrono::seconds(std::strtoul(after->c_str(), nullptr, 10));
+    }
+    if (on_ || watch_key_ || watch_bool_ || set_key_ || set_bool_) {
+        LOG_INFO(Core, "coop: flags debug {}{}{}{}{}{}", on_ ? "on" : "off",
                  watch_key_ ? fmt::format(", watching key {:#x}", *watch_key_) : "",
+                 watch_bool_ ? fmt::format(", watching bool {:#010x}", *watch_bool_) : "",
+                 set_after_.count() > 0 ? fmt::format(", setting after {} s", set_after_.count())
+                                        : "",
                  set_key_ ? fmt::format(", will set key {:#x}", *set_key_) : "",
                  set_bool_ ? fmt::format(", will set bool {:#010x}", *set_bool_) : "");
     }
@@ -175,11 +184,13 @@ void FlagDebug::Reset() {
     key_set_ = false;
     bool_set_ = false;
     watch_last_.reset();
+    watch_bool_last_.reset();
+    up_at_.reset();
     frames_ = 0;
 }
 
 void FlagDebug::Frame(EmulatorMemory& memory) {
-    if (!on_ && !watch_key_ && !set_key_ && !set_bool_) {
+    if (!on_ && !watch_key_ && !watch_bool_ && !set_key_ && !set_bool_) {
         return;
     }
     ++frames_;
@@ -197,6 +208,18 @@ void FlagDebug::Frame(EmulatorMemory& memory) {
             watch_last_ = now;
         }
     }
+    if (watch_bool_) {
+        const auto now = flags.get_bool(*watch_bool_);
+        if (!watch_bool_last_ || *watch_bool_last_ != now ||
+            frames_ % (kScanFrames * 20) == 0) {
+            LOG_INFO(Core, "coop: flags debug: get_bool({:#010x}) = {}{}", *watch_bool_,
+                     Value(now),
+                     watch_bool_last_ && *watch_bool_last_ != now
+                         ? " (was " + Value(*watch_bool_last_) + ")"
+                         : "");
+            watch_bool_last_ = now;
+        }
+    }
     Sets(memory);
     if (on_) {
         Scan(memory);
@@ -204,6 +227,21 @@ void FlagDebug::Frame(EmulatorMemory& memory) {
 }
 
 void FlagDebug::Sets(EmulatorMemory& memory) {
+    if ((!set_key_ || key_set_) && (!set_bool_ || bool_set_)) {
+        return;
+    }
+    // The game is up once the flag manager reads; LICHII_COOP_SET_AFTER
+    // waits from then.
+    if (!coop::host::read_ptr(memory, memory.main_base() + kManagerPtr)) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!up_at_) {
+        up_at_ = now;
+    }
+    if (now - *up_at_ < set_after_) {
+        return;
+    }
     coop::host::GameFlags flags(memory);
     if (set_key_ && !key_set_) {
         const auto before = flags.get_key64(*set_key_);

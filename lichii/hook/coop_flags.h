@@ -5,6 +5,7 @@
 // Present thread only, except LoadShared (called once at start).
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -52,7 +53,10 @@ std::optional<coop::host::SharedFlags> LoadShared(std::string& error);
 //   key tables, a few times a second;
 // - LICHII_COOP_DEBUG_KEY64=<hex key>: also logs get_key64 of that key;
 // - LICHII_COOP_SET_KEY64=<hex key>: sets that key once the game is up;
-// - LICHII_COOP_SET_BOOL=<hex hash>: sets that Bool flag once the game is up.
+// - LICHII_COOP_DEBUG_BOOL=<hex hash>: also logs get_bool of that flag;
+// - LICHII_COOP_SET_BOOL=<hex hash>: sets that Bool flag once the game is up;
+// - LICHII_COOP_SET_AFTER=<seconds>: waits that long after the game is up
+//   before setting.
 class FlagDebug {
 public:
     FlagDebug();
@@ -82,7 +86,11 @@ private:
     std::optional<std::uint32_t> set_bool_;
     bool key_set_ = false;
     bool bool_set_ = false;
+    std::optional<std::uint32_t> watch_bool_;
+    std::chrono::seconds set_after_{0};
+    std::optional<std::chrono::steady_clock::time_point> up_at_;
     std::optional<std::optional<bool>> watch_last_;
+    std::optional<std::optional<bool>> watch_bool_last_;
     std::uint64_t frames_ = 0;
     Table bools_, ints_, keys_;
 };

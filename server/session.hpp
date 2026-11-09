@@ -42,6 +42,10 @@ struct SessionConfig {
   // messages a second) stay well under them.
   std::uint32_t reliable_per_second = 60;
   std::uint32_t unreliable_per_second = 240;
+  // Most connections one address may hold that have not sent HELLO yet, so
+  // one machine cannot fill every transport slot with silent connections.
+  // One more is refused at once (see connected). 0: no limit.
+  std::size_t max_half_open_per_address = 4;
   // Called with one line for each join, leave and refusal. May be empty.
   std::function<void(const std::string&)> log;
 };
@@ -71,6 +75,10 @@ struct Stats {
   std::uint64_t after_refused = 0;   // packets from a connection being closed
   std::uint64_t rate_limited = 0;    // over a player's message rate
   std::uint64_t relayed = 0;         // messages passed on (once per message)
+  // Connections refused at connect: their address already had
+  // max_half_open_per_address waiting for HELLO. Not packets, so not in
+  // dropped().
+  std::uint64_t half_open_limited = 0;
 
   std::uint64_t errors(protocol::Error e) const {
     return by_error[static_cast<std::size_t>(e)];
@@ -83,8 +91,14 @@ class Session {
  public:
   explicit Session(SessionConfig config = {});
 
-  // A new connection. It has hello_timeout_us to send HELLO.
-  void connected(ConnectionId id, std::uint64_t now_us);
+  // A new connection from `address` (the transport's own number for the
+  // peer's IP; none: not counted against any address). It has
+  // hello_timeout_us to send HELLO. False when the address already has
+  // max_half_open_per_address connections waiting for HELLO: the session
+  // then keeps nothing of it, queues nothing for it, and the transport must
+  // close it at once and not report it again.
+  bool connected(ConnectionId id, std::uint64_t now_us,
+                 std::optional<std::uint32_t> address = std::nullopt);
 
   // One packet from a connection on a channel.
   void received(ConnectionId id, std::uint8_t channel,
@@ -103,6 +117,8 @@ class Session {
 
   const Stats& stats() const { return stats_; }
   std::size_t player_count() const;
+  // Connections from `address` still waiting for HELLO.
+  std::size_t half_open_count(std::uint32_t address) const;
   std::optional<std::uint8_t> player_number(ConnectionId id) const;
 
  private:
@@ -118,6 +134,7 @@ class Session {
     double reliable_budget = 0;
     double unreliable_budget = 0;
     std::uint64_t budget_time = 0;
+    std::optional<std::uint32_t> address;
     std::uint8_t number = 0;  // 1 to 4 once joined
     std::string nickname;
   };

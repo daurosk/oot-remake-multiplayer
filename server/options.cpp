@@ -44,6 +44,11 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.run_for_ms = ms;
+    } else if (arg == "--max-half-open") {
+      if (!has_value || !parse_number(args[++i], line.max_half_open)) {
+        error = "--max-half-open needs a number (0 for no limit)";
+        return std::nullopt;
+      }
     } else {
       error = "unknown argument: " + arg;
       return std::nullopt;
@@ -53,10 +58,13 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
 }
 
 const char* usage() {
-  return "usage: coop_server [--port N] [--game-build ID] [--run-for-ms N]\n"
+  return "usage: coop_server [--port N] [--game-build ID] [--max-half-open N]\n"
+         "                   [--run-for-ms N]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --game-build ID  game build every player must run (default: the\n"
          "                   first player to join decides)\n"
+         "  --max-half-open N  most connections one address may hold before\n"
+         "                   sending HELLO (default 4, 0 for no limit)\n"
          "  --run-for-ms N   stop by itself after N milliseconds\n";
 }
 

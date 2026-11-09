@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
     ServerOptions options;
     options.port = line->port;
     options.session.game_build_id = line->game_build_id;
+    options.session.max_half_open_per_address = line->max_half_open;
     options.session.log = [](const std::string& text) {
       std::printf("coop_server: %s\n", text.c_str());
       std::fflush(stdout);
@@ -71,9 +72,11 @@ int main(int argc, char** argv) {
         }
       }
       const Stats& stats = server.session().stats();
-      std::printf("coop_server: stopping; relayed %llu, dropped %llu\n",
+      std::printf("coop_server: stopping; relayed %llu, dropped %llu, "
+                  "half-open refused %llu\n",
                   static_cast<unsigned long long>(stats.relayed),
-                  static_cast<unsigned long long>(stats.dropped()));
+                  static_cast<unsigned long long>(stats.dropped()),
+                  static_cast<unsigned long long>(stats.half_open_limited));
     }
   }
   enet_deinitialize();

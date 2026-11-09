@@ -642,14 +642,64 @@ void Warp(Core::System& system, const std::string& scene, const std::string& sta
             }
             LOG_INFO(Core, "coop: test vector3 table: count {}, entries {:#x}, index of next position {}",
                      count.value_or(0), entries.value_or(0), index ? static_cast<int>(*index) : -1);
+            // The hashes of entries 0-3 (from the slots), then where each
+            // sits in the entries: the stride and the hash offset.
+            std::array<std::uint32_t, 4> hash_of{};
+            if (slots && cap) {
+                for (std::uint32_t i = 0; i < *cap; ++i) {
+                    const auto h = coop::host::read_u32(memory, *slots + 8ull * i);
+                    const auto at = coop::host::read_u32(memory, *slots + 8ull * i + 4);
+                    if (h && *h != 0 && at && *at < 4) {
+                        hash_of[*at] = *h;
+                    }
+                }
+            }
+            std::array<std::int64_t, 4> found{-1, -1, -1, -1};
             if (entries) {
-                for (std::uint64_t off = 0; off < 0xc0; off += 0x10) {
+                for (std::uint64_t off = 0; off < 0x800; off += 4) {
+                    const auto w = coop::host::read_u32(memory, *entries + off);
+                    for (int k = 0; k < 4; ++k) {
+                        if (w && hash_of[k] != 0 && *w == hash_of[k] && found[k] < 0) {
+                            found[k] = static_cast<std::int64_t>(off);
+                        }
+                    }
+                }
+            }
+            LOG_INFO(Core, "coop: test vector3 hashes {:08x} {:08x} {:08x} {:08x} at {} {} {} {}",
+                     hash_of[0], hash_of[1], hash_of[2], hash_of[3], found[0], found[1], found[2],
+                     found[3]);
+            std::uint64_t stride = 0;
+            if (found[0] >= 0 && found[1] > found[0]) {
+                stride = static_cast<std::uint64_t>(found[1] - found[0]);
+            }
+            const std::uint64_t base =
+                entries ? *entries + (index && stride ? stride * *index : 0) : 0;
+            if (entries) {
+                for (std::uint64_t off = 0; off < 0x80; off += 0x10) {
                     std::array<std::uint32_t, 4> w{};
                     for (int k = 0; k < 4; ++k) {
-                        w[k] = coop::host::read_u32(memory, *entries + off + 4 * k).value_or(0xdeadbeef);
+                        w[k] = coop::host::read_u32(memory, base + off + 4 * k).value_or(0xdeadbeef);
                     }
-                    LOG_INFO(Core, "coop: test vector3 +{:#05x}: {:08x} {:08x} {:08x} {:08x}", off, w[0], w[1],
-                             w[2], w[3]);
+                    LOG_INFO(Core, "coop: test vector3 entry (stride {:#x}) +{:#04x}: {:08x} {:08x} {:08x} {:08x}",
+                             stride, off, w[0], w[1], w[2], w[3]);
+                }
+                // What the entry's pointers point at (a value kept elsewhere).
+                for (std::uint64_t off = 0; off < 0x80; off += 8) {
+                    const auto p = coop::host::read_ptr(memory, base + off);
+                    if (!p || *p < 0x1000000) {
+                        continue;
+                    }
+                    std::array<std::uint32_t, 4> w{};
+                    bool ok = true;
+                    for (int k = 0; k < 4; ++k) {
+                        const auto v = coop::host::read_u32(memory, *p + 4 * k);
+                        ok = ok && v.has_value();
+                        w[k] = v.value_or(0);
+                    }
+                    if (ok) {
+                        LOG_INFO(Core, "coop: test vector3 entry +{:#04x} -> {:#x}: {:08x} {:08x} {:08x} {:08x}",
+                                 off, *p, w[0], w[1], w[2], w[3]);
+                    }
                 }
             }
         }

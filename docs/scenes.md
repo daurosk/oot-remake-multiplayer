@@ -21,7 +21,9 @@ One line each for the callers:
 - Puppet (`coop_puppet.*`): `switch (coop::host::visibility(local.scene, local.event_running, presence.scene(n), presence.status(n)))`: `hide` despawns or hides the puppet, `hold` stops updating its transform and animation, `show` drives it as now.
 - Overlay markers (`coop_window.*`): `if (coop::host::visibility(local.scene, local.event_running, presence.scene(n), presence.status(n)) == coop::host::Visibility::hide) continue;` (draw a held marker with its last pose).
 
-## Join-partner warp (research, not built)
+## Join-partner warp (dropped)
+
+**Dropped (Caleb, 2026-11-09): "we dont need warp to partner".** Nothing below is built; it stays as research only.
 
 ### How the game changes scene
 

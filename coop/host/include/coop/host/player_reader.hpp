@@ -39,7 +39,18 @@ struct PlayerReading {
 
 class PlayerReader {
  public:
-  explicit PlayerReader(GameMemory& memory) : memory_(memory) {}
+  // What read_drawn last saw of each equipment slot. The game shows a change
+  // of state only for a moment (addresses.hpp), so the last one is kept: give
+  // every frame's reader the same DrawnState, or drawn pieces are lost.
+  struct DrawnMemo {
+    std::uint32_t id = 0xFFFFFFFFu;  // the piece in the slot; ~0 none
+    std::uint8_t hand = 0;           // the slot record's in-hand byte
+    bool drawn = false;
+  };
+  using DrawnState = std::array<DrawnMemo, 8>;
+
+  explicit PlayerReader(GameMemory& memory, DrawnState* drawn_state = nullptr)
+      : memory_(memory), drawn_memo_(drawn_state != nullptr ? *drawn_state : own_drawn_) {}
 
   // This frame's reading, or nothing when the player cannot be read.
   std::optional<PlayerReading> read();
@@ -66,6 +77,8 @@ class PlayerReader {
   std::optional<std::uint64_t> game_ui();
   std::optional<std::uint8_t> read_drawn();
   GameMemory& memory_;
+  DrawnState own_drawn_{};
+  DrawnState& drawn_memo_;
 };
 
 // A rotation matrix (row-major, v' = M v) to a unit quaternion with w >= 0.

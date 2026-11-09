@@ -15,7 +15,7 @@ Every `Obj_` actor pack with a `LifeRef` and a `DestructionRef` (checked: all 8,
 | Pots | `Obj_Pot_*` (15, the respawning and dream ones too), `Obj_ShadowTemple_SkullPot_*`, `Obj_Gerudo_HorsebackArcheryPot_*` | |
 | Crates | `Obj_BrokenBox_*` | 5 of 5 |
 | Rocks | `Obj_LiftRock_*` (lifted and thrown), `Obj_BrokenRock_*`, `Obj_*_BrokenRock_*` (bomb or hammer) | 1 of 1 |
-| Grass | `Obj_Plant_Grass_*` | |
+| Grass | `Obj_Plant_Grass_*`; by full name `Land_kokiri_Plant_A_02_DropFixed_03`, `Land_Kokiri_Plant_G_01`, `Land_Kokiri_Zenmai_A_02`, `Obj_Plant_DestructibleGrass_Base` (the packs with the life of `Obj_Plant_DestructibleGrass_Base`: a pot's life, 1, and no `DestructionRef`, so the first scan missed them) | |
 | Signs | `Obj_SignBoard_*`, `Obj_*_Signboard_*`, `Obj_GuidePost_*` | 100 of 100 |
 | Walls and floors | `Obj_*_CrackWall_*`, `Obj_*_CrackFloor_*` (bombable) | |
 | Others | `Obj_BrokenIcePillar_*`, `Obj_Kokiri_Beehive_*`, `Obj_*_SpiderWeb_*` | Beehive 1 of 1 |
@@ -49,6 +49,7 @@ Seen on the way:
 - Drops: each game runs its own death, so each drops its own rupee or heart. Caleb wants one drop for one player (the one who broke it). Next: hold the copy's drop (the drop component, or remove the dropped `Obj_Rupee_*` that appears where a copy died).
 - Signposts (above), and pots and grass cut by the sword: not seen in a run yet. A pot that breaks with its life read at 0 goes through the life path; one removed at once goes through the gone rule, which needs it to have moved: a pot cut where it stands would be missed. Next live check: a pot.
 - Lifted and carried objects (a pot or rock in Link's hands) are not moved on the other screen; only the break is shared. Movables are the step after switches.
+- Grass, 2026-11-09: Caleb cut grass in Hyrule Field (build e2ed2aa) and it stayed on the other screen. That build shared no grass there: the field has no `Obj_Plant_Grass_*` at all (two logs with `LICHII_COOP_DEBUG_OBJECTS=1`), only 13 `Land_kokiri_Plant_A_02_DropFixed_03` near the Kokiri side, now on the list. Not checked in a game: that this grass leaves the list when cut. The rest of the field's grass is not an actor: no actor of it is on the list while it stands (the Foliage module probably draws it). Where its cut state lives is not known, so it is not shared. Next: one run with the debug switch where grass is cut, then read what changed.
 - Grass and signs cut by the other player: the owner may be a game where that grass is far away. Works the same way, not checked.
 
 ## Switches and doors (next)
@@ -58,3 +59,17 @@ Most switch states are 64-bit-key flags of the switch's placement ([flags.md](fl
 ## Testing
 
 `tools/autotest/run.ps1 -Scenario rock`: A walks to the Graveyard's liftable rock with `goto` ([testing.md](testing.md), "Input scripts"), lifts and throws it; B stands 6.5 m away facing it. The `coop: objects: share gone` and `share life` lines in the two logs and B's screenshots show the break on both. `sign` (Kakariko signpost, cut with the sword) and `crate` are there for the cases above that are not shared yet.
+
+## Field grass (not an actor): research, not shared yet
+
+Read from the plain `main` of build e0f3ccfaf50065ae with `nso_index.py` (integration's tool); the game was not run.
+
+- The grass of the fields is drawn by `game::foliage::Module`. Its turf shader binds a buffer named `SsboGrassCut` (the code at main+0x2c02600), next to `SsboUnitPlacement`, `SsboGather` and `SsboVegeBehaviour`. So a cut is an entry in a buffer the shader reads, not an actor.
+- Path, checked in the code: the module pointer is at main+0x4e22540; when its byte +0x30 has bit 0 clear, `[module+0xf0]+0x338` is the foliage scene (the game's own 0x2c013c0). `SsboGrassCut` is the 0x30 bytes at scene+0x58, `SsboGather` at scene+0x88.
+- Other names in the binary: `OneshotTryCutFoliage` (an AI one-shot, name used at 0x296776c), `PlayerCutGrass`, `IsCutGrass`, `FoliageCutRadius` (0xa03484, 0x30fee8c), `EnableGrassCut`, `GrassCutBoost`, `GrassCutEffectEmitRate` (foliage parameters), `game__drop__FoliageDropParam`.
+- Not known: the layout inside the buffer (one entry per cut, a grid, a ring), what writes it, and whether writing an entry from outside is enough for the shader to hide the grass (the buffer may be a copy of a list kept elsewhere).
+
+`LICHII_COOP_DEBUG_OBJECTS=1` logs it (`CoopWorld::FoliageProbe`, `coop: foliage:` lines): the path once, then every 8-byte word that changes in scene+0x40..0xc0 and in what the six words of `SsboGrassCut` point to, two pointers deep (0x200 bytes each), with where our Link stood. At most 60 lines per block, 1,500 per session.
+
+Next: one run where grass is cut (steps in the coordinator's notes), then read which words changed and how they relate to where Link stood. From that: the entry layout, then a GRASS_CUT message (protocol 4 or 5) that carries a cut's position and size and is written into the other games' buffers, or replayed through the game's own cut call if the buffer turns out to be a copy.
+

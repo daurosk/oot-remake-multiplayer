@@ -583,7 +583,7 @@ private:
         }
         view.game = true;
         EmulatorMemory memory(system.ApplicationMemory(), base_);
-        coop::host::PlayerReader reader(memory);
+        coop::host::PlayerReader reader(memory, &drawn_state_);
         auto reading = reader.read();
         if (reading) {
             view.position = reading->position;
@@ -796,6 +796,8 @@ private:
     u64 base_ = 0;
     bool build_warned_ = false;
     FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
+    // Kept across frames: a drawn sword shows in the game's memory for a moment only.
+    coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
 
     // Set by Begin before the network thread starts; the session borrows the

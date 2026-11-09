@@ -220,21 +220,47 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
     const std::uint64_t slot = *user + addr::kEquipSlots + addr::kEquipSlotStride * i;
     const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
     if (!id) return std::nullopt;
-    if (*id == addr::kEmptyId) continue;
+    DrawnMemo& memo = drawn_memo_[i];
     // As 0x4a33c0: the holder must still hold this id and its actor must
     // not be gone.
-    const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder);
-    if (!holder) continue;
-    const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
-    if (!holder_id || *holder_id != *id) continue;
-    const auto equipment = read_ptr(memory_, *holder + addr::kHolderActor);
-    if (!equipment) continue;
-    const auto state = read_u32(memory_, *equipment + addr::kActorState);
-    if (!state) continue;
-    if (*state >= addr::kActorStateGoneFirst && *state <= addr::kActorStateGoneLast) continue;
+    bool live = false;
+    if (*id != addr::kEmptyId) {
+      if (const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder)) {
+        const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
+        if (holder_id && *holder_id == *id) {
+          if (const auto equipment = read_ptr(memory_, *holder + addr::kHolderActor)) {
+            const auto state = read_u32(memory_, *equipment + addr::kActorState);
+            live = state && !(*state >= addr::kActorStateGoneFirst &&
+                              *state <= addr::kActorStateGoneLast);
+          }
+        }
+      }
+    }
+    if (!live) {
+      memo = DrawnMemo{};
+      continue;
+    }
     const auto bits = read_u8(memory_, *user + addr::kEquipSlotState + i);
     if (!bits) return std::nullopt;
-    if (*bits & addr::kEquipSlotDrawnBit) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
+    // The slot record's byte: 1 in hand. Not readable counts as put away.
+    const std::uint8_t hand =
+        read_u8(memory_, *user + addr::kEquipRecords + addr::kEquipRecordStride * i +
+                             addr::kEquipRecordInHand)
+            .value_or(0);
+    if (memo.id != *id) {
+      memo = DrawnMemo{*id, hand, hand == 1};  // a new piece
+    }
+    // The request byte lasts a moment; the last request seen stands until
+    // the next one, or until the record's byte changes.
+    if (*bits & addr::kEquipSlotDrawnBit) {
+      memo.drawn = true;
+    } else if (*bits & (addr::kEquipRequestAway | addr::kEquipRequestNone)) {
+      memo.drawn = false;
+    } else if (hand != memo.hand) {
+      memo.drawn = hand == 1;
+    }
+    memo.hand = hand;
+    if (memo.drawn) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
   }
   return drawn;
 }

@@ -162,7 +162,7 @@ Every piece is **an actor of its own**, created by the wearer's EquipmentUser co
 `PlayerReader::read_equipment()` fills `PLAYER_EQUIP`:
 
 - The eight `PlayerStatus.Equip*` flags ([items.md](items.md)) are String64 flags. Their table is GameData type 16 at manager + 0x610 (the pattern of [flags.md](flags.md)): entries of 0x108 bytes, `char*` to the text at +0x68, `s32` buffer size (64) at +0x70, as the getter **0x3758110** reads them. `GameFlags::get_string64` reads the table, not the write queue, so a change shows one GameData update later. A text that is not printable ASCII or not ended within its buffer is dropped.
-- `drawn` is bit *i* for slot *i* of the player's EquipmentUser, set when the slot holds a live actor and its byte has bit 1. Seen in the game: 0x01 sword drawn, 0x10 shield raised, 0x08 held item out, 0x00 all put away.
+- `drawn` is bit *i* for slot *i* of the player's EquipmentUser, set when the slot holds a live actor whose last change of state was into the hand (the byte's bit 1 is a request that lasts a moment; see [In hand or put away](#in-hand-or-put-away-built-not-run-in-the-game)). Seen in the game: 0x01 sword drawn, 0x10 shield raised, 0x08 held item out, 0x00 all put away.
 - Seen in the game: `weapon` `Weapon_Sword_Kokiri`, `shield` `Weapon_Shield_Hylian` / `Weapon_Shield_Deku`, `ocarina` `Item_Ocarina_Fairy`; the other five flags are "" for a child with nothing there. Before a save loads every flag is "" and `drawn` is nothing (no player actor).
 - Not read: the held item's name (which tool is in slot 3). The flags name the ocarina and the arrow kind, not what is in hand.
 - The sampler sends it on the first frame and on every change; the client sends it again to every newcomer. Age comes from `PLAYER_SAMPLE`.
@@ -199,12 +199,21 @@ Read from the dump (static, not run):
 
 What the director does (`Director::Hold`), for a live puppet, after its gear is worn:
 
-- `Target::drawn` is the player's `drawn` bits from `PLAYER_EQUIP` (the debug puppet gets our own).
+- `Target::drawn` is the player's `drawn` bits from `PLAYER_EQUIP` (the test puppet gets our own).
 - For the sword (slot 0) and the shield (slot 4): when the player's bit differs from what the puppet was last set to, one call of the change-state function with state 1 or 2. A piece just worn counts as put away, so only "in hand" is asked then.
 - After the call the slot's byte is read: with the wanted bit set the change is taken and logged, `P<n> equipment slot <s> in hand` or `put away`. Otherwise the call is made again after 250 ms (`not taken (byte ..)` with `LICHII_COOP_DEBUG_ANIM`).
 - Where the piece sits (hand bone, arm, guard) is the game's own: the state picks the bone, and the pose copy moves the arm.
 
-**Not proven in game.** It compiles and the unit tests cover the calls (`puppet_test.cpp`: hold, move); no game was run with it. To check with two players: one draws the sword (Y), guards (ZL), puts away (B); the other watches the puppet and the log lines above. Autotest scenario: `hold`. If `not taken` repeats, the state numbers or the byte's bits are wrong for that slot.
+**Two-player run (Caleb, 2026-11-09, main 2e3f68b): "swords and equipment didn't show".** What the logs of that run say:
+
+- Each time a player drew the sword, the other game logged `P<n> equipment slot 0 in hand` and, about 40 ms later, `put away`. So the call is taken, but the player's `drawn` bit lasted one or two frames. The byte at +0x13bc is a **request**, not the state: the setters write it (0x6b6820 writes 2, 0xe34c70 writes 4, also when a piece is created) and the game clears it when the change is done. 0xce7ab0 reads the state from the piece itself once the byte is 0. "Bit 1 is set while the piece is out" (above) was wrong.
+- Fix (`PlayerReader::read_drawn`): the reader remembers the last request seen for each slot (2: in hand; 4 or 1: not) until the next one. It also follows the byte both setters keep in the user's slot record (EquipmentUser +0x4b0 + 0xa8 * slot + 0xa4: 1 in hand, 0 put away; read from the dump, not run), so a request that passed between two frames is not lost. The readers of all frames share one `PlayerReader::DrawnState` (the hook and `Session` keep it).
+- The object log of the same run shows every Link, puppets too, with three pieces: `Weapon_Sword_Kokiri`, `Weapon_Sheath_Kokiri` and `Weapon_Shield_Hylian`, all in state 4, the sword 0.88 above the feet on the player and on the puppet alike. About 90 ms after the equip calls the game makes the three again and removes the first set. So a change of state is now made again when the piece in the slot is another one (`Slot::hold_id`).
+- Also changed: a change counts as taken when the slot record's byte shows it, since a setter leaves the request byte alone when the piece is in that state already.
+
+**Not known: why a worn sword is not seen on the puppet's back.** The actors are there, at the right height. With `LICHII_COOP_DEBUG_ANIM=1` the `gear:` line (every 2 s) now ends with each slot as the game has it: `slot 0: id .. actor .. state .. up <height over the puppet> request .. record .. want hand|away`. Compare a puppet's line with what is seen on the screen.
+
+**Not proven in game** (no game was run with this fix). To check with two players: one draws the sword (Y), guards (ZL), puts away (B); the other watches the puppet. The log must show `in hand` when the sword comes out and `put away` only when it goes back. Autotest scenario: `hold`.
 
 ### Not done (equipment)
 
@@ -316,7 +325,7 @@ Approach (a), in `lichii/hook/` and one small emulator patch. Not yet run with t
 | SVC | `CoopSvc::Call` | 0xf4 from Ocarina only. Hands the SVC to the director and writes the call it wants into the buffer. |
 | Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x300-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, and as SeqExecuteCreateActor does at 0x32bca40..0x32bcaa0: +0x48 = 0, +0x98 = 1), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Create fills the handle slot with a 0x30-byte **create request**: +0 low 16 bits the state, +8 the actor. State 3 = ready: the director takes the actor with **0x36fbd0(request, 1, 0)**, as SeqExecuteCreateActor's check (0x32bcb30) does, and clears the slot; state 4 is dropped with 0x36fde0(request), 5 and 6 are failures. Once the actor is in state 4 the puppet is live and its +0x31c and +0x328 are written every frame. (With the walker's +0x48 = 0x10001 the request stayed in state 2.) |
 | Delete | 0xa6490 | The run of `OneShotGenericDeleteThisActor` (its node's last vtable slot, 0xc706f0) calls 0xa6490 with the actor and 0. It returns at once for an actor in state 7 to 11. The director asks for it when the player has been out of the plan for 2 s (`kLeaveGraceMs`: a stalled peer fades to 0 for a moment, and without the wait the puppet was deleted and made again), changes model, or the local scene is not the one the puppet was made in. An actor the engine deleted itself (state 7 to 11, or a holder whose id no longer matches) is noticed and made again. |
-| Planner | `coop_puppet.cpp`, present thread | `CoopPuppet::Publish`, from `CoopHook::OnFrame`: every remote player that presence shows in your scene and has not faded becomes a target, at its shown position and rotation (`QuatToMatrix`, the inverse of the reader's). With `LICHII_COOP_DEBUG_PUPPET=1` one more, 2 units along x from where you stood 3 s after the scene was known, staying there. Nothing is planned while the scene is not known (loading). |
+| Planner | `coop_puppet.cpp`, present thread | `CoopPuppet::Publish`, from `CoopHook::OnFrame`: every remote player that presence shows in your scene and has not faded becomes a target, at its shown position and rotation (`QuatToMatrix`, the inverse of the reader's). With `LICHII_COOP_TEST_PUPPET=1` one more (the test puppet), 2 units along x from where you stood 3 s after the scene was known, staying there. It had no switch of its own until 2026-11-09: `LICHII_COOP_DEBUG_PUPPET=1` made it too, so a run with the logs on showed a second Link and fairy standing frozen where each player started (Caleb's run of that day). Now `LICHII_COOP_DEBUG_PUPPET` only writes the status lines. Nothing is planned while the scene is not known (loading). |
 
 The actor is `CoopPuppet_Child` or `CoopPuppet_Adult`, by the age in the player's samples (a change of age deletes it and makes the other); `LICHII_COOP_PUPPET_ACTOR=<pack name>` sets one actor for everyone (`Animal_Cow_LinkHouse` was the default before the pack).
 
@@ -354,12 +363,13 @@ One emulator is enough for the spawn (a server must be set so co-op is on):
 
 ```bat
 set LICHII_COOP_DEBUG_PUPPET=1
+set LICHII_COOP_TEST_PUPPET=1
 lichii.exe
 ```
 
 In the log, in order:
 
-1. `Applying "coop puppet": bl 0x3c46280 at main+0x6e6dd8 and main+0x6e70f8, 124 bytes of cave` and `coop: puppets on, actor Animal_Cow_LinkHouse, debug puppet beside you`.
+1. `Applying "coop puppet": bl 0x3c46280 at main+0x6e6dd8 and main+0x6e70f8, 124 bytes of cave` and `coop: puppets on, actor Animal_Cow_LinkHouse, test puppet beside you`.
 2. Every second, `coop: puppet: <n> cave frames/s, scene '...', <k> wanted`: the cave runs once per game frame (30 or 60).
 3. `P0: block at ...`, `P0: create Animal_Cow_LinkHouse requested (returned ...), handle slot ...`.
 4. `P0: took actor ... from request ...` and `P0 Animal_Cow_LinkHouse spawned after <ms> ms: request ..., actor ..., state 4, at (x, y, z)`.
@@ -412,7 +422,7 @@ A second `Player_Child` model object is in memory (not reached from the player a
 
 The pose copy wins over the AS commands: while a player's poses arrive (the last within 1 s), the director plays no AS command on that player's puppet, so only the pose copy moves it. Gear is still put on as before. Without poses (a peer whose build has no pose copy) the puppet plays the AS commands as it did. `LICHII_COOP_POSE_AS=1` plays them as well while poses arrive.
 
-The debug puppet (`LICHII_COOP_DEBUG_PUPPET=1`) copies our own pose when `LICHII_COOP_DEBUG_POSE=1` is set too, so one game shows whether the copy works.
+The test puppet (`LICHII_COOP_TEST_PUPPET=1`) copies our own pose when `LICHII_COOP_DEBUG_POSE=1` is set too, so one game shows whether the copy works.
 
 `LICHII_COOP_DEBUG_POSE=1` logs a line a second: `pose: <bones> bones, <n> moving; <s> sent/s, <r> received/s, <w> written/s, <x> refused/s; last write kept <k>, overwritten <o>`. "Kept" and "overwritten" compare one written bone with what the puppet holds a frame later: overwritten means the game's own animation writes the local transforms after our write, and the copy cannot show.
 
@@ -467,7 +477,7 @@ Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii
 |---|---|
 | Actor | `Dm_Npc_Navi`, the cutscene Navi from the game's own pack: its own model and glow (`XLink/Npc_Navi`), `ActorLogicSimpleActor`, the generic name `Dm_Npc_Base`. `Npc_Navi` is not used: it is the player's partner, with an AI that follows the player and a name the game looks up, so a second one would clash. `LICHII_COOP_FAIRY_ACTOR=<pack>` picks another (`Npc_Fairy` is the next to try). |
 | Create and delete | A second `CoopPuppet::Director`, the same create, take and delete path as the puppet. It registers with the svc cave as caller 20 (`CoopSvc::AddCaller`, after the puppets and CoopSpawn), on the first `CoopFairy::Publish`; the cave asks each caller in turn, each with its own frame and its own call results. Each director takes at most 4 calls a frame, the cave allows 16. Its log lines start with `fairy`. |
-| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. For an adult puppet the offset is scaled by 1.45 ([Adult](#adult)). It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
+| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the test puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. For an adult puppet the offset is scaled by 1.45 ([Adult](#adult)). It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
 | Pose | Written into the actor every game frame by the director, like the puppet's. The Navi AI is not pointed at the puppet. |
 | On and off | On with the puppets (`LICHII_COOP_PUPPET` or `LICHII_COOP_DEBUG_PUPPET`); `LICHII_COOP_FAIRY=0` turns it off. |
 

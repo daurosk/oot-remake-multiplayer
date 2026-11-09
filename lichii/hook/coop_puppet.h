@@ -105,10 +105,19 @@ inline constexpr std::uint32_t kEquipStateInHand = 1;
 inline constexpr std::uint32_t kEquipStateAway = 2;
 inline constexpr std::uint64_t kEquipSlots = 0x20;
 inline constexpr std::uint64_t kEquipSlotStride = 0x18;
+inline constexpr std::uint64_t kEquipSlotHolder = 0x08;
 inline constexpr std::uint64_t kEquipSlotId = 0x10;
 inline constexpr std::uint64_t kEquipSlotBits = 0x13bc;
 inline constexpr std::uint8_t kEquipBitInHand = 0x2;
 inline constexpr std::uint8_t kEquipBitAway = 0x4;
+// The byte is a request the game clears when the change is done (seen in a
+// two-player run, 2026-11-09), and a setter does nothing when the piece is in
+// that state already. Both setters keep a byte per slot in the user's slot
+// records (EquipmentUser + 0x4b0, 0xa8 each, byte at +0xa4): 1 in hand, 0 put
+// away. Read from the dump, not run.
+inline constexpr std::uint64_t kEquipRecords = 0x4b0;
+inline constexpr std::uint64_t kEquipRecordStride = 0xa8;
+inline constexpr std::uint64_t kEquipRecordInHand = 0xa4;
 // The game's own way to move an actor that has a physics body, as the AI
 // node ExecuteActorForceSetMtx (run 0x2622e50): write +0x31c..+0x34b, then
 // call vtable slot 0x218, which is 0x4c6580(actor, 0) for the vtable every
@@ -307,6 +316,7 @@ private:
         int hold_slot = 0;                  // the change being made
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
+        std::array<std::uint32_t, 5> hold_id{};  // the piece each change was made for
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {
@@ -379,7 +389,7 @@ struct PlannerSettings {
     // player's age (LICHII_COOP_PUPPET_ACTOR overrides it).
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
-    bool debug = false;           // LICHII_COOP_DEBUG_PUPPET: one more, beside you,
+    bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
     Vec3 debug_offset{2.0f, 0.0f, 0.0f};  // from you, in game units (about metres)

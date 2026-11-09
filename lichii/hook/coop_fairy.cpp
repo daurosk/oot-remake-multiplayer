@@ -135,11 +135,11 @@ struct Glue {
         // The same plan as the puppets' (CoopSvc's ConfigurePuppets); the
         // actor name is not used, the fairy has its own.
         CoopPuppet::PlannerSettings puppet_settings;
-        puppet_settings.debug = EnvOn("LICHII_COOP_DEBUG_PUPPET");
+        puppet_settings.debug = EnvOn("LICHII_COOP_TEST_PUPPET");
         LOG_INFO(Core, "coop: fairies on, actor {}", settings.actor);
         director = std::make_unique<CoopPuppet::Director>(
             [](const std::string& line) { LOG_INFO(Core, "fairy {}", line); },
-            puppet_settings.debug);
+            EnvOn("LICHII_COOP_DEBUG_PUPPET"));
         // Navi has a physics body: a plain write of her place is undone.
         director->SetMatrixCall(true);
         planner = std::make_unique<CoopPuppet::Planner>(puppet_settings);

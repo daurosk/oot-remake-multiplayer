@@ -86,7 +86,7 @@ class Session {
   // (then incoming flag messages wait).
   FrameReport frame(const std::optional<PlayerReading>& reading, FlagStore* flags);
   FrameReport frame(GameMemory& memory, FlagStore* flags) {
-    PlayerReader reader(memory);
+    PlayerReader reader(memory, &drawn_state_);
     return frame(reader.read(), flags);
   }
 
@@ -145,6 +145,7 @@ class Session {
   Sampler sampler_;
   std::optional<FlagWatcher> watcher_;
   bool reset_sampler_ = false;
+  PlayerReader::DrawnState drawn_state_{};  // frame(GameMemory&)'s readers share it
 
   // Guarded by net_mutex_.
   std::mutex net_mutex_;

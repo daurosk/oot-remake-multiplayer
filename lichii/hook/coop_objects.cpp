@@ -77,6 +77,7 @@
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
 #include "coop_spawn.h"
+#include "coop_world.h"
 
 namespace CoopObjects {
 namespace {
@@ -827,6 +828,7 @@ public:
     }
 
     bool debug_ = false;
+    CoopWorld::FoliageProbe foliage_;
     bool cheat_ = false;
     bool share_ = false;
     bool pose_ = true;
@@ -920,6 +922,12 @@ private:
         }
         names_ = std::move(names);
         sync_.SetPlayer(player);
+        if (debug_) {  // research: the field grass that is no actor (world.md)
+            for (const std::string& line : foliage_.Look(
+                     [&r](u64 address) { return r.Get<u64>(address); }, main_, player)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
         return true;
     }
 

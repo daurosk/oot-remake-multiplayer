@@ -618,6 +618,42 @@ void Warp(Core::System& system, const std::string& scene, const std::string& sta
         start_ok = coop::host::GameFlags::set_string64_now(memory, start_name, start);
     }
     const bool banc_ok = coop::host::GameFlags::set_string64_now(memory, banc, scene);
+    // Research for a position warp: the Vector3 table (type 10, M + 0x3d0)
+    // and where Sequence_ReservedNextPosition sits in it. Logged once.
+    static bool dumped = false;
+    if (!dumped) {
+        dumped = true;
+        const auto mgr = coop::host::read_ptr(memory, memory.main_base() + 0x4e842a8);
+        if (mgr) {
+            const auto count = coop::host::read_u32(memory, *mgr + 0x3d0);
+            const auto entries = coop::host::read_ptr(memory, *mgr + 0x3d8);
+            const auto slots = coop::host::read_ptr(memory, *mgr + 0x3e0);
+            const auto cap = coop::host::read_u32(memory, *mgr + 0x3ec);
+            std::optional<std::uint32_t> index;
+            if (slots && cap && *cap) {
+                for (std::uint32_t i = position % *cap, n = 0; n < *cap; ++n, i = (i + 1) % *cap) {
+                    const auto h = coop::host::read_u32(memory, *slots + 8ull * i);
+                    if (!h || *h == 0) break;
+                    if (*h == position) {
+                        index = coop::host::read_u32(memory, *slots + 8ull * i + 4);
+                        break;
+                    }
+                }
+            }
+            LOG_INFO(Core, "coop: test vector3 table: count {}, entries {:#x}, index of next position {}",
+                     count.value_or(0), entries.value_or(0), index ? static_cast<int>(*index) : -1);
+            if (entries) {
+                for (std::uint64_t off = 0; off < 0xc0; off += 0x10) {
+                    std::array<std::uint32_t, 4> w{};
+                    for (int k = 0; k < 4; ++k) {
+                        w[k] = coop::host::read_u32(memory, *entries + off + 4 * k).value_or(0xdeadbeef);
+                    }
+                    LOG_INFO(Core, "coop: test vector3 +{:#05x}: {:08x} {:08x} {:08x} {:08x}", off, w[0], w[1],
+                             w[2], w[3]);
+                }
+            }
+        }
+    }
     LOG_INFO(Core,
              "coop: test warp to {} (start {}): scene {} (type {}), start {} (type {}), "
              "position type {}",

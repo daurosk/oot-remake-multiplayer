@@ -168,10 +168,10 @@ Every piece is **an actor of its own**, created by the wearer's EquipmentUser co
 
 ### How the puppet applies it (for the puppet spawner)
 
-1. **The pack.** Give `CoopPuppet_Child` and `CoopPuppet_Adult` the player's `EquipmentUserRef` (`Component/EquipmentUserParam/Player_<Child|Adult>`, as `Player_Event` has it) and its blackboard table. Without it the puppet has nowhere to put a piece. A change to `tools/puppet_pack` (`KEEP_COMPONENTS`).
-2. **Weapons, shield, bow, tool at creation.** The EquipmentUser's slot names are blackboard **instance** parameters (`IsInstanceParam`), so the create request can carry them, as event scenes do for `Player_Event`: `EquipmentUser_Weapon` = the received `weapon`, `EquipmentUser_Shield` = `shield`. Where the create argument holds instance parameters (+0x40, +0x48 in the table at the top) is not read yet.
+1. **The pack.** Done: `CoopPuppet_Child` and `CoopPuppet_Adult` carry the player's `EquipmentUserRef` (`Component/EquipmentUserParam/Player_<Child|Adult>`, as `Player_Event` has it). Its `$parent` chain (`Player` → `Default` for the child, `Default` for the adult) comes along, and so do the blackboard tables its `BlackboardTableRef` names (`Player_Child` → `Player` → `WeaponUser`, and `EquipmentUser`). The player's own `BlackboardRef` stays out, as in `Player_Event`. The builder fails if the chain names no table with `EquipmentUser_*` instance keys, and lists the keys in `coop_puppet.json` (`equipment_keys`).
+2. **Everything worn, at creation.** The table the player's EquipmentUserParam names is `Player`, not `EquipmentUser`: its **instance** parameters (`IsInstanceParam`) are `EquipmentUser_Weapon`, `_Shield`, `_Bow` (default `Weapon_Range_Bow`), **`_ArmorHead`, `_ArmorUpper`, `_ArmorLower`** (checked, romfs, child and adult). So the create request can carry the armor too: `EquipmentUser_Weapon` = the received `weapon`, `EquipmentUser_Shield` = `shield`, `EquipmentUser_ArmorUpper` = the tunic, `_ArmorLower` = the boots, `_ArmorHead` = the mask. No scene of the game sets these keys in a placement's `Dynamic` table (all 160 `.bcett` files read); event scenes must set them another way. Where the create argument holds instance parameters (+0x40, +0x48 in the table at the top) is not read yet.
 3. **A change after creation** (a new sword, a shield taken off): the plain way is to delete and create the puppet again with the new names, as an age change does. Faster later: call 0x2df7b20 on the puppet's EquipmentUser with the slot and name from the hook routine (a fourth command kind beside create and play), once its arguments are read.
-4. **Armor** (tunic, boots, mask, gauntlets): the same 0x2df7b20 path with the armor slot kinds 0x2df6c80 uses; the blackboard has no keys for armor, so this needs the call, not a creation parameter. Until then the puppet shows the default Kokiri tunic.
+4. **Armor** (tunic, boots, mask): at creation through the `EquipmentUser_Armor*` keys above. A change after creation is a re-create, or the 0x2df7b20 call with the armor slot kinds 0x2df6c80 uses. Gauntlets and the Stone of Agony have no key; they need the call.
 5. **Drawn or sheathed**: the equipment state comes with the AS commands the puppet already plays (the game draws the sword in the draw animation), and `OneShotEquipmentUserRequestChangeState` and `OneShotPlayerRequestAllEquipmentSheathed` are the nodes that set it; their run slots were not read. Use `drawn` to check the puppet matches, and to correct it once the change-state call is known. A cruder correction, not tried: set bit 1 of the puppet's byte at EquipmentUser +0x13bc + *i*.
 6. **Slots.** Address pieces by slot as `addresses.hpp` names them (`kEquipSlotSword` 0, `kEquipSlotHeldItem` 3, `kEquipSlotShield` 4, seen in the game), not by the blackboard order, which would put the shield at 2.
 
@@ -180,6 +180,7 @@ Every piece is **an actor of its own**, created by the wearer's EquipmentUser co
 1. Not run: a tunic, boots, a mask or a second sword (none in the test save), adult Link's slots, and which item was in slot 3. Run them with a later save: the local debug log (`LICHII_COOP_DEBUG_EQUIP`) prints the flags and every slot.
 2. The name of the actor in each slot (for a held tool such as the hookshot or bombs, which are not in `PlayerStatus.Equip*`): the actor's name field was not found. The item buttons are `PlayerStatus.AssignableItem.*` (an enum, [items.md](items.md)).
 3. 0x2df7b20's other arguments, the armor slot kinds, the change-state call, and where a create request carries blackboard instance parameters.
+5. Whether the game wears what a placement's `Dynamic` table names (`place_test.py --param`): see the pack load test below.
 4. String64 flags still in the write queue (the getter checks an object at manager + 0x608 first).
 
 ## The frame hook
@@ -229,14 +230,14 @@ That writes the mod `<load folder>\0400486024DEC000\coop-puppet\` (`--mod-dir` p
 
 | Mod file (under `romfs\`) | What |
 |---|---|
-| `Pack\Actor\CoopPuppet_Child.pack.zs` | 10 files: our ActorParam and the player's own component files it refers to |
-| `Pack\Actor\CoopPuppet_Adult.pack.zs` | 9 files, the same for adult Link |
+| `Pack\Actor\CoopPuppet_Child.pack.zs` | 17 files: our ActorParam and the player's own component files it refers to |
+| `Pack\Actor\CoopPuppet_Adult.pack.zs` | 14 files, the same for adult Link |
 | `RSDB\ActorInfo.Product.111.rstbl.byml.zs` | The game's table plus a row for each puppet |
 | `RSDB\GameActorInfo.Product.111.rstbl.byml.zs` | The game's table plus a row `{__RowId}` for each |
 | `System\Resource\ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs` | The game's size table plus the new entries |
 | `..\coop_puppet.json` | What was made, from which files (with their SHA-256) |
 
-The puppet's ActorParam has no `$parent`: it is `Player_<Child|Adult>` merged with `Player_Base`, keeping only `ASRef`, `ASInfoRef`, `ASOptimize`, `AnimationRef`, `ModelInfoRef`, `ModelBindRef`, `BoneBindRef`, `LODRef` and `LocalDepthShadowRef`. It adds the shared defaults the simple event actors use (`ActorLogicSimpleActor`, `PreActorSetting/ActorOnly`, `ActorSystemSetting/GameActorDefault`, `WorldInfoParam/Default`, `XLink/ActorBasic`). Left out: input, camera target, physics, equipment, life, AI, the `Player` actor name, ELink and SLink (effects and sound; add later if wanted). The child puppet uses `AS/Player_Child.root.asb` and the `Player_Child` model, the adult one `AS/Player_Adult.root.asb` and `Player_Adult`, with the player's own animation resource lists.
+The puppet's ActorParam has no `$parent`: it is `Player_<Child|Adult>` merged with `Player_Base`, keeping only `ASRef`, `ASInfoRef`, `ASOptimize`, `AnimationRef`, `ModelInfoRef`, `ModelBindRef`, `BoneBindRef`, `LODRef`, `LocalDepthShadowRef` and `EquipmentUserRef`. It adds the shared defaults the simple event actors use (`ActorLogicSimpleActor`, `PreActorSetting/ActorOnly`, `ActorSystemSetting/GameActorDefault`, `WorldInfoParam/Default`, `XLink/ActorBasic`). Left out: input, camera target, physics, the player's blackboard, life, AI, the `Player` actor name, ELink and SLink (effects and sound; add later if wanted). The child puppet uses `AS/Player_Child.root.asb` and the `Player_Child` model, the adult one `AS/Player_Adult.root.asb` and `Player_Adult`, with the player's own animation resource lists.
 
 What the game needs for a new actor, read from the files (**checked**) and the TotK engine (**inferred**):
 

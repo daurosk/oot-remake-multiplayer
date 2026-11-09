@@ -2,9 +2,13 @@
 #include "coop_fairy.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <string_view>
 #include <utility>
+
+#include "coop_pose.h"
 
 namespace CoopFairy {
 
@@ -76,10 +80,109 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
     return out;
 }
 
+namespace {
+
+template <typename T>
+bool ReadValue(CoopPuppet::Guest& guest, std::uint64_t at, T& out) {
+    return at != 0 && guest.Read(at, &out, sizeof(T));
+}
+
+bool NameIs(CoopPuppet::Guest& guest, std::uint64_t actor, std::string_view name) {
+    std::uint64_t text = 0;
+    std::array<char, 64> buf{};
+    if (name.size() >= buf.size() || !ReadValue(guest, actor + addr::kActorName, text) ||
+        !guest.Read(text, buf.data(), name.size() + 1)) {
+        return false;
+    }
+    return std::string_view(buf.data(), name.size()) == name && buf[name.size()] == '\0';
+}
+
+bool Present(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    std::uint32_t state = 0;
+    return ReadValue(guest, actor + addr::kActorState, state) && state == addr::kStatePresent;
+}
+
+std::string Hex(std::uint64_t v) {
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%#llx", static_cast<unsigned long long>(v));
+    return buf;
+}
+
+} // namespace
+
+std::uint64_t FindActor(CoopPuppet::Guest& guest, std::uint64_t main_base, std::string_view name) {
+    std::uint64_t manager = 0, lists = 0;
+    if (main_base == 0 || !ReadValue(guest, main_base + addr::kManagerPtr, manager) ||
+        !ReadValue(guest, manager + addr::kLists, lists) || lists == 0) {
+        return 0;
+    }
+    const std::uint64_t head = lists + addr::kListHead;
+    std::uint64_t node = 0;
+    if (!ReadValue(guest, head, node)) {
+        return 0;
+    }
+    for (std::size_t walked = 0; node != 0 && node != head && walked < addr::kMaxWalk; ++walked) {
+        std::uint64_t owner = 0;
+        if (ReadValue(guest, node + addr::kNodeOwner, owner) && owner != 0 &&
+            owner + addr::kActorNode == node && Present(guest, owner) &&
+            NameIs(guest, owner, name)) {
+            return owner;
+        }
+        if (!ReadValue(guest, node, node)) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
+bool Wings::StillNavi(CoopPuppet::Guest& guest) {
+    return navi_ != 0 && Present(guest, navi_) && NameIs(guest, navi_, source_);
+}
+
+void Wings::Frame(CoopPuppet::Guest& guest, std::uint64_t main_base,
+                  const std::vector<std::uint64_t>& fairies, std::uint64_t now_ms) {
+    if (main_base == 0 || fairies.empty()) {
+        return;
+    }
+    if (navi_ != 0 && !StillNavi(guest)) {
+        Say("wings: " + source_ + " " + Hex(navi_) + " gone");
+        navi_ = 0;
+    }
+    if (navi_ == 0) {
+        if (searched_ && now_ms - std::min(now_ms, search_ms_) < kSearchMs) {
+            return;
+        }
+        searched_ = true;
+        search_ms_ = now_ms;
+        navi_ = FindActor(guest, main_base, source_);
+        if (navi_ == 0) {
+            return;
+        }
+        Say("wings: copying " + source_ + " " + Hex(navi_) + " onto the fairies");
+    }
+    if (notes_.size() > 16) {
+        notes_.clear();  // fairies come and go; a fresh map logs each again once
+    }
+    for (const std::uint64_t fairy : fairies) {
+        std::string note;
+        const bool copied = fairy != 0 && CoopPose::CopySkeleton(guest, navi_, fairy, &note);
+        if (copied) {
+            ++copies_;
+        }
+        std::string& last = notes_[fairy];
+        const std::string line = (copied ? "copied " : "not copied: ") + note;
+        if (line != last) {
+            last = line;
+            Say("wings: fairy " + Hex(fairy) + " " + line);
+        }
+    }
+}
+
 } // namespace CoopFairy
 
 #ifdef LICHII_COOP
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -120,6 +223,8 @@ struct Glue {
     std::unique_ptr<CoopPuppet::Director> director;
     std::unique_ptr<CoopPuppet::Planner> planner;  // the present thread only
     std::unique_ptr<Follower> follower;            // the present thread only
+    std::unique_ptr<Wings> wings;                  // the calc thread only
+    std::atomic<std::uint64_t> main_base{0};       // as last published
 
     Glue() {
         // The cave is there only with the puppets; the fairy follows them.
@@ -144,11 +249,27 @@ struct Glue {
         director->SetMatrixCall(true);
         planner = std::make_unique<CoopPuppet::Planner>(puppet_settings);
         follower = std::make_unique<Follower>(std::move(settings));
-        CoopSvc::AddCaller(kCallerOrder,
-                           [d = director.get()](CoopPuppet::Guest& guest, bool after_call,
+        // LICHII_COOP_FAIRY_WINGS=0: no wing beat (the fairies hang still).
+        if (Env("LICHII_COOP_FAIRY_WINGS") != "0") {
+            wings = std::make_unique<Wings>(
+                "Npc_Navi", [](const std::string& line) { LOG_INFO(Core, "fairy {}", line); });
+        }
+        CoopSvc::AddCaller(kCallerOrder, [this](CoopPuppet::Guest& guest, bool after_call,
                                                 std::uint64_t result, std::uint64_t now_ms) {
-                               return d->Step(guest, after_call, result, now_ms);
-                           });
+            auto call = director->Step(guest, after_call, result, now_ms);
+            if (!after_call && wings) {
+                // The start of a frame: the director has just found its live
+                // fairies, and the copy is made before any call of ours.
+                std::vector<std::uint64_t> fairies;
+                for (const auto& slot : director->Slots()) {
+                    if (slot.phase == CoopPuppet::Phase::live && slot.actor != 0) {
+                        fairies.push_back(slot.actor);
+                    }
+                }
+                wings->Frame(guest, main_base.load(), fairies, now_ms);
+            }
+            return call;
+        });
         on = true;
     }
 };
@@ -192,6 +313,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
+    glue.main_base.store(main_base);
     const auto puppets = glue.planner->Plan(main_base, scene, position, false, remotes, now_ms);
     glue.director->SetInput(glue.follower->Follow(puppets, now_ms));
 }

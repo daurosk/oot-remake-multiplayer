@@ -5,7 +5,8 @@
 # has filled the pouch. The menu path is s6-autotest's (bomb.A.txt): PLUS, the
 # Items page, bombs at column 1 row 3 (the cursor starts on the slingshot), A
 # puts them on ZR. The first ZR opens a "Bomb" help box (and makes a bomb
-# that is gone in 0.1 s) that holds input until A. Then ZR pulls, ZR throws.
+# that is gone in 0.1 s); it stays up through A and two more ZR (each again a
+# 0.1 s bomb, 2026-11-09). Then ZR pulls, ZR throws.
 # A first walks right, away from the cow at the save spot (A next to it talks
 # to it), so that B, looking ahead, sees the throw.
 mark start
@@ -50,6 +51,12 @@ mark help-closed
 press ZR
 wait 45
 mark pulled
+press ZR
+wait 45
+mark help-gone
+press ZR
+wait 45
+mark pulled2
 press ZR
 wait 20
 mark thrown

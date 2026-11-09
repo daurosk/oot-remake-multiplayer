@@ -370,6 +370,13 @@ public:
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override {
         if (obj == edit_) {
+            // The emulator's "Exit Fullscreen" hotkey is Esc on the main
+            // window, and would take it before the box sees it: claim it.
+            if (event->type() == QEvent::ShortcutOverride &&
+                static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+                event->accept();
+                return true;
+            }
             if (event->type() == QEvent::KeyPress &&
                 static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
                 Close();

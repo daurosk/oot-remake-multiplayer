@@ -4,7 +4,7 @@ add_executable(coop_test
   options.cpp
   probe.cpp
 )
-target_link_libraries(coop_test PRIVATE coop_server_lib coop_net enet coop_warnings)
+target_link_libraries(coop_test PRIVATE coop_server_lib coop_net coop_presence enet coop_warnings)
 if(WIN32)
   target_link_libraries(coop_test PRIVATE winmm)
 endif()

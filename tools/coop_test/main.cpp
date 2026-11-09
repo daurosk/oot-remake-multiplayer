@@ -152,7 +152,7 @@ int run_clients(const Options& options, coop::server::EnetServer* server) {
               static_cast<unsigned>(probes.front()->config().port),
               options.seconds == 0 ? "until Ctrl+C"
                                    : (std::to_string(options.seconds) + " s").c_str(),
-              static_cast<unsigned long long>(kShowDelayUs / 1000));
+              static_cast<unsigned long long>(coop::presence::Settings{}.show_delay_us / 1000));
   std::fflush(stdout);
 
   Spread loop_ms;  // time from one pass over everything to the next

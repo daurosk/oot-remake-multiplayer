@@ -92,6 +92,7 @@ ShownError& ShownError::operator+=(const ShownError& other) {
   interpolated += other.interpolated;
   extrapolated += other.extrapolated;
   held += other.held;
+  hidden += other.hidden;
   return *this;
 }
 
@@ -165,6 +166,7 @@ void Probe::handle(const net::Event& event) {
     case net::EventKind::welcomed:
     case net::EventKind::reconnected:
       ++welcomes_;
+      presence_.on_welcome(event.welcome);
       break;
     case net::EventKind::refused:
       refused_ = event.refuse_reason;
@@ -175,6 +177,7 @@ void Probe::handle(const net::Event& event) {
     case net::EventKind::disconnected:
       ++disconnects_;
       archive_all();
+      presence_.clear();
       break;
     case net::EventKind::message:
       on_message(event.message, event.channel);
@@ -183,6 +186,7 @@ void Probe::handle(const net::Event& event) {
 }
 
 void Probe::on_message(const proto::Message& message, std::uint8_t channel) {
+  presence_.apply(message);
   auto heard = [this](std::uint8_t player) {
     if (std::find(heard_from_.begin(), heard_from_.end(), player) == heard_from_.end()) {
       heard_from_.push_back(player);
@@ -193,21 +197,7 @@ void Probe::on_message(const proto::Message& message, std::uint8_t channel) {
   } else if (const auto* sample = std::get_if<proto::PlayerSample>(&message)) {
     const std::uint8_t player = sample->player_number;
     heard(player);
-    Remote& r = remote(player);
-    r.samples.add(sample->time.sequence);
-    if (sample->position && sample->velocity) {
-      PathPoint p;
-      p.time_us = sample->time.server_time_us;
-      for (std::size_t k = 0; k < 3; ++k) {
-        p.position[k] = (*sample->position)[k];
-        p.velocity[k] = (*sample->velocity)[k];
-      }
-      auto at = std::upper_bound(
-          r.buffer.begin(), r.buffer.end(), p.time_us,
-          [](std::uint64_t t, const PathPoint& q) { return t < q.time_us; });
-      if (at == r.buffer.begin() || (at - 1)->time_us != p.time_us) r.buffer.insert(at, p);
-      while (r.buffer.size() > kSampleBuffer) r.buffer.pop_front();
-    }
+    remote(player).samples.add(sample->time.sequence);
   } else if (const auto* test = std::get_if<proto::TestPayload>(&message)) {
     if (test->filler.empty() || test->filler[0] < 1 || test->filler[0] > proto::kMaxPlayers) {
       ++unattributed_;
@@ -294,17 +284,21 @@ void Probe::render(std::uint64_t now) {
   if (next_render_ <= now) next_render_ = now + kRenderPeriodUs;
 
   const std::uint64_t server_now = client_.server_now_us();
-  if (server_now < kShowDelayUs) return;
-  const std::uint64_t at = server_now - kShowDelayUs;
-  for (auto& [player, r] : remotes_) {
-    auto shown = shown_point(r.buffer, at);
-    if (!shown) continue;
-    const PathPoint truth = true_point(player, at);
-    r.shown.units.add(distance(shown->position, truth.position));
-    switch (shown->how) {
-      case Shown::interpolated: ++r.shown.interpolated; break;
-      case Shown::extrapolated: ++r.shown.extrapolated; break;
-      case Shown::held: ++r.shown.held; break;
+  if (server_now < presence_.settings().show_delay_us) return;
+  for (const std::uint8_t player : presence_.players()) {
+    const auto pose = presence_.shown(player, server_now);
+    if (!pose) continue;
+    const PathPoint truth = true_point(player, pose->at_us);
+    const Vec shown_at{pose->position[0], pose->position[1], pose->position[2]};
+    ShownError& e = remote(player).shown;
+    e.units.add(distance(shown_at, truth.position));
+    switch (pose->how) {
+      case presence::How::interpolated: ++e.interpolated; break;
+      case presence::How::extrapolated: ++e.extrapolated; break;
+      case presence::How::held:
+        ++e.held;
+        if (pose->fade <= 0.0f) ++e.hidden;
+        break;
     }
   }
 }
@@ -374,13 +368,15 @@ void Probe::print(std::FILE* out, std::uint64_t extra_reliable_lost) const {
   } else {
     std::fprintf(out,
                  "  %-14s min %.3f avg %.3f max %.3f units over %llu frames "
-                 "(interpolated %llu, extrapolated %llu, held %llu), shown %llu ms behind\n",
+                 "(interpolated %llu, extrapolated %llu, held %llu, hidden %llu), "
+                 "shown %llu ms behind\n",
                  "shown error", e.units.min, e.units.avg(), e.units.max,
                  static_cast<unsigned long long>(e.units.count),
                  static_cast<unsigned long long>(e.interpolated),
                  static_cast<unsigned long long>(e.extrapolated),
                  static_cast<unsigned long long>(e.held),
-                 static_cast<unsigned long long>(kShowDelayUs / 1000));
+                 static_cast<unsigned long long>(e.hidden),
+                 static_cast<unsigned long long>(presence_.settings().show_delay_us / 1000));
   }
   if (unattributed_ != 0) {
     std::fprintf(out, "  %-14s %llu test payloads with no sender byte\n", "unattributed",

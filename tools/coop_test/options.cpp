@@ -117,7 +117,7 @@ const char* usage() {
   return "usage: coop_test [options]\n"
          "Runs the co-op server and clients that send test traffic and fake player\n"
          "samples, and reports round trip, clock offset, losses and the shown error\n"
-         "of the fake path after interpolation.\n"
+         "of the fake path as coop/presence draws it.\n"
          "\n"
          "  (no mode)            server and clients in this process\n"
          "  --server-only        only the server\n"

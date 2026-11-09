@@ -72,7 +72,7 @@ One block per client, then the server's counts when the server is in the same pr
 | `reliable` | test payloads on channel 0 from all other players: received, lost, out of order, repeated |
 | `unreliable` | the same on channel 3 |
 | `samples` | the same for `PLAYER_SAMPLE` |
-| `shown error` | 60 times a second, the distance in game units between where the client shows each other player and where that player's circle really was then; how many of those frames were interpolated, extrapolated (past the last sample, up to 150 ms) or held (further than that) |
+| `shown error` | 60 times a second, the distance in game units between where the client shows each other player (with `coop/presence`) and where that player's circle really was at the time shown; how many of those frames were interpolated, extrapolated (past the last sample, up to 150 ms), held (further than that, fading out) and, of the held ones, hidden (faded right out) |
 | `server` | players in, messages relayed, dropped, and dropped by the rate limit |
 | `loop` | how long the tool took from one pass over its clients (and the server, in one process) to the next, in ms; about 2 on an idle PC |
 
@@ -84,6 +84,6 @@ A pass needs: no reliable message lost, no client refused or dropped, every clie
 
 ## Interpolation
 
-Each client shows the others 100 ms behind its estimate of the server clock, keeps the last 16 samples of each, interpolates in a straight line between the two around the shown time, extrapolates with the last velocity for up to 150 ms, then holds ([protocol.md](protocol.md), `PLAYER_SAMPLE`). The shown error therefore holds the chord error of the circle between samples (under 0.01 units at 60 a second), the difference between two clients' clock estimates times the speed (157 units a second), and anything late.
+Each client draws the others with the `coop/presence` library at its default settings, the same code the emulator uses ([presence.md](presence.md)): 100 ms behind its estimate of the server clock, the last 16 samples of each, cubic Hermite between the two around the shown time using their velocities, extrapolation with the last velocity for up to 150 ms, then held and faded out over 250 ms. A sample's position is the circle at the sample's own time stamp, and the error is taken against the circle at the time shown, so a difference between two clients' clock estimates moves when a player is drawn, not where. With nothing lost the error is the Hermite error on the circle and float rounding, well under 0.001 units at 60 samples a second; anything larger comes from samples lost or late.
 
 Samples are stamped with the sender's estimate of the server clock (`Client::server_now_us`), as the protocol says ("Encoding", times). The server relays them unchanged, so every client places the others' samples on its own estimate of the same clock.

@@ -1,0 +1,7 @@
+# rock, B: walks into Kakariko with A and stands, watching the rock.
+mark start
+stick 0 -1 70
+wait 420
+mark kakariko
+wait 600
+mark end

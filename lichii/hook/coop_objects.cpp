@@ -416,7 +416,7 @@ private:
                     LogPose(r, "+", a, actor);
                 }
             }
-            if (actor.name.starts_with("Enemy_")) {
+            if (IsShared(actor.name)) {  // enemies and breakables
                 Life(r, a, actor);
             }
         }

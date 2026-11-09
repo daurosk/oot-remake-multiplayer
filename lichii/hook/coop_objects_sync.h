@@ -42,7 +42,7 @@ struct LifeWrite {
     std::int32_t life = 0;
 };
 
-// Shared at first: enemies only.
+// Shared: enemies, and the breakable world objects (coop_world.h).
 bool IsShared(std::string_view name);
 
 // The id of an enemy the scene made without a placement hash: the scene, the
@@ -104,6 +104,8 @@ private:
         std::uint64_t hit_at = 0;  // last DAMAGE sent
     };
 
+    void Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
+               std::vector<coop::protocol::Message>& send);
     void Apply(std::uint8_t self, std::uint64_t now_us, std::vector<coop::protocol::Message>& send,
                std::vector<LifeWrite>& writes);
     coop::protocol::ObjectState StateOf(Object& o, std::uint64_t now_us);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_world.h"
 
 #include <algorithm>
 #include <cmath>
@@ -27,7 +28,7 @@ bool Moved(const proto::Vec3& a, const proto::Vec3& b) {
 } // namespace
 
 bool IsShared(std::string_view name) {
-    return name.starts_with("Enemy_");
+    return name.starts_with("Enemy_") || CoopWorld::IsBreakable(name);
 }
 
 std::uint64_t SceneSpawnId(std::string_view scene, std::string_view name, unsigned order) {
@@ -143,9 +144,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             o.max = s.life->max;
         }
     }
+    std::vector<Object> gone;
     for (auto it = objects_.begin(); it != objects_.end();) {
-        it = now_seen.contains(it->first) ? std::next(it) : objects_.erase(it);
+        if (now_seen.contains(it->first)) {
+            ++it;
+            continue;
+        }
+        gone.push_back(std::move(it->second));
+        it = objects_.erase(it);
     }
+    Flush(self, now_us, gone, send);
     std::sort(fresh.begin(), fresh.end(), [](const Seen* a, const Seen* b) {
         return std::tie(a->name, a->position[0], a->position[2]) <
                std::tie(b->name, b->position[0], b->position[2]);
@@ -227,6 +235,36 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         present_sent_ = std::move(present);
         present_at_ = now_us;
         present_once_ = true;
+    }
+}
+
+// Objects that left our walk. A break read just before it went (a pot's life
+// 0, then the pot is removed a few frames later) still reaches the others:
+// the owner's last life 0 as a sample, a copy's unsent hit as DAMAGE.
+void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
+                 std::vector<proto::Message>& send) {
+    for (Object& o : gone) {
+        const auto owner = owners_.find(o.id);
+        if (owner == owners_.end() || owner->second.player == 0) {
+            continue;
+        }
+        if (owner->second.player == self) {
+            if (o.life && *o.life <= 0 && (!o.sent_life || o.sent_life->life > 0)) {
+                proto::ObjectSample sample;
+                sample.id = o.id;
+                sample.epoch = owner->second.epoch;
+                sample.state = StateOf(o, now_us);
+                send.emplace_back(sample);
+            }
+        } else if (o.hit_sum > 0) {
+            proto::Damage d;
+            d.id = o.id;
+            d.epoch = owner->second.epoch;
+            d.amount = o.hit_sum;
+            d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
+            d.position = o.position;
+            send.emplace_back(d);
+        }
     }
 }
 

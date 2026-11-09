@@ -378,3 +378,65 @@ TEST_CASE("loopback: three clients share a flag through the host and join a part
   CHECK(server.session().stats().join_not_there == 1);
   CHECK(server.session().stats().dropped() == 0);
 }
+
+// Full 4096-entry messages (45 KB, 33 ENet fragments) both ways. ENet 1.3
+// shifts `1 << 31` on an int for the 32nd fragment; the sanitizer build
+// passes this only because cmake/enet.cmake turns off that one check.
+TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size parts") {
+  EnetLife enet;
+  ServerOptions options;
+  options.port = 0;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client host;
+  std::vector<Client*> all{&host};
+  host.connect(server.port());
+  REQUIRE(pump_until(server, all, [&] { return host.connected; }));
+  host.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, all, [&] { return host.find<FlagSnapshot>() != nullptr; }));
+  REQUIRE(host.find<Host>() != nullptr);
+  CHECK(*host.find<Host>() == Host{1});
+
+  // Two full parts from the host, then one full FLAG_STATE.
+  std::vector<FlagEntry> table;
+  for (std::uint32_t i = 0; i < 2 * kMaxFlagEntries; ++i) {
+    table.push_back(FlagEntry{i + 1, 0, FlagKind::int32, i});
+  }
+  const auto parts = split_snapshot(table);
+  REQUIRE(parts.has_value());
+  REQUIRE(parts->size() == 2);
+  for (const FlagSnapshot& part : *parts) {
+    CHECK(part.flags.size() == kMaxFlagEntries);
+    host.send(part, kChannelProgress);
+  }
+  REQUIRE(pump_until(server, all, [&] {
+    return server.session().flag_count() == table.size();
+  }));
+
+  Client joiner;
+  all.push_back(&joiner);
+  joiner.connect(server.port());
+  REQUIRE(pump_until(server, all, [&] { return joiner.connected; }));
+  joiner.send(hello_from("Zelda"), kChannelSession);
+  std::vector<FlagEntry> got;
+  REQUIRE(pump_until(server, all, [&] {
+    got.clear();
+    bool last = false;
+    for (const Received& r : joiner.inbox) {
+      if (const auto* p = std::get_if<FlagSnapshot>(&r.message)) {
+        got.insert(got.end(), p->flags.begin(), p->flags.end());
+        last = last || p->part + 1u == p->part_count;
+      }
+    }
+    return last;
+  }));
+  CHECK(got == table);
+
+  std::vector<FlagEntry> changed(table.begin(), table.begin() + kMaxFlagEntries);
+  for (FlagEntry& e : changed) e.value += 1;
+  host.send(FlagState{0, changed}, kChannelProgress);
+  REQUIRE(pump_until(server, all, [&] { return joiner.find<FlagState>() != nullptr; }));
+  CHECK(*joiner.find<FlagState>() == FlagState{1, changed});
+  CHECK(server.session().stats().dropped() == 0);
+}

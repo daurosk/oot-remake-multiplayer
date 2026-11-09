@@ -40,3 +40,11 @@ add_library(coop_host STATIC
 )
 target_include_directories(coop_host PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/host/include")
 target_link_libraries(coop_host PUBLIC coop_protocol PRIVATE coop_warnings)
+
+# Overlay: the other players as markers with name tags, as a plain draw list.
+# No rendering and no game addresses; the caller hands over the camera.
+add_library(coop_overlay STATIC
+  overlay/src/overlay.cpp
+)
+target_include_directories(coop_overlay PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/overlay/include")
+target_link_libraries(coop_overlay PUBLIC coop_presence PRIVATE coop_warnings)

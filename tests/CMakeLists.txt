@@ -10,8 +10,9 @@ add_executable(coop_tests
   host/sampler_test.cpp
   host/flags_test.cpp
   host/flag_watcher_test.cpp
+  overlay/overlay_test.cpp
 )
-target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host doctest::doctest coop_warnings)
+target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host coop_overlay doctest::doctest coop_warnings)
 doctest_discover_tests(coop_tests)
 
 add_subdirectory(server)

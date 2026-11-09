@@ -1,0 +1,60 @@
+# Overlay
+
+`coop/overlay/` (library `coop_overlay`) turns the players that [presence](presence.md) shows into a list of markers with name tags to draw over the game. It draws nothing itself: no rendering code, no fonts, no game addresses. The caller (the Lichii hook, later the recomp) fills in the camera each frame, gets a list of plain `DrawItem`s back, and draws them however its renderer likes. Plan stage 1 step 1, drawing side.
+
+## Use
+
+```cpp
+coop::overlay::Overlay overlay;                       // default settings
+coop::overlay::Camera camera;                          // filled by the caller each frame
+camera.view = ...;                                     // world -> view, column-major 4x4
+camera.projection = ...;                               // view -> clip, column-major 4x4
+camera.viewport_width = 1280; camera.viewport_height = 720;
+
+auto shown = coop::overlay::collect(presence, client.server_now_us());
+auto result = overlay.build(camera, local_scene, shown);
+for (const auto& item : result.items) draw(item);     // far to near
+```
+
+`collect` calls `Presence::shown` for every remote player, so call it once a frame instead of `shown` (it advances what presence has shown). A caller with its own source of players can fill `Shown` itself.
+
+## The camera
+
+`Camera` holds the view and projection matrices (4x4 floats, column-major: element `[col * 4 + row]`) and the viewport size in pixels. **The address of the game's camera is not yet known**, so nothing here reads it; finding it is the hook's job. Any projection whose clip w is the distance in front of the camera works (OpenGL, Direct3D and the usual game perspective matrices all do this). `look_at` and `perspective` (OpenGL style) are there for tests and tools.
+
+## What `build` does
+
+For each player, in order:
+
+1. A NaN or infinite position or fade: skipped as `invalid`. A fade of 0 or below: `faded`.
+2. Not in `local_scene`, or its scene is not known: `other_scene`.
+3. Projected with `projection * view`. Clip w is the player's **depth**, the distance in front of the camera. Depth 0 or below is `behind`; under `near_distance` is `too_near`; over `far_distance` is `too_far`.
+4. Screen position from the normalised device coordinates: pixels from the top left, y down. A point exactly on the edge is on screen.
+5. Just off screen (within `edge_reach` normalised units of the edge, 1 by default, so up to half a screen beyond it) the marker is moved along the line from the screen centre onto a rectangle `edge_margin` pixels inside the edges, with `edge = true` and `arrow_angle` (radians in screen space, 0 right, pi/2 down) pointing towards the player. Further off, or with `edge_arrows` off, it is skipped as `off_screen`.
+6. Marker size is `marker_size * reference_distance / depth`, kept within `min_size` and `max_size`.
+7. The name tag (the nickname, or `P<number>` when there is none) is anchored at the bottom centre of the text, `tag_gap` pixels above the marker's top. When that would be above the top of the screen it goes below the marker instead (`below = true`, anchor at the top centre of the text).
+8. `alpha` is the presence fade (kept at 1 at most), for both marker and tag.
+
+Items are sorted far to near (by depth), then lowest player number first, so drawing them in order puts nearer players on top. `Result::skipped` says why each other player was left out. A camera with a NaN or infinite entry or a viewport not above 0 gives `Error::camera`, and invalid settings `Error::settings`; both draw nothing.
+
+## Settings
+
+| Setting | Default | What |
+|---|---|---|
+| `near_distance` | 1 | nearer than this (world units of depth) is not drawn |
+| `far_distance` | 10000 | further than this is not drawn |
+| `marker_size` | 24 px | marker size at `reference_distance` |
+| `reference_distance` | 300 | depth at which the marker is `marker_size` |
+| `min_size`, `max_size` | 8, 48 px | the size is kept within these |
+| `tag_gap` | 6 px | between marker and name tag |
+| `edge_arrows` | on | draw players just off screen as edge arrows |
+| `edge_reach` | 1 | how far off screen (normalised units) still gets an arrow |
+| `edge_margin` | 16 px | how far inside the screen edge the arrow sits |
+
+The distances are in the game's world units, which are not yet measured (see [host.md](host.md), `units_per_metre`); the defaults are guesses to tune in a run.
+
+## Not yet proven
+
+- The camera address and the game's matrix layout (whether it is column-major, and its clip w convention) are not known; the hook must check them in a run.
+- The distance defaults have not been tried against the game's units.
+- Nothing has been drawn yet; this is tested only by unit tests (`tests/overlay/`).

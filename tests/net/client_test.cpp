@@ -720,3 +720,560 @@ TEST_CASE("client: the new event kinds are named") {
   CHECK(to_string(EventKind::player_left) == "player left");
   CHECK(to_string(EventKind::player_status) == "player status");
 }
+
+// ---- Shared flags and join partner ----
+
+namespace {
+
+// Answers the client's HELLO with WELCOME: we are `self`, the others given.
+void welcome_as(Client& client, FakeServer& server, Events& events, std::uint8_t self,
+                std::vector<proto::PlayerInfo> others) {
+  const std::size_t from = server.received.size();
+  REQUIRE(pump(client, server, [&] {
+    return server.find<proto::Hello>(from).has_value();
+  }));
+  proto::Welcome w;
+  w.player_number = self;
+  w.server_time_us = steady_us();
+  w.tick_rate = 30;
+  w.players = std::move(others);
+  server.send(w, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return client.state() == State::connected;
+  }));
+}
+
+// Waits for the server to get a message of type T from `from` on; its index.
+template <typename T>
+std::size_t wait_received(Client& client, FakeServer& server, std::size_t from) {
+  std::optional<std::size_t> at;
+  REQUIRE(pump(client, server, [&] {
+    at = server.find<T>(from);
+    return at.has_value();
+  }));
+  return *at;
+}
+
+// Messages of type T the server got from `from` on.
+template <typename T>
+std::size_t count_received(const FakeServer& server, std::size_t from) {
+  std::size_t n = 0;
+  for (std::size_t i = from; i < server.received.size(); ++i) {
+    n += std::holds_alternative<T>(server.received[i].message) ? 1 : 0;
+  }
+  return n;
+}
+
+proto::FlagEntry bool_flag(std::uint32_t hash, bool value, std::uint16_t index = 0) {
+  return {hash, index, proto::FlagKind::boolean, value ? 1u : 0u};
+}
+
+proto::FlagEntry s32_flag(std::uint32_t hash, std::int32_t value) {
+  return {hash, 0, proto::FlagKind::int32, static_cast<std::uint32_t>(value)};
+}
+
+// A message of kMaxFlagEntries entries (45 KB) is 32 or more ENet fragments,
+// and ENet 1.3's fragment bitmask then does `1 << 31` on an int
+// (protocol.c), which UBSan stops on. COOP_SANITIZE always turns ASan on
+// with UBSan, so those checks are left out of that build only.
+#if defined(__SANITIZE_ADDRESS__)
+constexpr bool kFullSizeMessages = false;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+constexpr bool kFullSizeMessages = false;
+#else
+constexpr bool kFullSizeMessages = true;
+#endif
+#else
+constexpr bool kFullSizeMessages = true;
+#endif
+
+// Services both ends for a while, for checks that something did not happen.
+void settle(Client& client, FakeServer& server, Events& events, int ms = 100) {
+  pump(client, server, [] { return false; }, ms);
+  events.drain(client);
+}
+
+}  // namespace
+
+TEST_CASE("client flags: set_flags sends one FLAG_SET per call, checked") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  CHECK_FALSE(client.set_flag(bool_flag(1, true)));  // not connected
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK_FALSE(client.is_host());
+
+  const std::size_t from = server.received.size();
+  const std::vector<proto::FlagEntry> batch = {
+      bool_flag(10, true), s32_flag(11, -5), bool_flag(10, false), bool_flag(10, true, 3)};
+  CHECK(client.set_flags(batch));
+  const std::size_t at = wait_received<proto::FlagSet>(client, server, from);
+  CHECK(server.received[at].channel == proto::kChannelProgress);
+  const auto& set = std::get<proto::FlagSet>(server.received[at].message);
+  CHECK(set.player_number == proto::kPlayerSelf);
+  // The same (hash, index) twice keeps the last value, in first-seen order.
+  CHECK(set.flags == std::vector<proto::FlagEntry>{bool_flag(10, false), s32_flag(11, -5),
+                                                    bool_flag(10, true, 3)});
+  // A player's own change waits for the host's answer.
+  CHECK(client.flags().empty());
+
+  // Refused whole, nothing sent: none, a bool of 2, a NaN, a bad kind.
+  const std::size_t sent = server.received.size();
+  CHECK_FALSE(client.set_flags({}));
+  CHECK_FALSE(client.set_flags(std::vector<proto::FlagEntry>{
+      bool_flag(1, true), {2, 0, proto::FlagKind::boolean, 2}}));
+  CHECK_FALSE(client.set_flag({3, 0, proto::FlagKind::float32, 0x7fc00000u}));
+  CHECK_FALSE(client.set_flag({4, 0, static_cast<proto::FlagKind>(9), 0}));
+  settle(client, server, events);
+  CHECK(server.received.size() == sent);
+  if (!kFullSizeMessages) return;
+  // More than one message's worth goes as several FLAG_SETs from one call.
+  std::vector<proto::FlagEntry> many;
+  for (std::uint32_t i = 0; i < proto::kMaxFlagEntries + 5; ++i) many.push_back(s32_flag(100 + i, 1));
+  CHECK(client.set_flags(many));
+  REQUIRE(pump(client, server, [&] { return count_received<proto::FlagSet>(server, sent) == 2; }));
+  const auto first = server.find<proto::FlagSet>(sent);
+  REQUIRE(first.has_value());
+  CHECK(std::get<proto::FlagSet>(server.received[*first].message).flags.size() ==
+        proto::kMaxFlagEntries);
+}
+
+TEST_CASE("client flags: every FLAG_STATE goes into the table with an event") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::FlagState{3, {bool_flag(1, true)}}, proto::kChannelProgress);  // nobody
+  server.send(proto::FlagState{2, {bool_flag(1, true)}}, proto::kChannelProgress);  // us
+  server.send(proto::FlagState{1, {bool_flag(7, true), s32_flag(8, 42)}},
+              proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+  const Event& state = events.all[*events.find(EventKind::flag_state)];
+  CHECK(state.player == 1);
+  CHECK(state.channel == proto::kChannelProgress);
+  CHECK(state.flags == std::vector<proto::FlagEntry>{bool_flag(7, true), s32_flag(8, 42)});
+  CHECK(client.rejected_count() == rejected + 2);
+  CHECK(client.flags().size() == 2);
+  CHECK(client.find_flag(8) == s32_flag(8, 42));
+  CHECK_FALSE(client.find_flag(8, 1).has_value());
+
+  // A later state wins over the table, as over the game's own change.
+  server.send(proto::FlagState{1, {s32_flag(8, 7)}}, proto::kChannelProgress);
+  const std::size_t before = events.all.size();
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return events.find(EventKind::flag_state, before).has_value();
+  }));
+  CHECK(client.find_flag(8) == s32_flag(8, 7));
+  CHECK(events.count(EventKind::flag_state) == 2);
+}
+
+TEST_CASE("client flags: a snapshot in parts gives one event and synced") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK_FALSE(client.synced());
+
+  // A state from before goes; the snapshot is the whole table.
+  server.send(proto::FlagState{1, {bool_flag(99999, true)}}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+
+  // Three small parts, as split_snapshot would make of a bigger table.
+  std::vector<proto::FlagEntry> table;
+  std::vector<proto::FlagSnapshot> parts_list;
+  for (std::uint16_t p = 0; p < 3; ++p) {
+    proto::FlagSnapshot part{p, 3, {}};
+    for (std::uint32_t i = 0; i < 4; ++i) {
+      part.flags.push_back(s32_flag(p * 10u + i + 1, static_cast<std::int32_t>(i)));
+    }
+    table.insert(table.end(), part.flags.begin(), part.flags.end());
+    parts_list.push_back(std::move(part));
+  }
+  const auto* parts = &parts_list;
+
+  // Out of order: part 1 with no part 0 is refused, and so is part 2 after 0.
+  const std::size_t rejected = client.rejected_count();
+  server.send((*parts)[1], proto::kChannelProgress);
+  server.send((*parts)[0], proto::kChannelProgress);
+  server.send((*parts)[2], proto::kChannelProgress);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 2; }));
+  settle(client, server, events);
+  CHECK_FALSE(client.synced());
+  CHECK(events.count(EventKind::flag_snapshot) == 0);
+
+  // In order: not synced until the last part.
+  server.send((*parts)[0], proto::kChannelProgress);
+  server.send((*parts)[1], proto::kChannelProgress);
+  settle(client, server, events);
+  CHECK_FALSE(client.synced());
+  CHECK(events.count(EventKind::flag_snapshot) == 0);
+  server.send((*parts)[2], proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
+  CHECK(client.synced());
+  CHECK(events.count(EventKind::flag_snapshot) == 1);
+  CHECK(events.all[*events.find(EventKind::flag_snapshot)].flags == table);
+  CHECK(client.flags().size() == table.size());
+  CHECK_FALSE(client.find_flag(99999).has_value());
+  CHECK(client.rejected_count() == rejected + 2);
+
+  // An empty table is one empty part.
+  server.send(proto::FlagSnapshot{0, 1, {}}, proto::kChannelProgress);
+  const std::size_t before = events.all.size();
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return events.find(EventKind::flag_snapshot, before).has_value();
+  }));
+  CHECK(client.flags().empty());
+  CHECK(client.synced());
+}
+
+TEST_CASE("client flags: the host answers FLAG_SET through its callback") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 1, {{2, "Saria"}, {3, "Zelda"}});
+  CHECK(client.is_host());
+
+  // Default: accept every value; the answer is a FLAG_STATE, applied here too.
+  std::size_t from = server.received.size();
+  server.send(proto::FlagSet{2, {bool_flag(5, true), s32_flag(6, 3)}}, proto::kChannelProgress);
+  std::size_t at = wait_received<proto::FlagState>(client, server, from);
+  CHECK(server.received[at].channel == proto::kChannelProgress);
+  CHECK(std::get<proto::FlagState>(server.received[at].message) ==
+        proto::FlagState{0, {bool_flag(5, true), s32_flag(6, 3)}});
+  REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+  const std::size_t state_at = *events.find(EventKind::flag_state);
+  CHECK(events.all[state_at].player == 1);  // our own answer
+  CHECK(events.all[state_at - 1].kind == EventKind::message);
+  CHECK(client.find_flag(5) == bool_flag(5, true));
+
+  // A callback that changes one, refuses one already in the table (sent back
+  // with the table's value), refuses one not in it (left out), returns a bad
+  // value (taken as refused), and gives another hash (kept as asked).
+  std::vector<std::uint8_t> askers;
+  client.set_flag_answer([&](std::uint8_t player, const proto::FlagEntry& asked)
+                             -> std::optional<proto::FlagEntry> {
+    askers.push_back(player);
+    switch (asked.hash) {
+      case 6: return s32_flag(6, 100);
+      case 5: return std::nullopt;
+      case 20: return std::nullopt;
+      case 21: return proto::FlagEntry{21, 0, proto::FlagKind::boolean, 7};
+      default: return s32_flag(999, 1);
+    }
+  });
+  from = server.received.size();
+  server.send(proto::FlagSet{3, {s32_flag(6, 4), bool_flag(5, false), bool_flag(20, true),
+                                 bool_flag(21, true), s32_flag(22, 9)}},
+              proto::kChannelProgress);
+  at = wait_received<proto::FlagState>(client, server, from);
+  CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+        std::vector<proto::FlagEntry>{s32_flag(6, 100), bool_flag(5, true), s32_flag(22, 1)});
+  CHECK(askers == std::vector<std::uint8_t>{3, 3, 3, 3, 3});
+  CHECK(client.find_flag(6) == s32_flag(6, 100));
+  CHECK_FALSE(client.find_flag(20).has_value());
+
+  // All refused and none known: no FLAG_STATE, no flag_state event.
+  client.set_flag_answer([](std::uint8_t, const proto::FlagEntry&) {
+    return std::optional<proto::FlagEntry>{};
+  });
+  settle(client, server, events);
+  from = server.received.size();
+  const int states = events.count(EventKind::flag_state);
+  server.send(proto::FlagSet{2, {bool_flag(30, true)}}, proto::kChannelProgress);
+  settle(client, server, events, 200);
+  CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+  CHECK(events.count(EventKind::flag_state) == states);
+
+  // The host's own change goes out as FLAG_STATE and into the table, no event.
+  client.set_flag_answer({});
+  from = server.received.size();
+  CHECK(client.set_flag(bool_flag(40, true)));
+  at = wait_received<proto::FlagState>(client, server, from);
+  CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+        std::vector<proto::FlagEntry>{bool_flag(40, true)});
+  CHECK(client.find_flag(40) == bool_flag(40, true));
+  CHECK_FALSE(server.find<proto::FlagSet>(from).has_value());
+
+  // FLAG_SET from nobody or from ourselves is refused.
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::FlagSet{4, {bool_flag(1, true)}}, proto::kChannelProgress);
+  server.send(proto::FlagSet{1, {bool_flag(1, true)}}, proto::kChannelProgress);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 2; }));
+
+  // The host's table goes to the server as FLAG_SNAPSHOT parts.
+  if (!kFullSizeMessages) return;
+  from = server.received.size();
+  std::vector<proto::FlagEntry> table;
+  for (std::uint32_t i = 0; i < proto::kMaxFlagEntries + 1; ++i) table.push_back(s32_flag(i + 1, 1));
+  CHECK(client.send_flag_snapshot(table));
+  REQUIRE(pump(client, server, [&] { return count_received<proto::FlagSnapshot>(server, from) == 2; }));
+  const auto part0 = server.find<proto::FlagSnapshot>(from);
+  REQUIRE(part0.has_value());
+  const auto& snap = std::get<proto::FlagSnapshot>(server.received[*part0].message);
+  CHECK(snap.part == 0);
+  CHECK(snap.part_count == 2);
+  CHECK(server.received[*part0].channel == proto::kChannelProgress);
+}
+
+TEST_CASE("client flags: who hosts, and a non-host refuses FLAG_SET") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  CHECK_FALSE(client.is_host());
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK_FALSE(client.is_host());
+  CHECK_FALSE(client.send_flag_snapshot({}));
+
+  const std::size_t from = server.received.size();
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::FlagSet{1, {bool_flag(1, true)}}, proto::kChannelProgress);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 1; }));
+
+  // The host leaves: the lowest number left is us.
+  server.send(proto::PlayerLeft{1, proto::LeaveReason::left}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::player_left));
+  CHECK(client.is_host());
+  CHECK(client.send_flag_snapshot({}));
+  const std::size_t at = wait_received<proto::FlagSnapshot>(client, server, from);
+  CHECK(std::get<proto::FlagSnapshot>(server.received[at].message) ==
+        proto::FlagSnapshot{0, 1, {}});
+  CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+}
+
+TEST_CASE("client join: request, accept, refuse, not there and stale answers") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  CHECK_FALSE(client.request_join(1).has_value());  // not connected
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}, {3, "Zelda"}});
+
+  CHECK_FALSE(client.request_join(2).has_value());  // us
+  CHECK_FALSE(client.request_join(4).has_value());  // nobody
+  CHECK_FALSE(client.join_request_id().has_value());
+
+  // Request and accept.
+  std::size_t from = server.received.size();
+  const auto id = client.request_join(1);
+  REQUIRE(id.has_value());
+  CHECK(client.join_request_id() == id);
+  const std::size_t at = wait_received<proto::JoinPartner>(client, server, from);
+  CHECK(server.received[at].channel == proto::kChannelSession);
+  const auto& request = std::get<proto::JoinPartner>(server.received[at].message);
+  CHECK(request.player_number == proto::kPlayerSelf);
+  CHECK(request.other_player == 1);
+  CHECK(request.request_id == *id);
+  CHECK(request.kind == proto::JoinKind::request);
+
+  const proto::JoinTarget where{"spot04", {1, 2, 3}, {0, 0, 0, 1}};
+  const proto::JoinPartner accept{1, 2, *id, proto::JoinKind::accept, where, {}};
+  server.send(accept, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::join_accepted));
+  const Event accepted = events.all[*events.find(EventKind::join_accepted)];
+  CHECK(accepted.player == 1);
+  CHECK(accepted.request_id == *id);
+  CHECK(accepted.join_target == where);
+  CHECK_FALSE(client.join_request_id().has_value());
+
+  // The same answer again is stale now; so is one from another player than
+  // the one asked.
+  const auto id2 = client.request_join(3);
+  REQUIRE(id2.has_value());
+  CHECK(*id2 != *id);
+  server.send(accept, proto::kChannelSession);
+  server.send(proto::JoinPartner{1, 2, *id2, proto::JoinKind::accept, where, {}},
+              proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.stale_join_answers() == 2; }));
+
+  // A refusal keeps its reason, an unknown one raw.
+  server.send(proto::JoinPartner{3, 2, *id2, proto::JoinKind::refuse, std::nullopt,
+                                 static_cast<proto::JoinRefuseReason>(9)},
+              proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::join_refused));
+  const Event refused = events.all[*events.find(EventKind::join_refused)];
+  CHECK(refused.player == 3);
+  CHECK(refused.request_id == *id2);
+  CHECK(static_cast<int>(refused.join_reason) == 9);
+  CHECK(events.count(EventKind::join_accepted) == 1);
+
+  // A newer request makes the older one stale.
+  const auto old_id = client.request_join(1);
+  const auto id3 = client.request_join(3);
+  REQUIRE(old_id.has_value());
+  REQUIRE(id3.has_value());
+  server.send(proto::JoinPartner{1, 2, *old_id, proto::JoinKind::accept, where, {}},
+              proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.stale_join_answers() == 3; }));
+
+  // The server's own refusal for a player who has just left.
+  server.send(proto::PlayerLeft{3, proto::LeaveReason::left}, proto::kChannelSession);
+  server.send(proto::JoinPartner{3, 2, *id3, proto::JoinKind::refuse, std::nullopt,
+                                 proto::JoinRefuseReason::not_there},
+              proto::kChannelSession);
+  const std::size_t before = events.all.size();
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return events.find(EventKind::join_refused, before).has_value();
+  }));
+  const Event gone = events.all[*events.find(EventKind::join_refused, before)];
+  CHECK(gone.player == 3);
+  CHECK(gone.join_reason == proto::JoinRefuseReason::not_there);
+  CHECK(client.stale_join_answers() == 3);
+}
+
+TEST_CASE("client join: a request times out on its own") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_timeout_ms = 200;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK(ClientConfig{}.join_timeout_ms == 5000);
+
+  const auto started = std::chrono::steady_clock::now();
+  const auto id = client.request_join(1);
+  REQUIRE(id.has_value());
+  REQUIRE(wait_event(client, server, events, EventKind::join_timed_out));
+  CHECK(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(200));
+  const Event timed_out = events.all[*events.find(EventKind::join_timed_out)];
+  CHECK(timed_out.player == 1);
+  CHECK(timed_out.request_id == *id);
+  CHECK_FALSE(client.join_request_id().has_value());
+
+  // A late answer is stale.
+  server.send(proto::JoinPartner{1, 2, *id, proto::JoinKind::refuse, std::nullopt,
+                                 proto::JoinRefuseReason::declined},
+              proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.stale_join_answers() == 1; }));
+  CHECK(events.count(EventKind::join_refused) == 0);
+}
+
+TEST_CASE("client join: a request from another player and its answer") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_timeout_ms = 300;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}, {3, "Zelda"}});
+
+  // Refused: from nobody, or for someone else.
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::JoinPartner{4, 2, 1, proto::JoinKind::request, std::nullopt, {}},
+              proto::kChannelSession);
+  server.send(proto::JoinPartner{3, 1, 1, proto::JoinKind::request, std::nullopt, {}},
+              proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 2; }));
+
+  server.send(proto::JoinPartner{1, 2, 77, proto::JoinKind::request, std::nullopt, {}},
+              proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::join_request));
+  const Event asked = events.all[*events.find(EventKind::join_request)];
+  CHECK(asked.player == 1);
+  CHECK(asked.request_id == 77);
+
+  const proto::JoinTarget where{"spot00", {4, 5, 6}, {0, 0, 0, 1}};
+  CHECK_FALSE(client.accept_join(1, 78, where));  // not that id
+  CHECK_FALSE(client.accept_join(3, 77, where));  // not that player
+  CHECK_FALSE(client.accept_join(1, 77, {"", {}, {0, 0, 0, 1}}));  // no scene
+  std::size_t from = server.received.size();
+  CHECK(client.accept_join(1, 77, where));
+  const std::size_t at = wait_received<proto::JoinPartner>(client, server, from);
+  CHECK(std::get<proto::JoinPartner>(server.received[at].message) ==
+        proto::JoinPartner{0, 1, 77, proto::JoinKind::accept, where,
+                           proto::JoinPartner{}.reason});  // not on the wire
+  CHECK_FALSE(client.accept_join(1, 77, where));  // answered already
+
+  // A refusal.
+  server.send(proto::JoinPartner{3, 2, 5, proto::JoinKind::request, std::nullopt, {}},
+              proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::join_request));
+  from = server.received.size();
+  CHECK(client.refuse_join(3, 5, proto::JoinRefuseReason::busy));
+  const std::size_t refused_at = wait_received<proto::JoinPartner>(client, server, from);
+  CHECK(std::get<proto::JoinPartner>(server.received[refused_at].message) ==
+        proto::JoinPartner{0, 3, 5, proto::JoinKind::refuse, std::nullopt,
+                           proto::JoinRefuseReason::busy});
+
+  // A request left past the timeout can no longer be answered.
+  server.send(proto::JoinPartner{3, 2, 6, proto::JoinKind::request, std::nullopt, {}},
+              proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::join_request));
+  settle(client, server, events, 400);
+  CHECK_FALSE(client.refuse_join(3, 6, proto::JoinRefuseReason::declined));
+
+  // Nor one from a player who then leaves.
+  server.send(proto::JoinPartner{3, 2, 7, proto::JoinKind::request, std::nullopt, {}},
+              proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::join_request));
+  server.send(proto::PlayerLeft{3, proto::LeaveReason::left}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::player_left));
+  CHECK_FALSE(client.refuse_join(3, 7, proto::JoinRefuseReason::declined));
+}
+
+TEST_CASE("client flags and join: a reconnect clears the shared state") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+
+  server.send(proto::FlagSnapshot{0, 1, {bool_flag(1, true)}}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
+  server.send(proto::JoinPartner{1, 2, 9, proto::JoinKind::request, std::nullopt, {}},
+              proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::join_request));
+  // Half a snapshot, and our own open request.
+  server.send(proto::FlagSnapshot{0, 2, {bool_flag(2, true)}}, proto::kChannelProgress);
+  const auto id = client.request_join(1);
+  REQUIRE(id.has_value());
+  settle(client, server, events);
+  CHECK(client.synced());
+  CHECK(client.flags().size() == 1);
+
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+  CHECK_FALSE(client.synced());
+  CHECK(client.flags().empty());
+  CHECK_FALSE(client.join_request_id().has_value());
+
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK_FALSE(client.synced());
+  CHECK_FALSE(client.refuse_join(1, 9, proto::JoinRefuseReason::declined));
+  // The old answer is stale; the old half snapshot is not finished by part 1.
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::JoinPartner{1, 2, *id, proto::JoinKind::refuse, std::nullopt,
+                                 proto::JoinRefuseReason::busy},
+              proto::kChannelSession);
+  server.send(proto::FlagSnapshot{1, 2, {bool_flag(3, true)}}, proto::kChannelProgress);
+  REQUIRE(pump(client, server, [&] {
+    return client.stale_join_answers() == 1 && client.rejected_count() == rejected + 1;
+  }));
+  CHECK_FALSE(client.synced());
+  CHECK(client.flags().empty());
+
+  client.stop();
+  CHECK_FALSE(client.set_flag(bool_flag(1, true)));
+  CHECK_FALSE(client.request_join(1).has_value());
+}
+
+TEST_CASE("client: the flag and join event kinds are named") {
+  CHECK(to_string(EventKind::flag_state) == "flag state");
+  CHECK(to_string(EventKind::flag_snapshot) == "flag snapshot");
+  CHECK(to_string(EventKind::join_request) == "join request");
+  CHECK(to_string(EventKind::join_accepted) == "join accepted");
+  CHECK(to_string(EventKind::join_refused) == "join refused");
+  CHECK(to_string(EventKind::join_timed_out) == "join timed out");
+}

@@ -318,6 +318,20 @@ Kakariko Village (child), Fritchii v5 coop build, two local instances on one ser
 
 Not yet seen: animation (the puppet stands in its default pose), rotation in the picture, a scene change with two instances, adult Link.
 
+## Fairy
+
+Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii/hook/coop_fairy.*`). Not yet run in game when this was written.
+
+| Piece | What |
+|---|---|
+| Actor | `Dm_Npc_Navi`, the cutscene Navi from the game's own pack: its own model and glow (`XLink/Npc_Navi`), `ActorLogicSimpleActor`, the generic name `Dm_Npc_Base`. `Npc_Navi` is not used: it is the player's partner, with an AI that follows the player and a name the game looks up, so a second one would clash. `LICHII_COOP_FAIRY_ACTOR=<pack>` picks another (`Npc_Fairy` is the next to try). |
+| Create and delete | A second `CoopPuppet::Director`, the same create, take and delete path as the puppet. `CoopSvc::Call` hands each `svc #0xf4` to `CoopFairy::Step`: the puppet director until it is done for the frame, then the fairy one (`Chain`), each with its own frame and its own call results. Each takes at most 4 calls a frame, the cave allows 16. Its log lines start with `fairy`. |
+| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
+| Pose | Written into the actor every game frame by the director, like the puppet's. The Navi AI is not pointed at the puppet. |
+| Off | `LICHII_COOP_FAIRY=0`. |
+
+The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.

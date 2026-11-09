@@ -11,8 +11,10 @@ add_executable(coop_tests
   host/flags_test.cpp
   host/flag_watcher_test.cpp
   overlay/overlay_test.cpp
+  lichii/camera_test.cpp
   lichii/settings_test.cpp
-  # The hook's settings parser has no emulator code, so it is tested on its own.
+  # These two hook files have no emulator code, so they are tested on their own.
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
 )
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)

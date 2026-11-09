@@ -53,6 +53,12 @@ struct SessionConfig {
   // flag_table_full. 262,144 is 64 snapshot parts, far past OoT's flags.
   // 0 keeps nothing; more than 65535 parts' worth counts as 65535 parts.
   std::size_t max_flags = 262'144;
+  // A HELLO whose name a player already holds takes that player's place
+  // (rejoin after a crash) only when it comes from the same address and the
+  // old player has sent nothing for this long; otherwise it is refused as
+  // name taken. The server pings every 250 ms and a live build answers, so a
+  // live player is never this quiet. 0: never take over.
+  std::uint64_t rejoin_stale_us = 1'000'000;
   // Called with one line for each join, leave and refusal. May be empty.
   std::function<void(const std::string&)> log;
 };
@@ -86,6 +92,9 @@ struct Stats {
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
   std::uint64_t half_open_limited = 0;
+  // HELLOs that took over a stale player of the same name (see
+  // rejoin_stale_us).
+  std::uint64_t rejoined = 0;
 
   // JOIN_PARTNER (stage 1 step 3). Relayed ones count in relayed too.
   std::uint64_t join_relayed = 0;
@@ -180,8 +189,8 @@ class Session {
   void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
               std::uint64_t now_us);
   void remove_player(ConnectionId id, protocol::LeaveReason reason);
-  bool name_in_use(const std::string& nickname) const;
-  std::uint8_t free_number() const;
+  std::optional<ConnectionId> holder_of(const std::string& nickname) const;
+  std::uint8_t free_number(std::uint8_t preferred = 0) const;
 
   void send(ConnectionId to, std::uint8_t channel, const protocol::Message& m);
   void send_to_others(ConnectionId except, std::uint8_t channel,

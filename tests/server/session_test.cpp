@@ -65,8 +65,8 @@ struct Harness {
     }
   }
 
-  void connect(ConnectionId id) {
-    session.connected(id, now);
+  void connect(ConnectionId id, std::optional<std::uint32_t> address = std::nullopt) {
+    REQUIRE(session.connected(id, now, address));
     collect();
   }
 
@@ -81,8 +81,9 @@ struct Harness {
   }
 
   // Connects and joins a player; returns the WELCOME.
-  Welcome join(ConnectionId id, const std::string& nickname) {
-    connect(id);
+  Welcome join(ConnectionId id, const std::string& nickname,
+               std::optional<std::uint32_t> address = std::nullopt) {
+    connect(id, address);
     receive(id, hello_from(nickname), kChannelSession);
     for (const Sent& s : to(id)) {
       if (const auto* w = std::get_if<Welcome>(&s.message)) return *w;
@@ -987,4 +988,133 @@ TEST_CASE("a size limit set past what a snapshot can carry still keeps and sends
   h.clear();
   h.join(2, "Zelda");
   CHECK(messages_of<FlagSnapshot>(h, 2).size() == 1);
+}
+
+namespace {
+
+constexpr std::uint32_t kHomePc = 0x0100007F;
+constexpr std::uint32_t kOtherPc = 0x0200000A;
+
+// Sends a HELLO on a new connection; returns what that connection was sent.
+std::vector<Sent> hello_on(Harness& h, ConnectionId id, const std::string& nickname,
+                           std::optional<std::uint32_t> address) {
+  h.clear();
+  h.connect(id, address);
+  h.receive(id, hello_from(nickname), kChannelSession);
+  return h.to(id);
+}
+
+RefuseReason refused_reason(const std::vector<Sent>& msgs) {
+  REQUIRE(msgs.size() == 1);
+  return std::get<Refused>(msgs[0].message).reason;
+}
+
+}  // namespace
+
+TEST_CASE("a killed build restarted on the same PC takes its old place after 1 s quiet") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+  h.join(3, "Saria", kOtherPc);
+  // Link's build is killed: nothing more from connection 1. The others talk.
+  h.now += 1'000'000;
+  h.receive(2, Ping{h.now}, kChannelSession);
+
+  auto msgs = hello_on(h, 9, "link", kHomePc);
+  REQUIRE(!msgs.empty());
+  const auto* w = std::get_if<Welcome>(&msgs[0].message);
+  REQUIRE(w != nullptr);
+  CHECK(w->player_number == 1);  // its old number, not just the lowest free
+  REQUIRE(w->players.size() == 2);
+  CHECK(w->players[0].nickname == "Zelda");
+  CHECK(h.dropped == std::vector<ConnectionId>{1});
+  for (ConnectionId other : {2u, 3u}) {
+    auto seen = h.to(other);
+    // Left, the host handed on (Link hosted), then joined again.
+    REQUIRE(seen.size() >= 3);
+    CHECK(std::get<PlayerLeft>(seen[0].message) == PlayerLeft{1, LeaveReason::timed_out});
+    CHECK(std::get<Host>(seen[1].message) == Host{2});
+    CHECK(std::get<PlayerJoined>(seen[2].message) == PlayerJoined{1, "link"});
+  }
+  CHECK(h.session.player_count() == 3);
+  CHECK(h.session.player_number(9) == std::optional<std::uint8_t>{1});
+  CHECK(h.session.stats().rejoined == 1);
+  CHECK(h.session.stats().dropped() == 0);
+
+  // ENet reporting the old peer gone later changes nothing.
+  h.clear();
+  h.session.disconnected(1, h.now);
+  h.collect();
+  CHECK(h.sent.empty());
+  CHECK(h.session.player_count() == 3);
+}
+
+TEST_CASE("a rejoining host hands over as on any leave; alone it hosts again with the table") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+  h.receive(1, FlagState{0, {FlagEntry{0x1234, 0, FlagKind::boolean, 1}}}, kChannelProgress);
+  h.now += 1'500'000;
+  auto msgs = hello_on(h, 9, "Link", kHomePc);
+  CHECK(h.session.host() == std::optional<std::uint8_t>{2});
+  CHECK(messages_of<Host>(h, 2) == std::vector<Host>{Host{2}});
+  CHECK(messages_of<Host>(h, 9) == std::vector<Host>{Host{2}});
+  // The table the old host built is kept and sent to the rejoiner.
+  CHECK(h.session.flag_count() == 1);
+  CHECK(messages_of<FlagSnapshot>(h, 9).size() == 1);
+
+  Harness solo;
+  solo.join(1, "Link", kHomePc);
+  solo.now += 1'000'000;
+  auto again = hello_on(solo, 9, "Link", kHomePc);
+  REQUIRE(std::holds_alternative<Welcome>(again[0].message));
+  CHECK(std::get<Welcome>(again[0].message).player_number == 1);
+  CHECK(solo.session.host() == std::optional<std::uint8_t>{1});
+}
+
+TEST_CASE("a rejoin into a full session takes the old place instead of being refused as full") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+  h.join(3, "Saria", kOtherPc);
+  h.join(4, "Darunia", kOtherPc);
+  h.now += 1'000'000;
+  auto msgs = hello_on(h, 9, "Link", kHomePc);
+  REQUIRE(std::holds_alternative<Welcome>(msgs[0].message));
+  CHECK(h.session.player_count() == 4);
+  // A fifth name is still refused as full.
+  CHECK(refused_reason(hello_on(h, 10, "Ruto", kHomePc)) == RefuseReason::server_full);
+}
+
+TEST_CASE("a live player's name stays refused, from any PC; another PC never takes over") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+
+  // Same PC, but Link was heard 999 ms ago: still a live player.
+  h.now += 999'000;
+  CHECK(refused_reason(hello_on(h, 10, "Link", kHomePc)) == RefuseReason::name_taken);
+  // Another PC, however long Link has been quiet.
+  h.now += 5'000'000;
+  CHECK(refused_reason(hello_on(h, 11, "LINK", kOtherPc)) == RefuseReason::name_taken);
+  // A connection with no address never takes over.
+  CHECK(refused_reason(hello_on(h, 12, "Link", std::nullopt)) == RefuseReason::name_taken);
+  CHECK(h.dropped == std::vector<ConnectionId>{12});  // only the refused one
+  CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
+  CHECK(h.session.stats().rejoined == 0);
+
+  // Link answers again: a later same-PC HELLO is refused too.
+  h.receive(1, Ping{h.now}, kChannelSession);
+  h.now += 100'000;
+  CHECK(refused_reason(hello_on(h, 13, "Link", kHomePc)) == RefuseReason::name_taken);
+}
+
+TEST_CASE("rejoin_stale_us 0 turns the takeover off") {
+  SessionConfig config;
+  config.rejoin_stale_us = 0;
+  Harness h(config);
+  h.join(1, "Link", kHomePc);
+  h.now += 9'000'000;
+  CHECK(refused_reason(hello_on(h, 9, "Link", kHomePc)) == RefuseReason::name_taken);
+  CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
 }

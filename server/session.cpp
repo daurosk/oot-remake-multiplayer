@@ -110,21 +110,36 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, *reason, now_us);
     return;
   }
-  if (player_count() >= kMaxPlayers) {
-    refuse(id, c, RefuseReason::server_full, now_us);
-    return;
-  }
   if (blank_name(hello.nickname)) {
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
   }
-  if (name_in_use(hello.nickname)) {
-    refuse(id, c, RefuseReason::name_taken, now_us);
+  // A crashed build restarted on the same machine finds its old self still
+  // in until the silence timeout. It takes that place when the old one is
+  // quiet and from the same address; a live player's name, or one from
+  // another address, stays refused, so nobody can push a player out.
+  std::uint8_t preferred = 0;
+  if (auto holder = holder_of(hello.nickname)) {
+    const Connection& old = connections_.at(*holder);
+    const bool stale = config_.rejoin_stale_us != 0 && c.address && old.address == c.address &&
+                       now_us - old.last_heard >= config_.rejoin_stale_us;
+    if (!stale) {
+      refuse(id, c, RefuseReason::name_taken, now_us);
+      return;
+    }
+    preferred = old.number;
+    ++stats_.rejoined;
+    log("player " + std::to_string(old.number) + " rejoins: " + old.nickname);
+    actions_.push_back(DisconnectAction{*holder});
+    remove_player(*holder, LeaveReason::timed_out);
+  }
+  if (player_count() >= kMaxPlayers) {
+    refuse(id, c, RefuseReason::server_full, now_us);
     return;
   }
 
   Welcome welcome;
-  welcome.player_number = free_number();
+  welcome.player_number = free_number(preferred);
   welcome.server_time_us = now_us;
   welcome.tick_rate = config_.tick_rate;
   for (const auto& entry : connections_) {
@@ -416,18 +431,23 @@ std::optional<std::uint8_t> Session::player_number(ConnectionId id) const {
   return it->second.number;
 }
 
-bool Session::name_in_use(const std::string& nickname) const {
-  return std::any_of(connections_.begin(), connections_.end(), [&](const auto& entry) {
-    return entry.second.state == State::joined && same_name(entry.second.nickname, nickname);
-  });
+std::optional<ConnectionId> Session::holder_of(const std::string& nickname) const {
+  for (const auto& [id, c] : connections_) {
+    if (c.state == State::joined && same_name(c.nickname, nickname)) return id;
+  }
+  return std::nullopt;
 }
 
-std::uint8_t Session::free_number() const {
-  for (std::uint8_t n = 1; n <= kMaxPlayers; ++n) {
-    bool used = std::any_of(connections_.begin(), connections_.end(), [&](const auto& entry) {
+// `preferred` (a rejoiner's old number) when it is free, else the lowest.
+std::uint8_t Session::free_number(std::uint8_t preferred) const {
+  auto used = [&](std::uint8_t n) {
+    return std::any_of(connections_.begin(), connections_.end(), [&](const auto& entry) {
       return entry.second.state == State::joined && entry.second.number == n;
     });
-    if (!used) return n;
+  };
+  if (preferred >= 1 && preferred <= kMaxPlayers && !used(preferred)) return preferred;
+  for (std::uint8_t n = 1; n <= kMaxPlayers; ++n) {
+    if (!used(n)) return n;
   }
   return 0;  // unreachable: on_hello refuses a full session first
 }

@@ -400,6 +400,8 @@ Two local games in the Graveyard (child), autotest scenario `pose` (`tools/autot
 - B's screenshots show the puppet in A's poses at the same moments: walking, mid-run, turning to run back, and a hunched pose with hands on the knees that the AS route never showed.
 - With `LICHII_COOP_POSE_NO_AS=1` no AS command is played on the puppet at all, and it still moves through every pose: the copy alone drives the whole body.
 
+- Facing: with scenario `turn` (A walks up, then faces left, right, toward B and away), the yaw that `LICHII_COOP_DEBUG_POSE=1` now logs (`yaw ours <deg>, P<n> <deg>`, from actor +0x328) of B's puppet followed A's own at every turn: 91, 152, 2, -93, 86 on both sides; A's puppet of B stayed at B's -104. The facing is the actor matrix the director writes from `PLAYER_SAMPLE`; the root bone carries none (its local rotation stays identity).
+
 The first two-game run had every write refused: the player reaches its model through component +0x0, +0x60 as well, but the puppet does not; component +0x8 works for both.
 
 ### Not done (pose)

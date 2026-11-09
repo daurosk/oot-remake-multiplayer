@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 
@@ -382,6 +383,16 @@ bool WritePose(State& s, CoopPuppet::Guest& guest, std::uint64_t actor, const Po
     return true;
 }
 
+// The actor's facing in degrees: its forward axis (rotation column 2) on the
+// ground plane, atan2(x, z). "-" when it cannot be read.
+std::string YawText(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    std::array<float, 9> m{};
+    if (actor == 0 || !guest.Read(actor + 0x328, m.data(), sizeof(m))) return "-";
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%.0f", std::atan2(m[2], m[8]) * 57.29578f);
+    return buf;
+}
+
 }  // namespace
 
 void SetLog(std::function<void(const std::string&)> log, bool debug, bool no_as) {
@@ -430,11 +441,18 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
     }
     if (s.debug && now_ms - s.log_ms >= 1000) {
         s.log_ms = now_ms;
+        // Facing, for checking that a puppet turns with its player: ours and
+        // each puppet's, from the actor's rotation (+0x328).
+        std::string facing = "; yaw ours " + YawText(guest, player);
+        for (const auto& [number, actor] : puppets) {
+            facing += ", P" + std::to_string(number) + " " + YawText(guest, actor);
+        }
         Say(s, std::to_string(s.first.size()) + " bones, " + std::to_string(s.last_size) +
                    " moving; " + std::to_string(s.sent) + " sent/s, " +
                    std::to_string(s.received) + " received/s, " + std::to_string(s.written) +
                    " written/s, " + std::to_string(s.refused) + " refused/s; last write kept " +
-                   std::to_string(s.kept) + ", overwritten " + std::to_string(s.overwritten));
+                   std::to_string(s.kept) + ", overwritten " + std::to_string(s.overwritten) +
+                   facing);
         s.sent = s.received = s.written = s.refused = s.kept = s.overwritten = 0;
     }
 }

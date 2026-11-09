@@ -102,7 +102,7 @@ constexpr u32 kStateAlive = 4;
 constexpr u64 kActorVtable = 0x4b25e18;
 constexpr u64 kSetMatrix = 0x4c6580;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
-constexpr unsigned kMoverCallerOrder = 20;  // after the puppets and spawn copies (10)
+constexpr unsigned kMoverCallerOrder = 30;  // after the puppets, spawn copies (10) and fairies (20)
 // Animations (docs/puppet.md "Animation"): the AS controller is
 // [[[actor + 0x270] + 0x40] + 0x18] + 0x18; slot 0 is [controller + 0x20];
 // its command name char* +0x10, rate f32 +0xd4, frame f32 +0xe8. The play

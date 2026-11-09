@@ -16,6 +16,8 @@ port = 27510               # optional, the default
 name = Saria               # 1 to 16 characters, different for each player
 ```
 
+A `#` or `;` starts a comment at the start of a line or after a space or tab; one with no space before it (`Link#2`) is part of the value.
+
 Two more environment variables are for checking the markers (see [the first run](#not-checked-yet-the-first-run)): `LICHII_COOP_DEBUG_CAMERA=1` marks yourself too and logs where, `LICHII_COOP_CAMERA_FLIP_Y=1` turns the markers upside down.
 
 Any mistake (an unknown key, a bad port, a name too long) is written to the log and turns co-op off, so a typo never connects somewhere unintended. The log shows `coop: on, server ...` or `coop: off (...)` at start.

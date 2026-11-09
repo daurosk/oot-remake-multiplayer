@@ -33,7 +33,9 @@ void Open() {
     layout->addWidget(new QLabel(QStringLiteral("Gives the local player an item, as a pickup "
                                                 "would. The save must be loaded.")));
     AddQuick(layout, "Gold Skulltula token (+1)", "PouchData.Item_Token_Gold.StockNum");
-    AddQuick(layout, "Heart piece (+1)", "PouchData.Obj_Heart_Piece.StockNum");
+    AddQuick(layout, "Heart piece (+1, count only, no heart shown)",
+             "PouchData.Obj_Heart_Piece.StockNum");
+    AddQuick(layout, "Heart container (+1 heart)", "PlayerStatus.MaxLife");
     AddQuick(layout, "Small key, Forest Temple (+1)", "DungeonInfo.ForestTemple.SmallKeyNum");
     AddQuick(layout, "Hookshot", "PouchData.Item_Hookshot.StockNum");
     AddQuick(layout, "Song of Storms", "IsGet.Item_Melody_StormSong");

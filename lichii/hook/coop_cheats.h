@@ -23,8 +23,9 @@ bool On();
 // The item flags that can be given (every shared item flag), sorted by name.
 std::vector<std::string> Items();
 
-// Queues one gift of the item flag `name`: a Bool flag becomes 1, an Int
-// flag goes up by one. A `PouchData.<item>.StockNum` also sets
+// Queues one gift of the item flag `name`: a Bool flag or an owned item
+// (StockNum) becomes 1, a count (keys, tokens, heart pieces) goes up by one,
+// PlayerStatus.MaxLife by one heart (4). A `PouchData.<item>.StockNum` also sets
 // `IsGet.<item>` when there is one. Any thread.
 void Give(const std::string& name);
 

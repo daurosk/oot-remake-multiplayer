@@ -34,15 +34,24 @@ std::string GiveOne(coop::host::FlagStore& game, const coop::host::ItemFlag& ite
     if (!now) {
         return std::string(item.name) + ": not readable (save not loaded?)";
     }
-    std::uint32_t value = 1;
+    // A Bool or an owned item: 1. A count: one more. Max life: one heart
+    // (4 quarters) more.
+    const auto was = static_cast<std::int32_t>(now->value);
+    std::int32_t value = 1;
     if (item.kind == FlagKind::int32) {
-        value = static_cast<std::uint32_t>(static_cast<std::int32_t>(now->value) + 1);
+        if (item.rule == coop::host::ItemRule::count) {
+            value = was + 1;
+        } else if (item.name == "PlayerStatus.MaxLife") {
+            value = was + 4;
+        } else {
+            value = std::max(was, 1);
+        }
     }
-    if (!game.write(coop::protocol::FlagEntry(key, item.kind, value))) {
+    if (!game.write(coop::protocol::FlagEntry(key, item.kind, static_cast<std::uint32_t>(value)))) {
         return std::string(item.name) + ": write failed";
     }
     return std::string(item.name) + " " + std::to_string(static_cast<std::int32_t>(now->value)) +
-           " -> " + std::to_string(static_cast<std::int32_t>(value));
+           " -> " + std::to_string(value);
 }
 
 } // namespace

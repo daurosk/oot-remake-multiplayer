@@ -5,7 +5,8 @@
 //              ExecuteWmSetTime loads)
 //   T        = [WorldMgr + 0x510], the time object
 //   now      = the time record at T + 0x20, or T + 0x50 while bit 9 of
-//              T + 8 is set (the getter 0x3452280 copies its +8 and +0x10)
+//              T + 8 is set (the getter 0x3452280 copies its +8 and +0x10):
+//              u32 seconds since midnight at +8, u32 days at +0xc
 //   set      = 0x34522d0(WorldMgr, seconds since midnight): ExecuteWmSetTime
 //              calls it with hour * 3600 + minute * 60; it hands the time to
 //              0xeee640(T, seconds, 1, -1)
@@ -166,8 +167,10 @@ struct Glue {
                      flags, (*raw)[0], (*raw)[1], (*raw)[2], (*raw)[3], (*raw)[4], (*raw)[5],
                      asked ? (*asked)[0] : 0u, asked ? (*asked)[1] : 0u);
         }
-        // The record's u32 at +0x10 (the getter copies +8 and +0x10).
-        const std::uint32_t seconds = (*raw)[4];
+        // Seconds since midnight are the record's u32 at +8 (live, 2026-11-09:
+        // 10:01 read 0x8ceb; +0xc counts days, it went up by one when a set
+        // took the clock back to 00:00).
+        const std::uint32_t seconds = (*raw)[2];
         if (seconds >= coop::protocol::kSecondsPerDay) {
             return std::nullopt;
         }

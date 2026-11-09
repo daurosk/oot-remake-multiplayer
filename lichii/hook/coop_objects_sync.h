@@ -31,6 +31,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -93,9 +94,9 @@ struct LifeWrite {
     std::int32_t hurt = 0;
 };
 
-// Shared at first: enemies only.
-// Enemies, animals (a cucco is Animal_Cucco) and townspeople (Npc_, but not
-// Navi, held equipment or invisible helpers).
+// Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
+// not Navi, held equipment or invisible helpers) and the breakable world
+// objects (coop_world.h).
 bool IsShared(std::string_view name);
 
 // The id of an enemy the scene made without a placement hash: the scene, the
@@ -159,6 +160,16 @@ public:
               const std::vector<Seen>& seen, std::vector<coop::protocol::Message>& send,
               std::vector<LifeWrite>& writes);
 
+    // Present thread, before Tick: our own Link's position, when the walk saw
+    // it. A breakable that leaves the list within kBreakNearM of it after it
+    // was moved (lifted, carried, thrown), or within kBreakReachM unmoved,
+    // was broken: a thrown rock, and a crate cut by the sword, are removed
+    // with their life never read at 0. One that leaves further away was
+    // unloaded.
+    void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
+    static constexpr float kBreakNearM = 8.0f;
+    static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
+    static constexpr int kMissedWalks = 2;
     // Present thread, every frame: where each copy we do not own should be.
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
 
@@ -188,6 +199,9 @@ public:
 
     // For tests and logs.
     std::size_t Count() const { return objects_.size(); }
+    // What Flush decided for each shared object that left the walk, as log
+    // lines; taken (and cleared) by the caller.
+    std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
     // The actors of the enemies we own, with their names (for the test drive).
     std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
@@ -238,11 +252,16 @@ private:
         std::int32_t hurt_left = 0;
         std::int32_t hurt_target = 0;
         std::uint64_t hurt_until = 0;
+        bool breakable = false;                 // coop_world.h
+        coop::protocol::Vec3 first_position{};  // where it was first seen
+        int missed = 0;                         // walks in a row without it
     };
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes);
 
+    void Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
+               std::vector<coop::protocol::Message>& send);
     void Apply(std::uint8_t self, std::uint64_t now_us, std::vector<coop::protocol::Message>& send,
                std::vector<LifeWrite>& writes);
     coop::protocol::ObjectState StateOf(Object& o, std::uint64_t now_us);
@@ -259,6 +278,8 @@ private:
     std::uint8_t DeciderOf(std::uint8_t self, std::uint64_t now_us) const;
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
+    std::optional<coop::protocol::Vec3> player_;
+    std::vector<std::string> notes_;
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::map<std::uint64_t, Decided> decided_;  // by director key
     std::map<std::uint64_t, std::uint64_t> bound_;  // actor to director key

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_world.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <tuple>
 #include <type_traits>
 #include <variant>
@@ -87,7 +89,8 @@ bool IsShared(std::string_view name) {
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
-    return name.starts_with("Enemy_") || name.starts_with("Animal_");
+    return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
+           CoopWorld::IsBreakable(name);
 }
 
 bool IsRolled(std::string_view name) {
@@ -323,16 +326,22 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.position = s.position;
         o.rotation = s.rotation;
         o.animation = s.animation;
-        if (s.life) {
-            if (o.life && s.life->life < *o.life) {
+        // A breakable's life can no longer be read once it has died (a crate
+        // at 0 for one frame, then its life object is gone): read that as 0.
+        std::optional<proto::ObjectLife> life = s.life;
+        if (!life && o.breakable && o.life && *o.life > 0) {
+            life = proto::ObjectLife{0, o.max};
+        }
+        if (life) {
+            if (o.life && life->life < *o.life) {
                 o.fight_until = now_us + kFightUs;
-                std::int32_t drop = *o.life - s.life->life;
+                std::int32_t drop = *o.life - life->life;
                 if (o.hurt_left > 0) {
                     // Our own hurt landing (or the game taking more for it):
                     // not a hit of ours.
                     o.hurt_left = std::max(0, o.hurt_left - drop);
                     if (o.hurt_left == 0) {
-                        if (s.life->life == o.hurt_target) {
+                        if (life->life == o.hurt_target) {
                             ++hurt_taken_;
                         }
                         o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
@@ -348,13 +357,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     o.hit_sum += drop;
                 }
             }
-            o.life = s.life->life;
-            o.max = s.life->max;
+            o.life = life->life;
+            o.max = life->max;
         }
     }
     hidden_ = std::move(hidden);
+    // Gone only when two walks in a row miss it: an actor drops out of the
+    // list for a moment when it is lifted or changes hands.
+    std::vector<Object> gone;
     for (auto it = objects_.begin(); it != objects_.end();) {
         if (now_seen.contains(it->first)) {
+            it->second.missed = 0;
+            ++it;
+            continue;
+        }
+        if (++it->second.missed < kMissedWalks) {
             ++it;
             continue;
         }
@@ -371,13 +388,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             r.position = o.position;
             send.emplace_back(r);
             owners_.erase(owner);
+        } else {
+            gone.push_back(std::move(it->second));
         }
         it = objects_.erase(it);
     }
+    Flush(self, now_us, gone, send);
     for (auto it = decided_.begin(); it != decided_.end();) {
         // A copy removed by its maker and no longer on our list is done.
-        const bool gone = it->second.address == 0 || !now_seen.contains(it->second.address);
-        it = it->second.removed && gone ? decided_.erase(it) : std::next(it);
+        const bool left = it->second.address == 0 || !now_seen.contains(it->second.address);
+        it = it->second.removed && left ? decided_.erase(it) : std::next(it);
     }
     decider_ = DeciderOf(self, now_us);
     std::set<std::uint64_t> refused;
@@ -393,6 +413,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.animation = s->animation;
         o.seen_at = now_us;
         o.name = s->name;
+        o.breakable = CoopWorld::IsBreakable(s->name);
+        o.first_position = s->position;
         if (s->life) {
             o.life = s->life->life;
             o.max = s->life->max;
@@ -542,6 +564,74 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         present_sent_ = std::move(present);
         present_at_ = now_us;
         present_once_ = true;
+    }
+}
+
+// Objects that left our walk. A break read just before it went (a pot's life
+// 0, then the pot is removed a few frames later) still reaches the others:
+// the owner's last life 0 as a sample, a copy's unsent hit as DAMAGE. A
+// breakable gone near our Link was broken here even when its life never
+// read 0 (a thrown rock is removed where it lands, a crate a moment after its
+// life reaches 0): within kBreakNearM when it was moved (lifted, thrown),
+// within kBreakReachM (sword reach) when not. The same, with all its life.
+void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
+                 std::vector<proto::Message>& send) {
+    for (Object& o : gone) {
+        const auto owner = owners_.find(o.id);
+        if (owner == owners_.end() || owner->second.player == 0) {
+            continue;
+        }
+        bool broken_here = false;
+        if (o.breakable && player_ && (!o.life || *o.life > 0)) {
+            const float dx = o.position[0] - (*player_)[0];
+            const float dy = o.position[1] - (*player_)[1];
+            const float dz = o.position[2] - (*player_)[2];
+            const float mx = o.position[0] - o.first_position[0];
+            const float my = o.position[1] - o.first_position[1];
+            const float mz = o.position[2] - o.first_position[2];
+            const bool moved = std::sqrt(mx * mx + my * my + mz * mz) >= 0.5f;
+            const float from_link = std::sqrt(dx * dx + dy * dy + dz * dz);
+            broken_here = from_link <= (moved ? kBreakNearM : kBreakReachM);
+        }
+        {
+            float near = -1.0f;
+            if (player_) {
+                const float dx = o.position[0] - (*player_)[0];
+                const float dy = o.position[1] - (*player_)[1];
+                const float dz = o.position[2] - (*player_)[2];
+                near = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            const float mx = o.position[0] - o.first_position[0];
+            const float my = o.position[1] - o.first_position[1];
+            const float mz = o.position[2] - o.first_position[2];
+            char line[200];
+            std::snprintf(line, sizeof line,
+                          "gone %016llx owner %u life %d moved %.2f from Link %.2f: %s",
+                          static_cast<unsigned long long>(o.id.value), owner->second.player,
+                          o.life.value_or(-1), std::sqrt(mx * mx + my * my + mz * mz), near,
+                          broken_here ? "broken here" : "left");
+            notes_.emplace_back(line);
+        }
+        if (owner->second.player == self) {
+            if (broken_here) {
+                o.life = 0;
+            }
+            if (o.life && *o.life <= 0 && (!o.sent_life || o.sent_life->life > 0)) {
+                proto::ObjectSample sample;
+                sample.id = o.id;
+                sample.epoch = owner->second.epoch;
+                sample.state = StateOf(o, now_us);
+                send.emplace_back(sample);
+            }
+        } else if (o.hit_sum > 0 || broken_here) {
+            proto::Damage d;
+            d.id = o.id;
+            d.epoch = owner->second.epoch;
+            d.amount = broken_here ? std::max(o.life.value_or(1), o.hit_sum) : o.hit_sum;
+            d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
+            d.position = o.position;
+            send.emplace_back(d);
+        }
     }
 }
 

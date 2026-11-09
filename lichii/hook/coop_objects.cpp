@@ -759,6 +759,9 @@ public:
             }
             CoopSpawn::TheDirector().SetEnemies(main_, std::move(enemies));
         }
+        for (const auto& note : sync_.TakeNotes()) {
+            LOG_INFO(Core, "coop: objects: share {}", note);
+        }
         for (const Seen& s : seen) {
             if (!s.animation || !IsShared(s.name)) {
                 continue;
@@ -856,6 +859,7 @@ private:
         if (!List(r, actors)) {
             return false;
         }
+        std::optional<coop::protocol::Vec3> player;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
         for (const u64 a : actors) {
             auto it = names_.find(a);
@@ -874,6 +878,13 @@ private:
                     LOG_INFO(Core, "coop: objects: share vtable {} main+{:#x}, slot 0x218 main+{:#x}",
                              known.first, vt - main_, slot - main_);
                 }
+            }
+            if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
+                coop::protocol::Vec3 at{};
+                for (std::size_t i = 0; i < 3; ++i) {
+                    at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                player = at;
             }
             if (IsShared(known.first) ||
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
@@ -900,6 +911,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        sync_.SetPlayer(player);
         return true;
     }
 
@@ -1206,7 +1218,7 @@ private:
                     LogPose(r, "+", a, actor);
                 }
             }
-            if (actor.name.starts_with("Enemy_")) {
+            if (IsShared(actor.name)) {  // enemies and breakables
                 Life(r, a, actor);
             }
         }

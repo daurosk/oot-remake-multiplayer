@@ -236,10 +236,18 @@ Two copies of the emulator (A and B, the same child save, a local server, `LICHI
 - **Heart pieces do not make hearts by themselves.** Raising `Obj_Heart_Piece.StockNum` (to 11) adds no heart in the game: the conversion happens in the pickup, not from the count. Hearts follow `MaxLife` (max rule); the cheat window has a heart container button for it. Not checked live yet: `MaxLife` crossing, and what a real heart piece pickup writes.
 - `StockNum` 1 = owned holds for the Hookshot: 1 made it show; the first cheat build raised it past 1 on repeated clicks (2, 3) and the game still showed it; the cheat now stops at 1.
 
-Not done: Gold Skulltula placement keys (which `Obj_RupeeToken` key goes with a token, and whether it is set on kill or on pickup) need a real Skulltula in a run; a late joiner getting the items.
+## Live check 2 (2026-11-09): late joiner, hearts, a real Gold Skulltula
+
+The same kit, both saves reset to the child save; game A and the server first, game B started minutes later.
+
+- **A late joiner gets the items.** The Hookshot given in A before B started was in B's menu when B loaded the save, with nobody clicking anything in B. (The unit test "a late joiner gets the host's items and keeps its own" covers the same path on fake games: the server's `FLAG_SNAPSHOT`, merged by `ItemFlagStore`, the joiner's own extra items sent back.)
+- **`PlayerStatus.MaxLife` is not where the game keeps its hearts.** The cheat's 16 -> 20 showed a fifth heart in both games (so the flag crosses), but each game wrote 16 back on its own within a quarter second (`int 0xfbe01da1 20 -> 16` with game B not yet running), and the heart was gone once the menu opened. The flag is a copy; the real maximum is elsewhere (likely the player), not mapped. Anchor, for comparison, raises the game's own `healthCapacity` and turns 4 pieces into a heart itself when one arrives. So heart containers do not cross yet.
+- **A Gold Skulltula is two 64-bit keys, set at token pickup.** The Kakariko tree Skulltula: in each game its own token pickup set `0x6a8d9b2373d08fc9` and `0x6a8d9b2373d08fcb` 0 -> 1 in the same scan as `Item_Token_Gold.StockNum` +1 (the clocks of A and B line up 412 s apart, so each game's pickup and the other's token arriving match). Other placements show the same pairs (key and key + 2). Not split yet: whether the kill alone sets either.
+- **Shared, the keys cross but a loaded Skulltula stays.** With both keys in the run's shared-flags file, A's pickup set them in B in the same second, yet B, already in the scene, still got the Skulltula out of the tree and its token: both games ended +2. The game reads the key when the actor is placed, not after. Anchor does the same flag sync and also deletes a Gold Skulltula (`EN_SW`) or token (`EN_SI`) actor every frame its flag is set; we need that step too (object side). Not checked: that the Skulltula is gone in B after a scene change.
 
 ## Not done
 
-1. Gold Skulltula and heart piece placement keys (see One-time pickups), and `MaxLife` live.
-2. What `StockNum` holds for other owned items (1 for the Hookshot), and what a real heart piece pickup writes.
-3. The unnamed structs and dungeon members above.
+1. Gold Skulltula placement keys: one known (above); the rest (`Obj_RupeeToken`, 85 placements, and any others) to read from the Banc placements; a loaded Skulltula or token removed when its key is set by another player; heart piece placement keys.
+2. Heart containers: find the game's real maximum life (not `PlayerStatus.MaxLife`) and write it, with the 4-pieces conversion.
+3. What `StockNum` holds for other owned items (1 for the Hookshot), and what a real heart piece pickup writes.
+4. The unnamed structs and dungeon members above.

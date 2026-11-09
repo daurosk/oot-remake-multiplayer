@@ -13,18 +13,20 @@ Both stages share one design, one wire protocol and one server, so what is learn
 
 ## Status
 
-Planning. No co-op code yet. The plan is in [docs/plan.md](docs/plan.md) and the wire protocol in [docs/protocol.md](docs/protocol.md). Stage 0 needs no game and no emulator, so it can start before the Lichii code comes in.
+Stage 0 is done and stage 1 (presence in the emulator) is in progress. Nothing has been tested with the game running yet; the first test release for two PCs is being put together. The plan is in [docs/plan.md](docs/plan.md) and the wire protocol in [docs/protocol.md](docs/protocol.md).
 
 | Stage | State |
 |---|---|
-| 0. Transport, server and two clients on one PC | Not started |
-| 1. Presence: other players shown as markers | Not started |
+| 0. Transport, server and two clients on one PC | Done: ENet server and client, wire protocol, `tools/coop_test` (10 minute soak runs pass on one PC). Two-PC run not yet done. |
+| 1. Presence: other players shown as markers | In progress: player sampling, smoothing and extrapolation ([docs/presence.md](docs/presence.md)), the emulator hook with `coop.ini` settings and a status panel, and markers drawn from the game's camera ([docs/lichii.md](docs/lichii.md)). Not yet checked in game. |
 | 2. Puppet Link in the world | Not started |
 | 3. Scenes, following and cutscenes | Not started |
-| 4. Shared progress (chests, keys, doors, songs) | Not started |
+| 4. Shared progress (chests, keys, doors, songs) | Started: server host choice and flag table, client flag sync and a flag watcher ([docs/host.md](docs/host.md)). The game's flag addresses are not yet found. |
 | 5. Shared enemies and objects | Not started |
-| 6. Chat, player list, reconnects | Not started |
+| 6. Chat, player list, reconnects | Started: chat, player list and join/leave events in the client; the host moves to another player when one leaves. |
 | Recomp port of stages 0 to 6 | Waits for a playable recomp |
+
+The emulator side is a small patch on Frizti's Fritchii, pinned in [lichii/PIN](lichii/PIN); `lichii/fetch.ps1` fetches that source and applies the patches. See [lichii/README.md](lichii/README.md).
 
 ## Building
 

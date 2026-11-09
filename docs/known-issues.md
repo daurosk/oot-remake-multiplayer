@@ -27,6 +27,6 @@ This is the first test release. Everything below was checked on one PC with two 
 
 ## Other notes
 
-- Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. The host's PC asks to allow `coop_server.exe` through the firewall.
+- Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks.
 - If an emulator is killed (not closed), its name stays taken on the server for a few seconds.
 - The kit's emulator is portable and never reads or writes `%APPDATA%\eden`.

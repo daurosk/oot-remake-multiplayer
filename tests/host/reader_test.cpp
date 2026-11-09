@@ -546,9 +546,9 @@ TEST_CASE("host reader: what the player wears") {
   SUBCASE("a request lasts a moment: the last one stands") {
     put_user(m, l);
     const std::uint64_t request = kUser + 0x13bc;
-    const std::uint64_t record = kUser + 0x4b0 + 0xa4;  // slot 0's in-hand byte
+    const std::uint64_t record = kUser + 0x4b0 + 0xa4;  // the slot record's byte: not the state
     put_equipped(m, 0, 40, 4, 0x4);  // just made: put away
-    m.put_u8(record, 0);
+    m.put_u8(record, 1);
     CHECK(reader.read_equipment()->drawn == 0x00);
     m.put_u8(request, 0x2);  // drawn
     CHECK(reader.read_equipment()->drawn == 0x01);
@@ -559,12 +559,12 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(reader.read_equipment()->drawn == 0x00);
     m.put_u8(request, 0);
     CHECK(reader.read_equipment()->drawn == 0x00);
-    // A request that was missed: the record's byte changed.
-    m.put_u8(record, 1);
-    CHECK(reader.read_equipment()->drawn == 0x01);
+    // The record's byte is not the state (1 with the sword out and away alike).
     m.put_u8(record, 0);
     CHECK(reader.read_equipment()->drawn == 0x00);
-    // Another piece in the slot starts from its record.
+    m.put_u8(record, 1);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    // Another piece in the slot starts put away, as the game makes it.
     m.put_u8(request, 0x2);
     CHECK(reader.read_equipment()->drawn == 0x01);
     m.put_u8(request, 0);

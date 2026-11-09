@@ -2,13 +2,20 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <string>
 #include <vector>
 
+#include <QApplication>
+#include <QEvent>
 #include <QFontMetrics>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QPainter>
 #include <QPen>
 #include <QPointer>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include "coop_hook.h"
@@ -20,6 +27,33 @@ constexpr int kPad = 8;
 constexpr int kMargin = 16;
 constexpr int kRefreshMs = 200;
 constexpr int kMarkerRefreshMs = 16;  // markers follow the camera
+constexpr int kChatRefreshMs = 50;    // smooth enough for the fade
+constexpr std::uint64_t kChatShowMs = 8000;
+constexpr std::uint64_t kChatFadeMs = 1000;  // after kChatShowMs
+constexpr int kChatWidth = 520;
+constexpr int kChatMaxChars = 200;  // coop::protocol::kMaxChatChars
+
+// Where an overlay window sits: on the game when it is shown, else on the
+// main window.
+QWidget* Anchor(QWidget* main, QWidget* render) {
+    return render && render->isVisible() ? render : main;
+}
+
+bool MainShown(const QWidget* main) {
+    return main && main->isVisible() && !main->isMinimized();
+}
+
+// A frameless see-through tool window that takes no input, as the panel.
+void MakeOverlay(QWidget* w, int pixel_size) {
+    w->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowTransparentForInput |
+                      Qt::WindowDoesNotAcceptFocus);
+    w->setAttribute(Qt::WA_TranslucentBackground);
+    w->setAttribute(Qt::WA_ShowWithoutActivating);
+    QFont f = w->font();
+    f.setPixelSize(pixel_size);
+    f.setWeight(QFont::DemiBold);
+    w->setFont(f);
+}
 
 // A frameless tool window, as the emulator's own performance overlay: a child
 // widget would be hidden under the native render surface.
@@ -190,6 +224,371 @@ private:
     CoopHook::Markers markers_;
 };
 
+// The last chat lines and room notices, bottom left of the game. Each shows
+// for kChatShowMs, then fades out; all kept lines show while the box is open.
+class ChatLayer : public QWidget {
+public:
+    ChatLayer(QWidget* main, QWidget* render) : QWidget(main), render_(render) {
+        MakeOverlay(this, 14);
+        auto* timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, this, [this] { Refresh(); });
+        timer->start(kChatRefreshMs);
+    }
+
+    // The chat box is open (`box_height` tall): every line, unfaded, above it.
+    void SetTyping(int box_height) {
+        box_height_ = box_height;
+        Refresh();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QFontMetrics fm(font());
+        int y = kPad + fm.ascent();
+        for (const auto& l : shown_) {
+            const int a = std::clamp(static_cast<int>(l.alpha * 255.0f), 0, 255);
+            const QString text = fm.elidedText(QString::fromStdString(l.text), Qt::ElideRight,
+                                               width() - 2 * kPad);
+            const int tw = fm.horizontalAdvance(text);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, a * 150 / 255));
+            p.drawRoundedRect(QRect(kPad - 4, y - fm.ascent() - 2, tw + 8, fm.height() + 4), 4, 4);
+            p.setPen(l.notice ? QColor(255, 220, 120, a) : QColor(255, 255, 255, a));
+            p.drawText(kPad, y, text);
+            y += fm.lineSpacing() + 4;
+        }
+    }
+
+private:
+    struct Shown {
+        std::string text;
+        bool notice = false;
+        float alpha = 1.0f;
+    };
+
+    void Refresh() {
+        std::vector<Shown> shown;
+        for (const auto& l : CoopHook::ChatLines()) {
+            float alpha = 1.0f;
+            if (box_height_ == 0 && l.age_ms >= kChatShowMs) {
+                alpha = 1.0f - float(l.age_ms - kChatShowMs) / float(kChatFadeMs);
+            }
+            if (alpha > 0.0f) {
+                shown.push_back({l.text, l.notice, alpha});
+            }
+        }
+        QWidget* main = parentWidget();
+        if (shown.empty() || !MainShown(main)) {
+            shown_.clear();
+            hide();
+            return;
+        }
+        const QFontMetrics fm(font());
+        const int height = static_cast<int>(shown.size()) * (fm.lineSpacing() + 4) + 2 * kPad;
+        QWidget* anchor = Anchor(main, render_);
+        const int bottom = anchor->height() - kMargin - box_height_ - 4;
+        const QRect area(anchor->mapToGlobal(QPoint(kMargin, std::max(0, bottom - height))),
+                         QSize(std::min(kChatWidth, anchor->width() - 2 * kMargin), height));
+        if (geometry() != area) {
+            setGeometry(area);
+        }
+        if (!isVisible()) {
+            show();
+        }
+        shown_ = std::move(shown);
+        update();
+    }
+
+    QPointer<QWidget> render_;
+    int box_height_ = 0;  // 0: the box is closed
+    std::vector<Shown> shown_;
+};
+
+// The one-line chat box: Enter sends, Esc (or clicking back on the game)
+// closes. While it is open it has the keyboard, so the game gets no input
+// (the render window releases every key when it loses focus).
+class ChatBox : public QWidget {
+public:
+    ChatBox(QWidget* main, QWidget* render, ChatLayer* lines)
+        : QWidget(main), render_(render), lines_(lines) {
+        setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+        setAttribute(Qt::WA_TranslucentBackground);
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        edit_ = new QLineEdit(this);
+        edit_->setMaxLength(kChatMaxChars);
+        edit_->setPlaceholderText(QStringLiteral("Say something (Enter sends, Esc closes)"));
+        QFont f = edit_->font();
+        f.setPixelSize(14);
+        edit_->setFont(f);
+        SetFailed(false);
+        layout->addWidget(edit_);
+        connect(edit_, &QLineEdit::returnPressed, this, [this] { Send(); });
+        connect(edit_, &QLineEdit::textEdited, this, [this] { SetFailed(false); });
+        edit_->installEventFilter(this);
+    }
+
+    void Open() {
+        QWidget* main = parentWidget();
+        if (!MainShown(main)) {
+            return;
+        }
+        QWidget* anchor = Anchor(main, render_);
+        const int h = edit_->sizeHint().height();
+        const int w = std::min(kChatWidth, anchor->width() - 2 * kMargin);
+        setGeometry(QRect(anchor->mapToGlobal(QPoint(kMargin, anchor->height() - kMargin - h)),
+                          QSize(w, h)));
+        show();
+        raise();
+        activateWindow();
+        edit_->setFocus(Qt::OtherFocusReason);
+        if (lines_) {
+            lines_->SetTyping(h);
+        }
+    }
+
+    void Close() {
+        if (!isVisible()) {
+            return;
+        }
+        hide();
+        edit_->clear();
+        SetFailed(false);
+        if (lines_) {
+            lines_->SetTyping(0);
+        }
+        if (QWidget* main = parentWidget()) {
+            main->activateWindow();
+        }
+        if (render_) {
+            render_->setFocus(Qt::OtherFocusReason);
+        }
+    }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        if (obj == edit_) {
+            // The emulator's "Exit Fullscreen" hotkey is Esc on the main
+            // window, and would take it before the box sees it: claim it.
+            if (event->type() == QEvent::ShortcutOverride &&
+                static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+                event->accept();
+                return true;
+            }
+            if (event->type() == QEvent::KeyPress &&
+                static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+                Close();
+                return true;
+            }
+            if (event->type() == QEvent::FocusOut && isVisible()) {
+                // Clicked back on the game or elsewhere; after the focus
+                // change is done, so activating the main window is not undone.
+                QTimer::singleShot(0, this, [this] {
+                    if (!isActiveWindow()) {
+                        Close();
+                    }
+                });
+            }
+        }
+        return QWidget::eventFilter(obj, event);
+    }
+
+private:
+    void Send() {
+        const QString text = edit_->text().trimmed();
+        if (text.isEmpty()) {
+            Close();
+            return;
+        }
+        if (!CoopHook::SendChat(text.toStdString())) {
+            SetFailed(true);  // not connected, or text the protocol refuses
+            return;
+        }
+        Close();
+    }
+
+    void SetFailed(bool failed) {
+        edit_->setStyleSheet(
+            failed ? QStringLiteral("QLineEdit { background: rgba(90,0,0,210); color: white;"
+                                    " border: 1px solid #f66; border-radius: 4px; padding: 4px; }")
+                   : QStringLiteral("QLineEdit { background: rgba(0,0,0,190); color: white;"
+                                    " border: 1px solid #888; border-radius: 4px; padding: 4px; }"));
+        edit_->setToolTip(failed ? QStringLiteral("Not sent: not connected, or characters chat "
+                                                  "does not allow")
+                                 : QString());
+    }
+
+    QPointer<QWidget> render_;
+    QPointer<ChatLayer> lines_;
+    QLineEdit* edit_ = nullptr;
+};
+
+// Everyone in the room while Tab is held: number, name, state, ping (our own
+// round trip; for the others "~" and how old their newest sample is), scene.
+class PlayerList : public QWidget {
+public:
+    PlayerList(QWidget* main, QWidget* render) : QWidget(main), render_(render) {
+        MakeOverlay(this, 15);
+        auto* timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, this, [this] {
+            if (isVisible()) {
+                Refresh();
+            }
+        });
+        timer->start(kRefreshMs);
+    }
+
+    void SetHeld(bool held) {
+        if (held) {
+            Refresh();
+        } else {
+            hide();
+        }
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 170));
+        p.drawRoundedRect(rect(), 8, 8);
+        const QFontMetrics fm(font());
+        int y = 2 * kPad + fm.ascent();
+        for (std::size_t r = 0; r < cells_.size(); ++r) {
+            int x = 2 * kPad;
+            const QColor colour = r == 0      ? QColor(255, 220, 120)
+                                  : dim_[r] ? QColor(170, 170, 170)
+                                            : QColor(255, 255, 255);
+            p.setPen(colour);
+            for (std::size_t c = 0; c < cells_[r].size(); ++c) {
+                p.drawText(x, y, cells_[r][c]);
+                x += widths_[c] + kColumnGap;
+            }
+            y += fm.lineSpacing();
+        }
+    }
+
+private:
+    static constexpr int kColumnGap = 18;
+
+    void Refresh() {
+        QWidget* main = parentWidget();
+        if (!MainShown(main)) {
+            hide();
+            return;
+        }
+        cells_.assign(1, {QStringLiteral("#"), QStringLiteral("Player"), QStringLiteral("State"),
+                          QStringLiteral("Ping"), QStringLiteral("Scene")});
+        dim_.assign(1, false);
+        for (const auto& row : CoopHook::PlayerList()) {
+            QString ms = QStringLiteral("-");
+            if (row.ms) {
+                ms = QStringLiteral("%1%2 ms").arg(row.self ? QString() : QStringLiteral("~")).arg(*row.ms);
+            }
+            QString name = QString::fromStdString(row.name);
+            if (row.self) {
+                name += QStringLiteral(" (you)");
+            }
+            cells_.push_back({row.number ? QStringLiteral("P%1").arg(row.number)
+                                         : QStringLiteral("-"),
+                              name, QString::fromStdString(row.state), ms,
+                              QString::fromStdString(row.scene.value_or("?"))});
+            dim_.push_back(row.state != "connected");
+        }
+        const QFontMetrics fm(font());
+        widths_.assign(cells_[0].size(), 0);
+        for (const auto& r : cells_) {
+            for (std::size_t c = 0; c < r.size(); ++c) {
+                widths_[c] = std::max(widths_[c], fm.horizontalAdvance(r[c]));
+            }
+        }
+        int width = 4 * kPad - kColumnGap;
+        for (const int w : widths_) {
+            width += w + kColumnGap;
+        }
+        const int height = static_cast<int>(cells_.size()) * fm.lineSpacing() + 4 * kPad;
+        QWidget* anchor = Anchor(main, render_);
+        const QRect area(anchor->mapToGlobal(QPoint(std::max(0, (anchor->width() - width) / 2),
+                                                    anchor->height() / 6)),
+                         QSize(width, height));
+        if (geometry() != area) {
+            setGeometry(area);
+        }
+        if (!isVisible()) {
+            show();
+        }
+        update();
+    }
+
+    QPointer<QWidget> render_;
+    std::vector<std::vector<QString>> cells_;
+    std::vector<bool> dim_;
+    std::vector<int> widths_;
+};
+
+// The keys, taken only while the game's render window has the keyboard:
+// Enter opens the chat box, Tab held shows the player list. Neither is a
+// button in the emulator's default keymap (they only reach the emulated USB
+// keyboard, which Ocarina does not read), and both are eaten. With a
+// modifier held they pass, so emulator hotkeys keep working.
+class Keys : public QObject {
+public:
+    Keys(QWidget* main, QWidget* render, ChatBox* box, PlayerList* list)
+        : QObject(main), main_(main), render_(render), box_(box), list_(list) {
+        qApp->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        const auto type = event->type();
+        if (type == QEvent::ApplicationDeactivate ||
+            (type == QEvent::WindowDeactivate && obj == main_)) {
+            if (list_ && list_->isVisible()) {
+                list_->SetHeld(false);  // the Tab release may never come
+            }
+            return false;
+        }
+        if (type != QEvent::KeyPress && type != QEvent::KeyRelease) {
+            return false;
+        }
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (!OnGame(obj) || (key->modifiers() & ~Qt::KeypadModifier) != Qt::NoModifier) {
+            return false;
+        }
+        switch (key->key()) {
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+            if (type == QEvent::KeyPress && !key->isAutoRepeat() && box_) {
+                box_->Open();
+            }
+            return true;
+        case Qt::Key_Tab:
+            if (!key->isAutoRepeat() && list_) {
+                list_->SetHeld(type == QEvent::KeyPress);
+            }
+            return true;
+        default:
+            return false;
+        }
+    }
+
+private:
+    // The event goes to the game's render window or the surface inside it.
+    bool OnGame(QObject* obj) const {
+        auto* w = qobject_cast<QWidget*>(obj);
+        return w && render_ && render_->isVisible() &&
+               (w == render_ || render_->isAncestorOf(w));
+    }
+
+    QPointer<QWidget> main_;
+    QPointer<QWidget> render_;
+    QPointer<ChatBox> box_;
+    QPointer<PlayerList> list_;
+};
+
 } // namespace
 
 void Attach(QWidget* main, QWidget* render) {
@@ -200,6 +599,11 @@ void Attach(QWidget* main, QWidget* render) {
     new Panel(main, render);
     // Shows only while the hook has the camera; the panel stays either way.
     new MarkerLayer(main, render);
+    // Chat lines, the chat box (Enter) and the player list (Tab held).
+    auto* lines = new ChatLayer(main, render);
+    auto* box = new ChatBox(main, render, lines);
+    auto* list = new PlayerList(main, render);
+    new Keys(main, render, box, list);
 }
 
 } // namespace CoopWindow

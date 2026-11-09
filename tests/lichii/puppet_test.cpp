@@ -628,6 +628,105 @@ TEST_CASE("puppet gear: each known piece worn once, on its own name cell") {
     CHECK(calls[0].x[1] == 6u);
 }
 
+TEST_CASE("puppet gear: a worn piece goes into the hand and back as its player's does") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    auto slot_id = [&](int s) {
+        return kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId;
+    };
+    g.guest.Set(slot_id(4), std::uint32_t{0xFFFFFFFF});  // no shield actor yet
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.gear[1] = "Weapon_Shield_Deku";
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 20).size() == 2);  // worn, put away
+    CHECK(Frame(d, g, 30).empty());      // as its player: nothing asked
+
+    // The sword is drawn: asked into the hand until the game takes it.
+    t.drawn = std::uint8_t{0x11};
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 1);  // the shield has no actor: not asked
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[0] == kEu);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    CHECK(Frame(d, g, 50).empty());  // not taken: waits before asking again
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitInHand);
+    CHECK(Frame(d, g, 400).size() == 1);
+    CHECK(Frame(d, g, 410).empty());  // taken: not again
+
+    // The shield's actor is there now.
+    g.guest.Set(slot_id(4), std::uint32_t{7});
+    g.guest.Set(kEu + addr::kEquipSlotBits + 4, addr::kEquipBitInHand);
+    calls = Frame(d, g, 420);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 4u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+
+    // Put away again.
+    t.drawn = std::uint8_t{0x10};
+    d.SetInput(Wants({t}));
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitAway);
+    calls = Frame(d, g, 430);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateAway);
+    CHECK(Frame(d, g, 440).empty());
+
+    // A new shield is worn put away: asked into the hand again.
+    t.gear[1] = "Weapon_Shield_Hylian";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 450);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[1].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[1].x[1] == 4u);
+
+    // Drawn bits not known: nothing asked.
+    t.drawn.reset();
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 460).empty());
+}
+
+TEST_CASE("puppet move: the game's setter once a frame when asked for") {
+    Game g;
+    Director d;
+    d.SetMatrixCall(true);
+    MakeLive(d, g);
+    d.SetInput(Wants({At(1, 4, 5, 6)}));
+    // kVtable is not the actor class the setter is known for: not called.
+    CHECK(Frame(d, g, 20).empty());
+
+    // An actor of that class: once a frame, after the transform is written.
+    Game g2;
+    Director d2;
+    d2.SetMatrixCall(true);
+    d2.SetInput(Wants({At(1, 4, 5, 6)}));
+    auto calls = Frame(d2, g2, 0);
+    REQUIRE(calls.size() == 2);
+    g2.Spawn(calls[1].x[3]);
+    g2.guest.Set(kActor, kBase + addr::kActorVtable);
+    Frame(d2, g2, 10);
+    Frame(d2, g2, 15);
+    REQUIRE(d2.Slots()[0].phase == Phase::live);
+    for (std::uint64_t now : {20, 30}) {
+        calls = Frame(d2, g2, now);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kSetMatrix);
+        CHECK(calls[0].x[0] == kActor);
+        CHECK(calls[0].x[1] == 0u);
+    }
+    CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
+}
+
 TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
     Game g;
     Director d;

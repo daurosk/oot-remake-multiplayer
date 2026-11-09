@@ -93,6 +93,28 @@ inline constexpr std::int32_t kMaxAsSlots = 8;  // slots synced from slot 0
 inline constexpr std::uint64_t kEquip = 0x2df7b20;
 inline constexpr std::uint64_t kActorParts = 0x270;
 inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
+// In hand or put away: 0xe34c40(eu, slot, state) is the game's own change of
+// an equipment slot's state (the shield node 0x2797850 calls it with slot 4,
+// state 1). State 1 is in hand (0x6b6820), 2 put away on the back
+// (0xe34c70, the state a piece is worn in). Each sets a bit in the slot's
+// byte at EquipmentUser + 0x13bc + slot (2 in hand, 4 put away), which is how
+// a call that was taken is told from one that was not. The slot's link is at
+// EquipmentUser + 0x20 + 0x18 * slot (u32 id at +0x10, ~0 empty).
+inline constexpr std::uint64_t kEquipChangeState = 0xe34c40;
+inline constexpr std::uint32_t kEquipStateInHand = 1;
+inline constexpr std::uint32_t kEquipStateAway = 2;
+inline constexpr std::uint64_t kEquipSlots = 0x20;
+inline constexpr std::uint64_t kEquipSlotStride = 0x18;
+inline constexpr std::uint64_t kEquipSlotId = 0x10;
+inline constexpr std::uint64_t kEquipSlotBits = 0x13bc;
+inline constexpr std::uint8_t kEquipBitInHand = 0x2;
+inline constexpr std::uint8_t kEquipBitAway = 0x4;
+// The game's own way to move an actor that has a physics body, as the AI
+// node ExecuteActorForceSetMtx (run 0x2622e50): write +0x31c..+0x34b, then
+// call vtable slot 0x218, which is 0x4c6580(actor, 0) for the vtable every
+// actor seen has (docs/objects.md). A plain write is undone within a frame.
+inline constexpr std::uint64_t kActorVtable = 0x4b25e18;
+inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 }  // namespace addr
 
 // The slot kinds the puppet wears, in Target::gear order: weapon, shield,
@@ -100,6 +122,9 @@ inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 inline constexpr std::array<std::uint32_t, 5> kGearKinds{0, 6, 7, 8, 9};
 inline constexpr std::array<const char*, 5> kGearNames{"weapon", "shield", "head", "armor",
                                                        "boots"};
+// The equipment slot each of them lands in (seen in the game: the sword in
+// slot 0, the shield in slot 4); -1: not a piece that is drawn or put away.
+inline constexpr std::array<int, 5> kGearSlots{0, 4, -1, -1, -1};
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
@@ -162,6 +187,9 @@ struct Target {
     // What the player wears, in kGearKinds order; unset: not known yet,
     // "" nothing (not taken off yet; the puppet keeps what it has).
     std::array<std::optional<std::string>, 5> gear;
+    // PLAYER_EQUIP's drawn bits: bit i set when the player's equipment slot i
+    // is in hand (sword out, shield on the arm). Unset: not known.
+    std::optional<std::uint8_t> drawn;
 };
 
 struct Input {
@@ -184,6 +212,9 @@ public:
     // The Link puppets' director runs the pose copy (coop_pose.h); others, such
     // as the fairies', do not.
     void SetPoseCopy(bool on) { pose_copy_ = on; }
+    // Move each puppet with the game's own setter as well (addr::kSetMatrix),
+    // once a frame: for an actor with a physics body, such as the fairy.
+    void SetMatrixCall(bool on) { matrix_call_ = on; }
 
     // Any thread. The next frame of the cave uses it.
     void SetInput(Input input);
@@ -250,8 +281,16 @@ private:
         std::size_t equip_index = 0;        // the equip being made
         std::string equip_name;
         std::uint64_t gear_log_ms = 0;      // last gear line (debug anim)
+        std::uint8_t in_hand = 0;           // equipment slots asked into the hand (bits)
+        std::uint8_t hold_known = 0;        // slots whose state we have set (bits)
+        int hold_slot = 0;                  // the change being made
+        bool hold_in_hand = false;
+        std::uint64_t hold_retry_ms = 0;    // no new change before this
+        std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
-    enum class Pending { none, malloc, create, take, drop, remove, play, frame, sync, equip };
+    enum class Pending {
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, hold, move
+    };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void PoseFrame(Guest& guest, std::uint64_t now_ms);
@@ -262,6 +301,9 @@ private:
     std::optional<Call> Animate(Slot& slot, const Target& target, Guest& guest);
     std::optional<Call> Equip(Slot& slot, const Target& target, Guest& guest,
                               std::uint64_t now_ms);
+    std::optional<Call> Hold(Slot& slot, const Target& target, Guest& guest,
+                             std::uint64_t now_ms);
+    std::optional<Call> Move(Slot& slot, Guest& guest);
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
@@ -277,6 +319,7 @@ private:
     bool verbose_;
     bool anim_;
     bool pose_copy_ = false;
+    bool matrix_call_ = false;
 
     mutable std::mutex input_mutex_;
     Input next_input_;  // guarded
@@ -304,6 +347,7 @@ struct Remote {
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;
     std::array<std::optional<std::string>, 5> gear;  // as Target::gear
+    std::optional<std::uint8_t> drawn;               // as Target::drawn
 };
 
 struct PlannerSettings {
@@ -324,7 +368,8 @@ public:
     Input Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                const std::optional<Vec3>& position, bool local_event,
                const std::vector<Remote>& remotes, std::uint64_t now_ms,
-               const std::array<std::optional<std::string>, 5>& own_gear = {});
+               const std::array<std::optional<std::string>, 5>& own_gear = {},
+               std::optional<std::uint8_t> own_drawn = {});
     std::string ActorFor(bool adult) const;
     const PlannerSettings& settings() const { return settings_; }
 

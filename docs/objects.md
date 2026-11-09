@@ -36,7 +36,9 @@ Watching the list stands in for hooking 0x372a70: an actor made by a create show
 | Draw the slingshot (ZR held) | `Weapon_Range_SlingShot` at Link's hand, and `Shootable_DekuSeed` at the same place | The seed is made when it is nocked, before it flies |
 | Each shot | the flying `Shootable_DekuSeed` goes 0.1 to 0.5 s later; a new one is made at once for the next shot | 48 to 45 seeds over three shots |
 
-**Confirmed: `Shootable_DekuSeed`.** `NormalArrow`, `Item_Bomb`, `Item_Bombchu`, `Item_DekuNut`, `Weapon_Boomerang`, `Shootable_Hook` and `Shootable_HookLong` are still from the data files only: the save has none of them.
+| Throw a Deku nut | `Item_DekuNut` at Link's hand | Gone 1 to 4 s later |
+
+**Confirmed: `Shootable_DekuSeed` and `Item_DekuNut`.** `NormalArrow`, `Item_Bomb`, `Item_Bombchu`, `Weapon_Boomerang`, `Shootable_Hook` and `Shootable_HookLong` are still from the data files only: the save has none of them.
 
 ### Life chain (confirmed)
 
@@ -55,6 +57,7 @@ Watching the list stands in for hooking 0x372a70: an actor made by a create show
 - **The function.** The Life component's step **0x49d8c0** applies damage. Each frame it sums what was dealt to the actor into **Life + 0x1cb0** (from **Life + 0x228**, **Life + 0x1350** and one more term), then sets life with a compare-and-swap at **0x49dcf8**: life minus that sum, at most max, never below 0. A GDB write watchpoint on an enemy's life stops there every frame, with sum 0 when nothing hit.
 - **Life + 0x228** is a per-frame damage accumulator: 0xaa920 (called from 0x2c23e28) swaps it to 0 each frame. What adds a hit into it was not found: there is no atomic add to that offset in the code, so it is written through a base other than the Life component. A watchpoint cannot follow it live: the field is written several hundred times a second and each stop starves the frame loop (52,000 stops, no frame shown, in 90 s).
 - **Life + 0x1ca8 and + 0x1cac** are a mirror of life and max, rewritten 1 to 2.5 s after life changes (0x8d96a0). They read -1 for an instant now and then. They do not guard life.
+- **A real hit.** A player killed a Poe with the Kokiri Sword while a logger read it: life 3 to 2 to 1 to 0, one per hit, and the sum at Life + 0x1cb0 read 1 after each. 2 s after life reached 0 the Poe left the list and `Obj_Spirit_Poe` (its soul) appeared; its lantern `Weapon_PoeCantera` went with it. That Poe was made by the game near a dug-up grave (hash `0xffffffffffffffff`), so it is a game-made enemy: the "Made by the scene with no hash" row of the id table applies to it.
 - **A direct write holds and kills.** Through the GDB stub: a ReDead's life 12 to 5 stayed 5, and its mirror followed. 5 to 0: 2.4 s later an `Obj_Rupee_Green` appeared at the ReDead's place, the game's own death drop. The ReDead stayed in the list in state 4, life 0, for the 20 s it was watched. So the owner can apply `DAMAGE` by writing life (the proposal's plan), and the game's own death follows; a copy's life must not be written to 0 by anyone but its owner.
 
 ### Placement hash (confirmed)
@@ -209,7 +212,7 @@ The server's per-player limits (60 a second on channels 0 to 2, 240 on 3 and 4) 
 
 In order, each its own branch:
 
-1. **Live check, the rest.** Done for the slingshot, life, hashes and the list (above). Left: the other seven projectiles, which need a save with them (run with `LICHII_COOP_DEBUG_OBJECTS=1` and read the `coop: objects:` lines), and a real hit on an enemy logged by the hook's reader.
+1. **Live check, the rest.** Done for the slingshot, the nut, life, a sword kill, hashes and the list (above). Left: the other six projectiles, which need a save with them (run with `LICHII_COOP_DEBUG_OBJECTS=1` and read the `coop: objects:` lines), and the hook's reader run once in a build.
 2. **Protocol.** Add the eight messages and the components to `coop/protocol/` with round-trip and refusal tests, and the rules to [protocol.md](protocol.md).
 3. **Server.** The ownership table and rules, with tests driven by fake presence lists and positions: first owner, fight lock, out-of-fight hand-over with the hold, owner leaving, a hand-over whose old owner never answers, stale epochs dropped, damage only to the owner.
 4. **The actor list.** Found (see "Live check"). The host library gets a reader for it, with the same guards as `coop_objects.cpp`.
@@ -219,7 +222,7 @@ In order, each its own branch:
 
 ## Not done
 
-1. Only the slingshot's seed was seen live; the other projectile names are from the data files. The hook's reader has not run in a build yet.
+1. Only the slingshot's seed and the Deku nut were seen live; the other projectile names are from the data files. The hook's reader has not run in a build yet.
 2. What adds a hit into Life + 0x228 (the step that applies it, 0x49d8c0, is found), and the stun paths of nuts and the boomerang. A direct life write is enough for the owner (live check), so this is only needed to learn the cause of a hit.
 3. Where `ExecuteBarrelBombAI` keeps the remaining fuse.
 4. The rest of 0xc16cf0's argument (the shooter, the start position and velocity), and how the shooter gives a new projectile its velocity.

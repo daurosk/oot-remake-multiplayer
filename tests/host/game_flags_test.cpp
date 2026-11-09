@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <functional>
+#include <string>
 #include <vector>
 
 #include "coop/host/game_flags.hpp"
@@ -218,4 +219,27 @@ TEST_CASE("game flag store: 64-bit keys for FlagWatcher") {
   CHECK_FALSE(store.write({protocol::FlagKey::key64_flag(6), protocol::FlagKind::boolean, 1}));
   CHECK_FALSE(store.write({protocol::FlagKey::key64_flag(0x8c44828386468bfull, 1),
                            protocol::FlagKind::boolean, 1}));
+}
+
+TEST_CASE("game flags: a String64 written at once into its buffer, and its type found") {
+  auto w = game();
+  auto& m = w.mem;
+  constexpr std::uint64_t kStrEntries = 0x8500000000ull, kStrSlots = 0x8510000000ull,
+                          kStrText = 0x8520000000ull;
+  table(m, 0x610, kStrEntries, kStrSlots, 0x108, {0x44});
+  m.put_u64(kStrEntries + 0x68, kStrText);
+  m.put_u32(kStrEntries + 0x70, 64);
+  zero(m, kStrText, 64);
+  CHECK(GameFlags::set_string64_now(w, 0x44, "KakarikoVillage_Child"));
+  GameFlags flags(w);
+  CHECK(flags.get_string64(0x44) == "KakarikoVillage_Child");
+  CHECK(GameFlags::set_string64_now(w, 0x44, ""));
+  CHECK(flags.get_string64(0x44) == "");
+  CHECK_FALSE(GameFlags::set_string64_now(w, 0x45, "x"));               // unknown
+  CHECK_FALSE(GameFlags::set_string64_now(w, 0x44, std::string(64, 'a')));  // too long
+  CHECK_FALSE(GameFlags::set_string64_now(w, 0x44, "a\nb"));
+  CHECK(flags.find_type(0x44) == 16);
+  CHECK(flags.find_type(0x22) == 2);
+  CHECK(flags.find_type(0x11) == 0);
+  CHECK_FALSE(flags.find_type(0x99));
 }

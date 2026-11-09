@@ -252,7 +252,7 @@ $version = @(
 # Nothing of the game, no keys or firmware and no one's emulator data may go out.
 $banned = Get-ChildItem $kit -Recurse -File | Where-Object {
     $_.Extension -in '.keys', '.nsp', '.nup', '.xci', '.nca', '.nro', '.nso', '.zs', '.pack', '.bfres', '.sarc' -or
-    $_.FullName -match '\emulator\user\(nand|sdmc|load|dump|cache|shader|keys\.+)'
+    $_.FullName -match '\\emulator\\user\\(nand|sdmc|load|dump|cache|shader|keys\\.+)'
 }
 if ($banned) { throw "The kit holds files that must not ship: $(($banned | Select-Object -First 5 | ForEach-Object FullName) -join ', ')" }
 

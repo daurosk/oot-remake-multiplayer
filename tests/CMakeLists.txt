@@ -16,8 +16,10 @@ add_executable(coop_tests
   overlay/overlay_test.cpp
   lichii/camera_test.cpp
   lichii/settings_test.cpp
-  # These two hook files have no emulator code, so they are tested on their own.
+  lichii/puppet_test.cpp
+  # These hook files have no emulator code, so they are tested on their own.
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
 )
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)

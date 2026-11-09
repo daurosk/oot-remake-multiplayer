@@ -45,6 +45,7 @@
 #include "coop/version.hpp"
 #include "coop_camera.h"
 #include "coop_objects.h"
+#include "coop_puppet.h"
 #include "coop_settings.h"
 
 namespace CoopHook {
@@ -230,6 +231,8 @@ public:
                 return coop::overlay::collect(p, report.server_now_us);
             });
         }
+        CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
+                            report.connected ? session_.get() : nullptr, report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);

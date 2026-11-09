@@ -1,27 +1,43 @@
-# Known issues in the early test release
+# Known issues in the test release (v0.1.0-test2)
 
-This is the first test release. Everything below was checked on one PC with two copies of the game talking through the server (two emulator windows, often driven by the [autotest](../tools/autotest) scripts). **It has not been played on two PCs yet**, over a LAN or the internet: that is what this release is for. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)).
+This is an early test release. Everything below was checked on one PC with two copies of the game talking through the server (two emulator windows, often driven by the [autotest](../tools/autotest) scripts), and then played once by hand in two games on that PC. **It has not been played on two PCs yet**, over a LAN or the internet: that is what this release is for. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)).
+
+Every player needs the same release. v0.1.0-test2 speaks protocol 3; a v0.1.0-test1 game cannot join a test2 server, or the other way round.
+
+## Found in the first play test of this build (being fixed)
+
+One PC, two games, played by hand on 2026-11-09.
+
+- **Sword and shield on the other Links do not show.**
+- **Cut grass is not shared**: grass you cut still stands in the other games.
+- **A frozen copy of Link and his fairy** can stay where another player first appeared. The real one still follows the player.
+- **Hit reactions**: an enemy hit in one game loses life in the others but does not react there (a Stalchild keeps its head).
+- Seen working: Stalchildren rise at the same places in both games.
 
 ## Works (checked on one PC, two games)
 
 - Joining, leaving, rejoining after a crash, and reconnecting when the server restarts.
-- The co-op panel (top left): each player's name, area, distance and ping. The in-game chat box (Enter) and player list (hold Tab).
-- **Other players as Link** (with the puppet pack): they stand where the other player is, follow them live, copy their whole pose (walking, running, sword stance) and wear their sword and shield. Navi flies beside each of them.
+- The co-op panel (top left): each player's name, area, distance and ping. The in-game chat box (Enter) and player list (hold Tab). A name tag over each player's head.
+- **Other players as Link** (with the puppet pack): child or adult, as their own save is. They stand where the other player is, follow them live and copy their whole pose (walking, running, sword stance). Navi flies beside each of them. A player who joins later gets a Link for everyone already there.
 - **Items**: key items, bottles, songs and one-time pickups are shared; small keys, Gold Skulltula tokens and heart pieces add up across players. Rupees, ammo and health stay per player. A player who joins late gets the items found before.
 - **Dungeons**: switches, doors, cleared rooms and water levels are shared through the game's saved dungeon flags.
-- **Enemies**: their position, animation and life follow the player who owns them; a kill in one game is a kill in all. Townspeople and animals stand and move the same in every game.
+- **Enemies**: their position, animation and life follow the player who owns them; a kill in one game is a kill in all. Townspeople and animals stand and move the same in every game. One game decides where the night Stalchildren rise, so they are the same for everyone.
 - **Things a player makes**: Deku seeds and Deku nuts appear in the other games.
+- **Time of day**: every game follows the host's clock ([time.md](time.md)).
 
-## Not yet, or not working
+## Built, but not yet seen working in the game
 
-- **Bombs, arrows, the boomerang and the hookshot**: built, but no test has thrown a bomb or shot an arrow yet, so an explosion in the other games has not been seen. Arrows would point the wrong way (their rotation is not sent).
-- **Hit reactions**: when you hit an enemy, the other games see it lose life and die, but not flinch or flash.
-- **Pots, crates, grass, rocks and breakable walls** are not shared yet: each game has its own.
+- **Pots, crates, rocks and signs** are shared like enemies ([world.md](world.md)). Crates were seen in the automatic tests; the rest has not been checked by hand, and cut grass does not work (above).
+- **Bombs, arrows, the boomerang and the hookshot**: no test has thrown a bomb or shot an arrow yet, so an explosion in the other games has not been seen. Arrows would point the wrong way (their rotation is not sent).
+- **Sword and shield in hand or put away** as their owner has them: built, but in the play test they did not show at all (above).
+- **Areas and cutscenes**: a player in another area shows only in the panel, not as Link, and the other Links hide during your cutscenes and stand still during theirs.
+- **Dungeon sharing** is checked only at the flag level: no one has played through a dungeon door or the Water Temple's water level in two games yet.
+
+## Not yet
+
 - **Heart containers**: picking one up does not raise the other players' maximum health. Heart pieces count up, but four of them do not make a heart for the others.
 - **Gold Skulltulas**: the token count is shared, but the Skulltula you took may still be there in the other games.
-- **Tunic, boots and masks** are not shown on the other players' Link yet (sword and shield are).
-- **Dungeon sharing** is checked only at the flag level: no one has played through a dungeon door or the Water Temple's water level in two games yet.
-- **Areas and cutscenes**: a player in another area shows only in the panel, not as Link, and the other Links hide during your cutscenes and stand still during theirs. This is built and unit-tested but not yet checked in the game.
+- **Tunic, boots and masks** are not shown on the other players' Link.
 - **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
 - **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.
 

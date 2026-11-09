@@ -19,7 +19,7 @@ The test build **[v0.1.0-test2](https://github.com/daurosk/oot-remake-multiplaye
 2. Play on the [same network (LAN)](docs/play-lan.md), or [over the internet](docs/play-online.md) with port forwarding or a virtual LAN such as Radmin VPN.
 3. [Known issues](docs/known-issues.md): what works in this build and what does not yet.
 
-What works in it: the other players as Link (child or adult) with Navi and a name tag, following them live; shared items, songs, keys and dungeon flags; shared enemies and townspeople; the host's time of day in every game; chat, a player list and reconnects. Found in the first play test and being fixed: the other Links' sword and shield do not show, cut grass is not shared, enemies do not react to another player's hits, and a frozen copy of Link can stay where a player first appeared.
+What works in it: the other players as Link (child or adult) with Navi and a name tag, following them live; shared items, songs, keys and dungeon flags; shared enemies and townspeople; the host's time of day in every game; chat, a player list and reconnects. Found in the first play test and being fixed: the other Links' sword and shield do not show, cut grass is not shared and enemies do not react to another player's hits.
 
 Every player needs the same release: a test1 game cannot join a test2 server.
 

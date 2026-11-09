@@ -10,7 +10,6 @@ One PC, two games, played by hand on 2026-11-09.
 
 - **Sword and shield on the other Links do not show.**
 - **Cut grass is not shared**: grass you cut still stands in the other games.
-- **A frozen copy of Link and his fairy** can stay where another player first appeared. The real one still follows the player.
 - **Hit reactions**: an enemy hit in one game loses life in the others but does not react there (a Stalchild keeps its head).
 - Seen working: Stalchildren rise at the same places in both games.
 

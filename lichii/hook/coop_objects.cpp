@@ -22,7 +22,13 @@
 //
 // LICHII_COOP_OBJECTS=1 shares enemies with the other games (Share and
 // OnEvent below; the rules are in coop_objects_sync.h). Off by default until
-// the two-game test passes.
+// the two-game test passes. With it:
+// - copies we do not own are placed every frame where the owner's enemy was
+//   (position +0x31c, rotation +0x328); LICHII_COOP_OBJECTS_POSE=0 stops it;
+// - a life a copy must lose is given to the game as damage (added to the s32
+//   at Life + 0x228, which the Life step 0x49d8c0 sums into Life + 0x1cb0 and
+//   takes off life), so the game reacts to it as to a hit;
+//   LICHII_COOP_OBJECTS_HURT=0 writes life directly instead.
 //
 // This runs on the present thread while the guest runs, so a walk can see the
 // list mid-change. A walk whose length differs from the head's count is
@@ -31,7 +37,9 @@
 #include "coop_objects.h"
 #include "coop_flags.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
@@ -68,6 +76,10 @@ constexpr u64 kActorNode = 0x538;
 constexpr u64 kActorName = 0x260;
 constexpr u64 kActorState = 0x2c;
 constexpr u64 kActorPosition = 0x31c;
+constexpr u64 kActorRotation = 0x328;  // 9 x f32, rows of 3
+constexpr u64 kLifeHurt = 0x228;       // s32 damage this frame (0x49dc90)
+constexpr u32 kStateAlive = 4;
+constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
 constexpr u64 kComponentLife = 0x2b8;
 constexpr u64 kLifeValue = 0x1c10;
@@ -115,6 +127,23 @@ bool EnvFlag(const char* name) {
 #else
     const char* value = std::getenv(name);
     return value != nullptr && value[0] != '\0' && std::string_view(value) != "0";
+#endif
+}
+
+// Unset or anything but "0": on.
+bool EnvOn(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return true;
+    }
+    const bool on = std::string_view(value) != "0";
+    std::free(value);
+    return on;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr || std::string_view(value) != "0";
 #endif
 }
 
@@ -190,7 +219,13 @@ public:
             }
             return;
         }
-        if (++share_frame_ % kEveryFrames != 0 || !Ready(system)) {
+        if (!Ready(system)) {
+            return;
+        }
+        if (pose_ && sharing_) {
+            Place(system, server_now_us);
+        }
+        if (++share_frame_ % kEveryFrames != 0) {
             return;
         }
         Reader r(system.ApplicationMemory());
@@ -202,6 +237,11 @@ public:
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
         if (self == 0) {
             return;
+        }
+        if (!sharing_) {
+            sync_.SetHurt(hurt_);
+            LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
+                     hurt_ ? "through the game" : "written as life");
         }
         sharing_ = true;
         std::vector<coop::protocol::Message> send;
@@ -244,6 +284,8 @@ public:
     bool debug_ = false;
     bool cheat_ = false;
     bool share_ = false;
+    bool pose_ = true;
+    bool hurt_ = true;
 
 private:
     // The game is the right one; finds main once per process.
@@ -294,6 +336,9 @@ private:
                 for (std::size_t i = 0; i < 3; ++i) {
                     s.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
+                if (const auto m = r.Get<std::array<float, 9>>(a + kActorRotation)) {
+                    s.rotation = *m;
+                }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);
                     const auto max = r.Get<s32>(value->second + 8);
@@ -322,14 +367,75 @@ private:
     }
 
     // A direct write of life is enough for the game (docs/objects.md, "Damage").
+    // A hurt is added to the damage the Life step takes off this frame.
     void WriteLife(Core::Memory::Memory& memory, Reader& r, const LifeWrite& w) {
         const auto value = LifeValue(r, w.address);
         if (!value || !memory.IsValidVirtualAddressRange(value->first + 8, 4)) {
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
+        if (w.hurt > 0) {
+            const auto table = r.Ptr(w.address + kActorComponents);
+            const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+            if (life && memory.IsValidVirtualAddressRange(*life + kLifeHurt, 4)) {
+                const s32 pending = r.Get<s32>(*life + kLifeHurt).value_or(0);
+                memory.Write32(*life + kLifeHurt, static_cast<u32>(pending + w.hurt));
+                LOG_INFO(Core, "coop: objects: share hurt {:#x}: {} at life {} (to {})",
+                         w.address, w.hurt, old, w.life);
+                return;
+            }
+        }
         memory.Write32(value->first + 8, static_cast<u32>(w.life));
         LOG_INFO(Core, "coop: objects: share life {:#x}: {} -> {}", w.address, old, w.life);
+    }
+
+    // Every frame: each copy we do not own goes where the owner's enemy was.
+    // How far the game moved it since our last write is logged every 5 s: if
+    // its AI or physics fight the write, that shows here.
+    void Place(Core::System& system, u64 now_us) {
+        std::vector<PoseWrite> poses;
+        sync_.Poses(now_us, poses);
+        auto& memory = system.ApplicationMemory();
+        Reader r(memory);
+        std::unordered_map<u64, coop::protocol::Vec3> placed;
+        for (const PoseWrite& w : poses) {
+            if (r.Get<u32>(w.address + kActorState).value_or(0) != kStateAlive ||
+                !memory.IsValidVirtualAddressRange(w.address + kActorPosition, 12 + 36)) {
+                continue;
+            }
+            if (const auto before = placed_.find(w.address); before != placed_.end()) {
+                float d2 = 0.0f;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    const float d =
+                        r.Get<float>(w.address + kActorPosition + 4 * i).value_or(0.0f) -
+                        before->second[i];
+                    d2 += d * d;
+                }
+                const float d = std::sqrt(d2);
+                drift_sum_ += d;
+                drift_max_ = std::max(drift_max_, d);
+                ++drift_count_;
+            }
+            memory.WriteBlock(w.address + kActorPosition, w.position.data(), 12);
+            if (w.rotation) {
+                memory.WriteBlock(w.address + kActorRotation, w.rotation->data(), 36);
+            }
+            placed.emplace(w.address, w.position);
+        }
+        placed_ = std::move(placed);
+        if (now_us - drift_at_ >= kDriftLogUs) {
+            if (drift_count_ > 0 || sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {
+                LOG_INFO(Core,
+                         "coop: objects: share placed {} copies; moved by the game between "
+                         "writes avg {:.3f} max {:.3f} over {}; hurts taken {} missed {}",
+                         placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
+                         drift_max_, drift_count_, sync_.HurtsTaken(), sync_.HurtsMissed());
+            }
+            drift_at_ = now_us;
+            drift_sum_ = 0.0f;
+            drift_max_ = 0.0f;
+            drift_count_ = 0;
+        }
     }
 
     // Tops up each cheat item below its count. A read that fails means the
@@ -465,6 +571,11 @@ private:
         actor.life = now;
     }
 
+    std::unordered_map<u64, coop::protocol::Vec3> placed_;  // what we wrote last frame
+    float drift_sum_ = 0.0f;
+    float drift_max_ = 0.0f;
+    std::size_t drift_count_ = 0;
+    u64 drift_at_ = 0;
     unsigned frame_ = 0;
     unsigned share_frame_ = 0;
     bool sharing_ = false;
@@ -483,6 +594,8 @@ Objects& Instance() {
         objects.debug_ = EnvFlag("LICHII_COOP_DEBUG_OBJECTS");
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
+        objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
+        objects.hurt_ = EnvOn("LICHII_COOP_OBJECTS_HURT");
         return true;
     }();
     (void)once;

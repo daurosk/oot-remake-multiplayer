@@ -277,3 +277,155 @@ TEST_CASE("objects: every message it sends passes the client's own check") {
               proto::Error::none);
     }
 }
+
+TEST_CASE("objects: animals are shared too (hits on a cucco)") {
+    CHECK(CoopObjects::IsShared("Animal_Cucco"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Talon"));
+}
+
+TEST_CASE("objects: a rotation matrix goes to a quaternion and back") {
+    // A turn of 90 degrees about y, then an arbitrary one.
+    const CoopObjects::Mat3 turn{0, 0, 1, 0, 1, 0, -1, 0, 0};
+    const auto back = CoopObjects::MatOf(CoopObjects::QuatOf(turn));
+    for (std::size_t i = 0; i < 9; ++i) {
+        CHECK(back[i] == doctest::Approx(turn[i]).epsilon(1e-5));
+    }
+    const proto::Quat q{0.2f, -0.5f, 0.3f, 0.787401f};
+    const auto m = CoopObjects::MatOf(q);
+    const auto q2 = CoopObjects::QuatOf(m);
+    const float sign = q2[3] * q[3] < 0 ? -1.0f : 1.0f;
+    for (std::size_t i = 0; i < 4; ++i) {
+        CHECK(q2[i] * sign == doctest::Approx(q[i]).epsilon(1e-4));
+    }
+    CHECK(CoopObjects::QuatOf({}) == proto::Quat{0, 0, 0, 1});  // garbage reads as no turn
+}
+
+TEST_CASE("objects: the owner's samples carry rotation and velocity") {
+    Sync sync;
+    Seen e = Enemy(0x100, 0x11, 2, 0.0f);
+    e.rotation = CoopObjects::Mat3{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    Tick(sync, 0, {e});
+    Own(sync, *sync.IdOf(0x100), 1);
+    Tick(sync, 10 * kMs, {e});
+    e.position[0] = 1.0f;
+    e.rotation = CoopObjects::Mat3{0, 0, 1, 0, 1, 0, -1, 0, 0};
+    const auto samples = All<proto::ObjectSample>(Tick(sync, 110 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.rotation);
+    CHECK((*samples[0].state.rotation)[3] == doctest::Approx(0.7071f).epsilon(1e-3));
+    REQUIRE(samples[0].state.velocity);
+    CHECK((*samples[0].state.velocity)[0] == doctest::Approx(10.0f));  // 1 m in 0.1 s
+    // Turning on the spot is a change too.
+    e.rotation = CoopObjects::Mat3{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    CHECK(All<proto::ObjectSample>(Tick(sync, 170 * kMs, {e})).size() == 1);
+}
+
+TEST_CASE("objects: a copy is placed where the owner's enemy was 100 ms ago") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2, 50.0f)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    std::vector<CoopObjects::PoseWrite> poses;
+    sync.Poses(10 * kMs, poses);
+    CHECK(poses.empty());  // no owner, nothing received
+
+    Own(sync, id, 2);
+    const auto sample = [&](std::uint64_t t, float x, float vx = 0.0f) {
+        proto::ObjectSample s;
+        s.player_number = 2;
+        s.id = id;
+        s.state.time = {t, 0};
+        s.state.position = proto::Vec3{x, 0.0f, 0.0f};
+        s.state.velocity = proto::Vec3{vx, 0.0f, 0.0f};
+        s.state.rotation = proto::Quat{0, 0, 0, 1};
+        sync.Receive(s);
+    };
+    sample(1000 * kMs, 0.0f);
+    sample(1050 * kMs, 1.0f, 20.0f);
+    Tick(sync, 1100 * kMs, {Enemy(0x100, 0x11, 2, 50.0f)});
+
+    poses.clear();
+    sync.Poses(1125 * kMs, poses);  // shows 1025: halfway
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].address == 0x100);
+    CHECK(poses[0].position[0] == doctest::Approx(0.5f));
+    REQUIRE(poses[0].rotation);
+    CHECK((*poses[0].rotation)[0] == doctest::Approx(1.0f));
+
+    poses.clear();
+    sync.Poses(1200 * kMs, poses);  // shows 1100: 50 ms past the last, at 20 m/s
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(2.0f));
+    poses.clear();
+    sync.Poses(1900 * kMs, poses);  // never more than 150 ms ahead
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(4.0f));
+
+    // Long silence: the copy is left to itself.
+    poses.clear();
+    sync.Poses(4000 * kMs, poses);
+    CHECK(poses.empty());
+
+    // Ours now: nothing pulls it.
+    sample(4000 * kMs, 3.0f);
+    Own(sync, id, 1, 1);
+    Tick(sync, 4010 * kMs, {Enemy(0x100, 0x11, 2, 50.0f)});
+    poses.clear();
+    sync.Poses(4100 * kMs, poses);
+    CHECK(poses.empty());
+}
+
+TEST_CASE("objects: with hurt on, a copy loses life through the game and it is no hit of ours") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.state.life = proto::ObjectLife{3, 4};
+    sync.Receive(s);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    CHECK(step.writes[0].life == 3);
+    // The same sample again asks for nothing more.
+    sync.Receive(s);
+    CHECK(Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 4)}).writes.empty());
+    // The game takes it: no DAMAGE goes back.
+    Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 3)});
+    CHECK(All<proto::Damage>(Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 3)})).empty());
+    CHECK(sync.HurtsTaken() == 1);
+    // Our own hit after that still goes.
+    Tick(sync, 600 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(All<proto::Damage>(Tick(sync, 800 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
+}
+
+TEST_CASE("objects: a hurt the game does not take is written as life after 400 ms") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 3)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 2;
+    sync.Receive(d);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 3)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    // A second hit while the first is pending stacks on the target.
+    d.amount = 1;
+    sync.Receive(d);
+    step = Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 3)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    CHECK(step.writes[0].life == 0);
+    CHECK(Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 3)}).writes.empty());
+    step = Tick(sync, 430 * kMs, {Enemy(0x100, 0x11, 3)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(step.writes[0].life == 0);
+    CHECK(sync.HurtsMissed() == 1);
+}

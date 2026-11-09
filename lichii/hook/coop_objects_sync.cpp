@@ -24,10 +24,105 @@ bool Moved(const proto::Vec3& a, const proto::Vec3& b) {
     return false;
 }
 
+bool Turned(const std::optional<proto::Quat>& a, const std::optional<proto::Quat>& b) {
+    if (a.has_value() != b.has_value()) {
+        return true;
+    }
+    if (!a) {
+        return false;
+    }
+    float dot = 0.0f;
+    for (std::size_t i = 0; i < 4; ++i) {
+        dot += (*a)[i] * (*b)[i];
+    }
+    return std::fabs(dot) < 0.99995f;  // about 1 degree
+}
+
+proto::Vec3 Lerp(const proto::Vec3& a, const proto::Vec3& b, float t) {
+    return {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
+}
+
+// Normalised linear blend, the short way round.
+proto::Quat Nlerp(const proto::Quat& a, proto::Quat b, float t) {
+    float dot = 0.0f;
+    for (std::size_t i = 0; i < 4; ++i) {
+        dot += a[i] * b[i];
+    }
+    if (dot < 0.0f) {
+        for (float& v : b) {
+            v = -v;
+        }
+    }
+    proto::Quat q{};
+    float len = 0.0f;
+    for (std::size_t i = 0; i < 4; ++i) {
+        q[i] = a[i] + (b[i] - a[i]) * t;
+        len += q[i] * q[i];
+    }
+    len = std::sqrt(len);
+    if (len < 1e-6f) {
+        return a;
+    }
+    for (float& v : q) {
+        v /= len;
+    }
+    return q;
+}
+
+bool Finite(const proto::Vec3& v) {
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
 } // namespace
 
 bool IsShared(std::string_view name) {
-    return name.starts_with("Enemy_");
+    return name.starts_with("Enemy_") || name.starts_with("Animal_");
+}
+
+proto::Quat QuatOf(const Mat3& m) {
+    // m[3 * row + column], Shepperd's method. Rows that are not unit length
+    // (a read of something else) give no turn.
+    for (std::size_t row = 0; row < 3; ++row) {
+        const float len = m[3 * row] * m[3 * row] + m[3 * row + 1] * m[3 * row + 1] +
+                          m[3 * row + 2] * m[3 * row + 2];
+        if (!std::isfinite(len) || std::fabs(len - 1.0f) > 0.1f) {
+            return {0.0f, 0.0f, 0.0f, 1.0f};
+        }
+    }
+    const float trace = m[0] + m[4] + m[8];
+    proto::Quat q{};
+    if (trace > 0.0f) {
+        const float s = std::sqrt(trace + 1.0f) * 2.0f;
+        q = {(m[7] - m[5]) / s, (m[2] - m[6]) / s, (m[3] - m[1]) / s, 0.25f * s};
+    } else if (m[0] > m[4] && m[0] > m[8]) {
+        const float s = std::sqrt(1.0f + m[0] - m[4] - m[8]) * 2.0f;
+        q = {0.25f * s, (m[1] + m[3]) / s, (m[2] + m[6]) / s, (m[7] - m[5]) / s};
+    } else if (m[4] > m[8]) {
+        const float s = std::sqrt(1.0f + m[4] - m[0] - m[8]) * 2.0f;
+        q = {(m[1] + m[3]) / s, 0.25f * s, (m[5] + m[7]) / s, (m[2] - m[6]) / s};
+    } else {
+        const float s = std::sqrt(1.0f + m[8] - m[0] - m[4]) * 2.0f;
+        q = {(m[2] + m[6]) / s, (m[5] + m[7]) / s, 0.25f * s, (m[3] - m[1]) / s};
+    }
+    float len = 0.0f;
+    for (const float v : q) {
+        len += v * v;
+    }
+    len = std::sqrt(len);
+    if (!std::isfinite(len) || len < 1e-6f) {
+        return {0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    for (float& v : q) {
+        v /= len;
+    }
+    return q;
+}
+
+Mat3 MatOf(const proto::Quat& q) {
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    return {1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w),
+            2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+            2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y)};
 }
 
 std::uint64_t SceneSpawnId(std::string_view scene, std::string_view name, unsigned order) {
@@ -96,6 +191,10 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     proto::ObjectState state;
     state.time = {now_us, ++o.sequence};
     state.position = o.position;
+    state.velocity = o.velocity;
+    if (o.rotation) {
+        state.rotation = QuatOf(*o.rotation);
+    }
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
@@ -126,17 +225,40 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             continue;
         }
         Object& o = it->second;
+        if (now_us > o.seen_at && now_us - o.seen_at < 500'000 && Finite(s.position)) {
+            const float dt = static_cast<float>(now_us - o.seen_at) / 1e6f;
+            for (std::size_t i = 0; i < 3; ++i) {
+                o.velocity[i] = (s.position[i] - o.position[i]) / dt;
+            }
+        } else {
+            o.velocity = {};
+        }
+        o.seen_at = now_us;
         o.position = s.position;
+        o.rotation = s.rotation;
         if (s.life) {
             if (o.life && s.life->life < *o.life) {
                 o.fight_until = now_us + kFightUs;
+                std::int32_t drop = *o.life - s.life->life;
+                if (o.hurt_left > 0) {
+                    // Our own hurt landing (or the game taking more for it):
+                    // not a hit of ours.
+                    o.hurt_left = std::max(0, o.hurt_left - drop);
+                    if (o.hurt_left == 0) {
+                        if (s.life->life == o.hurt_target) {
+                            ++hurt_taken_;
+                        }
+                        o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
+                    }
+                    drop = 0;
+                }
                 const auto owner = owners_.find(o.id);
-                if (owner != owners_.end() && owner->second.player != 0 &&
+                if (drop > 0 && owner != owners_.end() && owner->second.player != 0 &&
                     owner->second.player != self) {
                     if (o.hit_sum == 0) {
                         o.hit_since = now_us;
                     }
-                    o.hit_sum += *o.life - s.life->life;
+                    o.hit_sum += drop;
                 }
             }
             o.life = s.life->life;
@@ -154,6 +276,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         Object o;
         o.address = s->address;
         o.position = s->position;
+        o.rotation = s->rotation;
+        o.seen_at = now_us;
         if (s->life) {
             o.life = s->life->life;
             o.max = s->life->max;
@@ -166,9 +290,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         objects_.emplace(s->address, o);
     }
 
+    self_ = self;
     Apply(self, now_us, send, writes);
 
     for (auto& [address, o] : objects_) {
+        // A hurt the game did not take (or took differently) in time: the
+        // life is written as the owner has it.
+        if (o.hurt_until != 0 && now_us >= o.hurt_until) {
+            if (o.life && *o.life != o.hurt_target) {
+                writes.push_back({o.address, o.hurt_target, 0});
+                o.life = o.hurt_target;
+                ++hurt_missed_;
+            }
+            o.hurt_left = 0;
+            o.hurt_until = 0;
+        }
         const auto owner = owners_.find(o.id);
         const bool known = owner != owners_.end() && owner->second.player != 0;
         // Our hits on a copy, summed over 100 ms, go to the owner.
@@ -190,7 +326,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             (!o.sent_once || now_us - o.sent_at >= kSampleEveryUs)) {
             const std::optional<proto::ObjectLife> life =
                 o.life ? std::optional(proto::ObjectLife{*o.life, o.max}) : std::nullopt;
-            const bool changed = life != o.sent_life || Moved(o.position, o.sent_position);
+            const std::optional<proto::Quat> rotation =
+                o.rotation ? std::optional(QuatOf(*o.rotation)) : std::nullopt;
+            const bool changed = life != o.sent_life || Moved(o.position, o.sent_position) ||
+                                 Turned(rotation, o.sent_rotation);
             if (!o.sent_once || changed || now_us - o.sent_at >= kStillEveryUs) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -201,6 +340,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.sent_once = true;
                 o.sent_life = life;
                 o.sent_position = o.position;
+                o.sent_rotation = rotation;
             }
         }
     }
@@ -246,22 +386,45 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         return nullptr;
     };
     const auto write = [&writes](Object& o, std::int32_t life) {
-        writes.push_back({o.address, life});
+        writes.push_back({o.address, life, 0});
         o.life = life;
+        o.hurt_left = 0;
+        o.hurt_until = 0;
     };
     for (const proto::Message& m : inbox) {
         if (const auto* owner = std::get_if<proto::ObjectOwner>(&m)) {
             owners_[owner->id] = {owner->owner, owner->epoch};
+            if (owner->owner == self) {
+                if (Object* o = find(owner->id)) {
+                    o->received.clear();  // ours now: nothing pulls it
+                }
+            }
         } else if (const auto* sample = std::get_if<proto::ObjectSample>(&m)) {
             Object* o = find(sample->id);
             const auto own = owners_.find(sample->id);
-            if (o == nullptr || !sample->state.life || !o->life ||
-                (own != owners_.end() && own->second.player == self)) {
+            if (o == nullptr || (own != owners_.end() && own->second.player == self)) {
+                continue;
+            }
+            if (sample->state.position && Finite(*sample->state.position)) {
+                const std::uint64_t t = sample->state.time.server_time_us;
+                if (o->received.empty() || t > o->received.back().time) {
+                    o->received.push_back(
+                        {t, *sample->state.position, sample->state.rotation, sample->state.velocity});
+                    while (o->received.size() > kKeepSamples) {
+                        o->received.pop_front();
+                    }
+                }
+            }
+            if (!sample->state.life || !o->life) {
                 continue;
             }
             const std::int32_t life = sample->state.life->life;
+            const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             const bool holding = o->hit_sum > 0 || now_us - o->hit_at < kHitHoldUs;
-            if (life < *o->life || (life > *o->life && !holding)) {
+            if (life < have) {
+                Lower(*o, life, now_us, writes);
+                o->fight_until = now_us + kFightUs;
+            } else if (life > have && !holding) {
                 write(*o, life);
                 o->fight_until = now_us + kFightUs;
             }
@@ -271,7 +434,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (o == nullptr || !o->life || damage->amount <= 0) {
                 continue;
             }
-            write(*o, std::max(0, *o->life - damage->amount));
+            const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
+            Lower(*o, std::max(0, have - damage->amount), now_us, writes);
             o->fight_until = now_us + kFightUs;
         } else if (const auto* ask = std::get_if<proto::HandoverAsk>(&m)) {
             proto::HandoverState state;
@@ -290,6 +454,78 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 write(*o, handed->state.life->life);
             }
         }
+    }
+}
+
+void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
+                 std::vector<LifeWrite>& writes) {
+    if (!o.life) {
+        return;
+    }
+    if (!hurt_) {
+        writes.push_back({o.address, life, 0});
+        o.life = life;
+        return;
+    }
+    const std::int32_t from = o.hurt_until != 0 ? o.hurt_target : *o.life;
+    if (life >= from) {
+        return;
+    }
+    // The game takes it off itself; the walk sees the drop and does not
+    // count it as our hit. o.life stays as read until then.
+    writes.push_back({o.address, life, from - life});
+    o.hurt_left += from - life;
+    o.hurt_target = life;
+    o.hurt_until = now_us + kHurtWaitUs;
+}
+
+void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
+    const std::uint64_t t = now_us > kBehindUs ? now_us - kBehindUs : 0;
+    for (const auto& [address, o] : objects_) {
+        if (o.received.empty() || now_us < o.received.back().time ||
+            now_us - o.received.back().time > kPoseStaleUs) {
+            continue;
+        }
+        const auto owner = owners_.find(o.id);
+        if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
+            continue;
+        }
+        PoseWrite w;
+        w.address = address;
+        const Received& last = o.received.back();
+        std::optional<proto::Quat> rotation;
+        if (t >= last.time) {
+            const float ahead =
+                static_cast<float>(std::min(t - last.time, kExtrapolateUs)) / 1e6f;
+            w.position = last.position;
+            if (last.velocity && Finite(*last.velocity)) {
+                for (std::size_t i = 0; i < 3; ++i) {
+                    w.position[i] += (*last.velocity)[i] * ahead;
+                }
+            }
+            rotation = last.rotation;
+        } else if (t <= o.received.front().time) {
+            w.position = o.received.front().position;
+            rotation = o.received.front().rotation;
+        } else {
+            std::size_t i = 1;
+            while (o.received[i].time <= t) {
+                ++i;
+            }
+            const Received& a = o.received[i - 1];
+            const Received& b = o.received[i];
+            const float f = static_cast<float>(t - a.time) / static_cast<float>(b.time - a.time);
+            w.position = Lerp(a.position, b.position, f);
+            if (a.rotation && b.rotation) {
+                rotation = Nlerp(*a.rotation, *b.rotation, f);
+            } else {
+                rotation = b.rotation ? b.rotation : a.rotation;
+            }
+        }
+        if (rotation) {
+            w.rotation = MatOf(*rotation);
+        }
+        out.push_back(w);
     }
 }
 

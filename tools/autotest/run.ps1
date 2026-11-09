@@ -92,7 +92,7 @@ public class AutotestWin {
    using (var g = Graphics.FromImage(b)) { var dc = g.GetHdc(); PrintWindow(h, dc, 3); g.ReleaseHdc(dc); }
    string how = "print";
    if (Dark(b)) { using (var g = Graphics.FromImage(b)) g.CopyFromScreen(o.X, o.Y, 0, 0, new Size(w, ht)); how = "screen"; }
-   int sw = Math.Max(1, w * 2 / 3), sh = Math.Max(1, ht * 2 / 3);
+   int sw = Math.Max(1, w), sh = Math.Max(1, ht);
    using (var s = new Bitmap(b, sw, sh)) s.Save(path, System.Drawing.Imaging.ImageFormat.Png);
    return how;
   }

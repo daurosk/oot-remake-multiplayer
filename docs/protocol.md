@@ -56,6 +56,15 @@ Each rule answers a way the TotK online sync was seen to break.
 3. No `HELLO` within 10 seconds: the server drops the connection.
 4. One address may hold at most 4 connections that have not sent `HELLO` yet (a server option; 0 for no limit). The server drops one more at once, without `REFUSED`.
 
+### Rejoin after a crash
+
+A killed emulator stays in the session until the server times it out, so its restart would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when both hold:
+
+- it comes from the same IP address as that player, and
+- the server has heard nothing from that player for 1 second (a server option; 0 turns the takeover off). Every build answers the server's `PING` every 250 ms, so a live player is never this quiet.
+
+Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the host handed on as on any leave, and the new connection is welcomed with the old player's number. Otherwise the `HELLO` is refused as name taken as before: someone on another PC, or anyone while the player is still talking, cannot push a player out by using their name. The client does not retry a refusal, so a build restarted within a second of the crash is refused once and must connect again.
+
 ## Keep-alive and clock
 
 - `PING` every 250 ms from each side with the sender time; `PONG` echoes it with the receiver time. This gives the round trip and the clock offset.

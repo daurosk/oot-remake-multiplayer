@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -439,4 +440,58 @@ TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size p
   REQUIRE(pump_until(server, all, [&] { return joiner.find<FlagState>() != nullptr; }));
   CHECK(*joiner.find<FlagState>() == FlagState{1, changed});
   CHECK(server.session().stats().dropped() == 0);
+}
+
+TEST_CASE("loopback: a killed client restarted on the same PC is back in within 2 s") {
+  EnetLife enet;
+  ServerOptions options;
+  options.port = 0;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  auto killed = std::make_unique<Client>();
+  Client zelda;
+  killed->connect(server.port());
+  zelda.connect(server.port());
+  REQUIRE(pump_until(server, {killed.get(), &zelda},
+                     [&] { return killed->connected && zelda.connected; }));
+  killed->send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {killed.get()}, [&] { return killed->find<Welcome>() != nullptr; }));
+  zelda.send(hello_from("Zelda"), kChannelSession);
+  REQUIRE(pump_until(server, {&zelda}, [&] { return zelda.find<Welcome>() != nullptr; }));
+
+  // Killed: the ENet host goes away without a word to the server.
+  killed.reset();
+  const auto kill_time = std::chrono::steady_clock::now();
+
+  // Straight away the name still belongs to a player heard just now.
+  Client early;
+  early.connect(server.port());
+  REQUIRE(pump_until(server, {&early, &zelda}, [&] { return early.connected; }));
+  early.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&early, &zelda}, [&] { return early.disconnected; }));
+  const Refused* refused = early.find<Refused>();
+  REQUIRE(refused != nullptr);
+  CHECK(refused->reason == RefuseReason::name_taken);
+
+  // The restarted build, a second after the kill, takes the old place.
+  while (std::chrono::steady_clock::now() - kill_time < std::chrono::milliseconds(1050)) {
+    server.service(1);
+    zelda.pump();
+  }
+  Client restarted;
+  restarted.connect(server.port());
+  REQUIRE(pump_until(server, {&restarted, &zelda}, [&] { return restarted.connected; }));
+  restarted.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&restarted, &zelda}, [&] {
+    return restarted.find<Welcome>() != nullptr && zelda.find<PlayerJoined>() != nullptr;
+  }));
+  const auto back_after = std::chrono::steady_clock::now() - kill_time;
+  CHECK(back_after < std::chrono::seconds(2));
+  CHECK(restarted.find<Welcome>()->player_number == 1);
+  REQUIRE(zelda.find<PlayerLeft>() != nullptr);
+  CHECK(*zelda.find<PlayerLeft>() == PlayerLeft{1, LeaveReason::timed_out});
+  CHECK(*zelda.find<PlayerJoined>() == PlayerJoined{1, "Link"});
+  CHECK(server.session().player_count() == 2);
+  CHECK(server.session().stats().rejoined == 1);
 }

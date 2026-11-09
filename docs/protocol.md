@@ -77,6 +77,10 @@ Each rule answers a way the TotK online sync was seen to break.
 | 9 | `CHAT` | 0 | both | `u8` player field, text up to 200 characters |
 | 10 | `PLAYER_SAMPLE` | 3 | both | `u8` player field, then the components below |
 | 11 | `TEST_PAYLOAD` | 0 or 3 | both | `u32` sequence number, then the rest of the body is filler; used only by the stage 0 test tool |
+| 12 | `JOIN_PARTNER` | 0 | both | `u8` player field, `u8` other player, `u16` request id, `u8` kind, then by kind (below) |
+| 13 | `FLAG_SET` | 1 | both | `u8` player field, a flag list of 1 to 4096 entries (below) |
+| 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 4096 entries |
+| 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 4096 entries |
 
 Type numbers are never reused or renumbered; new types are added at the end.
 
@@ -96,13 +100,58 @@ The `time` component is required in every sample; the others are sent only when 
 
 A player sends `PLAYER_SAMPLE` every frame it moves (up to 60 a second) and at least 4 a second while still. Receivers keep the last 16 samples per player, show them about 100 ms behind (tuned by measuring), interpolate between samples and extrapolate up to 150 ms from the last one; beyond that the puppet holds and fades.
 
+The player field of `JOIN_PARTNER`, `FLAG_SET` and `FLAG_STATE` works as in `CHAT`: 0 from a client, the sender's number from the server.
+
+### Join partner (stage 1 step 3)
+
+A warp to another player's scene, in three steps, all on channel 0:
+
+1. The asker sends `JOIN_PARTNER` kind **request**, other player = the one to join, and a request id of its own choosing.
+2. The server relays it to that player, with the asker's number in the player field.
+3. That player's build answers kind **accept** (where it stands) or **refuse**, other player = the asker, the same request id. The server relays it back the same way.
+
+If the player to join is not in the session, the server itself answers kind refuse, reason 4, with that player's number in the player field. The asker drops an answer whose request id is not its latest request, and gives up on its own after a while with no answer.
+
+| Kind | Value | Then |
+|---|---|---|
+| request | 0 | nothing |
+| accept | 1 | scene (string, 1 to 64 characters), position (3 x f32), rotation (4 x f32 quaternion, x y z w, as in `PLAYER_SAMPLE`) |
+| refuse | 2 | `u8` reason: 1 busy (loading, cutscene, menu, dead), 2 declined, 3 cannot warp here (a boss fight, for example), 4 not there (from the server); an unknown reason is kept |
+
+Any other kind is refused, since the rest of the body cannot be read. The other player is 1 to 4 and never the sender itself. Floats must be finite.
+
+### Shared flags (stage 1 step 4)
+
+Only world flags are shared (chests, small keys, doors, heart pieces, songs, dungeon state). Inventory, hearts and magic stay per player, the suggested answer in the plan's open decisions.
+
+A flag list is `u16` count, then that many entries of 11 bytes each:
+
+| Field | Type | What |
+|---|---|---|
+| hash | `u32` | Murmur3 x86 32-bit, seed 0, of the flag's name in the game (`flag_hash` in the code) |
+| index | `u16` | the element of an array flag; 0 for a plain flag |
+| kind | `u8` | 0 bool, 1 s32, 2 f32, 3 u32 (an enum flag's hash, or any unsigned value); other kinds are refused |
+| value | 4 bytes | the value as that kind: a bool is 0 or 1, an f32 is finite |
+
+A list holds the same (hash, index) at most once. A list of more than 4096 entries is refused (that keeps a message under 45 KB).
+
+How flags move:
+
+- A player's game changes shared flags: its build sends `FLAG_SET` with every flag changed that frame. The server relays it to the host only. The game that set them keeps its own change until the answer comes.
+- The host's build applies the change to its game, which is the truth, and sends `FLAG_STATE` with the values that came out. The host also sends `FLAG_STATE` for the flags its own game changes. The server keeps every value it relays (so progress stays when the host leaves) and relays it to everyone else. Every player applies a `FLAG_STATE`, even over its own `FLAG_SET`. The server drops a `FLAG_STATE` from anyone but the host.
+- On join, the server sends the joining player its whole table as `FLAG_SNAPSHOT`, before any `FLAG_STATE` that comes after: the channel is ordered, so nothing is missed between them. The joiner holds its game until the last part has come (part = part count − 1) and then applies them all.
+- A host that starts a session, or takes over from one who left, sends its table to the server as `FLAG_SNAPSHOT` the same way. The server merges it in; how a clash between the table and the new host's save is settled is for the server work to decide.
+- A table of more than 4096 flags is split into parts in order, each up to 4096 entries (`split_snapshot` in the code). An empty table is one part with no entries. A table can have at most 65535 parts.
+- The server holds a host sending its table to the same limit as any message on channels 0 to 2 (60 a second, bursts of 120), so a host table of up to about 100 parts (over 400,000 flags) fits one burst. The server's own sends have no such limit.
+
 ## Later stages (outline only)
 
-- **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` asks for a warp to another player's scene.
-- **Stage 4:** `FLAG_SET` (flag hash, value) from any player goes to the host; the host's `FLAG_STATE` is the answer everyone applies. A full flag snapshot is sent on join.
+- **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
+- **Stage 4:** `FLAG_SET`, `FLAG_STATE` and `FLAG_SNAPSHOT` (above) share world flags through the host.
 - **Stage 5:** `OWNER_CLAIM`, `OWNER_GRANT` (with the last state, life included), `OBJECT_SAMPLE` (timed on the server clock, as `PLAYER_SAMPLE`), `DAMAGE` (target, amount, kind, source), `OBJECT_REMOVE` (owner only). Groups for bosses. The hold times and margins are measured before they are fixed.
 
 ## Versioning
 
 - The protocol version goes up whenever a message layout changes in a way an older reader cannot skip.
 - Adding a component or a message type that old readers may ignore does not change the version.
+- Types 12 to 15 (`JOIN_PARTNER` and the flag messages) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags.

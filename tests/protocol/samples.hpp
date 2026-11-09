@@ -21,6 +21,25 @@ inline PlayerSample full_sample() {
   return s;
 }
 
+inline std::vector<FlagEntry> flag_entries() {
+  return {
+      {0x248bfa47u, 0, FlagKind::boolean, 1},
+      {0x248bfa47u, 3, FlagKind::boolean, 0},  // same flag, another element
+      {0x12345678u, 0, FlagKind::int32, 0xFFFFFFFFu},  // -1
+      {0x9abcdef0u, 0, FlagKind::float32, 0x3FC00000u},  // 1.5
+      {0x0badf00du, 7, FlagKind::uint32, 0xDEADBEEFu},
+  };
+}
+
+// A request, an accept and a refuse, as a client sends them.
+inline std::vector<JoinPartner> join_messages() {
+  JoinPartner ask{0, 2, 7, JoinKind::request, std::nullopt};
+  JoinPartner yes{0, 1, 7, JoinKind::accept,
+                  JoinTarget{"spot00", {10.0f, 0.5f, -3.0f}, {0.0f, 1.0f, 0.0f, 0.0f}}};
+  JoinPartner no{0, 3, 8, JoinKind::refuse, std::nullopt, JoinRefuseReason::cannot_warp};
+  return {ask, yes, no};
+}
+
 inline std::vector<Message> every_message() {
   std::vector<Message> all;
   all.push_back(Hello{kProtocolVersion, "lichii 0.1.0", "e0f3ccfaf50065ae", "1.1.1", "Navi"});
@@ -37,6 +56,11 @@ inline std::vector<Message> every_message() {
   minimal.time = {5, 6};
   all.push_back(minimal);
   all.push_back(TestPayload{77, {1, 2, 3, 4, 5, 0, 255}});
+  for (const JoinPartner& j : join_messages()) all.push_back(j);
+  all.push_back(FlagSet{0, {flag_entries()[0]}});
+  all.push_back(FlagState{1, flag_entries()});
+  all.push_back(FlagSnapshot{0, 1, flag_entries()});
+  all.push_back(FlagSnapshot{2, 3, {}});
   return all;
 }
 

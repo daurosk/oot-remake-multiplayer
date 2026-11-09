@@ -239,7 +239,7 @@ TEST_CASE("objects: a copy takes the owner's life, but does not heal back over o
     CHECK(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}).writes.empty());
     // Long after, the owner's word wins.
     sync.Receive(s);
-    step = Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 2)});
+    step = Tick(sync, 1500 * kMs, {Enemy(0x100, 0x11, 2)});
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].life == 3);
 }
@@ -807,4 +807,37 @@ TEST_CASE("objects: after our hit on a copy the owner's old animation waits for 
     copy.Plays(1920 * kMs, plays);
     REQUIRE(plays.size() == 1);
     CHECK(plays[0].name == "Walk");
+}
+
+TEST_CASE("objects: a hurt the game takes after its life was written is put back, not sent on") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)}, 2);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    proto::ObjectSample s;
+    s.player_number = 1;
+    s.id = id;
+    s.state.life = proto::ObjectLife{3, 4};
+    sync.Receive(s);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    // Not taken in 400 ms: written as life.
+    step = Tick(sync, 420 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(step.writes[0].life == 3);
+    Tick(sync, 450 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
+    // The game takes the old hit now (it was paused): 3 -> 2. Put back to 3.
+    step = Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 3);
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(sync.HurtsLate() == 1);
+    step = Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
+    CHECK(All<proto::Damage>(step).empty());
+    // A real hit of ours after that still goes to the owner.
+    Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    CHECK(All<proto::Damage>(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 2)}, 2)).size() == 1);
 }

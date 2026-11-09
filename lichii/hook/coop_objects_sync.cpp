@@ -352,6 +352,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
                     }
                     drop = 0;
+                } else if (o.late_left > 0 && now_us < o.late_until) {
+                    // The game took a hurt after its life had been written
+                    // for it: a second fall for one hit. Put it back; it is
+                    // no hit of ours.
+                    const std::int32_t back = std::min(drop, o.late_left);
+                    o.late_left -= back;
+                    life->life += back;
+                    drop -= back;
+                    writes.push_back({o.address, life->life, 0, {}});
+                    ++hurt_late_;
                 }
                 const auto owner = owners_.find(o.id);
                 if (drop > 0 && owner != owners_.end() && owner->second.player != 0 &&
@@ -493,6 +503,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (o.hurt_until != 0 && now_us >= o.hurt_until) {
             if (o.life && *o.life != o.hurt_target) {
                 writes.push_back({o.address, o.hurt_target, 0, {}});
+                // The hit given to the game may still be taken (a pause, a
+                // text box): watch for that fall for a while.
+                o.late_left = std::max(0, *o.life - o.hurt_target);
+                o.late_until = now_us + kHurtLateUs;
                 o.life = o.hurt_target;
                 ++hurt_missed_;
             }

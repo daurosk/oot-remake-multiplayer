@@ -138,7 +138,11 @@ public:
     static constexpr std::uint64_t kSampleEveryUs = 50'000;     // 20 a second
     static constexpr std::uint64_t kStillEveryUs = 1'000'000;
     static constexpr std::uint64_t kDamageSumUs = 100'000;
-    static constexpr std::uint64_t kHitHoldUs = 500'000;        // no healing back after our hit
+    // No healing back after our hit: the DAMAGE leaves 100 ms later, the
+    // owner's game may take 400 ms over it, then its sample comes back.
+    static constexpr std::uint64_t kHitHoldUs = 1'000'000;
+    // After a hurt was written as life, a fall the game still makes for it.
+    static constexpr std::uint64_t kHurtLateUs = 1'000'000;
     // After our own hit on a copy its game plays the hit reaction itself: the
     // owner's animation from before the hit is not played over it this long.
     static constexpr std::uint64_t kReactHoldUs = 700'000;
@@ -215,6 +219,7 @@ public:
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
+    std::size_t HurtsLate() const { return hurt_late_; }
 
 private:
     struct Owner {
@@ -261,6 +266,10 @@ private:
         std::int32_t hurt_left = 0;
         std::int32_t hurt_target = 0;
         std::uint64_t hurt_until = 0;
+        // A hurt written as life after the wait: a late fall of up to this
+        // much is the game taking that same hit.
+        std::int32_t late_left = 0;
+        std::uint64_t late_until = 0;
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
         coop::protocol::Vec3 first_position{};  // where it was first seen
@@ -302,7 +311,7 @@ private:
     // Each other player's scene and the server time of its latest sample
     // (guarded by inbox_mutex_: PLAYER_SAMPLE comes too often for the inbox).
     std::map<std::uint8_t, std::pair<std::string, std::uint64_t>> scenes_;
-    // Where the other players stand (same guard), with our clock's time.
+    // Where the other players stand (same guard), with the sample's server time.
     std::map<std::uint8_t, std::pair<coop::protocol::Vec3, std::uint64_t>> places_;
     std::map<std::string, unsigned> order_;    // next order per name, this scene visit
     std::map<coop::protocol::ObjectId, Owner> owners_;
@@ -314,6 +323,7 @@ private:
     std::set<std::uint64_t> taken_;             // key64 flags seen set to 1
     std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
+    std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts written directly after the wait
 
     mutable std::mutex inbox_mutex_;

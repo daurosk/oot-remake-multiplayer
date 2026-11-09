@@ -155,7 +155,7 @@ constexpr std::array<u32, 0x98 / 4> kHitTemplate{
     0x03010102, 0x00030000,                          // +0x2d0
 };
 constexpr u64 kHitRecord = 0x240;
-constexpr u64 kHitLateMs = 300;  // under Sync::kHurtWaitUs
+constexpr u64 kHitLateMs = 200;  // under Sync::kHurtWaitUs
 constexpr u64 kHitHeader = 0x1f8;
 constexpr u64 kHitAmount = 0x224;
 constexpr u64 kLastHitId = 0x1b18;

@@ -92,6 +92,8 @@ When the renderer has found the game's camera, the other players are also drawn 
 - **Off screen:** just off screen, a blue arrow at the edge points at the player, with the name beside it. It fades with distance too, but never below 60%.
 - **Off the top:** a tag that would leave the top of the screen goes under the player instead.
 
+Seen in the autotest kits (2026-11-09, `toolsutotestun.ps1 -Scenario nametag -ScreenCopy` with `LICHII_COOP_PUPPET=1` and `LICHII_COOP_DEBUG_CAMERA=1`, Graveyard, both child): the camera is found in both games; in B the tag `A` floats just over A's puppet at 3, 13 and 16 units, and each game tags its own Link `you` just over the hat; in A, B standing behind the camera shows as an edge arrow at the bottom left with `B` above it. That run used 13 px text and a fade from 25 to 60 units. The final 3.5% text and the 10 to 40 unit fade are unit-tested only. `-ScreenCopy` is needed: the window's own print leaves the overlay windows out.
+
 ### Where the camera comes from
 
 The emulator's DLSS path already finds the game's camera (`RasterizerVulkan::TrackOcarinaCamera`, `src/video_core/renderer_vulkan/vk_rasterizer.cpp`), but only with DLSS on. `lichii/hook/coop_camera_track.h` does the same checks without DLSS, from one call the second patch adds after each draw's pipeline is configured:

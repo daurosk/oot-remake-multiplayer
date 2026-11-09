@@ -319,5 +319,33 @@ class FullBuildTest(unittest.TestCase):
             build.build(self.dir, os.path.join(self.dir, "mod"), log=lambda *_: None)
 
 
+class LoadRootTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.user = os.path.join(self.dir, "user")
+        os.makedirs(os.path.join(self.user, "config"))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def write_ini(self, load_dir):
+        with open(os.path.join(self.user, "config", "qt-config.ini"), "w", encoding="utf-8") as f:
+            f.write("[Data%20Storage]\nload_directory\\default=false\n")
+            f.write(f"load_directory={load_dir}\n")
+
+    def test_no_config(self):
+        self.assertEqual(build.load_root(self.user), os.path.join(self.user, "load"))
+
+    def test_configured_elsewhere(self):
+        other = os.path.join(self.dir, "other", "load")
+        os.makedirs(other)
+        self.write_ini(other.replace("\\", "/"))
+        self.assertEqual(os.path.normcase(build.load_root(self.user)), os.path.normcase(other))
+
+    def test_configured_missing_folder(self):
+        self.write_ini(os.path.join(self.dir, "gone").replace("\\", "/"))
+        self.assertEqual(build.load_root(self.user), os.path.join(self.user, "load"))
+
+
 if __name__ == "__main__":
     unittest.main()

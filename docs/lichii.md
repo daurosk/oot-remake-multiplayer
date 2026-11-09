@@ -77,6 +77,12 @@ Checked with `LICHII_COOP_DEBUG_CAMERA=1` (it marks yourself in yellow, labelled
 
 To check again, set `LICHII_COOP_DEBUG_CAMERA=1` before starting the emulator. If the dot is ever mirrored top to bottom, `LICHII_COOP_CAMERA_FLIP_Y=1` turns it.
 
+## Mods (LayeredFS)
+
+Fritchii v5 applies LayeredFS mods to a `.nup` as it does to any game, with no patch of ours: `<load folder>\0400486024DEC000\<mod>\romfs\` is layered over the game's romfs, and the log says `RomFS: LayeredFS patches applied successfully`. The puppet pack (`docs/puppet.md`, Pack) is such a mod.
+
+The load folder is the log's `LoadDir:` line. The emulator stores it (and the NAND and SD folders) in `user\config\qt-config.ini` as absolute paths, so a copied or moved emulator folder still reads the old folder's mods and saves. After copying a kit for a test, point `load_directory`, `nand_directory` and `sdmc_directory` at the copy.
+
 ## Not proven yet
 
 - Two PCs over a real network (the first run was two instances on one PC).

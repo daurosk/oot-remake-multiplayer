@@ -282,6 +282,30 @@ def build(romfs, mod_dir, log=print):
     return manifest
 
 
+def load_root(user_dir):
+    """The mod load folder the emulator really reads for this user folder.
+
+    The emulator keeps `load_directory` in user/config/qt-config.ini as an
+    absolute path. A copied or moved emulator folder keeps the old path, so
+    mods written to <user>/load would be ignored. Use the configured folder
+    when it is set and exists; otherwise <user>/load.
+    """
+    default = os.path.join(user_dir, "load")
+    ini = os.path.join(user_dir, "config", "qt-config.ini")
+    try:
+        with open(ini, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return default
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "load_directory" and value.strip():
+            path = os.path.normpath(value.strip())
+            if os.path.isdir(path):
+                return path
+    return default
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--romfs", required=True, help="the game's extracted romfs folder")
@@ -290,7 +314,13 @@ def main(argv=None):
     g.add_argument("--user-dir", help="the emulator's user folder; writes load/<title id>/<mod name>")
     ap.add_argument("--mod-name", default=DEFAULT_MOD_NAME)
     a = ap.parse_args(argv)
-    mod_dir = a.mod_dir or os.path.join(a.user_dir, "load", TITLE_ID, a.mod_name)
+    if a.mod_dir:
+        mod_dir = a.mod_dir
+    else:
+        root = load_root(a.user_dir)
+        if os.path.normcase(root) != os.path.normcase(os.path.join(a.user_dir, "load")):
+            print(f"note: the emulator's settings load mods from {root}")
+        mod_dir = os.path.join(root, TITLE_ID, a.mod_name)
     try:
         build(a.romfs, mod_dir)
     except BuildError as e:

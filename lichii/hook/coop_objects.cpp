@@ -174,6 +174,23 @@ bool EnvFlag(const char* name) {
 #endif
 }
 
+// The variable's number (0 when unset or not a number).
+int EnvNumber(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return 0;
+    }
+    const int n = std::atoi(value);
+    std::free(value);
+    return n;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr ? 0 : std::atoi(value);
+#endif
+}
+
 // Unset or anything but "0": on.
 bool EnvOn(const char* name) {
 #ifdef _WIN32
@@ -348,6 +365,7 @@ public:
             }
             last = {p.name, now_ms};
             ++played_;
+            LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}'", p.address, p.name);
             CoopPuppet::Call c;
             c.function = main_ + kPlayAs;
             c.x[0] = block_ + kBlockRequest;
@@ -494,6 +512,22 @@ public:
         std::vector<coop::protocol::Message> send;
         std::vector<LifeWrite> writes;
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        for (const Seen& s : seen) {
+            if (!s.animation || !IsShared(s.name)) {
+                continue;
+            }
+            auto& last = anim_logged_[s.address];
+            if (last != s.animation->name && anim_lines_ < 400) {
+                ++anim_lines_;
+                LOG_INFO(Core, "coop: objects: anim {} {:#x} '{}'{}", s.name, s.address,
+                         s.animation->name,
+                         sync_.OwnerOf(sync_.IdOf(s.address).value_or(coop::protocol::ObjectId{})) ==
+                                 self
+                             ? " (ours)"
+                             : "");
+                last = s.animation->name;
+            }
+        }
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
@@ -534,6 +568,7 @@ public:
     bool pose_ = true;
     bool hurt_ = true;
     bool drive_ = false;
+    int drive_mode_ = 0;
 
 private:
     // The game is the right one; finds main once per process.
@@ -712,13 +747,17 @@ private:
         if (!at || !m || r.Get<u32>(enemy + kActorState).value_or(0) != kStateAlive) {
             return;
         }
-        // Columns of the player's rotation: x (side) and z (forward).
+        // Rows of the player's rotation: row 0 is his side, row 2 the way he
+        // faces (two-game test 2026-11-09: column 2 put the enemy behind him).
+        // Mode 2: still, 2 m ahead, no hurts (for real sword hits).
+        const bool still = drive_mode_ == 2;
         const float t = static_cast<float>(now_us % 4'000'000) / 4'000'000.0f;
-        const float sway = 1.5f * std::sin(t * 6.2831853f);
+        const float sway = still ? 0.0f : 1.5f * std::sin(t * 6.2831853f);
+        const float ahead = still ? 2.0f : 3.0f;
         Mover::Pose pose;
         pose.actor = enemy;
-        pose.transform = {(*at)[0] + 3.0f * (*m)[2] + sway * (*m)[0], (*at)[1],
-                          (*at)[2] + 3.0f * (*m)[8] + sway * (*m)[6]};
+        pose.transform = {(*at)[0] + ahead * (*m)[6] + sway * (*m)[0], (*at)[1],
+                          (*at)[2] + ahead * (*m)[8] + sway * (*m)[2]};
         drive_pose_ = pose;
         if (now_us - drive_log_at_ >= 2'000'000) {
             drive_log_at_ = now_us;
@@ -734,7 +773,7 @@ private:
             LOG_INFO(Core, "coop: objects: test drive {:#x} {} in front of {:#x}", enemy,
                      names_[enemy].first, player);
         }
-        if (now_us - drive_hurt_at_ >= 4'000'000) {
+        if (!still && now_us - drive_hurt_at_ >= 4'000'000) {
             drive_hurt_at_ = now_us;
             const auto value = LifeValue(r, enemy);
             const s32 life = value ? r.Get<s32>(value->first + 8).value_or(0) : 0;
@@ -955,6 +994,8 @@ private:
     std::unordered_map<u64, coop::protocol::Vec3> placed_;  // what we wrote last frame
     u8 self_ = 0;
     std::unordered_set<std::string> vtables_logged_;
+    std::unordered_map<u64, std::string> anim_logged_;
+    unsigned anim_lines_ = 0;
     std::optional<Mover::Pose> drive_pose_;
     u64 drive_enemy_ = 0;
     u64 drive_log_at_ = 0;
@@ -986,6 +1027,7 @@ Objects& Instance() {
         // take an amount alone from Life + 0x228 (it needs a whole hit record).
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT");
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
+        objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         return true;
     }();
     (void)once;

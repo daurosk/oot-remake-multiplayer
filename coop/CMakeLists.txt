@@ -20,3 +20,11 @@ add_library(coop STATIC
 )
 target_include_directories(coop PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(coop PUBLIC enet coop_protocol coop_net PRIVATE coop_warnings)
+
+# Presence: where to draw the other players, from their decoded messages.
+# No sockets and no game, so Lichii and the recomp can both call it.
+add_library(coop_presence STATIC
+  presence/src/presence.cpp
+)
+target_include_directories(coop_presence PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/presence/include")
+target_link_libraries(coop_presence PUBLIC coop_protocol PRIVATE coop_warnings)

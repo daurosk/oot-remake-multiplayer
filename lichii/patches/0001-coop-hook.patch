@@ -20,7 +20,7 @@ stops it when it closes.
  6 files changed, 42 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 6f2a86b708..d1123df305 100644
+index 8e847462b0..e4058e94ef 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -728,6 +728,18 @@ if (MSVC AND CXX_CLANG)
@@ -43,10 +43,10 @@ index 6f2a86b708..d1123df305 100644
  
  if (ENABLE_DEBUG_TOOLS)
 diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
-index d2393ea078..1dc7d9e846 100644
+index c229ee21c8..a1df9c8e5a 100644
 --- a/src/core/CMakeLists.txt
 +++ b/src/core/CMakeLists.txt
-@@ -1316,4 +1316,8 @@ elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS_RELEA
+@@ -1320,4 +1320,8 @@ elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS_RELEA
      set_source_files_properties(${lichii_kernel_sources} PROPERTIES COMPILE_OPTIONS -fno-lto)
  endif()
  
@@ -80,10 +80,10 @@ index b8a8979315..b7c3d805df 100644
  
  void nvdisp_disp0::WaitForComposite() {
 diff --git a/src/core/hle/service/nx2_gsv.h b/src/core/hle/service/nx2_gsv.h
-index aaae47868f..2aa931f792 100644
+index 8a1e7661c3..7da1ee1fda 100644
 --- a/src/core/hle/service/nx2_gsv.h
 +++ b/src/core/hle/service/nx2_gsv.h
-@@ -79,6 +79,9 @@
+@@ -80,6 +80,9 @@
  #include "core/hle/service/sm/sm.h"
  #include "core/hle/service/server_manager.h"
  #include "core/hle/service/service.h"
@@ -93,7 +93,7 @@ index aaae47868f..2aa931f792 100644
  
  namespace Service {
  
-@@ -2260,6 +2263,9 @@ private:
+@@ -2310,6 +2313,9 @@ private:
          system.SpeedLimiter().DoSpeedLimiting(system.CoreTiming().GetGlobalTimeUs());
          system.GetPerfStats().EndSystemFrame();
          system.GetPerfStats().BeginSystemFrame();
@@ -104,10 +104,10 @@ index aaae47868f..2aa931f792 100644
  
      // EDEN_NX2_FRAME_CAPTURE=<dir>: every 120th present, save what the renderer shows as
 diff --git a/src/yuzu/CMakeLists.txt b/src/yuzu/CMakeLists.txt
-index 751193c459..47ae0c2cc1 100644
+index 0a3d33862e..e20405edbb 100644
 --- a/src/yuzu/CMakeLists.txt
 +++ b/src/yuzu/CMakeLists.txt
-@@ -484,4 +484,8 @@ endif()
+@@ -504,4 +504,8 @@ endif()
  # Remember that the linker is incredibly stupid.
  target_link_libraries(yuzu PRIVATE OpenSSL::SSL OpenSSL::Crypto SDL3::SDL3)
  
@@ -117,10 +117,10 @@ index 751193c459..47ae0c2cc1 100644
 +
  create_target_directory_groups(yuzu)
 diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
-index 649bbe29a2..7c45a00e98 100644
+index cc2ba56561..a342237691 100644
 --- a/src/yuzu/main_window.cpp
 +++ b/src/yuzu/main_window.cpp
-@@ -15,6 +15,10 @@
+@@ -16,6 +16,10 @@
  #include "common/settings_enums.h"
  #include "frontend_common/settings_generator.h"
  #include "render/performance_overlay.h"
@@ -131,7 +131,7 @@ index 649bbe29a2..7c45a00e98 100644
  #ifdef HAS_RESHADE
  #include "configuration/configure_post_processing.h"
  #include "video_core/post_processing/fx_preset.h"
-@@ -1080,6 +1084,9 @@ void MainWindow::WebBrowserRequestExit() {
+@@ -1089,6 +1093,9 @@ void MainWindow::WebBrowserRequestExit() {
  void MainWindow::InitializeWidgets() {
      render_window = new GRenderWindow(this, input_subsystem);
      render_window->hide();
@@ -141,7 +141,7 @@ index 649bbe29a2..7c45a00e98 100644
  
      game_list = new GameList(QtCommon::vfs, QtCommon::provider.get(), *play_time_manager,
                               *QtCommon::system, this);
-@@ -5335,6 +5342,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
+@@ -5613,6 +5620,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
          return;
      }
      LOG_INFO(Frontend, "Closing frontend after emulation cleanup");

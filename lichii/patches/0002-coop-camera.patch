@@ -12,10 +12,10 @@ so co-op can draw player markers in the world.
  1 file changed, 7 insertions(+)
 
 diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-index 156982fcbb..ec799347b4 100644
+index ac3a698db9..87c31693a8 100644
 --- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 +++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-@@ -75,6 +75,9 @@
+@@ -77,6 +77,9 @@
  #include "video_core/nx2_debug_control.h"
  #include "video_core/nx2_perf.h"
  #include "video_core/nx2_profile.h"
@@ -25,7 +25,7 @@ index 156982fcbb..ec799347b4 100644
  
  namespace Vulkan {
  
-@@ -516,6 +519,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
+@@ -544,6 +547,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
          return;
      }
  

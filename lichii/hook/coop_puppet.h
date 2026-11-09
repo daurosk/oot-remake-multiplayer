@@ -38,6 +38,16 @@ inline constexpr std::uint64_t kCreate = 0x372a70;          // requestCreateActo
 inline constexpr std::uint64_t kActorManagerPtr = 0x4e91888;
 inline constexpr std::uint64_t kMalloc = 0x14c6c90;
 inline constexpr std::uint64_t kRequestDelete = 0xa6490;    // (actor, 0)
+// What the create puts in the handle slot is a request: its low 16 bits at
+// +0 are its state, +8 the actor. SeqExecuteCreateActor's check (0x32bcb30)
+// waits for state 3, then takes the actor with 0x36fbd0(request, 1, 0),
+// which wakes it (0x94f30) and returns it, and clears the slot. State 4 it
+// hands to 0x36fde0(request); 5 and 6 are failures.
+inline constexpr std::uint64_t kTakeCreated = 0x36fbd0;     // (request, 1, 0) -> actor
+inline constexpr std::uint64_t kDropCreate = 0x36fde0;      // (request)
+inline constexpr std::uint64_t kRequestActor = 0x08;
+inline constexpr std::uint32_t kRequestReady = 3;
+inline constexpr std::uint32_t kRequestDrop = 4;
 // The GOT entry the preload walker reads for create argument +0x40.
 inline constexpr std::uint64_t kGotCreateDefault = 0x4c7dad0;
 
@@ -132,21 +142,24 @@ private:
         std::uint64_t handle = 0;   // the handle slot of the current create
         std::uint64_t handle_index = 0;
         std::uint64_t actor = 0;    // resolved this frame; 0 none
+        std::uint64_t request = 0;  // what the handle slot held
+        std::uint64_t taken = 0;    // the actor 0x36fbd0 gave
+        std::uint64_t vtable = 0;   // its vtable then, to notice reuse
+        bool take = false;          // call 0x36fbd0 next
+        bool drop = false;          // call 0x36fde0 next
         std::string actor_name;     // what was created
         std::string scene;          // where it was created
         std::uint64_t since_ms = 0; // when the phase began
         std::uint64_t retry_ms = 0; // no new malloc or create before this
-        bool told_kind = false;
-        int kind = 0;       // what the handle is, once live: 0 not known, 1 link, 2 holder, 3 actor
-        int last_kind = 0;  // what the last Resolve read it as
     };
-    enum class Pending { none, malloc, create, remove };
+    enum class Pending { none, malloc, create, take, drop, remove };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms);
     std::optional<Call> Next(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Create(Slot& slot, const Target& target, Guest& guest);
     std::uint64_t Resolve(Slot& slot, Guest& guest);
+    void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
     Slot& SlotFor(std::uint8_t number);
     void Say(const std::string& text) const;

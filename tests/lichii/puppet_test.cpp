@@ -27,9 +27,9 @@ constexpr std::uint64_t kBase = 0x80000000;    // main
 constexpr std::uint64_t kHeap = 0x200000000;   // what the fake malloc gives
 constexpr std::uint64_t kManager = 0x300000000;
 constexpr std::uint64_t kDefault = kBase + 0x3ee4f8c;
-constexpr std::uint64_t kLink = 0x400000000;
-constexpr std::uint64_t kHolder = 0x400001000;
+constexpr std::uint64_t kRequest = 0x400000000;
 constexpr std::uint64_t kActor = 0x400002000;
+constexpr std::uint64_t kVtable = kBase + 0x4000000;
 
 class FakeGuest : public CoopPuppet::Guest {
 public:
@@ -75,8 +75,8 @@ private:
     std::map<std::uint64_t, std::array<std::uint8_t, 0x1000>> pages_;
 };
 
-// A game with the manager pointer, the walker's default and a link to an
-// actor that is not filled in until Spawn().
+// A game with the manager pointer, the walker's default and a create
+// request that is not filled in until Spawn().
 struct Game {
     FakeGuest guest;
     Game() {
@@ -84,20 +84,23 @@ struct Game {
         guest.Map(kBase + addr::kGotCreateDefault, 8);
         guest.Map(kHeap, 0x1000);
         guest.Map(kManager, 0x200);
-        guest.Map(kLink, 0x20);
-        guest.Map(kHolder, 0x50);
+        guest.Map(kRequest, 0x30);
         guest.Map(kActor, 0x400);
         guest.Set(kBase + addr::kActorManagerPtr, kManager);
         guest.Set(kBase + addr::kGotCreateDefault, kDefault);
     }
-    // What the manager does later: a link in the handle slot, the actor alive.
+    // What the manager does: a request in the handle slot at once, loading
+    // (state 2); later ready (3) with the actor, which is alive.
+    void Request(std::uint64_t handle) {
+        guest.Set(kRequest, std::uint32_t{2});
+        guest.Set(handle, kRequest);
+    }
     void Spawn(std::uint64_t handle, std::uint32_t state = 4) {
-        guest.Set(kLink + addr::kLinkHolder, kHolder);
-        guest.Set(kLink + addr::kLinkId, std::uint32_t{77});
-        guest.Set(kHolder + addr::kHolderActor, kActor);
-        guest.Set(kHolder + addr::kHolderId, std::uint32_t{77});
+        Request(handle);
+        guest.Set(kRequest, std::uint32_t{0x10000 | addr::kRequestReady});
+        guest.Set(kRequest + addr::kRequestActor, kActor);
+        guest.Set(kActor, kVtable);
         guest.Set(kActor + addr::kActorState, state);
-        guest.Set(handle, kLink);
     }
 };
 
@@ -131,6 +134,8 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
             result = 1;
         } else if (call->function == kBase + addr::kRequestDelete) {
             result = 1;
+        } else if (call->function == kBase + addr::kTakeCreated) {
+            REQUIRE(g.guest.Read(call->x[0] + addr::kRequestActor, &result, 8));
         }
         call = d.Step(g.guest, true, result, now_ms);
         REQUIRE(calls.size() < 16);
@@ -238,7 +243,8 @@ TEST_CASE("puppet: malloc, create, live, follow, delete") {
     CHECK(g.guest.Get<float>(kHeap + 0x1c) == 1.0f);  // row 1, column 1
     CheckPosition(g.guest, kHeap + 0x30, 1, 1, 1);    // scale
     CHECK(g.guest.Get<std::uint64_t>(kHeap + 0x40) == kDefault);
-    CHECK(g.guest.Get<std::uint32_t>(kHeap + 0x48) == 0x10001u);
+    CHECK(g.guest.Get<std::uint32_t>(kHeap + 0x48) == 0u);
+    CHECK(g.guest.Get<std::uint8_t>(kHeap + 0x98) == 1u);
     CHECK(g.guest.Get<std::uint64_t>(kHeap + block::kName) == kHeap + block::kNameText);
     CHECK(g.guest.Get<std::uint32_t>(kHeap + block::kName + 8) == block::kNameCapacity);
     std::array<char, 32> name{};
@@ -247,13 +253,23 @@ TEST_CASE("puppet: malloc, create, live, follow, delete") {
     REQUIRE(d.Slots().size() == 1);
     CHECK(d.Slots()[0].phase == Phase::creating);
 
-    // Not there yet: nothing to do.
+    // Not there yet: nothing to do, also while the request loads.
     CHECK(Frame(d, g, 200).empty());
+    g.Request(handle);
+    CHECK(Frame(d, g, 250).empty());
     CHECK(d.Slots()[0].phase == Phase::creating);
 
-    // The manager fills the handle: live.
+    // The request is ready: the actor is taken, as the game does, and the
+    // handle slot cleared; then it is live.
     g.Spawn(handle);
-    CHECK(Frame(d, g, 300).empty());
+    calls = Frame(d, g, 300);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kTakeCreated);
+    CHECK(calls[0].x[0] == kRequest);
+    CHECK(calls[0].x[1] == 1);
+    CHECK(calls[0].x[2] == 0);
+    CHECK(g.guest.Get<std::uint64_t>(handle) == 0);
+    CHECK(Frame(d, g, 310).empty());
     CHECK(d.Slots()[0].phase == Phase::live);
     CHECK(d.Slots()[0].actor == kActor);
 
@@ -300,6 +316,7 @@ TEST_CASE("puppet: a scene change deletes what survived it, then creates anew") 
     REQUIRE(calls.size() == 2);
     g.Spawn(calls[1].x[3]);
     Frame(d, g, 10);
+    Frame(d, g, 15);
     REQUIRE(d.Slots()[0].phase == Phase::live);
 
     // Loading: no scene, nothing is touched.
@@ -325,11 +342,37 @@ TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
     auto calls = Frame(d, g, 0);
     g.Spawn(calls[1].x[3]);
     Frame(d, g, 10);
+    Frame(d, g, 15);
     REQUIRE(d.Slots()[0].phase == Phase::live);
-    // A stale holder (its id no longer the link's): the actor is gone.
-    g.guest.Set(kHolder + addr::kHolderId, std::uint32_t{78});
+    // Freed and reused for something else (another vtable): gone.
+    g.guest.Set(kActor, kVtable + 0x100);
     CHECK(Frame(d, g, 20).size() == 1);  // gone, and at once a new create
     CHECK(d.Slots()[0].phase == Phase::creating);
+}
+
+TEST_CASE("puppet: a failed or dropped request is cleared and tried again") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    const std::uint64_t handle = calls[1].x[3];
+    g.Request(handle);
+    g.guest.Set(kRequest, std::uint32_t{5});
+    CHECK(Frame(d, g, 10).empty());
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(g.guest.Get<std::uint64_t>(handle) == 0);
+
+    calls = Frame(d, g, 5100);
+    REQUIRE(calls.size() == 1);
+    const std::uint64_t again = calls[0].x[3];
+    g.Request(again);
+    g.guest.Set(kRequest, std::uint32_t{addr::kRequestDrop});
+    calls = Frame(d, g, 5200);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kDropCreate);
+    CHECK(calls[0].x[0] == kRequest);
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(g.guest.Get<std::uint64_t>(again) == 0);
 }
 
 TEST_CASE("puppet: a call the cave did not make is undone next frame") {

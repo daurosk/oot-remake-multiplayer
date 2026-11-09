@@ -37,10 +37,6 @@ std::string VecText(const Vec3& v) {
     return buf;
 }
 
-const char* KindText(int kind) {
-    return kind == 1 ? "a link" : kind == 2 ? "a holder" : kind == 3 ? "the actor" : "?";
-}
-
 bool Gone(std::uint32_t state) {
     return state >= 7 && state <= 11;  // as 0x37cca0
 }
@@ -154,6 +150,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             slot.phase = Phase::no_block;
         } else if (pending_ == Pending::create) {
             slot.phase = Phase::idle;
+        } else if (pending_ == Pending::take || pending_ == Pending::drop) {
+            // Still creating with the flag set: asked again.
         } else {
             slot.phase = Phase::live;
         }
@@ -171,6 +169,12 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             slot.phase != Phase::deleting) {
             continue;
         }
+        if (slot.phase == Phase::creating) {
+            Poll(slot, guest, now_ms);
+            if (slot.phase != Phase::creating) {
+                continue;
+            }
+        }
         slot.actor = Resolve(slot, guest);
         std::uint32_t state = 0;
         const bool have_state =
@@ -181,10 +185,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 Vec3 at{};
                 ReadValue(guest, slot.actor + addr::kActorPosition, at);
                 Say("P" + std::to_string(slot.number) + " " + slot.actor_name + " spawned after " +
-                    std::to_string(now_ms - slot.since_ms) + " ms: handle " + Hex(slot.handle) +
-                    ", actor " + Hex(slot.actor) + " (handle read as " + KindText(slot.last_kind) +
-                    "), state 4, at " + VecText(at));
-                slot.kind = slot.last_kind;
+                    std::to_string(now_ms - slot.since_ms) + " ms: request " + Hex(slot.request) +
+                    ", actor " + Hex(slot.actor) + ", state 4, at " + VecText(at));
                 slot.phase = Phase::live;
                 slot.since_ms = now_ms;
             } else if (now_ms - slot.since_ms > kCreateTimeoutMs) {
@@ -194,6 +196,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     "); trying again in 5 s");
                 slot.phase = Phase::idle;
                 slot.retry_ms = now_ms + 5000;
+                slot.take = slot.drop = false;
             }
             break;
         case Phase::live:
@@ -203,6 +206,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.taken = 0;
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
@@ -217,6 +221,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.taken = 0;
             }
             break;
         default:
@@ -247,6 +252,25 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         Say(who + ": create " + slot.actor_name + " requested (returned " +
             Hex(result & 0xffffffff) + "), handle slot " + Hex(slot.handle));
         break;
+    case Pending::take:
+        slot.take = false;
+        WriteValue(guest, slot.handle, std::uint64_t{0});  // as the game does
+        if (result == 0 || !ReadValue(guest, result, slot.vtable)) {
+            Say(who + ": request " + Hex(slot.request) + " gave no actor; trying again in 5 s");
+            slot.phase = Phase::idle;
+            slot.retry_ms = now_ms + 5000;
+        } else {
+            slot.taken = result;
+            Say(who + ": took actor " + Hex(result) + " from request " + Hex(slot.request));
+        }
+        break;
+    case Pending::drop:
+        slot.drop = false;
+        WriteValue(guest, slot.handle, std::uint64_t{0});
+        Say(who + ": request " + Hex(slot.request) + " dropped (state 4); trying again in 5 s");
+        slot.phase = Phase::idle;
+        slot.retry_ms = now_ms + 5000;
+        break;
     case Pending::remove:
         Say(who + ": delete requested (returned " + Hex(result & 0xff) + ")");
         break;
@@ -274,6 +298,21 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             auto c = Create(slot, *t, guest);
             if (c) {
                 slot.since_ms = now_ms;
+            }
+            return c;
+        }
+        return std::nullopt;
+    case Phase::creating:
+        if (slot.take || slot.drop) {
+            Call c;
+            c.x[0] = slot.request;
+            if (slot.take) {
+                c.function = input_.main_base + addr::kTakeCreated;
+                c.x[1] = 1;
+                pending_ = Pending::take;
+            } else {
+                c.function = input_.main_base + addr::kDropCreate;
+                pending_ = Pending::drop;
             }
             return c;
         }
@@ -308,16 +347,17 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     }
     const std::uint64_t b = slot.block;
 
-    // The create argument as the preload walker 0x9456b0 fills it, with our
-    // position and rotation (docs/puppet.md).
+    // The create argument as SeqExecuteCreateActor (0x32bca10) fills it in
+    // the middle of play, with our position and rotation (docs/puppet.md).
+    // The preload walker's form (+0x48 = 0x10001, +0x98 = 0) is only taken
+    // up while a scene loads: made later, its request stays in state 2.
     std::array<std::uint8_t, 0x100> arg{};
     const Vec3 scale{1.0f, 1.0f, 1.0f};
-    const std::uint32_t flags = 0x10001;
     std::memcpy(arg.data() + 0x00, target.position.data(), 12);
     std::memcpy(arg.data() + 0x0c, target.rotation.data(), 36);
     std::memcpy(arg.data() + 0x30, scale.data(), 12);
     std::memcpy(arg.data() + 0x40, &create_default, 8);
-    std::memcpy(arg.data() + 0x48, &flags, 4);
+    arg[0x98] = 1;
     if (!guest.Write(b + block::kCreateArg, arg.data(), arg.size())) {
         return std::nullopt;
     }
@@ -345,70 +385,46 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.actor = 0;
     slot.actor_name = target.actor;
     slot.scene = input_.scene;
-    slot.told_kind = false;
+    slot.request = 0;
+    slot.taken = 0;
+    slot.vtable = 0;
+    slot.take = slot.drop = false;
     pending_ = Pending::create;
     return c;
 }
 
-// The handle slot is filled by the manager. As in the player's chain
-// (docs/puppet.md, player-state-map.md) it should be a link: a holder at +8
-// and an id at +0x10 that the holder repeats at +0x48, the actor at holder
-// +0x40. A holder or the actor itself is also tried, and what it was is
-// logged once.
+// The actor taken from the request, while its vtable is the one it had then
+// (an actor the engine freed and reused is not written to).
 std::uint64_t Director::Resolve(Slot& slot, Guest& guest) {
-    std::uint64_t h = 0;
-    if (!ReadValue(guest, slot.handle, h) || h == 0) {
+    std::uint64_t vtable = 0;
+    if (slot.taken == 0 || !ReadValue(guest, slot.taken, vtable) || vtable != slot.vtable) {
         return 0;
     }
-    const auto plausible = [&](std::uint64_t a) {
-        if (a == 0 || a % 8 != 0) {
-            return false;
-        }
-        std::uint32_t state = 0;
-        Vec3 p{};
-        if (!ReadValue(guest, a + addr::kActorState, state) || state > 15 ||
-            !ReadValue(guest, a + addr::kActorPosition, p)) {
-            return false;
-        }
-        return std::all_of(p.begin(), p.end(),
-                           [](float v) { return std::isfinite(v) && std::fabs(v) < 1e6f; });
-    };
-    // Once one reading has worked for this handle, only that one is used, so
-    // a stale link is not then taken for something else.
-    std::uint64_t actor = 0;
-    const char* kind = nullptr;
-    std::uint64_t holder = 0;
-    std::uint32_t id = 0, holder_id = 0;
-    if ((slot.kind == 0 || slot.kind == 1) && ReadValue(guest, h + addr::kLinkHolder, holder) &&
-        holder != 0 && ReadValue(guest, h + addr::kLinkId, id) && id != 0xffffffffu &&
-        ReadValue(guest, holder + addr::kHolderId, holder_id) && holder_id == id &&
-        ReadValue(guest, holder + addr::kHolderActor, actor) && plausible(actor)) {
-        kind = "a link";
-        slot.last_kind = 1;
-    } else if ((slot.kind == 0 || slot.kind == 2) &&
-               ReadValue(guest, h + addr::kHolderActor, actor) && plausible(actor)) {
-        kind = "a holder";
-        slot.last_kind = 2;
-    } else if ((slot.kind == 0 || slot.kind == 3) && plausible(h)) {
-        actor = h;
-        kind = "the actor";
-        slot.last_kind = 3;
-    } else {
-        actor = 0;
-        slot.last_kind = 0;
+    return slot.taken;
+}
+
+// While creating, before the actor is taken: what the request says.
+void Director::Poll(Slot& slot, Guest& guest, std::uint64_t now_ms) {
+    std::uint64_t request = 0;
+    std::uint32_t word = 0;
+    if (slot.taken != 0 || slot.take || slot.drop || slot.handle == 0 ||
+        !ReadValue(guest, slot.handle, request) || request == 0 ||
+        !ReadValue(guest, request, word)) {
+        return;
     }
-    if (!slot.told_kind) {
-        slot.told_kind = true;
-        std::array<std::uint64_t, 10> words{};
-        guest.Read(h, words.data(), sizeof(words));
-        std::string raw;
-        for (auto w : words) {
-            raw += " " + Hex(w);
-        }
-        Say("P" + std::to_string(slot.number) + ": handle " + Hex(slot.handle) + " holds " +
-            Hex(h) + ", taken as " + (kind ? kind : "nothing known") + "; it holds" + raw);
+    const std::uint32_t state = word & 0xffff;
+    slot.request = request;
+    if (state == addr::kRequestReady) {
+        slot.take = true;
+    } else if (state == addr::kRequestDrop) {
+        slot.drop = true;
+    } else if (state == 5 || state == 6) {
+        Say("P" + std::to_string(slot.number) + " " + slot.actor_name + ": request " +
+            Hex(request) + " failed (state " + std::to_string(state) + "); trying again in 5 s");
+        WriteValue(guest, slot.handle, std::uint64_t{0});
+        slot.phase = Phase::idle;
+        slot.retry_ms = now_ms + 5000;
     }
-    return actor;
 }
 
 void Director::Status(Guest& guest, std::uint64_t now_ms) {
@@ -443,6 +459,16 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
         }
         if (const Target* t = Wanted(slot.number)) {
             line += ", wanted at " + VecText(t->position);
+        }
+        // While it is being made, what the handle holds, to see it fill in.
+        if (std::uint64_t h = 0; slot.phase == Phase::creating && slot.handle != 0 &&
+                                 ReadValue(guest, slot.handle, h) && h != 0) {
+            std::array<std::uint64_t, 8> words{};
+            guest.Read(h, words.data(), sizeof(words));
+            line += "; handle holds " + Hex(h) + ":";
+            for (auto w : words) {
+                line += " " + Hex(w);
+            }
         }
         Say(line);
     }

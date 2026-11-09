@@ -186,7 +186,29 @@ Research (s2-equip-create) showed that create argument +0x40 is a name pointer, 
 - Proven in game (2026-11-09, autotest `gear` and `gear-change` on one PC): both puppets wear the other player's Kokiri Sword and Hylian Shield (`wears ... (returned 0x1)`), and when A swaps to the Deku Shield in the menu, B's puppet of A swaps too (Hylian on its back before, Deku after). The pack must carry the EquipmentUserParam (main since PR 52): with an older pack the EquipmentUser is 0 and nothing is worn.
 - Not run: tunic, boots, mask (none in the test save), taking a piece off (an empty name is skipped), adult Link.
 
+### In hand or put away (built, not run in the game)
+
+Caleb's hand test of v0.1.0-test1 (2026-11-09): only the shield showed on puppets, always on the back, also while its player held it on the arm or guarded. The logs of that test show the sword was worn too (`wears weapon ... (returned 0x1)`); a piece is worn put away and nothing ever changed that.
+
+Read from the dump (static, not run):
+
+| Piece | What |
+|---|---|
+| Change state | `0xe34c40(EquipmentUser, slot, state)`. State 1 is in hand (it runs 0x6b6820; the shield node 0x2797850 calls it with slot 4, state 1), state 2 is put away on the back (0xe34c70, the state a piece is worn in), state 0 goes to 0x2dfdee0 |
+| The slot's byte | EquipmentUser +0x13bc + slot: bit 1 (0x2) in hand, bit 2 (0x4) put away. 0xce7ab0(eu, slot) reads the current state |
+
+What the director does (`Director::Hold`), for a live puppet, after its gear is worn:
+
+- `Target::drawn` is the player's `drawn` bits from `PLAYER_EQUIP` (the debug puppet gets our own).
+- For the sword (slot 0) and the shield (slot 4): when the player's bit differs from what the puppet was last set to, one call of the change-state function with state 1 or 2. A piece just worn counts as put away, so only "in hand" is asked then.
+- After the call the slot's byte is read: with the wanted bit set the change is taken and logged, `P<n> equipment slot <s> in hand` or `put away`. Otherwise the call is made again after 250 ms (`not taken (byte ..)` with `LICHII_COOP_DEBUG_ANIM`).
+- Where the piece sits (hand bone, arm, guard) is the game's own: the state picks the bone, and the pose copy moves the arm.
+
+**Not proven in game.** It compiles and the unit tests cover the calls (`puppet_test.cpp`: hold, move); no game was run with it. To check with two players: one draws the sword (Y), guards (ZL), puts away (B); the other watches the puppet and the log lines above. Autotest scenario: `hold`. If `not taken` repeats, the state numbers or the byte's bits are wrong for that slot.
+
 ### Not done (equipment)
+
+0. Held items (bow, slingshot, Deku stick, boomerang; slot 3) are not shown: the item's actor name is not sent. It needs the name read from the slot-3 actor and a new `PLAYER_EQUIP` component, then an equip (kinds 5 bow, 11 tool) and the same change-state call on slot 3.
 
 1. Not run: a tunic, boots, a mask or a second sword (none in the test save), adult Link's slots, and which item was in slot 3. Run them with a later save: the local debug log (`LICHII_COOP_DEBUG_EQUIP`) prints the flags and every slot.
 2. The name of the actor in each slot (for a held tool such as the hookshot or bombs, which are not in `PlayerStatus.Equip*`): the actor's name field was not found. The item buttons are `PlayerStatus.AssignableItem.*` (an enum, [items.md](items.md)).
@@ -426,6 +448,11 @@ Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii
 The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
 
 **Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
+
+**Frozen in a hand test (2026-11-09, v0.1.0-test1).** The fairies stayed where they were created and did not animate. Read from the dump and the romfs, not run:
+
+- `Dm_Npc_Navi` has a physics body (a character controller), so the plain write of its place is undone, as for the shared objects ([objects.md](objects.md)). The fairy's director now also calls the game's own setter `0x4c6580(actor, 0)` once a frame after the write (`Director::SetMatrixCall`, `Director::Move`; only for an actor whose vtable is 0x4b25e18). **Not proven in game**: check that each fairy stays at its puppet's shoulder while the player walks (`fairy ... pose:` lines with `LICHII_COOP_DEBUG_ANIM`).
+- It does not flap: its animation file (`Dm_Npc_Navi.root.asb`, 330 bytes) has no animation commands. `Npc_Navi.root.asb` has `Wait`, `Dash`, `Fly_*` and `Talk`. Not done: a pack with the `Dm_Npc_Navi` model and `Npc_Navi`'s animations (then play `Wait`), or a copy of the local Navi's skeleton pose onto it each frame, as the pose copy does for Link.
 
 ## Not done
 

@@ -32,6 +32,8 @@ The emulator side is a small patch on Frizti's Fritchii, pinned in [lichii/PIN](
 
 Needs CMake 3.24 or newer and a C++20 compiler (Visual Studio 2022 on Windows). ENet and doctest are fetched by CMake at pinned versions. `cmake -S . -B build`, then `cmake --build build --config Release` and `ctest --test-dir build -C Release`.
 
+To test co-op on two PCs with the test kit, see [docs/testing.md](docs/testing.md).
+
 ## What you need
 
 - Your own legally obtained copy of the game, dumped from your own console. This repository has no game files, keys or firmware and never will.

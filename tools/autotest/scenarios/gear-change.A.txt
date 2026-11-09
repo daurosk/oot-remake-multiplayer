@@ -1,0 +1,33 @@
+# gear-change: A walks ahead, then swaps Hylian -> Deku Shield in the menu (steps of
+# menu-gear); B watches A's puppet. Expect in B's log: P1 wears shield 'Weapon_Shield_Deku'.
+mark start
+stick 0 0.6 160
+wait 120
+mark before
+press PLUS
+wait 60
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+mark first-page
+press R
+wait 45
+mark equipment
+# The cursor starts on the worn shield (Hylian); the Deku Shield is to its left.
+press DLEFT
+wait 30
+press A
+wait 45
+mark equipped
+press PLUS
+wait 90
+mark closed
+wait 120
+mark after1
+wait 180
+mark after2

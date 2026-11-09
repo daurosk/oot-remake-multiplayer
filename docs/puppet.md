@@ -40,7 +40,8 @@ The create argument is about 0x100 bytes on the caller's stack. Fields the calle
 | +0x0 | Position, 3 floats; zero from the default at 0x3ee4f8c | Checked as stores; meaning inferred |
 | +0xc | Rotation, 3×3 floats, copied from the identity at 0x3ee4f9c | Checked |
 | +0x30 | Scale, 3 floats, (1, 1, 1) from 0x3ee5008 | Checked |
-| +0x40 | Pointer, set to 0x3ee4f8c (an empty default) | Checked; meaning not read |
+| +0x40 | `const char*`, default `""`: 0x3ee4f8c is the empty string between `ToPlayerDeg` and `PlayerToTargetDiffDeg` in rodata, and the GOT entry 0x4c7dad0 the director copies is the same kind of empty-string default (2669 uses in main, picked with `csel` against a real string). Not an instance-parameter block | Checked (SeqExecuteCreateActor 0x32bca58..0x32bca80) |
+| +0x60 | Pointer; SeqExecuteCreateActor copies `[[node +0x60]]` here when it is not null, else 0. The likeliest carrier of the node's instance parameters (EquipmentUser_* for gear at create) | Store checked; meaning not read |
 | +0x48 | Word 0x10001 | Checked; meaning not read |
 | +0x4f to +0x55 | Zero | Checked |
 | +0x58 | 0x41 bytes cleared | Checked |
@@ -76,7 +77,7 @@ The emulator serves the packs as a romfs layer, the same way any LayeredFS mod i
 | State | Actor +0x2c; 4 is alive and in the world, 7 to 11 gone | Checked there |
 | Component table | Actor +0x270 | Checked |
 | AS (animation) component | Component table +0x40, then +0x18, then +0x18: the AS controller | Checked, 0x3abebc0 and 0x28aedf8 |
-| Current AS frame | Controller +0x20 is an array, controller +0x18 the index into it; the float at entry +0xe8 is the frame. Read by 0x3abebc0 | Checked as a read; that +0xe8 is the frame is inferred from the `ASFrame` plug of `ExecuteASPlaySetASFrameEachFrameByPlug` |
+| Current AS frame | Controller +0x20 is an array of slots, controller +0x18 the slot count (see Animation); the float at entry +0xe8 is the frame. Read by 0x3abebc0 | Checked as a read; that +0xe8 is the frame is inferred from the `ASFrame` plug of `ExecuteASPlaySetASFrameEachFrameByPlug` |
 | Play an AS command | **0x2022a0**, 87 callers, with one argument: a request on the stack | Checked |
 
 The request to 0x2022a0, as `OneShotASPlayWithSkipUpdate` (run slot 0x28aed70) builds it:
@@ -174,6 +175,16 @@ Every piece is **an actor of its own**, created by the wearer's EquipmentUser co
 4. **Armor** (tunic, boots, mask): at creation through the `EquipmentUser_Armor*` keys above. A change after creation is a re-create, or the 0x2df7b20 call with the armor slot kinds 0x2df6c80 uses. Gauntlets and the Stone of Agony have no key; they need the call.
 5. **Drawn or sheathed**: the equipment state comes with the AS commands the puppet already plays (the game draws the sword in the draw animation), and `OneShotEquipmentUserRequestChangeState` and `OneShotPlayerRequestAllEquipmentSheathed` are the nodes that set it; their run slots were not read. Use `drawn` to check the puppet matches, and to correct it once the change-state call is known. A cruder correction, not tried: set bit 1 of the puppet's byte at EquipmentUser +0x13bc + *i*.
 6. **Slots.** Address pieces by slot as `addresses.hpp` names them (`kEquipSlotSword` 0, `kEquipSlotHeldItem` 3, `kEquipSlotShield` 4, seen in the game), not by the blackboard order, which would put the shield at 2.
+
+### What the director does (built, s2-puppet-live-4)
+
+Research (s2-equip-create) showed that create argument +0x40 is a name pointer, not instance parameters, and that `EquipmentUser_*` keys are only worn through an AI node the puppet does not run. So the director wears gear with the game's equip call instead, once the puppet is live:
+
+- `OnEvent` keeps each remote player's merged `PLAYER_EQUIP` (weapon, shield, head, armor, boots); `Publish` passes it on as `Target::gear`.
+- For each piece whose name differs from what the puppet wears, one call `0x2df7b20(eu, kind, &char*, 2, -1, 1, 0)` with `eu = [[actor + 0x270] + 0x200]` and kinds 0, 6, 7, 8, 9. Each kind has its own name cell in the puppet's block (+0x300, 0x40 each; the char* cells at +0x440). Log: `P<n> wears <piece> '<name>'`.
+- An empty name (nothing in that slot) is not taken off yet; a gear change later is the same call, no re-create. A re-create wears everything again.
+- Proven in game (2026-11-09, autotest `gear` and `gear-change` on one PC): both puppets wear the other player's Kokiri Sword and Hylian Shield (`wears ... (returned 0x1)`), and when A swaps to the Deku Shield in the menu, B's puppet of A swaps too (Hylian on its back before, Deku after). The pack must carry the EquipmentUserParam (main since PR 52): with an older pack the EquipmentUser is 0 and nothing is worn.
+- Not run: tunic, boots, mask (none in the test save), taking a piece off (an empty name is skipped), adult Link.
 
 ### Not done (equipment)
 
@@ -279,13 +290,39 @@ Approach (a), in `lichii/hook/` and one small emulator patch. Not yet run with t
 |---|---|---|
 | Patch | `lichii/patches/0003-coop-puppet.patch` | Two calls in the emulator: `PatchManager::PatchNSO` calls `CoopSvc::PatchMain` after its built-in patches, and `Kernel::Svc::Call` asks `CoopSvc::Call` before any other SVC. |
 | Code patch | `CoopSvc::PatchMain` (`coop_svc.cpp`) | Only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`, for main of build `E0F3CCFA...3348`. moduleCalc_ calls the frame function 0x3b4e300 from two places: main+0x6e70f8 (0x94d19c82), the one that runs every frame, and main+0x6e6dd8 (0x94d19d4a), a rare branch. Checks that both hold those words and that 0x3c46280 to 0x3c47000 is zero, in the original and in what the other patches made, then writes `bl 0x3c46280` at both and the cave. Logs `Applying "coop puppet"` or why not. |
-| Cave | `coop_svc.s`, bytes in `coop_svc.h` | 124 bytes at 0x3c46280. Keeps the game's `x0` and `s0`, takes 0x100 bytes of stack, and loops: `svc #0xf4` with the buffer, then, while the emulator says so, calls the function it put in the buffer with `x0` to `x7` and the stack arguments from it, and hands the result back at the next SVC. At most 16 calls a frame. Then it branches to 0x3b4e300 as the game would have called it. |
+| Cave | `coop_svc.s`, bytes in `coop_svc.h` | 128 bytes at 0x3c46280. Keeps the game's `x0` and `s0`, takes 0x100 bytes of stack, and loops: `svc #0xf4` with the buffer, then, while the emulator says so, calls the function it put in the buffer with `x0` to `x7`, `s0` (buffer +0x68, for the frame of 0x37b5d70) and the stack arguments from it, and hands the result back at the next SVC. At most 16 calls a frame. Then it branches to 0x3b4e300 as the game would have called it. |
 | SVC | `CoopSvc::Call` | 0xf4 from Ocarina only. Hands the SVC to the director and writes the call it wants into the buffer. |
-| Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x200-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, and as SeqExecuteCreateActor does at 0x32bca40..0x32bcaa0: +0x48 = 0, +0x98 = 1), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Create fills the handle slot with a 0x30-byte **create request**: +0 low 16 bits the state, +8 the actor. State 3 = ready: the director takes the actor with **0x36fbd0(request, 1, 0)**, as SeqExecuteCreateActor's check (0x32bcb30) does, and clears the slot; state 4 is dropped with 0x36fde0(request), 5 and 6 are failures. Once the actor is in state 4 the puppet is live and its +0x31c and +0x328 are written every frame. (With the walker's +0x48 = 0x10001 the request stayed in state 2.) |
+| Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x300-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, and as SeqExecuteCreateActor does at 0x32bca40..0x32bcaa0: +0x48 = 0, +0x98 = 1), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Create fills the handle slot with a 0x30-byte **create request**: +0 low 16 bits the state, +8 the actor. State 3 = ready: the director takes the actor with **0x36fbd0(request, 1, 0)**, as SeqExecuteCreateActor's check (0x32bcb30) does, and clears the slot; state 4 is dropped with 0x36fde0(request), 5 and 6 are failures. Once the actor is in state 4 the puppet is live and its +0x31c and +0x328 are written every frame. (With the walker's +0x48 = 0x10001 the request stayed in state 2.) |
 | Delete | 0xa6490 | The run of `OneShotGenericDeleteThisActor` (its node's last vtable slot, 0xc706f0) calls 0xa6490 with the actor and 0. It returns at once for an actor in state 7 to 11. The director asks for it when the player has been out of the plan for 2 s (`kLeaveGraceMs`: a stalled peer fades to 0 for a moment, and without the wait the puppet was deleted and made again), changes model, or the local scene is not the one the puppet was made in. An actor the engine deleted itself (state 7 to 11, or a holder whose id no longer matches) is noticed and made again. |
 | Planner | `coop_puppet.cpp`, present thread | `CoopPuppet::Publish`, from `CoopHook::OnFrame`: every remote player that presence shows in your scene and has not faded becomes a target, at its shown position and rotation (`QuatToMatrix`, the inverse of the reader's). With `LICHII_COOP_DEBUG_PUPPET=1` one more, 2 units along x from where you stood 3 s after the scene was known, staying there. Nothing is planned while the scene is not known (loading). |
 
-The actor is `Animal_Cow_LinkHouse` until the puppet pack exists; `LICHII_COOP_PUPPET_ACTOR=<pack name>` changes it.
+The actor is `CoopPuppet_Child` or `CoopPuppet_Adult`, by the age in the player's samples (a change of age deletes it and makes the other); `LICHII_COOP_PUPPET_ACTOR=<pack name>` sets one actor for everyone (`Animal_Cow_LinkHouse` was the default before the pack).
+
+### Animation playback
+
+What [How the puppet plays it](#how-the-puppet-plays-it) planned, built in the director. The session's `on_event` hands every PLAYER_SAMPLE to `CoopPuppet::OnEvent`, which keeps each player's newest field 7 (name, frame, rate) with a counter; the planner passes it on with the target. For a live puppet whose AS chain (actor +0x270, +0x40, +0x18, +0x18) is there:
+
+1. A name it has not played: the name goes into one of two 0x50-byte buffers in the block (in turn, since the slot may keep the pointer), the request at block +0x200 is {actor, name, slot 0, rate, -1.0, -1.0, skip-if-same 0, node 0} (node 0 as the game's own caller at 0x2a95c4), and the cave calls **0x2022a0**(request).
+2. In the same frame, **0x37b5d70**(controller, 0, `s0` = received frame). 0x37b5d70 checks the slot index against the count and works on the slot's player (slot +0x48), so it is called rather than writing +0xe8.
+3. After that the game plays it on. A new sample (the counter moved) with the same name sets the frame again only when the puppet's slot 0 frame (+0xe8) is more than 3 frames off (`kFrameSlack`), so keep-alives correct drift without jerking.
+4. Then every other slot (1 to the slot count, at most 8) gets slot 0's command with **0x3abec10**(actor, 0, slot, 0, 0), the call behind `ExecuteASSyncPartialAnimation`: it reads the source slot's command (+0x10) and rate (0xdf49e0) and plays it on the target slot through 0x37b59c0 (request skip-if-same 1). Caleb's test of the slot-0-only version (2026-11-09) showed the legs animating and the upper body in T-pose: the upper body is a partial slot. Not yet run.
+
+**Pose against the actor's own calc.** In the same test the puppet did not follow while it played animations. The engine's matrix setter, the run of `OneShotActorRequestSetMtx` (0x28b2050), calls **0xc6fd60**(actor, mtx34, 0): for an actor with a physics body (component table +0x50, its +0x20) it hands the matrix to the body (0x4c6630); otherwise it stores a pending transform, position at actor **+0x358** and rotation rows at **+0x364**, and sets or clears bit 0x8000 of +0x4a8 (from the third argument). The actor's calc applies that over +0x31c/+0x328. The director now writes both pairs every frame (`Pose`), as the setter would. With `LICHII_COOP_DEBUG_ANIM=1` a line a second, `P<n> pose: at <+0x31c>, request <+0x358>, now to <target>`, shows what the game left there since the last write. Not yet run; the applier itself was not found.
+
+`LICHII_COOP_DEBUG_ANIM=1` logs `P<n> plays '<name>' from frame <f>`, each correction (`frame <now> -> <received>`), and hold/move-again; with `LICHII_COOP_DEBUG_PUPPET=1` the status line shows what each puppet plays and its frame. Names of 0x50 characters or more are not played (the reader refuses more than 64).
+
+### Scene filter
+
+The planner runs `coop::host::visibility` (`coop/host/scene.hpp`) for each remote player with our scene, our event flag (`PlayerReading::event_running`) and their scene and PLAYER_STATUS flags:
+
+| Visibility | Puppet |
+|---|---|
+| hide, other or unknown scene | Not planned: none is made, one that exists is deleted after the 2 s grace (or at once on our scene change) |
+| hide, our cutscene | Kept, written 500 units below its spot (`kHideDrop`), no animation calls, so it is not deleted and made again for every cutscene |
+| hold, their cutscene | Kept where it is, no pose write; slot 0's frame from the start of the hold is set again once a frame, so it stands frozen |
+| show | Pose written every frame, animation as above |
+
+The overlay markers follow the same rule: `Coop::Frame` (`coop_hook.cpp`) notes each player `visibility` hides, and `Place` builds no marker for them. Hold and show keep the marker.
 
 ### The first run
 
@@ -316,7 +353,23 @@ Kakariko Village (child), Fritchii v5 coop build, two local instances on one ser
 - Each instance makes a `CoopPuppet_Child` for the other player (A's P2, B's P1). A walked a few steps; B's P1 moved with him, `live ... at` equal to `wanted at`.
 - A closed: B logs `P1: delete requested`, `P1 deleted (state 7)`, and the puppet is gone from B's screen.
 
-Not yet seen: animation (the puppet stands in its default pose), rotation in the picture, a scene change with two instances, adult Link.
+Not yet seen: animation (the puppet stands in its default pose), rotation in the picture, a scene change with two instances, adult Link. Animation playback and the scene filter are built since (unit tests on fake memory); not yet run in the game.
+
+## Fairy
+
+Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii/hook/coop_fairy.*`).
+
+| Piece | What |
+|---|---|
+| Actor | `Dm_Npc_Navi`, the cutscene Navi from the game's own pack: its own model and glow (`XLink/Npc_Navi`), `ActorLogicSimpleActor`, the generic name `Dm_Npc_Base`. `Npc_Navi` is not used: it is the player's partner, with an AI that follows the player and a name the game looks up, so a second one would clash. `LICHII_COOP_FAIRY_ACTOR=<pack>` picks another (`Npc_Fairy` is the next to try). |
+| Create and delete | A second `CoopPuppet::Director`, the same create, take and delete path as the puppet. It registers with the svc cave as caller 20 (`CoopSvc::AddCaller`, after the puppets and CoopSpawn), on the first `CoopFairy::Publish`; the cave asks each caller in turn, each with its own frame and its own call results. Each director takes at most 4 calls a frame, the cave allows 16. Its log lines start with `fairy`. |
+| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
+| Pose | Written into the actor every game frame by the director, like the puppet's. The Navi AI is not pointed at the puppet. |
+| On and off | On with the puppets (`LICHII_COOP_PUPPET` or `LICHII_COOP_DEBUG_PUPPET`); `LICHII_COOP_FAIRY=0` turns it off. |
+
+The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
+
+**Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
 
 ## Not done
 
@@ -325,4 +378,5 @@ Not yet seen: animation (the puppet stands in its default pose), rotation in the
 3. The run slots of `ExecuteActorForceSetMtx` and `OneShotActorRequestSetMtx`, if a direct pose write does not hold.
 4. ~~What the handle slot holds~~ (a create request, see [Spawn and move](#spawn-and-move-what-is-built)); the meaning of `w4`, the stack arguments and create argument +0x40.
 5. Whether the engine accepts an uncompressed pack, and whether the size table needs entries for new packs.
-6. Animation, equipment and scene changes on the puppet are from the dump and not yet run; spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).
+6. Follow, upper-body animation and equipment (worn and changed) are proven in game (2026-11-09); leg speed, scene changes and adult Link are not run. Spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).
+7. A puppet created while its player is far away (about 47 units, 2026-11-09) is not drawn when the player comes near; its fairy is. Recreated nearby, it is drawn. Not looked into.

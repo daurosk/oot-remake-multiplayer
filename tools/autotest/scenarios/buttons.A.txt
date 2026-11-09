@@ -1,0 +1,49 @@
+# buttons: finds what each button does in this version. A presses one button at a time,
+# a screenshot follows each (mark), then B (cancel) and a pause so the next starts clean.
+# Read A's shots in order; use the answers to fix sword, slingshot, bomb and menu-gear.
+mark start
+press X
+wait 60
+mark after-X
+press B
+wait 60
+press Y
+wait 60
+mark after-Y
+press B
+wait 60
+press ZR
+wait 60
+mark after-ZR
+press B
+wait 60
+press R
+wait 60
+mark after-R
+press B
+wait 60
+press L
+wait 60
+mark after-L
+press B
+wait 60
+hold ZL 40
+mark holding-ZL
+wait 30
+press MINUS
+wait 60
+mark after-MINUS
+press MINUS
+wait 60
+press PLUS
+wait 60
+mark after-PLUS
+press ZR
+wait 45
+mark plus-then-ZR
+press ZL
+wait 45
+mark plus-then-ZL
+press PLUS
+wait 60
+mark end

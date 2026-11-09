@@ -1,0 +1,15 @@
+# slingshot: A aims the slingshot (ZR, the item slot shows it) and fires on release; B watches.
+# Checked 2026-11-09: Link aims (Shoot Seed), the seed count drops 43 to 42.
+# Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
+# ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
+# dash (hold), B put away, X jump, Y attack, right stick camera.
+mark start
+hold ZR 60
+mark aiming
+hold ZR 30
+wait 20
+mark fired
+wait 40
+press B
+wait 60
+mark end

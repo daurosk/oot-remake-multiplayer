@@ -40,6 +40,7 @@
 #include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/host/player_reader.hpp"
+#include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop/overlay/overlay.hpp"
@@ -51,6 +52,7 @@
 #include "coop_flags.h"
 #include "coop_fairy.h"
 #include "coop_objects.h"
+#include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
@@ -123,6 +125,13 @@ const char* WhyText(coop::overlay::Why why) {
 
 using Clock = std::chrono::steady_clock;
 
+// The calc thread's clock (coop_svc.cpp), so pose times line up.
+std::uint64_t SteadyMs() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch())
+            .count());
+}
+
 std::string Hex(const std::array<u8, 0x20>& id, std::size_t bytes) {
     std::string out;
     char buf[3];
@@ -141,6 +150,7 @@ struct FrameView {
     std::optional<coop::protocol::Vec3> position;
     std::optional<std::string> scene;
     std::vector<coop::overlay::Shown> others;
+    std::vector<std::uint8_t> hidden;  // others with no marker (scene.hpp: hide)
     std::optional<Markers> markers;  // none: no camera
     std::string camera_note;         // for the panel, when the game runs
 };
@@ -189,10 +199,14 @@ public:
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
             Log(event);
+            CoopPuppet::OnEvent(event);
+            CoopPose::OnEvent(event, SteadyMs());
             Chat(event, client);
             CoopObjects::OnEvent(event);
             CoopSpawn::OnEvent(event);
         };
+        CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
+                         EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
         return true;
@@ -236,11 +250,27 @@ public:
         }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
         if (report.connected) {
+            const bool event = reading && reading->event_running.value_or(false);
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
-                return coop::overlay::collect(p, report.server_now_us);
+                auto shown = coop::overlay::collect(p, report.server_now_us);
+                // The same rule as the puppet: no marker for a player in
+                // another scene or while our own cutscene runs.
+                for (const auto& s : shown) {
+                    const auto* player = p.player(s.number);
+                    const std::optional<std::string_view> theirs =
+                        s.scene ? std::optional<std::string_view>(*s.scene) : std::nullopt;
+                    const std::optional<std::string_view> ours =
+                        view.scene ? std::optional<std::string_view>(*view.scene) : std::nullopt;
+                    if (coop::host::visibility(ours, event, theirs, player ? player->flags() : 0) ==
+                        coop::host::Visibility::hide) {
+                        view.hidden.push_back(s.number);
+                    }
+                }
+                return shown;
             });
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
+                            reading && reading->event_running.value_or(false),
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
@@ -396,6 +426,9 @@ private:
         c.viewport_height = camera->height;
 
         auto players = view.others;
+        std::erase_if(players, [&](const coop::overlay::Shown& s) {
+            return std::find(view.hidden.begin(), view.hidden.end(), s.number) != view.hidden.end();
+        });
         if (debug_camera_ && view.position) {
             players.push_back({0, "you", *view.position, view.scene, 1.0f});
         }
@@ -560,6 +593,7 @@ private:
         auto last_state = coop::net::State::idle;
         while (!stop_) {
             session_->service();
+            session_->with_client([](coop::net::Client& c) { CoopPose::Send(c, SteadyMs()); });
             RoomView room = session_->with_client([&](coop::net::Client& c) {
                 return RoomView{c.state(), c.player_number(), c.round_trip_us(), c.players(),
                                 note_};

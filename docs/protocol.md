@@ -205,6 +205,16 @@ How it moves:
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field. It keeps nothing.
 - Every build keeps the last one it sent, and sends it again when a `PLAYER_JOINED` arrives, so a newcomer sees what everyone already wears.
 
+### Pose (`PLAYER_POSE`)
+
+The local Link's skeleton after its animation, so the puppet can copy it bone by bone ([puppet.md](puppet.md), "Pose"). On channel 3 with `PLAYER_SAMPLE`, unreliable: a lost pose is replaced by the next one.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 26 | `PLAYER_POSE` | 3 | both | `u8` player field, `u64` server time, `u32` sequence, `u32` skeleton, `u16` bone count (at most 512), then per bone: `u16` bone (below 512, each above the one before), `u8` parts (bit 0 rotation, bit 1 translation, bit 2 scale; other bits refused), `u8` flags, then the parts it has in that order: rotation 4 x `s16` (quaternion x y z w scaled by 32767; -32768 refused), translation 3 x `s16`, scale 3 x `s16` (both scaled by 8192) |
+
+Only the bones that move are listed; a bone left out keeps what the puppet has. The rotation, translation and scale are the bone's local transform (relative to its parent) after the sender's animation, and flags is the game's flag byte of that bone, passed on unread ([puppet.md](puppet.md), "Pose"). `skeleton` tells the receiver which skeleton the bones belong to; a puppet whose skeleton differs ignores the message. The time works as in `PLAYER_SAMPLE`. The server relays it like `PLAYER_SAMPLE`, with the sender's number in the player field, and keeps nothing.
+
 ### Objects (stage 5)
 
 Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). The server keeps an object table (below); the hook does not send these yet.
@@ -247,6 +257,6 @@ The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's
 
 - The protocol version goes up whenever a message layout changes in a way an older reader cannot skip.
 - Adding a component or a message type that old readers may ignore does not change the version.
-- Types 12 to 25 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP` and the object messages) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
+- Types 12 to 26 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP`, the object messages and `PLAYER_POSE`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.
 - Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.

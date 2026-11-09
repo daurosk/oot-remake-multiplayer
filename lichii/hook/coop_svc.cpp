@@ -55,11 +55,12 @@ bool Wanted() {
 void ConfigurePuppets() {
     CoopPuppet::PlannerSettings settings;
     settings.debug = EnvOn("LICHII_COOP_DEBUG_PUPPET");
+    settings.debug_anim = EnvOn("LICHII_COOP_DEBUG_ANIM");
     if (const auto actor = Env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = actor;
     }
     const bool debug = settings.debug;
-    LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor,
+    LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
              debug ? ", debug puppet beside you" : "");
     CoopPuppet::Configure(std::move(settings), debug,
                           [](const std::string& line) { LOG_INFO(Core, "{}", line); });
@@ -209,7 +210,8 @@ bool Call(Core::System& system, std::uint32_t imm, std::array<std::uint64_t, 8>&
     const bool ok =
         guest.Write(buffer + kBufferStack, call->stack.data(), sizeof(call->stack)) &&
         guest.Write(buffer + kBufferFunction, &call->function, sizeof(call->function)) &&
-        guest.Write(buffer + kBufferRegisters, call->x.data(), sizeof(call->x));
+        guest.Write(buffer + kBufferRegisters, call->x.data(), sizeof(call->x)) &&
+        guest.Write(buffer + kBufferS0, &call->s0, sizeof(call->s0));
     args[0] = ok ? 1 : 0;
     return true;
 }

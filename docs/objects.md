@@ -176,6 +176,9 @@ One path for every kind of hit, as TotK's `TOTK_SYNC_DAMAGE` found worked best (
 - A copy takes the owner's life from samples: a lower life at once, a higher one only when none of our hits is in flight (500 ms after our `DAMAGE`), so it does not heal back between our hit and the owner's answer. `HANDOVER_STATE` gives a new owner the last life.
 - Not yet: positions and poses of copies, projectiles, the fight lock and bosses. Copies are not hidden when the other game's enemy is elsewhere.
 
+**Two-game test (Caleb, 2026-11-09, Hyrule Field at night, child saves).** Two Stalchild spawned in each game (hash ~0, so ids by the scene rule). Game A owned both; each sword hit in A lowered life in B, 2 to 1 to 0 (`coop: objects: share life` lines in B), and both died on both screens. Seen as not done yet: B shows no flinch and no head knocked off on the first hit (only the life value is written, not the hit reaction), and each game's Stalchild chase their own Link (positions are not written into copies).
+
+
 ## Protocol proposal
 
 All on the channels [protocol.md](protocol.md) reserves: channel 2 (reliable) for ownership, spawns, removes and damage, channel 4 (unreliable, sequenced) for object samples. Type numbers are given when the code is written, after whatever other stages have taken by then (the next free is 17 today).

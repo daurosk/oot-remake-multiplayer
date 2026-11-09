@@ -120,6 +120,7 @@ namespace {
 
 // A director stand-in: hands out `calls` calls a frame and records what it saw.
 struct FakeStep {
+    FakeStep(int c, std::uint64_t i) : calls(c), id(i) {}
     int calls = 0;
     std::uint64_t id = 0;
     int given = 0;

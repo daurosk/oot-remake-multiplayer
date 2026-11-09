@@ -4,6 +4,8 @@
 #include <cmath>
 #include <utility>
 
+#include "coop/host/scene.hpp"
+
 namespace coop::overlay {
 
 namespace {
@@ -94,7 +96,9 @@ Result Overlay::build(const Camera& camera, std::string_view local_scene,
       skip(Why::faded);
       continue;
     }
-    if (!p.scene || *p.scene != local_scene) {
+    const std::optional<std::string_view> theirs =
+        p.scene ? std::optional<std::string_view>(*p.scene) : std::nullopt;
+    if (!coop::host::same_place(theirs, local_scene)) {  // either era
       skip(Why::other_scene);
       continue;
     }

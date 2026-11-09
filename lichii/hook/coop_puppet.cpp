@@ -1,6 +1,7 @@
 // Puppets (coop_puppet.h). No emulator code.
 #include "coop_puppet.h"
 
+#include "coop_camera.h"
 #include "coop_pose.h"
 
 #include <algorithm>
@@ -182,6 +183,10 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         std::lock_guard lock(input_mutex_);
         input_ = next_input_;
     }
+    if (input_.scene != scene_) {
+        scene_ = input_.scene;
+        scene_since_ms_ = now_ms;
+    }
     if (input_.main_base == 0) {
         return;
     }
@@ -228,6 +233,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 slot.phase = Phase::idle;
                 slot.actor = 0;
                 slot.taken = 0;
+                slot.lost_ms = now_ms;  // a load deletes it before the camera goes
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
@@ -347,10 +353,21 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         }
         return std::nullopt;
     case Phase::idle:
-        if (t != nullptr && slot.block != 0 && now_ms >= slot.retry_ms && !input_.scene.empty()) {
+        // A failed create waits 5 s before the same actor is tried again; a
+        // different one (the player's age was read wrong while loading) at once.
+        if (t != nullptr && slot.block != 0 && !input_.scene.empty() &&
+            (now_ms >= slot.retry_ms || t->actor != slot.actor_name)) {
+            if (!Drawn(slot, now_ms)) {
+                if (!slot.wait_said) {
+                    slot.wait_said = true;
+                    Say("P" + std::to_string(slot.number) + ": waiting for the game to draw");
+                }
+                return std::nullopt;
+            }
             auto c = Create(slot, *t, guest);
             if (c) {
                 slot.since_ms = now_ms;
+                slot.wait_said = false;
             }
             return c;
         }
@@ -405,6 +422,22 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
     default:
         return std::nullopt;
     }
+}
+
+// Whether a create now would be drawn. Made while the game loads a scene
+// (the scene is readable, the camera is gone), a puppet reaches state 4 but
+// never shows until it is made again (Caleb's two-player run, 2026-11-09:
+// B created P1 at 37.1 s, its loading screen ran 36.8 to 40.2 s).
+bool Director::Drawn(const Slot& slot, std::uint64_t now_ms) const {
+    if (!input_.camera) {
+        return true;  // nothing to go by
+    }
+    const std::uint64_t since = input_.drawn_since_ms;
+    if (since == 0 || now_ms < since || now_ms - since < kDrawnMs) {
+        return false;
+    }
+    const std::uint64_t change = std::max(scene_since_ms_, slot.lost_ms);
+    return since > change || now_ms - change >= kSteadyMs;
 }
 
 std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& guest) {
@@ -971,7 +1004,22 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    g_director->SetInput(g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear));
+    auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear);
+    // The camera as the hook's markers judge it (kCameraStale there).
+    static bool camera_seen = false;           // the present thread only
+    static std::uint64_t drawn_since_ms = 0;
+    const auto camera = CoopCamera::Latest();
+    const bool drawn = camera && std::chrono::steady_clock::now() - camera->at <
+                                     std::chrono::milliseconds(250);
+    if (!drawn) {
+        drawn_since_ms = 0;
+    } else if (drawn_since_ms == 0) {
+        drawn_since_ms = now_ms;
+    }
+    camera_seen = camera_seen || drawn;
+    input.camera = camera_seen;
+    input.drawn_since_ms = drawn_since_ms;
+    g_director->SetInput(std::move(input));
 }
 
 } // namespace CoopPuppet

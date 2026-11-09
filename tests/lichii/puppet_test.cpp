@@ -707,3 +707,105 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[1].actor == "Animal_Cow_LinkHouse");
 }
+
+namespace {
+CoopPuppet::Input Drawing(std::vector<Target> targets, std::uint64_t drawn_since_ms,
+                          std::string scene = "KokiriForest_Child") {
+    auto in = Wants(std::move(targets), std::move(scene));
+    in.camera = true;
+    in.drawn_since_ms = drawn_since_ms;
+    return in;
+}
+}  // namespace
+
+TEST_CASE("puppet join: no create while the game loads; at once when it draws") {
+    Game g;
+    Director d;
+    // The scene is readable at 0 but the loading screen has no camera.
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 0));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 1);  // the block only
+    CHECK(calls[0].function == kBase + addr::kMalloc);
+    CHECK(Frame(d, g, 3000).empty());
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    // Drawn again from 3400: not yet...
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 3400));
+    CHECK(Frame(d, g, 3400 + Director::kDrawnMs - 1).empty());
+    // ...then created, in the same scene, no retry wait.
+    calls = Frame(d, g, 3400 + Director::kDrawnMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: drawing that never broke over a scene change waits the steady time") {
+    Game g;
+    Director d;
+    d.SetInput(Drawing({}, 100, "A"));
+    Frame(d, g, 1000);
+    // New scene at 2000, the camera unbroken since 100 (begun before it).
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 100, "B"));
+    auto calls = Frame(d, g, 2000);
+    REQUIRE(calls.size() == 1);  // the block only
+    CHECK(Frame(d, g, 2000 + Director::kSteadyMs - 1).empty());
+    calls = Frame(d, g, 2000 + Director::kSteadyMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: one already drawing creates at once (the other player joins)") {
+    Game g;
+    Director d;
+    d.SetInput(Drawing({}, 100));
+    Frame(d, g, 50);
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 100));
+    const auto calls = Frame(d, g, 60000);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[1].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: deleted by a load before the camera goes, made again after it") {
+    Game g;
+    Director d;
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 100));
+    CHECK(Frame(d, g, 50).size() == 1);  // the block; not drawn yet
+    auto calls = Frame(d, g, 1000);
+    REQUIRE(calls.size() == 1);
+    g.Spawn(calls[0].x[3]);
+    Frame(d, g, 1010);
+    Frame(d, g, 1015);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    // The engine deletes it at 5000; the camera is still fresh then.
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{7});
+    CHECK(Frame(d, g, 5000).empty());
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    // The loading screen, then drawn from 9000.
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 0));
+    CHECK(Frame(d, g, 5100).empty());
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 9000));
+    CHECK(Frame(d, g, 9000 + Director::kDrawnMs - 1).empty());
+    calls = Frame(d, g, 9000 + Director::kDrawnMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: a dropped create of the wrong age is followed by the right one at once") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Request(calls[1].x[3]);
+    g.guest.Set(kRequest, std::uint32_t{addr::kRequestDrop});
+    calls = Frame(d, g, 100);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kDropCreate);
+    REQUIRE(d.Slots()[0].phase == Phase::idle);
+    // The same actor waits 5 s...
+    CHECK(Frame(d, g, 200).empty());
+    // ...the child, now that the age is read right, does not.
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+    calls = Frame(d, g, 300);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
+}

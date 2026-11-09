@@ -168,6 +168,13 @@ struct Input {
     std::uint64_t main_base = 0;  // 0: no game, nothing is done
     std::string scene;            // the local scene; "" not known
     std::vector<Target> targets;
+    // The local game's drawing, from the renderer's camera (coop_camera.h).
+    // A puppet created while the game loads a scene (the scene is already
+    // readable) is made but never drawn, so a create waits for the drawing
+    // (Director::Drawn). `camera`: a camera has been seen since start; false
+    // (no camera, or a test) creates at once, as before.
+    bool camera = false;
+    std::uint64_t drawn_since_ms = 0;  // the current unbroken run of drawn frames; 0 none
 };
 
 Mat3 QuatToMatrix(const Quat& q);  // rows; normalises q, identity if it is 0
@@ -216,6 +223,12 @@ public:
     static constexpr float kFrameSlack = 3.0f;
     // A hidden puppet is moved this far down, under the floor.
     static constexpr float kHideDrop = 500.0f;
+    // A create waits until the game has drawn this long without a break,
+    // begun after the last scene change or puppet loss (a load drops the
+    // camera)...
+    static constexpr std::uint64_t kDrawnMs = 750;
+    // ...or, when the drawing never broke, this long after it.
+    static constexpr std::uint64_t kSteadyMs = 3000;
 
 private:
     struct Slot {
@@ -235,6 +248,8 @@ private:
         std::uint64_t since_ms = 0; // when the phase began
         std::uint64_t retry_ms = 0; // no new malloc or create before this
         std::uint64_t missing_ms = 0; // when its player left the plan; 0 wanted
+        std::uint64_t lost_ms = 0;    // when the engine deleted it (a load, often)
+        bool wait_said = false;       // "waiting for the game to draw" logged
         std::string anim_name;        // played on it; "" none yet
         std::uint32_t anim_serial = 0;
         std::uint64_t anim_buffer = 0;  // which name buffer is next
@@ -269,6 +284,7 @@ private:
               std::uint64_t now_ms);
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
+    bool Drawn(const Slot& slot, std::uint64_t now_ms) const;
     Slot& SlotFor(std::uint8_t number);
     void Say(const std::string& text) const;
     void Status(Guest& guest, std::uint64_t now_ms);
@@ -290,6 +306,8 @@ private:
     std::uint64_t frames_ = 0;
     std::uint64_t frames_at_status_ = 0;
     std::uint64_t status_ms_ = 0;
+    std::string scene_;               // input_.scene as last seen
+    std::uint64_t scene_since_ms_ = 0;
 };
 
 // The present thread's side: what to show this frame.

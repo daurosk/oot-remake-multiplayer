@@ -1,0 +1,20 @@
+# cucco: B loads into Kakariko at the well (test warp, run with -NoLoad), walks
+# near the cucco A will carry and stands still, so A's puppet and the cucco
+# copy are on screen.
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark landed
+goto -4.0 40.0 1.5 900
+toward -8.0 32.0 8      # face where A comes from
+mark watching
+wait 1500
+mark end

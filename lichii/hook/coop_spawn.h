@@ -60,6 +60,8 @@ struct Copy {
     std::string actor;
     Vec3 position{};
     Act act = Act::show;
+    // Off for enemy copies (coop_objects): the Mover places them each frame.
+    bool place = true;
 };
 
 class Sync {
@@ -141,6 +143,10 @@ public:
 
     // Present thread.
     void SetInput(std::uint64_t main_base, std::vector<Copy> copies);
+    // Present thread: rolled enemies another game decided (coop_objects,
+    // docs/objects.md "Rolled spawns"). Keys have the top bit set, so they
+    // never meet SetInput's.
+    void SetEnemies(std::uint64_t main_base, std::vector<Copy> copies);
     std::map<std::uint64_t, std::uint64_t> Live() const;  // key to actor
 
     // The calc thread, at each `svc #0xf4` the puppets did not take.
@@ -171,6 +177,8 @@ private:
     mutable std::mutex mutex_;
     std::uint64_t next_base_ = 0;  // guarded
     std::vector<Copy> next_;       // guarded
+    std::uint64_t next_enemy_base_ = 0;  // guarded
+    std::vector<Copy> next_enemies_;     // guarded
     std::map<std::uint64_t, std::uint64_t> live_;  // guarded
 
     std::uint64_t base_ = 0;
@@ -186,6 +194,9 @@ private:
 };
 
 Director& TheDirector();
+// Registers the director with the svc cave once (the spawn sync and the
+// shared enemies' rolled copies both use it).
+void UseDirector();
 
 // The hook: present thread, once per frame after the session's frame.
 // Does nothing unless LICHII_COOP_SPAWN=1 and puppets (the cave) are on.

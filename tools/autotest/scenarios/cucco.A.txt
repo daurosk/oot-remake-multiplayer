@@ -1,0 +1,32 @@
+# cucco: both games load into Kakariko at the well (test warp, run with -NoLoad).
+# A walks to the cucco at (-11.0, 28.5), picks it up, carries it next to B and
+# puts it down. B's screen should show the puppet holding A's cucco without it
+# falling or looping (docs/objects.md, "Animations and hit reactions").
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200               # the title screen
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands
+mark landed
+goto -11.04 28.49 1.0 900
+mark at-cucco
+press A                 # pick it up
+wait 90
+mark lifted
+goto -6.0 36.0 1.5 600  # carry it next to B
+mark carried-1
+wait 120
+mark carried-2
+wait 120
+mark carried-3
+press A                 # put it down
+wait 120
+mark dropped
+wait 240
+mark end

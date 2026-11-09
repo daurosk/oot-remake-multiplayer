@@ -39,6 +39,7 @@
 
 #include "coop/host/game_memory.hpp"
 #include "coop/host/player_reader.hpp"
+#include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop/overlay/overlay.hpp"
@@ -136,6 +137,7 @@ struct FrameView {
     std::optional<coop::protocol::Vec3> position;
     std::optional<std::string> scene;
     std::vector<coop::overlay::Shown> others;
+    std::vector<std::uint8_t> hidden;  // others with no marker (scene.hpp: hide)
     std::optional<Markers> markers;  // none: no camera
     std::string camera_note;         // for the panel, when the game runs
 };
@@ -222,8 +224,23 @@ public:
         }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
         if (report.connected) {
+            const bool event = reading && reading->event_running.value_or(false);
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
-                return coop::overlay::collect(p, report.server_now_us);
+                auto shown = coop::overlay::collect(p, report.server_now_us);
+                // The same rule as the puppet: no marker for a player in
+                // another scene or while our own cutscene runs.
+                for (const auto& s : shown) {
+                    const auto* player = p.player(s.number);
+                    const std::optional<std::string_view> theirs =
+                        s.scene ? std::optional<std::string_view>(*s.scene) : std::nullopt;
+                    const std::optional<std::string_view> ours =
+                        view.scene ? std::optional<std::string_view>(*view.scene) : std::nullopt;
+                    if (coop::host::visibility(ours, event, theirs, player ? player->flags() : 0) ==
+                        coop::host::Visibility::hide) {
+                        view.hidden.push_back(s.number);
+                    }
+                }
+                return shown;
             });
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
@@ -378,6 +395,9 @@ private:
         c.viewport_height = camera->height;
 
         auto players = view.others;
+        std::erase_if(players, [&](const coop::overlay::Shown& s) {
+            return std::find(view.hidden.begin(), view.hidden.end(), s.number) != view.hidden.end();
+        });
         if (debug_camera_ && view.position) {
             players.push_back({0, "you", *view.position, view.scene, 1.0f});
         }

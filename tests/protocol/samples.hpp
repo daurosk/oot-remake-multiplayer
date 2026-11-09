@@ -61,6 +61,7 @@ inline std::vector<Message> every_message() {
   all.push_back(FlagState{1, flag_entries()});
   all.push_back(FlagSnapshot{0, 1, flag_entries()});
   all.push_back(FlagSnapshot{2, 3, {}});
+  all.push_back(Host{2});
   return all;
 }
 

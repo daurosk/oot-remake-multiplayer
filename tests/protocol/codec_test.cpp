@@ -396,7 +396,8 @@ TEST_CASE("who may send what") {
   CHECK(may_send(Sender::client, MessageType::hello));
   CHECK_FALSE(may_send(Sender::server, MessageType::hello));
   for (MessageType t : {MessageType::welcome, MessageType::refused,
-                        MessageType::player_joined, MessageType::player_left}) {
+                        MessageType::player_joined, MessageType::player_left,
+                        MessageType::host}) {
     CHECK(may_send(Sender::server, t));
     CHECK_FALSE(may_send(Sender::client, t));
   }
@@ -733,7 +734,31 @@ TEST_CASE("a reader without the new types skips them") {
   CHECK(stage0_decode(must_encode(Chat{0, "hi"}), back) == Error::none);
   // And this build in turn skips a type newer than itself.
   Bytes future;
-  put_u16(future, 16);
+  put_u16(future, 17);
   put_u16(future, 0);
   CHECK(decode_bytes(future) == Error::unknown_type);
+}
+
+TEST_CASE("host names the hosting player, from the server on the progress channel") {
+  CHECK(static_cast<int>(MessageType::host) == 16);
+  CHECK(channel_of(MessageType::host) == kChannelProgress);
+  CHECK_FALSE(allowed_on_channel(MessageType::host, kChannelSession));
+  CHECK(may_send(Sender::server, MessageType::host));
+  CHECK_FALSE(may_send(Sender::client, MessageType::host));
+  const Bytes b = must_encode(Host{3});
+  CHECK(b == Bytes{16, 0, 1, 0, 3});
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<Host>(back) == Host{3});
+  CHECK(check_received(back, Sender::server, kChannelProgress) == Error::none);
+  CHECK(check_received(back, Sender::client, kChannelProgress) == Error::wrong_sender);
+  CHECK(sender_of(back) == std::nullopt);
+  Bytes out;
+  CHECK(encode(Host{0}, out) == Error::bad_value);
+  CHECK(encode(Host{5}, out) == Error::bad_value);
+  CHECK(decode_bytes(Bytes{16, 0, 1, 0, 0}) == Error::bad_value);
+  CHECK(decode_bytes(Bytes{16, 0, 2, 0, 1, 0}) == Error::trailing_bytes);
+  // A stage 0 reader skips it like the other new types.
+  Message old;
+  CHECK(stage0_decode(b, old) == Error::unknown_type);
 }

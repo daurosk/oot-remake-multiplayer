@@ -59,6 +59,7 @@ enum class MessageType : std::uint16_t {
   flag_set = 13,
   flag_state = 14,
   flag_snapshot = 15,
+  host = 16,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -310,10 +311,20 @@ struct FlagSnapshot {
   bool operator==(const FlagSnapshot&) const = default;
 };
 
+// HOST: who hosts the session, the player whose game is the truth for
+// shared flags. Sent by the server on the progress channel to a player who
+// joins (before its FLAG_SNAPSHOT) and to everyone when the host changes. The
+// first player in hosts; when the host leaves, the remaining player with the
+// lowest number takes over.
+struct Host {
+  std::uint8_t player_number = 1;  // 1 to 4
+  bool operator==(const Host&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
-                             FlagSnapshot>;
+                             FlagSnapshot, Host>;
 
 MessageType type_of(const Message& message);
 
@@ -333,7 +344,7 @@ enum class Sender : std::uint8_t {
 };
 
 // Whether this side may send this message type. HELLO is client only;
-// WELCOME, REFUSED, PLAYER_JOINED and PLAYER_LEFT are server only; the rest go
+// WELCOME, REFUSED, PLAYER_JOINED, PLAYER_LEFT and HOST are server only; the rest go
 // both ways. False for a type this build does not know.
 bool may_send(Sender from, MessageType type);
 

@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -46,6 +47,12 @@ struct SessionConfig {
   // one machine cannot fill every transport slot with silent connections.
   // One more is refused at once (see connected). 0: no limit.
   std::size_t max_half_open_per_address = 4;
+  // Most (hash, index) keys the server's flag table holds, so a host cannot
+  // grow it without end. Values past it are still relayed but not kept (and
+  // so not in a joiner's snapshot); each such entry is counted in
+  // flag_table_full. 262,144 is 64 snapshot parts, far past OoT's flags.
+  // 0 keeps nothing; more than 65535 parts' worth counts as 65535 parts.
+  std::size_t max_flags = 262'144;
   // Called with one line for each join, leave and refusal. May be empty.
   std::function<void(const std::string&)> log;
 };
@@ -79,6 +86,20 @@ struct Stats {
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
   std::uint64_t half_open_limited = 0;
+
+  // JOIN_PARTNER (stage 1 step 3). Relayed ones count in relayed too.
+  std::uint64_t join_relayed = 0;
+  // Requests answered by the server itself with refuse / not_there.
+  std::uint64_t join_not_there = 0;
+  // Dropped: naming the sender itself, or an accept or refuse for a player
+  // who is not in the session.
+  std::uint64_t join_dropped = 0;
+  // FLAG_SET and FLAG_STATE relayed (stage 1 step 4); in relayed too.
+  std::uint64_t flag_relayed = 0;
+  std::uint64_t flag_refused = 0;     // FLAG_STATE or FLAG_SNAPSHOT not from the host
+  std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
+  std::uint64_t flag_clashes = 0;     // host snapshot entries that differed (server kept)
+  std::uint64_t flag_table_full = 0;  // entries not kept: max_flags reached
 
   std::uint64_t errors(protocol::Error e) const {
     return by_error[static_cast<std::size_t>(e)];
@@ -117,6 +138,10 @@ class Session {
 
   const Stats& stats() const { return stats_; }
   std::size_t player_count() const;
+  // The host's player number; none while the session is empty.
+  std::optional<std::uint8_t> host() const;
+  // Flags in the server's table.
+  std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.
   std::size_t half_open_count(std::uint32_t address) const;
   std::optional<std::uint8_t> player_number(ConnectionId id) const;
@@ -143,6 +168,14 @@ class Session {
                 std::uint64_t now_us);
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::uint64_t now_us);
+  void on_join_partner(ConnectionId id, Connection& c, protocol::JoinPartner& j);
+  void on_flag_set(Connection& c, protocol::Message& message);
+  void on_flag_state(ConnectionId id, Connection& c, protocol::Message& message);
+  void on_flag_snapshot(ConnectionId id, Connection& c, const protocol::FlagSnapshot& part);
+  // Keeps an entry in the table; false when it is new and the table is full.
+  bool keep_flag(const protocol::FlagEntry& e);
+  void send_snapshot(ConnectionId to);
+  std::optional<ConnectionId> connection_of(std::uint8_t number) const;
   bool within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us);
   void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
               std::uint64_t now_us);
@@ -158,6 +191,11 @@ class Session {
   SessionConfig config_;
   std::string session_game_build_;  // set while players are in
   std::map<ConnectionId, Connection> connections_;
+  // The host's connection; set while players are in.
+  std::optional<ConnectionId> host_;
+  // Every shared flag value the host has sent, by (hash, index). Kept when
+  // the host leaves; forgotten when the session empties.
+  std::map<std::pair<std::uint32_t, std::uint16_t>, protocol::FlagEntry> flags_;
   std::vector<Action> actions_;
   Stats stats_;
 };

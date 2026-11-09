@@ -84,11 +84,11 @@ struct Harness {
   Welcome join(ConnectionId id, const std::string& nickname) {
     connect(id);
     receive(id, hello_from(nickname), kChannelSession);
-    auto msgs = to(id);
-    REQUIRE(!msgs.empty());
-    const auto* w = std::get_if<Welcome>(&msgs.back().message);
-    REQUIRE(w != nullptr);
-    return *w;
+    for (const Sent& s : to(id)) {
+      if (const auto* w = std::get_if<Welcome>(&s.message)) return *w;
+    }
+    FAIL("no WELCOME");
+    return {};
   }
 
   std::vector<Sent> to(ConnectionId id) const {
@@ -518,7 +518,7 @@ TEST_CASE("an empty session forgets the game build the first player set") {
   other.game_build_id = "0000000000000000";
   h.receive(2, other, kChannelSession);
   auto msgs = h.to(2);
-  REQUIRE(msgs.size() == 1);
+  REQUIRE(msgs.size() == 3);  // WELCOME, then HOST and FLAG_SNAPSHOT
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
 }
 
@@ -610,4 +610,381 @@ TEST_CASE("the HELLO timeout still drops half-open connections, freeing their pl
   CHECK(h.dropped.size() == 4);
   CHECK(h.session.half_open_count(kHome) == 0);
   CHECK(h.session.connected(5, h.now, kHome));
+}
+
+// ---------------------------------------------------------------- stage 1 steps 3 and 4
+
+namespace {
+
+FlagEntry flag(std::uint32_t hash, std::uint32_t value, std::uint16_t index = 0) {
+  return FlagEntry{hash, index, FlagKind::uint32, value};
+}
+
+std::vector<FlagEntry> many(std::uint32_t first, std::size_t n) {
+  std::vector<FlagEntry> out;
+  for (std::size_t i = 0; i < n; ++i) out.push_back(flag(first + static_cast<std::uint32_t>(i), 1));
+  return out;
+}
+
+template <typename T>
+std::vector<T> messages_of(const Harness& h, ConnectionId id) {
+  std::vector<T> out;
+  for (const Sent& s : h.to(id)) {
+    if (const auto* m = std::get_if<T>(&s.message)) out.push_back(*m);
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("the first player hosts; each joiner is told who hosts, then sent the table") {
+  Harness h;
+  CHECK(h.session.host() == std::nullopt);
+  h.join(1, "Link");
+  CHECK(h.session.host() == std::optional<std::uint8_t>{1});
+  auto msgs = h.to(1);
+  REQUIRE(msgs.size() == 3);
+  CHECK(std::holds_alternative<Welcome>(msgs[0].message));
+  CHECK(msgs[1].channel == kChannelProgress);
+  CHECK(std::get<Host>(msgs[1].message) == Host{1});
+  CHECK(msgs[2].channel == kChannelProgress);
+  CHECK(std::get<FlagSnapshot>(msgs[2].message) == FlagSnapshot{0, 1, {}});
+
+  h.clear();
+  h.join(2, "Zelda");
+  CHECK(h.session.host() == std::optional<std::uint8_t>{1});
+  CHECK(messages_of<Host>(h, 2) == std::vector<Host>{Host{1}});
+  CHECK(messages_of<FlagSnapshot>(h, 2).size() == 1);
+  // The others are told of the joiner only.
+  CHECK(only_message_to<PlayerJoined>(h, 1).has_value());
+}
+
+TEST_CASE("when the host leaves, the lowest remaining number hosts and everyone is told") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+
+  h.session.disconnected(1, h.now);
+  h.collect();
+  CHECK(h.session.host() == std::optional<std::uint8_t>{2});
+  for (ConnectionId id : {2u, 3u}) {
+    auto msgs = h.to(id);
+    REQUIRE(msgs.size() == 2);
+    CHECK(std::holds_alternative<PlayerLeft>(msgs[0].message));
+    CHECK(msgs[1].channel == kChannelProgress);
+    CHECK(std::get<Host>(msgs[1].message) == Host{2});
+  }
+
+  // A newcomer takes the free number 1 but does not take over.
+  h.clear();
+  Welcome w = h.join(4, "Darunia");
+  CHECK(w.player_number == 1);
+  CHECK(h.session.host() == std::optional<std::uint8_t>{2});
+  CHECK(messages_of<Host>(h, 4) == std::vector<Host>{Host{2}});
+
+  // A player who is not the host leaving changes nothing.
+  h.clear();
+  h.session.disconnected(3, h.now);
+  h.collect();
+  CHECK(messages_of<Host>(h, 2).empty());
+  CHECK(messages_of<Host>(h, 4).empty());
+
+  // The host leaves again: now player 1 (connection 4) is the lowest.
+  h.clear();
+  h.session.disconnected(2, h.now);
+  h.collect();
+  CHECK(h.session.host() == std::optional<std::uint8_t>{1});
+  CHECK(messages_of<Host>(h, 4) == std::vector<Host>{Host{1}});
+}
+
+TEST_CASE("join partner goes to the named player only, and the answer back") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+
+  h.receive(1, JoinPartner{0, 3, 7, JoinKind::request, std::nullopt}, kChannelSession);
+  CHECK(h.to(2).empty());
+  CHECK(h.to(1).empty());
+  auto ask = only_message_to<JoinPartner>(h, 3);
+  REQUIRE(ask.has_value());
+  CHECK(ask->player_number == 1);
+  CHECK(ask->other_player == 3);
+  CHECK(ask->request_id == 7);
+  CHECK(ask->kind == JoinKind::request);
+  CHECK(h.sent[0].channel == kChannelSession);
+
+  h.clear();
+  JoinTarget where{"spot00", {1.0f, 2.0f, 3.0f}, {0.0f, 0.0f, 0.0f, 1.0f}};
+  h.receive(3, JoinPartner{0, 1, 7, JoinKind::accept, where}, kChannelSession);
+  CHECK(h.to(2).empty());
+  CHECK(h.to(3).empty());
+  auto yes = only_message_to<JoinPartner>(h, 1);
+  REQUIRE(yes.has_value());
+  CHECK(*yes == JoinPartner{3, 1, 7, JoinKind::accept, where});
+
+  h.clear();
+  h.receive(2, JoinPartner{0, 1, 8, JoinKind::refuse, std::nullopt, JoinRefuseReason::busy},
+            kChannelSession);
+  auto no = only_message_to<JoinPartner>(h, 1);
+  REQUIRE(no.has_value());
+  CHECK(no->player_number == 2);
+  CHECK(no->kind == JoinKind::refuse);
+  CHECK(no->reason == JoinRefuseReason::busy);
+  CHECK(h.session.stats().join_relayed == 3);
+}
+
+TEST_CASE("a join request for a player not there is refused by the server, with the same id") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+
+  h.receive(1, JoinPartner{0, 4, 9, JoinKind::request, std::nullopt}, kChannelSession);
+  CHECK(h.to(2).empty());
+  auto no = only_message_to<JoinPartner>(h, 1);
+  REQUIRE(no.has_value());
+  CHECK(no->player_number == 4);
+  CHECK(no->other_player == 1);
+  CHECK(no->request_id == 9);
+  CHECK(no->kind == JoinKind::refuse);
+  CHECK(no->reason == JoinRefuseReason::not_there);
+  CHECK(h.session.stats().join_not_there == 1);
+  CHECK(h.session.stats().join_relayed == 0);
+
+  // An answer to a player who has gone is dropped, not answered.
+  h.clear();
+  h.receive(2, JoinPartner{0, 3, 9, JoinKind::refuse, std::nullopt, JoinRefuseReason::declined},
+            kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().join_dropped == 1);
+}
+
+TEST_CASE("a join partner naming its own sender is dropped") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(2, JoinPartner{0, 2, 1, JoinKind::request, std::nullopt}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().join_dropped == 1);
+  CHECK(h.session.stats().dropped() >= 1);
+}
+
+TEST_CASE("flag set goes to the host only, the host's own back to itself") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+
+  h.receive(2, FlagSet{0, {flag(5, 1)}}, kChannelProgress);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 1);
+  CHECK(h.sent[0].channel == kChannelProgress);
+  CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{2, {flag(5, 1)}});
+  // A FLAG_SET changes nothing on the server: only the host's answer does.
+  CHECK(h.session.flag_count() == 0);
+
+  h.clear();
+  h.receive(1, FlagSet{0, {flag(6, 2)}}, kChannelProgress);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 1);
+  CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{1, {flag(6, 2)}});
+  CHECK(h.session.stats().flag_relayed == 2);
+}
+
+TEST_CASE("flag state is taken from the host only, kept, and relayed to everyone else") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+
+  h.receive(2, FlagState{0, {flag(5, 1)}}, kChannelProgress);
+  h.receive(3, FlagSnapshot{0, 1, {flag(5, 1)}}, kChannelProgress);
+  CHECK(h.sent.empty());
+  CHECK(h.session.flag_count() == 0);
+  CHECK(h.session.stats().flag_refused == 2);
+
+  h.receive(1, FlagState{0, {flag(5, 1), flag(5, 3, 2)}}, kChannelProgress);
+  CHECK(h.to(1).empty());
+  for (ConnectionId id : {2u, 3u}) {
+    auto st = only_message_to<FlagState>(h, id);
+    REQUIRE(st.has_value());
+    CHECK(*st == FlagState{1, {flag(5, 1), flag(5, 3, 2)}});
+  }
+  CHECK(h.session.flag_count() == 2);  // (hash, index) keys: index 2 is its own
+
+  // A later value replaces the kept one.
+  h.receive(1, FlagState{0, {flag(5, 0)}}, kChannelProgress);
+  CHECK(h.session.flag_count() == 2);
+  h.clear();
+  h.join(4, "Darunia");
+  auto snap = messages_of<FlagSnapshot>(h, 4);
+  REQUIRE(snap.size() == 1);
+  CHECK(snap[0].flags == std::vector<FlagEntry>{flag(5, 0), flag(5, 3, 2)});
+}
+
+TEST_CASE("a joiner gets the table before any flag state sent after it joined") {
+  Harness h;
+  h.join(1, "Link");
+  h.receive(1, FlagState{0, {flag(1, 1)}}, kChannelProgress);
+  h.clear();
+
+  h.join(2, "Zelda");
+  h.receive(1, FlagState{0, {flag(2, 1)}}, kChannelProgress);
+  auto msgs = h.to(2);
+  REQUIRE(msgs.size() == 4);
+  CHECK(std::holds_alternative<Welcome>(msgs[0].message));
+  CHECK(std::get<Host>(msgs[1].message) == Host{1});
+  CHECK(std::get<FlagSnapshot>(msgs[2].message) == FlagSnapshot{0, 1, {flag(1, 1)}});
+  CHECK(std::get<FlagState>(msgs[3].message) == FlagState{1, {flag(2, 1)}});
+  for (std::size_t i = 1; i < 4; ++i) CHECK(msgs[i].channel == kChannelProgress);
+}
+
+TEST_CASE("a large table goes to a joiner in parts") {
+  Harness h;
+  h.join(1, "Link");
+  h.receive(1, FlagState{0, many(0, kMaxFlagEntries)}, kChannelProgress);
+  h.receive(1, FlagState{0, many(100'000, kMaxFlagEntries)}, kChannelProgress);
+  h.receive(1, FlagState{0, many(200'000, kMaxFlagEntries)}, kChannelProgress);
+  h.receive(1, FlagState{0, {flag(999'999, 1)}}, kChannelProgress);
+  CHECK(h.session.flag_count() == 3 * kMaxFlagEntries + 1);
+  h.clear();
+
+  h.join(2, "Zelda");
+  auto parts = messages_of<FlagSnapshot>(h, 2);
+  REQUIRE(parts.size() == 4);
+  std::size_t total = 0;
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    CHECK(parts[i].part == i);
+    CHECK(parts[i].part_count == 4);
+    total += parts[i].flags.size();
+  }
+  CHECK(total == 3 * kMaxFlagEntries + 1);
+}
+
+TEST_CASE("a new host's snapshot merges in; on a clash the server's value stays") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.receive(1, FlagState{0, {flag(1, 1), flag(2, 7)}}, kChannelProgress);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  REQUIRE(h.session.host() == std::optional<std::uint8_t>{2});
+  h.clear();
+
+  // Player 2's save has flag 1 the same, flag 2 different and flag 3 new.
+  h.receive(2, FlagSnapshot{0, 1, {flag(1, 1), flag(2, 0), flag(3, 4)}}, kChannelProgress);
+  auto to_host = messages_of<FlagState>(h, 2);
+  REQUIRE(to_host.size() == 1);
+  CHECK(to_host[0] == FlagState{2, {flag(2, 7)}});
+  auto to_other = messages_of<FlagState>(h, 3);
+  REQUIRE(to_other.size() == 1);
+  CHECK(to_other[0] == FlagState{2, {flag(3, 4)}});
+  CHECK(h.session.flag_count() == 3);
+  CHECK(h.session.stats().flag_clashes == 1);
+  CHECK(h.session.stats().snapshot_parts == 1);
+
+  // The same table again: nothing new, nothing differs, nothing sent.
+  h.clear();
+  h.receive(2, FlagSnapshot{0, 1, {flag(1, 1), flag(2, 7), flag(3, 4)}}, kChannelProgress);
+  CHECK(h.sent.empty());
+
+  h.join(4, "Darunia");
+  auto snap = messages_of<FlagSnapshot>(h, 4);
+  REQUIRE(snap.size() == 1);
+  CHECK(snap[0].flags == std::vector<FlagEntry>{flag(1, 1), flag(2, 7), flag(3, 4)});
+}
+
+TEST_CASE("the table is kept while anyone is in and forgotten when the session empties") {
+  Harness h;
+  h.join(1, "Link");
+  h.receive(1, FlagState{0, {flag(1, 1)}}, kChannelProgress);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  CHECK(h.session.host() == std::nullopt);
+  CHECK(h.session.flag_count() == 0);
+  h.clear();
+  h.join(2, "Zelda");
+  CHECK(h.session.host() == std::optional<std::uint8_t>{1});
+  CHECK(messages_of<FlagSnapshot>(h, 2) == std::vector<FlagSnapshot>{FlagSnapshot{0, 1, {}}});
+}
+
+TEST_CASE("the flag table has a size limit; values past it are relayed but not kept") {
+  SessionConfig small;
+  small.max_flags = 2;
+  Harness h(small);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, FlagState{0, {flag(1, 1), flag(2, 1), flag(3, 1)}}, kChannelProgress);
+  CHECK(h.session.flag_count() == 2);
+  CHECK(h.session.stats().flag_table_full == 1);
+  auto st = only_message_to<FlagState>(h, 2);
+  REQUIRE(st.has_value());
+  CHECK(st->flags.size() == 3);
+  // An existing key still takes a new value.
+  h.receive(1, FlagState{0, {flag(1, 5)}}, kChannelProgress);
+  CHECK(h.session.stats().flag_table_full == 1);
+}
+
+TEST_CASE("a host snapshot past the size limit is relayed but not kept, like a flag state") {
+  SessionConfig small;
+  small.max_flags = 2;
+  Harness h(small);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, FlagSnapshot{0, 1, {flag(1, 1), flag(2, 1), flag(3, 1)}}, kChannelProgress);
+  CHECK(h.session.flag_count() == 2);
+  CHECK(h.session.stats().flag_table_full == 1);
+  auto st = only_message_to<FlagState>(h, 2);
+  REQUIRE(st.has_value());
+  CHECK(st->flags.size() == 3);
+}
+
+TEST_CASE("a host leaving halfway through its snapshot: parts merged so far stay") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  // Part 0 of 2 comes, then the host leaves before part 1.
+  h.receive(1, FlagSnapshot{0, 2, {flag(1, 1)}}, kChannelProgress);
+  // Player 2 is not the host yet: its snapshot is dropped.
+  h.receive(2, FlagSnapshot{0, 1, {flag(2, 2)}}, kChannelProgress);
+  CHECK(h.session.stats().flag_refused == 1);
+  CHECK(h.session.flag_count() == 1);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  REQUIRE(h.session.host() == std::optional<std::uint8_t>{2});
+  h.clear();
+  // Now it hosts, and its table merges in over what part 0 left.
+  h.receive(2, FlagSnapshot{0, 1, {flag(1, 9), flag(2, 2)}}, kChannelProgress);
+  CHECK(messages_of<FlagState>(h, 2) == std::vector<FlagState>{FlagState{2, {flag(1, 1)}}});
+  CHECK(messages_of<FlagState>(h, 3) == std::vector<FlagState>{FlagState{2, {flag(2, 2)}}});
+  CHECK(h.session.flag_count() == 2);
+  // A later joiner gets both.
+  h.join(4, "Darunia");
+  auto snap = messages_of<FlagSnapshot>(h, 4);
+  REQUIRE(snap.size() == 1);
+  CHECK(snap[0].flags == std::vector<FlagEntry>{flag(1, 1), flag(2, 2)});
+}
+
+TEST_CASE("a size limit set past what a snapshot can carry still keeps and sends the table") {
+  SessionConfig huge;
+  huge.max_flags = static_cast<std::size_t>(-1);
+  Harness h(huge);
+  h.join(1, "Link");
+  h.receive(1, FlagState{0, many(1, 10)}, kChannelProgress);
+  CHECK(h.session.flag_count() == 10);
+  h.clear();
+  h.join(2, "Zelda");
+  CHECK(messages_of<FlagSnapshot>(h, 2).size() == 1);
 }

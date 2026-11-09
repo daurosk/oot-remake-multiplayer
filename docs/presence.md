@@ -13,8 +13,9 @@ for (auto n : presence.players_in_scene(local_scene)) {
 ```
 
 - `WELCOME` sets this player's number and the players already in. `PLAYER_JOINED` adds a player (a number already in starts afresh); `PLAYER_LEFT` removes one. A sample for a number with no `PLAYER_JOINED` is dropped, so a late sample after a leave does not bring the player back.
-- Each player keeps its last 16 samples that have a position, ordered by server time, then sequence. A sample whose sequence is already buffered is a duplicate and dropped. A sample older than the time last shown for that player, or older than all 16 when the buffer is full, is dropped as too old.
-- Scene and age come from the newest sample that carried them, so a late, older sample does not overwrite them. `same_scene` is false while the scene is not known.
+- Each player keeps its last 16 samples that have a position, ordered by server time, then sequence. A sample whose sequence is already buffered is a duplicate and dropped. A sample older than the time last shown for that player is dropped as too old (it would rewrite what was already drawn), unless it is newer than every buffered sample: then it is kept and extrapolated from, so a player whose samples all arrive later than the show delay is still shown. A sample older than all 16 of a full buffer is dropped too.
+- A sample with a NaN or infinite float, or a rotation of length 0, is dropped as invalid (the decoder refuses these already; this is a second guard). Rotations are normalised when buffered, and shown positions and velocities are kept within the float range, so even huge finite values from a sender give a finite pose.
+- Scene and age come from the newest sample that carried them, by sequence (allowing for the u32 wrap), so a late, older sample does not overwrite them and a jump in the sender's clock estimate cannot freeze them. They are taken even from a sample too late to be drawn. `same_scene` is false while the scene is not known.
 - `PLAYER_STATUS` flags are kept per player as received (unknown bits too).
 - `shown(player, server_now)` gives the pose at `server_now - show_delay`, and `Pose::how` says how it was made:
   - **interpolated** between the two samples around that time: cubic Hermite using both velocities, or a straight line if either has none. Rotation is a shortest-path slerp.

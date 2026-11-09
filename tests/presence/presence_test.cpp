@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <string>
 
@@ -339,4 +340,224 @@ TEST_CASE("presence: velocity scale converts the velocity unit") {
   REQUIRE(pose);
   CHECK(pose->position[0] == doctest::Approx(5.0));
   CHECK(pose->velocity[0] == doctest::Approx(1.0));
+}
+
+namespace {
+
+bool finite(const Vec3& v) {
+  return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+bool unit(const Quat& q) {
+  for (float c : q) {
+    if (!std::isfinite(c)) return false;
+  }
+  const double n = double(q[0]) * q[0] + double(q[1]) * q[1] + double(q[2]) * q[2] +
+                   double(q[3]) * q[3];
+  return std::fabs(n - 1.0) < 1e-5;
+}
+
+constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
+constexpr float kInf = std::numeric_limits<float>::infinity();
+constexpr float kBig = std::numeric_limits<float>::max();
+
+}  // namespace
+
+TEST_CASE("presence: a scene change in a sample too late to draw is still taken") {
+  Presence p = two_players();
+  p.on_sample(sample(2, 1000 * kMs, 1, {0, 0, 0}));
+  p.on_sample(sample(2, 1200 * kMs, 3, {2, 0, 0}));
+  REQUIRE(p.shown(2, 1250 * kMs));  // shows 1150 ms
+  auto late = sample(2, 1100 * kMs, 2, {1, 0, 0});
+  late.scene = "ydan";
+  late.age = Age::adult;
+  CHECK(p.on_sample(late) == SampleResult::too_old);  // not drawn...
+  CHECK(p.player(2)->scene() == "ydan");             // ...but its scene is used
+  CHECK(p.player(2)->age() == Age::adult);
+}
+
+TEST_CASE("presence: a sender whose samples all arrive after the show delay is still shown") {
+  Presence p = two_players();  // 100 ms delay; these arrive 130 ms after their time
+  CHECK_FALSE(p.shown(2, 1130 * kMs));
+  CHECK(p.on_sample(sample(2, 1000 * kMs, 1, {0, 0, 0}, Vec3{10, 0, 0})) ==
+        SampleResult::buffered);
+  auto pose = p.shown(2, 1146 * kMs);  // shows 1046, past the only sample
+  REQUIRE(pose);
+  CHECK(pose->how == How::extrapolated);
+  CHECK(pose->position[0] == doctest::Approx(0.46));
+  CHECK(p.on_sample(sample(2, 1016 * kMs, 2, {0.16f, 0, 0}, Vec3{10, 0, 0})) ==
+        SampleResult::buffered);
+  pose = p.shown(2, 1162 * kMs);
+  REQUIRE(pose);
+  CHECK(pose->how == How::extrapolated);
+  CHECK(pose->position[0] == doctest::Approx(0.62));
+  // A late one that falls between buffered samples already shown is dropped.
+  CHECK(p.on_sample(sample(2, 1008 * kMs, 9, {9, 9, 9})) == SampleResult::too_old);
+}
+
+TEST_CASE("presence: scene and age follow the sequence across its wrap, not a clock jump") {
+  Presence p = two_players();
+  auto s = [](std::uint64_t t, std::uint32_t seq, const char* scene) {
+    proto::PlayerSample x;
+    x.player_number = 2;
+    x.time = {t, seq};
+    x.scene = scene;
+    return x;
+  };
+  p.on_sample(s(1000 * kMs, 0xFFFF'FFFEu, "spot00"));
+  // The sender's clock estimate jumps a day ahead for one sample.
+  p.on_sample(s(86'400'000 * kMs, 0xFFFF'FFFFu, "spot01"));
+  CHECK(p.player(2)->scene() == "spot01");
+  // Back on time, and the sequence wraps to 0: still newer.
+  p.on_sample(s(1100 * kMs, 0, "spot02"));
+  CHECK(p.player(2)->scene() == "spot02");
+  p.on_sample(s(1200 * kMs, 1, "spot03"));
+  CHECK(p.player(2)->scene() == "spot03");
+  // A late one from before the wrap does not overwrite it.
+  p.on_sample(s(1050 * kMs, 0xFFFF'FFFDu, "ydan"));
+  CHECK(p.player(2)->scene() == "spot03");
+}
+
+TEST_CASE("presence: buffer order across the sequence wrap and with equal times") {
+  Presence p = two_players();
+  CHECK(p.on_sample(sample(2, 116 * kMs, 0, {1, 0, 0})) == SampleResult::buffered);
+  CHECK(p.on_sample(sample(2, 100 * kMs, 0xFFFF'FFFFu, {0, 0, 0})) == SampleResult::buffered);
+  const auto& b = p.player(2)->samples();
+  REQUIRE(b.size() == 2);
+  CHECK(b[0].time.sequence == 0xFFFF'FFFFu);
+  CHECK(b[1].time.sequence == 0);
+
+  // Two samples with the same server time: no divide by zero, the later
+  // sequence is the one joined to the next sample.
+  Settings lin;
+  lin.hermite = false;
+  Presence q = two_players(lin);
+  q.on_sample(sample(2, 100 * kMs, 1, {0, 0, 0}, Vec3{1, 0, 0}));
+  q.on_sample(sample(2, 100 * kMs, 2, {4, 0, 0}, Vec3{1, 0, 0}));
+  auto at = q.player(2)->pose_at(100 * kMs, q.settings());
+  REQUIRE(at);
+  CHECK(at->how == How::extrapolated);
+  CHECK(at->position[0] == doctest::Approx(4));
+  q.on_sample(sample(2, 200 * kMs, 3, {8, 0, 0}));
+  at = q.player(2)->pose_at(150 * kMs, q.settings());
+  REQUIRE(at);
+  CHECK(at->how == How::interpolated);
+  CHECK(at->position[0] == doctest::Approx(6));
+  CHECK(finite(at->velocity));
+}
+
+TEST_CASE("presence: NaN, infinity and zero rotations are refused") {
+  Presence p = two_players();
+  CHECK(p.on_sample(sample(2, 0, 1, {kNaN, 0, 0})) == SampleResult::invalid);
+  CHECK(p.on_sample(sample(2, 0, 2, {0, kInf, 0})) == SampleResult::invalid);
+  CHECK(p.on_sample(sample(2, 0, 3, {0, 0, 0}, Vec3{0, 0, -kInf})) == SampleResult::invalid);
+  auto r = sample(2, 0, 4, {0, 0, 0});
+  r.rotation = Quat{0, 0, 0, 0};
+  r.scene = "ydan";
+  CHECK(p.on_sample(r) == SampleResult::invalid);
+  r.rotation = Quat{0, kNaN, 0, 1};
+  CHECK(p.on_sample(r) == SampleResult::invalid);
+  r.rotation = Quat{kInf, 0, 0, 1};
+  CHECK(p.on_sample(r) == SampleResult::invalid);
+  CHECK(p.player(2)->samples().empty());
+  CHECK_FALSE(p.player(2)->scene());  // nothing of a refused sample is used
+
+  // A rotation that is not of length 1 is normalised when buffered, so a
+  // held pose (not slerped) is still a unit rotation.
+  r.rotation = Quat{0, 0, 0, 1e30f};
+  CHECK(p.on_sample(r) == SampleResult::buffered);
+  const auto pose = p.player(2)->pose_at(1000 * kMs, p.settings());
+  REQUIRE(pose);
+  REQUIRE(pose->rotation);
+  CHECK(unit(*pose->rotation));
+  CHECK((*pose->rotation)[3] == doctest::Approx(1.0));
+}
+
+TEST_CASE("presence: huge finite values from a sender still give a finite pose") {
+  Presence p = two_players();
+  auto a = sample(2, 0, 1, {kBig, -kBig, kBig}, Vec3{kBig, kBig, -kBig});
+  auto b = sample(2, 1, 2, {-kBig, kBig, -kBig}, Vec3{-kBig, kBig, kBig});  // 1 us later
+  a.rotation = Quat{kBig, kBig, kBig, kBig};
+  b.rotation = Quat{-kBig, kBig, -kBig, kBig};
+  REQUIRE(p.on_sample(a) == SampleResult::buffered);
+  REQUIRE(p.on_sample(b) == SampleResult::buffered);
+  const Player& pl = *p.player(2);
+  for (Settings st : {Settings{}, [] {
+                        Settings s;
+                        s.hermite = false;
+                        return s;
+                      }()}) {
+    for (std::uint64_t at : {0ull, 1ull, 2ull, 100'000ull, 151'000ull, 10'000'000ull}) {
+      const auto pose = pl.pose_at(at, st);
+      REQUIRE(pose);
+      CHECK(finite(pose->position));
+      CHECK(finite(pose->velocity));
+      REQUIRE(pose->rotation);
+      CHECK(unit(*pose->rotation));
+    }
+  }
+  // Interpolation a third of the way through the 1 us gap.
+  Presence q = two_players();
+  q.on_sample(sample(2, 0, 1, {kBig, 0, 0}, Vec3{kBig, 0, 0}));
+  q.on_sample(sample(2, 3, 2, {-kBig, 0, 0}, Vec3{kBig, 0, 0}));
+  const auto mid = q.player(2)->pose_at(1, q.settings());
+  REQUIRE(mid);
+  CHECK(finite(mid->position));
+  CHECK(finite(mid->velocity));
+}
+
+TEST_CASE("presence: slerp with bad input or nearly the same rotations") {
+  const Quat id{0, 0, 0, 1};
+  CHECK(unit(slerp(Quat{kNaN, 0, 0, 1}, id, 0.5)));
+  CHECK(unit(slerp(Quat{kInf, kInf, 0, 0}, Quat{0, kInf, 0, 0}, 0.5)));
+  CHECK(unit(slerp(Quat{0, 0, 0, 0}, Quat{0, 0, 0, 0}, 0.5)));
+  CHECK(unit(slerp(Quat{kBig, kBig, kBig, kBig}, Quat{-kBig, kBig, kBig, -kBig}, 0.3)));
+  CHECK(quat_mismatch(slerp(id, about_y(1.0), std::nan("")), id) < 1e-6);
+  CHECK(quat_mismatch(slerp(Quat{0, 0, 0, 0}, about_y(1.0), 1.0), about_y(1.0)) < 1e-6);
+  // Nearly the same (and nearly opposite signs of the same): unit, between.
+  const Quat a = about_y(1e-4);
+  const Quat b = about_y(2e-4);
+  const Quat nb{-b[0], -b[1], -b[2], -b[3]};
+  // (Compared by component: at angles this small, a dot product cannot
+  // tell them apart.)
+  for (const Quat& to : {b, nb}) {
+    const Quat m = slerp(a, to, 0.5);
+    CHECK(unit(m));
+    CHECK(m[1] == doctest::Approx(std::sin(0.75e-4)).epsilon(1e-3));
+    CHECK(m[3] == doctest::Approx(1.0));  // same sign as a: the short way
+  }
+  const Quat same = slerp(a, a, 0.5);
+  CHECK(same[1] == doctest::Approx(a[1]).epsilon(1e-5));
+  // Exactly opposite rotations by half a turn: still a unit result.
+  CHECK(unit(slerp(id, Quat{0, 1, 0, 0}, 0.5)));
+}
+
+TEST_CASE("presence: a velocity scale that is not finite is taken as 1") {
+  for (double bad : {std::nan(""), double(kInf), -1.0, 0.0}) {
+    Settings st;
+    st.velocity_scale = bad;
+    Presence p = two_players(st);
+    p.on_sample(sample(2, 0, 1, {0, 0, 0}, Vec3{1, 0, 0}));
+    const auto pose = p.player(2)->pose_at(100 * kMs, p.settings());
+    REQUIRE(pose);
+    CHECK(pose->position[0] == doctest::Approx(0.1));
+  }
+}
+
+TEST_CASE("presence: unknown player numbers are ignored") {
+  Presence p = two_players();
+  for (std::uint8_t n : {std::uint8_t{0}, std::uint8_t{3}, std::uint8_t{5}, std::uint8_t{255}}) {
+    CHECK(p.on_sample(sample(n, 0, 1, {0, 0, 0})) == SampleResult::unknown_player);
+    CHECK_FALSE(p.on_left(proto::PlayerLeft{n}));
+    CHECK_FALSE(p.on_status(proto::PlayerStatus{n, 1}));
+    CHECK_FALSE(p.shown(n, 1000 * kMs));
+    CHECK_FALSE(p.player(n));
+  }
+  proto::PlayerJoined j;
+  j.player_number = 5;
+  CHECK_FALSE(p.on_joined(j));
+  j.player_number = 0;
+  CHECK_FALSE(p.on_joined(j));
+  CHECK(p.players() == std::vector<std::uint8_t>{2});
+  CHECK(p.on_sample(sample(1, 0, 1, {0, 0, 0})) == SampleResult::self);
 }

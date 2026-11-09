@@ -46,7 +46,7 @@ struct Settings {
   bool hermite = true;
   // Position units per velocity unit (velocity is "per second" in both).
   // 1 when the sender's position and velocity use the same unit. Not above
-  // zero: taken as 1.
+  // zero, or not finite: taken as 1.
   double velocity_scale = 1.0;
 };
 
@@ -68,7 +68,8 @@ struct Pose {
   std::uint64_t at_us = 0;  // the server time this pose is for
 };
 
-// One buffered sample. Only samples with a position are buffered.
+// One buffered sample. Only samples with a position are buffered. Every
+// float in it is finite, and the rotation, if any, has length 1.
 struct Sample {
   protocol::SampleTime time;
   Vec3 position{};
@@ -81,7 +82,9 @@ enum class SampleResult : std::uint8_t {
   buffered,        // kept for drawing (and its scene and age used)
   state_only,      // no position: only its scene and age were used
   duplicate,       // a sample with that sequence is already buffered
-  too_old,         // older than what was already shown, or than a full buffer
+  too_old,         // older than what was already shown and than the newest
+                   // buffered sample, or than all of a full buffer
+  invalid,         // a NaN or infinite float, or a rotation of length 0
   unknown_player,  // no PLAYER_JOINED for that number (or it left)
   self,            // about this player, not a remote one
 };
@@ -98,8 +101,10 @@ class Player {
   std::uint8_t flags() const { return flags_; }
   bool has_flag(std::uint8_t bit) const { return (flags_ & bit) != 0; }
 
-  // Scene and age from the newest sample (by server time, then sequence)
-  // that carried them. A late, older sample does not overwrite them.
+  // Scene and age from the newest sample that carried them, by sequence
+  // (allowing for its wrap), even one too late to be drawn. A late, older
+  // sample does not overwrite them. Sequence, not server time, so a jump in
+  // the sender's clock estimate cannot freeze them.
   const std::optional<std::string>& scene() const { return scene_; }
   std::optional<Age> age() const { return age_; }
   // False while the player's scene is not known.
@@ -121,9 +126,9 @@ class Player {
   std::string nickname_;
   std::uint8_t flags_ = 0;
   std::optional<std::string> scene_;
-  std::optional<protocol::SampleTime> scene_time_;
+  std::optional<std::uint32_t> scene_sequence_;
   std::optional<Age> age_;
-  std::optional<protocol::SampleTime> age_time_;
+  std::optional<std::uint32_t> age_sequence_;
   std::deque<Sample> samples_;
   std::optional<std::uint64_t> last_shown_us_;
 };
@@ -177,7 +182,9 @@ class Presence {
 };
 
 // Shortest-path spherical interpolation of two rotations, t in 0..1. The
-// inputs need not be normalised; the result is.
+// inputs need not be normalised; the result is. An input of length 0 or
+// with a NaN or infinite part counts as no rotation (identity); a t that is
+// not finite gives identity.
 Quat slerp(const Quat& a, const Quat& b, double t);
 
 }  // namespace coop::presence

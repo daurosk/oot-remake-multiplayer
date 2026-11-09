@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace coop::presence {
@@ -14,10 +15,41 @@ bool earlier(const protocol::SampleTime& a, const protocol::SampleTime& b) {
 
 using DVec = std::array<double, 3>;
 
+// Sequence a after b, allowing for the u32 wrap.
+bool sequence_after(std::uint32_t a, std::uint32_t b) {
+  return static_cast<std::int32_t>(a - b) > 0;
+}
+
 DVec to_d(const Vec3& v) { return {v[0], v[1], v[2]}; }
 
-Vec3 to_f(const DVec& v) {
-  return {static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2])};
+// A double made into a float: converting one out of the float range is
+// undefined, so clamp to the largest finite float; a NaN becomes 0.
+float to_float(double x) {
+  constexpr double kMax = std::numeric_limits<float>::max();
+  if (std::isnan(x)) return 0.0f;
+  return static_cast<float>(std::clamp(x, -kMax, kMax));
+}
+
+Vec3 to_f(const DVec& v) { return {to_float(v[0]), to_float(v[1]), to_float(v[2])}; }
+
+template <std::size_t N>
+bool all_finite(const std::array<float, N>& v) {
+  return std::all_of(v.begin(), v.end(), [](float x) { return std::isfinite(x); });
+}
+
+// Normalise in place; false if it has no length or a part that is not
+// finite. In double, so no float input can overflow the squares.
+bool normalise(std::array<double, 4>& q) {
+  const double n = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  if (!std::isfinite(n) || !(n > 0.0)) return false;
+  for (double& c : q) c /= n;
+  return true;
+}
+
+std::optional<Quat> unit_quat(const Quat& q) {
+  std::array<double, 4> d{q[0], q[1], q[2], q[3]};
+  if (!normalise(d)) return std::nullopt;
+  return Quat{to_float(d[0]), to_float(d[1]), to_float(d[2]), to_float(d[3])};
 }
 
 DVec velocity_or_zero(const Sample& s) {
@@ -41,16 +73,10 @@ bool valid_number(std::uint8_t n) { return n >= 1 && n <= 4; }
 Quat slerp(const Quat& a, const Quat& b, double t) {
   std::array<double, 4> q0{a[0], a[1], a[2], a[3]};
   std::array<double, 4> q1{b[0], b[1], b[2], b[3]};
-  auto normalise = [](std::array<double, 4>& q) {
-    const double n = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-    if (n > 0.0) {
-      for (double& c : q) c /= n;
-    } else {
-      q = {0.0, 0.0, 0.0, 1.0};
-    }
-  };
-  normalise(q0);
-  normalise(q1);
+  constexpr std::array<double, 4> kIdentity{0.0, 0.0, 0.0, 1.0};
+  if (!normalise(q0)) q0 = kIdentity;
+  if (!normalise(q1)) q1 = kIdentity;
+  if (!std::isfinite(t)) return {0.0f, 0.0f, 0.0f, 1.0f};
   double dot = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3];
   if (dot < 0.0) {  // q and -q are the same rotation: take the short way
     for (double& c : q1) c = -c;
@@ -59,16 +85,15 @@ Quat slerp(const Quat& a, const Quat& b, double t) {
   std::array<double, 4> out{};
   if (dot > 0.9995) {  // nearly the same: a normalised straight line is exact enough
     for (std::size_t k = 0; k < 4; ++k) out[k] = q0[k] + (q1[k] - q0[k]) * t;
-    normalise(out);
+    if (!normalise(out)) out = kIdentity;
   } else {
-    const double theta = std::acos(std::min(dot, 1.0));
+    const double theta = std::acos(std::clamp(dot, -1.0, 1.0));
     const double s = std::sin(theta);
     const double w0 = std::sin((1.0 - t) * theta) / s;
     const double w1 = std::sin(t * theta) / s;
     for (std::size_t k = 0; k < 4; ++k) out[k] = w0 * q0[k] + w1 * q1[k];
   }
-  return {static_cast<float>(out[0]), static_cast<float>(out[1]), static_cast<float>(out[2]),
-          static_cast<float>(out[3])};
+  return {to_float(out[0]), to_float(out[1]), to_float(out[2]), to_float(out[3])};
 }
 
 Player::Player(std::uint8_t number, std::string nickname)
@@ -80,22 +105,40 @@ bool Player::same_scene(std::string_view local_scene) const {
 
 SampleResult Player::add(const protocol::PlayerSample& in) {
   const protocol::SampleTime& t = in.time;
-  if (last_shown_us_ && t.server_time_us < *last_shown_us_) return SampleResult::too_old;
+  // The decoder refuses NaN and infinity, but this may be fed from elsewhere.
+  if ((in.position && !all_finite(*in.position)) || (in.velocity && !all_finite(*in.velocity))) {
+    return SampleResult::invalid;
+  }
+  std::optional<Quat> rotation;
+  if (in.rotation) {
+    rotation = unit_quat(*in.rotation);
+    if (!rotation) return SampleResult::invalid;
+  }
   for (const Sample& s : samples_) {
     if (s.time.sequence == t.sequence) return SampleResult::duplicate;
   }
 
   // Scene and age: only from a sample newer than the one that last set them.
-  if (in.scene && (!scene_time_ || earlier(*scene_time_, t))) {
+  // Taken before the drawing checks, so a scene change in a sample too late
+  // to draw is still used.
+  if (in.scene && (!scene_sequence_ || sequence_after(t.sequence, *scene_sequence_))) {
     scene_ = in.scene;
-    scene_time_ = t;
+    scene_sequence_ = t.sequence;
   }
-  if (in.age && (!age_time_ || earlier(*age_time_, t))) {
+  if (in.age && (!age_sequence_ || sequence_after(t.sequence, *age_sequence_))) {
     age_ = in.age;
-    age_time_ = t;
+    age_sequence_ = t.sequence;
   }
 
   if (!in.position) return SampleResult::state_only;
+  // Older than the time already shown: it would rewrite a past already
+  // drawn, so it is dropped, unless it is newer than every buffered sample.
+  // Then it is the best there is, and a sender whose samples all arrive
+  // later than the show delay is still shown (extrapolated).
+  if (last_shown_us_ && t.server_time_us < *last_shown_us_ && !samples_.empty() &&
+      earlier(t, samples_.back().time)) {
+    return SampleResult::too_old;
+  }
   if (samples_.size() >= kSampleBuffer && earlier(t, samples_.front().time)) {
     return SampleResult::too_old;
   }
@@ -104,7 +147,7 @@ SampleResult Player::add(const protocol::PlayerSample& in) {
   s.time = t;
   s.position = *in.position;
   s.velocity = in.velocity;
-  s.rotation = in.rotation;
+  s.rotation = rotation;
   const auto at = std::upper_bound(
       samples_.begin(), samples_.end(), t,
       [](const protocol::SampleTime& key, const Sample& x) { return earlier(key, x.time); });
@@ -118,7 +161,9 @@ std::optional<Pose> Player::pose_at(std::uint64_t show_us, const Settings& setti
   std::size_t i = 0;
   while (i + 1 < samples_.size() && samples_[i + 1].time.server_time_us <= show_us) ++i;
   const Sample& a = samples_[i];
-  const double scale = settings.velocity_scale > 0.0 ? settings.velocity_scale : 1.0;
+  const double scale = std::isfinite(settings.velocity_scale) && settings.velocity_scale > 0.0
+                           ? settings.velocity_scale
+                           : 1.0;
 
   Pose pose;
   pose.at_us = show_us;

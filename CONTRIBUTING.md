@@ -45,7 +45,7 @@ By opening a pull request you agree that your contribution is licensed under GPL
 
 Every pull request is reviewed by a review session before it is merged. This holds for everyone: outside contributors, the maintainer, and the project's own workers. Nothing merges unreviewed, however small.
 
-A review session is one of the maintainer's AI sessions, started only to review that pull request ([docs/workflow.md](docs/workflow.md)). It did not write the change. It writes what it found on the pull request; you answer or push fixes to the same branch, and it looks again.
+A review session is one of the maintainer's AI sessions, started only to review that pull request ([docs/workflow.md](docs/workflow.md)). It did not write the change. For a pull request from outside it writes what it found as a comment on the pull request; you answer or push fixes to the same branch, and it looks again. Reviews of the project's own workers are written in the project's notes, outside this repository.
 
 A review checks that:
 

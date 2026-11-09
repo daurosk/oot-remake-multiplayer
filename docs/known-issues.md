@@ -9,7 +9,7 @@ Every player needs the same release. v0.1.0-test2 speaks protocol 3; a v0.1.0-te
 One PC, two games, played by hand on 2026-11-09.
 
 - **Sword and shield on the other Links do not show.**
-- **Cut grass is not shared**: grass you cut still stands in the other games.
+- **Cut grass is not shared**: grass you cut still stands in the other games. After this release the 13 grass tufts near the Kokiri side of Hyrule Field were added to the shared objects (in the next build; not yet checked in a game). The field's ordinary grass is still not shared: it is not an object the co-op code can see yet ([world.md](world.md)).
 - **Hit reactions**: an enemy hit in one game loses life in the others but does not react there (a Stalchild keeps its head).
 - Seen working: Stalchildren rise at the same places in both games.
 
@@ -17,16 +17,17 @@ One PC, two games, played by hand on 2026-11-09.
 
 - Joining, leaving, rejoining after a crash, and reconnecting when the server restarts.
 - The co-op panel (top left): each player's name, area, distance and ping. The in-game chat box (Enter) and player list (hold Tab). A name tag over each player's head.
-- **Other players as Link** (with the puppet pack): child or adult, as their own save is. They stand where the other player is, follow them live and copy their whole pose (walking, running, sword stance). Navi flies beside each of them. A player who joins later gets a Link for everyone already there.
+- **Other players as Link** (with the puppet pack), checked as child Link. They stand where the other player is, follow them live and copy their whole pose (walking, running, sword stance). Navi flies beside each of them. A player who joins later gets a Link for everyone already there.
 - **Items**: key items, bottles, songs and one-time pickups are shared; small keys, Gold Skulltula tokens and heart pieces add up across players. Rupees, ammo and health stay per player. A player who joins late gets the items found before.
 - **Dungeons**: switches, doors, cleared rooms and water levels are shared through the game's saved dungeon flags.
 - **Enemies**: their position, animation and life follow the player who owns them; a kill in one game is a kill in all. Townspeople and animals stand and move the same in every game. One game decides where the night Stalchildren rise, so they are the same for everyone.
 - **Things a player makes**: Deku seeds and Deku nuts appear in the other games.
-- **Time of day**: every game follows the host's clock ([time.md](time.md)).
 
 ## Built, but not yet seen working in the game
 
-- **Pots, crates, rocks and signs** are shared like enemies ([world.md](world.md)). Crates were seen in the automatic tests; the rest has not been checked by hand, and cut grass does not work (above).
+- **Adult Link**: a player on an adult save should show as adult Link in the other games. Nothing adult has been run yet.
+- **Time of day**: every game should follow the host's clock ([time.md](time.md)). No run has shown a second game following the host yet.
+- **Pots, crates and rocks** are shared like enemies ([world.md](world.md)). Crates and a thrown rock were seen in the automatic tests; pots have not been seen, and nothing here has been checked by hand. Cut grass does not work (above).
 - **Bombs, arrows, the boomerang and the hookshot**: no test has thrown a bomb or shot an arrow yet, so an explosion in the other games has not been seen. Arrows would point the wrong way (their rotation is not sent).
 - **Sword and shield in hand or put away** as their owner has them: built, but in the play test they did not show at all (above).
 - **Areas and cutscenes**: a player in another area shows only in the panel, not as Link, and the other Links hide during your cutscenes and stand still during theirs.
@@ -36,6 +37,7 @@ One PC, two games, played by hand on 2026-11-09.
 
 - **Heart containers**: picking one up does not raise the other players' maximum health. Heart pieces count up, but four of them do not make a heart for the others.
 - **Gold Skulltulas**: the token count is shared, but the Skulltula you took may still be there in the other games.
+- **Cut signs** are not shared: a sign cut in one game stays whole in the others.
 - **Tunic, boots and masks** are not shown on the other players' Link.
 - **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
 - **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.

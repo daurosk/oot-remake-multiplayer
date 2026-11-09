@@ -17,10 +17,12 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <thread>
 
 #include "common/fs/path_util.h"
@@ -38,6 +40,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/protocol/codec.hpp"
 #include "coop/version.hpp"
+#include "coop_camera.h"
 #include "coop_settings.h"
 
 namespace CoopHook {
@@ -51,6 +54,48 @@ constexpr const char* kBuildId = "lichii fritchii-v4.1 coop";
 
 // A frame older than this means the game is not running (stopped, paused).
 constexpr auto kFrameStale = std::chrono::seconds(1);
+// A camera older than this is from a scene no longer drawn (a menu, a load).
+constexpr auto kCameraStale = std::chrono::milliseconds(250);
+// With LICHII_COOP_DEBUG_CAMERA, how often the local player's projection is logged.
+constexpr std::uint64_t kDebugLogFrames = 120;
+
+// An environment variable that is set and not "0".
+bool EnvFlag(const char* name) {
+#ifdef _MSC_VER
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return false;
+    }
+    const bool on = value[0] != '\0' && std::string_view(value) != "0";
+    std::free(value);
+    return on;
+#else
+    const char* value = std::getenv(name);
+    return value != nullptr && value[0] != '\0' && std::string_view(value) != "0";
+#endif
+}
+
+const char* WhyText(coop::overlay::Why why) {
+    using coop::overlay::Why;
+    switch (why) {
+    case Why::invalid:
+        return "invalid";
+    case Why::faded:
+        return "faded";
+    case Why::other_scene:
+        return "other scene";
+    case Why::behind:
+        return "behind the camera";
+    case Why::too_near:
+        return "too near";
+    case Why::too_far:
+        return "too far";
+    case Why::off_screen:
+        return "off screen";
+    }
+    return "?";
+}
 
 using Clock = std::chrono::steady_clock;
 
@@ -97,6 +142,8 @@ struct FrameView {
     std::optional<coop::protocol::Vec3> position;
     std::optional<std::string> scene;
     std::vector<coop::overlay::Shown> others;
+    std::optional<Markers> markers;  // none: no camera
+    std::string camera_note;         // for the panel, when the game runs
 };
 
 // What the network thread knows, for the window.
@@ -110,7 +157,14 @@ struct RoomView {
 
 class Coop {
 public:
-    explicit Coop(Settings settings) : settings_(std::move(settings)) {}
+    explicit Coop(Settings settings)
+        : settings_(std::move(settings)), debug_camera_(EnvFlag("LICHII_COOP_DEBUG_CAMERA")),
+          flip_y_(EnvFlag("LICHII_COOP_CAMERA_FLIP_Y")) {
+        if (debug_camera_ || flip_y_) {
+            LOG_INFO(Core, "coop: camera debug {}, flip y {}", debug_camera_ ? "on" : "off",
+                     flip_y_ ? "on" : "off");
+        }
+    }
 
     bool Begin() {
         coop::net::ClientConfig config;
@@ -132,6 +186,7 @@ public:
 
     // `quiet`: no logging, for the end of the program, when the log may be gone.
     void End(bool quiet) {
+        CoopCamera::SetWanted(false);
         {
             std::lock_guard lock(net_mutex_);
             stop_ = true;
@@ -181,9 +236,18 @@ public:
             std::lock_guard lock(presence_mutex_);
             view.others = coop::overlay::collect(presence_, *now);
         }
+        Place(view);
 
         std::lock_guard lock(view_mutex_);
         frame_ = std::move(view);
+    }
+
+    std::optional<Markers> CurrentMarkers() {
+        std::lock_guard lock(view_mutex_);
+        if (Clock::now() - frame_.at >= kFrameStale) {
+            return std::nullopt;
+        }
+        return frame_.markers;
     }
 
     std::vector<OverlayLine> Lines() {
@@ -198,6 +262,126 @@ public:
     }
 
 private:
+    // Projects the players with the camera the renderer found (coop_camera.h).
+    // Without one, view.markers stays empty and only the panel shows.
+    void Place(FrameView& view) {
+        CoopCamera::SetWanted(view.game);
+        if (!view.game) {
+            return;
+        }
+        ++frames_;
+        const auto camera = CoopCamera::Latest();
+        const bool fresh = camera && view.at - camera->at < kCameraStale;
+        if (fresh != camera_seen_) {
+            camera_seen_ = fresh;
+            if (fresh) {
+                LOG_INFO(Core, "coop: camera found ({}x{}, clip y {}), markers on",
+                         camera->width, camera->height, camera->y_down ? "down" : "up");
+            } else {
+                LOG_INFO(Core, "coop: camera lost, markers off");
+            }
+        }
+        const bool log = debug_camera_ && frames_ % kDebugLogFrames == 0;
+        if (!fresh) {
+            view.camera_note = "markers: no camera";
+            if (log) {
+                LOG_INFO(Core, "coop: camera debug: no camera");
+            }
+            return;
+        }
+
+        // The game's matrix is row-major and maps world to clip; the overlay
+        // takes column-major view and projection, so the view is identity.
+        // Clip y is turned to point up the picture, as the overlay expects.
+        coop::overlay::Camera c;
+        c.view = coop::overlay::identity();
+        const bool flip = camera->y_down != flip_y_;
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                const float v = camera->clip_from_world[row * 4 + col];
+                c.projection[col * 4 + row] = (row == 1 && flip) ? -v : v;
+            }
+        }
+        c.viewport_width = camera->width;
+        c.viewport_height = camera->height;
+
+        auto players = view.others;
+        if (debug_camera_ && view.position) {
+            players.push_back({0, "you", *view.position, view.scene, 1.0f});
+        }
+        const auto result = overlay_.build(c, view.scene.value_or(""), players);
+        if (result.error != coop::overlay::Error::none) {
+            view.camera_note = "markers: bad camera matrix";
+            if (log) {
+                LOG_INFO(Core, "coop: camera debug: matrix not finite");
+            }
+            return;
+        }
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "markers: on (camera %.0fx%.0f%s)", camera->width,
+                      camera->height, debug_camera_ ? ", debug" : "");
+        view.camera_note = buf;
+
+        Markers markers;
+        markers.width = camera->width;
+        markers.height = camera->height;
+        for (const auto& item : result.items) {
+            Marker m;
+            m.x = item.marker.x;
+            m.y = item.marker.y;
+            m.size = item.marker.size;
+            m.alpha = item.alpha;
+            m.edge = item.edge;
+            m.arrow_angle = item.arrow_angle;
+            m.self = item.number == 0;
+            m.tag = item.tag.text;
+            m.tag_x = item.tag.x;
+            m.tag_y = item.tag.y;
+            m.tag_below = item.tag.below;
+            markers.items.push_back(std::move(m));
+        }
+        view.markers = std::move(markers);
+
+        if (log) {
+            LogSelf(view, *camera, c, result);
+        }
+    }
+
+    // LICHII_COOP_DEBUG_CAMERA: where the local player lands on screen. With
+    // the right matrix, the marker labelled "you" sits on Link.
+    static void LogSelf(const FrameView& view, const CoopCamera::Frame& camera,
+                        const coop::overlay::Camera& c, const coop::overlay::Result& result) {
+        if (!view.position) {
+            LOG_INFO(Core, "coop: camera debug: own position not readable");
+            return;
+        }
+        const auto& p = *view.position;
+        float clip[4];
+        for (int row = 0; row < 4; ++row) {
+            clip[row] = c.projection[0 * 4 + row] * p[0] + c.projection[1 * 4 + row] * p[1] +
+                        c.projection[2 * 4 + row] * p[2] + c.projection[3 * 4 + row];
+        }
+        std::string where = "not drawn";
+        for (const auto& item : result.items) {
+            if (item.number == 0) {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "at %.0f,%.0f of %.0fx%.0f%s", item.marker.x,
+                              item.marker.y, camera.width, camera.height,
+                              item.edge ? " (edge arrow)" : "");
+                where = buf;
+            }
+        }
+        for (const auto& s : result.skipped) {
+            if (s.number == 0) {
+                where = std::string("skipped: ") + WhyText(s.why);
+            }
+        }
+        LOG_INFO(Core,
+                 "coop: camera debug: you at ({:.1f}, {:.1f}, {:.1f}) clip ({:.3f}, {:.3f}, "
+                 "{:.3f}, {:.3f}) {}",
+                 p[0], p[1], p[2], clip[0], clip[1], clip[2], clip[3], where);
+    }
+
     std::optional<coop::host::PlayerReading> Read(Core::System& system, FrameView& view) {
         auto* process = system.ApplicationProcess();
         if (process == nullptr) {
@@ -348,6 +532,9 @@ private:
         } else if (frame.scene) {
             lines.push_back({"you: " + *frame.scene, true});
         }
+        if (running && frame.game && !frame.camera_note.empty()) {
+            lines.push_back({frame.camera_note, true});
+        }
 
         std::map<std::uint8_t, const coop::overlay::Shown*> shown;
         if (running) {
@@ -384,7 +571,13 @@ private:
 
     const Settings settings_;
 
+    const bool debug_camera_;  // LICHII_COOP_DEBUG_CAMERA: mark yourself, log where
+    const bool flip_y_;        // LICHII_COOP_CAMERA_FLIP_Y: if markers are upside down
+
     // Present thread only.
+    coop::overlay::Overlay overlay_;
+    bool camera_seen_ = false;
+    std::uint64_t frames_ = 0;
     coop::host::Sampler sampler_;
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
@@ -491,6 +684,13 @@ std::vector<OverlayLine> OverlayLines() {
         return coop->Lines();
     }
     return {};
+}
+
+std::optional<Markers> CurrentMarkers() {
+    if (auto* coop = Get()) {
+        return coop->CurrentMarkers();
+    }
+    return std::nullopt;
 }
 
 } // namespace CoopHook

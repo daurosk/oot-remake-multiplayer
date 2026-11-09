@@ -7,6 +7,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `PIN` | Repo URL, release tag and commit we build against. |
 | `fetch.ps1` | Clones or updates the source to the pin and applies `patches/*.patch` in order. |
 | `patches/0001-coop-hook.patch` | The hook points, nothing else. |
+| `patches/0002-coop-camera.patch` | One call per draw in the Vulkan renderer that hands the game's camera to the hook, for markers. |
 | `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
 ## Fetch and patch
@@ -51,6 +52,7 @@ With `LICHII_COOP` off (the default) the patch changes nothing in the build.
 | `src/yuzu/main_window.cpp` | Starts co-op and its panel once the render window exists (`CoopWindow::Attach`), and stops it when the window closes (`CoopHook::Shutdown`). |
 | `src/core/hle/service/nx2_gsv.h` | In `Composite` (the Switch 2 present path, the one Ocarina uses), calls `CoopHook::OnFrame` after the speed limiter and the frame-time stats. |
 | `src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp` | The same in `nvdisp_disp0::Composite` (the Switch 1 present path). |
+| `src/video_core/renderer_vulkan/vk_rasterizer.cpp` | (0002) After each draw's pipeline is configured, calls `CoopCamera::Track` (`hook/coop_camera_track.h`), which looks for the game's camera buffer as the DLSS path does, without DLSS. `video_core` sees the hook folder and `LICHII_COOP` because `core.cmake` makes both public on `core`, which `video_core` links. |
 
 Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same ENet 1.3.18) when one exists, so there is one ENet in the program.
 
@@ -63,7 +65,7 @@ Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same
 ## A new Fritchii release
 
 1. Change `PIN` to the new tag and commit.
-2. Run `fetch.ps1`. If a patch no longer applies, apply it by hand on the new commit, commit, and replace the file with `git format-patch -1 --zero-commit --no-signature --stdout`.
+2. Run `fetch.ps1`. If a patch no longer applies, apply it by hand on the new commit, commit, and replace that file with `git format-patch -1 --zero-commit --no-signature --stdout` of its commit.
 3. Build with `LICHII_COOP=ON` and check the log for `coop: loaded`.
 
-The patch stays at 6 files and about 40 lines; everything else is in `hook/`.
+The patches stay at 7 files and about 50 lines; everything else is in `hook/`.

@@ -3,9 +3,12 @@
 # builds needs no new patch.
 set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
+    "${_coop_hook}/coop_camera.cpp"
     "${_coop_hook}/coop_hook.cpp"
     "${_coop_hook}/coop_settings.cpp"
 )
-target_include_directories(core PRIVATE "${_coop_hook}")
-target_compile_definitions(core PRIVATE LICHII_COOP)
+# Public, so video_core (which links core) sees them: the patched
+# vk_rasterizer.cpp includes coop_camera_track.h under LICHII_COOP.
+target_include_directories(core PUBLIC "${_coop_hook}")
+target_compile_definitions(core PUBLIC LICHII_COOP)
 target_link_libraries(core PRIVATE coop coop_net coop_host coop_presence coop_overlay)

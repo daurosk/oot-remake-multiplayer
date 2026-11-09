@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 17:46:31 -0900
+Subject: [PATCH] coop: hand the game's camera to the co-op hook
+
+With LICHII_COOP on, each draw calls CoopCamera::Track from the hook's
+coop_camera_track.h after its pipeline is configured. It looks for the same
+camera buffer as the DLSS path (TrackOcarinaCamera) without needing DLSS,
+so co-op can draw player markers in the world.
+---
+ src/video_core/renderer_vulkan/vk_rasterizer.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index 156982fcbb..ec799347b4 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -75,6 +75,9 @@
+ #include "video_core/nx2_debug_control.h"
+ #include "video_core/nx2_perf.h"
+ #include "video_core/nx2_profile.h"
++#ifdef LICHII_COOP
++#include "coop_camera_track.h"
++#endif
+ 
+ namespace Vulkan {
+ 
+@@ -516,6 +519,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
+         return;
+     }
+ 
++#ifdef LICHII_COOP
++    CoopCamera::Track(texture_cache, buffer_cache, device_memory, maxwell3d->regs,
++                      render_trace_frame);
++#endif
+ #ifdef EGLANTINE_STREAMLINE
+     TrackOcarinaCamera();
+     TrackOcarinaActor(pipeline->ShaderHashes()[1], is_indexed, is_indirect);

@@ -12,7 +12,13 @@ add_executable(coop_tests
   host/flag_watcher_test.cpp
   host/session_test.cpp
   overlay/overlay_test.cpp
+  lichii/camera_test.cpp
+  lichii/settings_test.cpp
+  # These two hook files have no emulator code, so they are tested on their own.
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
 )
+target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)
 target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host coop_overlay doctest::doctest coop_warnings)
 # The session tests run the real server in process.
 target_link_libraries(coop_tests PRIVATE coop_server_lib)

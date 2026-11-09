@@ -50,7 +50,7 @@ If the old coordinator is gone before step 2 (crashed, stopped, out of usage), t
 
 1. Check own context. Read new messages and reports.
 2. Check each running worker's context and state.
-3. For each finished worker: read its report (not its whole diff), send a review worker if the change is large, open the pull request for the owner, start whatever that unblocks. Archive every session that has finished its work.
+3. For each finished worker: read its report (not its whole diff), open the pull request and send a review worker to review it (a review worker reviews every pull request, from a worker or from an outside contributor; nothing merges unreviewed), start whatever that unblocks. Archive every session that has finished its work.
 4. Update `WORKERS.md`; rewrite `HANDOFF.md` if anything changed.
 5. Tell the owner, in a few lines: what finished, what started, what needs their decision.
 

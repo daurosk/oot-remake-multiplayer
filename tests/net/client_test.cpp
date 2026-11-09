@@ -1167,7 +1167,8 @@ TEST_CASE("client join: a request from another player and its answer") {
   CHECK(client.accept_join(1, 77, where));
   const std::size_t at = wait_received<proto::JoinPartner>(client, server, from);
   CHECK(std::get<proto::JoinPartner>(server.received[at].message) ==
-        proto::JoinPartner{0, 1, 77, proto::JoinKind::accept, where, {}});
+        proto::JoinPartner{0, 1, 77, proto::JoinKind::accept, where,
+                           proto::JoinPartner{}.reason});  // not on the wire
   CHECK_FALSE(client.accept_join(1, 77, where));  // answered already
 
   // A refusal.

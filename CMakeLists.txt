@@ -4,6 +4,7 @@ project(oot_coop VERSION 0.0.1 LANGUAGES C CXX)
 
 option(COOP_BUILD_TESTS "Build the unit tests" ON)
 option(COOP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC or Clang)" OFF)
+option(COOP_TSAN "Build with ThreadSanitizer (GCC or Clang; not with COOP_SANITIZE)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +26,18 @@ if(COOP_SANITIZE)
   add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined
                       -fno-omit-frame-pointer -g)
   add_link_options(-fsanitize=address,undefined)
+endif()
+
+# ThreadSanitizer cannot be combined with ASan, so it is its own build.
+if(COOP_TSAN)
+  if(MSVC)
+    message(FATAL_ERROR "COOP_TSAN is for GCC or Clang")
+  endif()
+  if(COOP_SANITIZE)
+    message(FATAL_ERROR "COOP_TSAN and COOP_SANITIZE cannot be on together")
+  endif()
+  add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=thread)
 endif()
 
 include(cmake/enet.cmake)

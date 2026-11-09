@@ -67,3 +67,30 @@ jobs:
           set -o pipefail
           ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
           grep -q '^result: PASS' coop_test.log
+
+  tsan:
+    runs-on: ubuntu-latest
+    name: sanitize (clang, tsan)
+    env:
+      CC: clang
+      CXX: clang++
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v4
+      # Newer runner kernels use more mmap randomness than older TSan runtimes
+      # accept ("unexpected memory mapping"); lower it for this job.
+      - name: Lower ASLR entropy for TSan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCOOP_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+          -DCOOP_TSAN=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: coop_test, 2 clients for 20 seconds
+        run: |
+          set -o pipefail
+          ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
+          grep -q '^result: PASS' coop_test.log

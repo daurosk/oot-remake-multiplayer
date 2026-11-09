@@ -590,6 +590,7 @@ Director& TheDirector() {
 #include "core/memory.h"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
+#include "coop_svc.h"
 
 namespace CoopSpawn {
 namespace {
@@ -803,6 +804,14 @@ Director& TheDirector() {
 void Frame(Core::System& system, coop::host::Session* session,
            const std::optional<std::string>& scene, std::uint64_t server_now_us) {
     if (On()) {
+        static const bool registered = [] {
+            CoopSvc::AddCaller(10, [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t now_ms) {
+                return TheDirector().Step(guest, after_call, result, now_ms);
+            });
+            return true;
+        }();
+        (void)registered;
         TheGlue().Frame(system, session, scene, server_now_us);
     }
 }

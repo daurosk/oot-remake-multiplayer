@@ -2,7 +2,7 @@
 
 Plan stage 5 ([plan.md](plan.md), [objects.md](objects.md)): a bomb, a slingshot seed, a Deku nut, an arrow, the boomerang or the hookshot tip that one player makes appears in the other games too, moves the same and goes (or explodes) at the same moment. Code: `lichii/hook/coop_spawn.{h,cpp}`, tests in `tests/lichii/spawn_test.cpp`.
 
-Turn it on with `LICHII_COOP_SPAWN=1`. It needs the puppet cave, so `LICHII_COOP_PUPPET=1` too (or the cave patched for spawns, see "Not done").
+Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn director is its caller 10 (`CoopSvc::AddCaller`), after the puppets.
 
 ## Shared actors
 
@@ -32,8 +32,8 @@ Turn it on with `LICHII_COOP_SPAWN=1`. It needs the puppet cave, so `LICHII_COOP
 
 ## Not done
 
-- The svc cave is patched only when puppets are on; spawns need `coop_svc.cpp` to ask `CoopSpawn::TheDirector()` when the puppet director has no call (asked of the coordinator).
+- Not yet compiled into the emulator or run in a game.
 - Rotation is not sent (copies are made facing the identity rotation): arrows point the wrong way.
 - Copies are the game's real actors, so a copy bomb also hurts things in its own game, and its own fuse runs: it may go off slightly before the owner's remove arrives. The harmless `CoopShot_*` packs of [objects.md](objects.md) would avoid both.
 - A copy seed or nut made by the create request may not behave like a shot one (the game may give it its nocked state); its place is still written every frame.
-- Not yet run in the game. The live test: two games, A throws a bomb and shoots a seed; screenshots of both windows show the copy and the explosion at the same time.
+- The live test: two games, A throws a bomb and shoots a seed; screenshots of both windows show the copy and the explosion at the same time.

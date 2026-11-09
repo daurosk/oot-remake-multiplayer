@@ -831,6 +831,7 @@ void Start() {
     g_started = true;
     const auto v = coop::enet_linked_version();
     LOG_INFO(Core, "coop: loaded (ENet {}.{}.{})", (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
+    LOG_INFO(Core, "coop: build {}, protocol {}", LICHII_COOP_VERSION, coop::protocol::kProtocolVersion);
 
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;

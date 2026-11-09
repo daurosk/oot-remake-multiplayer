@@ -1,7 +1,10 @@
 # Builds a co-op test kit: one folder (and a zip of it) to copy to each test PC.
 # It holds the server, a copy of the patched emulator with an empty portable user\ folder,
-# play.cmd, start-server.cmd, collect-logs.cmd, make-puppet-pack.cmd with tools\puppet_pack,
-# coop-options.ini (debug and feature switches, all off), VERSION.txt and TESTING.md.
+# Host.bat, Join.bat, play.cmd, start-server.cmd, collect-logs.cmd, make-puppet-pack.cmd
+# with tools\puppet_pack, coop-options.ini (feature switches on, debug off), the player
+# guides (SETUP.md, PLAY-LAN.md, PLAY-ONLINE.md, KNOWN-ISSUES.md), TESTING.md, the licence
+# texts (licenses\, THIRD_PARTY_NOTICES.md), SOURCE.txt (where this build's source is) and
+# VERSION.txt.
 # No game files, keys or firmware go in, and no puppet pack: each PC adds its own and
 # builds the pack from its own romfs (docs/testing.md).
 #
@@ -18,6 +21,8 @@
 #               packages) and zstandard are copied into the kit's python\ folder, so
 #               make-puppet-pack.cmd runs on a PC without Python (about 60 MB more).
 #               Without it, each PC needs Python 3 and zstandard of its own.
+# -Release      a release name such as v0.1.0-test1: the kit is named oot-coop-<Release>
+#               instead of oot-coop-<date>, and VERSION.txt and SOURCE.txt name it.
 param(
     [string]$EmulatorBin = '',
     [string]$BuildDir = '',
@@ -25,7 +30,8 @@ param(
     [ValidateRange(1, 65535)][int]$Port = 27510,
     [switch]$IncludePdb,
     [switch]$NoZip,
-    [string]$Python = ''
+    [string]$Python = '',
+    [ValidatePattern('^[A-Za-z0-9._-]*$')][string]$Release = ''
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -118,7 +124,7 @@ if (Test-Path $vswhere) {
 if (-not $crt) { Write-Warning 'Visual C++ runtime folder not found; the kit will need the VC++ 2015-2022 x64 runtime installed on each PC.' }
 
 # Lay out the kit.
-$name = 'oot-coop-{0:yyyyMMdd-HHmm}' -f (Get-Date)
+$name = if ($Release) { "oot-coop-$Release" } else { 'oot-coop-{0:yyyyMMdd-HHmm}' -f (Get-Date) }
 $kit = Join-Path $OutRoot $name
 if (Test-Path $kit) { throw "$kit already exists; wait a minute or remove it." }
 New-Item -ItemType Directory -Force -Path $kit | Out-Null
@@ -142,7 +148,7 @@ if ($crt) {
     }
 }
 
-foreach ($f in 'start-server.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
+foreach ($f in 'Host.bat', 'Join.bat', 'start-server.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
 foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
 
 # The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
@@ -177,10 +183,53 @@ if ($Python) {
 Copy-Text (Join-Path $here 'kit\coop.ini.template') (Join-Path $kit 'scripts\coop.ini.template')
 New-Item -ItemType Directory -Force -Path (Join-Path $kit 'logs') | Out-Null
 Copy-Text (Join-Path $repo 'docs\testing.md') (Join-Path $kit 'TESTING.md')
+foreach ($doc in @(@('setup.md', 'SETUP.md'), @('play-lan.md', 'PLAY-LAN.md'), @('play-online.md', 'PLAY-ONLINE.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))) {
+    Copy-Text (Join-Path $repo "docs\$($doc[0])") (Join-Path $kit $doc[1])
+}
 Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $kit 'LICENSE.txt')
+Copy-Text (Join-Path $repo 'THIRD_PARTY_NOTICES.md') (Join-Path $kit 'THIRD_PARTY_NOTICES.md')
+
+# Licence texts of what is bundled (THIRD_PARTY_NOTICES.md says which is which).
+$lic = Join-Path $kit 'licenses'
+New-Item -ItemType Directory -Force -Path $lic | Out-Null
+Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $lic 'oot-remake-multiplayer-GPL-3.0.txt')
+if ($emuSource -and (Test-Path (Join-Path $emuSource 'LICENSE.txt'))) {
+    Copy-Item (Join-Path $emuSource 'LICENSE.txt') (Join-Path $lic 'Fritchii-GPL-3.0.txt')
+    Get-ChildItem (Join-Path $emuSource 'LICENSES') -Filter '*.txt' -ErrorAction SilentlyContinue |
+        ForEach-Object { Copy-Item $_.FullName (Join-Path $lic "SPDX-$($_.Name)") }
+} else { Write-Warning "The emulator source's LICENSE.txt was not found; add the licence texts by hand." }
+$enetLicense = Join-Path $BuildDir '_deps\enet-src\LICENSE'
+if (Test-Path $enetLicense) { Copy-Item $enetLicense (Join-Path $lic 'ENet-MIT.txt') }
+else { Write-Warning 'ENet LICENSE not found in the build folder; add it by hand.' }
+
+# Where the source of this exact build is (GPL-3.0, section 6).
+$hookCommit = Invoke-Git $hookDir rev-parse HEAD
+$emuCommit = Invoke-Git $emuSource rev-parse HEAD
+$source = @(
+    "Source code for this build$(if ($Release) { " ($Release)" })",
+    '',
+    'Everything in this kit that is GPL-3.0 can be rebuilt from public source.',
+    '',
+    'The co-op code (hook, server, puppet pack tool, these scripts):',
+    "  https://github.com/daurosk/oot-remake-multiplayer/tree/$hookCommit",
+    "  $(if ($Release) { "(tag $Release) " })commit $hookCommit",
+    '',
+    'The emulator: Fritchii by Frizti, with the small patch from the repo above:',
+    "  https://github.com/Frizti/Fritchii/tree/$($pin.tag)   (commit $($pin.commit))",
+    '  Patches: lichii/patches in the co-op repo; lichii/fetch.ps1 fetches that tag and',
+    '  applies them, and lichii/README.md says how to build it with the co-op hook.',
+    "  This kit's emulator was built from $emuCommit (that tag plus the patches).",
+    '',
+    'Qt 6.8.3 (LGPL-3.0): https://download.qt.io/archive/qt/6.8/6.8.3/',
+    'The other libraries are fetched at pinned versions by the Fritchii build (CPM).',
+    '',
+    'If a link stops working, open an issue on the co-op repo and the source will be',
+    'sent to you.'
+)
+[System.IO.File]::WriteAllLines((Join-Path $kit 'SOURCE.txt'), [string[]]$source)
 
 $version = @(
-    "kit: $name",
+    "kit: $name$(if ($Release) { " (release $Release)" })",
     "built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz') on $($env:COMPUTERNAME)",
     "co-op repo (this script): $(Describe-Commit $repo)",
     "co-op hook built into the emulator: $(Describe-Commit $hookDir)",
@@ -199,6 +248,13 @@ $version = @(
     "default port: $Port"
 )
 [System.IO.File]::WriteAllLines((Join-Path $kit 'VERSION.txt'), [string[]]$version)
+
+# Nothing of the game, no keys or firmware and no one's emulator data may go out.
+$banned = Get-ChildItem $kit -Recurse -File | Where-Object {
+    $_.Extension -in '.keys', '.nsp', '.nup', '.xci', '.nca', '.nro', '.nso', '.zs', '.pack', '.bfres', '.sarc' -or
+    $_.FullName -match '\\emulator\\user\\(nand|sdmc|load|dump|cache|shader|keys\\.+)'
+}
+if ($banned) { throw "The kit holds files that must not ship: $(($banned | Select-Object -First 5 | ForEach-Object FullName) -join ', ')" }
 
 $size = (Get-ChildItem $kit -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ('Folder: {0:N0} MB' -f ($size / 1MB))

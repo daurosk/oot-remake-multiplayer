@@ -12,6 +12,12 @@
 //   snapshot does not overwrite it, a FLAG_STATE does.
 // - The host answers each FLAG_SET with FLAG_STATE of what came out, and sends
 //   its whole table as FLAG_SNAPSHOT when asked.
+// - Counts (FlagStore::is_count: small keys, Gold Skulltula tokens, heart
+//   pieces) add up: a player sends its change as a count delta; the host's
+//   game adds a delta (handed over in a FLAG_STATE event by its client, or
+//   in a FLAG_SET) and sends the total as FLAG_STATE. A total is written on
+//   top of any change the game made that is not sent yet, so two players
+//   gaining at once both count (docs/protocol.md, "Counts").
 //
 // No sockets: messages come in already received (decoded or as bytes) and go
 // out encoded. receive() only queues; every read and write of the game happens
@@ -20,6 +26,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <span>
 #include <variant>
 #include <vector>
@@ -39,6 +46,7 @@ struct FlagStats {
   std::uint64_t changes_sent = 0;      // entries in FLAG_SET or own FLAG_STATE
   std::uint64_t answers_sent = 0;      // host: entries answering a FLAG_SET
   std::uint64_t applied = 0;           // entries written into the game
+  std::uint64_t deltas_added = 0;      // host: count deltas added to the game (in applied too)
   std::uint64_t kept_local = 0;        // snapshot entries skipped over a pending change
   std::uint64_t not_shared = 0;        // incoming entries not in the shared list
   std::uint64_t read_failures = 0;
@@ -93,6 +101,7 @@ class FlagWatcher {
   void apply_snapshot(FlagStore& store);
   void answer_set(FlagStore& store, const protocol::FlagSet& set, Table& answers);
   bool write(FlagStore& store, const protocol::FlagEntry& entry);
+  void add(FlagStore& store, const protocol::FlagEntry& delta);
   void diff(FlagStore& store, Table& changes);
   void send_snapshot(FlagStore& store, std::vector<Outgoing>& out);
 
@@ -102,6 +111,8 @@ class FlagWatcher {
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer
   Table unwritten_;   // incoming values whose write failed; tried again
+  Table unadded_;     // host: count deltas whose write failed; tried again
+  std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;
   bool holding_ = false;

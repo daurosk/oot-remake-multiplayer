@@ -147,7 +147,7 @@ A flag list is `u16` count, then that many entries. An entry is its key, then it
 |---|---|---|
 | key kind | `u8` | 0 named, 1 64-bit key. Any other is refused, since the rest of the list cannot be read |
 | key | 6 or 12 bytes | by key kind, below |
-| kind | `u8` | 0 bool, 1 s32, 2 f32, 3 u32 (an enum flag's hash, or any unsigned value); other kinds are refused |
+| kind | `u8` | 0 bool, 1 s32, 2 f32, 3 u32 (an enum flag's hash, or any unsigned value), 4 count delta (an s32 change, `FLAG_SET` only, below); other kinds are refused |
 | value | 4 bytes | the value as that kind: a bool is 0 or 1, an f32 is finite |
 
 | Key kind | Fields | Entry size |
@@ -168,6 +168,16 @@ How flags move:
 - The server keeps the table while anyone is in and forgets it when the last player leaves. It holds at most 262,144 flags (a server setting); a value for a new flag past that, in a `FLAG_STATE` or a host's `FLAG_SNAPSHOT`, is still relayed but not kept, so a later joiner does not get it.
 - A table of more than 3600 flags is split into parts in order, each up to 3600 entries (`split_snapshot` in the code). An empty table is one part with no entries. A table can have at most 65535 parts.
 - The server holds a host sending its table to the same limit as any message on channels 0 to 2 (60 a second, bursts of 120), so a host table of up to about 100 parts (over 360,000 flags) fits one burst. The server's own sends have no such limit.
+
+#### Counts
+
+Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.md)): two players can gain or spend at once, and an absolute value would lose one of the two (the host spends a key, 2 → 1, while a player gets one, 2 → 3; the host cannot tell that the 3 started from 2). So a player sends a count's change, not its value:
+
+- A player's build sends a count change as kind 4, count delta: the s32 change since the last value its game had (+1 got, −1 used). Only a named flag carries one, and only in `FLAG_SET`; a `FLAG_STATE` or `FLAG_SNAPSHOT` with kind 4 is refused, so the server's table only ever holds totals. The server relays it to the host like any `FLAG_SET`.
+- The host's build adds the delta to its game's value (never below 0) and sends the new total as `FLAG_STATE`, kind 1, which every player applies. It sends the total even when it did not change (the host spent what the player got), since the player waits for it. Its client does not answer a delta itself: it hands it to the game, whose flag watcher sends the total the same frame.
+- A player writes a total on top of any change its game made that it has not sent yet, and still sends that change. So every gain and every spend is counted once, whatever the order.
+- A count change does not wait for an answer of its own. A delta not answered when the host changes is sent again to the new host (the sum, if there were several); when the new host is us, it is dropped, since our game holds it and our snapshot carries it. A host's own count change goes out as its total. Our own delta that comes back to us as host (sent before we knew we host) is not added again.
+- Not covered: a delta that reached a host who left before its `FLAG_STATE` went out is lost with that host's game; one answered by a `FLAG_STATE` for the same flag from another player's change is no longer sent again on a host change.
 
 ### Equipment (`PLAYER_EQUIP`)
 
@@ -207,3 +217,4 @@ How it moves:
 - Adding a component or a message type that old readers may ignore does not change the version.
 - Types 12 to 17 (`JOIN_PARTNER`, the flag messages, `HOST` and `PLAYER_EQUIP`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.
+- Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.

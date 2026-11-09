@@ -45,6 +45,12 @@ class FlagStore {
   // Writes the flag. False when it could not (unknown hash, a kind that does
   // not match the flag, unmapped memory). Must not throw.
   virtual bool write(const protocol::FlagEntry& entry) = 0;
+
+  // True for a count (small keys, Gold Skulltula tokens, heart pieces): an
+  // int32 flag whose changes add up (docs/items.md). A player's watcher sends
+  // its change of one as a count delta, and write() then takes a
+  // FlagKind::count_delta entry and adds it. Default: no counts.
+  virtual bool is_count(FlagKey) { return false; }
 };
 
 // The flags this session shares, sorted, each once. Loaded from plain text,

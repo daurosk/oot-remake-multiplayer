@@ -37,7 +37,7 @@ constexpr std::uint32_t kBottleAItem = 0x7d48df76;     // BottleInfo.BottleA.Bot
 constexpr std::uint32_t kForestKeys = 0x90237092;      // DungeonInfo.ForestTemple.SmallKeyNum, count
 constexpr std::uint32_t kGoldTokens = 0x04735978;      // PouchData.Item_Token_Gold.StockNum, count
 constexpr std::uint32_t kHeartPieces = 0x51ec97b3;     // PouchData.Obj_Heart_Piece.StockNum, count
-constexpr std::uint32_t kMaxLife = 0xfbe01da1;         // PlayerStatus.MaxLife, max, off
+constexpr std::uint32_t kMaxLife = 0xfbe01da1;         // PlayerStatus.MaxLife, max
 constexpr std::uint32_t kWorldBool = 0x11, kWorldInt = 0x22;  // not items
 
 // The GameDataMgr layout of docs/flags.md, as in game_flags_test.cpp, with
@@ -151,7 +151,7 @@ TEST_CASE("game items: every name hashes to its hash, sorted, each once") {
         item.name.starts_with("DungeonInfo.") && !item.name.ends_with(".SmallKeyNum");
     if (item.name.starts_with("IsGet.") || dungeon_bool)
       CHECK((item.kind == K::boolean && item.rule == ItemRule::any));
-    if (item.rule == ItemRule::count) CHECK_FALSE(item.on);
+    CHECK(item.on);  // every rule is on, counts included
   }
   CHECK(find_item(0) == nullptr);
   CHECK(find_item(kWorldInt) == nullptr);
@@ -173,10 +173,10 @@ TEST_CASE("game items: Caleb's rule, item by item") {
            Want{kBottleA, ItemRule::any, true},         // the bottle is shared
            Want{kBottleAValid, ItemRule::any, true},
            Want{kBottleAItem, ItemRule::per_player, true},  // what is in it is not
-           Want{kForestKeys, ItemRule::count, false},
-           Want{kGoldTokens, ItemRule::count, false},
-           Want{kHeartPieces, ItemRule::count, false},
-           Want{kMaxLife, ItemRule::max, false},
+           Want{kForestKeys, ItemRule::count, true},
+           Want{kGoldTokens, ItemRule::count, true},
+           Want{kHeartPieces, ItemRule::count, true},
+           Want{kMaxLife, ItemRule::max, true},
            Want{0x31ab5580, ItemRule::per_player, true},  // Life
            Want{0x01c20002, ItemRule::any, true},         // Zelda's Lullaby
        }) {
@@ -195,9 +195,9 @@ TEST_CASE("game items: the shared list") {
   CHECK(shared.contains(FlagKey{kPocketEgg, 0}));
   CHECK_FALSE(shared.contains(FlagKey{kRupees, 0}));
   CHECK_FALSE(shared.contains(FlagKey{kBottleAItem, 0}));
-  CHECK_FALSE(shared.contains(FlagKey{kForestKeys, 0}));  // count: not on yet
-  CHECK_FALSE(shared.contains(FlagKey{kMaxLife, 0}));
-  CHECK(shared.size() == 300 - 18 - 17);
+  CHECK(shared.contains(FlagKey{kForestKeys, 0}));  // counts travel as deltas
+  CHECK(shared.contains(FlagKey{kMaxLife, 0}));
+  CHECK(shared.size() == 300 - 18);
   const auto all = item_shared_flags(true);
   CHECK(all.contains(FlagKey{kForestKeys, 0}));
   CHECK(all.contains(FlagKey{kMaxLife, 0}));
@@ -302,4 +302,159 @@ TEST_CASE("game items: through FlagWatcher, the host answers with the merged val
   CHECK(pf.get_int(kHookshot) == 1);
   CHECK(pf.get_bool(kBottleAValid) == true);
   CHECK(pf.get_int(kPocketEgg) == 1);
+}
+
+namespace {
+
+protocol::FlagEntry delta(std::uint32_t h, std::int32_t change) {
+  return {h, 0, K::count_delta, static_cast<std::uint32_t>(change)};
+}
+
+// The decoded messages of one frame.
+std::vector<protocol::Message> decoded(const std::vector<coop::host::Outgoing>& out) {
+  std::vector<protocol::Message> messages;
+  for (const auto& o : out) {
+    protocol::Message m;
+    REQUIRE(protocol::decode(o.bytes, m) == protocol::Error::none);
+    messages.push_back(std::move(m));
+  }
+  return messages;
+}
+
+// Hands a frame's messages to another watcher, as the server would.
+void deliver(FlagWatcher& to, const std::vector<coop::host::Outgoing>& out) {
+  for (const auto& o : out) CHECK(to.receive(o.bytes));
+}
+
+std::int32_t keys(Writable& w) { return *GameFlags(w).get_int(kForestKeys); }
+
+}  // namespace
+
+TEST_CASE("game items: the store adds count deltas") {
+  auto w = game();
+  GameFlagStore game_store(w);
+  ItemFlagStore store(game_store);
+  hold_int(w, kForestKeys, 2);
+  CHECK(store.is_count(FlagKey{kForestKeys, 0}));
+  CHECK(store.is_count(FlagKey{kHeartPieces, 0}));
+  CHECK(store.is_count(FlagKey{kGoldTokens, 0}));
+  CHECK_FALSE(store.is_count(FlagKey{kHookshot, 0}));
+  CHECK_FALSE(store.is_count(FlagKey{kMaxLife, 0}));  // max, not a count
+  CHECK_FALSE(store.is_count(FlagKey{kForestKeys, 1}));
+  CHECK_FALSE(store.is_count(FlagKey::key64_flag(kForestKeys)));
+
+  CHECK(store.write(delta(kForestKeys, 1)));
+  CHECK(keys(w) == 3);
+  CHECK(store.write(delta(kForestKeys, -1)));
+  CHECK(keys(w) == 2);
+  CHECK(store.write(delta(kForestKeys, -5)));  // never below 0
+  CHECK(keys(w) == 0);
+  CHECK(store.stats().added == 3);
+  // A total is written as it came: the host's value is the truth.
+  CHECK(store.write(i(kForestKeys, 4)));
+  CHECK(keys(w) == 4);
+  // A delta on anything but a count, or a count the game lacks, is refused.
+  CHECK_FALSE(store.write(delta(kHookshot, 1)));
+  CHECK_FALSE(store.write(delta(kWorldInt, 1)));
+  CHECK_FALSE(store.write(delta(kGoldTokens, 1)));  // not in this fake game
+  CHECK(store.stats().refused == 3);
+  CHECK(keys(w) == 4);
+}
+
+TEST_CASE("game items: two players gaining keys at once lose no increment") {
+  // Host H and players A and B, each with 2 Forest Temple keys.
+  auto hw = game(), aw = game(), bw = game();
+  GameFlagStore hg(hw), ag(aw), bg(bw);
+  ItemFlagStore hs(hg), as(ag), bs(bg);
+  for (auto* w : {&hw, &aw, &bw}) hold_int(*w, kForestKeys, 2);
+  FlagWatcher host(item_shared_flags(), FlagRole::host);
+  FlagWatcher a(item_shared_flags(), FlagRole::player);
+  FlagWatcher b(item_shared_flags(), FlagRole::player);
+  CHECK(host.frame(hs).empty());  // first frames are the baseline
+  CHECK(a.frame(as).empty());
+  CHECK(b.frame(bs).empty());
+
+  // In the same frame: A and B each pick up a key, the host opens a door.
+  hold_int(aw, kForestKeys, 3);
+  hold_int(bw, kForestKeys, 3);
+  hold_int(hw, kForestKeys, 1);
+  const auto from_a = a.frame(as);
+  const auto from_b = b.frame(bs);
+  const auto host_own = host.frame(hs);
+  // The players send their change, the host its value.
+  REQUIRE(decoded(from_a).size() == 1);
+  CHECK(std::get<protocol::FlagSet>(decoded(from_a)[0]).flags ==
+        std::vector{delta(kForestKeys, 1)});
+  CHECK(std::get<protocol::FlagState>(decoded(host_own)[0]).flags ==
+        std::vector{i(kForestKeys, 1)});
+  CHECK(a.pending() == 0);  // a count waits for no answer of its own
+
+  // The host's own FLAG_STATE reaches the players first; A picks up another
+  // key before its next frame.
+  deliver(a, host_own);
+  deliver(b, host_own);
+  hold_int(aw, kForestKeys, 4);
+  deliver(host, from_a);
+  deliver(host, from_b);
+  const auto answer = host.frame(hs);
+  REQUIRE(decoded(answer).size() == 1);
+  CHECK(std::get<protocol::FlagState>(decoded(answer)[0]).flags ==
+        std::vector{i(kForestKeys, 3)});  // 2 - 1 + 1 + 1
+  CHECK(keys(hw) == 3);
+
+  // A takes the host's 1, then its 3, each on top of the key it has not
+  // sent yet, and sends that key as +1.
+  deliver(a, answer);
+  deliver(b, answer);
+  const auto from_a2 = a.frame(as);
+  CHECK(keys(aw) == 4);
+  REQUIRE(decoded(from_a2).size() == 1);
+  CHECK(std::get<protocol::FlagSet>(decoded(from_a2)[0]).flags ==
+        std::vector{delta(kForestKeys, 1)});
+  CHECK(b.frame(bs).empty());
+  CHECK(keys(bw) == 3);
+
+  deliver(host, from_a2);
+  const auto answer2 = host.frame(hs);
+  deliver(a, answer2);
+  deliver(b, answer2);
+  CHECK(a.frame(as).empty());
+  CHECK(b.frame(bs).empty());
+  CHECK(host.frame(hs).empty());
+  // 2 - 1 (door) + 1 (A) + 1 (B) + 1 (A again): everyone holds 4.
+  CHECK(keys(hw) == 4);
+  CHECK(keys(aw) == 4);
+  CHECK(keys(bw) == 4);
+}
+
+TEST_CASE("game items: the host adds deltas its client hands over") {
+  // The live path: the host's net client does not answer a delta itself; it
+  // gives it to the game in its flag_state event (a FLAG_STATE with the
+  // deltas), and the host's watcher sends the total.
+  auto hw = game();
+  GameFlagStore hg(hw);
+  ItemFlagStore hs(hg);
+  hold_int(hw, kForestKeys, 2);
+  FlagWatcher host(item_shared_flags(), FlagRole::host);
+  host.frame(hs);
+  hold_int(hw, kForestKeys, 1);  // the host spends one this frame too
+  CHECK(host.receive(protocol::Message{
+      protocol::FlagState{1, {delta(kForestKeys, 1), i(kHookshot, 1)}}}));
+  const auto out = decoded(host.frame(hs));
+  CHECK(keys(hw) == 2);
+  CHECK(host.stats().deltas_added == 1);
+  REQUIRE(out.size() == 1);
+  // Its own spend and the player's gain in one total.
+  CHECK(std::get<protocol::FlagState>(out[0]).flags == std::vector{i(kForestKeys, 2)});
+
+  // A player never takes a delta.
+  auto pw = game();
+  GameFlagStore pg(pw);
+  ItemFlagStore ps(pg);
+  hold_int(pw, kForestKeys, 2);
+  FlagWatcher player(item_shared_flags(), FlagRole::player);
+  player.frame(ps);
+  CHECK(player.receive(protocol::Message{protocol::FlagState{1, {delta(kForestKeys, 1)}}}));
+  CHECK(player.frame(ps).empty());
+  CHECK(keys(pw) == 2);
 }

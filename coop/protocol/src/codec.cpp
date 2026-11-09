@@ -358,12 +358,23 @@ bool has_duplicate(std::span<const FlagEntry> flags) {
   return std::adjacent_find(keys.begin(), keys.end()) != keys.end();
 }
 
+// Which lists may carry a count delta: FLAG_SET only.
+enum class Deltas : bool { refused, allowed };
+
+Error check_delta(const FlagEntry& e, Deltas deltas) {
+  return e.kind == FlagKind::count_delta && deltas == Deltas::refused ? Error::bad_value
+                                                                      : Error::none;
+}
+
 // The rules every flag list follows: min_count to kMaxFlagEntries entries,
-// each valid, no key twice.
-Error check_flags(const std::vector<FlagEntry>& flags, std::size_t min_count) {
+// each valid, a count delta only where allowed, no key twice.
+Error check_flags(const std::vector<FlagEntry>& flags, std::size_t min_count, Deltas deltas) {
   if (flags.size() > kMaxFlagEntries) return Error::too_large;
   if (flags.size() < min_count) return Error::bad_value;
-  for (const auto& e : flags) COOP_TRY(check_flag(e));
+  for (const auto& e : flags) {
+    COOP_TRY(check_flag(e));
+    COOP_TRY(check_delta(e, deltas));
+  }
   if (has_duplicate(flags)) return Error::bad_value;
   return Error::none;
 }
@@ -421,7 +432,7 @@ Error encode_body(const JoinPartner& m, Writer& w) {
 
 Error encode_body(const FlagSet& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  COOP_TRY(check_flags(m.flags, 1));
+  COOP_TRY(check_flags(m.flags, 1, Deltas::allowed));
   w.u8(m.player_number);
   write_flags(m.flags, w);
   return Error::none;
@@ -429,7 +440,7 @@ Error encode_body(const FlagSet& m, Writer& w) {
 
 Error encode_body(const FlagState& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  COOP_TRY(check_flags(m.flags, 1));
+  COOP_TRY(check_flags(m.flags, 1, Deltas::refused));
   w.u8(m.player_number);
   write_flags(m.flags, w);
   return Error::none;
@@ -437,7 +448,7 @@ Error encode_body(const FlagState& m, Writer& w) {
 
 Error encode_body(const FlagSnapshot& m, Writer& w) {
   if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
-  COOP_TRY(check_flags(m.flags, 0));
+  COOP_TRY(check_flags(m.flags, 0, Deltas::refused));
   w.u16(m.part);
   w.u16(m.part_count);
   write_flags(m.flags, w);
@@ -689,7 +700,8 @@ Error decode_body(Reader& r, JoinPartner& m) {
   return Error::none;
 }
 
-Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count) {
+Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count,
+                 Deltas deltas) {
   std::uint16_t count = 0;
   COOP_READ(r.u16(count));
   if (count > kMaxFlagEntries || count < min_count) return Error::bad_value;
@@ -716,6 +728,7 @@ Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count
     COOP_READ(r.u32(e.value));
     e.kind = static_cast<FlagKind>(kind);
     COOP_TRY(check_flag(e));
+    COOP_TRY(check_delta(e, deltas));
   }
   if (has_duplicate(flags)) return Error::bad_value;
   return Error::none;
@@ -724,20 +737,20 @@ Error read_flags(Reader& r, std::vector<FlagEntry>& flags, std::size_t min_count
 Error decode_body(Reader& r, FlagSet& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  return read_flags(r, m.flags, 1);
+  return read_flags(r, m.flags, 1, Deltas::allowed);
 }
 
 Error decode_body(Reader& r, FlagState& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  return read_flags(r, m.flags, 1);
+  return read_flags(r, m.flags, 1, Deltas::refused);
 }
 
 Error decode_body(Reader& r, FlagSnapshot& m) {
   COOP_READ(r.u16(m.part));
   COOP_READ(r.u16(m.part_count));
   if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
-  return read_flags(r, m.flags, 0);
+  return read_flags(r, m.flags, 0, Deltas::refused);
 }
 
 Error decode_body(Reader& r, Host& m) {
@@ -1088,6 +1101,7 @@ bool valid_flag(const FlagEntry& e) {
       return e.value <= 1;
     case FlagKind::int32:
     case FlagKind::uint32:
+    case FlagKind::count_delta:  // key64 is refused above: always a bool
       return true;
     case FlagKind::float32:
       return std::isfinite(std::bit_cast<float>(e.value));

@@ -1,0 +1,13 @@
+# Title screen to the world on the last save (Continue). Run right after both games joined.
+# Checked 2026-11-09: the title shows Continue about 20 s after the join; four A presses load it.
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark loaded

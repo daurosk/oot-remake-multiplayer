@@ -1,0 +1,11 @@
+# walk: A walks, runs, turns and walks back; B stands still.
+mark start
+stick 0 0.5 90          # walk forward slowly
+mark walked
+hold LSTICK_UP+B 90     # run (B held)
+mark ran
+stick 1 0 60            # turn and walk right
+stick 0 -1 90           # back toward the start
+stick -1 0 60
+mark turned
+wait 60

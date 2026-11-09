@@ -4,13 +4,16 @@
 set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
     "${_coop_hook}/coop_camera.cpp"
+    "${_coop_hook}/coop_cheats.cpp"
     "${_coop_hook}/coop_flags.cpp"
     "${_coop_hook}/coop_hook.cpp"
     "${_coop_hook}/coop_objects.cpp"
+    "${_coop_hook}/coop_objects_sync.cpp"
     "${_coop_hook}/coop_pose.cpp"
     "${_coop_hook}/coop_puppet.cpp"
     "${_coop_hook}/coop_settings.cpp"
     "${_coop_hook}/coop_svc.cpp"
+    "${_coop_hook}/coop_testinput.cpp"
 )
 # Public, so video_core (which links core) sees them: the patched
 # vk_rasterizer.cpp includes coop_camera_track.h under LICHII_COOP.

@@ -95,6 +95,49 @@ So the animation sync is the AS command name plus a frame, as the plan says. The
 
 Writing the pose: for an actor with no physics the plan is to write +0x31c and +0x328 directly, from the emulator, every frame. Whether the actor's own calc writes them back each frame is not known. If it does, the node `ExecuteActorForceSetMtx` (string 0x3dafe6a, registered at 0x2622d3c) and `OneShotActorRequestSetMtx` (0x3d23020) are the engine's own setters; their run slots were not found.
 
+## Animation
+
+Read from the dump for the sampler; not run. This settles Not done item 1, and corrects the "Current AS frame" row above: controller +0x18 is the slot count, not an index.
+
+### Where the current animation is
+
+| Item | Where | Status |
+|---|---|---|
+| AS controller | actor +0x270, then +0x40, +0x18, +0x18 (the walk in 0x974b80, 0x1081f60, 0x3abebc0 and 0x2022a0) | Checked |
+| Slot count | controller +0x18, s32; every reader refuses an index that is negative or not below it | Checked |
+| Slot array | controller +0x20, entries of 0x48 bytes; the first 8 bytes of an entry point to the slot | Checked |
+| Slot 0 | The default slot: the slot-name lookup 0xacd6d0 gives 0 for an empty or unknown name | Checked; that it is Link's whole body is inferred |
+| Current AS command | slot +0x10, `char*`. 0x2022a0 with request +0x20 = 1 compares the new name with it (pointer, then bytes) and does nothing when they match; `ExecuteASSyncPartialAnimation` (0x3abec10) reads it to replay a slot's command on another slot. An empty string (0x3cddd43) means nothing plays | Checked |
+| Rate | slot +0xd4, f32 (0xdf49e0). 0x3abec10 passes it as the rate of its replay request | Checked as a read; that it is the rate is inferred from that use |
+| Frame | slot +0xe8, f32 (0x3abebc0) | Checked as a read; meaning inferred, as above |
+
+Other slots (upper body, face and so on) are named in each actor's AS resource (controller +0x48, then +0x10, +8; 0xacd6d0 walks the names there). Only slot 0 is sent for now.
+
+`PlayerReader::read_animation` follows this chain from the player actor and fills PLAYER_SAMPLE field 7: name, frame, rate. It reads the name in 16-byte pieces that stay inside a 16-byte block, so a name at the end of a mapped page still reads, and refuses an empty or unterminated name, more than 64 characters, anything but printable ASCII, and a frame or rate that is not finite or out of range. The sampler sends a sample when the command or rate changes, not for a new frame alone: the receiver runs the frame on from the rate, and every keep-alive corrects it.
+
+### How the puppet plays it
+
+The request to 0x2022a0, with what this read adds to the table above:
+
+| Offset | What | Status |
+|---|---|---|
+| +0x10 | s32 slot index; 0x2022a0 checks it against the slot count. 0 for the whole body | Checked |
+| +0x14 | Rate: the received rate | Inferred, as above |
+| +0x20 | Byte 1: skip if this slot already plays the same command | Checked |
+
+So, from the hook routine (see How the emulator runs code there), for each puppet each frame:
+
+1. When the received name differs from what was last asked: play request {puppet actor, name, slot 0, rate, -1, -1, skip-if-same 1}, call 0x2022a0. The name must stay in guest memory while the slot uses it: put it in the block from the game's `malloc`, one buffer per puppet, not on the stack.
+2. Set the frame: **0x37b5d70**(controller, slot, `s0` = frame), the call `ExecuteASPlaySetASFrameEachFrameByPlug` (0x26202f0) makes after its play. The controller is the chain above, read by the handler. Do it when the puppet's frame is off by more than a frame or two from the received frame run on by the rate, so the game's own playback stays smooth in between.
+
+Age: the sample's age field (GameUI +0x5c0) chooses `CoopPuppet_Child` or `CoopPuppet_Adult`; a change means delete and create again, since the model differs.
+
+### Not done (animation)
+
+1. Nothing here was run. To check: slot 0's name changes between standing, walking, running and rolling, and the frame counts up at the rate. Needs a debug log of `read_animation()` in the hook (a `lichii/**` change).
+2. Held item, sword and shield shown: not looked for. The node `ExecuteEquipmentSyncASCommandWithEquipmentUser` (string 0x3cef911, referenced at 0x26a94a4) is the place to start.
+3. The other slots (upper body, face) and partial animations; and whether 0x2022a0 copes with a name from a heap block (it compares by pointer first, then by bytes).
+
 ## The frame hook
 
 | Address | Word | What | Status |

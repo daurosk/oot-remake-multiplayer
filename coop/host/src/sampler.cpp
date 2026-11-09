@@ -28,6 +28,13 @@ bool nonzero(const std::optional<Vec3>& v) {
   return v && std::any_of(v->begin(), v->end(), [](float c) { return c != 0.0f; });
 }
 
+bool animation_changed(const std::optional<protocol::Animation>& a,
+                       const std::optional<protocol::Animation>& b) {
+  if (a.has_value() != b.has_value()) return true;
+  if (!a) return false;
+  return a->name != b->name || a->rate != b->rate;
+}
+
 void push(std::vector<Outgoing>& out, const protocol::Message& message) {
   if (auto bytes = protocol::encode(message)) {
     out.push_back({protocol::channel_of(message), std::move(*bytes)});
@@ -74,6 +81,9 @@ bool Sampler::should_send(const PlayerReading& reading, std::uint64_t now) const
   if (turned(reading.rotation, last_sent_->rotation, settings_.still_rotation)) return true;
   if (reading.scene != last_sent_->scene) return true;
   if (reading.age != last_sent_->age) return true;
+  // A new AS command or rate, not a new frame: receivers run the frame on
+  // from the rate, and the keep-alive corrects it.
+  if (animation_changed(reading.animation, last_sent_->animation)) return true;
   return false;
 }
 
@@ -106,6 +116,7 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
     sample.rotation = reading->rotation;
     sample.scene = reading->scene;
     sample.age = reading->age;
+    sample.animation = reading->animation;
     ++sequence_;
     push(out, sample);
     last_sent_ = std::move(sample);

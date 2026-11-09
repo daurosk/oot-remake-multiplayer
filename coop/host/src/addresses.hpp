@@ -64,6 +64,36 @@ inline constexpr std::uint64_t kActorPosition = 0x31c;
 inline constexpr std::uint64_t kActorRotation = 0x328;
 inline constexpr bool kActorRotationRowMajor = true;
 
+// --- AS (animation) controller of an actor ----------------------------------
+// [dump] actor +0x270 (component table) -> +0x40 -> +0x18 -> +0x18 is the AS
+// controller, the same walk in 0x974b80, 0x1081f60, 0x3abebc0 and 0x2022a0.
+// Checked.
+inline constexpr std::uint64_t kActorComponents = 0x270;
+inline constexpr std::uint64_t kComponentsAs = 0x40;
+inline constexpr std::uint64_t kAsComponentInner = 0x18;
+inline constexpr std::uint64_t kAsInnerController = 0x18;
+// [dump] Controller: s32 slot count at +0x18, slot array at +0x20, 0x48 bytes
+// an entry, whose first 8 bytes point to the slot. Every reader bounds the
+// index by the count (0x3abebc0, 0x37b5d70, 0x2022a0). Checked.
+inline constexpr std::uint64_t kAsSlotCount = 0x18;
+inline constexpr std::uint64_t kAsSlotArray = 0x20;
+inline constexpr std::uint64_t kAsSlotStride = 0x48;
+// [dump] Slot 0 is the default slot: the slot-name lookup 0xacd6d0 gives 0
+// for an empty or unknown name. That it is Link's whole-body slot is inferred.
+inline constexpr std::uint32_t kAsMainSlot = 0;
+// [dump] Slot: char* to the AS command now playing, at +0x10. 0x2022a0 with
+// "skip if the same" (request +0x20 = 1) compares the new name with it, and
+// ExecuteASSyncPartialAnimation (0x3abec10) replays it on another slot. An
+// empty string (0x3cddd43) means nothing. Checked.
+inline constexpr std::uint64_t kAsSlotCommandName = 0x10;
+// [dump] Slot: f32 play rate at +0xd4 (0xdf49e0; 0x3abec10 passes it as the
+// rate of the replay request). Checked as a read; that it is the rate is
+// inferred from the request field it fills.
+inline constexpr std::uint64_t kAsSlotRate = 0xd4;
+// [dump] Slot: f32 current frame at +0xe8 (0x3abebc0). Checked as a read;
+// that it is the frame is inferred (the ASFrame plug, see docs/puppet.md).
+inline constexpr std::uint64_t kAsSlotFrame = 0xe8;
+
 // --- Banc module: the current scene ---------------------------------------
 // [plan][map] Banc module pointer. Checked (actor-map.md).
 inline constexpr std::uint64_t kBancModulePtr = 0x4e919d0;

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <span>
 
 #include "coop/host/flags.hpp"
@@ -62,6 +63,17 @@ class GameFlags {
   static bool set_bool(WritableGameMemory& memory, std::uint32_t hash, bool value);
   static bool set_int(WritableGameMemory& memory, std::uint32_t hash, std::int32_t value);
   static bool set_key64(WritableGameMemory& memory, std::uint64_t key, bool value);
+
+  // Test only (tools/autotest warp): writes a String64 flag's text straight
+  // into its buffer, 0-terminated, without the game's queue, so the live
+  // value changes at once. False when the flag is unknown or the text does
+  // not fit (at most 63 bytes, printable ASCII).
+  static bool set_string64_now(WritableGameMemory& memory, std::uint32_t hash,
+                               std::string_view text);
+
+  // Which typed table (the save type ids, 0 to 25) holds `hash`, for finding
+  // a flag's type. Nothing when none does.
+  std::optional<int> find_type(std::uint32_t hash);
 
  private:
   GameMemory& memory_;

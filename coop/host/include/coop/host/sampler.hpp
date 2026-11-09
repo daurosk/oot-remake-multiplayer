@@ -9,6 +9,7 @@
 #include <optional>
 #include <vector>
 
+#include "coop/host/outgoing.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop/protocol/messages.hpp"
 
@@ -29,11 +30,6 @@ struct SamplerSettings {
   std::uint64_t max_velocity_gap_us = 250'000;
   // Faster than this, in metres a second, is a warp: no velocity is sent.
   float max_speed = 200.0f;
-};
-
-struct Outgoing {
-  std::uint8_t channel = 0;
-  std::vector<std::uint8_t> bytes;  // one encoded message, one ENet packet
 };
 
 class Sampler {

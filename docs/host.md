@@ -1,6 +1,6 @@
 # Host
 
-`coop/host/` (library `coop_host`) is the sending side of presence: it reads the local player from guest memory and builds the `PLAYER_SAMPLE` and `PLAYER_STATUS` messages of [protocol.md](protocol.md). It has no sockets and no emulator code. The emulator (Lichii, later the recomp) implements one small interface, `GameMemory`, and sends what the sampler returns. Plan stage 1 step 1; the receiving side is [presence.md](presence.md).
+`coop/host/` (library `coop_host`) is the sending side of presence and the game side of shared flags (below). For presence it reads the local player from guest memory and builds the `PLAYER_SAMPLE` and `PLAYER_STATUS` messages of [protocol.md](protocol.md). It has no sockets and no emulator code. The emulator (Lichii, later the recomp) implements one small interface, `GameMemory`, and sends what the sampler returns. Plan stage 1 step 1; the receiving side is [presence.md](presence.md).
 
 ## Use
 
@@ -71,3 +71,53 @@ Not confirmed yet, to check in the first run:
 - What the two player links stand for; the second was unreadable in Run 1.
 - The type check of the player manager against 0x4c7f8a0 is not done here.
 - The game's unit of length (`units_per_metre`).
+
+## Shared flags
+
+The game side of shared progress (plan stage 1 step 4, protocol.md "Shared flags"). Like the sampler it has no sockets: it takes received flag messages and returns encoded ones. The emulator implements one more interface, `FlagStore`.
+
+```cpp
+class LichiiFlags : public coop::host::FlagStore {
+  std::optional<coop::protocol::FlagEntry> read(coop::host::FlagKey key) override;  // nothing if it cannot
+  bool write(const coop::protocol::FlagEntry& entry) override;                       // false if it cannot
+};
+
+std::string error;
+auto shared = coop::host::SharedFlags::load("shared_flags.txt", &error);  // the user's list
+coop::host::FlagWatcher flags(*shared, is_host ? coop::host::FlagRole::host
+                                               : coop::host::FlagRole::player);
+
+// for each FLAG_SET, FLAG_STATE or FLAG_SNAPSHOT the client receives:
+flags.receive(message);
+// once per emulated frame, on the game's thread:
+for (auto& m : flags.frame(lichii_flags)) send(m.channel, m.bytes);
+// host: when starting a session or taking over
+flags.set_role(coop::host::FlagRole::host);
+flags.request_snapshot();
+// after a reconnect:
+flags.reset();
+```
+
+While `holding()` is true a snapshot is coming in parts; the emulator should hold the game (protocol.md: the joiner holds until the last part).
+
+**Not located yet:** the game's own flag get and set functions. `main-map.md` ("Flags") names the `GameDataMgr` and the flag table file but not the functions. `player-state-map.md` reads one bool flag through the tables in memory (value at byte +0x16 of the entry at manager +0x18 + index x 0x18, the index from the hash table at manager +0x20), but it is not known that the in-memory index is the file position, and the second table at +0x80 was not read. Until the functions are found, a `FlagStore` would go through those tables, bools only, and any write needs a run to check it.
+
+### The flag list
+
+Which flags are shared is a plain text file the user supplies; no list from the game is in this repository. One flag a line: a name (hashed with `flag_hash`, Murmur3 x86 32-bit, seed 0) or a hash as `0x` and up to 8 hex digits, then for an array flag an index or a range (`0-7`). `#` starts a comment. A made-up example is [`tests/host/shared_flags.example.txt`](../tests/host/shared_flags.example.txt). A bad line refuses the whole file, with its line number.
+
+**Choice:** the list holds world flags only, the suggested answer in the plan's open decisions: chests, small keys, doors, heart pieces collected, songs learned, dungeon state, events seen. Inventory, rupees, hearts, magic and equipment stay per player and are left out of the list. A flag that comes in but is not in the local list is not written (`stats().not_shared`), so a host with a longer list cannot change a player's per-player flags. Caleb has not decided this yet; changing it is a change to the list, not to the code.
+
+### What it does each frame
+
+1. Writes again any incoming value whose write failed last time, unless the game changed that flag by itself since (its change is newer and is sent).
+2. Takes the queued messages in order:
+   - Player: a `FLAG_STATE` is written into the game and clears the local change waiting for that flag (the host's answer wins, even "no"). `FLAG_SNAPSHOT` parts are kept until the last one (part = part count - 1), then written all together; a flag with a local change still waiting is not overwritten. A `FLAG_STATE` that comes while a snapshot is held is written after it. A part out of order or missing drops the snapshot (`stats().bad_snapshots`).
+   - Host: each `FLAG_SET` is written, read back, and answered with the value that came out, so a refused write is answered with the game's value.
+3. Unless a snapshot is held, reads every shared flag and compares it with last frame. The first good read of a flag is its baseline and sends nothing. A failed read is skipped and the flag keeps its last value. What the watcher wrote itself is already its last value, so it is never sent back.
+4. Sends the changes: a player as `FLAG_SET` (kept as waiting for an answer), the host as `FLAG_STATE` together with its answers. At most 4096 entries a message; more go in several.
+5. Host, when asked: reads the whole list and sends it as `FLAG_SNAPSHOT` parts (`split_snapshot`). Flags that cannot be read are left out.
+
+A player takes no `FLAG_SET` and a host no `FLAG_STATE` or `FLAG_SNAPSHOT`; those are ignored. After `reset()` changes still waiting for an answer are sent again.
+
+Not proven yet: nothing has run against the game. A late answer to an earlier `FLAG_SET` can briefly undo a newer local change of the same flag until the next answer comes; this is rare (two changes of one flag within a round trip) and was left as protocol.md says (every `FLAG_STATE` is applied).

@@ -7,6 +7,7 @@ wait 120                # let both games settle after the load (B can be at a fe
 stick 0 -1 120          # back down the path, out of the Graveyard
 wait 420                # Kakariko loads; its title card shows
 mark kakariko
+stick 0 1 60            # out of the gate passage first (walls on both sides)
 goto -5.9 70.5 0.6      # just east of the post
 mark at-post
 toward -7.46 71.12 8

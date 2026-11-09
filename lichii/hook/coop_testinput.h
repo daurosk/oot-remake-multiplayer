@@ -128,9 +128,24 @@ public:
     const Output& Current() const { return out_; }
     bool Done() const { return index_ >= script_.steps.size(); }
     std::size_t StepCount() const { return script_.steps.size(); }
+    // Steering now (goto or toward), for the log.
+    bool Steering() const;
+    std::optional<double> Heading() const { return heading_; }
+    double Mirror() const { return mirror_; }
+
+    // Link turns before he walks: movement is learnt from only after the
+    // stick has held one direction this long, and a steering stick is
+    // re-aimed at most this often, so such windows happen.
+    static constexpr double kSettleS = 0.3;
+    static constexpr double kAimEveryS = 0.5;
+    // No 0.3 m of progress in kStuckS: push a quarter turn aside for kDetourS.
+    static constexpr double kStuckS = 1.0;
+    static constexpr double kDetourS = 0.7;
 
 private:
-    void Steer(const Step& step, std::optional<std::array<float, 2>> player);
+    void Learn(double now_s, std::optional<std::array<float, 2>> player);
+    void Steer(const Step& step, double now_s, std::optional<std::array<float, 2>> player);
+    void Hold(std::optional<double> stick_angle, double now_s);
 
     Script script_;
     std::size_t index_ = 0;
@@ -141,9 +156,16 @@ private:
     // other way round. Learnt from Link's movement while the stick is held.
     std::optional<double> heading_;
     double mirror_ = 1.0;
-    int wrong_way_ = 0;
-    std::optional<std::array<float, 2>> last_pos_;
-    std::optional<double> last_stick_angle_;  // the stick angle held since last_pos_
+    bool mirror_known_ = false;
+    std::optional<double> stick_angle_;  // the left stick's direction now (none: let go)
+    double stick_since_ = 0.0;           // when it took that direction
+    std::optional<std::array<float, 2>> window_pos_;  // where a steady window began
+    std::optional<std::array<float, 2>> prev_player_;  // last frame's position
+    double aimed_at_ = -1.0;             // when Steer last chose a direction
+    std::optional<std::array<float, 2>> progress_pos_;  // stuck check
+    double progress_at_ = 0.0;
+    double detour_until_ = -1.0;
+    double detour_side_ = -1.0;
 };
 
 // Called once per emulated frame by the hook. Does nothing unless

@@ -1,0 +1,7 @@
+# rock, B: faces the rock from where its save puts it, a little further up the path.
+mark start
+wait 120
+toward -34.12 14.94 12
+mark watching
+wait 900
+mark end

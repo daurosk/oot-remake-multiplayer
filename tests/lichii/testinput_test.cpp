@@ -2,6 +2,7 @@
 // (lichii/hook/coop_testinput.cpp). No emulator code.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string>
@@ -116,11 +117,14 @@ TEST_CASE("testinput: windows line ends") {
 namespace {
 
 // A Link that walks where the stick says, through a camera turned by
-// `camera` radians and, with `mirrored`, flipped left for right.
+// `camera` radians and, with `mirrored`, flipped left for right. Like the
+// game's, he turns at most 8 radians a second and walks only once he faces
+// within 1 radian of the stick.
 struct FakeLink {
     double camera = 0.0;
     bool mirrored = false;
     std::array<float, 2> pos{0.0f, 0.0f};
+    double facing = 0.0;
 
     void Step(const Output& out, double dt) {
         if (!out.left || (out.left->x == 0 && out.left->y == 0)) {
@@ -133,10 +137,22 @@ struct FakeLink {
         if (mirrored) {
             a = -a;
         }
-        a += camera;  // world angle of stick up
-        pos[0] += static_cast<float>(std::cos(a) * 5.0 * mag * dt);
-        pos[1] += static_cast<float>(std::sin(a) * 5.0 * mag * dt);
+        a += camera;  // the world angle the stick asks for
+        double turn = std::remainder(a - facing, 2 * 3.14159265358979);
+        const double most = 8.0 * dt;
+        turn = std::clamp(turn, -most, most);
+        facing += turn;
+        if (std::fabs(std::remainder(a - facing, 2 * 3.14159265358979)) > 1.0) {
+            return;
+        }
+        const float nx = pos[0] + static_cast<float>(std::cos(facing) * 5.0 * mag * dt);
+        const float nz = pos[1] + static_cast<float>(std::sin(facing) * 5.0 * mag * dt);
+        if (wall && nx >= 2.0f && nx <= 2.5f && std::fabs(nz) <= 1.5f) {
+            return;  // a short wall across the way: x 2 to 2.5, z -1.5 to 1.5
+        }
+        pos = {nx, nz};
     }
+    bool wall = false;
 };
 
 // Plays `script` at 30 frames a second for up to `seconds`.
@@ -199,7 +215,24 @@ TEST_CASE("testinput: toward turns Link to the point for its ticks, with buttons
     REQUIRE(r.Current().buttons == kY);
     // The stick now walks Link along +x in the world, toward the point.
     const auto before = link.pos;
-    link.Step(r.Current(), dt);
-    CHECK(link.pos[0] - before[0] > 0.1f);
-    CHECK(std::fabs(link.pos[1] - before[1]) < 0.05f);
+    for (int i = 0; i < 15; ++i) {  // he turns first, then walks
+        link.Step(r.Current(), dt);
+    }
+    const float dx = link.pos[0] - before[0];
+    const float dz = link.pos[1] - before[1];
+    CHECK(dx > 0.3f);
+    CHECK(std::fabs(dz) < 0.3f * dx);
+}
+
+TEST_CASE("testinput: goto gets round a short wall in the way") {
+    for (const double camera : {0.0, 1.2}) {
+        CAPTURE(camera);
+        Runner r(Must("goto 5 0 0.6 1200\nmark there\n"));
+        FakeLink link{camera, false};
+        link.wall = true;
+        std::vector<std::string> log;
+        REQUIRE(Play(r, link, 25.0, log));
+        REQUIRE(log.size() == 1);
+        CHECK(log[0] == "mark there");
+    }
 }

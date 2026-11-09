@@ -1,0 +1,13 @@
+# crate, B: out of the gate with A, then faces the crate from a few metres up the path.
+mark start
+wait 120
+stick 0 -1 300          # its save is further up the Graveyard path than A's
+wait 420
+mark kakariko
+stick 0 1 60
+goto -3.5 69.3 1.0
+goto -4.5 60.0 1.5 900
+toward -8.09 40.95 10
+mark watching
+wait 1500
+mark end

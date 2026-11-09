@@ -1,0 +1,35 @@
+# crate: both walk from the Graveyard save into Kakariko; A walks to the crate south of the
+# Graveyard gate (Obj_BrokenBox_A_01 at x -8.09, z 40.95, life 5) and hits it with the sword
+# until it breaks. B walks a few metres out of the gate and faces it.
+mark start
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard
+wait 420                # Kakariko loads
+mark kakariko
+stick 0 1 60            # out of the gate passage first
+goto -4.0 55.0 1.5 900  # half way
+goto -7.0 42.4 0.7 900  # next to the crate
+mark at-crate
+toward -8.09 40.95 8
+press Y
+wait 25
+toward -8.09 40.95 8
+press Y
+wait 25
+mark hit2
+toward -8.09 40.95 8
+press Y
+wait 25
+toward -8.09 40.95 8
+press Y
+wait 25
+mark hit4
+toward -8.09 40.95 8
+press Y
+wait 25
+toward -8.09 40.95 8
+press Y
+wait 60
+mark hit6
+wait 120
+mark after

@@ -150,7 +150,7 @@ double Wrap(double a) {
 }
 
 constexpr std::uint32_t kGotoTicks = 600;  // 10 s
-constexpr float kMovedM = 0.15f;           // movement that teaches the camera model
+constexpr float kMovedM = 0.4f;            // movement that teaches the camera model
 constexpr double kMinMagnitude = 0.45;     // slower near the point, never a crawl
 
 } // namespace
@@ -254,35 +254,71 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
 
 Runner::Runner(Script script) : script_(std::move(script)) {}
 
+bool Runner::Steering() const {
+    return index_ < script_.steps.size() && (script_.steps[index_].kind == Kind::go ||
+                                             script_.steps[index_].kind == Kind::toward);
+}
+
+// The left stick now points at `stick_angle` (none: centred or not ours).
+// A new direction starts a new window to learn from.
+void Runner::Hold(std::optional<double> stick_angle, double now_s) {
+    const bool same = stick_angle && stick_angle_ &&
+                      std::fabs(Wrap(*stick_angle - *stick_angle_)) < 0.2;
+    if (!same) {
+        stick_since_ = now_s;
+        window_pos_.reset();
+    }
+    stick_angle_ = stick_angle;
+}
+
+// Learns the camera from how Link moved while the stick held one direction:
+// from kSettleS after it took that direction, every 0.4 m walked.
+void Runner::Learn(double now_s, std::optional<std::array<float, 2>> player) {
+    if (player && prev_player_ &&
+        std::hypot((*player)[0] - (*prev_player_)[0], (*player)[1] - (*prev_player_)[1]) > 3.0f) {
+        // A jump: a new scene or a warp, with a new camera. Learn again.
+        heading_.reset();
+        mirror_known_ = false;
+        mirror_ = 1.0;
+        window_pos_.reset();
+    }
+    if (player) {
+        prev_player_ = player;
+    }
+    if (!player || !stick_angle_ || now_s - stick_since_ < kSettleS) {
+        return;
+    }
+    if (!window_pos_) {
+        window_pos_ = player;
+        return;
+    }
+    const float dx = (*player)[0] - (*window_pos_)[0];
+    const float dz = (*player)[1] - (*window_pos_)[1];
+    if (std::hypot(dx, dz) < kMovedM) {
+        return;
+    }
+    const double seen = std::atan2(dz, dx);
+    const double stick = *stick_angle_ - kPi / 2;
+    if (heading_ && !mirror_known_) {
+        // The probe: stick off up (right first). Unmirrored, Link walks the
+        // stick's turn from heading; mirrored, the same turn the other way.
+        if (std::fabs(stick) > 0.7) {  // any stick well off up tells the two apart
+            const double plain = std::fabs(Wrap(seen - (*heading_ + stick)));
+            const double flipped = std::fabs(Wrap(seen - (*heading_ - stick)));
+            mirror_ = plain <= flipped ? 1.0 : -1.0;
+            mirror_known_ = true;
+        }
+        window_pos_ = player;
+        return;
+    }
+    const double fresh = Wrap(seen - mirror_ * stick);
+    heading_ = heading_ ? Wrap(*heading_ + 0.5 * Wrap(fresh - *heading_)) : fresh;
+    window_pos_ = player;
+}
+
 void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
                      std::vector<std::string>& log) {
-    // Learn the camera from how Link moved under the stick held since last_pos_.
-    if (player) {
-        if (!last_pos_ || !last_stick_angle_) {
-            last_pos_ = player;
-        } else {
-            const float dx = (*player)[0] - (*last_pos_)[0];
-            const float dz = (*player)[1] - (*last_pos_)[1];
-            if (std::hypot(dx, dz) >= kMovedM) {
-                const double seen = std::atan2(dz, dx);
-                const double stick = *last_stick_angle_ - kPi / 2;
-                if (heading_) {
-                    const double expected = *heading_ + mirror_ * stick;
-                    if (std::fabs(Wrap(seen - expected)) > 2.0) {
-                        if (++wrong_way_ >= 3) {
-                            mirror_ = -mirror_;
-                            wrong_way_ = 0;
-                        }
-                    } else {
-                        wrong_way_ = 0;
-                    }
-                }
-                heading_ = Wrap(seen - mirror_ * stick);
-                last_pos_ = player;
-            }
-        }
-    }
-
+    Learn(now_s, player);
     while (index_ < script_.steps.size()) {
         const Step& s = script_.steps[index_];
         const double length = static_cast<double>(s.ticks) / kTicksPerSecond;
@@ -300,50 +336,79 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
                 }
                 ++index_;
                 step_start_ = now_s;
+                aimed_at_ = -1.0;
+                progress_pos_.reset();
                 continue;
             }
-            Steer(s, player);
+            Steer(s, now_s, player);
             return;
         }
         if (now_s - step_start_ >= length) {
             ++index_;
             step_start_ += length;  // timed steps keep exact time between them
+            aimed_at_ = -1.0;
             continue;
         }
         if (s.kind == Kind::toward) {
-            Steer(s, player);
+            Steer(s, now_s, player);
             return;
         }
         out_ = Output{s.buttons, s.left, s.right};
-        last_stick_angle_.reset();
+        std::optional<double> angle;
         if (s.left && (s.left->x != 0 || s.left->y != 0)) {
-            last_stick_angle_ = std::atan2(static_cast<double>(s.left->y), s.left->x);
+            angle = std::atan2(static_cast<double>(s.left->y), s.left->x);
         }
+        Hold(angle, now_s);
         return;
     }
     out_ = Output{};
-    last_stick_angle_.reset();
+    Hold(std::nullopt, now_s);
 }
 
-void Runner::Steer(const Step& step, std::optional<std::array<float, 2>> player) {
-    out_ = Output{step.buttons, Stick{0, 0}, std::nullopt};
+void Runner::Steer(const Step& step, double now_s, std::optional<std::array<float, 2>> player) {
+    out_.buttons = step.buttons;
+    out_.right.reset();
     if (!player) {
-        last_stick_angle_.reset();
+        out_.left = Stick{0, 0};
+        Hold(std::nullopt, now_s);
         return;
     }
-    double angle = kPi / 2;  // no camera model yet: stick up, and learn from it
+    // Keep the last aim for a while so Link walks one way long enough to
+    // learn from; a toward step aims once.
+    const double dist = std::hypot(step.x - (*player)[0], step.z - (*player)[1]);
+    const double every = dist > 2.5 ? kAimEveryS : 0.1;  // close: no overshooting
+    const bool keep = aimed_at_ >= 0.0 && out_.left && now_s >= detour_until_ &&
+                      (step.kind == Kind::toward || now_s - aimed_at_ < every);
+    if (keep) {
+        return;
+    }
+    // Stuck (a wall, the other player's puppet): no progress for kStuckS
+    // turns the push a quarter turn, the other side each time, for a moment.
+    if (!progress_pos_ || std::hypot((*player)[0] - (*progress_pos_)[0],
+                                     (*player)[1] - (*progress_pos_)[1]) >= 0.3f) {
+        progress_pos_ = player;
+        progress_at_ = now_s;
+    } else if (now_s - progress_at_ >= kStuckS) {
+        detour_until_ = now_s + kDetourS;
+        detour_side_ = -detour_side_;
+        progress_pos_ = player;
+        progress_at_ = now_s;
+    }
+    const double detour = now_s < detour_until_ ? detour_side_ * kPi / 2 : 0.0;
+    // No camera model yet: stick up, then stick right once, and learn from both.
+    double angle = (!heading_ ? kPi / 2 : 0.0) + detour;
     double magnitude = 1.0;
-    if (heading_) {
+    if (heading_ && mirror_known_) {
         const double want = std::atan2(step.z - (*player)[1], step.x - (*player)[0]);
-        angle = kPi / 2 + mirror_ * Wrap(want - *heading_);
-        if (step.kind == Kind::go) {
-            const double dist = std::hypot(step.x - (*player)[0], step.z - (*player)[1]);
+        angle = kPi / 2 + mirror_ * Wrap(want - *heading_) + detour;
+        if (step.kind == Kind::go && detour == 0.0) {
             magnitude = std::clamp(dist / 2.0, kMinMagnitude, 1.0);
         }
     }
     out_.left = Stick{static_cast<std::int32_t>(std::lround(std::cos(angle) * magnitude * kStickMax)),
                       static_cast<std::int32_t>(std::lround(std::sin(angle) * magnitude * kStickMax))};
-    last_stick_angle_ = angle;
+    aimed_at_ = now_s;
+    Hold(angle, now_s);
 }
 
 } // namespace CoopTestInput
@@ -552,7 +617,15 @@ void OnFrame(Core::System& system) {
     Running& r = *g_state.running;
     const double now = std::chrono::duration<double>(Clock::now() - r.start).count();
     std::vector<std::string> log;
-    r.runner->Advance(now, PlayerXZ(system), log);
+    const auto player = PlayerXZ(system);
+    r.runner->Advance(now, player, log);
+    if (r.runner->Steering() && g_state.frame % 15 == 0) {
+        const auto& out = r.runner->Current();
+        LOG_INFO(Core, "coop: test steer at {:.2f} {:.2f}, heading {:.2f}, mirror {}, stick {} {}",
+                 player ? (*player)[0] : 0.0f, player ? (*player)[1] : 0.0f,
+                 r.runner->Heading().value_or(99.0), r.runner->Mirror(),
+                 out.left ? out.left->x : 0, out.left ? out.left->y : 0);
+    }
     for (const auto& line : log) {
         LOG_INFO(Core, "coop: test {}", line);
     }

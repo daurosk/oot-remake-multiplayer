@@ -44,6 +44,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_camera.h"
+#include "coop_objects.h"
 #include "coop_settings.h"
 
 namespace CoopHook {
@@ -672,6 +673,7 @@ void Start() {
 }
 
 void OnFrame(Core::System& system) {
+    CoopObjects::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.

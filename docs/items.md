@@ -2,7 +2,7 @@
 
 Where Ocarina of Time keeps the player's items, and which of them co-op shares. The values are flags in the game's flag store ([flags.md](flags.md)): every name below is a flag name, its hash is the Murmur3 x86 32-bit hash with seed 0, and `GameFlags` reads and writes it.
 
-**Status.** Every name and hash on this page is checked: each one was hashed and found in `GameData/GameDataList.Product.110.byml.zs` with the type shown, by walking the list's `Struct` entries (a struct member is `{member name hash, child flag hash}`, and child = `Parent.Member`). Member names came from strings in `main` and the RomFS. **Nothing here is confirmed in a run yet**, including what each value means (`StockNum` 1 = owned is inferred from the name and from `PouchData.Item_Token_Gold.StockNum` being read as a count by the `Dm_SY_Get` event flow).
+**Status.** Every name and hash on this page is checked: each one was hashed and found in `GameData/GameDataList.Product.110.byml.zs` with the type shown, by walking the list's `Struct` entries (a struct member is `{member name hash, child flag hash}`, and child = `Parent.Member`). Member names came from strings in `main` and the RomFS. What is confirmed in a run is in [Live check](#live-check-2026-11-09); the rest is not, including most of what each value means (`StockNum` 1 = owned is inferred from the name and from `PouchData.Item_Token_Gold.StockNum` being read as a count by the `Dm_SY_Get` event flow).
 
 ## Caleb's rule (2026-11-09)
 
@@ -218,7 +218,7 @@ The "what it gives" flags are named and on in `item_shared_flags()`. The pickups
 
 `coop/host/game_items.hpp` holds the tables above as data: 300 flags, each with its kind and rule, and a test hashes every name. `item_shared_flags()` is the shared list built from it (282 flags: every rule but per player). `ItemFlagStore` wraps the game's `GameFlagStore` and merges on write: max, OR and mirror as in the rules table, per-player flags and a wrong kind refused, anything that is not an item passed through. The host's `FlagWatcher` answers a `FLAG_SET` with what its game holds after the write, so the merged value is what everyone gets; a player's game takes the host's `FLAG_STATE` through the same store, so an item it has is not taken away by an answer that lacks it.
 
-To use it, the emulator hands `Session::frame` an `ItemFlagStore` over its `GameFlagStore` and adds `item_shared_flags()` to the shared list. Not wired in `lichii/hook` yet.
+In the emulator (`lichii/hook`): the shared list is `item_shared_flags()` plus the flags of the user's `LICHII_COOP_FLAGS` file, and `Session::frame` gets an `ItemFlagStore` over the game's `GameFlagStore` every frame, so items are shared whenever co-op is on (`LICHII_COOP_ITEMS=0` turns them off, [lichii.md](lichii.md)). With `LICHII_COOP_DEBUG_FLAGS=1` an Int or Bool change of an item flag ends with `item <name>` in the log. `LICHII_COOP_CHEATS=1` adds a debug window that gives an item flag the way a pickup changes it (`lichii/hook/coop_cheats.*`, [lichii.md](lichii.md)).
 
 Counts (small keys, Gold Skulltula tokens, heart pieces) travel as count deltas ([protocol.md](protocol.md), "Counts"): a player's `FlagWatcher` sends its change (kind 4) when `FlagStore::is_count` says so, which `ItemFlagStore` does for every count item; the host's `ItemFlagStore` adds a delta to the game's value (never below 0) and the host's watcher sends the total; a player writes a total on top of any change of its own not sent yet. So two players gaining at once both count (tested on fake games: two players and the host gaining and spending in the same frame end on the same total). Every rule is on now, `MaxLife` (max) too.
 
@@ -226,8 +226,20 @@ Still to check in a run for hearts: whether the game turns four pieces into a co
 
 Effects of max to know about: an item a player loses (a shield burnt or eaten, the Giant's Knife breaking) comes back, because the host keeps the highest value. `LiftGrade` (Enum) and `DiveDepth` (Float) are not in the table yet; if the game reads strength from them and not from the gauntlet items, a shared gauntlet does not lift for the other player. Check in a run.
 
+## Live check (2026-11-09)
+
+Two copies of the emulator (A and B, the same child save, a local server, `LICHII_COOP_DEBUG_FLAGS=1`, `LICHII_COOP_CHEATS=1`); Caleb played, gifts came from the cheat window.
+
+- **Counts cross both ways and add up.** A Gold Skulltula token given in A (`Item_Token_Gold.StockNum` 5 -> 6) showed in B within a quarter second, and in B's pause menu. Tokens, heart pieces and Forest Temple small keys given in both games, several in a row, ended on the same totals in both: tokens 13, heart pieces 11, keys 3.
+- **Key items cross.** The Hookshot (`StockNum` and `IsGet`) and the Song of Storms given in B showed in A's menus. A dungeon's `IsGetBossKey` given in A reached B.
+- **A reload in A** (its tables read 0 for one scan, then the same values again) changed nothing in B.
+- **Heart pieces do not make hearts by themselves.** Raising `Obj_Heart_Piece.StockNum` (to 11) adds no heart in the game: the conversion happens in the pickup, not from the count. Hearts follow `MaxLife` (max rule); the cheat window has a heart container button for it. Not checked live yet: `MaxLife` crossing, and what a real heart piece pickup writes.
+- `StockNum` 1 = owned holds for the Hookshot: 1 made it show; the first cheat build raised it past 1 on repeated clicks (2, 3) and the game still showed it; the cheat now stops at 1.
+
+Not done: Gold Skulltula placement keys (which `Obj_RupeeToken` key goes with a token, and whether it is set on kill or on pickup) need a real Skulltula in a run; a late joiner getting the items.
+
 ## Not done
 
-1. A live check: rupees, one key item and one small key changing in a run, with `ItemFlagStore` wired into the hook.
-2. What `StockNum` holds for an owned item (1?) and how heart pieces turn into containers.
+1. Gold Skulltula and heart piece placement keys (see One-time pickups), and `MaxLife` live.
+2. What `StockNum` holds for other owned items (1 for the Hookshot), and what a real heart piece pickup writes.
 3. The unnamed structs and dungeon members above.

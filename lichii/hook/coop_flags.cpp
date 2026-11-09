@@ -10,6 +10,7 @@
 
 #include "common/logging.h"
 #include "core/memory.h"
+#include "coop/host/game_items.hpp"
 
 namespace CoopHook {
 namespace {
@@ -139,18 +140,27 @@ std::optional<std::uint32_t> EmulatorMemory::compare_exchange_u32(std::uint64_t 
 }
 
 std::optional<coop::host::SharedFlags> LoadShared(std::string& error) {
-    const auto path = Env("LICHII_COOP_FLAGS");
-    if (!path) {
+    // The player's items (docs/items.md), unless LICHII_COOP_ITEMS=0.
+    const auto items_env = Env("LICHII_COOP_ITEMS");
+    const bool items = !items_env || *items_env != "0";
+    std::vector<coop::host::FlagKey> keys;
+    if (items) {
+        keys = coop::host::item_shared_flags().keys();
+        LOG_INFO(Core, "coop: sharing {} item flags", keys.size());
+    }
+    if (const auto path = Env("LICHII_COOP_FLAGS")) {
+        std::string why;
+        const auto file = coop::host::SharedFlags::load(*path, &why);
+        if (!file) {
+            error = "LICHII_COOP_FLAGS " + *path + ": " + why;
+            return std::nullopt;
+        }
+        LOG_INFO(Core, "coop: sharing {} flags from {}", file->size(), *path);
+        keys.insert(keys.end(), file->keys().begin(), file->keys().end());
+    } else if (!items) {
         return std::nullopt;
     }
-    std::string why;
-    auto shared = coop::host::SharedFlags::load(*path, &why);
-    if (!shared) {
-        error = "LICHII_COOP_FLAGS " + *path + ": " + why;
-        return std::nullopt;
-    }
-    LOG_INFO(Core, "coop: sharing {} flags from {}", shared->size(), *path);
-    return shared;
+    return coop::host::SharedFlags(std::move(keys));
 }
 
 FlagDebug::FlagDebug()
@@ -334,9 +344,11 @@ void FlagDebug::ScanNamed(EmulatorMemory& memory, u64 manager, const char* name,
             std::memcpy(&was, &last.bytes[i * value_size], value_size);
             std::memcpy(&now, &values[i * value_size], value_size);
             const auto h = hash_of.find(static_cast<std::uint32_t>(i));
-            LOG_INFO(Core, "coop: flags debug: {} {:#010x} (entry {}) {} -> {}", name,
-                     h == hash_of.end() ? 0u : h->second, i, static_cast<std::int32_t>(was),
-                     static_cast<std::int32_t>(now));
+            const std::uint32_t hash = h == hash_of.end() ? 0u : h->second;
+            const auto* item = coop::host::find_item(hash);
+            LOG_INFO(Core, "coop: flags debug: {} {:#010x} (entry {}) {} -> {}{}{}", name, hash, i,
+                     static_cast<std::int32_t>(was), static_cast<std::int32_t>(now),
+                     item ? " item " : "", item ? item->name : std::string_view{});
         }
     }
     last.bytes = std::move(values);

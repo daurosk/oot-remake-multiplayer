@@ -267,7 +267,9 @@ It writes `..\coop-kit\oot-coop-<yyyymmdd-hhmm>\` and a zip of it beside the mai
 | `-IncludePdb` | Adds `lichii.pdb` (about 60 MB) for crash dumps with symbols. |
 | `-NoZip` | No zip. |
 
-It refuses an emulator built without co-op and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
+It refuses an emulator built without co-op, one that has Fritchii's own updater (build with `-DENABLE_UPDATE_CHECKER=OFF`: that updater would offer a plain Fritchii in place of the co-op one) and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. With the zip it writes `<zip>.sha256` and copies `Update.bat` beside it. A release gets all three as assets: `Update.bat` checks a download against the `.sha256` and refuses a release without one, and the standalone `Update.bat` is how a kit from before the updater (v0.1.0-test2) gets it ([setup.md, Updating](setup.md#updating)). The kit's `MANIFEST.txt` lists its own files, so the next update can remove the ones a newer kit drops. Tests of the updater: `powershell -File tools\release\tests\update_test.ps1` (CI runs them).
+
+To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
 
 ## Automatic tests
 

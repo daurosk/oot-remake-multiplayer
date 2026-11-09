@@ -45,7 +45,7 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 
 ## 4. The puppet pack
 
-The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after a new release):
+The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed):
 
 1. Start `Join.bat`, right-click the game in the list and choose **Dump RomFS**, then the full dump. It writes several GB to `emulator\user\dump\0400486024DEC000\romfs\`. Close the emulator when it is done.
 2. Double-click `make-puppet-pack.cmd`. It finds the dump and builds the pack in under a minute. If it cannot find the dump, it asks for the folder that holds `Pack`, `Model`, `AS`, `RSDB` and `System`.
@@ -62,6 +62,18 @@ Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 ## Settings
 
 `coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again.
+
+## Updating
+
+Every player needs the same version: a game of one version cannot join a server of another.
+
+**Kits from v0.1.0-test3 on:** close the emulator and the server, then double-click `Update.bat` in the kit folder. It looks for the newest release on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page, says which one, and asks before it changes anything. Then it downloads the zip, checks it against the SHA-256 published with the release, and replaces the kit's own files. Host.bat and Join.bat say at start when a newer release is out.
+
+**A v0.1.0-test2 kit** has no `Update.bat` yet: download `Update.bat` from the newest release once, put it in the kit folder beside `Host.bat`, and double-click it (Windows may warn about a file from the internet the first time: **More info**, then **Run anyway**). From then on the kit has its own. (Or download the whole zip once more and copy your `emulator\user` folder into it.)
+
+What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, your name and server, the puppet pack), `logs\`, any file of yours that is not part of the kit, and `coop-options.ini`: your switches stay as they are, and a switch the new version adds is written at the end behind a `#` (off). Every file it replaces goes first to `backup-<old version>\` in the kit folder; if something fails half way, those are put back. If the update is stopped (window closed, power cut), run `Update.bat` again: it finishes it (Host.bat and Join.bat remind you). Delete the backup folder once the new version works.
+
+It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
 
 ## Reporting a problem
 

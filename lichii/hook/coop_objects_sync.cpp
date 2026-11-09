@@ -76,7 +76,7 @@ bool Finite(const proto::Vec3& v) {
 } // namespace
 
 bool IsShared(std::string_view name) {
-    return name.starts_with("Enemy_") || name.starts_with("Animal_");
+    return name.starts_with("Enemy_") || name.starts_with("Animal_") || name.starts_with("Npc_");
 }
 
 proto::Quat QuatOf(const Mat3& m) {

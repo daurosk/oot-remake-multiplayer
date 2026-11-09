@@ -228,11 +228,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // A pickup taken elsewhere (taken_, from the last Apply) is hidden.
     std::map<std::uint64_t, const Seen*> now_seen;
     std::vector<const Seen*> fresh;
-    std::map<std::uint64_t, proto::Vec3> hidden;
+    std::set<std::uint64_t> hidden;
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash && taken_.contains(s.hash)) {
-            const auto was = hidden_.find(s.address);
-            hidden[s.address] = was != hidden_.end() ? was->second : s.position;
+            hidden.insert(s.address);
             continue;  // gone for everyone: not shared, not sent
         }
         if (!IsShared(s.name)) {
@@ -563,9 +562,10 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
         }
         out.push_back(w);
     }
-    for (const auto& [address, at] : hidden_) {
-        out.push_back({address, {at[0], at[1] - kHideDrop, at[2]}, std::nullopt});
-    }
+}
+
+std::vector<std::uint64_t> Sync::Removes() const {
+    return {hidden_.begin(), hidden_.end()};
 }
 
 } // namespace CoopObjects

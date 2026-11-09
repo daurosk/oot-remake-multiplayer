@@ -54,9 +54,8 @@ coop::protocol::Quat QuatOf(const Mat3& m);
 Mat3 MatOf(const coop::protocol::Quat& q);
 
 // One-time pickups (docs/items.md): a 64-bit placement key that another game
-// set to 1 hides the actor with that placement hash here (a Gold Skulltula
+// set to 1 removes the actor with that placement hash here (a Gold Skulltula
 // and its Obj_RupeeToken), so it cannot be taken twice.
-inline constexpr float kHideDrop = 1000.0f;  // metres below where it was
 
 // A pose to write into a copy (+0x31c and +0x328).
 struct PoseWrite {
@@ -113,9 +112,11 @@ public:
               const std::vector<Seen>& seen, std::vector<coop::protocol::Message>& send,
               std::vector<LifeWrite>& writes);
 
-    // Present thread, every frame: where each copy we do not own should be,
-    // and each taken pickup (far below the world).
+    // Present thread, every frame: where each copy we do not own should be.
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
+
+    // The loaded actors whose pickup another game took: to delete.
+    std::vector<std::uint64_t> Removes() const;
 
     // Present thread: a placement key set to 1 by a flag message. Collect
     // asks this for actors that are not shared, to report them too.
@@ -190,7 +191,7 @@ private:
     bool hurt_ = false;
     std::uint8_t self_ = 0;
     std::set<std::uint64_t> taken_;             // key64 flags seen set to 1
-    std::map<std::uint64_t, coop::protocol::Vec3> hidden_;  // actor: where it was
+    std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_missed_ = 0;  // hurts written directly after the wait
 

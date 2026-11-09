@@ -23,12 +23,16 @@
 // LICHII_COOP_OBJECTS=1 shares enemies with the other games (Share and
 // OnEvent below; the rules are in coop_objects_sync.h). Off by default until
 // the two-game test passes. With it:
-// - copies we do not own are placed every frame where the owner's enemy was
-//   (position +0x31c, rotation +0x328); LICHII_COOP_OBJECTS_POSE=0 stops it;
+// - copies we do not own are placed every game frame where the owner's enemy
+//   was, by the game's own setter on its calc thread (Mover; needs the svc
+//   cave, so LICHII_COOP_PUPPET=1 or LICHII_COOP_SPAWN=1);
+//   LICHII_COOP_OBJECTS_POSE=0 stops it;
+// - a pickup another game took (a key64 flag set to 1) is deleted here;
 // - a life a copy must lose is given to the game as damage (added to the s32
 //   at Life + 0x228, which the Life step 0x49d8c0 sums into Life + 0x1cb0 and
 //   takes off life), so the game reacts to it as to a hit;
-//   LICHII_COOP_OBJECTS_HURT=0 writes life directly instead.
+//   off by default (LICHII_COOP_OBJECTS_HURT=1 tries it): the game needs a
+//   whole hit record there, so life is written directly.
 // LICHII_COOP_OBJECTS_TEST_DRIVE=1 (two-game tests only): on the game that
 // owns it (player 1 only), one enemy (a ReDead if there is one) is held 3 m in front of our
 // player, swaying 1.5 m side to side, and hurt by 1 every 4 s through the
@@ -40,12 +44,15 @@
 
 #include "coop_objects.h"
 #include "coop_flags.h"
+#include "coop_puppet.h"
+#include "coop_svc.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -83,6 +90,16 @@ constexpr u64 kActorPosition = 0x31c;
 constexpr u64 kActorRotation = 0x328;  // 9 x f32, rows of 3
 constexpr u64 kLifeHurt = 0x228;       // s32 damage this frame (0x49dc90)
 constexpr u32 kStateAlive = 4;
+// The game's own way to move an actor, as the AI node ExecuteActorForceSetMtx
+// (run 0x2622e50) does it: write +0x31c..+0x34b (place, then the 3x3), then
+// call vtable slot 0x218 (actor, 0). Every actor seen shares the vtable
+// 0x4b25e18, whose slot 0x218 is 0x4c6580: it sets bit 23 of +0x4a8 and hands
+// the new transform to the physics component (0x4c6630). Checked live: a
+// plain write of +0x31c is undone by the game within a frame.
+constexpr u64 kActorVtable = 0x4b25e18;
+constexpr u64 kSetMatrix = 0x4c6580;
+constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
+constexpr unsigned kMoverCallerOrder = 20;  // after the puppets and spawn copies (10)
 constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
 constexpr u64 kComponentLife = 0x2b8;
@@ -197,6 +214,116 @@ private:
     Core::Memory::Memory& memory_;
 };
 
+// The game's calc thread, at the svc cave (coop_svc.h AddCaller): moves the
+// copies with the game's own setter and deletes the taken pickups. The
+// present thread hands it the latest wish list; each game frame it works
+// through that list, one game call per pose or delete.
+class Mover {
+public:
+    struct Pose {
+        u64 actor = 0;
+        std::array<float, 12> transform{};  // place, then the 3x3 rows
+        bool rotation = false;              // false: keep the actor's own
+    };
+
+    void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes) {
+        std::lock_guard lock(mutex_);
+        main_ = main;
+        poses_ = std::move(poses);
+        removes_ = std::move(removes);
+    }
+
+    // Calls made since the last ask (for the 5 s log line).
+    std::pair<std::size_t, std::size_t> TakeCounts() {
+        std::lock_guard lock(mutex_);
+        const auto counts = std::pair{moved_, deleted_};
+        moved_ = 0;
+        deleted_ = 0;
+        return counts;
+    }
+
+    std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call) {
+        std::lock_guard lock(mutex_);
+        if (!after_call) {
+            work_ = poses_;
+            work_removes_.clear();
+            for (const u64 a : removes_) {
+                if (!asked_.contains(a)) {
+                    work_removes_.push_back(a);
+                }
+            }
+            if (removes_.empty()) {
+                asked_.clear();
+            }
+            next_ = 0;
+            next_remove_ = 0;
+        }
+        if (main_ == 0) {
+            return std::nullopt;
+        }
+        while (next_ < work_.size()) {
+            const Pose& p = work_[next_++];
+            if (!Alive(guest, p.actor)) {
+                continue;
+            }
+            if (p.rotation) {
+                guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
+            } else {
+                guest.Write(p.actor + kActorPosition, p.transform.data(), 12);
+            }
+            ++moved_;
+            CoopPuppet::Call c;
+            c.function = main_ + kSetMatrix;
+            c.x[0] = p.actor;
+            c.x[1] = 0;
+            return c;
+        }
+        while (next_remove_ < work_removes_.size()) {
+            const u64 a = work_removes_[next_remove_++];
+            asked_.insert(a);
+            if (!Alive(guest, a)) {
+                continue;
+            }
+            ++deleted_;
+            CoopPuppet::Call c;
+            c.function = main_ + kRequestDelete;
+            c.x[0] = a;
+            c.x[1] = 0;
+            return c;
+        }
+        return std::nullopt;
+    }
+
+private:
+    // On the game thread, so the list cannot change under us: still on the
+    // actor list (its node points back at it), awake, and an actor.
+    bool Alive(CoopPuppet::Guest& guest, u64 a) {
+        u32 state = 0;
+        u64 owner = 0;
+        u64 vtable = 0;
+        return a != 0 && guest.Read(a + kActorState, &state, 4) && state == kStateAlive &&
+               guest.Read(a + kActorNode + kNodeOwner, &owner, 8) && owner == a &&
+               guest.Read(a, &vtable, 8) && vtable == main_ + kActorVtable;
+    }
+
+    std::mutex mutex_;
+    u64 main_ = 0;
+    std::vector<Pose> poses_;
+    std::vector<u64> removes_;
+    std::vector<Pose> work_;
+    std::vector<u64> work_removes_;
+    std::unordered_set<u64> asked_;  // deletes asked once
+    std::size_t next_ = 0;
+    std::size_t next_remove_ = 0;
+    std::size_t moved_ = 0;
+    std::size_t deleted_ = 0;
+};
+
+Mover& TheMover() {
+    static Mover mover;
+    return mover;
+}
+
 class Objects {
 public:
     void Frame(Core::System& system) {
@@ -246,6 +373,13 @@ public:
             return;
         }
         if (!sharing_) {
+            static const bool registered = [] {
+                CoopSvc::AddCaller(kMoverCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
+                                      std::uint64_t) { return TheMover().Step(guest, after_call); });
+                return true;
+            }();
+            (void)registered;
             sync_.SetHurt(hurt_);
             LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
                      hurt_ ? "through the game" : "written as life");
@@ -417,6 +551,7 @@ private:
             }
         }
         const auto owned = sync_.Owned();
+        drive_pose_.reset();
         if (self_ != 1 || player == 0 || owned.empty()) {  // player 1's game only
             return;
         }
@@ -437,9 +572,11 @@ private:
         // Columns of the player's rotation: x (side) and z (forward).
         const float t = static_cast<float>(now_us % 4'000'000) / 4'000'000.0f;
         const float sway = 1.5f * std::sin(t * 6.2831853f);
-        const std::array<float, 3> to{(*at)[0] + 3.0f * (*m)[2] + sway * (*m)[0], (*at)[1],
-                                      (*at)[2] + 3.0f * (*m)[8] + sway * (*m)[6]};
-        memory.WriteBlock(enemy + kActorPosition, to.data(), 12);
+        Mover::Pose pose;
+        pose.actor = enemy;
+        pose.transform = {(*at)[0] + 3.0f * (*m)[2] + sway * (*m)[0], (*at)[1],
+                          (*at)[2] + 3.0f * (*m)[8] + sway * (*m)[6]};
+        drive_pose_ = pose;
         if (now_us - drive_log_at_ >= 2'000'000) {
             drive_log_at_ = now_us;
             LOG_INFO(Core,
@@ -459,7 +596,7 @@ private:
             const auto value = LifeValue(r, enemy);
             const s32 life = value ? r.Get<s32>(value->first + 8).value_or(0) : 0;
             if (life > 1) {
-                WriteLife(memory, r, {enemy, life - 1, 1});
+                WriteLife(memory, r, {enemy, life - 1, hurt_ ? 1 : 0});
             }
         }
     }
@@ -473,9 +610,12 @@ private:
         auto& memory = system.ApplicationMemory();
         Reader r(memory);
         std::unordered_map<u64, coop::protocol::Vec3> placed;
+        std::vector<Mover::Pose> wish;
+        if (drive_pose_) {
+            wish.push_back(*drive_pose_);
+        }
         for (const PoseWrite& w : poses) {
-            if (r.Get<u32>(w.address + kActorState).value_or(0) != kStateAlive ||
-                !memory.IsValidVirtualAddressRange(w.address + kActorPosition, 12 + 36)) {
+            if (r.Get<u32>(w.address + kActorState).value_or(0) != kStateAlive) {
                 continue;
             }
             if (const auto before = placed_.find(w.address); before != placed_.end()) {
@@ -491,20 +631,29 @@ private:
                 drift_max_ = std::max(drift_max_, d);
                 ++drift_count_;
             }
-            memory.WriteBlock(w.address + kActorPosition, w.position.data(), 12);
+            Mover::Pose p;
+            p.actor = w.address;
+            std::copy(w.position.begin(), w.position.end(), p.transform.begin());
             if (w.rotation) {
-                memory.WriteBlock(w.address + kActorRotation, w.rotation->data(), 36);
+                std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
+                p.rotation = true;
             }
+            wish.push_back(p);
             placed.emplace(w.address, w.position);
         }
         placed_ = std::move(placed);
+        TheMover().Want(main_, std::move(wish), sync_.Removes());
         if (now_us - drift_at_ >= kDriftLogUs) {
-            if (drift_count_ > 0 || sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {
+            const auto [moved, deleted] = TheMover().TakeCounts();
+            if (drift_count_ > 0 || moved > 0 || deleted > 0 ||
+                sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {
                 LOG_INFO(Core,
-                         "coop: objects: share placed {} copies; moved by the game between "
-                         "writes avg {:.3f} max {:.3f} over {}; hurts taken {} missed {}",
+                         "coop: objects: share placed {} copies; off from where we put them "
+                         "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes; "
+                         "hurts taken {} missed {}",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
-                         drift_max_, drift_count_, sync_.HurtsTaken(), sync_.HurtsMissed());
+                         drift_max_, drift_count_, moved, deleted, sync_.HurtsTaken(),
+                         sync_.HurtsMissed());
             }
             drift_at_ = now_us;
             drift_sum_ = 0.0f;
@@ -661,6 +810,7 @@ private:
     std::unordered_map<u64, coop::protocol::Vec3> placed_;  // what we wrote last frame
     u8 self_ = 0;
     std::unordered_set<std::string> vtables_logged_;
+    std::optional<Mover::Pose> drive_pose_;
     u64 drive_enemy_ = 0;
     u64 drive_log_at_ = 0;
     u64 drive_hurt_at_ = 0;
@@ -687,7 +837,9 @@ Objects& Instance() {
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
-        objects.hurt_ = EnvOn("LICHII_COOP_OBJECTS_HURT");
+        // Off by default: the live test (2026-11-09) showed the game does not
+        // take an amount alone from Life + 0x228 (it needs a whole hit record).
+        objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT");
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
         return true;
     }();

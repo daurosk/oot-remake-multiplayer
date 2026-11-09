@@ -1,12 +1,11 @@
-# gear: A walks a few steps ahead and stands; B's screenshots show A's puppet and
-# what it wears (sword and shield on its back).
+# gear: A walks well ahead, then turns fully back toward B and stands.
+# B stands still; B's shots show A's puppet from both sides.
 mark start
-stick 0 0.6 50          # a few steps forward
+stick 0 0.6 160         # walk forward, away from B
 wait 120
-mark stand1
-wait 300
-mark stand2
-stick 0 -0.6 20         # turn back toward B
+mark stand
+stick 0 -0.6 40         # turn round toward B (a few steps)
 wait 120
-mark facing
-wait 60
+mark turned1
+wait 120
+mark turned2

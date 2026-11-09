@@ -2,16 +2,8 @@
 #include "coop_fairy.h"
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <cmath>
-#include <cstdlib>
-#include <memory>
-#include <mutex>
 #include <utility>
-
-#include "coop/host/session.hpp"
-#include "coop/presence/presence.hpp"
 
 namespace CoopFairy {
 
@@ -77,95 +69,93 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
     return out;
 }
 
-std::optional<CoopPuppet::Call> Chain::Next(const Step& first, const Step& second,
-                                            bool after_call, std::uint64_t result) {
-    if (!after_call) {
-        last_ = Who::none;
-        second_started_ = false;
-    } else if (last_ == Who::none) {
-        return std::nullopt;  // no call was handed out this frame
-    }
-    if (last_ != Who::second) {
-        if (auto call = first(after_call, result)) {
-            last_ = Who::first;
-            return call;
-        }
-    }
-    const bool resumed = second_started_;
-    second_started_ = true;
-    if (auto call = second(resumed, result)) {
-        last_ = Who::second;
-        return call;
-    }
-    last_ = Who::none;
-    return std::nullopt;
-}
+} // namespace CoopFairy
+
+#ifdef LICHII_COOP
+
+#include <chrono>
+#include <cstdlib>
+#include <memory>
+#include <vector>
+
+#include "common/logging.h"
+#include "coop/host/session.hpp"
+#include "coop/presence/presence.hpp"
+#include "coop_svc.h"
+
+namespace CoopFairy {
 
 namespace {
 
-std::once_flag g_once;
-std::atomic<bool> g_on = false;
-std::unique_ptr<CoopPuppet::Director> g_director;
-std::unique_ptr<CoopPuppet::Planner> g_planner;  // the present thread only
-std::unique_ptr<Follower> g_follower;            // the present thread only
-Chain g_chain;                                   // the calc thread only
-
-bool EnvOff(const char* name) {
+std::string Env(const char* name) {
 #ifdef _MSC_VER
     char* value = nullptr;
     std::size_t size = 0;
     if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
-        return false;
+        return {};
     }
-    const bool off = std::string(value) == "0";
+    std::string out(value);
     std::free(value);
-    return off;
+    return out;
 #else
     const char* value = std::getenv(name);
-    return value != nullptr && std::string(value) == "0";
+    return value != nullptr ? std::string(value) : std::string();
 #endif
+}
+
+bool EnvOn(const char* name) {
+    const auto v = Env(name);
+    return !v.empty() && v != "0";
+}
+
+struct Glue {
+    bool on = false;
+    std::unique_ptr<CoopPuppet::Director> director;
+    std::unique_ptr<CoopPuppet::Planner> planner;  // the present thread only
+    std::unique_ptr<Follower> follower;            // the present thread only
+
+    Glue() {
+        // The cave is there only with the puppets; the fairy follows them.
+        const bool puppets = EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET");
+        if (!puppets || Env("LICHII_COOP_FAIRY") == "0") {
+            LOG_INFO(Core, "coop: fairies off");
+            return;
+        }
+        Settings settings;
+        if (const auto actor = Env("LICHII_COOP_FAIRY_ACTOR"); !actor.empty()) {
+            settings.actor = actor;
+        }
+        // The same plan as the puppets' (CoopSvc's ConfigurePuppets); the
+        // actor name is not used, the fairy has its own.
+        CoopPuppet::PlannerSettings puppet_settings;
+        puppet_settings.debug = EnvOn("LICHII_COOP_DEBUG_PUPPET");
+        LOG_INFO(Core, "coop: fairies on, actor {}", settings.actor);
+        director = std::make_unique<CoopPuppet::Director>(
+            [](const std::string& line) { LOG_INFO(Core, "fairy {}", line); },
+            puppet_settings.debug);
+        planner = std::make_unique<CoopPuppet::Planner>(puppet_settings);
+        follower = std::make_unique<Follower>(std::move(settings));
+        CoopSvc::AddCaller(kCallerOrder,
+                           [d = director.get()](CoopPuppet::Guest& guest, bool after_call,
+                                                std::uint64_t result, std::uint64_t now_ms) {
+                               return d->Step(guest, after_call, result, now_ms);
+                           });
+        on = true;
+    }
+};
+
+Glue& TheGlue() {
+    static Glue glue;  // kept for the whole run: the cave holds its director
+    return glue;
 }
 
 } // namespace
 
-void Configure(const CoopPuppet::PlannerSettings& puppets, Settings settings, bool verbose,
-               CoopPuppet::Director::Log log) {
-    if (EnvOff("LICHII_COOP_FAIRY")) {
-        return;
-    }
-    std::call_once(g_once, [&] {
-        auto tagged = [log = std::move(log)](const std::string& line) {
-            if (log) {
-                log("fairy " + line);
-            }
-        };
-        g_director = std::make_unique<CoopPuppet::Director>(std::move(tagged), verbose);
-        g_planner = std::make_unique<CoopPuppet::Planner>(puppets);
-        g_follower = std::make_unique<Follower>(std::move(settings));
-        g_on = true;
-    });
-}
-
-bool On() {
-    return g_on;
-}
-
-std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call,
-                                     std::uint64_t result, std::uint64_t now_ms) {
-    auto& puppets = CoopPuppet::TheDirector();
-    if (!g_on) {
-        return puppets.Step(guest, after_call, result, now_ms);
-    }
-    return g_chain.Next(
-        [&](bool after, std::uint64_t r) { return puppets.Step(guest, after, r, now_ms); },
-        [&](bool after, std::uint64_t r) { return g_director->Step(guest, after, r, now_ms); },
-        after_call, result);
-}
-
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
              const std::optional<Vec3>& position, coop::host::Session* session,
              std::uint64_t server_now_us) {
-    if (!g_on) {
+    Glue& glue = TheGlue();
+    if (!glue.on) {
         return;
     }
     // The same remotes CoopPuppet::Publish reads, so the plans agree.
@@ -193,8 +183,10 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    const auto puppets = g_planner->Plan(main_base, scene, position, remotes, now_ms);
-    g_director->SetInput(g_follower->Follow(puppets, now_ms));
+    const auto puppets = glue.planner->Plan(main_base, scene, position, remotes, now_ms);
+    glue.director->SetInput(glue.follower->Follow(puppets, now_ms));
 }
 
 } // namespace CoopFairy
+
+#endif  // LICHII_COOP

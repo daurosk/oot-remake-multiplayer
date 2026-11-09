@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // Fairies: each puppet (coop_puppet.h) gets a Navi that hovers by its
-// shoulder and trails it (docs/puppet.md, Fairy). No emulator code here, so
-// it is tested on its own.
+// shoulder and trails it (docs/puppet.md, Fairy).
 //
 // The fairy is an actor made the same way as the puppet: a second
-// CoopPuppet::Director, asked at the same `svc #0xf4` once the puppet's
-// director is done for the frame (Chain). Its targets come from a second
-// CoopPuppet::Planner fed the same inputs as the puppet's, so each fairy
-// follows exactly the puppet the player sees, the debug puppet included.
-// The game's own Navi AI is not used: the director writes the fairy's pose
-// every game frame, like the puppet's.
+// CoopPuppet::Director, registered with the svc cave as caller 20
+// (CoopSvc::AddCaller), so it runs after the puppets each frame. Its targets
+// come from a second CoopPuppet::Planner fed the same inputs as the puppet's,
+// so each fairy follows exactly the puppet the player sees, the debug puppet
+// included. The game's own Navi AI is not used: the director writes the
+// fairy's pose every game frame, like the puppet's.
+//
+// Follower is plain logic and is tested on its own; Publish is the emulator
+// glue (built only with LICHII_COOP).
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "coop_puppet.h"
 
@@ -46,6 +46,9 @@ struct Settings {
     float snap = 4.0f;          // farther than this (units) it jumps there
 };
 
+// The svc cave's order for the fairy director (puppets first, CoopSpawn 10).
+inline constexpr int kCallerOrder = 20;
+
 // Turns the puppets' targets into fairy targets. The present thread only.
 class Follower {
 public:
@@ -71,33 +74,10 @@ private:
     std::string scene_;
 };
 
-// The two directors at one `svc #0xf4`. The calc thread only.
-class Chain {
-public:
-    using Step = std::function<std::optional<CoopPuppet::Call>(bool after_call,
-                                                               std::uint64_t result)>;
-    // `first` runs until it says done for the frame, then `second`. Each sees
-    // its own new frame once and the results of its own calls only.
-    std::optional<CoopPuppet::Call> Next(const Step& first, const Step& second,
-                                         bool after_call, std::uint64_t result);
-
-private:
-    enum class Who { none, first, second };
-    Who last_ = Who::none;
-    bool second_started_ = false;
-};
-
-// Settings and the process-wide fairy director, once, beside the puppets'
-// (CoopSvc). LICHII_COOP_FAIRY=0 turns fairies off.
-void Configure(const CoopPuppet::PlannerSettings& puppets, Settings settings, bool verbose,
-               CoopPuppet::Director::Log log);
-bool On();
-
-// CoopSvc::Call: the puppet director, then the fairy one.
-std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call,
-                                     std::uint64_t result, std::uint64_t now_ms);
-
-// CoopHook::OnFrame, right after CoopPuppet::Publish, with the same arguments.
+// CoopHook::OnFrame, right after CoopPuppet::Publish, with the same
+// arguments. The first call reads the settings (on with the puppets;
+// LICHII_COOP_FAIRY=0 off, LICHII_COOP_FAIRY_ACTOR another actor) and
+// registers the fairy director with the cave.
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
              const std::optional<Vec3>& position, coop::host::Session* session,
              std::uint64_t server_now_us);

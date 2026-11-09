@@ -1,21 +1,17 @@
 // Tests for the fairies (lichii/hook/coop_fairy.cpp): where a fairy goes
-// beside its puppet, how it trails, and the two directors sharing one SVC.
+// beside its puppet, and how it trails.
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 #include <string>
-#include <vector>
 
 #include "coop_fairy.h"
 
 namespace {
 
-using CoopFairy::Chain;
 using CoopFairy::Follower;
 using CoopFairy::Settings;
-using CoopPuppet::Call;
 using CoopPuppet::Input;
 using CoopPuppet::Target;
 
@@ -116,83 +112,3 @@ TEST_CASE("fairy: bobs within its range") {
     CHECK(lo >= s.offset[1] - s.bob - 1e-4f);
 }
 
-namespace {
-
-// A director stand-in: hands out `calls` calls a frame and records what it saw.
-struct FakeStep {
-    FakeStep(int c, std::uint64_t i) : calls(c), id(i) {}
-    int calls = 0;
-    std::uint64_t id = 0;
-    int given = 0;
-    std::vector<std::string> seen;
-    std::optional<Call> operator()(bool after, std::uint64_t result) {
-        if (!after) {
-            given = 0;
-            seen.push_back("frame");
-        } else {
-            seen.push_back("result " + std::to_string(result));
-        }
-        if (given >= calls) {
-            return std::nullopt;
-        }
-        ++given;
-        Call c;
-        c.function = id * 100 + static_cast<std::uint64_t>(given);
-        return c;
-    }
-};
-
-// Runs one frame as the cave does: SVC, call, SVC with its result, ...
-std::vector<std::uint64_t> Frame(Chain& chain, FakeStep& a, FakeStep& b) {
-    std::vector<std::uint64_t> made;
-    Chain::Step sa = [&](bool af, std::uint64_t r) { return a(af, r); };
-    Chain::Step sb = [&](bool af, std::uint64_t r) { return b(af, r); };
-    auto call = chain.Next(sa, sb, false, 0);
-    while (call) {
-        made.push_back(call->function);
-        call = chain.Next(sa, sb, true, call->function + 1000);  // the "result"
-    }
-    return made;
-}
-
-} // namespace
-
-TEST_CASE("fairy chain: the puppets first, then the fairies, each with its own results") {
-    Chain chain;
-    FakeStep a{2, 1};
-    FakeStep b{1, 2};
-    CHECK(Frame(chain, a, b) == std::vector<std::uint64_t>{101, 102, 201});
-    CHECK(a.seen == std::vector<std::string>{"frame", "result 1101", "result 1102"});
-    CHECK(b.seen == std::vector<std::string>{"frame", "result 1201"});
-    // The next frame starts both again.
-    a.seen.clear();
-    b.seen.clear();
-    CHECK(Frame(chain, a, b) == std::vector<std::uint64_t>{101, 102, 201});
-    CHECK(a.seen.front() == "frame");
-    CHECK(b.seen.front() == "frame");
-}
-
-TEST_CASE("fairy chain: nothing from either, or only the fairies") {
-    Chain chain;
-    FakeStep a{0, 1};
-    FakeStep b{0, 2};
-    CHECK(Frame(chain, a, b).empty());
-    CHECK(a.seen == std::vector<std::string>{"frame"});
-    CHECK(b.seen == std::vector<std::string>{"frame"});
-    FakeStep c{0, 1};
-    FakeStep d{2, 2};
-    CHECK(Frame(chain, c, d) == std::vector<std::uint64_t>{201, 202});
-    CHECK(c.seen == std::vector<std::string>{"frame"});
-    CHECK(d.seen == std::vector<std::string>{"frame", "result 1201", "result 1202"});
-}
-
-TEST_CASE("fairy chain: a stray result with no call out is ignored") {
-    Chain chain;
-    FakeStep a{1, 1};
-    FakeStep b{1, 2};
-    Chain::Step sa = [&](bool af, std::uint64_t r) { return a(af, r); };
-    Chain::Step sb = [&](bool af, std::uint64_t r) { return b(af, r); };
-    CHECK_FALSE(chain.Next(sa, sb, true, 5));
-    CHECK(a.seen.empty());
-    CHECK(b.seen.empty());
-}

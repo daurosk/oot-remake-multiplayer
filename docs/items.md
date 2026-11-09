@@ -76,11 +76,11 @@ Each row: `PouchData.<item>.StockNum` and `IsGet.<item>` (â€” when there is none
 | `Armor_Child_Mask_Truth` | 0x96459cd3 | 0xf7d5bd9c | Shared, max |
 | `Armor_Child_Mask_Zora` | 0x924e9a46 | 0x280eb00e | Shared, max |
 | `Armor_GlassTruth` | 0x49d1c374 | 0x7fe2a5b2 | Shared, max |
-| `BottleA` | 0xd53ce3a7 | — | Shared, OR (the bottle; contents per player) |
-| `BottleB` | 0xfca29a04 | — | Shared, OR (the bottle; contents per player) |
-| `BottleC` | 0x893216a1 | — | Shared, OR (the bottle; contents per player) |
-| `BottleD` | 0x5324f9d3 | — | Shared, OR (the bottle; contents per player) |
-| `BottleE` | 0xc92b16be | — | Shared, OR (the bottle; contents per player) |
+| `BottleA` | 0xd53ce3a7 | â€” | Shared, OR (the bottle; contents per player) |
+| `BottleB` | 0xfca29a04 | â€” | Shared, OR (the bottle; contents per player) |
+| `BottleC` | 0x893216a1 | â€” | Shared, OR (the bottle; contents per player) |
+| `BottleD` | 0x5324f9d3 | â€” | Shared, OR (the bottle; contents per player) |
+| `BottleE` | 0xc92b16be | â€” | Shared, OR (the bottle; contents per player) |
 | `Item_AgonyStone` | 0xf3b14ce2 | 0xdd587ed8 | Shared, max |
 | `Item_AlarmCucco` | 0xb6ca6093 | 0x14909166 | Shared, mirror (trade item) |
 | `Item_Arrow_Fire` | 0x5e529ab9 | 0x4db7eae0 | Shared, max |
@@ -201,9 +201,22 @@ From the event flows, not traced in code:
 
 For a shared item the cheapest notice is our own overlay line ("Player 2 got the Hookshot"). Using the game's own window would mean starting `Dm_SY_Get_WithoutPlayer` with the item as the guest actor, which needs the event system from the host; not tried.
 
+## In the code
+
+`coop/host/game_items.hpp` holds the tables above as data: 300 flags, each with its kind and rule, and a test hashes every name. `item_shared_flags()` is the shared list built from it (265 flags: every rule but per player, without the ones not on yet). `ItemFlagStore` wraps the game's `GameFlagStore` and merges on write: max, OR and mirror as in the rules table, per-player flags and a wrong kind refused, anything that is not an item passed through. The host's `FlagWatcher` answers a `FLAG_SET` with what its game holds after the write, so the merged value is what everyone gets; a player's game takes the host's `FLAG_STATE` through the same store, so an item it has is not taken away by an answer that lacks it.
+
+To use it, the emulator hands `Session::frame` an `ItemFlagStore` over its `GameFlagStore` and adds `item_shared_flags()` to the shared list. Not wired in `lichii/hook` yet.
+
+Not on yet, in the table with `on = false`:
+
+- **Count rules** (small keys, Gold Skulltulas, heart pieces). Flags carry absolute values, and the host cannot tell which of its values a player's change started from: the host spends a key (2 â†’ 1) while a player gets one (2 â†’ 3); the player's 3 means +1 only if the host knows it was based on 2. `merge_item` has the count rule with that base. The proposed protocol change: a flag kind "count delta" (`FlagKind` 4, `int32` change) allowed in `FLAG_SET` only. The player's watcher sends its own change as a delta from the last value it had from the host; the host adds it to its value and answers with `FLAG_STATE` of the result as a plain `int32`. Needs the coordinator: `coop/protocol` belongs to another task.
+- **MaxLife** (max): until it is known how heart pieces turn into containers.
+
+Effects of max to know about: an item a player loses (a shield burnt or eaten, the Giant's Knife breaking) comes back, because the host keeps the highest value. `LiftGrade` (Enum) and `DiveDepth` (Float) are not in the table yet; if the game reads strength from them and not from the gauntlet items, a shared gauntlet does not lift for the other player. Check in a run.
+
 ## Not done
 
-1. `GameItems` in `coop_host` (read and write these flags with the rules above, tests on a fake manager).
-2. A live check: rupees and one key item changing in a run.
+1. Count delta in the protocol (above), then turn the count rules on.
+2. A live check: rupees and one key item changing in a run, with `ItemFlagStore` wired into the hook.
 3. What `StockNum` holds for an owned item (1?) and how heart pieces turn into containers.
 4. The unnamed structs and dungeon members above.

@@ -185,6 +185,7 @@ public:
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
             Log(event);
             Chat(event, client);
+            CoopObjects::OnEvent(event);
         };
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
@@ -227,6 +228,8 @@ public:
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
+                           report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);

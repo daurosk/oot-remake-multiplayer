@@ -7,6 +7,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_flags.cpp"
     "${_coop_hook}/coop_hook.cpp"
     "${_coop_hook}/coop_objects.cpp"
+    "${_coop_hook}/coop_objects_sync.cpp"
     "${_coop_hook}/coop_puppet.cpp"
     "${_coop_hook}/coop_settings.cpp"
     "${_coop_hook}/coop_svc.cpp"

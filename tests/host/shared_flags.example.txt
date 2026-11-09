@@ -1,0 +1,8 @@
+# A made-up list of shared flags, for the tests only. Real lists come from
+# the user and are never committed. One flag a line: a name or a 0x hash,
+# then for an array flag an index or a range.
+
+Example.ChestOpened
+0x0000beef          # a hash given directly
+Example.DoorUnlocked 2
+Example.KeysUsed 0-3

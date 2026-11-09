@@ -32,6 +32,8 @@ target_link_libraries(coop_presence PUBLIC coop_protocol PRIVATE coop_warnings)
 # Host: reads the local player from guest memory (through an interface the
 # emulator implements) and builds PLAYER_SAMPLE and PLAYER_STATUS. No sockets.
 add_library(coop_host STATIC
+  host/src/flags.cpp
+  host/src/flag_watcher.cpp
   host/src/game_memory.cpp
   host/src/player_reader.cpp
   host/src/sampler.cpp

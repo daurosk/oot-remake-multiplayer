@@ -8,6 +8,8 @@ add_executable(coop_tests
   presence/presence_test.cpp
   host/reader_test.cpp
   host/sampler_test.cpp
+  host/flags_test.cpp
+  host/flag_watcher_test.cpp
 )
 target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host doctest::doctest coop_warnings)
 doctest_discover_tests(coop_tests)

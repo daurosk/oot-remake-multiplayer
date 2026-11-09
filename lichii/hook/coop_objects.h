@@ -7,13 +7,31 @@
 
 #pragma once
 
+#include <cstdint>
+#include <optional>
+#include <string>
+
 namespace Core {
 class System;
+}
+namespace coop::host {
+class Session;
+}
+namespace coop::net {
+struct Event;
 }
 
 namespace CoopObjects {
 
 // Called once per presented frame, before the co-op session's frame.
 void OnFrame(Core::System& system);
+
+// LICHII_COOP_OBJECTS=1: shares the enemies. Present thread, once per frame
+// after the session's frame; `session` is null when not connected.
+void Share(Core::System& system, coop::host::Session* session,
+           const std::optional<std::string>& scene, std::uint64_t server_now_us);
+
+// Network thread, from the session's on_event: takes the object messages.
+void OnEvent(const coop::net::Event& event);
 
 } // namespace CoopObjects

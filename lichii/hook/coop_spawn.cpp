@@ -504,6 +504,10 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
                 c.x[0] = slot.taken;
                 c.x[1] = 0;
                 Say(slot.actor + ": copy " + std::to_string(slot.key) + " deleted");
+                {
+                    std::lock_guard lock(mutex_);  // Sync must not take it for live
+                    live_.erase(slot.key);
+                }
                 slot = Slot{};
                 pending_ = Pending::remove;
                 pending_slot_ = i;

@@ -172,7 +172,7 @@ TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back")
     spawn.id = {proto::ObjectKind::made, 1, 77};
     spawn.actor = "Item_Bomb";
     spawn.state.time = {4'990'000, 0};
-    spawn.state.position = proto::Vec3{10.0f, 0.0f, 0.0f};
+    spawn.state.position = proto::Vec3{10.0f, 1.0f, 2.0f};
     spawn.state.velocity = proto::Vec3{0.0f, 0.0f, 0.0f};
     sync.Receive(Wire(spawn, 1));
     now += 33 * kMs;

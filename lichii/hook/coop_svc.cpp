@@ -14,7 +14,6 @@
 #include "core/loader/nso.h"
 #include "core/memory.h"
 
-#include "coop_fairy.h"
 #include "coop_puppet.h"
 
 namespace CoopSvc {
@@ -58,13 +57,6 @@ void ConfigurePuppets() {
     const bool debug = settings.debug;
     LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor,
              debug ? ", debug puppet beside you" : "");
-    CoopFairy::Settings fairy;
-    if (const auto actor = Env("LICHII_COOP_FAIRY_ACTOR"); !actor.empty()) {
-        fairy.actor = actor;
-    }
-    CoopFairy::Configure(settings, fairy, debug,
-                         [](const std::string& line) { LOG_INFO(Core, "{}", line); });
-    LOG_INFO(Core, "coop: fairies {}", CoopFairy::On() ? "on, actor " + fairy.actor : "off");
     CoopPuppet::Configure(std::move(settings), debug,
                           [](const std::string& line) { LOG_INFO(Core, "{}", line); });
 }
@@ -162,7 +154,7 @@ bool Call(Core::System& system, std::uint32_t imm, std::array<std::uint64_t, 8>&
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     const std::uint64_t buffer = args[0];
-    const auto call = CoopFairy::Step(guest, args[2] != 0, args[1], now_ms);
+    const auto call = CoopPuppet::TheDirector().Step(guest, args[2] != 0, args[1], now_ms);
     if (!call) {
         args[0] = 0;
         return true;

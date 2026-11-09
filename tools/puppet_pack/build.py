@@ -32,20 +32,28 @@ DEFAULT_MOD_NAME = "coop-puppet"
 VARIANTS = ("Child", "Adult")
 PACK_DICT = "pack.zsdic"
 
-# Components taken from the player's own ActorParam: what it takes to draw Link and
-# play his AS commands. Everything else of the player (input, camera, physics,
-# equipment, life, the `Player` actor name) is left out.
+# Components taken from the player's own ActorParam: what it takes to draw Link, play
+# his AS commands and wear his equipment. EquipmentUserRef brings the player's
+# EquipmentUserParam chain, whose BlackboardTableRef names the EquipmentUser_* slots
+# (as Player_Event has it, without the player's BlackboardRef). Everything else of the
+# player (input, camera, physics, life, the `Player` actor name) is left out.
 KEEP_COMPONENTS = (
     "ASInfoRef",
     "ASOptimize",
     "ASRef",
     "AnimationRef",
     "BoneBindRef",
+    "EquipmentUserRef",
     "LODRef",
     "LocalDepthShadowRef",
     "ModelBindRef",
     "ModelInfoRef",
 )
+
+# The puppet is no use without these: no AS, no model, nowhere to put a sword.
+REQUIRED_COMPONENTS = ("ASRef", "ModelInfoRef", "EquipmentUserRef")
+# Blackboard keys of the EquipmentUser: the instance parameters a create request can set.
+EQUIP_KEY_PREFIX = "EquipmentUser_"
 
 # Components set to the engine's shared defaults, the ones the simple event actors use.
 # These files are not in any actor pack; the engine holds them.
@@ -122,7 +130,7 @@ def flatten_actor_param(members, actor):
 
 
 def make_actor_param(player_components):
-    missing = [k for k in ("ASRef", "ModelInfoRef") if k not in player_components]
+    missing = [k for k in REQUIRED_COMPONENTS if k not in player_components]
     if missing:
         raise BuildError(f"the player's ActorParam has no {', '.join(missing)}")
     comps = {k: player_components[k] for k in KEEP_COMPONENTS if k in player_components}
@@ -147,14 +155,61 @@ def collect_members(members, root_doc):
     return out
 
 
+def blackboard_table(files, path):
+    """A BlackboardParamTable with its $parent chain merged: {array name: {key: entry}}."""
+    chain, seen = [], set()
+    while path and path in files and path not in seen:
+        seen.add(path)
+        doc = byml.loads(files[path])
+        chain.append(doc)
+        path = ref_to_member(doc.get("$parent"))
+    out = {}
+    for doc in reversed(chain):
+        for name, arr in doc.items():
+            if isinstance(arr, list):
+                for e in arr:
+                    if isinstance(e, dict) and "BBKey" in e:
+                        out.setdefault(name, {})[e["BBKey"]] = e
+    return out
+
+
+def equipment_keys(files, actor_param):
+    """The EquipmentUser_* instance keys the puppet's EquipmentUser blackboard table has.
+
+    Follows EquipmentUserRef and its $parent chain to the first BlackboardTableRef.
+    Raises BuildError when there is none: the puppet could not wear anything.
+    """
+    path = ref_to_member(actor_param["Components"].get("EquipmentUserRef"))
+    seen = set()
+    table = None
+    while path and path not in seen:
+        seen.add(path)
+        if path not in files:
+            raise BuildError(f"{path} is not in the pack")
+        doc = byml.loads(files[path])
+        table = ref_to_member(doc.get("BlackboardTableRef"))
+        if table:
+            break
+        path = ref_to_member(doc.get("$parent"))
+    if not table or table not in files:
+        raise BuildError("the EquipmentUserParam names no blackboard table in the pack")
+    keys = []
+    for arr in blackboard_table(files, table).values():
+        keys += [k for k, e in arr.items() if k.startswith(EQUIP_KEY_PREFIX) and e.get("IsInstanceParam")]
+    if not keys:
+        raise BuildError(f"{table} has no {EQUIP_KEY_PREFIX}* instance keys")
+    return sorted(keys)
+
+
 def build_pack(members, variant):
-    """Returns (pack bytes, actor param bytes, member list) for one variant."""
+    """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant."""
     player = f"Player_{variant}"
     doc = make_actor_param(flatten_actor_param(members, player))
     files = collect_members(members, doc)
+    keys = equipment_keys(files, doc)
     ap = byml.dumps(doc)
     files[actor_param_path(puppet_name(variant))] = ap
-    return sarc.write(files), ap, sorted(files)
+    return sarc.write(files), ap, sorted(files), keys
 
 
 def info_row(player_row, actor):
@@ -239,7 +294,7 @@ def build(romfs, mod_dir, log=print):
         if not os.path.isfile(src):
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names = build_pack(members, v)
+        pack, ap, names, keys = build_pack(members, v)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -254,8 +309,8 @@ def build(romfs, mod_dir, log=print):
             raise BuildError(f"the size table has no {actor_param_path(player)}")
         table.add_new(actor_param_path(actor), max(player_ap, len(ap) + PACK_SIZE_MARGIN))
         made.append({"actor": actor, "from": player, "pack": dst_rel, "pack_bytes": len(pack),
-                     "members": names})
-        log(f"{actor}: {len(names)} files, {len(pack)} bytes -> {dst_rel}")
+                     "members": names, "equipment_keys": keys})
+        log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))

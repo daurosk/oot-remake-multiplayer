@@ -269,16 +269,15 @@ TEST_CASE("flag watcher: the game's own change wins over a write still to retry"
   CHECK(w.frame(store).empty());
 }
 
-TEST_CASE("flag watcher: a player ignores FLAG_SET, a host FLAG_STATE and snapshots") {
+TEST_CASE("flag watcher: a player ignores FLAG_SET, a host snapshots") {
   FlagWatcher player(shared(), FlagRole::player);
   CHECK_FALSE(player.receive(proto::FlagSet{2, {entry(kChest, 1)}}));
   CHECK_FALSE(player.receive(proto::Message{proto::Chat{1, "hi"}}));
   const std::vector<std::uint8_t> junk{1, 2, 3};
   CHECK_FALSE(player.receive(junk));
   FlagWatcher host(shared(), FlagRole::host);
-  CHECK_FALSE(host.receive(state({entry(kChest, 1)})));
   CHECK_FALSE(host.receive(proto::FlagSnapshot{0, 1, {}}));
-  CHECK(host.stats().ignored_messages == 2);
+  CHECK(host.stats().ignored_messages == 1);
 }
 
 TEST_CASE("flag watcher, host: own changes go out as FLAG_STATE") {
@@ -305,6 +304,18 @@ TEST_CASE("flag watcher, host: a FLAG_SET is applied and answered with what came
   CHECK(store.get(kHearts) == 0);
   CHECK(w.stats().answers_sent == 2);
   CHECK(w.frame(store).empty());  // the write is not seen as a change
+}
+
+TEST_CASE("flag watcher, host: a FLAG_STATE is written into the host's game and not sent back") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kChest, 1), entry(kHearts, 1)})));
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kChest) == 1);
+  CHECK(store.get(kHearts) == 0);  // not shared
+  CHECK(w.stats().not_shared == 1);
+  CHECK(w.frame(store).empty());
 }
 
 TEST_CASE("flag watcher, host: the whole table as FLAG_SNAPSHOT when asked") {

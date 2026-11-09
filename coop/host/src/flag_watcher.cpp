@@ -39,10 +39,10 @@ bool FlagWatcher::receive(const protocol::Message& message) {
       return true;
     }
   } else if (const auto* state = std::get_if<protocol::FlagState>(&message)) {
-    if (role_ == FlagRole::player) {
-      queue_.emplace_back(*state);
-      return true;
-    }
+    // Both roles: a host gets FLAG_STATE for its own game too (its client's
+    // answer to a FLAG_SET, the server's value on a clash).
+    queue_.emplace_back(*state);
+    return true;
   } else if (const auto* snapshot = std::get_if<protocol::FlagSnapshot>(&message)) {
     if (role_ == FlagRole::player) {
       queue_.emplace_back(*snapshot);
@@ -141,16 +141,16 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
     answer_set(store, *set, answers);
     return;
   }
-  if (role_ != FlagRole::player) {
-    ++stats_.ignored_messages;
-    return;
-  }
   if (auto* state = std::get_if<protocol::FlagState>(&message)) {
     if (holding_) {
       held_states_.push_back(std::move(*state));
     } else {
       apply_state(store, state->flags);
     }
+    return;
+  }
+  if (role_ != FlagRole::player) {
+    ++stats_.ignored_messages;
     return;
   }
 

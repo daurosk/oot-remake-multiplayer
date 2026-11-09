@@ -53,7 +53,8 @@ class FlagWatcher {
 
   // A message from the server. Flag messages are queued for the next frame();
   // anything else, or a message this role does not take (a host takes no
-  // FLAG_STATE, a player no FLAG_SET), is ignored. False when ignored or the
+  // FLAG_SNAPSHOT, a player no FLAG_SET), is ignored. Both take FLAG_STATE:
+  // a host's client answers FLAG_SETs itself, and its game takes the answer. False when ignored or the
   // bytes do not decode.
   bool receive(const protocol::Message& message);
   bool receive(std::span<const std::uint8_t> bytes);

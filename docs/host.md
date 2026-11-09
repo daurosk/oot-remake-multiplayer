@@ -118,6 +118,51 @@ Which flags are shared is a plain text file the user supplies; no list from the 
 4. Sends the changes: a player as `FLAG_SET` (kept as waiting for an answer), the host as `FLAG_STATE` together with its answers. At most 4096 entries a message; more go in several.
 5. Host, when asked: reads the whole list and sends it as `FLAG_SNAPSHOT` parts (`split_snapshot`). Flags that cannot be read are left out.
 
-A player takes no `FLAG_SET` and a host no `FLAG_STATE` or `FLAG_SNAPSHOT`; those are ignored. After `reset()` changes still waiting for an answer are sent again.
+A player takes no `FLAG_SET` and a host no `FLAG_SNAPSHOT`; those are ignored. Both take `FLAG_STATE`: as host it is the client's own answer to a `FLAG_SET` (or the server's value on a clash), which the host's game must take too. After `reset()` changes still waiting for an answer are sent again.
 
 Not proven yet: nothing has run against the game. A late answer to an earlier `FLAG_SET` can briefly undo a newer local change of the same flag until the next answer comes; this is rare (two changes of one flag within a round trip) and was left as protocol.md says (every `FLAG_STATE` is applied).
+
+## Session
+
+`coop::host::Session` ([`session.hpp`](../coop/host/include/coop/host/session.hpp)) ties the pieces together, so the emulator calls one thing on each of its two threads. It borrows a `coop::net::Client` and owns a `Sampler`, a `FlagWatcher` (when a flag list is given) and a `coop::presence::Presence`.
+
+```cpp
+coop::net::Client client(config);
+client.start();
+coop::host::SessionSettings settings;
+settings.shared = coop::host::SharedFlags::load("shared_flags.txt");  // or leave empty: no flags
+coop::host::Session session(client, std::move(settings));
+
+// emulator thread, once per emulated frame (the only thread that touches the game):
+auto report = session.frame(lichii_memory, &lichii_flags);   // or frame(reading, flags)
+if (report.holding) { /* a snapshot is coming in parts: hold the game */ }
+
+// network thread (the only thread that uses the client):
+while (running) { session.service(); session.wait(2); }
+session.wake();  // to end a wait() early when stopping
+
+// any thread:
+session.with_client([](coop::net::Client& c) { return c.players(); });
+session.with_presence([&](coop::presence::Presence& p) { return coop::overlay::collect(p, now); });
+```
+
+The same shape as `lichii/hook/coop_hook.cpp` today: `frame()` queues what it builds under the network lock and wakes the network thread; `service()` sends the queue, runs the client once and handles its events. Lock order: network, then presence. `frame()` holds neither while it reads or writes the game.
+
+What goes where:
+
+| From | To |
+|---|---|
+| sampler's `PLAYER_STATUS`, `PLAYER_SAMPLE` | `Client::send` |
+| watcher's `FLAG_SET` / `FLAG_STATE` (the game's own changes) | `Client::set_flags`, which sends `FLAG_SET`, or `FLAG_STATE` when the client hosts, and resends unanswered ones on a host change |
+| watcher's `FLAG_SNAPSHOT` parts | `Client::send_flag_snapshot`, whole |
+| every `message` event | presence |
+| `FLAG_SNAPSHOT` `message` events, every `flag_state` event | the watcher, at the next frame |
+| `host_changed` | the watcher's role; when we became host, it reads the whole list and sends it (also when we hosted already: after a reconnect the server wants the table again) |
+| `welcomed`, `reconnected` | presence `on_welcome`; sampler and watcher `reset()` at the next frame |
+| `disconnected` | presence `clear()` |
+
+**Who answers a `FLAG_SET`.** The client does, as soon as it arrives (accept, `set_flag_answer` to change that), and gives a `flag_state` event for the host's own game, which the watcher writes. The watcher's own answering (write, read back, answer with what came out) is not used by the session, since the client has already answered; a write the host's game refuses is tried again each frame, and if the game changes the flag by itself, that change goes out. Answering from the game would need the client not to answer, a `coop/net` change.
+
+While the client is not connected, `frame()` reads and sends nothing; changes the game made meanwhile are found by the first connected frame. A null `FlagStore` for a frame leaves incoming flag messages queued for a later one.
+
+Proven by `tests/host/session_test.cpp`, the real server in process and two or three sessions with fake games: a player's change reaches the host and a host's change the player, with nothing echoed; the host leaving makes the player host, which sends its table, and a later joiner gets every flag; samples reach the other player's presence and follow a move; the same with a network thread per player and the frames on another (run under TSAN in CI). Not proven: a real game; the hook does not use `Session` yet.

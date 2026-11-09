@@ -37,9 +37,12 @@ add_library(coop_host STATIC
   host/src/game_memory.cpp
   host/src/player_reader.cpp
   host/src/sampler.cpp
+  host/src/session.cpp
 )
 target_include_directories(coop_host PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/host/include")
-target_link_libraries(coop_host PUBLIC coop_protocol PRIVATE coop_warnings)
+# Session (session.hpp) ties the client, the sampler, the flag watcher and
+# presence together, so the host library also links those two.
+target_link_libraries(coop_host PUBLIC coop_protocol coop_net coop_presence PRIVATE coop_warnings)
 
 # Overlay: the other players as markers with name tags, as a plain draw list.
 # No rendering and no game addresses; the caller hands over the camera.

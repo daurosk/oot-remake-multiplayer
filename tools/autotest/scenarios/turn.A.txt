@@ -1,0 +1,19 @@
+# turn: A waits until B has loaded, walks up the path, then faces left,
+# right and back toward B, holding each for 2 s so the yaw lines (with
+# LICHII_COOP_DEBUG_POSE=1) and B's screenshots show whether the puppet turns.
+wait 1500
+mark start
+stick 0 0.5 60          # up the path
+mark up
+stick -1 0 12           # face left
+wait 120
+mark left
+stick 1 0 12            # face right
+wait 120
+mark right
+stick 0 -1 12           # face B
+wait 120
+mark down
+stick 0 1 12            # face away again
+wait 120
+mark away

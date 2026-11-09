@@ -183,7 +183,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    const auto puppets = glue.planner->Plan(main_base, scene, position, remotes, now_ms);
+    const auto puppets = glue.planner->Plan(main_base, scene, position, false, remotes, now_ms);
     glue.director->SetInput(glue.follower->Follow(puppets, now_ms));
 }
 

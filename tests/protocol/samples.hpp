@@ -87,6 +87,8 @@ inline std::vector<Message> object_messages() {
   all.push_back(minimal);
   all.push_back(ObjectRemove{0, kMadeId, 0, RemoveReason::exploded, {1.0f, 2.0f, 3.0f}});
   all.push_back(Damage{4, kPlacedId, 3, 2, static_cast<std::uint8_t>(DamageCause::sword), {0.5f, 0.0f, -0.5f}});
+  all.push_back(PlayerPose{2, {123456789, 7}, 0x00a1b2c3, {PoseBone{3, 0x1f, std::array<std::int16_t, 4>{0, 0, 0, 32767}, std::array<std::int16_t, 3>{-8192, 1, 2}, std::nullopt}, PoseBone{300, 0, std::nullopt, std::nullopt, std::array<std::int16_t, 3>{8192, 8192, 8192}}}});
+  all.push_back(PlayerPose{0, {1, 1}, 1, {}});
   return all;
 }
 

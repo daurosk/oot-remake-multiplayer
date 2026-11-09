@@ -1,6 +1,8 @@
 // Puppets (coop_puppet.h). No emulator code.
 #include "coop_puppet.h"
 
+#include "coop_pose.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -9,7 +11,9 @@
 #include <cstring>
 #include <memory>
 
+#include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
+#include "coop/net/client.hpp"
 #include "coop/presence/presence.hpp"
 
 namespace CoopPuppet {
@@ -75,7 +79,8 @@ const char* PhaseText(Phase phase) {
     return "?";
 }
 
-Director::Director(Log log, bool verbose) : log_(std::move(log)), verbose_(verbose) {}
+Director::Director(Log log, bool verbose, bool anim)
+    : log_(std::move(log)), verbose_(verbose), anim_(anim) {}
 
 void Director::SetInput(Input input) {
     std::lock_guard lock(input_mutex_);
@@ -91,7 +96,7 @@ void Director::Say(const std::string& text) const {
 std::vector<Director::SlotView> Director::Slots() const {
     std::vector<SlotView> out;
     for (const auto& s : slots_) {
-        out.push_back({s.number, s.phase, s.block, s.actor, s.actor_name});
+        out.push_back({s.number, s.phase, s.block, s.actor, s.actor_name, s.anim_name});
     }
     return out;
 }
@@ -121,6 +126,7 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
                                    std::uint64_t now_ms) {
     if (!after_call) {
         NewFrame(guest, now_ms);
+        PoseFrame(guest, now_ms);
     } else if (pending_ != Pending::none) {
         Finish(guest, result, now_ms);
     }
@@ -138,6 +144,21 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
         }
     }
     return std::nullopt;
+}
+
+// Once a frame, the full-body pose copy (coop_pose.cpp): our skeleton is
+// read and each live puppet's is written.
+void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
+    if (!pose_copy_) {
+        return;
+    }
+    std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets;
+    for (const auto& slot : slots_) {
+        if (slot.phase == Phase::live && slot.actor != 0) {
+            puppets.emplace_back(slot.number, slot.actor);
+        }
+    }
+    CoopPose::OnCalcFrame(guest, input_.main_base, puppets, now_ms);
 }
 
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
@@ -210,8 +231,13 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
-                WriteValue(guest, slot.actor + addr::kActorPosition, t->position);
-                WriteValue(guest, slot.actor + addr::kActorRotation, t->rotation);
+                if (t->show == Show::show) {
+                    Pose(slot, guest, t->position, &t->rotation, now_ms);
+                } else if (t->show == Show::hide) {
+                    Vec3 parked = t->position;
+                    parked[1] -= kHideDrop;
+                    Pose(slot, guest, parked, nullptr, now_ms);
+                }  // hold: left where it is
             }
             break;
         case Phase::deleting:
@@ -273,6 +299,33 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         break;
     case Pending::remove:
         Say(who + ": delete requested (returned " + Hex(result & 0xff) + ")");
+        break;
+    case Pending::play:
+        slot.anim_name = slot.play_name;
+        slot.anim_serial = slot.play_serial;
+        slot.frame_to_set = slot.play_frame;
+        slot.sync_next = 1;  // then the partial slots, after the frame
+        if (anim_) {
+            char buf[48];
+            std::snprintf(buf, sizeof(buf), " from frame %.1f", slot.play_frame);
+            Say(who + " plays '" + slot.play_name + "'" + buf + " (returned " +
+                Hex(result & 0xff) + ")");
+        }
+        break;
+    case Pending::frame:
+        slot.frame_to_set.reset();
+        break;
+    case Pending::sync:
+        if (anim_) {
+            Say(who + " slot " + std::to_string(slot.sync_next) + " synced to slot 0 ('" +
+                slot.anim_name + "')");
+        }
+        ++slot.sync_next;
+        break;
+    case Pending::equip:
+        slot.worn[slot.equip_index] = slot.equip_name;
+        Say(who + " wears " + kGearNames[slot.equip_index] + " '" + slot.equip_name +
+            "' (returned " + Hex(result & 0xff) + ")");
         break;
     case Pending::none:
         break;
@@ -342,7 +395,13 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             pending_ = Pending::remove;
             return c;
         }
-        return std::nullopt;
+        if (auto c = Equip(slot, *t, guest, now_ms)) {
+            return c;
+        }
+        if (pose_copy_ && CoopPose::Drives(slot.number, now_ms)) {
+            return std::nullopt;  // the pose copy moves it
+        }
+        return Animate(slot, *t, guest);
     default:
         return std::nullopt;
     }
@@ -400,8 +459,237 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.taken = 0;
     slot.vtable = 0;
     slot.take = slot.drop = false;
+    slot.anim_name.clear();
+    slot.anim_serial = 0;
+    slot.frame_to_set.reset();
+    slot.held_frame.reset();
+    slot.sync_next = 0;
+    slot.worn = {};
     pending_ = Pending::create;
     return c;
+}
+
+// One equip call for a live puppet whose player's gear differs from what it
+// wears, or none. An empty name (nothing in that slot) is not taken off yet:
+// how to clear a slot is not proven (0x2e01a90 with "" is a guess).
+std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest,
+                                    std::uint64_t now_ms) {
+    if (anim_ && now_ms - slot.gear_log_ms >= 2000) {
+        slot.gear_log_ms = now_ms;
+        std::uint64_t parts = 0;
+        std::uint64_t eu = 0;
+        ReadValue(guest, slot.actor + addr::kActorParts, parts);
+        if (parts != 0) {
+            ReadValue(guest, parts + addr::kPartsEquipmentUser, eu);
+        }
+        std::string line = "P" + std::to_string(slot.number) + " gear: eu " + Hex(eu);
+        for (std::size_t i = 0; i < target.gear.size(); ++i) {
+            line += std::string(", ") + kGearNames[i] + " " +
+                    (target.gear[i] ? "'" + *target.gear[i] + "'" : std::string("?")) +
+                    (slot.worn[i].empty() ? "" : " (worn)");
+        }
+        Say(line);
+    }
+    for (std::size_t i = 0; i < target.gear.size(); ++i) {
+        const auto& want = target.gear[i];
+        if (!want || want->empty() || *want == slot.worn[i] ||
+            want->size() >= block::kGearCapacity) {
+            continue;
+        }
+        std::uint64_t parts = 0;
+        std::uint64_t eu = 0;
+        if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+            !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+            return std::nullopt;  // not set up (yet)
+        }
+        const std::uint64_t text = slot.block + block::kGearText + block::kGearCapacity * i;
+        const std::uint64_t cell = slot.block + block::kGearPtr + 8 * i;
+        std::array<char, block::kGearCapacity> name{};
+        std::memcpy(name.data(), want->data(), want->size());
+        if (!guest.Write(text, name.data(), name.size()) || !WriteValue(guest, cell, text)) {
+            return std::nullopt;
+        }
+        slot.equip_index = i;
+        slot.equip_name = *want;
+        Call c;
+        c.function = input_.main_base + addr::kEquip;
+        c.x[0] = eu;
+        c.x[1] = kGearKinds[i];
+        c.x[2] = cell;
+        c.x[3] = 2;
+        c.x[4] = 0xFFFFFFFF;
+        c.x[5] = 1;
+        c.x[6] = 0;
+        pending_ = Pending::equip;
+        return c;
+    }
+    return std::nullopt;
+}
+
+// The AS controller of an actor; 0 when the chain is not there.
+std::uint64_t Director::Controller(Guest& guest, std::uint64_t actor) {
+    std::uint64_t p = actor;
+    for (const std::uint64_t offset : addr::kControllerPath) {
+        if (p == 0 || !ReadValue(guest, p + offset, p)) {
+            return 0;
+        }
+    }
+    return p;
+}
+
+// Slot 0's frame, when the controller has a slot 0 and its frame is a number.
+std::optional<float> Director::Frame(Guest& guest, std::uint64_t controller) {
+    std::int32_t count = 0;
+    std::uint64_t slots = 0;
+    std::uint64_t slot0 = 0;
+    float frame = 0.0f;
+    if (!ReadValue(guest, controller + addr::kSlotCount, count) || count <= 0 ||
+        !ReadValue(guest, controller + addr::kSlots, slots) || slots == 0 ||
+        !ReadValue(guest, slots, slot0) || slot0 == 0 ||
+        !ReadValue(guest, slot0 + addr::kSlotFrame, frame) || !std::isfinite(frame)) {
+        return std::nullopt;
+    }
+    return frame;
+}
+
+std::optional<Call> Director::SetFrame(Slot& slot, std::uint64_t controller, float frame) {
+    Call c;
+    c.function = input_.main_base + addr::kSetAsFrame;
+    c.x[0] = controller;
+    c.x[1] = 0;  // slot 0
+    c.s0 = frame;
+    slot.frame_set_in = frames_;
+    pending_ = Pending::frame;
+    return c;
+}
+
+// One animation call for a live puppet in its scene, or none.
+// - show: play the received command when it changes, then set its frame;
+//   after that, set the frame only when a new sample finds it more than
+//   kFrameSlack off, so the game's own playback runs in between.
+// - hold: the frame it had when the hold began, every frame.
+// - hide: nothing (it is out of sight).
+std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& guest) {
+    if (target.show == Show::hide) {
+        return std::nullopt;
+    }
+    const std::uint64_t controller = Controller(guest, slot.actor);
+    if (controller == 0) {
+        return std::nullopt;
+    }
+    const std::string who = "P" + std::to_string(slot.number);
+    if (target.show == Show::hold) {
+        if (!slot.held_frame) {
+            slot.held_frame = Frame(guest, controller);
+            if (!slot.held_frame) {
+                return std::nullopt;
+            }
+            if (anim_) {
+                Say(who + " held");
+            }
+        }
+        if (slot.frame_set_in == frames_) {
+            return std::nullopt;  // once a frame
+        }
+        return SetFrame(slot, controller, *slot.held_frame);
+    }
+    if (slot.held_frame && anim_) {
+        Say(who + " moves again");
+    }
+    slot.held_frame.reset();
+    if (!target.anim || target.anim->name.empty() ||
+        target.anim->name.size() >= block::kAnimCapacity) {
+        return std::nullopt;
+    }
+    const Anim& anim = *target.anim;
+    if (anim.name != slot.anim_name) {
+        const std::uint64_t text =
+            slot.block + block::kAnimText + block::kAnimCapacity * slot.anim_buffer;
+        std::array<char, block::kAnimCapacity> name{};
+        std::memcpy(name.data(), anim.name.data(), anim.name.size());
+        if (!guest.Write(text, name.data(), name.size())) {
+            return std::nullopt;
+        }
+        slot.anim_buffer ^= 1;
+        const float rate = std::isfinite(anim.rate) ? anim.rate : 1.0f;
+        std::array<std::uint8_t, 0x30> request{};
+        const float unset = -1.0f;
+        const std::int32_t index = 0;
+        std::memcpy(request.data() + 0x00, &slot.actor, 8);
+        std::memcpy(request.data() + 0x08, &text, 8);
+        std::memcpy(request.data() + 0x10, &index, 4);
+        std::memcpy(request.data() + 0x14, &rate, 4);
+        std::memcpy(request.data() + 0x18, &unset, 4);
+        std::memcpy(request.data() + 0x1c, &unset, 4);
+        // +0x20 skip-if-same stays 0: we only play a new name.
+        const std::uint64_t at = slot.block + block::kPlayRequest;
+        if (!guest.Write(at, request.data(), request.size())) {
+            return std::nullopt;
+        }
+        slot.play_name = anim.name;
+        slot.play_frame = std::isfinite(anim.frame) ? anim.frame : 0.0f;
+        slot.play_serial = target.anim_serial;
+        Call c;
+        c.function = input_.main_base + addr::kPlayAs;
+        c.x[0] = at;
+        pending_ = Pending::play;
+        return c;
+    }
+    if (slot.frame_to_set) {
+        return SetFrame(slot, controller, *slot.frame_to_set);
+    }
+    if (slot.sync_next > 0) {
+        std::int32_t count = 0;
+        ReadValue(guest, controller + addr::kSlotCount, count);
+        if (slot.sync_next < std::min(count, addr::kMaxAsSlots)) {
+            Call c;
+            c.function = input_.main_base + addr::kSyncAsSlot;
+            c.x[0] = slot.actor;
+            c.x[1] = 0;
+            c.x[2] = static_cast<std::uint64_t>(slot.sync_next);
+            pending_ = Pending::sync;
+            return c;
+        }
+        slot.sync_next = 0;
+    }
+    if (target.anim_serial != slot.anim_serial) {
+        slot.anim_serial = target.anim_serial;
+        const auto now = Frame(guest, controller);
+        if (std::isfinite(anim.frame) &&
+            (!now || std::fabs(*now - anim.frame) > kFrameSlack)) {
+            if (anim_) {
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), " frame %.1f -> %.1f", now.value_or(-1.0f),
+                              anim.frame);
+                Say(who + " '" + anim.name + "'" + buf);
+            }
+            return SetFrame(slot, controller, anim.frame);
+        }
+    }
+    return std::nullopt;
+}
+
+// The puppet's pose: +0x31c/+0x328 and the engine's pending transform
+// (+0x358/+0x364), which the actor's calc applies over +0x31c. With the
+// debug anim log, once a second, what the game left there since the last
+// write, so a writer that undoes ours shows up.
+void Director::Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
+                    std::uint64_t now_ms) {
+    if (anim_ && now_ms - slot.pose_log_ms >= 1000) {
+        slot.pose_log_ms = now_ms;
+        Vec3 at{};
+        Vec3 asked{};
+        ReadValue(guest, slot.actor + addr::kActorPosition, at);
+        ReadValue(guest, slot.actor + addr::kActorPositionRequest, asked);
+        Say("P" + std::to_string(slot.number) + " pose: at " + VecText(at) + ", request " +
+            VecText(asked) + ", now to " + VecText(position));
+    }
+    WriteValue(guest, slot.actor + addr::kActorPosition, position);
+    WriteValue(guest, slot.actor + addr::kActorPositionRequest, position);
+    if (rotation != nullptr) {
+        WriteValue(guest, slot.actor + addr::kActorRotation, *rotation);
+        WriteValue(guest, slot.actor + addr::kActorRotationRequest, *rotation);
+    }
 }
 
 // The actor taken from the request, while its vtable is the one it had then
@@ -468,8 +756,16 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
             line += " actor " + Hex(slot.actor) + " state " + std::to_string(state) + " at " +
                     VecText(at);
         }
+        if (!slot.anim_name.empty()) {
+            const auto frame = slot.actor ? Frame(guest, Controller(guest, slot.actor))
+                                          : std::nullopt;
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), " frame %.1f", frame.value_or(-1.0f));
+            line += " plays '" + slot.anim_name + "'" + buf;
+        }
         if (const Target* t = Wanted(slot.number)) {
             line += ", wanted at " + VecText(t->position);
+            line += t->show == Show::show ? " (show)" : t->show == Show::hold ? " (hold)" : " (hide)";
         }
         // While it is being made, what the handle holds, to see it fill in.
         if (std::uint64_t h = 0; slot.phase == Phase::creating && slot.handle != 0 &&
@@ -486,8 +782,9 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
 }
 
 Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
-                    const std::optional<Vec3>& position, const std::vector<Remote>& remotes,
-                    std::uint64_t now_ms) {
+                    const std::optional<Vec3>& position, bool local_event,
+                    const std::vector<Remote>& remotes, std::uint64_t now_ms,
+                    const std::array<std::optional<std::string>, 5>& own_gear) {
     Input in;
     if (main_base == 0) {
         return in;
@@ -503,16 +800,36 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         return in;
     }
     for (const auto& r : remotes) {
-        if (r.number == 0 || !r.scene || *r.scene != in.scene || !(r.fade > 0.0f)) {
+        if (r.number == 0 || !(r.fade > 0.0f)) {
             continue;
+        }
+        const std::optional<std::string_view> theirs =
+            r.scene ? std::optional<std::string_view>(*r.scene) : std::nullopt;
+        Show show = Show::show;
+        switch (coop::host::visibility(in.scene, local_event, theirs, r.status)) {
+        case coop::host::Visibility::hide:
+            if (!coop::host::same_scene(in.scene, theirs)) {
+                continue;  // not here: no puppet (one made is deleted)
+            }
+            show = Show::hide;  // our cutscene: kept, out of sight
+            break;
+        case coop::host::Visibility::hold:
+            show = Show::hold;
+            break;
+        case coop::host::Visibility::show:
+            break;
         }
         Target t;
         t.number = r.number;
-        t.actor = settings_.actor;
+        t.actor = ActorFor(r.adult);
         t.position = r.position;
         if (r.rotation) {
             t.rotation = QuatToMatrix(*r.rotation);
         }
+        t.show = show;
+        t.anim = r.anim;
+        t.anim_serial = r.anim_serial;
+        t.gear = r.gear;
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -523,11 +840,19 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         }
         Target t;
         t.number = 0;
-        t.actor = settings_.actor;
+        t.actor = ActorFor(false);
         t.position = *debug_spot_;
+        t.gear = own_gear;
         in.targets.push_back(std::move(t));
     }
     return in;
+}
+
+std::string Planner::ActorFor(bool adult) const {
+    if (!settings_.actor.empty()) {
+        return settings_.actor;
+    }
+    return adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
 }
 
 namespace {
@@ -537,11 +862,56 @@ std::atomic<bool> g_configured = false;
 std::unique_ptr<Director> g_director;
 std::unique_ptr<Planner> g_planner;  // the present thread only
 
+// Each remote player's newest animation, from the network thread.
+struct Received {
+    Anim anim;
+    std::uint32_t serial = 0;
+};
+std::mutex g_anim_mutex;
+std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
+std::array<std::array<std::optional<std::string>, 5>, 5> g_gear;  // the same; guarded
+
 } // namespace
+
+void OnEvent(const coop::net::Event& event) {
+    if (!g_configured) {
+        return;
+    }
+    using coop::net::EventKind;
+    if (event.kind == EventKind::disconnected) {
+        std::lock_guard lock(g_anim_mutex);
+        g_anims = {};
+        g_gear = {};
+    } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
+        std::lock_guard lock(g_anim_mutex);
+        g_anims[event.player].reset();
+        g_gear[event.player] = {};
+    } else if (event.kind == EventKind::player_equip && event.player != 0 &&
+               event.player < g_gear.size()) {
+        const auto& e = event.equipment;
+        g_director->Note("P" + std::to_string(event.player) + " PLAYER_EQUIP: weapon '" +
+                         e.weapon.value_or("?") + "', shield '" + e.shield.value_or("?") + "'");
+        std::lock_guard lock(g_anim_mutex);
+        g_gear[event.player] = {e.weapon, e.shield, e.head, e.armor, e.boots};
+    } else if (event.kind == EventKind::message) {
+        const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
+        if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
+            sample->player_number >= g_anims.size()) {
+            return;
+        }
+        std::lock_guard lock(g_anim_mutex);
+        auto& slot = g_anims[sample->player_number];
+        const std::uint32_t serial = slot ? slot->serial + 1 : 1;
+        slot = Received{{sample->animation->name, sample->animation->frame,
+                         sample->animation->rate},
+                        serial};
+    }
+}
 
 void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
-        g_director = std::make_unique<Director>(std::move(log), verbose);
+        g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
+        g_director->SetPoseCopy(true);
         g_planner = std::make_unique<Planner>(std::move(settings));
         g_configured = true;
     });
@@ -553,12 +923,18 @@ Director& TheDirector() {
 }
 
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
-             const std::optional<Vec3>& position, coop::host::Session* session,
-             std::uint64_t server_now_us) {
+             const std::optional<Vec3>& position, bool local_event,
+             coop::host::Session* session, std::uint64_t server_now_us) {
     if (!g_configured) {
         return;  // puppets are off
     }
     std::vector<Remote> remotes;
+    std::array<std::optional<std::string>, 5> own_gear;
+    if (session != nullptr) {
+        if (const auto& e = session->sampler().last_equipment()) {
+            own_gear = {e->weapon, e->shield, e->head, e->armor, e->boots};
+        }
+    }
     if (session != nullptr && server_now_us != 0) {
         session->with_presence([&](coop::presence::Presence& p) {
             for (const std::uint8_t n : p.players()) {
@@ -574,16 +950,28 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
                 r.fade = pose->fade;
                 if (const auto* player = p.player(n)) {
                     r.scene = player->scene();
+                    r.status = player->flags();
+                    r.adult = player->age() == coop::protocol::Age::adult;
                 }
                 remotes.push_back(std::move(r));
             }
         });
+        std::lock_guard lock(g_anim_mutex);
+        for (auto& r : remotes) {
+            if (r.number < g_anims.size() && g_anims[r.number]) {
+                r.anim = g_anims[r.number]->anim;
+                r.anim_serial = g_anims[r.number]->serial;
+            }
+            if (r.number < g_gear.size()) {
+                r.gear = g_gear[r.number];
+            }
+        }
     }
     const auto now_ms = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    g_director->SetInput(g_planner->Plan(main_base, scene, position, remotes, now_ms));
+    g_director->SetInput(g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear));
 }
 
 } // namespace CoopPuppet

@@ -385,6 +385,8 @@ private:
             process_ = process;
             base_ = FindMain(process);
             LOG_INFO(Core, "coop: game build {}, main at {:#x}", build, base_);
+            // A new game process: its first status goes again.
+            session_->reset();
         }
         view.game = true;
         EmulatorMemory memory(system.ApplicationMemory(), base_);

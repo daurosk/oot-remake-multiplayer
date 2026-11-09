@@ -299,3 +299,28 @@ TEST_CASE("session: a frame thread and a network thread per player share a flag"
   CHECK(ok);
   CHECK(players == 2);
 }
+
+TEST_CASE("session: reset sends the status again on the next connected frame") {
+  EnetLife enet;
+  coop::server::EnetServer server(any_port());
+  REQUIRE(server.start());
+  std::vector<Peer*> peers;
+
+  Peer a(server.port(), "Link", SessionSettings{});
+  join(server, peers, a);
+  REQUIRE(pump(server, peers, [&] { return a.session.sampler().last_sample().has_value(); }));
+
+  // A new game process: the reset is applied on the next connected frame,
+  // before that frame's reading (none here), so nothing was sent since.
+  a.session.reset();
+  const auto report = a.session.frame(std::nullopt, nullptr);
+  CHECK(report.connected);
+  CHECK(report.queued == 0);
+  CHECK_FALSE(a.session.sampler().last_sample().has_value());
+
+  // The next reading goes out as a status and a sample at once.
+  const auto again = a.session.frame(a.memory, nullptr);
+  CHECK(again.queued == 2);
+  CHECK(a.session.sampler().last_sample().has_value());
+  CHECK(a.session.with_client([](net::Client& c) { return c.state() == net::State::connected; }));
+}

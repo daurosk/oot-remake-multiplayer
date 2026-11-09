@@ -1011,8 +1011,12 @@ TEST_CASE("bad object messages are refused") {
   CHECK(encode(ObjectOwner{{ObjectKind::made, 5, 5}, 1, 0, 0}, out) == Error::bad_value);
   CHECK(encode(ObjectOwner{test::kPlacedId, 5, 0, 0}, out) == Error::bad_value);
   CHECK(encode(HandoverAsk{test::kPlacedId, 0, 0}, out) == Error::bad_value);
-  // A spawn is always of a made object and names its actor.
-  CHECK(encode(ObjectSpawn{0, test::kPlacedId, "NormalArrow", 0, {}}, out) == Error::bad_value);
+  // A spawn names its actor; a placed id names no maker (version 2).
+  Bytes placed_spawn;
+  CHECK(encode(ObjectSpawn{0, test::kPlacedId, "Enemy_Skulltula_Gold", 0, {}}, placed_spawn) ==
+        Error::none);
+  CHECK(encode(ObjectSpawn{0, {ObjectKind::placed, 1, 5}, "Enemy_Skulltula_Gold", 0, {}}, out) ==
+        Error::bad_value);
   CHECK(encode(ObjectSpawn{0, test::kMadeId, "", 0, {}}, out) == Error::bad_value);
   CHECK(encode(ObjectSpawn{0, test::kMadeId, std::string(65, 'a'), 0, {}}, out) ==
         Error::string_too_long);

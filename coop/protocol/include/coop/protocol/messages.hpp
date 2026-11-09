@@ -15,7 +15,7 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 1;
+inline constexpr std::uint16_t kProtocolVersion = 2;  // 2: OBJECT_SPAWN of a placed id
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 

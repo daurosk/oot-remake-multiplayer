@@ -612,8 +612,7 @@ Error encode_body(const HandoverState& m, Writer& w) {
 
 Error encode_body(const ObjectSpawn& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
-  if (m.id.kind != ObjectKind::made) return Error::bad_value;
-  COOP_TRY(check_object_id(m.id));
+  COOP_TRY(check_object_id(m.id));  // made, or placed (an owner naming its actor)
   COOP_TRY(check_string(m.actor, kMaxActorNameChars));
   if (m.actor.empty()) return Error::bad_value;
   COOP_TRY(check_object_state(m.state));
@@ -1131,7 +1130,6 @@ Error decode_body(Reader& r, ObjectSpawn& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_TRY(read_object_id(r, m.id));
-  if (m.id.kind != ObjectKind::made) return Error::bad_value;
   COOP_TRY(r.str(m.actor, kMaxActorNameChars));
   if (m.actor.empty()) return Error::bad_value;
   COOP_READ(r.u8(m.flags));

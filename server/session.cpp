@@ -386,7 +386,18 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
 void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t channel,
                                 Message& message) {
   ObjectId oid;
-  if (const auto* spawn = std::get_if<ObjectSpawn>(&message)) {
+  if (const auto* spawn = std::get_if<ObjectSpawn>(&message);
+      spawn && spawn->id.kind == ObjectKind::placed) {
+    // The owner of a placed object names its actor, for games that do not
+    // have it loaded (a Gold Skulltula only one game shook out of a tree).
+    // Relayed to the scene; nothing is registered.
+    oid = spawn->id;
+    auto it = objects_.find(oid);
+    if (it == objects_.end() || it->second.owner != id || it->second.scene != c.scene) {
+      ++stats_.object_refused;
+      return;
+    }
+  } else if (spawn) {
     oid = spawn->id;
     if (spawn->id.maker != c.number || objects_.count(oid)) {
       ++stats_.object_refused;

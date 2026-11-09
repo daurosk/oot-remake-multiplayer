@@ -19,11 +19,13 @@ add_executable(coop_tests
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
   lichii/objects_test.cpp
+  lichii/testinput_test.cpp
   # These hook files have no emulator code, so they are tested on their own.
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_testinput.cpp
 )
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)
 target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host coop_overlay doctest::doctest coop_warnings)

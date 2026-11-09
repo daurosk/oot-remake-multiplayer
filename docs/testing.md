@@ -259,3 +259,36 @@ It writes `..\coop-kit\oot-coop-<yyyymmdd-hhmm>\` and a zip of it beside the mai
 | `-NoZip` | No zip. |
 
 It refuses an emulator built without co-op and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
+
+## Automatic tests
+
+`tools/autotest/run.ps1` runs a two-game test on one PC with no one playing: it plays scripted controller input into both games and keeps screenshots of both windows, so a check can be done and looked at later.
+
+```
+tools\autotest\run.ps1 -Scenario walk
+```
+
+What it does:
+
+1. Starts the server (`build\server\coop_server.exe`, port 27560) and the two kits `coop-kit\auto-A` and `auto-B` (found by going up from the repo; `-KitA`, `-KitB`, `-Game`, `-Exe`, `-Server` override). Each kit is an ordinary kit folder with a filled `emulator\user\` and a save. With `-Exe`, that emulator build is copied into both kits first.
+2. Waits until both logs have `coop: welcomed as player`, puts the windows side by side and plays `scenarios\load.txt` in both (title screen to the first save).
+3. Plays `scenarios\<name>.A.txt` in A and `<name>.B.txt` in B (none: B stands still), and captures both windows every `-Every` seconds (default 3) and at each `mark` line.
+4. Closes both games and the server, copies the emulator and server logs beside the screenshots, and prints the folder: `coop-kit\shots\<scenario>\<date-time>\` (outside the repo: game screenshots are never committed). A run that went wrong leaves `FAILED.txt` there with the reason.
+
+The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`.
+
+### Input scripts
+
+The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([coop_testinput.h](../lichii/hook/coop_testinput.h)). It looks at the file about twice a second; each time the file changes, it plays it from the start into player 1's pad, on top of the real keyboard. The window needs no focus. Time is counted in ticks of 1/60 s of real time.
+
+| Line | Does |
+|---|---|
+| `wait 120` | nothing for 120 ticks (2 s) |
+| `hold A 30` | hold A for 30 ticks |
+| `hold LSTICK_UP+B 90` | left stick up and B together (run) |
+| `press A` / `press ZR+A 10` | hold, then let go, 6 ticks each (or the number given) |
+| `stick 0.5 1.0 60 [KEYS]` | left stick at x, y (each -1 to 1), with buttons if given |
+| `rstick -1 0 30` | right stick (camera) the same way |
+| `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
+
+Buttons: `A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK DUP DDOWN DLEFT DRIGHT`, and full stick directions `LSTICK_UP` (`_DOWN`, `_LEFT`, `_RIGHT`) and `RSTICK_...`. `#` starts a comment. At the end the log has `coop: test script done`; a bad line is logged as `coop: test script <file>: line N: why` and nothing is played.

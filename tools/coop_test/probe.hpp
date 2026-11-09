@@ -15,13 +15,12 @@
 //
 // Measured, for each other player:
 // - sequence gaps, out-of-order and repeated arrivals on each kind;
-// - 60 times a second, the position shown after interpolation, a fixed delay
-//   behind in server time, against where the path really was then.
+// - 60 times a second, the position coop/presence shows (docs/presence.md,
+//   default settings) against where the path really was at the time shown.
 
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <deque>
 #include <limits>
 #include <map>
 #include <optional>
@@ -29,6 +28,7 @@
 #include <vector>
 
 #include "coop/net/client.hpp"
+#include "coop/presence/presence.hpp"
 #include "path.hpp"
 
 namespace coop::test_tool {
@@ -73,7 +73,8 @@ struct ShownError {
   Spread units;                    // distance shown to true, game units
   std::uint64_t interpolated = 0;  // frames between two samples
   std::uint64_t extrapolated = 0;  // frames past the last sample, within the limit
-  std::uint64_t held = 0;          // frames past the limit: the puppet holds
+  std::uint64_t held = 0;          // frames past the limit: the puppet holds and fades
+  std::uint64_t hidden = 0;        // held frames faded right out (fade 0)
 
   ShownError& operator+=(const ShownError& other);
 };
@@ -133,7 +134,6 @@ class Probe {
     SequenceTracker reliable;
     SequenceTracker unreliable;
     SequenceTracker samples;
-    std::deque<PathPoint> buffer;  // by time, at most kSampleBuffer
     ShownError shown;
   };
 
@@ -149,6 +149,7 @@ class Probe {
   ProbeConfig config_;
   net::Client client_;
   std::map<std::uint8_t, Remote> remotes_;
+  presence::Presence presence_;
   // Counts from senders that left, or from before this probe was dropped.
   SequenceCounts archived_reliable_;
   SequenceCounts archived_unreliable_;

@@ -22,10 +22,11 @@ if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
 $current = Read-CoopIni $ini
 $ask = $Mode -eq 'change'
-$askServer = $ask -or $Mode -eq 'join'
+$serverGiven = [bool]$Server
+$askServer = $ask -or ($Mode -eq 'join' -and -not $serverGiven)
 if ($Mode -eq 'host') { $Server = '127.0.0.1' }
 if (-not $Server) { $Server = $current.server }
-if ($Mode -eq 'join' -and $Server -match '^(127\.|localhost)') { $Server = '' }
+if ($Mode -eq 'join' -and -not $serverGiven -and $Server -match '^(127\.|localhost)') { $Server = '' }
 if (-not $Name) { $Name = $current.name }
 if (-not $Port) { $Port = if ($current.port) { $current.port } else { '@PORT@' } }
 
@@ -56,7 +57,7 @@ Write-Host "Co-op: server $Server, port $Port, name $Name   (play.cmd change to 
 
 $user = Join-Path $emu 'user'
 if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
-    Write-Host "No keys in $user\keys yet. TESTING.md says what goes where."
+    Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
 }
 if ($Mode -eq 'host') {
     $serverExe = Join-Path $kit 'server\coop_server.exe'

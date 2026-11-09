@@ -78,6 +78,22 @@ try {
     $same = Merge-KitOptions $mine ([string[]]@('LICHII_COOP_PUPPET=1')) 'v0.1.0-test3'
     Check ($same.Count -eq $mine.Count) 'nothing new, nothing added'
 
+    # --- Order, paths and addresses
+    $order = Get-KitInstallOrder @('VERSION.txt', 'Host.bat', 'MANIFEST.txt', 'emulator\lichii.exe', 'scripts\play.ps1')
+    Check ($order[-1] -eq 'VERSION.txt') 'VERSION.txt is written last'
+    Check ($order[-2] -eq 'MANIFEST.txt') 'MANIFEST.txt just before it'
+    Check ($order.Count -eq 5 -and $order[0] -eq 'Host.bat') 'the rest keep their order'
+    foreach ($p in 'tools\gone.txt', 'emulator\old.dll', 'a/b.txt') { Check (Test-KitRelativePath $p) "a plain kit path: $p" }
+    foreach ($p in '..\outside.txt', 'tools\..\..\x', 'C:\Windows\x', '\\server\share\x', '\root.txt', 'tools\.\x', 'a\\b', '') {
+        Check (-not (Test-KitRelativePath $p)) "not a plain kit path: '$p'"
+    }
+    $ok = 'https://github.com/daurosk/oot-remake-multiplayer/releases/download/v0.1.0-test3/oot-coop-v0.1.0-test3.zip'
+    Check (Test-KitDownloadUrl $ok 'daurosk/oot-remake-multiplayer') 'a download of this project''s releases'
+    foreach ($u in 'https://github.com/someone/else/releases/download/v1/x.zip', 'http://github.com/daurosk/oot-remake-multiplayer/releases/download/v1/x.zip',
+                   '\\server\share\x.zip', 'C:\x.zip', 'https://github.com/daurosk/oot-remake-multiplayer/releases/download/../../x',
+                   'https://example.com/daurosk/oot-remake-multiplayer/releases/download/v1/x.zip') {
+        Check (-not (Test-KitDownloadUrl $u 'daurosk/oot-remake-multiplayer')) "not fetched: $u"
+    }
     # --- Whole updates of a fake kit
     function Write-File([string]$Path, [string]$Text) {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
@@ -196,6 +212,51 @@ try {
     Check ((Get-KitVersion $kit) -eq 'v0.1.0-test2') 'VERSION.txt is the old one'
     Test-PlayerKept $kit 'rolled back'
 
+    # A damaged MANIFEST.txt never removes anything outside the kit or a folder.
+    $kit = Join-Path $tmp 'kit5'; New-OldKit $kit
+    Write-File "$tmp\outside.txt" 'outside the kit'
+    Write-File "$kit\tools\folder\inside.txt" 'in a folder'
+    Write-File "$kit\MANIFEST.txt" "..\outside.txt`r`n$tmp\outside.txt`r`ntools\folder`r`ntools\gone.txt`r`n"
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0) 'update with a damaged MANIFEST.txt ran'
+    Check ((Read-File "$tmp\outside.txt") -eq 'outside the kit') 'a file outside the kit is not removed'
+    Check ((Read-File "$kit\tools\folder\inside.txt") -eq 'in a folder') 'a folder is not removed'
+    Check (-not (Test-Path "$kit\tools\gone.txt")) 'a plain listed file is removed'
+
+    # An update that stopped half way (window closed, power cut): VERSION.txt is still the old
+    # one, update-in-progress.txt is there, and the next run finishes it.
+    $kit = Join-Path $tmp 'kit6'; New-OldKit $kit
+    Write-File "$kit\Host.bat" 'new host'
+    Write-File "$kit\update-in-progress.txt" 'Update.bat was updating this kit'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Check -Api $good 2>&1
+    Check (($out -join ' ') -match 'did not finish') '-Check says an update did not finish'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'Updated to v0\.1\.0-test3') 'the next run finishes a stopped update'
+    Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'the emulator is the new one'
+    Check (-not (Test-Path "$kit\update-in-progress.txt")) 'the marker is gone'
+    Test-PlayerKept $kit 'finished update'
+    # Stopped after VERSION.txt was written but before the marker went: done again too.
+    $kit = Join-Path $tmp 'kit7'; New-OldKit $kit
+    Write-File "$kit\VERSION.txt" "kit: oot-coop-v0.1.0-test3 (release v0.1.0-test3)`r`n"
+    Write-File "$kit\update-in-progress.txt" 'Update.bat was updating this kit'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -notmatch 'newest version' -and (Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'a marker with the new VERSION.txt is done again, not "newest"'
+    Check (-not (Test-Path "$kit\update-in-progress.txt")) 'and the marker is gone'
+
+    # A running emulator lets others read its exe but not write it: the backup works, the
+    # write fails after other files were written, and everything is put back.
+    $kit = Join-Path $tmp 'kit8'; New-OldKit $kit
+    $lock = [System.IO.File]::Open("$kit\emulator\lichii.exe", 'Open', 'Read', 'Read')
+    try {
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    } finally { $lock.Dispose() }
+    Check ($LASTEXITCODE -ne 0 -and ($out -join ' ') -match 'old files are back') 'a write that fails half way is rolled back'
+    Check ((Read-File "$kit\Host.bat") -eq 'old host') 'a file written before it is the old one again'
+    Check ((Read-File "$kit\backup-v0.1.0-test2\emulator\lichii.exe") -eq 'old exe') 'the locked file was backed up'
+    Check ((Get-KitVersion $kit) -eq 'v0.1.0-test2') 'VERSION.txt is the old one'
+    Check (-not (Test-Path "$kit\update-in-progress.txt")) 'no marker after a clean rollback'
+    Check (-not (Test-Path "$kit\scripts\new.ps1")) 'the new file is gone again'
+    Test-PlayerKept $kit 'rolled back after a write'
     # The one-file Update.bat, dropped into an old kit that has no scripts\update.ps1.
     $kit = Join-Path $tmp 'kit 4 (with spaces)'; New-OldKit $kit
     & (Join-Path $release 'make_update_bat.ps1') -Out "$kit\Update.bat"

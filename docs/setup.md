@@ -71,7 +71,7 @@ Every player needs the same version: a game of one version cannot join a server 
 
 **A v0.1.0-test2 kit** has no `Update.bat` yet: download `Update.bat` from the newest release once, put it in the kit folder beside `Host.bat`, and double-click it (Windows may warn about a file from the internet the first time: **More info**, then **Run anyway**). From then on the kit has its own. (Or download the whole zip once more and copy your `emulator\user` folder into it.)
 
-What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, your name and server, the puppet pack), `logs\`, any file of yours that is not part of the kit, and `coop-options.ini`: your switches stay as they are, and a switch the new version adds is written at the end behind a `#` (off). Every file it replaces goes first to `backup-<old version>\` in the kit folder; if something fails half way, those are put back. Delete the backup folder once the new version works.
+What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, your name and server, the puppet pack), `logs\`, any file of yours that is not part of the kit, and `coop-options.ini`: your switches stay as they are, and a switch the new version adds is written at the end behind a `#` (off). Every file it replaces goes first to `backup-<old version>\` in the kit folder; if something fails half way, those are put back. If the update is stopped (window closed, power cut), run `Update.bat` again: it finishes it (Host.bat and Join.bat remind you). Delete the backup folder once the new version works.
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
 

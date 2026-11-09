@@ -12,7 +12,9 @@
 # is newer, it downloads the release's zip, checks it against the SHA-256 published beside it
 # (oot-coop-<version>.zip.sha256), unpacks it to a temp folder and copies the kit's own files
 # over this kit. Every file it replaces is first copied to backup-<old version>\; if anything
-# fails, those are put back and the new files removed.
+# fails, those are put back and the new files removed. VERSION.txt is written last, and
+# update-in-progress.txt marks an update that has started: an update that was stopped half way
+# (window closed, power cut) is done again by the next run.
 #
 # Never touched: emulator\user\ (keys, firmware, saves, settings, coop.ini with your name and
 # server, the puppet pack), logs\, backup-*\ and every file that is not part of the kit.
@@ -31,6 +33,7 @@ param(
 )
 
 $UserAgent = 'oot-coop-updater'
+$InProgress = 'update-in-progress.txt'
 
 # --- Versions ---------------------------------------------------------------------------
 
@@ -93,6 +96,11 @@ function Get-KitVersion([string]$KitDir) {
     return ''
 }
 
+# True when an update of this kit started and did not finish.
+function Test-KitUnfinished([string]$KitDir) {
+    return Test-Path -LiteralPath (Join-Path $KitDir $InProgress)
+}
+
 # --- Releases ---------------------------------------------------------------------------
 
 function Read-KitReleaseList([string]$Source) {
@@ -123,6 +131,14 @@ function Select-KitRelease($Releases) {
     return $best
 }
 
+# True for a download address of this repository's own releases. Outside tests nothing else
+# is fetched, so an odd address in the list can never make the updater read a local or
+# network path.
+function Test-KitDownloadUrl([string]$Url, [string]$RepoName) {
+    $prefix = "https://github.com/$RepoName/releases/download/"
+    return $Url.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and $Url -notmatch '[\\]|/\.\.?(/|$)'
+}
+
 function Get-KitDownload([string]$From, [string]$To) {
     if ($From -notmatch '^https?://') { Copy-Item -LiteralPath $From -Destination $To; return }
     $old = $ProgressPreference
@@ -151,10 +167,29 @@ function Test-KitPlayerPath([string]$Rel) {
     return $false
 }
 
+# True for a plain path inside the kit: not rooted, no drive, no '.' or '..' part. A line of
+# an old MANIFEST.txt that is not one is never acted on.
+function Test-KitRelativePath([string]$Rel) {
+    if (-not $Rel -or $Rel.Contains(':') -or [System.IO.Path]::IsPathRooted($Rel)) { return $false }
+    foreach ($part in $Rel.Replace('/', '\').Split('\')) {
+        if ($part -eq '' -or $part -eq '.' -or $part -eq '..') { return $false }
+    }
+    return $true
+}
+
 # Files of a kit folder, as kit-relative paths.
 function Get-KitFiles([string]$Dir) {
     $root = [System.IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
     return @(Get-ChildItem -LiteralPath $Dir -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($root.Length) })
+}
+
+# The order files are written in: VERSION.txt and MANIFEST.txt last, so a kit whose update
+# stopped half way never says it is the new version.
+function Get-KitInstallOrder([string[]]$Files) {
+    $last = @('MANIFEST.txt', 'VERSION.txt')
+    $first = @($Files | Where-Object { $last -notcontains $_ })
+    $end = @($last | Where-Object { $Files -contains $_ })
+    return [string[]](@($first) + @($end))
 }
 
 # The switch names a coop-options.ini mentions, set or behind a '#'.
@@ -232,17 +267,18 @@ function Get-KitUnpackedRoot([string]$Dir) {
 # Backup first; on failure everything is put back. Returns the number of files written.
 function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [string]$Version) {
     $NewKit = [System.IO.Path]::GetFullPath($NewKit).TrimEnd('\')
-    $newFiles = @(Get-KitFiles $NewKit | Where-Object { -not (Test-KitPlayerPath $_) })
+    $newFiles = Get-KitInstallOrder @(Get-KitFiles $NewKit | Where-Object { -not (Test-KitPlayerPath $_) })
     # Files of the old kit that the new one no longer has: only those the old kit's
-    # MANIFEST.txt lists (a kit before this updater has none, so nothing is removed).
+    # MANIFEST.txt lists (a kit before this updater has none, so nothing is removed), and
+    # only plain files inside the kit.
     $gone = @()
     $manifest = Join-Path $KitDir 'MANIFEST.txt'
     if (Test-Path -LiteralPath $manifest) {
         $keep = @{}
         foreach ($f in $newFiles) { $keep[$f.ToLowerInvariant()] = $true }
-        $gone = @([System.IO.File]::ReadAllLines($manifest) | Where-Object {
-            $_ -and -not $_.StartsWith('#') -and -not (Test-KitPlayerPath $_) -and -not $keep.ContainsKey($_.ToLowerInvariant()) -and
-            (Test-Path -LiteralPath (Join-Path $KitDir $_))
+        $gone = @([System.IO.File]::ReadAllLines($manifest) | ForEach-Object { $_.Trim() } | Where-Object {
+            $_ -and -not $_.StartsWith('#') -and (Test-KitRelativePath $_) -and -not (Test-KitPlayerPath $_) -and
+            -not $keep.ContainsKey($_.ToLowerInvariant()) -and (Test-Path -LiteralPath (Join-Path $KitDir $_) -PathType Leaf)
         })
     }
     # A changed puppet pack tool means the pack should be made again (make-puppet-pack.cmd).
@@ -258,7 +294,10 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
     }
     $saved = New-Object System.Collections.Generic.List[string]    # backed up (replaced or removed)
     $created = New-Object System.Collections.Generic.List[string]  # new, nothing to put back
+    $marker = Join-Path $KitDir $InProgress
     try {
+        # From here until the end, the kit is between two versions.
+        [System.IO.File]::WriteAllText($marker, "Update.bat was updating this kit to $Version. Run Update.bat again to finish it.`r`n")
         foreach ($rel in @($newFiles) + @($gone)) {
             $dest = Join-Path $KitDir $rel
             if (Test-Path -LiteralPath $dest) {
@@ -267,12 +306,6 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
                 Copy-Item -LiteralPath $dest -Destination $b -Force
                 $saved.Add($rel)
             }
-        }
-        foreach ($rel in $newFiles) {
-            $dest = Join-Path $KitDir $rel
-            if (-not $saved.Contains($rel)) { $created.Add($rel) }
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
-            Copy-Item -LiteralPath (Join-Path $NewKit $rel) -Destination $dest -Force
         }
         foreach ($rel in $gone) { Remove-Item -LiteralPath (Join-Path $KitDir $rel) -Force }
         # The player's options: kept, with the new switches added behind '#'.
@@ -295,12 +328,35 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
             $d = Join-Path $KitDir $_.FullName.Substring($NewKit.Length + 1)
             if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
         }
+        # The kit's files, VERSION.txt last (Get-KitInstallOrder).
+        foreach ($rel in $newFiles) {
+            $dest = Join-Path $KitDir $rel
+            if (-not $saved.Contains($rel)) { $created.Add($rel) }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $NewKit $rel) -Destination $dest -Force
+        }
+        Remove-Item -LiteralPath $marker -Force
     } catch {
         $why = $_
-        foreach ($rel in $created) { Remove-Item -LiteralPath (Join-Path $KitDir $rel) -Force -ErrorAction SilentlyContinue }
-        foreach ($rel in $saved) {
-            Copy-Item -LiteralPath (Join-Path $Backup $rel) -Destination (Join-Path $KitDir $rel) -Force -ErrorAction SilentlyContinue
+        $lost = New-Object System.Collections.Generic.List[string]
+        foreach ($rel in $created) {
+            try { Remove-Item -LiteralPath (Join-Path $KitDir $rel) -Force -ErrorAction Stop } catch { $lost.Add($rel) }
         }
+        foreach ($rel in $saved) {
+            $from = Join-Path $Backup $rel
+            $to = Join-Path $KitDir $rel
+            try {
+                # A file the failed write never changed (a running emulator's exe) is fine as it is.
+                if ((Test-Path -LiteralPath $to) -and (Get-FileHash -LiteralPath $to).Hash -eq (Get-FileHash -LiteralPath $from).Hash) { continue }
+                Copy-Item -LiteralPath $from -Destination $to -Force -ErrorAction Stop
+            } catch { $lost.Add($rel) }
+        }
+        if ($lost.Count) {
+            throw ("Updating failed ($why), and these could not be put back: $(($lost | Select-Object -First 5) -join ', ')" +
+                   $(if ($lost.Count -gt 5) { " and $($lost.Count - 5) more" } else { '' }) +
+                   ". Copy the files in $Backup back into the kit by hand, or run Update.bat again.")
+        }
+        Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
         throw "Updating failed, the old files are back in place: $why"
     }
     return $newFiles.Count
@@ -316,10 +372,15 @@ function Invoke-KitUpdate {
         throw "$dir is not a co-op kit (no emulator folder). Put Update.bat in the kit folder, beside Host.bat."
     }
     $mine = Get-KitVersion $dir
+    $unfinished = Test-KitUnfinished $dir
     $have = if ($mine) { $mine } else { 'a test build' }
     $list = if ($Api) { $Api } else { "https://api.github.com/repos/$Repo/releases?per_page=30" }
 
     if ($Check) {
+        if ($unfinished) {
+            Write-Host 'An update of this kit did not finish: close the games and run Update.bat.'
+            return 0
+        }
         try { $newest = Select-KitRelease (Read-KitReleaseList $list) } catch { return 0 }
         if ($newest -and (Compare-KitVersion $newest.Tag $mine) -gt 0) {
             Write-Host "A new version is out: $($newest.Tag) (you have $have). Close the games and run Update.bat."
@@ -329,10 +390,16 @@ function Invoke-KitUpdate {
 
     Write-Host "Kit: $dir"
     Write-Host "This kit: $have"
+    if ($unfinished) { Write-Host 'An update of this kit did not finish: it is done again now.' }
     Write-Host 'Looking for the newest release...'
     $newest = Select-KitRelease (Read-KitReleaseList $list)
     if (-not $newest) { Write-Host 'No release with a kit was found.'; return 1 }
-    if ((Compare-KitVersion $newest.Tag $mine) -le 0) {
+    if (-not $Api) {
+        foreach ($u in $newest.Zip, $newest.Sum) {
+            if (-not (Test-KitDownloadUrl $u $Repo)) { throw "The release list names a download outside this project's releases: $u" }
+        }
+    }
+    if (-not $unfinished -and (Compare-KitVersion $newest.Tag $mine) -le 0) {
         Write-Host "You have the newest version ($mine)."
         return 0
     }

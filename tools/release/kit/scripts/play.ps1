@@ -21,10 +21,16 @@ $template = Join-Path $PSScriptRoot 'coop.ini.template'
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
 # A newer release? One short question to GitHub; nothing is shown when there is none or no
-# network. Update.bat does the update.
+# network. Update.bat does the update. Given 6 s at most: a slow name lookup or proxy search
+# is not bounded by the request's own timeout, so the check is stopped when it takes longer.
 $updater = Join-Path $PSScriptRoot 'update.ps1'
 if (Test-Path $updater) {
-    try { & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $updater -Check -Kit $kit } catch { }
+    try {
+        $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        $check = Start-Process -FilePath $ps -NoNewWindow -PassThru -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$updater`"", '-Check', '-Kit', "`"$kit`"")
+        if (-not $check.WaitForExit(6000)) { $check.Kill() }
+    } catch { }
 }
 
 $current = Read-CoopIni $ini

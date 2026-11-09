@@ -354,6 +354,46 @@ Kakariko Village (child), Fritchii v5 coop build, two local instances on one ser
 
 Not yet seen: animation (the puppet stands in its default pose), rotation in the picture, a scene change with two instances, adult Link. Animation playback and the scene filter are built since (unit tests on fake memory); not yet run in the game.
 
+## Pose
+
+Full-body copy, built because playing the same AS command left the legs slower and stiffer than the body (Caleb's test, 2026-11-09). Each frame the puppet takes the other player's whole skeleton, as Anchor's dummy player does on N64 (idea only, no code). Position and rotation still come from `PLAYER_SAMPLE` and the follow fix above.
+
+### Where the skeleton is
+
+Read with the emulator's debug server (`EDEN_NX2_DEBUG_SERVER`, `read_memory` and `search_memory`) in the running game, Kakariko, child, 2026-11-09. Checked means seen in memory there; the code that writes it was not read.
+
+| Item | Where | Status |
+|---|---|---|
+| Model object (nn::g3d `ModelObj`) | actor +0x270, then +0x0, +0x60, +0x18; the model object sits inline at +0x120 of that, its first word points to the model resource (`FMDL`, name `Player_Child`) | Checked |
+| Skeleton object | model object +0x20; its first word points to the skeleton resource (`FSKL`) | Checked |
+| Bone count | skeleton object +0x48, u16: 309 for `Player_Child` (the resource has it at +0x38) | Checked |
+| Local transforms | skeleton object +0x18, a pointer to bone count entries of 0x60 bytes | Checked |
+| World matrices | skeleton object +0x20 | Seen, not used |
+
+One local transform (0x60 bytes): u32 flags at +0x0 (bits 23 to 30 change with the pose; +0x4 to +0xc stay 0), scale 3 x f32 at +0x10, the rotation as 3 rows of 4 floats at +0x20 (the fourth of each row 0), the translation 3 x f32 at +0x50. Every rotation read was orthonormal.
+
+While Link walked (150 frames), 117 bones changed rotation, 42 translation (bones 1 to 3 are the root and hips) and 11 scale; the flags changed on most of the animated bones. Largest translation 0.58, largest scale 1.01: both fit the protocol's s16 in 1/8192.
+
+A second `Player_Child` model object is in memory (not reached from the player actor); it is not used.
+
+### What the hook does
+
+`lichii/hook/coop_pose.{h,cpp}`, called by the puppet director once a frame on the calc thread (`Director::PoseFrame`, the cave's first SVC of the frame):
+
+1. Finds our player (the same chain as `PlayerReader`), walks to its skeleton and reads all local transforms. The first read is kept; a bone's rotation, translation or scale is counted as moving once it differs from that read by more than 1e-4 (rotation also when its flags change), and stays counted. The moving bones, with their flag byte (bits 23 to 30), are the pose.
+2. The network thread sends it as `PLAYER_POSE` ([protocol.md](protocol.md)) at most 30 times a second, when a new one was read.
+3. A received pose goes to that player's track. Each frame the puppet shows the last two blended (normalised lerp of the rotations, lerp of the rest), one send interval behind, so 30 a second plays smooth at 60 frames.
+4. For each live puppet with the same bone count, the shown pose is written into its local transforms: the rows of the rotation, the translation and scale, and the flag bits. Bones not in the pose are left as the puppet's own animation has them.
+
+The debug puppet (`LICHII_COOP_DEBUG_PUPPET=1`) copies our own pose when `LICHII_COOP_DEBUG_POSE=1` is set too, so one game shows whether the copy works.
+
+`LICHII_COOP_DEBUG_POSE=1` logs a line a second: `pose: <bones> bones, <n> moving; <s> sent/s, <r> received/s, <w> written/s, <x> refused/s; last write kept <k>, overwritten <o>`. "Kept" and "overwritten" compare one written bone with what the puppet holds a frame later: overwritten means the game's own animation writes the local transforms after our write, and the copy cannot show.
+
+### Not done (pose)
+
+1. Run in the game: does the write show (kept, and the puppet matches in screenshots), with and without the AS command also played on the puppet.
+2. The skeleton id is only the bone count; child and adult differ in it, which is what a mismatch would be.
+3. Adult Link's skeleton was not read (only `Player_Child`).
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.

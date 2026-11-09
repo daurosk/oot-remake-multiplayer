@@ -250,6 +250,7 @@ private:
     enum class Pending { none, malloc, create, take, drop, remove, play, frame, sync, equip };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
+    void PoseFrame(Guest& guest, std::uint64_t now_ms);
     void Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms);
     std::optional<Call> Next(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Create(Slot& slot, const Target& target, Guest& guest);

@@ -866,7 +866,7 @@ TEST_CASE("a reader without the new types skips them") {
   CHECK(stage0_decode(must_encode(Chat{0, "hi"}), back) == Error::none);
   // And this build in turn skips a type newer than itself.
   Bytes future;
-  put_u16(future, 26);
+  put_u16(future, 27);
   put_u16(future, 0);
   CHECK(decode_bytes(future) == Error::unknown_type);
 }
@@ -1060,4 +1060,44 @@ TEST_CASE("an object sample needs its time component, and skips unknown ones") {
   no_time.erase(no_time.begin() + at, no_time.begin() + at + 16);
   fix_length(no_time);
   CHECK(decode_bytes(no_time) == Error::missing_component);
+}
+
+TEST_CASE("player pose has its number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::player_pose) == 26);
+  CHECK(channel_of(MessageType::player_pose) == kChannelPlayerSamples);
+  CHECK_FALSE(allowed_on_channel(MessageType::player_pose, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::player_pose));
+  Message p = PlayerPose{0, {5, 6}, 9, {}};
+  CHECK(check_received(p, Sender::client, kChannelPlayerSamples) == Error::none);
+  CHECK(set_sender(p, 2));
+  CHECK(sender_of(p) == 2);
+  PoseBone bone{4, 0x10, std::array<std::int16_t, 4>{1, 2, 3, -1}, std::nullopt,
+                std::array<std::int16_t, 3>{5, 6, 7}};
+  const Bytes b = must_encode(PlayerPose{0, {5, 6}, 9, {bone}});
+  // header, player, time 12, skeleton 4, count 2; bone 2, parts 1, flags 1, rotation 8, scale 6
+  REQUIRE(b.size() == kHeaderSize + 1 + 12 + 4 + 2 + 4 + 8 + 6);
+  CHECK(b[kHeaderSize + 19] == 4);     // the bone, little-endian
+  CHECK(b[kHeaderSize + 21] == 0x05);  // rotation and scale
+  CHECK(b[kHeaderSize + 22] == 0x10);  // flags
+  CHECK(b[kHeaderSize + 29] == 0xff);  // w = -1
+}
+
+TEST_CASE("bad player poses are refused") {
+  Bytes out;
+  PlayerPose p;
+  p.bones.resize(kMaxPoseBones + 1);
+  for (std::size_t i = 0; i < p.bones.size(); ++i) p.bones[i].bone = static_cast<std::uint16_t>(i);
+  CHECK(encode(p, out) == Error::bad_value);
+  p.bones = {PoseBone{2}, PoseBone{2}};  // not increasing
+  CHECK(encode(p, out) == Error::bad_value);
+  p.bones = {PoseBone{static_cast<std::uint16_t>(kMaxPoseBones)}};
+  CHECK(encode(p, out) == Error::bad_value);
+  p.bones = {PoseBone{1, 0, std::array<std::int16_t, 4>{std::numeric_limits<std::int16_t>::min(), 0, 0, 0}}};
+  CHECK(encode(p, out) == Error::bad_value);
+  // An unknown part bit is refused on decode.
+  p.bones = {PoseBone{1}};
+  Bytes b = must_encode(p);
+  b[kHeaderSize + 21] = 0x08;
+  Message m;
+  CHECK(decode(b, m) == Error::bad_value);
 }

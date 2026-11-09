@@ -49,6 +49,7 @@
 #include "coop_chat.h"
 #include "coop_flags.h"
 #include "coop_objects.h"
+#include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
 
@@ -119,6 +120,13 @@ const char* WhyText(coop::overlay::Why why) {
 
 using Clock = std::chrono::steady_clock;
 
+// The calc thread's clock (coop_svc.cpp), so pose times line up.
+std::uint64_t SteadyMs() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch())
+            .count());
+}
+
 std::string Hex(const std::array<u8, 0x20>& id, std::size_t bytes) {
     std::string out;
     char buf[3];
@@ -187,8 +195,11 @@ public:
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
             Log(event);
             CoopPuppet::OnEvent(event);
+            CoopPose::OnEvent(event, SteadyMs());
             Chat(event, client);
         };
+        CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
+                         EnvFlag("LICHII_COOP_DEBUG_POSE"));
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
         return true;
@@ -562,6 +573,7 @@ private:
         auto last_state = coop::net::State::idle;
         while (!stop_) {
             session_->service();
+            session_->with_client([](coop::net::Client& c) { CoopPose::Send(c, SteadyMs()); });
             RoomView room = session_->with_client([&](coop::net::Client& c) {
                 return RoomView{c.state(), c.player_number(), c.round_trip_us(), c.players(),
                                 note_};

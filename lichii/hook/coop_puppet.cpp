@@ -1,6 +1,8 @@
 // Puppets (coop_puppet.h). No emulator code.
 #include "coop_puppet.h"
 
+#include "coop_pose.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -124,6 +126,7 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
                                    std::uint64_t now_ms) {
     if (!after_call) {
         NewFrame(guest, now_ms);
+        PoseFrame(guest, now_ms);
     } else if (pending_ != Pending::none) {
         Finish(guest, result, now_ms);
     }
@@ -141,6 +144,18 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
         }
     }
     return std::nullopt;
+}
+
+// Once a frame, the full-body pose copy (coop_pose.cpp): our skeleton is
+// read and each live puppet's is written.
+void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
+    std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets;
+    for (const auto& slot : slots_) {
+        if (slot.phase == Phase::live && slot.actor != 0) {
+            puppets.emplace_back(slot.number, slot.actor);
+        }
+    }
+    CoopPose::OnCalcFrame(guest, input_.main_base, puppets, now_ms);
 }
 
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {

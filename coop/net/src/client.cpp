@@ -107,6 +107,7 @@ std::string_view to_string(EventKind kind) {
     case EventKind::join_refused: return "join refused";
     case EventKind::join_timed_out: return "join timed out";
     case EventKind::host_changed: return "host changed";
+    case EventKind::player_equip: return "player equip";
   }
   return "unknown";
 }
@@ -436,6 +437,11 @@ bool Client::apply_room(const proto::Message& message, std::uint8_t channel,
     event.kind = EventKind::player_joined;
     event.player = joined->player_number;
     event.nickname = joined->nickname;
+    // The newcomer has not seen what we wear.
+    if (const Player* self = find_player(player_number_); self && self->equipment) {
+      send_raw(proto::PlayerEquip{proto::kPlayerSelf, *self->equipment},
+               proto::channel_of(proto::MessageType::player_equip));
+    }
   } else if (const auto* left = std::get_if<proto::PlayerLeft>(&message)) {
     const Player* known = find_player(left->player_number);
     if (known == nullptr || known->self) return false;
@@ -452,6 +458,14 @@ bool Client::apply_room(const proto::Message& message, std::uint8_t channel,
     event.kind = EventKind::player_status;
     event.player = status->player_number;
     event.status_flags = status->flags;
+  } else if (const auto* equip = std::get_if<proto::PlayerEquip>(&message)) {
+    Player* known = player_entry(equip->player_number);
+    if (known == nullptr || known->self) return false;
+    known->equipment = proto::merge_equipment(known->equipment.value_or(proto::Equipment{}),
+                                              equip->equipment);
+    event.kind = EventKind::player_equip;
+    event.player = equip->player_number;
+    event.equipment = *known->equipment;
   } else if (const auto* chat = std::get_if<proto::Chat>(&message)) {
     const Player* known = find_player(chat->player_number);
     if (known == nullptr || known->self) return false;
@@ -530,6 +544,12 @@ bool Client::send_on(const proto::Message& message, std::uint8_t channel) {
   if (!send_raw(message, channel)) return false;
   if (const auto* status = std::get_if<proto::PlayerStatus>(&message)) {
     if (Player* self = player_entry(player_number_)) self->status = status->flags;
+  }
+  if (const auto* equip = std::get_if<proto::PlayerEquip>(&message)) {
+    if (Player* self = player_entry(player_number_)) {
+      self->equipment = proto::merge_equipment(self->equipment.value_or(proto::Equipment{}),
+                                               equip->equipment);
+    }
   }
   return true;
 }

@@ -44,7 +44,7 @@ Each rule answers a way the TotK online sync was seen to break.
 - A body made of components lists them as `u16 component_id`, `u16 length`, data. A reader skips any id it does not know. A known component must have exactly its length (below) and may appear only once.
 - Strings are `u16 length` + UTF-8 bytes, no terminator, with a maximum per field counted in characters (code points). The UTF-8 must be valid (no overlong forms, no surrogates, nothing past U+10FFFF) and hold no control characters (U+0000 to U+001F, U+007F to U+009F). A string is also never more than 4 bytes a character.
 - Floats must be finite: NaN and infinity are refused.
-- Player numbers are 1 to 4. `PLAYER_STATUS`, `CHAT` and `PLAYER_SAMPLE` start with a `u8` player field: a client always sends 0 ("me"), and the server writes in the sender's number (1 to 4), which it knows from the connection, before relaying to the others. A client message with any other value there, or a server one with 0, is refused.
+- Player numbers are 1 to 4. `PLAYER_STATUS`, `CHAT`, `PLAYER_SAMPLE` and `PLAYER_EQUIP` start with a `u8` player field: a client always sends 0 ("me"), and the server writes in the sender's number (1 to 4), which it knows from the connection, before relaying to the others. A client message with any other value there, or a server one with 0, is refused.
 - Times are `u64` microseconds. `PING` and `PONG` carry the sender's own clock, which is how the offset is found (below). Every other time is on the server clock: `WELCOME` carries the server's own, and a sample (`PLAYER_SAMPLE`, and later `OBJECT_SAMPLE`) carries the sender's estimate of the server clock when the state was taken, worked out from its own clock and its offset. The server relays samples with their time unchanged, so a receiver places another player's sample on the same time line as its own estimate of the server clock. A client sends no sample before it has an offset; the `WELCOME` time gives a first, rough one.
 
 ## Handshake
@@ -91,6 +91,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries |
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
+| 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
 Type numbers are never reused or renumbered; new types are added at the end.
 
@@ -168,6 +169,32 @@ How flags move:
 - A table of more than 3600 flags is split into parts in order, each up to 3600 entries (`split_snapshot` in the code). An empty table is one part with no entries. A table can have at most 65535 parts.
 - The server holds a host sending its table to the same limit as any message on channels 0 to 2 (60 a second, bursts of 120), so a host table of up to about 100 parts (over 360,000 flags) fits one burst. The server's own sends have no such limit.
 
+### Equipment (`PLAYER_EQUIP`)
+
+What a player wears and holds, so the puppet of that player in everyone else's game wears it too ([puppet.md](puppet.md), "Equipment"). On channel 0, reliable: it changes seldom and must not be lost, unlike a sample.
+
+Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a known one at most once and of exactly its length):
+
+| Id | Name | Data | Read from |
+|---|---|---|---|
+| 1 | `weapon` | string, up to 64 characters | `PlayerStatus.EquipWeapon` |
+| 2 | `shield` | string | `PlayerStatus.EquipShield` |
+| 3 | `armor` | string (the tunic) | `PlayerStatus.EquipArmor` |
+| 4 | `boots` | string | `PlayerStatus.EquipBoot` |
+| 5 | `head` | string (a mask, or head armor) | `PlayerStatus.EquipHeadArmor` |
+| 6 | `hand` | string (gauntlets) | `PlayerStatus.EquipHandArmor` |
+| 7 | `ocarina` | string | `PlayerStatus.EquipOcarina` |
+| 8 | `arrow` | string | `PlayerStatus.EquipArrow` |
+| 9 | `drawn` | `u8`: bit *i* set when the player's equipment slot *i* is drawn (in hand), clear when sheathed or empty | the EquipmentUser component |
+
+Each string is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
+
+How it moves:
+
+- A build sends `PLAYER_EQUIP` with every component it can read on its first frame once welcomed, then whenever any of them changes (a field that fails to read for a frame is not a change), and again after a reconnect.
+- The server relays it to everyone else like `CHAT`, with the sender's number in the player field. It keeps nothing.
+- Every build keeps the last one it sent, and sends it again when a `PLAYER_JOINED` arrives, so a newcomer sees what everyone already wears.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -178,5 +205,5 @@ How flags move:
 
 - The protocol version goes up whenever a message layout changes in a way an older reader cannot skip.
 - Adding a component or a message type that old readers may ignore does not change the version.
-- Types 12 to 16 (`JOIN_PARTNER`, the flag messages and `HOST`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags.
+- Types 12 to 17 (`JOIN_PARTNER`, the flag messages, `HOST` and `PLAYER_EQUIP`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.

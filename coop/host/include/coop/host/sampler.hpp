@@ -1,9 +1,10 @@
 #pragma once
 
-// Builds the local player's PLAYER_SAMPLE and PLAYER_STATUS messages, once per
-// emulated frame, as docs/protocol.md asks: a sample every frame the player
-// moves and at least 4 a second while still, a status on every change. It
-// returns encoded messages; the caller sends them (coop::net::Client).
+// Builds the local player's PLAYER_SAMPLE, PLAYER_STATUS and PLAYER_EQUIP
+// messages, once per emulated frame, as docs/protocol.md asks: a sample every
+// frame the player moves and at least 4 a second while still, a status and
+// the equipment on every change. It returns encoded messages; the caller
+// sends them (coop::net::Client).
 
 #include <cstdint>
 #include <optional>
@@ -45,13 +46,14 @@ class Sampler {
     return frame(reader.read(), server_now_us);
   }
 
-  // After a reconnect: send the status again and start velocity afresh. The
-  // sequence keeps counting.
+  // After a reconnect: send the status and equipment again and start
+  // velocity afresh. The sequence keeps counting.
   void reset();
 
   // The last messages built, for tests and the debug overlay.
   const std::optional<protocol::PlayerSample>& last_sample() const { return last_sent_; }
   std::uint8_t status_flags() const { return flags_; }
+  const std::optional<protocol::Equipment>& last_equipment() const { return equipment_sent_; }
   std::uint32_t next_sequence() const { return sequence_; }
 
  private:
@@ -65,6 +67,7 @@ class Sampler {
   std::optional<PlayerReading> previous_;   // last frame's reading
   std::uint64_t previous_time_us_ = 0;
   std::optional<protocol::PlayerSample> last_sent_;
+  std::optional<protocol::Equipment> equipment_sent_;
 };
 
 }  // namespace coop::host

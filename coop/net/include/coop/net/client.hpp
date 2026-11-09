@@ -60,6 +60,10 @@
 //   1) can come before WELCOME. Up to max_early_messages of them are kept
 //   while waiting for WELCOME and handled right after it.
 //
+// Equipment: a PLAYER_EQUIP from another player updates its players() entry
+// and gives `player_equip`. The last one we sent is sent again to the server
+// whenever another player joins, so the newcomer's puppet of us is dressed.
+//
 // Join partner (stage 1 step 3): request_join() asks to warp to a player and
 // returns the request id; its answer gives `join_accepted` or `join_refused`,
 // and no answer in join_timeout_ms gives `join_timed_out`. Only the latest
@@ -167,6 +171,9 @@ enum class EventKind : std::uint8_t {
   // HOST named a new host, `player`. Follows HOST's `message` event, after
   // our pending flags went out again.
   host_changed,
+  // PLAYER_EQUIP from `player`: `equipment` is what that player now wears,
+  // the fields the message left out kept from before (also in players()).
+  player_equip,
 };
 
 std::string_view to_string(EventKind kind);
@@ -195,6 +202,7 @@ struct Event {
   std::uint16_t request_id = 0;              // join_*
   protocol::JoinTarget join_target;          // join_accepted
   protocol::JoinRefuseReason join_reason{};  // join_refused; raw value kept
+  protocol::Equipment equipment;             // player_equip
 };
 
 // A shared flag's place in the table: a name's hash and array index, or a
@@ -216,6 +224,10 @@ struct Player {
   // sent for ourselves. Nothing until the first.
   std::optional<std::uint8_t> status;
   bool self = false;
+  // What the player wears: the last PLAYER_EQUIP, received or (ours) sent,
+  // each field kept until a message carries it again. Nothing until the
+  // first. Ours is sent again to every player who joins, so they see it.
+  std::optional<protocol::Equipment> equipment;
   bool operator==(const Player&) const = default;
 };
 

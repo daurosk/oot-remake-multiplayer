@@ -33,6 +33,7 @@ struct PlayerReading {
   std::optional<std::string> scene;     // for example "spot00"
   std::optional<bool> event_running;    // an event (cutscene) has control
   std::optional<protocol::Animation> animation;  // AS command in the main slot
+  std::optional<protocol::Equipment> equipment;  // what the player wears
   bool operator==(const PlayerReading&) const = default;
 };
 
@@ -54,11 +55,16 @@ class PlayerReader {
   // protocol::kMaxAnimationChars printable ASCII characters, or the frame or
   // rate is not finite or out of range.
   std::optional<protocol::Animation> read_animation();
+  // What the player has equipped (PlayerStatus.Equip* flags) and which
+  // equipment slots are drawn. Nothing when neither could be read; a field
+  // is nothing when its own read failed.
+  std::optional<protocol::Equipment> read_equipment();
   // The player actor's guest address, after the link choice and id test.
   std::optional<std::uint64_t> find_player_actor();
 
  private:
   std::optional<std::uint64_t> game_ui();
+  std::optional<std::uint8_t> read_drawn();
   GameMemory& memory_;
 };
 

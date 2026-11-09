@@ -10,6 +10,7 @@
 // yet, as the game's 0x20fd90 does.
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <span>
 
 #include "coop/host/flags.hpp"
@@ -49,6 +50,11 @@ class GameFlags {
   std::optional<bool> get_key64(std::uint64_t key);
   // Element `index` of a BoolArray flag. Read only.
   std::optional<bool> get_bool_array(std::uint32_t hash, std::uint32_t index);
+  // A String64 flag (for example PlayerStatus.EquipWeapon, an actor name).
+  // Read only, from the table as 0x3758110 reads it; a write still in the
+  // game's queue is not seen until the game applies it. Nothing when the
+  // text is not 0-terminated within its buffer or not printable ASCII.
+  std::optional<std::string> get_string64(std::uint32_t hash);
 
   // Queues a write as the game's setter does. False when the flag is
   // unknown, the queue is full, the game applied the queue while this was

@@ -94,6 +94,39 @@ inline constexpr std::uint64_t kAsSlotRate = 0xd4;
 // that it is the frame is inferred (the ASFrame plug, see docs/puppet.md).
 inline constexpr std::uint64_t kAsSlotFrame = 0xe8;
 
+// --- Equipment ---------------------------------------------------------------
+// [items] What the player has equipped: String64 flags holding actor names,
+// docs/items.md. Hash = Murmur3 x86 32, seed 0, of the name (checked against
+// protocol::flag_hash in tests/host/reader_test.cpp). Checked in the flag
+// list; that they follow the menu is not run.
+inline constexpr std::uint32_t kEquipWeapon = 0xa95a3521;     // PlayerStatus.EquipWeapon
+inline constexpr std::uint32_t kEquipShield = 0xee463235;     // PlayerStatus.EquipShield
+inline constexpr std::uint32_t kEquipArmor = 0x008d7f0c;      // PlayerStatus.EquipArmor
+inline constexpr std::uint32_t kEquipBoot = 0xd107a85d;       // PlayerStatus.EquipBoot
+inline constexpr std::uint32_t kEquipHeadArmor = 0x59d9c7b3;  // PlayerStatus.EquipHeadArmor
+inline constexpr std::uint32_t kEquipHandArmor = 0x7ce1cb81;  // PlayerStatus.EquipHandArmor
+inline constexpr std::uint32_t kEquipOcarina = 0xb72cd3fc;    // PlayerStatus.EquipOcarina
+inline constexpr std::uint32_t kEquipArrow = 0x3615e379;      // PlayerStatus.EquipArrow
+// [dump] The actor's EquipmentUser component: component table +0x200, as
+// 0x7f7690 reads it (QueryEquipmentUserIsEquipStateDrawnAny, 0x29f1f90).
+// Checked.
+inline constexpr std::uint64_t kComponentsEquipmentUser = 0x200;
+// [dump] EquipmentUser: 8 dynamic equipment slots at +0x20, 0x18 bytes each,
+// holding a link to the equipment actor (holder pointer +0x8, u32 id +0x10,
+// ~0 empty; the holder as in the player link above). A byte per slot at
+// +0x13bc, bit 1 = drawn. 0x4a33c0 walks them so, skipping a slot whose
+// actor is in state 7 to 11 (gone). Checked; that bit 1 means "drawn, not
+// sheathed" is inferred from the query's name.
+inline constexpr std::uint64_t kEquipSlots = 0x20;
+inline constexpr std::uint64_t kEquipSlotStride = 0x18;
+inline constexpr std::uint32_t kEquipSlotCount = 8;
+inline constexpr std::uint64_t kEquipSlotHolder = 0x08;
+inline constexpr std::uint64_t kEquipSlotId = 0x10;
+inline constexpr std::uint64_t kEquipSlotState = 0x13bc;
+inline constexpr std::uint8_t kEquipSlotDrawnBit = 0x2;
+inline constexpr std::uint32_t kActorStateGoneFirst = 7;
+inline constexpr std::uint32_t kActorStateGoneLast = 11;
+
 // --- Banc module: the current scene ---------------------------------------
 // [plan][map] Banc module pointer. Checked (actor-map.md).
 inline constexpr std::uint64_t kBancModulePtr = 0x4e919d0;

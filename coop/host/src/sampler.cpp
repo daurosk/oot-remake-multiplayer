@@ -47,6 +47,7 @@ void Sampler::reset() {
   status_sent_ = false;
   previous_.reset();
   last_sent_.reset();
+  equipment_sent_.reset();
 }
 
 std::optional<Vec3> Sampler::velocity(const PlayerReading& reading, std::uint64_t now) const {
@@ -105,6 +106,16 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
     flags_ = flags;
     status_sent_ = true;
     push(out, protocol::PlayerStatus{protocol::kPlayerSelf, flags_});
+  }
+
+  if (reading->equipment) {
+    const protocol::Equipment now =
+        equipment_sent_ ? protocol::merge_equipment(*equipment_sent_, *reading->equipment)
+                        : *reading->equipment;
+    if (now != equipment_sent_) {
+      push(out, protocol::PlayerEquip{protocol::kPlayerSelf, now});
+      equipment_sent_ = now;
+    }
   }
 
   if (should_send(*reading, server_now_us)) {

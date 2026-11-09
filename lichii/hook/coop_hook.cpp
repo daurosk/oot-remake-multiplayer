@@ -37,6 +37,7 @@
 #include "core/loader/loader.h"
 #include "core/memory.h"
 
+#include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop/host/scene.hpp"
@@ -47,10 +48,12 @@
 #include "coop/version.hpp"
 #include "coop_camera.h"
 #include "coop_chat.h"
+#include "coop_cheats.h"
 #include "coop_flags.h"
 #include "coop_objects.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
+#include "coop_testinput.h"
 
 namespace CoopHook {
 namespace {
@@ -188,6 +191,7 @@ public:
             Log(event);
             CoopPuppet::OnEvent(event);
             Chat(event, client);
+            CoopObjects::OnEvent(event);
         };
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
@@ -214,12 +218,20 @@ public:
 
         // The game's flags, when it is the right game and a list is shared.
         std::optional<EmulatorMemory> memory;
-        std::optional<coop::host::GameFlagStore> store;
+        // Item flags are merged, not overwritten (ItemFlagStore, docs/items.md).
+        std::optional<coop::host::GameFlagStore> game_store;
+        std::optional<coop::host::ItemFlagStore> store;
         if (view.game) {
             memory.emplace(system.ApplicationMemory(), base_);
             flag_debug_.Frame(*memory);
+            if (sharing_ || cheats_) {
+                game_store.emplace(*memory);
+            }
+            if (cheats_) {
+                CoopCheats::Frame(*game_store);
+            }
             if (sharing_) {
-                store.emplace(*memory);
+                store.emplace(*game_store);
             }
         }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
@@ -246,6 +258,8 @@ public:
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
                             reading && reading->event_running.value_or(false),
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
+                           report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);
@@ -743,6 +757,8 @@ private:
     // client and locks it, so neither is touched directly after that.
     std::unique_ptr<coop::net::Client> client_;
     std::unique_ptr<coop::host::Session> session_;
+    // Debug item cheats (coop_cheats.h, LICHII_COOP_CHEATS).
+    const bool cheats_ = CoopCheats::On();
     std::atomic<bool> stop_ = false;
     std::atomic<bool> quiet_ = false;
     std::string note_;  // network thread only
@@ -820,6 +836,7 @@ void Start() {
 
 void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
+    CoopTestInput::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.

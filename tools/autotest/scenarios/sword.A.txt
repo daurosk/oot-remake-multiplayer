@@ -1,0 +1,18 @@
+# sword: A targets the nearest enemy (ZL) and swings the sword (Y) three times; B watches.
+# Checked 2026-11-09: Y and ZL reach the game, but no swing was seen: the save point has no
+# enemy and the other player's stand-in covers Link. Start from a save near an enemy.
+# Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
+# ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
+# dash (hold), B put away, X jump, Y attack, right stick camera.
+mark start
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+mark swing1
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 30
+mark swings
+press B
+wait 60

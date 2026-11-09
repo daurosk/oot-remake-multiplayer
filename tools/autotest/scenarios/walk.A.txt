@@ -1,0 +1,14 @@
+# walk: A walks, dashes, turns and walks back; B stands still.
+# Bindings (the game's own Basic Controls page, pause menu > System, 2026-11-09): ZL target,
+# ZR use item, L/R quick select items, MINUS map, PLUS menu (L/R change page), A actions and
+# dash (hold), B put away, X jump, Y attack, right stick camera.
+mark start
+stick 0 0.5 90          # walk forward slowly
+mark walked
+hold LSTICK_UP+A 90     # dash (A held)
+mark ran
+stick 1 0 60            # turn and walk right
+stick 0 -1 90           # back toward the start
+stick -1 0 60
+mark turned
+wait 60

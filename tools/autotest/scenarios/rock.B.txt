@@ -1,0 +1,8 @@
+# rock, B: stands a few metres from the rock and faces it, so B's screen shows it break.
+mark start
+wait 60
+goto -38.6 9.2 0.8      # about 7 m from the rock
+toward -34.12 14.94 20  # turn to it, so the camera swings round
+mark watching
+wait 900
+mark end

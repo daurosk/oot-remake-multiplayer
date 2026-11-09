@@ -1,4 +1,4 @@
-# Wire protocol, version 1
+# Wire protocol, version 3
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -215,6 +215,18 @@ The local Link's skeleton after its animation, so the puppet can copy it bone by
 
 Only the bones that move are listed; a bone left out keeps what the puppet has. The rotation, translation and scale are the bone's local transform (relative to its parent) after the sender's animation, and flags is the game's flag byte of that bone, passed on unread ([puppet.md](puppet.md), "Pose"). `skeleton` tells the receiver which skeleton the bones belong to; a puppet whose skeleton differs ignores the message. The time works as in `PLAYER_SAMPLE`. The server relays it like `PLAYER_SAMPLE`, with the sender's number in the player field, and keeps nothing.
 
+### Time of day (`TIME_OF_DAY`)
+
+Every game shows the host's time of day ([time.md](time.md)).
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 27 | `TIME_OF_DAY` | 0 | both | `u8` player field, `u32` seconds since midnight (below 86,400), `u8` flags (bit 0 jump; other bits refused) |
+
+- The host sends it about once a second; a game more than two in-game minutes away from it moves its clock there.
+- A game whose clock jumped by itself (the Sun's Song, sleeping, an event) sends it with the jump bit, and every other game, the host's too, takes it at once.
+- The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+
 ### Objects (stage 5)
 
 Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). The server keeps an object table (below); the hook does not send these yet.
@@ -223,7 +235,7 @@ The server's rules today (`server/session.cpp`):
 
 - A player's scene is the one of its latest `OBJECT_PRESENT` or `PLAYER_SAMPLE` scene. Changing scene lets go of everything it had loaded or made in the old one.
 - `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. Made ids in the list are ignored.
-- `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` only from the maker named in the id, once. Anything else is dropped.
+- `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` of a made id only from the maker named in the id, once; of a placed id only from its current owner, in its scene (relayed, nothing registered). Anything else is dropped.
 - `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner.
 - When the owner of a placed object unloads it, changes scene or leaves, the game with the lowest number that still has it takes it with epoch + 1: it gets `HANDOVER_STATE` with the last relayed sample (player field: the old owner) when there was one, then everyone in the scene gets `OBJECT_OWNER`. Nobody left: the object is forgotten.
 - A made object goes when its maker lets go of it: the others in the scene get `OBJECT_REMOVE` (gone, at its last position) from the server.
@@ -236,7 +248,7 @@ The server's rules today (`server/session.cpp`):
 | 19 | `OBJECT_OWNER` | 2 | server | object id, `u8` owner (0 none, else 1 to 4), `u16` epoch, `u32` group (0 none) |
 | 20 | `HANDOVER_ASK` | 2 | server | object id, `u16` epoch, `u8` to player (1 to 4) |
 | 21 | `HANDOVER_STATE` | 2 | both | `u8` player field, object id, `u16` epoch, then object components |
-| 22 | `OBJECT_SPAWN` | 2 | both | `u8` player field, object id (kind made only), actor name (string, 1 to 64), `u8` flags (bit 0 projectile), then object components |
+| 22 | `OBJECT_SPAWN` | 2 | both | `u8` player field, object id (kind made; or kind placed, from its owner: the actor of a placed object that other games may not have loaded, such as a Gold Skulltula one game shook out of a tree), actor name (string, 1 to 64), `u8` flags (bit 0 projectile), then object components |
 | 23 | `OBJECT_SAMPLE` | 4 | both | `u8` player field, object id, `u16` epoch, then object components |
 | 24 | `OBJECT_REMOVE` | 2 | both | `u8` player field, object id, `u16` epoch, `u8` reason (0 gone, 1 dead, 2 exploded, 3 hit, 4 picked up), position (3 x f32) |
 | 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32) |
@@ -257,7 +269,9 @@ The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's
 
 - The protocol version goes up whenever a message layout changes in a way an older reader cannot skip.
 - Adding a component or a message type that old readers may ignore does not change the version.
-- Types 12 to 26 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP`, the object messages and `PLAYER_POSE`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
+- Types 12 to 27 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP`, the object messages, `PLAYER_POSE` and `TIME_OF_DAY`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.
 - Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
+- Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
+- Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.

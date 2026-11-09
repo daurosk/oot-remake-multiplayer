@@ -15,7 +15,7 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 1;
+inline constexpr std::uint16_t kProtocolVersion = 3;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -71,6 +71,7 @@ enum class MessageType : std::uint16_t {
   object_remove = 24,
   damage = 25,
   player_pose = 26,
+  time_of_day = 27,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -651,12 +652,29 @@ struct PlayerPose {
   bool operator==(const PlayerPose&) const = default;
 };
 
+// TIME_OF_DAY (docs/time.md): a game's clock, in seconds since midnight.
+// The host sends it about once a second; any player whose clock jumped (the
+// Sun's Song, a night's sleep, an event) sends it with `jump`, and every game
+// takes a jump at once. Relayed to everyone else.
+inline constexpr std::uint32_t kSecondsPerDay = 86'400;
+namespace time_of_day {
+inline constexpr std::uint8_t jump = 1u << 0;
+}  // namespace time_of_day
+
+struct TimeOfDay {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::uint32_t seconds = 0;                 // 0 to kSecondsPerDay - 1
+  std::uint8_t flags = 0;                    // time_of_day bits
+  bool operator==(const TimeOfDay&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
-                             ObjectSample, ObjectRemove, Damage, PlayerPose>;
+                             ObjectSample, ObjectRemove, Damage, PlayerPose,
+                             TimeOfDay>;
 
 MessageType type_of(const Message& message);
 

@@ -1351,6 +1351,28 @@ TEST_CASE("a removed enemy stays owned by nobody until no game has it, then is f
   CHECK(h.session.object_count() == 0);
 }
 
+TEST_CASE("the owner of a placed object may name its actor to the scene; nobody else may") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {placed(9)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
+  h.clear();
+  ObjectSpawn spawn{0, placed(9), "Enemy_Skulltula_Gold", 0, state_at(3, 1)};
+  h.receive(1, spawn, kChannelOwnership);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 2);
+  spawn.player_number = 1;
+  CHECK(std::get<ObjectSpawn>(h.sent[0].message) == spawn);
+  CHECK(h.session.object_owner(placed(9)) == owned(1, 0));  // unchanged
+  // Not the owner, or an object nobody listed: refused.
+  h.clear();
+  h.receive(2, ObjectSpawn{0, placed(9), "Enemy_Skulltula_Gold", 0, state_at(3, 1)},
+            kChannelOwnership);
+  h.receive(1, ObjectSpawn{0, placed(8), "Enemy_Skulltula_Gold", 0, state_at(3, 1)},
+            kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().object_refused == 2);
+}
+
 TEST_CASE("a made object belongs to its maker; it goes on every screen when the maker leaves") {
   ObjectHarness h;
   h.receive(1, present_in("Graveyard", {}), kChannelOwnership);

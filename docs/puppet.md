@@ -186,7 +186,29 @@ Research (s2-equip-create) showed that create argument +0x40 is a name pointer, 
 - Proven in game (2026-11-09, autotest `gear` and `gear-change` on one PC): both puppets wear the other player's Kokiri Sword and Hylian Shield (`wears ... (returned 0x1)`), and when A swaps to the Deku Shield in the menu, B's puppet of A swaps too (Hylian on its back before, Deku after). The pack must carry the EquipmentUserParam (main since PR 52): with an older pack the EquipmentUser is 0 and nothing is worn.
 - Not run: tunic, boots, mask (none in the test save), taking a piece off (an empty name is skipped), adult Link.
 
+### In hand or put away (built, not run in the game)
+
+Caleb's hand test of v0.1.0-test1 (2026-11-09): only the shield showed on puppets, always on the back, also while its player held it on the arm or guarded. The logs of that test show the sword was worn too (`wears weapon ... (returned 0x1)`); a piece is worn put away and nothing ever changed that.
+
+Read from the dump (static, not run):
+
+| Piece | What |
+|---|---|
+| Change state | `0xe34c40(EquipmentUser, slot, state)`. State 1 is in hand (it runs 0x6b6820; the shield node 0x2797850 calls it with slot 4, state 1), state 2 is put away on the back (0xe34c70, the state a piece is worn in), state 0 goes to 0x2dfdee0 |
+| The slot's byte | EquipmentUser +0x13bc + slot: bit 1 (0x2) in hand, bit 2 (0x4) put away. 0xce7ab0(eu, slot) reads the current state |
+
+What the director does (`Director::Hold`), for a live puppet, after its gear is worn:
+
+- `Target::drawn` is the player's `drawn` bits from `PLAYER_EQUIP` (the debug puppet gets our own).
+- For the sword (slot 0) and the shield (slot 4): when the player's bit differs from what the puppet was last set to, one call of the change-state function with state 1 or 2. A piece just worn counts as put away, so only "in hand" is asked then.
+- After the call the slot's byte is read: with the wanted bit set the change is taken and logged, `P<n> equipment slot <s> in hand` or `put away`. Otherwise the call is made again after 250 ms (`not taken (byte ..)` with `LICHII_COOP_DEBUG_ANIM`).
+- Where the piece sits (hand bone, arm, guard) is the game's own: the state picks the bone, and the pose copy moves the arm.
+
+**Not proven in game.** It compiles and the unit tests cover the calls (`puppet_test.cpp`: hold, move); no game was run with it. To check with two players: one draws the sword (Y), guards (ZL), puts away (B); the other watches the puppet and the log lines above. Autotest scenario: `hold`. If `not taken` repeats, the state numbers or the byte's bits are wrong for that slot.
+
 ### Not done (equipment)
+
+0. Held items (bow, slingshot, Deku stick, boomerang; slot 3) are not shown: the item's actor name is not sent. It needs the name read from the slot-3 actor and a new `PLAYER_EQUIP` component, then an equip (kinds 5 bow, 11 tool) and the same change-state call on slot 3.
 
 1. Not run: a tunic, boots, a mask or a second sword (none in the test save), adult Link's slots, and which item was in slot 3. Run them with a later save: the local debug log (`LICHII_COOP_DEBUG_EQUIP`) prints the flags and every slot.
 2. The name of the actor in each slot (for a held tool such as the hookshot or bombs, which are not in `PlayerStatus.Equip*`): the actor's name field was not found. The item buttons are `PlayerStatus.AssignableItem.*` (an enum, [items.md](items.md)).
@@ -298,6 +320,8 @@ Approach (a), in `lichii/hook/` and one small emulator patch. Not yet run with t
 
 The actor is `CoopPuppet_Child` or `CoopPuppet_Adult`, by the age in the player's samples (a change of age deletes it and makes the other); `LICHII_COOP_PUPPET_ACTOR=<pack name>` sets one actor for everyone (`Animal_Cow_LinkHouse` was the default before the pack).
 
+**No create while loading.** The scene is readable as soon as a load starts, but a puppet created during the loading screen reaches state 4 and is never drawn; it showed only after it was deleted and made again (Caleb's two-player run, 2026-11-09: player 2 made player 1's puppet at 37.1 s, during its loading screen from 36.8 to 40.2 s, and saw it only after it was remade at 230 s). So a create waits until the renderer's camera (`CoopCamera::Latest`, fresh within 250 ms as for the markers) has run unbroken for 0.75 s (`kDrawnMs`), begun after the last local scene change or engine delete of that puppet; if the camera never broke over such a change, 3 s after it (`kSteadyMs`). The log says `P<n>: waiting for the game to draw` once per wait. With no camera seen since start, creates go at once as before. A dropped or failed create waits 5 s only before the same actor is tried again: a different one (the age read wrong while the other player was loading, which made an adult create) goes at once. To not make that wrong one at all, a create also waits until the wanted actor has stayed the same for 1 s (`Input::settle_ms`): in the two-game runs of 2026-11-09 the game that loaded first read the other's age as adult for about 0.6 s, made `CoopPuppet_Adult`, dropped it and made the child 0.6 s later.
+
 ### Animation playback
 
 What [How the puppet plays it](#how-the-puppet-plays-it) planned, built in the director. The session's `on_event` hands every PLAYER_SAMPLE to `CoopPuppet::OnEvent`, which keeps each player's newest field 7 (name, frame, rate) with a counter; the planner passes it on with the target. For a live puppet whose AS chain (actor +0x270, +0x40, +0x18, +0x18) is there:
@@ -408,8 +432,32 @@ The first two-game run had every write refused: the player reaches its model thr
 ### Not done (pose)
 
 1. The AS commands stop only while poses arrive; if poses stop for more than 1 s the next sample's animation is played again (the slot's last command keeps playing until then).
-2. The skeleton id is only the bone count; child and adult differ in it, which is what a mismatch would be.
-3. Adult Link's skeleton was not read (only `Player_Child`).
+2. Adult Link's skeleton was not read in a running game (only `Player_Child`): see [Adult](#adult).
+
+## Adult
+
+Caleb (2026-11-09): adult Link is synced like child Link. Everything here is built and unit tested; **none of it was run in a game** (in-game tests were stopped on 2026-11-09 before the adult run). What to check is listed at the end.
+
+| Piece | What | Status |
+|---|---|---|
+| Which puppet | The sample's age chooses `CoopPuppet_Child` or `CoopPuppet_Adult`. When a player's age changes (the pedestal), the planner's actor name changes, and the director deletes the puppet and creates it again at the new age | Unit tested (planner and director); not run |
+| Mixed ages | A child scene and its adult twin (`Graveyard_Child`, `Graveyard_Adult`) count as the same place for puppets, fairies and the overlay markers (`coop::host::same_place`, which drops a trailing `_Child` or `_Adult`). Shared objects and flags still need the very same scene | Unit tested; not run |
+| Pose | The skeleton id sent with every `PLAYER_POSE` is the bone count (low 9 bits) with a hash (FNV-1a) of the model's name above it. The name is read from the model resource (`FMDL` +0x8: pointer to a u16 length and the characters): `Player_Child` or `Player_Adult`. A puppet takes only a pose of its own model, so a pose that arrives around an age change is dropped, not written on the wrong skeleton. The wire format did not change. A change of our own model starts the moving-bone sets again | Unit tested on fake memory; the adult skeleton was not read in a game. If the path to the skeleton differs for `Player_Adult`, the debug line shows `?` for the model or counts refused writes |
+| Gear | Nothing in the gear code is for the child only: it sends the names in `PlayerStatus.Equip*` and equips them by name, so the Master Sword, Biggoron's Sword, the Hylian and Mirror Shield, tunics, boots and the held bow, hookshot or hammer go the same way. The adult's bones are in [Equipment](#equipment) | Not run: adult slots and names were never seen in a game |
+| Fairy | The fairy's shoulder offset is scaled by 1.45 (`CoopFairy::Settings::adult_scale`) for a puppet whose actor ends in `_Adult` | Unit tested; the factor is a guess from the two heights |
+| Name tag | The tag floats over the head at 1.35 (child) or 1.9 (adult) world units, by the sample's age (`coop_hook.cpp`, from the name tags work) | Heights not checked on an adult |
+
+Age in the game: the player actor itself is `Player_Child` or `Player_Adult` (0x4b6db0, `QueryPlayerIsChild`, reads the actor's parameters). The save's era is the bool flag `Sequence_IsChildhood` (hash 0xcea220d3, in `GameDataList`); `main` also has the names `IsChildWhenChangeBanc`, `IsChildWhenInitializingScene`, `IsCreateChildPlayer`, `ChangeEra` and `IsSetCurrentEra`, not read.
+
+For tests without an adult save: the autotest `warp` to a scene ending in `_Adult` or `_Child` also queues `Sequence_IsChildhood` (false or true) before it asks for the scene ([testing.md](testing.md)). Whether the game then creates `Player_Adult` is **not known**: it was never run. Scenario `adult` (`tools/autotest/scenarios/adult.A.txt`, `adult.B.txt`, run with `-NoLoad`) warps A into `Graveyard_Adult` and B into `Graveyard_Child`; A walks, runs, turns and swings while B watches.
+
+To check in a game (with `LICHII_COOP_DEBUG_POSE=1`):
+
+1. An adult player: its pose line starts `pose: Player_Adult <n> bones` with no refused writes; the other game logs `CoopPuppet_Adult spawned` and shows an adult puppet that walks in the player's poses.
+2. Child and adult in the twin scenes see each other, each at the right age and place.
+3. Pulling or returning the Master Sword: the other game's puppet is replaced by one of the new age within a second or two.
+4. Adult gear on the puppet: Master Sword, a shield on the back and raised, a tunic, boots, the bow or hookshot in hand.
+5. The fairy by the adult puppet's shoulder and the name tag just over its head.
 
 ## Fairy
 
@@ -419,13 +467,18 @@ Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii
 |---|---|
 | Actor | `Dm_Npc_Navi`, the cutscene Navi from the game's own pack: its own model and glow (`XLink/Npc_Navi`), `ActorLogicSimpleActor`, the generic name `Dm_Npc_Base`. `Npc_Navi` is not used: it is the player's partner, with an AI that follows the player and a name the game looks up, so a second one would clash. `LICHII_COOP_FAIRY_ACTOR=<pack>` picks another (`Npc_Fairy` is the next to try). |
 | Create and delete | A second `CoopPuppet::Director`, the same create, take and delete path as the puppet. It registers with the svc cave as caller 20 (`CoopSvc::AddCaller`, after the puppets and CoopSpawn), on the first `CoopFairy::Publish`; the cave asks each caller in turn, each with its own frame and its own call results. Each director takes at most 4 calls a frame, the cave allows 16. Its log lines start with `fairy`. |
-| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
+| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. For an adult puppet the offset is scaled by 1.45 ([Adult](#adult)). It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
 | Pose | Written into the actor every game frame by the director, like the puppet's. The Navi AI is not pointed at the puppet. |
 | On and off | On with the puppets (`LICHII_COOP_PUPPET` or `LICHII_COOP_DEBUG_PUPPET`); `LICHII_COOP_FAIRY=0` turns it off. |
 
 The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
 
 **Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
+
+**Frozen in a hand test (2026-11-09, v0.1.0-test1).** The fairies stayed where they were created and did not animate. Read from the dump and the romfs, not run:
+
+- `Dm_Npc_Navi` has a physics body (a character controller), so the plain write of its place is undone, as for the shared objects ([objects.md](objects.md)). The fairy's director now also calls the game's own setter `0x4c6580(actor, 0)` once a frame after the write (`Director::SetMatrixCall`, `Director::Move`; only for an actor whose vtable is 0x4b25e18). **Not proven in game**: check that each fairy stays at its puppet's shoulder while the player walks (`fairy ... pose:` lines with `LICHII_COOP_DEBUG_ANIM`).
+- It does not flap: its animation file (`Dm_Npc_Navi.root.asb`, 330 bytes) has no animation commands. `Npc_Navi.root.asb` has `Wait`, `Dash`, `Fly_*` and `Talk`. Not done: a pack with the `Dm_Npc_Navi` model and `Npc_Navi`'s animations (then play `Wait`), or a copy of the local Navi's skeleton pose onto it each frame, as the pose copy does for Link.
 
 ## Not done
 

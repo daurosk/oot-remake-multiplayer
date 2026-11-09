@@ -345,6 +345,30 @@ TEST_CASE("puppet: a scene change deletes what survived it, then creates anew") 
     CHECK(calls[0].function == kBase + addr::kCreate);
 }
 
+TEST_CASE("puppet: a player who changes age gets the other puppet, in the same scene") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // Now an adult: the child puppet is deleted at once, no leave grace.
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")}));
+    calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+    CHECK(calls[0].x[0] == kActor);
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{9});
+    calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Adult");
+}
+
 TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
     Game g;
     Director d;
@@ -628,6 +652,105 @@ TEST_CASE("puppet gear: each known piece worn once, on its own name cell") {
     CHECK(calls[0].x[1] == 6u);
 }
 
+TEST_CASE("puppet gear: a worn piece goes into the hand and back as its player's does") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    auto slot_id = [&](int s) {
+        return kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId;
+    };
+    g.guest.Set(slot_id(4), std::uint32_t{0xFFFFFFFF});  // no shield actor yet
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.gear[1] = "Weapon_Shield_Deku";
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 20).size() == 2);  // worn, put away
+    CHECK(Frame(d, g, 30).empty());      // as its player: nothing asked
+
+    // The sword is drawn: asked into the hand until the game takes it.
+    t.drawn = std::uint8_t{0x11};
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 1);  // the shield has no actor: not asked
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[0] == kEu);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    CHECK(Frame(d, g, 50).empty());  // not taken: waits before asking again
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitInHand);
+    CHECK(Frame(d, g, 400).size() == 1);
+    CHECK(Frame(d, g, 410).empty());  // taken: not again
+
+    // The shield's actor is there now.
+    g.guest.Set(slot_id(4), std::uint32_t{7});
+    g.guest.Set(kEu + addr::kEquipSlotBits + 4, addr::kEquipBitInHand);
+    calls = Frame(d, g, 420);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 4u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+
+    // Put away again.
+    t.drawn = std::uint8_t{0x10};
+    d.SetInput(Wants({t}));
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitAway);
+    calls = Frame(d, g, 430);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateAway);
+    CHECK(Frame(d, g, 440).empty());
+
+    // A new shield is worn put away: asked into the hand again.
+    t.gear[1] = "Weapon_Shield_Hylian";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 450);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[1].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[1].x[1] == 4u);
+
+    // Drawn bits not known: nothing asked.
+    t.drawn.reset();
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 460).empty());
+}
+
+TEST_CASE("puppet move: the game's setter once a frame when asked for") {
+    Game g;
+    Director d;
+    d.SetMatrixCall(true);
+    MakeLive(d, g);
+    d.SetInput(Wants({At(1, 4, 5, 6)}));
+    // kVtable is not the actor class the setter is known for: not called.
+    CHECK(Frame(d, g, 20).empty());
+
+    // An actor of that class: once a frame, after the transform is written.
+    Game g2;
+    Director d2;
+    d2.SetMatrixCall(true);
+    d2.SetInput(Wants({At(1, 4, 5, 6)}));
+    auto calls = Frame(d2, g2, 0);
+    REQUIRE(calls.size() == 2);
+    g2.Spawn(calls[1].x[3]);
+    g2.guest.Set(kActor, kBase + addr::kActorVtable);
+    Frame(d2, g2, 10);
+    Frame(d2, g2, 15);
+    REQUIRE(d2.Slots()[0].phase == Phase::live);
+    for (std::uint64_t now : {20, 30}) {
+        calls = Frame(d2, g2, now);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kSetMatrix);
+        CHECK(calls[0].x[0] == kActor);
+        CHECK(calls[0].x[1] == 0u);
+    }
+    CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
+}
+
 TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
     Game g;
     Director d;
@@ -706,4 +829,128 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     in = cow.Plan(kBase, std::string("Kokiri"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[1].actor == "Animal_Cow_LinkHouse");
+}
+
+namespace {
+CoopPuppet::Input Drawing(std::vector<Target> targets, std::uint64_t drawn_since_ms,
+                          std::string scene = "KokiriForest_Child") {
+    auto in = Wants(std::move(targets), std::move(scene));
+    in.camera = true;
+    in.drawn_since_ms = drawn_since_ms;
+    return in;
+}
+}  // namespace
+
+TEST_CASE("puppet join: no create while the game loads; at once when it draws") {
+    Game g;
+    Director d;
+    // The scene is readable at 0 but the loading screen has no camera.
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 0));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 1);  // the block only
+    CHECK(calls[0].function == kBase + addr::kMalloc);
+    CHECK(Frame(d, g, 3000).empty());
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    // Drawn again from 3400: not yet...
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 3400));
+    CHECK(Frame(d, g, 3400 + Director::kDrawnMs - 1).empty());
+    // ...then created, in the same scene, no retry wait.
+    calls = Frame(d, g, 3400 + Director::kDrawnMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: drawing that never broke over a scene change waits the steady time") {
+    Game g;
+    Director d;
+    d.SetInput(Drawing({}, 100, "A"));
+    Frame(d, g, 1000);
+    // New scene at 2000, the camera unbroken since 100 (begun before it).
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 100, "B"));
+    auto calls = Frame(d, g, 2000);
+    REQUIRE(calls.size() == 1);  // the block only
+    CHECK(Frame(d, g, 2000 + Director::kSteadyMs - 1).empty());
+    calls = Frame(d, g, 2000 + Director::kSteadyMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: one already drawing creates at once (the other player joins)") {
+    Game g;
+    Director d;
+    d.SetInput(Drawing({}, 100));
+    Frame(d, g, 50);
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 100));
+    const auto calls = Frame(d, g, 60000);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[1].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: deleted by a load before the camera goes, made again after it") {
+    Game g;
+    Director d;
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 100));
+    CHECK(Frame(d, g, 50).size() == 1);  // the block; not drawn yet
+    auto calls = Frame(d, g, 1000);
+    REQUIRE(calls.size() == 1);
+    g.Spawn(calls[0].x[3]);
+    Frame(d, g, 1010);
+    Frame(d, g, 1015);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    // The engine deletes it at 5000; the camera is still fresh then.
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{7});
+    CHECK(Frame(d, g, 5000).empty());
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    // The loading screen, then drawn from 9000.
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 0));
+    CHECK(Frame(d, g, 5100).empty());
+    d.SetInput(Drawing({At(1, 0, 0, 0)}, 9000));
+    CHECK(Frame(d, g, 9000 + Director::kDrawnMs - 1).empty());
+    calls = Frame(d, g, 9000 + Director::kDrawnMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet join: a dropped create of the wrong age is followed by the right one at once") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Request(calls[1].x[3]);
+    g.guest.Set(kRequest, std::uint32_t{addr::kRequestDrop});
+    calls = Frame(d, g, 100);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kDropCreate);
+    REQUIRE(d.Slots()[0].phase == Phase::idle);
+    // The same actor waits 5 s...
+    CHECK(Frame(d, g, 200).empty());
+    // ...the child, now that the age is read right, does not.
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+    calls = Frame(d, g, 300);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
+}
+
+TEST_CASE("puppet join: the wanted actor must settle before a create (age read while loading)") {
+    Game g;
+    Director d;
+    auto in = Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")});
+    in.settle_ms = 1000;
+    d.SetInput(in);
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 1);  // the block only
+    CHECK(calls[0].function == kBase + addr::kMalloc);
+    CHECK(Frame(d, g, 500).empty());
+    // The age is read right at 600: the wait starts again, no adult is made.
+    in = Wants({At(1, 0, 0, 0, "CoopPuppet_Child")});
+    in.settle_ms = 1000;
+    d.SetInput(in);
+    CHECK(Frame(d, g, 600).empty());
+    CHECK(Frame(d, g, 1599).empty());
+    calls = Frame(d, g, 1600);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
 }

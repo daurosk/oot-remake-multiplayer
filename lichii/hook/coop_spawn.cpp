@@ -306,6 +306,12 @@ void Director::SetInput(std::uint64_t main_base, std::vector<Copy> copies) {
     next_ = std::move(copies);
 }
 
+void Director::SetEnemies(std::uint64_t main_base, std::vector<Copy> copies) {
+    std::lock_guard lock(mutex_);
+    next_enemy_base_ = main_base;
+    next_enemies_ = std::move(copies);
+}
+
 std::map<std::uint64_t, std::uint64_t> Director::Live() const {
     std::lock_guard lock(mutex_);
     return live_;
@@ -386,8 +392,9 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     std::uint64_t base = 0;
     {
         std::lock_guard lock(mutex_);
-        base = next_base_;
+        base = next_base_ != 0 ? next_base_ : next_enemy_base_;
         copies_ = next_;
+        copies_.insert(copies_.end(), next_enemies_.begin(), next_enemies_.end());
     }
     if (base != base_) {
         // A new game (or none): nothing we had is ours any more.
@@ -429,7 +436,7 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
             if (!ReadValue(guest, slot.taken, vtable) || vtable != slot.vtable ||
                 !ReadValue(guest, slot.taken + addr::kActorState, state) || Gone(state)) {
                 slot.phase = Phase::done;  // it went by itself (a fuse, a hit)
-            } else if (const Copy* c = Wanted(slot.key); c != nullptr && c->act != Act::remove) {
+            } else if (const Copy* c = Wanted(slot.key); c != nullptr && c->act != Act::remove && c->place) {
                 WriteValue(guest, slot.taken + addr::kActorPosition, c->position);
                 if (c->act == Act::explode && !slot.exploded) {
                     // A bomb's life is 1; at 0 the game runs its own explosion.
@@ -807,17 +814,21 @@ Director& TheDirector() {
     return director;
 }
 
+void UseDirector() {
+    static const bool registered = [] {
+        CoopSvc::AddCaller(10, [](CoopPuppet::Guest& guest, bool after_call,
+                                  std::uint64_t result, std::uint64_t now_ms) {
+            return TheDirector().Step(guest, after_call, result, now_ms);
+        });
+        return true;
+    }();
+    (void)registered;
+}
+
 void Frame(Core::System& system, coop::host::Session* session,
            const std::optional<std::string>& scene, std::uint64_t server_now_us) {
     if (On()) {
-        static const bool registered = [] {
-            CoopSvc::AddCaller(10, [](CoopPuppet::Guest& guest, bool after_call,
-                                      std::uint64_t result, std::uint64_t now_ms) {
-                return TheDirector().Step(guest, after_call, result, now_ms);
-            });
-            return true;
-        }();
-        (void)registered;
+        UseDirector();
         TheGlue().Frame(system, session, scene, server_now_us);
     }
 }

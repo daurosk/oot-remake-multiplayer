@@ -1,0 +1,17 @@
+# rock: A walks to the liftable rock beside the Graveyard path (Obj_LiftRock_A_03 at x -34.12,
+# z 14.94, life 1; the save puts Link at about -35.7, 8.5), lifts it (A) and throws it (ZR), so
+# it breaks. B, further up the same path, faces the rock and should see it break too.
+mark start
+wait 120                # let both games settle after the load
+goto -34.6 13.4 0.6     # beside the rock
+goto -34.35 14.2 0.35   # right up to it
+mark at-rock
+toward -34.12 14.94 20
+press A                 # lift (the prompt says Lift when in reach)
+wait 50
+mark lifted
+press ZR                # throw (the prompt shows ZR while Link holds it)
+wait 90
+mark thrown
+wait 120
+mark after

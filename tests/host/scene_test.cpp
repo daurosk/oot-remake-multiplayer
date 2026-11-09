@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "coop/host/scene.hpp"
@@ -38,4 +39,18 @@ TEST_CASE("visibility") {
   CHECK(visibility(a, false, b, 0) == Visibility::hide);
   CHECK(visibility(std::nullopt, false, a, 0) == Visibility::hide);
   CHECK(visibility(a, false, std::nullopt, 0) == Visibility::hide);
+}
+
+TEST_CASE("the same place in either era shows the puppet") {
+  CHECK(std::string(coop::host::place_of("Graveyard_Adult")) == "Graveyard");
+  CHECK(std::string(coop::host::place_of("Graveyard_Child")) == "Graveyard");
+  CHECK(std::string(coop::host::place_of("WaterTemple")) == "WaterTemple");
+  CHECK(std::string(coop::host::place_of("_Adult")) == "_Adult");
+  CHECK(coop::host::same_place("HyruleField_Child", "HyruleField_Adult"));
+  CHECK_FALSE(coop::host::same_place("HyruleField_Child", "KokiriForest_Adult"));
+  CHECK_FALSE(coop::host::same_place("", ""));
+  CHECK_FALSE(coop::host::same_place(std::nullopt, "Graveyard_Adult"));
+  CHECK(coop::host::visibility(std::string_view("Graveyard_Child"), false,
+                               std::string_view("Graveyard_Adult"), 0) ==
+        coop::host::Visibility::show);
 }

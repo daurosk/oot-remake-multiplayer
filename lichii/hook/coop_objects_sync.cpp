@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_world.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <tuple>
 #include <type_traits>
 #include <variant>
@@ -73,6 +75,11 @@ bool Finite(const proto::Vec3& v) {
     return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
+float Distance(const proto::Vec3& a, const proto::Vec3& b) {
+    const float x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2];
+    return std::sqrt(x * x + y * y + z * z);
+}
+
 } // namespace
 
 bool IsShared(std::string_view name) {
@@ -82,7 +89,18 @@ bool IsShared(std::string_view name) {
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
-    return name.starts_with("Enemy_") || name.starts_with("Animal_");
+    return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
+           CoopWorld::IsBreakable(name);
+}
+
+bool IsRolled(std::string_view name) {
+    // Enemy_Stalchild and Enemy_Stalchild_Big; not the picture book's
+    // Enemy_Stalchild_Dictionary actors.
+    return name == "Enemy_Stalchild" || name == "Enemy_Stalchild_Big";
+}
+
+bool IsAnnounced(std::string_view name) {
+    return name == "Enemy_Skulltula_Gold";
 }
 
 proto::Quat QuatOf(const Mat3& m) {
@@ -151,13 +169,21 @@ std::uint64_t SceneSpawnId(std::string_view scene, std::string_view name, unsign
 }
 
 void Sync::Receive(const proto::Message& message) {
+    if (const auto* p = std::get_if<proto::PlayerSample>(&message)) {
+        if (p->scene && p->player_number != proto::kPlayerSelf) {
+            std::lock_guard lock(inbox_mutex_);
+            scenes_[p->player_number] = {*p->scene, p->time.server_time_us};
+        }
+        return;
+    }
     const bool wanted = std::visit(
         [](const auto& m) {
             using T = std::decay_t<decltype(m)>;
             return std::is_same_v<T, proto::ObjectOwner> || std::is_same_v<T, proto::ObjectSample> ||
                    std::is_same_v<T, proto::HandoverAsk> || std::is_same_v<T, proto::HandoverState> ||
                    std::is_same_v<T, proto::Damage> || std::is_same_v<T, proto::FlagSet> ||
-                   std::is_same_v<T, proto::FlagState> || std::is_same_v<T, proto::FlagSnapshot>;
+                   std::is_same_v<T, proto::FlagState> || std::is_same_v<T, proto::FlagSnapshot> ||
+                   std::is_same_v<T, proto::ObjectSpawn> || std::is_same_v<T, proto::ObjectRemove>;
         },
         message);
     if (!wanted) {
@@ -178,8 +204,44 @@ void Sync::Reset() {
     present_sent_.clear();
     present_at_ = 0;
     present_once_ = false;
+    decided_.clear();
+    bound_.clear();
+    refused_.clear();
+    decider_ = 0;
+    // next_key_ and made_counter_ go on: the director never makes a key
+    // twice, and the server keeps made ids until they are removed.
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
+}
+
+std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
+    std::uint8_t decider = self;
+    std::lock_guard lock(inbox_mutex_);
+    for (const auto& [player, seen] : scenes_) {
+        const bool fresh = seen.second <= now_us ? now_us - seen.second < kSceneStaleUs
+                                                 : seen.second - now_us < kSceneStaleUs;
+        if (player != self && player != 0 && player < decider && fresh && seen.first == scene_) {
+            decider = player;
+        }
+    }
+    return decider;
+}
+
+void Sync::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
+    bound_.clear();
+    for (const auto& [key, address] : live) {
+        if (decided_.contains(key) && address != 0) {
+            bound_[address] = key;
+        }
+    }
+}
+
+std::vector<EnemyCopy> Sync::Creates() const {
+    std::vector<EnemyCopy> out;
+    for (const auto& [key, d] : decided_) {
+        out.push_back({key, d.name, d.position, d.removed});
+    }
+    return out;
 }
 
 std::optional<proto::ObjectId> Sync::IdOf(std::uint64_t address) const {
@@ -228,6 +290,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         const std::string keep = scene;
         Reset();
         scene_ = keep;
+        scene_since_ = now_us;
     }
 
     // What this walk shows: new enemies get ids, known ones their life and
@@ -263,16 +326,22 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.position = s.position;
         o.rotation = s.rotation;
         o.animation = s.animation;
-        if (s.life) {
-            if (o.life && s.life->life < *o.life) {
+        // A breakable's life can no longer be read once it has died (a crate
+        // at 0 for one frame, then its life object is gone): read that as 0.
+        std::optional<proto::ObjectLife> life = s.life;
+        if (!life && o.breakable && o.life && *o.life > 0) {
+            life = proto::ObjectLife{0, o.max};
+        }
+        if (life) {
+            if (o.life && life->life < *o.life) {
                 o.fight_until = now_us + kFightUs;
-                std::int32_t drop = *o.life - s.life->life;
+                std::int32_t drop = *o.life - life->life;
                 if (o.hurt_left > 0) {
                     // Our own hurt landing (or the game taking more for it):
                     // not a hit of ours.
                     o.hurt_left = std::max(0, o.hurt_left - drop);
                     if (o.hurt_left == 0) {
-                        if (s.life->life == o.hurt_target) {
+                        if (life->life == o.hurt_target) {
                             ++hurt_taken_;
                         }
                         o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
@@ -288,14 +357,50 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     o.hit_sum += drop;
                 }
             }
-            o.life = s.life->life;
-            o.max = s.life->max;
+            o.life = life->life;
+            o.max = life->max;
         }
     }
     hidden_ = std::move(hidden);
+    // Gone only when two walks in a row miss it: an actor drops out of the
+    // list for a moment when it is lifted or changes hands.
+    std::vector<Object> gone;
     for (auto it = objects_.begin(); it != objects_.end();) {
-        it = now_seen.contains(it->first) ? std::next(it) : objects_.erase(it);
+        if (now_seen.contains(it->first)) {
+            it->second.missed = 0;
+            ++it;
+            continue;
+        }
+        if (++it->second.missed < kMissedWalks) {
+            ++it;
+            continue;
+        }
+        // Our rolled enemy is gone (killed, or the game took it away): the
+        // others delete their copies.
+        const Object& o = it->second;
+        const auto owner = owners_.find(o.id);
+        if (o.id.kind == proto::ObjectKind::made && o.id.maker == self && owner != owners_.end() &&
+            owner->second.player == self) {
+            proto::ObjectRemove r;
+            r.id = o.id;
+            r.epoch = owner->second.epoch;
+            r.reason = o.life && *o.life <= 0 ? proto::RemoveReason::dead : proto::RemoveReason::gone;
+            r.position = o.position;
+            send.emplace_back(r);
+            owners_.erase(owner);
+        } else {
+            gone.push_back(std::move(it->second));
+        }
+        it = objects_.erase(it);
     }
+    Flush(self, now_us, gone, send);
+    for (auto it = decided_.begin(); it != decided_.end();) {
+        // A copy removed by its maker and no longer on our list is done.
+        const bool left = it->second.address == 0 || !now_seen.contains(it->second.address);
+        it = it->second.removed && left ? decided_.erase(it) : std::next(it);
+    }
+    decider_ = DeciderOf(self, now_us);
+    std::set<std::uint64_t> refused;
     std::sort(fresh.begin(), fresh.end(), [](const Seen* a, const Seen* b) {
         return std::tie(a->name, a->position[0], a->position[2]) <
                std::tie(b->name, b->position[0], b->position[2]);
@@ -308,17 +413,65 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.animation = s->animation;
         o.seen_at = now_us;
         o.name = s->name;
+        o.breakable = CoopWorld::IsBreakable(s->name);
+        o.first_position = s->position;
         if (s->life) {
             o.life = s->life->life;
             o.max = s->life->max;
         }
-        if (s->hash != 0 && s->hash != kNoHash) {
+        if (const auto bound = bound_.find(s->address); bound != bound_.end()) {
+            // A copy the director made of a decided or announced one.
+            Decided& d = decided_.at(bound->second);
+            if (d.removed) {
+                continue;  // being deleted
+            }
+            d.address = s->address;
+            o.id = d.id;
+        } else if (s->hash != 0 && s->hash != kNoHash) {
             o.id = {proto::ObjectKind::placed, 0, s->hash};
+            o.late = IsAnnounced(s->name) && now_us - scene_since_ >= kLateUs;
+            // Our own one of an announced copy came: the copy goes.
+            for (auto& [key, d] : decided_) {
+                if (d.id == o.id && !d.removed) {
+                    d.removed = true;
+                    if (d.address != 0) {
+                        objects_.erase(d.address);
+                    }
+                }
+            }
+        } else if (IsRolled(s->name)) {
+            if (decider_ == self) {
+                // We roll this scene's enemies: share it.
+                o.id = {proto::ObjectKind::made, self, ++made_counter_};
+                owners_[o.id] = {self, 0};
+                proto::ObjectSpawn spawn;
+                spawn.id = o.id;
+                spawn.actor = o.name;
+                spawn.state = StateOf(o, now_us);
+                send.emplace_back(std::move(spawn));
+            } else {
+                // Another game rolls here. A copy being made near this
+                // place may be this one, not yet on the director's list:
+                // wait. Anything else is our own roll: deleted.
+                const bool waiting = std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                    const Decided& d = e.second;
+                    return d.address == 0 && !d.removed && now_us - d.got_us < kCreateWaitUs &&
+                           Distance(d.position, s->position) < kClaimDistance;
+                });
+                if (!waiting) {
+                    if (!refused_.contains(s->address)) {
+                        ++refused_count_;
+                    }
+                    refused.insert(s->address);
+                }
+                continue;
+            }
         } else {
             o.id = {proto::ObjectKind::placed, 0, SceneSpawnId(scene_, s->name, order_[s->name]++)};
         }
         objects_.emplace(s->address, o);
     }
+    refused_ = std::move(refused);
 
     self_ = self;
     Apply(self, now_us, send, writes);
@@ -350,6 +503,17 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.hit_at = now_us;
             }
             o.hit_sum = 0;
+        }
+        // A Gold Skulltula that came out of a tree here: name it for the
+        // games that do not have it.
+        if (known && owner->second.player == self && o.late && !o.announced &&
+            o.id.kind == proto::ObjectKind::placed) {
+            proto::ObjectSpawn spawn;
+            spawn.id = o.id;
+            spawn.actor = o.name;
+            spawn.state = StateOf(o, now_us);
+            send.emplace_back(std::move(spawn));
+            o.announced = true;
         }
         // The owner's samples.
         if (known && owner->second.player == self &&
@@ -403,6 +567,74 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
 }
 
+// Objects that left our walk. A break read just before it went (a pot's life
+// 0, then the pot is removed a few frames later) still reaches the others:
+// the owner's last life 0 as a sample, a copy's unsent hit as DAMAGE. A
+// breakable gone near our Link was broken here even when its life never
+// read 0 (a thrown rock is removed where it lands, a crate a moment after its
+// life reaches 0): within kBreakNearM when it was moved (lifted, thrown),
+// within kBreakReachM (sword reach) when not. The same, with all its life.
+void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
+                 std::vector<proto::Message>& send) {
+    for (Object& o : gone) {
+        const auto owner = owners_.find(o.id);
+        if (owner == owners_.end() || owner->second.player == 0) {
+            continue;
+        }
+        bool broken_here = false;
+        if (o.breakable && player_ && (!o.life || *o.life > 0)) {
+            const float dx = o.position[0] - (*player_)[0];
+            const float dy = o.position[1] - (*player_)[1];
+            const float dz = o.position[2] - (*player_)[2];
+            const float mx = o.position[0] - o.first_position[0];
+            const float my = o.position[1] - o.first_position[1];
+            const float mz = o.position[2] - o.first_position[2];
+            const bool moved = std::sqrt(mx * mx + my * my + mz * mz) >= 0.5f;
+            const float from_link = std::sqrt(dx * dx + dy * dy + dz * dz);
+            broken_here = from_link <= (moved ? kBreakNearM : kBreakReachM);
+        }
+        {
+            float near = -1.0f;
+            if (player_) {
+                const float dx = o.position[0] - (*player_)[0];
+                const float dy = o.position[1] - (*player_)[1];
+                const float dz = o.position[2] - (*player_)[2];
+                near = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            const float mx = o.position[0] - o.first_position[0];
+            const float my = o.position[1] - o.first_position[1];
+            const float mz = o.position[2] - o.first_position[2];
+            char line[200];
+            std::snprintf(line, sizeof line,
+                          "gone %016llx owner %u life %d moved %.2f from Link %.2f: %s",
+                          static_cast<unsigned long long>(o.id.value), owner->second.player,
+                          o.life.value_or(-1), std::sqrt(mx * mx + my * my + mz * mz), near,
+                          broken_here ? "broken here" : "left");
+            notes_.emplace_back(line);
+        }
+        if (owner->second.player == self) {
+            if (broken_here) {
+                o.life = 0;
+            }
+            if (o.life && *o.life <= 0 && (!o.sent_life || o.sent_life->life > 0)) {
+                proto::ObjectSample sample;
+                sample.id = o.id;
+                sample.epoch = owner->second.epoch;
+                sample.state = StateOf(o, now_us);
+                send.emplace_back(sample);
+            }
+        } else if (o.hit_sum > 0 || broken_here) {
+            proto::Damage d;
+            d.id = o.id;
+            d.epoch = owner->second.epoch;
+            d.amount = broken_here ? std::max(o.life.value_or(1), o.hit_sum) : o.hit_sum;
+            d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
+            d.position = o.position;
+            send.emplace_back(d);
+        }
+    }
+}
+
 void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Message>& send,
                  std::vector<LifeWrite>& writes) {
     std::vector<proto::Message> inbox;
@@ -439,6 +671,42 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             flags(state->flags);
         } else if (const auto* snapshot = std::get_if<proto::FlagSnapshot>(&m)) {
             flags(snapshot->flags);
+        } else if (const auto* spawn = std::get_if<proto::ObjectSpawn>(&m)) {
+            // A rolled enemy the decider made, or a placed one its owner
+            // announced: created here by the director.
+            const bool made = spawn->id.kind == proto::ObjectKind::made;
+            if (!spawn->state.position || !Finite(*spawn->state.position)) {
+                continue;
+            }
+            if (made && (spawn->id.maker == self || spawn->id.maker == 0 || !IsRolled(spawn->actor))) {
+                continue;
+            }
+            if (!made && (!IsAnnounced(spawn->actor) || find(spawn->id) != nullptr ||
+                          spawn->player_number == self)) {
+                continue;  // we have that placement ourselves
+            }
+            const bool known = std::any_of(decided_.begin(), decided_.end(),
+                                           [&](const auto& e) { return e.second.id == spawn->id; });
+            if (known) {
+                continue;
+            }
+            Decided d;
+            d.id = spawn->id;
+            d.name = spawn->actor;
+            d.position = *spawn->state.position;
+            d.got_us = now_us;
+            decided_.emplace(next_key_++, std::move(d));
+            if (made) {
+                owners_[spawn->id] = {spawn->id.maker, 0};
+            } else if (!owners_.contains(spawn->id)) {
+                owners_[spawn->id] = {spawn->player_number, 0};  // OBJECT_OWNER corrects the epoch
+            }
+        } else if (const auto* remove = std::get_if<proto::ObjectRemove>(&m)) {
+            for (auto& [key, d] : decided_) {
+                if (d.id == remove->id) {
+                    d.removed = true;
+                }
+            }
         } else if (const auto* owner = std::get_if<proto::ObjectOwner>(&m)) {
             owners_[owner->id] = {owner->owner, owner->epoch};
             if (owner->owner == self) {
@@ -576,6 +844,14 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
     }
 }
 
+float FrameAfter(float frame, float rate, std::int64_t age_us) {
+    if (!std::isfinite(frame) || !std::isfinite(rate)) {
+        return 0.0f;
+    }
+    const float after = frame + rate * 30.0f * static_cast<float>(age_us) / 1e6f;
+    return std::isfinite(after) && after > 0.0f ? after : 0.0f;
+}
+
 void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||
@@ -586,17 +862,25 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
             continue;
         }
-        const auto& wanted = o.received.back().animation;
-        if (!wanted || wanted->name.empty() || (o.animation && o.animation->name == wanted->name)) {
+        const Received& last = o.received.back();
+        const auto& wanted = last.animation;
+        if (!wanted || wanted->name.empty()) {
             continue;
         }
-        out.push_back({address, wanted->name,
-                       std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f});
+        const float rate = std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f;
+        // Shown kBehindUs late, as the pose; no further ahead than a pose is.
+        const std::int64_t age = std::clamp<std::int64_t>(
+            static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
+            -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
+        out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
+                       last.time});
     }
 }
 
 std::vector<std::uint64_t> Sync::Removes() const {
-    return {hidden_.begin(), hidden_.end()};
+    std::vector<std::uint64_t> out(hidden_.begin(), hidden_.end());
+    out.insert(out.end(), refused_.begin(), refused_.end());
+    return out;
 }
 
 } // namespace CoopObjects

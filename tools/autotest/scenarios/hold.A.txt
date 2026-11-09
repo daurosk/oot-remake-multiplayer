@@ -1,0 +1,24 @@
+# hold: A walks ahead, draws the sword (Y), guards with the shield (ZL), puts both away (B),
+# then guards again; B watches A's puppet. Expect in B's log, in this order:
+# "P1 equipment slot 0 in hand", "slot 4 in hand", "slot 0 put away", "slot 4 put away".
+mark start
+stick 0 0.6 160
+wait 120
+mark away
+press Y
+wait 90
+mark sword-out
+hold ZL 60
+mark guard
+hold ZL 60
+wait 60
+mark after-guard
+press B
+wait 120
+mark put-away
+hold ZL 60
+mark guard-again
+hold ZL 60
+press B
+wait 120
+mark end

@@ -28,3 +28,13 @@ add_library(coop_presence STATIC
 )
 target_include_directories(coop_presence PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/presence/include")
 target_link_libraries(coop_presence PUBLIC coop_protocol PRIVATE coop_warnings)
+
+# Host: reads the local player from guest memory (through an interface the
+# emulator implements) and builds PLAYER_SAMPLE and PLAYER_STATUS. No sockets.
+add_library(coop_host STATIC
+  host/src/game_memory.cpp
+  host/src/player_reader.cpp
+  host/src/sampler.cpp
+)
+target_include_directories(coop_host PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/host/include")
+target_link_libraries(coop_host PUBLIC coop_protocol PRIVATE coop_warnings)

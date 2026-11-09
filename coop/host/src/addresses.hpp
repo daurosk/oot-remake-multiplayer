@@ -1,0 +1,86 @@
+#pragma once
+
+// Every guest address and offset the host library reads, in one place.
+//
+// Game: main module of build e0f3ccfaf50065ae, display version 1.1.1.
+// Sources (read only, never copied from game files):
+//   [plan]  docs/plan.md, "Game facts we start from"
+//   [map]   ..\integration\docs/player-state-map.md (Reads, Derivations, Run 1)
+// "Checked" below means the map read it from the instructions; "run" means
+// Run 1 of the map saw it in the live game; "inferred" means neither.
+// Offsets into main are added to GameMemory::main_base(). Pointers are 8 bytes
+// (the guest is AArch64), little-endian.
+
+#include <cstdint>
+
+namespace coop::host::addr {
+
+// --- GameUI module: the player block it fills each frame ------------------
+// [plan][map] Pointer to the GameUI module, at main + 0x4e7cfa8. Checked.
+inline constexpr std::uint64_t kGameUiModulePtr = 0x4e7cfa8;
+// [plan][map] Player position, 3 x f32, copied from actor +0x31c by 0x32a4c40.
+// Checked; that it updates every frame is likely, not proven (Run 1 saw it
+// change once, not follow a moving player).
+inline constexpr std::uint64_t kGameUiPosition = 0x590;
+// [map] u16 flags, bit 0 = the position above is valid (set by 0x32a4c40,
+// cleared by 0x32a510c when the actor is not in state 4). Checked.
+inline constexpr std::uint64_t kGameUiPoseFlags = 0x58a;
+inline constexpr std::uint16_t kGameUiPoseValidBit = 0x1;
+// [plan][map] u8 is-child, 1 for child (0x32a53f8 stores 0x4b6db0(actor),
+// the same test QueryPlayerIsChild uses). Checked. 0 is taken as adult.
+inline constexpr std::uint64_t kGameUiIsChild = 0x5c0;
+
+// --- Scene module down to the player actor --------------------------------
+// [map] "From the Scene module to the player", shown whole at 0x37c97c and
+// the link choice at 0x37cca0. Checked. The map's peek is
+// 7104e97648 0 0x1f0 0x58 0x78 0x40 8 0x40 +0x31c.
+inline constexpr std::uint64_t kSceneModulePtr = 0x4e97648;
+inline constexpr std::uint64_t kSceneTable = 0x1f0;          // S -> C
+inline constexpr std::uint64_t kTableCount = 0x50;           // C: u32 count
+inline constexpr std::uint64_t kTableArray = 0x58;           // C -> array
+inline constexpr std::uint64_t kPlayerManagerSlot = 0x78;    // array[15] -> O
+inline constexpr std::uint32_t kMinTableCount = 0x10;        // needs index 15
+inline constexpr std::uint64_t kManagerMustBeSet = 0x30;     // O: pointer, non-zero
+inline constexpr std::uint64_t kManagerLinkFirst = 0x40;     // O -> L, tried first
+inline constexpr std::uint64_t kManagerLinkSecond = 0x50;    // O -> L, if not alive
+inline constexpr std::uint64_t kLinkHolder = 0x08;           // L -> H
+inline constexpr std::uint64_t kLinkId = 0x10;               // L: u32 id, ~0 empty
+inline constexpr std::uint64_t kHolderActor = 0x40;          // H -> actor
+inline constexpr std::uint64_t kHolderId = 0x48;             // H: u32, must equal L id
+inline constexpr std::uint32_t kEmptyId = 0xffffffffu;
+// The width of the two ids and of the count is not stated in the map; 4 bytes
+// is assumed. Unconfirmed.
+
+// --- Actor ----------------------------------------------------------------
+// [map] u32 state; 4 is what GameUI requires before it copies the position,
+// and is taken here as "the player is present". Checked; names unknown.
+inline constexpr std::uint64_t kActorState = 0x2c;
+inline constexpr std::uint32_t kActorStatePresent = 4;
+// [plan][map] Position, 3 x f32. Checked.
+inline constexpr std::uint64_t kActorPosition = 0x31c;
+// [plan][map] Rotation, 9 x f32, three rows of three. The layout is checked;
+// that it is rows (not columns) of the matrix that turns local into world is
+// inferred. If a run shows the puppet turning the wrong way, flip this.
+inline constexpr std::uint64_t kActorRotation = 0x328;
+inline constexpr bool kActorRotationRowMajor = true;
+
+// --- Banc module: the current scene ---------------------------------------
+// [plan][map] Banc module pointer. Checked (actor-map.md).
+inline constexpr std::uint64_t kBancModulePtr = 0x4e919d0;
+// [map] 0x58aac0 gives no name when B +0x38 is null. Checked.
+inline constexpr std::uint64_t kBancMustBeSet = 0x38;
+// [plan][map] Pointer to the path string and its capacity (u64 assumed).
+// Checked. 0x58aac0 cuts it after the last '/' or '\' and at the first '.'.
+// It has an earlier branch (B +0x38 -> +0x150 -> +0x1a8) that was not read,
+// so in some states this may not be the name. Likely, not sure.
+inline constexpr std::uint64_t kBancPathPtr = 0x40;
+inline constexpr std::uint64_t kBancPathCapacity = 0x48;
+
+// --- Event manager ----------------------------------------------------------
+// [plan][map] Event manager pointer; IsEventRunning (0xbcc100) is +0x68 != 0.
+// Checked, and seen in Run 1 (set in the opening movie and timeline). 8 bytes,
+// as the map's peek reads.
+inline constexpr std::uint64_t kEventManagerPtr = 0x4e94840;
+inline constexpr std::uint64_t kEventRunning = 0x68;
+
+}  // namespace coop::host::addr

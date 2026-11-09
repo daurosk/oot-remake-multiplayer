@@ -336,6 +336,14 @@ private:
                 known.first = r.Name(a);
                 const auto placement = r.Ptr(a + kActorPlacement);
                 known.second = placement ? r.Get<u64>(*placement + kPlacementHash).value_or(0) : 0;
+                if (IsShared(known.first) && vtables_logged_.insert(known.first).second) {
+                    // The set-matrix node (0x2622e50) writes +0x31c..+0x34b and
+                    // then calls vtable slot 0x218 (actor, 0): what does it do?
+                    const u64 vt = r.Get<u64>(a).value_or(0);
+                    const u64 slot = vt ? r.Get<u64>(vt + 0x218).value_or(0) : 0;
+                    LOG_INFO(Core, "coop: objects: share vtable {} main+{:#x}, slot 0x218 main+{:#x}",
+                             known.first, vt - main_, slot - main_);
+                }
             }
             if (IsShared(known.first) ||
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
@@ -432,6 +440,14 @@ private:
         const std::array<float, 3> to{(*at)[0] + 3.0f * (*m)[2] + sway * (*m)[0], (*at)[1],
                                       (*at)[2] + 3.0f * (*m)[8] + sway * (*m)[6]};
         memory.WriteBlock(enemy + kActorPosition, to.data(), 12);
+        if (now_us - drive_log_at_ >= 2'000'000) {
+            drive_log_at_ = now_us;
+            LOG_INFO(Core,
+                     "coop: objects: test drive player at {:.2f} {:.2f} {:.2f} rot {:.2f} {:.2f} {:.2f} | "
+                     "{:.2f} {:.2f} {:.2f} | {:.2f} {:.2f} {:.2f}",
+                     (*at)[0], (*at)[1], (*at)[2], (*m)[0], (*m)[1], (*m)[2], (*m)[3], (*m)[4],
+                     (*m)[5], (*m)[6], (*m)[7], (*m)[8]);
+        }
         if (enemy != drive_enemy_) {
             drive_enemy_ = enemy;
             drive_hurt_at_ = now_us;
@@ -627,12 +643,26 @@ private:
         LOG_INFO(Core, "coop: objects: life {} {:#x} hash {:#x}: {} -> {} of {} (copy {} of {})",
                  actor.name, a, actor.hash, actor.life ? (*actor.life)[0] : now[0], now[0], now[1],
                  now[2], now[3]);
+        if (actor.life && now[0] < (*actor.life)[0]) {
+            // A hit: the hit record the Life step reads (+0x1f0..+0x2f0) and
+            // the copy it keeps of the last one (+0x1b00..+0x1bb0), in hex.
+            for (const auto [from, to] : {std::pair<u64, u64>{0x1f0, 0x2f0}, {0x1b00, 0x1bb0}}) {
+                std::string hex;
+                for (u64 o = from; o < to; o += 4) {
+                    hex += fmt::format("{:08x}{}", r.Get<u32>(*life + o).value_or(0),
+                                       (o - from) % 32 == 28 ? " | " : " ");
+                }
+                LOG_INFO(Core, "coop: objects: hit record {} +{:#x}: {}", actor.name, from, hex);
+            }
+        }
         actor.life = now;
     }
 
     std::unordered_map<u64, coop::protocol::Vec3> placed_;  // what we wrote last frame
     u8 self_ = 0;
+    std::unordered_set<std::string> vtables_logged_;
     u64 drive_enemy_ = 0;
+    u64 drive_log_at_ = 0;
     u64 drive_hurt_at_ = 0;
     float drift_sum_ = 0.0f;
     float drift_max_ = 0.0f;

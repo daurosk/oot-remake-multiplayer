@@ -44,6 +44,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_camera.h"
+#include "coop_flags.h"
 #include "coop_objects.h"
 #include "coop_settings.h"
 
@@ -124,31 +125,6 @@ std::string Hex(const std::array<u8, 0x20>& id, std::size_t bytes) {
     return out;
 }
 
-// Guest memory through the emulator. Unmapped reads fail quietly.
-class EmulatorMemory : public coop::host::GameMemory {
-public:
-    EmulatorMemory(Core::Memory::Memory& memory, u64 base) : memory_(memory), base_(base) {}
-    std::uint64_t main_base() const override {
-        return base_;
-    }
-    bool read(std::uint64_t address, std::span<std::uint8_t> out) override {
-        if (out.empty()) {
-            return true;
-        }
-        if (address + out.size() < address ||
-            !memory_.IsValidVirtualAddressRange(address, out.size())) {
-            return false;
-        }
-        // The unsafe read skips GPU flushing: the player state is CPU data,
-        // and the present thread must not wait on the GPU.
-        return memory_.ReadBlockUnsafe(address, out.data(), out.size());
-    }
-
-private:
-    Core::Memory::Memory& memory_;
-    u64 base_;
-};
-
 // What OnFrame found, for the window.
 struct FrameView {
     Clock::time_point at{};
@@ -196,6 +172,12 @@ public:
             return false;
         }
         coop::host::SessionSettings session;
+        std::string flag_error;
+        session.shared = LoadShared(flag_error);
+        if (!flag_error.empty()) {
+            LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
+        }
+        sharing_ = session.shared.has_value();
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client&) {
             Log(event);
@@ -223,8 +205,17 @@ public:
         view.at = Clock::now();
         const auto reading = Read(system, view);
 
-        // No shared flags yet: the hook has no FlagStore for the game.
-        const auto report = session_->frame(reading, nullptr);
+        // The game's flags, when it is the right game and a list is shared.
+        std::optional<EmulatorMemory> memory;
+        std::optional<coop::host::GameFlagStore> store;
+        if (view.game) {
+            memory.emplace(system.ApplicationMemory(), base_);
+            flag_debug_.Frame(*memory);
+            if (sharing_) {
+                store.emplace(*memory);
+            }
+        }
+        const auto report = session_->frame(reading, store ? &*store : nullptr);
         if (report.connected) {
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
                 return coop::overlay::collect(p, report.server_now_us);
@@ -424,6 +415,7 @@ private:
             }
             // A new game process: its first status goes again.
             session_->reset();
+            flag_debug_.Reset();
         }
         view.game = true;
         EmulatorMemory memory(system.ApplicationMemory(), base_);
@@ -594,6 +586,8 @@ private:
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
     bool build_warned_ = false;
+    FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
+    bool sharing_ = false;  // a flag list is shared; set by Begin
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

@@ -86,9 +86,20 @@ So writing the live byte directly would skip the saved copy and the save-file ma
 - The emulator must implement `WritableGameMemory`: a write and a 32-bit compare-and-swap that is atomic against the game's threads (or run them while the guest is paused).
 - The list of shared flags should take only persistent keys (reset type 24), or a pot broken by one player would break for everyone.
 
+## Live check
+
+Run in the patched emulator (`lichii/hook/coop_flags.cpp`, settings in [lichii.md](lichii.md)) with a child save in the Kakariko graveyard, two instances and a local server, 2026-11-08.
+
+- The tables read live: `main at 0x80d68000` (it moves per run), `bool table, 11292 entries`, `int table, 1259 entries`, `key64 table, 11657 records`.
+- **The flower-grave chest is a named Bool, not a 64-bit key.** Opening it changed one flag that stays: `bool 0x39e4b7ec (entry 9361) 0 -> 1` (with the rupee Ints). No 64-bit key changed. So at least some chests are Bool flags; the "Chest opened" row above holds for the Banc chests, not for every chest.
+- The ReDead under that grave is a 64-bit key, `0xf9b880ab096a9cd6` (record 11382): 0 -> 1 when killed, back to 0 on the next scene load, like the other enemy and pot keys (a scene load flips about 40 keys at once).
+- `set_key64` and `set_bool` write through the queue and the game takes them: `set_key64(0xf9b880ab096a9cd6, 1) queued (before 0, now 1)`, then the table scan shows `0 -> 1`. A write made before the save has loaded is lost: loading the save puts the old value back. So a build must not write flags until the save is in (`LICHII_COOP_SET_AFTER` delays the debug writes).
+- **A flag crosses from A to B.** Both instances shared `0x39e4b7ec`. Opening the chest in A logged `0 -> 1` in A, and B logged `0 -> 1` within the same second (after allowing for B starting 3.5 s later); in B the chest was already open when its player got there. The same worked earlier with a debug write (`LICHII_COOP_SET_BOOL`) on another Bool: moving A's write later moved B's change with it.
+
+Not checked live: an Int or 64-bit key crossing, B to A, a late joiner getting the host's table.
+
 ## Not done
 
-1. **A live check.** Read `M + 0xc60` before and after opening a chest, find the chest's key, see +0xc go from 0 to 1. Then write a key through the queue and see the chest open on reload. Not done: no save near a chest in a portable kit, and no memory reader in the emulator yet.
-2. Float, UInt, Enum and the other types: their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
-3. 0x34fc280, called when a write is late or the queue is full.
-4. BoolArray writes, Struct (+0xc20) and BoolExp (+0xc48).
+1. Float, UInt, Enum and the other types: their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
+2. 0x34fc280, called when a write is late or the queue is full.
+3. BoolArray writes, Struct (+0xc20) and BoolExp (+0xc48).

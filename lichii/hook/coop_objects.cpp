@@ -15,11 +15,17 @@
 // life component = [[+0x270] + 0x2b8], life s32 at [life + 0x1c10] + 8,
 // max at [life + 0x1c18] + 8.
 //
+// LICHII_COOP_OBJECTS_CHEAT=1 (test only, for the stage 5 live checks): keeps
+// the bow, the small quiver with 30 arrows, the small bomb bag and 20 bombs in
+// the local player's pouch, topped up once a second through the game's own
+// flag write queue (docs/items.md hashes). It touches nothing else.
+//
 // This runs on the present thread while the guest runs, so a walk can see the
 // list mid-change. A walk whose length differs from the head's count is
 // dropped, and an actor counts as gone only when two walks in a row miss it.
 
 #include "coop_objects.h"
+#include "coop_flags.h"
 
 #include <array>
 #include <cstdlib>
@@ -36,6 +42,7 @@
 #include "core/hle/kernel/k_process.h"
 #include "core/loader/loader.h"
 #include "core/memory.h"
+#include "coop/host/game_flags.hpp"
 
 namespace CoopObjects {
 namespace {
@@ -61,6 +68,23 @@ constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
 constexpr unsigned kEveryFrames = 2;
+
+// LICHII_COOP_OBJECTS_CHEAT: PouchData.<item>.StockNum and IsGet.<item> hashes
+// from docs/items.md, and the count each is kept at.
+struct CheatItem {
+    const char* name;
+    u32 stock;
+    u32 is_get;
+    s32 count;
+};
+constexpr std::array<CheatItem, 5> kCheatItems{{
+    {"Weapon_Range_Bow", 0x938d56bf, 0x69ec28be, 1},
+    {"Item_Quiver_Small", 0xa8c3e1fb, 0x0a550531, 1},
+    {"Item_Arrow_Normal", 0x518ec74b, 0x572701ea, 30},
+    {"Item_BombBag_Small", 0xb0a1bf51, 0xa63f1e2d, 1},
+    {"Item_Bomb", 0xdb1bcd4f, 0x2bb00768, 20},
+}};
+constexpr unsigned kCheatEveryFrames = 60;
 
 bool EnvFlag(const char* name) {
 #ifdef _WIN32
@@ -145,11 +169,38 @@ public:
             first_ = true;
             LOG_INFO(Core, "coop: objects: main at {:#x}", main_);
         }
-        Reader r(system.ApplicationMemory());
-        Walk(r);
+        if (cheat_ && frame_ % kCheatEveryFrames == 0) {
+            Cheat(system);
+        }
+        if (debug_) {
+            Reader r(system.ApplicationMemory());
+            Walk(r);
+        }
     }
 
+    bool debug_ = false;
+    bool cheat_ = false;
+
 private:
+    // Tops up each cheat item below its count. A read that fails means the
+    // flag manager is not up yet (title screen): try again next time.
+    void Cheat(Core::System& system) {
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+        coop::host::GameFlags flags(memory);
+        for (const CheatItem& item : kCheatItems) {
+            const auto now = flags.get_int(item.stock);
+            if (!now || *now >= item.count) {
+                continue;
+            }
+            const bool set = coop::host::GameFlags::set_int(memory, item.stock, item.count);
+            if (flags.get_bool(item.is_get) == false) {
+                coop::host::GameFlags::set_bool(memory, item.is_get, true);
+            }
+            LOG_INFO(Core, "coop: objects: cheat {} {} -> {}{}", item.name, *now, item.count,
+                     set ? "" : " (queue busy, again next second)");
+        }
+    }
+
     static u64 FindMain(Core::System& system, Kernel::KProcess* process) {
         Loader::AppLoader::Modules modules;
         if (system.GetAppLoader().ReadNSOModules(modules) != Loader::ResultStatus::Success ||
@@ -267,11 +318,17 @@ private:
 } // namespace
 
 void OnFrame(Core::System& system) {
-    static const bool on = EnvFlag("LICHII_COOP_DEBUG_OBJECTS");
-    if (!on) {
+    static const bool debug = EnvFlag("LICHII_COOP_DEBUG_OBJECTS");
+    static const bool cheat = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
+    if (!debug && !cheat) {
         return;
     }
-    static Objects objects;  // the present thread only
+    static Objects objects = [] {
+        Objects o;
+        o.debug_ = debug;
+        o.cheat_ = cheat;
+        return o;
+    }();  // the present thread only
     objects.Frame(system);
 }
 

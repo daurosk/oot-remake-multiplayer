@@ -29,6 +29,10 @@
 //   at Life + 0x228, which the Life step 0x49d8c0 sums into Life + 0x1cb0 and
 //   takes off life), so the game reacts to it as to a hit;
 //   LICHII_COOP_OBJECTS_HURT=0 writes life directly instead.
+// LICHII_COOP_OBJECTS_TEST_DRIVE=1 (two-game tests only): on the game that
+// owns it (player 1 only), one enemy (a ReDead if there is one) is held 3 m in front of our
+// player, swaying 1.5 m side to side, and hurt by 1 every 4 s through the
+// damage field. The other game's copy should do the same on its screen.
 //
 // This runs on the present thread while the guest runs, so a walk can see the
 // list mid-change. A walk whose length differs from the head's count is
@@ -222,6 +226,9 @@ public:
         if (!Ready(system)) {
             return;
         }
+        if (drive_ && sharing_) {
+            Drive(system, server_now_us);
+        }
         if (pose_ && sharing_) {
             Place(system, server_now_us);
         }
@@ -243,6 +250,7 @@ public:
             LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
                      hurt_ ? "through the game" : "written as life");
         }
+        self_ = self;
         sharing_ = true;
         std::vector<coop::protocol::Message> send;
         std::vector<LifeWrite> writes;
@@ -286,6 +294,7 @@ public:
     bool share_ = false;
     bool pose_ = true;
     bool hurt_ = true;
+    bool drive_ = false;
 
 private:
     // The game is the right one; finds main once per process.
@@ -388,6 +397,55 @@ private:
         }
         memory.Write32(value->first + 8, static_cast<u32>(w.life));
         LOG_INFO(Core, "coop: objects: share life {:#x}: {} -> {}", w.address, old, w.life);
+    }
+
+    // LICHII_COOP_OBJECTS_TEST_DRIVE: see the top of this file.
+    void Drive(Core::System& system, u64 now_us) {
+        u64 player = 0;
+        for (const auto& [a, known] : names_) {
+            if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                player = a;
+                break;
+            }
+        }
+        const auto owned = sync_.Owned();
+        if (self_ != 1 || player == 0 || owned.empty()) {  // player 1's game only
+            return;
+        }
+        u64 enemy = owned.front().first;
+        for (const auto& [a, name] : owned) {
+            if (name == "Enemy_ReDead") {
+                enemy = a;
+                break;
+            }
+        }
+        auto& memory = system.ApplicationMemory();
+        Reader r(memory);
+        const auto at = r.Get<std::array<float, 3>>(player + kActorPosition);
+        const auto m = r.Get<std::array<float, 9>>(player + kActorRotation);
+        if (!at || !m || r.Get<u32>(enemy + kActorState).value_or(0) != kStateAlive) {
+            return;
+        }
+        // Columns of the player's rotation: x (side) and z (forward).
+        const float t = static_cast<float>(now_us % 4'000'000) / 4'000'000.0f;
+        const float sway = 1.5f * std::sin(t * 6.2831853f);
+        const std::array<float, 3> to{(*at)[0] + 3.0f * (*m)[2] + sway * (*m)[0], (*at)[1],
+                                      (*at)[2] + 3.0f * (*m)[8] + sway * (*m)[6]};
+        memory.WriteBlock(enemy + kActorPosition, to.data(), 12);
+        if (enemy != drive_enemy_) {
+            drive_enemy_ = enemy;
+            drive_hurt_at_ = now_us;
+            LOG_INFO(Core, "coop: objects: test drive {:#x} {} in front of {:#x}", enemy,
+                     names_[enemy].first, player);
+        }
+        if (now_us - drive_hurt_at_ >= 4'000'000) {
+            drive_hurt_at_ = now_us;
+            const auto value = LifeValue(r, enemy);
+            const s32 life = value ? r.Get<s32>(value->first + 8).value_or(0) : 0;
+            if (life > 1) {
+                WriteLife(memory, r, {enemy, life - 1, 1});
+            }
+        }
     }
 
     // Every frame: each copy we do not own goes where the owner's enemy was.
@@ -573,6 +631,9 @@ private:
     }
 
     std::unordered_map<u64, coop::protocol::Vec3> placed_;  // what we wrote last frame
+    u8 self_ = 0;
+    u64 drive_enemy_ = 0;
+    u64 drive_hurt_at_ = 0;
     float drift_sum_ = 0.0f;
     float drift_max_ = 0.0f;
     std::size_t drift_count_ = 0;
@@ -597,6 +658,7 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.hurt_ = EnvOn("LICHII_COOP_OBJECTS_HURT");
+        objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
         return true;
     }();
     (void)once;

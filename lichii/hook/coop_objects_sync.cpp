@@ -184,6 +184,17 @@ std::optional<proto::ObjectId> Sync::IdOf(std::uint64_t address) const {
     return it->second.id;
 }
 
+std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
+    std::vector<std::pair<std::uint64_t, std::string>> out;
+    for (const auto& [address, o] : objects_) {
+        const auto owner = owners_.find(o.id);
+        if (owner != owners_.end() && owner->second.player != 0 && owner->second.player == self_) {
+            out.emplace_back(address, o.name);
+        }
+    }
+    return out;
+}
+
 std::uint8_t Sync::OwnerOf(const proto::ObjectId& id) const {
     const auto it = owners_.find(id);
     return it == owners_.end() ? 0 : it->second.player;
@@ -288,6 +299,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.position = s->position;
         o.rotation = s->rotation;
         o.seen_at = now_us;
+        o.name = s->name;
         if (s->life) {
             o.life = s->life->life;
             o.max = s->life->max;

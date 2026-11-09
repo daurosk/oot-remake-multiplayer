@@ -127,6 +127,8 @@ public:
     // For tests and logs.
     std::size_t Count() const { return objects_.size(); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
+    // The actors of the enemies we own, with their names (for the test drive).
+    std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
@@ -151,6 +153,7 @@ private:
         std::optional<Mat3> rotation;
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
+        std::string name;
         std::uint64_t fight_until = 0;
         // Owner side.
         std::uint64_t sent_at = 0;

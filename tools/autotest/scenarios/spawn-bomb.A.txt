@@ -1,0 +1,31 @@
+# spawn-bomb (spawn sync, docs/spawns.md): A pulls a bomb and throws it; B, at
+# the same save spot, should show the bomb copy and its explosion at the same
+# time. Needs LICHII_COOP_OBJECTS_CHEAT=1 (bomb bag and bombs). Waits 15 s
+# first so a slower B has finished loading the scene, then walks A a little to
+# the right (away from the save spot's cow). R is quick select: it moves the
+# item slot from the slingshot to the bombs.
+mark start
+wait 900
+mark ready
+stick 1 0 40
+wait 20
+mark turned
+press R
+wait 30
+mark selected
+press ZR
+wait 45
+mark pulled
+press A
+wait 20
+mark thrown
+wait 40
+mark flying
+wait 40
+mark landed
+wait 40
+mark fuse
+wait 40
+mark exploded
+wait 60
+mark end

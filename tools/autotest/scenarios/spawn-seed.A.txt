@@ -1,0 +1,17 @@
+# spawn-seed (spawn sync, docs/spawns.md): A shoots a slingshot seed; B, at the
+# same save spot, should show the seed copy. Waits 15 s first so a slower B
+# has finished loading the scene. The save has the slingshot in the item slot.
+mark start
+wait 900
+mark ready
+hold ZR 60
+mark aiming
+hold ZR 30
+wait 10
+mark fired
+wait 20
+mark flying
+wait 60
+press B
+wait 60
+mark end

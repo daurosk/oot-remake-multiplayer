@@ -32,7 +32,9 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 
 ## Not done
 
-- Not yet compiled into the emulator or run in a game.
+- Compiled into the emulator and run with two games (2026-11-09, `tools/autotest` scenarios `spawn-seed` and `spawn-bomb`, `LICHII_COOP_SPAWN=1`, Graveyard save of the auto kits). In the logs, two slingshot seeds and a Deku Nut from A reach B. B creates each copy 50 to 70 ms after it arrives and deletes it when A's remove comes (seeds about 0.5 s later, the nut 0.3 s). The copies were not seen in screenshots: they are small, live under half a second, and the save's cow stands in front of both Links. The server must be a build with object owners (`server: object owners`, 2026-11-08); the older kit servers drop every object message.
+- No bomb yet: the auto kits' save has no bombs, and `LICHII_COOP_OBJECTS_CHEAT=1` did not give any (no `objects: cheat` line in the log). R (quick select) opens a carousel in this version (stick, slingshot, Deku Nut, bottle, map); the left stick picks, letting go of R selects.
+- A nut copy is deleted at the owner's remove, so it does not flash in the other game. A nut could be treated like a bomb (life to 0) if that makes the game flash it; not tried.
 - Rotation is not sent (copies are made facing the identity rotation): arrows point the wrong way.
 - Copies are the game's real actors, so a copy bomb also hurts things in its own game, and its own fuse runs: it may go off slightly before the owner's remove arrives. The harmless `CoopShot_*` packs of [objects.md](objects.md) would avoid both.
 - A copy seed or nut made by the create request may not behave like a shot one (the game may give it its nocked state); its place is still written every frame.

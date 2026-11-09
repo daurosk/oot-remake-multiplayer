@@ -18,3 +18,52 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { name: gcc, cc: gcc, cxx: g++ }
+          - { name: clang, cc: clang, cxx: clang++ }
+    name: linux (${{ matrix.compiler.name }})
+    env:
+      CC: ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        # -Werror: our code builds clean at -Wall -Wextra -Wpedantic.
+        # ENet is built with -w, so this only holds our own targets to it.
+        run: >
+          cmake -S . -B build -DCOOP_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS=-Werror
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  sanitize:
+    runs-on: ubuntu-latest
+    name: sanitize (clang, asan + ubsan)
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCOOP_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+          -DCOOP_SANITIZE=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: coop_test, 2 clients for 20 seconds
+        run: |
+          set -o pipefail
+          ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
+          grep -q '^result: PASS' coop_test.log

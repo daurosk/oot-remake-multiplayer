@@ -47,7 +47,7 @@ struct Client {
   void send(const Message& m, std::uint8_t channel) {
     auto bytes = encode(m);
     REQUIRE(bytes.has_value());
-    enet_uint32 flags = channel <= kChannelOwnership ? ENET_PACKET_FLAG_RELIABLE : 0;
+    enet_uint32 flags = channel <= kChannelOwnership ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
     ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(), flags);
     REQUIRE(enet_peer_send(peer, channel, p) == 0);
   }

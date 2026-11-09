@@ -109,7 +109,7 @@ void EnetServer::apply_actions() {
       if (it == peers_.end()) continue;
       // Channels 0 to 2 are reliable; 3 and 4 unreliable, sequenced.
       enet_uint32 flags =
-          send->channel <= protocol::kChannelOwnership ? ENET_PACKET_FLAG_RELIABLE : 0;
+          send->channel <= protocol::kChannelOwnership ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
       ENetPacket* packet = enet_packet_create(send->bytes.data(), send->bytes.size(), flags);
       if (packet != nullptr && enet_peer_send(it->second, send->channel, packet) != 0) {
         enet_packet_destroy(packet);

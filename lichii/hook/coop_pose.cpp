@@ -395,12 +395,12 @@ std::string YawText(CoopPuppet::Guest& guest, std::uint64_t actor) {
 
 }  // namespace
 
-void SetLog(std::function<void(const std::string&)> log, bool debug, bool no_as) {
+void SetLog(std::function<void(const std::string&)> log, bool debug, bool as_too) {
     State& s = S();
     std::lock_guard lock(s.mutex);
     s.log = std::move(log);
     s.debug = debug;
-    s.no_as = no_as;
+    s.no_as = !as_too;
 }
 
 bool Drives(std::uint8_t number, std::uint64_t now_ms) {

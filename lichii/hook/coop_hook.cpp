@@ -50,6 +50,7 @@
 #include "coop_chat.h"
 #include "coop_cheats.h"
 #include "coop_flags.h"
+#include "coop_fairy.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
@@ -203,7 +204,7 @@ public:
             CoopObjects::OnEvent(event);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
-                         EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_NO_AS"));
+                         EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
         return true;
@@ -269,6 +270,8 @@ public:
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
                             reading && reading->event_running.value_or(false),
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position,
+                           report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
         Place(view);

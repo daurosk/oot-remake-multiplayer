@@ -183,7 +183,8 @@ Research (s2-equip-create) showed that create argument +0x40 is a name pointer, 
 - `OnEvent` keeps each remote player's merged `PLAYER_EQUIP` (weapon, shield, head, armor, boots); `Publish` passes it on as `Target::gear`.
 - For each piece whose name differs from what the puppet wears, one call `0x2df7b20(eu, kind, &char*, 2, -1, 1, 0)` with `eu = [[actor + 0x270] + 0x200]` and kinds 0, 6, 7, 8, 9. Each kind has its own name cell in the puppet's block (+0x300, 0x40 each; the char* cells at +0x440). Log: `P<n> wears <piece> '<name>'`.
 - An empty name (nothing in that slot) is not taken off yet; a gear change later is the same call, no re-create. A re-create wears everything again.
-- Not proven in game. Watch that the local save's gear (the +0x29b init path) does not come back over it.
+- Proven in game (2026-11-09, autotest `gear` and `gear-change` on one PC): both puppets wear the other player's Kokiri Sword and Hylian Shield (`wears ... (returned 0x1)`), and when A swaps to the Deku Shield in the menu, B's puppet of A swaps too (Hylian on its back before, Deku after). The pack must carry the EquipmentUserParam (main since PR 52): with an older pack the EquipmentUser is 0 and nothing is worn.
+- Not run: tunic, boots, mask (none in the test save), taking a piece off (an empty name is skipped), adult Link.
 
 ### Not done (equipment)
 
@@ -385,7 +386,7 @@ A second `Player_Child` model object is in memory (not reached from the player a
 3. A received pose goes to that player's track. Each frame the puppet shows the last two blended (normalised lerp of the rotations, lerp of the rest), one send interval behind, so 30 a second plays smooth at 60 frames.
 4. For each live puppet with the same bone count, the shown pose is written into its local transforms: the rows of the rotation, the translation and scale, and the flag bits. Bones not in the pose are left as the puppet's own animation has them.
 
-`LICHII_COOP_POSE_NO_AS=1`: while a player's poses arrive (the last within 1 s), the director plays no AS command on that player's puppet, so only the pose copy moves it. For the case where the puppet's own animation writes over the copy.
+The pose copy wins over the AS commands: while a player's poses arrive (the last within 1 s), the director plays no AS command on that player's puppet, so only the pose copy moves it. Gear is still put on as before. Without poses (a peer whose build has no pose copy) the puppet plays the AS commands as it did. `LICHII_COOP_POSE_AS=1` plays them as well while poses arrive.
 
 The debug puppet (`LICHII_COOP_DEBUG_PUPPET=1`) copies our own pose when `LICHII_COOP_DEBUG_POSE=1` is set too, so one game shows whether the copy works.
 
@@ -398,7 +399,7 @@ Two local games in the Graveyard (child), autotest scenario `pose` (`tools/autot
 - Both games read 309 bones; about 300 count as moving once Link has walked. Each sends 30 poses a second and receives the other's 30.
 - B writes the pose on its puppet every frame (about 40 written a second at the game's 40 fps) and every write is still there a frame later (`kept 41, overwritten 0`): the puppet's own AS commands do not write its local transforms, so a write at the start of the frame holds.
 - B's screenshots show the puppet in A's poses at the same moments: walking, mid-run, turning to run back, and a hunched pose with hands on the knees that the AS route never showed.
-- With `LICHII_COOP_POSE_NO_AS=1` no AS command is played on the puppet at all, and it still moves through every pose: the copy alone drives the whole body.
+- With no AS command played on the puppet at all (then `LICHII_COOP_POSE_NO_AS=1`, now the default), it still moves through every pose: the copy alone drives the whole body.
 
 - Facing: with scenario `turn` (A walks up, then faces left, right, toward B and away), the yaw that `LICHII_COOP_DEBUG_POSE=1` now logs (`yaw ours <deg>, P<n> <deg>`, from actor +0x328) of B's puppet followed A's own at every turn: 91, 152, 2, -93, 86 on both sides; A's puppet of B stayed at B's -104. The facing is the actor matrix the director writes from `PLAYER_SAMPLE`; the root bone carries none (its local rotation stays identity).
 
@@ -406,9 +407,25 @@ The first two-game run had every write refused: the player reaches its model thr
 
 ### Not done (pose)
 
-1. Default is still to play the AS command as well (a build without the pose copy on the other side still animates the puppet). Whether to switch it off by default (`LICHII_COOP_POSE_NO_AS`) is open; both look the same.
+1. The AS commands stop only while poses arrive; if poses stop for more than 1 s the next sample's animation is played again (the slot's last command keeps playing until then).
 2. The skeleton id is only the bone count; child and adult differ in it, which is what a mismatch would be.
 3. Adult Link's skeleton was not read (only `Player_Child`).
+
+## Fairy
+
+Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii/hook/coop_fairy.*`).
+
+| Piece | What |
+|---|---|
+| Actor | `Dm_Npc_Navi`, the cutscene Navi from the game's own pack: its own model and glow (`XLink/Npc_Navi`), `ActorLogicSimpleActor`, the generic name `Dm_Npc_Base`. `Npc_Navi` is not used: it is the player's partner, with an AI that follows the player and a name the game looks up, so a second one would clash. `LICHII_COOP_FAIRY_ACTOR=<pack>` picks another (`Npc_Fairy` is the next to try). |
+| Create and delete | A second `CoopPuppet::Director`, the same create, take and delete path as the puppet. It registers with the svc cave as caller 20 (`CoopSvc::AddCaller`, after the puppets and CoopSpawn), on the first `CoopFairy::Publish`; the cave asks each caller in turn, each with its own frame and its own call results. Each director takes at most 4 calls a frame, the cave allows 16. Its log lines start with `fairy`. |
+| Where | `CoopFairy::Publish`, right after `CoopPuppet::Publish` with the same arguments, runs a second `CoopPuppet::Planner` on the same remotes, so a fairy exists exactly when its puppet does (the debug puppet too). Its goal is the puppet's position plus (0.35 right, 1.05 up, 0.25 back) turned by the puppet's rotation, with a 0.06 bob and a 0.08 loop. It closes on the goal at rate 5/s and jumps when more than 4 units away (a warp, a new scene). |
+| Pose | Written into the actor every game frame by the director, like the puppet's. The Navi AI is not pointed at the puppet. |
+| On and off | On with the puppets (`LICHII_COOP_PUPPET` or `LICHII_COOP_DEBUG_PUPPET`); `LICHII_COOP_FAIRY=0` turns it off. |
+
+The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
+
+**Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
 
 ## Not done
 
@@ -417,4 +434,5 @@ The first two-game run had every write refused: the player reaches its model thr
 3. The run slots of `ExecuteActorForceSetMtx` and `OneShotActorRequestSetMtx`, if a direct pose write does not hold.
 4. ~~What the handle slot holds~~ (a create request, see [Spawn and move](#spawn-and-move-what-is-built)); the meaning of `w4`, the stack arguments and create argument +0x40.
 5. Whether the engine accepts an uncompressed pack, and whether the size table needs entries for new packs.
-6. Animation playback and the scene filter are built and tested on fake memory, not yet run; equipment is from the dump only; spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).
+6. Follow, upper-body animation and equipment (worn and changed) are proven in game (2026-11-09); leg speed, scene changes and adult Link are not run. Spawn, follow and delete are [proven in game](#proven-in-game-2026-11-08).
+7. A puppet created while its player is far away (about 47 units, 2026-11-09) is not drawn when the player comes near; its fairy is. Recreated nearby, it is drawn. Not looked into.

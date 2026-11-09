@@ -109,12 +109,12 @@ void Send(coop::net::Client& client, std::uint64_t now_ms);
 // Network thread: keep a received PLAYER_POSE.
 void OnEvent(const coop::net::Event& event, std::uint64_t now_ms);
 // LICHII_COOP_DEBUG_POSE=1: a line a second with bone counts and rates.
-// LICHII_COOP_POSE_NO_AS=1 (no_as): a puppet whose poses arrive plays no AS
-// command of its own (see Drives).
-void SetLog(std::function<void(const std::string&)> log, bool debug, bool no_as = false);
-// Calc thread: whether the pose copy drives this player's puppet now, so the
-// director plays no AS command on it (with no_as only: poses arrived in the
-// last kFreshMs).
+// The pose copy wins over the AS commands: a puppet whose poses arrive plays
+// no AS command of its own (see Drives). LICHII_COOP_POSE_AS=1 (as_too) plays
+// them as well, as before the pose copy.
+void SetLog(std::function<void(const std::string&)> log, bool debug, bool as_too = false);
+// Calc thread: whether the pose copy drives this player's puppet now (poses
+// arrived in the last kFreshMs), so the director plays no AS command on it.
 bool Drives(std::uint8_t number, std::uint64_t now_ms);
 inline constexpr std::uint64_t kFreshMs = 1000;
 

@@ -5,8 +5,12 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <string_view>
 #include <vector>
+
+#include "coop_puppet.h"
 
 namespace Core {
 class System;
@@ -61,6 +65,18 @@ inline constexpr std::uint64_t kBufferS0 = 0x68;  // f32, loaded into s0 before 
 // `out` (NSO header, then the module), checked against `original` and `out`.
 void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view build_id,
                const std::vector<std::uint8_t>& original, std::vector<std::uint8_t>& out);
+
+// Something else that calls game functions from the cave, with the same
+// contract as CoopPuppet::Director::Step: once a frame it is asked with
+// after_call false; each call it returns is made, and it is asked again with
+// after_call true and the call's x0 in result; nothing means done for this
+// frame. The puppet director always goes first, then the callers by order
+// (CoopSpawn 10). Runs on the game's calc thread; keep it short. Any thread,
+// best before the game starts. The cave is patched only when Wanted() is
+// true (LICHII_COOP_PUPPET, LICHII_COOP_DEBUG_PUPPET or LICHII_COOP_SPAWN).
+using Caller = std::function<std::optional<CoopPuppet::Call>(
+    CoopPuppet::Guest& guest, bool after_call, std::uint64_t result, std::uint64_t now_ms)>;
+void AddCaller(int order, Caller caller);
 
 // Kernel::Svc::Call, before any other SVC: handles svc 0xf4 from Ocarina
 // and returns true, with the registers to give back in `args`. False for

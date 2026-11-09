@@ -1,0 +1,11 @@
+# gear: A walks well ahead, then turns fully back toward B and stands.
+# B stands still; B's shots show A's puppet from both sides.
+mark start
+stick 0 0.6 160         # walk forward, away from B
+wait 120
+mark stand
+stick 0 -0.6 40         # turn round toward B (a few steps)
+wait 120
+mark turned1
+wait 120
+mark turned2

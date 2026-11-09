@@ -11,6 +11,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_objects_sync.cpp"
     "${_coop_hook}/coop_puppet.cpp"
     "${_coop_hook}/coop_settings.cpp"
+    "${_coop_hook}/coop_spawn.cpp"
     "${_coop_hook}/coop_svc.cpp"
 )
 # Public, so video_core (which links core) sees them: the patched

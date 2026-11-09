@@ -52,6 +52,7 @@
 #include "coop_objects.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
+#include "coop_spawn.h"
 
 namespace CoopHook {
 namespace {
@@ -188,6 +189,7 @@ public:
             Log(event);
             Chat(event, client);
             CoopObjects::OnEvent(event);
+            CoopSpawn::OnEvent(event);
         };
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
@@ -240,6 +242,7 @@ public:
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
+        CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);

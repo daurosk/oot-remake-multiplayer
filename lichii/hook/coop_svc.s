@@ -12,6 +12,7 @@
 //   +0x00  the stack arguments the function sees (0x20 bytes)
 //   +0x20  the function's address
 //   +0x28  x0 to x7
+//   +0x68  s0 (a float argument, as 0x37b5d70 takes the frame)
 // At most 16 calls a frame. Then it makes the game's own call as before.
 //
 // Bytes: coop_svc.cpp (kCave). To rebuild them (LLVM on Windows):
@@ -43,6 +44,7 @@ ask:
     ldp   x2, x3, [sp, #0x38]
     ldp   x4, x5, [sp, #0x48]
     ldp   x6, x7, [sp, #0x58]
+    ldr   s0, [sp, #0x68]
     blr   x16
     mov   x1, x0
     mov   x2, #1

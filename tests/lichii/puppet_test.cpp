@@ -415,7 +415,7 @@ TEST_CASE("puppet: no more than the frame's limit of calls") {
     Game g;
     Director d;
     std::vector<Target> many;
-    for (std::uint8_t n = 0; n < 4; ++n) many.push_back(At(n, 0, 0, 0));
+    for (std::uint8_t n = 0; n < 10; ++n) many.push_back(At(n, 0, 0, 0));
     d.SetInput(Wants(many));
     CHECK(Frame(d, g, 0).size() == Director::kMaxCallsPerFrame);
 }
@@ -436,25 +436,205 @@ TEST_CASE("puppet planner: remote players in this scene, and the debug puppet") 
     remotes[2].fade = 0.0f;  // faded out
 
     // No game: nothing.
-    CHECK(p.Plan(0, std::string("Kokiri"), CoopPuppet::Vec3{0, 0, 0}, remotes, 0).main_base == 0);
+    CHECK(p.Plan(0, std::string("Kokiri"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 0).main_base == 0);
 
-    auto in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, remotes, 1000);
+    auto in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 1000);
     REQUIRE(in.targets.size() == 1);  // the debug puppet waits for the delay
     CHECK(in.targets[0].number == 2);
-    CHECK(in.targets[0].actor == s.actor);
+    CHECK(in.targets[0].actor == "CoopPuppet_Child");  // by age
     CHECK(in.targets[0].rotation[0] == doctest::Approx(-1.0f));  // half a turn about y
 
-    in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, remotes, 4000);
+    in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 4000);
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[1].number == 0);
     CHECK(in.targets[1].position == CoopPuppet::Vec3{12, 0, 10});
     // It stays where it was put while you walk.
-    in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{20, 0, 10}, remotes, 5000);
+    in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{20, 0, 10}, false, remotes, 5000);
     CHECK(in.targets[1].position == CoopPuppet::Vec3{12, 0, 10});
 
     // A new scene starts the delay again; an unknown scene plans nothing.
-    in = p.Plan(kBase, std::string("Field"), CoopPuppet::Vec3{0, 0, 0}, remotes, 6000);
+    in = p.Plan(kBase, std::string("Field"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 6000);
     REQUIRE(in.targets.size() == 1);
     CHECK(in.targets[0].number == 3);
-    CHECK(p.Plan(kBase, std::nullopt, CoopPuppet::Vec3{0, 0, 0}, remotes, 7000).targets.empty());
+    CHECK(p.Plan(kBase, std::nullopt, CoopPuppet::Vec3{0, 0, 0}, false, remotes, 7000).targets.empty());
+}
+
+namespace {
+// The AS chain of kActor (actor +0x270, +0x40, +0x18, +0x18), with one slot
+// whose frame is `frame`.
+constexpr std::uint64_t kAs = 0x500000000;
+constexpr std::uint64_t kController = kAs + 0x100;
+constexpr std::uint64_t kSlot0 = kAs + 0x200;
+void GiveAnimation(Game& g, float frame) {
+    g.guest.Map(kAs, 0x1000);
+    g.guest.Set(kActor + 0x270, kAs);
+    g.guest.Set(kAs + 0x40, kAs + 0x40);
+    g.guest.Set(kAs + 0x40 + 0x18, kAs + 0x80);
+    g.guest.Set(kAs + 0x80 + 0x18, kController);
+    g.guest.Set(kController + addr::kSlotCount, std::int32_t{1});
+    g.guest.Set(kController + addr::kSlots, kAs + 0x300);
+    g.guest.Set(kAs + 0x300, kSlot0);
+    g.guest.Set(kSlot0 + addr::kSlotFrame, frame);
+}
+
+Target Playing(std::string name, float frame, std::uint32_t serial,
+               CoopPuppet::Show show = CoopPuppet::Show::show) {
+    Target t = At(1, 4, 5, 6);
+    t.anim = CoopPuppet::Anim{std::move(name), frame, 1.5f};
+    t.anim_serial = serial;
+    t.show = show;
+    return t;
+}
+
+// A live puppet P1 at frame 15.
+void MakeLive(Director& d, Game& g) {
+    d.SetInput(Wants({At(1, 4, 5, 6)}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+}
+}  // namespace
+
+TEST_CASE("puppet animation: play the command, set its frame, correct only when far off") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); }, false, true);
+    MakeLive(d, g);
+    // No AS chain yet: nothing to play on.
+    d.SetInput(Wants({Playing("Wait", 4.0f, 1)}));
+    CHECK(Frame(d, g, 20).empty());
+
+    GiveAnimation(g, 0.0f);
+    auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kPlayAs);
+    const std::uint64_t request = calls[0].x[0];
+    CHECK(request == kHeap + block::kPlayRequest);
+    CHECK(g.guest.Get<std::uint64_t>(request + 0x00) == kActor);
+    const auto name_at = g.guest.Get<std::uint64_t>(request + 0x08);
+    CHECK(name_at == kHeap + block::kAnimText);
+    std::array<char, block::kAnimCapacity> name{};
+    REQUIRE(g.guest.Read(name_at, name.data(), name.size()));
+    CHECK(std::string(name.data()) == "Wait");
+    CHECK(g.guest.Get<std::int32_t>(request + 0x10) == 0);
+    CHECK(g.guest.Get<float>(request + 0x14) == 1.5f);
+    CHECK(g.guest.Get<float>(request + 0x18) == -1.0f);
+    CHECK(g.guest.Get<float>(request + 0x1c) == -1.0f);
+    CHECK(g.guest.Get<std::uint8_t>(request + 0x20) == 0u);
+    CHECK(g.guest.Get<std::uint64_t>(request + 0x28) == 0u);
+    CHECK(d.Slots()[0].anim_name == "Wait");
+    // Then, in the same frame, the received frame set on slot 0.
+    CHECK(calls[1].function == kBase + addr::kSetAsFrame);
+    CHECK(calls[1].x[0] == kController);
+    CHECK(calls[1].x[1] == 0u);
+    CHECK(calls[1].s0 == 4.0f);
+    CHECK(Frame(d, g, 40).empty());
+    g.guest.Set(kSlot0 + addr::kSlotFrame, 6.0f);  // the game plays it on
+    CHECK(Frame(d, g, 50).empty());
+
+    // A new sample close to the puppet's frame: left alone. Far off: set.
+    d.SetInput(Wants({Playing("Wait", 7.0f, 2)}));
+    CHECK(Frame(d, g, 60).empty());
+    d.SetInput(Wants({Playing("Wait", 20.0f, 3)}));
+    calls = Frame(d, g, 70);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].s0 == 20.0f);
+    CHECK(Frame(d, g, 80).empty());
+
+    // A new command goes in the other name buffer.
+    d.SetInput(Wants({Playing("Run", 1.0f, 4)}));
+    calls = Frame(d, g, 90);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kPlayAs);
+    CHECK(g.guest.Get<std::uint64_t>(request + 0x08) ==
+          kHeap + block::kAnimText + block::kAnimCapacity);
+    CHECK(d.Slots()[0].anim_name == "Run");
+
+    // A name too long for the buffer is not played.
+    d.SetInput(Wants({Playing(std::string(block::kAnimCapacity, 'x'), 1.0f, 5)}));
+    CHECK(Frame(d, g, 100).empty());
+    CHECK(d.Slots()[0].anim_name == "Run");
+}
+
+TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    GiveAnimation(g, 9.0f);
+    d.SetInput(Wants({Playing("Wait", 9.0f, 1)}));
+    Frame(d, g, 20);
+    Frame(d, g, 30);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
+
+    // Hold: not moved, and its frame set back to where it was every frame.
+    Target held = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hold);
+    held.position = {40, 5, 6};
+    d.SetInput(Wants({held}));
+    g.guest.Set(kSlot0 + addr::kSlotFrame, 11.0f);
+    for (std::uint64_t now : {40, 50}) {
+        auto calls = Frame(d, g, now);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kSetAsFrame);
+        CHECK(calls[0].s0 == 11.0f);
+        g.guest.Set(kSlot0 + addr::kSlotFrame, 12.0f);
+    }
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
+    CHECK(d.Slots()[0].anim_name == "Wait");
+
+    // Hide: parked below its spot, no animation calls, not deleted.
+    Target hidden = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hide);
+    hidden.position = {40, 5, 6};
+    d.SetInput(Wants({hidden}));
+    CHECK(Frame(d, g, 60).empty());
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
+    CHECK(d.Slots()[0].phase == Phase::live);
+
+    // Shown again: moves, and plays what it missed.
+    held.show = CoopPuppet::Show::show;
+    d.SetInput(Wants({held}));
+    auto calls = Frame(d, g, 70);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kPlayAs);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
+}
+
+TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation passed on") {
+    CoopPuppet::Planner p;
+    std::vector<CoopPuppet::Remote> remotes(3);
+    remotes[0].number = 1;
+    remotes[0].scene = "Kokiri";
+    remotes[0].anim = CoopPuppet::Anim{"Wait", 3.0f, 1.0f};
+    remotes[0].anim_serial = 7;
+    remotes[1].number = 2;
+    remotes[1].scene = "Kokiri";
+    remotes[1].adult = true;
+    remotes[1].status = coop::protocol::status::in_cutscene;
+    remotes[2].number = 3;  // scene not known
+
+    auto in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, false, remotes, 0);
+    REQUIRE(in.targets.size() == 2);
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);
+    CHECK(in.targets[0].actor == "CoopPuppet_Child");
+    REQUIRE(in.targets[0].anim);
+    CHECK(in.targets[0].anim->name == "Wait");
+    CHECK(in.targets[0].anim_serial == 7u);
+    CHECK(in.targets[1].show == CoopPuppet::Show::hold);  // their cutscene
+    CHECK(in.targets[1].actor == "CoopPuppet_Adult");
+
+    // Our cutscene: every puppet here kept but hidden.
+    in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, true, remotes, 10);
+    REQUIRE(in.targets.size() == 2);
+    CHECK(in.targets[0].show == CoopPuppet::Show::hide);
+    CHECK(in.targets[1].show == CoopPuppet::Show::hide);
+
+    // An actor named in the settings wins over age.
+    CoopPuppet::PlannerSettings s;
+    s.actor = "Animal_Cow_LinkHouse";
+    CoopPuppet::Planner cow(s);
+    in = cow.Plan(kBase, std::string("Kokiri"), std::nullopt, false, remotes, 0);
+    REQUIRE(in.targets.size() == 2);
+    CHECK(in.targets[1].actor == "Animal_Cow_LinkHouse");
 }

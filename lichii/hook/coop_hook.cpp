@@ -182,6 +182,7 @@ public:
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client&) {
             Log(event);
+            CoopPuppet::OnEvent(event);
         };
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         thread_ = std::thread([this] { Run(); });
@@ -223,6 +224,7 @@ public:
             });
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
+                            reading && reading->event_running.value_or(false),
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         Place(view);
 

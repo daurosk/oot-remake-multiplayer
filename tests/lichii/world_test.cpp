@@ -62,14 +62,17 @@ TEST_CASE("world: the breakables are shared, other world objects are not") {
                              "Obj_SignBoard_A_01", "Obj_Kokiri_Signboard_A_01",
                              "Obj_DodongoCave_CrackWall_A_01", "Obj_ShadowTemple_SkullPot_A_01",
                              "Obj_Kokiri_Beehive_A_01", "Obj_GuidePost_A_02",
-                             "Obj_InsideGanonCastle_SpiderWeb_A_01", "Obj_Goron_BrokenRock_A_01"}) {
+                             "Obj_InsideGanonCastle_SpiderWeb_A_01", "Obj_Goron_BrokenRock_A_01",
+                             // grass actors with no Obj_Plant_Grass_ name
+                             "Land_kokiri_Plant_A_02_DropFixed_03", "Land_Kokiri_Plant_G_01",
+                             "Land_Kokiri_Zenmai_A_02", "Obj_Plant_DestructibleGrass_Base"}) {
         CAPTURE(name);
         CHECK(CoopWorld::IsBreakable(name));
         CHECK(CoopObjects::IsShared(name));
     }
     for (const char* name : {"Obj_TBox_A_04", "Obj_Kakariko_Door_A_01", "Obj_StepSwitch_A_01",
                              "Obj_Kakariko_CookingPot_A_01", "Obj_GoronCity_LargePot_A_01",
-                             "Land_Graveyard_Plants_A_10", "Item_Bomb", "Player_Child",
+                             "Land_Graveyard_Plants_A_10", "Land_kokiri_Plant_A_01", "Item_Bomb", "Player_Child",
                              "Obj_Pot"}) {
         CAPTURE(name);
         CHECK_FALSE(CoopWorld::IsBreakable(name));

@@ -27,9 +27,26 @@ constexpr std::array<std::string_view, 10> kParts{
     "BrokenIcePillar_", "SkullPot_", "ArcheryPot_", "Beehive_", "SpiderWeb_",
 };
 
+// The grass that is an actor without an Obj_Plant_Grass_ name: every pack
+// with the life of Obj_Plant_DestructibleGrass_Base (a pot's: 1, then gone).
+// It has no DestructionRef, so the list above missed it; the 13 tufts by
+// the Kokiri side of Hyrule Field are the third. The rest of the field's
+// grass is foliage, no actor at all, and is not shared (world.md).
+constexpr std::array<std::string_view, 4> kGrass{
+    "Obj_Plant_DestructibleGrass_Base",
+    "Land_Kokiri_Plant_G_01",
+    "Land_kokiri_Plant_A_02_DropFixed_03",
+    "Land_Kokiri_Zenmai_A_02",
+};
+
 } // namespace
 
 bool IsBreakable(std::string_view name) {
+    for (const auto grass : kGrass) {
+        if (name == grass) {
+            return true;
+        }
+    }
     if (!name.starts_with("Obj_")) {
         return false;
     }

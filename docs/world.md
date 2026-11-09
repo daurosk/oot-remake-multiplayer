@@ -15,7 +15,7 @@ Every `Obj_` actor pack with a `LifeRef` and a `DestructionRef` (checked: all 8,
 | Pots | `Obj_Pot_*` (15, the respawning and dream ones too), `Obj_ShadowTemple_SkullPot_*`, `Obj_Gerudo_HorsebackArcheryPot_*` | |
 | Crates | `Obj_BrokenBox_*` | 5 of 5 |
 | Rocks | `Obj_LiftRock_*` (lifted and thrown), `Obj_BrokenRock_*`, `Obj_*_BrokenRock_*` (bomb or hammer) | 1 of 1 |
-| Grass | `Obj_Plant_Grass_*` | |
+| Grass | `Obj_Plant_Grass_*`; by full name `Land_kokiri_Plant_A_02_DropFixed_03`, `Land_Kokiri_Plant_G_01`, `Land_Kokiri_Zenmai_A_02`, `Obj_Plant_DestructibleGrass_Base` (the packs with the life of `Obj_Plant_DestructibleGrass_Base`: a pot's life, 1, and no `DestructionRef`, so the first scan missed them) | |
 | Signs | `Obj_SignBoard_*`, `Obj_*_Signboard_*`, `Obj_GuidePost_*` | 100 of 100 |
 | Walls and floors | `Obj_*_CrackWall_*`, `Obj_*_CrackFloor_*` (bombable) | |
 | Others | `Obj_BrokenIcePillar_*`, `Obj_Kokiri_Beehive_*`, `Obj_*_SpiderWeb_*` | Beehive 1 of 1 |
@@ -49,6 +49,7 @@ Seen on the way:
 - Drops: each game runs its own death, so each drops its own rupee or heart. Caleb wants one drop for one player (the one who broke it). Next: hold the copy's drop (the drop component, or remove the dropped `Obj_Rupee_*` that appears where a copy died).
 - Signposts (above), and pots and grass cut by the sword: not seen in a run yet. A pot that breaks with its life read at 0 goes through the life path; one removed at once goes through the gone rule, which needs it to have moved: a pot cut where it stands would be missed. Next live check: a pot.
 - Lifted and carried objects (a pot or rock in Link's hands) are not moved on the other screen; only the break is shared. Movables are the step after switches.
+- Grass, 2026-11-09: Caleb cut grass in Hyrule Field (build e2ed2aa) and it stayed on the other screen. That build shared no grass there: the field has no `Obj_Plant_Grass_*` at all (two logs with `LICHII_COOP_DEBUG_OBJECTS=1`), only 13 `Land_kokiri_Plant_A_02_DropFixed_03` near the Kokiri side, now on the list. Not checked in a game: that this grass leaves the list when cut. The rest of the field's grass is not an actor: no actor of it is on the list while it stands (the Foliage module probably draws it). Where its cut state lives is not known, so it is not shared. Next: one run with the debug switch where grass is cut, then read what changed.
 - Grass and signs cut by the other player: the owner may be a game where that grass is far away. Works the same way, not checked.
 
 ## Switches and doors (next)

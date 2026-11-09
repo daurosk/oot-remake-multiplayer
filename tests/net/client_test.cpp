@@ -562,3 +562,161 @@ TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::bad_name) == "bad name");
   CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(6)) == "unknown reason");
 }
+
+TEST_CASE("client: send_chat sends CHAT and refuses empty, long or bad text") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  CHECK_FALSE(client.send_chat("before the welcome"));
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+
+  const std::string longest(kMaxChatChars, 'a');
+  std::string accented;  // 200 characters of 2 bytes each
+  for (std::size_t i = 0; i < kMaxChatChars; ++i) accented += "\xc3\xa9";
+  CHECK(client.send_chat("hi"));
+  CHECK(client.send_chat(longest));
+  CHECK(client.send_chat(accented));
+  CHECK_FALSE(client.send_chat(""));
+  CHECK_FALSE(client.send_chat(longest + "a"));
+  CHECK_FALSE(client.send_chat(accented + "\xc3\xa9"));
+  CHECK_FALSE(client.send_chat("line\nbreak"));  // a control character
+  CHECK_FALSE(client.send_chat("\xc3"));         // cut-off UTF-8
+
+  const std::size_t from = 0;
+  REQUIRE(pump(client, server, [&] {
+    std::size_t chats = 0;
+    for (std::size_t i = from; i < server.received.size(); ++i) {
+      chats += std::holds_alternative<proto::Chat>(server.received[i].message) ? 1 : 0;
+    }
+    return chats >= 3;
+  }));
+  pump(client, server, [] { return false; }, 100);
+  std::vector<std::string> texts;
+  for (const auto& r : server.received) {
+    if (const auto* chat = std::get_if<proto::Chat>(&r.message)) {
+      CHECK(r.channel == proto::kChannelSession);
+      CHECK(chat->player_number == proto::kPlayerSelf);
+      texts.push_back(chat->text);
+    }
+  }
+  CHECK(texts == std::vector<std::string>{"hi", longest, accented});
+
+  client.stop();
+  CHECK_FALSE(client.send_chat("after stop"));
+}
+
+TEST_CASE("client: a relayed CHAT becomes a chat event with its sender") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_client(client, server);  // we are 2, Saria is 1
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+
+  server.send(proto::Chat{3, "nobody"}, proto::kChannelSession);  // not in the room
+  server.send(proto::Chat{2, "echo"}, proto::kChannelSession);    // our own number
+  server.send(proto::Chat{1, "hey"}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::chat));
+  pump(client, server, [] { return false; }, 100);
+  events.drain(client);
+  CHECK(events.count(EventKind::chat) == 1);
+  const std::size_t chat_at = *events.find(EventKind::chat);
+  const Event& chat = events.all[chat_at];
+  CHECK(chat.player == 1);
+  CHECK(chat.text == "hey");
+  CHECK(chat.channel == proto::kChannelSession);
+  // The raw message comes first, for hosts that read every message.
+  const auto message_at = events.find(EventKind::message);
+  REQUIRE(message_at.has_value());
+  CHECK(*message_at + 1 == chat_at);
+  CHECK(events.all[*message_at].message == proto::Message{proto::Chat{1, "hey"}});
+  CHECK(events.count(EventKind::message) == 1);
+  CHECK(client.rejected_count() == 2);
+}
+
+TEST_CASE("client: the player list follows joins, statuses, leaves and reconnects") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  CHECK(client.players().empty());
+  welcome_client(client, server);  // we are 2, Saria is 1
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+
+  const Player saria{1, "Saria", std::nullopt, false};
+  const Player link{2, "Link", std::nullopt, true};
+  CHECK(client.players() == std::vector<Player>{saria, link});
+  CHECK(client.find_player(4) == nullptr);
+
+  // Join.
+  server.send(proto::PlayerJoined{3, "Zelda"}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::player_joined));
+  const Event joined = events.all[*events.find(EventKind::player_joined)];
+  CHECK(joined.player == 3);
+  CHECK(joined.nickname == "Zelda");
+  REQUIRE(client.players().size() == 3);
+  CHECK(client.players()[2] == Player{3, "Zelda", std::nullopt, false});
+
+  // Status, theirs received and ours sent; unknown bits are kept.
+  const std::uint8_t flags = proto::status::paused | 0x80;
+  server.send(proto::PlayerStatus{3, flags}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::player_status));
+  const Event status = events.all[*events.find(EventKind::player_status)];
+  CHECK(status.player == 3);
+  CHECK(status.status_flags == flags);
+  REQUIRE(client.find_player(3) != nullptr);
+  CHECK(client.find_player(3)->status == flags);
+  CHECK(client.send(proto::PlayerStatus{0, proto::status::loading}));
+  CHECK(client.find_player(2)->status == proto::status::loading);
+
+  // Refused: a leave or a status for nobody, a join, leave or status for us.
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::PlayerStatus{4, 0}, proto::kChannelSession);
+  server.send(proto::PlayerLeft{4, proto::LeaveReason::left}, proto::kChannelSession);
+  server.send(proto::PlayerJoined{2, "Impostor"}, proto::kChannelSession);
+  server.send(proto::PlayerLeft{2, proto::LeaveReason::kicked}, proto::kChannelSession);
+  server.send(proto::PlayerStatus{2, proto::status::dead}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 5; }));
+  CHECK(client.players().size() == 3);
+  CHECK(client.find_player(2)->status == proto::status::loading);
+
+  // Leave: the event keeps the nickname; an unknown reason is kept raw.
+  server.send(proto::PlayerLeft{3, static_cast<proto::LeaveReason>(9)},
+              proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::player_left));
+  const Event left = events.all[*events.find(EventKind::player_left)];
+  CHECK(left.player == 3);
+  CHECK(left.nickname == "Zelda");
+  CHECK(static_cast<int>(left.leave_reason) == 9);
+  CHECK(client.players() == std::vector<Player>{saria, Player{2, "Link", proto::status::loading, true}});
+
+  // A join for a number already in the room replaces that player.
+  const std::size_t before = events.all.size();
+  server.send(proto::PlayerJoined{1, "Mido"}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return events.find(EventKind::player_joined, before).has_value();
+  }));
+  CHECK(client.find_player(1)->nickname == "Mido");
+  CHECK(client.players().size() == 2);
+
+  // A drop empties the list; the next WELCOME rebuilds it with no statuses.
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+  CHECK(client.players().empty());
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::reconnected));
+  CHECK(client.players() == std::vector<Player>{saria, link});
+
+  client.stop();
+  CHECK(client.players().empty());
+}
+
+TEST_CASE("client: the new event kinds are named") {
+  CHECK(to_string(EventKind::chat) == "chat");
+  CHECK(to_string(EventKind::player_joined) == "player joined");
+  CHECK(to_string(EventKind::player_left) == "player left");
+  CHECK(to_string(EventKind::player_status) == "player status");
+}

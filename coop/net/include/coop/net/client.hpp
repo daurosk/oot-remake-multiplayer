@@ -3,7 +3,8 @@
 // The co-op client: one connection to the server over ENet, used by the test
 // tool, Lichii and the recomp alike. No game code and no threads: the host
 // loop calls service() every frame (or more often), and reads what happened
-// with next_event().
+// with next_event(). It also keeps the list of players in the room and
+// sends chat (send_chat, players()).
 //
 // What it does by itself, inside service():
 // - connects, sends HELLO, waits for WELCOME or REFUSED;
@@ -39,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "coop/net/clock.hpp"
 #include "coop/protocol/messages.hpp"
@@ -92,6 +94,13 @@ enum class EventKind : std::uint8_t {
   disconnected,    // a welcomed connection was lost; reconnecting starts
   reconnected,     // WELCOME again after a disconnected: `welcome` is set
   message,         // anything else from the server: `message`, `channel`
+  // These four follow the `message` event of the same CHAT, PLAYER_JOINED,
+  // PLAYER_LEFT or PLAYER_STATUS, with players() already updated. A host
+  // that feeds every `message` to coop/presence can ignore them.
+  chat,            // `player`, `text`
+  player_joined,   // `player`, `nickname`
+  player_left,     // `player`, `nickname` (as it was), `leave_reason`
+  player_status,   // `player`, `status_flags`
 };
 
 std::string_view to_string(EventKind kind);
@@ -110,8 +119,27 @@ struct Event {
   protocol::RefuseReason refuse_reason{};  // refused; raw value kept
   DropReason drop_reason = DropReason::none;  // connect_failed, disconnected
   protocol::Message message;          // message
-  std::uint8_t channel = 0;           // message
+  std::uint8_t channel = 0;           // message, and the four after it
+  std::uint8_t player = 0;            // chat, player_*: 1 to 4
+  std::string text;                   // chat
+  std::string nickname;               // player_joined, player_left
+  protocol::LeaveReason leave_reason{};  // player_left; raw value kept
+  std::uint8_t status_flags = 0;      // player_status; unknown bits kept
 };
+
+// One player in the room, this client included.
+struct Player {
+  std::uint8_t number = 1;  // 1 to 4
+  std::string nickname;     // our own is the one from our HELLO
+  // The last PLAYER_STATUS flags: the ones received for the others, the ones
+  // sent for ourselves. Nothing until the first.
+  std::optional<std::uint8_t> status;
+  bool self = false;
+  bool operator==(const Player&) const = default;
+};
+
+// Longest chat text in characters (code points), as in the protocol.
+inline constexpr std::size_t kMaxChatChars = protocol::kMaxChatChars;
 
 // Text to show for a refusal, "unknown reason" for one this build does not know.
 std::string_view refuse_reason_text(protocol::RefuseReason reason);
@@ -141,6 +169,24 @@ class Client {
   // Same, on a channel the message type allows (TEST_PAYLOAD on 0 or 3).
   bool send_on(const protocol::Message& message, std::uint8_t channel);
 
+  // Sends CHAT. False for empty text, more than kMaxChatChars characters,
+  // text the protocol refuses (bad UTF-8, control characters), or when not
+  // connected. The server does not echo it back; show it locally.
+  bool send_chat(std::string_view text);
+
+  // Who is in the room, this client included, by player number. Built from
+  // WELCOME and kept current by PLAYER_JOINED, PLAYER_LEFT and
+  // PLAYER_STATUS. Empty until WELCOME and again after a drop (the
+  // `disconnected` event); the next WELCOME rebuilds it, with no status for
+  // anyone, so a host resends its own PLAYER_STATUS after `reconnected`.
+  // From the server, these are refused and counted in rejected_count(): a
+  // PLAYER_LEFT, PLAYER_STATUS or CHAT for a number not in the list or for
+  // our own, and a PLAYER_JOINED for our own. A PLAYER_JOINED for a number
+  // already in the list replaces that player.
+  const std::vector<Player>& players() const { return players_; }
+  // The player with this number, or null.
+  const Player* find_player(std::uint8_t number) const;
+
   State state() const { return state_; }
   // The player number from the last WELCOME, 0 before.
   std::uint8_t player_number() const { return player_number_; }
@@ -167,6 +213,11 @@ class Client {
   void on_welcome(const protocol::Welcome& welcome);
   bool send_raw(const protocol::Message& message, std::uint8_t channel);
   void push(Event event);
+  // Checks a room message against players_ and updates it; sets `out` to
+  // the event that follows its `message` event, if any. False to refuse.
+  bool apply_room(const protocol::Message& message, std::uint8_t channel,
+                  std::optional<Event>& out);
+  Player* player_entry(std::uint8_t number);
 
   ClientConfig config_;
   bool enet_started_ = false;
@@ -189,6 +240,7 @@ class Client {
   std::uint32_t failed_attempts_ = 0;
 
   ClockEstimator clock_;
+  std::vector<Player> players_;  // sorted by number
   std::deque<Event> events_;
   std::size_t rejected_ = 0;
 };

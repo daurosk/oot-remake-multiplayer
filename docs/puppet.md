@@ -355,6 +355,62 @@ Kakariko Village (child), Fritchii v5 coop build, two local instances on one ser
 
 Not yet seen: animation (the puppet stands in its default pose), rotation in the picture, a scene change with two instances, adult Link. Animation playback and the scene filter are built since (unit tests on fake memory); not yet run in the game.
 
+## Pose
+
+Full-body copy, built because playing the same AS command left the legs slower and stiffer than the body (Caleb's test, 2026-11-09). Each frame the puppet takes the other player's whole skeleton, as Anchor's dummy player does on N64 (idea only, no code). Position and rotation still come from `PLAYER_SAMPLE` and the follow fix above.
+
+### Where the skeleton is
+
+Read with the emulator's debug server (`EDEN_NX2_DEBUG_SERVER`, `read_memory` and `search_memory`) in the running game, Kakariko, child, 2026-11-09. Checked means seen in memory there; the code that writes it was not read.
+
+| Item | Where | Status |
+|---|---|---|
+| Model object (nn::g3d `ModelObj`) | actor +0x270 (component table), then +0x8 (the component with vtable main+0x4c61020), +0x18 (the model unit, vtable main+0x4c088a0), +0x18; the model object sits inline at +0x120 of that, its first word points to the model resource (`FMDL`, name `Player_Child`) | Checked on the player and on `CoopPuppet_Child`. The player also has it through component +0x0, +0x60, but the puppet does not, so that way is not used |
+| Skeleton object | model object +0x20; its first word points to the skeleton resource (`FSKL`) | Checked |
+| Bone count | skeleton object +0x48, u16: 309 for `Player_Child` (the resource has it at +0x38) | Checked |
+| Local transforms | skeleton object +0x18, a pointer to bone count entries of 0x60 bytes | Checked |
+| World matrices | skeleton object +0x20 | Seen, not used |
+
+One local transform (0x60 bytes): u32 flags at +0x0 (bits 23 to 30 change with the pose; +0x4 to +0xc stay 0), scale 3 x f32 at +0x10, the rotation as 3 rows of 4 floats at +0x20 (the fourth of each row 0), the translation 3 x f32 at +0x50. Every rotation read was orthonormal.
+
+While Link walked (150 frames), 117 bones changed rotation, 42 translation (bones 1 to 3 are the root and hips) and 11 scale; the flags changed on most of the animated bones. Largest translation 0.58, largest scale 1.01: both fit the protocol's s16 in 1/8192.
+
+A second `Player_Child` model object is in memory (not reached from the player actor); it is not used.
+
+### What the hook does
+
+`lichii/hook/coop_pose.{h,cpp}`, called by the puppet director once a frame on the calc thread (`Director::PoseFrame`, the cave's first SVC of the frame):
+
+1. Finds our player (the same chain as `PlayerReader`), walks to its skeleton and reads all local transforms. The first read is kept; a bone's rotation, translation or scale is counted as moving once it differs from that read by more than 1e-4 (rotation also when its flags change), and stays counted. The moving bones, with their flag byte (bits 23 to 30), are the pose.
+2. The network thread sends it as `PLAYER_POSE` ([protocol.md](protocol.md)) at most 30 times a second, when a new one was read.
+3. A received pose goes to that player's track. Each frame the puppet shows the last two blended (normalised lerp of the rotations, lerp of the rest), one send interval behind, so 30 a second plays smooth at 60 frames.
+4. For each live puppet with the same bone count, the shown pose is written into its local transforms: the rows of the rotation, the translation and scale, and the flag bits. Bones not in the pose are left as the puppet's own animation has them.
+
+The pose copy wins over the AS commands: while a player's poses arrive (the last within 1 s), the director plays no AS command on that player's puppet, so only the pose copy moves it. Gear is still put on as before. Without poses (a peer whose build has no pose copy) the puppet plays the AS commands as it did. `LICHII_COOP_POSE_AS=1` plays them as well while poses arrive.
+
+The debug puppet (`LICHII_COOP_DEBUG_PUPPET=1`) copies our own pose when `LICHII_COOP_DEBUG_POSE=1` is set too, so one game shows whether the copy works.
+
+`LICHII_COOP_DEBUG_POSE=1` logs a line a second: `pose: <bones> bones, <n> moving; <s> sent/s, <r> received/s, <w> written/s, <x> refused/s; last write kept <k>, overwritten <o>`. "Kept" and "overwritten" compare one written bone with what the puppet holds a frame later: overwritten means the game's own animation writes the local transforms after our write, and the copy cannot show.
+
+### Proven in game (2026-11-09)
+
+Two local games in the Graveyard (child), autotest scenario `pose` (`tools/autotest/scenarios/pose.A.txt`, `pose.B.txt`: B steps back down the path, A walks, runs, turns, rolls and swings in front of it), `LICHII_COOP_DEBUG_POSE=1`:
+
+- Both games read 309 bones; about 300 count as moving once Link has walked. Each sends 30 poses a second and receives the other's 30.
+- B writes the pose on its puppet every frame (about 40 written a second at the game's 40 fps) and every write is still there a frame later (`kept 41, overwritten 0`): the puppet's own AS commands do not write its local transforms, so a write at the start of the frame holds.
+- B's screenshots show the puppet in A's poses at the same moments: walking, mid-run, turning to run back, and a hunched pose with hands on the knees that the AS route never showed.
+- With no AS command played on the puppet at all (then `LICHII_COOP_POSE_NO_AS=1`, now the default), it still moves through every pose: the copy alone drives the whole body.
+
+- Facing: with scenario `turn` (A walks up, then faces left, right, toward B and away), the yaw that `LICHII_COOP_DEBUG_POSE=1` now logs (`yaw ours <deg>, P<n> <deg>`, from actor +0x328) of B's puppet followed A's own at every turn: 91, 152, 2, -93, 86 on both sides; A's puppet of B stayed at B's -104. The facing is the actor matrix the director writes from `PLAYER_SAMPLE`; the root bone carries none (its local rotation stays identity).
+
+The first two-game run had every write refused: the player reaches its model through component +0x0, +0x60 as well, but the puppet does not; component +0x8 works for both.
+
+### Not done (pose)
+
+1. The AS commands stop only while poses arrive; if poses stop for more than 1 s the next sample's animation is played again (the slot's last command keeps playing until then).
+2. The skeleton id is only the bone count; child and adult differ in it, which is what a mismatch would be.
+3. Adult Link's skeleton was not read (only `Player_Child`).
+
 ## Fairy
 
 Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii/hook/coop_fairy.*`).

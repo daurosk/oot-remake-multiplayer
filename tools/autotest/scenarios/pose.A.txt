@@ -1,0 +1,27 @@
+# pose: A waits until B has loaded, then walks and runs up the path and back
+# while B stands still; B's screenshots show the puppet's pose, A's show the
+# real one at the same moments.
+wait 1500               # 25 s: B is often still loading, then backs off
+mark start
+stick 0 0.4 90          # walk forward slowly
+mark walk
+stick 0 0.4 40
+mark walk2
+hold LSTICK_UP+B 30     # run (B held)
+mark run
+hold LSTICK_UP+B 15
+mark run2
+stick 0 -1 30           # turn and come back
+mark back
+stick 0 -1 10 A         # roll
+mark roll
+wait 12
+mark roll2
+wait 40
+press Y 8               # sword swing
+wait 6
+mark attack
+wait 10
+mark attack2
+wait 60
+mark still

@@ -52,6 +52,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -117,6 +118,8 @@ constexpr u64 kAsSlotName = 0x10;
 constexpr u64 kAsSlotRate = 0xd4;
 constexpr u64 kAsSlotFrame = 0xe8;
 constexpr u64 kPlayAs = 0x2022a0;
+constexpr u64 kSetAsFrame = 0x37b5d70;  // (controller, slot, s0 = frame), as the puppet
+constexpr float kFrameSlack = 3.0f;     // frames off before a copy's frame is set
 constexpr u64 kMalloc = 0x14c6c90;
 // The mover's block from the game's malloc: the play request, then one
 // fixed cell per animation name (a slot may keep the name's pointer).
@@ -125,7 +128,7 @@ constexpr u64 kBlockNames = 0x40;
 constexpr u64 kNameCell = 0x50;
 constexpr u64 kNameCells = 400;
 constexpr u64 kBlockSize = kBlockNames + kNameCell * kNameCells;
-constexpr u64 kReplayMs = 250;
+constexpr u64 kPlayLogMs = 1000;  // a copy's replays of one name: one log line a second
 // LICHII_COOP_OBJECTS_HIT_REPLAY=1 (experiment): a life a copy must lose is
 // given to the game as a whole hit, written into the copy's Life component
 // on the calc thread before its step, shaped like the one a Kokiri Sword hit
@@ -334,15 +337,17 @@ public:
         poses_ = std::move(poses);
         removes_ = std::move(removes);
         plays_ = std::move(plays);
+        want_ms_ = SteadyMs();
     }
 
     // Calls made since the last ask (for the 5 s log line).
-    std::array<std::size_t, 3> TakeCounts() {
+    std::array<std::size_t, 4> TakeCounts() {
         std::lock_guard lock(mutex_);
-        const std::array<std::size_t, 3> counts{moved_, deleted_, played_};
+        const std::array<std::size_t, 4> counts{moved_, deleted_, played_, framed_};
         moved_ = 0;
         deleted_ = 0;
         played_ = 0;
+        framed_ = 0;
         return counts;
     }
 
@@ -353,6 +358,14 @@ public:
             allocating_ = false;
             block_ = result;
             return std::nullopt;  // next frame
+        }
+        if (after_call && frame_after_) {
+            // The play just made: start it at the owner's frame, not at 0.
+            const auto [actor, frame] = *frame_after_;
+            frame_after_.reset();
+            if (const u64 controller = Controller(guest, actor); controller != 0) {
+                return SetFrame(controller, frame);
+            }
         }
         if (!after_call) {
             if (block_ == 0 && main_ != 0 && !allocating_ && !plays_.empty() && !alloc_tried_) {
@@ -407,16 +420,35 @@ public:
             if (!Alive(guest, p.address)) {
                 continue;
             }
-            auto& last = played_at_[p.address];
-            if (last.first == p.name && now_ms - last.second < kReplayMs) {
+            const u64 controller = Controller(guest, p.address);
+            if (controller == 0) {
                 continue;
+            }
+            // Checked every game frame: the copy's own AI may have put its
+            // own animation back since the last one.
+            const float rate = p.rate;
+            const u64 since = now_ms >= want_ms_ ? std::min<u64>(now_ms - want_ms_, 100) : 0;
+            const float frame =
+                FrameAfter(p.frame, rate, static_cast<std::int64_t>(since) * 1000);
+            if (SlotName(guest, controller) == p.name) {
+                auto& checked = checked_sample_[p.address];
+                if (checked == p.sample) {
+                    continue;
+                }
+                checked = p.sample;
+                float now_frame = 0.0f;
+                if (SlotFrame(guest, controller, now_frame) &&
+                    std::fabs(now_frame - frame) <= kFrameSlack) {
+                    continue;
+                }
+                ++framed_;
+                return SetFrame(controller, frame);
             }
             const u64 text = Cell(guest, p.name);
             if (text == 0) {
                 continue;
             }
             std::array<std::uint8_t, 0x30> request{};
-            const float rate = p.rate;
             const float unset = -1.0f;
             const std::int32_t index = 0;
             std::memcpy(request.data() + 0x00, &p.address, 8);
@@ -428,9 +460,15 @@ public:
             if (!guest.Write(block_ + kBlockRequest, request.data(), request.size())) {
                 continue;
             }
-            last = {p.name, now_ms};
             ++played_;
-            LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}'", p.address, p.name);
+            auto& last = played_at_[p.address];
+            if (last.first != p.name || now_ms - last.second >= kPlayLogMs) {
+                LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}' at frame {:.1f}", p.address,
+                         p.name, frame);
+                last = {p.name, now_ms};
+            }
+            checked_sample_[p.address] = p.sample;
+            frame_after_ = std::make_pair(p.address, frame);
             CoopPuppet::Call c;
             c.function = main_ + kPlayAs;
             c.x[0] = block_ + kBlockRequest;
@@ -453,6 +491,65 @@ public:
     }
 
 private:
+    static u64 SteadyMs() {
+        return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch())
+                                    .count());
+    }
+
+    CoopPuppet::Call SetFrame(u64 controller, float frame) {
+        CoopPuppet::Call c;
+        c.function = main_ + kSetAsFrame;
+        c.x[0] = controller;
+        c.x[1] = 0;  // slot 0
+        c.s0 = frame;
+        return c;
+    }
+
+    // The actor's AS controller, or 0.
+    u64 Controller(CoopPuppet::Guest& guest, u64 actor) {
+        u64 table = 0;
+        u64 as = 0;
+        u64 inner = 0;
+        u64 controller = 0;
+        s32 count = 0;
+        if (!guest.Read(actor + kActorComponents, &table, 8) || table == 0 ||
+            !guest.Read(table + kComponentsAs, &as, 8) || as == 0 ||
+            !guest.Read(as + kAsInner, &inner, 8) || inner == 0 ||
+            !guest.Read(inner + kAsController, &controller, 8) || controller == 0 ||
+            !guest.Read(controller + kAsSlotCount, &count, 4) || count < 1) {
+            return 0;
+        }
+        return controller;
+    }
+
+    u64 Slot0(CoopPuppet::Guest& guest, u64 controller) {
+        u64 array = 0;
+        u64 slot = 0;
+        if (!guest.Read(controller + kAsSlotArray, &array, 8) || array == 0 ||
+            !guest.Read(array, &slot, 8)) {
+            return 0;
+        }
+        return slot;
+    }
+
+    // Slot 0's command name ("" when unreadable).
+    std::string SlotName(CoopPuppet::Guest& guest, u64 controller) {
+        const u64 slot = Slot0(guest, controller);
+        u64 at = 0;
+        std::array<char, 64> text{};
+        if (slot == 0 || !guest.Read(slot + kAsSlotName, &at, 8) || at == 0 ||
+            !guest.Read(at, text.data(), text.size())) {
+            return {};
+        }
+        return std::string(text.data(), strnlen(text.data(), text.size()));
+    }
+
+    bool SlotFrame(CoopPuppet::Guest& guest, u64 controller, float& frame) {
+        const u64 slot = Slot0(guest, controller);
+        return slot != 0 && guest.Read(slot + kAsSlotFrame, &frame, 4) && std::isfinite(frame);
+    }
+
     // Writes one hit into the copy's Life component (see kHitTemplate).
     void Replay(CoopPuppet::Guest& guest, const Hit& h) {
         if (main_ == 0 || !Alive(guest, h.actor)) {
@@ -527,6 +624,10 @@ private:
     std::vector<PlayWish> work_plays_;
     std::size_t next_play_ = 0;
     std::size_t played_ = 0;
+    std::size_t framed_ = 0;  // frames set on a copy already showing the name
+    u64 want_ms_ = 0;
+    std::optional<std::pair<u64, float>> frame_after_;  // actor, frame: set after the play
+    std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
     std::unordered_map<std::string, u64> cells_;
     u64 block_ = 0;
@@ -963,15 +1064,15 @@ private:
         sync_.Plays(now_us, plays);
         TheMover().Want(main_, std::move(wish), sync_.Removes(), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
-            const auto [moved, deleted, played] = TheMover().TakeCounts();
-            if (drift_count_ > 0 || moved > 0 || deleted > 0 || played > 0 ||
+            const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
+            if (drift_count_ > 0 || moved > 0 || deleted > 0 || played > 0 || framed > 0 ||
                 sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {
                 LOG_INFO(Core,
                          "coop: objects: share placed {} copies; off from where we put them "
                          "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes, {} "
-                         "plays; hurts taken {} missed {}",
+                         "plays, {} frame sets; hurts taken {} missed {}",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
-                         drift_max_, drift_count_, moved, deleted, played, sync_.HurtsTaken(),
+                         drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
             }
             drift_at_ = now_us;

@@ -576,6 +576,14 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
     }
 }
 
+float FrameAfter(float frame, float rate, std::int64_t age_us) {
+    if (!std::isfinite(frame) || !std::isfinite(rate)) {
+        return 0.0f;
+    }
+    const float after = frame + rate * 30.0f * static_cast<float>(age_us) / 1e6f;
+    return std::isfinite(after) && after > 0.0f ? after : 0.0f;
+}
+
 void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||
@@ -586,12 +594,18 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
             continue;
         }
-        const auto& wanted = o.received.back().animation;
-        if (!wanted || wanted->name.empty() || (o.animation && o.animation->name == wanted->name)) {
+        const Received& last = o.received.back();
+        const auto& wanted = last.animation;
+        if (!wanted || wanted->name.empty()) {
             continue;
         }
-        out.push_back({address, wanted->name,
-                       std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f});
+        const float rate = std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f;
+        // Shown kBehindUs late, as the pose; no further ahead than a pose is.
+        const std::int64_t age = std::clamp<std::int64_t>(
+            static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
+            -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
+        out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
+                       last.time});
     }
 }
 

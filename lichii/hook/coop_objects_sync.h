@@ -48,12 +48,24 @@ struct Seen {
     std::optional<coop::protocol::Animation> animation;  // AS slot 0
 };
 
-// An animation a copy should play (the owner's AS slot 0 command).
+// An animation a copy should play (the owner's AS slot 0 command). The
+// mover checks the copy's slot 0 every game frame: another name is played
+// again at once, and `frame` is set after it (and again when a new sample
+// finds the copy more than a few frames off), so the copy's own AI cannot
+// pull it back for long and a replay never restarts it from frame 0.
 struct PlayWish {
     std::uint64_t address = 0;
     std::string name;
     float rate = 1.0f;
+    // The owner's frame where the copy is shown (kBehindUs ago), from the
+    // latest sample: its frame plus rate * 30 a second since it was taken.
+    float frame = 0.0f;
+    std::uint64_t sample = 0;  // the sample's time: a new one checks the frame
 };
+
+// The frame of an animation `age_us` after it showed `frame` at `rate`
+// (30 game frames a second); never below 0.
+float FrameAfter(float frame, float rate, std::int64_t age_us);
 
 using Mat3 = std::array<float, 9>;
 
@@ -125,7 +137,7 @@ public:
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
 
     // Present thread: for each copy we do not own, the owner's latest
-    // animation, when the copy shows another one.
+    // animation and its frame (the mover compares it with the copy's own).
     void Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const;
 
     // The loaded actors whose pickup another game took: to delete.

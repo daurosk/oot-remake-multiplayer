@@ -503,10 +503,50 @@ TEST_CASE("objects: the owner sends its enemy's animation; a copy is asked to pl
     REQUIRE(plays.size() == 1);
     CHECK(plays[0].address == 0x200);
     CHECK(plays[0].name == "Damage");
-    // Once it shows it, nothing more is asked.
+    // Still asked once it shows it: the mover compares names every game
+    // frame, so the copy's own AI cannot keep its own animation.
     c.animation = proto::Animation{"Damage", 2.0f, 1.0f};
     Tick(copy, 1040 * kMs, {c}, 2);
     plays.clear();
     copy.Plays(1050 * kMs, plays);
-    CHECK(plays.empty());
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Damage");
+    CHECK(plays[0].sample == 1000 * kMs);
+}
+
+TEST_CASE("objects: a copy's animation frame follows the owner's, shown 100 ms late") {
+    using CoopObjects::FrameAfter;
+    CHECK(FrameAfter(10.0f, 1.0f, 0) == doctest::Approx(10.0f));
+    CHECK(FrameAfter(10.0f, 2.0f, 100'000) == doctest::Approx(16.0f));
+    CHECK(FrameAfter(1.0f, 1.0f, -100'000) == doctest::Approx(0.0f));  // never below 0
+
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 2);
+    e.animation = proto::Animation{"Lifted", 10.0f, 2.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 2);
+    Tick(copy, 0, {c});
+    Own(copy, id, 1);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    std::vector<CoopObjects::PlayWish> plays;
+    // 200 ms after the sample, shown 100 ms late: 100 ms of playback at rate 2.
+    copy.Plays(1200 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].frame == doctest::Approx(16.0f));
+    CHECK(plays[0].rate == doctest::Approx(2.0f));
+    // Long after: no further ahead than a pose extrapolates (150 ms).
+    plays.clear();
+    copy.Plays(2000 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].frame == doctest::Approx(19.0f));
 }

@@ -933,3 +933,58 @@ TEST_CASE("the flag table has a size limit; values past it are relayed but not k
   h.receive(1, FlagState{0, {flag(1, 5)}}, kChannelProgress);
   CHECK(h.session.stats().flag_table_full == 1);
 }
+
+TEST_CASE("a host snapshot past the size limit is relayed but not kept, like a flag state") {
+  SessionConfig small;
+  small.max_flags = 2;
+  Harness h(small);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, FlagSnapshot{0, 1, {flag(1, 1), flag(2, 1), flag(3, 1)}}, kChannelProgress);
+  CHECK(h.session.flag_count() == 2);
+  CHECK(h.session.stats().flag_table_full == 1);
+  auto st = only_message_to<FlagState>(h, 2);
+  REQUIRE(st.has_value());
+  CHECK(st->flags.size() == 3);
+}
+
+TEST_CASE("a host leaving halfway through its snapshot: parts merged so far stay") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  // Part 0 of 2 comes, then the host leaves before part 1.
+  h.receive(1, FlagSnapshot{0, 2, {flag(1, 1)}}, kChannelProgress);
+  // Player 2 is not the host yet: its snapshot is dropped.
+  h.receive(2, FlagSnapshot{0, 1, {flag(2, 2)}}, kChannelProgress);
+  CHECK(h.session.stats().flag_refused == 1);
+  CHECK(h.session.flag_count() == 1);
+  h.session.disconnected(1, h.now);
+  h.collect();
+  REQUIRE(h.session.host() == std::optional<std::uint8_t>{2});
+  h.clear();
+  // Now it hosts, and its table merges in over what part 0 left.
+  h.receive(2, FlagSnapshot{0, 1, {flag(1, 9), flag(2, 2)}}, kChannelProgress);
+  CHECK(messages_of<FlagState>(h, 2) == std::vector<FlagState>{FlagState{2, {flag(1, 1)}}});
+  CHECK(messages_of<FlagState>(h, 3) == std::vector<FlagState>{FlagState{2, {flag(2, 2)}}});
+  CHECK(h.session.flag_count() == 2);
+  // A later joiner gets both.
+  h.join(4, "Darunia");
+  auto snap = messages_of<FlagSnapshot>(h, 4);
+  REQUIRE(snap.size() == 1);
+  CHECK(snap[0].flags == std::vector<FlagEntry>{flag(1, 1), flag(2, 2)});
+}
+
+TEST_CASE("a size limit set past what a snapshot can carry still keeps and sends the table") {
+  SessionConfig huge;
+  huge.max_flags = static_cast<std::size_t>(-1);
+  Harness h(huge);
+  h.join(1, "Link");
+  h.receive(1, FlagState{0, many(1, 10)}, kChannelProgress);
+  CHECK(h.session.flag_count() == 10);
+  h.clear();
+  h.join(2, "Zelda");
+  CHECK(messages_of<FlagSnapshot>(h, 2).size() == 1);
+}

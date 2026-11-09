@@ -123,7 +123,7 @@ Any other kind is refused, since the rest of the body cannot be read. The other 
 
 ### Who hosts
 
-The first player in hosts. When the host leaves, the remaining player with the lowest number takes over; a player who joins later never takes over by joining, even with a lower number. The server tells a joining player who hosts with `HOST` (after `WELCOME`, before its `FLAG_SNAPSHOT`), and tells everyone with `HOST` when the host changes. `HOST` is on channel 1, so a new host learns that it hosts before any `FLAG_SET` relayed to it.
+The first player in hosts. When the host leaves, the remaining player with the lowest number takes over; a player who joins later never takes over by joining, even with a lower number. The server tells a joining player who hosts with `HOST` (after `WELCOME`, before its `FLAG_SNAPSHOT`), and tells everyone with `HOST` when the host changes. `HOST` is on channel 1, so a new host learns that it hosts before any `FLAG_SET` relayed to it. Channels are not ordered against each other, so a build may get `HOST` and its snapshot before `WELCOME`; it keeps them until `WELCOME` comes.
 
 ### Shared flags (stage 1 step 4)
 
@@ -146,7 +146,7 @@ How flags move:
 - The host's build applies the change to its game, which is the truth, and sends `FLAG_STATE` with the values that came out. The host also sends `FLAG_STATE` for the flags its own game changes. The server keeps every value it relays (so progress stays when the host leaves) and relays it to everyone else. Every player applies a `FLAG_STATE`, even over its own `FLAG_SET`. The server drops a `FLAG_STATE` from anyone but the host.
 - On join, the server sends the joining player its whole table as `FLAG_SNAPSHOT`, before any `FLAG_STATE` that comes after: the channel is ordered, so nothing is missed between them. The joiner holds its game until the last part has come (part = part count − 1) and then applies them all.
 - A host that starts a session, or takes over from one who left, sends its table to the server as `FLAG_SNAPSHOT` the same way. The server merges it in. A flag the server lacks is kept and sent to everyone else as `FLAG_STATE`. On a clash the server's value stays (it is what every other player already has): the server sends it to the host as `FLAG_STATE`, which the host applies like any other. The server drops a `FLAG_SNAPSHOT` from anyone but the host.
-- The server keeps the table while anyone is in and forgets it when the last player leaves. It holds at most 262,144 flags (a server setting); a value for a new flag past that is still relayed but not kept, so a later joiner does not get it.
+- The server keeps the table while anyone is in and forgets it when the last player leaves. It holds at most 262,144 flags (a server setting); a value for a new flag past that, in a `FLAG_STATE` or a host's `FLAG_SNAPSHOT`, is still relayed but not kept, so a later joiner does not get it.
 - A table of more than 4096 flags is split into parts in order, each up to 4096 entries (`split_snapshot` in the code). An empty table is one part with no entries. A table can have at most 65535 parts.
 - The server holds a host sending its table to the same limit as any message on channels 0 to 2 (60 a second, bursts of 120), so a host table of up to about 100 parts (over 400,000 flags) fits one burst. The server's own sends have no such limit.
 

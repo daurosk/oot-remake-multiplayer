@@ -51,6 +51,7 @@ struct SessionConfig {
   // grow it without end. Values past it are still relayed but not kept (and
   // so not in a joiner's snapshot); each such entry is counted in
   // flag_table_full. 262,144 is 64 snapshot parts, far past OoT's flags.
+  // 0 keeps nothing; more than 65535 parts' worth counts as 65535 parts.
   std::size_t max_flags = 262'144;
   // Called with one line for each join, leave and refusal. May be empty.
   std::function<void(const std::string&)> log;

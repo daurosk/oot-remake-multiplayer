@@ -261,7 +261,9 @@ void Session::on_flag_snapshot(ConnectionId id, Connection& c, const FlagSnapsho
   for (const FlagEntry& e : part.flags) {
     auto it = flags_.find({e.hash, e.index});
     if (it == flags_.end()) {
-      if (keep_flag(e)) added.flags.push_back(e);
+      // Sent on even past max_flags, as a FLAG_STATE past it would be.
+      keep_flag(e);
+      added.flags.push_back(e);
     } else if (!(it->second == e)) {
       ++stats_.flag_clashes;
       kept.flags.push_back(it->second);
@@ -278,7 +280,10 @@ bool Session::keep_flag(const FlagEntry& e) {
     it->second = e;
     return true;
   }
-  if (flags_.size() >= config_.max_flags) {
+  // Never more than a snapshot can carry (65535 parts), so every joiner
+  // gets the whole table whatever max_flags says.
+  constexpr std::size_t kSnapshotLimit = 65535 * kMaxFlagEntries;
+  if (flags_.size() >= std::min(config_.max_flags, kSnapshotLimit)) {
     ++stats_.flag_table_full;
     return false;
   }
@@ -290,7 +295,7 @@ void Session::send_snapshot(ConnectionId to) {
   std::vector<FlagEntry> table;
   table.reserve(flags_.size());
   for (const auto& entry : flags_) table.push_back(entry.second);
-  // Fails only past 65535 parts, which max_flags would have to allow.
+  // Cannot fail: keep_flag holds the table to 65535 parts.
   auto parts = split_snapshot(table);
   if (!parts) return;
   for (const FlagSnapshot& p : *parts) send(to, kChannelProgress, p);

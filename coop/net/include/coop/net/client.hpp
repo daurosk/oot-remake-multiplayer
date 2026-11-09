@@ -32,9 +32,15 @@
 // Shared flags (stage 1 step 4, docs/protocol.md):
 // - set_flags() sends one FLAG_SET for the call (FLAG_STATE when this client
 //   is the host, which is the truth). The game keeps its own change until a
-//   FLAG_STATE says otherwise.
-// - Every FLAG_STATE received goes into flags() and gives a `flag_state`
-//   event; the game applies those values, even over its own change.
+//   FLAG_STATE says otherwise. Each flag sent in a FLAG_SET stays pending
+//   until a FLAG_STATE or snapshot carries it (pending_flags()). When the
+//   host changes, every pending flag is sent again: to the new host as a
+//   FLAG_SET, or as FLAG_STATE when the new host is us. The server loses a
+//   FLAG_SET in flight to a host that leaves; this is what keeps it.
+// - Every FLAG_STATE from the host goes into flags() and gives a
+//   `flag_state` event; the game applies those values, even over its own
+//   change. As host we get FLAG_STATE too, with our own number: the
+//   server's value where our snapshot clashed with its table.
 // - FLAG_SNAPSHOT parts are collected; when the last one is in they replace
 //   flags() and give one `flag_snapshot` event. Until then synced() is false,
 //   so the game can hold. A part out of order is refused and the collection
@@ -42,8 +48,17 @@
 // - The host answers each FLAG_SET it receives with a FLAG_STATE, through
 //   set_flag_answer() (default: accept every value). That FLAG_STATE goes
 //   into flags() too and gives a `flag_state` event for the host's game.
-// - Who hosts: is_host(). The protocol has no host notice yet, so it is the
-//   lowest player number in the room, as the plan has it (first player in).
+//   The server sends the host its own FLAG_SETs back (ones sent before we
+//   knew we host). Those are answered with the table's value where it has
+//   one (we have stated it since), else the asked value, and set_flag_answer()
+//   is not asked: our own changes as host are the truth.
+// - Who hosts: the server's HOST message. host_number() and is_host() follow
+//   it, and every change gives a `host_changed` event, the first HOST
+//   included. A client that becomes host sends its table with
+//   send_flag_snapshot().
+// - Channels are not ordered against each other, so HOST and FLAG_* (channel
+//   1) can come before WELCOME. Up to max_early_messages of them are kept
+//   while waiting for WELCOME and handled right after it.
 //
 // Join partner (stage 1 step 3): request_join() asks to warp to a player and
 // returns the request id; its answer gives `join_accepted` or `join_refused`,
@@ -102,6 +117,10 @@ struct ClientConfig {
   // Our join request ends with `join_timed_out` after this long with no
   // answer; a request from another player can be answered for as long.
   std::uint32_t join_timeout_ms = 5000;
+  // Progress-channel messages (HOST, FLAG_*) kept while waiting for WELCOME;
+  // more are dropped and counted in rejected_count(). The server's largest
+  // table (262,144 flags) is 64 snapshot parts.
+  std::uint32_t max_early_messages = 1024;
 
   // The client's clock in microseconds. Empty means std::chrono::steady_clock.
   // It must not go backwards by much: a step back only pauses the timers.
@@ -145,6 +164,9 @@ enum class EventKind : std::uint8_t {
   join_accepted,   // `player` accepted our `request_id`: `join_target`
   join_refused,    // `player` refused our `request_id`: `join_reason`
   join_timed_out,  // no answer from `player` to our `request_id` in time
+  // HOST named a new host, `player`. Follows HOST's `message` event, after
+  // our pending flags went out again.
+  host_changed,
 };
 
 std::string_view to_string(EventKind kind);
@@ -257,8 +279,12 @@ class Client {
                                                std::uint16_t index = 0) const;
   // True once the last FLAG_SNAPSHOT part of this connection is in.
   bool synced() const { return synced_; }
-  // Whether this client hosts: connected and the lowest number in the room.
+  // Whether this client hosts: connected and named by the last HOST.
   bool is_host() const;
+  // The player named by the last HOST; 0 before one (and after a drop).
+  std::uint8_t host_number() const { return host_number_; }
+  // Flags sent in a FLAG_SET that no FLAG_STATE or snapshot has carried yet.
+  const std::map<FlagKey, protocol::FlagEntry>& pending_flags() const { return pending_; }
 
   // Asks to warp to `player`'s scene. The request id, or nothing when not
   // connected, `player` is not in the room or is us, or it could not be sent.
@@ -314,6 +340,9 @@ class Client {
   void end_attempt(DropReason reason);
   void on_receive(const std::uint8_t* data, std::size_t size, std::uint8_t channel);
   void on_welcome(const protocol::Welcome& welcome);
+  void on_connected_message(protocol::Message message, std::uint8_t channel);
+  bool on_host(std::uint8_t number);  // false when it names the same host
+  void settle_pending(std::span<const protocol::FlagEntry> flags);
   bool send_raw(const protocol::Message& message, std::uint8_t channel);
   void push(Event event);
   // Checks a room message against players_ and updates it; sets `out` to
@@ -357,6 +386,13 @@ class Client {
   std::size_t rejected_ = 0;
 
   std::map<FlagKey, protocol::FlagEntry> flags_;
+  std::map<FlagKey, protocol::FlagEntry> pending_;  // our unanswered FLAG_SETs
+  std::uint8_t host_number_ = 0;
+  struct EarlyMessage {
+    protocol::Message message;
+    std::uint8_t channel = 0;
+  };
+  std::vector<EarlyMessage> early_;  // progress channel before WELCOME
   bool synced_ = false;
   std::vector<protocol::FlagEntry> snapshot_flags_;  // parts collected so far
   std::uint16_t snapshot_next_ = 0;   // the part expected next

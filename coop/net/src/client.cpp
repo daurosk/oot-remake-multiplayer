@@ -117,6 +117,7 @@ std::string_view to_string(EventKind kind) {
     case EventKind::join_accepted: return "join accepted";
     case EventKind::join_refused: return "join refused";
     case EventKind::join_timed_out: return "join timed out";
+    case EventKind::host_changed: return "host changed";
   }
   return "unknown";
 }
@@ -177,6 +178,7 @@ void Client::stop() {
   if (state_ != State::idle) state_ = State::stopped;
   players_.clear();
   clear_shared();
+  early_.clear();
 }
 
 void Client::begin_attempt() {
@@ -212,6 +214,7 @@ void Client::end_attempt(DropReason reason) {
   const bool was_connected = state_ == State::connected;
   players_.clear();
   clear_shared();
+  early_.clear();
   Event event;
   event.kind = was_connected ? EventKind::disconnected : EventKind::connect_failed;
   event.drop_reason = reason;
@@ -344,6 +347,11 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
       event.kind = EventKind::refused;
       event.refuse_reason = refused->reason;
       push(std::move(event));
+    } else if (channel == proto::kChannelProgress &&
+               early_.size() < config_.max_early_messages) {
+      // HOST and the snapshot may beat WELCOME (channels are not ordered
+      // against each other): kept for right after it.
+      early_.push_back(EarlyMessage{std::move(message), channel});
     } else {
       ++rejected_;  // nothing else is expected before the answer to HELLO
     }
@@ -354,7 +362,10 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
     ++rejected_;
     return;
   }
+  on_connected_message(std::move(message), channel);
+}
 
+void Client::on_connected_message(proto::Message message, std::uint8_t channel) {
   if (const auto* pong = std::get_if<proto::Pong>(&message)) {
     // Only an echo of a PING sent on this connection counts.
     const std::uint64_t now = now_us();
@@ -502,6 +513,10 @@ void Client::on_welcome(const proto::Welcome& welcome) {
   event.welcome = welcome;
   ever_welcomed_ = true;
   push(std::move(event));
+
+  std::vector<EarlyMessage> early = std::move(early_);
+  early_.clear();
+  for (EarlyMessage& e : early) on_connected_message(std::move(e.message), e.channel);
 }
 
 std::optional<Event> Client::next_event() {
@@ -558,8 +573,8 @@ bool Client::is_other_player(std::uint8_t number) const {
 }
 
 bool Client::is_host() const {
-  return state_ == State::connected && !players_.empty() &&
-         players_.front().number == player_number_;
+  return state_ == State::connected && host_number_ != 0 &&
+         host_number_ == player_number_;
 }
 
 std::optional<proto::FlagEntry> Client::find_flag(std::uint32_t hash,
@@ -581,6 +596,31 @@ void Client::clear_shared() {
   snapshot_count_ = 0;
   our_join_.reset();
   their_joins_.clear();
+  pending_.clear();
+  host_number_ = 0;
+}
+
+void Client::settle_pending(std::span<const proto::FlagEntry> flags) {
+  for (const proto::FlagEntry& flag : flags) pending_.erase(key_of(flag));
+}
+
+bool Client::on_host(std::uint8_t number) {
+  if (number == host_number_) return false;
+  host_number_ = number;
+  if (pending_.empty()) return true;
+  std::vector<proto::FlagEntry> list;
+  list.reserve(pending_.size());
+  for (const auto& entry : pending_) list.push_back(entry.second);
+  if (number == player_number_) {
+    // We are the truth now: what our game asked for is what it keeps.
+    if (send_flags(list, true)) {
+      store_flags(list);
+      pending_.clear();
+    }
+  } else {
+    send_flags(list, false);  // still pending until the new host answers
+  }
+  return true;
 }
 
 bool Client::send_flags(std::span<const proto::FlagEntry> flags, bool as_state) {
@@ -623,7 +663,11 @@ bool Client::set_flags(std::span<const proto::FlagEntry> flags) {
   }
   const bool host = is_host();
   if (!send_flags(list, host)) return false;
-  if (host) store_flags(list);
+  if (host) {
+    store_flags(list);
+  } else {
+    for (const proto::FlagEntry& flag : list) pending_[key_of(flag)] = flag;
+  }
   return true;
 }
 
@@ -716,28 +760,43 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
   Event event;
   event.channel = channel;
   if (const auto* state = std::get_if<proto::FlagState>(&message)) {
-    if (!is_other_player(state->player_number)) return false;
+    // Only the host's, as HOST named it: that may be a host whose
+    // PLAYER_LEFT (channel 0) is already in, or us (the server's value on a
+    // clash with our snapshot).
+    if (host_number_ == 0 || state->player_number != host_number_) return false;
     store_flags(state->flags);
+    settle_pending(state->flags);
     event.kind = EventKind::flag_state;
     event.player = state->player_number;
     event.flags = state->flags;
   } else if (const auto* set = std::get_if<proto::FlagSet>(&message)) {
-    // The server relays FLAG_SET to the host only.
-    if (!is_other_player(set->player_number) || !is_host()) return false;
+    // The server relays FLAG_SET to the host only, the host's own included.
+    // The asker may have left by now (PLAYER_LEFT is on channel 0); the
+    // answer is for everyone, so it is still given.
+    if (!is_host()) return false;
     std::vector<proto::FlagEntry> answer;
-    for (const proto::FlagEntry& asked : set->flags) {
-      std::optional<proto::FlagEntry> kept =
-          flag_answer_ ? flag_answer_(set->player_number, asked) : asked;
-      if (kept) {
-        kept->hash = asked.hash;
-        kept->index = asked.index;
+    if (set->player_number == player_number_) {
+      // Our own, sent before we knew we host. We have stated what is in the
+      // table since; the rest is our own change, which is the truth.
+      for (const proto::FlagEntry& asked : set->flags) {
+        answer.push_back(find_flag(asked.hash, asked.index).value_or(asked));
       }
-      // Refused, or a value the protocol would refuse: the table's value.
-      if (!kept || !valid_flag(*kept)) kept = find_flag(asked.hash, asked.index);
-      if (kept) answer.push_back(*kept);
+    } else {
+      for (const proto::FlagEntry& asked : set->flags) {
+        std::optional<proto::FlagEntry> kept =
+            flag_answer_ ? flag_answer_(set->player_number, asked) : asked;
+        if (kept) {
+          kept->hash = asked.hash;
+          kept->index = asked.index;
+        }
+        // Refused, or a value the protocol would refuse: the table's value.
+        if (!kept || !valid_flag(*kept)) kept = find_flag(asked.hash, asked.index);
+        if (kept) answer.push_back(*kept);
+      }
     }
     if (answer.empty() || !send_flags(answer, true)) return true;
     store_flags(answer);
+    settle_pending(answer);
     event.kind = EventKind::flag_state;
     event.player = player_number_;
     event.flags = std::move(answer);
@@ -760,6 +819,7 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
     // The snapshot is the whole table: it replaces what was there.
     flags_.clear();
     store_flags(snapshot_flags_);
+    settle_pending(snapshot_flags_);
     synced_ = true;
     event.kind = EventKind::flag_snapshot;
     event.flags = std::move(snapshot_flags_);
@@ -789,6 +849,10 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
     }
     event.player = join->player_number;
     event.request_id = join->request_id;
+  } else if (const auto* host = std::get_if<proto::Host>(&message)) {
+    if (!on_host(host->player_number)) return true;  // the same host again
+    event.kind = EventKind::host_changed;
+    event.player = host->player_number;
   } else {
     return true;  // nothing shared
   }

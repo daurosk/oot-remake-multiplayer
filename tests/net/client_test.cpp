@@ -727,7 +727,13 @@ namespace {
 
 // Answers the client's HELLO with WELCOME: we are `self`, the others given.
 void welcome_as(Client& client, FakeServer& server, Events& events, std::uint8_t self,
-                std::vector<proto::PlayerInfo> others) {
+                std::vector<proto::PlayerInfo> others,
+                std::optional<std::uint8_t> host = std::nullopt) {
+  // As the server does: WELCOME, then HOST (by default the lowest number
+  // in, as if the players came in that order).
+  std::uint8_t lowest = self;
+  for (const auto& p : others) lowest = std::min(lowest, p.number);
+  const std::uint8_t hosting = host.value_or(lowest);
   const std::size_t from = server.received.size();
   REQUIRE(pump(client, server, [&] {
     return server.find<proto::Hello>(from).has_value();
@@ -738,9 +744,10 @@ void welcome_as(Client& client, FakeServer& server, Events& events, std::uint8_t
   w.tick_rate = 30;
   w.players = std::move(others);
   server.send(w, proto::kChannelSession);
+  server.send(proto::Host{hosting}, proto::kChannelProgress);
   REQUIRE(pump(client, server, [&] {
     events.drain(client);
-    return client.state() == State::connected;
+    return client.state() == State::connected && client.host_number() == hosting;
   }));
 }
 
@@ -772,22 +779,6 @@ proto::FlagEntry bool_flag(std::uint32_t hash, bool value, std::uint16_t index =
 proto::FlagEntry s32_flag(std::uint32_t hash, std::int32_t value) {
   return {hash, 0, proto::FlagKind::int32, static_cast<std::uint32_t>(value)};
 }
-
-// A message of kMaxFlagEntries entries (45 KB) is 32 or more ENet fragments,
-// and ENet 1.3's fragment bitmask then does `1 << 31` on an int
-// (protocol.c), which UBSan stops on. COOP_SANITIZE always turns ASan on
-// with UBSan, so those checks are left out of that build only.
-#if defined(__SANITIZE_ADDRESS__)
-constexpr bool kFullSizeMessages = false;
-#elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
-constexpr bool kFullSizeMessages = false;
-#else
-constexpr bool kFullSizeMessages = true;
-#endif
-#else
-constexpr bool kFullSizeMessages = true;
-#endif
 
 // Services both ends for a while, for checks that something did not happen.
 void settle(Client& client, FakeServer& server, Events& events, int ms = 100) {
@@ -829,7 +820,6 @@ TEST_CASE("client flags: set_flags sends one FLAG_SET per call, checked") {
   CHECK_FALSE(client.set_flag({4, 0, static_cast<proto::FlagKind>(9), 0}));
   settle(client, server, events);
   CHECK(server.received.size() == sent);
-  if (!kFullSizeMessages) return;
   // More than one message's worth goes as several FLAG_SETs from one call.
   std::vector<proto::FlagEntry> many;
   for (std::uint32_t i = 0; i < proto::kMaxFlagEntries + 5; ++i) many.push_back(s32_flag(100 + i, 1));
@@ -1004,14 +994,36 @@ TEST_CASE("client flags: the host answers FLAG_SET through its callback") {
   CHECK(client.find_flag(40) == bool_flag(40, true));
   CHECK_FALSE(server.find<proto::FlagSet>(from).has_value());
 
-  // FLAG_SET from nobody or from ourselves is refused.
+  // A FLAG_SET from a player whose PLAYER_LEFT came first (channel 0 is
+  // not ordered against 1) is still answered: the answer is for everyone.
+  int asked = 0;
+  client.set_flag_answer([&](std::uint8_t, const proto::FlagEntry& f) {
+    ++asked;
+    return std::optional<proto::FlagEntry>{f};
+  });
   const std::size_t rejected = client.rejected_count();
-  server.send(proto::FlagSet{4, {bool_flag(1, true)}}, proto::kChannelProgress);
-  server.send(proto::FlagSet{1, {bool_flag(1, true)}}, proto::kChannelProgress);
-  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 2; }));
+  from = server.received.size();
+  server.send(proto::FlagSet{4, {bool_flag(41, true)}}, proto::kChannelProgress);
+  at = wait_received<proto::FlagState>(client, server, from);
+  CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+        std::vector<proto::FlagEntry>{bool_flag(41, true)});
+  CHECK(asked == 1);
+
+  // Our own FLAG_SET echoed (sent before we knew we host) is answered too,
+  // without the callback: the table's value where it has one (40 was stated
+  // since), else the asked one.
+  from = server.received.size();
+  server.send(proto::FlagSet{1, {bool_flag(40, false), bool_flag(42, true)}},
+              proto::kChannelProgress);
+  at = wait_received<proto::FlagState>(client, server, from);
+  CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+        std::vector<proto::FlagEntry>{bool_flag(40, true), bool_flag(42, true)});
+  CHECK(asked == 1);
+  CHECK(client.find_flag(42) == bool_flag(42, true));
+  CHECK(client.rejected_count() == rejected);
+  client.set_flag_answer({});
 
   // The host's table goes to the server as FLAG_SNAPSHOT parts.
-  if (!kFullSizeMessages) return;
   from = server.received.size();
   std::vector<proto::FlagEntry> table;
   for (std::uint32_t i = 0; i < proto::kMaxFlagEntries + 1; ++i) table.push_back(s32_flag(i + 1, 1));
@@ -1040,15 +1052,191 @@ TEST_CASE("client flags: who hosts, and a non-host refuses FLAG_SET") {
   server.send(proto::FlagSet{1, {bool_flag(1, true)}}, proto::kChannelProgress);
   REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected + 1; }));
 
-  // The host leaves: the lowest number left is us.
+  // The host leaves. Leaving alone does not make us host: HOST does. The
+  // old host's last FLAG_STATE may come after its PLAYER_LEFT (another
+  // channel) and is still applied.
   server.send(proto::PlayerLeft{1, proto::LeaveReason::left}, proto::kChannelSession);
   REQUIRE(wait_event(client, server, events, EventKind::player_left));
+  CHECK_FALSE(client.is_host());
+  CHECK(client.host_number() == 1);
+  server.send(proto::FlagState{1, {bool_flag(9, true)}}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+  CHECK(client.find_flag(9) == bool_flag(9, true));
+
+  const std::size_t before = events.all.size();
+  server.send(proto::Host{2}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+  const std::size_t changed = *events.find(EventKind::host_changed, before);
+  CHECK(events.all[changed].player == 2);
+  CHECK(events.all[changed - 1].kind == EventKind::message);
   CHECK(client.is_host());
+  CHECK(client.host_number() == 2);
+  // A FLAG_STATE now carries the new host's number; the old one's is refused.
+  const std::size_t rejected2 = client.rejected_count();
+  server.send(proto::FlagState{1, {bool_flag(9, false)}}, proto::kChannelProgress);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == rejected2 + 1; }));
+  CHECK(client.find_flag(9) == bool_flag(9, true));
+
+  // The same host again gives no event.
+  const int changes = events.count(EventKind::host_changed);
+  server.send(proto::Host{2}, proto::kChannelProgress);
+  settle(client, server, events);
+  CHECK(events.count(EventKind::host_changed) == changes);
+
   CHECK(client.send_flag_snapshot({}));
   const std::size_t at = wait_received<proto::FlagSnapshot>(client, server, from);
   CHECK(std::get<proto::FlagSnapshot>(server.received[at].message) ==
         proto::FlagSnapshot{0, 1, {}});
   CHECK_FALSE(server.find<proto::FlagState>(from).has_value());
+}
+
+TEST_CASE("client flags: a joiner who is the lowest number does not host by that") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 1, {{2, "Saria"}}, 2);
+  CHECK_FALSE(client.is_host());
+  CHECK(events.count(EventKind::host_changed) == 1);
+  const std::size_t from = server.received.size();
+  CHECK(client.set_flag(bool_flag(1, true)));
+  wait_received<proto::FlagSet>(client, server, from);
+}
+
+TEST_CASE("client flags: unanswered FLAG_SETs go again when the host changes") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}, {3, "Zelda"}});
+  CHECK(client.pending_flags().empty());
+
+  CHECK(client.set_flags(std::vector<proto::FlagEntry>{bool_flag(1, true), bool_flag(2, true)}));
+  CHECK(client.set_flag(bool_flag(3, true)));
+  CHECK(client.set_flag(bool_flag(1, false)));  // a newer value for 1
+  CHECK(client.pending_flags().size() == 3);
+  // The host answers 2 (with another value): it is no longer pending.
+  server.send(proto::FlagState{1, {bool_flag(2, false)}}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+  CHECK(client.pending_flags().size() == 2);
+
+  // Host 1 leaves with our sets in flight: they go to the new host.
+  std::size_t from = server.received.size();
+  server.send(proto::PlayerLeft{1, proto::LeaveReason::timed_out}, proto::kChannelSession);
+  server.send(proto::Host{3}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+  std::size_t at = wait_received<proto::FlagSet>(client, server, from);
+  CHECK(std::get<proto::FlagSet>(server.received[at].message).flags ==
+        std::vector<proto::FlagEntry>{bool_flag(1, false), bool_flag(3, true)});
+  CHECK(count_received<proto::FlagSet>(server, from) == 1);
+  CHECK(client.pending_flags().size() == 2);  // still waiting for host 3
+
+  // A snapshot also covers them.
+  server.send(proto::FlagSnapshot{0, 1, {bool_flag(3, true)}}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
+  CHECK(client.pending_flags().size() == 1);
+
+  // Host 3 leaves and we host: what is still pending is ours to state.
+  from = server.received.size();
+  server.send(proto::Host{2}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+  at = wait_received<proto::FlagState>(client, server, from);
+  CHECK(std::get<proto::FlagState>(server.received[at].message).flags ==
+        std::vector<proto::FlagEntry>{bool_flag(1, false)});
+  CHECK_FALSE(server.find<proto::FlagSet>(from).has_value());
+  CHECK(client.pending_flags().empty());
+  CHECK(client.find_flag(1) == bool_flag(1, false));
+
+  // A drop forgets them, and who hosts.
+  CHECK(client.set_flag(bool_flag(5, true)));  // as host: not pending
+  CHECK(client.pending_flags().empty());
+  server.send(proto::Host{3}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::host_changed));
+  CHECK(client.set_flag(bool_flag(6, true)));
+  CHECK(client.pending_flags().size() == 1);
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+  CHECK(client.pending_flags().empty());
+  CHECK(client.host_number() == 0);
+}
+
+TEST_CASE("client flags: as host, the server's value on a clash is applied") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 1, {{2, "Saria"}});
+  REQUIRE(client.is_host());
+  CHECK(client.set_flag(bool_flag(7, false)));
+  CHECK(client.send_flag_snapshot(std::vector<proto::FlagEntry>{bool_flag(7, false)}));
+  // The server keeps its value and sends it back with our own number.
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::FlagState{1, {bool_flag(7, true)}}, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_state));
+  const Event& e = events.all[*events.find(EventKind::flag_state)];
+  CHECK(e.player == 1);
+  CHECK(e.flags == std::vector<proto::FlagEntry>{bool_flag(7, true)});
+  CHECK(client.find_flag(7) == bool_flag(7, true));
+  CHECK(client.rejected_count() == rejected);
+}
+
+TEST_CASE("client flags: HOST and the snapshot may come before WELCOME") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.max_early_messages = 3;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+
+  // Channel 1 overtakes channel 0: HOST and a two-part snapshot first.
+  server.send(proto::Host{1}, proto::kChannelProgress);
+  server.send(proto::FlagSnapshot{0, 2, {bool_flag(1, true)}}, proto::kChannelProgress);
+  server.send(proto::FlagSnapshot{1, 2, {bool_flag(2, true)}}, proto::kChannelProgress);
+  // Past max_early_messages: dropped and counted.
+  server.send(proto::FlagState{1, {bool_flag(3, true)}}, proto::kChannelProgress);
+  // Not the progress channel: refused as before.
+  server.send(proto::Chat{1, "hi"}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() == 2; }));
+  settle(client, server, events);
+  CHECK(client.state() == State::handshaking);
+  CHECK(events.count(EventKind::host_changed) == 0);
+
+  proto::Welcome w;
+  w.player_number = 2;
+  w.server_time_us = steady_us();
+  w.tick_rate = 30;
+  w.players = {{1, "Saria"}};
+  server.send(w, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
+  CHECK(client.rejected_count() == 2);
+  CHECK(client.host_number() == 1);
+  CHECK(client.synced());
+  CHECK(client.flags().size() == 2);
+  // In order: welcomed, then HOST, then the snapshot.
+  const auto welcomed = events.find(EventKind::welcomed);
+  const auto host = events.find(EventKind::host_changed);
+  const auto snapshot = events.find(EventKind::flag_snapshot);
+  REQUIRE(welcomed.has_value());
+  REQUIRE(host.has_value());
+  CHECK(*welcomed < *host);
+  CHECK(*host < *snapshot);
+
+  // Kept messages do not outlive the attempt they came on.
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+  const std::size_t from = server.received.size();
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>(from).has_value(); }));
+  server.send(proto::Host{1}, proto::kChannelProgress);
+  settle(client, server, events);
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::connect_failed));
+  const int changes = events.count(EventKind::host_changed);
+  welcome_as(client, server, events, 2, {{1, "Saria"}, {3, "Zelda"}}, 3);
+  settle(client, server, events);
+  CHECK(client.host_number() == 3);
+  CHECK(events.count(EventKind::host_changed) == changes + 1);  // not 1, then 3
+  CHECK_FALSE(client.synced());
 }
 
 TEST_CASE("client join: request, accept, refuse, not there and stale answers") {
@@ -1276,4 +1464,5 @@ TEST_CASE("client: the flag and join event kinds are named") {
   CHECK(to_string(EventKind::join_accepted) == "join accepted");
   CHECK(to_string(EventKind::join_refused) == "join refused");
   CHECK(to_string(EventKind::join_timed_out) == "join timed out");
+  CHECK(to_string(EventKind::host_changed) == "host changed");
 }

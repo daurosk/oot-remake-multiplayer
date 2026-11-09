@@ -29,8 +29,10 @@ endif()
 
 # ENet finds header offsets by member access through a null pointer
 # (protocol.c, "& ((ENetProtocolHeader *) 0) -> sentTime"), an old offsetof
-# idiom that UBSan reports. Turn off only that check, only for ENet; ASan and
-# the rest of UBSan still cover it.
+# idiom that UBSan reports. Its fragment bitmask also does `1 << 31` on an int
+# (protocol.c, "1 << (fragmentNumber % 32)") once a packet has 32 or more
+# fragments, as every full 4096-entry flag message (45 KB) has. Turn off only
+# those two checks, only for ENet; ASan and the rest of UBSan still cover it.
 if(COOP_SANITIZE)
-  target_compile_options(enet PRIVATE -fno-sanitize=null)
+  target_compile_options(enet PRIVATE -fno-sanitize=null,shift-base)
 endif()

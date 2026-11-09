@@ -974,11 +974,12 @@ TEST_CASE("puppet gear: a piece the game made anew is put into the hand again") 
     auto calls = Frame(d, g, 20);
     REQUIRE(calls.size() == 2);  // worn, then into the hand
     CHECK(calls[1].function == kBase + addr::kEquipChangeState);
-    // The request byte is clear already; the slot record says it is in the hand.
-    CHECK(Frame(d, g, 300).size() == 1);  // not taken yet: asked again
+    // The slot record's byte is not the state: it does not count as taken.
     g.guest.Set(record, std::uint8_t{1});
+    CHECK(Frame(d, g, 300).size() == 1);  // not taken yet: asked again
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitInHand);
     CHECK(Frame(d, g, 600).size() == 1);
-    CHECK(Frame(d, g, 900).empty());  // taken by the record
+    CHECK(Frame(d, g, 900).empty());  // taken
 
     // The game makes the sword again (another id): the new one is put away.
     g.guest.Set(sword_id, std::uint32_t{9});
@@ -1026,4 +1027,63 @@ TEST_CASE("puppet gear: the debug log lists every slot that holds a piece") {
     CHECK(slots.find(" state 4 up ") != std::string::npos);
     CHECK(slots.find("flags 0x800") != std::string::npos);
     CHECK(slots.find("slot 0:") == std::string::npos);
+}
+
+TEST_CASE("puppet gear: nothing is worn while parked; a piece left behind is worn again") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    constexpr std::uint64_t kHolder = kParts + 0x2800;
+    constexpr std::uint64_t kPiece = kParts + 0x2900;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    for (std::uint32_t s = 0; s < 8; ++s) {
+        g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId,
+                    std::uint32_t{0xFFFFFFFF});
+    }
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.drawn = std::uint8_t{0};
+
+    // Parked (our event): no equip call.
+    t.show = CoopPuppet::Show::hide;
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 20).empty());
+
+    // Shown: worn.
+    t.show = CoopPuppet::Show::show;
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(Frame(d, g, 40).empty());
+
+    // The game's sword is next to the puppet: nothing more.
+    const std::uint64_t link = kEu + addr::kEquipSlots;
+    g.guest.Set(link + addr::kEquipSlotId, std::uint32_t{0x30});
+    g.guest.Set(link + addr::kEquipSlotHolder, kHolder);
+    g.guest.Set(kHolder + addr::kHolderActor, kPiece);
+    g.guest.Set(kPiece + addr::kActorState, addr::kStatePresent);
+    CoopPuppet::Vec3 own{};
+    g.guest.Read(kActor + addr::kActorPosition, &own, sizeof(own));
+    g.guest.Set(kPiece + addr::kActorPosition, CoopPuppet::Vec3{own[0], own[1] + 0.9f, own[2]});
+    CHECK(Frame(d, g, 50).empty());
+
+    // It stayed 500 below (made while parked): worn again, once a second at most.
+    g.guest.Set(kPiece + addr::kActorPosition, CoopPuppet::Vec3{own[0], own[1] - 499.0f, own[2]});
+    calls = Frame(d, g, 60);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    bool said = false;
+    for (const auto& line : log) {
+        said = said || line.find("left behind") != std::string::npos;
+    }
+    CHECK(said);
+    CHECK(Frame(d, g, 70).empty());
+    CHECK(Frame(d, g, 900).empty());
+    CHECK(Frame(d, g, 1100).size() == 1);
 }

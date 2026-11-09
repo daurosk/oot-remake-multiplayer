@@ -123,15 +123,12 @@ inline constexpr std::uint64_t kComponentsEquipmentUser = 0x200;
 // game clears it when the change is done: 0x6b6820 (in hand) writes 2,
 // 0xe34c70 (put away, also when a piece is created) writes 4, 0x2dfdee0
 // writes 1; 0xce7ab0 reads the state from the piece itself once the byte is
-// 0. Both setters also keep a byte per slot in the user's slot records
-// (+0x4b0, 0xa8 bytes each, byte at +0xa4): 1 in hand, 0 put away. [dump],
-// not run: so the reader takes the requests as they pass and a change of
-// that byte, and remembers the last one (PlayerReader::read_drawn).
+// 0. So the reader takes the requests as they pass and remembers the last
+// one (PlayerReader::read_drawn); a piece made anew starts put away.
+// The slot records (+0x4b0, 0xa8 bytes each) are not the state: the byte at
+// +0xa4 read 1 with the sword out and put away alike (autotest, 2026-11-09).
 inline constexpr std::uint8_t kEquipRequestNone = 0x1;
 inline constexpr std::uint8_t kEquipRequestAway = 0x4;
-inline constexpr std::uint64_t kEquipRecords = 0x4b0;
-inline constexpr std::uint64_t kEquipRecordStride = 0xa8;
-inline constexpr std::uint64_t kEquipRecordInHand = 0xa4;
 inline constexpr std::uint64_t kEquipSlots = 0x20;
 inline constexpr std::uint64_t kEquipSlotStride = 0x18;
 inline constexpr std::uint32_t kEquipSlotCount = 8;

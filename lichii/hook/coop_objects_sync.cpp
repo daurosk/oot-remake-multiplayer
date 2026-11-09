@@ -170,9 +170,14 @@ std::uint64_t SceneSpawnId(std::string_view scene, std::string_view name, unsign
 
 void Sync::Receive(const proto::Message& message) {
     if (const auto* p = std::get_if<proto::PlayerSample>(&message)) {
-        if (p->scene && p->player_number != proto::kPlayerSelf) {
+        if (p->player_number != proto::kPlayerSelf) {
             std::lock_guard lock(inbox_mutex_);
-            scenes_[p->player_number] = {*p->scene, p->time.server_time_us};
+            if (p->scene) {
+                scenes_[p->player_number] = {*p->scene, p->time.server_time_us};
+            }
+            if (p->position && Finite(*p->position)) {
+                places_[p->player_number] = {*p->position, p->time.server_time_us};
+            }
         }
         return;
     }
@@ -347,6 +352,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
                     }
                     drop = 0;
+                } else if (o.late_left > 0 && now_us < o.late_until) {
+                    // The game took a hurt after its life had been written
+                    // for it: a second fall for one hit. Put it back; it is
+                    // no hit of ours.
+                    const std::int32_t back = std::min(drop, o.late_left);
+                    o.late_left -= back;
+                    life->life += back;
+                    drop -= back;
+                    writes.push_back({o.address, life->life, 0, {}});
+                    ++hurt_late_;
                 }
                 const auto owner = owners_.find(o.id);
                 if (drop > 0 && owner != owners_.end() && owner->second.player != 0 &&
@@ -355,6 +370,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         o.hit_since = now_us;
                     }
                     o.hit_sum += drop;
+                    // Its own game is playing the hit reaction now.
+                    o.react_at = now_us;
+                    o.react_over = !o.received.empty() && o.received.back().animation
+                                       ? o.received.back().animation->name
+                                       : std::string{};
                 }
             }
             o.life = life->life;
@@ -414,6 +434,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
+        o.reacts = s->name.starts_with("Enemy_");
         o.first_position = s->position;
         if (s->life) {
             o.life = s->life->life;
@@ -481,7 +502,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // life is written as the owner has it.
         if (o.hurt_until != 0 && now_us >= o.hurt_until) {
             if (o.life && *o.life != o.hurt_target) {
-                writes.push_back({o.address, o.hurt_target, 0});
+                writes.push_back({o.address, o.hurt_target, 0, {}});
+                // The hit given to the game may still be taken (a pause, a
+                // text box): watch for that fall for a while.
+                o.late_left = std::max(0, *o.life - o.hurt_target);
+                o.late_until = now_us + kHurtLateUs;
                 o.life = o.hurt_target;
                 ++hurt_missed_;
             }
@@ -651,7 +676,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         return nullptr;
     };
     const auto write = [&writes](Object& o, std::int32_t life) {
-        writes.push_back({o.address, life, 0});
+        writes.push_back({o.address, life, 0, {}});
         o.life = life;
         o.hurt_left = 0;
         o.hurt_until = 0;
@@ -737,7 +762,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             const bool holding = o->hit_sum > 0 || now_us - o->hit_at < kHitHoldUs;
             if (life < have) {
-                Lower(*o, life, now_us, writes);
+                // Who hit it is not sent: its owner is the best guess.
+                Lower(*o, life, now_us, writes, sample->player_number);
                 o->fight_until = now_us + kFightUs;
             } else if (life > have && !holding) {
                 write(*o, life);
@@ -750,7 +776,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
-            Lower(*o, std::max(0, have - damage->amount), now_us, writes);
+            Lower(*o, std::max(0, have - damage->amount), now_us, writes, damage->player_number);
             o->fight_until = now_us + kFightUs;
         } else if (const auto* ask = std::get_if<proto::HandoverAsk>(&m)) {
             proto::HandoverState state;
@@ -773,12 +799,14 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
 }
 
 void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
-                 std::vector<LifeWrite>& writes) {
+                 std::vector<LifeWrite>& writes, std::uint8_t hitter) {
     if (!o.life) {
         return;
     }
-    if (!hurt_) {
-        writes.push_back({o.address, life, 0});
+    // Only enemies take a hit through the game (they flinch, lose a head, are
+    // knocked back); a pot, a crate or an animal gets its life written.
+    if (!hurt_ || !o.reacts) {
+        writes.push_back({o.address, life, 0, {}});
         o.life = life;
         return;
     }
@@ -788,7 +816,17 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
     }
     // The game takes it off itself; the walk sees the drop and does not
     // count it as our hit. o.life stays as read until then.
-    writes.push_back({o.address, life, from - life});
+    LifeWrite w{o.address, life, from - life, std::nullopt};
+    {
+        std::lock_guard lock(inbox_mutex_);
+        const auto place = places_.find(hitter);
+        const std::uint64_t at = place != places_.end() ? place->second.second : 0;
+        if (place != places_.end() &&
+            (at <= now_us ? now_us - at : at - now_us) < kPlaceStaleUs) {
+            w.from = place->second.first;
+        }
+    }
+    writes.push_back(w);
     o.hurt_left += from - life;
     o.hurt_target = life;
     o.hurt_until = now_us + kHurtWaitUs;
@@ -865,6 +903,13 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         const Received& last = o.received.back();
         const auto& wanted = last.animation;
         if (!wanted || wanted->name.empty()) {
+            continue;
+        }
+        // Just hit here: the copy's own game shows the hit. The owner's
+        // animation from before the hit waits; its next one (its own
+        // reaction to our DAMAGE) is played as usual.
+        if (o.react_at != 0 && now_us < o.react_at + kReactHoldUs &&
+            wanted->name == o.react_over) {
             continue;
         }
         const float rate = std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f;

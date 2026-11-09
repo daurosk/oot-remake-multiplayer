@@ -207,26 +207,28 @@ What the director does (`Director::Hold`), for a live puppet, after its gear is 
 **Two-player run (Caleb, 2026-11-09, main 2e3f68b): "swords and equipment didn't show".** What the logs of that run say:
 
 - Each time a player drew the sword, the other game logged `P<n> equipment slot 0 in hand` and, about 40 ms later, `put away`. So the call is taken, but the player's `drawn` bit lasted one or two frames. The byte at +0x13bc is a **request**, not the state: the setters write it (0x6b6820 writes 2, 0xe34c70 writes 4, also when a piece is created) and the game clears it when the change is done. 0xce7ab0 reads the state from the piece itself once the byte is 0. "Bit 1 is set while the piece is out" (above) was wrong.
-- Fix (`PlayerReader::read_drawn`): the reader remembers the last request seen for each slot (2: in hand; 4 or 1: not) until the next one. It also follows the byte both setters keep in the user's slot record (EquipmentUser +0x4b0 + 0xa8 * slot + 0xa4: 1 in hand, 0 put away; read from the dump, not run), so a request that passed between two frames is not lost. The readers of all frames share one `PlayerReader::DrawnState` (the hook and `Session` keep it).
+- Fix (`PlayerReader::read_drawn`): the reader remembers the last request seen for each slot (2: in hand; 4 or 1: not) until the next one; a piece the game makes anew starts put away, as the game makes it. The readers of all frames share one `PlayerReader::DrawnState` (the hook and `Session` keep it).
 - The object log of the same run shows every Link, puppets too, with three pieces: `Weapon_Sword_Kokiri`, `Weapon_Sheath_Kokiri` and `Weapon_Shield_Hylian`, all in state 4, the sword 0.88 above the feet on the player and on the puppet alike. About 90 ms after the equip calls the game makes the three again and removes the first set. So a change of state is now made again when the piece in the slot is another one (`Slot::hold_id`).
-- Also changed: a change counts as taken when the slot record's byte shows it, since a setter leaves the request byte alone when the piece is in that state already.
+- The slot record byte (EquipmentUser +0x4b0 + 0xa8 * slot + 0xa4) that PR 73 read as "1 in hand, 0 put away" is not the state: autotest 2026-11-09 read 1 with the sword out and put away alike. Neither the reader nor the puppet uses it any more (it is only in the debug line).
 
-**Not known: why a worn sword (and shield) is not seen on the puppet's back.** What the logs of the 2026-11-09 run add:
+**Sword and shield on the puppet, in hand and put away: seen working (autotest, 2026-11-09, main c8ea805).** Scenarios `back`, `backwarp` and `late` (`tools/autotest/scenarios`): A walks ahead of B, stands 10 s with all put away, draws the sword (Y), guards (ZL), puts away (B). On B's screen the other Link looks like A's own: the shield on the back when put away and over the back while the sword is out, the sword in the hand on Y (also seen mid-swing). On a child Link the put-away sword sits under the shield, on the player too. The debug lines give the same `up`/`off` for the puppet's pieces as for the player's (sword 0.88/0.16 on the back, 0.41 then 0.14 in the hand; shield 0.72/0.19).
 
-- A puppet equips itself. `CoopPuppet_Child` gets sword, sheath and shield about 65 ms after its actor exists, also when no `wears` call was made (run 2, the first scene: P1 has the three pieces and no `wears` line). It takes them from the **local** game's `PlayerStatus.Equip*` flags, as the player does. Our two equip calls then make the pieces a second time and the game removes the first set. So "the game makes the three again" is our call after the puppet's own.
-- The set our calls make can be made while the puppet is parked under the floor (`Show::hide`): first seen at y = -339.87. Whether those pieces come up with the puppet is not known; the object log has only the place of first sight.
-- Nothing in the logs or the code says why a piece that exists is not drawn.
+What else the runs showed:
 
-With `LICHII_COOP_DEBUG_ANIM=1` every live puppet now logs, every 2 s, after its `gear:` line:
+- A puppet equips itself: `CoopPuppet_Child` gets sword, sheath and shield about 65 ms after its actor exists, from the **local** game's `PlayerStatus.Equip*` flags. Our equip calls then make the pieces again and the game removes the first set.
+- **A parked puppet leaves its pieces behind.** While the puppet is parked 500 under the floor (`Show::hide`, our event or scene exit), its sword and shield read `up 500.88`: they stay where they were. In Caleb's run (e2ed2aa) the second set was made while the puppet was parked (first seen at y = -339.87), which would leave it 500 under the puppet once it comes up. So: no equip or in-hand call is made while the puppet is parked (`Director::Equip`, `Director::Hold`), and a worn sword or shield found more than 5 from its shown puppet is worn again, at most once a second (`Director::LeftBehind`, log `P<n> weapon '..' left behind (<distance> away): worn again`). Built and unit tested; the left-behind case itself was not reached in a run (a puppet came back from a park only by a scene change, which deletes it).
+- Tunic, boots and head pieces go through the same equip call; the test saves have none, so they are not seen.
 
-- `P<n> slots (puppet <actor>): eu ..; slot <s>: id .. actor .. state .. up <height over the wearer> off <distance on the ground> request .. record .. flags .. want hand|away` for **every** equipment slot that holds a piece (the sheath's slot too; match `actor` with the object log's `+ Weapon_Sheath_Kokiri <address>`).
-- `P<n> slots (local player <actor>): ...` the same for the local player, whose gear does show.
+With `LICHII_COOP_DEBUG_ANIM=1` every live puppet logs, every 2 s, after its `gear:` line:
 
-How to read them: `up` near 0.9 and `off` under 1 is on the back, `up` near -500 or a large `off` is a piece left behind; `request` not 0 for seconds means the puppet's equipment user never works its requests off; `record` and `flags` (u32 at slot record + 0xa0, 0x800 while put away; from the dump, not run) should equal the local player's for the same slot. 
+- `P<n> slots (puppet <actor>): eu ..; slot <s>: id .. actor .. state .. up <height over the wearer> off <distance on the ground> request .. record .. flags .. want hand|away` for every equipment slot that holds a piece.
+- `P<n> slots (local player <actor>): ...` the same for the local player.
 
-The run that answers it: two players, child Link, both games with `LICHII_COOP_DEBUG_ANIM=1` and `LICHII_COOP_DEBUG_OBJECTS=1` (not `LICHII_COOP_DEBUG_PUPPET`, it adds the test puppet). Stand side by side for 10 s with everything put away and look at the other's back; draw the sword (Y), 5 s; guard (ZL), 5 s; put away (B), 5 s; close. Note for each step what is seen on the other Link. Lines needed from both logs: `slots (puppet`, `slots (local player`, `gear:`, `equipment slot`, `wears`, `objects: + Weapon_` and `- Weapon_`.
+`up` near 0.9 and `off` under 1 is on the back; `up` near -500 or a large `off` is a piece left behind; `request` not 0 for seconds means the puppet's equipment user never works its requests off.
 
-**Not proven in game** (no game was run with this fix). To check with two players: one draws the sword (Y), guards (ZL), puts away (B); the other watches the puppet. The log must show `in hand` when the sword comes out and `put away` only when it goes back. Autotest scenario: `hold`.
+A run that checks it: `tools/autotest/run.ps1 -Scenario back -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_ANIM=1" -ScreenCopy`, with `-Server` a protocol-3 kit server; look at B's screenshots and its `slots (puppet` lines.
+
+**In-hand change: seen working** in the same runs: B logs `P1 equipment slot 0 in hand` when A draws and `put away` only when A puts it away. Guarding (ZL) with the sword out moves the shield with the arm (pose copy); the shield slot itself stays put away, on the player too.
 
 ### Not done (equipment)
 

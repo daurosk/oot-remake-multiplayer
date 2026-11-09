@@ -242,24 +242,16 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
     }
     const auto bits = read_u8(memory_, *user + addr::kEquipSlotState + i);
     if (!bits) return std::nullopt;
-    // The slot record's byte: 1 in hand. Not readable counts as put away.
-    const std::uint8_t hand =
-        read_u8(memory_, *user + addr::kEquipRecords + addr::kEquipRecordStride * i +
-                             addr::kEquipRecordInHand)
-            .value_or(0);
     if (memo.id != *id) {
-      memo = DrawnMemo{*id, hand, hand == 1};  // a new piece
+      memo = DrawnMemo{*id, false};  // a new piece: the game makes it put away
     }
     // The request byte lasts a moment; the last request seen stands until
-    // the next one, or until the record's byte changes.
+    // the next one.
     if (*bits & addr::kEquipSlotDrawnBit) {
       memo.drawn = true;
     } else if (*bits & (addr::kEquipRequestAway | addr::kEquipRequestNone)) {
       memo.drawn = false;
-    } else if (hand != memo.hand) {
-      memo.drawn = hand == 1;
     }
-    memo.hand = hand;
     if (memo.drawn) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
   }
   return drawn;

@@ -1,0 +1,58 @@
+# spawn-seed (spawn sync, docs/spawns.md): A aims the slingshot and shoots a
+# seed; B, at the same save spot, should show the copy. The nocked seed is an
+# actor for as long as A aims (about 2 s), the shot one for about 0.5 s.
+# Waits 15 s first so a slower B has loaded the scene, then walks A right,
+# away from the cow at the save spot, to open ground B can see. A mark every
+# 0.1 s (a screenshot of both games) while aiming and after the shot.
+mark start
+wait 900
+mark ready
+stick 1 0 50
+wait 30
+mark moved
+hold ZR 30
+mark aiming
+hold ZR 6
+mark aim1
+hold ZR 6
+mark aim2
+hold ZR 6
+mark aim3
+hold ZR 6
+mark aim4
+hold ZR 6
+mark aim5
+hold ZR 6
+mark aim6
+hold ZR 6
+mark aim7
+hold ZR 6
+mark aim8
+hold ZR 6
+mark aim9
+wait 4
+mark fired
+wait 6
+mark shot01
+wait 6
+mark shot02
+wait 6
+mark shot03
+wait 6
+mark shot04
+wait 6
+mark shot05
+wait 6
+mark shot06
+wait 6
+mark shot07
+wait 6
+mark shot08
+wait 6
+mark shot09
+wait 6
+mark shot10
+wait 60
+press B
+wait 30
+mark end

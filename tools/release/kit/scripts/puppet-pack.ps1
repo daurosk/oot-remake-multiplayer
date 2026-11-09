@@ -39,7 +39,7 @@ if (-not $Romfs) {
     $dumped = Get-ChildItem (Join-Path $user 'dump') -Directory -Recurse -Filter romfs -ErrorAction SilentlyContinue |
         Where-Object { Test-Path (Join-Path $_.FullName 'Pack\ZsDic.pack.zs') } | Select-Object -First 1
     $hint = if ($dumped) { $dumped.FullName } else { '' }
-    Write-Host "The game's romfs folder: the one that holds Pack, Model, AS, RSDB and System (TESTING.md says how to dump it)."
+    Write-Host "The game's romfs folder: the one that holds Pack, Model, AS, RSDB and System (SETUP.md, 'The puppet pack', says how to dump it)."
     $answer = Read-Host "Romfs folder$(if ($hint) { " [$hint]" })"
     $Romfs = if ($answer) { $answer.Trim().Trim('"') } else { $hint }
 }
@@ -61,4 +61,4 @@ if ($longest.Length -gt 259) {
 Write-Host "Building the puppet packs into $loadDir ..."
 & $exe @pre -I $tool --romfs $Romfs --user-dir $user
 if ($LASTEXITCODE -ne 0) { Write-Host "The pack build failed ($LASTEXITCODE)."; exit 1 }
-Write-Host 'Done. Start play.cmd; the emulator log shows "LayeredFS patches applied" when it loads the game.'
+Write-Host 'Done. Start Host.bat or Join.bat; the emulator log shows "LayeredFS patches applied" when it loads the game.'

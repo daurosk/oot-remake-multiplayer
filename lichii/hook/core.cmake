@@ -5,6 +5,7 @@ set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
     "${_coop_hook}/coop_camera.cpp"
     "${_coop_hook}/coop_cheats.cpp"
+    "${_coop_hook}/coop_dungeon.cpp"
     "${_coop_hook}/coop_fairy.cpp"
     "${_coop_hook}/coop_flags.cpp"
     "${_coop_hook}/coop_hook.cpp"
@@ -13,6 +14,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_pose.cpp"
     "${_coop_hook}/coop_puppet.cpp"
     "${_coop_hook}/coop_settings.cpp"
+    "${_coop_hook}/coop_spawn.cpp"
     "${_coop_hook}/coop_svc.cpp"
     "${_coop_hook}/coop_world.cpp"
     "${_coop_hook}/coop_testinput.cpp"
@@ -22,3 +24,12 @@ target_sources(core PRIVATE
 target_include_directories(core PUBLIC "${_coop_hook}")
 target_compile_definitions(core PUBLIC LICHII_COOP)
 target_link_libraries(core PRIVATE coop coop_net coop_host coop_presence coop_overlay)
+# Which co-op commit is built in, for the log ("coop: build ..."). Read when
+# CMake configures, so reconfigure after a pull to keep it current.
+execute_process(COMMAND git -C "${LICHII_COOP_DIR}" describe --tags --always --dirty
+    OUTPUT_VARIABLE _coop_version OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT _coop_version)
+    set(_coop_version "unknown")
+endif()
+set_property(SOURCE "${_coop_hook}/coop_hook.cpp" APPEND PROPERTY
+    COMPILE_DEFINITIONS "LICHII_COOP_VERSION=\"${_coop_version}\"")

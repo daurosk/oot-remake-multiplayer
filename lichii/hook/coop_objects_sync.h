@@ -13,12 +13,22 @@
 //   over 100 ms; the owner writes life minus the damage into its enemy.
 // - A copy we do not own takes the owner's life from its samples (a lower
 //   life at once; a higher one only when no hit of ours is in flight).
+// - The owner's samples also carry rotation and velocity; a copy is placed
+//   where the owner's enemy was 100 ms ago (Poses, every frame), so it stands
+//   and moves where the owner's does, whatever its own AI wants.
+// - With hurt on, a life the copy must lose (and DAMAGE on the owner) goes
+//   through the game's own per-frame damage field, so the game plays its hit
+//   reaction; a life that is not taken within 400 ms is written directly.
 #pragma once
+
+#include <array>
+#include <deque>
 
 #include <cstdint>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,15 +45,46 @@ struct Seen {
     std::uint64_t hash = 0;     // placement hash; 0 or ~0 when the game made it
     std::optional<coop::protocol::ObjectLife> life;
     coop::protocol::Vec3 position{};
+    std::optional<std::array<float, 9>> rotation;  // actor +0x328, rows of 3
+    std::optional<coop::protocol::Animation> animation;  // AS slot 0
+};
+
+// An animation a copy should play (the owner's AS slot 0 command).
+struct PlayWish {
+    std::uint64_t address = 0;
+    std::string name;
+    float rate = 1.0f;
+};
+
+using Mat3 = std::array<float, 9>;
+
+// A rotation matrix (rows of 3) as a unit quaternion (x, y, z, w), and back.
+coop::protocol::Quat QuatOf(const Mat3& m);
+Mat3 MatOf(const coop::protocol::Quat& q);
+
+// One-time pickups (docs/items.md): a 64-bit placement key that another game
+// set to 1 removes the actor with that placement hash here (a Gold Skulltula
+// and its Obj_RupeeToken), so it cannot be taken twice.
+
+// A pose to write into a copy (+0x31c and +0x328).
+struct PoseWrite {
+    std::uint64_t address = 0;
+    coop::protocol::Vec3 position{};
+    std::optional<Mat3> rotation;
 };
 
 // A life to write into an actor (its +0x1c10 life value).
 struct LifeWrite {
     std::uint64_t address = 0;
-    std::int32_t life = 0;
+    std::int32_t life = 0;  // the life it should have
+    // Above 0: give it this much damage through the game's own damage field
+    // (Life + 0x228) instead of writing life, so the game reacts to the hit.
+    std::int32_t hurt = 0;
 };
 
-// Shared: enemies, and the breakable world objects (coop_world.h).
+// Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
+// not Navi, held equipment or invisible helpers) and the breakable world
+// objects (coop_world.h).
 bool IsShared(std::string_view name);
 
 // The id of an enemy the scene made without a placement hash: the scene, the
@@ -62,6 +103,14 @@ public:
     static constexpr std::uint64_t kDamageSumUs = 100'000;
     static constexpr std::uint64_t kHitHoldUs = 500'000;        // no healing back after our hit
     static constexpr std::uint64_t kFightUs = 12'000'000;
+    static constexpr std::uint64_t kBehindUs = 100'000;       // copies show the owner this late
+    static constexpr std::uint64_t kExtrapolateUs = 150'000;
+    static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
+    static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
+    static constexpr std::size_t kKeepSamples = 16;
+
+    // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
+    void SetHurt(bool on) { hurt_ = on; }
 
     // Network thread: OBJECT_OWNER, OBJECT_SAMPLE, HANDOVER_ASK,
     // HANDOVER_STATE, DAMAGE. Others are ignored. Applied on the next Tick.
@@ -83,6 +132,19 @@ public:
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
     static constexpr int kMissedWalks = 2;
+    // Present thread, every frame: where each copy we do not own should be.
+    void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
+
+    // Present thread: for each copy we do not own, the owner's latest
+    // animation, when the copy shows another one.
+    void Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const;
+
+    // The loaded actors whose pickup another game took: to delete.
+    std::vector<std::uint64_t> Removes() const;
+
+    // Present thread: a placement key set to 1 by a flag message. Collect
+    // asks this for actors that are not shared, to report them too.
+    bool Taken(std::uint64_t hash) const { return taken_.contains(hash); }
 
     // Present thread: not connected or the game went away. Forgets everything.
     void Reset();
@@ -93,12 +155,23 @@ public:
     // lines; taken (and cleared) by the caller.
     std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
+    // The actors of the enemies we own, with their names (for the test drive).
+    std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
+    std::size_t HurtsTaken() const { return hurt_taken_; }
+    std::size_t HurtsMissed() const { return hurt_missed_; }
 
 private:
     struct Owner {
         std::uint8_t player = 0;
         std::uint16_t epoch = 0;
+    };
+    struct Received {
+        std::uint64_t time = 0;
+        coop::protocol::Vec3 position{};
+        std::optional<coop::protocol::Quat> rotation;
+        std::optional<coop::protocol::Vec3> velocity;
+        std::optional<coop::protocol::Animation> animation;
     };
     struct Object {
         coop::protocol::ObjectId id;
@@ -106,21 +179,36 @@ private:
         std::optional<std::int32_t> life;  // as last read or written
         std::int32_t max = 0;
         coop::protocol::Vec3 position{};
+        std::optional<Mat3> rotation;
+        std::optional<coop::protocol::Animation> animation;
+        coop::protocol::Vec3 velocity{};
+        std::uint64_t seen_at = 0;
+        std::string name;
         std::uint64_t fight_until = 0;
         // Owner side.
         std::uint64_t sent_at = 0;
         bool sent_once = false;
         std::optional<coop::protocol::ObjectLife> sent_life;
         coop::protocol::Vec3 sent_position{};
+        std::optional<coop::protocol::Quat> sent_rotation;
+        std::string sent_animation;
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
-        bool breakable = false;    // coop_world.h
+        std::deque<Received> received;  // the owner's samples, oldest first
+        // A hurt asked of the game: drops up to this much are not our hits.
+        std::int32_t hurt_left = 0;
+        std::int32_t hurt_target = 0;
+        std::uint64_t hurt_until = 0;
+        bool breakable = false;                 // coop_world.h
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
     };
+
+    // Takes `o` down to `life`: a hurt when hurt is on, else a write.
+    void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes);
 
     void Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
                std::vector<coop::protocol::Message>& send);
@@ -137,6 +225,12 @@ private:
     std::vector<coop::protocol::ObjectPresence> present_sent_;
     std::uint64_t present_at_ = 0;
     bool present_once_ = false;
+    bool hurt_ = false;
+    std::uint8_t self_ = 0;
+    std::set<std::uint64_t> taken_;             // key64 flags seen set to 1
+    std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken
+    std::size_t hurt_taken_ = 0;   // hurts the game took as asked
+    std::size_t hurt_missed_ = 0;  // hurts written directly after the wait
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;

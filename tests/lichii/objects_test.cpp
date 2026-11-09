@@ -279,3 +279,236 @@ TEST_CASE("objects: every message it sends passes the client's own check") {
               proto::Error::none);
     }
 }
+
+TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
+    CHECK(CoopObjects::IsShared("Animal_Cucco"));
+    CHECK(CoopObjects::IsShared("Npc_Hylia_051"));
+    CHECK_FALSE(CoopObjects::IsShared("CoopPuppet_Child"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Navi"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Equipment_002"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
+}
+
+TEST_CASE("objects: a rotation matrix goes to a quaternion and back") {
+    // A turn of 90 degrees about y, then an arbitrary one.
+    const CoopObjects::Mat3 turn{0, 0, 1, 0, 1, 0, -1, 0, 0};
+    const auto back = CoopObjects::MatOf(CoopObjects::QuatOf(turn));
+    for (std::size_t i = 0; i < 9; ++i) {
+        CHECK(back[i] == doctest::Approx(turn[i]).epsilon(1e-5));
+    }
+    const proto::Quat q{0.2f, -0.5f, 0.3f, 0.787401f};
+    const auto m = CoopObjects::MatOf(q);
+    const auto q2 = CoopObjects::QuatOf(m);
+    const float sign = q2[3] * q[3] < 0 ? -1.0f : 1.0f;
+    for (std::size_t i = 0; i < 4; ++i) {
+        CHECK(q2[i] * sign == doctest::Approx(q[i]).epsilon(1e-4));
+    }
+    CHECK(CoopObjects::QuatOf({}) == proto::Quat{0, 0, 0, 1});  // garbage reads as no turn
+}
+
+TEST_CASE("objects: the owner's samples carry rotation and velocity") {
+    Sync sync;
+    Seen e = Enemy(0x100, 0x11, 2, 0.0f);
+    e.rotation = CoopObjects::Mat3{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    Tick(sync, 0, {e});
+    Own(sync, *sync.IdOf(0x100), 1);
+    Tick(sync, 10 * kMs, {e});
+    e.position[0] = 1.0f;
+    e.rotation = CoopObjects::Mat3{0, 0, 1, 0, 1, 0, -1, 0, 0};
+    const auto samples = All<proto::ObjectSample>(Tick(sync, 110 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.rotation);
+    CHECK((*samples[0].state.rotation)[3] == doctest::Approx(0.7071f).epsilon(1e-3));
+    REQUIRE(samples[0].state.velocity);
+    CHECK((*samples[0].state.velocity)[0] == doctest::Approx(10.0f));  // 1 m in 0.1 s
+    // Turning on the spot is a change too.
+    e.rotation = CoopObjects::Mat3{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    CHECK(All<proto::ObjectSample>(Tick(sync, 170 * kMs, {e})).size() == 1);
+}
+
+TEST_CASE("objects: a copy is placed where the owner's enemy was 100 ms ago") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2, 50.0f)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    std::vector<CoopObjects::PoseWrite> poses;
+    sync.Poses(10 * kMs, poses);
+    CHECK(poses.empty());  // no owner, nothing received
+
+    Own(sync, id, 2);
+    const auto sample = [&](std::uint64_t t, float x, float vx = 0.0f) {
+        proto::ObjectSample s;
+        s.player_number = 2;
+        s.id = id;
+        s.state.time = {t, 0};
+        s.state.position = proto::Vec3{x, 0.0f, 0.0f};
+        s.state.velocity = proto::Vec3{vx, 0.0f, 0.0f};
+        s.state.rotation = proto::Quat{0, 0, 0, 1};
+        sync.Receive(s);
+    };
+    sample(1000 * kMs, 0.0f);
+    sample(1050 * kMs, 1.0f, 20.0f);
+    Tick(sync, 1100 * kMs, {Enemy(0x100, 0x11, 2, 50.0f)});
+
+    poses.clear();
+    sync.Poses(1125 * kMs, poses);  // shows 1025: halfway
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].address == 0x100);
+    CHECK(poses[0].position[0] == doctest::Approx(0.5f));
+    REQUIRE(poses[0].rotation);
+    CHECK((*poses[0].rotation)[0] == doctest::Approx(1.0f));
+
+    poses.clear();
+    sync.Poses(1200 * kMs, poses);  // shows 1100: 50 ms past the last, at 20 m/s
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(2.0f));
+    poses.clear();
+    sync.Poses(1900 * kMs, poses);  // never more than 150 ms ahead
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(4.0f));
+
+    // Long silence: the copy is left to itself.
+    poses.clear();
+    sync.Poses(4000 * kMs, poses);
+    CHECK(poses.empty());
+
+    // Ours now: nothing pulls it.
+    sample(4000 * kMs, 3.0f);
+    Own(sync, id, 1, 1);
+    Tick(sync, 4010 * kMs, {Enemy(0x100, 0x11, 2, 50.0f)});
+    poses.clear();
+    sync.Poses(4100 * kMs, poses);
+    CHECK(poses.empty());
+}
+
+TEST_CASE("objects: with hurt on, a copy loses life through the game and it is no hit of ours") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.state.life = proto::ObjectLife{3, 4};
+    sync.Receive(s);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    CHECK(step.writes[0].life == 3);
+    // The same sample again asks for nothing more.
+    sync.Receive(s);
+    CHECK(Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 4)}).writes.empty());
+    // The game takes it: no DAMAGE goes back.
+    Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 3)});
+    CHECK(All<proto::Damage>(Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 3)})).empty());
+    CHECK(sync.HurtsTaken() == 1);
+    // Our own hit after that still goes.
+    Tick(sync, 600 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(All<proto::Damage>(Tick(sync, 800 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
+}
+
+TEST_CASE("objects: a hurt the game does not take is written as life after 400 ms") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 3)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 2;
+    sync.Receive(d);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 3)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    // A second hit while the first is pending stacks on the target.
+    d.amount = 1;
+    sync.Receive(d);
+    step = Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 3)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    CHECK(step.writes[0].life == 0);
+    CHECK(Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 3)}).writes.empty());
+    step = Tick(sync, 430 * kMs, {Enemy(0x100, 0x11, 3)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(step.writes[0].life == 0);
+    CHECK(sync.HurtsMissed() == 1);
+}
+
+TEST_CASE("objects: a pickup another game took is removed here") {
+    Sync sync;
+    Seen token;
+    token.address = 0x300;
+    token.name = "Obj_RupeeToken";
+    token.hash = 0x6a8d9b2373d08fc9;
+    token.position = {5.0f, 2.0f, 1.0f};
+    CHECK_FALSE(sync.Taken(token.hash));
+    Tick(sync, 0, {token, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+
+    proto::FlagState state;
+    state.player_number = 2;
+    state.flags.push_back(proto::FlagEntry(proto::FlagKey::key64_flag(token.hash),
+                                           proto::FlagKind::boolean, 1));
+    state.flags.push_back(proto::FlagEntry(proto::FlagKey::key64_flag(0x77),
+                                           proto::FlagKind::boolean, 0));
+    sync.Receive(state);
+    Tick(sync, 10 * kMs, {token, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Taken(token.hash));
+    CHECK_FALSE(sync.Taken(0x77));
+
+    Tick(sync, 20 * kMs, {token, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x300});
+    // Gone from the list: nothing more to remove.
+    Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    // A taken enemy is not shared (not in OBJECT_PRESENT).
+    token.name = "Enemy_Skulltula_Gold";
+    token.address = 0x400;
+    const auto step = Tick(sync, 3000 * kMs, {token, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x400});
+    const auto present = All<proto::ObjectPresent>(step);
+    REQUIRE(present.size() == 1);
+    CHECK(present[0].objects.size() == 1);
+}
+
+TEST_CASE("objects: the owner sends its enemy's animation; a copy is asked to play it") {
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 2);
+    e.animation = proto::Animation{"Wait", 3.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.animation);
+    CHECK(samples[0].state.animation->name == "Wait");
+    // A new animation alone is a change worth a sample.
+    e.animation = proto::Animation{"Damage", 0.0f, 1.0f};
+    samples = All<proto::ObjectSample>(Tick(owner, 70 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    CHECK(samples[0].state.animation->name == "Damage");
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 2);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 0, {c});
+    Own(copy, id, 1);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(1020 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x200);
+    CHECK(plays[0].name == "Damage");
+    // Once it shows it, nothing more is asked.
+    c.animation = proto::Animation{"Damage", 2.0f, 1.0f};
+    Tick(copy, 1040 * kMs, {c}, 2);
+    plays.clear();
+    copy.Plays(1050 * kMs, plays);
+    CHECK(plays.empty());
+}

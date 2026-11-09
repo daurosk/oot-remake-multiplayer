@@ -30,6 +30,7 @@ param(
     # Seconds between screenshots while the scenario plays.
     [double]$Every = 3,
     # LICHII_COOP_... switches for both games, as NAME=value (replaces the default list).
+    # As NAME=value: an array, or one comma list ("A=1,B=1"), which is how powershell -File passes it.
     [string[]]$Switches = @("LICHII_COOP_PUPPET=1", "LICHII_COOP_OBJECTS=1", "LICHII_COOP_DEBUG_OBJECTS=1"),
     # Seconds to wait for each phase (boot and join, load, scenario).
     [int]$Timeout = 180,
@@ -176,7 +177,10 @@ try {
     Start-Sleep 1
 
     $old = @{}
-    foreach ($e in $Switches) { $k, $v = $e -split '=', 2; $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $v) }
+    # powershell -File passes -Switches "A=1","B=1" as one string "A=1,B=1": split on commas.
+    $Switches = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
+    foreach ($e in $Switches) { if ($e -notmatch '^[A-Za-z_][A-Za-z0-9_]*=') { throw "switch '$e': want NAME=value" } }
+    foreach ($e in $Switches) { $k, $v = $e -split '=', 2; Write-Host "switch $k=$v"; $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $v) }
     $i = 0
     foreach ($x in $kits.Keys) {
         $s = $st[$x]

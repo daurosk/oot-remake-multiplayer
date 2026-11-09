@@ -51,10 +51,12 @@
 #include "coop_cheats.h"
 #include "coop_flags.h"
 #include "coop_fairy.h"
+#include "coop_dungeon.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
+#include "coop_spawn.h"
 #include "coop_testinput.h"
 
 namespace CoopHook {
@@ -191,6 +193,7 @@ public:
         coop::host::SessionSettings session;
         std::string flag_error;
         session.shared = LoadShared(flag_error);
+        if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }
@@ -202,6 +205,7 @@ public:
             CoopPose::OnEvent(event, SteadyMs());
             Chat(event, client);
             CoopObjects::OnEvent(event);
+            CoopSpawn::OnEvent(event);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -274,6 +278,7 @@ public:
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
+        CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);
@@ -826,6 +831,7 @@ void Start() {
     g_started = true;
     const auto v = coop::enet_linked_version();
     LOG_INFO(Core, "coop: loaded (ENet {}.{}.{})", (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
+    LOG_INFO(Core, "coop: build {}, protocol {}", LICHII_COOP_VERSION, coop::protocol::kProtocolVersion);
 
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;

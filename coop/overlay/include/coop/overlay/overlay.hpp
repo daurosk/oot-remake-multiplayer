@@ -50,6 +50,9 @@ struct Settings {
   float max_size = 48.0f;
   // Gap in pixels between the marker's top and the name tag's anchor.
   float tag_gap = 6.0f;
+  // An adult player is drawn this far higher (world units), so the marker
+  // and name tag stay at the same place on the taller Link as on a child.
+  float adult_lift = 0.5f;
   // Players just off screen are drawn as an arrow clamped to the screen
   // edge, edge_margin pixels in. "Just off" means within edge_reach of the
   // screen in normalised device units (the screen is -1 to 1, so 1 lets a
@@ -72,6 +75,7 @@ struct Shown {
   Vec3 position{};
   std::optional<std::string> scene;  // none: not known, so not drawn
   float fade = 1.0f;                 // presence's fade, 1 shown, 0 gone
+  bool adult = false;                // from the player's samples; lifts the marker
 };
 
 // The players presence shows at `server_now_us`, lowest number first.

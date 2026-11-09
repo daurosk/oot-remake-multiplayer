@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 #include <utility>
 
 namespace CoopFairy {
@@ -22,6 +23,12 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
     // Each player's fairy is a little out of step with the others.
     const float phase = static_cast<float>(number) * 1.7f;
     Vec3 local = settings_.offset;
+    const std::string_view actor = puppet.actor;
+    if (actor.size() >= 6 && actor.substr(actor.size() - 6) == "_Adult") {
+        for (float& v : local) {
+            v *= settings_.adult_scale;
+        }
+    }
     local[0] += settings_.circle * std::cos(kTwoPi * settings_.circle_hz * t + phase);
     local[2] += settings_.circle * std::sin(kTwoPi * settings_.circle_hz * t + phase);
     local[1] += settings_.bob * std::sin(kTwoPi * settings_.bob_hz * t + phase);

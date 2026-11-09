@@ -112,3 +112,16 @@ TEST_CASE("fairy: bobs within its range") {
     CHECK(lo >= s.offset[1] - s.bob - 1e-4f);
 }
 
+
+TEST_CASE("an adult puppet's fairy sits higher, by its shoulder") {
+    Follower f(Still());
+    Target child;
+    child.actor = "CoopPuppet_Child";
+    Target adult = child;
+    adult.actor = "CoopPuppet_Adult";
+    const auto c = f.Goal(child, 0.0f, 1);
+    const auto a = f.Goal(adult, 0.0f, 1);
+    CHECK(c[1] == doctest::Approx(1.05f));
+    CHECK(a[1] == doctest::Approx(1.05f * Settings{}.adult_scale));
+    CHECK(a[0] > c[0]);
+}

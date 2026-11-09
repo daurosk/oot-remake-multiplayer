@@ -35,7 +35,7 @@
 //   whole hit record there, so life is written directly.
 // LICHII_COOP_OBJECTS_TEST_DRIVE=1 (two-game tests only): on the game that
 // LICHII_COOP_OBJECTS_TEST_TAKE=<hex key> (tests only): on player 2's game,
-// 10 s after sharing starts, acts as if that 64-bit placement key arrived
+// 3 s after sharing starts, acts as if that 64-bit placement key arrived
 // set to 1, so the actor with that placement hash is deleted here.
 // owns it (player 1 only), one enemy (a ReDead if there is one) is held 3 m in front of our
 // player, swaying 1.5 m side to side, and hurt by 1 every 4 s through the
@@ -534,7 +534,7 @@ public:
             }();
             (void)registered;
             sync_.SetHurt(hurt_);
-            take_at_ = server_now_us + 10'000'000;
+            take_at_ = server_now_us + 3'000'000;
             LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
                      hurt_ ? "through the game" : "written as life");
         }

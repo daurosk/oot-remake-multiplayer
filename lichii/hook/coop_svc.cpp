@@ -54,15 +54,17 @@ bool Wanted() {
 // Settings for the puppets, once, when the patch goes in.
 void ConfigurePuppets() {
     CoopPuppet::PlannerSettings settings;
-    settings.debug = EnvOn("LICHII_COOP_DEBUG_PUPPET");
+    // The test puppet has its own switch: the logs alone must not put a
+    // second Link in the game (Caleb's run of 2026-11-09 with the logs on).
+    settings.debug = EnvOn("LICHII_COOP_TEST_PUPPET");
     settings.debug_anim = EnvOn("LICHII_COOP_DEBUG_ANIM");
     if (const auto actor = Env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = actor;
     }
-    const bool debug = settings.debug;
+    const bool verbose = EnvOn("LICHII_COOP_DEBUG_PUPPET");
     LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
-             debug ? ", debug puppet beside you" : "");
-    CoopPuppet::Configure(std::move(settings), debug,
+             settings.debug ? ", test puppet beside you" : "");
+    CoopPuppet::Configure(std::move(settings), verbose,
                           [](const std::string& line) { LOG_INFO(Core, "{}", line); });
 }
 

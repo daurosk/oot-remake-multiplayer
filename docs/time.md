@@ -25,7 +25,7 @@ Game: main of build e0f3ccfaf50065ae (1.1.1). **Checked** means read from the in
 - No clock (no game, a load) sends nothing, and the first read after it is not a jump.
 - The set is the game's own setter, called on the calc thread from the svc cave (`CoopSvc::AddCaller`, order 40), after checking that the world manager and its time object exist.
 
-Switches: `LICHII_COOP_TIME=0` turns it off; `LICHII_COOP_DEBUG_TIME=1` logs the raw time record every 2 s and every message sent; `LICHII_COOP_TIME_TEST_SET=<seconds>` (tests only) sets this game's clock 5 s after joining, as the Sun's Song would. The cave is patched only with `LICHII_COOP_PUPPET` or `LICHII_COOP_SPAWN` on; without it the clock is read and sent but never set.
+Switches: `LICHII_COOP_TIME=0` turns it off; `LICHII_COOP_DEBUG_TIME=1` logs the raw time record every 2 s and every message sent; `LICHII_COOP_TIME_TEST_SET=<seconds>[@<delay>]` (tests only) makes the host set its clock <delay> seconds (default 5) after joining, as the Sun's Song would (another game ignores it, so the same switch list serves both games of a test). The cave is patched only with `LICHII_COOP_PUPPET` or `LICHII_COOP_SPAWN` on; without it the clock is read and sent but never set.
 
 ## Not done
 

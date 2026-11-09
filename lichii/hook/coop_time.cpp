@@ -115,9 +115,12 @@ struct Glue {
     unsigned frame = 0;
     std::uint64_t debug_at = 0;
     bool connected = false;
-    // LICHII_COOP_TIME_TEST_SET=<seconds> (tests only): 5 s after joining,
-    // this game sets its own clock there, as the Sun's Song would.
+    // LICHII_COOP_TIME_TEST_SET=<seconds>[@<delay s>] (tests only): <delay>
+    // seconds (default 5) after joining, the host sets its own clock there,
+    // as the Sun's Song would. Another game ignores it, so one switch list
+    // serves both games of a test.
     std::optional<std::uint32_t> test_set;
+    std::uint64_t test_delay_us = 5'000'000;
     std::uint64_t joined_at = 0;
     Sync sync;
     Setter setter;
@@ -127,7 +130,11 @@ struct Glue {
         const auto d = Env("LICHII_COOP_DEBUG_TIME");
         debug = !d.empty() && d != "0";
         if (const auto t = Env("LICHII_COOP_TIME_TEST_SET"); !t.empty()) {
-            const unsigned long v = std::strtoul(t.c_str(), nullptr, 10);
+            char* rest = nullptr;
+            const unsigned long v = std::strtoul(t.c_str(), &rest, 10);
+            if (rest != nullptr && *rest == '@') {
+                test_delay_us = std::strtoull(rest + 1, nullptr, 10) * 1'000'000;
+            }
             if (v < coop::protocol::kSecondsPerDay) {
                 test_set = static_cast<std::uint32_t>(v);
             }
@@ -197,12 +204,14 @@ struct Glue {
             joined_at = now_us;
         }
         connected = true;
-        if (test_set && now && now_us - joined_at >= 5'000'000) {
-            LOG_INFO(Core, "coop: time: test set to {}", *test_set);
-            setter.Want(main, *test_set);
+        const bool host = session->with_client([](coop::net::Client& c) { return c.is_host(); });
+        if (test_set && now && now_us - joined_at >= test_delay_us) {
+            if (host) {
+                LOG_INFO(Core, "coop: time: test set to {}", *test_set);
+                setter.Want(main, *test_set);
+            }
             test_set.reset();
         }
-        const bool host = session->with_client([](coop::net::Client& c) { return c.is_host(); });
         std::vector<coop::protocol::Message> send;
         if (const auto target = sync.Tick(now, host, now_us, send)) {
             setter.Want(main, *target);

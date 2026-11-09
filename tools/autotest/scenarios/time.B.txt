@@ -1,0 +1,20 @@
+# time: both games load into Kakariko (outdoors, so the sky shows) with the test-only warp; then the
+# host's clock is set to midnight by LICHII_COOP_TIME_TEST_SET=0@120 (switch for both games: only
+# the host takes it), and the other game must follow. Run with -NoLoad.
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark day
+wait 3000               # the host sets midnight 120 s after joining
+mark night
+wait 600
+mark end

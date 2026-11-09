@@ -214,12 +214,11 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
                 if (t->show == Show::show) {
-                    WriteValue(guest, slot.actor + addr::kActorPosition, t->position);
-                    WriteValue(guest, slot.actor + addr::kActorRotation, t->rotation);
+                    Pose(slot, guest, t->position, &t->rotation, now_ms);
                 } else if (t->show == Show::hide) {
                     Vec3 parked = t->position;
                     parked[1] -= kHideDrop;
-                    WriteValue(guest, slot.actor + addr::kActorPosition, parked);
+                    Pose(slot, guest, parked, nullptr, now_ms);
                 }  // hold: left where it is
             }
             break;
@@ -287,6 +286,7 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         slot.anim_name = slot.play_name;
         slot.anim_serial = slot.play_serial;
         slot.frame_to_set = slot.play_frame;
+        slot.sync_next = 1;  // then the partial slots, after the frame
         if (anim_) {
             char buf[48];
             std::snprintf(buf, sizeof(buf), " from frame %.1f", slot.play_frame);
@@ -296,6 +296,13 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         break;
     case Pending::frame:
         slot.frame_to_set.reset();
+        break;
+    case Pending::sync:
+        if (anim_) {
+            Say(who + " slot " + std::to_string(slot.sync_next) + " synced to slot 0 ('" +
+                slot.anim_name + "')");
+        }
+        ++slot.sync_next;
         break;
     case Pending::none:
         break;
@@ -427,6 +434,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.anim_serial = 0;
     slot.frame_to_set.reset();
     slot.held_frame.reset();
+    slot.sync_next = 0;
     pending_ = Pending::create;
     return c;
 }
@@ -543,6 +551,20 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
     if (slot.frame_to_set) {
         return SetFrame(slot, controller, *slot.frame_to_set);
     }
+    if (slot.sync_next > 0) {
+        std::int32_t count = 0;
+        ReadValue(guest, controller + addr::kSlotCount, count);
+        if (slot.sync_next < std::min(count, addr::kMaxAsSlots)) {
+            Call c;
+            c.function = input_.main_base + addr::kSyncAsSlot;
+            c.x[0] = slot.actor;
+            c.x[1] = 0;
+            c.x[2] = static_cast<std::uint64_t>(slot.sync_next);
+            pending_ = Pending::sync;
+            return c;
+        }
+        slot.sync_next = 0;
+    }
     if (target.anim_serial != slot.anim_serial) {
         slot.anim_serial = target.anim_serial;
         const auto now = Frame(guest, controller);
@@ -558,6 +580,29 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
         }
     }
     return std::nullopt;
+}
+
+// The puppet's pose: +0x31c/+0x328 and the engine's pending transform
+// (+0x358/+0x364), which the actor's calc applies over +0x31c. With the
+// debug anim log, once a second, what the game left there since the last
+// write, so a writer that undoes ours shows up.
+void Director::Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
+                    std::uint64_t now_ms) {
+    if (anim_ && now_ms - slot.pose_log_ms >= 1000) {
+        slot.pose_log_ms = now_ms;
+        Vec3 at{};
+        Vec3 asked{};
+        ReadValue(guest, slot.actor + addr::kActorPosition, at);
+        ReadValue(guest, slot.actor + addr::kActorPositionRequest, asked);
+        Say("P" + std::to_string(slot.number) + " pose: at " + VecText(at) + ", request " +
+            VecText(asked) + ", now to " + VecText(position));
+    }
+    WriteValue(guest, slot.actor + addr::kActorPosition, position);
+    WriteValue(guest, slot.actor + addr::kActorPositionRequest, position);
+    if (rotation != nullptr) {
+        WriteValue(guest, slot.actor + addr::kActorRotation, *rotation);
+        WriteValue(guest, slot.actor + addr::kActorRotationRequest, *rotation);
+    }
 }
 
 // The actor taken from the request, while its vtable is the one it had then

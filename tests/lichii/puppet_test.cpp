@@ -559,6 +559,36 @@ TEST_CASE("puppet animation: play the command, set its frame, correct only when 
     CHECK(d.Slots()[0].anim_name == "Run");
 }
 
+TEST_CASE("puppet animation: the other slots synced from slot 0; pose request written") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    GiveAnimation(g, 0.0f);
+    g.guest.Set(kController + addr::kSlotCount, std::int32_t{3});
+    d.SetInput(Wants({Playing("Wait", 4.0f, 1)}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 4);
+    CHECK(calls[0].function == kBase + addr::kPlayAs);
+    CHECK(calls[1].function == kBase + addr::kSetAsFrame);
+    for (std::size_t i = 2; i < 4; ++i) {
+        CHECK(calls[i].function == kBase + addr::kSyncAsSlot);
+        CHECK(calls[i].x[0] == kActor);
+        CHECK(calls[i].x[1] == 0u);
+        CHECK(calls[i].x[2] == i - 1);
+    }
+    CHECK(Frame(d, g, 30).empty());
+    // The pending transform carries the pose too, so the actor's calc keeps it.
+    CheckPosition(g.guest, kActor + addr::kActorPositionRequest, 4, 5, 6);
+    CHECK(g.guest.Get<float>(kActor + addr::kActorRotationRequest) ==
+          g.guest.Get<float>(kActor + addr::kActorRotation));
+
+    // A new command syncs them again.
+    d.SetInput(Wants({Playing("Run", 1.0f, 2)}));
+    calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 4);
+    CHECK(calls[3].function == kBase + addr::kSyncAsSlot);
+}
+
 TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
     Game g;
     Director d;

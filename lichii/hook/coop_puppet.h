@@ -57,6 +57,12 @@ inline constexpr std::uint64_t kGotCreateDefault = 0x4c7dad0;
 inline constexpr std::uint64_t kActorState = 0x2c;
 inline constexpr std::uint64_t kActorPosition = 0x31c;
 inline constexpr std::uint64_t kActorRotation = 0x328;
+// The pending transform the engine's own setter 0xc6fd60(actor, mtx34, 0)
+// (the run of OneShotActorRequestSetMtx, 0x28b2050) leaves on an actor with
+// no physics body: position at +0x358, rotation rows at +0x364. The actor's
+// calc applies it to +0x31c and +0x328; written with them every frame.
+inline constexpr std::uint64_t kActorPositionRequest = 0x358;
+inline constexpr std::uint64_t kActorRotationRequest = 0x364;
 inline constexpr std::uint32_t kStatePresent = 4;
 inline constexpr std::uint64_t kLinkHolder = 0x08;
 inline constexpr std::uint64_t kLinkId = 0x10;
@@ -74,6 +80,12 @@ inline constexpr std::uint64_t kSlotCount = 0x18;
 inline constexpr std::uint64_t kSlots = 0x20;
 inline constexpr std::uint64_t kSlotName = 0x10;
 inline constexpr std::uint64_t kSlotFrame = 0xe8;
+// ExecuteASSyncPartialAnimation's call: 0x3abec10(actor, from slot, to slot,
+// node 0, 0) plays the command of one slot on another (request skip-if-same
+// 1, the source's rate) through 0x37b59c0. Link's upper body and other
+// partial slots are filled this way from slot 0.
+inline constexpr std::uint64_t kSyncAsSlot = 0x3abec10;
+inline constexpr std::int32_t kMaxAsSlots = 8;  // slots synced from slot 0
 }  // namespace addr
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
@@ -207,8 +219,10 @@ private:
         std::string play_name;              // the play being made
         float play_frame = 0.0f;
         std::uint32_t play_serial = 0;
+        std::int32_t sync_next = 0;         // next slot to sync from slot 0; 0 none
+        std::uint64_t pose_log_ms = 0;      // last read-back line (debug anim)
     };
-    enum class Pending { none, malloc, create, take, drop, remove, play, frame };
+    enum class Pending { none, malloc, create, take, drop, remove, play, frame, sync };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms);
@@ -219,6 +233,8 @@ private:
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
+    void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
+              std::uint64_t now_ms);
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
     Slot& SlotFor(std::uint8_t number);

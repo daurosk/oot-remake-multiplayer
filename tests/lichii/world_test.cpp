@@ -1224,7 +1224,7 @@ TEST_CASE("sign cut: the message checks its words") {
     proto::Message back;
     REQUIRE(proto::decode(*bytes, back) == proto::Error::none);
     CHECK(std::get<proto::SignCut>(back) == m);
-    CHECK(static_cast<int>(proto::type_of(back)) == 65);
+    CHECK(static_cast<int>(proto::type_of(back)) == 80);
     for (const std::uint64_t key : {std::uint64_t{0x18}, (1ull << 32) | 0x18, (4ull << 32) | 0x1c,
                                     (4ull << 32) | 0x200, (0x62ull << 32)}) {
         m.words = {{key, 1}};
@@ -1232,4 +1232,31 @@ TEST_CASE("sign cut: the message checks its words") {
     }
     m.words.assign(proto::kMaxSignCutWords + 1, {(4ull << 32) | 0x18, 1});
     CHECK_FALSE(proto::encode(proto::Message{m}).has_value());
+}
+
+TEST_CASE("sign cut: what another player's word may be written over") {
+    using CoopWorld::SignWordWritable;
+    CHECK(SignWordWritable(0x8004000080f3, 0x800c000080f3));      // a flag
+    CHECK(SignWordWritable(0x7fc00000, 0x3e13b645));              // NaN to a float
+    CHECK(SignWordWritable(0, 0x42ccd1dec0f55bf7));               // a point into an empty word
+    CHECK_FALSE(SignWordWritable(0x42cd0ee8c0eedabe, 0x42cd0edac0ee8696));  // over a transform
+    CHECK_FALSE(SignWordWritable(0x42cd0ee8c0eedabe, 0));
+    CHECK_FALSE(SignWordWritable(0, 0x214ba36b18));               // a heap pointer
+    CHECK_FALSE(SignWordWritable(0x214ba36b18, 1));               // over one
+    // The world sync drops a pointer before the hook sees it.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x900, 0x70, 100, "Obj_GuidePost_A_02")});
+    proto::SignCut cut;
+    cut.player_number = 1;
+    cut.scene = kScene;
+    cut.hash = 0x70;
+    cut.words = {{(4ull << 32) | 0x18, 0x214ba36b18}, {(4ull << 32) | 0x20, 1}};
+    b.Receive(cut);
+    const auto step = Walk(b, 1500 * kMs, {Thing(0x900, 0x70, 100, "Obj_GuidePost_A_02")});
+    REQUIRE(step.words.size() == 1);
+    CHECK(step.words[0].value == 1);
+    // Another scene's cut is not ours.
+    cut.scene = "Market";
+    b.Receive(cut);
+    CHECK(Walk(b, 2000 * kMs, {Thing(0x900, 0x70, 100, "Obj_GuidePost_A_02")}).words.empty());
 }

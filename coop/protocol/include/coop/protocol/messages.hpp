@@ -84,7 +84,7 @@ enum class MessageType : std::uint16_t {
   drop_take = 37,
   drop_ask = 38,
   boss_room = 50,  // 50 to 54: boss rooms (docs/dungeons-boss.md)
-  sign_cut = 65,   // 65 to 69: signs (docs/world.md, "Signs")
+  sign_cut = 80,   // 80 to 84: signs (docs/world.md, "Signs")
 };
 
 // PLAYER_SAMPLE component ids.

@@ -128,6 +128,8 @@ proto::Quat UnitQuat(const std::optional<CoopObjects::Mat3>& m) {
     return q;
 }
 
+bool HeapPointer(std::uint64_t v);  // below, with the sign probe
+
 const std::string* SceneOfMessage(const proto::Message& m) {
     if (const auto* b = std::get_if<proto::WorldBreak>(&m)) {
         return &b->scene;
@@ -693,7 +695,9 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             cut != cuts_.end() && o.sign && now_us - o.first_us >= kHitWaitUs &&
             !hits_.contains(o.hash) && now_us - o.hit_given_us >= kCutAfterHitUs) {
             for (const proto::SignWord& w : cut->second) {
-                out.words.push_back({address, w.key, w.value});
+                if (!HeapPointer(w.value)) {  // the rest is checked against our word at the write
+                    out.words.push_back({address, w.key, w.value});
+                }
             }
             char more[48];
             std::snprintf(more, sizeof more, ": %zu words written", cut->second.size());
@@ -1276,6 +1280,13 @@ bool PoseWord(std::uint64_t v) {
 }
 
 } // namespace
+
+bool SignWordWritable(std::uint64_t current, std::uint64_t value) {
+    if (HeapPointer(value) || HeapPointer(current) || PoseWord(current)) {
+        return false;
+    }
+    return !PoseWord(value) || current == 0;
+}
 
 std::vector<proto::SignWord> SignProbe::CutWords(const Snapshot& before, const Snapshot& now,
                                                   const std::set<std::uint64_t>& noisy) {

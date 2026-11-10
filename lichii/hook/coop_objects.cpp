@@ -944,7 +944,8 @@ public:
                 const auto table = r.Ptr(w.address + kActorComponents);
                 const auto part = table ? r.Ptr(*table + 8 * ((w.key >> 32) - 2)) : std::nullopt;
                 const u64 at = part ? *part + (w.key & 0xffffffffu) : 0;
-                if (at != 0 && r.Get<u64>(at)) {
+                const auto now = at != 0 ? r.Get<u64>(at) : std::nullopt;
+                if (now && CoopWorld::SignWordWritable(*now, w.value)) {
                     memory_->Write64(at, w.value);
                 }
             }

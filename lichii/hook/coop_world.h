@@ -134,6 +134,11 @@ private:
     int lines_ = 0;
 };
 
+// Another player's cut word may go into our sign over `current` (what our
+// sign has there now): never a heap pointer either way, never over a
+// transform (two real floats), and two real floats only into an empty word.
+bool SignWordWritable(std::uint64_t current, std::uint64_t value);
+
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the
 // enemy sharing, which still carries a breakable's life: this adds what that

@@ -3,10 +3,16 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
+#include <map>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "coop_fairy.h"
+#include "coop_pose.h"
 
 namespace {
 
@@ -124,4 +130,142 @@ TEST_CASE("an adult puppet's fairy sits higher, by its shoulder") {
     CHECK(c[1] == doctest::Approx(1.05f));
     CHECK(a[1] == doctest::Approx(1.05f * Settings{}.adult_scale));
     CHECK(a[0] > c[0]);
+}
+
+// The wing beat: finding the local Navi on the actor list and copying her
+// skeleton onto each fairy.
+namespace {
+
+class WingGuest : public CoopPuppet::Guest {
+public:
+    void Map(std::uint64_t at, std::size_t size) { regions_[at].assign(size, 0); }
+    bool Read(std::uint64_t address, void* out, std::size_t size) override {
+        auto* p = Find(address, size);
+        if (p == nullptr) return false;
+        std::memcpy(out, p, size);
+        return true;
+    }
+    bool Write(std::uint64_t address, const void* in, std::size_t size) override {
+        auto* p = Find(address, size);
+        if (p == nullptr) return false;
+        std::memcpy(p, in, size);
+        return true;
+    }
+    template <typename T>
+    void Put(std::uint64_t at, T value) { REQUIRE(Write(at, &value, sizeof(T))); }
+    template <typename T>
+    T Get(std::uint64_t at) {
+        T value{};
+        REQUIRE(Read(at, &value, sizeof(T)));
+        return value;
+    }
+
+private:
+    std::uint8_t* Find(std::uint64_t address, std::size_t size) {
+        auto it = regions_.upper_bound(address);
+        if (it == regions_.begin()) return nullptr;
+        --it;
+        if (address + size > it->first + it->second.size()) return nullptr;
+        return it->second.data() + (address - it->first);
+    }
+    std::map<std::uint64_t, std::vector<std::uint8_t>> regions_;
+};
+
+namespace fa = CoopFairy::addr;
+namespace pa = CoopPose::addr;
+constexpr std::uint64_t kMain = 0x80000000;
+constexpr std::uint32_t kBones = 4;
+
+// A named, present actor with a kBones skeleton; returns its local array.
+std::uint64_t MakeActor(WingGuest& g, std::uint64_t actor, std::string_view name) {
+    const std::uint64_t parts = actor + 0x1000, first = actor + 0x2000, second = actor + 0x3000,
+                        holder = actor + 0x4000, skel = actor + 0x5000, local = actor + 0x6000,
+                        res = actor + 0x7000, text = actor + 0x8000;
+    for (std::uint64_t at : {actor, parts, first, second, holder, skel, res, text}) g.Map(at, 0x600);
+    g.Map(local, kBones * pa::kLocalStride);
+    g.Put(actor + fa::kActorState, fa::kStatePresent);
+    g.Put(actor + fa::kActorName, text);
+    REQUIRE(g.Write(text, name.data(), name.size()));
+    g.Put(actor + pa::kSkeletonPath[0], parts);
+    g.Put(parts + pa::kSkeletonPath[1], first);
+    g.Put(first + pa::kSkeletonPath[2], second);
+    g.Put(second + pa::kSkeletonPath[3], holder);
+    g.Put(holder + pa::kSkeletonPath[4], skel);
+    g.Put(holder + pa::kModelResource, res);
+    g.Put(res, std::array<char, 4>{'F', 'M', 'D', 'L'});
+    g.Put(skel + pa::kBoneCount, static_cast<std::uint16_t>(kBones));
+    g.Put(skel + pa::kLocalArray, local);
+    return local;
+}
+
+// The actor list: a ring through each actor's node, in order.
+void MakeList(WingGuest& g, const std::vector<std::uint64_t>& actors) {
+    const std::uint64_t manager = 0x500000000, lists = manager + 0x1000;
+    g.Map(kMain + 0x4e91000, 0x1000);
+    g.Map(manager, 0x400);
+    g.Map(lists, 0x1000);
+    g.Put(kMain + fa::kManagerPtr, manager);
+    g.Put(manager + fa::kLists, lists);
+    const std::uint64_t head = lists + fa::kListHead;
+    std::uint64_t prev = head;
+    for (const std::uint64_t a : actors) {
+        const std::uint64_t node = a + fa::kActorNode;
+        g.Put(prev, node);
+        g.Put(node + fa::kNodeOwner, a);
+        prev = node;
+    }
+    g.Put(prev, head);
+}
+
+} // namespace
+
+TEST_CASE("fairy: FindActor walks the list for a present actor by name") {
+    WingGuest g;
+    const std::uint64_t link = 0x600000000, navi = 0x700000000, fairy = 0x900000000;
+    MakeActor(g, link, "Player_Child");
+    MakeActor(g, fairy, "Dm_Npc_Navi");
+    MakeActor(g, navi, "Npc_Navi");
+    MakeList(g, {link, fairy, navi});
+    CHECK(CoopFairy::FindActor(g, kMain, "Npc_Navi") == navi);
+    CHECK(CoopFairy::FindActor(g, kMain, "Dm_Npc_Navi") == fairy);
+    CHECK(CoopFairy::FindActor(g, kMain, "Npc_Nav") == 0);  // a prefix is not the name
+    g.Put(navi + fa::kActorState, std::uint32_t{2});          // not present
+    CHECK(CoopFairy::FindActor(g, kMain, "Npc_Navi") == 0);
+    CHECK(CoopFairy::FindActor(g, 0, "Npc_Navi") == 0);
+}
+
+TEST_CASE("fairy: Wings copies the local Navi's pose onto every fairy each frame") {
+    WingGuest g;
+    const std::uint64_t navi = 0x700000000, f1 = 0x900000000, f2 = 0xa00000000;
+    const std::uint64_t from = MakeActor(g, navi, "Npc_Navi");
+    const std::uint64_t to1 = MakeActor(g, f1, "Dm_Npc_Navi");
+    const std::uint64_t to2 = MakeActor(g, f2, "Dm_Npc_Navi");
+    MakeList(g, {f1, f2, navi});
+    std::vector<std::string> lines;
+    CoopFairy::Wings wings("Npc_Navi", [&](const std::string& l) { lines.push_back(l); });
+
+    // A wing bone turns: each frame's pose reaches both fairies.
+    for (int frame = 0; frame < 3; ++frame) {
+        const float angle = 0.1f * static_cast<float>(frame + 1);
+        g.Put(from + 2 * pa::kLocalStride + 0x24, angle);
+        wings.Frame(g, kMain, {f1, f2}, 1000 + 16 * frame);
+        CHECK(g.Get<float>(to1 + 2 * pa::kLocalStride + 0x24) == angle);
+        CHECK(g.Get<float>(to2 + 2 * pa::kLocalStride + 0x24) == angle);
+    }
+    CHECK(wings.navi() == navi);
+    CHECK(wings.copies() == 6);
+    // One "copying" line and one per fairy, not one per frame.
+    CHECK(lines.size() == 3);
+
+    // Navi gone (a scene change): no copy, a line, and a search again later.
+    g.Put(navi + fa::kActorState, std::uint32_t{0});
+    wings.Frame(g, kMain, {f1, f2}, 2000);
+    CHECK(wings.navi() == 0);
+    CHECK(wings.copies() == 6);
+    g.Put(navi + fa::kActorState, fa::kStatePresent);
+    wings.Frame(g, kMain, {f1, f2}, 2100);  // searched at 2000: too soon
+    CHECK(wings.navi() == 0);
+    wings.Frame(g, kMain, {f1, f2}, 2600);
+    CHECK(wings.navi() == navi);
+    CHECK(wings.copies() == 8);
 }

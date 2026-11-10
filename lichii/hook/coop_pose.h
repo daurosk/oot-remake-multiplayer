@@ -105,6 +105,14 @@ private:
 // The local player's actor, as coop::host::PlayerReader finds it; 0 none.
 std::uint64_t FindPlayer(CoopPuppet::Guest& guest, std::uint64_t main_base);
 
+// Calc thread: copy every bone's local transform of `from`'s skeleton onto
+// `to`'s, when both skeletons are found and have the same bone count. For
+// the fairies: the local Navi's wing beat onto each puppet's Navi, whose own
+// actor plays no animation. `note` (may be null) gets both models and bone
+// counts, or why nothing was copied.
+bool CopySkeleton(CoopPuppet::Guest& guest, std::uint64_t from, std::uint64_t to,
+                  std::string* note);
+
 // Calc thread, once a frame: read the local player's skeleton and write the
 // shown pose onto each live puppet. puppets: (player number, actor); the
 // debug puppet (number 0) copies the local player's own pose.

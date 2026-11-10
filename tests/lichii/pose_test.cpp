@@ -254,3 +254,22 @@ TEST_CASE("pose: a pose of another model is not written") {
     CHECK(CoopPose::SkeletonId(309, "Player_Child") != CoopPose::SkeletonId(309, "Player_Adult"));
     CHECK(CoopPose::BoneCountOf(CoopPose::SkeletonId(309, "Player_Adult")) == 309);
 }
+
+TEST_CASE("pose: CopySkeleton copies every bone between skeletons of one size") {
+    FakeGuest g;
+    const std::uint64_t navi = 0x600000000, fairy = 0x700000000, link = 0x800000000;
+    const std::uint64_t from = MakeActor(g, navi, "Npc_Navi");
+    const std::uint64_t to = MakeActor(g, fairy, "Npc_Navi");
+    g.Put(from + 3 * paddr::kLocalStride + 0x50, CoopPose::Vec3{0.25f, 0.5f, 0});
+    g.Put(from + 5 * paddr::kLocalStride + 0x24, 0.75f);  // a rotation entry
+    std::string note;
+    REQUIRE(CoopPose::CopySkeleton(g, navi, fairy, &note));
+    CHECK(note == "Npc_Navi 8 bones -> Npc_Navi 8 bones");
+    CHECK(g.Get<float>(to + 3 * paddr::kLocalStride + 0x54) == 0.5f);
+    CHECK(g.Get<float>(to + 5 * paddr::kLocalStride + 0x24) == 0.75f);
+
+    // No skeleton on one side: nothing copied, and why.
+    g.Map(link, 0x400);
+    CHECK_FALSE(CoopPose::CopySkeleton(g, link, fairy, &note));
+    CHECK(note == "no skeleton on the source");
+}

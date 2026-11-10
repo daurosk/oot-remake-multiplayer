@@ -50,8 +50,10 @@ press A
 wait 45
 mark help-closed
 # A 6-tick ZR press made a bomb that was deleted 0.1 s later, when ZR was let go (chunk 2,
-# 2026-11-10: five presses, five 0.1 s bombs, count still 20). Hold ZR to take one out and
-# keep it; a second ZR throws it.
+# 2026-11-10: five presses, five 0.1 s bombs, count still 20). Holding ZR (60 and 150 ticks,
+# run 20261110-010524) made no difference: each bomb is still deleted 0.1 s after it appears,
+# while ZR is held. So it is not the input: the cheat's bombs (bag, count, capacity) are not
+# enough for the game to let Link keep one. Needs a save with real bombs, or the missing flag.
 hold ZR 60
 wait 30
 mark pulled

@@ -235,7 +235,7 @@ Why not the scene's decider alone (as for Stalchild): in a large scene the decid
 
 At most 20 drop messages a second leave one game (the rest wait their turn), so a field of cut grass cannot use up the server's limit.
 
-**Not proven: nothing here has run in a game** (no game was allowed to run while this was written; the unit tests pass, the emulator build was not made). To check with two games:
+**Not proven: nothing here has run in a game** (no game was allowed to run while this was written; the unit tests pass and the emulator builds with it). To check with two games:
 
 1. A killed enemy and a broken pot leave the same item at the same place in both games, and the log shows `coop: drops: sent ...` in one and `got ...` in the other.
 2. Whether a drop made by the create request can be picked up, gives the item, and blinks out like a real one.

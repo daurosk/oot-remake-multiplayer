@@ -1701,3 +1701,46 @@ TEST_CASE("objects: owners queued from before a reconnect are not applied after 
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 1)});
     CHECK(sync.OwnerOf(id) == 1);
 }
+
+TEST_CASE("objects: only chests, pickups and things that go away are removed when taken (issue 138)") {
+    // Names from the dungeons' keyed placements (coop_dungeon.cpp).
+    for (const char* name : {"Obj_TBox_A_01", "Obj_TBox_A_02_NoBake", "Obj_TBox_GlassTruth_A_01",
+                             "Obj_RupeeToken_Silver", "Obj_RupeeToken", "Enemy_Skulltula_Gold", "Obj_Token_Gold",
+                             "Obj_Heart_Container", "Obj_Heart", "Obj_Heart_InWater",
+                             "Obj_Kakariko_Heart_Piece", "Obj_Rupee_Green", "Obj_RedIce_A_01",
+                             "Obj_Ice_A_01", "Obj_BrokenRock_A_01", "WallCrack",
+                             "Obj_DodongoCave_CrackWall_A_01", "Obj_FireTemple_CrackFloor_A_01",
+                             "Obj_InsideTheDekuTree_SpiderWeb_A_01",
+                             "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_01",
+                             "Obj_InsideTheDekuTree_FallingFloor_A_01"}) {
+        CAPTURE(name);
+        CHECK(CoopObjects::RemovedWhenTaken(name));
+    }
+    for (const char* name : {"Obj_EnemyCounter_A_01", "Obj_silverRupeeCounter",
+                             "Obj_FireTemple_HammerSlipPillar_A_01", "Obj_Well_CandleStick_A_01",
+                             "Land_Well_Waterfall_A_01", "Obj_ForestTemple_GhostPicture_A_01",
+                             "Enemy_Anubis", "Obj_ShadowTemple_SkullPot_A_01",
+                             "Obj_ShadowTemple_SpikeBoard_A_01",
+                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild"}) {
+        CAPTURE(name);
+        CHECK_FALSE(CoopObjects::RemovedWhenTaken(name));
+    }
+}
+
+TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside it goes (issue 138)") {
+    Sync sync;
+    Seen counter = Chest(0x510, 0x1111);
+    counter.name = "Obj_EnemyCounter_A_01";
+    Seen pillar = Chest(0x520, 0x2222);
+    pillar.name = "Obj_FireTemple_HammerSlipPillar_A_01";
+    const Seen chest = Chest(0x530, 0x3333);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(counter.hash);
+    sync.Take(pillar.hash);
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
+    Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+}

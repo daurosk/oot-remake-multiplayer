@@ -82,6 +82,35 @@ float Distance(const proto::Vec3& a, const proto::Vec3& b) {
 
 } // namespace
 
+bool RemovedWhenTaken(std::string_view name) {
+    constexpr std::string_view kPrefixes[] = {
+        "Obj_TBox_",          // chests
+        "Obj_RupeeToken",     // Gold Skulltula tokens and silver rupees
+        "Obj_Token_Gold",     // a Gold Skulltula's token
+        "Enemy_Skulltula_Gold",
+        "Obj_Rupee_",         // a rupee placed once
+        "Obj_Heart",          // hearts, heart containers, hearts in water
+        "Obj_RedIce_",        // melted by blue fire
+        "Obj_Ice_",
+        "Obj_BrokenRock_",    // broken by a bomb or the hammer
+        "WallCrack",          // bombed open
+    };
+    constexpr std::string_view kParts[] = {
+        "Heart_Piece",        // Obj_*Heart_Piece*
+        "SpiderWeb",          // burnt or broken (Deku Tree, Shadow Temple, Ganon's Castle)
+        "_CrackWall_",        // bombed open
+        "_CrackFloor_",
+        "_FallingFloor_",     // fallen
+    };
+    for (const std::string_view p : kPrefixes) {
+        if (name.starts_with(p)) return true;
+    }
+    for (const std::string_view p : kParts) {
+        if (name.find(p) != std::string_view::npos) return true;
+    }
+    return false;
+}
+
 bool IsShared(std::string_view name) {
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment
@@ -571,7 +600,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
-            if (const auto t = taken_.find(s.hash); t != taken_.end()) {
+            if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
                 const bool near = player_ && Finite(*player_) && Finite(s.position) &&
                                   Distance(*player_, s.position) < kTakeNearM;
                 if (near && t->second.ticks < kTakeBindTicks && !t->second.near_said) {

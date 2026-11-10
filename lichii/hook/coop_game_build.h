@@ -107,6 +107,11 @@ inline constexpr std::array<Build, 1> kBuilds{{
      }},
 }};
 
+// Only coop_hook.cpp reads the table; the readers still use the 1.1.1
+// constants. Remove this when they take their offsets from the entry.
+static_assert(kBuilds.size() == 1,
+              "readers still use the 1.1.1 constants: docs/game-builds.md, one-time steps");
+
 // The build co-op was made on; HELLO names it.
 inline constexpr const Build& kPrimary = kBuilds[0];
 

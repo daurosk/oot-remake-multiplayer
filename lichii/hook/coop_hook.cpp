@@ -579,6 +579,7 @@ private:
         auto* process = system.ApplicationProcess();
         if (process == nullptr) {
             view.game_note = "no game";
+            build_warned_ = nullptr;  // the next game start warns again
             return std::nullopt;
         }
         if (system.GetApplicationProcessProgramID() != kOcarinaProgramId) {

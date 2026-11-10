@@ -277,12 +277,26 @@ At 0x6e6dd8 the actors of this frame have run, the calc thread is the only one i
 Fritchii already does both halves for other patches (`src/core/file_sys/patch_manager.cpp`, `src/core/hle/kernel/svc.cpp`):
 
 - **Built-in patches.** `BuiltinPatch` records write bytes at an offset into `main` when the module loads, for this title and build id only, and with `checked` refuse to write unless the original word is there. Optional ones are switched on by an environment variable.
-- **Code in the padding.** `main`'s code ends at 0x3c461d0 and its last page runs to 0x3c47000, all zero in the dump. Dynamic FPS uses 0x3c46200 to 0x3c46278. **0x3c46280 to 0x3c47000 is free** (3.4 KB). The resource poll patch puts `svc #0xf3` in other zero padding (0x17088).
+- **Code in the padding.** `main`'s code ends at 0x3c461d0 and its last page runs to 0x3c47000, all zero in the dump. Dynamic FPS uses 0x3c46200 to 0x3c46278. The resource poll patch puts `svc #0xf3` in other zero padding (0x17088). Others use this padding too: see "Where the caves are" below.
+
+**Where the caves are (issue 136, branch `cave-move`).** Until test6 our cave started at 0x3c46280, right after Dynamic FPS. The Hyrule Cheat Menu mod (v0.1, an IPS for this build) writes its stubs at exactly 0x3c46280 to 0x3c46398. The emulator applies mods' IPS patches first, then its built-in patches, then ours (`CoopSvc::PatchMain`). With that mod installed, our check found the bytes taken and left all of co-op's code out, saying so only in the log. Now:
+
+| main+ | Size | What | Whose |
+|---|---|---|---|
+| 0x3c46200 to 0x3c46278 | 0x78 | Dynamic FPS routine (called from 0x6e6cc4) | Fritchii |
+| 0x3c46280 to 0x3c46398 | 0x118 | Stubs, with jumps at 0x49d8c0, 0x49dcf8, 0x2f8e760, 0x32c1db0, 0x32d8500, 0x34694f8, 0x3469524, 0x3469550, 0x346966c, 0x3469698, 0x346bff0, 0x346c0d4 | Hyrule Cheat Menu v0.1 |
+| 0x3c46398 to 0x3c46a00 | | Free, left for other mods | |
+| **0x3c46a00 to 0x3c46a80** | 0x80 | **The co-op cave** (`coop_svc.s`), called from 0x6e6dd8 and 0x6e70f8 | co-op |
+| **0x3c46a80 to 0x3c46acc** | 0x4c | **The AI hold cave** (`coop_hold.s`), called from 0x369df8; only with `LICHII_COOP_OBJECTS_AI_HOLD` | co-op |
+| **0x3c46b00 to 0x3c46d10** | 0x210 | **The AI hold table** (written by the emulator) | co-op |
+| 0x3c46e00 to 0x3c46f10 | 0x110 | High refresh (Ctrl+U) routine and water ripple accumulator, hooks at 0x6e6cc4 and 0x475f8 | Fritchii v5.7 |
+
+Both caves were linked again at their new addresses (the commands are in the `.s` files). Only two words changed: the cave's last `b 0x3b4e300` and the hold cave's `adr` to its table. `CoopSvc::kTakenByOthers` lists the others' bytes, and a unit test checks that nothing of ours meets them. Before patching, `PatchMain` checks that the bytes it writes (and only those) are still zero after the mods and built-ins, and that the hooked calls are the game's own. If anything is there, it leaves co-op's code out, logs one line (`Skipping "coop puppet": main+0x... is not free (another mod's patch there?)`), and the overlay says `puppets and object sync off: another mod patches the game where co-op's code goes`. Players and flags still sync then; puppets, spawns, drops and enemy moves do not.
 - **Custom SVCs.** `svc.cpp` hands unknown SVC numbers to `CallNx2OotPollBackoff`; it acts only for this program and returns the registers unchanged. A new number for co-op works the same way, and its handler can read and write guest memory and the registers of the thread that called it.
 
 The emulator cannot call a game function itself, so the game calls the emulator and then does the work. The plan, one patch set named `coop puppet`, on only while co-op is on:
 
-1. At 0x6e6dd8, replace `bl 0x3b4e300` with `bl 0x3c46280` (checked against 0x94d19d4a).
+1. At 0x6e6dd8, replace `bl 0x3b4e300` with `bl 0x3c46280` (checked against 0x94d19d4a). (The cave is at 0x3c46a00 now: "Where the caves are".)
 2. At 0x3c46280, a short routine: save registers, reserve 0x200 bytes of stack, `svc #0xf4` with `x0` = the stack buffer. The handler fills the buffer with one command and returns its kind in `w0`:
    - 0: nothing.
    - 1, create: the buffer holds a create argument (copied from the walker's defaults, with position and rotation) and the pack name. The routine calls 0x372a70 with `x0` = `[0x4e91888]` and the handle slot in a block it got once from the game's `malloc` (0x14c6c90; its address is given to the handler by a first `svc #0xf4` with kind 2).
@@ -360,7 +374,7 @@ Approach (a), in `lichii/hook/` and one small emulator patch. Not yet run with t
 |---|---|---|
 | Patch | `lichii/patches/0003-coop-puppet.patch` | Two calls in the emulator: `PatchManager::PatchNSO` calls `CoopSvc::PatchMain` after its built-in patches, and `Kernel::Svc::Call` asks `CoopSvc::Call` before any other SVC. |
 | Code patch | `CoopSvc::PatchMain` (`coop_svc.cpp`) | Only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`, for main of build `E0F3CCFA...3348`. moduleCalc_ calls the frame function 0x3b4e300 from two places: main+0x6e70f8 (0x94d19c82), the one that runs every frame, and main+0x6e6dd8 (0x94d19d4a), a rare branch. Checks that both hold those words and that 0x3c46280 to 0x3c47000 is zero, in the original and in what the other patches made, then writes `bl 0x3c46280` at both and the cave. Logs `Applying "coop puppet"` or why not. |
-| Cave | `coop_svc.s`, bytes in `coop_svc.h` | 128 bytes at 0x3c46280. Keeps the game's `x0` and `s0`, takes 0x100 bytes of stack, and loops: `svc #0xf4` with the buffer, then, while the emulator says so, calls the function it put in the buffer with `x0` to `x7`, `s0` (buffer +0x68, for the frame of 0x37b5d70) and the stack arguments from it, and hands the result back at the next SVC. At most 256 calls a frame (16 until the enemy copies needed more). Then it branches to 0x3b4e300 as the game would have called it. |
+| Cave | `coop_svc.s`, bytes in `coop_svc.h` | 128 bytes at 0x3c46a00 (0x3c46280 until test6, issue 136). Keeps the game's `x0` and `s0`, takes 0x100 bytes of stack, and loops: `svc #0xf4` with the buffer, then, while the emulator says so, calls the function it put in the buffer with `x0` to `x7`, `s0` (buffer +0x68, for the frame of 0x37b5d70) and the stack arguments from it, and hands the result back at the next SVC. At most 256 calls a frame (16 until the enemy copies needed more). Then it branches to 0x3b4e300 as the game would have called it. |
 | SVC | `CoopSvc::Call` | 0xf4 from Ocarina only. Hands the SVC to the director and writes the call it wants into the buffer. |
 | Director | `coop_puppet.cpp`, calc thread | One slot per puppet. A slot gets a 0x300-byte block from the game's `malloc` (0x14c6c90) once, and keeps it. It writes the create argument (position, rotation, scale 1, +0x40 from the GOT entry 0x4c7dad0, and as SeqExecuteCreateActor does at 0x32bca40..0x32bcaa0: +0x48 = 0, +0x98 = 1), the name and a handle slot into the block, and asks for `create(manager, &name, &arg, &handle, 1, 0, 0, 0)` with 0 stack arguments. Create fills the handle slot with a 0x30-byte **create request**: +0 low 16 bits the state, +8 the actor. State 3 = ready: the director takes the actor with **0x36fbd0(request, 1, 0)**, as SeqExecuteCreateActor's check (0x32bcb30) does, and clears the slot; state 4 is dropped with 0x36fde0(request), 5 and 6 are failures. Once the actor is in state 4 the puppet is live and its +0x31c and +0x328 are written every frame. (With the walker's +0x48 = 0x10001 the request stayed in state 2.) |
 | Delete | 0xa6490 | The run of `OneShotGenericDeleteThisActor` (its node's last vtable slot, 0xc706f0) calls 0xa6490 with the actor and 0. It returns at once for an actor in state 7 to 11. The director asks for it when the player has been out of the plan for 2 s (`kLeaveGraceMs`: a stalled peer fades to 0 for a moment, and without the wait the puppet was deleted and made again), changes model, or the local scene is not the one the puppet was made in. An actor the engine deleted itself (state 7 to 11, or a holder whose id no longer matches) is noticed and made again. |
@@ -434,7 +448,7 @@ lichii.exe
 
 In the log, in order:
 
-1. `Applying "coop puppet": bl 0x3c46280 at main+0x6e6dd8 and main+0x6e70f8, 124 bytes of cave` and `coop: puppets on, actor Animal_Cow_LinkHouse, test puppet beside you`.
+1. `Applying "coop puppet": bl 0x3c46a00 at main+0x6e6dd8 and main+0x6e70f8, 124 bytes of cave` and `coop: puppets on, actor Animal_Cow_LinkHouse, test puppet beside you`.
 2. Every second, `coop: puppet: <n> cave frames/s, scene '...', <k> wanted`: the cave runs once per game frame (30 or 60).
 3. `P0: block at ...`, `P0: create Animal_Cow_LinkHouse requested (returned ...), handle slot ...`.
 4. `P0: took actor ... from request ...` and `P0 Animal_Cow_LinkHouse spawned after <ms> ms: request ..., actor ..., state 4, at (x, y, z)`.

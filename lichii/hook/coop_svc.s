@@ -1,7 +1,8 @@
 // The co-op code cave in Ocarina of Time's main (build e0f3ccfaf50065ae), at
-// main+0x3c46280, in the zero padding after the code (the code ends at
-// 0x3c461d0, Dynamic FPS uses 0x3c46200 to 0x3c46278, rodata starts at
-// 0x3c47000). The patch puts `bl 0x3c46280` at main+0x6e6dd8 in place of
+// main+0x3c46a00, in the zero padding after the code (the code ends at
+// 0x3c461d0, rodata starts at 0x3c47000; what others write in between is
+// CoopSvc::kTakenByOthers: Dynamic FPS, the Hyrule Cheat Menu, Fritchii's
+// Ctrl+U cave). The patch puts `bl 0x3c46a00` at main+0x6e6dd8 in place of
 // `bl 0x3b4e300` (moduleCalc_, after the frame's job graph is waited on), so
 // this runs once per game frame on the calc thread with that call's x0 and s0.
 //
@@ -17,7 +18,7 @@
 //
 // Bytes: coop_svc.cpp (kCave). To rebuild them (LLVM on Windows):
 //   clang --target=aarch64-none-elf -c coop_svc.s -o cave.o
-//   ld.lld cave.o -o cave.elf --section-start=.text=0x3c46280 -e 0 --defsym=frame_step=0x3b4e300
+//   ld.lld cave.o -o cave.elf --section-start=.text=0x3c46a00 -e 0 --defsym=frame_step=0x3b4e300
 //   llvm-objcopy -O binary cave.elf cave.bin
 
     .text

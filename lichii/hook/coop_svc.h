@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -30,8 +31,38 @@ inline constexpr std::array<Hook, 2> kHooks{{
     {0x6e6dd8, 0x94d19d4a},
     {0x6e70f8, 0x94d19c82},
 }};
-inline constexpr std::uint64_t kCaveOffset = 0x3c46280;
+// In main's zero padding after the code (0x3c461d0 to 0x3c47000, where rodata
+// starts), clear of what others patch there (kTakenByOthers). Until test6 the
+// cave was at 0x3c46280, which the Hyrule Cheat Menu mod also writes (#136).
+inline constexpr std::uint64_t kCaveOffset = 0x3c46a00;
 inline constexpr std::uint64_t kCaveEnd = 0x3c47000;       // rodata starts here
+
+// Bytes of main that other patches write, which ours must never touch
+// (docs/puppet.md, "Where the caves are"). Half-open ranges.
+struct Taken {
+    std::uint64_t begin;
+    std::uint64_t end;
+    const char* who;
+};
+inline constexpr std::array<Taken, 17> kTakenByOthers{{
+    {0x3c46200, 0x3c46278, "Fritchii Dynamic FPS routine"},
+    {0x6e6cc4, 0x6e6cc8, "Fritchii Dynamic FPS / high refresh call"},
+    {0x3c46e00, 0x3c46f10, "Fritchii v5.7 high refresh (Ctrl+U) cave"},
+    {0x475f8, 0x475fc, "Fritchii v5.7 water ripple hook"},
+    {0x3c46280, 0x3c46398, "Hyrule Cheat Menu v0.1 stubs"},
+    {0x49d8c0, 0x49d8c4, "Hyrule Cheat Menu v0.1 jump"},
+    {0x49dcf8, 0x49dcfc, "Hyrule Cheat Menu v0.1 jump"},
+    {0x2f8e760, 0x2f8e764, "Hyrule Cheat Menu v0.1 jump"},
+    {0x32c1db0, 0x32c1db4, "Hyrule Cheat Menu v0.1 jump"},
+    {0x32d8500, 0x32d8504, "Hyrule Cheat Menu v0.1 jump"},
+    {0x34694f8, 0x34694fc, "Hyrule Cheat Menu v0.1 jump"},
+    {0x3469524, 0x3469528, "Hyrule Cheat Menu v0.1 jump"},
+    {0x3469550, 0x3469554, "Hyrule Cheat Menu v0.1 jump"},
+    {0x346966c, 0x3469670, "Hyrule Cheat Menu v0.1 jump"},
+    {0x3469698, 0x346969c, "Hyrule Cheat Menu v0.1 jump"},
+    {0x346bff0, 0x346bff4, "Hyrule Cheat Menu v0.1 jump"},
+    {0x346c0d4, 0x346c0d8, "Hyrule Cheat Menu v0.1 jump"},
+}};
 
 // `bl kCaveOffset` at `offset`.
 constexpr std::uint32_t HookWord(std::uint64_t offset) {
@@ -55,7 +86,7 @@ inline constexpr std::array<std::uint8_t, 128> kCave{
     0x00, 0x02, 0x3f, 0xd6, 0xe1, 0x03, 0x00, 0xaa, 0x22, 0x00, 0x80, 0xd2,
     0xf2, 0xff, 0xff, 0x17, 0xff, 0x03, 0x04, 0x91, 0xe0, 0x03, 0x13, 0xaa,
     0x00, 0x41, 0x20, 0x1e, 0xe8, 0x13, 0x40, 0xfd, 0xf3, 0x53, 0x41, 0xa9,
-    0xfd, 0x7b, 0xc3, 0xa8, 0x01, 0x20, 0xfc, 0x17,
+    0xfd, 0x7b, 0xc3, 0xa8, 0x21, 0x1e, 0xfc, 0x17,
 };
 
 // The buffer the cave hands over (coop_svc.s).
@@ -70,6 +101,10 @@ inline constexpr std::uint64_t kBufferS0 = 0x68;  // f32, loaded into s0 before 
 // `out` (NSO header, then the module), checked against `original` and `out`.
 void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view build_id,
                const std::vector<std::uint8_t>& original, std::vector<std::uint8_t>& out);
+
+// Why PatchMain left co-op's code out of this game (another mod writes where
+// the caves or hooks go), for the overlay; empty when it did not.
+std::string Refusal();
 
 // Something else that calls game functions from the cave, with the same
 // contract as CoopPuppet::Director::Step: once a frame it is asked with

@@ -46,6 +46,11 @@ One PC, two games, played by hand on 2026-11-09.
 - **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
 - **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.
 
+## Mods
+
+- **Hyrule Cheat Menu** (v0.1): works with co-op from v0.1.0-test6 on. Before test6, co-op's code went where the mod's code goes, so with the mod installed co-op left its code out: no puppets, spawns or drops. Its God Mode, item refills and other cheats change your game in ways co-op does not expect and can hide or fake sync bugs, so **turn the mod off for a play test you report bugs from**.
+- Any other mod that patches the game's code where co-op's code goes: co-op leaves its code out and the overlay says `puppets and object sync off: another mod patches the game where co-op's code goes`. Players, names and shared flags still work. Tell us which mod it is.
+
 ## Other notes
 
 - Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks.

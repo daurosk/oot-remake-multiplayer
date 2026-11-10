@@ -1,13 +1,13 @@
 // The AI hold cave in Ocarina of Time's main (build e0f3ccfaf50065ae), at
-// main+0x3c46300, right after the co-op cave (coop_svc.s). Patched in only
+// main+0x3c46a80, right after the co-op cave (coop_svc.s). Patched in only
 // with LICHII_COOP_OBJECTS_AI_HOLD (docs/objects.md, "Holding a copy's AI").
 //
 // The loop over all BSA components (the enemies' brains) asks, for each one
 // (x21), an object for its calc bits with `blr x8` at main+0x369df8 and
 // puts bits 0 to 3 of the answer into the component's u16 at +0xc4; bit 0
-// is what QueryBsaIsBrainSkip reads. The patch makes that `bl 0x3c46300`:
+// is what QueryBsaIsBrainSkip reads. The patch makes that `bl 0x3c46a80`:
 // this makes the same call, then, when x21 is in the table the emulator
-// keeps at main+0x3c46400, changes the answer: w0 = (w0 & and) | or.
+// keeps at main+0x3c46b00, changes the answer: w0 = (w0 & and) | or.
 //   table +0x00  u32 count (at most 64)
 //         +0x04  u32 and
 //         +0x08  u32 or
@@ -16,7 +16,7 @@
 //
 // Bytes: coop_hold.h (kHoldCave). To rebuild them (LLVM on Windows):
 //   clang --target=aarch64-none-elf -c coop_hold.s -o hold.o
-//   ld.lld hold.o -o hold.elf --section-start=.text=0x3c46300 -e 0 --defsym=hold_table=0x3c46400
+//   ld.lld hold.o -o hold.elf --section-start=.text=0x3c46a80 -e 0 --defsym=hold_table=0x3c46b00
 //   llvm-objcopy -O binary hold.elf hold.bin
 
     .text

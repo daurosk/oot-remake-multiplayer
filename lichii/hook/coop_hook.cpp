@@ -63,6 +63,7 @@
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_svc.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
 
@@ -807,6 +808,12 @@ private:
             lines.push_back({"own position not readable", true});
         } else if (frame.scene) {
             lines.push_back({"you: " + *frame.scene, true});
+        }
+        if (running) {
+            // Another mod where co-op's code goes (#136): say so, not a silent half session.
+            if (const std::string refusal = CoopSvc::Refusal(); !refusal.empty()) {
+                lines.push_back({refusal, true});
+            }
         }
         if (running && frame.game && !frame.camera_note.empty()) {
             lines.push_back({frame.camera_note, true});

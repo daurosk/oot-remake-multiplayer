@@ -3,9 +3,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -124,6 +126,27 @@ void AddCaller(int order, Caller caller) {
     c.list.emplace(at, order, std::move(caller));
 }
 
+namespace {
+std::mutex g_refusal_mutex;
+std::string g_refusal;  // guarded
+
+void SetRefusal(std::string why) {
+    std::lock_guard lock(g_refusal_mutex);
+    g_refusal = std::move(why);
+}
+
+std::string Hex(std::uint64_t v) {
+    char buf[24];
+    std::snprintf(buf, sizeof buf, "%#llx", static_cast<unsigned long long>(v));
+    return buf;
+}
+} // namespace
+
+std::string Refusal() {
+    std::lock_guard lock(g_refusal_mutex);
+    return g_refusal;
+}
+
 void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view build_id,
                const std::vector<std::uint8_t>& original, std::vector<std::uint8_t>& out) {
     if (title_id != kOcarinaProgramId || module != "main" || !Wanted()) {
@@ -134,6 +157,7 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
                     kMainBuild);
         return;
     }
+    SetRefusal({});  // a new game start: said again below if it still holds
     constexpr std::size_t header = sizeof(Loader::NSOHeader);
     const std::size_t cave = header + kCaveOffset;
     if (original.size() < header + kCaveEnd || out.size() < header + kCaveEnd) {
@@ -147,15 +171,44 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
                         "    - Skipping \"coop puppet\": main+{:#x} holds {:#010x} (patched "
                         "{:#010x}), expected {:#010x}",
                         h.offset, Word(original, at), Word(out, at), h.original);
+            if (Word(original, at) == h.original) {
+                SetRefusal("puppets and object sync off: another mod patches the game where "
+                           "co-op hooks in (main+" + Hex(h.offset) + "); remove it or update co-op");
+            }
             return;
         }
     }
-    for (std::size_t i = cave; i < header + kCaveEnd; ++i) {
-        if (original[i] != 0 || out[i] != 0) {
-            LOG_WARNING(Loader, "    - Skipping \"coop puppet\": main+{:#x} is not free",
-                        i - header);
-            return;
+    // Only the bytes we write must be free: other patches use the rest of the
+    // padding (CoopSvc::kTakenByOthers). Mods' IPS patches and the built-in
+    // ones are already in `out`. Anything there: co-op's code stays out, and
+    // the overlay says why (#136).
+    bool hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
+    const auto busy = [&](std::uint64_t from, std::size_t size) -> std::optional<std::uint64_t> {
+        for (std::size_t i = header + from; i < header + from + size; ++i) {
+            if (original[i] != 0 || out[i] != 0) {
+                return i - header;
+            }
         }
+        return std::nullopt;
+    };
+    if (hold) {
+        auto held = busy(CoopHold::kCaveOffset, CoopHold::kCave.size());
+        if (!held) {
+            held = busy(CoopHold::kTableOffset, CoopHold::kTableSize);
+        }
+        if (held) {
+            LOG_WARNING(Loader, "    - Skipping \"coop ai hold\": main+{:#x} is not free", *held);
+            hold = false;
+        }
+    }
+    if (const auto used = busy(kCaveOffset, kCave.size())) {
+        SetRefusal("puppets and object sync off: another mod patches the game where co-op's code "
+                   "goes (main+" + Hex(*used) + "); remove it or update co-op");
+        LOG_WARNING(Loader,
+                    "    - Skipping \"coop puppet\": main+{:#x} is not free (another mod's patch "
+                    "there?); puppets, spawns and drops stay off in this game",
+                    *used);
+        return;
     }
     for (const auto& h : kHooks) {
         const std::uint32_t call = HookWord(h.offset);
@@ -167,7 +220,7 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
              "of cave",
              kCaveOffset, kHooks[0].offset, kHooks[1].offset, kCave.size());
     // The AI hold's own cave and hook (coop_hold.h), when asked for.
-    if (EnvOn("LICHII_COOP_OBJECTS_AI_HOLD")) {
+    if (hold) {
         const std::size_t at = header + CoopHold::kHookOffset;
         if (Word(original, at) != CoopHold::kHookOriginal ||
             Word(out, at) != CoopHold::kHookOriginal) {

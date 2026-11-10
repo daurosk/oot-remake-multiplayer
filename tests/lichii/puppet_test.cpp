@@ -14,6 +14,7 @@
 #include "coop/host/player_reader.hpp"
 #include "coop_fairy.h"
 #include "coop_puppet.h"
+#include "coop_hold.h"
 #include "coop_svc.h"
 
 namespace {
@@ -163,7 +164,7 @@ void CheckPosition(FakeGuest& guest, std::uint64_t at, float x, float y, float z
 }  // namespace
 
 TEST_CASE("puppet cave: the call and the cave decode to the right places") {
-    CHECK(CoopSvc::HookWord(0x6e6dd8) == 0x94d57d2au);
+    CHECK(CoopSvc::HookWord(0x6e6dd8) == 0x94d57f0au);
     for (const auto& h : CoopSvc::kHooks) {
         // The game's word is bl 0x3b4e300, ours lands on the cave.
         auto target = [&](std::uint32_t word) {
@@ -193,6 +194,48 @@ TEST_CASE("puppet cave: the call and the cave decode to the right places") {
         svc = svc || w == (0xd4000001u | (CoopSvc::kPuppetSvc << 5));
     }
     CHECK(svc);
+}
+
+TEST_CASE("puppet cave: nothing co-op writes in main meets what other patches write (#136)") {
+    struct Range {
+        std::uint64_t begin;
+        std::uint64_t end;
+    };
+    std::vector<Range> ours{
+        {CoopSvc::kCaveOffset, CoopSvc::kCaveOffset + CoopSvc::kCave.size()},
+        {CoopHold::kCaveOffset, CoopHold::kCaveOffset + CoopHold::kCave.size()},
+        {CoopHold::kTableOffset, CoopHold::kTableOffset + CoopHold::kTableSize},
+        {CoopHold::kHookOffset, CoopHold::kHookOffset + 4},
+    };
+    for (const auto& h : CoopSvc::kHooks) ours.push_back({h.offset, h.offset + 4});
+    for (const auto& r : ours) {
+        for (const auto& t : CoopSvc::kTakenByOthers) {
+            INFO(t.who);
+            CHECK((r.end <= t.begin || t.end <= r.begin));
+        }
+    }
+    // Ours do not meet each other, and the caves and table sit in main's zero
+    // padding (code ends at 0x3c461d0, rodata starts at kCaveEnd).
+    for (std::size_t i = 0; i < ours.size(); ++i) {
+        for (std::size_t j = i + 1; j < ours.size(); ++j) {
+            CHECK((ours[i].end <= ours[j].begin || ours[j].end <= ours[i].begin));
+        }
+    }
+    for (std::size_t i = 0; i < 3; ++i) {
+        CHECK(ours[i].begin >= 0x3c461d0);
+        CHECK(ours[i].end <= CoopSvc::kCaveEnd);
+        CHECK(ours[i].begin % 4 == 0);
+    }
+    // The Hyrule Cheat Menu v0.1 writes main+0x3c46280 to +0x3c46398: the cave
+    // used to start there.
+    CHECK(CoopSvc::kCaveOffset >= 0x3c46398);
+    // The hold cave's adr (relinked for the move) points at the table.
+    std::uint32_t adr = 0;
+    std::memcpy(&adr, CoopHold::kCave.data() + 16, 4);
+    REQUIRE((adr & 0x9f000000u) == 0x10000000u);
+    std::int64_t imm = static_cast<std::int64_t>(((adr >> 5) & 0x7ffff) << 2 | ((adr >> 29) & 3));
+    if (imm & 0x100000) imm -= 0x200000;
+    CHECK(CoopHold::kCaveOffset + 16 + imm == CoopHold::kTableOffset);
 }
 
 TEST_CASE("puppet: a quaternion turns into the matrix the reader reads back") {

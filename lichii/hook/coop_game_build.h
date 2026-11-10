@@ -99,11 +99,11 @@ inline constexpr std::array<Build, 1> kBuilds{{
          .frame_step = 0x3b4e300,
          .svc_hook_rare = 0x6e6dd8,
          .svc_hook_frame = 0x6e70f8,
-         .svc_cave = 0x3c46280,
+         .svc_cave = 0x3c46a00,
          .cave_end = 0x3c47000,
          .hold_hook = 0x369df8,
-         .hold_cave = 0x3c46300,
-         .hold_table = 0x3c46400,
+         .hold_cave = 0x3c46a80,
+         .hold_table = 0x3c46b00,
      }},
 }};
 

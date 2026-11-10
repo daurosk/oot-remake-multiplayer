@@ -1,0 +1,29 @@
+# sling-give (#128, slingshot-ammo): both games load into the Deku Tree entrance (warp
+# InsideTheDekuTree Entrance) from saves WITHOUT the Slingshot (save_flags.py set on the
+# baselines: Weapon_Range_SlingShot, seeds, seed capacity and the bullet bags at 0). At about
+# 100 s A gets the Slingshot the way a pickup sets it (test give, A:LICHII_COOP_CHEATS=1).
+# Expect B: "int 0x80d34ce9 ... 0 -> 1" (the Slingshot), then "int 0x5fadf7fc ... 0 -> 30"
+# (seeds) and "int 0xae8cc742 ... 0 -> 30" (capacity); B's menu shot shows 30/30, not 0/0.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,A:LICHII_COOP_CHEATS=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1200
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 600
+mark given
+wait 1800
+mark late

@@ -841,3 +841,106 @@ TEST_CASE("objects: a hurt the game takes after its life was written is put back
     Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
     CHECK(All<proto::Damage>(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 2)}, 2)).size() == 1);
 }
+
+TEST_CASE("objects: an enemy that becomes ours keeps its place and takes the lower life") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4, 50.0f)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.state.time = {1000 * kMs, 0};
+    s.state.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+    sync.Receive(s);
+    Tick(sync, 1100 * kMs, {Enemy(0x100, 0x11, 4, 50.0f)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    sync.Poses(1150 * kMs, poses);
+    REQUIRE(poses.size() == 1);  // a copy: placed where player 2's is
+
+    // The old owner's last state has more life than ours had left: no heal.
+    proto::HandoverState h;
+    h.player_number = 2;
+    h.id = id;
+    h.epoch = 1;
+    h.state.life = proto::ObjectLife{4, 4};
+    sync.Receive(h);
+    Own(sync, id, 1, 1);
+    auto step = Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 3, 50.0f)});
+    CHECK(step.writes.empty());
+    // Ours where it stands here: no pose, and its sample goes out at once.
+    poses.clear();
+    sync.Poses(1210 * kMs, poses);
+    CHECK(poses.empty());
+    const auto samples = All<proto::ObjectSample>(step);
+    REQUIRE(samples.size() == 1);
+    CHECK(samples[0].epoch == 1);
+    CHECK(samples[0].state.life->life == 3);
+    CHECK((*samples[0].state.position)[0] == doctest::Approx(50.0f));
+    // The hit that took it from 4 to 3 here is in its life: no DAMAGE for it,
+    // and our own DAMAGE coming back to us as the owner is not taken twice.
+    proto::Damage d;
+    d.player_number = 1;
+    d.id = id;
+    d.epoch = 0;
+    d.amount = 1;
+    sync.Receive(d);
+    step = Tick(sync, 1400 * kMs, {Enemy(0x100, 0x11, 3, 50.0f)});
+    CHECK(All<proto::Damage>(step).empty());
+    CHECK(step.writes.empty());
+    // A late sample of the old owner does not make it a copy again.
+    s.state.time = {1390 * kMs, 1};
+    sync.Receive(s);
+    Tick(sync, 1450 * kMs, {Enemy(0x100, 0x11, 3, 50.0f)});
+    poses.clear();
+    sync.Poses(1460 * kMs, poses);
+    CHECK(poses.empty());
+}
+
+TEST_CASE("objects: an enemy that stops being ours follows the new owner at once") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4, 50.0f)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    const auto sample = [&](std::uint8_t from, std::uint16_t epoch, std::uint64_t t, float x) {
+        proto::ObjectSample s;
+        s.player_number = from;
+        s.id = id;
+        s.epoch = epoch;
+        s.state.time = {t, 0};
+        s.state.position = proto::Vec3{x, 0.0f, 0.0f};
+        sync.Receive(s);
+    };
+    sample(2, 0, 1000 * kMs, 0.0f);
+    sample(2, 0, 1050 * kMs, 1.0f);
+    Tick(sync, 1100 * kMs, {Enemy(0x100, 0x11, 4, 50.0f)});
+
+    // Player 3 takes it over 30 m away: its first sample places the copy
+    // there, with nothing of player 2's blended in, and a late sample of
+    // player 2 (the older epoch) is dropped.
+    Own(sync, id, 3, 1);
+    sample(3, 1, 1150 * kMs, 30.0f);
+    sample(2, 0, 1160 * kMs, 2.0f);
+    Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 4, 50.0f)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    sync.Poses(1200 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(30.0f));
+
+    // We own it, then lose it to player 2: we stop sending and follow.
+    Own(sync, id, 1, 2);
+    auto step = Tick(sync, 1300 * kMs, {Enemy(0x100, 0x11, 4, 50.0f)});
+    CHECK(All<proto::ObjectSample>(step).size() == 1);
+    Own(sync, id, 2, 3);
+    sample(2, 3, 1350 * kMs, 7.0f);
+    step = Tick(sync, 1400 * kMs, {Enemy(0x100, 0x11, 4, 51.0f)});
+    CHECK(All<proto::ObjectSample>(step).empty());
+    poses.clear();
+    sync.Poses(1400 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(7.0f));
+    // An owner change that arrives late (an older epoch) changes nothing.
+    Own(sync, id, 1, 2);
+    Tick(sync, 1450 * kMs, {Enemy(0x100, 0x11, 4, 51.0f)});
+    CHECK(sync.OwnerOf(id) == 2);
+}

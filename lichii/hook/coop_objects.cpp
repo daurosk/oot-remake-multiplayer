@@ -395,6 +395,9 @@ public:
             }
             hits_.clear();
             work_ = poses_;
+            if (work_.size() > 1) {
+                std::rotate(work_.begin(), work_.begin() + (++turn_ % work_.size()), work_.end());
+            }
             work_removes_.clear();
             for (const u64 a : removes_) {
                 if (!asked_.contains(a)) {
@@ -409,23 +412,6 @@ public:
         }
         if (main_ == 0) {
             return std::nullopt;
-        }
-        while (next_ < work_.size()) {
-            const Pose& p = work_[next_++];
-            if (!Alive(guest, p.actor)) {
-                continue;
-            }
-            if (p.rotation) {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
-            } else {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 12);
-            }
-            ++moved_;
-            CoopPuppet::Call c;
-            c.function = main_ + kSetMatrix;
-            c.x[0] = p.actor;
-            c.x[1] = 0;
-            return c;
         }
         while (next_play_ < work_plays_.size() && block_ != 0) {
             const PlayWish& p = work_plays_[next_play_++];
@@ -496,6 +482,28 @@ public:
             CoopPuppet::Call c;
             c.function = main_ + kRequestDelete;
             c.x[0] = a;
+            c.x[1] = 0;
+            return c;
+        }
+        // Poses last: the cave makes at most CoopSvc::kCallsPerFrame calls a
+        // frame for everyone, and a scene may hold more copies than are left.
+        // The list starts one further on each frame, so no copy is left out
+        // twice in a row (run3, 2026-11-09: with 16 calls a frame, 3 to 5 of
+        // 19 to 21 copies were never moved and no animation was ever played).
+        while (next_ < work_.size()) {
+            const Pose& p = work_[next_++];
+            if (!Alive(guest, p.actor)) {
+                continue;
+            }
+            if (p.rotation) {
+                guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
+            } else {
+                guest.Write(p.actor + kActorPosition, p.transform.data(), 12);
+            }
+            ++moved_;
+            CoopPuppet::Call c;
+            c.function = main_ + kSetMatrix;
+            c.x[0] = p.actor;
             c.x[1] = 0;
             return c;
         }
@@ -649,6 +657,7 @@ private:
     std::vector<u64> work_removes_;
     std::unordered_set<u64> asked_;  // deletes asked once
     std::size_t next_ = 0;
+    std::size_t turn_ = 0;  // where this frame's poses start
     std::size_t next_remove_ = 0;
     std::size_t moved_ = 0;
     std::size_t deleted_ = 0;

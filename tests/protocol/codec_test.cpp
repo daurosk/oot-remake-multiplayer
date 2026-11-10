@@ -1196,3 +1196,90 @@ TEST_CASE("bad grass cuts are refused") {
   c.player_number = 5;
   CHECK(encode(c, out) == Error::bad_value);
 }
+
+namespace {
+WorldBreak Broke() {
+  WorldBreak b;
+  b.scene = "KakarikoVillage_Child";
+  b.hash = 0x8796851d6bbe37cull;
+  b.position = {-16.6f, 30.7f, 4.0f};
+  return b;
+}
+WorldMove Moved() {
+  WorldMove v;
+  v.scene = "ForestTemple";
+  v.hash = 0x1122334455667788ull;
+  v.time_us = 123'456'789;
+  v.position = {1.0f, 2.0f, 3.0f};
+  v.rotation = {0.0f, 0.70710678f, 0.0f, 0.70710678f};
+  v.flags = world_move::carried;
+  return v;
+}
+WorldPlace Rested() {
+  WorldPlace p;
+  p.scene = "ForestTemple";
+  p.hash = 0x1122334455667788ull;
+  p.position = {4.0f, 2.0f, 3.0f};
+  return p;
+}
+}  // namespace
+
+TEST_CASE("world messages have their numbers, channels and layouts") {
+  CHECK(static_cast<int>(MessageType::world_break) == 32);
+  CHECK(static_cast<int>(MessageType::world_move) == 33);
+  CHECK(static_cast<int>(MessageType::world_place) == 34);
+  CHECK(channel_of(MessageType::world_break) == kChannelSession);
+  CHECK(channel_of(MessageType::world_place) == kChannelSession);
+  CHECK(channel_of(MessageType::world_move) == kChannelObjectSamples);
+  CHECK_FALSE(allowed_on_channel(MessageType::world_move, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::world_break, kChannelObjectSamples));
+  for (const Message& m : {Message{Broke()}, Message{Moved()}, Message{Rested()}}) {
+    CHECK(may_send(Sender::client, type_of(m)));
+    CHECK(may_send(Sender::server, type_of(m)));
+    Message stamped = m;
+    CHECK(check_received(m, Sender::client, channel_of(m)) == Error::none);
+    CHECK(check_received(m, Sender::server, channel_of(m)) == Error::wrong_sender);
+    CHECK(set_sender(stamped, 3));
+    CHECK(sender_of(stamped) == 3);
+    Message back;
+    REQUIRE(decode(must_encode(stamped), back) == Error::none);
+    CHECK(back == stamped);
+  }
+  CHECK(must_encode(Broke()).size() == kHeaderSize + 1 + 2 + 21 + 8 + 12 + 1);
+  CHECK(must_encode(Moved()).size() == kHeaderSize + 1 + 2 + 12 + 8 + 8 + 12 + 16 + 1);
+  CHECK(must_encode(Rested()).size() == kHeaderSize + 1 + 2 + 12 + 8 + 12 + 16);
+}
+
+TEST_CASE("bad world messages are refused") {
+  Bytes out;
+  WorldBreak b = Broke();
+  b.hash = 0;
+  CHECK(encode(b, out) == Error::bad_value);
+  b.hash = ~std::uint64_t{0};
+  CHECK(encode(b, out) == Error::bad_value);
+  b = Broke();
+  b.scene.clear();
+  CHECK(encode(b, out) == Error::bad_value);
+  b = Broke();
+  b.flags = 2;
+  CHECK(encode(b, out) == Error::bad_value);
+  b = Broke();
+  b.position[2] = std::numeric_limits<float>::infinity();
+  CHECK(encode(b, out) == Error::bad_value);
+  b = Broke();
+  b.player_number = 5;
+  CHECK(encode(b, out) == Error::bad_value);
+  WorldMove v = Moved();
+  v.rotation = {0.0f, 0.0f, 0.0f, 0.0f};
+  CHECK(encode(v, out) == Error::bad_value);
+  v = Moved();
+  v.flags = 0x80;
+  CHECK(encode(v, out) == Error::bad_value);
+  WorldPlace p = Rested();
+  p.rotation[0] = std::numeric_limits<float>::quiet_NaN();
+  CHECK(encode(p, out) == Error::bad_value);
+  p = Rested();
+  p.hash = 0;
+  CHECK(encode(p, out) == Error::bad_value);
+  CHECK(out.empty());
+}

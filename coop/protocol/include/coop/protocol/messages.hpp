@@ -15,7 +15,7 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 4;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: GRASS_CUT
+inline constexpr std::uint16_t kProtocolVersion = 4;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: GRASS_CUT, WORLD_*
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -73,6 +73,10 @@ enum class MessageType : std::uint16_t {
   player_pose = 26,
   time_of_day = 27,
   grass_cut = 28,
+  // 29 to 31: enemy ownership on the server.
+  world_break = 32,
+  world_move = 33,
+  world_place = 34,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -688,13 +692,68 @@ struct GrassCut {
   bool operator==(const GrassCut& o) const;  // NaN equals NaN here
 };
 
+// WORLD_BREAK (docs/world.md, "Broken for everyone"): the placed breakable
+// with this placement hash was broken in the sender's scene (a pot, a crate,
+// a rock, a grass tuft, a cracked wall). The server keeps each scene's
+// breaks while anyone is in it and sends them to a player who enters, so a
+// pot broken before a player came is gone for that player too. With
+// `restored` the game put the object back (a pot that respawns): the break
+// is forgotten.
+namespace world_break {
+inline constexpr std::uint8_t restored = 1u << 0;
+}  // namespace world_break
+inline constexpr std::size_t kMaxWorldBreaks = 1024;  // kept per scene
+
+struct WorldBreak {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::string scene;                         // the sender's scene, not empty
+  std::uint64_t hash = 0;                    // placement hash, not 0 and not ~0
+  Vec3 position{};                           // where it was (finite)
+  std::uint8_t flags = 0;                    // world_break bits
+  bool operator==(const WorldBreak&) const = default;
+};
+
+// WORLD_MOVE: where the sender's game has a placed object it is moving (a
+// push block, a pot or rock in Link's hands or in flight), about 20 a
+// second while it moves. Unreliable, relayed to the sender's scene, not kept.
+namespace world_move {
+inline constexpr std::uint8_t carried = 1u << 0;  // in the mover's hands
+}  // namespace world_move
+
+struct WorldMove {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  std::uint64_t time_us = 0;  // server time of the reading
+  Vec3 position{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};  // unit
+  std::uint8_t flags = 0;                  // world_move bits
+  bool operator==(const WorldMove&) const = default;
+};
+
+// WORLD_PLACE: the object has come to rest here after a move. Reliable; the
+// server keeps the latest one of each object per scene (while anyone is in
+// the scene) for a player who enters later.
+inline constexpr std::size_t kMaxWorldPlaces = 256;  // kept per scene
+
+struct WorldPlace {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  Vec3 position{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+  bool operator==(const WorldPlace&) const = default;
+};
+
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
-                             TimeOfDay, GrassCut>;
+                             TimeOfDay, GrassCut, WorldBreak, WorldMove,
+                             WorldPlace>;
 
 MessageType type_of(const Message& message);
 

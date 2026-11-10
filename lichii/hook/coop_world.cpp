@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <utility>
@@ -24,10 +25,10 @@ constexpr std::array<std::string_view, 6> kPrefixes{
     "Obj_LiftRock_",     // rocks Link lifts and throws
     "Obj_BrokenRock_",   // rocks a bomb or hammer breaks
     "Obj_Plant_Grass_",  // grass
-    "Obj_GuidePost_",    // signposts
+    "Obj_RedIce_",       // red ice (melted with blue fire: it goes, no life)
 };
-constexpr std::array<std::string_view, 10> kParts{
-    "SignBoard_",  "Signboard_",      // cuttable signs, every region's
+constexpr std::array<std::string_view, 11> kParts{
+    "SignBoard_",  "Signboard_",  "GuidePost_",  // cuttable signs, every region's
     "CrackWall_",  "CrackFloor_",     // bombable walls and floors
     "BrokenRock_",                    // Goron and Death Mountain rocks
     "BrokenIcePillar_", "SkullPot_", "ArcheryPot_", "Beehive_", "SpiderWeb_",
@@ -67,6 +68,558 @@ bool IsBreakable(std::string_view name) {
         }
     }
     return false;
+}
+
+bool IsMovable(std::string_view name) {
+    if (!name.starts_with("Obj_") || name.find("BasePosAnchor") != std::string_view::npos) {
+        return false;
+    }
+    return name.find("MovableBox_") != std::string_view::npos ||
+           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_");
+}
+
+bool IsGrassActor(std::string_view name) {
+    if (name.starts_with("Obj_Plant_Grass_")) {
+        return true;
+    }
+    return std::find(kGrass.begin(), kGrass.end(), name) != kGrass.end();
+}
+
+namespace {
+
+namespace proto = coop::protocol;
+
+constexpr std::uint64_t kNoHash = ~std::uint64_t{0};
+constexpr std::size_t kMaxInbox = 4096;
+
+float Distance(const proto::Vec3& a, const proto::Vec3& b) {
+    const float x = a[0] - b[0];
+    const float y = a[1] - b[1];
+    const float z = a[2] - b[2];
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+bool Finite(const proto::Vec3& v) {
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+// The rotation as a unit quaternion the codec takes; none: no turn.
+proto::Quat UnitQuat(const std::optional<CoopObjects::Mat3>& m) {
+    proto::Quat q{0.0f, 0.0f, 0.0f, 1.0f};
+    if (!m) {
+        return q;
+    }
+    const proto::Quat got = CoopObjects::QuatOf(*m);
+    const float n =
+        std::sqrt(got[0] * got[0] + got[1] * got[1] + got[2] * got[2] + got[3] * got[3]);
+    if (!std::isfinite(n) || n < 0.5f || n > 2.0f) {
+        return q;
+    }
+    for (std::size_t i = 0; i < 4; ++i) {
+        q[i] = got[i] / n;
+    }
+    return q;
+}
+
+const std::string* SceneOfMessage(const proto::Message& m) {
+    if (const auto* b = std::get_if<proto::WorldBreak>(&m)) {
+        return &b->scene;
+    }
+    if (const auto* v = std::get_if<proto::WorldMove>(&m)) {
+        return &v->scene;
+    }
+    if (const auto* p = std::get_if<proto::WorldPlace>(&m)) {
+        return &p->scene;
+    }
+    return nullptr;
+}
+
+// A log line: "%016llx" is the hash, the first "%s" the name, the second `more`.
+std::string Line(std::string_view format, std::uint64_t hash, const std::string& name,
+                 std::string_view more) {
+    char hex[24];
+    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(hash));
+    std::string out(format);
+    if (const auto at = out.find("%016llx"); at != std::string::npos) {
+        out.replace(at, 7, hex);
+    }
+    if (const auto at = out.find("%s"); at != std::string::npos) {
+        out.replace(at, 2, name);
+        if (const auto next = out.find("%s", at + name.size()); next != std::string::npos) {
+            out.replace(next, 2, more);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+void WorldSync::Receive(const proto::Message& message) {
+    if (SceneOfMessage(message) == nullptr) {
+        return;
+    }
+    std::lock_guard lock(inbox_mutex_);
+    if (inbox_.size() < kMaxInbox) {
+        inbox_.push_back(message);
+    }
+}
+
+void WorldSync::Reset() {
+    scene_.clear();
+    scene_since_ = 0;
+    objects_.clear();
+    broken_.clear();
+    remote_.clear();
+    gone_.clear();
+    went_.clear();
+    early_.clear();
+    std::lock_guard lock(inbox_mutex_);
+    inbox_.clear();
+}
+
+std::uint8_t WorldSync::MoverOf(std::uint64_t hash) const {
+    for (const auto& [address, o] : objects_) {
+        if (o.hash == hash && o.ours) {
+            return self_;
+        }
+    }
+    const auto r = remote_.find(hash);
+    return r != remote_.end() && !r->second.samples.empty() ? r->second.player : 0;
+}
+
+std::vector<std::uint64_t> WorldSync::Removes() const {
+    std::vector<std::uint64_t> out;
+    for (const auto& [address, o] : objects_) {
+        if (o.remove) {
+            out.push_back(address);
+        }
+    }
+    return out;
+}
+
+void WorldSync::Drain(std::uint64_t now_us) {
+    std::vector<proto::Message> inbox;
+    {
+        std::lock_guard lock(inbox_mutex_);
+        inbox.swap(inbox_);
+    }
+    for (proto::Message& m : inbox) {
+        if (*SceneOfMessage(m) != scene_) {
+            // The server's replay for a scene can come before our walk has
+            // seen that scene: kept until the scene changes.
+            if (!std::holds_alternative<proto::WorldMove>(m) && early_.size() < kMaxInbox) {
+                early_.push_back(std::move(m));
+            }
+            continue;
+        }
+        if (const auto* b = std::get_if<proto::WorldBreak>(&m)) {
+            if ((b->flags & proto::world_break::restored) != 0) {
+                broken_.erase(b->hash);
+                for (auto& [address, o] : objects_) {
+                    if (o.hash == b->hash) {
+                        o.remove = false;
+                        o.life_written_us = 0;
+                    }
+                }
+            } else if (const auto known = broken_.find(b->hash); known == broken_.end()) {
+                Break k;
+                k.got_us = now_us;
+                broken_.emplace(b->hash, k);
+            } else if (known->second.local && now_us - known->second.got_us < kEchoUs) {
+                // The life 0 we read a moment ago was this player's break
+                // (it reached our copy through the enemy sharing first).
+                known->second.local = false;
+            }
+        } else if (const auto* v = std::get_if<proto::WorldMove>(&m)) {
+            Remote& r = remote_[v->hash];
+            const bool fresh = !r.samples.empty() && now_us - r.got_us < kRemoteHoldUs;
+            if (fresh && r.player != v->player_number) {
+                if (v->player_number > r.player) {
+                    continue;  // two movers: the lower number keeps it
+                }
+                r.samples.clear();
+            }
+            if (!fresh) {
+                r.samples.clear();
+            }
+            r.player = v->player_number;
+            r.got_us = now_us;
+            if (r.samples.empty() || v->time_us > r.samples.back().time_us) {
+                r.samples.push_back({v->time_us, v->position, v->rotation});
+                if (r.samples.size() > kKeepSamples) {
+                    r.samples.pop_front();
+                }
+            }
+        } else if (const auto* p = std::get_if<proto::WorldPlace>(&m)) {
+            Remote& r = remote_[p->hash];
+            r.place = Sample{now_us, p->position, p->rotation};
+            ++r.place_serial;
+            if (r.samples.empty()) {
+                r.player = p->player_number;
+            }
+        }
+    }
+}
+
+void WorldSync::LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out& out) {
+    if (o.sent_break || broken_.contains(o.hash)) {
+        return;
+    }
+    o.sent_break = true;
+    Break k;
+    k.got_us = now_us;
+    k.local = true;
+    broken_.emplace(o.hash, k);
+    proto::WorldBreak b;
+    b.scene = scene_;
+    b.hash = o.hash;
+    b.position = Finite(o.position) ? o.position : proto::Vec3{};
+    out.send.emplace_back(std::move(b));
+    out.notes.push_back(Line("world: %016llx %s broken here (%s): sent", o.hash, o.name, how));
+}
+
+void WorldSync::MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& out) {
+    if (o.remove || b.local) {
+        return;  // our own break: the game is doing it
+    }
+    if (b.got_us <= o.first_us + kStaleUs) {
+        // Broken before we ever saw it (we came later, or it loaded later).
+        o.remove = true;
+        out.notes.push_back(
+            Line("world: %016llx %s was broken before we saw it: deleted%s", o.hash, o.name, ""));
+        return;
+    }
+    const bool alive = !o.life || *o.life > 0;
+    if (o.life_written_us == 0) {
+        if (o.life && alive) {
+            out.lives.push_back({o.address, 0, 0, {}});
+        }
+        o.life_written_us = now_us;
+        out.notes.push_back(Line("world: %016llx %s broken by another player%s", o.hash, o.name,
+                                 o.life ? "" : " (no life: deleted after a wait)"));
+        return;
+    }
+    // Still standing. Grass does not go when its life is 0; something with
+    // no life has nothing to write; a life that is back above 0 did not take.
+    const std::uint64_t wait = o.grass || !o.life ? kDeleteGrassUs : kDeleteUs;
+    if (now_us - o.life_written_us >= wait && (o.grass || alive)) {
+        o.remove = true;
+        out.notes.push_back(
+            Line("world: %016llx %s still stands after the break: deleted%s", o.hash, o.name, ""));
+    }
+}
+
+std::optional<WorldSync::Sample> WorldSync::PoseAt(const Remote& r, std::uint64_t now_us) const {
+    const std::uint64_t t = now_us > kBehindUs ? now_us - kBehindUs : 0;
+    if (r.samples.empty() || (r.place && t >= r.samples.back().time_us)) {
+        return r.place ? r.place : std::nullopt;
+    }
+    if (t <= r.samples.front().time_us) {
+        return r.samples.front();
+    }
+    if (t >= r.samples.back().time_us) {
+        return r.samples.back();
+    }
+    for (std::size_t i = 1; i < r.samples.size(); ++i) {
+        const Sample& a = r.samples[i - 1];
+        const Sample& b = r.samples[i];
+        if (t > b.time_us) {
+            continue;
+        }
+        const float f = static_cast<float>(t - a.time_us) / static_cast<float>(b.time_us - a.time_us);
+        Sample s;
+        s.time_us = t;
+        float dot = 0.0f;
+        for (std::size_t k = 0; k < 4; ++k) {
+            dot += a.rotation[k] * b.rotation[k];
+        }
+        float n = 0.0f;
+        for (std::size_t k = 0; k < 4; ++k) {
+            s.rotation[k] = a.rotation[k] + f * ((dot < 0.0f ? -b.rotation[k] : b.rotation[k]) - a.rotation[k]);
+            n += s.rotation[k] * s.rotation[k];
+        }
+        n = std::sqrt(n);
+        for (std::size_t k = 0; k < 4; ++k) {
+            s.rotation[k] = n > 1e-4f ? s.rotation[k] / n : (k == 3 ? 1.0f : 0.0f);
+        }
+        for (std::size_t k = 0; k < 3; ++k) {
+            s.position[k] = a.position[k] + f * (b.position[k] - a.position[k]);
+        }
+        return s;
+    }
+    return r.samples.back();
+}
+
+void WorldSync::Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const {
+    for (const auto& [address, o] : objects_) {
+        if (!o.following || o.remove) {
+            continue;
+        }
+        const auto r = remote_.find(o.hash);
+        if (r == remote_.end()) {
+            continue;
+        }
+        if (const auto s = PoseAt(r->second, now_us)) {
+            CoopObjects::PoseWrite w;
+            w.address = address;
+            w.position = s->position;
+            w.rotation = CoopObjects::MatOf(s->rotation);
+            out.push_back(w);
+        }
+    }
+}
+
+void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
+                     const std::optional<proto::Vec3>& player, Out& out) {
+    const auto found = remote_.find(o.hash);
+    Remote* r = found != remote_.end() ? &found->second : nullptr;
+    bool remote = r != nullptr && !r->samples.empty() && now_us - r->got_us < kRemoteHoldUs;
+    if (r != nullptr && !remote && r->place) {
+        r->samples.clear();  // the mover stopped: only its rest place counts now
+    }
+    if (o.ours && remote) {
+        if (r->player < self) {
+            o.ours = false;  // two movers: the lower number keeps it
+            out.notes.push_back(Line("world: %016llx %s: another player moves it too; theirs%s",
+                                     o.hash, o.name, ""));
+        } else {
+            remote = false;
+        }
+    }
+    if (!o.ours && r != nullptr && r->place && o.place_seen != r->place_serial) {
+        o.place_seen = r->place_serial;
+        o.settle_us = now_us;
+        if (!o.following) {
+            out.notes.push_back(
+                Line("world: %016llx %s put where another player left it%s", o.hash, o.name, ""));
+        }
+    }
+    const bool settling = !o.ours && o.settle_us != 0 && now_us - o.settle_us < kSettleUs;
+    if (!o.ours && (remote || settling)) {
+        if (!o.following && remote) {
+            out.notes.push_back(
+                Line("world: %016llx %s moved by another player%s", o.hash, o.name, ""));
+        }
+        o.following = true;
+        o.rest = o.position;
+        o.quiet_until = now_us + kQuietUs;
+        return;
+    }
+    if (o.following) {
+        o.following = false;
+        o.rest = o.position;
+        o.quiet_until = now_us + kQuietUs;
+    }
+    if (now_us < o.quiet_until) {
+        o.rest = o.position;  // settling after another game's move: no claim
+        return;
+    }
+    if (!o.ours) {
+        const bool near = player && Distance(*player, o.position) <= kMoverReachM;
+        if (!near || !Finite(o.position) ||
+            Distance(o.position, o.rest) <= (o.breakable ? kLooseStartM : kBlockStartM)) {
+            return;
+        }
+        o.ours = true;
+        o.moved_us = now_us;
+        o.sent_us = 0;
+        out.notes.push_back(Line("world: %016llx %s moved here: sending%s", o.hash, o.name, ""));
+    }
+    if (o.stirred) {
+        o.moved_us = now_us;
+    }
+    if (!Finite(o.position)) {
+        o.ours = false;
+        return;
+    }
+    if (now_us - o.moved_us >= kRestUs) {
+        proto::WorldPlace p;
+        p.scene = scene_;
+        p.hash = o.hash;
+        p.position = o.position;
+        p.rotation = UnitQuat(o.rotation);
+        out.send.emplace_back(std::move(p));
+        o.ours = false;
+        o.rest = o.position;
+        out.notes.push_back(Line("world: %016llx %s at rest: place sent%s", o.hash, o.name, ""));
+        return;
+    }
+    if (o.sent_us == 0 || (now_us - o.sent_us >= kMoveEveryUs &&
+                           Distance(o.position, o.sent_position) > 0.003f)) {
+        proto::WorldMove v;
+        v.scene = scene_;
+        v.hash = o.hash;
+        v.time_us = now_us;
+        v.position = o.position;
+        v.rotation = UnitQuat(o.rotation);
+        if (player && Distance(*player, o.position) <= 1.5f) {
+            v.flags |= proto::world_move::carried;
+        }
+        out.send.emplace_back(std::move(v));
+        o.sent_us = now_us;
+        o.sent_position = o.position;
+    }
+}
+
+void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_us,
+                     const std::vector<CoopObjects::Seen>& seen,
+                     const std::optional<proto::Vec3>& player, Out& out) {
+    self_ = self;
+    if (scene != scene_) {
+        scene_ = scene;
+        scene_since_ = now_us;
+        objects_.clear();
+        broken_.clear();
+        remote_.clear();
+        gone_.clear();
+        went_.clear();
+        std::lock_guard lock(inbox_mutex_);
+        for (proto::Message& m : early_) {
+            if (*SceneOfMessage(m) == scene_) {
+                inbox_.insert(inbox_.begin(), std::move(m));
+            }
+        }
+        early_.clear();
+    }
+    Drain(now_us);
+
+    std::set<std::uint64_t> now_seen;
+    for (const CoopObjects::Seen& s : seen) {
+        if (s.hash == 0 || s.hash == kNoHash) {
+            continue;
+        }
+        const bool breakable = IsBreakable(s.name);
+        if (!breakable && !IsMovable(s.name)) {
+            continue;
+        }
+        now_seen.insert(s.address);
+        auto it = objects_.find(s.address);
+        if (it != objects_.end() && it->second.hash != s.hash) {
+            objects_.erase(it);  // the address has another actor now
+            it = objects_.end();
+        }
+        std::optional<std::int32_t> life;
+        if (s.life) {
+            life = s.life->life;
+        }
+        if (it == objects_.end()) {
+            Object o;
+            o.address = s.address;
+            o.hash = s.hash;
+            o.name = s.name;
+            o.breakable = breakable;
+            o.grass = IsGrassActor(s.name);
+            o.life = life;
+            o.position = s.position;
+            o.rotation = s.rotation;
+            o.first_position = s.position;
+            o.first_us = now_us;
+            o.rest = s.position;
+            o.sent_position = s.position;
+            if (const auto b = broken_.find(s.hash);
+                b != broken_.end() && b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
+                (!life || *life > 0)) {
+                // We saw it go and here it is again: the game put it back.
+                broken_.erase(b);
+                proto::WorldBreak back;
+                back.scene = scene_;
+                back.hash = o.hash;
+                back.position = Finite(o.position) ? o.position : proto::Vec3{};
+                back.flags = proto::world_break::restored;
+                out.send.emplace_back(std::move(back));
+                out.notes.push_back(
+                    Line("world: %016llx %s is back: break forgotten%s", o.hash, o.name, ""));
+            }
+            objects_.emplace(s.address, std::move(o));
+            continue;
+        }
+        Object& o = it->second;
+        o.missed = 0;
+        o.stirred = Finite(s.position) && Distance(s.position, o.position) > 0.003f;
+        o.position = s.position;
+        o.rotation = s.rotation;
+        // As the enemy sharing reads it: a breakable whose life can no longer
+        // be read has died (a crate's life object goes a frame after 0).
+        if (!life && o.breakable && o.life && *o.life > 0) {
+            life = 0;
+        }
+        if (life) {
+            const bool died = o.life && *o.life > 0 && *life <= 0;
+            o.life = life;
+            if (died && o.breakable) {
+                LocalBreak(o, now_us, "life 0", out);
+            }
+        }
+    }
+
+    for (auto it = objects_.begin(); it != objects_.end();) {
+        Object& o = it->second;
+        if (now_seen.contains(it->first) || ++o.missed < kMissedWalks) {
+            ++it;
+            continue;
+        }
+        const float from_link = player ? Distance(*player, o.position) : -1.0f;
+        const bool far = !player || from_link > kBreakNearM;
+        went_.emplace_back(now_us, far);
+        if (const auto b = broken_.find(o.hash); b != broken_.end()) {
+            b->second.seen_go = true;
+            b->second.gone_us = now_us;
+        } else if (o.breakable && player && (!o.life || *o.life > 0)) {
+            const bool moved = Distance(o.position, o.first_position) >= 0.5f;
+            if (from_link <= (moved ? kBreakNearM : kBreakReachM)) {
+                gone_.push_back({o, now_us});
+            }
+        }
+        it = objects_.erase(it);
+    }
+    if (!player) {
+        gone_.clear();  // no Link in the walk: the scene is loading or going
+    }
+    for (auto it = gone_.begin(); it != gone_.end();) {
+        if (now_us - it->at_us < kGoneHoldUs) {
+            ++it;
+            continue;
+        }
+        // Left the walk next to our Link. Broken, unless a crowd went with
+        // it and some of that crowd was far away: then the area unloaded.
+        int together = 0;
+        bool any_far = false;
+        for (const auto& [at, far] : went_) {
+            const std::uint64_t apart = at > it->at_us ? at - it->at_us : it->at_us - at;
+            if (apart <= kGoneHoldUs) {
+                ++together;
+                any_far = any_far || far;
+            }
+        }
+        if (together >= kUnloadCount && any_far) {
+            out.notes.push_back(Line("world: %016llx %s left with the area: no break%s",
+                                     it->object.hash, it->object.name, ""));
+        } else {
+            LocalBreak(it->object, now_us, "gone next to Link", out);
+            if (const auto b = broken_.find(it->object.hash); b != broken_.end()) {
+                b->second.seen_go = true;
+                b->second.gone_us = it->at_us;
+            }
+        }
+        it = gone_.erase(it);
+    }
+    std::erase_if(went_, [now_us](const auto& w) { return now_us - w.first > 4 * kGoneHoldUs; });
+
+    for (auto& [address, o] : objects_) {
+        if (const auto b = broken_.find(o.hash); b != broken_.end()) {
+            MakeBreak(o, b->second, now_us, out);
+            o.ours = false;
+            o.following = false;
+            continue;
+        }
+        Move(o, self, now_us, player, out);
+    }
+    // A mover that stopped without a rest place (it left, or the place was
+    // lost): forgotten once nothing follows it.
+    std::erase_if(remote_, [now_us](const auto& e) {
+        const Remote& r = e.second;
+        return !r.place && (r.samples.empty() || now_us - r.got_us > 4 * kRemoteHoldUs);
+    });
 }
 
 namespace {

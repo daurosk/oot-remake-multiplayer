@@ -1579,3 +1579,140 @@ TEST_CASE("the cuts of a scene end when its last player leaves or the list is fu
   REQUIRE(got.size() == kMaxGrassCuts);
   CHECK(got.front() == from(3, cut_at("HyruleField_Child", 103.0f)));
 }
+
+// ------------------------------------------------- shared world objects
+
+namespace {
+
+WorldBreak broke(const std::string& scene, std::uint64_t hash, std::uint8_t flags = 0) {
+  WorldBreak b;
+  b.scene = scene;
+  b.hash = hash;
+  b.position = Vec3{1.0f, 2.0f, 3.0f};
+  b.flags = flags;
+  return b;
+}
+
+WorldPlace rested(const std::string& scene, std::uint64_t hash, float x) {
+  WorldPlace p;
+  p.scene = scene;
+  p.hash = hash;
+  p.position = Vec3{x, 0.0f, 0.0f};
+  return p;
+}
+
+WorldMove moved(const std::string& scene, std::uint64_t hash, float x) {
+  WorldMove v;
+  v.scene = scene;
+  v.hash = hash;
+  v.time_us = 5;
+  v.position = Vec3{x, 0.0f, 0.0f};
+  return v;
+}
+
+template <typename T>
+T by(std::uint8_t player, T m) {
+  m.player_number = player;
+  return m;
+}
+
+}  // namespace
+
+TEST_CASE("a break goes to the players in its scene once and to those who come later") {
+  ObjectHarness h;
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);
+  h.clear();
+
+  h.receive(1, broke("Kakariko", 0x11), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 1).empty());
+  CHECK(messages_to<WorldBreak>(h, 2) == std::vector<WorldBreak>{by(1, broke("Kakariko", 0x11))});
+  CHECK(messages_to<WorldBreak>(h, 3).empty());
+  CHECK(h.session.stats().world_relayed == 1);
+
+  // Player 2's game saw its own copy break: the scene has it already.
+  h.clear();
+  h.receive(2, broke("Kakariko", 0x11), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 1).empty());
+  CHECK(h.session.stats().world_repeated == 1);
+
+  // Player 3 walks in and is told; so is a player who joins late.
+  h.receive(1, broke("Kakariko", 0x22), kChannelSession);
+  h.clear();
+  h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 3) == std::vector<WorldBreak>{by(1, broke("Kakariko", 0x11)),
+                                                                by(1, broke("Kakariko", 0x22))});
+  CHECK(h.session.stats().world_replayed == 2);
+  h.join(4, "Ruto");
+  h.clear();
+  h.receive(4, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 4).size() == 2);
+}
+
+TEST_CASE("a break that the game put back is forgotten") {
+  ObjectHarness h;
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.receive(1, broke("Kakariko", 0x11), kChannelSession);
+  h.clear();
+  // Nothing to forget for this one: not passed on.
+  h.receive(1, broke("Kakariko", 0x99, world_break::restored), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 2).empty());
+  h.receive(1, broke("Kakariko", 0x11, world_break::restored), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 2) ==
+        std::vector<WorldBreak>{by(1, broke("Kakariko", 0x11, world_break::restored))});
+  h.clear();
+  h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 3).empty());
+}
+
+TEST_CASE("moves are passed on, the last rest place is kept for those who come later") {
+  ObjectHarness h;
+  h.receive(1, sample_in("ForestTemple"), kChannelPlayerSamples);
+  h.receive(2, sample_in("ForestTemple"), kChannelPlayerSamples);
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);
+  h.clear();
+
+  h.receive(1, moved("ForestTemple", 0x50, 1.0f), kChannelObjectSamples);
+  CHECK(messages_to<WorldMove>(h, 2) ==
+        std::vector<WorldMove>{by(1, moved("ForestTemple", 0x50, 1.0f))});
+  CHECK(messages_to<WorldMove>(h, 3).empty());
+  // A move for a scene the sender is not in is dropped.
+  h.clear();
+  h.receive(1, moved("Market", 0x50, 1.0f), kChannelObjectSamples);
+  CHECK(messages_to<WorldMove>(h, 3).empty());
+
+  h.receive(1, rested("ForestTemple", 0x50, 2.0f), kChannelSession);
+  h.receive(1, rested("ForestTemple", 0x50, 4.0f), kChannelSession);
+  CHECK(messages_to<WorldPlace>(h, 2).size() == 2);
+  h.clear();
+  h.receive(3, sample_in("ForestTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldPlace>(h, 3) ==
+        std::vector<WorldPlace>{by(1, rested("ForestTemple", 0x50, 4.0f))});
+  CHECK(messages_to<WorldMove>(h, 3).empty());
+
+  // A broken object rests nowhere.
+  h.receive(2, broke("ForestTemple", 0x50), kChannelSession);
+  h.join(4, "Ruto");
+  h.clear();
+  h.receive(4, sample_in("ForestTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldPlace>(h, 4).empty());
+  CHECK(messages_to<WorldBreak>(h, 4).size() == 1);
+}
+
+TEST_CASE("the breaks and places of a scene end when its last player leaves") {
+  ObjectHarness h;
+  h.receive(1, broke("Kakariko", 0x11), kChannelSession);
+  h.receive(1, rested("Kakariko", 0x12, 1.0f), kChannelSession);
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 2).size() == 1);
+  CHECK(messages_to<WorldPlace>(h, 2).size() == 1);
+  h.receive(1, sample_in("Market"), kChannelPlayerSamples);  // player 2 still has them
+  h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 3).size() == 1);
+  h.session.disconnected(2, h.now);
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);  // Kakariko is empty
+  h.clear();
+  h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 3).empty());
+  CHECK(messages_to<WorldPlace>(h, 3).empty());
+}

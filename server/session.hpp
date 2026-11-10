@@ -21,6 +21,7 @@
 
 #include "coop/protocol/codec.hpp"
 #include "coop/protocol/messages.hpp"
+#include "world.hpp"
 
 namespace coop::server {
 
@@ -127,6 +128,10 @@ struct Stats {
   std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene
   std::uint64_t grass_repeated = 0;  // GRASS_CUT the scene already has: not passed on
   std::uint64_t grass_replayed = 0;  // kept cuts sent to a player who entered the scene
+  // Shared world objects (docs/world.md). Relayed ones count in relayed too.
+  std::uint64_t world_relayed = 0;   // WORLD_BREAK, WORLD_MOVE, WORLD_PLACE passed on
+  std::uint64_t world_repeated = 0;  // WORLD_BREAK the scene already has: not passed on
+  std::uint64_t world_replayed = 0;  // kept breaks and places sent to a player who entered
   std::uint64_t object_table_full = 0;  // objects turned away: max_objects
 
   std::uint64_t errors(protocol::Error e) const {
@@ -236,6 +241,9 @@ class Session {
   // in a game that loads the scene again, so the cuts end with the last game
   // that still shows them.
   void forget_empty_grass(const std::string& scene);
+  // WORLD_BREAK, WORLD_MOVE, WORLD_PLACE (world.hpp keeps what is kept).
+  void on_world(ConnectionId id, Connection& c, std::uint8_t channel, protocol::Message& message);
+  void forget_empty_world(const std::string& scene);
   // The player is in `scene` now; leaving another scene lets go of its objects.
   void set_scene(ConnectionId id, Connection& c, const std::string& scene);
   // The player no longer has the object loaded (unload, scene change, leave):
@@ -278,6 +286,7 @@ class Session {
   // kMaxGrassCuts a scene; sent to a player who enters the scene. Forgotten
   // when no player is in the scene.
   std::map<std::string, std::deque<protocol::GrassCut>> grass_;
+  WorldStore world_;
   std::vector<Action> actions_;
   Stats stats_;
 };

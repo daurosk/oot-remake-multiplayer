@@ -234,6 +234,11 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_grass_cut(id, c, *cut);
     return;
   }
+  if (std::holds_alternative<WorldBreak>(message) || std::holds_alternative<WorldMove>(message) ||
+      std::holds_alternative<WorldPlace>(message)) {
+    on_world(id, c, channel, message);
+    return;
+  }
   if (std::holds_alternative<ObjectSpawn>(message) ||
       std::holds_alternative<ObjectSample>(message) ||
       std::holds_alternative<ObjectRemove>(message) ||
@@ -494,6 +499,12 @@ void Session::set_scene(ConnectionId id, Connection& c, const std::string& scene
   const std::string left = std::exchange(c.scene, scene);
   drop_all_objects(id, c.number, present);
   forget_empty_grass(left);
+  forget_empty_world(left);
+  // What was broken and moved here before this player came (docs/world.md).
+  for (const Message& m : world_.replay(scene)) {
+    send(id, kChannelSession, m);
+    ++stats_.world_replayed;
+  }
   // The grass the others cut here before this player came.
   if (auto it = grass_.find(scene); it != grass_.end()) {
     for (const GrassCut& cut : it->second) {
@@ -525,8 +536,38 @@ void Session::on_grass_cut(ConnectionId id, Connection& c, GrassCut& cut) {
   ++stats_.grass_relayed;
 }
 
-void Session::forget_empty_grass(const std::string& scene) {
-  auto it = grass_.find(scene);
+// Shared world objects (docs/world.md): breaks and rest places are kept per
+// scene in world_ and replayed by set_scene; moves are only passed on. All
+// three go to the players in the sender's scene.
+void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Message& message) {
+  set_sender(message, c.number);
+  if (auto* b = std::get_if<WorldBreak>(&message)) {
+    set_scene(id, c, b->scene);  // the sender is there, whatever its last sample said
+    if (!world_.on_break(*b)) {
+      ++stats_.world_repeated;
+      return;
+    }
+    send_to_scene(b->scene, id, channel, message);
+  } else if (auto* p = std::get_if<WorldPlace>(&message)) {
+    set_scene(id, c, p->scene);
+    world_.on_place(*p);
+    send_to_scene(p->scene, id, channel, message);
+  } else if (auto* v = std::get_if<WorldMove>(&message)) {
+    if (v->scene != c.scene) return;  // late, from the scene it left
+    send_to_scene(v->scene, id, channel, message);
+  }
+  ++stats_.relayed;
+  ++stats_.world_relayed;
+}
+
+void Session::forget_empty_world(const std::string& scene) {
+  for (const auto& [id, c] : connections_) {
+    if (c.state == State::joined && c.scene == scene) return;
+  }
+  world_.forget(scene);
+}
+
+void Session::forget_empty_grass(const std::string& scene) {  auto it = grass_.find(scene);
   if (it == grass_.end()) return;
   for (const auto& [id, c] : connections_) {
     if (c.state == State::joined && c.scene == scene) return;
@@ -669,6 +710,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
   // owner is announced; the leaver is out of connections_ by now.
   drop_all_objects(id, c.number, c.present);
   forget_empty_grass(c.scene);
+  forget_empty_world(c.scene);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
       (reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
@@ -677,6 +719,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
     flags_.clear();
     objects_.clear();
     grass_.clear();
+    world_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before

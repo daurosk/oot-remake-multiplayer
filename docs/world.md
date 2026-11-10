@@ -4,7 +4,7 @@ Caleb (2026-11-09): every world object the same for all players. A pot or crate 
 
 Game build e0f3ccfaf50065ae (1.1.1). **Checked** means read from the romfs or the code; **live** means seen in a run.
 
-## Breakables (first cut, branch `world-sync`)
+## Breakables (first cut, branch `world-sync`; more in "Broken for everyone" below)
 
 ### What breaks
 
@@ -77,3 +77,47 @@ The grass of the fields is drawn by `game::foliage::Module`; a cut is no actor a
 `LICHII_COOP_DEBUG_OBJECTS=1` still logs the research probe (`CoopWorld::FoliageProbe`, `coop: foliage:` lines): the path once (with `(off)` and no walk while the module's byte +0x30 has bit 0 set), then every 8-byte word that changes in the scene's first 0x400 bytes and in what the six words of `SsboGrassCut` point to, two pointers deep (0x200 bytes each), with where our Link stood. A word that changed six times is a counter: it is logged once more as `noisy` and then left out. At most 60 lines per block in each scene, 1,500 per session.
 
 
+
+## Broken for everyone, moved for everyone (`WorldSync`, branch `world-sync-3`)
+
+`CoopWorld::WorldSync` (coop_world.cpp) shares placed breakables and movables by their placement hash, beside the enemy sharing above (which still carries a breakable's life). Three messages, protocol 4 ([protocol.md](protocol.md)). **Unit-tested only: nothing in this section has been seen in a game yet.**
+
+**`WORLD_BREAK`.** A game sends it once when a placed breakable breaks there: its life read at 0 (or no longer readable), or it left the actor list next to our Link (the rule above: 8 m when it was moved, 3 m when not). The second kind waits 0.7 s and is dropped when the area unloaded instead: four or more tracked objects went within that time and one of them was more than 8 m away, or our Link was not in the walk. The server keeps each scene's breaks (at most 1,024) while anyone is in the scene, passes each on once, and sends them to a player who enters. A game that gets one:
+
+- has had the object for a while: writes life 0, so the game breaks it itself. If the object still stands, it is deleted with the game's own delete call: grass after 0.4 s whatever its life says (the Kokiri-side tufts kept standing at life 0), anything without a life after 0.4 s, anything else after 6 s and only if its life is back above 0 (a crate takes 4.6 s to go by itself).
+- sees the object for the first time after the break (a late joiner, an area that loaded later): deletes it at once, no break effect.
+- A game that saw its own copy go and sees it again 3 s or more later (a respawning pot) sends the break with `restored`; everyone forgets the break.
+
+When the last player leaves a scene the server forgets its breaks, as the game restores everything on a reload.
+
+**`WORLD_MOVE` and `WORLD_PLACE`.** The game whose own Link is within 15 m of a placed movable or breakable that left its rest place (5 cm for blocks, 15 cm for pots and rocks) is its mover: it sends `WORLD_MOVE` (place and rotation, at most 20 a second, unreliable) while it moves and `WORLD_PLACE` (reliable) when it has been still 0.4 s. The others put their copy where the mover's was 100 ms ago, every frame, through the same setter the enemy copies use, then hold it at the rest place for 0.5 s and let it be; for 1.5 s after that their own copy settling is not taken as a move. One mover at a time: a game does not start sending while another's moves come in, and when two start together the lower player number keeps it. The server keeps each object's last rest place per scene (at most 256) for a player who enters later. The enemy sharing no longer places these objects (`WorldSync::Places`).
+
+### Table: what breaks or moves, and how it is shared
+
+| Object | Actor names | How it breaks or moves | Shared by | Proven |
+|---|---|---|---|---|
+| Field grass | none (foliage) | sword, spin, AI cut | `GRASS_CUT`, server list per scene | unit tests; not in a game |
+| Grass tufts | `Obj_Plant_Grass_*`, `Land_kokiri_Plant_A_02_DropFixed_03`, 3 more | sword | life + `WORLD_BREAK`, deleted 0.4 s later | unit tests; life 0 alone failed in a game |
+| Pots | `Obj_Pot_*`, `*SkullPot_*`, `*ArcheryPot_*` | sword, thrown | life, `WORLD_BREAK`; carried: `WORLD_MOVE` | unit tests; not in a game |
+| Crates | `Obj_BrokenBox_*` | sword (life 5) | life, `WORLD_BREAK` | life path seen in a game (3 runs) |
+| Liftable rocks | `Obj_LiftRock_*` | lifted, thrown | gone-near-Link, `WORLD_BREAK`; carried: `WORLD_MOVE` | thrown break seen in a game; carry not |
+| Bomb and hammer rocks, cracked walls and floors | `*BrokenRock_*`, `*CrackWall_*`, `*CrackFloor_*` | bomb, hammer | life, `WORLD_BREAK` | unit tests only |
+| Ice pillars, beehive, spider webs | `Obj_BrokenIcePillar_*`, `*Beehive_*`, `*SpiderWeb_*` | hit, fire | life, `WORLD_BREAK` | unit tests only |
+| Red ice | `Obj_RedIce_*` | blue fire (no life: it goes) | gone-near-Link, `WORLD_BREAK`, deleted | unit tests only |
+| Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | **not shared** (issue 90, below) | no |
+| Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE` | unit tests only |
+| Rolling rocks | `*RollingRock_*` | roll by themselves | each game's own (not shared) | - |
+| Bomb flowers | `Obj_BombFlower_*` | picked, thrown, explode | not shared here (the fruit is made by the game, no placement) | - |
+| Moving floors, lifts, shutters, water level | `*MoveFloor_*`, `*ElevatorLift_*`, `*SwitchShutter_*`, `*WaterPlane_*` | driven by switches | the switch flags ([flags.md](flags.md)); not positions | - |
+
+### Signs (issue 90): what the pack says
+
+Read from `Obj_GuidePost_A_02.pack` (romfs, 2026-11-09): a cuttable sign's life is `Signboard`, a child of `Obj_Invincible` with `IsDamagedWhileInvincibile`, so a hit never lowers its life; the cut is done by its `DestructionParam` (a `_fracture` shape whose pieces come off where the sword hit) and its AI is `CuttableSignboard`. It keeps no blackboard value for "cut". So a cut cannot be read from life or a flag. Two ways left, both need a run: read the Destruction component's state for the pieces that came off (find it with a memory compare while a sign is cut), or send the sword hit itself (place, direction) and replay it on the other games' sign with the hit replay the enemy sharing has (`Mover::AddHit`). Type 35 is kept free for it.
+
+### To check in a game (nothing here was run)
+
+1. Pot: A breaks a pot with the sword, B sees it break (`coop: world: ... broken here (life 0): sent` in A, `got break` and `broken by another player` in B). B enters the scene later: the pot is not there (`was broken before we saw it: deleted`).
+2. Tufts by the Kokiri side of Hyrule Field: A cuts, B's tuft goes (`still stands after the break: deleted`).
+3. A carries a pot or rock: B sees it in the air at A's puppet (`moved here: sending` in A, `moved by another player` in B); does the setter move a physics object, and does it drop when let be?
+4. A pushes a block (Forest Temple, Kakariko well): B's block follows and stays (`at rest: place sent`, `put where another player left it`). Does B's block keep its place after the 0.5 s hold, and can B push it afterwards?
+5. A door or room change next to pots: no `broken here (gone next to Link)` line may appear (it should say `left with the area`).

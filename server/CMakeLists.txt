@@ -2,6 +2,7 @@
 # tests can drive them without a network; the program is a thin ENet loop.
 add_library(coop_server_lib STATIC
   session.cpp
+  world.cpp
   enet_server.cpp
   options.cpp
 )

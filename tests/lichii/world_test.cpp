@@ -540,3 +540,436 @@ TEST_CASE("grass: cuts that come before the scene settles are made once it has")
     (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 5300);
     CHECK(grass.Step(g, false, 0, 5300));
 }
+
+// ------------------------------------------------------------ WorldSync
+
+namespace {
+
+using CoopWorld::WorldSync;
+
+Seen Thing(std::uint64_t address, std::uint64_t hash, std::optional<std::int32_t> life,
+           std::string name, proto::Vec3 at = {1.0f, 2.0f, 3.0f}) {
+    Seen s;
+    s.address = address;
+    s.name = std::move(name);
+    s.hash = hash;
+    if (life) {
+        s.life = proto::ObjectLife{*life, 1};
+    }
+    s.position = at;
+    return s;
+}
+
+const proto::Vec3 kLink{1.0f, 2.0f, 4.0f};  // one metre from Thing's default place
+
+WorldSync::Out Walk(WorldSync& w, std::uint64_t now, const std::vector<Seen>& seen,
+                    std::optional<proto::Vec3> player = kLink, std::uint8_t self = 2,
+                    const std::string& scene = kScene) {
+    WorldSync::Out out;
+    w.Tick(scene, self, now, seen, player, out);
+    return out;
+}
+
+template <typename T>
+std::vector<T> Sent(const WorldSync::Out& out) {
+    std::vector<T> got;
+    for (const auto& m : out.send) {
+        if (const auto* t = std::get_if<T>(&m)) {
+            got.push_back(*t);
+        }
+    }
+    return got;
+}
+
+proto::WorldBreak BreakOf(std::uint64_t hash, std::uint8_t flags = 0,
+                          const std::string& scene = kScene) {
+    proto::WorldBreak b;
+    b.player_number = 1;
+    b.scene = scene;
+    b.hash = hash;
+    b.flags = flags;
+    return b;
+}
+
+proto::WorldMove MoveOf(std::uint64_t hash, std::uint64_t time, float x, std::uint8_t player = 1) {
+    proto::WorldMove v;
+    v.player_number = player;
+    v.scene = kScene;
+    v.hash = hash;
+    v.time_us = time;
+    v.position = {x, 2.0f, 3.0f};
+    return v;
+}
+
+proto::WorldPlace PlaceOf(std::uint64_t hash, float x) {
+    proto::WorldPlace p;
+    p.player_number = 1;
+    p.scene = kScene;
+    p.hash = hash;
+    p.position = {x, 2.0f, 3.0f};
+    return p;
+}
+
+const char* const kBox = "Obj_ForestTemple_MovableBox_A_01";
+const char* const kTuft = "Land_kokiri_Plant_A_02_DropFixed_03";
+
+} // namespace
+
+TEST_CASE("world: movables, grass actors and the new breakables by name") {
+    for (const char* name : {"Obj_MovableBox_A_01", "Obj_ForestTemple_MovableBox_A_03",
+                             "Obj_LonLonRanch_MovableBox_A_01", "Obj_SliderBox_A_01",
+                             "Obj_AmosStatue_A_01"}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsMovable(name));
+        CHECK_FALSE(CoopWorld::IsBreakable(name));
+    }
+    for (const char* name : {"Obj_MovableBox_BasePosAnchor", "Obj_Pot_A_01", "Obj_Deku_MoveFloor_A_01",
+                             "Enemy_MovableBox_A_01", "Obj_RollingRock_A_01"}) {
+        CAPTURE(name);
+        CHECK_FALSE(CoopWorld::IsMovable(name));
+    }
+    CHECK(CoopWorld::IsBreakable("Obj_Zora_GuidePost_A_01"));
+    CHECK(CoopWorld::IsBreakable("Obj_RedIce_A_01"));
+    CHECK(CoopWorld::IsGrassActor(kTuft));
+    CHECK(CoopWorld::IsGrassActor("Obj_Plant_Grass_A_01"));
+    CHECK_FALSE(CoopWorld::IsGrassActor("Obj_Pot_A_01"));
+}
+
+TEST_CASE("world: a pot broken here is sent once and left to the game") {
+    WorldSync w;
+    CHECK(Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")}).send.empty());
+    const auto out = Walk(w, 1100 * kMs, {Thing(0x100, 0x11, 0, "Obj_Pot_A_01")});
+    const auto sent = Sent<proto::WorldBreak>(out);
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == 0x11);
+    CHECK(sent[0].scene == kScene);
+    CHECK(sent[0].flags == 0);
+    CHECK(sent[0].player_number == 0);
+    CHECK(w.Broken(0x11));
+    // Its pieces lie there for ten seconds: nothing more is sent, nothing deleted.
+    for (std::uint64_t t = 1200; t < 12000; t += 100) {
+        const auto later = Walk(w, t * kMs, {Thing(0x100, 0x11, 0, "Obj_Pot_A_01")});
+        CHECK(later.send.empty());
+        CHECK(later.lives.empty());
+    }
+    CHECK(w.Removes().empty());
+    // No placement hash: not ours to share.
+    WorldSync other;
+    Walk(other, 1000 * kMs, {Thing(0x100, 0, 1, "Obj_Pot_A_01")});
+    CHECK(Walk(other, 1100 * kMs, {Thing(0x100, 0, 0, "Obj_Pot_A_01")}).send.empty());
+    CHECK(other.Count() == 0);
+}
+
+TEST_CASE("world: a crate whose life can no longer be read was broken") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 5, "Obj_BrokenBox_A_01")});
+    const auto out = Walk(w, 1100 * kMs, {Thing(0x100, 0x11, std::nullopt, "Obj_BrokenBox_A_01")});
+    CHECK(Sent<proto::WorldBreak>(out).size() == 1);
+}
+
+TEST_CASE("world: another player's break takes our copy's life, then the copy if it stays") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01"), Thing(0x200, 0x22, 5, "Obj_BrokenBox_A_01")});
+    Walk(w, 5000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01"), Thing(0x200, 0x22, 5, "Obj_BrokenBox_A_01")});
+    w.Receive(BreakOf(0x11));
+    w.Receive(BreakOf(0x22));
+    auto out = Walk(w, 5100 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01"), Thing(0x200, 0x22, 5, "Obj_BrokenBox_A_01")});
+    REQUIRE(out.lives.size() == 2);
+    CHECK(out.lives[0].address == 0x100);
+    CHECK(out.lives[0].life == 0);
+    CHECK(out.lives[0].hurt == 0);
+    CHECK(out.send.empty());  // not our break: nothing goes back
+    // The pot takes it (life 0, pieces); the crate's life came back.
+    for (std::uint64_t t = 5200; t < 11000; t += 100) {
+        out = Walk(w, t * kMs, {Thing(0x100, 0x11, 0, "Obj_Pot_A_01"), Thing(0x200, 0x22, 5, "Obj_BrokenBox_A_01")});
+        CHECK(out.send.empty());
+        CHECK(out.lives.empty());
+        CHECK(w.Removes().empty());
+    }
+    Walk(w, 11100 * kMs, {Thing(0x100, 0x11, 0, "Obj_Pot_A_01"), Thing(0x200, 0x22, 5, "Obj_BrokenBox_A_01")});
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x200});
+}
+
+TEST_CASE("world: a grass tuft cut by another player is deleted when life 0 leaves it standing") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, kTuft)});
+    Walk(w, 5000 * kMs, {Thing(0x100, 0x11, 1, kTuft)});
+    w.Receive(BreakOf(0x11));
+    CHECK(Walk(w, 5100 * kMs, {Thing(0x100, 0x11, 1, kTuft)}).lives.size() == 1);
+    Walk(w, 5300 * kMs, {Thing(0x100, 0x11, 0, kTuft)});
+    CHECK(w.Removes().empty());
+    Walk(w, 5500 * kMs, {Thing(0x100, 0x11, 0, kTuft)});
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x100});
+}
+
+TEST_CASE("world: life 0 read just before the other player's break is their break") {
+    // The enemy sharing wrote life 0 into our tuft first; WORLD_BREAK came a walk later.
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, kTuft)});
+    Walk(w, 5000 * kMs, {Thing(0x100, 0x11, 1, kTuft)});
+    CHECK(Sent<proto::WorldBreak>(Walk(w, 5100 * kMs, {Thing(0x100, 0x11, 0, kTuft)})).size() == 1);
+    w.Receive(BreakOf(0x11));
+    Walk(w, 5200 * kMs, {Thing(0x100, 0x11, 0, kTuft)});
+    Walk(w, 5700 * kMs, {Thing(0x100, 0x11, 0, kTuft)});
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x100});
+}
+
+TEST_CASE("world: a copy first seen after the break is deleted quietly") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {});
+    w.Receive(BreakOf(0x11));
+    Walk(w, 2000 * kMs, {});
+    // The area loads a minute later, the pot whole in this game.
+    const auto out = Walk(w, 60000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    CHECK(out.lives.empty());
+    CHECK(out.send.empty());
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x100});
+    // The delete takes it; it does not count as put back when the area loads again.
+    Walk(w, 60100 * kMs, {});
+    Walk(w, 60200 * kMs, {});
+    const auto again = Walk(w, 70000 * kMs, {Thing(0x300, 0x11, 1, "Obj_Pot_A_01")});
+    CHECK(Sent<proto::WorldBreak>(again).size() == 1);
+    CHECK(Sent<proto::WorldBreak>(again)[0].flags == proto::world_break::restored);
+}
+
+TEST_CASE("world: the server's replay for the scene we are entering is kept") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {}, kLink, 2, "Market");
+    w.Receive(BreakOf(0x11));              // for kScene, while our walk still says Market
+    w.Receive(BreakOf(0x33, 0, "Graveyard"));
+    Walk(w, 1100 * kMs, {}, kLink, 2, "Market");
+    CHECK_FALSE(w.Broken(0x11));
+    Walk(w, 3000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    CHECK(w.Broken(0x11));
+    CHECK_FALSE(w.Broken(0x33));
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x100});
+    // A new scene forgets the old one's breaks.
+    Walk(w, 9000 * kMs, {}, kLink, 2, "Market");
+    CHECK_FALSE(w.Broken(0x11));
+}
+
+TEST_CASE("world: a rock thrown and gone next to Link was broken; an unloaded one was not") {
+    const char* rock = "Obj_LiftRock_A_01";
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, rock), Thing(0x200, 0x22, 1, rock, {1.0f, 2.0f, 30.0f})});
+    // Carried five metres, then gone (two walks), six metres from Link.
+    Walk(w, 1100 * kMs, {Thing(0x100, 0x11, 1, rock, {1.0f, 2.0f, 10.0f}), Thing(0x200, 0x22, 1, rock, {1.0f, 2.0f, 30.0f})});
+    std::vector<Seen> rest{Thing(0x200, 0x22, 1, rock, {1.0f, 2.0f, 30.0f})};
+    CHECK(Walk(w, 1200 * kMs, rest).send.empty());
+    CHECK(Walk(w, 1300 * kMs, rest).send.empty());
+    CHECK(Walk(w, 1900 * kMs, rest).send.empty());  // held
+    const auto out = Walk(w, 2100 * kMs, rest);
+    REQUIRE(Sent<proto::WorldBreak>(out).size() == 1);
+    CHECK(Sent<proto::WorldBreak>(out)[0].hash == 0x11);
+    // The far rock leaves: unloaded, nothing sent.
+    for (std::uint64_t t = 2200; t < 4000; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(Walk(w, t * kMs, {})).empty());
+    }
+    CHECK_FALSE(w.Broken(0x22));
+}
+
+TEST_CASE("world: pots that leave with their whole area were not broken") {
+    WorldSync w;
+    std::vector<Seen> room;
+    for (std::uint64_t i = 0; i < 6; ++i) {
+        // Two by the door next to Link, four across the room.
+        room.push_back(Thing(0x100 * (i + 1), 0x10 + i, 1, "Obj_Pot_A_01",
+                             {1.0f, 2.0f, i < 2 ? 3.0f : 20.0f + static_cast<float>(i)}));
+    }
+    Walk(w, 1000 * kMs, room);
+    for (std::uint64_t t = 1100; t < 4000; t += 100) {
+        CHECK(Walk(w, t * kMs, {}).send.empty());
+    }
+    // And with no Link in the walk (the scene is going) nothing is a break either.
+    WorldSync v;
+    Walk(v, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    for (std::uint64_t t = 1100; t < 4000; t += 100) {
+        CHECK(Walk(v, t * kMs, {}, std::nullopt).send.empty());
+    }
+}
+
+TEST_CASE("world: a pot the game puts back after we saw it break is whole for everyone again") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_02_Respawn")});
+    CHECK(Sent<proto::WorldBreak>(Walk(w, 1100 * kMs, {Thing(0x100, 0x11, 0, "Obj_Pot_A_02_Respawn")})).size() == 1);
+    Walk(w, 1200 * kMs, {});
+    Walk(w, 1300 * kMs, {});
+    const auto out = Walk(w, 9000 * kMs, {Thing(0x400, 0x11, 1, "Obj_Pot_A_02_Respawn")});
+    REQUIRE(Sent<proto::WorldBreak>(out).size() == 1);
+    CHECK(Sent<proto::WorldBreak>(out)[0].flags == proto::world_break::restored);
+    CHECK_FALSE(w.Broken(0x11));
+    CHECK(w.Removes().empty());
+    // The other game hears it and lets its own one be.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {});
+    b.Receive(BreakOf(0x11));
+    Walk(b, 1100 * kMs, {});
+    b.Receive(BreakOf(0x11, proto::world_break::restored));
+    Walk(b, 9100 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_02_Respawn")});
+    CHECK(b.Removes().empty());
+}
+
+TEST_CASE("world: a block pushed next to our Link is sent while it moves, then where it rests") {
+    WorldSync w;
+    CHECK(Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}).send.empty());
+    CHECK(w.Places(0x100));
+    auto out = Walk(w, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})});
+    REQUIRE(Sent<proto::WorldMove>(out).size() == 1);
+    CHECK(Sent<proto::WorldMove>(out)[0].hash == 0x50);
+    CHECK(Sent<proto::WorldMove>(out)[0].time_us == 1100 * kMs);
+    CHECK(Sent<proto::WorldMove>(out)[0].position[0] == doctest::Approx(1.2f));
+    CHECK(Sent<proto::WorldMove>(out)[0].flags == proto::world_move::carried);  // within 1.5 m
+    CHECK(w.MoverOf(0x50) == 2);
+    out = Walk(w, 1200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})});
+    CHECK(Sent<proto::WorldMove>(out).size() == 1);
+    for (std::uint64_t t = 1300; t < 1600; t += 100) {  // still: nothing new to say
+        CHECK(Walk(w, t * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})}).send.empty());
+    }
+    out = Walk(w, 1600 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})});
+    REQUIRE(Sent<proto::WorldPlace>(out).size() == 1);
+    CHECK(Sent<proto::WorldPlace>(out)[0].position[0] == doctest::Approx(1.4f));
+    CHECK(w.MoverOf(0x50) == 0);
+    CHECK(Walk(w, 1700 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})}).send.empty());
+    // Every message is one the codec takes.
+    for (const auto& m : out.send) {
+        CHECK(proto::encode(m).has_value());
+    }
+}
+
+TEST_CASE("world: an object that moves far from our Link is not ours to send") {
+    WorldSync w;
+    const proto::Vec3 far_link{100.0f, 2.0f, 3.0f};
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}, far_link);
+    for (std::uint64_t t = 1100; t < 2000; t += 100) {
+        const float x = 1.0f + static_cast<float>(t - 1000) / 1000.0f;
+        CHECK(Walk(w, t * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {x, 2.0f, 3.0f})}, far_link).send.empty());
+    }
+    // A pot that only settles a few centimetres is not being moved.
+    WorldSync v;
+    Walk(v, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    CHECK(Walk(v, 1100 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01", {1.0f, 1.9f, 3.0f})}).send.empty());
+}
+
+TEST_CASE("world: another player's moves place our copy, a little behind, then at its rest place") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    w.Receive(MoveOf(0x50, 2000 * kMs, 1.0f));
+    w.Receive(MoveOf(0x50, 2100 * kMs, 2.0f));
+    CHECK(Walk(w, 2100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}).send.empty());
+    CHECK(w.MoverOf(0x50) == 1);
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(2150 * kMs, poses);  // shows 2050: half way
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].address == 0x100);
+    CHECK(poses[0].position[0] == doctest::Approx(1.5f));
+    REQUIRE(poses[0].rotation);
+    CHECK((*poses[0].rotation)[0] == doctest::Approx(1.0f));
+    // Our copy goes where it is put; that is not us moving it.
+    CHECK(Walk(w, 2200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.5f, 2.0f, 3.0f})}).send.empty());
+    w.Receive(PlaceOf(0x50, 2.5f));
+    CHECK(Walk(w, 2300 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.0f, 2.0f, 3.0f})}).send.empty());
+    poses.clear();
+    w.Poses(2400 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(2.5f));
+    // Held for half a second, then let be; settling after that is not a move of ours.
+    CHECK(Walk(w, 2900 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})}).send.empty());
+    poses.clear();
+    w.Poses(2950 * kMs, poses);
+    CHECK(poses.empty());
+    CHECK(w.MoverOf(0x50) == 0);
+    CHECK(Walk(w, 3000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 1.8f, 3.0f})}).send.empty());
+    CHECK(Walk(w, 4300 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 1.8f, 3.0f})}).send.empty());
+    // Later we push it ourselves.
+    const auto out = Walk(w, 6000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 1.8f, 3.0f})}, proto::Vec3{3.0f, 1.8f, 4.0f});
+    CHECK(Sent<proto::WorldMove>(out).size() == 1);
+}
+
+TEST_CASE("world: two players moving one object: the lower number keeps it") {
+    // We are player 2 and pushing; player 1's moves come in: ours stop, theirs are placed.
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    CHECK(Sent<proto::WorldMove>(Walk(w, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})})).size() == 1);
+    w.Receive(MoveOf(0x50, 1150 * kMs, 0.8f, 1));
+    CHECK(Walk(w, 1200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})}).send.empty());
+    CHECK(w.MoverOf(0x50) == 1);
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(1300 * kMs, poses);
+    CHECK(poses.size() == 1);
+    // We are player 2 and pushing; player 3's moves come in: ours go on, theirs are not placed.
+    WorldSync v;
+    Walk(v, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    Walk(v, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})});
+    v.Receive(MoveOf(0x50, 1150 * kMs, 0.8f, 3));
+    CHECK(Sent<proto::WorldMove>(Walk(v, 1200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})})).size() == 1);
+    CHECK(v.MoverOf(0x50) == 2);
+    poses.clear();
+    v.Poses(1300 * kMs, poses);
+    CHECK(poses.empty());
+    // Between two other players the lower number's moves are the ones placed.
+    WorldSync u;
+    Walk(u, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}, kLink, 4);
+    u.Receive(MoveOf(0x50, 1100 * kMs, 5.0f, 3));
+    u.Receive(MoveOf(0x50, 1110 * kMs, 9.0f, 1));
+    u.Receive(MoveOf(0x50, 1120 * kMs, 5.1f, 3));
+    Walk(u, 1200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}, kLink, 4);
+    CHECK(u.MoverOf(0x50) == 1);
+    poses.clear();
+    u.Poses(1400 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(9.0f));
+}
+
+TEST_CASE("world: a block first seen after it was moved goes to its rest place") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {});
+    w.Receive(PlaceOf(0x50, 7.0f));  // the server's replay as we entered
+    Walk(w, 1100 * kMs, {});
+    Walk(w, 30000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(30050 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] == doctest::Approx(7.0f));
+    CHECK(Walk(w, 30200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {7.0f, 2.0f, 3.0f})}).send.empty());
+    Walk(w, 30600 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {7.0f, 2.0f, 3.0f})});
+    poses.clear();
+    w.Poses(30650 * kMs, poses);
+    CHECK(poses.empty());
+}
+
+TEST_CASE("world: a carried pot is moved for the others and breaks where it lands") {
+    WorldSync a;  // the carrier
+    Walk(a, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    auto out = Walk(a, 1100 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01", {1.0f, 3.2f, 3.6f})});
+    REQUIRE(Sent<proto::WorldMove>(out).size() == 1);
+    out = Walk(a, 1200 * kMs, {Thing(0x100, 0x11, 0, "Obj_Pot_A_01", {1.0f, 2.0f, 8.0f})});
+    CHECK(Sent<proto::WorldBreak>(out).size() == 1);
+    CHECK(Sent<proto::WorldMove>(out).empty());  // broken: no more moves
+    CHECK(a.MoverOf(0x11) == 0);
+    WorldSync b;  // the watcher
+    Walk(b, 1000 * kMs, {Thing(0x900, 0x11, 1, "Obj_Pot_A_01")});
+    Walk(b, 5000 * kMs, {Thing(0x900, 0x11, 1, "Obj_Pot_A_01")});
+    b.Receive(MoveOf(0x11, 5000 * kMs, 1.0f));
+    Walk(b, 5100 * kMs, {Thing(0x900, 0x11, 1, "Obj_Pot_A_01")});
+    std::vector<CoopObjects::PoseWrite> poses;
+    b.Poses(5150 * kMs, poses);
+    CHECK(poses.size() == 1);
+    b.Receive(BreakOf(0x11));
+    CHECK(Walk(b, 5200 * kMs, {Thing(0x900, 0x11, 1, "Obj_Pot_A_01")}).lives.size() == 1);
+    poses.clear();
+    b.Poses(5250 * kMs, poses);
+    CHECK(poses.empty());  // it is breaking: not placed any more
+}
+
+TEST_CASE("world: Reset and a reused address start clean") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    w.Receive(BreakOf(0x11));
+    w.Reset();
+    CHECK(w.Count() == 0);
+    Walk(w, 2000 * kMs, {Thing(0x100, 0x11, 1, "Obj_Pot_A_01")});
+    CHECK_FALSE(w.Broken(0x11));
+    // The same address with another placement is another object: no break from the life change.
+    CHECK(Walk(w, 2100 * kMs, {Thing(0x100, 0x77, 0, "Obj_Pot_A_01")}).send.empty());
+    CHECK(w.Count() == 1);
+}

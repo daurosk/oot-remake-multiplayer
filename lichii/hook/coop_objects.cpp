@@ -162,6 +162,14 @@ constexpr u64 kLastHitId = 0x1b18;
   // the copy's own AI took over: play again at most this often
 constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
+// LICHII_COOP_OBJECTS_AI_HOLD=1 (experiment, off by default; docs/objects.md
+// "Holding a copy's AI"): the BSA component is table +0xb0 (0xcad060), and
+// bit 0 of its u16 at +0xc4 is what QueryBsaIsBrainSkip (run 0x29ce250)
+// reads. The Mover sets it on enemy copies each game frame and counts how
+// often it was still set from the frame before.
+constexpr u64 kComponentBsa = 0xb0;
+constexpr u64 kBsaFlags = 0xc4;
+constexpr u16 kBsaBrainSkip = 1;
 constexpr u64 kComponentLife = 0x2b8;
 constexpr u64 kLifeValue = 0x1c10;
 constexpr u64 kLifeMax = 0x1c18;
@@ -318,6 +326,7 @@ public:
         u64 actor = 0;
         std::array<float, 12> transform{};  // place, then the 3x3 rows
         bool rotation = false;              // false: keep the actor's own
+        bool hold = false;                  // an enemy copy: skip its brain (experiment)
     };
 
     struct Hit {
@@ -495,6 +504,9 @@ public:
             if (!Alive(guest, p.actor)) {
                 continue;
             }
+            if (p.hold) {
+                HoldBrain(guest, p.actor);
+            }
             if (p.rotation) {
                 guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
             } else {
@@ -510,7 +522,32 @@ public:
         return std::nullopt;
     }
 
+    // Brain-skip bits set since the last ask, and how many of them were
+    // still set from the frame before (the game did not clear them).
+    std::pair<std::size_t, std::size_t> TakeHolds() {
+        std::lock_guard lock(mutex_);
+        return {std::exchange(hold_set_, 0), std::exchange(hold_kept_, 0)};
+    }
+
 private:
+    void HoldBrain(CoopPuppet::Guest& guest, u64 actor) {
+        u64 table = 0;
+        u64 bsa = 0;
+        u16 flags = 0;
+        if (!guest.Read(actor + kActorComponents, &table, 8) || table == 0 ||
+            !guest.Read(table + kComponentBsa, &bsa, 8) || bsa == 0 ||
+            !guest.Read(bsa + kBsaFlags, &flags, 2)) {
+            return;
+        }
+        ++hold_set_;
+        if ((flags & kBsaBrainSkip) != 0) {
+            ++hold_kept_;
+            return;
+        }
+        flags |= kBsaBrainSkip;
+        guest.Write(bsa + kBsaFlags, &flags, 2);
+    }
+
     static u64 SteadyMs() {
         return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
@@ -661,6 +698,8 @@ private:
     std::size_t next_remove_ = 0;
     std::size_t moved_ = 0;
     std::size_t deleted_ = 0;
+    std::size_t hold_set_ = 0;
+    std::size_t hold_kept_ = 0;
 };
 
 Mover& TheMover() {
@@ -844,6 +883,7 @@ public:
     bool hurt_ = true;
     bool replay_ = false;
     bool drive_ = false;
+    bool ai_hold_ = false;
     u64 test_take_ = 0;
     u64 take_at_ = 0;
     int drive_mode_ = 0;
@@ -1137,6 +1177,10 @@ private:
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
                 p.rotation = true;
             }
+            if (ai_hold_) {
+                const auto known = names_.find(w.address);
+                p.hold = known != names_.end() && known->second.first.starts_with("Enemy_");
+            }
             wish.push_back(p);
             placed.emplace(w.address, w.position);
         }
@@ -1155,6 +1199,11 @@ private:
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
+            }
+            if (ai_hold_) {
+                const auto [set, kept] = TheMover().TakeHolds();
+                LOG_INFO(Core, "coop: objects: ai hold: brain skip set {} times, {} still set from the frame before",
+                         set, kept);
             }
             drift_at_ = now_us;
             drift_sum_ = 0.0f;
@@ -1350,6 +1399,7 @@ Objects& Instance() {
         objects.replay_ = EnvOn("LICHII_COOP_OBJECTS_HIT_REPLAY");
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT") || objects.replay_;
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
+        objects.ai_hold_ = EnvFlag("LICHII_COOP_OBJECTS_AI_HOLD");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         return true;

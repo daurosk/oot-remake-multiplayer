@@ -68,11 +68,11 @@ A virtual LAN adds a little delay when it cannot connect the PCs directly; the p
 
 Yes, once your game has saved. Shared progress means the items, songs, chests, keys and pickups that other players shared with you. Co-op writes them into your game the same way your own pickups are written: through the game's own flag store, into the copy the game saves. So they behave like progress you made yourself:
 
-- **What is written into your save:** shared key items and upgrades, songs, bottles (empty), maps, compasses, boss keys, small keys, Gold Skulltula tokens, heart pieces, and the chests and one-time pickups that are shared ([host.md](host.md), [items.md](items.md)). They go into the save file the next time **the game** saves (an autosave, for example after getting an item, or when you save from the menu). Co-op never saves the game itself. If you close the emulator before the game has saved, the newest changes are lost, as in normal play.
+- **What is written into your save:** shared key items and upgrades, songs, bottles (empty), maps, compasses, boss keys, small keys, Gold Skulltula tokens, heart pieces, and the chests and one-time pickups that are shared ([host.md](host.md), [items.md](items.md)). They go into the save file the next time **the game** saves (an autosave, for example after you get an item yourself, or when you save from the menu). Co-op never saves the game itself: receiving a shared item does not save by itself. If you close the emulator before the game has saved, the newest changes are lost, as in normal play.
 - **Nothing is undone when you disconnect.** Leaving, losing the connection or the server closing takes nothing out of your game. You keep playing alone with everything you had, and the game saves it as usual.
 - **What is not shared, so it is only ever yours:** rupees, ammo, life and magic right now, what is in your bottles, your equipped gear and item buttons ([items.md](items.md), "Rules").
 - **While you are away**, you get nothing from the others. When you join again while the same server is still running, you get what they found in the meantime. You also keep what you found alone: the server merges both, and an item you have is never taken away.
-- **The server keeps nothing on disk.** Its list of shared progress lives only while its window is open. When the host starts it again, it fills again from the host's save, so progress lasts in the players' saves, not on the server.
+- **The server keeps nothing on disk.** Its list of shared progress lives only while its window is open. When it is started again, it fills again from the running game of the first player who joins (the host), so progress lasts in the players' saves, not on the server.
 
 ## Troubleshooting
 

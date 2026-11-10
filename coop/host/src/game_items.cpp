@@ -474,7 +474,11 @@ std::span<const ItemGrant> item_grants(std::uint32_t item) {
 }
 
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
-  if (!ready_) return;  // no save loaded yet: its load would undo it
+  if (!ready_) {
+    // No Link: a load would undo it. A new item gets it all at the mend.
+    if (new_item && load_ != nullptr) load_->note_new(item);
+    return;
+  }
   for (const ItemGrant& g : item_grants(item)) {
     if (!new_item && !is_capacity(g)) continue;  // an item held already: capacity only
     const FlagKey key{g.hash, 0};
@@ -547,7 +551,7 @@ std::size_t ItemFlagStore::mend() {
     if (!now || now->kind != item->kind) continue;
     const bool held = item->kind == protocol::FlagKind::int32 ? as_int(now->value) >= 1
                                                               : now->value != 0;
-    if (held) grant(g.item, false);
+    if (held) grant(g.item, load_ != nullptr && load_->pending(g.item));
   }
   return static_cast<std::size_t>(stats_.granted - before);
 }

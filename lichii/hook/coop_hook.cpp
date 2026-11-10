@@ -294,7 +294,7 @@ public:
                 // Issue 138: grants wait for a loaded save, and the capacities
                 // of held items are mended for a while after each load.
                 const bool mend = load_mend_.frame(reading.has_value());
-                store.emplace(*game_store, load_mend_.ready());
+                store.emplace(*game_store, &load_mend_);
                 if (mend) {
                     if (const auto raised = store->mend(); raised != 0) {
                         LOG_INFO(Core, "coop: items: {} capacities mended after a load", raised);

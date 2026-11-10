@@ -866,7 +866,7 @@ TEST_CASE("item grants: nothing is granted on the title screen, a loaded save is
   // Title screen: the join snapshot brings the Slingshot and a stick pickup.
   CHECK_FALSE(load.frame(false));
   {
-    ItemFlagStore store(game, load.ready());
+    ItemFlagStore store(game, &load);
     CHECK(store.write(owned(kSlingshot)));
     CHECK(store.write(b(kSticksGet, true)));
     CHECK(store.stats().granted == 0);
@@ -880,29 +880,92 @@ TEST_CASE("item grants: nothing is granted on the title screen, a loaded save is
   CHECK_FALSE(load.frame(false));
   CHECK(load.frame(true));
   {
-    ItemFlagStore store(game, load.ready());
-    CHECK(store.mend() == 2);
+    ItemFlagStore store(game, &load);
+    CHECK(store.mend() == 4);  // seed room, seeds, IsGet seeds, stick room
   }
   CHECK(game.value(kSeedCap) == 30);
   CHECK(game.value(kStickCap) == 10);
-  CHECK(game.value(kSeeds) == 0);   // a mend gives room, not ammo
-  CHECK(game.value(kSticks) == 0);
+  CHECK(game.value(kSeeds) == 30);  // the Slingshot came on the title: its whole grant now
+  CHECK(game.value(kSticks) == 0);  // IsGet gives room only
 
   // The load writes its 0 again in the next frame: the mend runs again.
   game.hold(kSeedCap, K::int32, 0);
   CHECK(load.frame(true));
   {
-    ItemFlagStore store(game, load.ready());
+    ItemFlagStore store(game, &load);
     CHECK(store.mend() == 1);
   }
   CHECK(game.value(kSeedCap) == 30);
-
-  // It stops after kFrames; a later load (title, then Link) starts it again.
-  unsigned more = 0;
-  while (load.frame(true)) ++more;
-  CHECK(more == coop::host::LoadMend::kFrames - 2);
+  // After the mend frames, an item held from before gets room only.
+  while (load.frame(true)) {
+  }
+  CHECK_FALSE(load.pending(kSlingshot));
+  game.hold(kSeedCap, K::int32, 0);
+  game.hold(kSeeds, K::int32, 3);
   CHECK_FALSE(load.frame(false));
   CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    store.mend();
+  }
+  CHECK(game.value(kSeedCap) == 30);
+  CHECK(game.value(kSeeds) == 3);
+
+}
+
+TEST_CASE("item grants: the mend runs kFrames after each load") {
+  coop::host::LoadMend load;
+  CHECK_FALSE(load.frame(false));
+  unsigned frames = 0;
+  while (load.frame(true)) ++frames;
+  CHECK(frames == coop::host::LoadMend::kFrames);
+  CHECK_FALSE(load.frame(true));
+  CHECK_FALSE(load.frame(false));  // a scene load
+  CHECK(load.frame(true));
+}
+
+TEST_CASE("item grants: an item that comes during a scene load gets its whole grant after it") {
+  MapStore game = game_with_grant_flags();
+  coop::host::LoadMend load;
+  load.frame(true);
+  while (load.frame(true)) {
+  }
+  CHECK_FALSE(load.frame(false));  // a door: no Link for a moment
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.write(owned(kBow)));  // the other player opened the Bow chest
+    CHECK(store.write(owned(kBombBagS)));
+  }
+  CHECK(game.value(kBow) == 1);
+  CHECK(game.value(kArrows) == 0);
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    store.mend();
+  }
+  CHECK(game.value(kArrowCap) == 30);
+  CHECK(game.value(kArrows) == 30);
+  CHECK(game.value(kBombCap) == 20);
+  CHECK(game.value(kBombs) == 20);
+}
+
+TEST_CASE("item grants: a pending item's grant leaves a bigger bag and more ammo alone") {
+  MapStore game = game_with_grant_flags();
+  coop::host::LoadMend load;
+  CHECK_FALSE(load.frame(false));
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.write(owned(kBow)));
+  }
+  game.hold(kArrowCap, K::int32, 50);  // the save loads with a big quiver
+  game.hold(kArrows, K::int32, 45);
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.mend() == 1);  // IsGet.Item_Arrow_Normal only
+  }
+  CHECK(game.value(kArrowCap) == 50);
+  CHECK(game.value(kArrows) == 45);
 }
 
 TEST_CASE("item grants: a mend leaves a bigger bag and items not held alone") {

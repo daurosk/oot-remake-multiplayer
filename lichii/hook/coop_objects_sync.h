@@ -182,6 +182,10 @@ struct EnemyCopy {
     std::string name;
     coop::protocol::Vec3 position{};
     bool removed = false;   // the maker's one is gone: delete ours
+    // Our copy went by itself while the maker's one lives (a Stalchild's own
+    // AI sinks it, issue 124): how often the director makes it again. 0 once
+    // our copy was seen dead.
+    std::uint8_t remakes = 0;
 };
 
 // The server repeats OBJECT_OWNER for every shared object about every 10 s.
@@ -229,6 +233,7 @@ public:
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
     static constexpr std::uint64_t kCreateWaitUs = 3'000'000;  // then a roll near it is ours to delete
+    static constexpr std::uint8_t kRemakes = 3;  // EnemyCopy::remakes for a live one
     static constexpr std::uint64_t kLateUs = 3'000'000;  // after the scene's first walk: came later
 
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
@@ -471,6 +476,9 @@ private:
         std::uint64_t got_us = 0;
         std::uint64_t address = 0;  // once the director made it and it was seen
         bool removed = false;
+        // Our copy left the walk dead (life 0 or a death animation): the
+        // director must not make it again (issue 124).
+        bool dead = false;
     };
     std::uint8_t DeciderOf(std::uint8_t self, std::uint64_t now_us) const;
     std::string scene_;

@@ -440,7 +440,7 @@ void Sync::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
 std::vector<EnemyCopy> Sync::Creates() const {
     std::vector<EnemyCopy> out;
     for (const auto& [key, d] : decided_) {
-        out.push_back({key, d.name, d.position, d.removed});
+        out.push_back({key, d.name, d.position, d.removed, d.dead ? std::uint8_t{0} : kRemakes});
     }
     return out;
 }
@@ -678,6 +678,18 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             send.emplace_back(r);
             owners_.erase(owner);
         } else {
+            // A decided copy the director made left our walk. Dead: not made
+            // again. Otherwise it went by itself (issue 124: a Stalchild copy
+            // sank into the ground while the decider's one still fights); the
+            // director makes it again, and the new one gets the create wait.
+            for (auto& [key, d] : decided_) {
+                if (d.address == o.address && d.id == o.id && !d.removed) {
+                    d.dead = d.dead || (o.life && *o.life <= 0) ||
+                             (o.animation && IsDeathAnimation(o.animation->name));
+                    d.address = 0;
+                    d.got_us = now_us;
+                }
+            }
             gone.push_back(std::move(it->second));
         }
         it = objects_.erase(it);

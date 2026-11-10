@@ -132,6 +132,27 @@ struct EnemyCopy {
     bool removed = false;   // the maker's one is gone: delete ours
 };
 
+// The server repeats OBJECT_OWNER for every shared object about every 10 s.
+// Changed() is true only when an object's owner or epoch differs from what
+// was seen last, so the log shows changes, not repeats (issue 111).
+class OwnerLog {
+public:
+    bool Changed(const coop::protocol::ObjectOwner& o) {
+        if (last_.size() >= kMax && !last_.contains(o.id)) last_.clear();
+        const auto now = std::make_pair(o.owner, o.epoch);
+        const auto [it, added] = last_.try_emplace(o.id, now);
+        if (added) return true;
+        if (it->second == now) return false;
+        it->second = now;
+        return true;
+    }
+    void Clear() { last_.clear(); }
+
+private:
+    static constexpr std::size_t kMax = 4096;
+    std::map<coop::protocol::ObjectId, std::pair<std::uint8_t, std::uint16_t>> last_;
+};
+
 class Sync {
 public:
     static constexpr std::uint64_t kPresentEveryUs = 2'000'000;

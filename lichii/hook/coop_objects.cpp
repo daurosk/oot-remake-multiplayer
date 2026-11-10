@@ -985,8 +985,10 @@ public:
     // Network thread.
     void Receive(const coop::protocol::Message& m) {
         if (const auto* o = std::get_if<coop::protocol::ObjectOwner>(&m)) {
-            LOG_INFO(Core, "coop: objects: share owner {:#x} is player {} epoch {}", o->id.value,
-                     o->owner, o->epoch);
+            if (owner_log_.Changed(*o)) {
+                LOG_INFO(Core, "coop: objects: share owner {:#x} is player {} epoch {}",
+                         o->id.value, o->owner, o->epoch);
+            }
         } else if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
             LOG_INFO(Core, "coop: objects: share got damage {} for {:#x}", d->amount,
                      d->id.value);
@@ -1564,6 +1566,7 @@ private:
     unsigned share_frame_ = 0;
     bool sharing_ = false;
     std::size_t present_logged_ = ~std::size_t{0};
+    CoopObjects::OwnerLog owner_log_;  // network thread
     std::size_t enemies_logged_ = 0;
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;

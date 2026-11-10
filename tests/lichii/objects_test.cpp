@@ -1028,3 +1028,24 @@ TEST_CASE("objects: the AI hold's table and hook") {
     table = CoopHold::Table({}, CoopHold::MasksFor(1));
     CHECK(u32(0) == 0);
 }
+
+TEST_CASE("objects: OBJECT_OWNER is logged on a change, not on every repeat") {
+    CoopObjects::OwnerLog log;
+    proto::ObjectOwner a;
+    a.id.value = 0x1234;
+    a.owner = 2;
+    a.epoch = 1;
+    CHECK(log.Changed(a));
+    CHECK_FALSE(log.Changed(a));  // the 10 s repeat
+    CHECK_FALSE(log.Changed(a));
+    proto::ObjectOwner b = a;
+    b.id.value = 0x5678;
+    CHECK(log.Changed(b));  // another object
+    a.epoch = 2;
+    CHECK(log.Changed(a));  // a new epoch
+    a.owner = 1;
+    CHECK(log.Changed(a));  // a new owner
+    CHECK_FALSE(log.Changed(a));
+    log.Clear();
+    CHECK(log.Changed(a));
+}

@@ -932,14 +932,24 @@ TEST_CASE("player equip: number, channel, senders and layout") {
 
 TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   Message back;
-  // An unknown component 12 between two known ones.
-  CHECK(decode(Bytes{17, 0, 18, 0, 0, 2, 0, 3, 0, 1, 0, 'x', 12, 0, 1, 0, 7, 9, 0, 1, 0, 2},
+  // An unknown component 200 between two known ones.
+  CHECK(decode(Bytes{17, 0, 18, 0, 0, 2, 0, 3, 0, 1, 0, 'x', 200, 0, 1, 0, 7, 9, 0, 1, 0, 2},
                back) == Error::none);
   CHECK(std::get<PlayerEquip>(back).equipment.shield == "x");
   CHECK(std::get<PlayerEquip>(back).equipment.drawn == 2);
   // The held item (10).
   CHECK(decode(Bytes{17, 0, 8, 0, 0, 10, 0, 3, 0, 1, 0, 's'}, back) == Error::none);
   CHECK(std::get<PlayerEquip>(back).equipment.held == "s");
+  // The other hand slots (11 to 15), each a string like the held item.
+  CHECK(decode(Bytes{17, 0, 35, 0, 0, 11, 0, 3, 0, 1, 0, 'a', 12, 0, 3, 0, 1, 0, 'b',
+                     13, 0, 3, 0, 1, 0, 'c', 14, 0, 3, 0, 1, 0, 'd', 15, 0, 2, 0, 0, 0},
+               back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back).equipment.weapon_slot == "a");
+  CHECK(std::get<PlayerEquip>(back).equipment.sub_weapon == "b");
+  CHECK(std::get<PlayerEquip>(back).equipment.third_weapon == "c");
+  CHECK(std::get<PlayerEquip>(back).equipment.tool == "d");
+  CHECK(std::get<PlayerEquip>(back).equipment.sub_tool == "");
+  CHECK_FALSE(std::get<PlayerEquip>(back).equipment.held);
   CHECK_FALSE(std::get<PlayerEquip>(back).equipment.weapon);
   // The same component twice.
   CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 9, 0, 1, 0, 1}) ==

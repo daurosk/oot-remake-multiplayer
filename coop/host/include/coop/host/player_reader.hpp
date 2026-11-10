@@ -75,10 +75,10 @@ class PlayerReader {
  private:
   std::optional<std::uint64_t> game_ui();
   std::optional<std::uint8_t> read_drawn();
-  // The actor name of the piece in equipment slot 3 (slingshot, bow); ""
-  // when the slot is empty or its piece is gone. Nothing when the slot or
-  // the name could not be read.
-  std::optional<std::string> read_held();
+  // The actor name of the piece in an equipment slot (3: slingshot, bow);
+  // "" when the slot is empty or its piece is gone. Nothing when the slot
+  // or the name could not be read.
+  std::optional<std::string> read_slot_name(std::uint32_t slot_index);
   GameMemory& memory_;
   DrawnState own_drawn_{};
   DrawnState& drawn_memo_;

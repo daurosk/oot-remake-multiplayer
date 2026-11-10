@@ -110,6 +110,13 @@ enum class EquipComponent : std::uint16_t {
   arrow = 8,
   drawn = 9,
   held = 10,
+  // The actor in each other hand slot of the game's EquipmentUser, by name,
+  // as `held` is for slot 3 (docs/puppet.md, "The other hand slots").
+  weapon_slot = 11,   // slot 0, Weapon: the sword, or a Deku stick in its place
+  sub_weapon = 12,    // slot 1, SubWeapon
+  third_weapon = 13,  // slot 2, ThirdWeapon
+  tool = 14,          // slot 5, Tool
+  sub_tool = 15,      // slot 6, SubTool
 };
 
 // Longest equipped actor name: the game keeps each in a String64 flag.
@@ -429,6 +436,13 @@ struct Equipment {
   // The item in the game's equipment slot 3 (slingshot, bow), by the name of
   // its actor; "" when the slot is empty. In hand when bit 3 of drawn is set.
   std::optional<std::string> held;
+  // The same for the other hand slots: 0 (what is really in the sword hand),
+  // 1, 2, 5 and 6. In hand when that slot's bit of drawn is set.
+  std::optional<std::string> weapon_slot;
+  std::optional<std::string> sub_weapon;
+  std::optional<std::string> third_weapon;
+  std::optional<std::string> tool;
+  std::optional<std::string> sub_tool;
   bool operator==(const Equipment&) const = default;
 };
 
@@ -450,6 +464,11 @@ inline Equipment merge_equipment(const Equipment& before, const Equipment& now) 
   keep(e.arrow, before.arrow);
   keep(e.drawn, before.drawn);
   keep(e.held, before.held);
+  keep(e.weapon_slot, before.weapon_slot);
+  keep(e.sub_weapon, before.sub_weapon);
+  keep(e.third_weapon, before.third_weapon);
+  keep(e.tool, before.tool);
+  keep(e.sub_tool, before.sub_tool);
   return e;
 }
 

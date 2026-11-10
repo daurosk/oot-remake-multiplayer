@@ -296,7 +296,8 @@ TEST_CASE("testinput: wear names a gear slot and a piece") {
     CHECK_FALSE(Parse("wear hat Armor_Child_Mask_Keaton\n", error));
     CHECK(WearFlag("head") == std::optional<std::string>("EquipHeadArmor"));
     CHECK(WearFlag("Boots") == std::optional<std::string>("EquipBoot"));
-    CHECK_FALSE(WearFlag("hand"));
+    CHECK(WearFlag("hand") == std::optional<std::string>("EquipHandArmor"));  // the gauntlets
+    CHECK_FALSE(WearFlag("gloves"));
     Runner r(Must("wear head Armor_Child_Mask_Keaton\n"));
     std::vector<std::string> log;
     r.Advance(0.0, std::nullopt, log);

@@ -197,6 +197,11 @@ Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a know
 | 8 | `arrow` | string | `PlayerStatus.EquipArrow` |
 | 9 | `drawn` | `u8`: bit *i* set when the player's equipment slot *i* is drawn (in hand), clear when sheathed or empty | the EquipmentUser component |
 | 10 | `held` | string: the item in equipment slot 3, the slot of the slingshot and the bow (for example `Weapon_Range_SlingShot`); in hand when bit 3 of `drawn` is set | the name of the actor in that slot |
+| 11 | `weapon_slot` | string: the actor in equipment slot 0 (Weapon), which is not always the equipped sword (a Deku stick); in hand when bit 0 of `drawn` is set | the name of the actor in that slot |
+| 12 | `sub_weapon` | string: the actor in slot 1 (SubWeapon); bit 1 of `drawn` | the same |
+| 13 | `third_weapon` | string: the actor in slot 2 (ThirdWeapon); bit 2 | the same |
+| 14 | `tool` | string: the actor in slot 5 (Tool); bit 5 | the same |
+| 15 | `sub_tool` | string: the actor in slot 6 (SubTool); bit 6 | the same |
 
 Each string is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
 
@@ -316,6 +321,7 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 - Types 12 to 27 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP`, the object messages, `PLAYER_POSE` and `TIME_OF_DAY`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.
 - Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.
+- `PLAYER_EQUIP` components 11 to 15 (the other hand slots, branch `held-items-2`) were added the same way and need no version of their own: a build without them skips them (unknown components are skipped), and its puppets show only the sword, shield and slot 3. As for 10, a server without them drops them when it relays.
 - `PLAYER_EQUIP` component 10, `held`, was added this way (2026-11-09) and the version stayed 3: a build without it skips it, and its puppets show no held item. The server reads and writes the message again when it relays, so a server without it drops the component: the held item needs a server that has it.
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.

@@ -572,6 +572,28 @@ TEST_CASE("host reader: what the player wears") {
       CHECK(reader.read_equipment()->held == "");
     }
   }
+  SUBCASE("the other hand slots are read the same way, each its own") {
+    put_user(m, l);
+    const auto name_in = [&](std::uint32_t slot, const std::string& name) {
+      put_equipped(m, slot, 60 + slot, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * slot;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    name_in(0, "Weapon_Sword_DekuStick");
+    name_in(5, "Weapon_Boomerang");
+    const auto e = reader.read_equipment();
+    REQUIRE(e);
+    CHECK(e->weapon_slot == "Weapon_Sword_DekuStick");
+    CHECK(e->tool == "Weapon_Boomerang");
+    CHECK(e->sub_weapon == "");    // empty slots
+    CHECK(e->third_weapon == "");
+    CHECK(e->sub_tool == "");
+    CHECK(e->held == "");
+  }
   SUBCASE("a request lasts a moment: the last one stands") {
     put_user(m, l);
     const std::uint64_t request = kUser + 0x13bc;

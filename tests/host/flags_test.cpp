@@ -97,7 +97,7 @@ TEST_CASE("shared flags: bad lines are refused with their line number") {
 }
 
 TEST_CASE("shared flags: the example file loads") {
-  const auto path = std::filesystem::path(__FILE__).parent_path() / "shared_flags.example.txt";
+  const auto path = std::filesystem::path(COOP_TEST_SOURCE_DIR) / "host" / "shared_flags.example.txt";
   std::string error;
   const auto flags = SharedFlags::load(path, &error);
   REQUIRE_MESSAGE(flags, error);

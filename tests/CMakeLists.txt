@@ -48,3 +48,6 @@ add_subdirectory(server)
 
 # The test tool runs a server and two clients for 3 s and loses nothing.
 add_test(NAME coop_test_two_clients COMMAND coop_test --clients 2 --seconds 3 --port 0 --report-every 0)
+
+# Where the test data files are (source paths are trimmed out of __FILE__, cmake/trim_paths.cmake).
+target_compile_definitions(coop_tests PRIVATE COOP_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

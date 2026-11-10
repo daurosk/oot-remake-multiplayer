@@ -13,15 +13,27 @@ word is a flag hash, and its second word is the value for the inline types
 (Bool 0, Int 2, Enum 6, UInt 20). There is no checksum. Only values already
 in the table are changed; nothing is added or moved.
 
+  save_flags.py list AUTOTEST_SAVE        each user's slots and their bombs
   save_flags.py get SAVE int:0xdb1bcd4f [bool:0x2bb00768 ...]
   save_flags.py set SAVE int:0xdb1bcd4f=20 [bool:0x2bb00768=1 ...]
   save_flags.py bombs SAVE [SAVE ...]     what a real small bomb bag sets
 
-Close the game first: it writes its saves on every scene change.
+SAVE may be a pattern (slot_0*/progress.sav); it is expanded here, as the
+Windows shells do not. Only saves in a kit's baseline are touched: a path
+must be <...>/autotest-save/<user>/<title>/slot_NN/progress.sav, and nothing
+under %APPDATA% or %LOCALAPPDATA% (a player's own saves, the emulator's
+NAND) is ever read or written. Before a change the file is copied to
+progress.sav.bak-<time>, and the new bytes go to a temp file that then
+replaces it. Close the game first: it writes its saves on every scene change.
 """
 import argparse
+import glob
+import os
+import re
+import shutil
 import struct
 import sys
+import time
 
 MAGIC = 0x01020304
 TABLE = 0x20
@@ -58,7 +70,9 @@ class SaveError(ValueError):
 
 
 def index(data):
-    """{(type id, hash): offset of the value word} for the inline entries."""
+    """{(type id, hash): offset of the value word} for the inline entries.
+    Checks the whole table: the type openers 0 to 0x1f in order, none
+    missing, then the end record and its pair, all before the pool."""
     if len(data) < TABLE or struct.unpack_from("<I", data, 0)[0] != MAGIC:
         raise SaveError("not a saved game (magic)")
     pool = struct.unpack_from("<I", data, 8)[0]
@@ -70,15 +84,91 @@ def index(data):
     while at + 8 <= pool:
         first, second = struct.unpack_from("<II", data, at)
         if first == 0:
+            expected = 0 if kind is None else kind + 1
+            if second != expected:
+                raise SaveError(f"type {second:#x} where {expected:#x} was due")
             if second == END:
+                if at + 16 > pool:
+                    raise SaveError("the end record's pair runs into the pool")
                 return out
             kind = second
         elif kind is None:
             raise SaveError("an entry before the first type")
         elif kind in TYPES.values():
+            if (kind, first) in out:
+                raise SaveError(f"{first:#x} twice in type {kind}")
             out[(kind, first)] = at + 4
         at += 8
     raise SaveError("no end record before the pool")
+
+
+SLOT = re.compile(r"slot_\d\d$", re.IGNORECASE)
+
+
+def _forbidden_roots():
+    roots = []
+    for name in ("APPDATA", "LOCALAPPDATA"):
+        value = os.environ.get(name)
+        if value:
+            roots.append(os.path.normcase(os.path.realpath(value)))
+    return roots
+
+
+def read_file(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def check_path(path):
+    """The resolved path of a baseline save, or SaveError."""
+    real = os.path.realpath(path)
+    norm = os.path.normcase(real)
+    for root in _forbidden_roots():
+        if norm == root or norm.startswith(root.rstrip(os.sep) + os.sep):
+            raise SaveError(f"{path}: under %APPDATA% or %LOCALAPPDATA%, never touched")
+    parts = os.path.normpath(real).split(os.sep)
+    if (len(parts) < 5 or parts[-1].lower() != "progress.sav" or not SLOT.match(parts[-2])
+            or parts[-5].lower() != "autotest-save"):
+        raise SaveError(f"{path}: not <kit>/autotest-save/<user>/<title>/slot_NN/progress.sav")
+    return real
+
+
+def expand(patterns):
+    """Glob patterns to checked save paths; an unmatched pattern is an error."""
+    out = []
+    for pattern in patterns:
+        hits = sorted(glob.glob(pattern)) if glob.has_magic(pattern) else [pattern]
+        if not hits:
+            raise SaveError(f"{pattern}: matches no file")
+        out.extend(check_path(h) for h in hits)
+    return out
+
+
+def write_save(path, old, new):
+    """Backs `old` up next to the file, then replaces it with `new` through a
+    temp file. Refuses when the file changed since it was read."""
+    index(new)  # the changed bytes are still a whole save
+    with open(path, "rb") as f:
+        if f.read() != old:
+            raise SaveError(f"{path}: changed since it was read (is the game running?)")
+    stem = f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+    backup, n = stem, 0
+    while os.path.exists(backup):
+        n += 1
+        backup = f"{stem}-{n}"
+    shutil.copyfile(path, backup)
+    with open(backup, "rb") as f:
+        if f.read() != old:
+            raise SaveError(f"{path}: backup {backup} does not match; nothing written")
+    tmp = f"{path}.tmp-{os.getpid()}"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(new)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return backup
 
 
 def parse_flag(text):
@@ -133,6 +223,8 @@ def bomb_changes(data):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
+    ls = sub.add_parser("list")
+    ls.add_argument("autotest_save")
     g = sub.add_parser("get")
     g.add_argument("save")
     g.add_argument("flags", nargs="+")
@@ -143,33 +235,39 @@ def main(argv=None):
     b.add_argument("saves", nargs="+")
     a = p.parse_args(argv)
     try:
-        if a.cmd == "get":
-            data = open(a.save, "rb").read()
-            for f in a.flags:
-                kind, h, _ = parse_flag(f)
-                v = get(data, kind, h)
-                print(f"{f} = {'not in this save' if v is None else v}")
+        if a.cmd == "list":
+            pattern = os.path.join(a.autotest_save, "*", "*", "slot_*", "progress.sav")
+            for path in expand([pattern]):
+                data = read_file(path)
+                print(f"{path}: bombs {get(data, 2, 0xdb1bcd4f)}, "
+                      f"bomb bag {get(data, 2, 0xb0a1bf51)}")
             return 0
-        paths = [a.save] if a.cmd == "set" else a.saves
-        for path in paths:
-            data = bytearray(open(path, "rb").read())
-            if a.cmd == "set":
-                changes = []
+        if a.cmd == "get":
+            for path in expand([a.save]):
+                data = read_file(path)
                 for f in a.flags:
-                    kind, h, value = parse_flag(f)
-                    if value is None:
-                        raise SaveError(f"{f}: no value (type:hash=value)")
-                    changes.append((kind, h, value))
-            else:
-                changes = bomb_changes(data)
-            done = set_values(data, changes)
-            if done:
-                with open(path, "wb") as out:
-                    out.write(data)
-            for h, old, new in done:
-                print(f"{path}: {h:#010x} {old} -> {new}")
-            if not done:
+                    kind, h, _ = parse_flag(f)
+                    v = get(data, kind, h)
+                    print(f"{path}: {f} = {'not in this save' if v is None else v}")
+            return 0
+        changes = []
+        if a.cmd == "set":
+            for f in a.flags:
+                kind, h, value = parse_flag(f)
+                if value is None:
+                    raise SaveError(f"{f}: no value (type:hash=value)")
+                changes.append((kind, h, value))
+        for path in expand([a.save] if a.cmd == "set" else a.saves):
+            old = read_file(path)
+            data = bytearray(old)
+            done = set_values(data, changes if a.cmd == "set" else bomb_changes(data))
+            if bytes(data) == old:
                 print(f"{path}: nothing to change")
+                continue
+            backup = write_save(path, old, bytes(data))
+            for h, before, after in done:
+                print(f"{path}: {h:#010x} {before} -> {after}")
+            print(f"{path}: old file kept as {os.path.basename(backup)}")
         return 0
     except (SaveError, OSError) as e:
         print(f"save_flags: {e}", file=sys.stderr)

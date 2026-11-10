@@ -8,11 +8,13 @@ Plan stage 1 step 3: show only players in your scene, hold or hide puppets while
 
 - `same_scene(a, b)`: both scenes known, non-empty and equal. Unknown is never the same scene.
 - `in_cutscene(flags)`: bit 2 of a `PLAYER_STATUS` flags byte.
-- `visibility(local_scene, local_in_cutscene, remote_scene, remote_flags)` gives `hide`, `hold` or `show`:
+- `visibility(local_scene, local_hides, remote_scene, remote_flags, remote_anim)` gives `hide`, `park`, `hold` or `show`:
   - other or unknown scene: `hide`;
-  - our own cutscene running: `hide` (puppets are not actors the event knows, so they must not walk into its shot);
-  - their cutscene running: `hold` (freeze at the last shown pose);
+  - our own cutscene running (`local_event_hides`: not while we play the Ocarina): `hide` (puppets are not actors the event knows, so they must not walk into its shot);
+  - they ride a horse (`activity_of(remote_anim)`): `park` (puppet out of sight, marker kept);
+  - their cutscene running, unless they play the Ocarina: `hold` (freeze at the last shown pose);
   - otherwise `show`.
+  The cases this covers (title, menus, loading, Epona, Ocarina, crawlspace) are listed in [puppet.md](puppet.md#cases-issue-86).
 
 The inputs already exist. The sender reads the scene (Banc +0x40, file name) and "event running" (event manager `*(main+0x4e94840)` +0x68 not zero, the game's `IsEventRunning` at 0xbcc100) in `coop/host` (`PlayerReader`, [host.md](host.md)) and sends the event bit as `PLAYER_STATUS` bit 2. The receiver keeps scene and status per player in `coop::presence::Presence` (`scene(n)`, `status(n)`, [presence.md](presence.md)). The local side is `PlayerReading::scene` and `PlayerReading::event_running` of this frame's reading.
 

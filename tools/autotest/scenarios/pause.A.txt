@@ -1,0 +1,12 @@
+# pause, A: walks a step, opens the pause menu (PLUS) for 6 s, closes it, walks back.
+# Part of screens.steps.txt.
+mark start
+stick 0 0.6 40
+wait 30
+press PLUS
+wait 360
+mark paused
+press PLUS
+wait 120
+stick 0 -0.6 40
+mark closed

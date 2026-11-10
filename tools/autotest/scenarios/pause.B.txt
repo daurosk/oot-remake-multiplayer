@@ -1,0 +1,9 @@
+# pause, B: opens the pause menu (PLUS), stays 6 s, closes it. Part of screens.steps.txt.
+mark start
+wait 60
+press PLUS
+wait 360
+mark paused
+press PLUS
+wait 120
+mark closed

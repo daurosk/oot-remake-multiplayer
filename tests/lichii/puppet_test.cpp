@@ -3,6 +3,7 @@
 // memory is a set of fake pages.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -834,6 +835,70 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     in = cow.Plan(kBase, std::string("Kokiri"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[1].actor == "Animal_Cow_LinkHouse");
+}
+
+TEST_CASE("puppet planner: riding parks, the Ocarina plays through their cutscene") {
+    CoopPuppet::Planner p;
+    std::vector<CoopPuppet::Remote> remotes(3);
+    remotes[0].number = 1;
+    remotes[0].scene = "HyruleField_Adult";
+    remotes[0].adult = true;
+    remotes[0].anim = CoopPuppet::Anim{"HorseMove", 0.0f, 1.0f};
+    remotes[1].number = 2;
+    remotes[1].scene = "HyruleField_Child";
+    remotes[1].status = coop::protocol::status::in_cutscene;
+    remotes[1].anim = CoopPuppet::Anim{"OcarinaReadyStart", 0.0f, 1.0f};
+    remotes[2].number = 3;
+    remotes[2].scene = "HyruleField_Child";
+    remotes[2].status = coop::protocol::status::in_cutscene;
+    remotes[2].anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};
+
+    auto in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, false, remotes, 0);
+    REQUIRE(in.targets.size() == 3);
+    CHECK(in.targets[0].show == CoopPuppet::Show::hide);  // kept, parked
+    CHECK(std::string(in.targets[0].why) == "riding");
+    CHECK(in.targets[1].show == CoopPuppet::Show::show);
+    CHECK(std::string(in.targets[1].why) == "ocarina");
+    CHECK(in.targets[2].show == CoopPuppet::Show::hold);
+    CHECK(std::string(in.targets[2].why) == "their cutscene");
+
+    // Getting off: shown again.
+    remotes[0].anim = CoopPuppet::Anim{"DismountHorse", 0.0f, 1.0f};
+    in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, false, remotes, 10);
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);
+
+    // Our cutscene hides them all, with why.
+    in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, true, remotes, 20);
+    REQUIRE(in.targets.size() == 3);
+    for (const auto& t : in.targets) {
+        CHECK(t.show == CoopPuppet::Show::hide);
+        CHECK(std::string(t.why) == "our cutscene");
+    }
+}
+
+TEST_CASE("puppet show changes are logged once each, with why") {
+    std::vector<std::string> log;
+    Game g;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    MakeLive(d, g);
+    GiveAnimation(g, 9.0f);
+    d.SetInput(Wants({Playing("Wait", 9.0f, 1)}));
+    Frame(d, g, 20);
+    auto count = [&](const std::string& text) {
+        return std::count_if(log.begin(), log.end(), [&](const std::string& l) {
+            return l.find(text) != std::string::npos;
+        });
+    };
+    CHECK(count("show -> ") == 0);
+    Target parked = Playing("Wait", 9.0f, 1, CoopPuppet::Show::hide);
+    parked.why = "riding";
+    d.SetInput(Wants({parked}));
+    Frame(d, g, 30);
+    Frame(d, g, 40);
+    CHECK(count("P1 show -> hide (riding)") == 1);
+    d.SetInput(Wants({Playing("Wait", 9.0f, 1)}));
+    Frame(d, g, 50);
+    CHECK(count("P1 hide -> show") == 1);
 }
 
 namespace {

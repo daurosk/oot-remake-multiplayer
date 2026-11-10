@@ -381,16 +381,41 @@ What [How the puppet plays it](#how-the-puppet-plays-it) planned, built in the d
 
 ### Scene filter
 
-The planner runs `coop::host::visibility` (`coop/host/scene.hpp`) for each remote player with our scene, our event flag (`PlayerReading::event_running`) and their scene and PLAYER_STATUS flags:
+The planner runs `coop::host::visibility` (`coop/host/scene.hpp`) for each remote player with our scene, whether our own event hides the others (`local_event_hides`: `PlayerReading::event_running`, except while we play the Ocarina), and their scene, PLAYER_STATUS flags and newest animation (the AS command in PLAYER_SAMPLE field 7, read by `activity_of`):
 
 | Visibility | Puppet |
 |---|---|
 | hide, other or unknown scene | Not planned: none is made, one that exists is deleted after the 2 s grace (or at once on our scene change) |
 | hide, our cutscene | Kept, written 500 units below its spot (`kHideDrop`), no animation calls, so it is not deleted and made again for every cutscene |
-| hold, their cutscene | Kept where it is, no pose write; slot 0's frame from the start of the hold is set again once a frame, so it stands frozen |
+| park, they ride a horse | As "our cutscene": kept, parked below its spot. Their Epona is not in our game, so the puppet would sit in the air at saddle height. The marker stays |
+| hold, their cutscene | Kept where it is, no pose write; slot 0's frame from the start of the hold is set again once a frame, so it stands frozen. Not while they play the Ocarina (then show) |
 | show | Pose written every frame, animation as above |
 
-The overlay markers follow the same rule: `Coop::Frame` (`coop_hook.cpp`) notes each player `visibility` hides, and `Place` builds no marker for them. Hold and show keep the marker.
+The overlay markers follow the same rule: `Coop::Frame` (`coop_hook.cpp`) notes each player `visibility` hides, and `Place` builds no marker for them. Park, hold and show keep the marker. Each puppet's Navi (`CoopFairy::Publish`) plans from the same remote list (`CoopPuppet::Collect`) and the same event flag, and is parked, held or shown with her puppet.
+
+Every change is logged once: `coop: puppet: P<n> show -> hide (our cutscene)`, `... hide -> show`, `... show -> hold (their cutscene)`, `... show -> hide (riding)`; the fairy's lines start `fairy coop: puppet:`. A puppet made again starts at `show`.
+
+### Cases (issue 86)
+
+What each case does now. "Handled" is by code and unit tests; none of these is proven in the game yet (the chunk 2 test turn runs the scenarios named).
+
+| Case | Whose | What happens | Status | Scenario |
+|---|---|---|---|---|
+| Cutscene (event running) | ours | Every puppet and Navi parked, no markers | Handled | `cutscene` (A talks to a sign, B watches) |
+| Cutscene | theirs | Their puppet held frozen | Handled | `cutscene` (reverse) |
+| Title screen, file select | ours | No player actor, so no reading and no scene: nothing planned, puppets deleted | Handled if the title has no player actor (unknown: the title demo may have one) | `screens` |
+| Title screen, file select | theirs | They send no samples (no reading): their pose fades in 0.4 s and the puppet is deleted after the 2 s grace | Handled | `screens` |
+| Pause menu, item menu | ours | Nothing changes: puppets stay; whether the game draws them behind the menu, and whether our pose writes run while paused, is not known | Unknown | `screens` (B pauses) |
+| Pause menu | theirs | Keep-alive samples go on; the puppet stands where they stopped. The `paused` and `in_menu` status bits are never set by the sender, and do not hide | Handled (stands) | `screens` |
+| Loading | ours | Scene change deletes every puppet; creates wait until the game draws again (`kDrawnMs`) | Handled (proven before, puppet-join) | `stray` |
+| Loading, other scene | theirs | Their scene changes: other place, deleted | Handled (proven, `stray`) | `stray` |
+| Riding Epona | theirs | Puppet parked while their command names a horse (`Horse...`, `Evt_Horse_...`, not `DismountHorse` or `HorseAccess`), marker kept | Handled; names read from the romfs, not seen played yet | `epona` (needs an adult save with Epona) |
+| Riding Epona | ours | Nothing changes | Handled (nothing to do) | `epona` |
+| Ocarina played freely | theirs | Shown (not held) while their command starts `Ocarina`, even if their event bit is set | Handled; whether the game sets the event bit then is not known | `ocarina` |
+| Ocarina played freely | ours | Our event does not hide the others while our own command starts `Ocarina` | Handled, same unknown | `ocarina` |
+| Song taught, warp song, Song of Time block | either | `DemoOcarina...` and what follows are cutscenes: as a cutscene | Handled as a cutscene | `ocarina` (log only) |
+| Time travel (Master Sword) | either | A cutscene, then the age changes: the puppet is made again as the other age (settle 1 s) | Handled (the age swap is proven, `stray-adult`) | none new |
+| Crawlspace | either | Unknown: the AS tables have no crawl command name (`Crouch...` is crouching); if the game runs it as an event, ours hides puppets and theirs holds them at the entrance | Unknown | `crawl` (logs the commands and event bit; needs a save by a crawlspace) |
 
 ### The first run
 

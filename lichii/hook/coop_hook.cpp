@@ -295,8 +295,14 @@ public:
                                         ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
                                         : std::nullopt);
         }
+        // Our own event hides the others (puppet, Navi, marker); playing the
+        // Ocarina does not (coop/host/scene.hpp, local_event_hides).
+        const bool event =
+            reading && coop::host::local_event_hides(
+                           reading->event_running.value_or(false),
+                           reading->animation ? std::optional<std::string_view>(reading->animation->name)
+                                              : std::nullopt);
         if (report.connected) {
-            const bool event = reading && reading->event_running.value_or(false);
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
                 auto shown = coop::overlay::collect(p, report.server_now_us);
                 for (auto& s : shown) {
@@ -319,10 +325,9 @@ public:
                 return shown;
             });
         }
-        CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
-                            reading && reading->event_running.value_or(false),
+        CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
-        CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position,
+        CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);

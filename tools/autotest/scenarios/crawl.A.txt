@@ -1,0 +1,20 @@
+# crawl (issue 86): finds out what a crawlspace does, logs only. NOT runnable on the kits'
+# saves as they are: needs A's save child, facing a crawlspace a few steps ahead (for example
+# the hole into the Hyrule Castle courtyard, or the one in the Lost Woods), and B in the same
+# scene, watching. Run with -NoLoad and LICHII_COOP_DEBUG_ANIM=1.
+# Read in B's log: the commands A plays ("P1 plays '...'") from "at-hole" to "through", and
+# whether "P1 show -> hold (their cutscene)" appears (A's game runs the crawl as an event).
+# In A's log: whether "P2 show -> hide (our cutscene)" appears. Screenshots: does B's
+# puppet of A crawl in, stand frozen at the entrance, or go through the wall standing?
+# If the crawl turns out to be an event, that is fine (hide/hold); if it is plain play with a
+# crawl command, add the name to docs/puppet.md's cases table.
+mark start
+wait 60
+stick 0 0.6 60          # walk up to the hole
+mark at-hole
+press A                 # crawl in
+wait 60
+stick 0 0.6 240         # crawl through
+mark through
+wait 120
+mark end

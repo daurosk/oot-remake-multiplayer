@@ -256,7 +256,7 @@ What the server does:
 - Forgets an object when no game has it present and its owner removed it or left.
 - Sends a player who enters a scene (at its first `OBJECT_PRESENT` there) every `OBJECT_SPAWN` still alive in it, at the last relayed state: the made enemies, and placed ones an owner announced. Before this a Stalchild made half a second before a player came in never appeared for that player (issue 101 logs).
 - A made enemy (not a projectile) that another game lists in `OBJECT_PRESENT` is handed over like a placed one, and goes on with that game when its owner leaves the scene; with nobody else it is removed as before.
-- Says the owner of everything a player lists again every 10 s, since a game that reloads the same scene forgets its table without the server noticing. Does not take back a scene a player left under 3 s ago: `PLAYER_SAMPLE` and `OBJECT_PRESENT` come from different threads and can cross at a scene change, which dropped and re-owned every object twice.
+- Says the owner of everything a player lists again every 10 s, since a game that reloads the same scene forgets its table without the server noticing. Does not take a scene back from a late message: `PLAYER_SAMPLE` and `OBJECT_PRESENT` come from different threads and can cross at a scene change, which dropped and re-owned every object twice. A stream that changes its scene is believed at once (so a quick walk out and back loses nothing); one that only repeats the scene it said before, while the other stream has moved on, is ignored.
 
 The server's per-player limits (60 a second on channels 0 to 2, 240 on 3 and 4) are enough for a room of enemies at 30 a second plus projectiles; a busy fight is measured before they change.
 

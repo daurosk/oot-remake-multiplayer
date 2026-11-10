@@ -1948,7 +1948,7 @@ TEST_CASE("the owner's remove right after it stops listing its made enemy remove
   CHECK(messages_to<ObjectOwner>(h, 2).empty());
 }
 
-TEST_CASE("a scene a player has just left is not taken back by a late message") {
+TEST_CASE("a late message does not take back a scene the player left; a real return does") {
   OwnerHarness h;
   h.receive(1, standing("Kakariko", 0), kChannelPlayerSamples);
   REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
@@ -1961,10 +1961,18 @@ TEST_CASE("a scene a player has just left is not taken back by a late message") 
   CHECK(messages_to<ObjectOwner>(h, 1).empty());
   CHECK(messages_to<ObjectOwner>(h, 2).empty());
   CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
-  // A real walk back, later, is taken.
-  h.run(3 * kSecond);
+  // A real walk back is taken at once, however soon: its samples say so.
+  h.receive(1, standing("Field", 3), kChannelPlayerSamples);
   h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  CHECK(h.session.stats().stale_scenes == 2);
   CHECK(messages_to<ObjectOwner>(h, 1) == std::vector<ObjectOwner>{{placed(7), 2, 1, 0}});
+  // And the other way round: the list moves on first, a late sample repeats.
+  h.clear();
+  h.receive(1, present_in("Kakariko", {}), kChannelOwnership);
+  h.receive(1, standing("Field", 3), kChannelPlayerSamples);
+  CHECK(h.session.stats().stale_scenes == 3);
+  h.receive(2, ObjectSample{0, placed(7), 1, state_at(1, 12)}, kChannelObjectSamples);
+  CHECK(messages_to<ObjectSample>(h, 1).empty());  // player 1 is in Kakariko
 }
 
 TEST_CASE("owners are said again every 10 s, for a game that forgot them") {

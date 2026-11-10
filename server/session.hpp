@@ -98,11 +98,6 @@ struct SessionConfig {
   // for all it lists, so a game that forgot its table (a reload of the same
   // scene) learns the owners again. 0: never.
   std::uint64_t owner_refresh_us = 10'000'000;
-  // A scene a player left less than this ago is not taken back from a late
-  // OBJECT_PRESENT or PLAYER_SAMPLE: the two come from different threads of
-  // the game and may cross at a scene change, which would drop and re-own
-  // every object twice.
-  std::uint64_t scene_flap_us = 3'000'000;
   // A kill (OBJECT_REMOVE, dead) from the owner before the last change is
   // still taken this long after it: the kill was real.
   std::uint64_t late_remove_us = 2'000'000;
@@ -175,7 +170,7 @@ struct Stats {
   std::uint64_t handover_unanswered = 0;  // moved with the last relayed sample
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)
-  std::uint64_t stale_scenes = 0;         // a scene just left, not taken back
+  std::uint64_t stale_scenes = 0;         // a late message's old scene, not taken back
   std::uint64_t group_links = 0;          // OBJECT_GROUP entries taken
   std::uint64_t group_refused = 0;        // OBJECT_GROUP entries turned away
   std::uint64_t late_removes = 0;         // a kill from the owner before, taken
@@ -254,9 +249,9 @@ class Session {
     // The scene the player is in, from its latest OBJECT_PRESENT or
     // PLAYER_SAMPLE scene; empty while not known.
     std::string scene;
-    // The scene before, and when it changed (see scene_flap_us).
-    std::string previous_scene;
-    std::uint64_t scene_changed_at = 0;
+    // The scene each of its two streams said last (see stale_scene).
+    std::string sample_scene;
+    std::string present_scene;
     // The objects it has loaded in that scene: placed ones, and made enemies
     // it listed. Projectiles are not listed here: they are found by owner.
     std::set<protocol::ObjectId> present;
@@ -333,7 +328,9 @@ class Session {
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us);
   // The player is in `scene` now; leaving another scene lets go of its
-  // objects. False, and nothing changed, for a scene it left a moment ago.
+  // objects. Always true.
+  // (Callers first ask stale_scene whether the message is a late one.)
+  bool stale_scene(std::string& said, const Connection& c, const std::string& scene);
   bool set_scene(ConnectionId id, Connection& c, const std::string& scene,
                  std::uint64_t now_us);
   // Sends a player who entered a scene the OBJECT_SPAWNs still alive in it.

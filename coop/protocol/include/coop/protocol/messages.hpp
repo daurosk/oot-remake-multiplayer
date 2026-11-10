@@ -15,7 +15,7 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 3;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY
+inline constexpr std::uint16_t kProtocolVersion = 4;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: GRASS_CUT
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -72,6 +72,7 @@ enum class MessageType : std::uint16_t {
   damage = 25,
   player_pose = 26,
   time_of_day = 27,
+  grass_cut = 28,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -668,13 +669,30 @@ struct TimeOfDay {
   bool operator==(const TimeOfDay&) const = default;
 };
 
+// GRASS_CUT (docs/world.md, "Field grass"): one cut of the field grass the
+// game's foliage module draws (no actor), as the game queued it: a sphere at
+// position with radius, and for a sword, three points of the swing (NaN when
+// the cut is a sphere only). flags is the game's byte, passed on unread.
+// Every game in the same scene makes the same cut. Relayed to everyone else.
+inline constexpr float kMaxGrassCutRadius = 100.0f;
+
+struct GrassCut {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::string scene;                         // the sender's scene, not empty
+  Vec3 position{};
+  float radius = 0.0f;                       // above 0, at most kMaxGrassCutRadius
+  std::uint8_t flags = 0;
+  std::array<Vec3, 3> sweep{};               // each value finite or NaN
+  bool operator==(const GrassCut& o) const;  // NaN equals NaN here
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
-                             TimeOfDay>;
+                             TimeOfDay, GrassCut>;
 
 MessageType type_of(const Message& message);
 

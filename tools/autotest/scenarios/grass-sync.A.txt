@@ -1,0 +1,47 @@
+# grass-sync, A: both games load into Hyrule Field (child) in front of Kakariko with the test-only
+# warp (run with -NoLoad). A cuts field grass (the foliage module's, no actor; docs/world.md
+# "Field grass") at about 186 22 while B watches from 191 28, then cuts three of the 13 tufts
+# (actors, at about 164 26) while B watches from 171 28. B should see both cut.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark arrived
+wait 900                # B walks to its place
+goto 186 22 1.0 900
+wait 300
+mark cut1-before
+toward 186 26 10
+hold Y 8
+wait 240
+mark cut1-after
+toward 182 22 10
+hold Y 8
+wait 240
+mark cut2-after
+hold Y 90               # a spin attack
+wait 300
+mark spin-after
+wait 900                # B walks to the tufts
+goto 166.5 26.5 0.5 1200
+wait 300
+mark tufts-before
+toward 164.5 26.1 15
+hold Y 8
+wait 60
+toward 164.2 26.2 15
+hold Y 8
+wait 60
+toward 163.4 26.0 15
+hold Y 8
+wait 300
+mark tufts-after
+wait 300

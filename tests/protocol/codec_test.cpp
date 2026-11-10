@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <ostream>  // doctest prints string_view through it
@@ -866,7 +867,7 @@ TEST_CASE("a reader without the new types skips them") {
   CHECK(stage0_decode(must_encode(Chat{0, "hi"}), back) == Error::none);
   // And this build in turn skips a type newer than itself.
   Bytes future;
-  put_u16(future, 28);
+  put_u16(future, 29);
   put_u16(future, 0);
   CHECK(decode_bytes(future) == Error::unknown_type);
 }
@@ -1141,4 +1142,57 @@ TEST_CASE("bad times of day are refused") {
   b = must_encode(TimeOfDay{0, 10, 0});
   b[kHeaderSize + 4] = 0xff;  // seconds past one day
   CHECK(decode(b, m) == Error::bad_value);
+}
+
+namespace {
+GrassCut Cut() {
+  GrassCut c;
+  c.scene = "HyruleField_Child";
+  c.position = {189.57f, 157.52f, 24.04f};
+  c.radius = 0.525f;
+  c.flags = 0x0c;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  c.sweep = {Vec3{189.0f, 157.9f, 24.5f}, Vec3{190.1f, 157.6f, 23.8f}, Vec3{nan, nan, nan}};
+  return c;
+}
+}  // namespace
+
+TEST_CASE("grass cuts have their number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::grass_cut) == 28);
+  CHECK(kProtocolVersion == 4);
+  CHECK(channel_of(MessageType::grass_cut) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::grass_cut, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::grass_cut));
+  CHECK(may_send(Sender::server, MessageType::grass_cut));
+  Message g = Cut();
+  CHECK(check_received(g, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(g, 2));
+  CHECK(sender_of(g) == 2);
+  const Bytes b = must_encode(Cut());
+  REQUIRE(b.size() == kHeaderSize + 1 + 2 + 17 + 12 + 4 + 1 + 36);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<GrassCut>(back) == Cut());  // NaN comes back as NaN
+  CHECK(std::isnan(std::get<GrassCut>(back).sweep[2][1]));
+}
+
+TEST_CASE("bad grass cuts are refused") {
+  Bytes out;
+  GrassCut c = Cut();
+  c.scene.clear();
+  CHECK(encode(c, out) == Error::bad_value);
+  c = Cut();
+  c.radius = 0.0f;
+  CHECK(encode(c, out) == Error::bad_value);
+  c.radius = kMaxGrassCutRadius * 2;
+  CHECK(encode(c, out) == Error::bad_value);
+  c = Cut();
+  c.position[1] = std::numeric_limits<float>::quiet_NaN();
+  CHECK(encode(c, out) == Error::bad_value);
+  c = Cut();
+  c.sweep[0][0] = std::numeric_limits<float>::infinity();
+  CHECK(encode(c, out) == Error::bad_value);
+  c = Cut();
+  c.player_number = 5;
+  CHECK(encode(c, out) == Error::bad_value);
 }

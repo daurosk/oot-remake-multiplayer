@@ -1200,6 +1200,56 @@ Error decode_body(Reader& r, TimeOfDay& m) {
   return Error::none;
 }
 
+// u8 player, str scene (1 to 64 chars), 3 x f32 position (finite), f32
+// radius (above 0, at most 100), u8 flags, 9 x f32 sweep (finite or NaN).
+bool finite_or_nan(float f) { return std::isfinite(f) || std::isnan(f); }
+bool same_float(float a, float b) {
+  return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b) ||
+         (std::isnan(a) && std::isnan(b)) || a == b;
+}
+Error check_grass_cut(const GrassCut& m) {
+  if (m.scene.empty()) return Error::bad_value;
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  if (!all_finite(m.position) || !std::isfinite(m.radius) || m.radius <= 0.0f ||
+      m.radius > kMaxGrassCutRadius) {
+    return Error::bad_value;
+  }
+  for (const Vec3& v : m.sweep) {
+    for (float f : v) {
+      if (!finite_or_nan(f)) return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+Error encode_body(const GrassCut& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_grass_cut(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  for (float f : m.position) w.f32(f);
+  w.f32(m.radius);
+  w.u8(m.flags);
+  for (const Vec3& v : m.sweep) {
+    for (float f : v) w.f32(f);
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, GrassCut& m) {
+  m = GrassCut{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  for (float& f : m.position) COOP_READ(r.f32(f));
+  COOP_READ(r.f32(m.radius));
+  COOP_READ(r.u8(m.flags));
+  for (Vec3& v : m.sweep) {
+    for (float& f : v) COOP_READ(r.f32(f));
+  }
+  return check_grass_cut(m);
+}
+
 Error decode_body(Reader& r, PlayerPose& m) {
   m = PlayerPose{};
   COOP_READ(r.u8(m.player_number));
@@ -1280,7 +1330,7 @@ MessageType type_of(const Message& message) {
       MessageType::object_present, MessageType::object_owner, MessageType::handover_ask,
       MessageType::handover_state, MessageType::object_spawn, MessageType::object_sample,
       MessageType::object_remove, MessageType::damage, MessageType::player_pose,
-      MessageType::time_of_day,
+      MessageType::time_of_day, MessageType::grass_cut,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1328,6 +1378,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::join_partner:
     case MessageType::player_equip:
     case MessageType::time_of_day:
+    case MessageType::grass_cut:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1384,6 +1435,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::object_remove:
     case MessageType::damage:
     case MessageType::time_of_day:
+    case MessageType::grass_cut:
       return true;
   }
   return false;
@@ -1406,7 +1458,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
                       std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose> ||
-                      std::is_same_v<T, TimeOfDay>) {
+                      std::is_same_v<T, TimeOfDay> || std::is_same_v<T, GrassCut>) {
           field = &m.player_number;
         }
       },
@@ -1498,6 +1550,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::damage: return decode_as<Damage>(body, out);
     case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
     case MessageType::time_of_day: return decode_as<TimeOfDay>(body, out);
+    case MessageType::grass_cut: return decode_as<GrassCut>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;
@@ -1524,6 +1577,20 @@ std::optional<RefuseReason> check_hello(const Hello& hello,
     return RefuseReason::wrong_game_build;
   }
   return std::nullopt;
+}
+
+bool GrassCut::operator==(const GrassCut& o) const {
+  if (player_number != o.player_number || scene != o.scene || flags != o.flags ||
+      !same_float(radius, o.radius)) {
+    return false;
+  }
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (!same_float(position[i], o.position[i])) return false;
+    for (std::size_t j = 0; j < 3; ++j) {
+      if (!same_float(sweep[i][j], o.sweep[i][j])) return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace coop::protocol

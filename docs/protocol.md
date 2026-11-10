@@ -227,6 +227,18 @@ Every game shows the host's time of day ([time.md](time.md)).
 - A game whose clock jumped by itself (the Sun's Song, sleeping, an event) sends it with the jump bit, and every other game, the host's too, takes it at once.
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
 
+### Field grass (`GRASS_CUT`)
+
+One cut of the field grass the foliage module draws (no actor; [world.md](world.md), "Field grass"), as the sender's game queued it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 28 | `GRASS_CUT` | 0 | both | `u8` player field, `str` scene (1 to 64 chars), 3 x `f32` position (finite), `f32` radius (above 0, at most 100), `u8` flags (the game's, passed on unread), 9 x `f32`: three points of the swing (each finite or NaN) |
+
+- Sent once for each cut the sender's game makes; a cut it made for another player is not sent back.
+- A game in the same scene makes the same cut; any other drops it. Nothing is kept.
+- The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+
 ### Objects (stage 5)
 
 Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). The server keeps an object table (below); the hook does not send these yet.
@@ -275,3 +287,4 @@ The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
+- Version 4 (2026-11-09): `GRASS_CUT` (type 28). No layout changed; the version went up so that a version 3 server, which does not know the type and would not relay it, is refused at `HELLO`.

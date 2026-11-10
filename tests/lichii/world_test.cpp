@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <cstring>
 #include <map>
 #include <optional>
 #include <string>
@@ -327,4 +328,180 @@ TEST_CASE("world: the foliage probe logs the cut buffer once, then only what cha
     look();
     REQUIRE(lines.size() == 1);
     CHECK(lines[0].find("scene 0") != std::string::npos);
+}
+
+namespace {
+
+// A game's memory as bytes, for the grass cut queue and the cave calls.
+struct FakeGame : CoopPuppet::Guest {
+    std::map<std::uint64_t, std::uint8_t> bytes;
+    void Put(std::uint64_t at, const void* in, std::size_t n) {
+        const auto* p = static_cast<const std::uint8_t*>(in);
+        for (std::size_t i = 0; i < n; ++i) {
+            bytes[at + i] = p[i];
+        }
+    }
+    void Word(std::uint64_t at, std::uint64_t v) { Put(at, &v, 8); }
+    bool Read(std::uint64_t at, void* out, std::size_t n) override {
+        auto* p = static_cast<std::uint8_t*>(out);
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto it = bytes.find(at + i);
+            if (it == bytes.end()) {
+                return false;
+            }
+            p[i] = it->second;
+        }
+        return true;
+    }
+    bool Write(std::uint64_t at, const void* in, std::size_t n) override {
+        Put(at, in, n);
+        return true;
+    }
+    CoopWorld::GrassSync::ReadWord Reader() {
+        return [this](std::uint64_t at) -> std::optional<std::uint64_t> {
+            std::uint64_t v = 0;
+            return Read(at, &v, 8) ? std::optional<std::uint64_t>(v) : std::nullopt;
+        };
+    }
+};
+
+constexpr std::uint64_t kMain = 0x8000000, kModule = 0x2100000000, kHolder = 0x2100001000,
+                        kFolScene = 0x2100002000, kEntries = 0x2100003000, kSlots = 0x2100004000;
+constexpr std::uint64_t kCap = 16;
+
+// The foliage scene with an empty queue of 16 (as seen live, 2026-11-09).
+void Setup(FakeGame& g) {
+    g.Word(kMain + CoopWorld::kFoliageModule, kModule);
+    g.Word(kModule + 0x30, 0xb8);  // bit 0 clear: on
+    g.Word(kModule + 0xf0, kHolder);
+    g.Word(kHolder + 0x338, kFolScene);
+    g.Word(kFolScene + 0x20, kCap);
+    g.Word(kFolScene + 0x28, kEntries);
+    g.Word(kFolScene + 0x38, 0);
+    for (std::uint64_t i = 0; i < kCap; ++i) {
+        g.Word(kEntries + 16 * i, 0);
+        g.Word(kEntries + 16 * i + 8, i);
+    }
+    const std::vector<std::uint8_t> zero(0x3c * kCap + 8, 0);
+    g.Put(kSlots, zero.data(), zero.size());
+}
+
+// The game queues a cut, as 0xb808f0 does: slot pointer, then sequence i + 1.
+void GameCuts(FakeGame& g, std::uint64_t slot_index, const CoopWorld::GrassSync::Slot& slot) {
+    std::uint64_t i = 0;
+    g.Read(kFolScene + 0x38, &i, 8);
+    const std::uint64_t at = kSlots + 0x3c * slot_index;  // 4-aligned, as the game's
+    g.Put(at, slot.data(), slot.size());
+    g.Word(kEntries + 16 * (i % kCap), at);
+    g.Word(kEntries + 16 * (i % kCap) + 8, i + 1);
+    g.Word(kFolScene + 0x38, i + 1);
+}
+
+proto::GrassCut Sword() {
+    proto::GrassCut c;
+    c.scene = "HyruleField_Child";
+    c.position = {189.57f, 157.52f, 24.04f};
+    c.radius = 0.525f;
+    c.flags = 0x0c;
+    c.sweep = {proto::Vec3{189.0f, 157.9f, 24.5f}, proto::Vec3{190.1f, 157.6f, 23.8f},
+               proto::Vec3{190.5f, 157.7f, 23.1f}};
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("grass: a cut slot and its message carry the same cut") {
+    const auto slot = CoopWorld::GrassSync::ToSlot(Sword());
+    float f = 0.0f;
+    std::memcpy(&f, slot.data() + 0x10, 4);
+    CHECK(f == doctest::Approx(0.3f));  // the game's own value
+    CHECK(slot[0x14] == 0x0c);
+    CHECK(CoopWorld::GrassSync::ToMessage(slot, "HyruleField_Child") == Sword());
+}
+
+TEST_CASE("grass: our own new cuts are sent once, from the second look on") {
+    FakeGame g;
+    Setup(g);
+    CoopWorld::GrassSync grass;
+    const auto slot = CoopWorld::GrassSync::ToSlot(Sword());
+    GameCuts(g, 0, slot);  // before we looked: not ours to send
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1000).empty());
+    proto::GrassCut second = Sword();
+    second.position[0] = 184.0f;
+    GameCuts(g, 1, CoopWorld::GrassSync::ToSlot(second));
+    // taken out by the game already: sequence i + capacity
+    g.Word(kEntries + 16 * 1 + 8, 1 + kCap);
+    proto::GrassCut third = Sword();
+    third.position[0] = 178.0f;
+    GameCuts(g, 2, CoopWorld::GrassSync::ToSlot(third));
+    const auto sent = grass.Look(g.Reader(), kMain, "HyruleField_Child", 1100);
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[0] == second);
+    CHECK(sent[1] == third);
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1200).empty());
+    // an entry whose sequence is neither i + 1 nor i + capacity is skipped
+    GameCuts(g, 3, slot);
+    g.Word(kEntries + 16 * 3 + 8, 99);
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1300).empty());
+    // the module says off: nothing, and the queue is learnt again after
+    g.Word(kModule + 0x30, 0xb9);
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1400).empty());
+}
+
+TEST_CASE("grass: another game's cut is made through the game's call, and not sent back") {
+    FakeGame g;
+    Setup(g);
+    CoopWorld::GrassSync grass;
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1000).empty());
+    proto::GrassCut theirs = Sword();
+    theirs.player_number = 2;
+    proto::GrassCut elsewhere = theirs;
+    elsewhere.scene = "KakarikoVillage_Child";
+    grass.Receive(elsewhere);  // not our scene: dropped
+    grass.Receive(theirs);
+    auto call = grass.Step(g, false, 0, 1010);
+    REQUIRE(call);
+    CHECK(call->function == kMain + 0x14c6c90);  // malloc, once
+    CHECK(call->x[0] == 0x40);
+    const std::uint64_t block = 0x2100009000;
+    call = grass.Step(g, true, block, 1010);
+    REQUIRE(call);
+    CHECK(call->function == kMain + CoopWorld::kCutFoliage);
+    CHECK(call->x[0] == kModule);
+    CHECK(call->x[1] == block);
+    CoopWorld::GrassSync::Slot written{};
+    REQUIRE(g.Read(block, written.data(), written.size()));
+    CHECK(written == CoopWorld::GrassSync::ToSlot(Sword()));
+    CHECK_FALSE(grass.Step(g, true, 1, 1010));  // nothing more to make
+    CHECK(grass.Made() == 1);
+    // the game queues the cut we asked for: it is not sent back
+    GameCuts(g, 0, written);
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1100).empty());
+    // our own cut at the same place later is sent
+    GameCuts(g, 1, written);
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1200).size() == 1);
+}
+
+TEST_CASE("grass: at most eight cuts a frame, the rest the next frame") {
+    FakeGame g;
+    Setup(g);
+    CoopWorld::GrassSync grass;
+    (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 1000);
+    for (int i = 0; i < 10; ++i) {
+        proto::GrassCut c = Sword();
+        c.position[2] += static_cast<float>(i);
+        grass.Receive(c);
+    }
+    int calls = 0;
+    auto call = grass.Step(g, false, 0, 1000);  // malloc
+    for (call = grass.Step(g, true, 0x2100009000, 1000); call; call = grass.Step(g, true, 1, 1000)) {
+        ++calls;
+    }
+    CHECK(calls == 8);
+    calls = 0;
+    for (call = grass.Step(g, false, 0, 1016); call; call = grass.Step(g, true, 1, 1016)) {
+        ++calls;
+    }
+    CHECK(calls == 2);
+    CHECK(grass.Made() == 10);
 }

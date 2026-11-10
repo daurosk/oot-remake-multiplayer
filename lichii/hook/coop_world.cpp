@@ -1182,10 +1182,10 @@ void SignProbe::Hit(const Sign& sign, bool ours, std::uint64_t now_us) {
 
 std::string SignProbe::Report(const State& s, const Event& e, const Snapshot& now,
                               std::uint64_t after_us) {
-    char head[64];
-    std::snprintf(head, sizeof head, " %s +%.1f s:", e.ours ? "our cut" : "given hit",
-                  static_cast<double>(after_us) / 1e6);
-    std::string line = Line("sign probe: %016llx %s", s.hash, s.name, "") + head;
+    const std::uint64_t tenths = (after_us + 50'000) / 100'000;
+    std::string line = Line("sign probe: %016llx %s", s.hash, s.name, "") +
+                       (e.ours ? " our cut +" : " given hit +") + std::to_string(tenths / 10) +
+                       "." + std::to_string(tenths % 10) + " s:";
     if (!e.base) {
         return line + " no copy from before the hit";
     }
@@ -1229,9 +1229,10 @@ std::string SignProbe::Report(const State& s, const Event& e, const Snapshot& no
             note(key, std::nullopt, is);
         }
     }
-    char tail[48];
-    std::snprintf(tail, sizeof tail, " %zu words changed%s", changed,
-                  changed > kMaxShown ? " (first ones shown)" : "");
+    std::string tail = " " + std::to_string(changed) + " words changed";
+    if (changed > kMaxShown) {
+        tail += " (first ones shown)";
+    }
     return line + tail + (changed > 0 ? ":" : "") + shown;
 }
 

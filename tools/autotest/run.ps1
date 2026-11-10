@@ -81,8 +81,28 @@ public class AutotestWin {
  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int ht, uint f);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+ delegate bool EnumProc(IntPtr h, IntPtr l);
+ [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+ [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
  public struct RECT { public int L,T,R,B; }
  public struct POINT { public int X,Y; }
+ // The visible top-level windows of one process, as "0xHANDLE 'title'", so the steps log
+ // shows a dialog (such as "Are you sure you want to close Lichii?", title "Lichii") that
+ // appeared beside the game window.
+ public static string Windows(int pid) {
+  var list = new System.Collections.Generic.List<string>();
+  EnumWindows((h, l) => {
+   uint p; GetWindowThreadProcessId(h, out p);
+   if (p == (uint)pid && IsWindowVisible(h)) {
+    var s = new System.Text.StringBuilder(256); GetWindowText(h, s, 256);
+    list.Add(string.Format("0x{0:x} '{1}'", h.ToInt64(), s));
+   }
+   return true;
+  }, IntPtr.Zero);
+  return string.Join(", ", list.ToArray());
+ }
  // Real pixels: without this a scaled desktop gives rects in scaled units and the copy
  // misses part of the window.
  public static void DpiAware() { SetProcessDPIAware(); }
@@ -138,6 +158,38 @@ function Read-Log($x) {
 }
 function Count($text, $pattern) { ([regex]::Matches($text, $pattern)).Count }
 
+# steps.txt beside the screenshots: what the driver did and when (local time to the ms), and
+# each game's process and windows, so a game that ends by itself can be matched to the logs
+# (issue 112: game A's frontend shut down 0.2 s after B rejoined, cause not known).
+function Note([string]$text) {
+    $line = "{0:HH:mm:ss.fff} {1}" -f (Get-Date), $text
+    Add-Content "$out\steps.txt" $line
+}
+function Note-Games([string]$when) {
+    foreach ($x in $kits.Keys) {
+        $p = $st[$x].Proc
+        if (-not $p) { Note "$when ${x}: not started"; continue }
+        if ($p.HasExited) { Note "$when ${x}: pid $($p.Id) exited (code $($p.ExitCode))"; continue }
+        $p.Refresh()
+        Note ("$when ${x}: pid $($p.Id) main 0x{0:x} windows: {1}" -f [int64]$p.MainWindowHandle, [AutotestWin]::Windows($p.Id))
+    }
+}
+# Games the driver did not close or kill but that are gone: logged with the step, and they
+# fail the run (a game that quits on its own is a bug, whoever asked it to).
+$expectedExit = @{}
+function Check-Exits([string]$step) {
+    foreach ($x in $kits.Keys) {
+        $p = $st[$x].Proc
+        if ($p -and $p.HasExited -and -not $expectedExit[$x]) {
+            $expectedExit[$x] = $true
+            $msg = "game $x ended by itself during $step (exit code $($p.ExitCode)); its log: eden_log-$x*.txt, look for 'Shutdown requested'"
+            Write-Host $msg; Note $msg
+            Add-Content "$out\counts.txt" "FAIL $msg"
+            $script:stepFails++
+        }
+    }
+}
+
 function Shot-Both([string]$name) {
     foreach ($x in $kits.Keys) {
         $p = $st[$x].Proc
@@ -192,6 +244,16 @@ function Stop-Server {
     if ($script:serverProc -and -not $script:serverProc.HasExited) { Stop-Process -Id $script:serverProc.Id -Force }
     Start-Sleep 1
 }
+# The kits' emulators ask "Are you sure you want to close Lichii?" when their window is closed
+# (confirmStop=0, Ask_Always). Nobody answers it in a test, so `close B` waited 20 s and then
+# ended B like a crash, and the question stayed open until then (issue 112). Ask_Never (2) makes
+# `close` a real leave. Only the [UI] key changes; the rest of qt-config.ini is kept.
+function Set-NoCloseQuestion([string]$ini) {
+    if (-not (Test-Path $ini)) { return }
+    $text = [IO.File]::ReadAllText($ini)
+    $new = $text -replace '(?m)^confirmStop\\default=.*$', 'confirmStop\default=false' -replace '(?m)^confirmStop=.*$', 'confirmStop=2'
+    if ($new -ne $text) { [IO.File]::WriteAllText($ini, $new) }
+}
 # Starts one game. A log left by an earlier run of it in this test is kept as eden_log-<x>-<n>.txt.
 function Start-Game([string]$x) {
     $s = $st[$x]
@@ -200,6 +262,7 @@ function Start-Game([string]$x) {
     $left | Stop-Process -Force
     $left | ForEach-Object { [void]$_.WaitForExit(15000) }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') "server = 127.0.0.1`r`nport = $Port`r`nname = $x"
+    Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
     Set-Content -Encoding ascii $s.Script ''
     if (Test-Path $s.Log) {
         if ($s.Runs -gt 0) { Copy-Item $s.Log "$out\eden_log-$x-$($s.Runs).txt" }
@@ -217,6 +280,8 @@ function Start-Game([string]$x) {
     Remove-Item Env:LICHII_COOP_TEST_SCRIPT
     foreach ($k in $old.Keys) { [Environment]::SetEnvironmentVariable($k, $old[$k]) }
     $s.Done = 0; $s.Marks = 0
+    $expectedExit[$x] = $false
+    Note "started ${x}: pid $($s.Proc.Id)"
 }
 # Waits until the game has a window and has joined the server.
 function Wait-Joined([string]$x) {
@@ -285,6 +350,7 @@ function Run-Steps([string]$file) {
         $w = @($line -split '\s+')
         $rest = @(if ($w.Count -gt 1) { $w[1..($w.Count - 1)] })
         Write-Host "step ${n}: $line"
+        Note "step ${n}: $line"
         switch ($w[0]) {
             'start' {
                 foreach ($x in $rest) { Start-Game $x; Start-Sleep 3 }
@@ -301,9 +367,19 @@ function Run-Steps([string]$file) {
             }
             'close' {
                 $p = $st[$rest[0]].Proc
-                if ($p -and -not $p.HasExited) { [void]$p.CloseMainWindow(); if (-not $p.WaitForExit(20000)) { Write-Host "game $($rest[0]) did not close: ended"; Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
+                $expectedExit[$rest[0]] = $true
+                if ($p -and -not $p.HasExited) {
+                    $p.Refresh()
+                    Note ("close $($rest[0]): pid $($p.Id) main window 0x{0:x}" -f [int64]$p.MainWindowHandle)
+                    [void]$p.CloseMainWindow()
+                    if (-not $p.WaitForExit(20000)) {
+                        $msg = "game $($rest[0]) did not close in 20 s: ended. Its windows: $([AutotestWin]::Windows($p.Id))"
+                        Write-Host $msg; Note $msg
+                        Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000)
+                    }
+                }
             }
-            'kill' { $p = $st[$rest[0]].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
+            'kill' { $expectedExit[$rest[0]] = $true; $p = $st[$rest[0]].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
             'server' { if ($rest[0] -eq 'stop') { Stop-Server } else { Start-Server } }
             'sleep' { Start-Sleep -Seconds ([double]$rest[0]) }
             'shot' { Shot-Both "s$n-$($rest[0])" }
@@ -332,6 +408,8 @@ function Run-Steps([string]$file) {
             }
             default { throw "steps line ${n}: unknown '$($w[0])'" }
         }
+        Note-Games "after step ${n}"
+        Check-Exits "step ${n} ($line)"
     }
 }
 
@@ -374,7 +452,7 @@ try {
     try { Shot-Both 'failed' } catch {}
 } finally {
     if (-not $KeepOpen) {
-        foreach ($x in $kits.Keys) { $p = $st[$x].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+        foreach ($x in $kits.Keys) { $expectedExit[$x] = $true; $p = $st[$x].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
         Stop-Server
     }
     foreach ($x in $kits.Keys) { if (Test-Path $st[$x].Log) { Copy-Item $st[$x].Log "$out\eden_log-$x.txt" } }

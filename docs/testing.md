@@ -305,6 +305,8 @@ A scenario can instead be `scenarios\<name>.steps.txt`, which drives both games 
 | `expect name A=1 B=0` | waits up to `-ExpectWait` seconds (default 30) until each game named has that many puppets (`CoopPuppet_*`) and as many puppet fairies (`Dm_Npc_Navi`) alive, counted from the objects debug lines (`LICHII_COOP_DEBUG_OBJECTS=1`, on by default); writes PASS or FAIL to `counts.txt` and takes a screenshot. A FAIL does not stop the test; at the end `FAILED.txt` says how many failed |
 | `shot name` | a screenshot of both |
 
+A steps run also writes `steps.txt`: each step with the local time to the millisecond, and after each step every game's process id and visible windows. A game that ends while the steps did not close or kill it is a FAIL in `counts.txt` ("ended by itself during step N"). Before each start the driver sets `confirmStop=2` (never ask) in the kit's `qt-config.ini`: with the default the window asks "Are you sure you want to close Lichii?", nobody answers, and `close B` ended B like a crash after 20 s (issue 112).
+
 `stray` (checked 2026-11-09 on main c8ea805: 9 of 9 counts right) loads both games into the Graveyard, sends A to Kakariko and back, then has B quit, join late, crash and rejoin, stops and restarts the server, and brings B back as adult Link; at each step it checks that no puppet or fairy is left where it should not be.
 
 ### Input scripts

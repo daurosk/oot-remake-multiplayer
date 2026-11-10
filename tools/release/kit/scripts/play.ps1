@@ -133,6 +133,16 @@ $user = Join-Path $emu 'user'
 if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
     Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
 }
+# No game mods with co-op (issue 136): stop before anything starts, and say where they are.
+$mods = @(Get-KitMods $user)
+if ($mods.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'Co-op does not work with game mods, and these are installed for Ocarina of Time:'
+    foreach ($m in $mods) { Write-Host "  $m" }
+    Write-Host 'Remove those folders, or turn the mods off: in the emulator, right-click the game,'
+    Write-Host 'Properties, Add-Ons, untick them. Then start again. (co-op''s own coop-puppet stays.)'
+    exit 1
+}
 if ($Mode -eq 'host') {
     $serverExe = Join-Path $kit 'server\coop_server.exe'
     $serverUp = Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }

@@ -235,6 +235,18 @@ try {
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -match 'Puppet pack: found\. Puppet pack: made without the other players'' sounds\. Run make-puppet-pack\.cmd again') "an old puppet pack: the sound line [$(($out | Select-String 'Puppet pack') -join ' / ')]"
     Test-Started $kit 'old puppet pack'
+    # A game mod installed (issue 136): play stops before the server or the game starts, and
+    # names the folder; turned off in the game's Add-Ons, the game starts.
+    $kit = Join-Path $tmp 'kit mod'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\coop-puppet\coop_puppet.json" '{"actors": [], "sound": true}'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\Hyrule-Cheat-Menu\exefs\subsdk8" 'x'
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -match 'Press any key') 'a mod: play stops with an error (play.cmd pauses so the player can read it)'
+    Check (($out -join ' ') -match 'Co-op does not work with game mods' -and ($out -join ' ') -match 'Hyrule-Cheat-Menu') "a mod: the message names it [$(($out | Select-String 'mods|Hyrule') -join ' / ')]"
+    Check (($out -join ' ') -notmatch 'Emulator started') 'a mod: the game does not start'
+    Write-File "$kit\emulator\user\config\qt-config.ini" "[DisabledAddOns]`r`nsize=1`r`n1\title_id=288309953924349952`r`n1\disabled\size=1`r`n1\disabled\1\d=Hyrule-Cheat-Menu`r`n"
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Test-Started $kit 'a mod turned off in Add-Ons'
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

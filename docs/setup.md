@@ -8,6 +8,7 @@ This is an early test build (v0.1.0-test2) of online co-op for the Ocarina of Ti
 - Your own copy of the game, dumped from your own console, with its keys (`prod.keys`, `title.keys`) and the console's firmware. The release has no game files, keys or firmware and never will. Every player needs their own.
 - The same game version as the other players (build id `e0f3ccfaf50065ae`; the emulator's log names it, see [below](#check-it-works)).
 - The same release of the co-op kit as the other players.
+- **No game mods.** Mods are not supported in co-op: cheat menus, texture packs, gameplay or FPS mods, emulator cheats. Remove them, or turn them off for the game (in the emulator, right-click the game, Properties, Add-Ons, untick them). Co-op's own puppet pack (`coop-puppet`, step 4) is not a mod in this sense and stays.
 
 ## 1. Unzip
 
@@ -92,6 +93,8 @@ It sends nothing about you: one request for the list of releases, and the two do
 
 ## Troubleshooting
 
+- **"Co-op does not work with game mods, and these are installed for Ocarina of Time"** when you start `Host.bat`, `Join.bat` or `play.cmd`: the folders it names hold game mods (in `emulator\user\load\0400486024DEC000\`, or the SD card's `atmosphere\contents\0400486024DEC000\`). Remove them, or turn them off in the game's Add-Ons (right-click the game, Properties, Add-Ons), then start again.
+- **The co-op panel says "Co-op is off: a game mod is installed"**: a mod changed the game's code where co-op hooks in, so co-op left its code out and did not connect. The log says where (`coop: off: a game mod is installed (main+0x...)`). Turn the mod off as above and restart the emulator.
 - **"RomFS Extraction Failed! There was an error copying the RomFS files or the user cancelled the operation." (step 4).** With a `.nup` game you do not need Dump RomFS: run `make-puppet-pack.cmd` and give it the `.nup`. Otherwise: the emulator shows this one message for nearly every failure and writes nothing about the dump itself in its log. In order:
   - Your keys are older than the game's update. The log (`emulator\user\log\eden_log.txt`) then has `Cannot decrypt ...: keys for gen 0x17+ required.`, and `make-puppet-pack.cmd` says **"Your prod.keys are too old for this game's update"**. Gen 0x17 needs `master_key_16` in `prod.keys`; keys that stop at `master_key_15` cannot decrypt the update. The game can still run from a `.nup`, which is not encrypted. Fix: build the pack from the `.nup` (step 4), or dump newer keys from your console.
   - It came at once, before any progress bar: the emulator cannot read the game. Check that `emulator\user\keys\prod.keys` exists (the "No keys" item below), the firmware is installed, and the game starts in this emulator.

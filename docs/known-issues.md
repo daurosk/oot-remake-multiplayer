@@ -46,6 +46,13 @@ One PC, two games, played by hand on 2026-11-09.
 - **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
 - **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.
 
+## Mods are not supported in co-op
+
+Co-op does not allow game mods (issue 136). A mod's code patches can sit where co-op's own go (the Hyrule Cheat Menu's does), and cheats, refills or God Mode change the game under the sync and hide or fake sync bugs.
+
+- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a mod is installed for the game, and name its folder. Mods turned off in the game's Add-Ons do not count, and neither does co-op's own `coop-puppet` pack.
+- When the game's code is patched where co-op patches it anyway (a mod started another way), co-op stays off. The panel says **"Co-op is off: a game mod is installed"**.
+
 ## Other notes
 
 - Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks.

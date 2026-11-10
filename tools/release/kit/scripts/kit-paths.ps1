@@ -41,6 +41,68 @@ function Get-KitLoadDir([string]$User) {
     return Join-Path $User 'load'
 }
 
+# Game mods the emulator would load for Ocarina of Time, which co-op does not allow (issue 136:
+# a mod's code patches can sit where co-op's own go, and its cheats change the game under the
+# sync). Looked at the way Fritchii's Add-Ons list does: each folder in <load>\0400486024DEC000
+# with a non-empty exefs, romfs, romfslite, romfs_ext or cheats folder, and the SD card's
+# atmosphere\contents\0400486024DEC000 (called "SDMC" there). A mod turned off in the game's
+# Add-Ons (qt-config.ini [DisabledAddOns]) does not count, and neither does co-op's own puppet
+# pack (coop-puppet). Returns one line per mod: its folder.
+$KitGameId = '0400486024DEC000'
+function Get-KitSdmcDir([string]$User) {
+    $ini = Join-Path $User 'config\qt-config.ini'
+    if (Test-Path -LiteralPath $ini) {
+        foreach ($line in [System.IO.File]::ReadAllLines($ini)) {
+            if ($line -match '^sdmc_directory=(.+)$') { return [System.IO.Path]::GetFullPath($Matches[1]) }
+        }
+    }
+    return Join-Path $User 'sdmc'
+}
+function Get-KitDisabledAddons([string]$User) {
+    $ini = Join-Path $User 'config\qt-config.ini'
+    $names = @()
+    if (-not (Test-Path -LiteralPath $ini)) { return $names }
+    $game = [Convert]::ToUInt64($KitGameId, 16).ToString()
+    $inSection = $false
+    $titles = @{}
+    $disabled = @{}
+    foreach ($line in [System.IO.File]::ReadAllLines($ini)) {
+        if ($line -match '^\[(.+)\]\s*$') { $inSection = $Matches[1] -eq 'DisabledAddOns'; continue }
+        if (-not $inSection) { continue }
+        if ($line -match '^(\d+)\\title_id=(\d+)\s*$') { $titles[$Matches[1]] = $Matches[2] }
+        elseif ($line -match '^(\d+)\\disabled\\\d+\\d=(.+?)\s*$') {
+            if (-not $disabled.ContainsKey($Matches[1])) { $disabled[$Matches[1]] = @() }
+            $disabled[$Matches[1]] += $Matches[2]
+        }
+    }
+    foreach ($i in $titles.Keys) {
+        if ($titles[$i] -eq $game -and $disabled.ContainsKey($i)) { $names += $disabled[$i] }
+    }
+    return $names
+}
+function Test-KitModPart([string]$Dir, [string[]]$Parts) {
+    foreach ($part in $Parts) {
+        $sub = Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $part } | Select-Object -First 1
+        if ($sub -and (Get-ChildItem -LiteralPath $sub.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) { return $true }
+    }
+    return $false
+}
+function Get-KitMods([string]$User) {
+    $found = @()
+    $off = @(Get-KitDisabledAddons $User)
+    $load = Join-Path (Get-KitLoadDir $User) $KitGameId
+    if (Test-Path -LiteralPath $load) {
+        foreach ($mod in Get-ChildItem -LiteralPath $load -Directory -ErrorAction SilentlyContinue) {
+            if ($mod.Name -eq 'coop-puppet' -or $off -contains $mod.Name) { continue }
+            if (Test-KitModPart $mod.FullName @('exefs', 'romfs', 'romfslite', 'romfs_ext', 'cheats')) { $found += $mod.FullName }
+        }
+    }
+    $sd = Join-Path (Get-KitSdmcDir $User) "atmosphere\contents\$KitGameId"
+    if ((Test-Path -LiteralPath $sd) -and $off -notcontains 'SDMC' -and
+        (Test-KitModPart $sd @('exefs', 'romfs', 'romfslite', 'romfs_ext'))) { $found += $sd }
+    return $found
+}
+
 # Reads coop-options.ini: NAME=value lines for LICHII_COOP_* switches and the emulator's
 # own EDEN_NX2_* switches. Blank lines and lines starting with # or ; are skipped, and so
 # is auto_update (play.ps1 reads it, the emulator does not). Returns an ordered table.

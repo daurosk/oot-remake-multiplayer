@@ -62,7 +62,7 @@ function Read-KitOptions([string]$Path) {
 # With an NVIDIA card the emulator uses it (it lists NVIDIA first and takes the first card),
 # so AMD's driver is not used. $Query returns the cards (Win32_VideoController by default);
 # a query that fails counts as no AMD card.
-function Get-AmdGpuKind([scriptblock]$Query = { Get-CimInstance Win32_VideoController -ErrorAction Stop }) {
+function Get-AmdGpuKind([scriptblock]$Query = { Get-CimInstance Win32_VideoController -OperationTimeoutSec 5 -ErrorAction Stop }) {
     try { $cards = @(& $Query) } catch { return '' }
     $amd = $false; $nvidia = $false
     foreach ($card in $cards) {
@@ -78,7 +78,7 @@ function Get-AmdGpuKind([scriptblock]$Query = { Get-CimInstance Win32_VideoContr
 # Sets EDEN_NX2_GPL=0 (shader libraries off) on a PC whose card is AMD, unless the player
 # already set EDEN_NX2_GPL (in Windows or in coop-options.ini, which play.ps1 reads first).
 # Returns the line to show, or nothing.
-function Set-AmdGplDefault([scriptblock]$Query = { Get-CimInstance Win32_VideoController -ErrorAction Stop }) {
+function Set-AmdGplDefault([scriptblock]$Query = { Get-CimInstance Win32_VideoController -OperationTimeoutSec 5 -ErrorAction Stop }) {
     if ($env:EDEN_NX2_GPL) { return }
     switch (Get-AmdGpuKind $Query) {
         'amd' {

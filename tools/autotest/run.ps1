@@ -101,7 +101,7 @@ if ($headSwitches.Count) {
         if (-not $PSBoundParameters.ContainsKey('Switches') -or $given -notcontains $k) { $Switches += $e }
     }
 }
-if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard' }
+if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not ($Switches -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
 
 $Server = Resolve $Server
 if (-not $TakeBaseline -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
@@ -161,6 +161,7 @@ foreach ($x in $kitList.Keys) {
         $d = Kit-Dir $kitList[$x] $n
         if (-not $d.StartsWith($kitList[$x] + '\', [StringComparison]::OrdinalIgnoreCase)) {
             Write-Host "WARNING: kit $x uses $n folder $d (outside the kit). tools\autotest\kit-paths.ps1 -Fix points it back."
+            if ($n -eq 'nand' -and -not $NoRestore) { throw "kit $x's NAND is outside the kit; the save restore would overwrite $d. Run kit-paths.ps1 -Fix or pass -NoRestore." }
         }
     }
 }

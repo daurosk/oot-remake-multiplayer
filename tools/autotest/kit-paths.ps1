@@ -50,7 +50,7 @@ foreach ($k in $Kit) {
         if (-not $ok -and $Fix) {
             $want = $own -replace '\\', '/'
             if ($m.Success) { $text = $text.Remove($m.Groups[1].Index, $m.Groups[1].Length).Insert($m.Groups[1].Index, $want) }
-            else { $text += "`r`n${n}_directory=$want" }
+            else { Write-Host "ERROR: $k has no ${n}_directory key; set it by hand in [Data%20Storage]"; continue }
             $text = [regex]::Replace($text, "(?m)^(${n}_directory\\default=)\w+", '${1}false')
             $changed = $true
         }

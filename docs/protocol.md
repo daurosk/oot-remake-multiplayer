@@ -1,4 +1,4 @@
-# Wire protocol, version 4
+# Wire protocol, version 5
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 

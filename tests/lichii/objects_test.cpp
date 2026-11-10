@@ -1720,7 +1720,7 @@ TEST_CASE("objects: only chests, pickups and things that go away are removed whe
                              "Obj_FireTemple_HammerSlipPillar_A_01", "Obj_Well_CandleStick_A_01",
                              "Land_Well_Waterfall_A_01", "Obj_ForestTemple_GhostPicture_A_01",
                              "Enemy_Anubis", "Obj_ShadowTemple_SkullPot_A_01",
-                             "Obj_ShadowTemple_SpikeBoard_A_01",
+                             "Obj_ShadowTemple_SpikeBoard_A_01", "Obj_ShadowTemple_FallingFloor_A_01",
                              "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild"}) {
         CAPTURE(name);
         CHECK_FALSE(CoopObjects::RemovedWhenTaken(name));

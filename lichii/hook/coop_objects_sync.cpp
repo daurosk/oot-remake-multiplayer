@@ -100,7 +100,7 @@ bool RemovedWhenTaken(std::string_view name) {
         "SpiderWeb",          // burnt or broken (Deku Tree, Shadow Temple, Ganon's Castle)
         "_CrackWall_",        // bombed open
         "_CrackFloor_",
-        "_FallingFloor_",     // fallen
+        "InsideTheDekuTree_FallingFloor_",  // fallen (the Shadow Temple's stays as ground: kept)
     };
     for (const std::string_view p : kPrefixes) {
         if (name.starts_with(p)) return true;

@@ -106,7 +106,8 @@ bool IsShared(std::string_view name);
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver
 // rupees, Gold Skulltulas and tokens), spider webs, red and blue ice,
-// cracked walls and floors, broken rocks and falling floors. Only these are
+// cracked walls and floors, broken rocks and the Deku Tree's falling
+// floors (the Shadow Temple's stays as ground once fallen). Only these are
 // removed when another player sets their key (Sync::Take). Everything else
 // with a key (enemy and silver rupee counters, the Fire Temple's hammer
 // pillars, torches, waterfalls, paintings, enemies) changes state instead of

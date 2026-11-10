@@ -104,6 +104,7 @@ void Sync::Reset() {
     sources_.clear();
     tell_at_ = 0;
     outbox_.clear();
+    held_.clear();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -266,6 +267,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 const std::vector<Vec3>& owned, const std::map<std::uint64_t, std::uint64_t>& made,
                 std::vector<proto::Message>& send, std::vector<Create>& creates,
                 std::vector<Remove>& removes) {
+    // The server time estimate can step back when the clock offset is
+    // measured again; every wait here subtracts times, so keep it monotonic.
+    now_us = std::max(now_us, last_now_);
+    last_now_ = now_us;
     if (scene != scene_) {
         Reset();
         scene_ = scene;
@@ -291,19 +296,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
     std::erase_if(sources_, [&](const auto& s) { return now_us - s.second > kSourceUs; });
 
-    Apply(self, now_us, removes);
-
-    std::map<std::uint64_t, const Seen*> on_list;
-    for (const Seen& s : seen) {
-        on_list.emplace(s.address, &s);
-    }
-    if (first_walk_) {
-        for (const auto& [address, s] : on_list) {
-            old_.insert(address);  // lay there when we came: nobody's roll now
-        }
-        first_walk_ = false;
-    }
-
+    // Before the messages: a copy the director let go of since the last walk
+    // must not look held by it when a take for it is applied now.
     // What the director made.
     for (auto& [id, d] : drops_) {
         if (d.key == 0) {
@@ -327,6 +321,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             d.key = 0;
             d.made = false;
         }
+    }
+
+    Apply(self, now_us, removes);
+
+    std::map<std::uint64_t, const Seen*> on_list;
+    for (const Seen& s : seen) {
+        on_list.emplace(s.address, &s);
+    }
+    if (first_walk_) {
+        for (const auto& [address, s] : on_list) {
+            old_.insert(address);  // lay there when we came: nobody's roll now
+        }
+        first_walk_ = false;
     }
 
     // Our actors: where they are, and the ones that left the list.
@@ -357,7 +364,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             const auto reason =
                 away < kTakeM ? proto::DropTakeReason::picked_up : proto::DropTakeReason::gone;
             d.state = State::taken;
-            Queue(proto::DropTake{0, id, reason});
+            held_.push_back({proto::DropTake{0, id, reason}, now_us});
             Note(Tag(id) + " " + d.name +
                  (reason == proto::DropTakeReason::picked_up ? " picked up here" : " blinked out here"));
         } else {
@@ -365,10 +372,38 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             Note(Tag(id) + " " + d.name + " unloaded here");
         }
     }
-    std::erase_if(old_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
-    std::erase_if(deleting_, [&](const auto& e) {
-        return on_list.count(e.first) == 0 || now_us - e.second.second > kDeleteWaitUs;
+    // Several gone within the hold, or Link gone: an unload, not pickups.
+    if (!held_.empty() && (!player || held_.size() >= kUnloadCount)) {
+        for (const HeldTake& h : held_) {
+            if (const auto it = drops_.find(h.take.id); it != drops_.end()) {
+                it->second.state = State::away;
+                Note(Tag(h.take.id) + " " + it->second.name + " unloaded here, not taken");
+            }
+        }
+        held_.clear();
+    }
+    std::erase_if(held_, [&](const HeldTake& h) {
+        if (now_us - h.since_us < kTakeHoldUs) {
+            return false;
+        }
+        Queue(h.take);
+        return true;
     });
+    std::erase_if(old_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
+    // A delete that never came true (the director had let go of the copy
+    // the moment we left it to it): the remover is asked. The actor stays
+    // here so it is never taken for a roll of ours.
+    for (auto it = deleting_.begin(); it != deleting_.end();) {
+        if (on_list.count(it->first) == 0) {
+            it = deleting_.erase(it);
+            continue;
+        }
+        if (now_us - it->second.second > kDeleteWaitUs) {
+            removes.push_back({it->first, it->second.first});
+            it->second.second = now_us;
+        }
+        ++it;
+    }
     std::erase_if(ghosts_, [&](const Ghost& g) { return now_us - g.since_us > kCreateWaitUs; });
 
     // Actors that are new on the list.
@@ -480,6 +515,18 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             continue;
         }
         if (d.address == 0 && d.key == 0) {
+            const auto lying = std::find_if(seen.begin(), seen.end(), [&](const Seen& s) {
+                return old_.count(s.address) != 0 && bound_.count(s.address) == 0 &&
+                       deleting_.count(s.address) == 0 && s.name == d.name &&
+                       Distance(s.position, d.position) < kMatchM;
+            });
+            if (lying != seen.end()) {
+                Bind(d, lying->address);
+                d.position = lying->position;
+                old_.erase(lying->address);
+                Note(Tag(id) + " " + d.name + " already lying here: kept as it");
+                continue;
+            }
             if (now_us < d.got_us + d.wait_us || d.id.maker == self) {
                 continue;
             }
@@ -683,9 +730,12 @@ public:
         if (!Walk(memory, seen, player, owned)) {
             return;  // the list changed under us
         }
-        const u8 self =
-            session->with_client([](coop::net::Client& c) { return c.player_number(); });
-        if (self == 0) {
+        // Before the first clock offset the server time is our own clock:
+        // times told to the others would not match theirs.
+        const auto [self, timed] = session->with_client([](coop::net::Client& c) {
+            return std::make_pair(c.player_number(), c.clock_offset_us().has_value());
+        });
+        if (self == 0 || !timed) {
             return;
         }
         if (!active_) {
@@ -859,9 +909,13 @@ private:
             if (owner && *owner + kActorNode == *node) {
                 const u64 a = *owner;
                 std::pair<What, std::string> entry{What::other, {}};
+                bool cached = false;
                 if (const auto it = known_.find(a); it != known_.end()) {
                     entry = it->second;
-                } else {
+                    cached = entry.first != What::drop || Name(memory, a) == entry.second;
+                }
+                if (!cached) {
+                    entry = {What::other, {}};
                     std::string name = Name(memory, a);
                     if (name == "Player_Child" || name == "Player_Adult") {
                         entry.first = What::player;

@@ -428,6 +428,8 @@ TEST_CASE("drops: picked up, blinked out, unloaded") {
     a.Tick();
     CHECK(Of<proto::DropTake>(a.send).empty());  // one walk without it is not enough
     a.Tick();
+    CHECK(Of<proto::DropTake>(a.send).empty());  // held a moment
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
     auto takes = Of<proto::DropTake>(a.send);
     REQUIRE(takes.size() == 1);
     CHECK(takes[0].id == told[0].id);
@@ -439,6 +441,7 @@ TEST_CASE("drops: picked up, blinked out, unloaded") {
     a.Gone(0x2000);
     a.Tick();
     a.Tick();
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
     takes = Of<proto::DropTake>(a.send);
     REQUIRE(takes.size() == 1);
     CHECK(takes[0].id == told[1].id);
@@ -461,6 +464,8 @@ TEST_CASE("drops: many gone at once, or no Link, is an unload; near 0 tells pick
     a.seen.clear();
     a.Tick();
     a.Tick();
+    CHECK(Of<proto::DropTake>(a.send).empty());
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
     CHECK(Of<proto::DropTake>(a.send).empty());
 
     Game b(1);
@@ -487,6 +492,7 @@ TEST_CASE("drops: many gone at once, or no Link, is an unload; near 0 tells pick
     c.Gone(0x2000);
     c.Tick();
     c.Tick();
+    c.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
     CHECK(Of<proto::DropTake>(c.send).size() == 1);
 }
 
@@ -573,6 +579,8 @@ TEST_CASE("drops: a player who comes in is told the drops still lying, where the
     a.Gone(0x2000);  // we picked the heart up
     a.Tick();
     a.Tick();
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
+    CHECK(Of<proto::DropTake>(a.send).size() == 1);
 
     a.sync.Receive(proto::DropAsk{2, "Another_Scene"});
     a.Tick(1000);
@@ -733,4 +741,151 @@ TEST_CASE("drops: the director lets go of a released copy without deleting it") 
     copy.act = CoopSpawn::Act::show;
     d.SetDrops(base, {copy});
     CHECK_FALSE(d.Step(guest, false, 0, 83));
+}
+
+TEST_CASE("drops: a take held while the scene changes is never told") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Lying(0x1000, 5.0f)};
+    a.Tick();
+    a.player = Vec3{5.0f, 0.0f, 0.0f};
+    a.Gone(0x1000);  // the door: actors unload first
+    a.Tick();
+    a.Tick();
+    CHECK(Of<proto::DropTake>(a.send).empty());
+    // Then the scene name changes.
+    a.send.clear();
+    a.creates.clear();
+    a.removes.clear();
+    a.now += 100 * kMs;
+    a.sync.Tick("Another_Scene", 1, a.now, {}, a.player, {}, {}, a.send, a.creates, a.removes);
+    for (int i = 0; i < 30; ++i) {
+        a.now += 33 * kMs;
+        a.send.clear();
+        a.sync.Tick("Another_Scene", 1, a.now, {}, a.player, {}, {}, a.send, a.creates, a.removes);
+        CHECK(Of<proto::DropTake>(a.send).empty());
+    }
+}
+
+TEST_CASE("drops: drops going one after another within the hold are an unload") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Lying(0x1000, 5.0f), Lying(0x2000, 7.0f), Lying(0x3000, 9.0f)};
+    a.Tick();
+    a.player = Vec3{7.0f, 0.0f, 0.0f};
+    a.Gone(0x1000);
+    a.Tick();
+    a.Tick();
+    a.Gone(0x2000);
+    a.Tick();
+    a.Tick();
+    a.Gone(0x3000);
+    a.Tick();
+    a.Tick();
+    for (int i = 0; i < 30; ++i) {
+        a.Tick();
+        CHECK(Of<proto::DropTake>(a.send).empty());
+    }
+    CHECK(a.sync.Live() == 0);
+}
+
+TEST_CASE("drops: a take in the walk after the director let go still deletes the copy") {
+    Game b(2);
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 5.0f, b.now));
+    b.Tick();
+    b.Tick(600);
+    REQUIRE(b.creates.size() == 1);
+    const std::uint64_t key = b.creates[0].key;
+    b.made[key] = 0x7000;
+    b.seen = {Lying(0x7000, 5.0f)};
+    b.Tick();
+    REQUIRE(b.creates.size() == 1);
+    CHECK(b.creates[0].release);
+    // The director let go; in this same walk the take arrives.
+    b.made.clear();
+    b.sync.Receive(proto::DropTake{1, Id(1, 7), proto::DropTakeReason::picked_up});
+    b.Tick();
+    REQUIRE(b.removes.size() == 1);  // asked of the remover, not left to the director
+    CHECK(b.removes[0] == Remove{0x7000, kGreen});
+}
+
+TEST_CASE("drops: a delete that never comes true is asked of the remover; never our roll") {
+    Game b(2);
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 5.0f, b.now));
+    b.Tick();
+    b.Tick(600);
+    REQUIRE(b.creates.size() == 1);
+    const std::uint64_t key = b.creates[0].key;
+    b.made[key] = 0x7000;
+    b.seen = {Lying(0x7000, 5.0f)};
+    b.Tick();
+    // Taken while the director still holds it: left to the director.
+    b.sync.Receive(proto::DropTake{1, Id(1, 7), proto::DropTakeReason::picked_up});
+    b.Tick();
+    CHECK(b.removes.empty());
+    // But it stays (the director had let go after all).
+    b.made.clear();
+    bool asked = false;
+    for (int i = 0; i < 120; ++i) {
+        b.Tick();
+        CHECK(Of<proto::DropSpawn>(b.send).empty());
+        asked = asked || !b.removes.empty();
+    }
+    CHECK(asked);
+}
+
+TEST_CASE("drops: after a short loss of the session the drops lying here are kept, not doubled") {
+    Game b(2);
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 5.0f, b.now));
+    b.Tick();
+    b.Tick(600);
+    REQUIRE(b.creates.size() == 1);
+    b.made[b.creates[0].key] = 0x7000;
+    b.seen = {Lying(0x7000, 5.0f), Lying(0x2000, 20.0f, kHeart)};
+    b.Tick();
+    REQUIRE(Of<proto::DropSpawn>(b.send).size() == 1);  // our own heart
+    const auto own = Of<proto::DropSpawn>(b.send)[0];
+    b.made.clear();
+    b.Tick();
+
+    // The session drops and comes back: everything is forgotten.
+    b.sync.Reset();
+    b.Tick();
+    REQUIRE(Of<proto::DropAsk>(b.send).size() == 1);
+    // The others tell both again: ours (the heart) and P1's rupee.
+    auto again_own = own;
+    again_own.player_number = 1;
+    again_own.flags = proto::drop_spawn::again;
+    b.sync.Receive(again_own);
+    b.sync.Receive(Told(1, 7, 5.0f, b.now, kGreen, proto::drop_spawn::again));
+    b.Tick();
+    CHECK(b.creates.empty());  // nothing made twice
+    CHECK(b.sync.IdOf(0x7000) == Id(1, 7));
+    CHECK(b.sync.IdOf(0x2000) == own.id);
+    // And a pickup of the old rupee is still shared.
+    b.player = Vec3{5.0f, 0.0f, 0.0f};
+    b.Gone(0x7000);
+    b.Tick();
+    b.Tick();
+    b.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
+    REQUIRE(Of<proto::DropTake>(b.send).size() == 1);
+    CHECK(Of<proto::DropTake>(b.send)[0].id == Id(1, 7));
+}
+
+TEST_CASE("drops: a server time that steps back does not end the waits") {
+    Game b(2);
+    b.now = 10'000'000;
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 5.0f, b.now));
+    b.Tick();
+    b.Tick(600);
+    REQUIRE(b.creates.size() == 1);
+    // The clock offset is measured again: two seconds back.
+    b.now -= 2'000'000;
+    b.Tick();
+    REQUIRE(b.creates.size() == 1);  // still asked, not given up
+    CHECK(b.sync.Live() == 1);
 }

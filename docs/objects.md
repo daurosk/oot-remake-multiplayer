@@ -229,7 +229,7 @@ Caleb (2026-11-09): monster drops are synced, so if one player collects one it d
 
 Why not the scene's decider alone (as for Stalchild): in a large scene the decider may be far away with the pot not loaded, and the player who broke it would get nothing.
 
-**Pickups and blinking out.** A drop of ours that is off the list for two walks, with our Link within 2.5 m of where it last was, was picked up; with Link within 15 m (`LICHII_COOP_DROPS_NEAR`, 0 for never) it blinked out; further away it was only unloaded here and nothing is told. Three or more gone in one walk, or no Link on the list, is an unload. A pickup or a blink-out goes out as `DROP_TAKE` and every game deletes its own actor of that drop. The game gives the collector the item itself; rupees, hearts and ammo stay per player.
+**Pickups and blinking out.** A drop of ours that is off the list for two walks, with our Link within 2.5 m of where it last was, was picked up; with Link within 15 m (`LICHII_COOP_DROPS_NEAR`, 0 for never) it blinked out; further away it was only unloaded here and nothing is told. Three or more gone in one walk or within 0.5 s, or no Link on the list, is an unload. A pickup or a blink-out goes out as `DROP_TAKE` 0.5 s later (a scene change or an unload in that time calls it off) and every game deletes its own actor of that drop. Drops are not announced before the clock offset to the server is known. The game gives the collector the item itself; rupees, hearts and ammo stay per player.
 
 **A player who comes in later** sends `DROP_ASK` with its scene at its first walk there. Every game in that scene answers 0.5 s later with `DROP_SPAWN` (flag "again") for each drop it still shows, where it lies now; a game that knows the id ignores it, the newcomer makes each at once.
 
@@ -243,6 +243,9 @@ At most 20 drop messages a second leave one game (the rest wait their turn), so 
 4. A drop left alone blinks out in both; a player walking away does not take it from the other (if it does, drops unload nearer than 15 m: lower `LICHII_COOP_DROPS_NEAR`).
 5. A player entering the scene later sees the drops lying there.
 6. That drops have no placement hash (else the log says `is placed ... not shared`).
+7. Leaving a scene through a door right beside a drop: the drop stays for the player who stays (a take is held 0.5 s and called off by the scene change or by more drops going at once).
+8. A short loss of the connection in a scene with drops: after it, each drop is there once (an actor already lying is kept as the drop the others tell again), and pickups are still shared.
+9. The cost of the drops' own walk of the actor list every second frame (beside the objects walk): frame time with and without `LICHII_COOP_DROPS=0`.
 
 Known limits: two players picking the same drop up within the network delay both get it. Two different things that drop within 3 m and 3 s of each other in two games count as one. A drop unloaded here is not made again when we come back near it.
 

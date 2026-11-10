@@ -48,6 +48,7 @@
 
 #include "coop_objects.h"
 #include "coop_every.h"
+#include "coop_cheat_items.h"
 #include "coop_flags.h"
 #include "coop_hold.h"
 #include "coop_puppet.h"
@@ -195,28 +196,7 @@ constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
 
-// LICHII_COOP_OBJECTS_CHEAT: PouchData.<item>.StockNum and IsGet.<item> hashes
-// from docs/items.md, and the count each is kept at. Entries with is_get 0 are
-// the ammo capacities (unnamed struct 0xf80f8077, docs/items.md): without one
-// the item is in the menu but the game gives none (bombs: Link lifts empty hands).
-struct CheatItem {
-    const char* name;
-    u32 stock;
-    u32 is_get;
-    s32 count;
-};
-constexpr std::array<CheatItem, 10> kCheatItems{{
-    {"Weapon_Range_Bow", 0x938d56bf, 0x69ec28be, 1},
-    {"Item_Quiver_Small", 0xa8c3e1fb, 0x0a550531, 1},
-    {"Item_Arrow_Normal", 0x518ec74b, 0x572701ea, 30},
-    {"capacity Arrow", 0x418db791, 0, 30},
-    {"Item_BombBag_Small", 0xb0a1bf51, 0xa63f1e2d, 1},
-    {"Item_Bomb", 0xdb1bcd4f, 0x2bb00768, 20},
-    {"capacity Bomb", 0xe753508b, 0, 20},
-    {"Weapon_Range_SlingShot", 0x80d34ce9, 0x0ec22ee1, 1},
-    {"Item_DekuSeed", 0x5fadf7fc, 0x29888e1e, 30},
-    {"capacity DekuSeed", 0xae8cc742, 0, 30},
-}};
+// LICHII_COOP_OBJECTS_CHEAT: what it sets is in coop_cheat_items.h.
 
 bool EnvFlag(const char* name) {
 #ifdef _WIN32
@@ -1442,22 +1422,11 @@ private:
         }
     }
 
-    // Tops up each cheat item below its count. A read that fails means the
-    // flag manager is not up yet (title screen): try again next time.
+    // The cheat items (coop_cheat_items.h), topped up once a second.
     void Cheat(Core::System& system) {
         CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
-        coop::host::GameFlags flags(memory);
-        for (const CheatItem& item : kCheatItems) {
-            const auto now = flags.get_int(item.stock);
-            if (!now || *now >= item.count) {
-                continue;
-            }
-            const bool set = coop::host::GameFlags::set_int(memory, item.stock, item.count);
-            if (item.is_get != 0 && flags.get_bool(item.is_get) == false) {
-                coop::host::GameFlags::set_bool(memory, item.is_get, true);
-            }
-            LOG_INFO(Core, "coop: objects: cheat {} {} -> {}{}", item.name, *now, item.count,
-                     set ? "" : " (queue busy, again next second)");
+        for (const auto& note : CoopCheatItems::TopUp(memory, cheat_state_)) {
+            LOG_INFO(Core, "coop: objects: {}", note);
         }
     }
 
@@ -1602,6 +1571,7 @@ private:
     u64 drift_at_ = 0;
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopEvery::Every cheat_every_{CoopEvery::kSecondUs};
+    CoopCheatItems::State cheat_state_;
     CoopEvery::Every share_every_{CoopEvery::kTwoFramesUs};
     bool sharing_ = false;
     std::size_t blast_drops_logged_ = 0;

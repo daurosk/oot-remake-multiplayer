@@ -30,7 +30,7 @@ Bottle hashes: A `IsValid` 0xf39ce410 / `BottleItem` 0x7d48df76; B 0x000ff6ea / 
 
 Song hashes (`IsGet.Item_Melody_…`): ZeldaLullaby 0x01c20002, EponaSong 0xb492ac33, SariaSong 0xd3f8bfcc, SunSong 0x165dd1ad, TimeSong 0x03b3450e, StormSong 0x2b39dd4f, ForestMinuet 0xdc0a0b54, FireBolero 0x49041ab9, WaterSerenade 0x3fa63986, ShadowNocturne 0xc2fb95f4, SpiritRequiem 0x802a36a8, LightPrelude 0xd6320ba4, ScarecrowSong 0x5e86fb4d.
 
-Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related and were not needed: 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077 (Int for Rupee, Bomb, Arrow, DekuStick, DekuNut and one more, perhaps capacities). Both are open.
+Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related (both now read for bombs, see [Bombs from the cheat](#bombs-from-the-cheat-issue-125)): 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077 (Int for Rupee, Bomb, Arrow, DekuStick, DekuNut and one more, perhaps capacities). Both are open.
 
 ## Rules
 
@@ -244,6 +244,28 @@ The same kit, both saves reset to the child save; game A and the server first, g
 - **`PlayerStatus.MaxLife` is not where the game keeps its hearts.** The cheat's 16 -> 20 showed a fifth heart in both games (so the flag crosses), but each game wrote 16 back on its own within a quarter second (`int 0xfbe01da1 20 -> 16` with game B not yet running), and the heart was gone once the menu opened. The flag is a copy; the real maximum is elsewhere (likely the player), not mapped. Anchor, for comparison, raises the game's own `healthCapacity` and turns 4 pieces into a heart itself when one arrives. So heart containers do not cross yet.
 - **A Gold Skulltula is two 64-bit keys, set at token pickup.** The Kakariko tree Skulltula: in each game its own token pickup set `0x6a8d9b2373d08fc9` and `0x6a8d9b2373d08fcb` 0 -> 1 in the same scan as `Item_Token_Gold.StockNum` +1 (the clocks of A and B line up 412 s apart, so each game's pickup and the other's token arriving match). Other placements show the same pairs (key and key + 2). Not split yet: whether the kill alone sets either.
 - **Shared, the keys cross but a loaded Skulltula stays.** With both keys in the run's shared-flags file, A's pickup set them in B in the same second, yet B, already in the scene, still got the Skulltula out of the tree and its token: both games ended +2. The game reads the key when the actor is placed, not after. Anchor does the same flag sync and also deletes a Gold Skulltula (`EN_SW`) or token (`EN_SI`) actor every frame its flag is set; we need that step too (object side). Not checked: that the Skulltula is gone in B after a scene change.
+
+## Bombs from the cheat (issue 125)
+
+With `LICHII_COOP_OBJECTS_CHEAT=1` the bomb bag, 20 bombs and the bomb capacity were set, the bombs showed on ZR with 20, but every ZR made an `Item_Bomb` over Link's head that was gone 0.1 s later, the count stayed 20 and nothing was thrown (autotest `spawn-bomb`, runs 20261109-054214 and 20261110-010524).
+
+**Not the co-op code.** In run 010524 the spawn sync was off (no `coop: spawn: on` line), no delete was asked by the objects sync, the drops or the director (none of their delete lines or counts), and the bomb is not a shared object (`IsShared`, `IsDrop` say no). Writing the cheat every 2 frames instead of once a second changed nothing (s5-spawn-sync-2).
+
+**What a real bomb bag sets that the cheat did not.** The autotest kits' save baselines hold a second user profile whose saves come from a player who got the bag in the game (slots 0 to 3 and 5: 10 to 14 bombs). Compared flag by flag with the autotest profile's six saves (no bombs) and that profile's slot 4 (no bombs), with the flag types from `GameDataList`, these bomb flags are set in every bomb save and 0 in every other:
+
+| Flag | Struct, member | Real saves | Cheat before |
+|---|---|---|---|
+| `PouchData.Item_Bomb.StockNum`, `IsGet.Item_Bomb`, bag `StockNum` and `IsGet`, capacity 0xe753508b | (known) | set | set |
+| UInt 0xc7ecb4a1 | 0xf5ab6461 (one UInt per assignable item and bottle), `Item_Bomb` | 35 (the slingshot 34): the order the items were got in | 0 |
+| Bool 0x6e5e7d9a | 0x541947d0 (53 members: `Bomb`, `Bottle`, `DekuNut`, `DekuStick`, `Ocarina`, `SlingShot`, `Bow`, ...), `Bomb` | 1 | 0 |
+| Bool 0xfced7932 | 0x57f52eb8 (the same 53 members), `Bomb` | 1 | 0 |
+| Bool 0x4d345bbe | 0x41f3e410 (199 members, one per item, like `IsGet`), `Item_BombBag_Small` | 1 | 0 |
+
+The struct `PouchData.Item_Bomb` has no member but `StockNum`. The capacity struct 0xf80f8077 is Rupee, DekuSeed, Bomb, Arrow, DekuStick and DekuNut (member names hashed). The two 53-member structs are most likely the item help boxes (shown and closed): the slingshot's members are 1 in every save that has the slingshot, and the cheat's first ZR opened the "Bomb" help box. `0x41f3e410.Item_Bomb` is 0 in one real save, so it is not needed. Which of the four the game checks when Link takes a bomb out is not known.
+
+**The fix (not run yet).** The cheat (`lichii/hook/coop_cheat_items.cpp`, tested in `tests/lichii/cheat_items_test.cpp`) now also sets the three Bools and gives the bomb the next get order after the highest of the 42 items. UInt flags are written through the game's UInt queue (`GameFlags::set_uint`, [flags.md](flags.md)). A save with real bombs is left as it is.
+
+**Checks in the next run.** A taken bomb lowers the count, so the cheat tops it up again and logs `coop: objects: cheat Item_Bomb 19 -> 20`; the bomb stays on the list (`coop: objects: + Item_Bomb`, no `-` line for over a second). Without that line, the bombs are still the problem; the other way is to load one of the real bomb saves.
 
 ## Not done
 

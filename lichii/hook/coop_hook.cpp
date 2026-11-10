@@ -46,6 +46,7 @@
 #include "coop/overlay/overlay.hpp"
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
+#include "coop_boss.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
@@ -236,6 +237,7 @@ public:
             CoopSpawn::OnEvent(event);
             CoopDrops::OnEvent(event);
             CoopTime::OnEvent(event);
+            CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -335,6 +337,10 @@ public:
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
+        // Boss rooms together (docs/dungeons-boss.md).
+        CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
+                        reading && reading->event_running.value_or(false),
+                        report.connected ? session_.get() : nullptr, report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);

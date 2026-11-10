@@ -17,7 +17,7 @@ namespace coop::protocol {
 
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
 // (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 4;
+inline constexpr std::uint16_t kProtocolVersion = 5;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -83,6 +83,7 @@ enum class MessageType : std::uint16_t {
   drop_spawn = 36,
   drop_take = 37,
   drop_ask = 38,
+  boss_room = 50,  // 50 to 54: boss rooms (docs/dungeons-boss.md)
 };
 
 // PLAYER_SAMPLE component ids.
@@ -862,6 +863,28 @@ struct DropAsk {
   bool operator==(const DropAsk&) const = default;
 };
 
+// BOSS_ROOM (docs/dungeons-boss.md): where the sender stands with a dungeon's
+// boss. `in_room` is sent on entering and every 2 s while there, so a game
+// in the same dungeon (one that joined or respawned too) moves its player in;
+// the intro's start and end let the others leave the intro together; `left`
+// and `defeated` end the pull. Relayed to everyone else.
+enum class BossState : std::uint8_t {
+  in_room = 1,
+  intro_start = 2,
+  intro_end = 3,
+  left = 4,
+  defeated = 5,
+};
+inline constexpr std::uint8_t kMaxBossRoom = 15;  // the room index in coop_boss.h's table
+
+struct BossRoom {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;  // the dungeon, 1 to 64 characters
+  std::uint8_t room = 0;  // 0 to kMaxBossRoom
+  BossState state = BossState::in_room;
+  bool operator==(const BossRoom&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -870,7 +893,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
-                             DropAsk>;
+                             DropAsk, BossRoom>;
 
 MessageType type_of(const Message& message);
 

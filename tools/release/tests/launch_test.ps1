@@ -242,7 +242,7 @@ try {
     Write-File "$kit\emulator\user\load\0400486024DEC000\Hyrule-Cheat-Menu\exefs\subsdk8" 'x'
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -match 'Press any key') 'a mod: play stops with an error (play.cmd pauses so the player can read it)'
-    Check (($out -join ' ') -match 'Co-op does not work with game mods' -and ($out -join ' ') -match 'Hyrule-Cheat-Menu') "a mod: the message names it [$(($out | Select-String 'mods|Hyrule') -join ' / ')]"
+    Check (($out -join ' ') -match 'Code and cheat mods are not supported in co-op' -and ($out -join ' ') -match 'Hyrule-Cheat-Menu') "a mod: the message names it [$(($out | Select-String 'mods|Hyrule') -join ' / ')]"
     Check (($out -join ' ') -notmatch 'Emulator started') 'a mod: the game does not start'
     Write-File "$kit\emulator\user\config\qt-config.ini" "[DisabledAddOns]`r`nsize=1`r`n1\title_id=288309953924349952`r`n1\disabled\size=1`r`n1\disabled\1\d=Hyrule-Cheat-Menu`r`n"
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
@@ -255,10 +255,10 @@ try {
     $kit = Join-Path $tmp 'kit copy clean'; New-Kit $kit 'v0.1.0-test4' 'old'
     Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$firstUser/load/`r`nsdmc_directory=$firstUser/sdmc/`r`n"
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
-    Check (($out -join ' ') -notmatch 'Co-op does not work with game mods') 'a clean copy of a kit with a mod: not stopped by the other kit''s mod'
+    Check (($out -join ' ') -notmatch 'Code and cheat mods are not supported') 'a clean copy of a kit with a mod: not stopped by the other kit''s mod'
     Test-Started $kit 'a clean copied kit'
     $kit = Join-Path $tmp 'kit copy mod'; New-Kit $kit 'v0.1.0-test4' 'old'
-    Write-File "$kit\emulator\user\load\0400486024DEC000\Own-Mod\romfs\a.bin" 'x'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\Own-Mod\exefs\main.ips" 'PATCH'
     $cleanUser = "$tmp\kit copy clean\emulator\user".Replace('\', '/')
     Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$cleanUser/load/`r`n"
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')

@@ -33,10 +33,17 @@ try {
     Write-File (Join-Path $game 'Hyrule-Cheat-Menu\exefs\subsdk8') 'x'
     $mods = @(Get-KitMods $user)
     Check ($mods.Count -eq 1 -and $mods[0] -like '*Hyrule-Cheat-Menu') "an exefs mod is found: $($mods -join ', ')"
-    # Any part counts, in any case: RomFS, cheats.
+    # Texture and model mods (game files only, romfs) are allowed; cheats folders are not; a mod
+    # with code (ExeFS, any case) and textures is a code mod.
     Write-File (Join-Path $game 'Textures\RomFS\a.bin') 'x'
+    Write-File (Join-Path $game 'Water Temple fix\romfslite\b.bin') 'x'
+    Check (@(Get-KitMods $user).Count -eq 1) 'romfs-only mods (texture and model fixes) are allowed'
     Write-File (Join-Path $game 'Cheats only\cheats\0123456789ABCDEF.txt') '[x]'
-    Check (@(Get-KitMods $user).Count -eq 3) 'romfs (any case) and cheats folders count too'
+    Write-File (Join-Path $game 'Both\ExeFS\main.ips') 'PATCH'
+    Write-File (Join-Path $game 'Both\romfs\c.bin') 'x'
+    $mods = @(Get-KitMods $user | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object)
+    Check (($mods -join ',') -eq 'Both,Cheats only,Hyrule-Cheat-Menu') "a cheats folder and a code+texture mod count [$($mods -join ',')]"
+    Remove-Item -LiteralPath (Join-Path $game 'Both') -Recurse -Force
 
     # Turned off in the game's Add-Ons: not counted. Another game's list does not matter.
     $id = [Convert]::ToUInt64('0400486024DEC000', 16).ToString()
@@ -53,12 +60,16 @@ try {
     Write-File (Join-Path $other '0400486024DEC000\Moved\exefs\main.ips') 'PATCH'
     $sd = Join-Path $tmp 'sd'
     Write-File (Join-Path $sd 'atmosphere\contents\0400486024DEC000\romfs\x.bin') 'x'
+    $ini = "[Data%20Storage]`r`nsdmc_directory=$($sd.Replace('\', '/'))/`r`n"
+    Write-File (Join-Path $user 'config\qt-config.ini') $ini
+    Check (-not (@(Get-KitMods $user) | Where-Object { $_ -like '*atmosphere*' })) 'game files on the SD card (romfs) are allowed'
+    Write-File (Join-Path $sd 'atmosphere\contents\0400486024DEC000\exefs\subsdk9') 'x'
     $ini = "[Data%20Storage]`r`nload_directory=$($other.Replace('\', '/'))/`r`nsdmc_directory=$($sd.Replace('\', '/'))/`r`n"
     Write-File (Join-Path $user 'config\qt-config.ini') $ini
     $mods = @(Get-KitMods $user)
     Check ($mods.Count -eq 2) "the load folder from qt-config.ini and the SD card's mod both count: $($mods -join ', ')"
     Check (@($mods | Where-Object { $_ -like '*Moved' }).Count -eq 1) 'the mod in the moved load folder'
-    Check (@($mods | Where-Object { $_ -like '*atmosphere*0400486024DEC000' }).Count -eq 1) 'the SD card mod (SDMC)'
+    Check (@($mods | Where-Object { $_ -like '*atmosphere*0400486024DEC000' }).Count -eq 1) 'code on the SD card (SDMC exefs) counts'
     Write-File (Join-Path $user 'config\qt-config.ini') ($ini + "[DisabledAddOns]`r`n1\disabled\1\d=SDMC`r`n1\disabled\size=1`r`n1\title_id=$id`r`nsize=1`r`n")
     Check (@(Get-KitMods $user).Count -eq 1) 'the SD card mod turned off (SDMC) does not count'
 

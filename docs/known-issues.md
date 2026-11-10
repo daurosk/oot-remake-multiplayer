@@ -46,11 +46,11 @@ One PC, two games, played by hand on 2026-11-09.
 - **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
 - **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.
 
-## Mods are not supported in co-op
+## Code and cheat mods are not supported in co-op
 
-Co-op does not allow game mods (issue 136). A mod's code patches can sit where co-op's own go (the Hyrule Cheat Menu's does), and cheats, refills or God Mode change the game under the sync and hide or fake sync bugs.
+Co-op does not allow mods that change the game's code, or cheats (issue 136). A mod's code patches can sit where co-op's own go (the Hyrule Cheat Menu's does), and cheats, refills or God Mode change the game under the sync and hide or fake sync bugs. **Texture and model mods are fine**: mods that only replace game files (a `romfs` folder), such as fixes for missing Water Temple or Fairy Fountain textures. If a mod changes models, every player should use the same one, or the games may differ.
 
-- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a mod is installed for the game, and name its folder. Mods turned off in the game's Add-Ons do not count, and neither does co-op's own `coop-puppet` pack, nor Dark's Dynamic FPS mod (Fritchii skips that one for its built-in Dynamic FPS). Loose `cheat_*` files count.
+- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a code or cheat mod is installed for the game (a mod folder with an `exefs` or `cheats` folder, a loose `cheat_*` file, or code on the SD card), and name it. Mods turned off in the game's Add-Ons do not count, and neither does Dark's Dynamic FPS mod (Fritchii skips that one for its built-in Dynamic FPS).
 - When the game's code is patched where co-op patches it anyway (a mod started another way), co-op stays off. The panel says **"Co-op is off: a game mod is installed"**.
 
 ## Other notes

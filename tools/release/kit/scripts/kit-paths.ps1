@@ -41,11 +41,12 @@ function Get-KitLoadDir([string]$User) {
     return Join-Path $User 'load'
 }
 
-# Game mods the emulator would load for Ocarina of Time, which co-op does not allow (issue 136:
-# a mod's code patches can sit where co-op's own go, and its cheats change the game under the
-# sync). Looked at the way Fritchii's Add-Ons list does: each folder in <load>\0400486024DEC000
-# with a non-empty exefs, romfs, romfslite, romfs_ext or cheats folder, and the SD card's
-# atmosphere\contents\0400486024DEC000 (called "SDMC" there). A mod turned off in the game's
+# Code and cheat mods the emulator would load for Ocarina of Time, which co-op does not allow
+# (issue 136: a mod's code patches can sit where co-op's own go, and cheats change the game under
+# the sync). Mods that only replace game files (romfs: textures, models) are allowed (Caleb,
+# 2026-11-10: texture fixes). Looked at the way Fritchii's Add-Ons list does: each folder in
+# <load>\0400486024DEC000 with a non-empty exefs or cheats folder, loose cheat_* files there,
+# and the SD card's atmosphere\contents\0400486024DEC000\exefs (called "SDMC" there). A mod turned off in the game's
 # Add-Ons (qt-config.ini [DisabledAddOns]) does not count, and neither does co-op's own puppet
 # pack (coop-puppet). Returns one line per mod: its folder.
 $KitGameId = '0400486024DEC000'
@@ -190,7 +191,7 @@ function Get-KitMods([string]$User) {
         foreach ($mod in Get-ChildItem -LiteralPath $load -Directory -ErrorAction SilentlyContinue) {
             if ($mod.Name -eq 'coop-puppet' -or $off -contains $mod.Name) { continue }
             if (Test-KitDynamicFpsMod $mod.FullName $off) { continue }  # Fritchii uses its built-in instead
-            if (Test-KitModPart $mod.FullName @('exefs', 'romfs', 'romfslite', 'romfs_ext', 'cheats')) { $found += $mod.FullName }
+            if (Test-KitModPart $mod.FullName @('exefs', 'cheats')) { $found += $mod.FullName }  # romfs alone is fine
         }
         # Loose cheat files (cheat_*), which the emulator lists as "Cheats" by file name.
         foreach ($f in Get-ChildItem -LiteralPath $load -File -Filter 'cheat_*' -ErrorAction SilentlyContinue) {
@@ -199,7 +200,7 @@ function Get-KitMods([string]$User) {
     }
     $sd = Join-Path (Get-KitSdmcDir $User) "atmosphere\contents\$KitGameId"
     if ((Test-Path -LiteralPath $sd) -and $off -notcontains 'SDMC' -and
-        (Test-KitModPart $sd @('exefs', 'romfs', 'romfslite', 'romfs_ext'))) { $found += $sd }
+        (Test-KitModPart $sd @('exefs'))) { $found += $sd }
     return $found
 }
 

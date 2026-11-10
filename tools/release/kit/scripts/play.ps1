@@ -139,15 +139,16 @@ if ($running) { Write-Host 'This emulator is already running; close it first to 
 # A copied kit: point the emulator's saved folders at this copy (kit-paths.ps1).
 $fixed = Repair-KitPaths $user
 if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
-# No game mods with co-op (issue 136): stop before anything starts, and say where they are. After the
+# No code or cheat mods with co-op (issue 136): stop before anything starts, and say where they are. After the
 # copied-kit fix above, so this kit's own load and SD folders are read.
 $mods = @(Get-KitMods $user)
 if ($mods.Count -gt 0) {
     Write-Host ''
-    Write-Host 'Co-op does not work with game mods, and these are installed for Ocarina of Time:'
+    Write-Host 'These mods for Ocarina of Time change the game''s code or are cheats:'
     foreach ($m in $mods) { Write-Host "  $m" }
-    Write-Host 'Remove those folders, or turn the mods off: in the emulator, right-click the game,'
-    Write-Host 'Properties, Add-Ons, untick them. Then start again. (co-op''s own coop-puppet stays.)'
+    Write-Host 'Code and cheat mods are not supported in co-op; texture and model mods are fine.'
+    Write-Host 'Remove those folders, or turn them off: in the emulator, right-click the game,'
+    Write-Host 'Properties, Add-Ons, untick them. Then start again.'
     exit 1
 }
 if ($Mode -eq 'host') {

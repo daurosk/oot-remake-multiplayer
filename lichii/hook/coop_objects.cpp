@@ -987,6 +987,25 @@ public:
                     present_logged_ = p->objects.size();
                     LOG_INFO(Core, "coop: objects: share present {} enemies in {}{}",
                              p->objects.size(), p->scene, sent ? "" : " (not sent)");
+                } else if (const auto* g = std::get_if<coop::protocol::ObjectGroup>(&m);
+                           g != nullptr && g->entries != group_logged_) {
+                    // Only the entries that are new or changed, at most 8 lines.
+                    std::size_t logged = 0, changed = 0;
+                    for (const auto& e : g->entries) {
+                        if (std::find(group_logged_.begin(), group_logged_.end(), e) !=
+                            group_logged_.end()) {
+                            continue;
+                        }
+                        ++changed;
+                        if (logged++ < 8) {
+                            LOG_INFO(Core, "coop: objects: group {:#x} follows {:#x}{}",
+                                     e.member.value, e.root.value,
+                                     e.flags != 0 ? " (boss)" : "");
+                        }
+                    }
+                    LOG_INFO(Core, "coop: objects: share group {} entries, {} changed{}",
+                             g->entries.size(), changed, sent ? "" : " (not sent)");
+                    group_logged_ = g->entries;
                 }
             }
         });
@@ -995,8 +1014,8 @@ public:
     // Network thread.
     void Receive(const coop::protocol::Message& m) {
         if (const auto* o = std::get_if<coop::protocol::ObjectOwner>(&m)) {
-            LOG_INFO(Core, "coop: objects: share owner {:#x} is player {} epoch {}", o->id.value,
-                     o->owner, o->epoch);
+            LOG_INFO(Core, "coop: objects: share owner {:#x} is player {} epoch {} group {}",
+                     o->id.value, o->owner, o->epoch, o->group);
         } else if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
             LOG_INFO(Core, "coop: objects: share got damage {} for {:#x}", d->amount,
                      d->id.value);
@@ -1576,6 +1595,7 @@ private:
     bool sharing_ = false;
     std::size_t blast_drops_logged_ = 0;
     std::size_t present_logged_ = ~std::size_t{0};
+    std::vector<coop::protocol::ObjectGroupEntry> group_logged_;
     std::size_t enemies_logged_ = 0;
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;

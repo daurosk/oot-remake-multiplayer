@@ -99,6 +99,169 @@ bool IsRolled(std::string_view name) {
     return name == "Enemy_Stalchild" || name == "Enemy_Stalchild_Big";
 }
 
+namespace {
+
+// Parts by exact actor name (Pack/Actor in the game's romfs, 2026-11-09).
+// The names a boss's own parts carry are sure; the summoned ones (eggs,
+// larvae, a flock) are read from the names and checked in a fight.
+struct PartRule {
+    std::string_view member;
+    GroupPart part;
+};
+
+const std::vector<PartRule>& PartRules() {
+    constexpr float kAny = 0.0f;
+    constexpr float kSummoned = 40.0f;  // what a boss calls up stays near it
+    static const std::vector<PartRule> rules = [] {
+        std::vector<PartRule> r;
+        auto boss = [&r](std::string_view root, std::initializer_list<std::string_view> parts,
+                         float reach) {
+            for (std::string_view p : parts) r.push_back({p, GroupPart{{root}, reach, true}});
+        };
+        auto enemy = [&r](std::string_view root, std::initializer_list<std::string_view> parts,
+                          float reach) {
+            for (std::string_view p : parts) r.push_back({p, GroupPart{{root}, reach, false}});
+        };
+        // Bosses.
+        boss("Enemy_DungeonBoss_Gohma",
+             {"Enemy_DungeonBoss_Gohma_Egg", "Enemy_Gohma_Egg", "Enemy_Gohma_Larva"}, kSummoned);
+        boss("Enemy_DungeonBoss_Dodongo",
+             {"Enemy_DungeonBoss_Dodongo_Attention",
+              "Enemy_DungeonBoss_Dodongo_Attention_RollingCenter",
+              "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo"},
+             kAny);
+        boss("Enemy_DungeonBoss_Dodongo", {"Enemy_BabyDodongo"}, kSummoned);
+        boss("Enemy_DungeonBoss_Barinade",
+             {"Enemy_DungeonBoss_Barinade_Arm", "Enemy_DungeonBoss_Barinade_Attention",
+              "Enemy_DungeonBoss_Barinade_Beam", "Enemy_DungeonBoss_Barinade_Jellyfish"},
+             kAny);
+        boss("Enemy_DungeonBoss_PhantomGanon", {"Enemy_PhantomGanonHorse"}, kAny);
+        boss("Enemy_DungeonBoss_Morpha",
+             {"Enemy_DungeonBoss_Morpha_Attention", "Enemy_DungeonBoss_Morpha_Attention_Spin",
+              "Enemy_DungeonBoss_Morpha_Tentacle"},
+             kAny);
+        boss("Enemy_DungeonBoss_BongoBongo",
+             {"Enemy_DungeonBoss_BongoBongo_LeftHand", "Enemy_DungeonBoss_BongoBongo_RightHand"},
+             kAny);
+        boss("Enemy_DungeonBoss_Ganon",
+             {"Enemy_DungeonBoss_Ganon_Attention", "Enemy_DungeonBoss_Ganon_Crystal",
+              "Enemy_DungeonBoss_Ganon_LegAttention", "Enemy_DungeonBoss_Ganon_SecondHalfBattle"},
+             kAny);
+        // Twinrova: the two witches and the fused one follow the battle
+        // manager when it is loaded, else Twinrova.
+        for (std::string_view w : {"Enemy_DungeonBoss_Kotake", "Enemy_DungeonBoss_Koume"}) {
+            r.push_back({w, GroupPart{{"Enemy_KotakeKoumeBattleManager",
+                                       "Enemy_DungeonBoss_Twinrova"},
+                                      kAny, true}});
+        }
+        boss("Enemy_KotakeKoumeBattleManager", {"Enemy_DungeonBoss_Twinrova"}, kAny);
+        // Mini-bosses.
+        boss("Enemy_MiddleBoss_BigOcto", {"Enemy_MiddleBoss_BigOcto_Attention"}, kAny);
+        boss("Enemy_MiddleBoss_BigOcto", {"Enemy_Shabom_BigOctoChild"}, kSummoned);
+        boss("Enemy_MiddleBoss_DarkLink", {"Enemy_MiddleBoss_DarkLink_EffectLocater"}, kAny);
+        boss("Enemy_MiddleBoss_FlareDancer", {"Enemy_MiddleBoss_FlareDancer_FireBody"}, kAny);
+        boss("Enemy_MiddleBoss_Poe_Meg", {"Enemy_MiddleBoss_Poe_Meg_Dummy"}, kAny);
+        boss("Enemy_DeadHand", {"Enemy_DeadHand_Hand"}, kSummoned);
+        // Enemies with a part or a brood. Several of one kind may share a
+        // room: a part follows the nearest.
+        enemy("Enemy_Dodongo", {"Enemy_Dodongo_Attention"}, 10.0f);
+        enemy("Enemy_Tailpasaran", {"Enemy_Tailpasaran_Attention"}, 10.0f);
+        enemy("Enemy_Anubis", {"Enemy_Anubis_MagicField"}, 20.0f);
+        enemy("Enemy_FlockGuayManager", {"Enemy_Guay_Flock"}, 60.0f);
+        r.push_back({"Enemy_Peahat_Larva",
+                     GroupPart{{"Enemy_Peahat_AircraftCarrier", "Enemy_Peahat"}, 30.0f, false}});
+        return r;
+    }();
+    return rules;
+}
+
+}  // namespace
+
+const GroupPart* PartOf(std::string_view name) {
+    for (const PartRule& rule : PartRules()) {
+        if (rule.member == name) return &rule.part;
+    }
+    return nullptr;
+}
+
+bool IsBoss(std::string_view name) {
+    if (name.find("_Dictionary") != std::string_view::npos) return false;
+    if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
+        return true;
+    }
+    for (const PartRule& rule : PartRules()) {
+        if (rule.part.boss && rule.part.roots.front() == name) return true;
+    }
+    return false;
+}
+
+std::vector<proto::ObjectGroupEntry> GroupsOf(
+    const std::vector<GroupInput>& walk,
+    const std::map<proto::ObjectId, proto::ObjectId>& linked) {
+    const auto dist2 = [](const GroupInput& a, const GroupInput& b) {
+        float d2 = 0.0f;
+        for (std::size_t i = 0; i < 3; ++i) {
+            const float d = a.position[i] - b.position[i];
+            d2 += d * d;
+        }
+        return d2;
+    };
+    std::vector<proto::ObjectGroupEntry> out;
+    for (const GroupInput& m : walk) {
+        const GroupPart* part = PartOf(m.name);
+        if (part == nullptr) {
+            if (IsBoss(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
+            continue;
+        }
+        const GroupInput* root = nullptr;
+        // The root linked last time stays while within kGroupKeep times the
+        // reach, so a part near the edge does not flip between groups.
+        if (const auto was = linked.find(m.id); was != linked.end()) {
+            for (const GroupInput& r : walk) {
+                if (r.id != was->second) continue;
+                const float keep = part->reach * kGroupKeep;
+                const float d2 = dist2(r, m);
+                if (std::isfinite(d2) && (part->reach <= 0.0f || d2 <= keep * keep)) root = &r;
+                break;
+            }
+        }
+        for (std::size_t n = 0; root == nullptr && n < part->roots.size(); ++n) {
+            float best = 0.0f;
+            for (const GroupInput& r : walk) {
+                if (r.name != part->roots[n] || r.id == m.id) continue;
+                const float d2 = dist2(r, m);
+                if (!std::isfinite(d2)) continue;
+                if (part->reach > 0.0f && d2 > part->reach * part->reach) continue;
+                // Nearest; on a tie the lower id, so every game picks the same.
+                if (root == nullptr || d2 < best || (d2 == best && r.id < root->id)) {
+                    root = &r;
+                    best = d2;
+                }
+            }
+        }
+        if (root != nullptr) {
+            out.push_back({m.id, root->id, part->boss || IsBoss(m.name)
+                                               ? proto::object_group::boss
+                                               : std::uint8_t{0}});
+        } else if (linked.contains(m.id) || IsBoss(m.name)) {
+            // Linked before, its root gone or out of reach: once, on its own
+            // again. A part never linked here sends nothing, so it cannot
+            // undo another game's link (and a stray larva gets no boss lock);
+            // a boss that is a part (Twinrova) still gets its own boss lock.
+            out.push_back({m.id, m.id, IsBoss(m.name) ? proto::object_group::boss
+                                                      : std::uint8_t{0}});
+        }
+    }
+    std::sort(out.begin(), out.end(),
+              [](const auto& a, const auto& b) { return a.member < b.member; });
+    // One entry per member (the codec refuses a member twice).
+    out.erase(std::unique(out.begin(), out.end(),
+                          [](const auto& a, const auto& b) { return a.member == b.member; }),
+              out.end());
+    if (out.size() > proto::kMaxGroupEntries) out.resize(proto::kMaxGroupEntries);
+    return out;
+}
+
 bool IsAnnounced(std::string_view name) {
     return name == "Enemy_Skulltula_Gold";
 }
@@ -209,6 +372,8 @@ void Sync::Reset() {
     present_sent_.clear();
     present_at_ = 0;
     present_once_ = false;
+    groups_sent_.clear();
+    group_links_.clear();
     decided_.clear();
     bound_.clear();
     refused_.clear();
@@ -606,6 +771,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     if (present.size() > proto::kMaxPresentObjects) {
         present.resize(proto::kMaxPresentObjects);
     }
+    bool present_went = false;
     if (!present_once_ || present != present_sent_ || now_us - present_at_ >= kPresentEveryUs) {
         proto::ObjectPresent p;
         p.scene = scene_;
@@ -614,7 +780,29 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         present_sent_ = std::move(present);
         present_at_ = now_us;
         present_once_ = true;
+        present_went = true;
     }
+
+    // Groups (docs/objects.md, "Groups"): after the presence, so the server
+    // knows every member. Sent on a change and again with every presence (a
+    // repeat changes nothing there, and the server forgets a scene's objects
+    // when nobody has them).
+    std::vector<GroupInput> walk;
+    walk.reserve(objects_.size());
+    for (const auto& [address, o] : objects_) {
+        walk.push_back({o.id, o.name, o.position});
+    }
+    std::vector<proto::ObjectGroupEntry> groups = GroupsOf(walk, group_links_);
+    group_links_.clear();
+    for (const proto::ObjectGroupEntry& e : groups) {
+        if (e.member != e.root) group_links_[e.member] = e.root;
+    }
+    if (!groups.empty() && (groups != groups_sent_ || present_went)) {
+        proto::ObjectGroup g;
+        g.entries = groups;
+        send.emplace_back(std::move(g));
+    }
+    groups_sent_ = std::move(groups);
 }
 
 // Objects that left our walk. A break read just before it went (a pot's life

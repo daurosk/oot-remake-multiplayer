@@ -474,6 +474,7 @@ std::span<const ItemGrant> item_grants(std::uint32_t item) {
 }
 
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
+  if (!ready_) return;  // no save loaded yet: its load would undo it
   for (const ItemGrant& g : item_grants(item)) {
     if (!new_item && !is_capacity(g)) continue;  // an item held already: capacity only
     const FlagKey key{g.hash, 0};
@@ -530,6 +531,25 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   // seeds owned with room for 0) is mended on the next write or snapshot.
   if (held(merged.value)) grant(key.hash, !held(now->value));
   return true;
+}
+
+std::size_t ItemFlagStore::mend() {
+  const std::uint64_t before = stats_.granted;
+  std::uint32_t last = 0;
+  bool any = false;
+  for (const ItemGrant& g : kGrants) {
+    if (any && g.item == last) continue;  // each item once
+    any = true;
+    last = g.item;
+    const ItemFlag* item = find_item(g.item);
+    if (item == nullptr) continue;
+    const auto now = inner_.read(FlagKey{g.item, 0});
+    if (!now || now->kind != item->kind) continue;
+    const bool held = item->kind == protocol::FlagKind::int32 ? as_int(now->value) >= 1
+                                                              : now->value != 0;
+    if (held) grant(g.item, false);
+  }
+  return static_cast<std::size_t>(stats_.granted - before);
 }
 
 bool ItemFlagStore::is_count(FlagKey key) {

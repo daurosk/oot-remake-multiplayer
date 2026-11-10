@@ -87,7 +87,10 @@ std::span<const ItemGrant> all_item_grants();
 // store's. Keeps no state beyond counters.
 class ItemFlagStore final : public FlagStore {
  public:
-  explicit ItemFlagStore(FlagStore& inner) : inner_(inner) {}
+  // `ready`: a save is loaded and Link is in the game. Before that (the
+  // title screen, a save loading) items are merged but nothing is granted:
+  // the save's load would put the capacities back to its own (issue 138).
+  explicit ItemFlagStore(FlagStore& inner, bool ready = true) : inner_(inner), ready_(ready) {}
 
   std::optional<protocol::FlagEntry> read(FlagKey key) override { return inner_.read(key); }
   // An item flag: reads what the game holds, merges, and writes only when
@@ -115,11 +118,43 @@ class ItemFlagStore final : public FlagStore {
   };
   const Stats& stats() const { return stats_; }
 
+  // Every item the game holds gets its capacity grants (no ammo). Run after
+  // a save has loaded (LoadMend): the load puts back the save's
+  // capacities, which a save from before the fix has at 0. Returns how many
+  // flags it raised.
+  std::size_t mend();
+
  private:
   void grant(std::uint32_t item, bool new_item);
 
   FlagStore& inner_;
+  bool ready_ = true;
   Stats stats_;
+};
+
+// When to mend (ItemFlagStore::mend): for the first frames after Link comes
+// into the game (a save loaded: no Link, then Link), once a frame. The
+// load may still be writing the save's values in the first frames, and a
+// mend is only floors, so it is run for a while rather than once.
+class LoadMend {
+ public:
+  static constexpr unsigned kFrames = 90;  // about 1.5 s at 60 frames a second
+
+  // Once per emulated frame, with whether Link is in the game. True: mend
+  // this frame.
+  bool frame(bool link) {
+    if (link && !link_) left_ = kFrames;
+    link_ = link;
+    if (!link_ || left_ == 0) return false;
+    --left_;
+    return true;
+  }
+  // Link is in the game (as of the last frame()).
+  bool ready() const { return link_; }
+
+ private:
+  bool link_ = false;
+  unsigned left_ = 0;
 };
 
 }  // namespace coop::host

@@ -857,3 +857,61 @@ TEST_CASE("game items: a Deku Shield the host loses comes back, lost by all, it 
   CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
   CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
 }
+
+TEST_CASE("item grants: nothing is granted on the title screen, a loaded save is mended (issue 138)") {
+  constexpr std::uint32_t kSticksGet = 0xc4e21ac2, kSticks = 0xb9494411, kStickCap = 0x457616b0;
+  MapStore game = game_with_grant_flags();
+  coop::host::LoadMend load;
+
+  // Title screen: the join snapshot brings the Slingshot and a stick pickup.
+  CHECK_FALSE(load.frame(false));
+  {
+    ItemFlagStore store(game, load.ready());
+    CHECK(store.write(owned(kSlingshot)));
+    CHECK(store.write(b(kSticksGet, true)));
+    CHECK(store.stats().granted == 0);
+  }
+  CHECK(game.value(kSlingshot) == 1);
+  CHECK(game.value(kSeedCap) == 0);
+  CHECK(game.value(kStickCap) == 0);
+  CHECK(game.value(kSticks) == 0);
+
+  // The save loads with its own values (room for 0), then Link appears.
+  CHECK_FALSE(load.frame(false));
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, load.ready());
+    CHECK(store.mend() == 2);
+  }
+  CHECK(game.value(kSeedCap) == 30);
+  CHECK(game.value(kStickCap) == 10);
+  CHECK(game.value(kSeeds) == 0);   // a mend gives room, not ammo
+  CHECK(game.value(kSticks) == 0);
+
+  // The load writes its 0 again in the next frame: the mend runs again.
+  game.hold(kSeedCap, K::int32, 0);
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, load.ready());
+    CHECK(store.mend() == 1);
+  }
+  CHECK(game.value(kSeedCap) == 30);
+
+  // It stops after kFrames; a later load (title, then Link) starts it again.
+  unsigned more = 0;
+  while (load.frame(true)) ++more;
+  CHECK(more == coop::host::LoadMend::kFrames - 2);
+  CHECK_FALSE(load.frame(false));
+  CHECK(load.frame(true));
+}
+
+TEST_CASE("item grants: a mend leaves a bigger bag and items not held alone") {
+  MapStore game = game_with_grant_flags();
+  game.hold(kSlingshot, K::int32, 1);
+  game.hold(kSeedCap, K::int32, 50);
+  ItemFlagStore store(game);
+  CHECK(store.mend() == 0);
+  CHECK(game.value(kSeedCap) == 50);
+  CHECK(game.value(kArrowCap) == 0);  // no Bow
+  CHECK(game.value(kBombCap) == 0);   // no bomb bag
+}

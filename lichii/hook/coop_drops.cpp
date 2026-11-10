@@ -645,6 +645,7 @@ std::optional<CoopPuppet::Call> Remover::Step(CoopPuppet::Guest& guest, bool aft
 #include "core/memory.h"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
+#include "coop_every.h"
 #include "coop_objects.h"
 #include "coop_spawn.h"
 #include "coop_svc.h"
@@ -661,7 +662,6 @@ constexpr u64 kListCount = 0x10;
 constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
-constexpr unsigned kEveryFrames = 2;
 constexpr u64 kDropKey = u64{1} << 62;  // the director's keys for drops
 constexpr int kCallerOrder = 40;        // after the mover (30)
 
@@ -720,7 +720,7 @@ public:
             }
             return;
         }
-        if (++frame_ % kEveryFrames != 0) {
+        if (!scan_.Due(CoopEvery::NowUs())) {
             return;
         }
         auto& memory = system.ApplicationMemory();
@@ -964,7 +964,7 @@ private:
     bool active_ = false;
     bool placed_ = false;
     bool first_ = true;
-    unsigned frame_ = 0;
+    CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;
     std::unordered_map<u64, std::pair<What, std::string>> known_;

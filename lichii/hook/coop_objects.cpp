@@ -47,6 +47,7 @@
 // dropped, and an actor counts as gone only when two walks in a row miss it.
 
 #include "coop_objects.h"
+#include "coop_every.h"
 #include "coop_flags.h"
 #include "coop_hold.h"
 #include "coop_puppet.h"
@@ -192,7 +193,6 @@ constexpr u64 kLifeCopy = 0x1ca8;  // life and max as last mirrored
 constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
-constexpr unsigned kEveryFrames = 2;
 
 // LICHII_COOP_OBJECTS_CHEAT: PouchData.<item>.StockNum and IsGet.<item> hashes
 // from docs/items.md, and the count each is kept at. Entries with is_get 0 are
@@ -216,7 +216,6 @@ constexpr std::array<CheatItem, 10> kCheatItems{{
     {"Item_DekuSeed", 0x5fadf7fc, 0x29888e1e, 30},
     {"capacity DekuSeed", 0xae8cc742, 0, 30},
 }};
-constexpr unsigned kCheatEveryFrames = 60;
 
 bool EnvFlag(const char* name) {
 #ifdef _WIN32
@@ -760,10 +759,11 @@ std::atomic<s32>& TheMaxLife() {
 class Objects {
 public:
     void Frame(Core::System& system) {
-        if (++frame_ % kEveryFrames != 0 || !Ready(system)) {
+        const auto now_us = CoopEvery::NowUs();
+        if (!scan_.Due(now_us) || !Ready(system)) {
             return;
         }
-        if (cheat_ && frame_ % kCheatEveryFrames == 0) {
+        if (cheat_ && cheat_every_.Due(now_us)) {
             Cheat(system);
         }
         if (debug_) {
@@ -803,7 +803,7 @@ public:
         if (pose_ && sharing_) {
             Place(system, server_now_us);
         }
-        if (++share_frame_ % kEveryFrames != 0) {
+        if (!share_.Due(CoopEvery::NowUs())) {
             return;
         }
         Reader r(system.ApplicationMemory());
@@ -1560,8 +1560,9 @@ private:
     float drift_max_ = 0.0f;
     std::size_t drift_count_ = 0;
     u64 drift_at_ = 0;
-    unsigned frame_ = 0;
-    unsigned share_frame_ = 0;
+    CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
+    CoopEvery::Every cheat_every_{CoopEvery::kSecondUs};
+    CoopEvery::Every share_{CoopEvery::kTwoFramesUs};
     bool sharing_ = false;
     std::size_t present_logged_ = ~std::size_t{0};
     std::size_t enemies_logged_ = 0;

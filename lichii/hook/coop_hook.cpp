@@ -53,6 +53,7 @@
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_drops.h"
+#include "coop_every.h"
 #include "coop_dungeon.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
@@ -76,7 +77,7 @@ constexpr auto kFrameStale = std::chrono::seconds(1);
 // A camera older than this is from a scene no longer drawn (a menu, a load).
 constexpr auto kCameraStale = std::chrono::milliseconds(250);
 // With LICHII_COOP_DEBUG_CAMERA, how often the local player's projection is logged.
-constexpr std::uint64_t kDebugLogFrames = 120;
+constexpr std::uint64_t kDebugLogUs = 2 * CoopEvery::kSecondUs;
 
 // The overlay's defaults are for centimetres; Ocarina's world unit is about a
 // metre (the first run: a child Link walks about 2.5 units a second and the
@@ -439,7 +440,6 @@ private:
         if (!view.game) {
             return;
         }
-        ++frames_;
         const auto camera = CoopCamera::Latest();
         const bool fresh = camera && view.at - camera->at < kCameraStale;
         if (fresh != camera_seen_) {
@@ -451,7 +451,7 @@ private:
                 LOG_INFO(Core, "coop: camera lost, markers off");
             }
         }
-        const bool log = debug_camera_ && frames_ % kDebugLogFrames == 0;
+        const bool log = debug_camera_ && debug_log_.Due(CoopEvery::NowUs());
         if (!fresh) {
             view.camera_note = "markers: no camera";
             if (log) {
@@ -816,7 +816,7 @@ private:
     // Present thread only.
     coop::overlay::Overlay overlay_{MarkerSettings()};
     bool camera_seen_ = false;
-    std::uint64_t frames_ = 0;
+    CoopEvery::Every debug_log_{kDebugLogUs};
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
     bool build_warned_ = false;

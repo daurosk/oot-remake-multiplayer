@@ -1,0 +1,66 @@
+# held-adult (issue 92): adult items in the hand. A loads straight into the Graveyard as adult
+# (as adult.A.txt; run with -NoLoad), is given the bow, the hookshot, the hammer and bombs,
+# steps aside to face B and uses the quick-select item five times (R next, ZR use, B away).
+# Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1".
+# Expect in B's log, as held-tools: the item in its slot ("slots 0 ... 6"), "P1 wears ...",
+# "P1 equipment slot N in hand", "put away". Bombs in hand are an actor of their own
+# (Item_Bomb), not a slot piece: they show in the objects lines, not here.
+mark start
+warp Graveyard_Adult
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give bow
+give hookshot
+give PouchData.Item_Hammer.StockNum
+give bombs
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+press R
+wait 30
+hold ZR 90
+mark item1
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item2
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item3
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item4
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item5
+wait 30
+press B
+wait 150
+mark end

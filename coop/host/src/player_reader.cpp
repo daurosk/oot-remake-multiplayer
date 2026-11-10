@@ -204,7 +204,12 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
-  e.held = read_held();
+  e.held = read_slot_name(addr::kEquipSlotHeldItem);
+  e.weapon_slot = read_slot_name(addr::kEquipSlotSword);
+  e.sub_weapon = read_slot_name(addr::kEquipSlotSubWeapon);
+  e.third_weapon = read_slot_name(addr::kEquipSlotThirdWeapon);
+  e.tool = read_slot_name(addr::kEquipSlotTool);
+  e.sub_tool = read_slot_name(addr::kEquipSlotSubTool);
   if (e == protocol::Equipment{}) return std::nullopt;
   return e;
 }
@@ -258,7 +263,8 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
   return drawn;
 }
 
-std::optional<std::string> PlayerReader::read_held() {
+std::optional<std::string> PlayerReader::read_slot_name(std::uint32_t slot_index) {
+  if (slot_index >= addr::kEquipSlotCount) return std::nullopt;
   const auto actor = find_player_actor();
   if (!actor) return std::nullopt;
   const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
@@ -266,7 +272,7 @@ std::optional<std::string> PlayerReader::read_held() {
   const auto user = read_ptr(memory_, *components + addr::kComponentsEquipmentUser);
   if (!user) return std::nullopt;
   const std::uint64_t slot =
-      *user + addr::kEquipSlots + addr::kEquipSlotStride * addr::kEquipSlotHeldItem;
+      *user + addr::kEquipSlots + addr::kEquipSlotStride * slot_index;
   const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
   if (!id) return std::nullopt;
   if (*id == addr::kEmptyId) return std::string{};

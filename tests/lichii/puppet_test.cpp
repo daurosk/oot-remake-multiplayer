@@ -1217,3 +1217,79 @@ TEST_CASE("puppet: refused creates slow down; one with a request is waited for")
     CHECK(d2.Slots()[0].phase == Phase::creating);
     CHECK(Frame(d2, g2, 1500).empty());
 }
+
+TEST_CASE("puppet gear: every hand slot and the gauntlets have a piece, kind and name cell") {
+    using namespace CoopPuppet;
+    // The game's slot kinds: weapon 0, shield 6, head 7, armor 8, boots 9,
+    // bow 5, gauntlets 10, sub weapon 1, third weapon 2, tool 11, sub tool 12.
+    CHECK(kGearKinds == std::array<std::uint32_t, kGearCount>{0, 6, 7, 8, 9, 5, 10, 1, 2, 11, 12});
+    // Each kind once, each hand slot at most once, none past the drawn bits.
+    for (std::size_t i = 0; i < kGearCount; ++i) {
+        for (std::size_t j = i + 1; j < kGearCount; ++j) {
+            CHECK(kGearKinds[i] != kGearKinds[j]);
+            CHECK((kGearSlots[i] < 0 || kGearSlots[i] != kGearSlots[j]));
+        }
+        CHECK(kGearSlots[i] < 8);
+    }
+    CHECK(kGearSlots[kGearSubWeapon] == 1);
+    CHECK(kGearSlots[kGearThirdWeapon] == 2);
+    CHECK(kGearSlots[kGearTool] == 5);
+    CHECK(kGearSlots[kGearSubTool] == 6);
+    CHECK(kGearSlots[kGearHand] == -1);
+    // Carried pieces are looked at for "left behind" only while in hand.
+    CHECK(GearIsCarried(kGearHeld));
+    CHECK(GearIsCarried(kGearTool));
+    CHECK_FALSE(GearIsCarried(0));
+    CHECK_FALSE(GearIsCarried(kGearHand));
+    // The block holds a name cell and a pointer for each.
+    CHECK(block::kGearText + block::kGearCapacity * kGearCount <= block::kGearPtr);
+    CHECK(block::kGearPtr + 8 * kGearCount <= block::kSize);
+}
+
+TEST_CASE("puppet gear: a PLAYER_EQUIP becomes the pieces, the sword hand's own actor first") {
+    using namespace CoopPuppet;
+    coop::protocol::Equipment e;
+    e.weapon = "Weapon_Sword_Kokiri";
+    e.shield = "Weapon_Shield_Deku";
+    e.hand = "Armor_Adult_Gauntlet_Silver";
+    e.held = "Weapon_Range_Bow";
+    e.tool = "Weapon_Boomerang";
+    e.sub_tool = "";
+    Gear g = GearOf(e);
+    CHECK(g[0] == "Weapon_Sword_Kokiri");  // slot 0 not known: the flag's sword
+    CHECK(g[1] == "Weapon_Shield_Deku");
+    CHECK(g[kGearHeld] == "Weapon_Range_Bow");
+    CHECK(g[kGearHand] == "Armor_Adult_Gauntlet_Silver");
+    CHECK(g[kGearTool] == "Weapon_Boomerang");
+    CHECK(g[kGearSubTool] == "");
+    CHECK_FALSE(g[kGearSubWeapon]);  // not sent: not known
+    e.weapon_slot = "";  // nothing in the hand slot: still the flag's sword
+    CHECK(GearOf(e)[0] == "Weapon_Sword_Kokiri");
+    e.weapon_slot = "Weapon_Sword_DekuStick";  // a stick in the sword hand
+    CHECK(GearOf(e)[0] == "Weapon_Sword_DekuStick");
+}
+
+TEST_CASE("puppet gear: a tool is equipped with the tool kind and drawn on its own slot") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearTool] = "Weapon_Boomerang";
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[1] == 11u);  // the tool kind
+    CHECK(calls[0].x[2] == kHeap + block::kGearPtr + 8 * CoopPuppet::kGearTool);
+    const std::uint64_t text = g.guest.Get<std::uint64_t>(calls[0].x[2]);
+    CHECK(text == kHeap + block::kGearText + block::kGearCapacity * CoopPuppet::kGearTool);
+    std::array<char, block::kGearCapacity> name{};
+    g.guest.Read(text, name.data(), name.size());
+    CHECK(std::string(name.data()) == "Weapon_Boomerang");
+}

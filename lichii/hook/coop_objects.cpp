@@ -837,13 +837,14 @@ public:
     }
 
     bool debug_ = false;
+    CoopWorld::FoliageProbe foliage_;
+    // Issue 88 (docs/items.md, "Heart containers").
     s32 link_life_logged_ = -1;
     s32 link_max_logged_ = -1;
     s32 flag_max_logged_ = -1;
     bool hearts_to_link_ = false;  // LICHII_COOP_HEARTS_TO_LINK=1 (issue 88 test)
     Core::Memory::Memory* memory_ = nullptr;  // set by Share for Collect
     static constexpr s32 kMostQuarters = 20 * 4;
-    CoopWorld::FoliageProbe foliage_;
     bool cheat_ = false;
     bool share_ = false;
     bool pose_ = true;
@@ -1383,9 +1384,9 @@ Objects& Instance() {
         objects.replay_ = EnvOn("LICHII_COOP_OBJECTS_HIT_REPLAY");
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT") || objects.replay_;
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
-        objects.hearts_to_link_ = EnvFlag("LICHII_COOP_HEARTS_TO_LINK");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
+        objects.hearts_to_link_ = EnvFlag("LICHII_COOP_HEARTS_TO_LINK");
         return true;
     }();
     (void)once;
@@ -1393,6 +1394,10 @@ Objects& Instance() {
 }
 
 } // namespace
+
+void SetMaxLife(std::optional<std::int32_t> quarters) {
+    TheMaxLife().store(quarters.value_or(-1));
+}
 
 void OnFrame(Core::System& system) {
     Objects& objects = Instance();
@@ -1407,10 +1412,6 @@ void Share(Core::System& system, coop::host::Session* session,
     if (objects.share_) {
         objects.Share(system, session, scene, server_now_us);
     }
-}
-
-void SetMaxLife(std::optional<std::int32_t> quarters) {
-    TheMaxLife().store(quarters.value_or(-1));
 }
 
 void OnEvent(const coop::net::Event& event) {

@@ -68,6 +68,18 @@ TEST_CASE("objects: only enemies are shared") {
     CHECK_FALSE(CoopObjects::IsShared("Obj_Pot"));
 }
 
+TEST_CASE("objects: a MaxLife raised by another player raises our Link's max life (issue 88)") {
+    using CoopObjects::RaisedMaxLife;
+    CHECK(RaisedMaxLife(16, 20) == 20);  // a heart container: 4 hearts -> 5
+    CHECK(RaisedMaxLife(16, 80) == 80);  // 20 hearts, the most
+    CHECK_FALSE(RaisedMaxLife(16, 16).has_value());  // the same: nothing to write
+    CHECK_FALSE(RaisedMaxLife(20, 16).has_value());  // never lowered
+    CHECK_FALSE(RaisedMaxLife(16, 84).has_value());  // over 20 hearts: not a real value
+    CHECK_FALSE(RaisedMaxLife(16, -1).has_value());  // the flag not readable
+    CHECK_FALSE(RaisedMaxLife(0, 20).has_value());   // our Link's life not read yet
+    CHECK_FALSE(RaisedMaxLife(-1, 20).has_value());
+}
+
 TEST_CASE("objects: a scene's own enemy gets the same id on both games") {
     const auto a = CoopObjects::SceneSpawnId(kScene, "Enemy_Stalchild", 0);
     CHECK(a == CoopObjects::SceneSpawnId(kScene, "Enemy_Stalchild", 0));

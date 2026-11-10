@@ -1,7 +1,8 @@
 # hearts: A gains a heart container (PlayerStatus.MaxLife + 4), a heart piece and a Gold
 # Skulltula token through the test give (needs LICHII_COOP_CHEATS=1); B stands still.
 # With LICHII_COOP_DEBUG_FLAGS=1 B logs "our Link's life L of M, MaxLife flag F"
-# (docs/items.md); run once more with LICHII_COOP_HEARTS_TO_LINK=1.
+# (docs/items.md) and "our Link's max life 16 -> 20 (from MaxLife)" (on by default;
+# LICHII_COOP_HEARTS_TO_LINK=0 on B shows the old behaviour: B writes 16 back).
 mark start
 wait 300
 give PlayerStatus.MaxLife

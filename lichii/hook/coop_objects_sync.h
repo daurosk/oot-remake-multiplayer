@@ -140,6 +140,13 @@ const GroupPart* PartOf(std::string_view name);
 // and the roots of boss groups); never a picture book _Dictionary actor.
 bool IsBoss(std::string_view name);
 
+// Issue 88: the hearts the game draws come from our Link's Life component,
+// not from the shared PlayerStatus.MaxLife flag. The max (quarter hearts) to
+// write into the component: the flag when another player raised it above
+// ours (at most 20 hearts), else nothing. Never lowers it.
+inline constexpr std::int32_t kMostLifeQuarters = 20 * 4;
+std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag);
+
 // One shared actor of a walk, for GroupsOf.
 struct GroupInput {
     coop::protocol::ObjectId id;

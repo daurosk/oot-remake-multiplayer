@@ -184,6 +184,11 @@ const GroupPart* PartOf(std::string_view name) {
     return nullptr;
 }
 
+std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag) {
+    if (link_max <= 0 || flag <= link_max || flag > kMostLifeQuarters) return std::nullopt;
+    return flag;
+}
+
 bool IsBoss(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {

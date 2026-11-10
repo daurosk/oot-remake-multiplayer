@@ -196,6 +196,7 @@ Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a know
 | 7 | `ocarina` | string | `PlayerStatus.EquipOcarina` |
 | 8 | `arrow` | string | `PlayerStatus.EquipArrow` |
 | 9 | `drawn` | `u8`: bit *i* set when the player's equipment slot *i* is drawn (in hand), clear when sheathed or empty | the EquipmentUser component |
+| 10 | `held` | string: the item in equipment slot 3, the slot of the slingshot and the bow (for example `Weapon_Range_SlingShot`); in hand when bit 3 of `drawn` is set | the name of the actor in that slot |
 
 Each string is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
 
@@ -310,6 +311,7 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 - Types 12 to 27 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP`, the object messages, `PLAYER_POSE` and `TIME_OF_DAY`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.
 - Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.
+- `PLAYER_EQUIP` component 10, `held`, was added this way (2026-11-09) and the version stayed 3: a build without it skips it, and its puppets show no held item. The server reads and writes the message again when it relays, so a server without it drops the component: the held item needs a server that has it.
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
 - Version 4 (2026-11-09): the drop messages (types 36 to 38), with the other messages of the same release. No layout changed; the version went up so that every game in a session shares drops or none does.

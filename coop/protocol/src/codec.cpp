@@ -471,6 +471,7 @@ constexpr EquipName kEquipNames[] = {
     {EquipComponent::armor, &Equipment::armor},     {EquipComponent::boots, &Equipment::boots},
     {EquipComponent::head, &Equipment::head},       {EquipComponent::hand, &Equipment::hand},
     {EquipComponent::ocarina, &Equipment::ocarina}, {EquipComponent::arrow, &Equipment::arrow},
+    {EquipComponent::held, &Equipment::held},
 };
 
 Error encode_body(const PlayerEquip& m, Writer& w) {

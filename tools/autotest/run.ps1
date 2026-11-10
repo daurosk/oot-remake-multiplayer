@@ -101,7 +101,7 @@ if ($headSwitches.Count) {
         if (-not $PSBoundParameters.ContainsKey('Switches') -or $given -notcontains $k) { $Switches += $e }
     }
 }
-if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not ($Switches -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
+if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not (@($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() }) -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
 
 $Server = Resolve $Server
 if (-not $TakeBaseline -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
@@ -417,10 +417,13 @@ function Start-Game([string]$x) {
     }
     $s.Runs++
     $old = @{}
-    foreach ($key in $switchEnv.Keys) {
+    # Plain NAME first, then A:NAME / B:NAME, so a per-game value wins; the old value is
+    # saved once, before the first set.
+    foreach ($key in @($switchEnv.Keys | Sort-Object { $_ -match '^[AB]:' })) {
         $k = $key
         if ($key -match '^([AB]):(.+)$') { if ($Matches[1] -ne $x) { continue }; $k = $Matches[2] }
-        $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $switchEnv[$key])
+        if (-not $old.ContainsKey($k)) { $old[$k] = [Environment]::GetEnvironmentVariable($k) }
+        [Environment]::SetEnvironmentVariable($k, $switchEnv[$key])
     }
     $env:LICHII_COOP_TEST_SCRIPT = $s.Script
     $s.Proc = Start-Process (Join-Path $s.Emu 'lichii.exe') -ArgumentList "-g `"$Game`"" -WorkingDirectory $s.Emu -PassThru

@@ -46,7 +46,8 @@ foreach ($k in $Kit) {
         $now = if (-not $isDefault -and $m.Success -and $m.Groups[1].Value) { [IO.Path]::GetFullPath($m.Groups[1].Value) } else { $own }
         $ok = $now -eq [IO.Path]::GetFullPath($own)
         Write-Host ("{0} {1,-4} {2} {3}" -f (Split-Path -Leaf $k), $n, $(if ($ok) { 'own  ' } else { 'OTHER' }), $now)
-        if ($n -eq 'nand') { $nands[$k] = $(if ($Fix) { [IO.Path]::GetFullPath($own) } else { $now }) }
+        # The NAND this kit ends up on: its own only once -Fix has really set it.
+        if ($n -eq 'nand') { $nands[$k] = $(if ($Fix -and ($ok -or $m.Success)) { [IO.Path]::GetFullPath($own) } else { $now }) }
         if (-not $ok -and $Fix) {
             $want = $own -replace '\\', '/'
             if ($m.Success) { $text = $text.Remove($m.Groups[1].Index, $m.Groups[1].Length).Insert($m.Groups[1].Index, $want) }

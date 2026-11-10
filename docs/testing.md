@@ -355,7 +355,7 @@ Buttons: `A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK DUP DDOWN DLEFT DRIGHT`, an
 
 Gear scenarios (checked 2026-11-09, with `LICHII_COOP_DEBUG_ANIM=1` added to `-Switches` for the `slots` lines): `back` (A stands with its back to B, then draws the sword, guards, puts away; B sees A's sword and shield where A's own Link has them), `backwarp` (the same after both warp into Kakariko; `-NoLoad`) and `late` (B loads the save 30 s after A; `-NoLoad`). See [puppet.md](puppet.md).
 
-Chunk 2 scenarios (written 2026-11-10, not run yet; each file's header lists its log lines):
+Chunk 2 scenarios (written 2026-11-10, first run in the chunk 2 test turn, see the integrate-p5 results; each file's header lists its log lines):
 
 - `held-tools` (#92): A puts the Deku Stick, Deku Nut, a bottle, bombs and the slingshot on ZR through the pause menu's Items page, one at a time, and uses each facing B. R is a quick-select carousel, not "next item", so the chunk 1 version never changed A's item. The menu moves assume the cursor opens on the item last put on ZR; each `menu-*` mark is a screenshot to check that, and `menu-1` shows where the given boomerang sits.
 - `skulltula` (#89): the Graveyard's nocturnal Gold Skulltula (on a web at -20.20 104.30 26.40). The save is at 10:01, so the header sets the host's clock to 20:00 75 s after joining and both games walk out to Kakariko and back to load the Graveyard at night; A shoots it with the slingshot while targeting, then jumps for the token; B watches.

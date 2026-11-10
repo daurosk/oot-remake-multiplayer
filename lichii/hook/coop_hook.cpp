@@ -63,6 +63,7 @@
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_svc.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
 
@@ -886,6 +887,7 @@ private:
 std::mutex g_mutex;
 bool g_started = false;
 bool g_shut_down = false;
+std::atomic<bool> g_mod_refused{false};  // a game mod patches where co-op does (Start)
 std::unique_ptr<Coop> g_coop;  // set once by Start, cleared by Shutdown
 
 // Joins the thread if the program ends without Shutdown.
@@ -924,6 +926,16 @@ void Start() {
     LOG_INFO(Core, "coop: loaded (ENet {}.{}.{})", (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
     LOG_INFO(Core, "coop: build {}, protocol {}", LICHII_COOP_VERSION, coop::protocol::kProtocolVersion);
 
+    // A game mod patches the game where co-op does (CoopSvc::Refusal, issue
+    // 136): co-op stays off for this run, and the overlay says why.
+    if (const std::string changed = CoopSvc::Refusal(); !changed.empty()) {
+        g_mod_refused = true;
+        LOG_WARNING(Core, "coop: off: a game mod is installed ({} is not the game's own). Co-op "
+                          "does not work with game mods: remove them or turn them off in the "
+                          "game's Add-Ons.",
+                    changed);
+        return;
+    }
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     auto settings = LoadSettings(ini, errors);
@@ -964,6 +976,9 @@ void Shutdown() {
 std::vector<OverlayLine> OverlayLines() {
     if (auto* coop = Get()) {
         return coop->Lines();
+    }
+    if (g_mod_refused) {
+        return {{"Co-op is off: a game mod is installed"}};
     }
     return {};
 }

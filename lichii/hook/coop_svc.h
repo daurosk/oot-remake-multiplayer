@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -70,6 +71,12 @@ inline constexpr std::uint64_t kBufferS0 = 0x68;  // f32, loaded into s0 before 
 // `out` (NSO header, then the module), checked against `original` and `out`.
 void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view build_id,
                const std::vector<std::uint8_t>& original, std::vector<std::uint8_t>& out);
+// Also checks, with puppets on or not, that every place in main co-op patches
+// is still the game's own after mods and the emulator's built-ins went in.
+// When one is not (a game mod patches it: issue 136, co-op allows no mods),
+// nothing is patched and this says where ("main+0x..."); co-op then stays
+// off. Empty when the game is as shipped.
+std::string Refusal();
 
 // Something else that calls game functions from the cave, with the same
 // contract as CoopPuppet::Director::Step: once a frame it is asked with

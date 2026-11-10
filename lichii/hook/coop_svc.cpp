@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
+#include <cstdio>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -18,6 +20,7 @@
 #include "core/memory.h"
 
 #include "coop_hold.h"
+#include "coop_sites.h"
 #include "coop_puppet.h"
 
 namespace CoopSvc {
@@ -124,9 +127,46 @@ void AddCaller(int order, Caller caller) {
     c.list.emplace(at, order, std::move(caller));
 }
 
+namespace {
+std::mutex g_refusal_mutex;
+std::string g_refusal;  // guarded: why co-op is off in this game (Refusal())
+
+void SetRefusal(std::string why) {
+    std::lock_guard lock(g_refusal_mutex);
+    g_refusal = std::move(why);
+}
+
+} // namespace
+
+std::string Refusal() {
+    std::lock_guard lock(g_refusal_mutex);
+    return g_refusal;
+}
+
 void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view build_id,
                const std::vector<std::uint8_t>& original, std::vector<std::uint8_t>& out) {
-    if (title_id != kOcarinaProgramId || module != "main" || !Wanted()) {
+    if (title_id != kOcarinaProgramId || module != "main") {
+        return;
+    }
+    SetRefusal({});  // a new game start
+    constexpr std::size_t header = sizeof(Loader::NSOHeader);
+    if (build_id == kMainBuild && original.size() >= header + kCaveEnd &&
+        out.size() >= header + kCaveEnd) {
+        // No game mods with co-op (issue 136): a mod that patches the game's
+        // code where co-op does would break one or the other. Checked always,
+        // so co-op stays off with any such mod, puppets on or not.
+        if (const auto changed = CoopSites::ChangedSite(out, header)) {
+            char where[24];
+            std::snprintf(where, sizeof where, "%#llx", static_cast<unsigned long long>(*changed));
+            SetRefusal(std::string("main+") + where);
+            LOG_WARNING(Loader,
+                        "    - Skipping \"coop puppet\": main+{} is not the game's own (a game "
+                        "mod patches it); co-op stays off. Remove or turn off the game's mods.",
+                        where);
+            return;
+        }
+    }
+    if (!Wanted()) {
         return;
     }
     if (build_id != kMainBuild) {
@@ -134,7 +174,6 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
                     kMainBuild);
         return;
     }
-    constexpr std::size_t header = sizeof(Loader::NSOHeader);
     const std::size_t cave = header + kCaveOffset;
     if (original.size() < header + kCaveEnd || out.size() < header + kCaveEnd) {
         LOG_WARNING(Loader, "    - Skipping \"coop puppet\": main is too small");
@@ -150,8 +189,8 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
             return;
         }
     }
-    for (std::size_t i = cave; i < header + kCaveEnd; ++i) {
-        if (original[i] != 0 || out[i] != 0) {
+    for (std::size_t i = cave; i < cave + kCave.size(); ++i) {
+        if (original[i] != 0) {  // `out` was checked by ChangedSite
             LOG_WARNING(Loader, "    - Skipping \"coop puppet\": main+{:#x} is not free",
                         i - header);
             return;

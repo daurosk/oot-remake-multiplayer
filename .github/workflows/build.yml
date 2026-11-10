@@ -50,6 +50,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/update_test.ps1
       - name: Kit path check tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/paths_test.ps1
+      - name: Kit launch-update tests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/launch_test.ps1
 
   linux:
     runs-on: ubuntu-latest

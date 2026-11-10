@@ -67,7 +67,11 @@ Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 
 Every player needs the same version: a game of one version cannot join a server of another.
 
-**Kits from v0.1.0-test3 on:** close the emulator and the server, then double-click `Update.bat` in the kit folder. It looks for the newest release on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page, says which one, and asks before it changes anything. Then it downloads the zip, checks it against the SHA-256 published with the release, and replaces the kit's own files. Host.bat and Join.bat say at start when a newer release is out.
+**On every start** (a kit whose `coop-options.ini` has `auto_update`): when `Host.bat`, `Join.bat` or `play.cmd` start and a newer co-op release is out, they ask "Update now? [Y/n]" (yes after 10 s with no key, so an unattended start updates too). Yes updates the whole kit, the emulator included, then starts the new version. No, no network, or GitHub down: this version starts as it is, after at most 6 s. If the update fails, the old files are put back and this version starts. `auto_update` in `coop-options.ini` sets it: `ask` (the default), `yes` (update without asking) or `no` (only say that one is out).
+
+**By hand:** close the emulator and the server, then double-click `Update.bat` in the kit folder. It looks for the newest release on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page, says which one, and asks before it changes anything. Then it downloads the zip, checks it against the SHA-256 published with the release, and replaces the kit's own files.
+
+The emulator is updated only this way, with the co-op build from our release. Fritchii's own updater is switched off in our builds and never used: it would put a plain Fritchii without co-op over the kit's. When Frizti publishes a newer Fritchii, the next co-op release moves to it.
 
 **A v0.1.0-test2 kit** has no `Update.bat` yet: download `Update.bat` from the newest release once, put it in the kit folder beside `Host.bat`, and double-click it (Windows may warn about a file from the internet the first time: **More info**, then **Run anyway**). From then on the kit has its own. (Or download the whole zip once more and copy your `emulator\user` folder into it.)
 

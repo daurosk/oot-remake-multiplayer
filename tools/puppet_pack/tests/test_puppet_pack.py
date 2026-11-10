@@ -408,12 +408,12 @@ class FullBuildTest(unittest.TestCase):
         self.assertGreaterEqual(t.get("RSDB/ActorInfo.Product.999.rstbl.byml"), 1000)
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
-        self.assertEqual(man["tool_sha256"], build.tool_hash())
         self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 10245064])
         self.assertEqual([a["param_size"] for a in man["actors"]], [21336, 21336])
         for a in man["actors"]:
             self.assertIn("EquipmentUser_Weapon", a["equipment_keys"])
             self.assertIn("EquipmentUser_Shield", a["equipment_keys"])
+        self.assertEqual(man["tool_sha256"], build.tool_hash())  # the kit compares it (pack-hint)
         # Running again gives the same files.
         first = {r: build.read(os.path.join(out, r)) for r in
                  ("RSDB/ActorInfo.Product.999.rstbl.byml.zs", "Pack/Actor/CoopPuppet_Child.pack.zs")}

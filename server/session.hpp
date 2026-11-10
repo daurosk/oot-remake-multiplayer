@@ -175,6 +175,7 @@ struct Stats {
   std::uint64_t world_relayed = 0;   // WORLD_BREAK, WORLD_MOVE, WORLD_PLACE passed on
   std::uint64_t world_repeated = 0;  // WORLD_BREAK the scene already has: not passed on
   std::uint64_t world_replayed = 0;  // kept breaks and places sent to a player who entered
+  std::uint64_t world_unkept = 0;    // GRASS_CUT or WORLD_* for a scene nobody is in: dropped
   std::uint64_t object_table_full = 0;  // objects turned away: max_objects
   std::uint64_t handover_asked = 0;       // HANDOVER_ASK sent to an owner
   std::uint64_t handover_unanswered = 0;  // moved with the last relayed sample
@@ -262,7 +263,6 @@ class Session {
     // The scene each of its two streams said last (see stale_scene).
     std::string sample_scene;
     std::string present_scene;
-    std::string world_scene;  // GRASS_CUT and WORLD_* (they say it too)
     // The objects it has loaded in that scene: placed ones, and made enemies
     // it listed. Projectiles are not listed here: they are found by owner.
     std::set<protocol::ObjectId> present;
@@ -348,6 +348,8 @@ class Session {
   void on_world(ConnectionId id, Connection& c, std::uint8_t channel, protocol::Message& message,
                 std::uint64_t now_us);
   void forget_empty_world(const std::string& scene);
+  // Whether a joined player is in this scene now.
+  bool scene_has_player(const std::string& scene) const;
   // The player is in `scene` now; leaving another scene lets go of its
   // objects. Always true.
   // (Callers first ask stale_scene whether the message is a late one.)

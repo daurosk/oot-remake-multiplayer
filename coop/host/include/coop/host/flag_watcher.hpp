@@ -87,7 +87,9 @@ class FlagWatcher {
   bool share_pickup(FlagKey key);
   // With learning on, an incoming 64-bit key set to 1 that this game does not
   // share yet is taken as a pickup too (the player who took it was in a scene
-  // this game has not loaded). At most kMaxLearned keys. Off by default.
+  // this game has not loaded). At most kMaxLearned keys. Off by default here;
+  // coop_hook.cpp turns it on whenever flags are shared (LICHII_COOP_PICKUPS=0
+  // turns it off).
   void set_learn_pickups(bool on) { learn_ = on; }
   static constexpr std::size_t kMaxLearned = 4096;
   std::size_t pickups() const { return pickups_.size(); }

@@ -930,7 +930,7 @@ void Start() {
     // 136): co-op stays off for this run, and the overlay says why.
     if (const std::string changed = CoopSvc::Refusal(); !changed.empty()) {
         g_mod_refused = true;
-        LOG_WARNING(Core, "coop: off: a game mod is installed ({} is not the game's own). Co-op "
+        LOG_WARNING(Core, "coop: off: a code mod is installed ({} is not the game's own). Co-op "
                           "does not work with game mods: remove them or turn them off in the "
                           "game's Add-Ons.",
                     changed);
@@ -978,7 +978,7 @@ std::vector<OverlayLine> OverlayLines() {
         return coop->Lines();
     }
     if (g_mod_refused) {
-        return {{"Co-op is off: a game mod is installed"}};
+        return {{"Co-op is off: a code mod is installed"}};
     }
     return {};
 }

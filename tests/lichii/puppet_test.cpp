@@ -231,6 +231,14 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     CHECK_FALSE(CoopSites::ChangedSite(std::vector<std::uint8_t>(16, 0xff)).has_value());
 }
 
+TEST_CASE("puppet cave: co-op that already runs stops once when a code mod is found later (#136, test7)") {
+    // The emulator started directly: co-op connected before the game's main was patched.
+    CHECK_FALSE(CoopSites::MustStopForMod(true, false, ""));             // main as shipped
+    CHECK(CoopSites::MustStopForMod(true, false, "main+0x3c46280"));     // the patcher refused
+    CHECK_FALSE(CoopSites::MustStopForMod(true, true, "main+0x3c46280"));   // stopped already
+    CHECK_FALSE(CoopSites::MustStopForMod(false, false, "main+0x3c46280"));  // never started
+}
+
 TEST_CASE("puppet: a quaternion turns into the matrix the reader reads back") {
     const float s = std::sqrt(0.5f);
     for (const CoopPuppet::Quat q : {CoopPuppet::Quat{0, 0, 0, 1}, CoopPuppet::Quat{0, s, 0, s},

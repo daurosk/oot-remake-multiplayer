@@ -1356,8 +1356,12 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     return shared->size() - before;
 }
 
+bool On() {
+    return !EnvOff("LICHII_COOP_DUNGEON");
+}
+
 void AddShared(std::optional<coop::host::SharedFlags>& shared) {
-    const bool on = !EnvOff("LICHII_COOP_DUNGEON");
+    const bool on = On();
     const std::size_t added = Merge(shared, on);
 #ifdef LICHII_COOP
     LOG_INFO(Core, "coop: dungeon: sharing {} dungeon flags and keys{}", added,

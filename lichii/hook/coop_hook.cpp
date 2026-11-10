@@ -242,9 +242,10 @@ public:
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
-        if (pickups_) {  // docs/dungeon.md: chests, silver rupees, cleared rooms stay done
-            for (const auto& k : CoopDungeon::Keys())
+        if (pickups_ && CoopDungeon::On()) {  // docs/dungeon.md: chests, silver rupees, cleared rooms stay done
+            for (const auto& k : CoopDungeon::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
+            }
         }
         thread_ = std::thread([this] { Run(); });
         return true;

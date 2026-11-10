@@ -49,4 +49,7 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on);
 // Merge, on unless LICHII_COOP_DUNGEON=0; logs what it did.
 void AddShared(std::optional<coop::host::SharedFlags>& shared);
 
+// False when LICHII_COOP_DUNGEON=0 (then the keys are not shared either).
+bool On();
+
 } // namespace CoopDungeon

@@ -387,8 +387,9 @@ The planner runs `coop::host::visibility` (`coop/host/scene.hpp`) for each remot
 |---|---|
 | hide, other or unknown scene | Not planned: none is made, one that exists is deleted after the 2 s grace (or at once on our scene change) |
 | hide, our cutscene | Kept, written 500 units below its spot (`kHideDrop`), no animation calls, so it is not deleted and made again for every cutscene |
-| park, they ride a horse | As "our cutscene": kept, parked below its spot. Their Epona is not in our game, so the puppet would sit in the air at saddle height. The marker stays |
+| park, they ride a horse | As "our cutscene": kept, parked below its spot. Their Epona is not in our game, so the puppet would sit in the air at saddle height. The marker stays. Also while they get on (`RideonRunHorse` and the like, 1 to 2 s), so the puppet vanishes as they mount |
 | hold, their cutscene | Kept where it is, no pose write; slot 0's frame from the start of the hold is set again once a frame, so it stands frozen. Not while they play the Ocarina (then show) |
+| show, our Ocarina song starts an event | A song that starts an event where it is played (Zelda's Lullaby on a Triforce plate, the Song of Time block) keeps our slot 0 on an `Ocarina_*` command for the first moments, so the others stay visible at the start of that shot until our animation changes. Known, small |
 | show | Pose written every frame, animation as above |
 
 The overlay markers follow the same rule: `Coop::Frame` (`coop_hook.cpp`) notes each player `visibility` hides, and `Place` builds no marker for them. Park, hold and show keep the marker. Each puppet's Navi (`CoopFairy::Publish`) plans from the same remote list (`CoopPuppet::Collect`) and the same event flag, and is parked, held or shown with her puppet.

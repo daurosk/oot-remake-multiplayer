@@ -225,7 +225,7 @@ struct Target {
     Vec3 position{};
     Mat3 rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
     Show show = Show::show;   // hold: frozen as it is; hide: parked out of sight
-    const char* why = "";     // for the log when `show` changes ("our cutscene", ...)
+    const char* why = "";     // for the log when `show` changes ("our cutscene", ...); string literals only
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;  // goes up with each received animation
     // What the player wears, in kGearKinds order; unset: not known yet,

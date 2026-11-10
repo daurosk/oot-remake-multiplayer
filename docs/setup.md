@@ -51,18 +51,29 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 
 ## 4. The puppet pack
 
-The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed):
+**Most players: your game is a `.nup`. Just double-click `make-puppet-pack.cmd`. No keys, no Dump RomFS.**
 
-**If your game is a `.nup` file** (most players): double-click `make-puppet-pack.cmd`. It finds the `.nup` in the emulator's game list folders (step 3), or asks for it (type its path, or drag the file into the window). It reads the game files straight from the `.nup`, so it needs no keys and no dump, and builds the pack in under a minute.
+1. Double-click `make-puppet-pack.cmd` in the kit folder.
+2. It finds the `.nup` in the emulator's game list folders (step 3). If it asks for it, type its path or drag the file into the window.
+3. Wait for it to finish: it reads the game files straight from the `.nup` and builds the pack in under a minute.
 
-**If your game is an `.nsp` or `.xci`** (or the tool cannot use your `.nup`), dump its RomFS first:
+Do not use the emulator's **Dump RomFS** for a `.nup`: you do not need it, and it often fails with "RomFS Extraction Failed" (for example when your keys are older than the game's update).
+
+**Which file do you have?** Look at the file you added to the emulator's game list in step 3: its name ends in `.nup`, `.nsp` or `.xci` (the game list also shows it in its **File type** column: NUP, NSP or XCI). `.nup`: the steps above are all you need. `.nsp` or `.xci`: see below.
+
+The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed). Without the pack, co-op still works, but the other players show only as a name and a dot.
+
+### Only if your game is an `.nsp` or `.xci`: dump the RomFS first
+
+<details>
+<summary>Dump steps for an <code>.nsp</code> or <code>.xci</code> (or when the tool cannot use your <code>.nup</code>)</summary>
 
 1. Check first: the game starts in the kit's emulator (step 3), and the game **update** is installed in the kit's emulator (step 2), not only in another emulator. Without it you dump the old base game, which co-op cannot use.
 2. Start `Join.bat`, right-click the game in the list and choose **Dump RomFS**. If it asks which RomFS, pick **Program [0400486024DEC000]**. Then pick **Full** (not Skeleton). It writes several GB to `emulator\user\dump\0400486024DEC000\romfs\` and needs that much free space plus 1 GB. Keep the progress window open until it says **RomFS Extraction Succeeded!**; then close the emulator.
 3. Double-click `make-puppet-pack.cmd`. It checks the dump and builds the pack. If something is wrong it says what and how to fix it (see [Troubleshooting](#troubleshooting)). If it finds nothing, it asks for the `.nup` or the folder that holds `Pack`, `Model`, `AS`, `RSDB` and `System`.
 4. You can delete the `dump` folder afterwards.
 
-Without the pack, co-op still works, but the other players show only as a name and a dot.
+</details>
 
 ## Check it works
 
@@ -92,7 +103,7 @@ It sends nothing about you: one request for the list of releases, and the two do
 
 ## Troubleshooting
 
-- **"RomFS Extraction Failed! There was an error copying the RomFS files or the user cancelled the operation." (step 4).** With a `.nup` game you do not need Dump RomFS: run `make-puppet-pack.cmd` and give it the `.nup`. Otherwise: the emulator shows this one message for nearly every failure and writes nothing about the dump itself in its log. In order:
+- **"RomFS Extraction Failed! There was an error copying the RomFS files or the user cancelled the operation." (step 4).** First check which game file you have ([step 4](#4-the-puppet-pack)): if it ends in `.nup`, you do not need Dump RomFS at all. Double-click `make-puppet-pack.cmd` and give it the `.nup`. Only with an `.nsp` or `.xci`: the emulator shows this one message for nearly every failure and writes nothing about the dump itself in its log. In order:
   - Your keys are older than the game's update. The log (`emulator\user\log\eden_log.txt`) then has `Cannot decrypt ...: keys for gen 0x17+ required.`, and `make-puppet-pack.cmd` says **"Your prod.keys are too old for this game's update"**. Gen 0x17 needs `master_key_16` in `prod.keys`; keys that stop at `master_key_15` cannot decrypt the update. The game can still run from a `.nup`, which is not encrypted. Fix: build the pack from the `.nup` (step 4), or dump newer keys from your console.
   - It came at once, before any progress bar: the emulator cannot read the game. Check that `emulator\user\keys\prod.keys` exists (the "No keys" item below), the firmware is installed, and the game starts in this emulator.
   - You pressed Cancel or closed a window: the dump-mode question, the "which RomFS" list, or the progress window. Dump again and keep the progress window open.

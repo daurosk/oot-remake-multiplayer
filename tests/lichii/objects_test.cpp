@@ -1161,6 +1161,8 @@ TEST_CASE("objects: OBJECT_GROUP follows the presence, on a change and with each
     Sync stray;
     step = Tick(stray, 1000 * kMs, {Enemy(0x400, 0x44, 1, 0.0f, "Enemy_Gohma_Larva")});
     CHECK(All<proto::ObjectGroup>(step).empty());
+}
+
 TEST_CASE("objects: OBJECT_OWNER is logged on a change, not on every repeat") {
     CoopObjects::OwnerLog log;
     proto::ObjectOwner a;

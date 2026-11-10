@@ -1012,6 +1012,8 @@ public:
     }
 
     // Network thread.
+    void ForgetOwnerLog() { owner_log_.Clear(); }  // network thread
+
     void Receive(const coop::protocol::Message& m) {
         if (const auto* o = std::get_if<coop::protocol::ObjectOwner>(&m)) {
             if (owner_log_.Changed(*o)) {  // owner and epoch only: a group change alone is not logged here
@@ -1669,7 +1671,7 @@ std::vector<std::uint64_t> OwnedActors() {
 void OnEvent(const coop::net::Event& event) {
     Objects& objects = Instance();
     if (event.kind == coop::net::EventKind::reconnected) {
-        objects.owner_log_.Clear();  // a restarted server may hand out the same owner and epoch again
+        objects.ForgetOwnerLog();  // a restarted server may hand out the same owner and epoch again
     }
     if (event.kind != coop::net::EventKind::message) {
         return;

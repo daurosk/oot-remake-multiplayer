@@ -132,3 +132,42 @@ TEST_CASE("chests: a late joiner's snapshot reports the chests it opens, a key t
     CHECK(b.values[open].value == 1);
     CHECK(wb.take_written_for_others() == std::vector<host::FlagKey>{open});
 }
+
+TEST_CASE("chests: a Deku Tree chest opened in A is written in B and reported for B's loaded copy (issue 138)") {
+    // The dungeons' chests come from coop_dungeon's list, not this one; the
+    // hook shares them the same way (Merge, then share_pickup for each key),
+    // so a loaded one in B is removed like an overworld chest.
+    constexpr std::uint64_t kSlingshotChest = 0x0b66198d17d6584e;  // InsideTheDekuTree Obj_TBox_A_02
+    bool listed = false;
+    for (const auto& k : CoopDungeon::Keys()) listed = listed || k.key == kSlingshotChest;
+    REQUIRE(listed);
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    CoopChests::Merge(list, true);
+    const auto chest = host::FlagKey::key64_flag(kSlingshotChest);
+    Game a;
+    Game b;
+    a.set(chest, 0);
+    b.set(chest, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    for (host::FlagWatcher* w : {&wa, &wb}) {
+        for (const auto& k : CoopDungeon::Keys()) w->share_pickup(host::FlagKey::key64_flag(k.key));
+    }
+    wa.frame(a);
+    wb.frame(b);
+
+    a.set(chest, 1);  // A opens the Slingshot chest
+    proto::Message m;
+    const auto* set = AsSet(wa.frame(a), m);
+    REQUIRE(set);
+    REQUIRE(set->flags.size() == 1);
+    const proto::FlagState state{1, set->flags};
+    wa.receive(proto::Message{state});
+    wb.receive(proto::Message{state});
+    wa.frame(a);
+    wb.frame(b);
+    CHECK(b.values[chest].value == 1);
+    CHECK(wb.take_written_for_others() == std::vector<host::FlagKey>{chest});
+    CHECK(wa.take_written_for_others().empty());
+}

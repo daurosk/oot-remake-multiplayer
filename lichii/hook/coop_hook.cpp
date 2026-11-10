@@ -292,7 +292,15 @@ public:
                 CoopCheats::Frame(*game_store);
             }
             if (sharing_) {
-                store.emplace(*game_store);
+                // Issue 138: grants wait for a loaded save, and the capacities
+                // of held items are mended for a while after each load.
+                const bool mend = load_mend_.frame(reading.has_value());
+                store.emplace(*game_store, &load_mend_);
+                if (mend) {
+                    if (const auto raised = store->mend(); raised != 0) {
+                        LOG_INFO(Core, "coop: items: {} capacities mended after a load", raised);
+                    }
+                }
             }
         }
         if (pickups_) {
@@ -864,6 +872,7 @@ private:
     bool sharing_ = false;  // a flag list is shared; set by Begin
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
+    coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

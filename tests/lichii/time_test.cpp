@@ -34,7 +34,7 @@ TEST_CASE("time: Ahead goes the short way round midnight") {
     CHECK(CoopTime::Ahead(10, 86'390) == -20);
 }
 
-TEST_CASE("time: the host says its clock once a second; others do not") {
+TEST_CASE("time: the host says its clock once a second, others do not") {
     Sync host;
     std::vector<proto::Message> send;
     CHECK_FALSE(host.Tick(36'000, true, 0, send));

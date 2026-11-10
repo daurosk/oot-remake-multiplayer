@@ -136,7 +136,7 @@ TEST_CASE("drops: which actors are drops") {
     CHECK_FALSE(CoopDrops::IsDrop("Item_Bomb"));
 }
 
-TEST_CASE("drops: a new scene asks; our game's drop is told once") {
+TEST_CASE("drops: a new scene asks, our game's drop is told once") {
     Game a(1);
     a.seen = {Lying(0x1000, 50.0f)};  // lay there when we came
     a.Tick();
@@ -455,7 +455,7 @@ TEST_CASE("drops: picked up, blinked out, unloaded") {
     CHECK(a.sync.Live() == 0);
 }
 
-TEST_CASE("drops: many gone at once, or no Link, is an unload; near 0 tells pickups only") {
+TEST_CASE("drops: many gone at once, or no Link, is an unload, near 0 tells pickups only") {
     Game a(1);
     a.Tick();
     a.seen = {Lying(0x1000, 5.0f), Lying(0x2000, 6.0f), Lying(0x3000, 7.0f)};
@@ -607,7 +607,7 @@ TEST_CASE("drops: a player who comes in is told the drops still lying, where the
     CHECK(b.creates[0].position[0] == doctest::Approx(6.0f));
 }
 
-TEST_CASE("drops: drops of another scene are not ours; a new scene forgets") {
+TEST_CASE("drops: drops of another scene are not ours, a new scene forgets") {
     Game b(2);
     b.Tick();
     auto other = Told(1, 7, 5.0f, b.now);
@@ -810,7 +810,7 @@ TEST_CASE("drops: a take in the walk after the director let go still deletes the
     CHECK(b.removes[0] == Remove{0x7000, kGreen});
 }
 
-TEST_CASE("drops: a delete that never comes true is asked of the remover; never our roll") {
+TEST_CASE("drops: a delete that never comes true is asked of the remover, never our roll") {
     Game b(2);
     b.Tick();
     b.sync.Receive(Told(1, 7, 5.0f, b.now));

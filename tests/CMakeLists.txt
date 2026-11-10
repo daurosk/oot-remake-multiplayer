@@ -1,3 +1,15 @@
+# A ';' in a doctest name splits the name for ctest: doctest_discover_tests
+# then registers a test that runs nothing. Refuse such names at configure time.
+file(GLOB_RECURSE coop_test_sources CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp"
+     "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+foreach(source IN LISTS coop_test_sources)
+  file(STRINGS "${source}" bad_names REGEX "(TEST_CASE|SUBCASE|SCENARIO|TEST_CASE_FIXTURE)[(]\"[^\"]*;[^\"]*\"")
+  if(bad_names)
+    message(FATAL_ERROR "A test name in ${source} has a ';' (ctest would run nothing for it): ${bad_names}")
+  endif()
+endforeach()
+
 add_executable(coop_tests
   main.cpp
   smoke_test.cpp

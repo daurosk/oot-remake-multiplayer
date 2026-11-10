@@ -749,7 +749,7 @@ TEST_CASE("world: the server's replay for the scene we are entering is kept") {
     CHECK_FALSE(w.Broken(0x11));
 }
 
-TEST_CASE("world: a rock thrown and gone next to Link was broken; an unloaded one was not") {
+TEST_CASE("world: a rock thrown and gone next to Link was broken, an unloaded one was not") {
     const char* rock = "Obj_LiftRock_A_01";
     WorldSync w;
     Walk(w, 1000 * kMs, {Thing(0x100, 0x11, 1, rock), Thing(0x200, 0x22, 1, rock, {1.0f, 2.0f, 30.0f})});
@@ -975,7 +975,7 @@ TEST_CASE("world: Reset and a reused address start clean") {
     CHECK(w.Count() == 1);
 }
 
-TEST_CASE("world: our sword passing a sign sends a hit; another player's hit is given to our sign") {
+TEST_CASE("world: our sword passing a sign sends a hit, another player's hit is given to our sign") {
     const char* sign = "Obj_GuidePost_A_02";
     CHECK(CoopWorld::IsSign(sign));
     CHECK(CoopWorld::IsSign("Obj_Kokiri_Signboard_A_01"));

@@ -215,7 +215,7 @@ TEST_CASE("overlay: fading with distance") {
   CHECK(why(r, 4) == Why::too_far);
 }
 
-TEST_CASE("overlay: fade passes through as alpha; faded out is skipped") {
+TEST_CASE("overlay: fade passes through as alpha, faded out is skipped") {
   Result r = build({player(2, {0, 0, -10}, 0.4f), player(3, {0, 0, -20}, 0.0f),
                     player(4, {0, 0, -30}, 1.0f)});
   REQUIRE(r.items.size() == 2);

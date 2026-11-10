@@ -50,6 +50,7 @@
 #include "coop_chat.h"
 #include "coop_cheats.h"
 #include "coop_flags.h"
+#include "coop_game_build.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_drops.h"
@@ -68,8 +69,9 @@ namespace {
 
 // The game and build the addresses in coop/host are for.
 constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
-constexpr const char* kGameBuildId = "e0f3ccfaf50065ae";
-constexpr const char* kGameVersion = "1.1.1";
+// The builds it knows: coop_game_build.h (docs/game-builds.md).
+constexpr std::string_view kGameBuildId = CoopGameBuild::kPrimary.id;
+constexpr std::string_view kGameVersion = CoopGameBuild::kPrimary.version;
 constexpr const char* kBuildId = "lichii fritchii-v5 coop";
 
 // A frame older than this means the game is not running (stopped, paused).
@@ -200,8 +202,8 @@ public:
         config.host = settings_.server;
         config.port = settings_.port;
         config.hello.build_id = kBuildId;
-        config.hello.game_build_id = kGameBuildId;
-        config.hello.game_version = kGameVersion;
+        config.hello.game_build_id = std::string(kGameBuildId);
+        config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
@@ -577,6 +579,7 @@ private:
         auto* process = system.ApplicationProcess();
         if (process == nullptr) {
             view.game_note = "no game";
+            build_warned_ = nullptr;  // the next game start warns again
             return std::nullopt;
         }
         if (system.GetApplicationProcessProgramID() != kOcarinaProgramId) {
@@ -584,12 +587,11 @@ private:
             return std::nullopt;
         }
         const auto build = Hex(system.GetApplicationProcessBuildID(), 8);
-        if (build != kGameBuildId) {
-            view.game_note = "game build " + build + ", co-op needs " + kGameBuildId;
-            if (!build_warned_) {
-                build_warned_ = true;
-                LOG_WARNING(Core, "coop: game build {} is not {}; nothing is read or sent", build,
-                            kGameBuildId);
+        if (CoopGameBuild::Find(build) == nullptr) {
+            view.game_note = CoopGameBuild::PanelRefusal(build);
+            if (build_warned_ != process) {
+                build_warned_ = process;  // once per game start
+                LOG_WARNING(Core, "coop: {}", CoopGameBuild::LogRefusal(build));
             }
             return std::nullopt;
         }
@@ -819,7 +821,7 @@ private:
     CoopEvery::Every debug_log_{kDebugLogUs};
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
-    bool build_warned_ = false;
+    Kernel::KProcess* build_warned_ = nullptr;  // the process last warned about
     FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};

@@ -1,60 +1,53 @@
-# Known issues in the test release (v0.1.0-test2)
+# Known issues in the test release (v0.1.0-test6)
 
-This is an early test release. Everything below was checked on one PC with two copies of the game talking through the server (two emulator windows, often driven by the [autotest](../tools/autotest) scripts), and then played once by hand in two games on that PC. **It has not been played on two PCs yet**, over a LAN or the internet: that is what this release is for. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)).
+This is an early test release. Everything under "Works" was seen in our two-game tests: two copies of the game on one PC talking through the server, driven by the [autotest](../tools/autotest) scripts, with the logs and screenshots of both games read afterwards. Testers have played earlier releases on separate PCs, over a LAN and the internet. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)).
 
-Every player needs the same release. v0.1.0-test2 and v0.1.0-test3 speak protocol 3. **Protocol 4** arrives with v0.1.0-test4: a protocol 3 game cannot join a protocol 4 server, or the other way round, so every player updates (`Update.bat`). Builds from chunk 2 on speak **protocol 5** and refuse protocol 4 the same way. A v0.1.0-test1 game cannot join a test2 or later server.
+**Every player needs the same release.** test6 speaks **protocol 6**: a test6 game and a test5 (or older) game or server refuse each other when they connect, so every player updates (`Update.bat` in the kit folder, or answer **Y** when `Host.bat` / `Join.bat` offer it). Then run `make-puppet-pack.cmd` once more: the puppet pack now carries Link's sounds.
+
+**The emulator is Fritchii v5.7.** The first start after the update prepares the shaders again, which takes a while. (Our tests start with Ctrl+U, high refresh, off; turn it on in the game as usual.)
+
+## Works (seen in two-game tests)
+
+- **Joining and leaving**: joining, leaving, rejoining after a crash, a name still held by a crashed game, and reconnecting when the server restarts.
+- **The co-op panel** (top left) with each player's name, area, distance and ping; the chat box (Enter), the player list (hold Tab) and name tags.
+- **Other players as Link**, child and adult, following them live and copying their whole pose, with Navi beside them. The adult Link puppet is new in test6 ([issue 111](https://github.com/daurosk/oot-remake-multiplayer/issues/111)): seen walking and running in Kakariko by day. A player who joins later gets a Link for everyone already there.
+- **Items**: key items, bottles, songs and one-time pickups are shared; small keys, Gold Skulltula tokens and heart pieces add up across players. Rupees, ammo and health stay per player. A player who joins late gets the items found before.
+- **Ammo comes with a shared item** ([issue 128](https://github.com/daurosk/oot-remake-multiplayer/issues/128)): when one player gets the Slingshot, the others get it with 30/30 seeds, not 0/0. The same for the bomb bag (20 bombs) and the other ammo items.
+- **No more stuck ammo after joining** ([issue 138](https://github.com/daurosk/oot-remake-multiplayer/issues/138)): a player who joins from the title screen, or is loading while an item arrives, gets the item's capacity and ammo once the save has loaded ("capacities mended" in the log). Seen for Deku Sticks (10/10) and the Slingshot (30/30).
+- **Heart containers**: a heart container raises every player's maximum health (seen with the test cheat).
+- **Dungeons**: switches, doors, cleared rooms, water levels and the dungeons' one-time objects are shared through the game's saved flags (seen with one Deku Tree chest; webs and cracked walls not checked yet). A switch the others set stays set when you load your save ([issue 129](https://github.com/daurosk/oot-remake-multiplayer/issues/129)).
+- **Chests** ([issue 87](https://github.com/daurosk/oot-remake-multiplayer/issues/87)): 60 chests outside the dungeons are shared too. A chest another player opens while you are in the same room disappears from your game (seen with one chest, in the logs; that it shows open when you come back is not checked yet). A chest right beside you is left alone, so that two players opening one chest at once do not break it; that case has not been tried yet.
+- **Boss rooms**: when one player enters a boss room, the others are moved in with them and the intro starts together (Water Temple).
+- **Enemies**: their position, animation and life follow the player who owns them. The Deku Babas of the Deku Tree's first room are placed in the other game too (seen in the logs; whether all show, and kills seen from both games, are not checked yet: below). Townspeople and animals stand and move the same in every game.
+- **Cut signs** ([issue 90](https://github.com/daurosk/oot-remake-multiplayer/issues/90)): a sign cut in one game is cut in the others too (all its pieces' values are written there; not yet seen on the other screen).
+- **Things a player makes**: Deku seeds and Deku nuts appear in the other games; a pulled bomb is copied to the other games.
+
+## Known issues
+
+- **Stalchildren** in Hyrule Field at night are not shared: each game has its own ([issue 124](https://github.com/daurosk/oot-remake-multiplayer/issues/124)).
+- **Bombs in our tests** vanish about 0.1 s after they are pulled out ([issue 125](https://github.com/daurosk/oot-remake-multiplayer/issues/125)). They do the same with co-op switched off, so this is our test setup, not co-op; if you see it in a real game, please report it.
+- **The other Links' sounds** ([issue 131](https://github.com/daurosk/oot-remake-multiplayer/issues/131)): the puppet pack now carries Link's sound parts, and nothing crashes, but our tests cannot hear sound: please tell us whether the other Links' footsteps, sword and voice can be heard.
+- **Held items** ([issue 92](https://github.com/daurosk/oot-remake-multiplayer/issues/92)): a Deku Stick and a bottle show in the other Links' hands; the Deku Nut and the Slingshot were not seen.
+- **Boss rooms**: a player who walks out of a boss room after the fight has started is not pulled back in.
+- **A code mod with the emulator started directly**: `Host.bat` and `Join.bat` refuse to start with a code mod (below). If the emulator is started some other way with a mod that patches where co-op does, co-op still connects but makes no puppets (the other players show only as markers). Remove the mod.
+- **Not yet checked in a game**: the Kokiri Shop's Deku Shield for a second player ([issue 130](https://github.com/daurosk/oot-remake-multiplayer/issues/130)), the Deku Tree's Skulltula and other kills seen from both games ([issues 132](https://github.com/daurosk/oot-remake-multiplayer/issues/132) and [133](https://github.com/daurosk/oot-remake-multiplayer/issues/133)), an enemy chasing a player into another player's game ([issue 101](https://github.com/daurosk/oot-remake-multiplayer/issues/101)), pots ([issue 102](https://github.com/daurosk/oot-remake-multiplayer/issues/102)), the host's time of day in every game ([time.md](time.md)), arrows, the boomerang and the hookshot.
+- **Gold Skulltulas**: the token count is shared. A Skulltula or token another player takes while you are in the same area should disappear in your game too (built in test6 with the chests, not checked yet).
+- **Tunic, boots and masks** are not shown on the other players' Link. The field's ordinary grass is not shared.
+- **Game version**: only version 1.1.1 of the game (build `e0f3ccfaf50065ae`) is supported; every player needs that one.
+
+## Mods
+
+Co-op does not allow mods that change the game's code, or cheats ([issue 136](https://github.com/daurosk/oot-remake-multiplayer/issues/136)). A mod's code patches can sit where co-op's own go (the Hyrule Cheat Menu's does), and cheats, refills or God Mode change the game under the sync. **Texture and model mods are fine**: mods that only replace game files (a `romfs` folder), such as fixes for missing Water Temple or Fairy Fountain textures. If a mod changes models, every player should use the same one, or the games may differ.
+
+- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a code or cheat mod is installed for the game (a mod folder with an `exefs` or `cheats` folder, a loose `cheat_*` file, or code on the SD card), and name it. Mods turned off in the game's Add-Ons do not count, and neither does Dark's Dynamic FPS mod (Fritchii has it built in).
+- When the game's code is patched where co-op patches it anyway, the puppet patch is skipped; see "A code mod with the emulator started directly" above.
 
 ## AMD graphics cards
 
-- **test4 crashes on AMD cards** (`amdvlk64.dll` in Windows' Event Viewer; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)): AMD's driver crashes with the emulator's shader libraries. Fixed in test4.2: the kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details and the one line for older kits or a PC with both cards.
-
-## Found in the first play test of this build (being fixed)
-
-One PC, two games, played by hand on 2026-11-09.
-
-- **Sword and shield on the other Links do not show.**
-- **Cut grass is not shared**: grass you cut still stands in the other games. After this release the 13 grass tufts near the Kokiri side of Hyrule Field were added to the shared objects (in the next build; not yet checked in a game). The field's ordinary grass is still not shared: it is not an object the co-op code can see yet ([world.md](world.md)).
-- **Hit reactions**: an enemy hit in one game loses life in the others but does not react there (a Stalchild keeps its head).
-- Seen working: Stalchildren rise at the same places in both games.
-
-## Works (checked on one PC, two games)
-
-- Joining, leaving, rejoining after a crash, and reconnecting when the server restarts.
-- The co-op panel (top left): each player's name, area, distance and ping. The in-game chat box (Enter) and player list (hold Tab). A name tag over each player's head.
-- **Other players as Link** (with the puppet pack), checked as child Link. They stand where the other player is, follow them live and copy their whole pose (walking, running, sword stance). Navi flies beside each of them. A player who joins later gets a Link for everyone already there.
-- **Items**: key items, bottles, songs and one-time pickups are shared; small keys, Gold Skulltula tokens and heart pieces add up across players. Rupees, ammo and health stay per player. A player who joins late gets the items found before.
-- **Dungeons**: switches, doors, cleared rooms and water levels are shared through the game's saved dungeon flags.
-- **Enemies**: their position, animation and life follow the player who owns them; a kill in one game is a kill in all. Townspeople and animals stand and move the same in every game. One game decides where the night Stalchildren rise, so they are the same for everyone.
-- **Things a player makes**: Deku seeds and Deku nuts appear in the other games.
-
-## Built, but not yet seen working in the game
-
-- **Adult Link**: a player on an adult save should show as adult Link in the other games. Nothing adult has been run yet.
-- **Time of day**: every game should follow the host's clock ([time.md](time.md)). No run has shown a second game following the host yet.
-- **Pots, crates and rocks** are shared like enemies ([world.md](world.md)). Crates and a thrown rock were seen in the automatic tests; pots have not been seen, and nothing here has been checked by hand. Cut grass does not work (above).
-- **Bombs, arrows, the boomerang and the hookshot**: no test has thrown a bomb or shot an arrow yet, so an explosion in the other games has not been seen. Arrows would point the wrong way (their rotation is not sent).
-- **Sword and shield in hand or put away** as their owner has them: built, but in the play test they did not show at all (above).
-- **Areas and cutscenes**: a player in another area shows only in the panel, not as Link, and the other Links hide during your cutscenes and stand still during theirs.
-- **Dungeon sharing** is checked only at the flag level: no one has played through a dungeon door or the Water Temple's water level in two games yet.
-
-## Not yet
-
-- **Heart containers and heart pieces**: from the next build, a heart container one player picks up raises every player's maximum health (seen with the test cheat, not yet with a real container). Heart pieces count up across players, but whether four of them make a heart for the others is not checked yet.
-- **Gold Skulltulas**: the token count is shared, but the Skulltula you took may still be there in the other games.
-- **Cut signs** may not be shared: the sword swing is sent to the others and given to their sign, but whether that cuts it there has not been seen yet. A sign cut in one game may stay whole in the others.
-- **Tunic, boots and masks** are not shown on the other players' Link.
-- **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
-- **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.
-
-## Code and cheat mods are not supported in co-op
-
-Co-op does not allow mods that change the game's code, or cheats (issue 136). A mod's code patches can sit where co-op's own go (the Hyrule Cheat Menu's does), and cheats, refills or God Mode change the game under the sync and hide or fake sync bugs. **Texture and model mods are fine**: mods that only replace game files (a `romfs` folder), such as fixes for missing Water Temple or Fairy Fountain textures. If a mod changes models, every player should use the same one, or the games may differ.
-
-- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a code or cheat mod is installed for the game (a mod folder with an `exefs` or `cheats` folder, a loose `cheat_*` file, or code on the SD card), and name it. Mods turned off in the game's Add-Ons do not count, and neither does Dark's Dynamic FPS mod (Fritchii skips that one for its built-in Dynamic FPS).
-- When the game's code is patched where co-op patches it anyway (a mod started another way), co-op stays off. The panel says **"Co-op is off: a code mod is installed"**.
+- AMD's driver crashed with the emulator's shader libraries in test4 (`amdvlk64.dll`; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)). Since test4.2 the kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details.
 
 ## Other notes
 
-- Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks.
-- If an emulator is killed (not closed) and started again at once, joining takes a moment: the game asks again by itself for up to 12 seconds while the server lets the old one go. A name someone else really uses shows "name taken" after those 12 seconds.
+- Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks (and Public for Hamachi or Radmin VPN, [play-online.md](play-online.md)).
+- If an emulator is killed (not closed) and started again at once, joining takes a moment: the game asks again by itself for up to 12 seconds while the server lets the old one go.
 - The kit's emulator is portable and never reads or writes `%APPDATA%\eden`.

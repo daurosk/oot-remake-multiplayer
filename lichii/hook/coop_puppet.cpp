@@ -80,6 +80,18 @@ const char* PhaseText(Phase phase) {
     return "?";
 }
 
+const char* ShowText(Show show) {
+    switch (show) {
+    case Show::show:
+        return "show";
+    case Show::hold:
+        return "hold";
+    case Show::hide:
+        return "hide";
+    }
+    return "?";
+}
+
 Director::Director(Log log, bool verbose, bool anim)
     : log_(std::move(log)), verbose_(verbose), anim_(anim) {}
 
@@ -215,6 +227,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ", actor " + Hex(slot.actor) + ", state 4, at " + VecText(at));
                 slot.phase = Phase::live;
                 slot.since_ms = now_ms;
+                slot.shown = Show::show;  // a new actor stands where it was made
             } else if (now_ms - slot.since_ms > kCreateTimeoutMs) {
                 Say("P" + std::to_string(slot.number) + " " + slot.actor_name +
                     " not spawned after " + std::to_string(kCreateTimeoutMs) + " ms (actor " +
@@ -237,6 +250,11 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
+                if (t->show != slot.shown) {
+                    Say("P" + std::to_string(slot.number) + " " + ShowText(slot.shown) + " -> " +
+                        ShowText(t->show) + (*t->why ? std::string(" (") + t->why + ")" : std::string()));
+                    slot.shown = t->show;
+                }
                 if (t->show == Show::show) {
                     Pose(slot, guest, t->position, &t->rotation, now_ms);
                 } else if (t->show == Show::hide) {
@@ -1146,18 +1164,30 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         }
         const std::optional<std::string_view> theirs =
             r.scene ? std::optional<std::string_view>(*r.scene) : std::nullopt;
+        const std::optional<std::string_view> anim =
+            r.anim ? std::optional<std::string_view>(r.anim->name) : std::nullopt;
         Show show = Show::show;
-        switch (coop::host::visibility(in.scene, local_event, theirs, r.status)) {
+        const char* why = "";
+        switch (coop::host::visibility(in.scene, local_event, theirs, r.status, anim)) {
         case coop::host::Visibility::hide:
             if (!coop::host::same_place(in.scene, theirs)) {
                 continue;  // not here: no puppet (one made is deleted)
             }
             show = Show::hide;  // our cutscene: kept, out of sight
+            why = "our cutscene";
+            break;
+        case coop::host::Visibility::park:
+            show = Show::hide;  // riding: kept, out of sight
+            why = "riding";
             break;
         case coop::host::Visibility::hold:
             show = Show::hold;
+            why = "their cutscene";
             break;
         case coop::host::Visibility::show:
+            if (coop::host::activity_of(anim) == coop::host::Activity::ocarina) {
+                why = "ocarina";
+            }
             break;
         }
         Target t;
@@ -1168,6 +1198,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
             t.rotation = QuatToMatrix(*r.rotation);
         }
         t.show = show;
+        t.why = why;
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
@@ -1273,21 +1304,8 @@ Director& TheDirector() {
     return *g_director;
 }
 
-void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
-             const std::optional<Vec3>& position, bool local_event,
-             coop::host::Session* session, std::uint64_t server_now_us) {
-    if (!g_configured) {
-        return;  // puppets are off
-    }
+std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us) {
     std::vector<Remote> remotes;
-    Gear own_gear;
-    std::optional<std::uint8_t> own_drawn;
-    if (session != nullptr) {
-        if (const auto& e = session->sampler().last_equipment()) {
-            own_gear = GearOf(*e);
-            own_drawn = e->drawn;
-        }
-    }
     if (session != nullptr && server_now_us != 0) {
         session->with_presence([&](coop::presence::Presence& p) {
             for (const std::uint8_t n : p.players()) {
@@ -1319,6 +1337,24 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
             }
+        }
+    }
+    return remotes;
+}
+
+void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
+             const std::optional<Vec3>& position, bool local_event,
+             coop::host::Session* session, std::uint64_t server_now_us) {
+    if (!g_configured) {
+        return;  // puppets are off
+    }
+    std::vector<Remote> remotes = Collect(session, server_now_us);
+    Gear own_gear;
+    std::optional<std::uint8_t> own_drawn;
+    if (session != nullptr) {
+        if (const auto& e = session->sampler().last_equipment()) {
+            own_gear = GearOf(*e);
+            own_drawn = e->drawn;
         }
     }
     const auto now_ms = static_cast<std::uint64_t>(

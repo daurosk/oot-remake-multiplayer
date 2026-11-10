@@ -225,6 +225,7 @@ struct Target {
     Vec3 position{};
     Mat3 rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
     Show show = Show::show;   // hold: frozen as it is; hide: parked out of sight
+    const char* why = "";     // for the log when `show` changes ("our cutscene", ...)
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;  // goes up with each received animation
     // What the player wears, in kGearKinds order; unset: not known yet,
@@ -256,6 +257,7 @@ Mat3 QuatToMatrix(const Quat& q);  // rows; normalises q, identity if it is 0
 
 enum class Phase { no_block, allocating, idle, creating, live, deleting };
 const char* PhaseText(Phase phase);
+const char* ShowText(Show show);  // "show", "hold", "hide"
 
 class Director {
 public:
@@ -349,6 +351,7 @@ private:
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
+        Show shown = Show::show;            // the last `show` acted on (log on change)
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made
         float play_frame = 0.0f;
@@ -453,7 +456,9 @@ struct PlannerSettings {
 class Planner {
 public:
     explicit Planner(PlannerSettings settings = {}) : settings_(std::move(settings)) {}
-    // `local_event`: our own cutscene runs (it hides every puppet).
+    // `local_event`: our own cutscene runs (it hides every puppet;
+    // coop::host::local_event_hides). Each remote's case is
+    // coop::host::visibility, with its animation (riding parks it).
     Input Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                const std::optional<Vec3>& position, bool local_event,
                const std::vector<Remote>& remotes, std::uint64_t now_ms,
@@ -474,8 +479,15 @@ private:
 void Configure(PlannerSettings settings, bool verbose, Director::Log log);
 Director& TheDirector();
 
+// Every remote player presence shows at `server_now_us`, with scene, status,
+// age, newest animation and gear: what Publish plans from. CoopFairy plans
+// from the same list, so a Navi hides when its puppet does. Null session or
+// zero time: none.
+std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us);
+
 // CoopHook::OnFrame, once per present, with no lock held. `session` may be
 // null (not connected): then only the debug puppet is planned.
+// `local_event`: coop::host::local_event_hides (our cutscene; not the Ocarina).
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
              const std::optional<Vec3>& position, bool local_event,
              coop::host::Session* session, std::uint64_t server_now_us);

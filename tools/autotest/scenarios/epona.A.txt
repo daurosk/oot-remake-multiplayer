@@ -1,0 +1,21 @@
+# epona (issue 86): A rides Epona; B watches A's puppet. NOT runnable on the kits' saves as
+# they are: needs A's save adult, at Lon Lon Ranch or in Hyrule Field, standing by Epona
+# (facing her), and B in the same place (child or adult; either era counts). Run with -NoLoad
+# after loading those saves by hand, or give A such a save.
+# Expect in B's log: "coop: puppet: P1 show -> hide (riding)" once A is on the horse (A's
+# command names a horse: with LICHII_COOP_DEBUG_ANIM=1 "P1 plays 'HorseRideOn...'",
+# "'HorseMove...'"), then "P1 hide -> show" after A gets off ("'DismountHorse'"). Screenshots
+# at "riding": B's window has no puppet of A (and no Navi) but A's marker; A's own window shows
+# A on Epona. If B's log shows A's riding commands under other names, add them to
+# coop::host::activity_of.
+mark start
+wait 60
+press A                 # get on
+wait 180
+mark mounted
+stick 0 0.8 180         # ride forward
+mark riding
+wait 60
+press A                 # get off (A by the horse's side; X if that is the game's button)
+wait 180
+mark dismounted

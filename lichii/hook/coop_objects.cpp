@@ -34,6 +34,8 @@
 //   that alone is not taken (LICHII_COOP_OBJECTS_HURT=1 still tries it), so
 //   an enemy gets a whole hit record (kHitTemplate; on by default,
 //   LICHII_COOP_OBJECTS_HIT_REPLAY=0 writes life directly instead);
+// - a copy near our Link whose own AI plays another animation than its
+//   owner's is asked for (issue 132; LICHII_COOP_OBJECTS_WAKE=0 stops it);
 // LICHII_COOP_OBJECTS_TEST_DRIVE=1 (two-game tests only): on the game that
 // LICHII_COOP_OBJECTS_TEST_TAKE=<hex key> (tests only): on player 2's game,
 // 3 s after sharing starts, acts as if that 64-bit placement key arrived
@@ -815,6 +817,7 @@ public:
             (void)registered;
             CoopSpawn::UseDirector();  // makes the rolled enemies another game decided
             sync_.SetHurt(hurt_);
+            sync_.SetWake(wake_);  // issue 132: LICHII_COOP_OBJECTS_WAKE=0 turns it off
             // A projectile copy's blast here is not our hit (docs/objects.md, "Projectiles").
             sync_.SetBlastNear([](const coop::protocol::Vec3& at, std::uint64_t now) {
                 return CoopProjectiles::TheBlasts().Near(at, now);
@@ -962,8 +965,8 @@ public:
                     LOG_INFO(Core, "coop: objects: rolled {} shared as made {}{}", sp->actor,
                              sp->id.value, sent ? "" : " (not sent)");
                 } else if (const auto* rm = std::get_if<coop::protocol::ObjectRemove>(&m)) {
-                    LOG_INFO(Core, "coop: objects: rolled made {} gone{}", rm->id.value,
-                             sent ? "" : " (not sent)");
+                    LOG_INFO(Core, "coop: objects: share remove {:#x} reason {}{}", rm->id.value,
+                             static_cast<int>(rm->reason), sent ? "" : " (not sent)");
                 } else if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
                     LOG_INFO(Core, "coop: objects: share damage {} to {:#x} epoch {}{}", d->amount,
                              d->id.value, d->epoch, sent ? "" : " (not sent)");
@@ -997,7 +1000,10 @@ public:
     }
 
     // Network thread.
-    void ForgetOwnerLog() { owner_log_.Clear(); }  // network thread
+    void ForgetOwnerLog() {  // network thread
+        owner_log_.Clear();
+        sync_.ForgetOwners();  // the server's epochs may start at 0 again (issue 133)
+    }
 
     void Receive(const coop::protocol::Message& m) {
         if (const auto* o = std::get_if<coop::protocol::ObjectOwner>(&m)) {
@@ -1051,6 +1057,7 @@ public:
     bool pose_ = true;
     bool hurt_ = true;
     bool replay_ = false;
+    bool wake_ = true;
     bool drive_ = false;
     int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
@@ -1607,6 +1614,7 @@ Objects& Instance() {
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
+        objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
         return true;
     }();
     (void)once;

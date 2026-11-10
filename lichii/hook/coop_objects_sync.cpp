@@ -271,6 +271,31 @@ bool IsAnnounced(std::string_view name) {
     return name == "Enemy_Skulltula_Gold";
 }
 
+std::string_view AnimationBase(std::string_view name) {
+    for (const std::string_view suffix : {"_ModelOnlyLOD", "_LOD"}) {
+        if (name.size() > suffix.size() && name.ends_with(suffix)) {
+            return name.substr(0, name.size() - suffix.size());
+        }
+    }
+    return name;
+}
+
+bool IsDeathAnimation(std::string_view name) {
+    for (const std::string_view word : {"Die", "Dead", "Death"}) {
+        for (std::size_t at = name.find(word); at != std::string_view::npos;
+             at = name.find(word, at + 1)) {
+            const bool starts = at == 0 || name[at - 1] == '_';
+            const std::size_t end = at + word.size();
+            const bool ends = end == name.size() || name[end] == '_' ||
+                              (name[end] >= '0' && name[end] <= '9');
+            if (starts && ends) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 proto::Quat QuatOf(const Mat3& m) {
     // m[3 * row + column], Shepperd's method. Rows that are not unit length
     // (a read of something else) give no turn.
@@ -372,6 +397,7 @@ void Sync::Reset() {
     scene_.clear();
     objects_.clear();
     hidden_.clear();
+    dead_.clear();
     order_.clear();
     owners_.clear();
     present_sent_.clear();
@@ -598,12 +624,18 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     }
                     drop = 0;
                 }
-                if (drop > 0 && owner != owners_.end() && owner->second.player != 0 &&
-                    owner->second.player != self) {
+                // Another game's, or nobody's yet (kept until the owner is
+                // known: an enemy hit the moment it loaded, issue 133).
+                const bool ours = owner != owners_.end() && owner->second.player == self;
+                if (drop > 0 && !ours) {
                     if (o.hit_sum == 0) {
                         o.hit_since = now_us;
                     }
                     o.hit_sum += drop;
+                    if (life->life <= 0 && o.killed_at == 0) {
+                        o.killed_at = now_us;  // our hit took it: a resend may follow
+                        o.resent = 0;
+                    }
                     // Its own game is playing the hit reaction now.
                     o.react_at = now_us;
                     o.react_over = !o.received.empty() && o.received.back().animation
@@ -613,6 +645,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
             o.life = life->life;
             o.max = life->max;
+            if (life->life > 0) {
+                o.killed_at = 0;  // alive again: a later kill is a new one
+            }
         }
     }
     hidden_ = std::move(hidden);
@@ -648,6 +683,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         it = objects_.erase(it);
     }
     Flush(self, now_us, gone, send);
+    // Off our walk: its owner is forgotten with it (see OBJECT_OWNER in
+    // Apply). Another actor with the same placed id still here keeps it.
+    for (const Object& o : gone) {
+        if (o.id.kind == proto::ObjectKind::placed &&
+            std::none_of(objects_.begin(), objects_.end(),
+                         [&o](const auto& e) { return e.second.id == o.id; })) {
+            owners_.erase(o.id);
+        }
+    }
     for (auto it = decided_.begin(); it != decided_.end();) {
         // A copy removed by its maker and no longer on our list is done.
         const bool left = it->second.address == 0 || !now_seen.contains(it->second.address);
@@ -670,6 +714,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.breakable = CoopWorld::IsBreakable(s->name);
         o.reacts = s->name.starts_with("Enemy_");
         o.first_position = s->position;
+        if (s->animation) {
+            o.rest_animation = s->animation->name;
+        }
         if (s->life) {
             o.life = s->life->life;
             o.max = s->life->max;
@@ -730,6 +777,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     self_ = self;
     Apply(self, now_us, send, writes);
+    // Copies their owner saw die that are still here after the grace.
+    dead_.clear();
+    for (const auto& [address, o] : objects_) {
+        if (o.dead_at != 0 && now_us - o.dead_at >= kDeadGraceUs) {
+            dead_.insert(address);
+        }
+    }
 
     for (auto& [address, o] : objects_) {
         // A hurt the game did not take (or took differently) in time: the
@@ -750,7 +804,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         const auto owner = owners_.find(o.id);
         const bool known = owner != owners_.end() && owner->second.player != 0;
         // Our hits on a copy, summed over 100 ms, go to the owner.
-        if (o.hit_sum > 0 && now_us - o.hit_since >= kDamageSumUs) {
+        if (o.hit_sum > 0 && now_us - o.hit_since >= kDamageSumUs &&
+            (known || now_us - o.hit_since >= kHitKeepUs)) {
             if (known && owner->second.player != self) {
                 proto::Damage d;
                 d.id = o.id;
@@ -827,6 +882,35 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     }
                 }
                 if (d <= kChaseReachM && speed >= kChaseSpeed) {
+                    ChaseStep(o, now_us);
+                }
+                // Woken by our Link (issue 132): out of the animation it
+                // rested in, near us. Keeps it ours.
+                // Only for kWakeOwnUs after it woke, so one that patrols or
+                // flies near us is not held in a fight for good.
+                const std::string_view now_playing =
+                    o.animation ? AnimationBase(o.animation->name) : std::string_view();
+                const bool resting = now_playing.empty() || o.rest_animation.empty() ||
+                                     now_playing == AnimationBase(o.rest_animation);
+                if (resting) {
+                    o.woke_at = 0;
+                } else if (o.woke_at == 0) {
+                    o.woke_at = now_us;
+                }
+                if (wake_ && d <= kWakeM && o.woke_at != 0 && now_us - o.woke_at < kWakeOwnUs) {
+                    ChaseStep(o, now_us);
+                }
+            } else if (wake_ && owner != owners_.end() && owner->second.player != 0 &&
+                       now_seen.contains(address) && Distance(o.position, *player_) <= kWakeM &&
+                       !o.received.empty() && now_us >= o.received.back().time &&
+                       now_us - o.received.back().time <= kPoseStaleUs &&
+                       !(o.react_at != 0 && now_us < o.react_at + kReactHoldUs)) {
+                // A copy near our Link whose own AI plays something else than
+                // the owner's enemy (issue 132): it wants to act on our Link.
+                const auto& wanted = o.received.back().animation;
+                if (o.animation && !o.animation->name.empty() && wanted &&
+                    !wanted->name.empty() &&
+                    AnimationBase(o.animation->name) != AnimationBase(wanted->name)) {
                     ChaseStep(o, now_us);
                 }
             }
@@ -912,11 +996,13 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             const float mx = o.position[0] - o.first_position[0];
             const float my = o.position[1] - o.first_position[1];
             const float mz = o.position[2] - o.first_position[2];
-            char line[200];
+            char line[260];
             std::snprintf(line, sizeof line,
-                          "gone %016llx owner %u life %d moved %.2f from Link %.2f: %s",
-                          static_cast<unsigned long long>(o.id.value), owner->second.player,
-                          o.life.value_or(-1), std::sqrt(mx * mx + my * my + mz * mz), near,
+                          "gone %016llx %s owner %u life %d anim '%s' moved %.2f from Link %.2f: %s",
+                          static_cast<unsigned long long>(o.id.value), o.name.c_str(),
+                          owner->second.player, o.life.value_or(-1),
+                          o.animation ? o.animation->name.c_str() : "",
+                          std::sqrt(mx * mx + my * my + mz * mz), near,
                           broken_here ? "broken here" : "left");
             notes_.emplace_back(line);
         }
@@ -930,6 +1016,21 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
                 sample.epoch = owner->second.epoch;
                 sample.state = StateOf(o, now_us);
                 send.emplace_back(sample);
+            }
+            // An enemy of ours that died here: dead for everyone (issue 133).
+            // Its life 0 alone does not reach a copy whose life cannot be
+            // read (the big Skulltula), nor end a copy whose game did not
+            // take the life we wrote. Rolled ones say it in Tick already.
+            const bool died = (o.life && *o.life <= 0) ||
+                              (o.animation && IsDeathAnimation(o.animation->name));
+            if (o.reacts && died && o.id.kind == proto::ObjectKind::placed) {
+                proto::ObjectRemove r;
+                r.id = o.id;
+                r.epoch = owner->second.epoch;
+                r.reason = proto::RemoveReason::dead;
+                r.position = o.position;
+                send.emplace_back(r);
+                notes_.emplace_back("dead, said to the others: " + o.name);
             }
         } else if (o.hit_sum > 0 || broken_here) {
             proto::Damage d;
@@ -946,9 +1047,14 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
 void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Message>& send,
                  std::vector<LifeWrite>& writes) {
     std::vector<proto::Message> inbox;
+    bool forget = false;
     {
         std::lock_guard lock(inbox_mutex_);
         inbox.swap(inbox_);
+        forget = std::exchange(forget_owners_, false);
+    }
+    if (forget) {
+        std::erase_if(owners_, [](const auto& e) { return e.first.kind == proto::ObjectKind::placed; });
     }
     const auto find = [this](const proto::ObjectId& id) -> Object* {
         for (auto& [address, o] : objects_) {
@@ -1015,7 +1121,36 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     d.removed = true;
                 }
             }
+            // A placed enemy its owner saw die (issue 133): ours dies too.
+            // Its life goes to 0 through the game (it plays its own death);
+            // still here kDeadGraceUs later, it is deleted.
+            const auto had = owners_.find(remove->id);
+            if (remove->reason == proto::RemoveReason::dead &&
+                remove->id.kind == proto::ObjectKind::placed &&
+                (had == owners_.end() || remove->epoch >= had->second.epoch)) {
+                if (Object* o = find(remove->id); o != nullptr && o->reacts && o->dead_at == 0) {
+                    if (o->life && *o->life > 0) {
+                        Lower(*o, 0, now_us, writes, remove->player_number);
+                    }
+                    o->dead_at = now_us;
+                    o->hit_sum = 0;
+                    notes_.emplace_back("dead in its owner's game: " + o->name);
+                }
+                // Nobody's now: no samples, poses or plays for it.
+                if (had != owners_.end()) {
+                    owners_.erase(had);
+                }
+            }
         } else if (const auto* owner = std::get_if<proto::ObjectOwner>(&m)) {
+            // A placed object's owner counts only while it is on our walk.
+            // The server forgets an object nobody has loaded and starts its
+            // epoch at 0 again; an owner kept from before would make every
+            // later one look old (issue 133: in the Lixyas test each game
+            // kept the other as owner of the Deku Tree's enemies for minutes,
+            // so neither sent their state and the hits were dropped).
+            if (owner->id.kind == proto::ObjectKind::placed && find(owner->id) == nullptr) {
+                continue;
+            }
             const auto had = owners_.find(owner->id);
             const std::uint8_t before = had != owners_.end() ? had->second.player : 0;
             if (had != owners_.end() && owner->epoch < had->second.epoch) {
@@ -1071,7 +1206,19 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 // Who hit it is not sent: its owner is the best guess.
                 Lower(*o, life, now_us, writes, sample->player_number);
                 o->fight_until = now_us + kFightUs;
-            } else if (life > have && !holding) {
+            } else if (life > have && !holding && have <= 0 && o->killed_at != 0 &&
+                       now_us - o->killed_at < kKilledKeepUs && o->dead_at == 0 &&
+                       o->resent < kResendMax) {
+                // We killed it here and the owner's enemy still lives (the
+                // DAMAGE was lost, or crossed a change of owner): not healed
+                // back, the hit is sent again (issue 133). After kResendMax
+                // the owner's life is taken, as below.
+                ++o->resent;
+                o->hit_sum = life;
+                o->hit_since = now_us > kDamageSumUs ? now_us - kDamageSumUs : 0;
+                notes_.emplace_back("killed here, owner still shows life: hit sent again: " +
+                                    o->name);
+            } else if (life > have && !holding && o->dead_at == 0) {
                 write(*o, life);
                 o->fight_until = now_us + kFightUs;
             }
@@ -1264,6 +1411,7 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
 std::vector<std::uint64_t> Sync::Removes() const {
     std::vector<std::uint64_t> out(hidden_.begin(), hidden_.end());
     out.insert(out.end(), refused_.begin(), refused_.end());
+    out.insert(out.end(), dead_.begin(), dead_.end());
     return out;
 }
 

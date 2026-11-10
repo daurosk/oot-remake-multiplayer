@@ -1304,3 +1304,301 @@ TEST_CASE("objects: an enemy of ours that comes at our Link is flagged too (a fi
         }
     }
 }
+
+// Issue 133: enemy kills not always shared; issue 132: room enemies that only
+// woke in their owner's game.
+namespace {
+
+Seen Acting(std::uint64_t address, std::uint64_t hash, std::optional<std::int32_t> life, float x,
+            const std::string& animation, std::string name = "Enemy_Dekubaba") {
+    Seen s = Enemy(address, hash, life.value_or(1), x, std::move(name));
+    if (!life) {
+        s.life.reset();  // the big Skulltula: no life we can read
+    }
+    s.animation = proto::Animation{animation, 0.0f, 1.0f};
+    return s;
+}
+
+proto::ObjectSample OwnerSample(const proto::ObjectId& id, std::uint8_t owner, std::uint64_t t,
+                                float x, std::int32_t life, const std::string& animation) {
+    proto::ObjectSample s;
+    s.player_number = owner;
+    s.id = id;
+    s.state.time = {t, 1};
+    s.state.position = proto::Vec3{x, 0.0f, 0.0f};
+    s.state.life = proto::ObjectLife{life, 2};
+    s.state.animation = proto::Animation{animation, 0.0f, 1.0f};
+    return s;
+}
+
+proto::ObjectRemove Dead(const proto::ObjectId& id, std::uint8_t owner,
+                         proto::RemoveReason reason = proto::RemoveReason::dead) {
+    proto::ObjectRemove r;
+    r.player_number = owner;
+    r.id = id;
+    r.reason = reason;
+    return r;
+}
+
+} // namespace
+
+TEST_CASE("objects: an owner from before an enemy unloaded does not outlive it (issue 133)") {
+    // The Lixyas run: the Skullwalltula went to player 2 at epoch 1, left
+    // player 1's walk, and the server, with nobody holding it, made it anew
+    // owned by player 1 at epoch 0. Player 1 kept "player 2, epoch 1",
+    // dropped every later owner as old, and sent its own kill to itself.
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 1)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 1)});
+    CHECK(sync.OwnerOf(id) == 2);
+    Tick(sync, 20 * kMs, {});
+    Tick(sync, 30 * kMs, {});
+    CHECK(sync.OwnerOf(id) == 0);  // gone with it
+    Own(sync, id, 2, 1);           // the server's last word on it, while unloaded
+    Tick(sync, 40 * kMs, {});
+    CHECK(sync.OwnerOf(id) == 0);
+    // Loaded again, the server's new owner at epoch 0 is taken.
+    Tick(sync, 2000 * kMs, {Enemy(0x200, 0x11, 1)});
+    Own(sync, id, 1, 0);
+    auto step = Tick(sync, 2010 * kMs, {Enemy(0x200, 0x11, 1)});
+    CHECK(sync.OwnerOf(id) == 1);
+    CHECK(All<proto::ObjectSample>(step).size() == 1);  // ours: its state goes out
+    // Our own kill is no DAMAGE to ourselves; it is said dead.
+    Tick(sync, 2100 * kMs, {Enemy(0x200, 0x11, 0)});
+    CHECK(All<proto::Damage>(Tick(sync, 2300 * kMs, {Enemy(0x200, 0x11, 0)})).empty());
+
+    // A reconnect: the server's epochs start again, so the owners are forgotten.
+    Sync again;
+    Tick(again, 0, {Enemy(0x100, 0x11, 1)});
+    const proto::ObjectId id2 = *again.IdOf(0x100);
+    Own(again, id2, 2, 3);
+    Tick(again, 10 * kMs, {Enemy(0x100, 0x11, 1)});
+    again.ForgetOwners();
+    Own(again, id2, 1, 0);
+    Tick(again, 20 * kMs, {Enemy(0x100, 0x11, 1)});
+    CHECK(again.OwnerOf(id2) == 1);
+}
+
+TEST_CASE("objects: a hit before the owner is known is kept and sent once it is (issue 133)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
+    CHECK(All<proto::Damage>(Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 5)})).empty());
+    CHECK(All<proto::Damage>(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 5)})).empty());
+    Own(sync, *sync.IdOf(0x100), 2, 3);
+    auto damage = All<proto::Damage>(Tick(sync, 600 * kMs, {Enemy(0x100, 0x11, 5)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 1);
+    CHECK(damage[0].epoch == 3);
+
+    // Kept 2 s at most: an owner known later gets nothing.
+    Sync late;
+    Tick(late, 0, {Enemy(0x100, 0x11, 6)});
+    Tick(late, 10 * kMs, {Enemy(0x100, 0x11, 5)});
+    CHECK(All<proto::Damage>(Tick(late, 2100 * kMs, {Enemy(0x100, 0x11, 5)})).empty());
+    Own(late, *late.IdOf(0x100), 2);
+    CHECK(All<proto::Damage>(Tick(late, 2200 * kMs, {Enemy(0x100, 0x11, 5)})).empty());
+}
+
+TEST_CASE("objects: a copy we killed is not healed back, and the hit is sent again twice at most") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 0)});
+    REQUIRE(All<proto::Damage>(Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 0)})).size() == 1);
+
+    // The owner's enemy still has its life after the hold: no heal, DAMAGE again.
+    for (const std::uint64_t t : {1200, 2300}) {
+        sync.Receive(OwnerSample(id, 2, t * kMs, 0.0f, 2, "Wait"));
+        auto step = Tick(sync, t * kMs, {Enemy(0x100, 0x11, 0)});
+        CHECK(step.writes.empty());
+        auto damage = All<proto::Damage>(step);
+        REQUIRE(damage.size() == 1);
+        CHECK(damage[0].amount == 2);
+    }
+    // After that the owner is right: the copy takes its life.
+    sync.Receive(OwnerSample(id, 2, 3400 * kMs, 0.0f, 2, "Wait"));
+    auto step = Tick(sync, 3400 * kMs, {Enemy(0x100, 0x11, 0)});
+    CHECK(All<proto::Damage>(step).empty());
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 2);
+}
+
+TEST_CASE("objects: an enemy of ours that died is said dead to the others, even with no life read") {
+    CHECK(CoopObjects::IsDeathAnimation("Die"));
+    CHECK(CoopObjects::IsDeathAnimation("Dead_Fall"));
+    CHECK(CoopObjects::IsDeathAnimation("Damage_Death"));
+    CHECK(CoopObjects::IsDeathAnimation("Die02"));
+    CHECK_FALSE(CoopObjects::IsDeathAnimation("Dive"));
+    CHECK_FALSE(CoopObjects::IsDeathAnimation("Wait"));
+    CHECK_FALSE(CoopObjects::IsDeathAnimation("Deadline"));
+
+    Sync sync;
+    const std::vector<Seen> rest = {Acting(0x100, 0x11, 2, 1.0f, "Wait"),
+                                    Acting(0x200, 0x22, std::nullopt, 2.0f, "Wait", "Enemy_Skulltula"),
+                                    Acting(0x300, 0x33, 2, 3.0f, "Wait")};
+    Tick(sync, 0, rest);
+    for (const std::uint64_t a : {0x100, 0x200, 0x300}) {
+        Own(sync, *sync.IdOf(a), 1, 4);
+    }
+    Tick(sync, 10 * kMs, rest);
+    // 0x100 read at life 0, 0x200 (no life) plays its death, 0x300 just unloads.
+    Tick(sync, 100 * kMs, {Acting(0x100, 0x11, 0, 1.0f, "Die"),
+                           Acting(0x200, 0x22, std::nullopt, 2.0f, "Dead_Fall", "Enemy_Skulltula"),
+                           Acting(0x300, 0x33, 2, 3.0f, "Wait")});
+    Tick(sync, 200 * kMs, {});
+    const auto removes = All<proto::ObjectRemove>(Tick(sync, 300 * kMs, {}));
+    REQUIRE(removes.size() == 2);
+    std::set<std::uint64_t> said;
+    for (const auto& r : removes) {
+        CHECK(r.reason == proto::RemoveReason::dead);
+        CHECK(r.epoch == 4);
+        said.insert(r.id.value);
+    }
+    CHECK(said == std::set<std::uint64_t>{0x11, 0x22});
+}
+
+TEST_CASE("objects: a copy its owner said dead loses its life, and is deleted 3 s later if still here") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)}, 2);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    // A remove that is not a death changes nothing here.
+    sync.Receive(Dead(id, 1, proto::RemoveReason::gone));
+    CHECK(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}, 2).writes.empty());
+    CHECK(sync.OwnerOf(id) == 1);
+
+    sync.Receive(Dead(id, 1));
+    auto step = Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    CHECK(sync.OwnerOf(id) == 0);  // nobody's: no samples, poses or plays
+    Tick(sync, 3900 * kMs, {Enemy(0x100, 0x11, 0)}, 2);
+    CHECK(sync.Removes().empty());
+    Tick(sync, 4000 * kMs, {Enemy(0x100, 0x11, 0)}, 2);
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
+    // No DAMAGE for a fall we wrote.
+    step = Tick(sync, 4100 * kMs, {Enemy(0x100, 0x11, 0)}, 2);
+    CHECK(All<proto::Damage>(step).empty());
+}
+
+namespace {
+
+// A copy at x whose own AI plays `ours` while the owner's samples say
+// `owners`, walked every 66 ms from `from` to `to` ms. The flags of the last
+// OBJECT_PRESENT sent, if any.
+std::optional<std::uint8_t> Wake(Sync& sync, const proto::ObjectId& id, std::uint64_t from,
+                                 std::uint64_t to, float x, const std::string& ours,
+                                 const std::string& owners) {
+    std::optional<std::uint8_t> flags;
+    for (std::uint64_t t = from; t < to; t += 66) {
+        sync.Receive(OwnerSample(id, 2, t * kMs, x, 2, owners));
+        for (const auto& p :
+             All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, ours)}))) {
+            flags = p.objects[0].flags;
+        }
+    }
+    return flags;
+}
+
+} // namespace
+
+TEST_CASE("objects: a copy whose own AI acts near our Link is flagged targeting (issue 132)") {
+    auto run = [](float x, const std::string& ours, bool wake) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait_Ground")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        const auto flags = Wake(sync, id, 10, 1500, x, ours, "Wait_Ground");
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, "Appear", true));             // rises for our Link, the owner's does not
+    CHECK_FALSE(run(5.0f, "Wait_Ground", true));  // plays what the owner's plays
+    CHECK_FALSE(run(15.0f, "Appear", true));      // over 10 m from our Link
+    CHECK_FALSE(run(5.0f, "Appear", false));      // LICHII_COOP_OBJECTS_WAKE=0
+
+    // Under 1 s of it is not enough.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait_Ground")});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    const auto flags = Wake(sync, id, 10, 800, 5.0f, "Appear", "Wait_Ground");
+    CHECK_FALSE(flags.has_value());
+}
+
+TEST_CASE("objects: an enemy of ours woken near our Link is flagged too, so it stays ours") {
+    auto run = [](float x, const std::string& now, std::uint64_t until = 1500) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait_Ground")});
+        Own(sync, *sync.IdOf(0x100), 1);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 66; t <= until; t += 66) {
+            for (const auto& p :
+                 All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, now)}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, "Attack"));
+    CHECK_FALSE(run(5.0f, "Wait_Ground"));
+    CHECK_FALSE(run(5.0f, "Wait_Ground_ModelOnlyLOD"));  // its far variant is still rest
+    CHECK_FALSE(run(15.0f, "Attack"));
+    // One that keeps flying or patrolling near us is not held for good: the
+    // flag ends 4 s after it woke (plus the 2 s it is kept), so a chase by
+    // another game can still take it.
+    CHECK_FALSE(run(5.0f, "Fly", 9000));
+}
+
+TEST_CASE("objects: animation names without their LOD suffix") {
+    CHECK(std::string(CoopObjects::AnimationBase("Wait_ModelOnlyLOD")) == "Wait");
+    CHECK(std::string(CoopObjects::AnimationBase("Fly_LOD")) == "Fly");
+    CHECK(std::string(CoopObjects::AnimationBase("Wait")) == "Wait");
+    CHECK(std::string(CoopObjects::AnimationBase("_LOD")) == "_LOD");
+
+    // A copy in its LOD variant of the owner's animation is not woken.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait")});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    const auto flags = Wake(sync, id, 10, 1500, 5.0f, "Wait_ModelOnlyLOD", "Wait");
+    CHECK_FALSE((flags && (*flags & kTargeting) != 0));
+}
+
+TEST_CASE("objects: a copy brought to 0 by its owner and alive again is healed, not hit") {
+    // We hit it once, long before; then the owner's own samples took it to
+    // 0 and back (a revive). No DAMAGE for the owner's whole life.
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 1)});
+    REQUIRE(All<proto::Damage>(Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 1)})).size() == 1);
+    sync.Receive(OwnerSample(id, 2, 5000 * kMs, 0.0f, 0, "Die"));
+    REQUIRE(Tick(sync, 5000 * kMs, {Enemy(0x100, 0x11, 1)}).writes.size() == 1);  // to 0
+    sync.Receive(OwnerSample(id, 2, 8000 * kMs, 0.0f, 2, "Wait"));
+    auto step = Tick(sync, 8000 * kMs, {Enemy(0x100, 0x11, 0)});
+    CHECK(All<proto::Damage>(step).empty());
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 2);
+}
+
+TEST_CASE("objects: owners queued from before a reconnect are not applied after the forget") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 1)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2, 3);  // the old server's, not yet taken by a Tick
+    sync.ForgetOwners();
+    Own(sync, id, 1, 0);  // the new server's
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 1)});
+    CHECK(sync.OwnerOf(id) == 1);
+}

@@ -223,9 +223,15 @@ def _num(v):
     return v.v if isinstance(v, byml._Num) else v
 
 
-def info_row(player_row, actor, heap_cap=None):
+def info_row(player_row, actor, heap_cap=None, heap=None):
+    """The puppet's ActorInfo row. `heap`, when given, sets InstanceHeapSize outright (a test
+    switch, `--heap`); otherwise the player's is capped at `heap_cap`."""
     row = {k: v for k, v in player_row.items() if k not in DROP_INFO_FIELDS}
     row.update(INFO_OVERRIDES)
+    if heap is not None:
+        old = row.get("InstanceHeapSize")
+        row["InstanceHeapSize"] = type(old)(heap) if isinstance(old, byml._Num) else int(heap)
+        return row
     heap = row.get("InstanceHeapSize")
     if heap_cap is not None and heap is not None and _num(heap) > _num(heap_cap):
         # Keep the field's BYML type (the game's rows hold a plain int).
@@ -281,7 +287,9 @@ def recompress(dicts, original_raw, data):
     return dicts.compress(data, name)
 
 
-def build(romfs, mod_dir, log=print):
+def build(romfs, mod_dir, log=print, heaps=None):
+    """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111)."""
+    heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
     dicts = zs.Dicts.from_romfs(romfs)
@@ -317,7 +325,7 @@ def build(romfs, mod_dir, log=print):
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
             raise BuildError(f"ActorInfo has no row {player}")
-        new_ai.append(info_row(ai_rows[player], actor, heap_cap))
+        new_ai.append(info_row(ai_rows[player], actor, heap_cap, heaps.get(actor)))
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
@@ -387,6 +395,8 @@ def main(argv=None):
     g.add_argument("--mod-dir", help="the mod folder to write (its romfs/ is made inside)")
     g.add_argument("--user-dir", help="the emulator's user folder; writes load/<title id>/<mod name>")
     ap.add_argument("--mod-name", default=DEFAULT_MOD_NAME)
+    ap.add_argument("--heap", action="append", default=[], metavar="ACTOR=BYTES",
+                    help="test switch: set a puppet's InstanceHeapSize, e.g. CoopPuppet_Adult=20000000")
     a = ap.parse_args(argv)
     if a.mod_dir:
         mod_dir = a.mod_dir
@@ -395,8 +405,15 @@ def main(argv=None):
         if os.path.normcase(root) != os.path.normcase(os.path.join(a.user_dir, "load")):
             print(f"note: the emulator's settings load mods from {root}")
         mod_dir = os.path.join(root, TITLE_ID, a.mod_name)
+    heaps = {}
+    for h in a.heap:
+        name, sep, size = h.partition("=")
+        if not sep or name not in (puppet_name(v) for v in VARIANTS) or not size.isdigit():
+            print(f"error: --heap {h}: want CoopPuppet_Child=BYTES or CoopPuppet_Adult=BYTES", file=sys.stderr)
+            return 2
+        heaps[name] = int(size)
     try:
-        build(a.romfs, mod_dir)
+        build(a.romfs, mod_dir, heaps=heaps)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -289,6 +289,9 @@ class BuildPackTest(unittest.TestCase):
         self.assertIsInstance(capped, byml.UInt)
         self.assertEqual(capped.v, 6000000)
         self.assertNotIn("InstanceHeapSize", build.info_row({"__RowId": "X"}, "A", 6012792))
+        # --heap sets it outright, above or below the cap.
+        self.assertEqual(build.info_row(adult, "A", 6012792, 20000000)["InstanceHeapSize"], 20000000)
+        self.assertEqual(build.info_row(child, "C", 6012792, 4000000)["InstanceHeapSize"], 4000000)
 
 
 @unittest.skipIf(zstandard is None, "needs the zstandard package")
@@ -377,6 +380,7 @@ class FullBuildTest(unittest.TestCase):
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
         self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 6012792])
+
         for a in man["actors"]:
             self.assertIn("EquipmentUser_Weapon", a["equipment_keys"])
             self.assertIn("EquipmentUser_Shield", a["equipment_keys"])
@@ -386,6 +390,19 @@ class FullBuildTest(unittest.TestCase):
         build.build(self.romfs, mod, log=lambda *_: None)
         for r, b in first.items():
             self.assertEqual(build.read(os.path.join(out, r)), b)
+
+    def test_build_heap_switch(self):
+        mod = os.path.join(self.dir, "mod2")
+        m = build.build(self.romfs, mod, log=lambda *_: None, heaps={"CoopPuppet_Adult": 20000000})
+        self.assertEqual([a["instance_heap"] for a in m["actors"]], [5692448, 20000000])
+
+    def test_main_heap_switch(self):
+        mod = os.path.join(self.dir, "mod3")
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--heap", "Bad=1"]), 2)
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod,
+                                     "--heap", "CoopPuppet_Adult=20000000"]), 0)
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertEqual(man["actors"][1]["instance_heap"], 20000000)
 
     def test_place_test(self):
         from puppet_pack import place_test, zs

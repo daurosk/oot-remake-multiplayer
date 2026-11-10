@@ -20,6 +20,7 @@
 
 #include "coop_boss.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <optional>
@@ -53,7 +54,9 @@ constexpr std::uint32_t kActorStatePresent = 4;
 constexpr std::uint64_t kActorPosition = 0x31c;
 constexpr std::uint64_t kSetMatrix = 0x4c6580;  // vtable slot 0x218 of every actor seen
 constexpr int kCallerOrder = 50;  // after the puppets, spawn, fairy, objects, time
-constexpr unsigned kEveryFrames = 6;  // 10 a second at 60
+// Ten times a second on the steady clock, not by presented frames (issue
+// 106: with the emulator's speed-up, frames come faster).
+constexpr std::uint64_t kTickEveryUs = 100'000;
 constexpr std::uint64_t kDebugEveryUs = 1'000'000;
 
 std::string Env(const char* name) {
@@ -149,7 +152,7 @@ struct Glue {
     bool on = true;
     bool by_scene = true;  // LICHII_COOP_BOSS_MOVE=matrix: never
     bool debug = false;
-    unsigned frame = 0;
+    std::uint64_t tick_at = 0;  // steady clock, us
     bool connected = false;
     std::uint64_t debug_at = 0;
     Sync sync;
@@ -196,9 +199,17 @@ struct Glue {
     void Frame(Core::System& system, std::uint64_t main, const std::optional<std::string>& scene,
                const std::optional<coop::protocol::Vec3>& position, bool event,
                coop::host::Session* session, std::uint64_t now_us) {
-        if (!on || ++frame % kEveryFrames != 0) {
+        if (!on) {
             return;
         }
+        const auto steady_us = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        if (tick_at != 0 && steady_us - tick_at < kTickEveryUs) {
+            return;
+        }
+        tick_at = steady_us;
         if (main == 0 || now_us == 0 || session == nullptr) {
             if (connected) {
                 sync.Reset();

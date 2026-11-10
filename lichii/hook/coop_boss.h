@@ -158,6 +158,7 @@ private:
     bool skip_asked_ = false;
     std::uint64_t skip_since_ = 0;
     bool event_ = false;  // last Tick's event
+    std::uint64_t last_now_ = 0;  // the clock never goes back (server time can)
     std::optional<std::string> scene_;  // the scene of the last Tick with one
     std::vector<std::uint8_t> defeated_;  // rooms beaten while we were in this scene
     // Pulling.

@@ -253,3 +253,26 @@ TEST_CASE("boss: Reset forgets everything") {
     CHECK(s.phase() == Sync::Phase::none);
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance), 2 * kS).pull);
 }
+
+TEST_CASE("boss: a clock that steps back does not end the wait for the intro") {
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive), 20 * kS);
+    // The server clock is estimated again and goes back 5 s: no wrap, no
+    // false "no intro" (that needs 10 s in the room).
+    auto a = s.Tick(At("ForestTemple", Forest().arrive), 15 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::intro_end));
+    CHECK(s.phase() == Sync::Phase::waiting);
+    a = s.Tick(At("ForestTemple", Forest().arrive), 29 * kS);
+    CHECK(s.phase() == Sync::Phase::waiting);
+    a = s.Tick(At("ForestTemple", Forest().arrive), 30 * kS);
+    CHECK(Has(a, proto::BossState::intro_end));
+}
+
+TEST_CASE("boss: a player who walks out during the fight is pulled back") {
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive, false, 2), 1 * kS);
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
+    auto a = s.Tick(At("ForestTemple", kForestEntrance, false, 2), 2 * kS);
+    CHECK(Has(a, proto::BossState::left));
+    CHECK(a.pull);
+}

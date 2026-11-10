@@ -141,6 +141,7 @@ void Sync::Reset() {
     entered_at_ = sent_at_ = intro_at_ = skip_at_ = skip_since_ = 0;
     skip_asked_ = false;
     event_ = false;
+    last_now_ = 0;
     scene_.reset();
     defeated_.clear();
     pulls_ = 0;
@@ -219,6 +220,10 @@ bool Sync::OtherFinishedIntro(const Room& room, std::uint64_t now_us) const {
 
 Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
     Actions out;
+    // Server time can step back when its offset is estimated again; every
+    // "since" below would then wrap.
+    now_us = std::max(now_us, last_now_);
+    last_now_ = now_us;
     {
         std::vector<proto::BossRoom> in;
         {

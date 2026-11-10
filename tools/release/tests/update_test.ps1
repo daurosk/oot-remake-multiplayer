@@ -239,7 +239,21 @@ try {
     Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'Updated to v0\.1\.0-test3') 'the next run finishes a stopped update'
     Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'the emulator is the new one'
     Check (-not (Test-Path "$kit\update-in-progress.txt")) 'the marker is gone'
+    Check ((Read-File "$kit\backup-v0.1.0-test2\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'a stopped update finished: the shader cache is in the backup'
+    Check (-not (Test-Path "$kit\emulator\user\cache\shader")) 'and no longer in use'
     Test-PlayerKept $kit 'finished update'
+    # Stopped after the shader cache was moved, before the exe was replaced: the rerun leaves it
+    # in the first run's backup and says where it is.
+    $kit = Join-Path $tmp 'kit11'; New-OldKit $kit
+    New-Item -ItemType Directory -Force -Path "$kit\backup-v0.1.0-test2\emulator\user\cache" | Out-Null
+    Move-Item -LiteralPath "$kit\emulator\user\cache\shader" -Destination "$kit\backup-v0.1.0-test2\emulator\user\cache\shader"
+    Write-File "$kit\update-in-progress.txt" "Update.bat was updating this kit from v0.1.0-test2 to v0.1.0-test3. Run Update.bat again to finish it.`r`n"
+    Check ((Get-KitUnfinishedFrom $kit) -eq 'v0.1.0-test2') 'the marker names the version the update started from'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'a stop after the shader move: the rerun finishes'
+    Check ((Read-File "$kit\backup-v0.1.0-test2\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'the shader cache stays in the first backup'
+    Check (-not (Test-Path "$kit\emulator\user\cache\shader")) 'and is not in use'
+    Check (($out -join ' ') -match 'moved by the update that stopped, is in .*backup-v0\.1\.0-test2\\emulator\\user\\cache\\shader') 'and the player is told where it is'
     # Stopped after VERSION.txt was written but before the marker went: done again too.
     $kit = Join-Path $tmp 'kit7'; New-OldKit $kit
     Write-File "$kit\VERSION.txt" "kit: oot-coop-v0.1.0-test3 (release v0.1.0-test3)`r`n"
@@ -247,6 +261,15 @@ try {
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
     Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -notmatch 'newest version' -and (Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'a marker with the new VERSION.txt is done again, not "newest"'
     Check (-not (Test-Path "$kit\update-in-progress.txt")) 'and the marker is gone'
+    Check ((Read-File "$kit\backup-v0.1.0-test3\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'an old marker without "from": the shader cache is kept in a backup'
+    # The same with a marker that names the old version: the backup is named after it.
+    $kit = Join-Path $tmp 'kit12'; New-OldKit $kit
+    Write-File "$kit\VERSION.txt" "kit: oot-coop-v0.1.0-test3 (release v0.1.0-test3)`r`n"
+    Write-File "$kit\update-in-progress.txt" "Update.bat was updating this kit from v0.1.0-test2 to v0.1.0-test3. Run Update.bat again to finish it.`r`n"
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Read-File "$kit\backup-v0.1.0-test2\Host.bat") -eq 'old host') 'a redo with the new VERSION.txt backs up into backup-<old version>'
+    Check ((Read-File "$kit\backup-v0.1.0-test2\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'the shader cache too'
+    Check (-not (Test-Path "$kit\backup-v0.1.0-test3")) 'no backup named after the new version'
 
     # A running emulator lets others read its exe but not write it: the backup works, the
     # write fails after other files were written, and everything is put back.

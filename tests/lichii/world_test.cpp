@@ -1225,7 +1225,7 @@ TEST_CASE("sign cut: the message checks its words") {
     REQUIRE(proto::decode(*bytes, back) == proto::Error::none);
     CHECK(std::get<proto::SignCut>(back) == m);
     CHECK(static_cast<int>(proto::type_of(back)) == 80);
-    for (const std::uint64_t key : {std::uint64_t{0x18}, (1ull << 32) | 0x18, (4ull << 32) | 0x1c,
+    for (const std::uint64_t key : std::vector<std::uint64_t>{0x18, (1ull << 32) | 0x18, (4ull << 32) | 0x1c,
                                     (4ull << 32) | 0x200, (0x62ull << 32)}) {
         m.words = {{key, 1}};
         CHECK_FALSE(proto::encode(proto::Message{m}).has_value());

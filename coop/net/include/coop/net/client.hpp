@@ -128,8 +128,11 @@ struct ClientConfig {
   // name_taken_retry_for_ms before the client gives up and reports it: a
   // build restarted after a crash finds its old self still in, until the
   // server lets it take that place (1 s of silence from the same address)
-  // or times the old one out (10 s). 0: no retry. While it retries, the
-  // state is waiting_retry and no refused event is pushed.
+  // or times the old one out (10 s). Either one 0: no retry, the name taken
+  // is reported at once. The interval is at least 100 ms. While it retries,
+  // the state is waiting_retry, retrying_name_taken() is true and no refused
+  // event is pushed. An attempt that ends another way (timeout, lost
+  // connection) ends the retry window: the next name taken starts a new one.
   std::uint32_t name_taken_retry_ms = 1500;
   std::uint32_t name_taken_retry_for_ms = 12000;
   // ENet events handled in one service() at most (at least 1).
@@ -364,6 +367,9 @@ class Client {
   std::uint32_t failed_attempts() const { return failed_attempts_; }
   // REFUSED "name taken" answers that were tried again (name_taken_retry_ms).
   std::uint32_t name_taken_retries() const { return name_taken_retries_; }
+  // True while a REFUSED "name taken" is being asked again (state
+  // waiting_retry, connecting or handshaking within name_taken_retry_for_ms).
+  bool retrying_name_taken() const { return name_taken_since_us_ != 0; }
 
  private:
   void begin_attempt();

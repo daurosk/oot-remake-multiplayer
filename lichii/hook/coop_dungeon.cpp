@@ -23,8 +23,12 @@ namespace {
 // played is the game's own record that a room's gimmick ran (the Deku Tree's
 // falling ladder, issue 129); the room logic's boot-up nodes
 // (ActorLogicBootUpActorIsFirstOnEventTrigger) most likely read it to put the
-// room in its end state (inferred from the graphs, not seen in a run). Story scenes, bosses, Navi, talks, the shared Common_ door
-// events and the game's generic Dm_/Demo_ scenes are left out (docs/dungeon.md).
+// room in its end state (inferred from the graphs, not seen in a run).
+// Left out (docs/dungeon.md): story scenes, bosses, Navi, talks, the shared
+// Common_ door events, the generic Dm_/Demo_ scenes, camera shots that are no
+// one room's state (FocusOnGimmick_Basic, the Ganon's Castle barrier looks),
+// and one-way rides that would leave a player on the wrong side (the Shadow
+// Temple boat, the Forest Temple elevator and room spins).
 constexpr std::array kFlags = std::to_array<Flag>({
     {0xfff1ad87, false, "BottomOfTheWell_BubbleAppear"},
     {0x0b5b3b0c, false, "BottomOfTheWell_CoffinRoomCheck"},
@@ -341,18 +345,14 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xda300861, false, "HavePlayedEvent.FocusGimmick_BlueTentacleGimmick"},
     {0x34a2ca26, false, "HavePlayedEvent.FocusGimmick_GreenTentacleGimmick"},
     {0xa73b4482, false, "HavePlayedEvent.FocusGimmick_RedTentacleGimmick0"},
-    {0xb5b9465d, false, "HavePlayedEvent.FocusOnGimmick_Basic"},
     {0x508f6c28, false, "HavePlayedEvent.FocusOnGimmick_FireTemple_FlareDancer02"},
     {0xcb8dc292, false, "HavePlayedEvent.FocusOnGimmick_InsideJabuJabuBelly_02"},
     {0x706c7e8e, false, "HavePlayedEvent.FocusOnGimmick_JabujabuLift"},
-    {0x0957fb8e, false, "HavePlayedEvent.FocusOnGimmick_NoSE"},
     {0x3fc5feac, false, "HavePlayedEvent.ForestTemple_OpenDoor_Room01To02"},
     {0x1e304367, false, "HavePlayedEvent.ForestTemple_OpenShutterPlusZ_FocusOnEnemy"},
     {0xd7dba229, false, "HavePlayedEvent.ForestTemple_OpenShutterPlusZ_FocusOnEnemy_02"},
     {0x1844352b, false, "HavePlayedEvent.ForestTemple_Room02_ShutterOpen"},
     {0x2ab9875a, false, "HavePlayedEvent.ForestTemple_Room04_OpenDoor_AppearTBox"},
-    {0x3c82a64d, false, "HavePlayedEvent.ForestTemple_Room11_ElevatorStart"},
-    {0x90f8892d, false, "HavePlayedEvent.ForestTemple_Room11_RoomSpin"},
     {0xdf877d0e, false, "HavePlayedEvent.ForestTemple_Room11_TBoxAppear"},
     {0x636495b3, false, "HavePlayedEvent.ForestTemple_Room12_WaterLevelDrop"},
     {0x3179b9fb, false, "HavePlayedEvent.ForestTemple_Room17_BigTBoxAppear"},
@@ -363,7 +363,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xdd81967f, false, "HavePlayedEvent.ForestTemple_Room21_ShutterOpen"},
     {0x6c52e546, false, "HavePlayedEvent.ForestTemple_Room22_FallingCeiling"},
     {0x794ddbfb, false, "HavePlayedEvent.ForestTemple_Room22_IceMelts"},
-    {0x4a330ebe, false, "HavePlayedEvent.ForestTemple_Room22_RoomSpin"},
     {0xce10e356, false, "HavePlayedEvent.ForestTemple_Room22_ShutterOpen"},
     {0x66fbc0e3, false, "HavePlayedEvent.ForestTemple_Room22_ShutterOpen_TBoxAppear"},
     {0xaec198f9, false, "HavePlayedEvent.ForestTemple_Room25_CandleLight_ShutterOpen"},
@@ -371,8 +370,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x66197039, false, "HavePlayedEvent.ForestTemple_Room27_CandleLight"},
     {0xa04f30a7, false, "HavePlayedEvent.ForestTemple_Room27_IceMelts"},
     {0x123c7e61, false, "HavePlayedEvent.ForestTemple_Room27_ShutterOpen"},
-    {0xd4f83ffb, false, "HavePlayedEvent.GanonCastle_Dungeon_SeeTowerBarrier"},
-    {0xc14921bf, false, "HavePlayedEvent.GanonCastle_Dungeon_SeeTowerBarrier_FromDoor"},
     {0x47d9968f, false, "HavePlayedEvent.GerudoTrainingGround_00_FallTreasureBox"},
     {0xf9759e26, false, "HavePlayedEvent.GerudoTrainingGround_01_AppearTreasureBox_From00"},
     {0xa1742a8d, false, "HavePlayedEvent.GerudoTrainingGround_02From03_SilverToken_Appear"},
@@ -424,11 +421,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x60ad7b07, false, "HavePlayedEvent.InsideGanonCastle_Dungeon_ShutterOpen_08_01"},
     {0x8403e645, false, "HavePlayedEvent.InsideGanonCastle_Dungeon_ShutterOpen_17_01"},
     {0xabfdbda6, false, "HavePlayedEvent.InsideGanonCastle_Dungeon_ShutterOpen_17_02"},
-    {0xe15c4814, false, "HavePlayedEvent.InsideGanonCastle_LookBarrierFromDoor_Fire"},
-    {0x32d41de0, false, "HavePlayedEvent.InsideGanonCastle_LookBarrierFromDoor_Forest"},
-    {0xee2fe1f6, false, "HavePlayedEvent.InsideGanonCastle_LookBarrierFromDoor_Shadow"},
-    {0x564175d1, false, "HavePlayedEvent.InsideGanonCastle_LookBarrierFromDoor_Spirit"},
-    {0x70715a25, false, "HavePlayedEvent.InsideGanonCastle_LookBarrierFromDoor_Water"},
     {0xa872a6b5, false, "HavePlayedEvent.InsideGanonCastle_OpenShutterPlusZ_FocusOnEnemy"},
     {0x50d27a0c, false, "HavePlayedEvent.InsideGanonCastle_OpenShutterPlusZ_FocusOnEnemy_02"},
     {0x6b97ef49, false, "HavePlayedEvent.InsideGanonCastle_OpenShutterPlusZ_FocusOnEnemy_03"},
@@ -467,7 +459,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xd3dbf7f3, false, "HavePlayedEvent.ShadowTemple_16_EnemyAnnihilation_Clear"},
     {0xd138576c, false, "HavePlayedEvent.ShadowTemple_19_EnemyAnnihilation_Clear"},
     {0x41bbb29e, false, "HavePlayedEvent.ShadowTemple_21_EnemyAnnihilation_Clear"},
-    {0x99d6bb15, false, "HavePlayedEvent.ShadowTemple_Gimmick_Departure"},
     {0x5d92cca1, false, "HavePlayedEvent.ShadowTemple_Gimmick_Focus_LargeJar_Key"},
     {0xc51a0cd0, false, "HavePlayedEvent.ShadowTemple_Room06_SilverToken_Appear"},
     {0x3536bf2a, false, "HavePlayedEvent.ShadowTemple_Room06_SilverToken_Unlock"},
@@ -508,8 +499,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x0ce90901, false, "HavePlayedEvent.SpritTemple_Room30_StepSwitch"},
     {0xd84384d6, false, "HavePlayedEvent.SpritTemple_Room31_OpenShutter"},
     {0xfd1a276a, false, "HavePlayedEvent.StoneOfWater_ElevatedFloor"},
-    {0x999c4244, false, "HavePlayedEvent.TrapTreasureBoxOpen"},
-    {0x1fa7c72c, false, "HavePlayedEvent.TreasureBoxAppear_Room04"},
     {0x21058d8a, false, "HavePlayedEvent.WaterTempleRoom08HitSwitch"},
     {0x2c39078e, false, "HavePlayedEvent.WaterTempleRoom14StepSwitch"},
     {0x65c93e0d, false, "HavePlayedEvent.WaterTempleRoom22Clear"},

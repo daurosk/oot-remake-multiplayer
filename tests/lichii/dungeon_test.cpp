@@ -62,7 +62,18 @@ TEST_CASE("dungeon: a room gimmick's played event is shared, story scenes and bo
     CHECK(names.count("HavePlayedEvent.DodongoCavern_Gimmick_EyeSwitch") == 1);
     CHECK(names.count("HavePlayedEvent.ForestTemple_Room22_ShutterOpen") == 1);
     CHECK(names.count("HavePlayedEvent.ShadowTemple_Room06_SilverToken_Unlock") == 1);
-    CHECK(played > 200);
+    // One-way rides and camera shots that are no room's state stay out.
+    for (const char* out :
+         {"HavePlayedEvent.ShadowTemple_Gimmick_Departure", "HavePlayedEvent.ForestTemple_Room11_ElevatorStart",
+          "HavePlayedEvent.ForestTemple_Room11_RoomSpin", "HavePlayedEvent.ForestTemple_Room22_RoomSpin",
+          "HavePlayedEvent.FocusOnGimmick_Basic", "HavePlayedEvent.FocusOnGimmick_NoSE",
+          "HavePlayedEvent.TrapTreasureBoxOpen", "HavePlayedEvent.TreasureBoxAppear_Room04",
+          "HavePlayedEvent.InsideGanonCastle_LookBarrierFromDoor_Fire",
+          "HavePlayedEvent.GanonCastle_Dungeon_SeeTowerBarrier",
+          "HavePlayedEvent.GanonCastle_Dungeon_SeeTowerBarrier_FromDoor"}) {
+        CHECK_MESSAGE(names.count(out) == 0, out);
+    }
+    CHECK(played > 180);
 }
 
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {

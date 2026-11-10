@@ -50,6 +50,7 @@
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
+#include "coop_chests.h"
 #include "coop_flags.h"
 #include "coop_game_build.h"
 #include "coop_pickups.h"
@@ -216,6 +217,7 @@ public:
         std::string flag_error;
         session.shared = LoadShared(flag_error);
         if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
+        if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }
@@ -244,6 +246,11 @@ public:
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         if (pickups_ && CoopDungeon::On()) {  // docs/dungeon.md: chests, silver rupees, cleared rooms stay done
             for (const auto& k : CoopDungeon::Keys()) {
+                session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
+            }
+        }
+        if (pickups_ && CoopChests::On()) {  // one way: an opened chest never closes again
+            for (const auto& k : CoopChests::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
         }
@@ -296,6 +303,15 @@ public:
             pickups_given_ += keys.size();
         }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
+        // Chests opened and pickups taken in another game: what is loaded of
+        // them goes here too (docs/items.md, "Chests").
+        if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
+            std::vector<std::uint64_t> keys;
+            for (const auto& k : taken) {
+                keys.push_back(k.key);
+            }
+            CoopObjects::TakenForOthers(keys);
+        }
         if (game_store) {  // issue 88: what the session left in MaxLife (docs/items.md)
             const auto max_life = game_store->read(coop::protocol::FlagKey{0xfbe01da1u, 0});
             CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32

@@ -42,6 +42,11 @@ void SetMaxLife(std::optional<std::int32_t> quarters);
 // Network thread, from the session's on_event: takes the object messages.
 void OnEvent(const coop::net::Event& event);
 
+// Emulator thread, after the session's frame: the placement keys the flag
+// watcher wrote 0 to 1 for another player (a chest opened, a pickup taken
+// there). What of them is loaded now is removed (docs/items.md, "Chests").
+void TakenForOthers(const std::vector<std::uint64_t>& keys);
+
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).
 std::vector<std::uint64_t> OwnedActors();

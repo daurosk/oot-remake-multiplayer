@@ -19,13 +19,15 @@ import glob
 import hashlib
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import byml, dumpcheck, rstb, sarc, zs  # noqa: E402
+from . import byml, dumpcheck, nup, rstb, sarc, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -363,7 +365,7 @@ def load_root(user_dir):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--romfs", required=True, help="the game's extracted romfs folder")
+    ap.add_argument("--romfs", required=True, help="the game's .nup file, or its extracted romfs folder")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--mod-dir", help="the mod folder to write (its romfs/ is made inside)")
     g.add_argument("--user-dir", help="the emulator's user folder; writes load/<title id>/<mod name>")
@@ -371,12 +373,37 @@ def main(argv=None):
     ap.add_argument("--any-version", action="store_true",
                     help=f"accept a dump that is not game data version {dumpcheck.EXPECTED_VERSION}")
     a = ap.parse_args(argv)
-    a.romfs = dumpcheck.resolve(a.romfs)
-    problems = dumpcheck.check_romfs(a.romfs, a.any_version)
+    from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
+    if from_nup:
+        problems = dumpcheck.check_nup(a.romfs, a.any_version)
+    else:
+        a.romfs = dumpcheck.resolve(a.romfs)
+        problems = dumpcheck.check_romfs(a.romfs, a.any_version)
     if problems:
         for p in problems:
             print(f"error: {p}", file=sys.stderr)
         return 1
+    if from_nup:
+        # Only the files the build reads, into a temporary RomFS folder.
+        tmp = tempfile.mkdtemp(prefix="coop-puppet-")
+        try:
+            with nup.Nup(a.romfs) as n:
+                for rel in dumpcheck.nup_files(n).values():
+                    dst = os.path.join(tmp, *rel.split("/"))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    with open(dst, "wb") as f:
+                        f.write(n.read(rel))
+            print(f"read the game files from {a.romfs}")
+            return _main_build(a, tmp)
+        except nup.NupError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _main_build(a, a.romfs)
+
+
+def _main_build(a, romfs):
     if a.mod_dir:
         mod_dir = a.mod_dir
     else:
@@ -385,7 +412,7 @@ def main(argv=None):
             print(f"note: the emulator's settings load mods from {root}")
         mod_dir = os.path.join(root, TITLE_ID, a.mod_name)
     try:
-        build(a.romfs, mod_dir)
+        build(romfs, mod_dir)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -1,8 +1,9 @@
 # Builds the puppet Link packs from this PC's own copy of the game into the kit's
 # emulator (a LayeredFS mod in the emulator's load folder). Nothing from the game is in
-# the kit: the packs are made here, from the romfs you dumped, and stay on this PC.
-# Usage: make-puppet-pack.cmd                   asks for the romfs folder
-#        make-puppet-pack.cmd -Romfs <folder>   no questions
+# the kit: the packs are made here, from your game's .nup file (read directly, no keys
+# needed) or a RomFS dump, and stay on this PC.
+# Usage: make-puppet-pack.cmd                          finds the .nup or dump, else asks
+#        make-puppet-pack.cmd -Romfs <.nup or folder>  no questions
 param([string]$Romfs = '')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
@@ -38,8 +39,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# The dump check: finds the emulator's dump (Dump RomFS writes to the dump folder) and
-# says, one line per problem, what is wrong with it and what to do.
+# The game check: finds the game's .nup in the emulator's game list folders, else the
+# emulator's RomFS dump, and says, one line per problem, what is wrong and what to do.
 $check = Join-Path $kit 'tools\puppet_pack\dumpcheck.py'
 function Test-Dump([string[]]$More) {
     $out = & $exe @pre -I $check --user-dir $user @More
@@ -53,20 +54,19 @@ function Test-Dump([string[]]$More) {
 
 if (-not $Romfs) {
     $r = Test-Dump @()
-    if ($r.Code -eq 1) { Write-Host 'Fix the dump as above, then run make-puppet-pack.cmd again.'; exit 1 }
     if ($r.Code -eq 0) {
         $Romfs = $r.Romfs
-        Write-Host "Found the game's RomFS dump: $Romfs"
+        Write-Host "Found the game files: $Romfs"
     } else {
         Write-Host ''
-        Write-Host "If your RomFS dump is somewhere else, type its folder (the one that holds Pack, Model, AS, RSDB and System); else press Enter to stop."
-        $answer = Read-Host 'Romfs folder'
+        Write-Host "Type (or drag in here) your game's .nup file, or the folder of a RomFS dump (the one that holds Pack, Model, AS, RSDB and System); press Enter to stop."
+        $answer = Read-Host 'Game .nup or romfs folder'
         if (-not $answer) { exit 1 }
         $Romfs = $answer.Trim().Trim('"')
     }
 }
 $r = Test-Dump @('--romfs', $Romfs)
-if ($r.Code -ne 0) { Write-Host 'Fix the dump as above, then run make-puppet-pack.cmd again.'; exit 1 }
+if ($r.Code -ne 0) { Write-Host 'Fix it as above, then run make-puppet-pack.cmd again.'; exit 1 }
 $Romfs = $r.Romfs
 
 # The longest file it writes; Python (and the emulator) cannot use paths past 259

@@ -15,7 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, nup, rstb, sarc  # noqa: E402
 
 try:
     import zstandard
@@ -389,6 +389,37 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(doc["Actors"][1]["Dynamic"], {"EquipmentUser_Weapon": "Weapon_Sword_Kokiri"})
         self.assertNotIn("Dynamic", doc["Actors"][2])
 
+    def romfs_files(self):
+        out = {}
+        for root, _, names in os.walk(self.romfs):
+            for n in names:
+                p = os.path.join(root, n)
+                out[os.path.relpath(p, self.romfs).replace("\\", "/")] = build.read(p)
+        return out
+
+    def test_build_from_nup_matches_folder(self):
+        files = self.romfs_files()
+        tid = int(dumpcheck.TITLE_ID, 16)
+        # Base holds old tables and stale packs; the update holds the real ones.
+        base = {k: (b"stale " + k.encode(), nup.CODEC_RAW) for k in files}
+        base["Model/Only_In_Base.bfres.zs"] = (b"x", nup.CODEC_RAW)
+        update = {k: (v, nup.CODEC_ZSTD if i % 2 else nup.CODEC_RAW) for i, (k, v) in enumerate(files.items())}
+        game = os.path.join(self.dir, "game.nup")
+        nup.write_nup(game, [(tid, 0, nup.KIND_BASE, base), (tid | 0x800, 0x20000, nup.KIND_UPDATE, update)])
+        a, b = os.path.join(self.dir, "from_dir"), os.path.join(self.dir, "from_nup")
+        quiet = io.StringIO()
+        with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+            self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", a, "--any-version"]), 0)
+            self.assertEqual(build.main(["--romfs", game, "--mod-dir", b, "--any-version"]), 0)
+            # Version 999 is not the game's: refused without --any-version.
+            self.assertEqual(build.main(["--romfs", game, "--mod-dir", b + "2"]), 1)
+
+        def tree(d):
+            return {os.path.relpath(os.path.join(r, n), d): build.read(os.path.join(r, n))
+                    for r, _, ns in os.walk(d) for n in ns}
+        self.assertEqual(tree(a), tree(b))
+        self.assertGreater(len(tree(a)), 4)
+
     def test_not_a_romfs(self):
         with self.assertRaises(build.BuildError):
             build.build(self.dir, os.path.join(self.dir, "mod"), log=lambda *_: None)
@@ -420,6 +451,74 @@ class LoadRootTest(unittest.TestCase):
     def test_configured_missing_folder(self):
         self.write_ini(os.path.join(self.dir, "gone").replace("\\", "/"))
         self.assertEqual(build.load_root(self.user), os.path.join(self.user, "load"))
+
+
+@unittest.skipIf(zstandard is None, "needs the zstandard package")
+class NupTest(unittest.TestCase):
+    """A tiny made-up .nup: base plus update, raw and zstd files."""
+
+    TID = int(dumpcheck.TITLE_ID, 16)
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "game.nup")
+        self.base = {"Pack/ZsDic.pack.zs": (b"dict v1", nup.CODEC_RAW),
+                     "Pack/Actor/Player_Child.pack.zs": (b"child v1" * 100, nup.CODEC_ZSTD),
+                     "RSDB/ActorInfo.Product.100.rstbl.byml.zs": (b"old", nup.CODEC_RAW),
+                     "Model/Base.bin": (b"", nup.CODEC_RAW)}
+        self.update = {"Pack/Actor/Player_Child.pack.zs": (b"child v2" * 100, nup.CODEC_ZSTD),
+                       "RSDB/ActorInfo.Product.111.rstbl.byml.zs": (b"new", nup.CODEC_ZSTD)}
+        nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, self.base),
+                                  (self.TID | 0x800, 0x10000, nup.KIND_UPDATE, {}),
+                                  (self.TID | 0x800, 0x20000, nup.KIND_UPDATE, self.update)])
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def test_merge_update_wins(self):
+        self.assertTrue(nup.is_nup(self.path))
+        with nup.Nup(self.path) as n:
+            self.assertEqual(n.best_update()["version"], 0x20000)
+            self.assertEqual(n.read("Pack/Actor/Player_Child.pack.zs"), b"child v2" * 100)
+            self.assertEqual(n.read("Pack/ZsDic.pack.zs"), b"dict v1")
+            self.assertEqual(n.read("Model/Base.bin"), b"")
+            self.assertEqual(n.glob("RSDB/ActorInfo.Product.*.rstbl.byml.zs"),
+                             ["RSDB/ActorInfo.Product.100.rstbl.byml.zs",
+                              "RSDB/ActorInfo.Product.111.rstbl.byml.zs"])
+            self.assertEqual(dumpcheck.nup_files(n)["RSDB/ActorInfo.Product.*.rstbl.byml.zs"],
+                             "RSDB/ActorInfo.Product.111.rstbl.byml.zs")
+            with self.assertRaises(nup.NupError):
+                n.read("Pack/Nope.zs")
+
+    def test_standalone_update(self):
+        nup.write_nup(self.path, [(self.TID, 0x20000, nup.KIND_UPDATE, self.update)])
+        with nup.Nup(self.path) as n:
+            self.assertEqual(n.read("RSDB/ActorInfo.Product.111.rstbl.byml.zs"), b"new")
+
+    def test_damaged_file_and_cut_short(self):
+        data = bytearray(build.read(self.path))
+        with nup.Nup(self.path) as n:
+            _name, _size, eoff, _esize, _sha, _codec = n.files[n.listdir("Pack")["ZsDic.pack.zs"][1]]
+        data[eoff] ^= 0xFF
+        with open(self.path, "wb") as f:
+            f.write(data)
+        with nup.Nup(self.path) as n:
+            with self.assertRaises(nup.NupError):
+                n.read("Pack/ZsDic.pack.zs")
+        with open(self.path, "wb") as f:
+            f.write(data[:len(data) // 2])
+        with self.assertRaises(nup.NupError):
+            nup.Nup(self.path)
+        self.assertEqual([p.code for p in dumpcheck.check_nup(self.path)], ["nup-bad"])
+
+    def test_check_nup(self):
+        # Missing most of what the pack needs.
+        self.assertEqual([p.code for p in dumpcheck.check_nup(self.path)], ["nup-partial"])
+        full = {pat.replace("*", "111"): (dumpcheck.ZSTD_MAGIC, nup.CODEC_RAW) for pat in dumpcheck.REQUIRED}
+        nup.write_nup(self.path, [(self.TID | 0x800, 1, nup.KIND_UPDATE, full)])
+        self.assertEqual(dumpcheck.check_nup(self.path), [])
+        nup.write_nup(self.path, [(0x0100000000010000, 1, nup.KIND_BASE, full)])
+        self.assertEqual([p.code for p in dumpcheck.check_nup(self.path)], ["nup-other"])
 
 
 class DumpCheckTest(unittest.TestCase):
@@ -472,8 +571,48 @@ class DumpCheckTest(unittest.TestCase):
     def test_no_dump(self):
         code, out = self.run_main()
         self.assertEqual(code, 2)
-        self.assertIn("No RomFS dump found", out)
+        self.assertIn("no RomFS dump", out)
         self.assertIn("prod.keys", out)
+
+    def write_user(self, rel, text):
+        p = os.path.join(self.user, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_keys_too_old(self):
+        # The player's case: master keys up to 15, the update needs gen 0x17.
+        self.write_user("keys/prod.keys", "".join(f"master_key_{i:02x} = {'0' * 32}\n" for i in range(0x16)))
+        self.write_user("log/eden_log.txt",
+                        "[ 1.0] Loader <Error> core\\file_sys\\content_archive.cpp:NCA:48: "
+                        "Cannot decrypt abc.nca: keys for gen 0x17+ required.\n")
+        probs = dumpcheck.check_keys(self.user)
+        self.assertEqual([p.code for p in probs], ["keys-old"])
+        self.assertIn("master_key_16", probs[0].message)
+        self.assertIn("master_key_15", probs[0].message)
+        code, out = self.run_main()
+        self.assertEqual(code, 2)
+        self.assertIn("too old", out)
+        # With master_key_16 the keys are new enough.
+        self.write_user("keys/prod.keys", "master_key_16 = " + "0" * 32 + "\n")
+        self.assertEqual(dumpcheck.check_keys(self.user), [])
+
+    @unittest.skipIf(zstandard is None, "needs the zstandard package")
+    def test_nup_in_game_list_wins(self):
+        games = os.path.join(self.dir, "games")
+        os.makedirs(games)
+        game = os.path.join(games, "Game [x].nup")
+        full = {pat.replace("*", "111"): (dumpcheck.ZSTD_MAGIC, nup.CODEC_RAW) for pat in dumpcheck.REQUIRED}
+        nup.write_nup(game, [(int(dumpcheck.TITLE_ID, 16), 0x20000, nup.KIND_UPDATE, full)])
+        self.write_user("config/qt-config.ini",
+                        "[UI]\nPaths\\gamedirs\\size=2\nPaths\\gamedirs\\1\\path=SDMC\n"
+                        f"Paths\\gamedirs\\2\\path={games.replace(os.sep, '/')}\n")
+        os.makedirs(os.path.join(self.romfs, "Pack"))  # a broken dump is ignored
+        code, out = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertIn(f"romfs={os.path.normpath(game)}", out)
+        code, out = self.run_main("--romfs", game)
+        self.assertEqual(code, 0)
 
     def test_keys_one_folder_too_deep(self):
         deep = os.path.join(self.user, "keys", "keys")

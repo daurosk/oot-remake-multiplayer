@@ -6,9 +6,10 @@
 # Items page, bombs at column 1 row 3 (the cursor starts on the slingshot), A
 # puts them on ZR. The first ZR opens a "Bomb" help box (and makes a bomb
 # that is gone in 0.1 s); it stays up through A and two more ZR (each again a
-# 0.1 s bomb, 2026-11-09). Then ZR pulls, ZR throws.
+# 0.1 s bomb, 2026-11-09). Then holding ZR pulls one, ZR throws.
 # A first walks right, away from the cow at the save spot (A next to it talks
 # to it), so that B, looking ahead, sees the throw.
+#! switches LICHII_COOP_OBJECTS_CHEAT=1
 mark start
 wait 900
 mark ready
@@ -48,16 +49,13 @@ mark help
 press A
 wait 45
 mark help-closed
-press ZR
-wait 45
+# A 6-tick ZR press made a bomb that was deleted 0.1 s later, when ZR was let go (chunk 2,
+# 2026-11-10: five presses, five 0.1 s bombs, count still 20). Hold ZR to take one out and
+# keep it; a second ZR throws it.
+hold ZR 60
+wait 30
 mark pulled
-press ZR
-wait 45
-mark help-gone
-press ZR
-wait 45
-mark pulled2
-press ZR
+press ZR 10
 wait 20
 mark thrown
 wait 30
@@ -73,4 +71,13 @@ mark fuse3
 wait 30
 mark fuse4
 wait 60
+mark boom
+# A second try with a longer hold, in case 60 ticks was not enough.
+hold ZR 150
+wait 30
+mark pulled2
+press ZR 10
+wait 20
+mark thrown2
+wait 200
 mark end

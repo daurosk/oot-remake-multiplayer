@@ -7,10 +7,13 @@ goto -34.6 13.4 0.6     # beside the rock
 goto -34.35 14.2 0.35   # right up to it
 mark at-rock
 toward -34.12 14.94 20
-press A                 # lift (the prompt says Lift when in reach)
+# Chunk 2 (2026-11-10): Link stood at the prompt ("Pick Up" shown) but the default 6-tick press
+# did nothing. Let the stick settle first and press for 12 ticks (held-tools: 6 were missed).
+wait 20
+press A 12              # lift (the prompt says Pick Up when in reach)
 wait 50
 mark lifted
-press ZR                # throw (the prompt shows ZR while Link holds it)
+press ZR 12             # throw (the prompt shows ZR while Link holds it)
 wait 90
 mark thrown
 wait 120

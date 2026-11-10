@@ -30,7 +30,7 @@ Bottle hashes: A `IsValid` 0xf39ce410 / `BottleItem` 0x7d48df76; B 0x000ff6ea / 
 
 Song hashes (`IsGet.Item_Melody_…`): ZeldaLullaby 0x01c20002, EponaSong 0xb492ac33, SariaSong 0xd3f8bfcc, SunSong 0x165dd1ad, TimeSong 0x03b3450e, StormSong 0x2b39dd4f, ForestMinuet 0xdc0a0b54, FireBolero 0x49041ab9, WaterSerenade 0x3fa63986, ShadowNocturne 0xc2fb95f4, SpiritRequiem 0x802a36a8, LightPrelude 0xd6320ba4, ScarecrowSong 0x5e86fb4d.
 
-Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related and were not needed: 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077, the ammo capacities (below). The first is open.
+Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related (both now read for bombs, see [Bombs from the cheat](#bombs-from-the-cheat-issue-125)): 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077, the ammo capacities ([below](#ammo-capacity-and-what-comes-with-an-item-issue-128)).
 
 ## Rules
 
@@ -57,12 +57,12 @@ Int struct 0xf80f8077 holds how much of each ammo a player can carry; its member
 
 | Member | Flag hash | Values seen in saves |
 |---|---|---|
-| Rupee | 0xe0013650 | 200 with a wallet |
+| Rupee | 0xe0010a50 | 200 with a wallet |
 | DekuSeed | 0xae8cc742 | 50 |
 | Bomb | 0xe753508b | 20 with the small bomb bag |
 | Arrow | 0x418db791 | 0 without a quiver |
-| DekuStick | 0x45762db0 | 10 |
-| DekuNut | 0x735a1ff7 | 20 |
+| DekuStick | 0x457616b0 | 10 |
+| DekuNut | 0x735b00f7 | 20 |
 
 The game's own get scene sets the capacity and the starting ammo with the item. An item that arrives from another player has no get scene, so the receiving game had the item with 0/0 (a player test: the shared Slingshot with no seeds, and no way out of the slingshot room). Now `ItemFlagStore`, when it gives a game an owned item that game did not have (0 to 1 or more), also raises that item's grants (`item_grants()` in `coop/host/game_items.hpp`) to at least these values, the original game's numbers:
 

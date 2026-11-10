@@ -369,7 +369,7 @@ namespace {
 // Arrow, DekuStick, DekuNut found by hashing them against the struct's
 // member hashes in GameDataList). Default 0: no ammo of that kind is held.
 constexpr std::uint32_t kCapSeed = 0xae8cc742, kCapBomb = 0xe753508b, kCapArrow = 0x418db791,
-                        kCapStick = 0x45762db0, kCapNut = 0x735a1ff7, kCapRupee = 0xe0013650;
+                        kCapStick = 0x457616b0, kCapNut = 0x735b00f7, kCapRupee = 0xe0010a50;
 // Ammo counts (per player) and their IsGet flags (docs/items.md).
 constexpr std::uint32_t kSeeds = 0x5fadf7fc, kSeedsGet = 0x29888e1e;
 constexpr std::uint32_t kArrows = 0x518ec74b, kArrowsGet = 0x572701ea;
@@ -469,8 +469,9 @@ void ItemFlagStore::grant(std::uint32_t item) {
   for (const ItemGrant& g : item_grants(item)) {
     const FlagKey key{g.hash, 0};
     const auto now = inner_.read(key);
-    if (now && now->kind != g.kind) continue;
-    if (now && as_int(now->value) >= g.value) continue;
+    // Unknown value: written over nothing, so a grant can never lower one.
+    if (!now || now->kind != g.kind) continue;
+    if (as_int(now->value) >= g.value) continue;
     if (inner_.write(protocol::FlagEntry{key, g.kind, as_bits(g.value)})) ++stats_.granted;
   }
 }

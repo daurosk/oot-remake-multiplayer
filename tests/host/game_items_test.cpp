@@ -2,6 +2,7 @@
 
 #include <map>
 #include <set>
+#include <string_view>
 #include <vector>
 
 #include "coop/host/flag_watcher.hpp"
@@ -599,6 +600,48 @@ TEST_CASE("item grants: the table is sorted and names its flags") {
     CHECK(!coop::host::item_grants(g.item).empty());
   }
   CHECK(coop::host::item_grants(0x8573d2cd).empty());  // the Hookshot needs no ammo
+}
+
+TEST_CASE("item grants: the six capacity hashes are the ones in GameDataList") {
+  // The children of struct 0xf80f8077, read from GameDataList; the unit
+  // tests cannot hash them (the struct's name is not known), so pin them.
+  const std::map<std::string_view, std::uint32_t> want{
+      {"0xf80f8077.Rupee", 0xe0010a50},    {"0xf80f8077.DekuSeed", 0xae8cc742},
+      {"0xf80f8077.Bomb", 0xe753508b},     {"0xf80f8077.Arrow", 0x418db791},
+      {"0xf80f8077.DekuStick", 0x457616b0}, {"0xf80f8077.DekuNut", 0x735b00f7},
+  };
+  std::set<std::string_view> seen;
+  for (const auto& g : coop::host::all_item_grants()) {
+    if (!g.name.starts_with("0xf80f8077.")) continue;
+    CAPTURE(g.name);
+    REQUIRE(want.count(g.name) == 1);
+    CHECK(g.hash == want.at(g.name));
+    seen.insert(g.name);
+  }
+  CHECK(seen.size() == want.size());  // every capacity is granted by something
+}
+
+TEST_CASE("item grants: a flag whose value cannot be read is not written") {
+  // A store that cannot read the seed flags but would take a write.
+  class Blind final : public coop::host::FlagStore {
+   public:
+    std::optional<protocol::FlagEntry> read(FlagKey key) override {
+      if (key.hash == kSlingshot) return protocol::FlagEntry{key, K::int32, slingshot};
+      return std::nullopt;
+    }
+    bool write(const protocol::FlagEntry& entry) override {
+      if (entry.key.hash == kSlingshot) slingshot = entry.value;
+      else ++others;
+      return true;
+    }
+    std::uint32_t slingshot = 0;
+    int others = 0;
+  } game;
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kSlingshot)));
+  CHECK(game.slingshot == 1u);
+  CHECK(game.others == 0);
+  CHECK(store.stats().granted == 0);
 }
 
 TEST_CASE("item grants: a shared Slingshot comes with its bag and 30 seeds (issue 128)") {

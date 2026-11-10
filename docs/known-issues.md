@@ -35,7 +35,7 @@ One PC, two games, played by hand on 2026-11-09.
 
 ## Not yet
 
-- **Heart containers**: picking one up does not raise the other players' maximum health. Heart pieces count up, but four of them do not make a heart for the others. Fixed in the next build for heart containers (the hearts follow the shared maximum; seen with the test cheat, not yet with a real container); four heart pieces not checked yet.
+- **Heart containers and heart pieces**: from the next build, a heart container one player picks up raises every player's maximum health (seen with the test cheat, not yet with a real container). Heart pieces count up across players, but whether four of them make a heart for the others is not checked yet.
 - **Gold Skulltulas**: the token count is shared, but the Skulltula you took may still be there in the other games.
 - **Cut signs** are not shared: a sign cut in one game stays whole in the others.
 - **Tunic, boots and masks** are not shown on the other players' Link.

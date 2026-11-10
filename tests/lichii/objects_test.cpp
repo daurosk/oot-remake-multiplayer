@@ -1028,3 +1028,118 @@ TEST_CASE("objects: the AI hold's table and hook") {
     table = CoopHold::Table({}, CoopHold::MasksFor(1));
     CHECK(u32(0) == 0);
 }
+
+TEST_CASE("objects: group rules for parts and bosses") {
+    using CoopObjects::IsBoss;
+    using CoopObjects::PartOf;
+    REQUIRE(PartOf("Enemy_DungeonBoss_BongoBongo_LeftHand") != nullptr);
+    CHECK(std::string(PartOf("Enemy_DungeonBoss_BongoBongo_LeftHand")->roots.front()) ==
+          "Enemy_DungeonBoss_BongoBongo");
+    CHECK(PartOf("Enemy_DungeonBoss_BongoBongo_LeftHand")->boss);
+    REQUIRE(PartOf("Enemy_Peahat_Larva") != nullptr);
+    CHECK_FALSE(PartOf("Enemy_Peahat_Larva")->boss);
+    // Independent larvae, the picture book and plain enemies are no parts.
+    CHECK(PartOf("Enemy_Peahat_Larva_Independent") == nullptr);
+    CHECK(PartOf("Enemy_DungeonBoss_BongoBongo_LeftHand_Dictionary") == nullptr);
+    CHECK(PartOf("Enemy_Stalchild") == nullptr);
+    CHECK(PartOf("Enemy_DungeonBoss_BongoBongo") == nullptr);
+    CHECK(IsBoss("Enemy_DungeonBoss_Volvagia"));
+    CHECK(IsBoss("Enemy_MiddleBoss_DarkLink"));
+    CHECK(IsBoss("Enemy_DeadHand"));
+    CHECK(IsBoss("Enemy_KotakeKoumeBattleManager"));
+    CHECK_FALSE(IsBoss("Enemy_DungeonBoss_Volvagia_Dictionary"));
+    CHECK_FALSE(IsBoss("Enemy_Stalchild"));
+    CHECK_FALSE(IsBoss("Enemy_Dodongo"));
+}
+
+TEST_CASE("objects: GroupsOf picks the root by name, then the nearest in reach") {
+    using CoopObjects::GroupInput;
+    const auto id = [](std::uint64_t v) { return proto::ObjectId{proto::ObjectKind::placed, 0, v}; };
+    constexpr std::uint8_t kBoss = proto::object_group::boss;
+    std::vector<GroupInput> walk{
+        {id(1), "Enemy_DungeonBoss_BongoBongo", {0, 0, 0}},
+        {id(2), "Enemy_DungeonBoss_BongoBongo_LeftHand", {500, 0, 0}},  // any reach
+        {id(3), "Enemy_Dodongo", {0, 0, 0}},
+        {id(4), "Enemy_Dodongo", {20, 0, 0}},
+        {id(5), "Enemy_Dodongo_Attention", {19, 0, 0}},  // nearest: 4
+        {id(6), "Enemy_Dodongo_Attention", {200, 0, 0}},  // none within 10 m: itself
+        {id(7), "Enemy_Stalchild", {0, 0, 0}},            // no group, no entry
+    };
+    auto groups = CoopObjects::GroupsOf(walk);
+    REQUIRE(groups.size() == 4);
+    CHECK(groups[0] == proto::ObjectGroupEntry{id(1), id(1), kBoss});
+    CHECK(groups[1] == proto::ObjectGroupEntry{id(2), id(1), kBoss});
+    CHECK(groups[2] == proto::ObjectGroupEntry{id(5), id(4), 0});
+    CHECK(groups[3] == proto::ObjectGroupEntry{id(6), id(6), 0});
+    // The battle manager wins over Twinrova for the witches.
+    walk = {
+        {id(10), "Enemy_DungeonBoss_Twinrova", {0, 0, 0}},
+        {id(11), "Enemy_DungeonBoss_Kotake", {0, 0, 0}},
+        {id(12), "Enemy_KotakeKoumeBattleManager", {90, 0, 0}},
+    };
+    groups = CoopObjects::GroupsOf(walk);
+    REQUIRE(groups.size() == 3);
+    CHECK(groups[0] == proto::ObjectGroupEntry{id(10), id(12), kBoss});
+    CHECK(groups[1] == proto::ObjectGroupEntry{id(11), id(12), kBoss});
+    CHECK(groups[2] == proto::ObjectGroupEntry{id(12), id(12), kBoss});
+    // Without the manager the witches follow Twinrova.
+    walk.pop_back();
+    groups = CoopObjects::GroupsOf(walk);
+    REQUIRE(groups.size() == 2);
+    CHECK(groups[1] == proto::ObjectGroupEntry{id(11), id(10), kBoss});
+    // The entries pass the codec.
+    proto::ObjectGroup g;
+    g.entries = groups;
+    const auto bytes = proto::encode(g);
+    REQUIRE(bytes.has_value());
+    proto::Message back;
+    CHECK(proto::decode(*bytes, back) == proto::Error::none);
+    CHECK(std::get<proto::ObjectGroup>(back) == g);
+}
+
+TEST_CASE("objects: OBJECT_GROUP follows the presence, on a change and with each presence") {
+    Sync sync;
+    std::vector<Seen> walk{Enemy(0x100, 0x11, 4, 0.0f, "Enemy_DeadHand"),
+                           Enemy(0x200, 0x22, 1, 5.0f, "Enemy_DeadHand_Hand")};
+    auto step = Tick(sync, 1000 * kMs, walk);
+    // Presence first, then the group.
+    REQUIRE(step.send.size() >= 2);
+    std::size_t present_at = step.send.size(), group_at = step.send.size();
+    for (std::size_t i = 0; i < step.send.size(); ++i) {
+        if (std::holds_alternative<proto::ObjectPresent>(step.send[i])) present_at = i;
+        if (std::holds_alternative<proto::ObjectGroup>(step.send[i])) group_at = i;
+    }
+    REQUIRE(group_at < step.send.size());
+    CHECK(present_at < group_at);
+    const auto group = All<proto::ObjectGroup>(step).at(0);
+    REQUIRE(group.entries.size() == 2);
+    const auto boss = sync.IdOf(0x100);
+    const auto hand = sync.IdOf(0x200);
+    REQUIRE(boss);
+    REQUIRE(hand);
+    for (const auto& e : group.entries) {
+        CHECK(e.root == *boss);
+        CHECK(e.flags == proto::object_group::boss);
+    }
+    // Nothing changed, no presence due: no group.
+    step = Tick(sync, 1100 * kMs, walk);
+    CHECK(All<proto::ObjectGroup>(step).empty());
+    // With the next presence (2 s), again.
+    step = Tick(sync, 3100 * kMs, walk);
+    CHECK(All<proto::ObjectGroup>(step).size() == 1);
+    // The boss leaves the walk: the hand follows nobody.
+    walk.erase(walk.begin());
+    for (std::uint64_t t = 3200; t < 3600; t += 100) step = Tick(sync, t * kMs, walk);
+    bool alone = false;
+    for (std::uint64_t t = 3600; t < 6000 && !alone; t += 100) {
+        step = Tick(sync, t * kMs, walk);
+        for (const auto& g : All<proto::ObjectGroup>(step)) {
+            alone = alone || (g.entries.size() == 1 && g.entries[0].root == *hand);
+        }
+    }
+    CHECK(alone);
+    // A walk with no group sends none.
+    Sync plain;
+    step = Tick(plain, 1000 * kMs, {Enemy(0x300, 0x33, 2)});
+    CHECK(All<proto::ObjectGroup>(step).empty());
+}

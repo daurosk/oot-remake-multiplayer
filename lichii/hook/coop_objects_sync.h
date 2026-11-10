@@ -123,6 +123,33 @@ bool IsRolled(std::string_view name);
 // a copy, and deletes the copy if its own one turns up.
 bool IsAnnounced(std::string_view name);
 
+// Enemies made of several actors (docs/objects.md, "Groups"): a boss and its
+// parts, an enemy and what it summons. Each part follows a root of one of the
+// names `roots` (the first name found wins, then the nearest), within `reach`
+// metres (0: anywhere in the scene). `boss`: the group's fight lock is a
+// boss's (60 s).
+struct GroupPart {
+    std::vector<std::string_view> roots;
+    float reach = 0.0f;
+    bool boss = false;
+};
+// The rule for a part, or null when `name` is no part.
+const GroupPart* PartOf(std::string_view name);
+// A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
+// and the roots of boss groups); never a picture book _Dictionary actor.
+bool IsBoss(std::string_view name);
+
+// One shared actor of a walk, for GroupsOf.
+struct GroupInput {
+    coop::protocol::ObjectId id;
+    std::string_view name;
+    coop::protocol::Vec3 position{};
+};
+// The OBJECT_GROUP entries for one walk, sorted by member: a part with its
+// root, a part whose root is not loaded with itself (so it follows nobody), a
+// boss with itself and the boss flag. Empty when the walk has none.
+std::vector<coop::protocol::ObjectGroupEntry> GroupsOf(const std::vector<GroupInput>& walk);
+
 // A rolled enemy another game decided, for the spawn director to create here
 // by name where the decider's one is. The Mover places and animates it after.
 struct EnemyCopy {
@@ -324,6 +351,7 @@ private:
     std::vector<coop::protocol::ObjectPresence> present_sent_;
     std::uint64_t present_at_ = 0;
     bool present_once_ = false;
+    std::vector<coop::protocol::ObjectGroupEntry> groups_sent_;  // as last sent
     bool hurt_ = false;
     std::uint8_t self_ = 0;
     std::set<std::uint64_t> taken_;             // key64 flags seen set to 1

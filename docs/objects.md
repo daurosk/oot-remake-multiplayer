@@ -219,11 +219,42 @@ One path for every kind of hit, as TotK's `TOTK_SYNC_DAMAGE` found worked best (
   - Open: what a skipped brain does to an enemy already in battle when it becomes a copy, and bosses.
 - **"0 plays" with 2 copies** (game A in run3): A's copies only ever showed `Wait`, `Sit`, `Fly` and `Wait_ModelOnlyLOD` (its `anim` lines), the same idle names their owner showed, so there was nothing to play; the one time a frame was off it was set (`2 frame sets`). Read from the log, not rerun.
 - Not yet: the AI hold seen in a game (off by default until then; without it a copy still chooses its own animation and target each frame, and the Mover puts the owner's place and animation back); projectiles, the fight lock and bosses; the hit flash proven; B hitting A's enemy was not run in this round (the `DAMAGE` path of the first cut). Copies are moved to the owner's enemy wherever it is.
-- The server side of the ownership rules (distance, fight lock, groups, hand-over with the state) is in `server/session.cpp` since branch `enemy-owner`, tested in `tests/server/session_test.cpp`. The hook does not send `OBJECT_GROUP` yet, so there are no groups in a real session.
+- The server side of the ownership rules (distance, fight lock, groups, hand-over with the state) is in `server/session.cpp` since branch `enemy-owner`, tested in `tests/server/session_test.cpp`. The hook sends `OBJECT_GROUP` since branch `object-groups` ("Groups" below).
 - Not yet: projectiles and bosses; the hit flash proven; B hitting A's enemy was not run in this round (the `DAMAGE` path of the first cut). Copies are moved to the owner's enemy wherever it is.
 
 **Two-game test (Caleb, 2026-11-09, Hyrule Field at night, child saves).** Two Stalchild spawned in each game (hash ~0, so ids by the scene rule). Game A owned both; each sword hit in A lowered life in B, 2 to 1 to 0 (`coop: objects: share life` lines in B), and both died on both screens. Seen as not done yet: B shows no flinch and no head knocked off on the first hit (only the life value is written, not the hit reaction), and each game's Stalchild chase their own Link (positions are not written into copies).
 
+
+### Groups
+
+Enemies made of several actors share one owner and one fight (issue 105). `CoopObjects::GroupsOf` (`lichii/hook/coop_objects_sync.cpp`, tested in `tests/lichii/objects_test.cpp`) finds them in each walk by actor name; `Sync::Tick` sends `OBJECT_GROUP` right after `OBJECT_PRESENT` (so the server knows every member), on every change and again with every presence. The server does the rest (`Session::on_object_group`): a member follows its root's owner, and a fight on any member is the root's.
+
+- A part follows the loaded actor of its root's name; with several roots of that name, the nearest within the rule's reach (lower id on a tie, so every game picks the same). A part whose root is not loaded (or out of reach) is sent with itself as root, so it follows nobody.
+- A boss or mini-boss (`Enemy_DungeonBoss_*`, `Enemy_MiddleBoss_*`, the roots of boss groups) is sent with itself and the boss flag, alone too, for the 60 s fight lock. Picture book `_Dictionary` actors never count.
+- Names from the game's `Pack/Actor` list (2026-11-09). A boss's own parts are certain by name; what it summons (eggs, larvae, babies, a flock) is read from the names and only counts within 40 m. None of it has been seen in a fight yet.
+
+| Root | Parts | Reach | Boss |
+|---|---|---|---|
+| `Enemy_DungeonBoss_Gohma` | `Enemy_DungeonBoss_Gohma_Egg`, `Enemy_Gohma_Egg`, `Enemy_Gohma_Larva` | 40 m | yes |
+| `Enemy_DungeonBoss_Dodongo` | `_Attention`, `_Attention_RollingCenter`, `_SpawnBabyDodongo`; `Enemy_BabyDodongo` (40 m) | any | yes |
+| `Enemy_DungeonBoss_Barinade` | `_Arm`, `_Attention`, `_Beam`, `_Jellyfish` | any | yes |
+| `Enemy_DungeonBoss_PhantomGanon` | `Enemy_PhantomGanonHorse` | any | yes |
+| `Enemy_DungeonBoss_Morpha` | `_Attention`, `_Attention_Spin`, `_Tentacle` | any | yes |
+| `Enemy_DungeonBoss_BongoBongo` | `_LeftHand`, `_RightHand` | any | yes |
+| `Enemy_DungeonBoss_Ganon` | `_Attention`, `_Crystal`, `_LegAttention`, `_SecondHalfBattle` | any | yes |
+| `Enemy_KotakeKoumeBattleManager` (else `Enemy_DungeonBoss_Twinrova`) | `Enemy_DungeonBoss_Kotake`, `Enemy_DungeonBoss_Koume`; `Enemy_DungeonBoss_Twinrova` follows the manager | any | yes |
+| `Enemy_MiddleBoss_BigOcto` | `_Attention`; `Enemy_Shabom_BigOctoChild` (40 m) | any | yes |
+| `Enemy_MiddleBoss_DarkLink` | `_EffectLocater` | any | yes |
+| `Enemy_MiddleBoss_FlareDancer` | `_FireBody` | any | yes |
+| `Enemy_MiddleBoss_Poe_Meg` | `_Dummy` (her copies) | any | yes |
+| `Enemy_DeadHand` | `Enemy_DeadHand_Hand` | 40 m | yes |
+| `Enemy_Dodongo` | `Enemy_Dodongo_Attention` | 10 m | no |
+| `Enemy_Tailpasaran` | `Enemy_Tailpasaran_Attention` | 10 m | no |
+| `Enemy_Anubis` | `Enemy_Anubis_MagicField` | 20 m | no |
+| `Enemy_FlockGuayManager` | `Enemy_Guay_Flock` | 60 m | no |
+| `Enemy_Peahat_AircraftCarrier` (else `Enemy_Peahat`) | `Enemy_Peahat_Larva` (not `_Independent`) | 30 m | no |
+
+Alone with the boss flag: Volvagia, Ganondorf, the Lizalfos, Iron Knuckle Nabooru and Gerudo thief mini-bosses (each thief its own fight). Not grouped: projectiles (`*_Bullet_*`, `Enemy_MoblinClub_ShockWave`, `Enemy_Scrub_Business_Seed`: their maker keeps them, branch `projectiles`), and actors that are not shared (names outside `Enemy_`).
 
 ## Drops
 

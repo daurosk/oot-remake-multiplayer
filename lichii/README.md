@@ -9,6 +9,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `patches/0001-coop-hook.patch` | The hook points, nothing else. |
 | `patches/0002-coop-camera.patch` | One call per draw in the Vulkan renderer that hands the game's camera to the hook, for markers. |
 | `patches/0003-coop-puppet.patch` | Two calls for the puppets: the code cave written into Ocarina's `main` when it is loaded, and the cave's `svc 0xf4` handed to the hook. |
+| `patches/0004-coop-null-write-log.patch` | A debug log line: who writes to guest address 0 (issue 111). |
 | `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
 ## Fetch and patch
@@ -58,6 +59,7 @@ With `LICHII_COOP` off (the default) the patch changes nothing in the build.
 | `src/video_core/renderer_vulkan/vk_rasterizer.cpp` | (0002) After each draw's pipeline is configured, calls `CoopCamera::Track` (`hook/coop_camera_track.h`), which looks for the game's camera buffer as the DLSS path does, without DLSS. `video_core` sees the hook folder and `LICHII_COOP` because `core.cmake` makes both public on `core`, which `video_core` links. |
 | `src/core/file_sys/patch_manager.cpp` | (0003) In `PatchNSO`, after the built-in patches, calls `CoopSvc::PatchMain`, which writes the puppet code cave into Ocarina's `main` (checked against the original words; only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`). |
 | `src/core/hle/kernel/svc.cpp` | (0003) `Kernel::Svc::Call` asks `CoopSvc::Call` first: it handles `svc 0xf4` from the cave and returns false for every other call, which goes on as before. |
+| `src/core/arm/dynarmic/arm_dynarmic_64.cpp` | (0004, only under `LICHII_COOP`) In `MemoryWrite`, a write to guest address 0 (an object built at a null pointer after a failed allocation) logs `Write to address 0 ... at pc ... lr ... sp ...; return addresses: ...` from the frame-pointer chain, the first 16 times in a run. The emulator's own `Unmapped Write64` line has no pc. The JIT syncs guest registers at block boundaries, so pc (and possibly lr and x29) can be the block's start or a little stale; the return addresses from the stack are the useful part. Only `MemoryWrite` is hooked: a 128-bit (q register) or exclusive store to address 0 is not logged. |
 
 Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same ENet 1.3.18) when one exists, so there is one ENet in the program.
 
@@ -73,7 +75,7 @@ Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same
 2. Run `fetch.ps1`. If a patch no longer applies, apply it by hand on the new commit, commit, and replace that file with `git format-patch -1 --zero-commit --no-signature --stdout` of its commit.
 3. Build with `LICHII_COOP=ON` and check the log for `coop: loaded`.
 
-The patches stay at 9 files and about 70 lines; everything else is in `hook/`.
+The patches stay at 10 files and about 90 lines; everything else is in `hook/`.
 
 Moves so far: `fritchii-v5` to `fritchii-v5.5` (2026-11-09, 37 commits, mostly the Vulkan renderer, shaders and settings; all three patches applied as they were), then `fritchii-v5.6` (2026-11-10, 108 commits after v5.5).
 

@@ -1063,6 +1063,8 @@ TEST_CASE("sign probe: names where a word is") {
     CHECK(SignProbe::Where(0x4a8) == "actor+0x4a8");
     CHECK(SignProbe::Where((1ull << 32) | 0x2b8) == "table+0x2b8");
     CHECK(SignProbe::Where(((2ull + 0x57) << 32) | 0x40) == "c+0x2b8+0x40");
+    CHECK(SignProbe::Where(0) == "actor+0x0");
+    CHECK(SignProbe::Where(2ull << 32) == "c+0x0+0x0");
 }
 
 TEST_CASE("sign probe: logs what a cut changed, without the counters") {
@@ -1121,8 +1123,16 @@ TEST_CASE("sign probe: a given hit, a hit with no copy before it, a far sign") {
     lines = q.Look(read, {sign}, near, 1500 * kMs);
     REQUIRE(lines.size() == 1);
     CHECK(lines[0].find("given hit +0.5 s: 1 words changed: c+0x10+0x48:0>5") != std::string::npos);
-    // A sign that left the walk is forgotten.
-    CHECK(q.Look(read, {}, near, 1600 * kMs).empty());
+    // A sign that left the walk is forgotten; with a hit still to report, that is logged.
+    lines = q.Look(read, {}, near, 1600 * kMs);  // its +2 s line was still to come
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("given hit: gone after the hit (+0.6 s)") != std::string::npos);
+    CHECK(q.Look(read, {sign}, near, 1700 * kMs).empty());
+    q.Hit(sign, true, 2000 * kMs);
+    lines = q.Look(read, {}, near, 2300 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0] == "sign probe: 0000000000000070 Obj_GuidePost_A_02 our cut: gone after the hit (+0.3 s)");
+    CHECK(q.Look(read, {}, near, 2400 * kMs).empty());
     CHECK(q.Look(read, {sign}, near, 3600 * kMs).empty());
 }
 

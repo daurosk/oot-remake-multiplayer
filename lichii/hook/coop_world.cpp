@@ -1101,11 +1101,11 @@ std::string SignProbe::Where(std::uint64_t key) {
     const auto offset = static_cast<unsigned long long>(key & 0xffffffffu);
     char text[48];
     if (region == kRegionActor) {
-        std::snprintf(text, sizeof text, "actor+%#llx", offset);
+        std::snprintf(text, sizeof text, "actor+0x%llx", offset);
     } else if (region == kRegionTable) {
-        std::snprintf(text, sizeof text, "table+%#llx", offset);
+        std::snprintf(text, sizeof text, "table+0x%llx", offset);
     } else {
-        std::snprintf(text, sizeof text, "c+%#llx+%#llx",
+        std::snprintf(text, sizeof text, "c+0x%llx+0x%llx",
                       static_cast<unsigned long long>((region - kRegionComponent) * 8), offset);
     }
     return text;
@@ -1240,12 +1240,27 @@ std::vector<std::string> SignProbe::Look(const ReadWord& read, const std::vector
                                          const std::optional<proto::Vec3>& player,
                                          std::uint64_t now_us) {
     std::vector<std::string> out;
-    // Forget signs the walk no longer sees.
-    std::erase_if(signs_, [&signs](const auto& e) {
-        return std::none_of(signs.begin(), signs.end(), [&e](const Sign& s) {
-            return s.address == e.first && s.hash == e.second.hash;
+    // Forget signs the walk no longer sees. One that went while a hit was
+    // still to report is logged: a cut that deletes or replaces the actor.
+    for (auto it = signs_.begin(); it != signs_.end();) {
+        const bool seen = std::any_of(signs.begin(), signs.end(), [&it](const Sign& s) {
+            return s.address == it->first && s.hash == it->second.hash;
         });
-    });
+        if (seen) {
+            ++it;
+            continue;
+        }
+        const State& s = it->second;
+        if (s.event && lines_ < kMaxLines) {
+            ++lines_;
+            const std::uint64_t after = now_us - s.event->time_us;
+            const std::uint64_t tenths = (after + 50'000) / 100'000;
+            out.push_back(Line("sign probe: %016llx %s", s.hash, s.name, "") +
+                          (s.event->ours ? " our cut" : " given hit") + ": gone after the hit (+" +
+                          std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + " s)");
+        }
+        it = signs_.erase(it);
+    }
     // The nearest few, a sign with a hit to report first.
     std::vector<std::pair<float, const Sign*>> pick;
     for (const Sign& sign : signs) {

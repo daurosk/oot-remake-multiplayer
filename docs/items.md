@@ -76,8 +76,9 @@ The game's own get scene sets the capacity and the starting ammo with the item. 
 | Nut bag small / medium / large | DekuNut 20 / 30 / 40 | filled to it | `IsGet.Item_DekuNut` (small) |
 | Stick bag small / medium / large | DekuStick 10 / 20 / 30 | filled to it | `IsGet.Item_DekuStick` (small) |
 | Wallet small / medium | Rupee 200 / 500 | none | |
+| `IsGet.Item_DekuStick` / `IsGet.Item_DekuNut` (the other player's first stick or nut pickup) | DekuStick 10 / DekuNut 20 | none | |
 
-A value already at or above the floor is left alone, so nothing is taken away. A game that gets the item itself is left to the game. The ammo stays per player afterwards: only this one fill is written. The large wallet is left out (its size is not known). Not checked in a game: that the game reads the capacity from these flags (the cheat that sets them, `LICHII_COOP_OBJECTS_CHEAT`, gave working bombs), and the sizes of the remake's bags beyond the ones in the table above.
+A value already at or above the floor is left alone, so nothing is taken away. An item a game already holds gets its capacity again on every write of it through the store (ammo only for a new item): a save that got a shared item with room for 0 (test5, issue 138: sticks and seeds that could not be picked up) is mended by the snapshot when it joins. A game that gets the item itself is left to the game. The ammo stays per player afterwards: only this one fill is written. The large wallet is left out (its size is not known). Not checked in a game: that the game reads the capacity from these flags (the cheat that sets them, `LICHII_COOP_OBJECTS_CHEAT`, gave working bombs), and the sizes of the remake's bags beyond the ones in the table above.
 
 ## Pouch items
 

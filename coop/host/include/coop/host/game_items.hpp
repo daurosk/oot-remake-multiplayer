@@ -70,7 +70,7 @@ std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t l
 // code: Slingshot and Bow come with 30 and the small bag or quiver, a bag
 // upgrade fills the new capacity.
 struct ItemGrant {
-  std::uint32_t item;       // the item's PouchData.<item>.StockNum hash
+  std::uint32_t item;       // the item's PouchData.<item>.StockNum hash, or IsGet.<item>
   std::string_view name;    // the granted flag's name in the game
   std::uint32_t hash;       // the granted flag's hash
   protocol::FlagKind kind;  // boolean or int32
@@ -100,10 +100,11 @@ class ItemFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override;
   // A named count item (ItemRule::count).
   bool is_count(FlagKey key) override;
-  // An int item merged from 0 (or less) to 1 or more in the game also raises
-  // its grants (item_grants) to their floor, per-player flags included.
-  // Only writes through this store do that; the game's own gets are left
-  // to the game.
+  // An item merged from 0 (or less, or false) to 1 or more (true) in the
+  // game also raises its grants (item_grants) to their floor, per-player
+  // flags included. An item the game holds already gets its capacity grants
+  // only (mends a game that got it without them). Only writes through this
+  // store do that; the game's own gets are left to the game.
 
   struct Stats {
     std::uint64_t merged = 0;   // item writes that changed the game's value
@@ -115,7 +116,7 @@ class ItemFlagStore final : public FlagStore {
   const Stats& stats() const { return stats_; }
 
  private:
-  void grant(std::uint32_t item);
+  void grant(std::uint32_t item, bool new_item);
 
   FlagStore& inner_;
   Stats stats_;

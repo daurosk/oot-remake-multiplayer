@@ -27,6 +27,20 @@ bool blank_name(const std::string& name) {
   return std::all_of(name.begin(), name.end(), [](char ch) { return ch == ' '; });
 }
 
+
+// For the server's window when a game of another protocol version is refused:
+// which side is out of date, and what to do about it.
+std::string version_note(std::uint16_t theirs) {
+  const std::string other = std::to_string(theirs);
+  const std::string mine = std::to_string(kProtocolVersion);
+  if (theirs < kProtocolVersion) {
+    return "the game speaks protocol " + other + ", older than this server's " + mine +
+           ": that player runs Update.bat in their kit";
+  }
+  return "the game speaks protocol " + other + ", newer than this server's " + mine +
+         ": run Update.bat in this kit (the host's)";
+}
+
 }  // namespace
 
 std::uint64_t Stats::dropped() const {
@@ -77,7 +91,7 @@ void Session::received(ConnectionId id, std::uint8_t channel,
   if (c.state == State::awaiting_hello) {
     if (auto version = hello_protocol_version(bytes);
         version && *version != kProtocolVersion) {
-      refuse(id, c, RefuseReason::wrong_protocol_version, now_us);
+      refuse(id, c, RefuseReason::wrong_protocol_version, now_us, version_note(*version));
       return;
     }
   }
@@ -108,7 +122,9 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
     expected = player_count() == 0 ? hello.game_build_id : session_game_build_;
   }
   if (auto reason = check_hello(hello, expected)) {
-    refuse(id, c, *reason, now_us);
+    refuse(id, c, *reason, now_us,
+           *reason == RefuseReason::wrong_protocol_version ? version_note(hello.protocol_version)
+                                                           : std::string());
     return;
   }
   if (blank_name(hello.nickname)) {
@@ -582,12 +598,13 @@ bool Session::within_rate(Connection& c, std::uint8_t channel, std::uint64_t now
 }
 
 void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason,
-                     std::uint64_t now_us) {
+                     std::uint64_t now_us, const std::string& why) {
   send(id, kChannelSession, Refused{reason});
   actions_.push_back(DisconnectAction{id});
   c.state = State::closing;
   c.refused_at = now_us;
-  log("refused a connection, reason " + std::to_string(static_cast<int>(reason)));
+  log("refused a connection, reason " + std::to_string(static_cast<int>(reason)) +
+      (why.empty() ? std::string() : ": " + why));
 }
 
 void Session::disconnected(ConnectionId id, std::uint64_t now_us) {

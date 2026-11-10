@@ -1,0 +1,5 @@
+# stray: A walks back down the path out of the Graveyard; Kakariko loads.
+mark start
+stick 0 -1 120
+wait 480
+mark kakariko

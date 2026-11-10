@@ -1,0 +1,5 @@
+# stray: A, just in from the Graveyard gate passage, walks back into it; the Graveyard loads.
+mark start
+stick 0 -1 150
+wait 480
+mark graveyard

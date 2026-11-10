@@ -100,6 +100,7 @@ enum class Kind {
     toward,
     warp,    // test only: scene change
     give,    // test only: an item
+    wear,    // test only: a PlayerStatus.Equip* flag (what the puppets in other games wear)
 };
 
 struct Step {
@@ -108,8 +109,8 @@ struct Step {
     std::uint64_t buttons = 0;
     std::optional<Stick> left;   // unset: the real stick
     std::optional<Stick> right;
-    std::string mark;  // mark: its name; warp: the scene; give: the item
-    std::string start; // warp: the start position name (empty: the scene's own)
+    std::string mark;  // mark: its name; warp: the scene; give: the item; wear: the piece
+    std::string start; // warp: the start position name (empty: the scene's own); wear: the slot
     float x = 0.0f;  // goto and toward: the world point (x, z)
     float z = 0.0f;
     float radius = 1.0f;
@@ -123,6 +124,10 @@ struct Script {
 // Reads a script. On a bad line returns nothing and sets `error` to
 // "line N: why".
 std::optional<Script> Parse(std::string_view text, std::string& error);
+
+// wear SLOT: the PlayerStatus flag name for weapon, shield, head, armor or
+// boots (any case), e.g. "EquipHeadArmor"; nothing for another word.
+std::optional<std::string> WearFlag(std::string_view slot);
 
 // What the pad gets now.
 struct Output {

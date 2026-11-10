@@ -267,7 +267,9 @@ It writes `..\coop-kit\oot-coop-<yyyymmdd-hhmm>\` and a zip of it beside the mai
 | `-IncludePdb` | Adds `lichii.pdb` (about 60 MB) for crash dumps with symbols. |
 | `-NoZip` | No zip. |
 
-It refuses an emulator built without co-op and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
+It refuses an emulator built without co-op, one that has Fritchii's own updater (build with `-DENABLE_UPDATE_CHECKER=OFF`: that updater would offer a plain Fritchii in place of the co-op one) and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. With the zip it writes `<zip>.sha256` and copies `Update.bat` beside it. A release gets all three as assets: `Update.bat` checks a download against the `.sha256` and refuses a release without one, and the standalone `Update.bat` is how a kit from before the updater (v0.1.0-test2) gets it ([setup.md, Updating](setup.md#updating)). The kit's `MANIFEST.txt` lists its own files, so the next update can remove the ones a newer kit drops. Tests of the updater: `powershell -File tools\release\tests\update_test.ps1` (CI runs them).
+
+To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
 
 ## Automatic tests
 
@@ -286,6 +288,23 @@ What it does:
 
 The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`. Give them as one comma list, `-Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS_CHEAT=1"`: with `powershell -File` that is how several arrive anyway (before 2026-11-09 such a list was set as one wrong variable, so the switches were silently off). The list replaces the default, and the runner prints each switch it sets.
 
+### Steps files
+
+A scenario can instead be `scenarios\<name>.steps.txt`, which drives both games and the server step by step, for tests where a game quits, crashes or joins late. One command a line (`#` starts a comment):
+
+| Line | Does |
+|---|---|
+| `start A B` | boots the games named (again), waits until each has joined; an earlier log of that game is kept as `eden_log-<x>-<n>.txt` |
+| `load A B` | plays `load.txt` in the games named (title screen to the save) |
+| `play A file.txt B file.txt` | plays those input scripts and waits for both |
+| `close B` / `kill B` | closes B's window (it leaves the server) / ends it at once (a crash) |
+| `server stop` / `server start` | the server goes away / comes back on the same port |
+| `sleep 10` | seconds |
+| `expect name A=1 B=0` | waits up to `-ExpectWait` seconds (default 30) until each game named has that many puppets (`CoopPuppet_*`) and as many puppet fairies (`Dm_Npc_Navi`) alive, counted from the objects debug lines (`LICHII_COOP_DEBUG_OBJECTS=1`, on by default); writes PASS or FAIL to `counts.txt` and takes a screenshot. A FAIL does not stop the test; at the end `FAILED.txt` says how many failed |
+| `shot name` | a screenshot of both |
+
+`stray` (checked 2026-11-09 on main c8ea805: 9 of 9 counts right) loads both games into the Graveyard, sends A to Kakariko and back, then has B quit, join late, crash and rejoin, stops and restarts the server, and brings B back as adult Link; at each step it checks that no puppet or fairy is left where it should not be.
+
 ### Input scripts
 
 The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([coop_testinput.h](../lichii/hook/coop_testinput.h)). It looks at the file about twice a second; each time the file changes, it plays it from the start into player 1's pad, on top of the real keyboard. The window needs no focus. Time is counted in ticks of 1/60 s of real time.
@@ -302,6 +321,7 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 | `toward X Z 8 [KEYS]` | push the stick toward that point for 8 ticks, with buttons if given: Link turns to face it |
 | `warp KakarikoVillage_Child Kakariko_WellSide` | test only: changes scene the game's own way (the String64 flag `Sequence_ReservedNextBanc`, and `Sequence_ReservedNextStartPosName` for the start position, a `StartPos` name in the scene's Banc). The game takes it only during an event, such as the one right after a save loads, so a warp scenario loads the save itself (run with `-NoLoad`) and asks for the warp first; the hook asks again every 0.5 s until Link is in that scene (up to 90 s) and logs `coop: test warp done`. A scene ending in `_Adult` or `_Child` also sets the bool `Sequence_IsChildhood` (false or true) through the game's queue, to load Link at that age |
 | `give bombs` | test only: gives `bombs`, `bow`, `hookshot` or any item flag `coop_cheats` knows (needs `LICHII_COOP_CHEATS=1` in `-Switches`) |
+| `wear head Armor_Child_Mask_Keaton` | test only: sets this game's `PlayerStatus.Equip*` flag for `weapon`, `shield`, `head`, `armor` or `boots` ([items.md](items.md)). Only the flag changes, not this game's Link; the other games' puppets wear it (scenario `wear`) |
 | `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
 
 `goto` and `toward` steer from Link's position and the game camera's ground directions (from its world-to-clip matrix), read each frame; a push that gets nowhere for a second steps aside. Positions are the ones the objects debug log prints (`at x y z`, y is height), or the `Translate` of a placement in the romfs Banc files.

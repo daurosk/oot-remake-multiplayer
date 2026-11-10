@@ -264,6 +264,28 @@ std::uint64_t FindPlayer(CoopPuppet::Guest& guest, std::uint64_t main_base) {
     return 0;
 }
 
+bool CopySkeleton(CoopPuppet::Guest& guest, std::uint64_t from, std::uint64_t to,
+                  std::string* note) {
+    const auto a = FindSkeleton(guest, from);
+    const auto b = FindSkeleton(guest, to);
+    if (!a || !b) {
+        if (note) *note = !a ? "no skeleton on the source" : "no skeleton on the target";
+        return false;
+    }
+    if (note) {
+        *note = a->model + " " + std::to_string(a->count) + " bones -> " + b->model + " " +
+                std::to_string(b->count) + " bones";
+    }
+    if (a->count != b->count) return false;
+    std::vector<LocalMtx> bones(a->count);
+    const std::size_t size = bones.size() * sizeof(LocalMtx);
+    if (!guest.Read(a->local, bones.data(), size)) return false;
+    for (const LocalMtx& m : bones) {
+        if (!std::isfinite(m.rows[0]) || !std::isfinite(m.translation[0])) return false;
+    }
+    return guest.Write(b->local, bones.data(), size);
+}
+
 namespace {
 
 bool Moved(const float* a, const float* b, std::size_t n) {

@@ -283,6 +283,31 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::create:
         Say(who + ": create " + slot.actor_name + " requested (returned " +
             Hex(result & 0xffffffff) + "), handle slot " + Hex(slot.handle));
+        if ((result & 0xffffffff) != 0) {
+            slot.refused = 0;
+            break;
+        }
+        // Refused (seen right after a load deleted the puppet, while the old
+        // scene goes): the handle stayed empty and nothing was made, so ask
+        // again soon. Should the game have queued a request after all, wait
+        // for it as for any create, so there are never two.
+        if (std::uint64_t queued = 0; ReadValue(guest, slot.handle, queued) && queued != 0) {
+            break;
+        }
+        ++slot.refused;
+        slot.phase = Phase::idle;
+        if (slot.refused < kRefusedFast) {
+            slot.retry_ms = now_ms + kRefusedRetryMs;
+            if (slot.refused == 1) {
+                Say(who + ": create refused; trying again each second");
+            }
+        } else {
+            slot.retry_ms = now_ms + kRefusedSlowMs;
+            if (slot.refused == kRefusedFast) {
+                Say(who + ": create refused " + std::to_string(kRefusedFast) +
+                    " times; trying again every 5 s");
+            }
+        }
         break;
     case Pending::take:
         slot.take = false;
@@ -552,6 +577,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.hold_known = 0;
     slot.hold_retry_ms = 0;
     slot.hold_id = {};
+    slot.far_since_ms = {};
+    slot.rewear_tries = {};
     pending_ = Pending::create;
     return c;
 }
@@ -719,13 +746,35 @@ void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
                                     (at[1] - own[1]) * (at[1] - own[1]) +
                                     (at[2] - own[2]) * (at[2] - own[2]));
         if (!(far > kGearFar)) {
+            slot.far_since_ms[i] = 0;
+            slot.rewear_tries[i] = 0;  // where it belongs: a later miss may try again
+            continue;
+        }
+        // Far on one reading may be a piece one frame behind a puppet that
+        // jumped: it must still be far a moment later.
+        if (slot.far_since_ms[i] == 0) {
+            slot.far_since_ms[i] = now_ms;
+            continue;
+        }
+        if (now_ms - slot.far_since_ms[i] < kFarForMs) {
             continue;
         }
         char text[32];
         std::snprintf(text, sizeof(text), "%.1f", static_cast<double>(far));
-        Say("P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + slot.worn[i] +
-            "' left behind (" + text + " away): worn again");
+        const std::string what =
+            "P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + slot.worn[i] + "'";
+        if (slot.rewear_tries[i] >= kRewearTries) {
+            if (slot.rewear_tries[i] == kRewearTries) {
+                Say(what + " still left behind (" + text + " away) after " +
+                    std::to_string(kRewearTries) + " tries: given up");
+                ++slot.rewear_tries[i];
+            }
+            continue;
+        }
+        ++slot.rewear_tries[i];
+        Say(what + " left behind (" + text + " away): worn again");
         slot.worn[i].clear();
+        slot.far_since_ms[i] = 0;
         slot.rewear_ms = now_ms + kRewearMs;
     }
 }

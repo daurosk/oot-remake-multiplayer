@@ -1,0 +1,15 @@
+# fairy: A walks off the cow and stands by B, then walks a slow loop and
+# back. B stands still and takes a burst of screenshots: the puppet's fairy
+# should flap (wing pose changes between frames), glow and follow A.
+stick 1 0 50            # off the cow at the save spot
+wait 240
+mark a-still
+wait 300
+stick 0 0.4 90          # a slow walk forward
+mark a-walked
+stick 1 0 40
+stick 0 -0.4 90         # and back
+mark a-back
+stick -1 0 40
+wait 240
+mark a-end

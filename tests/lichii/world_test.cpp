@@ -1136,42 +1136,100 @@ TEST_CASE("sign probe: a given hit, a hit with no copy before it, a far sign") {
     CHECK(q.Look(read, {sign}, near, 3600 * kMs).empty());
 }
 
-TEST_CASE("sign probe: WorldSync gives it our swing and another player's hit") {
+TEST_CASE("sign cut: our cut's words go out as SIGN_CUT and are written into the other game's sign") {
     const char* name = "Obj_GuidePost_A_02";
     FakeSign mem;
     auto read = [&mem](std::uint64_t a) { return mem(a); };
     WorldSync w;
+    WorldSync::Out out;
     Walk(w, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    CHECK(w.ProbeSigns(read, 1000 * kMs).empty());
-    mem.words[FakeSign::kCut + 0x40] = 1;
+    w.ProbeSigns(read, 1000 * kMs, out);
+    CHECK(out.send.empty());
+    // The cut: a flag and a point in a component, a piece's transform, the Life hit record, a heap pointer.
+    mem.words[FakeSign::kCut + 0x18] = 0x800c000080f3;
+    mem.words[FakeSign::kCut + 0x98] = 0x42ccd1dec0f55bf7;  // was 0: a point, kept
+    mem.words[FakeSign::kCut + 0x30] = 0x3e13b645;
+    mem.words[FakeSign::kCut + 0x20] = 0x214ba36b18;         // a heap pointer: not portable
+    mem.words[FakeSign::kLife + 0x1f8] = 0x4004000000060001;  // the hit record
+    mem.words[FakeSign::kCut + 0x128] = 0x42cd0edac0ee8696;   // a transform...
     const float nan = std::numeric_limits<float>::quiet_NaN();
     proto::GrassCut swing;
     swing.scene = kScene;
     swing.position = {1.2f, 3.0f, 3.4f};
     swing.radius = 0.5f;
     swing.sweep = {proto::Vec3{1.2f, 3.1f, 3.4f}, proto::Vec3{nan, nan, nan}, proto::Vec3{nan, nan, nan}};
-    WorldSync::Out out;
     w.Swing(swing, kLink, 1400 * kMs, out);
     REQUIRE(Sent<proto::WorldHit>(out).size() == 1);
+    proto::WorldHit hit = Sent<proto::WorldHit>(out)[0];
+    // (...that was a transform before too)
+    out = {};
     Walk(w, 1900 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    auto lines = w.ProbeSigns(read, 1900 * kMs);
-    REQUIRE(lines.size() == 1);
-    CHECK(lines[0].find("our cut +0.5 s: 1 words changed: c+0x10+0x40:0>1") != std::string::npos);
+    w.ProbeSigns(read, 1900 * kMs, out);
+    REQUIRE(Sent<proto::SignCut>(out).size() == 1);
+    proto::SignCut cut = Sent<proto::SignCut>(out)[0];
+    CHECK(cut.scene == kScene);
+    CHECK(cut.hash == 0x70);
+    const std::uint64_t entry = 2 + 0x10 / 8;  // table +0x10: kCut
+    REQUIRE(cut.words.size() == 4);
+    CHECK(cut.words[0] == proto::SignWord{(entry << 32) | 0x18, 0x800c000080f3});
+    CHECK(cut.words[1] == proto::SignWord{(entry << 32) | 0x30, 0x3e13b645});
+    CHECK(cut.words[2] == proto::SignWord{(entry << 32) | 0x98, 0x42ccd1dec0f55bf7});
+    CHECK(cut.words[3] == proto::SignWord{(entry << 32) | 0x128, 0x42cd0edac0ee8696});  // was 0: not a move
+    CHECK(proto::encode(proto::Message{cut}).has_value());
+    bool noted = false;
+    for (const auto& n : out.notes) {
+        noted = noted || n.find("Obj_GuidePost_A_02 cut here: 4 words sent") != std::string::npos;
+    }
+    CHECK(noted);
+    // Only once: the +2 s lines send nothing.
+    out = {};
+    w.ProbeSigns(read, 3500 * kMs, out);
+    CHECK(out.send.empty());
 
-    // The other game: the given hit starts the probe there.
-    FakeSign other;
-    auto read_b = [&other](std::uint64_t a) { return other(a); };
+    // The other game: the hit first, the words 0.2 s after it.
     WorldSync b;
-    Walk(b, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    CHECK(b.ProbeSigns(read_b, 1000 * kMs).empty());
-    proto::WorldHit got = Sent<proto::WorldHit>(out)[0];
-    got.player_number = 1;
-    b.Receive(got);
-    REQUIRE(Walk(b, 1500 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).hits.size() == 1);
-    CHECK(b.ProbeSigns(read_b, 1500 * kMs).empty());
-    other.words[FakeSign::kCut + 0x40] = 1;  // the replayed hit cut it the same way
-    Walk(b, 2000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    lines = b.ProbeSigns(read_b, 2000 * kMs);
-    REQUIRE(lines.size() == 1);
-    CHECK(lines[0].find("given hit +0.5 s: 1 words changed: c+0x10+0x40:0>1") != std::string::npos);
+    Walk(b, 1000 * kMs, {Thing(0x900, 0x70, 100, name)});
+    hit.player_number = 1;
+    cut.player_number = 1;
+    b.Receive(hit);
+    b.Receive(cut);
+    auto step = Walk(b, 1500 * kMs, {Thing(0x900, 0x70, 100, name)});
+    CHECK(step.hits.size() == 1);
+    CHECK(step.words.empty());
+    CHECK(Walk(b, 1600 * kMs, {Thing(0x900, 0x70, 100, name)}).words.empty());
+    step = Walk(b, 1700 * kMs, {Thing(0x900, 0x70, 100, name)});
+    REQUIRE(step.words.size() == 4);
+    CHECK(step.words[0].address == 0x900);
+    CHECK(step.words[0].key == cut.words[0].key);
+    CHECK(step.words[0].value == cut.words[0].value);
+    CHECK(Walk(b, 1800 * kMs, {Thing(0x900, 0x70, 100, name)}).words.empty());  // once
+
+    // A game entering later gets the words (no hit): written once the sign is loaded.
+    WorldSync c;
+    Walk(c, 1000 * kMs, {});
+    c.Receive(cut);
+    CHECK(Walk(c, 1100 * kMs, {Thing(0x500, 0x70, 100, name)}).words.empty());  // just loaded
+    CHECK(Walk(c, 1400 * kMs, {Thing(0x500, 0x70, 100, name)}).words.size() == 4);
+}
+
+TEST_CASE("sign cut: the message checks its words") {
+    proto::SignCut m;
+    m.player_number = 1;
+    m.scene = kScene;
+    m.hash = 0x70;
+    CHECK_FALSE(proto::encode(proto::Message{m}).has_value());  // no words
+    m.words = {{(4ull << 32) | 0x18, 1}};
+    const auto bytes = proto::encode(proto::Message{m});
+    REQUIRE(bytes.has_value());
+    proto::Message back;
+    REQUIRE(proto::decode(*bytes, back) == proto::Error::none);
+    CHECK(std::get<proto::SignCut>(back) == m);
+    CHECK(static_cast<int>(proto::type_of(back)) == 65);
+    for (const std::uint64_t key : {std::uint64_t{0x18}, (1ull << 32) | 0x18, (4ull << 32) | 0x1c,
+                                    (4ull << 32) | 0x200, (0x62ull << 32)}) {
+        m.words = {{key, 1}};
+        CHECK_FALSE(proto::encode(proto::Message{m}).has_value());
+    }
+    m.words.assign(proto::kMaxSignCutWords + 1, {(4ull << 32) | 0x18, 1});
+    CHECK_FALSE(proto::encode(proto::Message{m}).has_value());
 }

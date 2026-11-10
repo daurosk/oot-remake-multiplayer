@@ -82,10 +82,19 @@ public:
     // player's hit given to it.
     void Hit(const Sign& sign, bool ours, std::uint64_t now_us);
 
-    // Once per objects walk with the signs the walk saw. Returns log lines.
+    // Our own cut of a sign (the first lines after the hit): the words it
+    // changed, for SIGN_CUT.
+    struct Cut {
+        std::uint64_t address = 0;
+        std::uint64_t hash = 0;
+        std::vector<coop::protocol::SignWord> words;
+    };
+
+    // Once per objects walk with the signs the walk saw. Returns log lines;
+    // our cuts go to `cuts` when given.
     std::vector<std::string> Look(const ReadWord& read, const std::vector<Sign>& signs,
                                   const std::optional<coop::protocol::Vec3>& player,
-                                  std::uint64_t now_us);
+                                  std::uint64_t now_us, std::vector<Cut>* cuts = nullptr);
 
     void Reset();
 
@@ -114,6 +123,11 @@ private:
     };
 
     static Snapshot Read(const ReadWord& read, std::uint64_t address);
+    // What of a cut can be written into another game's sign: component
+    // words (not the Life hit record, not counters seen before the hit),
+    // no heap pointers, no transforms of the pieces.
+    static std::vector<coop::protocol::SignWord> CutWords(const Snapshot& before, const Snapshot& now,
+                                                          const std::set<std::uint64_t>& noisy);
     std::string Report(const State& s, const Event& e, const Snapshot& now, std::uint64_t after_us);
 
     std::map<std::uint64_t, State> signs_;  // by actor address
@@ -161,6 +175,7 @@ public:
     static constexpr float kSignHighM = 2.5f;   // and no more than this above or below its foot
     static constexpr std::uint64_t kHitEveryUs = 300'000;  // per sign
     static constexpr std::uint64_t kHitWaitUs = 300'000;   // a sign just loaded is hit this late
+    static constexpr std::uint64_t kCutAfterHitUs = 200'000;  // cut words this long after its hit
 
     struct Out {
         std::vector<coop::protocol::Message> send;
@@ -173,6 +188,14 @@ public:
             coop::protocol::Vec3 from{};
         };
         std::vector<Hit> hits;
+        // Words of another player's cut to write into our sign (SIGN_CUT):
+        // component table entry (key >> 32) - 2, byte offset key & 0xffffffff.
+        struct Word {
+            std::uint64_t address = 0;  // the actor
+            std::uint64_t key = 0;
+            std::uint64_t value = 0;
+        };
+        std::vector<Word> words;
         std::vector<std::string> notes;  // log lines
     };
 
@@ -199,8 +222,8 @@ public:
     std::vector<std::uint64_t> Removes() const;
 
     // Present thread, after Swing: the sign probe (SignProbe) on the signs of
-    // the last Tick. Returns log lines.
-    std::vector<std::string> ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us);
+    // the last Tick. Our own cut's words go out as SIGN_CUT.
+    void ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us, Out& out);
 
     void Reset();
 
@@ -236,6 +259,7 @@ private:
         bool grass = false;
         bool sign = false;
         std::uint64_t hit_sent_us = 0;
+        std::uint64_t hit_given_us = 0;
         std::optional<std::int32_t> life;
         coop::protocol::Vec3 position{};
         std::optional<CoopObjects::Mat3> rotation;
@@ -278,6 +302,8 @@ private:
     std::vector<Gone> gone_;
     // Hits for signs, until our copy is there to take them (by hash).
     std::map<std::uint64_t, std::vector<std::pair<coop::protocol::Vec3, coop::protocol::Vec3>>> hits_;
+    // Another player's cut words for signs (SIGN_CUT), until our copy is there (by hash).
+    std::map<std::uint64_t, std::vector<coop::protocol::SignWord>> cuts_;
     std::vector<std::pair<std::uint64_t, bool>> went_;  // (time, far) of everything that left lately
     std::vector<coop::protocol::Message> early_;  // for a scene we are not in yet
     std::uint8_t self_ = 0;

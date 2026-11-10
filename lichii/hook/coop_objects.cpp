@@ -877,6 +877,7 @@ public:
                 send.emplace_back(std::move(m));
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            sign_words_ = std::move(world.words);  // written after the probe's look
             if (!world.hits.empty()) {
                 // A sign another player's sword passed: the same hit on ours.
                 u64 link = 0;
@@ -927,10 +928,27 @@ public:
         for (const auto& note : TheGrass().TakeNotes()) {
             LOG_INFO(Core, "coop: {}", note);
         }
-        // Sign probe (issue 90, docs/world.md "Signs: the probe"): what a cut changes.
-        for (const auto& note : world_.ProbeSigns(
-                 [&r](u64 address) { return r.Get<u64>(address); }, server_now_us)) {
-            LOG_INFO(Core, "coop: {}", note);
+        // Signs (issue 90, docs/world.md "Signs"): the probe; our cut's words
+        // go out (SIGN_CUT), another player's are written into our sign.
+        {
+            CoopWorld::WorldSync::Out signs;
+            world_.ProbeSigns([&r](u64 address) { return r.Get<u64>(address); }, server_now_us,
+                              signs);
+            for (auto& m : signs.send) {
+                send.emplace_back(std::move(m));
+            }
+            for (const auto& note : signs.notes) {
+                LOG_INFO(Core, "coop: {}", note);
+            }
+            for (const auto& w : sign_words_) {
+                const auto table = r.Ptr(w.address + kActorComponents);
+                const auto part = table ? r.Ptr(*table + 8 * ((w.key >> 32) - 2)) : std::nullopt;
+                const u64 at = part ? *part + (w.key & 0xffffffffu) : 0;
+                if (at != 0 && r.Get<u64>(at)) {
+                    memory_->Write64(at, w.value);
+                }
+            }
+            sign_words_.clear();
         }
         if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
             grass_made_logged_ = made;
@@ -1023,6 +1041,7 @@ public:
         } else if (std::holds_alternative<coop::protocol::WorldBreak>(m) ||
                    std::holds_alternative<coop::protocol::WorldPlace>(m) ||
                    std::holds_alternative<coop::protocol::WorldHit>(m) ||
+                   std::holds_alternative<coop::protocol::SignCut>(m) ||
                    std::holds_alternative<coop::protocol::WorldMove>(m)) {
             if (const auto* b = std::get_if<coop::protocol::WorldBreak>(&m)) {
                 LOG_INFO(Core, "coop: world: got break {:#x} from P{} in {}{}", b->hash,
@@ -1040,6 +1059,7 @@ public:
     bool debug_ = false;
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
+    std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     int world_lines_ = 0;
     CoopWorld::FoliageProbe foliage_;

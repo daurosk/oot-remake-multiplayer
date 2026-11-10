@@ -141,6 +141,9 @@ const std::string* SceneOfMessage(const proto::Message& m) {
     if (const auto* h = std::get_if<proto::WorldHit>(&m)) {
         return &h->scene;
     }
+    if (const auto* c = std::get_if<proto::SignCut>(&m)) {
+        return &c->scene;
+    }
     return nullptr;
 }
 
@@ -183,6 +186,7 @@ void WorldSync::Reset() {
     gone_.clear();
     went_.clear();
     hits_.clear();
+    cuts_.clear();
     early_.clear();
     player_.reset();
     probe_.Reset();
@@ -268,6 +272,8 @@ void WorldSync::Drain(std::uint64_t now_us) {
             if (waiting.size() < proto::kMaxWorldHitsPerObject) {
                 waiting.emplace_back(h->at, h->from);
             }
+        } else if (const auto* c = std::get_if<proto::SignCut>(&m)) {
+            cuts_[c->hash] = c->words;
         } else if (const auto* p = std::get_if<proto::WorldPlace>(&m)) {
             Remote& r = remote_[p->hash];
             r.place = Sample{now_us, p->position, p->rotation};
@@ -535,6 +541,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         gone_.clear();
         went_.clear();
         hits_.clear();
+        cuts_.clear();
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
             if (*SceneOfMessage(m) == scene_) {
@@ -679,6 +686,19 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                                      o.name, ""));
             probe_.Hit({address, o.hash, o.name, o.position}, false, now_us);
             hits_.erase(waiting);
+            o.hit_given_us = now_us;
+        }
+        // Another player's cut of this sign: its words, once the hits are in.
+        if (const auto cut = cuts_.find(o.hash);
+            cut != cuts_.end() && o.sign && now_us - o.first_us >= kHitWaitUs &&
+            !hits_.contains(o.hash) && now_us - o.hit_given_us >= kCutAfterHitUs) {
+            for (const proto::SignWord& w : cut->second) {
+                out.words.push_back({address, w.key, w.value});
+            }
+            char more[48];
+            std::snprintf(more, sizeof more, ": %zu words written", cut->second.size());
+            out.notes.push_back(Line("world: %016llx %s cut by another player%s", o.hash, o.name, more));
+            cuts_.erase(cut);
         }
         if (const auto b = broken_.find(o.hash); b != broken_.end()) {
             MakeBreak(o, b->second, now_us, out);
@@ -1236,9 +1256,53 @@ std::string SignProbe::Report(const State& s, const Event& e, const Snapshot& no
     return line + tail + (changed > 0 ? ":" : "") + shown;
 }
 
+namespace {
+
+// A guest heap pointer (as the logs show them: 0x21_xxxxxxxx): not portable.
+bool HeapPointer(std::uint64_t v) {
+    return v >= 0x10'0000'0000ull && v < 0x100'0000'0000ull && v % 8 == 0;
+}
+
+// Two floats that are a place or a turn (a body's transform): the pieces
+// fly, a copy of where they were is no cut.
+bool PoseWord(std::uint64_t v) {
+    auto real = [](std::uint32_t bits) {
+        float f;
+        std::memcpy(&f, &bits, sizeof f);
+        const float a = std::fabs(f);
+        return std::isfinite(f) && a >= 1e-4f && a <= 1e6f;
+    };
+    return real(static_cast<std::uint32_t>(v)) && real(static_cast<std::uint32_t>(v >> 32));
+}
+
+} // namespace
+
+std::vector<proto::SignWord> SignProbe::CutWords(const Snapshot& before, const Snapshot& now,
+                                                  const std::set<std::uint64_t>& noisy) {
+    constexpr std::uint64_t kLifeRegion = 2 + 0x2b8 / 8;  // the hit record: the replay's own
+    std::vector<proto::SignWord> out;
+    for (const auto& [key, is] : now) {
+        const std::uint64_t region = key >> 32;
+        if (region < 2 || region == kLifeRegion || region - 2 >= proto::kSignCutEntries ||
+            (key & 0xffffffffu) >= proto::kSignCutBytes || noisy.contains(key)) {
+            continue;
+        }
+        const auto was = before.find(key);
+        if (was == before.end() || was->second == is || HeapPointer(is) ||
+            HeapPointer(was->second) || (PoseWord(is) && PoseWord(was->second))) {
+            continue;
+        }
+        out.push_back({key, is});
+        if (out.size() == proto::kMaxSignCutWords) {
+            break;
+        }
+    }
+    return out;
+}
+
 std::vector<std::string> SignProbe::Look(const ReadWord& read, const std::vector<Sign>& signs,
                                          const std::optional<proto::Vec3>& player,
-                                         std::uint64_t now_us) {
+                                         std::uint64_t now_us, std::vector<Cut>* cuts) {
     std::vector<std::string> out;
     // Forget signs the walk no longer sees. One that went while a hit was
     // still to report is logged: a cut that deletes or replaces the actor.
@@ -1303,6 +1367,12 @@ std::vector<std::string> SignProbe::Look(const ReadWord& read, const std::vector
                 ++lines_;
                 out.push_back(Report(s, e, now, after));
             }
+            if (cuts != nullptr && e.ours && e.reported == 0 && e.base && !now.empty()) {
+                Cut c{sign->address, s.hash, CutWords(e.base->words, now, s.noisy)};
+                if (!c.words.empty()) {
+                    cuts->push_back(std::move(c));
+                }
+            }
             if (++e.reported >= 2) {
                 // After a cut the sign is not what it was: start again.
                 s.event.reset();
@@ -1340,15 +1410,29 @@ void SignProbe::Reset() {
     signs_.clear();
 }
 
-std::vector<std::string> WorldSync::ProbeSigns(const SignProbe::ReadWord& read,
-                                               std::uint64_t now_us) {
+void WorldSync::ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us, Out& out) {
     std::vector<SignProbe::Sign> signs;
     for (const auto& [address, o] : objects_) {
         if (o.sign) {
             signs.push_back({address, o.hash, o.name, o.position});
         }
     }
-    return probe_.Look(read, signs, player_, now_us);
+    std::vector<SignProbe::Cut> cuts;
+    for (std::string& line : probe_.Look(read, signs, player_, now_us, &cuts)) {
+        out.notes.push_back(std::move(line));
+    }
+    for (SignProbe::Cut& c : cuts) {
+        proto::SignCut m;
+        m.scene = scene_;
+        m.hash = c.hash;
+        m.words = std::move(c.words);
+        char more[48];
+        std::snprintf(more, sizeof more, ": %zu words sent", m.words.size());
+        const auto it = objects_.find(c.address);
+        out.notes.push_back(Line("world: %016llx %s cut here%s", c.hash,
+                                 it != objects_.end() ? it->second.name : std::string("?"), more));
+        out.send.emplace_back(std::move(m));
+    }
 }
 
 } // namespace CoopWorld

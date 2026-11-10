@@ -1802,6 +1802,27 @@ TEST_CASE("sword hits on a sign are passed on and the last four kept for those w
   CHECK(got.front().at[0] == 2.0f);
   CHECK(got.front().player_number == 1);
 }
+
+TEST_CASE("a sign's cut words are passed on and the latest kept for those who come later") {
+  ObjectHarness h;
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.clear();
+  SignCut cut;
+  cut.scene = "Kakariko";
+  cut.hash = 0x70;
+  cut.words = {{(4ull << 32) | 0x18, 1}};
+  h.receive(1, cut, kChannelSession);
+  cut.words = {{(4ull << 32) | 0x18, 2}, {(4ull << 32) | 0x20, 3}};
+  h.receive(1, cut, kChannelSession);
+  CHECK(messages_to<SignCut>(h, 2).size() == 2);
+  CHECK(messages_to<SignCut>(h, 1).empty());
+  h.clear();
+  h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
+  const auto got = messages_to<SignCut>(h, 3);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().words.size() == 2);
+  CHECK(got.front().player_number == 1);
+}
 // ------------------------------------------------------ ownership rules
 // docs/objects.md "Enemies": the distance rule, the fight lock, groups, the
 // hand-over that carries the state, and what a player entering a scene gets.

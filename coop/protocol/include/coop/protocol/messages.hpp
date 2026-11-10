@@ -17,7 +17,7 @@ namespace coop::protocol {
 
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
 // (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 5;
+inline constexpr std::uint16_t kProtocolVersion = 6;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -84,6 +84,7 @@ enum class MessageType : std::uint16_t {
   drop_take = 37,
   drop_ask = 38,
   boss_room = 50,  // 50 to 54: boss rooms (docs/dungeons-boss.md)
+  sign_cut = 65,   // 65 to 69: signs (docs/world.md, "Signs")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -821,6 +822,33 @@ struct WorldHit {
   bool operator==(const WorldHit&) const = default;
 };
 
+// SIGN_CUT (docs/world.md, "Signs: the cut words"): the words of a sign's
+// components that the sender's own sword cut changed (the sign probe saw
+// them), with their new values. A replayed hit gives the others' sign the
+// hit reaction but not the cut, which the blade's contact makes: so the
+// cut itself is written. A key is (2 + component table entry) << 32 | byte
+// offset in that component (as SignProbe::Where), an entry below
+// kSignCutEntries and an offset below kSignCutBytes, a multiple of 8. The
+// server keeps the latest of each sign per scene for a player who enters
+// later.
+inline constexpr std::size_t kMaxSignCutWords = 48;
+inline constexpr std::uint64_t kSignCutEntries = 0x60;  // table +0..+0x300
+inline constexpr std::uint64_t kSignCutBytes = 0x200;   // of each component
+
+struct SignWord {
+  std::uint64_t key = 0;
+  std::uint64_t value = 0;
+  bool operator==(const SignWord&) const = default;
+};
+
+struct SignCut {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  std::vector<SignWord> words;  // 1 to kMaxSignCutWords, keys as above
+  bool operator==(const SignCut&) const = default;
+};
+
 // Shared drops (docs/objects.md, "Drops"): the rupees, hearts and ammo an
 // enemy, a pot, grass or a rock leaves. Every game announces the drops its
 // own game rolls with DROP_SPAWN; where two games rolled for the same thing
@@ -893,7 +921,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
-                             DropAsk, BossRoom>;
+                             DropAsk, BossRoom, SignCut>;
 
 MessageType type_of(const Message& message);
 

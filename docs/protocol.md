@@ -256,8 +256,9 @@ Placed breakables and movables, by placement hash ([world.md](world.md), "Broken
 | 33 | `WORLD_MOVE` | 4 | both | `u64` server time, 3 x `f32` position, 4 x `f32` rotation (unit quaternion x y z w), `u8` flags (bit 0: carried) |
 | 34 | `WORLD_PLACE` | 0 | both | 3 x `f32` position, 4 x `f32` rotation |
 | 35 | `WORLD_HIT` | 0 | both | 3 x `f32` where the sword was, 3 x `f32` where the player stood (a cut sign) |
+| 65 | `SIGN_CUT` | 0 | both | `u8` player, scene, `u64` hash, `u16` count (1 to 48), then count x (`u64` key, `u64` value): the words of the sign's components its cut changed. Key = (2 + component table entry, below 0x60) << 32, ored with the byte offset in that component (below 0x200, a multiple of 8) |
 
-The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one) and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. The last 4 `WORLD_HIT` of each object (at most 128 objects a scene) are kept and sent the same way. Types 29 to 31 are the enemy ownership messages.
+The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one) and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. The last 4 `WORLD_HIT` of each object (at most 128 objects a scene) are kept and sent the same way, and the latest `SIGN_CUT` of each sign (at most 128 a scene) after them. Types 29 to 31 are the enemy ownership messages.
 
 ### Objects (stage 5)
 
@@ -338,4 +339,5 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
 - Version 4 (2026-11-09, for 0.1.0-test4): one bump for all the messages of types 28 to 38: `GRASS_CUT` (28), `OBJECT_GROUP` (29), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35), `DROP_SPAWN`, `DROP_TAKE`, `DROP_ASK` (36 to 38); 30, 31 and 39 are kept free. No earlier layout changed. The version went up because the server now sends `HANDOVER_ASK` and moves objects between players, which a version 3 game does not answer, and so that a version 3 server, which would not relay the new types, is refused at `HELLO`: every game in a session shares grass, breaks and drops, or none does.
+- Version 6 (chunk 4): `SIGN_CUT` (65; 65 to 69 kept for signs). No earlier layout changed. The version went up so that a version 5 server, which would not relay it, is refused at `HELLO`.
 - Version 5 (chunk 2): `BOSS_ROOM` (50). No earlier layout changed. The version went up so that a version 4 game, which would never move into the boss room or leave the intro with the others, is refused at `HELLO`.

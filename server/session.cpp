@@ -241,7 +241,8 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     return;
   }
   if (std::holds_alternative<WorldBreak>(message) || std::holds_alternative<WorldMove>(message) ||
-      std::holds_alternative<WorldPlace>(message) || std::holds_alternative<WorldHit>(message)) {
+      std::holds_alternative<WorldPlace>(message) || std::holds_alternative<WorldHit>(message) ||
+      std::holds_alternative<SignCut>(message)) {
     on_world(id, c, channel, message, now_us);
     return;
   }
@@ -771,6 +772,13 @@ void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Mes
     }
     world_.on_hit(*h);
     send_to_scene(h->scene, id, channel, message);
+  } else if (auto* k = std::get_if<SignCut>(&message)) {
+    if (!scene_has_player(k->scene)) {
+      ++stats_.world_unkept;
+      return;
+    }
+    world_.on_sign_cut(*k);
+    send_to_scene(k->scene, id, channel, message);
   } else if (auto* v = std::get_if<WorldMove>(&message)) {
     if (v->scene != c.scene) return;  // late, from the scene it left
     send_to_scene(v->scene, id, channel, message);

@@ -69,13 +69,13 @@ FIXED_COMPONENTS = {
 DROP_INFO_FIELDS = ("ActorName", "ELinkUserName", "SLinkUserName")
 # Always calculated while loaded: the puppet is wherever its player is.
 INFO_OVERRIDES = {"CalcRadius": 100000.0, "CoreUsedLevel": byml.UInt(0)}
-# The row whose InstanceHeapSize caps the puppet's. Player_Adult asks 10,245,064 bytes (input,
-# physics, AI and the adult's items), more than any ordinary actor in the game (the largest is
-# 8,886,792); the game's create of CoopPuppet_Adult with that size wrote its new object at address 0
-# and dropped the request every time (issue 111). Player_Base (the adult model and animations, the
-# player's components) asks 6,012,792; Dark Link, the same model with AI and physics, 5,723,776.
-# The child's 5,692,448 is below the cap and stays as it was (proven in game).
-HEAP_CAP_ROW = "Player_Base"
+# The puppet's ActorParam is the player's merged with its $parent, Player_Base, in one file. The
+# game parses an ActorParam in a heap of its size-table entry, and the player's entry is sized for
+# its own file only: Player_Adult's ActorParam is a 776-byte stub (entry 6,232) and Player_Base's
+# has its own entry (13,336). With the player's entry alone the adult puppet's 1,508-byte file ran
+# out of heap: the 0x98-byte engine__actor__ActorParam object (factory main+0x9a9300) got a null
+# pointer and every create was dropped (issue 111). The puppet's entry is the sum of both.
+AP_PARENT = "Player_Base"
 
 # Room left in a size-table entry above the bytes we wrote.
 PACK_SIZE_MARGIN = 0x1000
@@ -223,19 +223,14 @@ def _num(v):
     return v.v if isinstance(v, byml._Num) else v
 
 
-def info_row(player_row, actor, heap_cap=None, heap=None):
-    """The puppet's ActorInfo row. `heap`, when given, sets InstanceHeapSize outright (a test
-    switch, `--heap`); otherwise the player's is capped at `heap_cap`."""
+def info_row(player_row, actor, heap=None):
+    """The puppet's ActorInfo row: the player's, less its player-only fields. `heap`, when given,
+    sets InstanceHeapSize (a test switch, `--heap`), keeping the field's BYML type."""
     row = {k: v for k, v in player_row.items() if k not in DROP_INFO_FIELDS}
     row.update(INFO_OVERRIDES)
     if heap is not None:
         old = row.get("InstanceHeapSize")
-        row["InstanceHeapSize"] = type(old)(heap) if isinstance(old, byml._Num) else int(heap)
-        return row
-    heap = row.get("InstanceHeapSize")
-    if heap_cap is not None and heap is not None and _num(heap) > _num(heap_cap):
-        # Keep the field's BYML type (the game's rows hold a plain int).
-        row["InstanceHeapSize"] = type(heap)(_num(heap_cap))
+        row["InstanceHeapSize"] = type(old)(int(heap)) if isinstance(old, byml._Num) else int(heap)
     row["__RowId"] = actor
     return row
 
@@ -307,9 +302,9 @@ def build(romfs, mod_dir, log=print, heaps=None):
     gai = byml.loads(gai_old)
     table = rstb.Rstb.loads(dicts.decompress(rs_raw))
     ai_rows = {r["__RowId"]: r for r in ai}
-    if HEAP_CAP_ROW not in ai_rows:
-        raise BuildError(f"ActorInfo has no row {HEAP_CAP_ROW}")
-    heap_cap = ai_rows[HEAP_CAP_ROW].get("InstanceHeapSize")
+    parent_ap = table.get(actor_param_path(AP_PARENT))
+    if parent_ap is None:
+        raise BuildError(f"the size table has no {actor_param_path(AP_PARENT)}")
 
     made = []
     new_ai, new_gai = [], []
@@ -325,7 +320,7 @@ def build(romfs, mod_dir, log=print, heaps=None):
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
             raise BuildError(f"ActorInfo has no row {player}")
-        new_ai.append(info_row(ai_rows[player], actor, heap_cap, heaps.get(actor)))
+        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor)))
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
@@ -333,9 +328,10 @@ def build(romfs, mod_dir, log=print, heaps=None):
         player_ap = table.get(actor_param_path(player))
         if player_ap is None:
             raise BuildError(f"the size table has no {actor_param_path(player)}")
-        table.add_new(actor_param_path(actor), max(player_ap, len(ap) + PACK_SIZE_MARGIN))
+        ap_size = max(player_ap + parent_ap, len(ap) + PACK_SIZE_MARGIN)
+        table.add_new(actor_param_path(actor), ap_size)
         made.append({"actor": actor, "from": player, "pack": dst_rel, "pack_bytes": len(pack),
-                     "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)),
+                     "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
                      "members": names, "equipment_keys": keys})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 

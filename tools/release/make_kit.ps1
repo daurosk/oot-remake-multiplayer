@@ -164,7 +164,7 @@ foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1
 # The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
 # scene-placing test helper stay out.
 $packTool = Join-Path $repo 'tools\puppet_pack'
-foreach ($f in 'build.py', '__init__.py', 'byml.py', 'rstb.py', 'sarc.py', 'zs.py') {
+foreach ($f in 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'nup.py', 'rstb.py', 'sarc.py', 'zs.py') {
     Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
 }
 

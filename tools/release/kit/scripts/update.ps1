@@ -22,6 +22,10 @@
 # update-in-progress.txt marks an update that has started: an update that was stopped half way
 # (window closed, power cut) is done again by the next run.
 #
+# The shader cache (emulator\user\cache\shader\) belongs to one emulator build: when the new
+# release brings a different emulator\lichii.exe, it is moved to backup-<old version>\ too, so
+# the new emulator starts with an empty cache (an old one can crash it). Same emulator: kept.
+#
 # Never touched: emulator\user\ (keys, firmware, saves, settings, coop.ini with your name and
 # server, the puppet pack), logs\, backup-*\ and every file that is not part of the kit.
 # coop-options.ini keeps your values; a switch the new kit adds is appended as a '#' line.
@@ -110,6 +114,23 @@ function Get-KitVersion([string]$KitDir) {
 # True when an update of this kit started and did not finish.
 function Test-KitUnfinished([string]$KitDir) {
     return Test-Path -LiteralPath (Join-Path $KitDir $InProgress)
+}
+
+# The version a stopped update started from, from update-in-progress.txt ("... this kit from
+# v0.1.0-test4.1 to ..."); '' when there is no marker or it does not say (older updaters).
+# VERSION.txt may already be the new one then, so the backup is named after this one.
+function Get-KitUnfinishedFrom([string]$KitDir) {
+    $file = Join-Path $KitDir $InProgress
+    if (-not (Test-Path -LiteralPath $file)) { return '' }
+    $text = [System.IO.File]::ReadAllText($file)
+    if ($text -match '\bfrom (v\d[0-9A-Za-z.-]*) to ' -and (ConvertTo-KitVersion $Matches[1])) { return $Matches[1] }
+    return ''
+}
+
+# Shader caches an earlier update moved into a backup-*\ folder of the kit (full paths).
+function Get-KitBackedUpShaders([string]$KitDir) {
+    return @(Get-ChildItem -LiteralPath $KitDir -Directory -Filter 'backup-*' -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName $ShaderCache } | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
 }
 
 # --- Releases ---------------------------------------------------------------------------
@@ -274,6 +295,19 @@ function Test-KitEmulator([string]$Exe) {
     return ''
 }
 
+# Where the emulator keeps its shader cache in a kit (Fritchii's portable user\ folder:
+# user\cache\shader\, a folder per game and vulkan_static_pipelines.bin).
+$ShaderCache = 'emulator\user\cache\shader'
+
+# True when NewExe is another emulator build than OldExe (or OldExe cannot be read), so the
+# old shader cache must not be used with it.
+function Test-KitEmulatorChanged([string]$OldExe, [string]$NewExe) {
+    if (-not (Test-Path -LiteralPath $OldExe)) { return $true }
+    try {
+        return (Get-FileHash -LiteralPath $OldExe -ErrorAction Stop).Hash -ne (Get-FileHash -LiteralPath $NewExe -ErrorAction Stop).Hash
+    } catch { return $true }
+}
+
 function Get-KitRunning([string]$KitDir) {
     $root = [System.IO.Path]::GetFullPath($KitDir).TrimEnd('\') + '\'
     return @(Get-Process -Name lichii, coop_server -ErrorAction SilentlyContinue | Where-Object {
@@ -289,8 +323,9 @@ function Get-KitUnpackedRoot([string]$Dir) {
 }
 
 # Copies the new kit's own files over KitDir. Every file replaced or removed goes to
-# Backup first; on failure everything is put back. Returns the number of files written.
-function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [string]$Version) {
+# Backup first; on failure everything is put back. With MoveShaders the shader cache is moved
+# to Backup before anything else (and back on failure). Returns the number of files written.
+function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [string]$Version, [bool]$MoveShaders = $false, [string]$From = '') {
     $NewKit = [System.IO.Path]::GetFullPath($NewKit).TrimEnd('\')
     $newFiles = Get-KitInstallOrder @(Get-KitFiles $NewKit | Where-Object { -not (Test-KitPlayerPath $_) })
     # Files of the old kit that the new one no longer has: only those the old kit's
@@ -320,9 +355,19 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
     $saved = New-Object System.Collections.Generic.List[string]    # backed up (replaced or removed)
     $created = New-Object System.Collections.Generic.List[string]  # new, nothing to put back
     $marker = Join-Path $KitDir $InProgress
+    $script:ShadersMoved = $false
+    $shaders = Join-Path $KitDir $ShaderCache
+    $shadersBackup = Join-Path $Backup $ShaderCache
     try {
         # From here until the end, the kit is between two versions.
-        [System.IO.File]::WriteAllText($marker, "Update.bat was updating this kit to $Version. Run Update.bat again to finish it.`r`n")
+        $fromText = if ($From) { "from $From " } else { '' }
+        [System.IO.File]::WriteAllText($marker, "Update.bat was updating this kit ${fromText}to $Version. Run Update.bat again to finish it.`r`n")
+        # First: a run stopped later has already moved it (and the next run sees the new exe).
+        if ($MoveShaders -and (Test-Path -LiteralPath $shaders -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $shadersBackup) | Out-Null
+            Move-Item -LiteralPath $shaders -Destination $shadersBackup -ErrorAction Stop
+            $script:ShadersMoved = $true
+        }
         foreach ($rel in @($newFiles) + @($gone)) {
             $dest = Join-Path $KitDir $rel
             if (Test-Path -LiteralPath $dest) {
@@ -364,6 +409,13 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
     } catch {
         $why = $_
         $lost = New-Object System.Collections.Generic.List[string]
+        if ($script:ShadersMoved) {
+            try {
+                if (Test-Path -LiteralPath $shaders) { Remove-Item -LiteralPath $shaders -Recurse -Force -ErrorAction Stop }
+                Move-Item -LiteralPath $shadersBackup -Destination $shaders -ErrorAction Stop
+                $script:ShadersMoved = $false
+            } catch { $lost.Add($ShaderCache + '\') }
+        }
         foreach ($rel in $created) {
             try { Remove-Item -LiteralPath (Join-Path $KitDir $rel) -Force -ErrorAction Stop } catch { $lost.Add($rel) }
         }
@@ -476,10 +528,23 @@ function Invoke-KitUpdate {
         $why = Test-KitEmulator (Join-Path $newKit 'emulator\lichii.exe')
         if ($why) { throw "The release zip is not a co-op kit ($why). Nothing changed." }
 
-        $backup = Join-Path $dir ('backup-' + $(if ($mine) { $mine } else { 'old' }))
+        # A stopped update may have written the new VERSION.txt already: the backup is named
+        # after the version that update started from.
+        $from = if ($unfinished) { Get-KitUnfinishedFrom $dir } else { '' }
+        if (-not $from) { $from = $mine }
+        $backup = Join-Path $dir ('backup-' + $(if ($from) { $from } else { 'old' }))
         if (Test-Path -LiteralPath $backup) { $backup += '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') }
-        $n = Install-KitFiles $newKit $dir $backup $newest.Tag
+        $newEmu = Test-KitEmulatorChanged (Join-Path $dir 'emulator\lichii.exe') (Join-Path $newKit 'emulator\lichii.exe')
+        $n = Install-KitFiles $newKit $dir $backup $newest.Tag $newEmu $from
         Write-Host "Updated to $($newest.Tag): $n files. The replaced files are in $backup (delete it once the new version works)."
+        if ($script:ShadersMoved) {
+            Write-Host "The emulator changed, so its old shader cache was moved to $backup\$ShaderCache. The first minutes of play may stutter while a new one is built."
+        } elseif ($unfinished -and -not (Test-Path -LiteralPath (Join-Path $dir $ShaderCache))) {
+            # The stopped run moved it already, into its own backup folder.
+            foreach ($s in Get-KitBackedUpShaders $dir) {
+                Write-Host "The old shader cache, moved by the update that stopped, is in $s."
+            }
+        }
         if ($script:PackToolChanged) {
             Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play.'
         }

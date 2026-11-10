@@ -33,6 +33,7 @@ Use the issue forms. Include the co-op build version, the emulator or recomp ver
 
 - One topic per pull request. Small ones are reviewed faster.
 - Describe the problem, then what changed.
+- List the issues it touches in the pull request body, one per line: `Fixes #N` for each issue it fully resolves (GitHub closes the issue when it is merged), `Part of #N` for one it resolves only partly or has not proven yet. Write `Fixes` only for what was checked (in the game, when the issue is about the game).
 - Say how you tested it: which build, how many clients, how long. Fill in the pull request template's "Not yet proven" part honestly.
 - The build and the unit tests pass (see "Building" in the [README](README.md)), and `tools/check_content.py` passes. Run both before you push.
 - If you change a message layout, change [docs/protocol.md](docs/protocol.md) in the same pull request.

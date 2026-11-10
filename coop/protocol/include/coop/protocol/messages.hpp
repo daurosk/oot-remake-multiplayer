@@ -86,7 +86,8 @@ enum class SampleComponent : std::uint16_t {
 };
 
 // PLAYER_EQUIP component ids. 1 to 8 are the game's equipped actor names
-// (PlayerStatus.Equip*), 9 the drawn bits.
+// (PlayerStatus.Equip*), 9 the drawn bits, 10 the actor name of the item in
+// the hand slot (slingshot, bow; read from the piece itself).
 enum class EquipComponent : std::uint16_t {
   weapon = 1,
   shield = 2,
@@ -97,6 +98,7 @@ enum class EquipComponent : std::uint16_t {
   ocarina = 7,
   arrow = 8,
   drawn = 9,
+  held = 10,
 };
 
 // Longest equipped actor name: the game keeps each in a String64 flag.
@@ -413,6 +415,9 @@ struct Equipment {
   // Bit i set: the game's equipment slot i is drawn (in hand), not sheathed.
   // Slots 0 to 7; see docs/puppet.md for which slot is which.
   std::optional<std::uint8_t> drawn;
+  // The item in the game's equipment slot 3 (slingshot, bow), by the name of
+  // its actor; "" when the slot is empty. In hand when bit 3 of drawn is set.
+  std::optional<std::string> held;
   bool operator==(const Equipment&) const = default;
 };
 
@@ -433,6 +438,7 @@ inline Equipment merge_equipment(const Equipment& before, const Equipment& now) 
   keep(e.ocarina, before.ocarina);
   keep(e.arrow, before.arrow);
   keep(e.drawn, before.drawn);
+  keep(e.held, before.held);
   return e;
 }
 

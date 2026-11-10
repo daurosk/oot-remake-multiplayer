@@ -960,6 +960,64 @@ TEST_CASE("puppet join: the wanted actor must settle before a create (age read w
     CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
 }
 
+TEST_CASE("puppet gear: the held item is worn as a bow and follows drawn bit 3") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    const std::uint64_t id3 =
+        kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 + addr::kEquipSlotId;
+    g.guest.Set(id3, std::uint32_t{0xFFFFFFFF});
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearHeld] = "";  // nothing held: nothing asked
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 20).empty());
+
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[0] == kEu);
+    CHECK(calls[0].x[1] == 5u);  // the bow kind
+    CHECK(calls[0].x[2] == kHeap + block::kGearPtr + 8 * CoopPuppet::kGearHeld);
+    std::uint64_t text = 0;
+    text = g.guest.Get<std::uint64_t>(calls[0].x[2]);
+    CHECK(text == kHeap + block::kGearText + block::kGearCapacity * CoopPuppet::kGearHeld);
+    CHECK(text + block::kGearCapacity <= kHeap + block::kGearPtr);  // names end before the cells
+    CHECK(block::kGearPtr + 8 * CoopPuppet::kGearCount <= block::kSize);
+    CHECK(Frame(d, g, 40).empty());  // worn put away, as its player has it
+
+    // Its player aims: into the hand, once its actor is there.
+    t.drawn = std::uint8_t{0x08};
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 50).empty());
+    g.guest.Set(id3, std::uint32_t{9});
+    g.guest.Set(kEu + addr::kEquipSlotBits + 3, addr::kEquipBitInHand);
+    calls = Frame(d, g, 60);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[1] == 3u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    CHECK(Frame(d, g, 70).empty());
+
+    // Put away, also when the player's slot is empty by then.
+    t.drawn = std::uint8_t{0};
+    t.gear[CoopPuppet::kGearHeld] = "";
+    d.SetInput(Wants({t}));
+    g.guest.Set(kEu + addr::kEquipSlotBits + 3, addr::kEquipBitAway);
+    calls = Frame(d, g, 80);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 3u);
+    CHECK(calls[0].x[2] == addr::kEquipStateAway);
+    CHECK(Frame(d, g, 90).empty());
+}
+
 TEST_CASE("puppet gear: a piece the game made anew is put into the hand again") {
     Game g;
     Director d;

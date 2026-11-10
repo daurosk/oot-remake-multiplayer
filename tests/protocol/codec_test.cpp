@@ -936,6 +936,10 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
                back) == Error::none);
   CHECK(std::get<PlayerEquip>(back).equipment.shield == "x");
   CHECK(std::get<PlayerEquip>(back).equipment.drawn == 2);
+  // The held item (10).
+  CHECK(decode(Bytes{17, 0, 8, 0, 0, 10, 0, 3, 0, 1, 0, 's'}, back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back).equipment.held == "s");
+  CHECK_FALSE(std::get<PlayerEquip>(back).equipment.weapon);
   // The same component twice.
   CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 9, 0, 1, 0, 1}) ==
         Error::duplicate_component);

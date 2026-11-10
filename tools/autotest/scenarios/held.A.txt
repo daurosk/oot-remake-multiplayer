@@ -1,0 +1,29 @@
+# held: A walks ahead of B, steps aside and turns to face B, then aims the slingshot (ZR) for
+# a few seconds, fires on release, puts it away (B) and aims once more; B watches A's puppet.
+# Expect in B's log: "P1 wears held 'Weapon_Range_SlingShot'", then "P1 equipment slot 3 in
+# hand" while A aims and "slot 3 put away" after B. Run with LICHII_COOP_DEBUG_ANIM=1 for the
+# "slots (puppet" lines.
+mark start
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 120
+mark before
+hold ZR 120
+mark aim
+hold ZR 120
+mark aim-long
+hold ZR 30
+wait 30
+mark fired
+wait 60
+press B
+wait 150
+mark away
+hold ZR 120
+mark aim-again
+hold ZR 60
+wait 30
+press B
+wait 150
+mark end

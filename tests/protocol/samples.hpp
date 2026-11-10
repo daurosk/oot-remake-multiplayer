@@ -50,6 +50,7 @@ inline PlayerEquip equip_message() {
   m.equipment.armor = "";  // nothing in that slot
   m.equipment.head = "Armor_Child_Mask_Keaton";
   m.equipment.drawn = 0x05;
+  m.equipment.held = "Weapon_Range_SlingShot";
   return m;
 }
 

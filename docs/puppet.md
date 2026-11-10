@@ -164,7 +164,7 @@ Every piece is **an actor of its own**, created by the wearer's EquipmentUser co
 - The eight `PlayerStatus.Equip*` flags ([items.md](items.md)) are String64 flags. Their table is GameData type 16 at manager + 0x610 (the pattern of [flags.md](flags.md)): entries of 0x108 bytes, `char*` to the text at +0x68, `s32` buffer size (64) at +0x70, as the getter **0x3758110** reads them. `GameFlags::get_string64` reads the table, not the write queue, so a change shows one GameData update later. A text that is not printable ASCII or not ended within its buffer is dropped.
 - `drawn` is bit *i* for slot *i* of the player's EquipmentUser, set when the slot holds a live actor whose last change of state was into the hand (the byte's bit 1 is a request that lasts a moment; see [In hand or put away](#in-hand-or-put-away-built-not-run-in-the-game)). Seen in the game: 0x01 sword drawn, 0x10 shield raised, 0x08 held item out, 0x00 all put away.
 - Seen in the game: `weapon` `Weapon_Sword_Kokiri`, `shield` `Weapon_Shield_Hylian` / `Weapon_Shield_Deku`, `ocarina` `Item_Ocarina_Fairy`; the other five flags are "" for a child with nothing there. Before a save loads every flag is "" and `drawn` is nothing (no player actor).
-- Not read: the held item's name (which tool is in slot 3). The flags name the ocarina and the arrow kind, not what is in hand.
+- `held` is the name of the actor in slot 3 (`PlayerReader::read_held`): the slot's link to its actor, as `drawn` follows it, then the actor's name (a `char*` at actor +0x260). "" when the slot is empty. The flags name the ocarina and the arrow kind, not what is in hand.
 - The sampler sends it on the first frame and on every change; the client sends it again to every newcomer. Age comes from `PLAYER_SAMPLE`.
 
 ### How the puppet applies it (for the puppet spawner)
@@ -230,9 +230,18 @@ A run that checks it: `tools/autotest/run.ps1 -Scenario back -Switches "LICHII_C
 
 **In-hand change: seen working** in the same runs: B logs `P1 equipment slot 0 in hand` when A draws and `put away` only when A puts it away. Guarding (ZL) with the sword out moves the shield with the arm (pose copy); the shield slot itself stays put away, on the player too.
 
+### The held item (slot 3)
+
+Caleb's hand test (2026-11-09): "sword appears in hand, slingshot does not". The slingshot is not in any `PlayerStatus.Equip*` flag, so nothing told the other games about it.
+
+- **Where it is.** Slot 3 of the EquipmentUser is the bow slot: the equip call 0x2df7b20 tests slot 3's link (EquipmentUser +0x70, +0x78) when its slot kind is 5, as it tests slot 0's for kind 0 and slot 1's for kind 1 (read from the dump). A child with the slingshot has the actor `Weapon_Range_SlingShot` there all the time: in state 6 while it is put away (`slot 3: ... state 6 ... flags 0x804` in the local player's debug line), and `drawn` bit 3 is set while Link aims.
+- **Sent.** `PLAYER_EQUIP` component 10, `held`: the name of the actor in slot 3 ([protocol.md](protocol.md)).
+- **Worn.** The director treats it as a sixth piece (`kGearHeld`): one equip call with kind 5 and the name, then the same change-state call as the sword on slot 3 when `drawn` bit 3 changes. An empty name takes nothing off; the piece is put away instead. The left-behind check looks at it only while it is in the hand.
+- **Test.** `tools/autotest/run.ps1 -Scenario held` (A aims the slingshot, fires, puts it away, aims again). B's log: `P1 wears held 'Weapon_Range_SlingShot'`, `P1 equipment slot 3 in hand`, `put away`.
+
 ### Not done (equipment)
 
-0. Held items (bow, slingshot, Deku stick, boomerang; slot 3) are not shown: the item's actor name is not sent. It needs the name read from the slot-3 actor and a new `PLAYER_EQUIP` component, then an equip (kinds 5 bow, 11 tool) and the same change-state call on slot 3.
+0. Other things in the hand (Deku stick, boomerang, bottle, ocarina, hookshot, bombs): which slot each uses is not known; only slot 3 is sent. The local debug line (`LICHII_COOP_DEBUG_ANIM`) prints every slot that holds a piece, so a run with each item out would show it.
 
 1. Not run: a tunic, boots, a mask or a second sword (none in the test save), adult Link's slots, and which item was in slot 3. Run them with a later save: the local debug log (`LICHII_COOP_DEBUG_EQUIP`) prints the flags and every slot.
 2. The name of the actor in each slot (for a held tool such as the hookshot or bombs, which are not in `PlayerStatus.Equip*`): the actor's name field was not found. The item buttons are `PlayerStatus.AssignableItem.*` (an enum, [items.md](items.md)).

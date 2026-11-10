@@ -543,6 +543,35 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e->drawn == 0x08);
     CHECK_FALSE(e->weapon);
   }
+  SUBCASE("the held item is the name of the piece in slot 3") {
+    put_user(m, l);
+    CHECK(reader.read_equipment()->held == "");  // the slot is empty
+    put_equipped(m, 3, 50, 6, 0x0);  // put away: the game keeps it in state 6
+    const std::uint64_t piece = kEquipActors + 0x1000 * 3;
+    const std::uint64_t text = piece + 0x800;
+    const std::string name = "Weapon_Range_SlingShot";
+    m.put_u64(piece + 0x260, text);
+    const std::string room(80, char{0});  // the reader takes a whole name's bytes
+    m.put(text, room.data(), room.size());
+    m.put(text, name.c_str(), name.size() + 1);
+    CHECK(reader.read_equipment()->held == name);
+    SUBCASE("a name that is not text is not known") {
+      m.put_u8(text + 3, 0x07);
+      CHECK_FALSE(reader.read_equipment()->held);
+    }
+    SUBCASE("a name with no end is not known") {
+      const std::string full(80, 'a');
+      m.put(text, full.data(), full.size());
+      CHECK_FALSE(reader.read_equipment()->held);
+    }
+    SUBCASE("a piece that is gone, or a stale holder, is nothing held") {
+      m.put_u32(piece + 0x2c, 8);
+      CHECK(reader.read_equipment()->held == "");
+      m.put_u32(piece + 0x2c, 4);
+      m.put_u32(kEquipHolders + 0x100 * 3 + 0x48, 99);
+      CHECK(reader.read_equipment()->held == "");
+    }
+  }
   SUBCASE("a request lasts a moment: the last one stands") {
     put_user(m, l);
     const std::uint64_t request = kUser + 0x13bc;

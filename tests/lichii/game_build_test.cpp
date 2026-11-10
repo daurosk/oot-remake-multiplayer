@@ -3,6 +3,7 @@
 // readers use today, so a reader can move onto the table without a change.
 #include <doctest/doctest.h>
 
+#include <ostream>
 #include <string>
 
 #include "../../coop/host/src/addresses.hpp"

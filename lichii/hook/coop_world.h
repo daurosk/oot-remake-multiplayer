@@ -43,6 +43,83 @@ bool IsSign(std::string_view name);
 // games (writing life 0 did not remove it, run of 2026-11-09).
 bool IsGrassActor(std::string_view name);
 
+// Research for signs (issue 90; docs/world.md, "Signs: the probe"). A sign's
+// cut is not in its life and its pack keeps no flag for it, and whether the
+// replayed hit (WORLD_HIT) cuts the others' sign has not been seen. The probe
+// answers both in one run: for each sign near our Link it keeps a copy of
+// the actor (+0..+0x600), its component table (+0..+0x300) and the first
+// 0x200 bytes of each component, taken again every second while nothing hit
+// it. Words that change between two such copies are counters and are left
+// out. When the sign is hit (our own swing passed it, or another player's
+// hit was given to it), it logs every other word that changed, 0.5 s and
+// 2 s later. The game that cut it and the game that got the hit should log
+// the same words if the replay cuts; those words are the cut state.
+class SignProbe {
+public:
+    using ReadWord = std::function<std::optional<std::uint64_t>(std::uint64_t)>;
+
+    static constexpr std::size_t kActorWords = 0x600 / 8;
+    static constexpr std::size_t kTableWords = 0x300 / 8;
+    static constexpr std::size_t kComponentWords = 0x200 / 8;
+    static constexpr std::uint64_t kActorTable = 0x270;    // as coop_objects.cpp
+    static constexpr std::uint64_t kBaseEveryUs = 1'000'000;
+    static constexpr std::uint64_t kBaseAgeUs = 250'000;   // our swing is read this late at most
+    static constexpr std::uint64_t kFirstReportUs = 500'000;
+    static constexpr std::uint64_t kLastReportUs = 2'000'000;
+    static constexpr float kNearM = 12.0f;
+    static constexpr std::size_t kMaxSigns = 3;            // read per look, the nearest
+    static constexpr std::size_t kMaxShown = 24;           // changes per line
+    static constexpr int kMaxLines = 200;                  // per session
+
+    struct Sign {
+        std::uint64_t address = 0;
+        std::uint64_t hash = 0;
+        std::string name;
+        coop::protocol::Vec3 position{};
+    };
+
+    // A hit on this sign: `ours` when our swing passed it, else another
+    // player's hit given to it.
+    void Hit(const Sign& sign, bool ours, std::uint64_t now_us);
+
+    // Once per objects walk with the signs the walk saw. Returns log lines.
+    std::vector<std::string> Look(const ReadWord& read, const std::vector<Sign>& signs,
+                                  const std::optional<coop::protocol::Vec3>& player,
+                                  std::uint64_t now_us);
+
+    void Reset();
+
+    // Where a word was read, for logs: actor+0x.., table+0x.., c+0x2b8+0x...
+    static std::string Where(std::uint64_t key);
+
+private:
+    using Snapshot = std::map<std::uint64_t, std::uint64_t>;  // key (Where) -> word
+    struct Base {
+        std::uint64_t time_us = 0;
+        Snapshot words;
+    };
+    struct Event {
+        bool ours = false;
+        std::uint64_t time_us = 0;
+        int reported = 0;  // 0, 1 (first), 2 (last)
+        std::optional<Base> base;
+    };
+    struct State {
+        std::uint64_t hash = 0;
+        std::string name;
+        std::deque<Base> bases;  // newest last, at most 3
+        std::set<std::uint64_t> noisy;
+        std::optional<Event> event;
+        std::uint64_t quiet_from_us = 0;  // a base taken from here on may add noise
+    };
+
+    static Snapshot Read(const ReadWord& read, std::uint64_t address);
+    std::string Report(const State& s, const Event& e, const Snapshot& now, std::uint64_t after_us);
+
+    std::map<std::uint64_t, State> signs_;  // by actor address
+    int lines_ = 0;
+};
+
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the
 // enemy sharing, which still carries a breakable's life: this adds what that
@@ -120,6 +197,10 @@ public:
     bool Places(std::uint64_t address) const { return objects_.contains(address); }
     // The copies to delete (broken elsewhere).
     std::vector<std::uint64_t> Removes() const;
+
+    // Present thread, after Swing: the sign probe (SignProbe) on the signs of
+    // the last Tick. Returns log lines.
+    std::vector<std::string> ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us);
 
     void Reset();
 
@@ -200,6 +281,8 @@ private:
     std::vector<std::pair<std::uint64_t, bool>> went_;  // (time, far) of everything that left lately
     std::vector<coop::protocol::Message> early_;  // for a scene we are not in yet
     std::uint8_t self_ = 0;
+    std::optional<coop::protocol::Vec3> player_;  // our Link at the last Tick
+    SignProbe probe_;
 
     mutable std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;

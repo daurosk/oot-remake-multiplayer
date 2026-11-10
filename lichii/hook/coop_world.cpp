@@ -184,6 +184,8 @@ void WorldSync::Reset() {
     went_.clear();
     hits_.clear();
     early_.clear();
+    player_.reset();
+    probe_.Reset();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -514,6 +516,7 @@ void WorldSync::Swing(const proto::GrassCut& cut, const std::optional<proto::Vec
         h.from = player && Finite(*player) ? *player : *best;
         out.send.emplace_back(std::move(h));
         out.notes.push_back(Line("world: %016llx %s: our sword passed it: hit sent%s", o.hash, o.name, ""));
+        probe_.Hit({address, o.hash, o.name, o.position}, true, now_us);
     }
 }
 
@@ -521,7 +524,9 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                      const std::vector<CoopObjects::Seen>& seen,
                      const std::optional<proto::Vec3>& player, Out& out) {
     self_ = self;
+    player_ = player;
     if (scene != scene_) {
+        probe_.Reset();
         scene_ = scene;
         scene_since_ = now_us;
         objects_.clear();
@@ -672,6 +677,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             }
             out.notes.push_back(Line("world: %016llx %s hit by another player's sword%s", o.hash,
                                      o.name, ""));
+            probe_.Hit({address, o.hash, o.name, o.position}, false, now_us);
             hits_.erase(waiting);
         }
         if (const auto b = broken_.find(o.hash); b != broken_.end()) {
@@ -1067,6 +1073,266 @@ std::uint64_t GrassSync::Made() const {
 std::vector<std::string> GrassSync::TakeNotes() {
     std::lock_guard lock(mutex_);
     return std::exchange(notes_, {});
+}
+
+// ---- SignProbe (docs/world.md, "Signs: the probe") ----
+
+namespace {
+
+// Snapshot keys: region in the high half, byte offset in the low half.
+// Region 0 is the actor, 1 its component table, 2 + i the component in
+// table entry i.
+constexpr std::uint64_t kRegionActor = 0;
+constexpr std::uint64_t kRegionTable = 1;
+constexpr std::uint64_t kRegionComponent = 2;
+
+std::uint64_t Key(std::uint64_t region, std::uint64_t offset) {
+    return (region << 32) | offset;
+}
+
+bool ProbePointer(std::uint64_t v) {
+    return v >= 0x1000 && v < (1ull << 48) && v % 8 == 0;
+}
+
+} // namespace
+
+std::string SignProbe::Where(std::uint64_t key) {
+    const std::uint64_t region = key >> 32;
+    const auto offset = static_cast<unsigned long long>(key & 0xffffffffu);
+    char text[48];
+    if (region == kRegionActor) {
+        std::snprintf(text, sizeof text, "actor+%#llx", offset);
+    } else if (region == kRegionTable) {
+        std::snprintf(text, sizeof text, "table+%#llx", offset);
+    } else {
+        std::snprintf(text, sizeof text, "c+%#llx+%#llx",
+                      static_cast<unsigned long long>((region - kRegionComponent) * 8), offset);
+    }
+    return text;
+}
+
+SignProbe::Snapshot SignProbe::Read(const ReadWord& read, std::uint64_t address) {
+    Snapshot out;
+    for (std::size_t i = 0; i < kActorWords; ++i) {
+        const auto w = read(address + 8 * i);
+        if (!w) {
+            return {};  // the actor is not there
+        }
+        out[Key(kRegionActor, 8 * i)] = *w;
+    }
+    const std::uint64_t table = out[Key(kRegionActor, kActorTable)];
+    if (!ProbePointer(table)) {
+        return out;
+    }
+    std::vector<std::uint64_t> entries;
+    for (std::size_t i = 0; i < kTableWords; ++i) {
+        const auto w = read(table + 8 * i);
+        if (!w) {
+            break;
+        }
+        out[Key(kRegionTable, 8 * i)] = *w;
+        entries.push_back(*w);
+    }
+    std::set<std::uint64_t> done;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const std::uint64_t c = entries[i];
+        if (!ProbePointer(c) || !done.insert(c).second) {
+            continue;  // empty, not a pointer, or read under an earlier entry
+        }
+        Snapshot part;
+        bool ok = true;
+        for (std::size_t j = 0; j < kComponentWords && ok; ++j) {
+            const auto w = read(c + 8 * j);
+            ok = w.has_value();
+            if (ok) {
+                part[Key(kRegionComponent + i, 8 * j)] = *w;
+            }
+        }
+        if (ok) {
+            out.insert(part.begin(), part.end());
+        }
+    }
+    return out;
+}
+
+void SignProbe::Hit(const Sign& sign, bool ours, std::uint64_t now_us) {
+    State& s = signs_[sign.address];
+    if (s.hash != sign.hash) {
+        s = State{};
+        s.hash = sign.hash;
+        s.name = sign.name;
+    }
+    if (s.event) {
+        return;  // the first hit's lines are still to come
+    }
+    Event e;
+    e.ours = ours;
+    e.time_us = now_us;
+    // Our swing is read from the grass queue a little after it was made:
+    // take a copy from before that. A given hit lands after this call.
+    const std::uint64_t age = ours ? kBaseAgeUs : 0;
+    for (auto it = s.bases.rbegin(); it != s.bases.rend(); ++it) {
+        if (it->time_us + age <= now_us) {
+            e.base = *it;
+            break;
+        }
+    }
+    s.event = std::move(e);
+}
+
+std::string SignProbe::Report(const State& s, const Event& e, const Snapshot& now,
+                              std::uint64_t after_us) {
+    char head[64];
+    std::snprintf(head, sizeof head, " %s +%.1f s:", e.ours ? "our cut" : "given hit",
+                  static_cast<double>(after_us) / 1e6);
+    std::string line = Line("sign probe: %016llx %s", s.hash, s.name, "") + head;
+    if (!e.base) {
+        return line + " no copy from before the hit";
+    }
+    if (now.empty()) {
+        return line + " not readable";
+    }
+    std::size_t changed = 0;
+    std::string shown;
+    auto note = [&](std::uint64_t key, std::optional<std::uint64_t> was,
+                    std::optional<std::uint64_t> is) {
+        if (s.noisy.contains(key) || was == is) {
+            return;
+        }
+        if (++changed > kMaxShown) {
+            return;
+        }
+        char text[64];
+        std::snprintf(text, sizeof text, " %s:", Where(key).c_str());
+        shown += text;
+        if (was) {
+            std::snprintf(text, sizeof text, "%llx", static_cast<unsigned long long>(*was));
+            shown += text;
+        } else {
+            shown += "-";
+        }
+        shown += ">";
+        if (is) {
+            std::snprintf(text, sizeof text, "%llx", static_cast<unsigned long long>(*is));
+            shown += text;
+        } else {
+            shown += "-";
+        }
+    };
+    const Snapshot& before = e.base->words;
+    for (const auto& [key, was] : before) {
+        const auto it = now.find(key);
+        note(key, was, it == now.end() ? std::nullopt : std::optional(it->second));
+    }
+    for (const auto& [key, is] : now) {
+        if (!before.contains(key)) {
+            note(key, std::nullopt, is);
+        }
+    }
+    char tail[48];
+    std::snprintf(tail, sizeof tail, " %zu words changed%s", changed,
+                  changed > kMaxShown ? " (first ones shown)" : "");
+    return line + tail + (changed > 0 ? ":" : "") + shown;
+}
+
+std::vector<std::string> SignProbe::Look(const ReadWord& read, const std::vector<Sign>& signs,
+                                         const std::optional<proto::Vec3>& player,
+                                         std::uint64_t now_us) {
+    std::vector<std::string> out;
+    // Forget signs the walk no longer sees.
+    std::erase_if(signs_, [&signs](const auto& e) {
+        return std::none_of(signs.begin(), signs.end(), [&e](const Sign& s) {
+            return s.address == e.first && s.hash == e.second.hash;
+        });
+    });
+    // The nearest few, a sign with a hit to report first.
+    std::vector<std::pair<float, const Sign*>> pick;
+    for (const Sign& sign : signs) {
+        const auto st = signs_.find(sign.address);
+        const bool hit = st != signs_.end() && st->second.event.has_value();
+        float d = 1e9f;
+        if (player) {
+            const float dx = sign.position[0] - (*player)[0];
+            const float dy = sign.position[1] - (*player)[1];
+            const float dz = sign.position[2] - (*player)[2];
+            d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        if (hit) {
+            pick.emplace_back(-1.0f, &sign);
+        } else if (d <= kNearM) {
+            pick.emplace_back(d, &sign);
+        }
+    }
+    std::sort(pick.begin(), pick.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    if (pick.size() > kMaxSigns) {
+        pick.resize(kMaxSigns);
+    }
+    for (const auto& [distance, sign] : pick) {
+        State& s = signs_[sign->address];
+        if (s.hash != sign->hash || s.name.empty()) {
+            s = State{};
+            s.hash = sign->hash;
+            s.name = sign->name;
+        }
+        if (s.event) {
+            Event& e = *s.event;
+            const std::uint64_t after = now_us - e.time_us;
+            const std::uint64_t due = e.reported == 0 ? kFirstReportUs : kLastReportUs;
+            if (after < due) {
+                continue;
+            }
+            const Snapshot now = Read(read, sign->address);
+            if (lines_ < kMaxLines) {
+                ++lines_;
+                out.push_back(Report(s, e, now, after));
+            }
+            if (++e.reported >= 2) {
+                // After a cut the sign is not what it was: start again.
+                s.event.reset();
+                s.bases.clear();
+            }
+            continue;
+        }
+        if (!s.bases.empty() && now_us - s.bases.back().time_us < kBaseEveryUs) {
+            continue;
+        }
+        Base b;
+        b.time_us = now_us;
+        b.words = Read(read, sign->address);
+        if (b.words.empty()) {
+            continue;
+        }
+        if (!s.bases.empty()) {
+            const Snapshot& last = s.bases.back().words;
+            for (const auto& [key, word] : b.words) {
+                const auto it = last.find(key);
+                if (it == last.end() || it->second != word) {
+                    s.noisy.insert(key);
+                }
+            }
+        }
+        s.bases.push_back(std::move(b));
+        while (s.bases.size() > 3) {
+            s.bases.pop_front();
+        }
+    }
+    return out;
+}
+
+void SignProbe::Reset() {
+    signs_.clear();
+}
+
+std::vector<std::string> WorldSync::ProbeSigns(const SignProbe::ReadWord& read,
+                                               std::uint64_t now_us) {
+    std::vector<SignProbe::Sign> signs;
+    for (const auto& [address, o] : objects_) {
+        if (o.sign) {
+            signs.push_back({address, o.hash, o.name, o.position});
+        }
+    }
+    return probe_.Look(read, signs, player_, now_us);
 }
 
 } // namespace CoopWorld

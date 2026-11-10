@@ -979,13 +979,23 @@ public:
                              p->objects.size(), p->scene, sent ? "" : " (not sent)");
                 } else if (const auto* g = std::get_if<coop::protocol::ObjectGroup>(&m);
                            g != nullptr && g->entries != group_logged_) {
-                    group_logged_ = g->entries;
-                    LOG_INFO(Core, "coop: objects: share group {} entries{}", g->entries.size(),
-                             sent ? "" : " (not sent)");
+                    // Only the entries that are new or changed, at most 8 lines.
+                    std::size_t logged = 0, changed = 0;
                     for (const auto& e : g->entries) {
-                        LOG_INFO(Core, "coop: objects: group {:#x} follows {:#x}{}", e.member.value,
-                                 e.root.value, e.flags != 0 ? " (boss)" : "");
+                        if (std::find(group_logged_.begin(), group_logged_.end(), e) !=
+                            group_logged_.end()) {
+                            continue;
+                        }
+                        ++changed;
+                        if (logged++ < 8) {
+                            LOG_INFO(Core, "coop: objects: group {:#x} follows {:#x}{}",
+                                     e.member.value, e.root.value,
+                                     e.flags != 0 ? " (boss)" : "");
+                        }
                     }
+                    LOG_INFO(Core, "coop: objects: share group {} entries, {} changed{}",
+                             g->entries.size(), changed, sent ? "" : " (not sent)");
+                    group_logged_ = g->entries;
                 }
             }
         });

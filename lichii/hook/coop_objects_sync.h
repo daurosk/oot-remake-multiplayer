@@ -145,10 +145,17 @@ struct GroupInput {
     std::string_view name;
     coop::protocol::Vec3 position{};
 };
+// A part keeps the root it was linked to while within this many times the
+// rule's reach, so one near the edge does not flip between groups.
+inline constexpr float kGroupKeep = 1.25f;
 // The OBJECT_GROUP entries for one walk, sorted by member: a part with its
-// root, a part whose root is not loaded with itself (so it follows nobody), a
-// boss with itself and the boss flag. Empty when the walk has none.
-std::vector<coop::protocol::ObjectGroupEntry> GroupsOf(const std::vector<GroupInput>& walk);
+// root, a boss with itself and the boss flag, and a part that `linked` (the
+// links of the last call, member to root) had linked but whose root is now
+// gone or out of reach with itself, once, so it follows nobody. A part never
+// linked here gets no entry. Empty when the walk has none.
+std::vector<coop::protocol::ObjectGroupEntry> GroupsOf(
+    const std::vector<GroupInput>& walk,
+    const std::map<coop::protocol::ObjectId, coop::protocol::ObjectId>& linked = {});
 
 // A rolled enemy another game decided, for the spawn director to create here
 // by name where the decider's one is. The Mover places and animates it after.
@@ -352,6 +359,7 @@ private:
     std::uint64_t present_at_ = 0;
     bool present_once_ = false;
     std::vector<coop::protocol::ObjectGroupEntry> groups_sent_;  // as last sent
+    std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
     bool hurt_ = false;
     std::uint8_t self_ = 0;
     std::set<std::uint64_t> taken_;             // key64 flags seen set to 1

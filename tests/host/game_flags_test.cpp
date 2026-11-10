@@ -45,6 +45,8 @@ constexpr std::uint64_t kIntEntries = 0x8200000000ull, kIntSlots = 0x8210000000u
 constexpr std::uint64_t kArrEntries = 0x8300000000ull, kArrSlots = 0x8310000000ull,
                         kArrBits = 0x8320000000ull;
 constexpr std::uint64_t kKeys = 0x8400000000ull, kKeyQueue = 0x8410000000ull;
+constexpr std::uint64_t kUIntEntries = 0x8500000000ull, kUIntSlots = 0x8510000000ull,
+                        kUIntQueue = 0x8520000000ull;
 constexpr std::uint32_t kCap = 7, kQueueCap = 4;
 
 void zero(FakeMemory& m, std::uint64_t a, std::size_t n) {
@@ -77,7 +79,7 @@ void queue(FakeMemory& m, std::uint64_t base, std::uint64_t buf, std::uint64_t s
 }
 
 // Bools 0x11 (entry 0) and 0x18 (entry 1, same start slot as 0x11), Int 0x22,
-// BoolArray 0x33 of 40 elements, 64-bit keys 5, 9, 0x8c44828386468bf.
+// BoolArray 0x33 of 40 elements, 64-bit keys 5, 9, 0x8c44828386468bf, UInt 0x44.
 Writable game() {
   Writable w;
   auto& m = w.mem;
@@ -86,6 +88,8 @@ Writable game() {
   queue(m, 0x10, kBoolQueue, 8);
   table(m, 0xd0, kIntEntries, kIntSlots, 0x28, {0x22});
   queue(m, 0xd0, kIntQueue, 12);
+  table(m, 0x790, kUIntEntries, kUIntSlots, 0x28, {0x44});
+  queue(m, 0x790, kUIntQueue, 12);
   table(m, 0x70, kArrEntries, kArrSlots, 0x40, {0x33});
   m.put_u32(kArrEntries + 0x20, 40);
   m.put_u64(kArrEntries + 0x28, kArrBits);
@@ -161,6 +165,23 @@ TEST_CASE("game flags: a set is queued as the game's setter does, and read back 
   CHECK(coop::host::read_u32(w.mem, kKeyQueue + 4) == 2u);  // the record index, not the key
   CHECK(f.get_key64(0x8c44828386468bfull) == true);
   CHECK(f.get_key64(9) == false);
+}
+
+TEST_CASE("game flags: UInt flags are read and queued like Int, in their own table") {
+  auto w = game();
+  w.mem.put_u32(kUIntEntries + 0x1c, 0xfffffff0u);
+  GameFlags f(w);
+  CHECK(f.get_uint(0x44) == 0xfffffff0u);
+  CHECK_FALSE(f.get_uint(0x22));   // an Int is not a UInt
+  CHECK_FALSE(f.get_int(0x44));    // nor the other way
+  CHECK_FALSE(GameFlags::set_uint(w, 0x22, 1));
+  REQUIRE(GameFlags::set_uint(w, 0x44, 35));
+  CHECK(coop::host::read_u32(w.mem, kUIntQueue) == 35u);
+  CHECK(coop::host::read_u32(w.mem, kUIntQueue + 4) == 0x44u);
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x7c0) == 0x30100001u);  // 1 taken, 1 finished
+  CHECK(coop::host::read_u32(w.mem, kUIntEntries + 0x1c) == 0xfffffff0u);  // not applied yet
+  CHECK(f.get_uint(0x44) == 35u);                                         // but seen
+  CHECK(coop::host::read_u32(w.mem, kIntQueue + 4) == 0u);  // the Int queue is untouched
 }
 
 TEST_CASE("game flags: refused when unknown, full, or the queue was applied meanwhile") {

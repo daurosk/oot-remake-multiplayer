@@ -1,6 +1,6 @@
 #pragma once
 // The game's own flag store (gmd::GameDataMgr), read and written over guest
-// memory. Layout and functions: docs/flags.md. Bool and Int flags by name
+// memory. Layout and functions: docs/flags.md. Bool, Int and UInt flags by name
 // hash, and the 64-bit-key flags (chests and other placed actors, keyed by the
 // placement's 64-bit hash).
 //
@@ -46,6 +46,8 @@ class GameFlags {
   // in that table, or memory cannot be read. Hash 0 is never a flag.
   std::optional<bool> get_bool(std::uint32_t hash);
   std::optional<std::int32_t> get_int(std::uint32_t hash);
+  // A UInt flag (type 20; 0x57a5e0 reads it, 0x57b030 sets it).
+  std::optional<std::uint32_t> get_uint(std::uint32_t hash);
   // A 64-bit-key flag (Bool64bitKey). A key not in the table is nothing,
   // not false: the table holds every key the game knows.
   std::optional<bool> get_key64(std::uint64_t key);
@@ -62,6 +64,7 @@ class GameFlags {
   // being written (try again next frame), or memory fails.
   static bool set_bool(WritableGameMemory& memory, std::uint32_t hash, bool value);
   static bool set_int(WritableGameMemory& memory, std::uint32_t hash, std::int32_t value);
+  static bool set_uint(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t value);
   static bool set_key64(WritableGameMemory& memory, std::uint64_t key, bool value);
 
   // Test only (tools/autotest warp): writes a String64 flag's text straight

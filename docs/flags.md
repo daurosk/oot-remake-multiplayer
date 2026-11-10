@@ -32,6 +32,7 @@ A lookup starts at `hash % slot count` and steps forward by one, wrapping, until
 | Bool (0) | M + 0x10 | 0x18 | u8 at +0x16; saved copy at +0x17 | 8 bytes: u8 value at +0, u32 hash at +4 |
 | BoolArray (1) | M + 0x70 | 0x40, has a vtable | bits at `*(+0x28)` in u32 words, lowest bit first; element count u32 at +0x20 | not read |
 | Int (2) | M + 0xd0 | 0x28 | u32 at +0x1c | 12 bytes: u32 value at +0, u32 hash at +4 |
+| UInt (20) | M + 0x790 | 0x28 | u32 at +0x1c | 12 bytes: u32 value at +0, u32 hash at +4 |
 
 All checked in the getters and setters below. The BoolArray element count at +0x20 is from a bounds test in the applier, so its meaning is inferred.
 
@@ -60,6 +61,8 @@ Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back t
 | 0x682b20 | Bool set (M, value, hash): queues | Checked |
 | 0x837070 | Int get | Checked |
 | 0x163b70 | Int set: queues | Checked |
+| 0x57a5e0 | UInt get: the Int getter with every table offset 0x6c0 further on | Checked (issue 125) |
+| 0x57b030 (a second copy near 0x57bdd8) | UInt set: queues, as the Int setter, at +0x7b0 / +0x7b8 / +0x7c0 | Checked (issue 125) |
 | 0x838960, 0x3761680 | 64-bit key get (M, out, key) | Checked |
 | 0x3761720 | 64-bit key set (M, value, key): finds the record, then 0xf071c0 queues it | Checked |
 | 0xb99980 | Applies the queues (M). Called from 0x3b500a0, in the GameData module | Checked for Bool and 64-bit keys |
@@ -100,6 +103,6 @@ Not checked live: an Int or 64-bit key crossing, B to A, a late joiner getting t
 
 ## Not done
 
-1. Float, UInt, Enum and the other types: their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
+1. Float, Enum and the other types (UInt is read, above): their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
 2. 0x34fc280, called when a write is late or the queue is full.
 3. BoolArray writes, Struct (+0xc20) and BoolExp (+0xc48).

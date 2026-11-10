@@ -23,6 +23,10 @@ struct Table {
 };
 constexpr Table kBool{0x10, 0x18, 0x20, 0x2c, 0x18, 0x16, 0x30, 0x38, 0x40, 8};
 constexpr Table kInt{0xd0, 0xd8, 0xe0, 0xec, 0x28, 0x1c, 0xf0, 0xf8, 0x100, 12};
+// UInt (type 20, M + 0x790): the Int layout 0x6c0 further on, as the getter
+// 0x57a5e0 and the setter 0x57b030 read it (entries of 0x28, value at +0x1c,
+// 12-byte queue slots {u32 value, u32 hash}).
+constexpr Table kUInt{0x790, 0x798, 0x7a0, 0x7ac, 0x28, 0x1c, 0x7b0, 0x7b8, 0x7c0, 12};
 // String64 (type 16, M + 0x610): entries of 0x108, char* to the text at
 // +0x68, s32 buffer size at +0x70 (0x3758110). Queue not read.
 constexpr Table kString64{0x610, 0x618, 0x620, 0x62c, 0x108, 0, 0, 0, 0, 0};
@@ -173,6 +177,19 @@ std::optional<std::int32_t> GameFlags::get_int(std::uint32_t hash) {
   return static_cast<std::int32_t>(*v);
 }
 
+std::optional<std::uint32_t> GameFlags::get_uint(std::uint32_t hash) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  const auto index = find(memory_, *mgr, kUInt, hash);
+  if (!index) return std::nullopt;
+  if (const auto q = queued(memory_, *mgr, kUInt.queue_cap, kUInt.queue_buf, kUInt.queue_word,
+                            kUInt.slot_size, hash))
+    return *q;
+  const auto entries = read_ptr(memory_, *mgr + kUInt.entries);
+  if (!entries) return std::nullopt;
+  return read_u32(memory_, *entries + kUInt.stride * *index + kUInt.value);
+}
+
 std::optional<bool> GameFlags::get_key64(std::uint64_t key) {
   const auto mgr = manager(memory_);
   if (!mgr) return std::nullopt;
@@ -271,6 +288,13 @@ bool GameFlags::set_int(WritableGameMemory& m, std::uint32_t hash, std::int32_t 
   if (!mgr || !find(m, *mgr, kInt, hash)) return false;
   return enqueue(m, *mgr, kInt.queue_cap, kInt.queue_buf, kInt.queue_word, kInt.slot_size,
                  static_cast<std::uint32_t>(value), hash, false);
+}
+
+bool GameFlags::set_uint(WritableGameMemory& m, std::uint32_t hash, std::uint32_t value) {
+  const auto mgr = manager(m);
+  if (!mgr || !find(m, *mgr, kUInt, hash)) return false;
+  return enqueue(m, *mgr, kUInt.queue_cap, kUInt.queue_buf, kUInt.queue_word, kUInt.slot_size,
+                 value, hash, false);
 }
 
 bool GameFlags::set_key64(WritableGameMemory& m, std::uint64_t key, bool value) {

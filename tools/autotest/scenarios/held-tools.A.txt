@@ -1,0 +1,57 @@
+# held-tools (issue 92): child items in the hand. A is given the boomerang, Deku sticks, the
+# Fairy Ocarina and a bottle, then steps aside to face B and uses whatever item is on the
+# quick-select (R moves to the next, ZR uses it), five times; B watches A's puppet.
+# Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1".
+# Expect in B's log at each mark: "P1 PLAYER_EQUIP: ... slots 0 '...' 1 '...' 2 '...' 5 '...'
+# 6 '...'" naming the item in its hand slot, "P1 wears <piece> '<name>'" and "P1 equipment
+# slot N in hand"; then "put away" after B. Which slot each item uses is what this run shows.
+# A's own "slots (local" lines (LICHII_COOP_DEBUG_ANIM) list every slot that holds a piece.
+# Deku sticks are a per-player item: if B's log says "NOT given", A needs sticks in its save.
+mark start
+give PouchData.Item_Boomerang.StockNum
+give PouchData.Item_DekuStick.StockNum
+give PouchData.Item_StickBag_Small.StockNum
+give PouchData.Item_Ocarina_Fairy.StockNum
+give PouchData.BottleA.StockNum
+wait 120
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+press R
+wait 30
+hold ZR 90
+mark item1
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item2
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item3
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item4
+wait 30
+press B
+wait 90
+press R
+wait 30
+hold ZR 90
+mark item5
+wait 30
+press B
+wait 150
+mark end

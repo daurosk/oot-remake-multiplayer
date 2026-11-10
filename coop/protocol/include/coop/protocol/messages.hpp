@@ -15,7 +15,9 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 3;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY
+// 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
+// (types 28 to 39) and the server sending HANDOVER_ASK.
+inline constexpr std::uint16_t kProtocolVersion = 4;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -72,6 +74,15 @@ enum class MessageType : std::uint16_t {
   damage = 25,
   player_pose = 26,
   time_of_day = 27,
+  grass_cut = 28,
+  object_group = 29,  // 30, 31: kept for enemy ownership
+  world_break = 32,
+  world_move = 33,
+  world_place = 34,
+  world_hit = 35,
+  drop_spawn = 36,
+  drop_take = 37,
+  drop_ask = 38,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -86,7 +97,8 @@ enum class SampleComponent : std::uint16_t {
 };
 
 // PLAYER_EQUIP component ids. 1 to 8 are the game's equipped actor names
-// (PlayerStatus.Equip*), 9 the drawn bits.
+// (PlayerStatus.Equip*), 9 the drawn bits, 10 the actor name of the item in
+// the hand slot (slingshot, bow; read from the piece itself).
 enum class EquipComponent : std::uint16_t {
   weapon = 1,
   shield = 2,
@@ -97,6 +109,14 @@ enum class EquipComponent : std::uint16_t {
   ocarina = 7,
   arrow = 8,
   drawn = 9,
+  held = 10,
+  // The actor in each other hand slot of the game's EquipmentUser, by name,
+  // as `held` is for slot 3 (docs/puppet.md, "The other hand slots").
+  weapon_slot = 11,   // slot 0, Weapon: the sword, or a Deku stick in its place
+  sub_weapon = 12,    // slot 1, SubWeapon
+  third_weapon = 13,  // slot 2, ThirdWeapon
+  tool = 14,          // slot 5, Tool
+  sub_tool = 15,      // slot 6, SubTool
 };
 
 // Longest equipped actor name: the game keeps each in a String64 flag.
@@ -413,6 +433,16 @@ struct Equipment {
   // Bit i set: the game's equipment slot i is drawn (in hand), not sheathed.
   // Slots 0 to 7; see docs/puppet.md for which slot is which.
   std::optional<std::uint8_t> drawn;
+  // The item in the game's equipment slot 3 (slingshot, bow), by the name of
+  // its actor; "" when the slot is empty. In hand when bit 3 of drawn is set.
+  std::optional<std::string> held;
+  // The same for the other hand slots: 0 (what is really in the sword hand),
+  // 1, 2, 5 and 6. In hand when that slot's bit of drawn is set.
+  std::optional<std::string> weapon_slot;
+  std::optional<std::string> sub_weapon;
+  std::optional<std::string> third_weapon;
+  std::optional<std::string> tool;
+  std::optional<std::string> sub_tool;
   bool operator==(const Equipment&) const = default;
 };
 
@@ -433,6 +463,12 @@ inline Equipment merge_equipment(const Equipment& before, const Equipment& now) 
   keep(e.ocarina, before.ocarina);
   keep(e.arrow, before.arrow);
   keep(e.drawn, before.drawn);
+  keep(e.held, before.held);
+  keep(e.weapon_slot, before.weapon_slot);
+  keep(e.sub_weapon, before.sub_weapon);
+  keep(e.third_weapon, before.third_weapon);
+  keep(e.tool, before.tool);
+  keep(e.sub_tool, before.sub_tool);
   return e;
 }
 
@@ -668,13 +704,173 @@ struct TimeOfDay {
   bool operator==(const TimeOfDay&) const = default;
 };
 
+// OBJECT_GROUP (client only, not relayed): which objects belong together, so
+// the server keeps them with one owner (docs/objects.md "Groups"). Each entry
+// names a member and its root: a boss part and the boss, a summoned enemy and
+// its summoner. An entry whose root is the member itself takes the member
+// out of any group; it is also how a lone object is marked a boss.
+namespace object_group {
+inline constexpr std::uint8_t boss = 1u << 0;  // the member is a boss: 60 s fight lock
+}  // namespace object_group
+
+struct ObjectGroupEntry {
+  ObjectId member;
+  ObjectId root;
+  std::uint8_t flags = 0;  // object_group bits
+  bool operator==(const ObjectGroupEntry&) const = default;
+};
+
+// Most entries in one OBJECT_GROUP. 1 to this many, no member twice.
+inline constexpr std::size_t kMaxGroupEntries = 256;
+
+struct ObjectGroup {
+  std::uint8_t player_number = kPlayerSelf;
+  std::vector<ObjectGroupEntry> entries;
+  bool operator==(const ObjectGroup&) const = default;
+};
+
+// GRASS_CUT (docs/world.md, "Field grass"): one cut of the field grass the
+// game's foliage module draws (no actor), as the game queued it: a sphere at
+// position with radius, and for a sword, three points of the swing (NaN when
+// the cut is a sphere only). flags is the game's byte, passed on unread.
+// Every game in the same scene makes the same cut. Relayed to everyone else.
+inline constexpr float kMaxGrassCutRadius = 100.0f;
+// Cuts the server keeps for one scene, for a player who enters it later.
+inline constexpr std::size_t kMaxGrassCuts = 512;
+
+struct GrassCut {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::string scene;                         // the sender's scene, not empty
+  Vec3 position{};
+  float radius = 0.0f;                       // above 0, at most kMaxGrassCutRadius
+  std::uint8_t flags = 0;
+  std::array<Vec3, 3> sweep{};               // each value finite or NaN
+  bool operator==(const GrassCut& o) const;  // NaN equals NaN here
+};
+
+// WORLD_BREAK (docs/world.md, "Broken for everyone"): the placed breakable
+// with this placement hash was broken in the sender's scene (a pot, a crate,
+// a rock, a grass tuft, a cracked wall). The server keeps each scene's
+// breaks while anyone is in it and sends them to a player who enters, so a
+// pot broken before a player came is gone for that player too. With
+// `restored` the game put the object back (a pot that respawns): the break
+// is forgotten.
+namespace world_break {
+inline constexpr std::uint8_t restored = 1u << 0;
+}  // namespace world_break
+inline constexpr std::size_t kMaxWorldBreaks = 1024;  // kept per scene
+
+struct WorldBreak {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::string scene;                         // the sender's scene, not empty
+  std::uint64_t hash = 0;                    // placement hash, not 0 and not ~0
+  Vec3 position{};                           // where it was (finite)
+  std::uint8_t flags = 0;                    // world_break bits
+  bool operator==(const WorldBreak&) const = default;
+};
+
+// WORLD_MOVE: where the sender's game has a placed object it is moving (a
+// push block, a pot or rock in Link's hands or in flight), about 20 a
+// second while it moves. Unreliable, relayed to the sender's scene, not kept.
+namespace world_move {
+inline constexpr std::uint8_t carried = 1u << 0;  // in the mover's hands
+}  // namespace world_move
+
+struct WorldMove {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  std::uint64_t time_us = 0;  // server time of the reading
+  Vec3 position{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};  // unit
+  std::uint8_t flags = 0;                  // world_move bits
+  bool operator==(const WorldMove&) const = default;
+};
+
+// WORLD_PLACE: the object has come to rest here after a move. Reliable; the
+// server keeps the latest one of each object per scene (while anyone is in
+// the scene) for a player who enters later.
+inline constexpr std::size_t kMaxWorldPlaces = 256;  // kept per scene
+
+struct WorldPlace {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  Vec3 position{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+  bool operator==(const WorldPlace&) const = default;
+};
+
+
+// WORLD_HIT (docs/world.md, "Signs"): the sender's sword swing passed the
+// placed object with this hash (a sign: its life never drops, the cut is
+// made by the game's destruction of the pieces the sword met). Each other
+// game gives its own copy the same hit, at the same place, through the
+// game's own damage call. The server keeps the last kMaxWorldHitsPerObject
+// of each object per scene for a player who enters later.
+inline constexpr std::size_t kMaxWorldHitsPerObject = 4;
+inline constexpr std::size_t kMaxWorldHitObjects = 128;  // per scene
+
+struct WorldHit {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  Vec3 at{};    // where the sword was (finite)
+  Vec3 from{};  // where the player who swung stood (finite)
+  bool operator==(const WorldHit&) const = default;
+};
+
+// Shared drops (docs/objects.md, "Drops"): the rupees, hearts and ammo an
+// enemy, a pot, grass or a rock leaves. Every game announces the drops its
+// own game rolls with DROP_SPAWN; where two games rolled for the same thing
+// (near in place and time) the one from the owner of what dropped it stays,
+// then the one from the lower player number. Relayed to everyone else.
+namespace drop_spawn {
+inline constexpr std::uint8_t owned = 1u << 0;  // the sender owns what dropped it
+inline constexpr std::uint8_t again = 1u << 1;  // told again for a player who came later
+}  // namespace drop_spawn
+
+struct DropSpawn {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  ObjectId id;             // kind made: the game that rolled it and its counter
+  std::string scene;       // 1 to 64 characters
+  std::string actor;       // the game's actor name, 1 to 64 characters
+  Vec3 position{};
+  std::uint64_t time_us = 0;  // server time when its maker first saw it
+  std::uint8_t flags = 0;     // drop_spawn bits
+  bool operator==(const DropSpawn&) const = default;
+};
+
+// DROP_TAKE: a drop is gone from the sender's game; every game removes it.
+enum class DropTakeReason : std::uint8_t {
+  picked_up = 0,  // the sender's Link collected it
+  gone = 1,       // it blinked out
+};
+
+struct DropTake {
+  std::uint8_t player_number = kPlayerSelf;
+  ObjectId id;
+  DropTakeReason reason = DropTakeReason::picked_up;
+  bool operator==(const DropTake&) const = default;
+};
+
+// DROP_ASK: the sender just came into this scene; every game there tells
+// the drops it still has again (DROP_SPAWN with `again`).
+struct DropAsk {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;  // 1 to 64 characters
+  bool operator==(const DropAsk&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
-                             TimeOfDay>;
+                             TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
+                             WorldPlace, WorldHit, DropSpawn, DropTake,
+                             DropAsk>;
 
 MessageType type_of(const Message& message);
 

@@ -251,3 +251,23 @@ The same kit, both saves reset to the child save; game A and the server first, g
 2. Heart containers: find the game's real maximum life (not `PlayerStatus.MaxLife`) and write it, with the 4-pieces conversion.
 3. What `StockNum` holds for other owned items (1 for the Hookshot), and what a real heart piece pickup writes.
 4. The unnamed structs and dungeon members above.
+
+## One-time pickups and heart containers (branch `shared-pickups`, issues 89 and 88)
+
+**Gold Skulltulas, tokens, heart containers and heart pieces (issue 89).** Their "taken" state is the placement's 64-bit key, which no list names, so it was never shared and the pickup stayed in the other games. Now:
+
+- The object walk (`LICHII_COOP_OBJECTS=1`) notes the placement hash of every loaded `Enemy_Skulltula_Gold`, `Obj_Token_Gold`, `Obj_RupeeToken_*`, `Obj_Heart_Container` and `Obj_*Heart_Piece*` (`coop_pickups.cpp`). The hook hands each new one to the flag watcher (`Session::share_pickup`), which shares `key64:<hash>` from then on (`coop: flags: one-time pickup ... is shared from now on`).
+- A game that is not in that scene still takes it: with learning on, an incoming 64-bit key set to 1 that the watcher does not share yet is added as a pickup and written (at most 4,096 a session). The host does the same for a player's `FLAG_SET`, so the key is in its snapshot for players who join later.
+- One way only: a pickup's key going back to 0 (the game resetting it on a scene change) is neither sent nor written over a 1.
+- The game that did not take it deletes its loaded copy of the actor as before (`coop_objects_sync.cpp`, a key64 flag arriving set to 1). The token count (`Item_Token_Gold`, count rule) was already shared.
+- `LICHII_COOP_PICKUPS=0` turns both off.
+
+Not checked in a game: that a Skulltula's placement hash is the key the game sets when it is taken (flags.md says the 85 `Obj_RupeeToken` placements are in the key list, by placement hash; the enemy's own placement may be another key, then the token's key carries it). A pickup already taken before the session started is not told to the others.
+
+**Heart containers (issue 88).** `PlayerStatus.MaxLife` is shared with the max rule, so a raised value should reach every game; what is not known is whether the game draws the hearts from that flag or from Link's own Life component (its max at `[Life + 0x1c18] + 8`). Prepared for one run:
+
+- The walk logs `coop: objects: our Link's life L of M, MaxLife flag F (quarter hearts)` each time M or F changes, so B's log shows whether F rose after A's container and whether M followed.
+- `LICHII_COOP_DEBUG_FLAGS=1` logs the int flag change itself.
+- `LICHII_COOP_HEARTS_TO_LINK=1` (test switch, off by default) writes F into the component's max when F is higher (at most 80 quarters), and logs `our Link's max life M -> F`.
+
+The run: both games with `LICHII_COOP_OBJECTS=1 LICHII_COOP_DEBUG_FLAGS=1`, A raises MaxLife (the cheat window's heart container button, or a real container), then read B's log and screen. If F rises and M does not and B's hearts stay: run again with `LICHII_COOP_HEARTS_TO_LINK=1` on B; if B's hearts then grow, make that the default. Heart pieces stay as they are: the count is shared, and four pieces become a heart only in the pickup itself (live check above).

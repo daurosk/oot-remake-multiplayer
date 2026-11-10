@@ -50,7 +50,9 @@
 #include "coop_chat.h"
 #include "coop_cheats.h"
 #include "coop_flags.h"
+#include "coop_pickups.h"
 #include "coop_fairy.h"
+#include "coop_drops.h"
 #include "coop_dungeon.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
@@ -214,6 +216,13 @@ public:
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }
         sharing_ = session.shared.has_value();
+        // One-time pickups (docs/items.md): keys the object walk notes are
+        // shared as they are seen, and another game's taken key is taken here
+        // too. LICHII_COOP_PICKUPS=0 turns both off.
+        pickups_ = sharing_ && !(std::getenv("LICHII_COOP_PICKUPS") != nullptr &&
+                                 std::string_view(std::getenv("LICHII_COOP_PICKUPS")) == "0");
+        session.learn_pickups = pickups_;
+        pickups_given_ = 0;
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
             Log(event);
@@ -222,6 +231,7 @@ public:
             Chat(event, client);
             CoopObjects::OnEvent(event);
             CoopSpawn::OnEvent(event);
+            CoopDrops::OnEvent(event);
             CoopTime::OnEvent(event);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
@@ -267,7 +277,21 @@ public:
                 store.emplace(*game_store);
             }
         }
+        if (pickups_) {
+            const auto keys = CoopPickups::Since(pickups_given_);
+            for (const std::uint64_t key : keys) {
+                session_->share_pickup(coop::protocol::FlagKey::key64_flag(key));
+                LOG_INFO(Core, "coop: flags: one-time pickup {:#x} is shared from now on", key);
+            }
+            pickups_given_ += keys.size();
+        }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
+        if (game_store) {  // issue 88: what the session left in MaxLife (docs/items.md)
+            const auto max_life = game_store->read(coop::protocol::FlagKey{0xfbe01da1u, 0});
+            CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32
+                                        ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
+                                        : std::nullopt);
+        }
         if (report.connected) {
             const bool event = reading && reading->event_running.value_or(false);
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
@@ -300,6 +324,7 @@ public:
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
         CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
+        CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
         Place(view);
@@ -799,6 +824,8 @@ private:
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
+    bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
+    std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

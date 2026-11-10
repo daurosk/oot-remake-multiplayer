@@ -13,7 +13,7 @@
 //   +0x20  the function's address
 //   +0x28  x0 to x7
 //   +0x68  s0 (a float argument, as 0x37b5d70 takes the frame)
-// At most 16 calls a frame. Then it makes the game's own call as before.
+// At most 256 calls a frame. Then it makes the game's own call as before.
 //
 // Bytes: coop_svc.cpp (kCave). To rebuild them (LLVM on Windows):
 //   clang --target=aarch64-none-elf -c coop_svc.s -o cave.o
@@ -30,7 +30,7 @@ _start:
     mov   x19, x0
     fmov  s8, s0
     sub   sp, sp, #0x100
-    mov   w20, #16
+    mov   w20, #256
     mov   x1, xzr
     mov   x2, xzr
 ask:

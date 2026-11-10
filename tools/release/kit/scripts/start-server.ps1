@@ -24,9 +24,21 @@ Write-Host "Players on this PC use 127.0.0.1. Log: $log"
 Write-Host 'Ctrl+C stops the server.'
 Write-Host ''
 
+# This kit's co-op release (VERSION.txt), named when the server refuses a game of another
+# version, so the players know which one to update to.
+$release = ''
+$versionFile = Join-Path $kit 'VERSION.txt'
+if (Test-Path -LiteralPath $versionFile) {
+    $first = [System.IO.File]::ReadAllLines($versionFile) | Select-Object -First 1
+    if ($first -match '\(release ([^)]+)\)') { $release = $Matches[1] }
+}
+
 $args2 = @('--port', "$Port") + @($Rest | Where-Object { $_ })
 & $exe @args2 2>&1 | ForEach-Object {
     $text = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
+    if ($release -and $text -match 'refused a connection, reason 1\b') {
+        $text += ". This server is co-op ${release}: every player needs $release (Update.bat updates to the newest release)."
+    }
     $line = '{0:HH:mm:ss.fff} {1}' -f (Get-Date), $text
     Write-Host $line
     Add-Content -Path $log -Value $line -Encoding UTF8

@@ -66,7 +66,7 @@ class PlayerReader {
   // rate is not finite or out of range.
   std::optional<protocol::Animation> read_animation();
   // What the player has equipped (PlayerStatus.Equip* flags) and which
-  // equipment slots are drawn. Nothing when neither could be read; a field
+  // equipment slots are drawn, and the item in the hand slot. Nothing when neither could be read; a field
   // is nothing when its own read failed.
   std::optional<protocol::Equipment> read_equipment();
   // The player actor's guest address, after the link choice and id test.
@@ -75,6 +75,10 @@ class PlayerReader {
  private:
   std::optional<std::uint64_t> game_ui();
   std::optional<std::uint8_t> read_drawn();
+  // The actor name of the piece in an equipment slot (3: slingshot, bow);
+  // "" when the slot is empty or its piece is gone. Nothing when the slot
+  // or the name could not be read.
+  std::optional<std::string> read_slot_name(std::uint32_t slot_index);
   GameMemory& memory_;
   DrawnState own_drawn_{};
   DrawnState& drawn_memo_;

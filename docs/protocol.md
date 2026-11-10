@@ -1,4 +1,4 @@
-# Wire protocol, version 3
+# Wire protocol, version 4
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -63,7 +63,7 @@ A killed emulator stays in the session until the server times it out, so its res
 - it comes from the same IP address as that player, and
 - the server has heard nothing from that player for 1 second (a server option; 0 turns the takeover off). Every build answers the server's `PING` every 250 ms, so a live player is never this quiet.
 
-Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the host handed on as on any leave, and the new connection is welcomed with the old player's number. Otherwise the `HELLO` is refused as name taken as before: someone on another PC, or anyone while the player is still talking, cannot push a player out by using their name. The client does not retry a refusal, so a build restarted within a second of the crash is refused once and must connect again.
+Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the host handed on as on any leave, and the new connection is welcomed with the old player's number. Otherwise the `HELLO` is refused as name taken as before: someone on another PC, or anyone while the player is still talking, cannot push a player out by using their name. A build restarted within that second is refused, so the client asks again: a `REFUSED` name taken is tried again every 1.5 s for 12 s (`name_taken_retry_ms`, `name_taken_retry_for_ms` in `ClientConfig`; 0 turns it off) before it is reported. That covers the second of silence on the same PC, and also a restart that comes from another address (the same PC joining by its LAN address after `127.0.0.1`), which waits for the server to time the old player out (10 s). Any other refusal is reported at once and not retried. While it retries the client is in `waiting_retry` and reports nothing; a name that someone else is really using is reported after the 12 s.
 
 ## Keep-alive and clock
 
@@ -196,6 +196,12 @@ Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a know
 | 7 | `ocarina` | string | `PlayerStatus.EquipOcarina` |
 | 8 | `arrow` | string | `PlayerStatus.EquipArrow` |
 | 9 | `drawn` | `u8`: bit *i* set when the player's equipment slot *i* is drawn (in hand), clear when sheathed or empty | the EquipmentUser component |
+| 10 | `held` | string: the item in equipment slot 3, the slot of the slingshot and the bow (for example `Weapon_Range_SlingShot`); in hand when bit 3 of `drawn` is set | the name of the actor in that slot |
+| 11 | `weapon_slot` | string: the actor in equipment slot 0 (Weapon), which is not always the equipped sword (a Deku stick); in hand when bit 0 of `drawn` is set | the name of the actor in that slot |
+| 12 | `sub_weapon` | string: the actor in slot 1 (SubWeapon); bit 1 of `drawn` | the same |
+| 13 | `third_weapon` | string: the actor in slot 2 (ThirdWeapon); bit 2 | the same |
+| 14 | `tool` | string: the actor in slot 5 (Tool); bit 5 | the same |
+| 15 | `sub_tool` | string: the actor in slot 6 (SubTool); bit 6 | the same |
 
 Each string is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
 
@@ -227,6 +233,32 @@ Every game shows the host's time of day ([time.md](time.md)).
 - A game whose clock jumped by itself (the Sun's Song, sleeping, an event) sends it with the jump bit, and every other game, the host's too, takes it at once.
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
 
+### Field grass (`GRASS_CUT`)
+
+One cut of the field grass the foliage module draws (no actor; [world.md](world.md), "Field grass"), as the sender's game queued it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 28 | `GRASS_CUT` | 0 | both | `u8` player field, `str` scene (1 to 64 chars), 3 x `f32` position (finite), `f32` radius (above 0, at most 100), `u8` flags (the game's, passed on unread), 9 x `f32`: three points of the swing (each finite or NaN) |
+
+- Sent once for each cut the sender's game makes; a cut it made for another player is not sent back.
+- A game in the same scene makes the same cut; any other drops it.
+- The server takes the cut's scene as the sender's scene, keeps the cut in that scene's list (at most 512, the oldest go first) and relays it to the other players in that scene, with the sender's number in the player field. A cut the scene's list already has (position and radius the same, bit for bit) is neither kept again nor relayed.
+- A player whose scene changes to one with a list (its `PLAYER_SAMPLE` scene, `OBJECT_PRESENT` or a cut of its own), a late joiner too, gets every cut in it, oldest first. A scene's list is forgotten when no player is in it any more: the grass grows back in a game that loads the scene again, so the cuts end with the last game that still shows them.
+
+### Shared world objects (`WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`)
+
+Placed breakables and movables, by placement hash ([world.md](world.md), "Broken for everyone, moved for everyone"). All three start with `u8` player field, `str` scene (1 to 64 chars), `u64` placement hash (not 0, not all ones), and go to the players in the sender's scene.
+
+| Type | Name | Channel | From | Body after the head |
+|---|---|---|---|---|
+| 32 | `WORLD_BREAK` | 0 | both | 3 x `f32` position (finite), `u8` flags (bit 0: restored) |
+| 33 | `WORLD_MOVE` | 4 | both | `u64` server time, 3 x `f32` position, 4 x `f32` rotation (unit quaternion x y z w), `u8` flags (bit 0: carried) |
+| 34 | `WORLD_PLACE` | 0 | both | 3 x `f32` position, 4 x `f32` rotation |
+| 35 | `WORLD_HIT` | 0 | both | 3 x `f32` where the sword was, 3 x `f32` where the player stood (a cut sign) |
+
+The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one) and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. The last 4 `WORLD_HIT` of each object (at most 128 objects a scene) are kept and sent the same way. Types 29 to 31 are the enemy ownership messages.
+
 ### Objects (stage 5)
 
 Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). The server keeps an object table (below); the hook does not send these yet.
@@ -234,13 +266,17 @@ Shared enemies and projectiles; the design and the reasons are in [objects.md](o
 The server's rules today (`server/session.cpp`):
 
 - A player's scene is the one of its latest `OBJECT_PRESENT` or `PLAYER_SAMPLE` scene. Changing scene lets go of everything it had loaded or made in the old one.
-- `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. Made ids in the list are ignored.
+- `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. A made id in the list counts only for a made enemy the server knows (the lister has its copy and may be given it); unknown made ids and projectiles are ignored. Every 10 s the answer to a list is `OBJECT_OWNER` for everything in it.
+- `PLAYER_SAMPLE` and `OBJECT_PRESENT` both say the sender's scene. One that names a new scene for its own kind changes the player's scene at once; one that repeats the scene its kind said before, after the other kind moved the player on, is late and is ignored.
+- At a player's first `OBJECT_PRESENT` in a scene the server sends it every `OBJECT_SPAWN` still alive there (player field: the owner; the last relayed state), each followed by `OBJECT_OWNER` when the owner is not the maker or the epoch is not 0.
 - `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` of a made id only from the maker named in the id, once; of a placed id only from its current owner, in its scene (relayed, nothing registered). Anything else is dropped.
-- `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner.
-- When the owner of a placed object unloads it, changes scene or leaves, the game with the lowest number that still has it takes it with epoch + 1: it gets `HANDOVER_STATE` with the last relayed sample (player field: the old owner) when there was one, then everyone in the scene gets `OBJECT_OWNER`. Nobody left: the object is forgotten.
-- A made object goes when its maker lets go of it: the others in the scene get `OBJECT_REMOVE` (gone, at its last position) from the server.
+- `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner. It starts the object's fight (12 s, 60 s for a boss).
+- The server moves an object by the rules in [objects.md](objects.md) ("Enemies": the player near it out of a fight, a hit from the player near it, an owner that is loading, paused 6 s or dead 10 s, a group member after its root). It sends the owner `HANDOVER_ASK`; the owner answers `HANDOVER_STATE` with the ask's epoch (anything else is dropped); the server then sends the new owner `HANDOVER_STATE` with epoch + 1 (player field: the old owner) and everyone in the scene `OBJECT_OWNER`. No answer in 500 ms: the same with the last relayed sample. Until then the old owner's samples are still relayed.
+- `OBJECT_REMOVE` with reason dead from the owner before the last change, with the epoch before, is taken for 2 s after it and passed on with the current epoch.
+- `OBJECT_GROUP` is not relayed. An entry is taken when both ids are known in the sender's scene and the sender has the member loaded; a root that follows another root gives its root; an entry naming itself leaves its group. `OBJECT_OWNER` then carries the group (the same number for the root and its members) and is sent to the scene when it changes.
+- When the owner of a placed object unloads it, changes scene or leaves, the nearest game that still has it (the lowest number when places are not known) takes it with epoch + 1: it gets `HANDOVER_STATE` with the last relayed sample (player field: the old owner) when there was one, then everyone in the scene gets `OBJECT_OWNER`. Nobody left: the object is forgotten.
+- A made object goes when its owner lets go of it: the others in the scene get `OBJECT_REMOVE` (gone, at its last position) from the server. A made enemy another game has listed goes to that game instead, like a placed one. An owner that stops listing its made enemy without an `OBJECT_REMOVE` has let go of it after 1 s.
 - A removed placed object stays, owned by nobody, until no game lists it, so a copy that is still loaded cannot bring it back.
-- Not yet: `HANDOVER_ASK` (a client's `HANDOVER_STATE` is dropped), the fight lock, the distance hand-over and groups.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
@@ -251,6 +287,7 @@ The server's rules today (`server/session.cpp`):
 | 22 | `OBJECT_SPAWN` | 2 | both | `u8` player field, object id (kind made; or kind placed, from its owner: the actor of a placed object that other games may not have loaded, such as a Gold Skulltula one game shook out of a tree), actor name (string, 1 to 64), `u8` flags (bit 0 projectile), then object components |
 | 23 | `OBJECT_SAMPLE` | 4 | both | `u8` player field, object id, `u16` epoch, then object components |
 | 24 | `OBJECT_REMOVE` | 2 | both | `u8` player field, object id, `u16` epoch, `u8` reason (0 gone, 1 dead, 2 exploded, 3 hit, 4 picked up), position (3 x f32) |
+| 29 | `OBJECT_GROUP` | 2 | client | `u8` player field, `u16` count (1 to 256), then per entry: member object id, root object id, `u8` flags (bit 0 the member is a boss; other bits refused). No member twice |
 | 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32) |
 
 An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 4 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
@@ -259,11 +296,23 @@ Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length
 
 The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
 
+### Drops
+
+The rupees, hearts and ammo that an enemy, a pot, grass or a rock leaves ([objects.md](objects.md), "Drops"). All on channel 2. The server relays each to everyone else, with the sender's number in the player field, and keeps nothing.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 36 | `DROP_SPAWN` | 2 | both | `u8` player field, object id (kind made: the game that rolled it and its counter), scene (string, 1 to 64), actor name (string, 1 to 64), position (3 x f32), `u64` server time when its maker first saw it, `u8` flags (bit 0 the sender owns what dropped it, bit 1 told again for a player who came later; other bits refused) |
+| 37 | `DROP_TAKE` | 2 | both | `u8` player field, object id (kind made), `u8` reason (0 picked up, 1 blinked out; others refused) |
+| 38 | `DROP_ASK` | 2 | both | `u8` player field, scene (string, 1 to 64): the sender came into this scene and asks for its drops |
+
+Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from any game that still shows the drop, so the maker in its id need not be the sender.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
 - **Stage 4:** `FLAG_SET`, `FLAG_STATE` and `FLAG_SNAPSHOT` (above) share world flags through the host.
-- **Stage 5:** the object messages (below). The server's ownership rules and the hold times are not in a build yet.
+- **Stage 5:** the object messages (above). The server's ownership rules are built; the hook's side of the hand-over and of groups is not.
 
 ## Versioning
 
@@ -272,6 +321,9 @@ The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's
 - Types 12 to 27 (`JOIN_PARTNER`, the flag messages, `HOST`, `PLAYER_EQUIP`, the object messages, `PLAYER_POSE` and `TIME_OF_DAY`) were added this way and the version stayed 0: no earlier layout changed, and a build without them reports them as unknown and ignores them. A session with such a build still runs, but that player cannot warp to a partner or share flags, and its puppets wear the default gear.
 - The key kind at the start of each flag entry (64-bit keys) changed the flag list layout. Nothing with the old layout was released, so the version stayed 0.
 - Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.
+- `PLAYER_EQUIP` components 11 to 15 (the other hand slots, branch `held-items-2`) were added the same way and need no version of their own: a build without them skips them (unknown components are skipped), and its puppets show only the sword, shield and slot 3. As for 10, a server without them drops them when it relays.
+- `PLAYER_EQUIP` component 10, `held`, was added this way (2026-11-09) and the version stayed 3: a build without it skips it, and its puppets show no held item. The server reads and writes the message again when it relays, so a server without it drops the component: the held item needs a server that has it.
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
+- Version 4 (2026-11-09, for 0.1.0-test4): one bump for all the messages of types 28 to 38: `GRASS_CUT` (28), `OBJECT_GROUP` (29), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35), `DROP_SPAWN`, `DROP_TAKE`, `DROP_ASK` (36 to 38); 30, 31 and 39 are kept free. No earlier layout changed. The version went up because the server now sends `HANDOVER_ASK` and moves objects between players, which a version 3 game does not answer, and so that a version 3 server, which would not relay the new types, is refused at `HELLO`: every game in a session shares grass, breaks and drops, or none does.

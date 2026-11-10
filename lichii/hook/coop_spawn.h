@@ -53,7 +53,9 @@ struct Seen {
 };
 
 // What the director should do with one copy.
-enum class Act : std::uint8_t { show, explode, remove };
+// release: the copy is made and its maker knows the actor; the director
+// forgets it without deleting it (drops, coop_drops.h).
+enum class Act : std::uint8_t { show, explode, remove, release };
 
 struct Copy {
     std::uint64_t key = 0;  // unique for this run
@@ -147,6 +149,9 @@ public:
     // docs/objects.md "Rolled spawns"). Keys have the top bit set, so they
     // never meet SetInput's.
     void SetEnemies(std::uint64_t main_base, std::vector<Copy> copies);
+    // Present thread: drops another game rolled (coop_drops). Keys have bit
+    // 62 set.
+    void SetDrops(std::uint64_t main_base, std::vector<Copy> copies);
     std::map<std::uint64_t, std::uint64_t> Live() const;  // key to actor
 
     // The calc thread, at each `svc #0xf4` the puppets did not take.
@@ -179,6 +184,8 @@ private:
     std::vector<Copy> next_;       // guarded
     std::uint64_t next_enemy_base_ = 0;  // guarded
     std::vector<Copy> next_enemies_;     // guarded
+    std::uint64_t next_drop_base_ = 0;   // guarded
+    std::vector<Copy> next_drops_;       // guarded
     std::map<std::uint64_t, std::uint64_t> live_;  // guarded
 
     std::uint64_t base_ = 0;

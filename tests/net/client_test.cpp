@@ -354,6 +354,74 @@ TEST_CASE("client: refusal is reported and not retried") {
   CHECK(events.count(EventKind::connect_failed) == 0);
 }
 
+TEST_CASE("client: name taken is asked again, then welcomed (a crashed build's old self)") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.name_taken_retry_ms = 50;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  server.send(proto::Refused{proto::RefuseReason::name_taken}, proto::kChannelSession);
+
+  // No refusal reported: the client waits and connects again.
+  const std::size_t from = server.received.size();
+  REQUIRE(pump(client, server, [&] {
+    events.drain(client);
+    return server.find<proto::Hello>(from).has_value();
+  }));
+  CHECK(events.count(EventKind::refused) == 0);
+  CHECK(server.connects == 2);
+  CHECK(client.name_taken_retries() == 1);
+
+  // This time the server lets it in.
+  welcome_client(client, server, 0, from);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+  CHECK(client.state() == State::connected);
+  CHECK(events.count(EventKind::refused) == 0);
+}
+
+TEST_CASE("client: a name still taken after the retry time is reported and not asked again") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.name_taken_retry_ms = 40;
+  config.name_taken_retry_for_ms = 300;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  // The server refuses every HELLO: someone else really has the name.
+  std::size_t answered = 0;
+  REQUIRE(pump(client, server, [&] {
+    while (auto at = server.find<proto::Hello>(answered)) {
+      answered = *at + 1;
+      server.send(proto::Refused{proto::RefuseReason::name_taken}, proto::kChannelSession);
+    }
+    events.drain(client);
+    return events.find(EventKind::refused).has_value();
+  }, 3000));
+  const Event& refused = events.all[*events.find(EventKind::refused)];
+  CHECK(refused.refuse_reason == proto::RefuseReason::name_taken);
+  CHECK(client.state() == State::refused);
+  CHECK(client.name_taken_retries() >= 3);
+  const int connects = server.connects;
+  pump(client, server, [] { return false; }, 200);
+  CHECK(server.connects == connects);
+}
+
+TEST_CASE("client: with name_taken_retry_for_ms 0 a name taken is reported at once") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.name_taken_retry_for_ms = 0;
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  server.send(proto::Refused{proto::RefuseReason::name_taken}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::refused));
+  CHECK(client.state() == State::refused);
+  CHECK(client.name_taken_retries() == 0);
+}
+
 TEST_CASE("client: an unknown refusal reason is kept") {
   FakeServer server;
   Client client(config_for(server));

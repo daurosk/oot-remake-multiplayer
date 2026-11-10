@@ -4,8 +4,14 @@
 # file also works dropped into an old kit that has no updater yet).
 #
 #   update.ps1 [-Kit <kit folder>] [-Yes]   update this kit (asks before it starts, unless -Yes)
-#   update.ps1 -Check                       only say whether a newer release is out (Host.bat and
-#                                           Join.bat run this; silent when there is no network)
+#   update.ps1 -Check                       only say whether a newer release is out
+#   update.ps1 -Status                      one line for play.ps1: "newer <version>", "unfinished"
+#                                           or nothing (none, or no network)
+#   update.ps1 -Launch                      update without asking, for play.ps1 when the player
+#                                           said yes (exit code 3: updated, start the new kit)
+#
+# play.ps1 (Host.bat, Join.bat, play.cmd) runs -Status on every start and, as coop-options.ini's
+# auto_update says (ask, yes or no), -Launch; then it starts the new kit's own play.ps1.
 #
 # What it does: reads the kit's version from VERSION.txt, asks GitHub for the releases of
 # daurosk/oot-remake-multiplayer (test builds count, drafts never) and takes the newest. If that
@@ -21,17 +27,22 @@
 # coop-options.ini keeps your values; a switch the new kit adds is appended as a '#' line.
 # No data about you is sent: one request for the release list and the two downloads.
 #
-# For tests: -Api names the release list (a URL or a local .json file) and the download
-# addresses in it may be local files; -NoRun only loads the functions.
+# For tests: -Api (or the environment variable OOT_COOP_UPDATE_API, which play.ps1 passes on)
+# names the release list (a URL or a local .json file) and the download addresses in it may
+# be local files; -NoRun only loads the functions.
 param(
     [string]$Kit = '',
     [switch]$Yes,
     [switch]$Check,
+    [switch]$Status,
+    [switch]$Launch,
     [string]$Repo = 'daurosk/oot-remake-multiplayer',
     [string]$Api = '',
     [switch]$NoRun
 )
 
+if (-not $Api -and $env:OOT_COOP_UPDATE_API) { $Api = $env:OOT_COOP_UPDATE_API }
+if ($Launch) { $Yes = [switch]$true }
 $UserAgent = 'oot-coop-updater'
 $InProgress = 'update-in-progress.txt'
 
@@ -109,7 +120,7 @@ function Read-KitReleaseList([string]$Source) {
     }
     # Windows PowerShell 5.1 does not offer TLS 1.2 unless asked; GitHub needs it.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $timeout = if ($Check) { 5 } else { 30 }
+    $timeout = if ($Check -or $Status) { 5 } else { 30 }
     return Invoke-RestMethod -Uri $Source -UserAgent $UserAgent -TimeoutSec $timeout -Headers @{ Accept = 'application/vnd.github+json' }
 }
 
@@ -192,13 +203,27 @@ function Get-KitInstallOrder([string[]]$Files) {
     return [string[]](@($first) + @($end))
 }
 
-# The switch names a coop-options.ini mentions, set or behind a '#'.
+# The switch names a coop-options.ini mentions, set or behind a '#': the emulator's
+# LICHII_COOP_... switches and the kit's own auto_update.
+$OptionName = '(LICHII_COOP_[A-Z0-9_]+|auto_update)'
 function Get-KitOptionNames([string[]]$Lines) {
     $names = @{}
     foreach ($l in $Lines) {
-        if ($l -match '^\s*[#;]?\s*(LICHII_COOP_[A-Z0-9_]+)\s*=') { $names[$Matches[1]] = $true }
+        if ($l -match ('^\s*[#;]?\s*' + $OptionName + '\s*=')) { $names[$Matches[1]] = $true }
     }
     return $names
+}
+
+# coop-options.ini's auto_update: 'ask' (the default, also for a value it does not know),
+# 'yes' or 'no'.
+function Get-KitAutoUpdate([string]$KitDir) {
+    $file = Join-Path $KitDir 'coop-options.ini'
+    if (Test-Path -LiteralPath $file) {
+        foreach ($line in [System.IO.File]::ReadAllLines($file)) {
+            if ($line -match '^\s*auto_update\s*=\s*(ask|yes|no)\s*$') { return $Matches[1].ToLowerInvariant() }
+        }
+    }
+    return 'ask'
 }
 
 # The player's coop-options.ini lines with every switch the new template names and the
@@ -212,7 +237,7 @@ function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
     $comment = New-Object System.Collections.Generic.List[string]
     foreach ($l in $New) {
         $t = $l.Trim()
-        if ($t -match '^[#;]?\s*(LICHII_COOP_[A-Z0-9_]+)\s*=') {
+        if ($t -match ('^[#;]?\s*' + $OptionName + '\s*=')) {
             $name = $Matches[1]
             if (-not $have.ContainsKey($name)) {
                 foreach ($c in $comment) { $added.Add($c) }
@@ -376,6 +401,13 @@ function Invoke-KitUpdate {
     $have = if ($mine) { $mine } else { 'a test build' }
     $list = if ($Api) { $Api } else { "https://api.github.com/repos/$Repo/releases?per_page=30" }
 
+    if ($Status) {
+        # Straight to stdout: a function's own output would become its return value.
+        if ($unfinished) { [Console]::Out.WriteLine('unfinished'); return 0 }
+        try { $newest = Select-KitRelease (Read-KitReleaseList $list) } catch { return 0 }
+        if ($newest -and (Compare-KitVersion $newest.Tag $mine) -gt 0) { [Console]::Out.WriteLine("newer $($newest.Tag)") }
+        return 0
+    }
     if ($Check) {
         if ($unfinished) {
             Write-Host 'An update of this kit did not finish: close the games and run Update.bat.'
@@ -452,6 +484,7 @@ function Invoke-KitUpdate {
             Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play.'
         }
         Write-Host 'Every player needs the same version: tell the others to update too.'
+        if ($Launch) { return 3 }
         return 0
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -462,7 +495,7 @@ if (-not $NoRun) {
     try {
         exit (Invoke-KitUpdate)
     } catch {
-        if ($Check) { exit 0 }
+        if ($Check -or $Status) { exit 0 }
         Write-Host "Update failed: $($_.Exception.Message)"
         exit 1
     }

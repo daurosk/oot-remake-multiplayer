@@ -1,6 +1,8 @@
 #include "session.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <set>
 #include <utility>
 
@@ -45,7 +47,8 @@ std::string version_note(std::uint16_t theirs) {
 
 std::uint64_t Stats::dropped() const {
   std::uint64_t total = before_welcome + repeated_hello + after_refused + rate_limited +
-                        join_dropped + flag_refused + object_refused + damage_dropped;
+                        join_dropped + flag_refused + object_refused + damage_dropped +
+                        group_refused;
   for (std::uint64_t n : by_error) total += n;
   return total;
 }
@@ -148,7 +151,7 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
     ++stats_.rejoined;
     log("player " + std::to_string(old.number) + " rejoins: " + old.nickname);
     actions_.push_back(DisconnectAction{*holder});
-    remove_player(*holder, LeaveReason::timed_out);
+    remove_player(*holder, LeaveReason::timed_out, now_us);
   }
   if (player_count() >= kMaxPlayers) {
     refuse(id, c, RefuseReason::server_full, now_us);
@@ -222,22 +225,44 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     return;
   }
   if (const auto* present = std::get_if<ObjectPresent>(&message)) {
-    on_object_present(id, c, *present);
+    on_object_present(id, c, *present, now_us);
     return;
   }
   if (auto* d = std::get_if<Damage>(&message)) {
-    on_damage(id, c, *d);
+    on_damage(id, c, *d, now_us);
+    return;
+  }
+  if (const auto* group = std::get_if<ObjectGroup>(&message)) {
+    on_object_group(id, c, *group);
+    return;
+  }
+  if (auto* cut = std::get_if<GrassCut>(&message)) {
+    on_grass_cut(id, c, *cut, now_us);
+    return;
+  }
+  if (std::holds_alternative<WorldBreak>(message) || std::holds_alternative<WorldMove>(message) ||
+      std::holds_alternative<WorldPlace>(message) || std::holds_alternative<WorldHit>(message)) {
+    on_world(id, c, channel, message, now_us);
     return;
   }
   if (std::holds_alternative<ObjectSpawn>(message) ||
       std::holds_alternative<ObjectSample>(message) ||
       std::holds_alternative<ObjectRemove>(message) ||
       std::holds_alternative<HandoverState>(message)) {
-    on_object_message(id, c, channel, message);
+    on_object_message(id, c, channel, message, now_us);
     return;
   }
-  if (const auto* sample = std::get_if<PlayerSample>(&message); sample && sample->scene) {
-    set_scene(id, c, *sample->scene);
+  // Where the player is and whether its game runs, for the ownership rules.
+  // The place of a sample from a scene it has just left is not its place.
+  if (const auto* sample = std::get_if<PlayerSample>(&message)) {
+    const bool here = !sample->scene || (!stale_scene(c.sample_scene, c, *sample->scene) &&
+                                         set_scene(id, c, *sample->scene, now_us));
+    if (here && sample->position) {
+      c.position = *sample->position;
+      c.position_at = now_us;
+    }
+  } else if (const auto* st = std::get_if<PlayerStatus>(&message)) {
+    on_status(c, st->flags, now_us);
   }
   if (sender_of(message)) set_sender(message, c.number);
   send_to_others(id, channel, message);
@@ -352,67 +377,207 @@ void Session::send_snapshot(ConnectionId to) {
 }
 
 // ---------------------------------------------------------------- objects
-// docs/objects.md "Server": the first game to report a placed object owns it;
-// only the owner of the current epoch is relayed, to the players in the
-// object's scene; DAMAGE goes to the owner alone. When the owner unloads it,
-// leaves the scene or leaves the session, the next game that has it loaded
-// (lowest number) takes it with epoch + 1 and the last relayed state. Made
-// objects (projectiles) stay with their maker and go when it lets go of them.
+// docs/objects.md "Enemies" and docs/protocol.md "Objects". The first game to
+// list a placed object owns it; only the owner of the current epoch is
+// relayed, to the players in the object's scene; DAMAGE goes to the owner
+// alone. An object changes owner (epoch + 1, the state first, then the news)
+// when its owner lets go of it, cannot play, or another player is the one
+// near it; a fight keeps it where it is. Projectiles stay with their maker
+// and go when it lets go of them.
 
-void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPresent& p) {
-  set_scene(id, c, p.scene);
+namespace {
+
+// Bits of PLAYER_STATUS that keep a player from being given an object.
+constexpr std::uint8_t kBusy = status::loading | status::paused | status::dead;
+
+constexpr std::uint8_t kFighting = object_presence::in_fight | object_presence::targeting;
+
+double metres(const Vec3& a, const Vec3& b) {
+  double sum = 0;
+  for (std::size_t i = 0; i < 3; ++i) {
+    const double d = static_cast<double>(a[i]) - static_cast<double>(b[i]);
+    sum += d * d;
+  }
+  return std::sqrt(sum);
+}
+
+// A time that is never 0, for fields where 0 means "not set".
+std::uint64_t stamp(std::uint64_t now_us) { return std::max<std::uint64_t>(now_us, 1); }
+
+}  // namespace
+
+void Session::on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us) {
+  auto since = [&](std::uint8_t bit, std::uint64_t& when) {
+    if (!(flags & bit)) {
+      when = 0;
+    } else if (when == 0) {
+      when = stamp(now_us);
+    }
+  };
+  since(status::paused, c.paused_since);
+  since(status::dead, c.dead_since);
+  c.status = flags;
+}
+
+// PLAYER_SAMPLE and OBJECT_PRESENT each say the scene, from different threads
+// of the game, and cross at a scene change. A stream that changes its scene
+// is believed at once; one that only repeats what it said before, while the
+// other has moved on, is late and is not.
+bool Session::stale_scene(std::string& said, const Connection& c, const std::string& scene) {
+  const bool repeat = scene == said;
+  said = scene;
+  if (!repeat || scene == c.scene) return false;
+  ++stats_.stale_scenes;
+  return true;
+}
+
+bool Session::set_scene(ConnectionId id, Connection& c, const std::string& scene,
+                        std::uint64_t now_us) {
+  if (c.scene == scene) return true;
+  const std::set<ObjectId> present = std::exchange(c.present, {});
+  const std::string left = std::exchange(c.scene, scene);
+  c.position.reset();  // the old scene's place means nothing here
+  c.replay_due = true;
+  c.owners_told_at = now_us;
+  drop_all_objects(id, c.number, present, now_us);
+  forget_empty_grass(left);
+  forget_empty_world(left);
+  // What was broken and moved here before this player came (docs/world.md).
+  for (const Message& m : world_.replay(scene)) {
+    send(id, kChannelSession, m);
+    ++stats_.world_replayed;
+  }
+  // The grass the others cut here before this player came.
+  if (auto it = grass_.find(scene); it != grass_.end()) {
+    for (const GrassCut& cut : it->second) {
+      send(id, kChannelSession, cut);
+      ++stats_.grass_replayed;
+    }
+  }
+  return true;
+}
+
+// A made enemy is announced once, when it is made, and a placed one that
+// other games may lack once, by its owner. A player who enters the scene
+// after that gets them here, at their last relayed state.
+void Session::replay_spawns(ConnectionId id, const Connection& c) {
+  for (const auto& [oid, o] : objects_) {
+    if (o.actor.empty() || o.removed || !o.owner || *o.owner == id || o.scene != c.scene) {
+      continue;
+    }
+    auto owner = connections_.find(*o.owner);
+    if (owner == connections_.end()) continue;
+    const std::uint8_t number = owner->second.number;
+    send(id, kChannelOwnership,
+         ObjectSpawn{number, oid, o.actor, o.spawn_flags, o.last_state.value_or(ObjectState{})});
+    // A spawn implies the maker (or the sender) at epoch 0; say so when it
+    // is otherwise.
+    if (o.epoch != 0 || (o.made && number != oid.maker)) {
+      send(id, kChannelOwnership, owner_message(oid, o));
+    }
+    ++stats_.spawns_replayed;
+  }
+}
+
+void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPresent& p,
+                                std::uint64_t now_us) {
+  if (stale_scene(c.present_scene, c, p.scene) || !set_scene(id, c, p.scene, now_us)) return;
+  if (c.replay_due) {
+    c.replay_due = false;
+    replay_spawns(id, c);
+  }
+  const bool refresh = config_.owner_refresh_us != 0 &&
+                       now_us - c.owners_told_at >= config_.owner_refresh_us;
+  if (refresh) {
+    c.owners_told_at = now_us;
+    ++stats_.owners_refreshed;
+  }
+
   std::set<ObjectId> listed;
   for (const ObjectPresence& e : p.objects) listed.insert(e.id);
   const std::set<ObjectId> before = c.present;
   for (const ObjectId& oid : before) {
-    if (!listed.count(oid)) {
-      c.present.erase(oid);
-      drop_presence(id, c.number, oid);
+    if (listed.count(oid)) continue;
+    c.present.erase(oid);
+    auto it = objects_.find(oid);
+    if (it != objects_.end() && it->second.made && it->second.owner == id) {
+      // Its OBJECT_REMOVE is probably right behind: run_ownership lets go
+      // of it when none comes.
+      it->second.present.erase(id);
+      if (it->second.orphan_since == 0) it->second.orphan_since = stamp(now_us);
+      continue;
     }
+    drop_presence(id, c.number, oid, now_us);
   }
-  for (const ObjectId& oid : listed) {
-    if (oid.kind != ObjectKind::placed) continue;  // made ones come by OBJECT_SPAWN
+
+  for (const ObjectPresence& e : p.objects) {
+    const ObjectId& oid = e.id;
     auto it = objects_.find(oid);
     if (it == objects_.end()) {
+      if (oid.kind != ObjectKind::placed) continue;  // made ones come by OBJECT_SPAWN
       if (objects_.size() >= config_.max_objects) {
         ++stats_.object_table_full;
         continue;
       }
       Object& o = objects_[oid];
       o.scene = p.scene;
+      o.serial = next_serial_++;
       o.present.insert(id);
       o.owner = id;
       c.present.insert(oid);
+      if (e.flags & kFighting) mark_fight(o, now_us);
       announce_owner(oid, o);
       continue;
     }
     Object& o = it->second;
-    if (o.scene != p.scene) continue;  // the same hash in another scene: not ours
+    // The same hash in another scene is not ours; a projectile has no copy
+    // that could take it.
+    if (o.scene != p.scene || o.projectile) continue;
     c.present.insert(oid);
-    if (!o.present.insert(id).second) continue;  // already had it
-    // Tell the newcomer who owns it and the epoch to send with. An object
-    // nobody has is forgotten, so a known placed one always has an owner or
-    // was removed.
-    std::uint8_t owner = 0;
-    if (o.owner) owner = connections_.at(*o.owner).number;
-    send(id, kChannelOwnership, ObjectOwner{oid, owner, o.epoch, 0});
+    const bool fresh = o.present.insert(id).second;
+    if (o.owner == id) {
+      o.orphan_since = 0;
+      if (e.flags & kFighting) mark_fight(o, now_us);
+    }
+    // Tell a newcomer who owns it and the epoch to send with; its own made
+    // enemy it knows.
+    if (refresh || (fresh && !(o.made && o.owner == id))) {
+      send(id, kChannelOwnership, owner_message(oid, o));
+    }
   }
 }
 
 void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t channel,
-                                Message& message) {
+                                Message& message, std::uint64_t now_us) {
+  // The owner's answer to HANDOVER_ASK. Not relayed as it came: the new
+  // owner gets it from finish_handover with the new epoch.
+  if (const auto* handed = std::get_if<HandoverState>(&message)) {
+    auto it = objects_.find(handed->id);
+    if (it == objects_.end() || it->second.owner != id || !it->second.ask ||
+        it->second.epoch != handed->epoch) {
+      ++stats_.object_refused;
+      return;
+    }
+    finish_handover(handed->id, it->second, &handed->state, now_us);
+    return;
+  }
+
   ObjectId oid;
   if (const auto* spawn = std::get_if<ObjectSpawn>(&message);
       spawn && spawn->id.kind == ObjectKind::placed) {
     // The owner of a placed object names its actor, for games that do not
     // have it loaded (a Gold Skulltula only one game shook out of a tree).
-    // Relayed to the scene; nothing is registered.
+    // Relayed to the scene, and kept for players who enter later.
     oid = spawn->id;
     auto it = objects_.find(oid);
     if (it == objects_.end() || it->second.owner != id || it->second.scene != c.scene) {
       ++stats_.object_refused;
       return;
     }
+    Object& o = it->second;
+    o.actor = spawn->actor;
+    o.spawn_flags = spawn->flags;
+    if (!o.last_state) o.last_state = spawn->state;
   } else if (spawn) {
     oid = spawn->id;
     if (spawn->id.maker != c.number || objects_.count(oid)) {
@@ -425,44 +590,68 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     }
     Object& o = objects_[oid];
     o.scene = c.scene;
+    o.serial = next_serial_++;
     o.owner = id;
     o.made = true;
+    o.projectile = (spawn->flags & object_spawn::projectile) != 0;
+    o.actor = spawn->actor;
+    o.spawn_flags = spawn->flags;
     o.last_state = spawn->state;
-  } else {
-    std::uint16_t epoch = 0;
-    if (const auto* sample = std::get_if<ObjectSample>(&message)) {
-      oid = sample->id;
-      epoch = sample->epoch;
-    } else if (const auto* remove = std::get_if<ObjectRemove>(&message)) {
-      oid = remove->id;
-      epoch = remove->epoch;
-    }
+  } else if (const auto* sample = std::get_if<ObjectSample>(&message)) {
+    oid = sample->id;
     auto it = objects_.find(oid);
-    // HANDOVER_STATE answers a HANDOVER_ASK, which this server does not send
-    // yet: refused like anything not from the owner of the current epoch.
-    if (std::holds_alternative<HandoverState>(message) || it == objects_.end() ||
-        it->second.owner != id || it->second.epoch != epoch) {
+    if (it == objects_.end() || it->second.owner != id || it->second.epoch != sample->epoch) {
       ++stats_.object_refused;
       return;
     }
     Object& o = it->second;
-    if (const auto* sample = std::get_if<ObjectSample>(&message)) {
-      o.last_state = sample->state;
-    } else if (o.made) {  // OBJECT_REMOVE
-      const std::string scene = o.scene;
-      objects_.erase(it);
-      set_sender(message, c.number);
-      send_to_scene(scene, id, channel, message);
-      ++stats_.relayed;
-      ++stats_.object_relayed;
+    const bool life_changed = sample->state.life && o.last_state && o.last_state->life &&
+                              sample->state.life->life != o.last_state->life->life;
+    const bool says_fight =
+        sample->state.state && (*sample->state.state & object_state::in_fight) != 0;
+    if (life_changed || says_fight) mark_fight(o, now_us);
+    o.last_state = sample->state;
+  } else {
+    auto& remove = std::get<ObjectRemove>(message);
+    oid = remove.id;
+    auto it = objects_.find(oid);
+    if (it == objects_.end()) {
+      ++stats_.object_refused;
       return;
+    }
+    Object& o = it->second;
+    const bool owner_now = o.owner == id && o.epoch == remove.epoch;
+    // A kill that crossed a hand-over: the old owner's enemy died before it
+    // heard it was no longer the owner. It dies for everyone.
+    const bool late = !owner_now && o.owner && o.previous_owner == id &&
+                      remove.reason == RemoveReason::dead &&
+                      static_cast<std::uint16_t>(remove.epoch + 1) == o.epoch &&
+                      now_us - o.changed_at <= config_.late_remove_us;
+    if (!owner_now && !late) {
+      ++stats_.object_refused;
+      return;
+    }
+    if (late) {
+      ++stats_.late_removes;
+      remove.epoch = o.epoch;  // receivers drop older epochs
+    }
+    const std::string scene = o.scene;
+    if (o.made) {
+      forget(it);
     } else {
       // Kept, owned by nobody, until no game has it loaded, so a copy still
       // listed cannot bring it back under a new owner.
       o.removed = true;
       o.owner.reset();
       o.last_state.reset();
+      o.ask.reset();
+      o.candidate.reset();
     }
+    set_sender(message, c.number);
+    send_to_scene(scene, id, channel, message);
+    ++stats_.relayed;
+    ++stats_.object_relayed;
+    return;
   }
   set_sender(message, c.number);
   send_to_scene(objects_.at(oid).scene, id, channel, message);
@@ -470,72 +659,342 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
   ++stats_.object_relayed;
 }
 
-// To the owner alone, whatever epoch the hitter knew: the hit was real.
-void Session::on_damage(ConnectionId id, Connection& c, Damage& d) {
+// To the owner alone, whatever epoch the hitter knew: the hit was real. A
+// hitter who is the one near the enemy, with its owner well away, then takes
+// it: the enemy fights whoever hits it, and only its owner's game moves it.
+// Two players in the same fight are never that far apart, so their hits do
+// not move it.
+void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t now_us) {
   auto it = objects_.find(d.id);
   if (it == objects_.end() || !it->second.owner || *it->second.owner == id) {
     ++stats_.damage_dropped;
     return;
   }
+  Object& o = it->second;
   d.player_number = c.number;
-  send(*it->second.owner, kChannelOwnership, d);
+  send(*o.owner, kChannelOwnership, d);
   ++stats_.relayed;
   ++stats_.damage_relayed;
+  mark_fight(o, now_us);
+  if (o.hit_at == 0 || now_us - o.hit_at > config_.hit_window_us) {
+    o.hit_base.reset();
+    if (o.last_state && o.last_state->life) o.hit_base = o.last_state->life->life;
+    o.hit_sum = 0;
+  }
+  o.hit_sum += d.amount;
+  o.hit_at = stamp(now_us);
+
+  if (o.ask || o.root || o.projectile || (c.status & kBusy) || !has_loaded(id, o)) return;
+  if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
+  auto owner = connections_.find(*o.owner);
+  if (owner == connections_.end()) return;
+  const auto mine = distance_to(c, o, now_us);
+  const auto theirs = distance_to(owner->second, o, now_us);
+  if (mine && theirs && *mine <= config_.handover_near_m &&
+      *mine + config_.handover_margin_m <= *theirs) {
+    ask_handover(d.id, o, id, now_us);
+  }
 }
 
-void Session::set_scene(ConnectionId id, Connection& c, const std::string& scene) {
-  if (c.scene == scene) return;
-  const std::set<ObjectId> present = std::exchange(c.present, {});
-  c.scene = scene;
-  drop_all_objects(id, c.number, present);
+// Field grass (docs/world.md "Field grass"): kept per scene and relayed to
+// the players in it. A cut the scene already has (the same place and size,
+// bit for bit) is not passed on, so a cut can never go round between games.
+void Session::on_grass_cut(ConnectionId id, Connection& c, GrassCut& cut,
+                           std::uint64_t /*now_us*/) {
+  // A cut never moves the player: only its samples and OBJECT_PRESENT do. A
+  // late one from the scene it has left is still a cut there, kept and passed
+  // on. One for a scene nobody is in is dropped: that grass has grown back.
+  if (!scene_has_player(cut.scene)) {
+    ++stats_.world_unkept;
+    return;
+  }
+  cut.player_number = c.number;
+  auto& cuts = grass_[cut.scene];
+  const auto same = [&cut](const GrassCut& o) {
+    return std::memcmp(o.position.data(), cut.position.data(), sizeof(float) * 3) == 0 &&
+           std::memcmp(&o.radius, &cut.radius, sizeof(float)) == 0;
+  };
+  if (std::any_of(cuts.begin(), cuts.end(), same)) {
+    ++stats_.grass_repeated;
+    return;
+  }
+  if (cuts.size() >= kMaxGrassCuts) cuts.pop_front();
+  cuts.push_back(cut);
+  send_to_scene(cut.scene, id, kChannelSession, cut);
+  ++stats_.relayed;
+  ++stats_.grass_relayed;
+}
+
+// Shared world objects (docs/world.md): breaks and rest places are kept per
+// scene in world_ and replayed by set_scene; moves are only passed on. All
+// three go to the players in the sender's scene.
+void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Message& message,
+                       std::uint64_t /*now_us*/) {
+  set_sender(message, c.number);
+  // As for grass cuts: these never move the player, and one for a scene
+  // nobody is in is not kept (the games there have reset it).
+  if (auto* b = std::get_if<WorldBreak>(&message)) {
+    if (!scene_has_player(b->scene)) {
+      ++stats_.world_unkept;
+      return;
+    }
+    if (!world_.on_break(*b)) {
+      ++stats_.world_repeated;
+      return;
+    }
+    send_to_scene(b->scene, id, channel, message);
+  } else if (auto* p = std::get_if<WorldPlace>(&message)) {
+    if (!scene_has_player(p->scene)) {
+      ++stats_.world_unkept;
+      return;
+    }
+    world_.on_place(*p);
+    send_to_scene(p->scene, id, channel, message);
+  } else if (auto* h = std::get_if<WorldHit>(&message)) {
+    if (!scene_has_player(h->scene)) {
+      ++stats_.world_unkept;
+      return;
+    }
+    world_.on_hit(*h);
+    send_to_scene(h->scene, id, channel, message);
+  } else if (auto* v = std::get_if<WorldMove>(&message)) {
+    if (v->scene != c.scene) return;  // late, from the scene it left
+    send_to_scene(v->scene, id, channel, message);
+  }
+  ++stats_.relayed;
+  ++stats_.world_relayed;
+}
+
+bool Session::scene_has_player(const std::string& scene) const {
+  if (scene.empty()) return false;
+  for (const auto& [id, c] : connections_) {
+    if (c.state == State::joined && c.scene == scene) return true;
+  }
+  return false;
+}
+
+void Session::forget_empty_world(const std::string& scene) {
+  if (!scene_has_player(scene)) world_.forget(scene);
+}
+
+void Session::forget_empty_grass(const std::string& scene) {
+  if (!scene_has_player(scene)) grass_.erase(scene);
+}
+
+// Not relayed. A member follows its root's owner (run_ownership), shares its
+// fight and is never moved alone.
+void Session::on_object_group(ConnectionId id, Connection& c, const ObjectGroup& g) {
+  for (const ObjectGroupEntry& e : g.entries) {
+    auto m = objects_.find(e.member);
+    auto r = objects_.find(e.root);
+    // Both known, in the sender's scene, and the member loaded by the sender.
+    if (m == objects_.end() || r == objects_.end() || m->second.scene != c.scene ||
+        r->second.scene != c.scene ||
+        !(m->second.owner == id || m->second.present.count(id) != 0)) {
+      ++stats_.group_refused;
+      continue;
+    }
+    Object& member = m->second;
+    // A root that follows another: its own root is the group's.
+    const ObjectId top = (e.member != e.root && r->second.root) ? *r->second.root : e.root;
+    if (e.member != e.root && top == e.member) {  // a loop
+      ++stats_.group_refused;
+      continue;
+    }
+    ++stats_.group_links;
+    member.boss = (e.flags & object_group::boss) != 0;
+    const std::uint32_t before = group_of(member);
+    if (top == e.member) {
+      unlink(e.member, member);
+    } else if (member.root != top) {
+      unlink(e.member, member);
+      Object& root = objects_.at(top);
+      const std::uint32_t root_before = group_of(root);
+      // What followed the member follows its new root.
+      for (const ObjectId& child : std::exchange(member.members, {})) {
+        auto ci = objects_.find(child);
+        if (ci == objects_.end()) continue;
+        ci->second.root = top;
+        root.members.insert(child);
+        announce_owner(child, ci->second);
+      }
+      member.root = top;
+      root.members.insert(e.member);
+      root.fight_until = std::max(root.fight_until, member.fight_until);
+      if (group_of(root) != root_before) announce_owner(top, root);
+    }
+    if (group_of(member) != before) announce_owner(e.member, member);
+  }
 }
 
 void Session::drop_all_objects(ConnectionId id, std::uint8_t number,
-                               const std::set<ObjectId>& present) {
-  for (const ObjectId& oid : present) drop_presence(id, number, oid);
+                               const std::set<ObjectId>& present, std::uint64_t now_us) {
+  for (const ObjectId& oid : present) drop_presence(id, number, oid, now_us);
   std::vector<ObjectId> made;
   for (const auto& [oid, o] : objects_) {
     if (o.made && o.owner == id) made.push_back(oid);
   }
-  for (const ObjectId& oid : made) drop_presence(id, number, oid);
+  for (const ObjectId& oid : made) drop_presence(id, number, oid, now_us);
 }
 
-void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId& oid) {
+void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId& oid,
+                            std::uint64_t now_us) {
   auto it = objects_.find(oid);
   if (it == objects_.end()) return;
   Object& o = it->second;
   o.present.erase(id);
+  if (o.candidate == id) o.candidate.reset();
   if (o.made) {
     if (o.owner != id) return;
-    // The maker let go of its projectile: it is gone on every screen.
+    // A made enemy goes on with a player who has its copy. A projectile, or
+    // an enemy nobody else has, is gone on every screen.
+    std::optional<ConnectionId> next;
+    if (!o.projectile) next = best_other(o, id, false, now_us);
+    if (next) {
+      change_owner(oid, o, next, number, now_us);
+      return;
+    }
     ObjectRemove r{number, oid, o.epoch, RemoveReason::gone, {}};
     if (o.last_state && o.last_state->position) r.position = *o.last_state->position;
     const std::string scene = o.scene;
-    objects_.erase(it);
+    forget(it);
     send_to_scene(scene, id, kChannelOwnership, r);
     return;
   }
   if (o.present.empty()) {
-    objects_.erase(it);  // nobody has it loaded: forgotten
+    forget(it);  // nobody has it loaded: forgotten
     return;
   }
-  if (o.owner == id) hand_over(oid, o, number);
+  if (o.owner == id) change_owner(oid, o, best_other(o, id, false, now_us), number, now_us);
 }
 
-void Session::hand_over(const ObjectId& oid, Object& o, std::uint8_t old_owner) {
-  std::optional<ConnectionId> next;
-  std::uint8_t next_number = 0;
+bool Session::has_loaded(ConnectionId id, const Object& o) const {
+  auto it = connections_.find(id);
+  return it != connections_.end() && it->second.state == State::joined &&
+         it->second.scene == o.scene && o.present.count(id) != 0;
+}
+
+std::optional<double> Session::distance_to(const Connection& c, const Object& o,
+                                           std::uint64_t now_us) const {
+  if (!c.position || !o.last_state || !o.last_state->position) return std::nullopt;
+  if (now_us > c.position_at && now_us - c.position_at > config_.position_stale_us) {
+    return std::nullopt;
+  }
+  return metres(*c.position, *o.last_state->position);
+}
+
+bool Session::unfit_owner(const Connection& c, std::uint64_t now_us) const {
+  if (c.status & status::loading) return true;
+  if (c.paused_since != 0 && now_us - c.paused_since >= config_.owner_paused_us) return true;
+  return c.dead_since != 0 && now_us - c.dead_since >= config_.owner_dead_us;
+}
+
+std::optional<ConnectionId> Session::best_other(const Object& o,
+                                                std::optional<ConnectionId> except,
+                                                bool fit_only, std::uint64_t now_us) const {
+  std::optional<ConnectionId> best;
+  std::optional<double> best_distance;
+  std::uint8_t best_number = 0;
   for (ConnectionId other : o.present) {
-    auto it = connections_.find(other);
-    if (it == connections_.end() || it->second.state != State::joined) continue;
-    if (!next || it->second.number < next_number) {
-      next = other;
-      next_number = it->second.number;
+    if (other == except || !has_loaded(other, o)) continue;
+    const Connection& oc = connections_.at(other);
+    if (fit_only && (oc.status & kBusy)) continue;
+    const auto d = distance_to(oc, o, now_us);
+    bool better = !best;
+    if (best) {
+      if (d.has_value() != best_distance.has_value()) {
+        better = d.has_value();  // a known place before an unknown one
+      } else if (d && *d != *best_distance) {
+        better = *d < *best_distance;
+      } else {
+        better = oc.number < best_number;
+      }
+    }
+    if (better) {
+      best = other;
+      best_distance = d;
+      best_number = oc.number;
     }
   }
+  return best;
+}
+
+void Session::mark_fight(Object& o, std::uint64_t now_us) {
+  Object* target = &o;
+  if (o.root) {
+    if (auto r = objects_.find(*o.root); r != objects_.end()) target = &r->second;
+  }
+  const bool boss = o.boss || target->boss;
+  const std::uint64_t until =
+      now_us + (boss ? config_.boss_fight_lock_us : config_.fight_lock_us);
+  target->fight_until = std::max(target->fight_until, until);
+}
+
+bool Session::in_fight(const Object& o, std::uint64_t now_us) const {
+  const Object* target = &o;
+  if (o.root) {
+    if (auto r = objects_.find(*o.root); r != objects_.end()) target = &r->second;
+  }
+  return target->fight_until > now_us;
+}
+
+void Session::ask_handover(const ObjectId& oid, Object& o, ConnectionId to,
+                           std::uint64_t now_us) {
+  auto target = connections_.find(to);
+  if (!o.owner || target == connections_.end()) return;
+  o.ask = Object::Ask{to, now_us};
+  o.candidate.reset();
+  send(*o.owner, kChannelOwnership, HandoverAsk{oid, o.epoch, target->second.number});
+  ++stats_.handover_asked;
+}
+
+void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState* answer,
+                              std::uint64_t now_us) {
+  if (!o.ask || !o.owner) return;
+  const ConnectionId to = o.ask->to;
+  o.ask.reset();
+  // The player it was for left, changed scene or unloaded it meanwhile: the
+  // owner keeps it.
+  if (!has_loaded(to, o)) return;
+  if (answer) {
+    // What the answer lacks (an owner that no longer has the actor sends
+    // only the time) stays as last relayed.
+    ObjectState s = *answer;
+    if (o.last_state) {
+      const ObjectState& old = *o.last_state;
+      if (!s.position) s.position = old.position;
+      if (!s.velocity) s.velocity = old.velocity;
+      if (!s.rotation) s.rotation = old.rotation;
+      if (!s.animation) s.animation = old.animation;
+      if (!s.life) s.life = old.life;
+    }
+    o.last_state = std::move(s);
+  }
+  // A hit passed on to the old owner just before: its answer may have been
+  // read before the game took the life off. The new owner must not get the
+  // life back.
+  if (o.last_state && o.last_state->life && o.hit_base && o.hit_at != 0 &&
+      now_us - o.hit_at <= config_.hit_window_us) {
+    const std::int64_t cap = std::max<std::int64_t>(0, std::int64_t{*o.hit_base} - o.hit_sum);
+    if (o.last_state->life->life > cap) o.last_state->life->life = static_cast<std::int32_t>(cap);
+  }
+  std::uint8_t old_owner = 0;
+  if (auto it = connections_.find(*o.owner); it != connections_.end()) {
+    old_owner = it->second.number;
+  }
+  change_owner(oid, o, to, old_owner, now_us);
+}
+
+void Session::change_owner(const ObjectId& oid, Object& o, std::optional<ConnectionId> next,
+                           std::uint8_t old_owner, std::uint64_t now_us) {
+  o.previous_owner = o.owner;
   o.owner = next;
   o.last_owner = old_owner;
   ++o.epoch;
+  o.changed_at = stamp(now_us);
+  o.candidate.reset();
+  o.ask.reset();
+  o.orphan_since = 0;
   ++stats_.owner_changes;
   // The state first, then the news: the new owner has it before it starts.
   if (next && o.last_state) {
@@ -544,13 +1003,131 @@ void Session::hand_over(const ObjectId& oid, Object& o, std::uint8_t old_owner) 
   announce_owner(oid, o);
 }
 
-void Session::announce_owner(const ObjectId& oid, const Object& o) {
+void Session::run_ownership(std::uint64_t now_us) {
+  std::vector<ObjectId> ids;
+  ids.reserve(objects_.size());
+  for (const auto& entry : objects_) ids.push_back(entry.first);
+  for (const ObjectId& oid : ids) {
+    auto it = objects_.find(oid);
+    if (it == objects_.end()) continue;
+    Object& o = it->second;
+    if (o.removed || !o.owner) continue;
+    const ConnectionId owner = *o.owner;
+    auto owner_it = connections_.find(owner);
+    if (owner_it == connections_.end()) continue;
+    const Connection& oc = owner_it->second;
+
+    if (o.orphan_since != 0) {
+      if (now_us - o.orphan_since >= config_.orphan_us) {
+        o.orphan_since = 0;
+        drop_presence(owner, oc.number, oid, now_us);  // may forget it
+      }
+      continue;
+    }
+    if (o.ask) {
+      if (now_us - o.ask->at >= config_.handover_answer_us) {
+        ++stats_.handover_unanswered;
+        finish_handover(oid, o, nullptr, now_us);
+      }
+      continue;
+    }
+    if (o.projectile) continue;
+
+    // A group member goes where its root is, fight or not.
+    if (o.root) {
+      auto r = objects_.find(*o.root);
+      if (r != objects_.end() && r->second.owner && r->second.owner != o.owner &&
+          !r->second.ask && has_loaded(*r->second.owner, o)) {
+        ask_handover(oid, o, *r->second.owner, now_us);
+      }
+      continue;
+    }
+
+    // An owner whose game stands still gives it up, fight or not.
+    if (unfit_owner(oc, now_us)) {
+      if (auto next = best_other(o, owner, true, now_us)) ask_handover(oid, o, *next, now_us);
+      continue;
+    }
+
+    // Out of a fight: the player who is the one near it, held for a while.
+    std::optional<ConnectionId> want;
+    const auto theirs = distance_to(oc, o, now_us);
+    const bool settled =
+        o.changed_at == 0 || now_us - o.changed_at >= config_.handover_cooldown_us;
+    if (theirs && settled && !in_fight(o, now_us)) {
+      double best = 0;
+      for (ConnectionId other : o.present) {
+        if (other == owner || !has_loaded(other, o)) continue;
+        const Connection& pc = connections_.at(other);
+        if (pc.status & kBusy) continue;
+        const auto mine = distance_to(pc, o, now_us);
+        if (!mine || *mine > config_.handover_near_m ||
+            *mine + config_.handover_margin_m > *theirs) {
+          continue;
+        }
+        if (!(*theirs > config_.handover_owner_far_m || *mine <= config_.handover_chase_m)) {
+          continue;
+        }
+        if (!want || *mine < best) {
+          want = other;
+          best = *mine;
+        }
+      }
+    }
+    if (!want) {
+      o.candidate.reset();
+      continue;
+    }
+    if (o.candidate != want) {
+      o.candidate = want;
+      o.candidate_since = now_us;
+    }
+    if (now_us - o.candidate_since >= config_.handover_hold_us) {
+      ask_handover(oid, o, *want, now_us);
+    }
+  }
+}
+
+std::uint32_t Session::group_of(const Object& o) const {
+  if (o.root) {
+    auto r = objects_.find(*o.root);
+    return r == objects_.end() ? 0 : r->second.serial;
+  }
+  return o.members.empty() ? 0 : o.serial;
+}
+
+ObjectOwner Session::owner_message(const ObjectId& oid, const Object& o) const {
   std::uint8_t owner = 0;
   if (o.owner) {
     auto it = connections_.find(*o.owner);
     if (it != connections_.end()) owner = it->second.number;
   }
-  send_to_scene(o.scene, std::nullopt, kChannelOwnership, ObjectOwner{oid, owner, o.epoch, 0});
+  return ObjectOwner{oid, owner, o.epoch, group_of(o)};
+}
+
+void Session::unlink(const ObjectId& oid, Object& o) {
+  if (!o.root) return;
+  auto r = objects_.find(*o.root);
+  if (r != objects_.end()) r->second.members.erase(oid);
+  o.root.reset();
+}
+
+void Session::forget(Objects::iterator it) {
+  const ObjectId oid = it->first;
+  unlink(oid, it->second);
+  const std::set<ObjectId> members = std::move(it->second.members);
+  objects_.erase(it);
+  // What followed it is on its own again.
+  for (const ObjectId& m : members) {
+    auto mi = objects_.find(m);
+    if (mi == objects_.end()) continue;
+    mi->second.root.reset();
+    announce_owner(m, mi->second);
+  }
+}
+
+void Session::announce_owner(const ObjectId& oid, const Object& o) {
+  send_to_scene(o.scene, std::nullopt, kChannelOwnership, owner_message(oid, o));
 }
 
 void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
@@ -568,12 +1145,18 @@ std::optional<std::pair<std::uint8_t, std::uint16_t>> Session::object_owner(
     const ObjectId& id) const {
   auto it = objects_.find(id);
   if (it == objects_.end()) return std::nullopt;
-  std::uint8_t owner = 0;
-  if (it->second.owner) {
-    auto c = connections_.find(*it->second.owner);
-    if (c != connections_.end()) owner = c->second.number;
-  }
-  return std::make_pair(owner, it->second.epoch);
+  return std::make_pair(owner_message(id, it->second).owner, it->second.epoch);
+}
+
+std::optional<std::uint32_t> Session::object_group(const ObjectId& id) const {
+  auto it = objects_.find(id);
+  if (it == objects_.end()) return std::nullopt;
+  return group_of(it->second);
+}
+
+bool Session::object_in_fight(const ObjectId& id, std::uint64_t now_us) const {
+  auto it = objects_.find(id);
+  return it != objects_.end() && in_fight(it->second, now_us);
 }
 
 std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
@@ -611,10 +1194,10 @@ void Session::disconnected(ConnectionId id, std::uint64_t now_us) {
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
   bool silent = now_us - it->second.last_heard >= config_.silence_timeout_us / 2;
-  remove_player(id, silent ? LeaveReason::timed_out : LeaveReason::left);
+  remove_player(id, silent ? LeaveReason::timed_out : LeaveReason::left, now_us);
 }
 
-void Session::remove_player(ConnectionId id, LeaveReason reason) {
+void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t now_us) {
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
   Connection c = std::move(it->second);
@@ -623,7 +1206,9 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
   send_to_others(id, kChannelSession, PlayerLeft{c.number, reason});
   // After PLAYER_LEFT, so the others learn the owner left before the new
   // owner is announced; the leaver is out of connections_ by now.
-  drop_all_objects(id, c.number, c.present);
+  drop_all_objects(id, c.number, c.present, now_us);
+  forget_empty_grass(c.scene);
+  forget_empty_world(c.scene);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
       (reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
@@ -631,6 +1216,8 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
     host_.reset();
     flags_.clear();
     objects_.clear();
+    grass_.clear();
+    world_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before
@@ -669,11 +1256,15 @@ void Session::tick(std::uint64_t now_us) {
   }
   for (ConnectionId id : late_hello) {
     actions_.push_back(DisconnectAction{id});
-    remove_player(id, LeaveReason::timed_out);
+    remove_player(id, LeaveReason::timed_out, now_us);
   }
   for (ConnectionId id : silent) {
     actions_.push_back(DisconnectAction{id});
-    remove_player(id, LeaveReason::timed_out);
+    remove_player(id, LeaveReason::timed_out, now_us);
+  }
+  if (now_us - ownership_checked_at_ >= config_.ownership_check_us) {
+    ownership_checked_at_ = now_us;
+    run_ownership(now_us);
   }
 }
 

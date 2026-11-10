@@ -50,6 +50,10 @@ inline PlayerEquip equip_message() {
   m.equipment.armor = "";  // nothing in that slot
   m.equipment.head = "Armor_Child_Mask_Keaton";
   m.equipment.drawn = 0x05;
+  m.equipment.held = "Weapon_Range_SlingShot";
+  m.equipment.weapon_slot = "Weapon_Sword_Kokiri";
+  m.equipment.sub_weapon = "";
+  m.equipment.tool = "Weapon_Boomerang";
   return m;
 }
 
@@ -78,6 +82,7 @@ inline std::vector<Message> object_messages() {
   all.push_back(ObjectOwner{kPlacedId, 2, 9, 4});
   all.push_back(ObjectOwner{kMadeId, 0, 0, 0});
   all.push_back(HandoverAsk{kPlacedId, 9, 3});
+  all.push_back(ObjectGroup{0, {{kPlacedId, kMadeId, object_group::boss}, {kMadeId, kMadeId, 0}}});
   all.push_back(HandoverState{0, kPlacedId, 9, full_object_state()});
   all.push_back(ObjectSpawn{0, kMadeId, "NormalArrow", object_spawn::projectile, full_object_state()});
   all.push_back(ObjectSample{1, kPlacedId, 65535, full_object_state()});
@@ -91,6 +96,11 @@ inline std::vector<Message> object_messages() {
   all.push_back(PlayerPose{0, {1, 1}, 1, {}});
   all.push_back(TimeOfDay{3, 86399, time_of_day::jump});
   all.push_back(TimeOfDay{0, 0, 0});
+  all.push_back(DropSpawn{0, kMadeId, "Graveyard", "Obj_Rupee_Green", {1.0f, 2.0f, 3.0f}, 123456789, drop_spawn::owned});
+  all.push_back(DropSpawn{2, kMadeId, "spot00", "Obj_Heart", {0.0f, 0.0f, 0.0f}, 0, drop_spawn::again});
+  all.push_back(DropTake{0, kMadeId, DropTakeReason::picked_up});
+  all.push_back(DropTake{3, kMadeId, DropTakeReason::gone});
+  all.push_back(DropAsk{0, "Graveyard"});
   return all;
 }
 

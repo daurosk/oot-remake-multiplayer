@@ -1,0 +1,42 @@
+# wear-adult (issue 91): tunic, boots and gauntlets on adult Link. A loads straight into the
+# Graveyard as adult (as adult.A.txt; run with -NoLoad), steps aside to face B and sets its
+# own gear flags with the test-only `wear` (only the flag changes, not A's own Link): Goron
+# tunic, Hover Boots, Silver Gauntlets, then the Zora tunic and Iron Boots.
+# Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1".
+# Expect in B's log: "P1 wears armor 'Armor_Adult_Goron'", "P1 wears boots
+# 'Armor_Adult_HoverBoot'", "P1 wears hand 'Armor_Adult_Gauntlet_Silver'", and so on; look at
+# B's shots at each mark for the colour and the boots.
+mark start
+warp Graveyard_Adult
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+wear armor Armor_Adult_Goron
+wait 240
+mark goron
+wear boots Armor_Adult_HoverBoot
+wait 240
+mark hover
+wear hand Armor_Adult_Gauntlet_Silver
+wait 240
+mark silver
+wear armor Armor_Adult_Zora
+wear boots Armor_Adult_HeavyBoot
+wait 240
+mark zora-iron
+wait 300
+mark end

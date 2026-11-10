@@ -124,6 +124,14 @@ struct ClientConfig {
   // A welcomed connection that lasted this long sets the delay back to the
   // first one when it drops; a shorter one keeps doubling it.
   std::uint32_t stable_after_ms = 10000;
+  // REFUSED "name taken" is tried again every name_taken_retry_ms for
+  // name_taken_retry_for_ms before the client gives up and reports it: a
+  // build restarted after a crash finds its old self still in, until the
+  // server lets it take that place (1 s of silence from the same address)
+  // or times the old one out (10 s). 0: no retry. While it retries, the
+  // state is waiting_retry and no refused event is pushed.
+  std::uint32_t name_taken_retry_ms = 1500;
+  std::uint32_t name_taken_retry_for_ms = 12000;
   // ENet events handled in one service() at most (at least 1).
   std::uint32_t max_events_per_service = 256;
   // Our join request ends with `join_timed_out` after this long with no
@@ -145,7 +153,7 @@ enum class State : std::uint8_t {
   handshaking,    // HELLO sent, waiting for the answer
   connected,      // WELCOME received
   waiting_retry,  // between attempts
-  refused,        // the server sent REFUSED; the client does not retry
+  refused,        // the server sent REFUSED; the client does not retry (name taken: see name_taken_retry_ms)
   stopped,        // stop() was called
 };
 
@@ -354,6 +362,8 @@ class Client {
   std::size_t rejected_count() const { return rejected_; }
   // Attempts since the last WELCOME.
   std::uint32_t failed_attempts() const { return failed_attempts_; }
+  // REFUSED "name taken" answers that were tried again (name_taken_retry_ms).
+  std::uint32_t name_taken_retries() const { return name_taken_retries_; }
 
  private:
   void begin_attempt();
@@ -399,6 +409,8 @@ class Client {
   std::uint64_t retry_at_us_ = 0;
   std::uint32_t retry_delay_ms_ = 0;
   std::uint32_t failed_attempts_ = 0;
+  std::uint64_t name_taken_since_us_ = 0;  // the first "name taken" in a row, 0: none
+  std::uint32_t name_taken_retries_ = 0;
 
   ClockEstimator clock_;
   std::vector<Player> players_;  // sorted by number

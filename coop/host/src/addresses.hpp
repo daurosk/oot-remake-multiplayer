@@ -142,6 +142,19 @@ inline constexpr std::uint8_t kEquipSlotDrawnBit = 0x2;
 inline constexpr std::uint32_t kEquipSlotSword = 0;
 inline constexpr std::uint32_t kEquipSlotHeldItem = 3;
 inline constexpr std::uint32_t kEquipSlotShield = 4;
+// [dump] The game's own names for the eight slots, an enum's names in rodata
+// at 0x3ef2033: Weapon, SubWeapon, ThirdWeapon, Bow, Shield, Tool, SubTool,
+// Helmet. (The 18 slot kinds of the equip call are another enum, 0x3ef94a8.)
+inline constexpr std::uint32_t kEquipSlotSubWeapon = 1;
+inline constexpr std::uint32_t kEquipSlotThirdWeapon = 2;
+inline constexpr std::uint32_t kEquipSlotTool = 5;
+inline constexpr std::uint32_t kEquipSlotSubTool = 6;
+// [dump] 0x2df7b20 (the equip call) tests slot 3's link (+0x70, +0x78) for
+// slot kind 5, the bow kind: slot 3 is the bow slot. Autotest logs
+// (2026-11-09): a child with the slingshot has `Weapon_Range_SlingShot`
+// there, in state 6 while it is put away.
+// [objects] An actor's name: a char* at +0x260 (docs/objects.md).
+inline constexpr std::uint64_t kActorName = 0x260;
 inline constexpr std::uint32_t kActorStateGoneFirst = 7;
 inline constexpr std::uint32_t kActorStateGoneLast = 11;
 

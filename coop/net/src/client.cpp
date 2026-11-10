@@ -344,6 +344,20 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
         enet_peer_disconnect_now(peer_, 0);
         peer_ = nullptr;
       }
+      // Our own crashed build may still hold the name for a moment (see
+      // name_taken_retry_ms): ask again before giving up.
+      if (refused->reason == proto::RefuseReason::name_taken &&
+          config_.name_taken_retry_for_ms != 0) {
+        const std::uint64_t now = now_us();
+        if (name_taken_since_us_ == 0) name_taken_since_us_ = now;
+        if (elapsed(now, name_taken_since_us_) < ms_to_us(config_.name_taken_retry_for_ms)) {
+          ++name_taken_retries_;
+          retry_at_us_ = now + ms_to_us(std::max<std::uint32_t>(config_.name_taken_retry_ms, 1));
+          state_ = State::waiting_retry;
+          return;
+        }
+      }
+      name_taken_since_us_ = 0;
       state_ = State::refused;
       Event event;
       event.kind = EventKind::refused;
@@ -497,6 +511,7 @@ void Client::on_welcome(const proto::Welcome& welcome) {
   welcomed_us_ = now;
   player_number_ = welcome.player_number;
   failed_attempts_ = 0;
+  name_taken_since_us_ = 0;
 
   players_.clear();
   clear_shared();

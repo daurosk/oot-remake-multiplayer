@@ -73,6 +73,32 @@ bool FlagWatcher::receive(std::span<const std::uint8_t> bytes) {
   return receive(message);
 }
 
+bool FlagWatcher::share_pickup(FlagKey key) {
+  if (key.kind != FlagKeyKind::key64 || !pickups_.insert(key).second) return false;
+  shared_.add(key);
+  return true;
+}
+
+bool FlagWatcher::takes(const FlagEntry& entry) {
+  const FlagKey key = key_of(entry);
+  const bool one = entry.kind == protocol::FlagKind::boolean && entry.value != 0;
+  if (!shared_.contains(key)) {
+    if (!learn_ || !one || key.kind != FlagKeyKind::key64 || learned_ >= kMaxLearned) {
+      ++stats_.not_shared;
+      return false;
+    }
+    ++learned_;
+    ++stats_.pickups_learned;
+    share_pickup(key);
+    return true;
+  }
+  if (!one && pickups_.contains(key)) {
+    ++stats_.pickup_resets;
+    return false;
+  }
+  return true;
+}
+
 void FlagWatcher::set_role(FlagRole role) {
   role_ = role;
   holding_ = false;
@@ -201,10 +227,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
 void FlagWatcher::apply_state(FlagStore& store, const std::vector<FlagEntry>& flags) {
   for (const auto& entry : flags) {
     const FlagKey key = key_of(entry);
-    if (!shared_.contains(key)) {
-      ++stats_.not_shared;
-      continue;
-    }
+    if (!takes(entry)) continue;
     if (is_delta(entry)) {
       // A player's count change, handed over by the host's client: the host
       // adds it, and diff() sends the total. A player takes totals only.
@@ -224,8 +247,8 @@ void FlagWatcher::apply_state(FlagStore& store, const std::vector<FlagEntry>& fl
 void FlagWatcher::apply_snapshot(FlagStore& store) {
   holding_ = false;
   for (const auto& [key, entry] : snapshot_) {
-    if (!shared_.contains(key)) {
-      ++stats_.not_shared;
+    if (!takes(entry)) {
+      // not shared here, or a pickup's 0
     } else if (pending_.contains(key)) {
       ++stats_.kept_local;  // the host's answer to it is still to come
     } else {
@@ -241,10 +264,7 @@ void FlagWatcher::apply_snapshot(FlagStore& store) {
 void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Table& answers) {
   for (const auto& entry : set.flags) {
     const FlagKey key = key_of(entry);
-    if (!shared_.contains(key)) {
-      ++stats_.not_shared;
-      continue;
-    }
+    if (!takes(entry)) continue;
     const bool written = store.write(entry);
     if (written) {
       ++stats_.applied;
@@ -326,6 +346,10 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (it->second == *now && !restate_.contains(key)) continue;
     const FlagEntry before = it->second;
     it->second = *now;
+    if (now->value == 0 && pickups_.contains(key) && !restate_.contains(key)) {
+      ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
+      continue;
+    }
     ++stats_.changes_sent;
     if (role_ == FlagRole::player && store.is_count(key) &&
         before.kind == protocol::FlagKind::int32 && now->kind == protocol::FlagKind::int32) {

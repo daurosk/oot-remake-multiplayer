@@ -22,6 +22,9 @@
 #include <utility>
 #include <vector>
 
+namespace coop::protocol {
+struct Equipment;
+}
 namespace coop::host {
 class Session;
 }
@@ -129,17 +132,46 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 }  // namespace addr
 
 // The slot kinds the puppet wears, in Target::gear order: weapon, shield,
-// head, armor, boots (reports/s2-equip-create: kinds 0, 6, 7, 8, 9).
-inline constexpr std::array<std::uint32_t, 5> kGearKinds{0, 6, 7, 8, 9};
-inline constexpr std::array<const char*, 5> kGearNames{"weapon", "shield", "head", "armor",
-                                                       "boots"};
+// head, armor, boots (reports/s2-equip-create: kinds 0, 6, 7, 8, 9), and the
+// item in the hand slot (kind 5, the bow kind: 0x2df7b20 tests slot 3's link
+// for it; the slingshot is a bow to the game).
+//
+// The rest (branch held-items-2) follows the game's own two enums, read from
+// rodata. The 18 slot kinds the equip call takes (0x3ef94a8): 0 Weapon,
+// 1 SubWeapon, 2 ThirdWeapon, 3 Sheath, 4 Quiver, 5 Bow, 6 Shield,
+// 7 ArmorHead, 8 ArmorUpper, 9 ArmorLower, 10 ArmorHand, 11 Tool, 12 SubTool,
+// 13 to 16 Accessory1 to 4, 17 Extra. The 8 hand slots (0x3ef2033): 0 Weapon,
+// 1 SubWeapon, 2 ThirdWeapon, 3 Bow, 4 Shield, 5 Tool, 6 SubTool, 7 Helmet.
+// So the pieces after the held item are: the gauntlets (kind 10, no hand
+// slot), and whatever sits in hand slots 1, 2, 5 and 6 (kinds 1, 2, 11, 12:
+// which of the Deku stick, boomerang, hookshot, bottle and ocarina uses
+// which is for a game run to show; all four are sent and worn the same way).
+inline constexpr std::size_t kGearCount = 11;
+inline constexpr std::size_t kGearHeld = 5;  // index of the held item
+inline constexpr std::size_t kGearHand = 6;  // the gauntlets
+inline constexpr std::size_t kGearSubWeapon = 7;
+inline constexpr std::size_t kGearThirdWeapon = 8;
+inline constexpr std::size_t kGearTool = 9;
+inline constexpr std::size_t kGearSubTool = 10;
+using Gear = std::array<std::optional<std::string>, kGearCount>;
+inline constexpr std::array<std::uint32_t, kGearCount> kGearKinds{0, 6, 7, 8, 9, 5,
+                                                                  10, 1, 2, 11, 12};
+inline constexpr std::array<const char*, kGearCount> kGearNames{
+    "weapon", "shield",     "head",         "armor", "boots",   "held",
+    "hand",   "sub weapon", "third weapon", "tool",  "sub tool"};
+// Pieces the game keeps elsewhere while they are put away (seen for the
+// slingshot: state 6), so the left-behind check looks at them only in hand.
+constexpr bool GearIsCarried(std::size_t i) {
+    return i == kGearHeld || i >= kGearSubWeapon;
+}
 // The equipment slot each of them lands in (seen in the game: the sword in
-// slot 0, the shield in slot 4); -1: not a piece that is drawn or put away.
-inline constexpr std::array<int, 5> kGearSlots{0, 4, -1, -1, -1};
+// slot 0, the shield in slot 4, the slingshot in slot 3); -1: not a piece
+// that is drawn or put away.
+inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1, 1, 2, 5, 6};
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x500;
+inline constexpr std::uint64_t kSize = 0x680;
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -157,7 +189,7 @@ inline constexpr std::uint64_t kAnimCapacity = 0x50;  // 64 characters and the 0
 // the equip call is given.
 inline constexpr std::uint64_t kGearText = 0x300;
 inline constexpr std::uint64_t kGearCapacity = 0x40;
-inline constexpr std::uint64_t kGearPtr = 0x440;  // 5 x 8 bytes
+inline constexpr std::uint64_t kGearPtr = 0x5c0;  // kGearCount x 8 bytes
 }  // namespace block
 
 // Guest memory, as the director sees it. Failures are quiet.
@@ -197,7 +229,7 @@ struct Target {
     std::uint32_t anim_serial = 0;  // goes up with each received animation
     // What the player wears, in kGearKinds order; unset: not known yet,
     // "" nothing (not taken off yet; the puppet keeps what it has).
-    std::array<std::optional<std::string>, 5> gear;
+    Gear gear;
     // PLAYER_EQUIP's drawn bits: bit i set when the player's equipment slot i
     // is in hand (sword out, shield on the arm). Unset: not known.
     std::optional<std::uint8_t> drawn;
@@ -323,7 +355,7 @@ private:
         std::uint32_t play_serial = 0;
         std::int32_t sync_next = 0;         // next slot to sync from slot 0; 0 none
         std::uint64_t pose_log_ms = 0;      // last read-back line (debug anim)
-        std::array<std::string, 5> worn;    // equipped on it, by gear index
+        std::array<std::string, kGearCount> worn;    // equipped on it, by gear index
         std::size_t equip_index = 0;        // the equip being made
         std::string equip_name;
         std::uint64_t gear_log_ms = 0;      // last gear line (debug anim)
@@ -332,10 +364,10 @@ private:
         int hold_slot = 0;                  // the change being made
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
-        std::array<std::uint32_t, 5> hold_id{};  // the piece each change was made for
+        std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
-        std::array<std::uint64_t, 5> far_since_ms{};  // first far reading of each piece; 0 near
-        std::array<std::uint8_t, 5> rewear_tries{};   // re-wears since the piece was last near
+        std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
+        std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {
@@ -390,6 +422,9 @@ private:
 };
 
 // The present thread's side: what to show this frame.
+// A player's PLAYER_EQUIP as the puppet's pieces, in kGearKinds order.
+Gear GearOf(const coop::protocol::Equipment& equipment);
+
 struct Remote {
     std::uint8_t number = 0;
     std::optional<std::string> scene;
@@ -400,7 +435,7 @@ struct Remote {
     bool adult = false;
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;
-    std::array<std::optional<std::string>, 5> gear;  // as Target::gear
+    Gear gear;  // as Target::gear
     std::optional<std::uint8_t> drawn;               // as Target::drawn
 };
 
@@ -422,7 +457,7 @@ public:
     Input Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                const std::optional<Vec3>& position, bool local_event,
                const std::vector<Remote>& remotes, std::uint64_t now_ms,
-               const std::array<std::optional<std::string>, 5>& own_gear = {},
+               const Gear& own_gear = {},
                std::optional<std::uint8_t> own_drawn = {});
     std::string ActorFor(bool adult) const;
     const PlannerSettings& settings() const { return settings_; }

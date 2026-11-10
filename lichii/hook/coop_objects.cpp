@@ -48,6 +48,7 @@
 
 #include "coop_objects.h"
 #include "coop_flags.h"
+#include "coop_hold.h"
 #include "coop_puppet.h"
 #include "coop_svc.h"
 
@@ -77,6 +78,8 @@
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
 #include "coop_spawn.h"
+#include "coop_pickups.h"
+#include <atomic>
 #include "coop_world.h"
 
 namespace CoopObjects {
@@ -109,6 +112,18 @@ constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 // Rolled enemies' copies in the spawn director: their keys have the top bit.
 constexpr u64 kEnemyKey = u64{1} << 63;
 constexpr unsigned kMoverCallerOrder = 30;  // after the puppets, spawn copies (10) and fairies (20)
+constexpr unsigned kGrassCallerOrder = 40;  // the others' field grass cuts (coop_world.h)
+
+CoopWorld::GrassSync& TheGrass() {
+    static CoopWorld::GrassSync grass;
+    return grass;
+}
+
+u64 SteadyNowMs() {
+    return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count());
+}
 // Animations (docs/puppet.md "Animation"): the AS controller is
 // [[[actor + 0x270] + 0x40] + 0x18] + 0x18; slot 0 is [controller + 0x20];
 // its command name char* +0x10, rate f32 +0xd4, frame f32 +0xe8. The play
@@ -162,6 +177,14 @@ constexpr u64 kLastHitId = 0x1b18;
   // the copy's own AI took over: play again at most this often
 constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
+// LICHII_COOP_OBJECTS_AI_HOLD=1 or 2 (off by default; docs/objects.md
+// "Holding a copy's AI", coop_hold.h): the BSA component is table +0xb0
+// (0xcad060), and bit 0 of its u16 at +0xc4 is what QueryBsaIsBrainSkip (run
+// 0x29ce250) reads. Each game frame the Mover writes the held copies' BSA
+// components into the table the hold cave reads, and counts in how many
+// frames each one's bit read as asked.
+constexpr u64 kComponentBsa = 0xb0;
+constexpr u64 kBsaFlags = 0xc4;
 constexpr u64 kComponentLife = 0x2b8;
 constexpr u64 kLifeValue = 0x1c10;
 constexpr u64 kLifeMax = 0x1c18;
@@ -327,6 +350,7 @@ public:
         std::array<float, 3> at{};    // the copy's place
         std::array<float, 3> from{};  // the hitter's place (ours when not known)
         u64 asked_ms = 0;             // set by AddHit
+        bool exact = false;           // `at` is where the blade was, not the actor's foot
     };
 
     // Present thread: hits to replay at the next game frame.
@@ -336,6 +360,14 @@ public:
             hits_.push_back(hit);
             hits_.back().asked_ms = SteadyMs();
         }
+    }
+
+    // Present thread: the enemy copies whose AI is held, and how.
+    void Hold(std::vector<u64> actors, const CoopHold::Masks& masks) {
+        std::lock_guard lock(mutex_);
+        holds_ = std::move(actors);
+        masks_ = masks;
+        holding_ = true;
     }
 
     void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes,
@@ -394,7 +426,13 @@ public:
                 }
             }
             hits_.clear();
+            if (holding_) {
+                WriteHolds(guest);
+            }
             work_ = poses_;
+            if (work_.size() > 1) {
+                std::rotate(work_.begin(), work_.begin() + (++turn_ % work_.size()), work_.end());
+            }
             work_removes_.clear();
             for (const u64 a : removes_) {
                 if (!asked_.contains(a)) {
@@ -409,23 +447,6 @@ public:
         }
         if (main_ == 0) {
             return std::nullopt;
-        }
-        while (next_ < work_.size()) {
-            const Pose& p = work_[next_++];
-            if (!Alive(guest, p.actor)) {
-                continue;
-            }
-            if (p.rotation) {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
-            } else {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 12);
-            }
-            ++moved_;
-            CoopPuppet::Call c;
-            c.function = main_ + kSetMatrix;
-            c.x[0] = p.actor;
-            c.x[1] = 0;
-            return c;
         }
         while (next_play_ < work_plays_.size() && block_ != 0) {
             const PlayWish& p = work_plays_[next_play_++];
@@ -499,10 +520,74 @@ public:
             c.x[1] = 0;
             return c;
         }
+        // Poses last: the cave makes at most CoopSvc::kCallsPerFrame calls a
+        // frame for everyone, and a scene may hold more copies than are left.
+        // The list starts one further on each frame, so no copy is left out
+        // twice in a row (run3, 2026-11-09: with 16 calls a frame, 3 to 5 of
+        // 19 to 21 copies were never moved and no animation was ever played).
+        while (next_ < work_.size()) {
+            const Pose& p = work_[next_++];
+            if (!Alive(guest, p.actor)) {
+                continue;
+            }
+            if (p.rotation) {
+                guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
+            } else {
+                guest.Write(p.actor + kActorPosition, p.transform.data(), 12);
+            }
+            ++moved_;
+            CoopPuppet::Call c;
+            c.function = main_ + kSetMatrix;
+            c.x[0] = p.actor;
+            c.x[1] = 0;
+            return c;
+        }
         return std::nullopt;
     }
 
+    // Since the last ask: copy-frames held, and in how many of them the
+    // copy's brain skip bit read as asked (the cave's work of the frame
+    // before, seen after the game's frame).
+    std::pair<std::size_t, std::size_t> TakeHolds() {
+        std::lock_guard lock(mutex_);
+        return {std::exchange(hold_set_, 0), std::exchange(hold_kept_, 0)};
+    }
+
 private:
+    // Start of a game frame: the held copies' BSA components go into the
+    // table the hold cave reads (an empty list empties it, so an enemy that
+    // became ours runs its own AI again from this frame).
+    void WriteHolds(CoopPuppet::Guest& guest) {
+        if (main_ == 0) {
+            return;
+        }
+        std::vector<u64> components;
+        const u16 want = static_cast<u16>(masks_.or_mask & CoopHold::kBrainSkip);
+        for (const u64 actor : holds_) {
+            u64 table = 0;
+            u64 bsa = 0;
+            u16 flags = 0;
+            if (!Alive(guest, actor) || !guest.Read(actor + kActorComponents, &table, 8) ||
+                table == 0 || !guest.Read(table + kComponentBsa, &bsa, 8) || bsa == 0 ||
+                !guest.Read(bsa + kBsaFlags, &flags, 2)) {
+                continue;
+            }
+            if (held_before_.contains(bsa)) {
+                ++hold_set_;
+                if ((flags & CoopHold::kBrainSkip) == want) {
+                    ++hold_kept_;
+                }
+            }
+            components.push_back(bsa);
+        }
+        if (components.size() > CoopHold::kMaxHeld) {
+            components.resize(CoopHold::kMaxHeld);
+        }
+        const auto bytes = CoopHold::Table(components, masks_);
+        guest.Write(main_ + CoopHold::kTableOffset, bytes.data(), bytes.size());
+        held_before_ = std::unordered_set<u64>(components.begin(), components.end());
+    }
+
     static u64 SteadyMs() {
         return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
@@ -580,7 +665,7 @@ private:
         std::memcpy(&rec[0], &h.attacker, 8);
         rec[2] = id;
         rec[0x2c4 / 4 - kHitRecord / 4] = id;
-        const std::array<float, 3> at{h.at[0], h.at[1] + 1.0f, h.at[2]};
+        const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
         std::memcpy(&rec[0x27c / 4 - kHitRecord / 4], at.data(), 12);
         std::memcpy(&rec[0x2a0 / 4 - kHitRecord / 4], h.from.data(), 12);
         rec[3] = 0;  // present last, below
@@ -649,14 +734,27 @@ private:
     std::vector<u64> work_removes_;
     std::unordered_set<u64> asked_;  // deletes asked once
     std::size_t next_ = 0;
+    std::size_t turn_ = 0;  // where this frame's poses start
     std::size_t next_remove_ = 0;
     std::size_t moved_ = 0;
     std::size_t deleted_ = 0;
+    std::vector<u64> holds_;
+    CoopHold::Masks masks_;
+    bool holding_ = false;
+    std::unordered_set<u64> held_before_;  // BSA components in last frame's table
+    std::size_t hold_set_ = 0;
+    std::size_t hold_kept_ = 0;
 };
 
 Mover& TheMover() {
     static Mover mover;
     return mover;
+}
+
+// The MaxLife flag as the session left it (SetMaxLife); -1: not known.
+std::atomic<s32>& TheMaxLife() {
+    static std::atomic<s32> quarters{-1};
+    return quarters;
 }
 
 class Objects {
@@ -681,6 +779,7 @@ public:
         if (session == nullptr || !scene || scene->empty() || server_now_us == 0) {
             if (sharing_) {
                 sync_.Reset();
+                world_.Reset();
                 sharing_ = false;
             }
             return;
@@ -708,6 +807,7 @@ public:
             return;
         }
         Reader r(system.ApplicationMemory());
+        memory_ = &system.ApplicationMemory();
         std::vector<Seen> seen;
         if (!Collect(r, seen)) {
             return;
@@ -723,6 +823,11 @@ public:
                                    [](CoopPuppet::Guest& guest, bool after_call,
                                       std::uint64_t result, std::uint64_t now_ms) {
                                        return TheMover().Step(guest, after_call, result, now_ms);
+                                   });
+                CoopSvc::AddCaller(kGrassCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t now_ms) {
+                                       return TheGrass().Step(guest, after_call, result, now_ms);
                                    });
                 return true;
             }();
@@ -770,6 +875,68 @@ public:
         }
         for (const auto& note : sync_.TakeNotes()) {
             LOG_INFO(Core, "coop: objects: share {}", note);
+        }
+        // Breaks and moves of placed world objects (docs/world.md).
+        {
+            CoopWorld::WorldSync::Out world;
+            world_.Tick(*scene, self, server_now_us, seen, player_, world);
+            for (auto& m : world.send) {
+                send.emplace_back(std::move(m));
+            }
+            writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            if (!world.hits.empty()) {
+                // A sign another player's sword passed: the same hit on ours.
+                u64 link = 0;
+                for (const auto& [a, known] : names_) {
+                    if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                        link = a;
+                        break;
+                    }
+                }
+                for (const auto& hit : world.hits) {
+                    if (link == 0) {
+                        break;
+                    }
+                    Mover::Hit h;
+                    h.actor = hit.address;
+                    h.attacker = link;
+                    h.amount = 1;
+                    h.at = hit.at;
+                    h.from = hit.from;
+                    h.exact = true;
+                    TheMover().AddHit(h);
+                }
+            }
+            for (const auto& note : world.notes) {
+                if (world_lines_ < 2000) {
+                    ++world_lines_;
+                    LOG_INFO(Core, "coop: {}", note);
+                }
+            }
+        }        // Field grass (docs/world.md): our new cuts go out, the others' are
+        // made at the svc cave.
+        for (auto& cut : TheGrass().Look([&r](u64 address) { return r.Get<u64>(address); }, main_,
+                                         *scene, SteadyNowMs())) {
+            LOG_INFO(Core, "coop: grass: cut at {:.2f} {:.2f} {:.2f} radius {:.2f} flags {:#x} sent",
+                     cut.position[0], cut.position[1], cut.position[2], cut.radius, cut.flags);
+            {
+                CoopWorld::WorldSync::Out swing;  // a sign the sword passed (docs/world.md)
+                world_.Swing(cut, player_, server_now_us, swing);
+                for (auto& m : swing.send) {
+                    send.emplace_back(std::move(m));
+                }
+                for (const auto& note : swing.notes) {
+                    LOG_INFO(Core, "coop: {}", note);
+                }
+            }
+            send.emplace_back(std::move(cut));
+        }
+        for (const auto& note : TheGrass().TakeNotes()) {
+            LOG_INFO(Core, "coop: {}", note);
+        }
+        if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
+            grass_made_logged_ = made;
+            LOG_INFO(Core, "coop: grass: {} cuts of the others made here", made);
         }
         for (const Seen& s : seen) {
             if (!s.animation || !IsShared(s.name)) {
@@ -823,18 +990,52 @@ public:
         } else if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
             LOG_INFO(Core, "coop: objects: share got damage {} for {:#x}", d->amount,
                      d->id.value);
-        }
-        sync_.Receive(m);
+        } else if (const auto* g = std::get_if<coop::protocol::GrassCut>(&m)) {
+            LOG_INFO(Core, "coop: grass: got cut from P{} in {} at {:.2f} {:.2f} {:.2f} radius {:.2f}",
+                     g->player_number, g->scene, g->position[0], g->position[1], g->position[2],
+                     g->radius);
+            TheGrass().Receive(*g);
+            return;
+        } else if (std::holds_alternative<coop::protocol::WorldBreak>(m) ||
+                   std::holds_alternative<coop::protocol::WorldPlace>(m) ||
+                   std::holds_alternative<coop::protocol::WorldHit>(m) ||
+                   std::holds_alternative<coop::protocol::WorldMove>(m)) {
+            if (const auto* b = std::get_if<coop::protocol::WorldBreak>(&m)) {
+                LOG_INFO(Core, "coop: world: got break {:#x} from P{} in {}{}", b->hash,
+                         b->player_number, b->scene,
+                         (b->flags & coop::protocol::world_break::restored) != 0 ? " (back)" : "");
+            } else if (const auto* p = std::get_if<coop::protocol::WorldPlace>(&m)) {
+                LOG_INFO(Core, "coop: world: got place {:#x} from P{} at {:.2f} {:.2f} {:.2f}",
+                         p->hash, p->player_number, p->position[0], p->position[1], p->position[2]);
+            }
+            world_.Receive(m);
+            return;
+        }        sync_.Receive(m);
     }
 
     bool debug_ = false;
+    u64 grass_made_logged_ = 0;
+    CoopWorld::WorldSync world_;
+    std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
+    int world_lines_ = 0;
     CoopWorld::FoliageProbe foliage_;
+    // Issue 88 (docs/items.md, "Heart containers").
+    s32 link_life_logged_ = -1;
+    s32 link_max_logged_ = -1;
+    s32 flag_max_logged_ = -1;
+    bool hearts_to_link_ = false;  // LICHII_COOP_HEARTS_TO_LINK=1 (issue 88 test)
+    Core::Memory::Memory* memory_ = nullptr;  // set by Share for Collect
+    static constexpr s32 kMostQuarters = 20 * 4;
     bool cheat_ = false;
     bool share_ = false;
+
+    // Present thread: the shared things this game owns (for coop_drops).
+    auto OwnedNow() const { return sync_.Owned(); }
     bool pose_ = true;
     bool hurt_ = true;
     bool replay_ = false;
     bool drive_ = false;
+    int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
     u64 take_at_ = 0;
     int drive_mode_ = 0;
@@ -857,6 +1058,7 @@ private:
             first_ = true;
             names_.clear();
             sync_.Reset();
+            world_.Reset();
             LOG_INFO(Core, "coop: objects: main at {:#x}", main_);
         }
         return true;
@@ -880,6 +1082,7 @@ private:
                 known.first = r.Name(a);
                 const auto placement = r.Ptr(a + kActorPlacement);
                 known.second = placement ? r.Get<u64>(*placement + kPlacementHash).value_or(0) : 0;
+                CoopPickups::Note(known.first, known.second);  // one-time pickups (docs/items.md)
                 if (IsShared(known.first) && vtables_logged_.insert(known.first).second) {
                     // The set-matrix node (0x2622e50) writes +0x31c..+0x34b and
                     // then calls vtable slot 0x218 (actor, 0): what does it do?
@@ -895,8 +1098,34 @@ private:
                     at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
                 player = at;
+                // Issue 88: the hearts the game shows come from Link's own Life
+                // component; logged beside the MaxLife flag (coop_flags debug)
+                // so one run shows whether a shared MaxLife reaches it.
+                if (const auto value = LifeValue(r, a)) {
+                    const s32 life = r.Get<s32>(value->first + 8).value_or(-1);
+                    const s32 max = r.Get<s32>(value->second + 8).value_or(-1);
+                    const s32 flag = TheMaxLife().load();
+                    if (max != link_max_logged_ || flag != flag_max_logged_ ||
+                        (debug_ && life != link_life_logged_)) {
+                        link_max_logged_ = max;
+                        link_life_logged_ = life;
+                        flag_max_logged_ = flag;
+                        LOG_INFO(Core,
+                                 "coop: objects: our Link's life {} of {}, MaxLife flag {} (quarter hearts)",
+                                 life, max, flag);
+                    }
+                    // Test switch: a MaxLife raised by another player is put
+                    // into the component the hearts are drawn from.
+                    if (hearts_to_link_ && max > 0 && flag > max && flag <= kMostQuarters &&
+                        memory_ != nullptr &&
+                        memory_->IsValidVirtualAddressRange(value->second + 8, 4)) {
+                        memory_->Write32(value->second + 8, static_cast<u32>(flag));
+                        LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
+                                 max, flag);
+                    }
+                }
             }
-            if (IsShared(known.first) ||
+            if (IsShared(known.first) || CoopWorld::IsMovable(known.first) ||
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
                 Seen s;
                 s.address = a;
@@ -922,6 +1151,7 @@ private:
         }
         names_ = std::move(names);
         sync_.SetPlayer(player);
+        player_ = player;
         if (debug_) {  // research: the field grass that is no actor (world.md)
             for (const std::string& line : foliage_.Look(
                      [&r](u64 address) { return r.Get<u64>(address); }, main_, player)) {
@@ -1097,7 +1327,10 @@ private:
     void Place(Core::System& system, u64 now_us) {
         std::vector<PoseWrite> poses;
         sync_.Poses(now_us, poses);
-        auto& memory = system.ApplicationMemory();
+        // A placed world object goes where coop_world says, or stays where
+        // this game has it: the enemy sharing does not place those.
+        std::erase_if(poses, [this](const PoseWrite& w) { return world_.Places(w.address); });
+        world_.Poses(now_us, poses);        auto& memory = system.ApplicationMemory();
         Reader r(memory);
         std::unordered_map<u64, coop::protocol::Vec3> placed;
         std::vector<Mover::Pose> wish;
@@ -1134,7 +1367,14 @@ private:
         placed_ = std::move(placed);
         std::vector<PlayWish> plays;
         sync_.Plays(now_us, plays);
-        TheMover().Want(main_, std::move(wish), sync_.Removes(), std::move(plays));
+        if (ai_hold_ != 0) {
+            TheMover().Hold(sync_.Holds(now_us), CoopHold::MasksFor(ai_hold_));
+        }
+        std::vector<u64> removes = sync_.Removes();
+        for (const u64 a : world_.Removes()) {
+            removes.push_back(a);
+        }
+        TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
             if (drift_count_ > 0 || moved > 0 || deleted > 0 || played > 0 || framed > 0 ||
@@ -1146,6 +1386,14 @@ private:
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
+            }
+            if (ai_hold_ != 0) {
+                const auto [frames, kept] = TheMover().TakeHolds();
+                LOG_INFO(Core,
+                         "coop: objects: ai hold mode {}: {} copy-frames held, brain skip bit as "
+                         "asked in {}; {} plays in {:.1f} s",
+                         ai_hold_, frames, kept, played,
+                         static_cast<double>(now_us - drift_at_) / 1e6);
             }
             drift_at_ = now_us;
             drift_sum_ = 0.0f;
@@ -1341,8 +1589,10 @@ Objects& Instance() {
         objects.replay_ = EnvOn("LICHII_COOP_OBJECTS_HIT_REPLAY");
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT") || objects.replay_;
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
+        objects.ai_hold_ = EnvNumber("LICHII_COOP_OBJECTS_AI_HOLD");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
+        objects.hearts_to_link_ = EnvFlag("LICHII_COOP_HEARTS_TO_LINK");
         return true;
     }();
     (void)once;
@@ -1350,6 +1600,10 @@ Objects& Instance() {
 }
 
 } // namespace
+
+void SetMaxLife(std::optional<std::int32_t> quarters) {
+    TheMaxLife().store(quarters.value_or(-1));
+}
 
 void OnFrame(Core::System& system) {
     Objects& objects = Instance();
@@ -1364,6 +1618,17 @@ void Share(Core::System& system, coop::host::Session* session,
     if (objects.share_) {
         objects.Share(system, session, scene, server_now_us);
     }
+}
+
+std::vector<std::uint64_t> OwnedActors() {
+    Objects& objects = Instance();
+    std::vector<std::uint64_t> out;
+    if (objects.share_) {
+        for (const auto& [address, name] : objects.OwnedNow()) {
+            out.push_back(address);
+        }
+    }
+    return out;
 }
 
 void OnEvent(const coop::net::Event& event) {

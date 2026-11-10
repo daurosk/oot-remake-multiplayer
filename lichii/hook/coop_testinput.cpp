@@ -164,6 +164,7 @@ std::optional<std::string> WearFlag(std::string_view slot) {
     if (low == "head") return "EquipHeadArmor";
     if (low == "armor") return "EquipArmor";
     if (low == "boots") return "EquipBoot";
+    if (low == "hand") return "EquipHandArmor";
     return std::nullopt;
 }
 
@@ -271,7 +272,7 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.mark = std::string(w[1]);
         } else if (cmd == "WEAR") {
             if (w.size() != 3 || !WearFlag(w[1])) {
-                return fail("want: wear weapon|shield|head|armor|boots NAME");
+                return fail("want: wear weapon|shield|head|armor|boots|hand NAME");
             }
             step.kind = Kind::wear;
             step.start = std::string(w[1]);

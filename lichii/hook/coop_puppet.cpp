@@ -729,6 +729,9 @@ void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
         if (s < 0 || slot.worn[i].empty()) {
             continue;
         }
+        if (GearIsCarried(i) && (slot.in_hand & (1u << s)) == 0) {
+            continue;  // put away, the game keeps a held item elsewhere (state 6)
+        }
         const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
         std::uint32_t id = 0xFFFFFFFFu;
         std::uint64_t holder = 0;
@@ -1107,10 +1110,21 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
     }
 }
 
+Gear GearOf(const coop::protocol::Equipment& e) {
+    Gear gear{e.weapon, e.shield,     e.head,         e.armor, e.boots,   e.held,
+              e.hand,   e.sub_weapon, e.third_weapon, e.tool,  e.sub_tool};
+    // What is really in the sword hand (a Deku stick) goes before the
+    // equipped sword's name; an empty slot leaves the flag's name.
+    if (e.weapon_slot && !e.weapon_slot->empty()) {
+        gear[0] = e.weapon_slot;
+    }
+    return gear;
+}
+
 Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                     const std::optional<Vec3>& position, bool local_event,
                     const std::vector<Remote>& remotes, std::uint64_t now_ms,
-                    const std::array<std::optional<std::string>, 5>& own_gear,
+                    const Gear& own_gear,
                     std::optional<std::uint8_t> own_drawn) {
     Input in;
     if (main_base == 0) {
@@ -1198,7 +1212,7 @@ struct Received {
 };
 std::mutex g_anim_mutex;
 std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
-std::array<std::array<std::optional<std::string>, 5>, 5> g_gear;  // the same; guarded
+std::array<Gear, 5> g_gear;  // the same; guarded
 std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
 
 } // namespace
@@ -1222,9 +1236,13 @@ void OnEvent(const coop::net::Event& event) {
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
         g_director->Note("P" + std::to_string(event.player) + " PLAYER_EQUIP: weapon '" +
-                         e.weapon.value_or("?") + "', shield '" + e.shield.value_or("?") + "'");
+                         e.weapon.value_or("?") + "', shield '" + e.shield.value_or("?") + "', held '" +
+                         e.held.value_or("?") + "', slots 0 '" + e.weapon_slot.value_or("?") +
+                         "' 1 '" + e.sub_weapon.value_or("?") + "' 2 '" +
+                         e.third_weapon.value_or("?") + "' 5 '" + e.tool.value_or("?") + "' 6 '" +
+                         e.sub_tool.value_or("?") + "', hand '" + e.hand.value_or("?") + "'");
         std::lock_guard lock(g_anim_mutex);
-        g_gear[event.player] = {e.weapon, e.shield, e.head, e.armor, e.boots};
+        g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
@@ -1262,11 +1280,11 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         return;  // puppets are off
     }
     std::vector<Remote> remotes;
-    std::array<std::optional<std::string>, 5> own_gear;
+    Gear own_gear;
     std::optional<std::uint8_t> own_drawn;
     if (session != nullptr) {
         if (const auto& e = session->sampler().last_equipment()) {
-            own_gear = {e->weapon, e->shield, e->head, e->armor, e->boots};
+            own_gear = GearOf(*e);
             own_drawn = e->drawn;
         }
     }

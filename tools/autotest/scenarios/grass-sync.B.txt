@@ -1,0 +1,25 @@
+# grass-sync, B: loads into the same place as A, watches A cut field grass from 191 28 (facing
+# 186 22), then walks to 171 28 and watches A cut the tufts at 164 26.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark arrived
+goto 191 28 1.0 600
+toward 186 22 15
+mark watching-field
+wait 2700
+mark field-seen
+goto 171 28 1.0 1200
+toward 164 27 15
+mark watching-tufts
+wait 2400
+mark end

@@ -204,6 +204,12 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
+  e.held = read_slot_name(addr::kEquipSlotHeldItem);
+  e.weapon_slot = read_slot_name(addr::kEquipSlotSword);
+  e.sub_weapon = read_slot_name(addr::kEquipSlotSubWeapon);
+  e.third_weapon = read_slot_name(addr::kEquipSlotThirdWeapon);
+  e.tool = read_slot_name(addr::kEquipSlotTool);
+  e.sub_tool = read_slot_name(addr::kEquipSlotSubTool);
   if (e == protocol::Equipment{}) return std::nullopt;
   return e;
 }
@@ -255,6 +261,44 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
     if (memo.drawn) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
   }
   return drawn;
+}
+
+std::optional<std::string> PlayerReader::read_slot_name(std::uint32_t slot_index) {
+  if (slot_index >= addr::kEquipSlotCount) return std::nullopt;
+  const auto actor = find_player_actor();
+  if (!actor) return std::nullopt;
+  const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
+  if (!components) return std::nullopt;
+  const auto user = read_ptr(memory_, *components + addr::kComponentsEquipmentUser);
+  if (!user) return std::nullopt;
+  const std::uint64_t slot =
+      *user + addr::kEquipSlots + addr::kEquipSlotStride * slot_index;
+  const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
+  if (!id) return std::nullopt;
+  if (*id == addr::kEmptyId) return std::string{};
+  // The same test of the link as read_drawn.
+  const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder);
+  if (!holder) return std::string{};
+  const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
+  if (!holder_id || *holder_id != *id) return std::string{};
+  const auto piece = read_ptr(memory_, *holder + addr::kHolderActor);
+  if (!piece) return std::string{};
+  const auto state = read_u32(memory_, *piece + addr::kActorState);
+  if (!state) return std::nullopt;
+  if (*state >= addr::kActorStateGoneFirst && *state <= addr::kActorStateGoneLast) {
+    return std::string{};
+  }
+  const auto text = read_ptr(memory_, *piece + addr::kActorName);
+  if (!text) return std::nullopt;
+  std::array<std::uint8_t, protocol::kMaxEquipNameChars + 1> bytes{};
+  if (!memory_.read(*text, bytes)) return std::nullopt;
+  std::string name;
+  for (const std::uint8_t b : bytes) {
+    if (b == 0) return name.empty() ? std::nullopt : std::optional<std::string>(name);
+    if (b < 0x20 || b > 0x7e) return std::nullopt;
+    name.push_back(static_cast<char>(b));
+  }
+  return std::nullopt;  // longer than a name can be
 }
 
 std::optional<PlayerReading> PlayerReader::read() {

@@ -1,0 +1,24 @@
+# wear-masks (issue 91): child masks. A steps aside to face B and sets its own head flag with
+# the test-only `wear` (only the flag changes): Skull, Spooky, Bunny, Gerudo, then none.
+# Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1".
+# Expect in B's log: "P1 wears head 'Armor_Child_Mask_Skull'" and so on; B's shots at each mark.
+mark start
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+wear head Armor_Child_Mask_Skull
+wait 240
+mark skull
+wear head Armor_Child_Mask_Spooky
+wait 240
+mark spooky
+wear head Armor_Child_Mask_Bunny
+wait 240
+mark bunny
+wear head Armor_Child_Mask_Gerudo
+wait 240
+mark gerudo
+wait 300
+mark end

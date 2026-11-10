@@ -251,6 +251,17 @@ def upsert_rows(rows, new_rows):
     return [by_id[k] for k in sorted(by_id, key=lambda s: s.encode("utf-8"))]
 
 
+def tool_hash(folder=None):
+    """One SHA-256 for the tool's own *.py files (this folder, not tests/), so the kit can tell a
+    pack made by another version of the tool (play.ps1, Get-PuppetPackHint, computes the same):
+    sha256 over "<name>:<sha256 of the file's bytes>\\n" for each file, names in ordinal order."""
+    folder = folder or os.path.dirname(os.path.abspath(__file__))
+    names = sorted((n for n in os.listdir(folder) if n.lower().endswith(".py")
+                    and os.path.isfile(os.path.join(folder, n))), key=lambda n: n.encode("utf-8"))
+    text = "".join(f"{n}:{hashlib.sha256(read(os.path.join(folder, n))).hexdigest()}\n" for n in names)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def find_one(romfs, pattern):
     hits = sorted(glob.glob(os.path.join(romfs, pattern)))
     if len(hits) != 1:
@@ -363,6 +374,7 @@ def build(romfs, mod_dir, log=print, heaps=None):
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }
+    manifest["tool_sha256"] = tool_hash()  # the kit compares it with its own tool (Get-PuppetPackHint)
     write(os.path.join(mod_dir, "coop_puppet.json"), json.dumps(manifest, indent=1).encode())
     return manifest
 

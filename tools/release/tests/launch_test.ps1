@@ -84,23 +84,34 @@ try {
     Remove-Item -LiteralPath $opt -Force -ErrorAction SilentlyContinue
 }
 
-# --- The puppet pack hint (kit-paths.ps1, issue 131): sound, and a pack older than the tool.
+# --- The puppet pack hint (kit-paths.ps1, issue 131): sound, and the pack tool's hash.
 $ph = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-pack-hint-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 try {
-    $man = Join-Path $ph 'coop_puppet.json'; $tool = Join-Path $ph 'puppet_pack'
-    Write-File (Join-Path $tool 'build.py') '# tool'
-    (Get-Item (Join-Path $tool 'build.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-2)
+    # The same files and hash as test_tool_hash in tools\puppet_pack\tests: both sides agree.
+    $tool = Join-Path $ph 'puppet_pack'
+    New-Item -ItemType Directory -Force -Path $tool | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $tool 'b_c.py'), [System.Text.Encoding]::ASCII.GetBytes("print(1)`n"))
+    [System.IO.File]::WriteAllBytes((Join-Path $tool 'Zeta.py'), [System.Text.Encoding]::ASCII.GetBytes("x`r`n"))
+    [System.IO.File]::WriteAllBytes((Join-Path $tool '__init__.py'), [byte[]]@())
+    [System.IO.File]::WriteAllBytes((Join-Path $tool 'a.pyc'), [System.Text.Encoding]::ASCII.GetBytes('no'))
+    $hash = 'b9d822a64cc6285dd1aa300d77f64ea0c86f775240885dad79ae4f2f7694f5e0'
+    Check ((Get-PuppetToolHash $tool) -eq $hash) "the pack tool hash is build.py's [$(Get-PuppetToolHash $tool)]"
+    $man = Join-Path $ph 'coop_puppet.json'
     Write-File $man '{"tool": "tools/puppet_pack", "actors": []}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the other players'' sounds.*make-puppet-pack\.cmd') 'a pack without "sound": run make-puppet-pack again'
     Write-File $man '{"actors": [], "sound": false}'
     Check ((Get-PuppetPackHint $man $tool) -match 'sounds') 'a --no-sound pack: the same line'
-    Write-File $man '{"actors": [], "sound": true}'
-    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'a pack with sound, newer than the tool: nothing said'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tool_sha256`": `"$hash`"}"
+    (Get-Item (Join-Path $tool 'b_c.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(10)
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'the same tool, its files dated hours ahead (a zip from another time zone): nothing said'
     Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool folder: nothing said'
-    (Get-Item (Join-Path $tool 'build.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(1)
-    Check ((Get-PuppetPackHint $man $tool) -match 'older than this kit''s pack tool') 'a pack older than the tool: run make-puppet-pack again'
+    Write-File $man '{"actors": [], "sound": true}'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
+    Write-File $man '{"actors": [], "sound": true, "tool_sha256": "0000"}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'another version of the pack tool') 'another tool hash: run make-puppet-pack again'
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
+    Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
 } finally {
     Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -91,23 +91,40 @@ function Set-AmdGplDefault([scriptblock]$Query = { Get-CimInstance Win32_VideoCo
     }
 }
 
+# The pack tool's own hash, as tools\puppet_pack\build.py (tool_hash) writes it into
+# coop_puppet.json: SHA-256 over "<name>:<sha256 of the file>`n" for each *.py in the folder
+# (not tests\), names in ordinal order. Nothing when the folder is not there.
+function Get-PuppetToolHash([string]$ToolDir) {
+    if (-not $ToolDir -or -not (Test-Path -LiteralPath $ToolDir -PathType Container)) { return }
+    $files = @(Get-ChildItem -LiteralPath $ToolDir -File -ErrorAction Stop | Where-Object { $_.Extension -eq '.py' })
+    $names = [string[]]@($files | ForEach-Object { $_.Name })
+    [Array]::Sort($names, [StringComparer]::Ordinal)
+    $text = New-Object System.Text.StringBuilder
+    foreach ($n in $names) {
+        $h = (Get-FileHash -LiteralPath (Join-Path $ToolDir $n) -Algorithm SHA256).Hash.ToLowerInvariant()
+        [void]$text.Append("${n}:$h`n")
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text.ToString()))
+    } finally { $sha.Dispose() }
+    return (-join ($bytes | ForEach-Object { $_.ToString('x2') }))
+}
+
 # The puppet pack (coop_puppet.json, written by make-puppet-pack.cmd) against the kit's pack
 # tool (tools\puppet_pack): a line asking the player to make the pack again, or nothing. A pack
 # made before issue 131 has no "sound": true, so the other players' Links make no sound; a pack
-# older than the tool misses what the tool fixed since. Never throws: the start goes on.
+# whose tool_sha256 is not the kit's tool hash was made by another version of the tool (a hash,
+# not file times: a kit zip's times are the builder's local time). Never throws: the start goes on.
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
-        $made = Get-Item -LiteralPath $Manifest -ErrorAction Stop
-        $json = [System.IO.File]::ReadAllText($made.FullName) | ConvertFrom-Json -ErrorAction Stop
+        $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop
         if ($json.sound -ne $true) {
             return 'Puppet pack: made without the other players'' sounds. Run make-puppet-pack.cmd again to hear their footsteps, sword and voice.'
         }
-        if ($ToolDir -and (Test-Path -LiteralPath $ToolDir)) {
-            $newest = Get-ChildItem -LiteralPath $ToolDir -Filter *.py -File -ErrorAction Stop |
-                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-            if ($newest -and $newest.LastWriteTimeUtc -gt $made.LastWriteTimeUtc) {
-                return 'Puppet pack: older than this kit''s pack tool. Run make-puppet-pack.cmd again for the other players'' sounds and the latest puppet fixes.'
-            }
+        $tool = Get-PuppetToolHash $ToolDir
+        if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {
+            return 'Puppet pack: made by another version of the pack tool. Run make-puppet-pack.cmd again for the latest puppet fixes.'
         }
     } catch {
         return 'Puppet pack: coop_puppet.json could not be read. Run make-puppet-pack.cmd again.'

@@ -59,6 +59,9 @@ struct SessionSettings {
   // The flags this session shares (SharedFlags::load). Nothing: flags are
   // not shared, and flag messages are ignored.
   std::optional<SharedFlags> shared;
+  // FlagWatcher::set_learn_pickups: take another game's 64-bit key set to 1
+  // as a one-time pickup even when this game has not seen its actor.
+  bool learn_pickups = false;
   // Called on the network thread, under the network lock, for every client
   // event after the session has handled it (for logging). It may use the
   // client it is given but must not call into the Session.
@@ -118,6 +121,11 @@ class Session {
     std::lock_guard lock(presence_mutex_);
     return f(presence_);
   }
+
+  // Emulator thread only, like frame(): a one-time pickup's 64-bit key seen
+  // loaded in the game (FlagWatcher::share_pickup). False when flags are not
+  // shared or it was known.
+  bool share_pickup(FlagKey key) { return watcher_ && watcher_->share_pickup(key); }
 
   // Emulator thread only (the parts frame() uses), for tests and the overlay.
   const Sampler& sampler() const { return sampler_; }

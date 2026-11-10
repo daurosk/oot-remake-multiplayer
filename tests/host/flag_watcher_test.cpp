@@ -1,4 +1,6 @@
 #include <doctest/doctest.h>
+#include <algorithm>
+#include <cstddef>
 
 #include <map>
 #include <set>
@@ -435,4 +437,109 @@ TEST_CASE("flag watcher: after a reconnect, unanswered changes are sent again") 
   CHECK_FALSE(w.holding());
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 1)});
   CHECK(w.frame(store).empty());
+}
+
+// ------------------------------------------------------- one-time pickups
+
+TEST_CASE("flag watcher: a pickup key shared at run time goes out once taken, never back to 0") {
+  const FlagKey skull = FlagKey::key64_flag(0x8796851d6bbe37cull);
+  FakeStore store = game();
+  store.set(skull, 0);
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.share_pickup(skull));
+  CHECK_FALSE(w.share_pickup(skull));
+  CHECK_FALSE(w.share_pickup(kChest));  // a named flag is no pickup
+  CHECK(w.shared().contains(skull));
+  CHECK(w.pickups() == 1);
+  CHECK(w.frame(store).empty());  // the first read is the baseline
+
+  store.set(skull, 1);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(skull, 1)});
+  w.receive(state({entry(skull, 1)}));  // the host's answer
+  CHECK(w.frame(store).empty());
+
+  // The game resets the key when the scene is left: ours only.
+  store.set(skull, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(w.stats().pickup_resets == 1);
+  // And a 0 that comes in is not written over a taken one.
+  store.set(skull, 1);
+  w.frame(store);
+  w.receive(state({entry(skull, 0)}));
+  w.frame(store);
+  CHECK(store.get(skull) == 1);
+}
+
+TEST_CASE("flag watcher: another game's taken pickup is learned and written when learning is on") {
+  const FlagKey skull = FlagKey::key64_flag(0x55u);
+  const FlagKey pot = FlagKey::key64_flag(0x66u);
+  FakeStore store = game();
+  store.set(skull, 0);
+  store.set(pot, 0);
+
+  FlagWatcher off(shared(), FlagRole::player);
+  off.frame(store);
+  off.receive(state({entry(skull, 1)}));
+  off.frame(store);
+  CHECK(store.get(skull) == 0);  // off: not shared, left alone
+  CHECK(off.stats().not_shared == 1);
+
+  FlagWatcher w(shared(), FlagRole::player);
+  w.set_learn_pickups(true);
+  w.frame(store);
+  w.receive(state({entry(skull, 1), entry(pot, 0)}));
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(skull) == 1);
+  CHECK(store.get(pot) == 0);  // a 0 teaches nothing
+  CHECK(w.stats().pickups_learned == 1);
+  CHECK(w.pickups() == 1);
+  // It is a pickup now: our game resetting it is not sent.
+  store.set(skull, 0);
+  CHECK(w.frame(store).empty());
+}
+
+TEST_CASE("flag watcher, host: a player's taken pickup is learned, written and told to everyone") {
+  const FlagKey skull = FlagKey::key64_flag(0x55u);
+  FakeStore store = game();
+  store.set(skull, 0);
+  FlagWatcher h(shared(), FlagRole::host);
+  h.set_learn_pickups(true);
+  h.frame(store);
+  proto::FlagSet set;
+  set.player_number = 2;
+  set.flags = {entry(skull, 1)};
+  h.receive(set);
+  CHECK(only<proto::FlagState>(h.frame(store)) == std::vector{entry(skull, 1)});
+  CHECK(store.get(skull) == 1);
+  // In the host's snapshot from then on, for a player who joins later.
+  h.request_snapshot();
+  const auto parts = decode(h.frame(store));
+  REQUIRE(parts.size() == 1);
+  const auto& flags = std::get<proto::FlagSnapshot>(parts[0]).flags;
+  CHECK(std::find(flags.begin(), flags.end(), entry(skull, 1)) != flags.end());
+  // A player's FLAG_SET of a pickup's 0 is not taken.
+  set.flags = {entry(skull, 0)};
+  h.receive(set);
+  CHECK(h.frame(store).empty());
+  CHECK(store.get(skull) == 1);
+}
+
+TEST_CASE("flag watcher: at most kMaxLearned pickups are learned from messages") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.set_learn_pickups(true);
+  w.frame(store);
+  std::vector<proto::FlagEntry> flags;
+  for (std::uint64_t i = 0; i < FlagWatcher::kMaxLearned + 5; ++i) {
+    flags.push_back(entry(FlagKey::key64_flag(0x10000 + i), 1));
+  }
+  for (std::size_t at = 0; at < flags.size(); at += proto::kMaxFlagEntries) {
+    const auto end = std::min(flags.size(), at + proto::kMaxFlagEntries);
+    w.receive(state(std::vector<proto::FlagEntry>(flags.begin() + static_cast<std::ptrdiff_t>(at),
+                                                  flags.begin() + static_cast<std::ptrdiff_t>(end))));
+  }
+  w.frame(store);
+  CHECK(w.stats().pickups_learned == FlagWatcher::kMaxLearned);
+  CHECK(w.pickups() == FlagWatcher::kMaxLearned);
 }

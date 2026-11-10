@@ -78,6 +78,8 @@
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
 #include "coop_spawn.h"
+#include "coop_pickups.h"
+#include <atomic>
 #include "coop_world.h"
 
 namespace CoopObjects {
@@ -749,6 +751,12 @@ Mover& TheMover() {
     return mover;
 }
 
+// The MaxLife flag as the session left it (SetMaxLife); -1: not known.
+std::atomic<s32>& TheMaxLife() {
+    static std::atomic<s32> quarters{-1};
+    return quarters;
+}
+
 class Objects {
 public:
     void Frame(Core::System& system) {
@@ -799,6 +807,7 @@ public:
             return;
         }
         Reader r(system.ApplicationMemory());
+        memory_ = &system.ApplicationMemory();
         std::vector<Seen> seen;
         if (!Collect(r, seen)) {
             return;
@@ -1010,6 +1019,13 @@ public:
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     int world_lines_ = 0;
     CoopWorld::FoliageProbe foliage_;
+    // Issue 88 (docs/items.md, "Heart containers").
+    s32 link_life_logged_ = -1;
+    s32 link_max_logged_ = -1;
+    s32 flag_max_logged_ = -1;
+    bool hearts_to_link_ = false;  // LICHII_COOP_HEARTS_TO_LINK=1 (issue 88 test)
+    Core::Memory::Memory* memory_ = nullptr;  // set by Share for Collect
+    static constexpr s32 kMostQuarters = 20 * 4;
     bool cheat_ = false;
     bool share_ = false;
 
@@ -1066,6 +1082,7 @@ private:
                 known.first = r.Name(a);
                 const auto placement = r.Ptr(a + kActorPlacement);
                 known.second = placement ? r.Get<u64>(*placement + kPlacementHash).value_or(0) : 0;
+                CoopPickups::Note(known.first, known.second);  // one-time pickups (docs/items.md)
                 if (IsShared(known.first) && vtables_logged_.insert(known.first).second) {
                     // The set-matrix node (0x2622e50) writes +0x31c..+0x34b and
                     // then calls vtable slot 0x218 (actor, 0): what does it do?
@@ -1081,6 +1098,32 @@ private:
                     at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
                 player = at;
+                // Issue 88: the hearts the game shows come from Link's own Life
+                // component; logged beside the MaxLife flag (coop_flags debug)
+                // so one run shows whether a shared MaxLife reaches it.
+                if (const auto value = LifeValue(r, a)) {
+                    const s32 life = r.Get<s32>(value->first + 8).value_or(-1);
+                    const s32 max = r.Get<s32>(value->second + 8).value_or(-1);
+                    const s32 flag = TheMaxLife().load();
+                    if (max != link_max_logged_ || flag != flag_max_logged_ ||
+                        (debug_ && life != link_life_logged_)) {
+                        link_max_logged_ = max;
+                        link_life_logged_ = life;
+                        flag_max_logged_ = flag;
+                        LOG_INFO(Core,
+                                 "coop: objects: our Link's life {} of {}, MaxLife flag {} (quarter hearts)",
+                                 life, max, flag);
+                    }
+                    // Test switch: a MaxLife raised by another player is put
+                    // into the component the hearts are drawn from.
+                    if (hearts_to_link_ && max > 0 && flag > max && flag <= kMostQuarters &&
+                        memory_ != nullptr &&
+                        memory_->IsValidVirtualAddressRange(value->second + 8, 4)) {
+                        memory_->Write32(value->second + 8, static_cast<u32>(flag));
+                        LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
+                                 max, flag);
+                    }
+                }
             }
             if (IsShared(known.first) || CoopWorld::IsMovable(known.first) ||
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
@@ -1549,6 +1592,7 @@ Objects& Instance() {
         objects.ai_hold_ = EnvNumber("LICHII_COOP_OBJECTS_AI_HOLD");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
+        objects.hearts_to_link_ = EnvFlag("LICHII_COOP_HEARTS_TO_LINK");
         return true;
     }();
     (void)once;
@@ -1556,6 +1600,10 @@ Objects& Instance() {
 }
 
 } // namespace
+
+void SetMaxLife(std::optional<std::int32_t> quarters) {
+    TheMaxLife().store(quarters.value_or(-1));
+}
 
 void OnFrame(Core::System& system) {
     Objects& objects = Instance();

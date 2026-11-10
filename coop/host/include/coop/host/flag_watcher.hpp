@@ -49,6 +49,8 @@ struct FlagStats {
   std::uint64_t deltas_added = 0;      // host: count deltas added to the game (in applied too)
   std::uint64_t kept_local = 0;        // snapshot entries skipped over a pending change
   std::uint64_t not_shared = 0;        // incoming entries not in the shared list
+  std::uint64_t pickups_learned = 0;   // 64-bit keys taken as pickups from a message
+  std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
@@ -74,6 +76,21 @@ class FlagWatcher {
   // One emulated frame: writes what came in, then compares the shared flags
   // with last frame, and returns the messages to send, in order.
   std::vector<Outgoing> frame(FlagStore& store);
+
+  // One-time pickups (docs/items.md, "One-time pickups"): a Gold Skulltula,
+  // its token, a heart container or piece is a 64-bit-key flag keyed by the
+  // actor's placement hash, and no list names those keys. The game's hook
+  // calls this for each such actor it sees loaded; the key is shared from
+  // then on, one way only: 0 to 1 is sent and written, a 1 never goes back
+  // to 0 through the session (a key that the game resets on a scene change
+  // must not put the pickup back for the others). False: already a pickup.
+  bool share_pickup(FlagKey key);
+  // With learning on, an incoming 64-bit key set to 1 that this game does not
+  // share yet is taken as a pickup too (the player who took it was in a scene
+  // this game has not loaded). At most kMaxLearned keys. Off by default.
+  void set_learn_pickups(bool on) { learn_ = on; }
+  static constexpr std::size_t kMaxLearned = 4096;
+  std::size_t pickups() const { return pickups_.size(); }
 
   // The host left and this player takes over, or the other way round. Keeps
   // what is known of the game; drops a snapshot being held.
@@ -105,8 +122,15 @@ class FlagWatcher {
   void diff(FlagStore& store, Table& changes);
   void send_snapshot(FlagStore& store, std::vector<Outgoing>& out);
 
+  // True when the entry is for a shared flag and may be applied: a pickup's
+  // 0 is not, and an unknown 64-bit key set to 1 is learned first.
+  bool takes(const protocol::FlagEntry& entry);
+
   SharedFlags shared_;
   FlagRole role_;
+  std::set<FlagKey> pickups_;  // one-way 64-bit keys
+  std::size_t learned_ = 0;
+  bool learn_ = false;
   std::vector<Incoming> queue_;
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer

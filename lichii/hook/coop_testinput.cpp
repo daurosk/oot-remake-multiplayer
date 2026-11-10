@@ -500,6 +500,7 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include "coop/host/game_flags.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop_cheats.h"
+#include "coop_every.h"
 #include "coop_camera.h"
 #include "coop_flags.h"
 #include "core/arm/debug.h"
@@ -538,7 +539,7 @@ struct State {
     std::filesystem::file_time_type seen_time{};
     std::uintmax_t seen_size = 0;
     bool seen = false;
-    unsigned frame = 0;
+    CoopEvery::Every check{CoopEvery::kQuarterUs};
     Kernel::KProcess* process = nullptr;
     u64 main = 0;
     std::optional<Running> running;
@@ -790,7 +791,8 @@ void OnFrame(Core::System& system) {
     if (g_state.path.empty()) {
         return;
     }
-    if (g_state.frame++ % 15 == 0) {
+    const bool quarter = g_state.check.Due(CoopEvery::NowUs());
+    if (quarter) {
         CheckFile(system);
     }
     if (!g_state.running) {
@@ -802,7 +804,7 @@ void OnFrame(Core::System& system) {
     const auto player = PlayerXZ(system);
     const auto camera = CameraXZ();
     r.runner->Advance(now, player, log, camera);
-    if (r.runner->Steering() && g_state.frame % 15 == 0) {
+    if (r.runner->Steering() && quarter) {
         const auto& out = r.runner->Current();
         LOG_INFO(Core,
                  "coop: test steer at {:.2f} {:.2f}, camera {:.2f} {:.2f}, heading {:.2f}, "

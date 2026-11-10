@@ -74,8 +74,8 @@ INFO_OVERRIDES = {"CalcRadius": 100000.0, "CoreUsedLevel": byml.UInt(0)}
 # its own file only: Player_Adult's ActorParam is a 776-byte stub (entry 6,232) and Player_Base's
 # has its own entry (13,336). With the player's entry alone the adult puppet's 1,508-byte file ran
 # out of heap: the 0x98-byte engine__actor__ActorParam object (factory main+0x9a9300) got a null
-# pointer and every create was dropped (issue 111). The puppet's entry is the sum of both.
-AP_PARENT = "Player_Base"
+# pointer and every create was dropped (issue 111). The puppet's entry is the sum of the entries of
+# every file in the $parent chain that flatten_actor_param merges (actor_param_chain).
 
 # Room left in a size-table entry above the bytes we wrote.
 PACK_SIZE_MARGIN = 0x1000
@@ -116,8 +116,8 @@ def _strings(v):
         yield v
 
 
-def flatten_actor_param(members, actor):
-    """The actor's ActorParam with its `$parent` chain merged in (child wins)."""
+def actor_param_chain(members, actor):
+    """The actor's ActorParam and its `$parent` chain: [(member path, document)], the actor first."""
     chain = []
     path = actor_param_path(actor)
     seen = set()
@@ -128,8 +128,14 @@ def flatten_actor_param(members, actor):
         if path not in members:
             raise BuildError(f"{path} is not in the pack")
         doc = byml.loads(members[path])
-        chain.append(doc)
+        chain.append((path, doc))
         path = ref_to_member(doc.get("$parent")) if isinstance(doc, dict) else None
+    return chain
+
+
+def flatten_actor_param(members, actor):
+    """The actor's ActorParam with its `$parent` chain merged in (child wins)."""
+    chain = [doc for _, doc in actor_param_chain(members, actor)]
     comps = {}
     for doc in reversed(chain):
         comps.update(doc.get("Components", {}))
@@ -302,10 +308,6 @@ def build(romfs, mod_dir, log=print, heaps=None):
     gai = byml.loads(gai_old)
     table = rstb.Rstb.loads(dicts.decompress(rs_raw))
     ai_rows = {r["__RowId"]: r for r in ai}
-    parent_ap = table.get(actor_param_path(AP_PARENT))
-    if parent_ap is None:
-        raise BuildError(f"the size table has no {actor_param_path(AP_PARENT)}")
-
     made = []
     new_ai, new_gai = [], []
     for v in VARIANTS:
@@ -325,10 +327,13 @@ def build(romfs, mod_dir, log=print, heaps=None):
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
         table.add_new(strip_zs(dst_rel), pack_size)
-        player_ap = table.get(actor_param_path(player))
-        if player_ap is None:
-            raise BuildError(f"the size table has no {actor_param_path(player)}")
-        ap_size = max(player_ap + parent_ap, len(ap) + PACK_SIZE_MARGIN)
+        chain_ap = 0
+        for path, _ in actor_param_chain(members, player):
+            size = table.get(path)
+            if size is None:
+                raise BuildError(f"the size table has no {path}")
+            chain_ap += size
+        ap_size = max(chain_ap, len(ap) + PACK_SIZE_MARGIN)
         table.add_new(actor_param_path(actor), ap_size)
         made.append({"actor": actor, "from": player, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,

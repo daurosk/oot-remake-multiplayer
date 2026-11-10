@@ -276,6 +276,21 @@ class BuildPackTest(unittest.TestCase):
         again = build.upsert_rows(out, [new])
         self.assertEqual(len(again), 4)
 
+    def test_actor_param_chain(self):
+        members = fake_player_pack("Adult")
+        self.assertEqual([p for p, _ in build.actor_param_chain(members, "Player_Adult")],
+                         ["Actor/Player_Adult.engine__actor__ActorParam.bgyml",
+                          "Actor/Player_Base.engine__actor__ActorParam.bgyml"])
+        # No $parent: the file alone. A deeper chain: every file.
+        solo = {"Actor/S.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {}})}
+        self.assertEqual(len(build.actor_param_chain(solo, "S")), 1)
+        deep = dict(members)
+        base = byml.loads(deep["Actor/Player_Base.engine__actor__ActorParam.bgyml"])
+        base["$parent"] = "Work/Actor/Root.engine__actor__ActorParam.gyml"
+        deep["Actor/Player_Base.engine__actor__ActorParam.bgyml"] = byml.dumps(base)
+        deep["Actor/Root.engine__actor__ActorParam.bgyml"] = byml.dumps({"Components": {}})
+        self.assertEqual(len(build.actor_param_chain(deep, "Player_Adult")), 3)
+
     def test_info_row_heap(self):
         adult = {"__RowId": "Player_Adult", "InstanceHeapSize": 10245064}
         self.assertEqual(build.info_row(adult, "A")["InstanceHeapSize"], 10245064)  # the player's

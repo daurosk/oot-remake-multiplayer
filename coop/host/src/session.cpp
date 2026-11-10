@@ -67,7 +67,11 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
         out.emplace_back(std::move(message));
       }
     }
-    if (watcher_ && flags != nullptr) queue_flags(watcher_->frame(*flags), out);
+    if (watcher_ && flags != nullptr) {
+      // No Link to read: the game is loading (FlagWatcher::set_loading).
+      watcher_->set_loading(!reading.has_value());
+      queue_flags(watcher_->frame(*flags), out);
+    }
   }
   if (watcher_) {
     report.hosting = watcher_->role() == FlagRole::host;

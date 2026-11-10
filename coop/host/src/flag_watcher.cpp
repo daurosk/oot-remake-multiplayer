@@ -18,6 +18,20 @@ void push(std::vector<Outgoing>& out, const protocol::Message& message) {
 
 bool is_delta(const FlagEntry& e) { return e.kind == protocol::FlagKind::count_delta; }
 
+// The game's value `now` is older than the group's (FlagWatcher::set_loading):
+// a Bool back from 1 to 0, or, while there is no Link at all (`loading`),
+// an Int (not a count) back to exactly the value it held before the group's
+// value came (`before`). Any other Int change is the game's own (a trade
+// item handed on in the settle time, more progress in the save) and goes out.
+bool backwards(const FlagEntry& group, const FlagEntry* before, const FlagEntry& now,
+               bool loading) {
+  if (group.kind == protocol::FlagKind::boolean) {
+    return group.value != 0 && now.value == 0;
+  }
+  return loading && group.kind == protocol::FlagKind::int32 && before != nullptr &&
+         now == *before && now != group;
+}
+
 std::int64_t as_int(std::uint32_t bits) { return static_cast<std::int32_t>(bits); }
 
 std::uint32_t as_bits(std::int64_t v) {
@@ -111,8 +125,31 @@ void FlagWatcher::set_role(FlagRole role) {
   }
 }
 
+void FlagWatcher::set_loading(bool loading) {
+  if (loading) {
+    loading_ = true;
+    settle_left_ = kSettleFrames;
+  } else {
+    loading_ = false;
+  }
+}
+
+void FlagWatcher::note_group(const FlagEntry& value, const FlagEntry* before) {
+  const FlagKey key = key_of(value);
+  group_[key] = value;
+  if (before != nullptr && *before != value) {
+    group_before_[key] = *before;
+  } else {
+    group_before_.erase(key);
+  }
+}
+
 void FlagWatcher::reset() {
   queue_.clear();
+  // Another session, or the same server started again: what the group had
+  // comes again with the next snapshot.
+  group_.clear();
+  group_before_.clear();
   holding_ = false;
   snapshot_.clear();
   held_states_.clear();
@@ -158,6 +195,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     }
     diff(store, changes);
   }
+  if (!loading_ && settle_left_ > 0) --settle_left_;
   restate_.clear();
 
   if (role_ == FlagRole::player) {
@@ -280,6 +318,10 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       if (written && !is_delta(entry)) now = entry;
     }
     if (!now) continue;  // no answer: neither written nor readable
+    if (!is_delta(*now) && !store.is_count(key)) {
+      const auto known = last_.find(key);
+      note_group(*now, known != last_.end() ? &known->second : nullptr);
+    }
     last_[key] = *now;
     answers[key] = *now;
     ++stats_.answers_sent;
@@ -308,6 +350,10 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   }
   ++stats_.applied;
   unwritten_.erase(key);
+  if (!is_delta(entry) && !store.is_count(key)) {
+    const auto known = last_.find(key);
+    note_group(entry, known != last_.end() ? &known->second : nullptr);
+  }
   last_[key] = entry;  // so the next diff does not send it back
   return true;
 }
@@ -346,6 +392,28 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (it->second == *now && !restate_.contains(key)) continue;
     const FlagEntry before = it->second;
     it->second = *now;
+    if (settling() && !store.is_count(key) && !restate_.contains(key)) {
+      // A load putting back an older value than the group's: not sent, and
+      // the group's value goes back in (set_loading).
+      const auto group = group_.find(key);
+      const auto older = group_before_.find(key);
+      if (group != group_.end() &&
+          backwards(group->second, older != group_before_.end() ? &older->second : nullptr,
+                    *now, loading_)) {
+        if (store.write(group->second)) {
+          ++stats_.load_reverts;
+          ++stats_.applied;
+          it->second = group->second;
+          unwritten_.erase(key);
+          continue;
+        }
+        // The game takes no write of it (a player's own item): it is not
+        // the group's to put back.
+        ++stats_.write_failures;
+        group_.erase(group);
+        group_before_.erase(key);
+      }
+    }
     if (now->value == 0 && pickups_.contains(key) && !restate_.contains(key)) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
@@ -361,6 +429,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       continue;
     }
     changes[key] = *now;
+    if (!store.is_count(key)) note_group(*now, &before);  // sent: the group's value now
     unwritten_.erase(key);  // the game's own change is newer
     if (role_ == FlagRole::player) pending_[key] = *now;
   }

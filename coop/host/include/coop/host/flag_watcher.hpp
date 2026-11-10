@@ -55,6 +55,7 @@ struct FlagStats {
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
+  std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
 };
 
 class FlagWatcher {
@@ -99,7 +100,23 @@ class FlagWatcher {
   void set_role(FlagRole role);
   FlagRole role() const { return role_; }
 
-  // After a reconnect: drops anything queued or held. Local changes still
+  // The game is loading (no Link to read: the title screen, a save being
+  // loaded, a scene change). A load writes the save's own values over the
+  // flags, also over ones the group set just before (issue 129: a switch
+  // shared by the snapshot was reset by the joiner's save load, sent back as
+  // 0, and the group's later 1 was written while the load ran and lost).
+  // While loading and kSettleFrames after, a shared flag that the game moves
+  // away from the group's value backwards (a Bool from 1 to 0; while
+  // loading only, not in the settle time, an Int back to exactly the value
+  // it had before the group's value came; counts are left to their delta
+  // rule) is not sent: the group's value is written back. A Bool going to 1,
+  // or an Int to any other value, is the game's own change and is sent.
+  void set_loading(bool loading);
+  static constexpr int kSettleFrames = 120;
+  bool settling() const { return loading_ || settle_left_ > 0; }
+
+  // After a reconnect: drops anything queued or held, and the group values
+  // of set_loading (the next snapshot brings them again). Local changes still
   // waiting for an answer are sent again at the next frame, since the answer
   // may have been lost with the connection.
   void reset();
@@ -127,6 +144,8 @@ class FlagWatcher {
   // True when the entry is for a shared flag and may be applied: a pickup's
   // 0 is not, and an unknown 64-bit key set to 1 is learned first.
   bool takes(const protocol::FlagEntry& entry);
+  // Records `value` as the group's, with the game's value before it.
+  void note_group(const protocol::FlagEntry& value, const protocol::FlagEntry* before);
 
   SharedFlags shared_;
   FlagRole role_;
@@ -138,6 +157,10 @@ class FlagWatcher {
   Table pending_;     // player: own changes waiting for the host's answer
   Table unwritten_;   // incoming values whose write failed; tried again
   Table unadded_;     // host: count deltas whose write failed; tried again
+  Table group_;         // each shared flag as the group last had it (set_loading)
+  Table group_before_;  // an Int's value in our game just before group_ took it
+  bool loading_ = false;
+  int settle_left_ = 0;
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;

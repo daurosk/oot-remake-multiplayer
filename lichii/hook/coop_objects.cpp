@@ -1375,14 +1375,16 @@ private:
                 continue;
             }
             if (const auto before = placed_.find(w.address); before != placed_.end()) {
+                coop::protocol::Vec3 now{};
                 float d2 = 0.0f;
                 for (std::size_t i = 0; i < 3; ++i) {
-                    const float d =
-                        r.Get<float>(w.address + kActorPosition + 4 * i).value_or(0.0f) -
-                        before->second[i];
+                    now[i] = r.Get<float>(w.address + kActorPosition + 4 * i).value_or(0.0f);
+                    const float d = now[i] - before->second[i];
                     d2 += d * d;
                 }
                 const float d = std::sqrt(d2);
+                // A copy whose own AI pulls it at our Link (issue 101).
+                sync_.NoteDrift(w.address, before->second, now, now_us);
                 drift_sum_ += d;
                 drift_max_ = std::max(drift_max_, d);
                 ++drift_count_;

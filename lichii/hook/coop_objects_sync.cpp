@@ -453,6 +453,45 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     return state;
 }
 
+void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
+    if (o.chase_last == 0 || now_us < o.chase_last || now_us - o.chase_last > kChaseGapUs) {
+        o.chase_first = now_us;
+    }
+    o.chase_last = now_us;
+    if (now_us - o.chase_first >= kChaseHoldUs) {
+        o.chase_until = now_us + kChaseKeepUs;
+    }
+}
+
+void Sync::NoteDrift(std::uint64_t address, const proto::Vec3& put, const proto::Vec3& now,
+                     std::uint64_t now_us) {
+    if (!player_ || !Finite(put) || !Finite(now)) {
+        return;
+    }
+    const auto it = objects_.find(address);
+    if (it == objects_.end() || !it->second.reacts) {
+        return;
+    }
+    Object& o = it->second;
+    const auto owner = owners_.find(o.id);
+    if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
+        return;  // ours, or nobody's: the Mover does not place it
+    }
+    auto distance = [this](const proto::Vec3& at) {
+        float d2 = 0.0f;
+        for (std::size_t i = 0; i < 3; ++i) {
+            const float d = at[i] - (*player_)[i];
+            d2 += d * d;
+        }
+        return std::sqrt(d2);
+    };
+    const float before = distance(put);
+    const float after = distance(now);
+    if (after <= kChaseReachM && before - after >= kChaseStepM) {
+        ChaseStep(o, now_us);
+    }
+}
+
 void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_us,
                 const std::vector<Seen>& seen, std::vector<proto::Message>& send,
                 std::vector<LifeWrite>& writes) {
@@ -759,10 +798,36 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     std::vector<proto::ObjectPresence> present;
     present.reserve(objects_.size());
-    for (const auto& [address, o] : objects_) {
+    for (auto& [address, o] : objects_) {
         std::uint8_t flags = proto::object_presence::awake;
         if (o.fight_until > now_us) {
             flags |= proto::object_presence::in_fight;
+        }
+        // An enemy of ours coming at our Link (NoteDrift): a fight to the
+        // server, so it stays with us.
+        if (o.reacts && player_) {
+            const auto owner = owners_.find(o.id);
+            if (owner != owners_.end() && owner->second.player == self) {
+                proto::Vec3 to{};
+                float d2 = 0.0f;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    to[i] = (*player_)[i] - o.position[i];
+                    d2 += to[i] * to[i];
+                }
+                const float d = std::sqrt(d2);
+                float speed = 0.0f;
+                if (d > 0.0f) {
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        speed += o.velocity[i] * to[i] / d;
+                    }
+                }
+                if (d <= kChaseReachM && speed >= kChaseSpeed) {
+                    ChaseStep(o, now_us);
+                }
+            }
+        }
+        if (o.chase_until > now_us) {
+            flags |= proto::object_presence::targeting;
         }
         present.push_back({o.id, flags});
     }

@@ -538,6 +538,10 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
     if (o.owner == id) {
       o.orphan_since = 0;
       if (e.flags & kFighting) mark_fight(o, now_us);
+    } else if (e.flags & object_presence::targeting) {
+      o.chased_by.try_emplace(id, now_us);  // its copy chases this player
+    } else {
+      o.chased_by.erase(id);
     }
     // Tell a newcomer who owns it and the epoch to send with; its own made
     // enemy it knows.
@@ -688,7 +692,17 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
   auto owner = connections_.find(*o.owner);
   if (owner == connections_.end()) return;
-  const auto mine = distance_to(c, o, now_us);
+  auto mine = distance_to(c, o, now_us);
+  // Where the hit landed is where the hitter's copy stands. A copy that
+  // chased the hitter stands far from the owner's enemy (issue 101), and
+  // the hitter is the one near the enemy that fights it.
+  const bool at_known = d.position != Vec3{} && std::isfinite(d.position[0]) &&
+                        std::isfinite(d.position[1]) && std::isfinite(d.position[2]);
+  if (at_known && c.position &&
+      !(now_us > c.position_at && now_us - c.position_at > config_.position_stale_us)) {
+    const double at = metres(*c.position, d.position);
+    if (!mine || at < *mine) mine = at;
+  }
   const auto theirs = distance_to(owner->second, o, now_us);
   if (mine && theirs && *mine <= config_.handover_near_m &&
       *mine + config_.handover_margin_m <= *theirs) {
@@ -843,6 +857,7 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
   if (it == objects_.end()) return;
   Object& o = it->second;
   o.present.erase(id);
+  o.chased_by.erase(id);
   if (o.candidate == id) o.candidate.reset();
   if (o.made) {
     if (o.owner != id) return;
@@ -995,6 +1010,7 @@ void Session::change_owner(const ObjectId& oid, Object& o, std::optional<Connect
   o.candidate.reset();
   o.ask.reset();
   o.orphan_since = 0;
+  if (next) o.chased_by.erase(*next);
   ++stats_.owner_changes;
   // The state first, then the news: the new owner has it before it starts.
   if (next && o.last_state) {
@@ -1049,12 +1065,27 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
+    const bool settled =
+        o.changed_at == 0 || now_us - o.changed_at >= config_.handover_cooldown_us;
+    if (!settled || in_fight(o, now_us)) {
+      o.candidate.reset();
+      continue;
+    }
+
+    // Out of a fight: a game whose copy chases its own Link (issue 101). The
+    // enemy's AI chases only its own game's Link, so that game is the only
+    // one whose enemy goes where it should. A group's root takes its
+    // members' chases as its own.
+    if (auto chaser = chased_by(o, owner, now_us)) {
+      ++stats_.handover_chased;
+      ask_handover(oid, o, *chaser, now_us);
+      continue;
+    }
+
     // Out of a fight: the player who is the one near it, held for a while.
     std::optional<ConnectionId> want;
     const auto theirs = distance_to(oc, o, now_us);
-    const bool settled =
-        o.changed_at == 0 || now_us - o.changed_at >= config_.handover_cooldown_us;
-    if (theirs && settled && !in_fight(o, now_us)) {
+    if (theirs) {
       double best = 0;
       for (ConnectionId other : o.present) {
         if (other == owner || !has_loaded(other, o)) continue;
@@ -1086,6 +1117,32 @@ void Session::run_ownership(std::uint64_t now_us) {
       ask_handover(oid, o, *want, now_us);
     }
   }
+}
+
+std::optional<ConnectionId> Session::chased_by(const Object& o, ConnectionId owner,
+                                               std::uint64_t now_us) const {
+  std::optional<ConnectionId> best;
+  std::uint64_t best_since = 0;
+  std::uint8_t best_number = 0;
+  auto consider = [&](const Object& from) {
+    for (const auto& [other, since] : from.chased_by) {
+      if (other == owner || !has_loaded(other, o)) continue;
+      if (now_us < since || now_us - since < config_.handover_chased_us) continue;
+      const Connection& pc = connections_.at(other);
+      if (pc.status & kBusy) continue;
+      // The longest chase first, then the lower player number.
+      if (!best || since < best_since || (since == best_since && pc.number < best_number)) {
+        best = other;
+        best_since = since;
+        best_number = pc.number;
+      }
+    }
+  };
+  consider(o);
+  for (const ObjectId& m : o.members) {
+    if (auto it = objects_.find(m); it != objects_.end()) consider(it->second);
+  }
+  return best;
 }
 
 std::uint32_t Session::group_of(const Object& o) const {

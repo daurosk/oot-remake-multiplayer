@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cstring>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -1182,4 +1183,112 @@ TEST_CASE("objects: OBJECT_OWNER is logged on a change, not on every repeat") {
     CHECK_FALSE(log.Changed(a));
     log.Clear();
     CHECK(log.Changed(a));
+}
+
+// Issue 101: an enemy that chases a player from afar in that player's game.
+namespace {
+
+// Runs a copy at x from `from` ms to `to` ms: each 33 ms the game's frame
+// pulls it `step` metres towards x = 0 from where the Mover put it, each
+// 66 ms a walk. The flags of the last OBJECT_PRESENT sent, if any.
+std::optional<std::uint8_t> Drift(Sync& sync, std::uint64_t from, std::uint64_t to, float x,
+                                  float step, std::uint8_t self = 1) {
+    std::optional<std::uint8_t> flags;
+    for (std::uint64_t t = from; t < to; t += 33) {
+        sync.NoteDrift(0x100, {x, 0.0f, 0.0f}, {x - step, 0.0f, 0.0f}, t * kMs);
+        if ((t - from) % 66 == 0) {
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Enemy(0x100, 0x11, 2, x, "Enemy_Peahat_Larva_Independent")},
+                          self))) {
+                REQUIRE(p.objects.size() == 1);
+                flags = p.objects[0].flags;
+            }
+        }
+    }
+    return flags;
+}
+
+constexpr std::uint8_t kTargeting = proto::object_presence::targeting;
+
+} // namespace
+
+TEST_CASE("objects: a copy whose own AI pulls it at our Link for 1 s is flagged as chasing us") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2, 20.0f, "Enemy_Peahat_Larva_Independent")});
+    Own(sync, *sync.IdOf(0x100), 2);
+    Tick(sync, 1 * kMs, {Enemy(0x100, 0x11, 2, 20.0f, "Enemy_Peahat_Larva_Independent")});
+
+    // Under 1 s: nothing yet.
+    auto flags = Drift(sync, 10, 900, 20.0f, 0.1f);
+    CHECK_FALSE(flags.has_value());
+    flags = Drift(sync, 900, 1200, 20.0f, 0.1f);
+    REQUIRE(flags);
+    CHECK((*flags & kTargeting) != 0);
+    // Held still again: the flag stays 2 s, then goes.
+    flags = Drift(sync, 1200, 3000, 20.0f, 0.0f);
+    CHECK_FALSE(flags.has_value());  // no change, no repeat within 2 s
+    flags = Drift(sync, 3000, 3600, 20.0f, 0.0f);
+    REQUIRE(flags);
+    CHECK((*flags & kTargeting) == 0);
+}
+
+TEST_CASE("objects: no chase when the copy goes away, is too far, ours, or the run has gaps") {
+    auto run = [](float x, float step, std::uint8_t owner) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Enemy(0x100, 0x11, 2, x, "Enemy_Peahat_Larva_Independent")});
+        Own(sync, *sync.IdOf(0x100), owner);
+        const auto flags = Drift(sync, 10, 3000, x, step);
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(20.0f, 0.1f, 2));        // the chase itself
+    CHECK_FALSE(run(20.0f, -0.1f, 2)); // pulled away from our Link
+    CHECK_FALSE(run(45.0f, 0.1f, 2));  // over 40 m away
+    CHECK_FALSE(run(20.0f, 0.01f, 2)); // under 2 cm a frame: the Mover's own noise
+    CHECK_FALSE(run(20.0f, 0.1f, 1));  // ours: the Mover does not place it
+
+    // A step every 500 ms is no run.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2, 20.0f, "Enemy_Peahat_Larva_Independent")});
+    Own(sync, *sync.IdOf(0x100), 2);
+    for (std::uint64_t t = 10; t < 3000; t += 500) {
+        sync.NoteDrift(0x100, {20.0f, 0.0f, 0.0f}, {19.0f, 0.0f, 0.0f}, t * kMs);
+    }
+    const auto present =
+        All<proto::ObjectPresent>(Tick(sync, 3000 * kMs, {Enemy(0x100, 0x11, 2, 20.0f, "Enemy_Peahat_Larva_Independent")}));
+    for (const auto& p : present) {
+        CHECK((p.objects[0].flags & kTargeting) == 0);
+    }
+}
+
+TEST_CASE("objects: an enemy of ours that comes at our Link is flagged too (a fight to the server)") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2, 20.0f)});
+    Own(sync, *sync.IdOf(0x100), 1);
+    std::optional<std::uint8_t> flags;
+    float x = 20.0f;
+    for (std::uint64_t t = 66; t <= 1500; t += 66) {
+        x -= 0.2f;  // 3 m/s towards our Link
+        for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 2, x)}))) {
+            flags = p.objects[0].flags;
+        }
+    }
+    REQUIRE(flags);
+    CHECK((*flags & kTargeting) != 0);
+
+    // Walking away is no chase.
+    Sync away;
+    away.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(away, 0, {Enemy(0x100, 0x11, 2, 20.0f)});
+    Own(away, *away.IdOf(0x100), 1);
+    x = 20.0f;
+    for (std::uint64_t t = 66; t <= 3000; t += 66) {
+        x += 0.2f;
+        for (const auto& p : All<proto::ObjectPresent>(Tick(away, t * kMs, {Enemy(0x100, 0x11, 2, x)}))) {
+            CHECK((p.objects[0].flags & kTargeting) == 0);
+        }
+    }
 }

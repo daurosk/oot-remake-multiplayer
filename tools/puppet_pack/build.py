@@ -389,10 +389,7 @@ def main(argv=None):
         try:
             with nup.Nup(a.romfs) as n:
                 for rel in dumpcheck.nup_files(n).values():
-                    dst = os.path.join(tmp, *rel.split("/"))
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    with open(dst, "wb") as f:
-                        f.write(n.read(rel))
+                    nup.write_under(tmp, rel, n.read(rel))
             print(f"read the game files from {a.romfs}")
             return _main_build(a, tmp)
         except nup.NupError as e:

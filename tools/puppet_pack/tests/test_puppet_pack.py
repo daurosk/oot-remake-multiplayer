@@ -3,6 +3,7 @@
     python tools/puppet_pack/tests/test_puppet_pack.py
 """
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -510,6 +511,60 @@ class NupTest(unittest.TestCase):
         with self.assertRaises(nup.NupError):
             nup.Nup(self.path)
         self.assertEqual([p.code for p in dumpcheck.check_nup(self.path)], ["nup-bad"])
+
+    def patch_toc(self, change):
+        """Changes the TOC bytes in place and fixes the TOC hash, as a crafted file would."""
+        data = bytearray(build.read(self.path))
+        sup = nup.SUPER.unpack_from(data, 0)
+        toc_off, toc_size = sup[3], sup[4]
+        toc = bytearray(data[toc_off:toc_off + toc_size])
+        change(toc)
+        data[toc_off:toc_off + toc_size] = toc
+        data[24:56] = hashlib.sha256(bytes(toc)).digest()
+        with open(self.path, "wb") as f:
+            f.write(data)
+
+    def test_unsafe_names_refused(self):
+        for bad in ("..", ".", "..\\..\\evil.zs", "a\\b", "C:evil", "a\0b"):
+            nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, {f"Pack/{bad}": (b"x", nup.CODEC_RAW)})])
+            with self.assertRaises(nup.NupError, msg=repr(bad)):
+                nup.Nup(self.path)
+        nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, {"Pack//x": (b"x", nup.CODEC_RAW)})])
+        with self.assertRaises(nup.NupError):
+            nup.Nup(self.path)
+
+    def test_write_under_stays_inside(self):
+        root = os.path.join(self.dir, "out")
+        os.makedirs(root)
+        for rel in ("../evil", "a/../../evil", "..\\evil", "C:/evil", "/evil", "a//b", ""):
+            with self.assertRaises(nup.NupError, msg=repr(rel)):
+                nup.write_under(root, rel, b"x")
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "evil")))
+        dst = nup.write_under(root, "Pack/ok.zs", b"ok")
+        self.assertEqual(build.read(dst), b"ok")
+        self.assertTrue(os.path.realpath(dst).startswith(os.path.realpath(root) + os.sep))
+
+    def test_bad_child_index(self):
+        def change(toc):
+            pool_off = nup.TOC.unpack_from(toc, 0)[4]
+            struct.pack_into("<I", toc, pool_off - 4, 0xFFFF)
+        self.patch_toc(change)
+        with self.assertRaises(nup.NupError):
+            nup.Nup(self.path)
+
+    def test_zstd_larger_than_stored_size(self):
+        # The child pack's stored size says 10 bytes; the frame holds 800.
+        with nup.Nup(self.path) as n:
+            index = n.listdir("Pack/Actor")["Player_Child.pack.zs"][1]
+
+        def change(toc):
+            _m, npk, ndirs, _nf, _po, _ps, _r = nup.TOC.unpack_from(toc, 0)
+            at = nup.TOC.size + npk * nup.PACKAGE.size + ndirs * nup.DIR.size + index * nup.FILE.size + 8
+            struct.pack_into("<Q", toc, at, 10)
+        self.patch_toc(change)
+        with nup.Nup(self.path) as n:
+            with self.assertRaises(nup.NupError):
+                n.read("Pack/Actor/Player_Child.pack.zs")
 
     def test_check_nup(self):
         # Missing most of what the pack needs.

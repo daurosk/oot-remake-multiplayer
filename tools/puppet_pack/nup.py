@@ -16,6 +16,7 @@ update winning, as the emulator's AppLoader_NUP::ReadRomFS does.
 """
 import fnmatch
 import hashlib
+import io
 import os
 import struct
 
@@ -35,6 +36,27 @@ assert (SUPER.size, TOC.size, PACKAGE.size, DIR.size, FILE.size) == (0x80, 0x30,
 
 class NupError(RuntimeError):
     pass
+
+
+def safe_name(name):
+    """A single path part: not empty, not . or .., no separators, drive colons or NUL."""
+    return bool(name) and name not in (".", "..") and not any(ch in name for ch in "/\\:\0")
+
+
+def write_under(root, rel, data):
+    """Writes data to root/rel, refusing any path that would land outside root.
+    The data is already read, so nothing is opened before the check."""
+    parts = rel.split("/")
+    if not all(safe_name(p) for p in parts):
+        raise NupError(f"refused to write {rel!r}: not a plain relative path")
+    real_root = os.path.realpath(root)
+    dst = os.path.realpath(os.path.join(real_root, *parts))
+    if os.path.commonpath([real_root, dst]) != real_root or dst == real_root:
+        raise NupError(f"refused to write {rel!r}: it is outside {root}")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "wb") as f:
+        f.write(data)
+    return dst
 
 
 def is_nup(path):
@@ -109,6 +131,21 @@ class Nup:
             self.files.append((pool[noff:noff + nlen].decode("utf-8"), fsize, eoff, esize, sha, codec))
         n_children = (pool_off - pos) // 4
         self.children = struct.unpack_from(f"<{n_children}I", toc, pos)
+        # Every index and every name a tree walk can reach must be sound: a bad index
+        # is a NupError, never an IndexError, and no child name can leave its folder
+        # when it is joined into a path.
+        for p in self.packages:
+            if p["romfs_dir"] != NO_DIR and p["romfs_dir"] >= ndirs:
+                raise NupError(f"{self.path} has a bad table of contents (package dir out of range)")
+        for _name, first, count in self.dirs:
+            if first + count > n_children:
+                raise NupError(f"{self.path} has a bad table of contents (children out of range)")
+        for c in self.children:
+            if c >= ndirs + nfiles:
+                raise NupError(f"{self.path} has a bad table of contents (child out of range)")
+            name = self.dirs[c][0] if c < ndirs else self.files[c - ndirs][0]
+            if not safe_name(name):
+                raise NupError(f"{self.path} has a file or folder named {name!r}, which is not allowed")
 
     # -- packages --------------------------------------------------------------
 
@@ -176,7 +213,11 @@ class Nup:
         elif codec == CODEC_ZSTD:
             import zstandard
             try:
-                data = zstandard.ZstdDecompressor().decompressobj().decompress(self._read(eoff, esize))
+                # Never more than the stored size plus one byte, whatever the frame
+                # header claims (max_output_size alone is skipped when the header has
+                # a content size), so a bad frame cannot blow up memory.
+                with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(self._read(eoff, esize))) as r:
+                    data = r.read(fsize + 1)
             except zstandard.ZstdError as e:
                 raise NupError(f"{rel_path} in {self.path} is damaged ({e})") from e
         else:
@@ -190,10 +231,7 @@ class Nup:
         written = []
         for pattern in patterns:
             for rel in self.glob(pattern):
-                dst = os.path.join(out_dir, *rel.split("/"))
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                with open(dst, "wb") as f:
-                    f.write(self.read(rel))
+                write_under(out_dir, rel, self.read(rel))
                 written.append(rel)
         return written
 

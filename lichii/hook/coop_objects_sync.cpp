@@ -910,6 +910,19 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
     }
 }
 
+std::vector<std::uint64_t> Sync::Holds(std::uint64_t now_us) const {
+    std::vector<PoseWrite> placed;
+    Poses(now_us, placed);
+    std::vector<std::uint64_t> out;
+    for (const PoseWrite& w : placed) {
+        const auto o = objects_.find(w.address);
+        if (o != objects_.end() && o->second.reacts) {
+            out.push_back(w.address);
+        }
+    }
+    return out;
+}
+
 float FrameAfter(float frame, float rate, std::int64_t age_us) {
     if (!std::isfinite(frame) || !std::isfinite(rate)) {
         return 0.0f;

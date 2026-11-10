@@ -48,6 +48,7 @@
 
 #include "coop_objects.h"
 #include "coop_flags.h"
+#include "coop_hold.h"
 #include "coop_puppet.h"
 #include "coop_svc.h"
 
@@ -162,14 +163,14 @@ constexpr u64 kLastHitId = 0x1b18;
   // the copy's own AI took over: play again at most this often
 constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
-// LICHII_COOP_OBJECTS_AI_HOLD=1 (experiment, off by default; docs/objects.md
-// "Holding a copy's AI"): the BSA component is table +0xb0 (0xcad060), and
-// bit 0 of its u16 at +0xc4 is what QueryBsaIsBrainSkip (run 0x29ce250)
-// reads. The Mover sets it on enemy copies each game frame and counts how
-// often it was still set from the frame before.
+// LICHII_COOP_OBJECTS_AI_HOLD=1 or 2 (off by default; docs/objects.md
+// "Holding a copy's AI", coop_hold.h): the BSA component is table +0xb0
+// (0xcad060), and bit 0 of its u16 at +0xc4 is what QueryBsaIsBrainSkip (run
+// 0x29ce250) reads. Each game frame the Mover writes the held copies' BSA
+// components into the table the hold cave reads, and counts in how many
+// frames each one's bit read as asked.
 constexpr u64 kComponentBsa = 0xb0;
 constexpr u64 kBsaFlags = 0xc4;
-constexpr u16 kBsaBrainSkip = 1;
 constexpr u64 kComponentLife = 0x2b8;
 constexpr u64 kLifeValue = 0x1c10;
 constexpr u64 kLifeMax = 0x1c18;
@@ -326,7 +327,6 @@ public:
         u64 actor = 0;
         std::array<float, 12> transform{};  // place, then the 3x3 rows
         bool rotation = false;              // false: keep the actor's own
-        bool hold = false;                  // an enemy copy: skip its brain (experiment)
     };
 
     struct Hit {
@@ -345,6 +345,14 @@ public:
             hits_.push_back(hit);
             hits_.back().asked_ms = SteadyMs();
         }
+    }
+
+    // Present thread: the enemy copies whose AI is held, and how.
+    void Hold(std::vector<u64> actors, const CoopHold::Masks& masks) {
+        std::lock_guard lock(mutex_);
+        holds_ = std::move(actors);
+        masks_ = masks;
+        holding_ = true;
     }
 
     void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes,
@@ -403,6 +411,9 @@ public:
                 }
             }
             hits_.clear();
+            if (holding_) {
+                WriteHolds(guest);
+            }
             work_ = poses_;
             if (work_.size() > 1) {
                 std::rotate(work_.begin(), work_.begin() + (++turn_ % work_.size()), work_.end());
@@ -504,9 +515,6 @@ public:
             if (!Alive(guest, p.actor)) {
                 continue;
             }
-            if (p.hold) {
-                HoldBrain(guest, p.actor);
-            }
             if (p.rotation) {
                 guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
             } else {
@@ -522,30 +530,47 @@ public:
         return std::nullopt;
     }
 
-    // Brain-skip bits set since the last ask, and how many of them were
-    // still set from the frame before (the game did not clear them).
+    // Since the last ask: copy-frames held, and in how many of them the
+    // copy's brain skip bit read as asked (the cave's work of the frame
+    // before, seen after the game's frame).
     std::pair<std::size_t, std::size_t> TakeHolds() {
         std::lock_guard lock(mutex_);
         return {std::exchange(hold_set_, 0), std::exchange(hold_kept_, 0)};
     }
 
 private:
-    void HoldBrain(CoopPuppet::Guest& guest, u64 actor) {
-        u64 table = 0;
-        u64 bsa = 0;
-        u16 flags = 0;
-        if (!guest.Read(actor + kActorComponents, &table, 8) || table == 0 ||
-            !guest.Read(table + kComponentBsa, &bsa, 8) || bsa == 0 ||
-            !guest.Read(bsa + kBsaFlags, &flags, 2)) {
+    // Start of a game frame: the held copies' BSA components go into the
+    // table the hold cave reads (an empty list empties it, so an enemy that
+    // became ours runs its own AI again from this frame).
+    void WriteHolds(CoopPuppet::Guest& guest) {
+        if (main_ == 0) {
             return;
         }
-        ++hold_set_;
-        if ((flags & kBsaBrainSkip) != 0) {
-            ++hold_kept_;
-            return;
+        std::vector<u64> components;
+        const u16 want = static_cast<u16>(masks_.or_mask & CoopHold::kBrainSkip);
+        for (const u64 actor : holds_) {
+            u64 table = 0;
+            u64 bsa = 0;
+            u16 flags = 0;
+            if (!Alive(guest, actor) || !guest.Read(actor + kActorComponents, &table, 8) ||
+                table == 0 || !guest.Read(table + kComponentBsa, &bsa, 8) || bsa == 0 ||
+                !guest.Read(bsa + kBsaFlags, &flags, 2)) {
+                continue;
+            }
+            if (held_before_.contains(bsa)) {
+                ++hold_set_;
+                if ((flags & CoopHold::kBrainSkip) == want) {
+                    ++hold_kept_;
+                }
+            }
+            components.push_back(bsa);
         }
-        flags |= kBsaBrainSkip;
-        guest.Write(bsa + kBsaFlags, &flags, 2);
+        if (components.size() > CoopHold::kMaxHeld) {
+            components.resize(CoopHold::kMaxHeld);
+        }
+        const auto bytes = CoopHold::Table(components, masks_);
+        guest.Write(main_ + CoopHold::kTableOffset, bytes.data(), bytes.size());
+        held_before_ = std::unordered_set<u64>(components.begin(), components.end());
     }
 
     static u64 SteadyMs() {
@@ -698,6 +723,10 @@ private:
     std::size_t next_remove_ = 0;
     std::size_t moved_ = 0;
     std::size_t deleted_ = 0;
+    std::vector<u64> holds_;
+    CoopHold::Masks masks_;
+    bool holding_ = false;
+    std::unordered_set<u64> held_before_;  // BSA components in last frame's table
     std::size_t hold_set_ = 0;
     std::size_t hold_kept_ = 0;
 };
@@ -883,7 +912,7 @@ public:
     bool hurt_ = true;
     bool replay_ = false;
     bool drive_ = false;
-    bool ai_hold_ = false;
+    int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
     u64 take_at_ = 0;
     int drive_mode_ = 0;
@@ -1177,16 +1206,15 @@ private:
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
                 p.rotation = true;
             }
-            if (ai_hold_) {
-                const auto known = names_.find(w.address);
-                p.hold = known != names_.end() && known->second.first.starts_with("Enemy_");
-            }
             wish.push_back(p);
             placed.emplace(w.address, w.position);
         }
         placed_ = std::move(placed);
         std::vector<PlayWish> plays;
         sync_.Plays(now_us, plays);
+        if (ai_hold_ != 0) {
+            TheMover().Hold(sync_.Holds(now_us), CoopHold::MasksFor(ai_hold_));
+        }
         TheMover().Want(main_, std::move(wish), sync_.Removes(), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
@@ -1200,10 +1228,13 @@ private:
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
             }
-            if (ai_hold_) {
-                const auto [set, kept] = TheMover().TakeHolds();
-                LOG_INFO(Core, "coop: objects: ai hold: brain skip set {} times, {} still set from the frame before",
-                         set, kept);
+            if (ai_hold_ != 0) {
+                const auto [frames, kept] = TheMover().TakeHolds();
+                LOG_INFO(Core,
+                         "coop: objects: ai hold mode {}: {} copy-frames held, brain skip bit as "
+                         "asked in {}; {} plays in {:.1f} s",
+                         ai_hold_, frames, kept, played,
+                         static_cast<double>(now_us - drift_at_) / 1e6);
             }
             drift_at_ = now_us;
             drift_sum_ = 0.0f;
@@ -1399,7 +1430,7 @@ Objects& Instance() {
         objects.replay_ = EnvOn("LICHII_COOP_OBJECTS_HIT_REPLAY");
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT") || objects.replay_;
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
-        objects.ai_hold_ = EnvFlag("LICHII_COOP_OBJECTS_AI_HOLD");
+        objects.ai_hold_ = EnvNumber("LICHII_COOP_OBJECTS_AI_HOLD");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         return true;

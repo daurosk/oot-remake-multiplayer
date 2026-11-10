@@ -17,6 +17,7 @@
 #include "core/loader/nso.h"
 #include "core/memory.h"
 
+#include "coop_hold.h"
 #include "coop_puppet.h"
 
 namespace CoopSvc {
@@ -165,6 +166,22 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
              "    - Applying \"coop puppet\": bl {:#x} at main+{:#x} and main+{:#x}, {} bytes "
              "of cave",
              kCaveOffset, kHooks[0].offset, kHooks[1].offset, kCave.size());
+    // The AI hold's own cave and hook (coop_hold.h), when asked for.
+    if (EnvOn("LICHII_COOP_OBJECTS_AI_HOLD")) {
+        const std::size_t at = header + CoopHold::kHookOffset;
+        if (Word(original, at) != CoopHold::kHookOriginal ||
+            Word(out, at) != CoopHold::kHookOriginal) {
+            LOG_WARNING(Loader, "    - Skipping \"coop ai hold\": main+{:#x} holds {:#010x}",
+                        CoopHold::kHookOffset, Word(out, at));
+        } else {
+            const std::uint32_t call = CoopHold::HookWord();
+            std::memcpy(out.data() + at, &call, sizeof(call));
+            std::memcpy(out.data() + header + CoopHold::kCaveOffset, CoopHold::kCave.data(),
+                        CoopHold::kCave.size());
+            LOG_INFO(Loader, "    - Applying \"coop ai hold\": bl {:#x} at main+{:#x}",
+                     CoopHold::kCaveOffset, CoopHold::kHookOffset);
+        }
+    }
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
         ConfigurePuppets();  // the cave may be here for the other callers alone
     }

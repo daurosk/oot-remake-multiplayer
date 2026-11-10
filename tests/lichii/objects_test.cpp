@@ -2,11 +2,13 @@
 // No emulator code: each walk is a list of actors.
 #include <doctest/doctest.h>
 
+#include <cstring>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
+#include "coop_hold.h"
 #include "coop_objects_sync.h"
 
 namespace proto = coop::protocol;
@@ -943,4 +945,86 @@ TEST_CASE("objects: an enemy that stops being ours follows the new owner at once
     Own(sync, id, 1, 2);
     Tick(sync, 1450 * kMs, {Enemy(0x100, 0x11, 4, 51.0f)});
     CHECK(sync.OwnerOf(id) == 2);
+}
+
+TEST_CASE("objects: the AI hold covers enemy copies only, and ends when one becomes ours") {
+    Sync sync;
+    const std::vector<Seen> seen{Enemy(0x100, 0x11, 4, 50.0f),
+                                 Enemy(0x200, 0x22, 4, 60.0f, "Animal_Cucco"),
+                                 Enemy(0x300, 0x33, 4, 70.0f)};
+    Tick(sync, 0, seen);
+    CHECK(sync.Holds(10 * kMs).empty());  // no owner yet: its own AI runs
+    const auto sample = [&](std::uint64_t address, std::uint64_t t) {
+        proto::ObjectSample s;
+        s.player_number = 2;
+        s.id = *sync.IdOf(address);
+        s.state.time = {t, 0};
+        s.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+        sync.Receive(s);
+    };
+    Own(sync, *sync.IdOf(0x100), 2);
+    Own(sync, *sync.IdOf(0x200), 2);
+    Own(sync, *sync.IdOf(0x300), 1);
+    Tick(sync, 900 * kMs, seen);
+    CHECK(sync.Holds(950 * kMs).empty());  // player 2's, but no sample to follow yet
+    sample(0x100, 1000 * kMs);
+    sample(0x200, 1000 * kMs);
+    Tick(sync, 1050 * kMs, seen);
+    // The enemy copy is held; the animal copy and our own enemy are not.
+    CHECK(sync.Holds(1100 * kMs) == std::vector<std::uint64_t>{0x100});
+    // The owner falls silent: the copy is let go with its pose.
+    CHECK(sync.Holds(1000 * kMs + Sync::kPoseStaleUs + kMs).empty());
+    // It becomes ours: not held from the next list on.
+    Own(sync, *sync.IdOf(0x100), 1, 1);
+    Tick(sync, 1150 * kMs, seen);
+    CHECK(sync.Holds(1160 * kMs).empty());
+    // And held again once it is player 2's and placed again.
+    Own(sync, *sync.IdOf(0x100), 2, 2);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = *sync.IdOf(0x100);
+    s.epoch = 2;
+    s.state.time = {1200 * kMs, 0};
+    s.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+    sync.Receive(s);
+    Tick(sync, 1250 * kMs, seen);
+    CHECK(sync.Holds(1260 * kMs) == std::vector<std::uint64_t>{0x100});
+}
+
+TEST_CASE("objects: the AI hold's table and hook") {
+    // bl from main+0x369df8 to the hold cave, which sits after the co-op cave.
+    const std::uint32_t word = CoopHold::HookWord();
+    CHECK((word >> 26) == 0x25);
+    CHECK(CoopHold::kHookOffset + (static_cast<std::uint64_t>(word & 0x3ffffff) << 2) ==
+          CoopHold::kCaveOffset);
+    CHECK(CoopHold::kCaveOffset + CoopHold::kCave.size() <= CoopHold::kTableOffset);
+    // Mode 1 sets the brain skip bit, mode 2 clears it, anything else changes nothing.
+    CHECK(((0x1230u & CoopHold::MasksFor(1).and_mask) | CoopHold::MasksFor(1).or_mask) == 0x1231u);
+    CHECK(((0x1231u & CoopHold::MasksFor(2).and_mask) | CoopHold::MasksFor(2).or_mask) == 0x1230u);
+    CHECK(((0x1231u & CoopHold::MasksFor(0).and_mask) | CoopHold::MasksFor(0).or_mask) == 0x1231u);
+    // Count, masks, then the components; empty entries and those past 64 are left out.
+    std::vector<std::uint64_t> components{0x1111, 0, 0x2222};
+    auto table = CoopHold::Table(components, CoopHold::MasksFor(1));
+    const auto u32 = [&](std::size_t at) {
+        std::uint32_t v = 0;
+        std::memcpy(&v, table.data() + at, 4);
+        return v;
+    };
+    const auto u64 = [&](std::size_t at) {
+        std::uint64_t v = 0;
+        std::memcpy(&v, table.data() + at, 8);
+        return v;
+    };
+    CHECK(u32(0) == 2);
+    CHECK(u32(4) == 0xffffffffu);
+    CHECK(u32(8) == 1);
+    CHECK(u64(0x10) == 0x1111);
+    CHECK(u64(0x18) == 0x2222);
+    components.assign(100, 0x3333);
+    table = CoopHold::Table(components, CoopHold::MasksFor(2));
+    CHECK(u32(0) == CoopHold::kMaxHeld);
+    CHECK(u32(4) == 0xfffffffeu);
+    // No enemy held: an empty table, so every brain runs as the game wants.
+    table = CoopHold::Table({}, CoopHold::MasksFor(1));
+    CHECK(u32(0) == 0);
 }

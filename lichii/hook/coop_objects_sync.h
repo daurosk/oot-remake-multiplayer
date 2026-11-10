@@ -188,6 +188,12 @@ public:
     // animation and its frame (the mover compares it with the copy's own).
     void Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const;
 
+    // Present thread: the enemy copies whose own AI is held (the AI hold,
+    // coop_hold.h): an Enemy_ we do not own that its owner's samples place
+    // right now, so exactly the enemies Poses moves. One that becomes ours
+    // (or whose owner fell silent) is not in the next list.
+    std::vector<std::uint64_t> Holds(std::uint64_t now_us) const;
+
     // The loaded actors to delete: pickups another game took, and rolled
     // enemies this game made while another one decides the scene's rolls.
     std::vector<std::uint64_t> Removes() const;

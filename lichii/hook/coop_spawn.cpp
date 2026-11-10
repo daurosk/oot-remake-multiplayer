@@ -312,6 +312,12 @@ void Director::SetEnemies(std::uint64_t main_base, std::vector<Copy> copies) {
     next_enemies_ = std::move(copies);
 }
 
+void Director::SetDrops(std::uint64_t main_base, std::vector<Copy> copies) {
+    std::lock_guard lock(mutex_);
+    next_drop_base_ = main_base;
+    next_drops_ = std::move(copies);
+}
+
 std::map<std::uint64_t, std::uint64_t> Director::Live() const {
     std::lock_guard lock(mutex_);
     return live_;
@@ -392,9 +398,10 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     std::uint64_t base = 0;
     {
         std::lock_guard lock(mutex_);
-        base = next_base_ != 0 ? next_base_ : next_enemy_base_;
+        base = next_base_ != 0 ? next_base_ : next_enemy_base_ != 0 ? next_enemy_base_ : next_drop_base_;
         copies_ = next_;
         copies_.insert(copies_.end(), next_enemies_.begin(), next_enemies_.end());
+        copies_.insert(copies_.end(), next_drops_.begin(), next_drops_.end());
     }
     if (base != base_) {
         // A new game (or none): nothing we had is ours any more.
@@ -507,6 +514,15 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         }
         if (slot.phase == Phase::live) {
             const Copy* want = Wanted(slot.key);
+            if (want != nullptr && want->act == Act::release) {
+                // Its maker has the actor now: the slot is free, the actor stays.
+                {
+                    std::lock_guard lock(mutex_);
+                    live_.erase(slot.key);
+                }
+                slot = Slot{};
+                continue;
+            }
             if (want == nullptr || want->act == Act::remove) {
                 CoopPuppet::Call c;
                 c.function = base_ + addr::kRequestDelete;

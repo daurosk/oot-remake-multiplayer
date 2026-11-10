@@ -1142,3 +1142,55 @@ TEST_CASE("bad times of day are refused") {
   b[kHeaderSize + 4] = 0xff;  // seconds past one day
   CHECK(decode(b, m) == Error::bad_value);
 }
+
+TEST_CASE("the drop messages have their numbers, channel and layout") {
+  CHECK(static_cast<int>(MessageType::drop_spawn) == 36);
+  CHECK(static_cast<int>(MessageType::drop_take) == 37);
+  CHECK(static_cast<int>(MessageType::drop_ask) == 38);
+  for (const MessageType type :
+       {MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask}) {
+    CHECK(channel_of(type) == kChannelOwnership);
+    CHECK_FALSE(allowed_on_channel(type, kChannelSession));
+    CHECK(may_send(Sender::client, type));
+    CHECK(may_send(Sender::server, type));
+  }
+  const ObjectId id{ObjectKind::made, 2, 7};
+  Message spawn = DropSpawn{0, id, "Graveyard", "Obj_Heart", {1.0f, 2.0f, 3.0f}, 99, drop_spawn::owned};
+  CHECK(check_received(spawn, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(set_sender(spawn, 2));
+  CHECK(sender_of(spawn) == 2);
+  const Bytes b = must_encode(spawn);
+  // player, id, two strings, position, time, flags
+  REQUIRE(b.size() == kHeaderSize + 1 + 10 + (2 + 9) + (2 + 9) + 12 + 8 + 1);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == spawn);
+  CHECK(must_encode(DropTake{0, id, DropTakeReason::gone}).size() == kHeaderSize + 1 + 10 + 1);
+  CHECK(must_encode(DropAsk{0, "Graveyard"}).size() == kHeaderSize + 1 + 2 + 9);
+}
+
+TEST_CASE("bad drop messages are refused") {
+  const ObjectId made{ObjectKind::made, 2, 7};
+  const ObjectId placed{ObjectKind::placed, 0, 7};
+  Bytes out;
+  CHECK(encode(DropSpawn{0, placed, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DropSpawn{0, made, "", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DropSpawn{0, made, "s", "", {}, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {}, 0, 4}, out) == Error::bad_value);
+  CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {std::numeric_limits<float>::infinity(), 0, 0}, 0, 0},
+               out) == Error::bad_value);
+  CHECK(encode(DropSpawn{5, made, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DropTake{0, placed, DropTakeReason::gone}, out) == Error::bad_value);
+  CHECK(encode(DropTake{0, made, static_cast<DropTakeReason>(2)}, out) == Error::bad_value);
+  CHECK(encode(DropAsk{0, ""}, out) == Error::bad_value);
+  Message m;
+  Bytes b = must_encode(DropTake{0, made, DropTakeReason::gone});
+  b.back() = 2;  // an unknown reason
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(DropSpawn{0, made, "s", "Obj_Heart", {}, 0, 0});
+  b.back() = 0x80;  // an unknown flag
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(DropAsk{0, "s"});
+  b.push_back(0);
+  CHECK(decode(b, m) != Error::none);
+}

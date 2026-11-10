@@ -1,4 +1,4 @@
-# Wire protocol, version 3
+# Wire protocol, version 4
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -259,6 +259,18 @@ Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length
 
 The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
 
+### Drops
+
+The rupees, hearts and ammo that an enemy, a pot, grass or a rock leaves ([objects.md](objects.md), "Drops"). All on channel 2. The server relays each to everyone else, with the sender's number in the player field, and keeps nothing.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 36 | `DROP_SPAWN` | 2 | both | `u8` player field, object id (kind made: the game that rolled it and its counter), scene (string, 1 to 64), actor name (string, 1 to 64), position (3 x f32), `u64` server time when its maker first saw it, `u8` flags (bit 0 the sender owns what dropped it, bit 1 told again for a player who came later; other bits refused) |
+| 37 | `DROP_TAKE` | 2 | both | `u8` player field, object id (kind made), `u8` reason (0 picked up, 1 blinked out; others refused) |
+| 38 | `DROP_ASK` | 2 | both | `u8` player field, scene (string, 1 to 64): the sender came into this scene and asks for its drops |
+
+Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from any game that still shows the drop, so the maker in its id need not be the sender.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -274,4 +286,5 @@ The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's
 - Kind 4, count delta, was added to the flag entry the same way. A build without it refuses a `FLAG_SET` that carries one (an unknown kind), so a host must have it; a player without it never sends one and takes totals as it always did.
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
+- Version 4 (2026-11-09): the drop messages (types 36 to 38), with the other messages of the same release. No layout changed; the version went up so that every game in a session shares drops or none does.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.

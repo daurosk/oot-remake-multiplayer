@@ -1200,6 +1200,88 @@ Error decode_body(Reader& r, TimeOfDay& m) {
   return Error::none;
 }
 
+// DROP_SPAWN: u8 player, object id (made), scene, actor, position, u64 time,
+// u8 flags (bits 0 and 1, the others 0).
+Error encode_body(const DropSpawn& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_object_id(m.id));
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  COOP_TRY(check_string(m.actor, kMaxActorNameChars));
+  if (m.scene.empty() || m.actor.empty() || !all_finite(m.position)) return Error::bad_value;
+  if ((m.flags & ~(drop_spawn::owned | drop_spawn::again)) != 0) return Error::bad_value;
+  w.u8(m.player_number);
+  write_object_id(m.id, w);
+  w.str(m.scene);
+  w.str(m.actor);
+  for (float f : m.position) w.f32(f);
+  w.u64(m.time_us);
+  w.u8(m.flags);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DropSpawn& m) {
+  m = DropSpawn{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(read_object_id(r, m.id));
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_TRY(r.str(m.actor, kMaxActorNameChars));
+  if (m.scene.empty() || m.actor.empty()) return Error::bad_value;
+  COOP_TRY(read_floats(r, m.position));
+  COOP_READ(r.u64(m.time_us));
+  COOP_READ(r.u8(m.flags));
+  if ((m.flags & ~(drop_spawn::owned | drop_spawn::again)) != 0) return Error::bad_value;
+  return Error::none;
+}
+
+// DROP_TAKE: u8 player, object id (made), u8 reason (0 picked up, 1 gone).
+Error encode_body(const DropTake& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_object_id(m.id));
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  if (static_cast<std::uint8_t>(m.reason) > static_cast<std::uint8_t>(DropTakeReason::gone)) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  write_object_id(m.id, w);
+  w.u8(static_cast<std::uint8_t>(m.reason));
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DropTake& m) {
+  m = DropTake{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(read_object_id(r, m.id));
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  std::uint8_t reason = 0;
+  COOP_READ(r.u8(reason));
+  if (reason > static_cast<std::uint8_t>(DropTakeReason::gone)) return Error::bad_value;
+  m.reason = static_cast<DropTakeReason>(reason);
+  return Error::none;
+}
+
+// DROP_ASK: u8 player, scene.
+Error encode_body(const DropAsk& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  if (m.scene.empty()) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.scene);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DropAsk& m) {
+  m = DropAsk{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  if (m.scene.empty()) return Error::bad_value;
+  return Error::none;
+}
+
 Error decode_body(Reader& r, PlayerPose& m) {
   m = PlayerPose{};
   COOP_READ(r.u8(m.player_number));
@@ -1280,7 +1362,8 @@ MessageType type_of(const Message& message) {
       MessageType::object_present, MessageType::object_owner, MessageType::handover_ask,
       MessageType::handover_state, MessageType::object_spawn, MessageType::object_sample,
       MessageType::object_remove, MessageType::damage, MessageType::player_pose,
-      MessageType::time_of_day,
+      MessageType::time_of_day,   MessageType::drop_spawn,  MessageType::drop_take,
+      MessageType::drop_ask,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1308,6 +1391,9 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::object_spawn:
     case MessageType::object_remove:
     case MessageType::damage:
+    case MessageType::drop_spawn:
+    case MessageType::drop_take:
+    case MessageType::drop_ask:
       return kChannelOwnership;
     default:
       return kChannelSession;
@@ -1346,6 +1432,9 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::object_spawn:
     case MessageType::object_remove:
     case MessageType::damage:
+    case MessageType::drop_spawn:
+    case MessageType::drop_take:
+    case MessageType::drop_ask:
       return channel == kChannelOwnership;
     case MessageType::test_payload:
       return channel == kChannelSession || channel == kChannelPlayerSamples;
@@ -1384,6 +1473,9 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::object_remove:
     case MessageType::damage:
     case MessageType::time_of_day:
+    case MessageType::drop_spawn:
+    case MessageType::drop_take:
+    case MessageType::drop_ask:
       return true;
   }
   return false;
@@ -1406,7 +1498,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
                       std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose> ||
-                      std::is_same_v<T, TimeOfDay>) {
+                      std::is_same_v<T, TimeOfDay> || std::is_same_v<T, DropSpawn> ||
+                      std::is_same_v<T, DropTake> || std::is_same_v<T, DropAsk>) {
           field = &m.player_number;
         }
       },
@@ -1498,6 +1591,9 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::damage: return decode_as<Damage>(body, out);
     case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
     case MessageType::time_of_day: return decode_as<TimeOfDay>(body, out);
+    case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
+    case MessageType::drop_take: return decode_as<DropTake>(body, out);
+    case MessageType::drop_ask: return decode_as<DropAsk>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;

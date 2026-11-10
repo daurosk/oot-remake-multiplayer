@@ -1423,6 +1423,49 @@ Error decode_body(Reader& r, WorldHit& m) {
   return Error::none;
 }
 
+// SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
+Error check_sign_cut(const SignCut& m) {
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (m.words.empty() || m.words.size() > kMaxSignCutWords) return Error::bad_value;
+  for (const SignWord& w : m.words) {
+    const std::uint64_t region = w.key >> 32;
+    const std::uint64_t offset = w.key & 0xffffffffu;
+    if (region < 2 || region - 2 >= kSignCutEntries || offset >= kSignCutBytes || offset % 8 != 0) {
+      return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+Error encode_body(const SignCut& m, Writer& w) {
+  COOP_TRY(check_sign_cut(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.hash);
+  w.u16(static_cast<std::uint16_t>(m.words.size()));
+  for (const SignWord& x : m.words) {
+    w.u64(x.key);
+    w.u64(x.value);
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, SignCut& m) {
+  m = SignCut{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.hash));
+  std::uint16_t count = 0;
+  COOP_READ(r.u16(count));
+  if (count == 0 || count > kMaxSignCutWords) return Error::bad_value;
+  m.words.resize(count);
+  for (SignWord& x : m.words) {
+    COOP_READ(r.u64(x.key));
+    COOP_READ(r.u64(x.value));
+  }
+  return check_sign_cut(m);
+}
+
 // DROP_SPAWN: u8 player, object id (made), scene, actor, position, u64 time,
 // u8 flags (bits 0 and 1, the others 0).
 Error encode_body(const DropSpawn& m, Writer& w) {
@@ -1615,7 +1658,7 @@ MessageType type_of(const Message& message) {
       MessageType::world_break,
       MessageType::world_move, MessageType::world_place, MessageType::world_hit,
       MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
-      MessageType::boss_room,
+      MessageType::boss_room, MessageType::sign_cut,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1673,6 +1716,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::world_place:
     case MessageType::world_hit:
     case MessageType::boss_room:
+    case MessageType::sign_cut:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1744,6 +1788,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::drop_take:
     case MessageType::drop_ask:
     case MessageType::boss_room:
+    case MessageType::sign_cut:
       return true;
   }
   return false;
@@ -1771,7 +1816,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, WorldBreak> || std::is_same_v<T, WorldMove> ||
                       std::is_same_v<T, WorldPlace> || std::is_same_v<T, WorldHit> ||
                       std::is_same_v<T, DropSpawn> || std::is_same_v<T, DropTake> ||
-                      std::is_same_v<T, DropAsk> || std::is_same_v<T, BossRoom>) {
+                      std::is_same_v<T, DropAsk> || std::is_same_v<T, BossRoom> ||
+                      std::is_same_v<T, SignCut>) {
           field = &m.player_number;
         }
       },
@@ -1869,6 +1915,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::world_move: return decode_as<WorldMove>(body, out);
     case MessageType::world_place: return decode_as<WorldPlace>(body, out);
     case MessageType::world_hit: return decode_as<WorldHit>(body, out);
+    case MessageType::sign_cut: return decode_as<SignCut>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

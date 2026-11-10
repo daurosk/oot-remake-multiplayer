@@ -3,6 +3,7 @@
 // (coop_objects_sync.cpp, Flush). No emulator code.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <limits>
@@ -1036,6 +1037,7 @@ struct FakeSign {
     static constexpr std::uint64_t kTable = 0x20000000;
     static constexpr std::uint64_t kLife = 0x30000000;
     static constexpr std::uint64_t kCut = 0x40000000;
+    static constexpr std::uint64_t kPoint = 0x50000000;  // table +0x268: the cut point and flag
     std::map<std::uint64_t, std::uint64_t> words;
     int reads = 0;
 
@@ -1044,11 +1046,13 @@ struct FakeSign {
         words[kTable + 0x10] = kCut;
         words[kTable + 0x2b8] = kLife;
         words[kTable + 0x2c0] = kLife;  // the same component twice: read once
+        words[kTable + 0x268] = kPoint;
     }
     std::optional<std::uint64_t> operator()(std::uint64_t a) {
         ++reads;
         const auto in = [a](std::uint64_t base, std::uint64_t size) { return a >= base && a < base + size; };
-        if (!in(kActor, 0x600) && !in(kTable, 0x300) && !in(kLife, 0x200) && !in(kCut, 0x200)) {
+        if (!in(kActor, 0x600) && !in(kTable, 0x300) && !in(kLife, 0x200) && !in(kCut, 0x200) &&
+            !in(kPoint, 0x200)) {
             return std::nullopt;
         }
         const auto it = words.find(a);
@@ -1136,42 +1140,154 @@ TEST_CASE("sign probe: a given hit, a hit with no copy before it, a far sign") {
     CHECK(q.Look(read, {sign}, near, 3600 * kMs).empty());
 }
 
-TEST_CASE("sign probe: WorldSync gives it our swing and another player's hit") {
+TEST_CASE("sign cut: our cut's words go out as SIGN_CUT and are written into the other game's sign") {
+    using CoopWorld::SignProbe;
     const char* name = "Obj_GuidePost_A_02";
     FakeSign mem;
     auto read = [&mem](std::uint64_t a) { return mem(a); };
     WorldSync w;
+    WorldSync::Out out;
     Walk(w, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    CHECK(w.ProbeSigns(read, 1000 * kMs).empty());
-    mem.words[FakeSign::kCut + 0x40] = 1;
+    w.ProbeSigns(read, 1000 * kMs, out);
+    CHECK(out.send.empty());
+    // The cut: the point (into an empty word) and the flag, words off the list, the hit record.
+    mem.words[FakeSign::kPoint + 0x98] = 0x42ccd1dec0f55bf7;
+    mem.words[FakeSign::kPoint + 0x1e8] = 0x800c000080f3;
+    mem.words[FakeSign::kPoint + 0x1f0] = 5;                  // not on the list
+    mem.words[FakeSign::kCut + 0x18] = 0x800c000080f3;         // entry 0x10: not on the list
+    mem.words[FakeSign::kLife + 0x1f8] = 0x4004000000060001;  // the hit record
     const float nan = std::numeric_limits<float>::quiet_NaN();
     proto::GrassCut swing;
     swing.scene = kScene;
     swing.position = {1.2f, 3.0f, 3.4f};
     swing.radius = 0.5f;
     swing.sweep = {proto::Vec3{1.2f, 3.1f, 3.4f}, proto::Vec3{nan, nan, nan}, proto::Vec3{nan, nan, nan}};
-    WorldSync::Out out;
     w.Swing(swing, kLink, 1400 * kMs, out);
     REQUIRE(Sent<proto::WorldHit>(out).size() == 1);
+    proto::WorldHit hit = Sent<proto::WorldHit>(out)[0];
+    out = {};
     Walk(w, 1900 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    auto lines = w.ProbeSigns(read, 1900 * kMs);
-    REQUIRE(lines.size() == 1);
-    CHECK(lines[0].find("our cut +0.5 s: 1 words changed: c+0x10+0x40:0>1") != std::string::npos);
+    w.ProbeSigns(read, 1900 * kMs, out);
+    REQUIRE(Sent<proto::SignCut>(out).size() == 1);
+    proto::SignCut cut = Sent<proto::SignCut>(out)[0];
+    CHECK(cut.scene == kScene);
+    CHECK(cut.hash == 0x70);
+    const std::uint64_t entry = 2 + 0x268 / 8;
+    REQUIRE(cut.words.size() == 2);
+    CHECK(cut.words[0] == proto::SignWord{(entry << 32) | 0x98, 0x42ccd1dec0f55bf7});
+    CHECK(cut.words[1] == proto::SignWord{(entry << 32) | 0x1e8, 0x800c000080f3});
+    CHECK(proto::encode(proto::Message{cut}).has_value());
+    // Only once: the +2 s lines send nothing.
+    out = {};
+    w.ProbeSigns(read, 3500 * kMs, out);
+    CHECK(out.send.empty());
 
-    // The other game: the given hit starts the probe there.
+    // The other game: the hit first, then the words once its probe has a copy.
     FakeSign other;
     auto read_b = [&other](std::uint64_t a) { return other(a); };
     WorldSync b;
+    WorldSync::Out probe;
     Walk(b, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    CHECK(b.ProbeSigns(read_b, 1000 * kMs).empty());
-    proto::WorldHit got = Sent<proto::WorldHit>(out)[0];
-    got.player_number = 1;
-    b.Receive(got);
-    REQUIRE(Walk(b, 1500 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).hits.size() == 1);
-    CHECK(b.ProbeSigns(read_b, 1500 * kMs).empty());
-    other.words[FakeSign::kCut + 0x40] = 1;  // the replayed hit cut it the same way
-    Walk(b, 2000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
-    lines = b.ProbeSigns(read_b, 2000 * kMs);
-    REQUIRE(lines.size() == 1);
-    CHECK(lines[0].find("given hit +0.5 s: 1 words changed: c+0x10+0x40:0>1") != std::string::npos);
+    b.ProbeSigns(read_b, 1000 * kMs, probe);  // B stood near the sign: the probe has its copy
+    hit.player_number = 1;
+    cut.player_number = 1;
+    // A word off the list, as a buggy or hostile sender might send it: dropped.
+    cut.words.push_back({(4ull << 32) | 0x18, 1});
+    b.Receive(hit);
+    b.Receive(cut);
+    auto step = Walk(b, 1500 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    CHECK(step.hits.size() == 1);
+    CHECK(step.words.empty());
+    CHECK(Walk(b, 1600 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).words.empty());  // 0.2 s after the hit
+    step = Walk(b, 1700 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    REQUIRE(step.words.size() == 2);
+    CHECK(step.words[0].part.table == FakeSign::kTable);
+    CHECK(step.words[0].part.component == FakeSign::kPoint);
+    CHECK(std::any_of(step.notes.begin(), step.notes.end(), [](const std::string& n) {
+        return n.find("cut by another player: 2 of 3 words to write") != std::string::npos;
+    }));
+    // The write goes where the probe saw the component, after the checks.
+    CHECK(b.SignWordTarget(read_b, step.words[0]) == FakeSign::kPoint + 0x98);
+    CHECK(b.SignWordTarget(read_b, step.words[1]) == FakeSign::kPoint + 0x1e8);
+    auto moved = step.words[0];
+    other.words[FakeSign::kTable + 0x268] = FakeSign::kCut;  // the table changed since the copy
+    CHECK_FALSE(b.SignWordTarget(read_b, moved).has_value());
+    other.words[FakeSign::kTable + 0x268] = FakeSign::kPoint;
+    moved.part.component = 0x7;  // not a pointer
+    CHECK_FALSE(b.SignWordTarget(read_b, moved).has_value());
+    moved = step.words[0];
+    moved.hash = 0x71;  // the actor is another sign now
+    CHECK_FALSE(b.SignWordTarget(read_b, moved).has_value());
+    moved = step.words[0];
+    moved.key = (moved.key & ~0xffffffffull) | 0x1f0;  // off the list
+    CHECK_FALSE(b.SignWordTarget(read_b, moved).has_value());
+    other.words[FakeSign::kPoint + 0x98] = 0x42cd0ee8c0eedabe;  // a transform there now
+    CHECK_FALSE(b.SignWordTarget(read_b, step.words[0]).has_value());
+    CHECK(Walk(b, 1900 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).words.empty());  // once
+
+    // A game entering later gets the words (no hit) once the sign is loaded and copied.
+    FakeSign third;
+    WorldSync c;
+    Walk(c, 1000 * kMs, {});
+    c.Receive(cut);
+    CHECK(Walk(c, 1100 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).words.empty());  // just loaded
+    c.ProbeSigns([&third](std::uint64_t a) { return third(a); }, 1100 * kMs, probe);
+    CHECK(Walk(c, 1400 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).words.size() == 2);
+}
+
+TEST_CASE("sign cut: the message checks its words") {
+    proto::SignCut m;
+    m.player_number = 1;
+    m.scene = kScene;
+    m.hash = 0x70;
+    CHECK_FALSE(proto::encode(proto::Message{m}).has_value());  // no words
+    m.words = {{(4ull << 32) | 0x18, 1}};
+    const auto bytes = proto::encode(proto::Message{m});
+    REQUIRE(bytes.has_value());
+    proto::Message back;
+    REQUIRE(proto::decode(*bytes, back) == proto::Error::none);
+    CHECK(std::get<proto::SignCut>(back) == m);
+    CHECK(static_cast<int>(proto::type_of(back)) == 80);
+    for (const std::uint64_t key : std::vector<std::uint64_t>{0x18, (1ull << 32) | 0x18, (4ull << 32) | 0x1c,
+                                    (4ull << 32) | 0x200, (0x62ull << 32)}) {
+        m.words = {{key, 1}};
+        CHECK_FALSE(proto::encode(proto::Message{m}).has_value());
+    }
+    m.words.assign(proto::kMaxSignCutWords + 1, {(4ull << 32) | 0x18, 1});
+    CHECK_FALSE(proto::encode(proto::Message{m}).has_value());
+}
+
+TEST_CASE("sign cut: what another player's word may be written over") {
+    using CoopWorld::SignWordWritable;
+    CHECK(SignWordWritable(0x8004000080f3, 0x800c000080f3));      // a flag
+    CHECK(SignWordWritable(0x7fc00000, 0x3e13b645));              // NaN to a float
+    CHECK(SignWordWritable(0, 0x42ccd1dec0f55bf7));               // a point into an empty word
+    CHECK_FALSE(SignWordWritable(0x42cd0ee8c0eedabe, 0x42cd0edac0ee8696));  // over a transform
+    CHECK_FALSE(SignWordWritable(0x42cd0ee8c0eedabe, 0));
+    CHECK_FALSE(SignWordWritable(0, 0x214ba36b18));               // a heap pointer
+    CHECK_FALSE(SignWordWritable(0x214ba36b18, 1));               // over one
+    CHECK(CoopWorld::SignCutKeyAllowed(((2ull + 0x268 / 8) << 32) | 0x1e8));
+    CHECK(CoopWorld::SignCutKeyAllowed(((2ull + 0x130 / 8) << 32) | 0xb0));
+    CHECK_FALSE(CoopWorld::SignCutKeyAllowed(((2ull + 0x268 / 8) << 32) | 0x1f0));
+    CHECK_FALSE(CoopWorld::SignCutKeyAllowed(((2ull + 0x2b8 / 8) << 32) | 0x1f8));
+    CHECK_FALSE(CoopWorld::SignCutKeyAllowed(0x268));
+    // The world sync drops a pointer and another scene's cut.
+    FakeSign mem;
+    WorldSync b;
+    WorldSync::Out probe;
+    Walk(b, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, "Obj_GuidePost_A_02")});
+    b.ProbeSigns([&mem](std::uint64_t a) { return mem(a); }, 1000 * kMs, probe);
+    const std::uint64_t entry = 2 + 0x268 / 8;
+    proto::SignCut cut;
+    cut.player_number = 1;
+    cut.scene = kScene;
+    cut.hash = 0x70;
+    cut.words = {{(entry << 32) | 0x98, 0x214ba36b18}, {(entry << 32) | 0x1e8, 1}};
+    b.Receive(cut);
+    const auto step = Walk(b, 1500 * kMs, {Thing(FakeSign::kActor, 0x70, 100, "Obj_GuidePost_A_02")});
+    REQUIRE(step.words.size() == 1);
+    CHECK(step.words[0].value == 1);
+    cut.scene = "Market";
+    b.Receive(cut);
+    CHECK(Walk(b, 2000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, "Obj_GuidePost_A_02")}).words.empty());
 }

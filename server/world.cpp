@@ -47,6 +47,16 @@ void WorldStore::on_hit(const WorldHit& h) {
   if (it->second.size() > kMaxWorldHitsPerObject) it->second.pop_front();
 }
 
+void WorldStore::on_sign_cut(const SignCut& c) {
+  Scene& s = scenes_[c.scene];
+  auto it = s.cuts.find(c.hash);
+  if (it != s.cuts.end()) {
+    it->second = c;
+  } else if (s.cuts.size() < kMaxWorldHitObjects) {
+    s.cuts.emplace(c.hash, c);
+  }
+}
+
 std::vector<Message> WorldStore::replay(const std::string& scene) const {
   std::vector<Message> out;
   auto it = scenes_.find(scene);
@@ -56,6 +66,7 @@ std::vector<Message> WorldStore::replay(const std::string& scene) const {
   for (const auto& [hash, hits] : it->second.hits) {
     for (const WorldHit& h : hits) out.emplace_back(h);
   }
+  for (const auto& [hash, cut] : it->second.cuts) out.emplace_back(cut);
   return out;
 }
 

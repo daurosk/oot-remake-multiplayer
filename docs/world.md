@@ -124,5 +124,5 @@ Open, to see in a run: (1) the swing is only read where the foliage module is on
 2. Tufts by the Kokiri side of Hyrule Field: A cuts, B's tuft goes (`still stands after the break: deleted`).
 3. A carries a pot or rock: B sees it in the air at A's puppet (`moved here: sending` in A, `moved by another player` in B); does the setter move a physics object, and does it drop when let be?
 4. A pushes a block (Forest Temple, Kakariko well): B's block follows and stays (`at rest: place sent`, `put where another player left it`). Does B's block keep its place after the 0.5 s hold, and can B push it afterwards?
-6. Sign: A cuts the signpost by the Graveyard gate (scenario `sign`): A logs `our sword passed it: hit sent`, B `hit by another player's sword`; does B's sign lose the same pieces? And for B entering later?
 5. A door or room change next to pots: no `broken here (gone next to Link)` line may appear (it should say `left with the area`).
+6. Sign: A cuts the signpost by the Graveyard gate (scenario `sign`): A logs `our sword passed it: hit sent`, B `hit by another player's sword`; does B's sign lose the same pieces? And for B entering later?

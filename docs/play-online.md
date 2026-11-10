@@ -5,7 +5,7 @@ For players in different places. Every player has done [setup.md](setup.md) firs
 The others must be able to reach the host's PC on **UDP port 27510** (or the port in `emulator\user\config\coop.ini`). There are two ways:
 
 - **(a) Port forwarding**: the host opens the port on their router. Fastest, nothing to install, but the host needs access to the router and a public IP address.
-- **(b) A virtual LAN** such as Radmin VPN, ZeroTier or Tailscale: everyone installs the same free program and joins one private network, then it works as on a LAN. Nothing to change on any router.
+- **(b) A virtual LAN** such as Radmin VPN, Hamachi, ZeroTier or Tailscale: everyone installs the same free program and joins one private network, then it works as on a LAN. Nothing to change on any router.
 
 **When do you need (b)?** When the host cannot forward a port: no access to the router, a shared network (dorm, work, school, hotel), mobile internet, or an internet provider that uses CGNAT (your router's WAN address is not the address that [whatismyip](https://www.whatismyip.com) shows, or starts with `100.64.` to `100.127.`). If you are not sure, try (b): it always works.
 
@@ -43,7 +43,36 @@ Radmin VPN is free and needs no account. ZeroTier and Tailscale work the same wa
 
 **Tailscale:** everyone signs in to the same tailnet (or the host shares their PC with the others). Use the host's Tailscale address, `100.x.y.z` (the Tailscale window, or `tailscale ip -4`).
 
+### Hamachi
+
+Hamachi (LogMeIn) works the same way as Radmin VPN. Its addresses start with `25.`.
+
+1. Everyone installs Hamachi and joins the same network. The host creates the network and sends its ID and password to the others.
+2. **The host:** your Hamachi IPv4 address is at the top of the Hamachi window (for example `25.12.34.56`). Use the IPv4 address, not the IPv6 one. Double-click `Host.bat`, keep the server window open, and send that `25.x.x.x` address to the others.
+3. **The others:** double-click `Join.bat` and type the host's `25.x.x.x` address.
+
+**Firewall (host only).** Windows treats the Hamachi adapter as a **Public** network. The server listens on **UDP port 27510** (or the port in `emulator\user\config\coop.ini`), so `coop_server.exe` must be allowed on Public networks. Only the server has to be allowed: the emulator only connects out, on the host's PC too. Either:
+
+- When Windows Firewall asks about `coop_server.exe`, tick **Public networks** as well as Private, then **Allow access**. If you missed that question: Windows Security > Firewall & network protection > **Allow an app through firewall** > Change settings, find `coop_server` and tick **Public**.
+- Or open **Command Prompt as administrator** and run the rule from [play-lan.md, Firewall](play-lan.md#firewall) with `profile=any`:
+
+  ```
+  netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510 profile=any
+  ```
+
+**Check that it works.** When someone joins, the host's server window shows `player 2 joined: <name>`. The joining player's log (`emulator\user\log\eden_log.txt`) has `coop: welcomed as player 2 on 25.x.x.x:27510`. If the joiner's panel stays on `connecting`, see Troubleshooting below. Check first that both of you are shown as online (green) in the Hamachi window.
+
 A virtual LAN adds a little delay when it cannot connect the PCs directly; the ping in the game's co-op panel shows how much.
+
+## Does shared progress stay in my save after I disconnect?
+
+Yes, once your game has saved. Shared progress means the items, songs, chests, keys and pickups that other players shared with you. Co-op writes them into your game the same way your own pickups are written: through the game's own flag store, into the copy the game saves. So they behave like progress you made yourself:
+
+- **What is written into your save:** shared key items and upgrades, songs, bottles (empty), maps, compasses, boss keys, small keys, Gold Skulltula tokens, heart pieces, and the chests and one-time pickups that are shared ([host.md](host.md), [items.md](items.md)). They go into the save file the next time **the game** saves (an autosave, for example after you get an item yourself, or when you save from the menu). Co-op never saves the game itself: receiving a shared item does not save by itself. If you close the emulator before the game has saved, the newest changes are lost, as in normal play.
+- **Nothing is undone when you disconnect.** Leaving, losing the connection or the server closing takes nothing out of your game. You keep playing alone with everything you had, and the game saves it as usual.
+- **What is not shared, so it is only ever yours:** rupees, ammo, life and magic right now, what is in your bottles, your equipped gear and item buttons ([items.md](items.md), "Rules").
+- **While you are away**, you get nothing from the others. When you join again while the same server is still running, you get what they found in the meantime. You also keep what you found alone: the server merges both, and an item you have is never taken away.
+- **The server keeps nothing on disk.** Its list of shared progress lives only while its window is open. When it is started again, it fills again from the running game of the first player who joins (the host), so progress lasts in the players' saves, not on the server.
 
 ## Troubleshooting
 

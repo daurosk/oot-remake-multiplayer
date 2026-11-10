@@ -30,10 +30,16 @@ You get:
 
 The kit's emulator is portable: it keeps everything in `emulator\user\` and never touches a normal Fritchii, Lichii or Eden install.
 
-If this PC already plays the game on Fritchii (or Lichii or Eden), copy (do not move) from `%APPDATA%\eden`:
+If this PC already plays the game on Fritchii (or Lichii or Eden), copy (do not move) your `keys` and `nand` folders into the kit:
 
 - the `keys` folder to `emulator\user\keys`
 - the `nand` folder to `emulator\user\nand` (firmware, game updates and saves; a few GB)
+
+Where to find them:
+
+- **A normal install** keeps them in `%APPDATA%\eden` (paste that into the Explorer address bar).
+- **A portable install** (a Fritchii, Lichii or Eden you unzipped, with a `user` folder next to its exe) keeps them in that folder: `user\keys` and `user\nand` next to the exe. `%APPDATA%\eden` is then empty or missing.
+- **Not sure which?** Search your drives for `prod.keys` in Explorer. The folder it is in is the `keys` folder; the `nand` folder is beside it.
 
 Otherwise put your keys in `emulator\user\keys\`, start the emulator once (`Join.bat`, any address) and use **Tools > Install Firmware** and **File > Install Files to NAND** for your firmware and game update.
 
@@ -74,6 +80,13 @@ Every player needs the same version: a game of one version cannot join a server 
 What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, your name and server, the puppet pack), `logs\`, any file of yours that is not part of the kit, and `coop-options.ini`: your switches stay as they are, and a switch the new version adds is written at the end behind a `#` (off). Every file it replaces goes first to `backup-<old version>\` in the kit folder; if something fails half way, those are put back. If the update is stopped (window closed, power cut), run `Update.bat` again: it finishes it (Host.bat and Join.bat remind you). Delete the backup folder once the new version works.
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
+
+## Troubleshooting
+
+- **"RomFS extraction failed" at the dump (step 4).** The kit's emulator needs the same things as for playing: your keys in `emulator\user\keys`, the firmware installed, and the game's update installed in the kit's emulator itself (**File > Install Files to NAND**), not only in another emulator. Check step 2, then dump again and choose the full dump. Keep the progress window open until it says it is done; closing it stops the dump.
+- **"No keys", or the game does not show in the list or does not start.** The kit's emulator does not see your keys. Check that `emulator\user\keys\prod.keys` exists (not one folder deeper) and that you copied from the right place (step 2: a portable install keeps them next to its exe, not in `%APPDATA%\eden`). Restart the emulator after copying.
+- **Where is the log?** `emulator\user\log\eden_log.txt` in your kit folder. Log lines name the emulator's source files, such as `src\core\...`. In test3 and older kits they show a full folder such as `C:\...\src\...`: that is where the emulator was built, not your folder, and it is not a problem (from test4 on, only the `src\...` part is shown).
+- **Still stuck?** Close the emulator, run `collect-logs.cmd` and report it (below).
 
 ## Reporting a problem
 

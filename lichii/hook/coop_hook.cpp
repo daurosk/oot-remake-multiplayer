@@ -50,6 +50,7 @@
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
+#include "coop_chests.h"
 #include "coop_flags.h"
 #include "coop_game_build.h"
 #include "coop_pickups.h"
@@ -62,6 +63,7 @@
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_svc.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
 
@@ -216,6 +218,7 @@ public:
         std::string flag_error;
         session.shared = LoadShared(flag_error);
         if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
+        if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }
@@ -244,6 +247,11 @@ public:
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
         if (pickups_ && CoopDungeon::On()) {  // docs/dungeon.md: chests, silver rupees, cleared rooms stay done
             for (const auto& k : CoopDungeon::Keys()) {
+                session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
+            }
+        }
+        if (pickups_ && CoopChests::On()) {  // one way: an opened chest never closes again
+            for (const auto& k : CoopChests::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
         }
@@ -284,7 +292,15 @@ public:
                 CoopCheats::Frame(*game_store);
             }
             if (sharing_) {
-                store.emplace(*game_store);
+                // Issue 138: grants wait for a loaded save, and the capacities
+                // of held items are mended for a while after each load.
+                const bool mend = load_mend_.frame(reading.has_value());
+                store.emplace(*game_store, &load_mend_);
+                if (mend) {
+                    if (const auto raised = store->mend(); raised != 0) {
+                        LOG_INFO(Core, "coop: items: {} capacities mended after a load", raised);
+                    }
+                }
             }
         }
         if (pickups_) {
@@ -296,6 +312,15 @@ public:
             pickups_given_ += keys.size();
         }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
+        // Chests opened and pickups taken in another game: what is loaded of
+        // them goes here too (docs/items.md, "Chests").
+        if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
+            std::vector<std::uint64_t> keys;
+            for (const auto& k : taken) {
+                keys.push_back(k.key);
+            }
+            CoopObjects::TakenForOthers(keys);
+        }
         if (game_store) {  // issue 88: what the session left in MaxLife (docs/items.md)
             const auto max_life = game_store->read(coop::protocol::FlagKey{0xfbe01da1u, 0});
             CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32
@@ -847,6 +872,7 @@ private:
     bool sharing_ = false;  // a flag list is shared; set by Begin
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
+    coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.
@@ -870,6 +896,7 @@ private:
 std::mutex g_mutex;
 bool g_started = false;
 bool g_shut_down = false;
+std::atomic<bool> g_mod_refused{false};  // a game mod patches where co-op does (Start)
 std::unique_ptr<Coop> g_coop;  // set once by Start, cleared by Shutdown
 
 // Joins the thread if the program ends without Shutdown.
@@ -908,6 +935,16 @@ void Start() {
     LOG_INFO(Core, "coop: loaded (ENet {}.{}.{})", (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
     LOG_INFO(Core, "coop: build {}, protocol {}", LICHII_COOP_VERSION, coop::protocol::kProtocolVersion);
 
+    // A game mod patches the game where co-op does (CoopSvc::Refusal, issue
+    // 136): co-op stays off for this run, and the overlay says why.
+    if (const std::string changed = CoopSvc::Refusal(); !changed.empty()) {
+        g_mod_refused = true;
+        LOG_WARNING(Core, "coop: off: a code mod is installed ({} is not the game's own). Co-op "
+                          "does not work with game mods: remove them or turn them off in the "
+                          "game's Add-Ons.",
+                    changed);
+        return;
+    }
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     auto settings = LoadSettings(ini, errors);
@@ -948,6 +985,9 @@ void Shutdown() {
 std::vector<OverlayLine> OverlayLines() {
     if (auto* coop = Get()) {
         return coop->Lines();
+    }
+    if (g_mod_refused) {
+        return {{"Co-op is off: a code mod is installed"}};
     }
     return {};
 }

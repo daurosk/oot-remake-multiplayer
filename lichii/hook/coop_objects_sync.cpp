@@ -82,6 +82,35 @@ float Distance(const proto::Vec3& a, const proto::Vec3& b) {
 
 } // namespace
 
+bool RemovedWhenTaken(std::string_view name) {
+    constexpr std::string_view kPrefixes[] = {
+        "Obj_TBox_",          // chests
+        "Obj_RupeeToken",     // Gold Skulltula tokens and silver rupees
+        "Obj_Token_Gold",     // a Gold Skulltula's token
+        "Enemy_Skulltula_Gold",
+        "Obj_Rupee_",         // a rupee placed once
+        "Obj_Heart",          // hearts, heart containers, hearts in water
+        "Obj_RedIce_",        // melted by blue fire
+        "Obj_Ice_",
+        "Obj_BrokenRock_",    // broken by a bomb or the hammer
+        "WallCrack",          // bombed open
+    };
+    constexpr std::string_view kParts[] = {
+        "Heart_Piece",        // Obj_*Heart_Piece*
+        "SpiderWeb",          // burnt or broken (Deku Tree, Shadow Temple, Ganon's Castle)
+        "_CrackWall_",        // bombed open
+        "_CrackFloor_",
+        "InsideTheDekuTree_FallingFloor_",  // fallen (the Shadow Temple's stays as ground: kept)
+    };
+    for (const std::string_view p : kPrefixes) {
+        if (name.starts_with(p)) return true;
+    }
+    for (const std::string_view p : kParts) {
+        if (name.find(p) != std::string_view::npos) return true;
+    }
+    return false;
+}
+
 bool IsShared(std::string_view name) {
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment
@@ -379,9 +408,7 @@ void Sync::Receive(const proto::Message& message) {
             using T = std::decay_t<decltype(m)>;
             return std::is_same_v<T, proto::ObjectOwner> || std::is_same_v<T, proto::ObjectSample> ||
                    std::is_same_v<T, proto::HandoverAsk> || std::is_same_v<T, proto::HandoverState> ||
-                   std::is_same_v<T, proto::Damage> || std::is_same_v<T, proto::FlagSet> ||
-                   std::is_same_v<T, proto::FlagState> || std::is_same_v<T, proto::FlagSnapshot> ||
-                   std::is_same_v<T, proto::ObjectSpawn> || std::is_same_v<T, proto::ObjectRemove>;
+                   std::is_same_v<T, proto::Damage> || std::is_same_v<T, proto::ObjectSpawn> || std::is_same_v<T, proto::ObjectRemove>;
         },
         message);
     if (!wanted) {
@@ -393,9 +420,20 @@ void Sync::Receive(const proto::Message& message) {
     }
 }
 
+void Sync::Take(std::uint64_t hash) {
+    if (hash == 0 || hash == kNoHash) {
+        return;
+    }
+    std::lock_guard lock(inbox_mutex_);
+    if (takes_in_.size() < 1024) {
+        takes_in_.push_back(hash);
+    }
+}
+
 void Sync::Reset() {
     scene_.clear();
     objects_.clear();
+    taken_.clear();  // a new scene's actors were made knowing every key
     hidden_.clear();
     dead_.clear();
     order_.clear();
@@ -413,6 +451,7 @@ void Sync::Reset() {
     // twice, and the server keeps made ids until they are removed.
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
+    takes_in_.clear();  // the new scene's actors are made knowing every key
 }
 
 std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
@@ -539,10 +578,45 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     std::map<std::uint64_t, const Seen*> now_seen;
     std::vector<const Seen*> fresh;
     std::set<std::uint64_t> hidden;
+    {
+        std::vector<std::uint64_t> takes;
+        {
+            std::lock_guard lock(inbox_mutex_);
+            takes.swap(takes_in_);
+        }
+        // Takes that came while no walk ran are for actors made after them.
+        const bool gap = !ticked_ || now_us < last_tick_us_ ||
+                         now_us - last_tick_us_ > kTakeGapUs;
+        if (!gap) {
+            for (const std::uint64_t hash : takes) {
+                taken_.try_emplace(hash);
+            }
+        } else if (!takes.empty()) {
+            notes_.emplace_back(std::to_string(takes.size()) +
+                                " keys written for others while no walk ran: nothing removed for them");
+        }
+        last_tick_us_ = now_us;
+        ticked_ = true;
+    }
     for (const Seen& s : seen) {
-        if (s.hash != 0 && s.hash != kNoHash && taken_.contains(s.hash)) {
-            hidden.insert(s.address);
-            continue;  // gone for everyone: not shared, not sent
+        if (s.hash != 0 && s.hash != kNoHash) {
+            if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
+                const bool near = player_ && Finite(*player_) && Finite(s.position) &&
+                                  Distance(*player_, s.position) < kTakeNearM;
+                if (near && t->second.ticks < kTakeBindTicks && !t->second.near_said) {
+                    t->second.near_said = true;
+                    notes_.emplace_back(s.name + ": taken or opened in another game, left here: our Link is beside it");
+                }
+                if (!near && t->second.ticks < kTakeBindTicks && t->second.addresses.insert(s.address).second) {
+                    char key[24];
+                    std::snprintf(key, sizeof key, "%#llx", static_cast<unsigned long long>(s.hash));
+                    notes_.emplace_back(s.name + " " + key + ": taken or opened in another game, removed here");
+                }
+                if (t->second.addresses.contains(s.address)) {
+                    hidden.insert(s.address);
+                    continue;  // gone for everyone: not shared, not sent
+                }
+            }
         }
         if (!IsShared(s.name)) {
             continue;
@@ -648,6 +722,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (life->life > 0) {
                 o.killed_at = 0;  // alive again: a later kill is a new one
             }
+        }
+    }
+    for (auto& [hash, taking] : taken_) {
+        if (taking.ticks < kTakeBindTicks) {
+            ++taking.ticks;  // actors loaded after this knew the key
         }
     }
     hidden_ = std::move(hidden);
@@ -1070,22 +1149,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         o.hurt_left = 0;
         o.hurt_until = 0;
     };
-    const auto flags = [this](const std::vector<proto::FlagEntry>& entries) {
-        for (const proto::FlagEntry& f : entries) {
-            if (f.key.kind == proto::FlagKeyKind::key64 && f.kind == proto::FlagKind::boolean &&
-                f.value == 1) {
-                taken_.insert(f.key.key);
-            }
-        }
-    };
     for (const proto::Message& m : inbox) {
-        if (const auto* set = std::get_if<proto::FlagSet>(&m)) {
-            flags(set->flags);
-        } else if (const auto* state = std::get_if<proto::FlagState>(&m)) {
-            flags(state->flags);
-        } else if (const auto* snapshot = std::get_if<proto::FlagSnapshot>(&m)) {
-            flags(snapshot->flags);
-        } else if (const auto* spawn = std::get_if<proto::ObjectSpawn>(&m)) {
+        if (const auto* spawn = std::get_if<proto::ObjectSpawn>(&m)) {
             // A rolled enemy the decider made, or a placed one its owner
             // announced: created here by the director.
             const bool made = spawn->id.kind == proto::ObjectKind::made;

@@ -15,10 +15,12 @@
 //
 // No game data beyond the flag names and their hashes.
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "coop/host/flags.hpp"
 #include "coop/protocol/messages.hpp"
@@ -70,7 +72,7 @@ std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t l
 // code: Slingshot and Bow come with 30 and the small bag or quiver, a bag
 // upgrade fills the new capacity.
 struct ItemGrant {
-  std::uint32_t item;       // the item's PouchData.<item>.StockNum hash
+  std::uint32_t item;       // the item's PouchData.<item>.StockNum hash, or IsGet.<item>
   std::string_view name;    // the granted flag's name in the game
   std::uint32_t hash;       // the granted flag's hash
   protocol::FlagKind kind;  // boolean or int32
@@ -82,12 +84,58 @@ std::span<const ItemGrant> item_grants(std::uint32_t item);
 // Every grant, sorted by item.
 std::span<const ItemGrant> all_item_grants();
 
+// When to mend (ItemFlagStore::mend), kept by the hook across frames: for
+// the first frames after Link comes into the game (a save or a scene
+// loaded: no Link, then Link), once a frame. The load may still be writing
+// the save's values in the first frames, and a mend is only floors, so it
+// is run for a while rather than once. It also keeps the items that came
+// while there was no Link: they get their whole grant (ammo too) in the
+// mend frames (issues 128, 138).
+class LoadMend {
+ public:
+  static constexpr unsigned kFrames = 90;  // about 1.5 s at 60 frames a second
+
+  // Once per emulated frame, with whether Link is in the game. True: mend
+  // this frame.
+  bool frame(bool link) {
+    if (link && !link_) left_ = kFrames;
+    link_ = link;
+    if (!link_) return false;
+    if (left_ == 0) {
+      pending_.clear();  // their mend frames are over
+      return false;
+    }
+    --left_;
+    return true;
+  }
+  // Link is in the game (as of the last frame()).
+  bool ready() const { return link_; }
+  // An item new to the game came while not ready (ItemFlagStore).
+  void note_new(std::uint32_t item) {
+    if (std::find(pending_.begin(), pending_.end(), item) == pending_.end()) pending_.push_back(item);
+  }
+  bool pending(std::uint32_t item) const {
+    return std::find(pending_.begin(), pending_.end(), item) != pending_.end();
+  }
+
+ private:
+  bool link_ = false;
+  unsigned left_ = 0;
+  std::vector<std::uint32_t> pending_;
+};
+
 // A FlagStore that merges item flags on write and passes everything else
 // (other world flags, 64-bit keys) through unchanged. Reads are the inner
 // store's. Keeps no state beyond counters.
 class ItemFlagStore final : public FlagStore {
  public:
-  explicit ItemFlagStore(FlagStore& inner) : inner_(inner) {}
+  // With `load`: grants only while Link is in the game (load->ready()).
+  // Before that (the title screen, a save or scene loading) items are
+  // merged but nothing is granted: the load would put the capacities back
+  // to the save's (issue 138). An item new to the game then is noted in
+  // `load` and gets its whole grant at the mend. Without `load`: always.
+  explicit ItemFlagStore(FlagStore& inner, LoadMend* load = nullptr)
+      : inner_(inner), load_(load), ready_(load == nullptr || load->ready()) {}
 
   std::optional<protocol::FlagEntry> read(FlagKey key) override { return inner_.read(key); }
   // An item flag: reads what the game holds, merges, and writes only when
@@ -100,10 +148,11 @@ class ItemFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override;
   // A named count item (ItemRule::count).
   bool is_count(FlagKey key) override;
-  // An int item merged from 0 (or less) to 1 or more in the game also raises
-  // its grants (item_grants) to their floor, per-player flags included.
-  // Only writes through this store do that; the game's own gets are left
-  // to the game.
+  // An item merged from 0 (or less, or false) to 1 or more (true) in the
+  // game also raises its grants (item_grants) to their floor, per-player
+  // flags included. An item the game holds already gets its capacity grants
+  // only (mends a game that got it without them). Only writes through this
+  // store do that; the game's own gets are left to the game.
 
   struct Stats {
     std::uint64_t merged = 0;   // item writes that changed the game's value
@@ -114,10 +163,19 @@ class ItemFlagStore final : public FlagStore {
   };
   const Stats& stats() const { return stats_; }
 
+  // Every item the game holds gets its capacity grants; one that came while
+  // there was no Link (LoadMend::pending) gets its whole grant, ammo too.
+  // Run in LoadMend's frames after a load: the load puts back the save's
+  // capacities, which a save from before the fix has at 0. Returns how many
+  // flags it raised.
+  std::size_t mend();
+
  private:
-  void grant(std::uint32_t item);
+  void grant(std::uint32_t item, bool new_item);
 
   FlagStore& inner_;
+  LoadMend* load_ = nullptr;
+  bool ready_ = true;
   Stats stats_;
 };
 

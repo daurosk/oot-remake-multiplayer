@@ -26,6 +26,8 @@ class WorldStore {
   void on_place(const protocol::WorldPlace& p);
   // Keeps the last hits of each object (a cut sign). Always relayed.
   void on_hit(const protocol::WorldHit& h);
+  // Keeps the latest cut words of each sign. Always relayed.
+  void on_sign_cut(const protocol::SignCut& c);
   // Everything a player entering `scene` must be told, breaks first.
   std::vector<protocol::Message> replay(const std::string& scene) const;
   void forget(const std::string& scene);
@@ -40,6 +42,7 @@ class WorldStore {
     std::deque<std::uint64_t> order;                       // oldest break first
     std::map<std::uint64_t, protocol::WorldPlace> places;
     std::map<std::uint64_t, std::deque<protocol::WorldHit>> hits;
+    std::map<std::uint64_t, protocol::SignCut> cuts;
   };
   std::map<std::string, Scene> scenes_;
 };

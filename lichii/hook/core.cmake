@@ -9,6 +9,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_cheat_items.cpp"
     "${_coop_hook}/coop_cheats.cpp"
     "${_coop_hook}/coop_drops.cpp"
+    "${_coop_hook}/coop_chests.cpp"
     "${_coop_hook}/coop_dungeon.cpp"
     "${_coop_hook}/coop_fairy.cpp"
     "${_coop_hook}/coop_flags.cpp"

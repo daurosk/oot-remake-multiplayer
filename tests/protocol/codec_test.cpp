@@ -1158,7 +1158,7 @@ TEST_CASE("bad times of day are refused") {
   CHECK(decode(b, m) == Error::bad_value);
 }
 
-TEST_CASE("object group has its number, channel and layout; only a client sends it") {
+TEST_CASE("object group has its number, channel and layout, only a client sends it") {
   CHECK(static_cast<int>(MessageType::object_group) == 29);
   CHECK(channel_of(MessageType::object_group) == kChannelOwnership);
   CHECK_FALSE(allowed_on_channel(MessageType::object_group, kChannelSession));
@@ -1229,7 +1229,7 @@ GrassCut Cut() {
 
 TEST_CASE("grass cuts have their number, channel and layout") {
   CHECK(static_cast<int>(MessageType::grass_cut) == 28);
-  CHECK(kProtocolVersion == 5);
+  CHECK(kProtocolVersion == 6);
   CHECK(channel_of(MessageType::grass_cut) == kChannelSession);
   CHECK_FALSE(allowed_on_channel(MessageType::grass_cut, kChannelPlayerSamples));
   CHECK(may_send(Sender::client, MessageType::grass_cut));

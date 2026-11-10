@@ -462,33 +462,132 @@ TEST_CASE("objects: a pickup another game took is removed here") {
     Tick(sync, 0, {token, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 
-    proto::FlagState state;
-    state.player_number = 2;
-    state.flags.push_back(proto::FlagEntry(proto::FlagKey::key64_flag(token.hash),
-                                           proto::FlagKind::boolean, 1));
-    state.flags.push_back(proto::FlagEntry(proto::FlagKey::key64_flag(0x77),
-                                           proto::FlagKind::boolean, 0));
-    sync.Receive(state);
+    // The flag watcher wrote its key for another player (Take); a key never
+    // written here (0x77) is not taken.
+    sync.Take(token.hash);
     Tick(sync, 10 * kMs, {token, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Taken(token.hash));
     CHECK_FALSE(sync.Taken(0x77));
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x300});
+    const auto notes = sync.TakeNotes();
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0].find("removed here") != std::string::npos);
 
     Tick(sync, 20 * kMs, {token, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x300});
     // Gone from the list: nothing more to remove.
     Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
-    // A taken enemy is not shared (not in OBJECT_PRESENT).
-    token.name = "Enemy_Skulltula_Gold";
-    token.address = 0x400;
-    const auto step = Tick(sync, 3000 * kMs, {token, Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x400});
-    const auto present = All<proto::ObjectPresent>(step);
-    REQUIRE(present.size() == 1);
-    CHECK(present[0].objects.size() == 1);
 }
 
-TEST_CASE("objects: the owner sends its enemy's animation; a copy is asked to play it") {
+TEST_CASE("objects: a chest opened elsewhere goes only while it was loaded closed") {
+    Sync sync;
+    Seen chest;
+    chest.address = 0x500;
+    chest.name = "Obj_TBox_A_01";
+    chest.hash = 0x3c5bb811b4cf54dd;
+    chest.position = {1.0f, 0.0f, 1.0f};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    // Collect lists a chest only once its key is taken: the walk of the Tick
+    // that brings the take does not have it yet, the next one does.
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+    // The room loads again in the same scene (a new actor): the game made it
+    // open, knowing the key. Left alone.
+    chest.address = 0x600;
+    Tick(sync, 900 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    // Another scene and back: the take is forgotten, nothing goes.
+    Tick(sync, 1000 * kMs, {}, 1, "Other");
+    CHECK_FALSE(sync.Taken(chest.hash));
+    chest.address = 0x700;
+    Tick(sync, 2000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+}
+
+namespace {
+
+Seen Chest(std::uint64_t address, std::uint64_t hash = 0x3c5bb811b4cf54dd) {
+    Seen chest;
+    chest.address = address;
+    chest.name = "Obj_TBox_A_01";
+    chest.hash = hash;
+    chest.position = {1.0f, 0.0f, 1.0f};
+    return chest;
+}
+
+} // namespace
+
+TEST_CASE("objects: keys written while no walk ran remove nothing (title, save load, join snapshot)") {
+    // Before the first Tick of the run.
+    Sync sync;
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 0, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    CHECK_FALSE(sync.Taken(0x3c5bb811b4cf54dd));
+
+    // After a pause of the walks (a load of the same scene): dropped too.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 3000 * kMs, {Chest(0x600), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3010 * kMs, {Chest(0x600), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+
+    // Across a scene change: the next scene's chest was made knowing the key.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 3020 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    Tick(sync, 3030 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    CHECK(sync.Removes().empty());
+
+    // While the walks run, a take still removes the chest loaded then.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 3040 * kMs, {Enemy(0x200, 0x22, 2)}, 1, "Other");
+    Tick(sync, 3050 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
+}
+
+TEST_CASE("objects: a chest beside our Link is not removed (we may be opening it too)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chest
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) said |= n.find("our Link is beside it") != std::string::npos;
+    CHECK(said);
+    // Walking away later does not remove it: the bind window is over.
+    sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
+    Tick(sync, 30 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    // Another chest of the same take, far away, in the window: removed.
+    sync.Take(0x1111);
+    Tick(sync, 40 * kMs, {Chest(0x900, 0x1111), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x900});
+}
+
+TEST_CASE("objects: a take for a chest not loaded removes nothing that loads later") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(0x1234);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 2)});
+    Seen chest;
+    chest.address = 0x800;
+    chest.name = "Obj_TBox_A_01";
+    chest.hash = 0x1234;
+    Tick(sync, 30 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    sync.Take(0);  // no placement: ignored
+    Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK_FALSE(sync.Taken(0));
+}
+
+TEST_CASE("objects: the owner sends its enemy's animation, a copy is asked to play it") {
     Sync owner;
     Seen e = Enemy(0x100, 0x11, 2);
     e.animation = proto::Animation{"Wait", 3.0f, 1.0f};
@@ -733,7 +832,7 @@ TEST_CASE("objects: a Gold Skulltula shaken out of a tree is announced and copie
     CHECK(c.Creates().empty());
 }
 
-TEST_CASE("objects: a hurt carries the hitter's place; an animal's life is written") {
+TEST_CASE("objects: a hurt carries the hitter's place, an animal's life is written") {
     Sync sync;
     sync.SetHurt(true);
     Tick(sync, 0, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f, "Animal_Cucco")});
@@ -1601,4 +1700,47 @@ TEST_CASE("objects: owners queued from before a reconnect are not applied after 
     Own(sync, id, 1, 0);  // the new server's
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 1)});
     CHECK(sync.OwnerOf(id) == 1);
+}
+
+TEST_CASE("objects: only chests, pickups and things that go away are removed when taken (issue 138)") {
+    // Names from the dungeons' keyed placements (coop_dungeon.cpp).
+    for (const char* name : {"Obj_TBox_A_01", "Obj_TBox_A_02_NoBake", "Obj_TBox_GlassTruth_A_01",
+                             "Obj_RupeeToken_Silver", "Obj_RupeeToken", "Enemy_Skulltula_Gold", "Obj_Token_Gold",
+                             "Obj_Heart_Container", "Obj_Heart", "Obj_Heart_InWater",
+                             "Obj_Kakariko_Heart_Piece", "Obj_Rupee_Green", "Obj_RedIce_A_01",
+                             "Obj_Ice_A_01", "Obj_BrokenRock_A_01", "WallCrack",
+                             "Obj_DodongoCave_CrackWall_A_01", "Obj_FireTemple_CrackFloor_A_01",
+                             "Obj_InsideTheDekuTree_SpiderWeb_A_01",
+                             "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_01",
+                             "Obj_InsideTheDekuTree_FallingFloor_A_01"}) {
+        CAPTURE(name);
+        CHECK(CoopObjects::RemovedWhenTaken(name));
+    }
+    for (const char* name : {"Obj_EnemyCounter_A_01", "Obj_silverRupeeCounter",
+                             "Obj_FireTemple_HammerSlipPillar_A_01", "Obj_Well_CandleStick_A_01",
+                             "Land_Well_Waterfall_A_01", "Obj_ForestTemple_GhostPicture_A_01",
+                             "Enemy_Anubis", "Obj_ShadowTemple_SkullPot_A_01",
+                             "Obj_ShadowTemple_SpikeBoard_A_01", "Obj_ShadowTemple_FallingFloor_A_01",
+                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild"}) {
+        CAPTURE(name);
+        CHECK_FALSE(CoopObjects::RemovedWhenTaken(name));
+    }
+}
+
+TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside it goes (issue 138)") {
+    Sync sync;
+    Seen counter = Chest(0x510, 0x1111);
+    counter.name = "Obj_EnemyCounter_A_01";
+    Seen pillar = Chest(0x520, 0x2222);
+    pillar.name = "Obj_FireTemple_HammerSlipPillar_A_01";
+    const Seen chest = Chest(0x530, 0x3333);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(counter.hash);
+    sync.Take(pillar.hash);
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
+    Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
 }

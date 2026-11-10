@@ -83,6 +83,38 @@ try {
 } finally {
     Remove-Item -LiteralPath $opt -Force -ErrorAction SilentlyContinue
 }
+
+# --- The puppet pack hint (kit-paths.ps1, issue 131): sound, and the pack tool's hash.
+$ph = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-pack-hint-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    # The same files and hash as test_tool_hash in tools\puppet_pack\tests: both sides agree.
+    $tool = Join-Path $ph 'puppet_pack'
+    New-Item -ItemType Directory -Force -Path $tool | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $tool 'b_c.py'), [System.Text.Encoding]::ASCII.GetBytes("print(1)`n"))
+    [System.IO.File]::WriteAllBytes((Join-Path $tool 'Zeta.py'), [System.Text.Encoding]::ASCII.GetBytes("x`r`n"))
+    [System.IO.File]::WriteAllBytes((Join-Path $tool '__init__.py'), [byte[]]@())
+    [System.IO.File]::WriteAllBytes((Join-Path $tool 'a.pyc'), [System.Text.Encoding]::ASCII.GetBytes('no'))
+    $hash = 'b9d822a64cc6285dd1aa300d77f64ea0c86f775240885dad79ae4f2f7694f5e0'
+    Check ((Get-PuppetToolHash $tool) -eq $hash) "the pack tool hash is build.py's [$(Get-PuppetToolHash $tool)]"
+    $man = Join-Path $ph 'coop_puppet.json'
+    Write-File $man '{"tool": "tools/puppet_pack", "actors": []}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'without the other players'' sounds.*make-puppet-pack\.cmd') 'a pack without "sound": run make-puppet-pack again'
+    Write-File $man '{"actors": [], "sound": false}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'sounds') 'a --no-sound pack: the same line'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tool_sha256`": `"$hash`"}"
+    (Get-Item (Join-Path $tool 'b_c.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(10)
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'the same tool, its files dated hours ahead (a zip from another time zone): nothing said'
+    Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool folder: nothing said'
+    Write-File $man '{"actors": [], "sound": true}'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
+    Write-File $man '{"actors": [], "sound": true, "tool_sha256": "0000"}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'another version of the pack tool') 'another tool hash: run make-puppet-pack again'
+    Write-File $man '{ not json'
+    Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
+    Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
+} finally {
+    Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
+}
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-launch-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $oldApi = $env:OOT_COOP_UPDATE_API
@@ -196,6 +228,41 @@ try {
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -match 'Option: EDEN_NX2_GPL=1' -and ($out -join ' ') -notmatch 'AMD GPU found') 'EDEN_NX2_GPL in coop-options.ini is passed and wins over the AMD rule'
     Test-Started $kit 'EDEN_NX2_GPL option'
+
+    # A puppet pack made before sound: one line asks for make-puppet-pack, and the game starts.
+    $kit = Join-Path $tmp 'kit pack'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\coop-puppet\coop_puppet.json" '{"actors": []}'
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -match 'Puppet pack: found\. Puppet pack: made without the other players'' sounds\. Run make-puppet-pack\.cmd again') "an old puppet pack: the sound line [$(($out | Select-String 'Puppet pack') -join ' / ')]"
+    Test-Started $kit 'old puppet pack'
+    # A game mod installed (issue 136): play stops before the server or the game starts, and
+    # names the folder; turned off in the game's Add-Ons, the game starts.
+    $kit = Join-Path $tmp 'kit mod'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\coop-puppet\coop_puppet.json" '{"actors": [], "sound": true}'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\Hyrule-Cheat-Menu\exefs\subsdk8" 'x'
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -match 'Press any key') 'a mod: play stops with an error (play.cmd pauses so the player can read it)'
+    Check (($out -join ' ') -match 'Code and cheat mods are not supported in co-op' -and ($out -join ' ') -match 'Hyrule-Cheat-Menu') "a mod: the message names it [$(($out | Select-String 'mods|Hyrule') -join ' / ')]"
+    Check (($out -join ' ') -notmatch 'Emulator started') 'a mod: the game does not start'
+    Write-File "$kit\emulator\user\config\qt-config.ini" "[DisabledAddOns]`r`nsize=1`r`n1\title_id=288309953924349952`r`n1\disabled\size=1`r`n1\disabled\1\d=Hyrule-Cheat-Menu`r`n"
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Test-Started $kit 'a mod turned off in Add-Ons'
+    # A copied kit whose qt-config.ini still names the first kit's folders: the check reads this
+    # kit's own (after Repair-KitPaths), not the other's.
+    $first = Join-Path $tmp 'kit first'; New-Kit $first 'v0.1.0-test4' 'old'
+    Write-File "$first\emulator\user\load\0400486024DEC000\Hyrule-Cheat-Menu\exefs\subsdk8" 'x'
+    $firstUser = "$first\emulator\user".Replace('\', '/')
+    $kit = Join-Path $tmp 'kit copy clean'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$firstUser/load/`r`nsdmc_directory=$firstUser/sdmc/`r`n"
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -notmatch 'Code and cheat mods are not supported') 'a clean copy of a kit with a mod: not stopped by the other kit''s mod'
+    Test-Started $kit 'a clean copied kit'
+    $kit = Join-Path $tmp 'kit copy mod'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\Own-Mod\exefs\main.ips" 'PATCH'
+    $cleanUser = "$tmp\kit copy clean\emulator\user".Replace('\', '/')
+    Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$cleanUser/load/`r`n"
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -match 'Own-Mod' -and ($out -join ' ') -notmatch 'Emulator started') 'a copied kit with its own mod: stopped, naming it'
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

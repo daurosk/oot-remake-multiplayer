@@ -103,6 +103,18 @@ struct LifeWrite {
 // objects (coop_world.h).
 bool IsShared(std::string_view name);
 
+// True for an actor that is gone, or shows done, once its placement key is
+// set: chests, pickups (rupees, hearts, heart pieces and containers, silver
+// rupees, Gold Skulltulas and tokens), spider webs, red and blue ice,
+// cracked walls and floors, broken rocks and the Deku Tree's falling
+// floors (the Shadow Temple's stays as ground once fallen). Only these are
+// removed when another player sets their key (Sync::Take). Everything else
+// with a key (enemy and silver rupee counters, the Fire Temple's hammer
+// pillars, torches, waterfalls, paintings, enemies) changes state instead of
+// going away, so its actor stays; the room shows it done when it loads again
+// (issue 138).
+bool RemovedWhenTaken(std::string_view name);
+
 // The id of an enemy the scene made without a placement hash: the scene, the
 // actor name and its place in the order such enemies of that name appeared
 // in this scene visit (first seen first; the same walk ordered by x, then z).
@@ -341,8 +353,15 @@ public:
     std::uint8_t Decider() const { return decider_; }
     std::size_t Refused() const { return refused_count_; }
 
-    // Present thread: a placement key set to 1 by a flag message. Collect
-    // asks this for actors that are not shared, to report them too.
+    // Any thread: the flag watcher wrote this placement key 0 to 1 for another
+    // player (a chest opened, a pickup taken elsewhere; FlagWatcher::
+    // take_written_for_others). The actors with that hash loaded in the next
+    // two Ticks are removed here, unless our Link is within kTakeNearM; ones loaded after it are left alone, since the
+    // game made them knowing the key (a chest shows open). Forgotten at a
+    // scene change (docs/items.md, "Chests").
+    void Take(std::uint64_t hash);
+    // Present thread: a placement key taken in this scene. Collect asks this
+    // for actors that are not shared, to report them too.
     bool Taken(std::uint64_t hash) const { return taken_.contains(hash); }
 
     // Present thread: not connected or the game went away. Forgets everything.
@@ -499,7 +518,26 @@ private:
     std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
     bool hurt_ = false;
     std::uint8_t self_ = 0;
-    std::set<std::uint64_t> taken_;             // key64 flags seen set to 1
+    // Take(): each key taken in this scene, and the actors that had it in the
+    // two Ticks after it came (the first walk was collected before Taken()
+    // knew the key); only those are removed.
+    static constexpr unsigned kTakeBindTicks = 2;
+    // A take is kept only when the Tick before came at most this long ago: one
+    // that came while no walk ran (title screen, save load, scene load: the
+    // join snapshot) is for actors the game makes knowing the key.
+    static constexpr std::uint64_t kTakeGapUs = 1'500'000;
+    // An actor this close to our Link is not removed: we may be opening that
+    // chest ourselves (both players at once), or standing on it.
+    static constexpr float kTakeNearM = 3.0f;
+    struct Taking {
+        unsigned ticks = 0;
+        std::set<std::uint64_t> addresses;
+        bool near_said = false;
+    };
+    std::uint64_t last_tick_us_ = 0;
+    bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)
+    std::map<std::uint64_t, Taking> taken_;
+    std::vector<std::uint64_t> takes_in_;  // guarded by inbox_mutex_
     std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken
     std::set<std::uint64_t> dead_;    // copies whose owner said dead kDeadGraceUs ago
     bool wake_ = true;

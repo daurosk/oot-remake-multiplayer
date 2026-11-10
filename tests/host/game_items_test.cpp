@@ -40,6 +40,7 @@ constexpr std::uint32_t kForestKeys = 0x90237092;      // DungeonInfo.ForestTemp
 constexpr std::uint32_t kGoldTokens = 0x04735978;      // PouchData.Item_Token_Gold.StockNum, count
 constexpr std::uint32_t kHeartPieces = 0x51ec97b3;     // PouchData.Obj_Heart_Piece.StockNum, count
 constexpr std::uint32_t kMaxLife = 0xfbe01da1;         // PlayerStatus.MaxLife, max
+constexpr std::uint32_t kDekuShield = 0x7ca64f23;      // PouchData.Weapon_Shield_Deku.StockNum, max
 constexpr std::uint32_t kWorldBool = 0x11, kWorldInt = 0x22;  // not items
 
 // The GameDataMgr layout of docs/flags.md, as in game_flags_test.cpp, with
@@ -101,7 +102,8 @@ void queue(FakeMemory& m, std::uint64_t base, std::uint64_t buf, std::uint64_t s
 
 const std::vector<std::uint32_t> kBools{kHookshotGet, kBottleAValid, kWorldBool};
 const std::vector<std::uint32_t> kInts{kHookshot,   kPocketEgg,  kRupees, kBottleA,
-                                       kBottleAItem, kForestKeys, kWorldInt, kMaxLife};
+                                       kBottleAItem, kForestKeys, kWorldInt, kMaxLife,
+                                       kDekuShield};
 
 std::size_t at(const std::vector<std::uint32_t>& v, std::uint32_t h) {
   for (std::size_t i = 0; i < v.size(); ++i)
@@ -127,6 +129,20 @@ void hold_bool(Writable& w, std::uint32_t h, bool v) {
 }
 void hold_int(Writable& w, std::uint32_t h, std::int32_t v) {
   w.mem.put_u32(kIntEntries + kIntStride * at(kInts, h) + kIntValue, static_cast<std::uint32_t>(v));
+}
+
+// The game's applier: the queued Int writes go into the table and the queue
+// is emptied (its round moves on), as the game does each frame. Without it a
+// read keeps returning the newest queued value.
+void apply_ints(Writable& w) {
+  const std::uint64_t word_at = kMgr + 0xd0 + 0x30;
+  const std::uint32_t word = *coop::host::read_u32(w.mem, word_at);
+  for (std::uint32_t k = 0; k < (word & 0xfffff); ++k) {
+    const std::uint32_t value = *coop::host::read_u32(w.mem, kIntQueue + 12 * k);
+    const std::uint32_t hash = *coop::host::read_u32(w.mem, kIntQueue + 12 * k + 4);
+    w.mem.put_u32(kIntEntries + kIntStride * at(kInts, hash) + kIntValue, value);
+  }
+  w.mem.put_u32(word_at, (((word >> 28) + 1) & 0xf) << 28);
 }
 
 protocol::FlagEntry b(std::uint32_t h, bool v) { return {h, 0, K::boolean, v ? 1u : 0u}; }
@@ -580,11 +596,18 @@ TEST_CASE("item grants: the table is sorted and names its flags") {
     CAPTURE(g.name);
     CHECK(g.item >= last);
     last = g.item;
-    // Every granting item is an owned item that is shared by max.
+    // Every granting item is an owned item shared by max, or an IsGet flag
+    // (shared by OR) that grants a capacity only.
     const auto* item = find_item(g.item);
     REQUIRE(item != nullptr);
-    CHECK(item->rule == ItemRule::max);
-    CHECK(item->kind == K::int32);
+    if (item->name.starts_with("IsGet.")) {
+      CHECK(item->rule == ItemRule::any);
+      CHECK(item->kind == K::boolean);
+      CHECK(g.name.starts_with("0xf80f8077."));
+    } else {
+      CHECK(item->rule == ItemRule::max);
+      CHECK(item->kind == K::int32);
+    }
     CHECK(g.value > 0);
     if (g.name.starts_with("0xf80f8077.")) {
       CHECK(g.kind == K::int32);  // a capacity: the struct's name is not known
@@ -699,12 +722,48 @@ TEST_CASE("item grants: Bow and bomb bag follow the same rule") {
 TEST_CASE("item grants: a game that owns the item gets nothing extra") {
   MapStore game = game_with_grant_flags();
   game.hold(kSlingshot, K::int32, 1);  // its own chest: the game gave the seeds itself
+  game.hold(kSeedCap, K::int32, 30);
+  game.hold(kSeeds, K::int32, 4);      // and some were used since
   ItemFlagStore store(game);
   CHECK(store.write(owned(kSlingshot)));
-  CHECK(game.value(kSeeds) == 0);
-  CHECK(game.value(kSeedCap) == 0);
+  CHECK(game.value(kSeeds) == 4);
+  CHECK(game.value(kSeedCap) == 30);
   CHECK(store.stats().granted == 0);
   CHECK(store.stats().kept == 1);
+}
+
+TEST_CASE("item grants: an item held with room for 0 gets its capacity, not ammo (test5 saves)") {
+  MapStore game = game_with_grant_flags();
+  game.hold(kSlingshot, K::int32, 1);  // shared on test5: Slingshot with 0/0 seeds
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kSlingshot)));  // the snapshot on join, or any later echo
+  CHECK(game.value(kSeedCap) == 30);
+  CHECK(game.value(kSeeds) == 0);         // seeds are picked up now; none given
+  CHECK(store.stats().granted == 1);
+  CHECK(store.stats().kept == 1);
+}
+
+TEST_CASE("item grants: the other player's first stick gives room for sticks (issue 138)") {
+  constexpr std::uint32_t kSticksGet = 0xc4e21ac2, kSticks = 0xb9494411, kStickCap = 0x457616b0;
+  constexpr std::uint32_t kNutsGet = 0x00c2ee37, kNuts = 0xf30d9f54, kNutCap = 0x735b00f7;
+  MapStore game = game_with_grant_flags();
+  ItemFlagStore store(game);
+  // Only IsGet crosses for a stick picked up elsewhere (the count is per player).
+  CHECK(store.write(b(kSticksGet, true)));
+  CHECK(game.value(kSticksGet) == 1);
+  CHECK(game.value(kStickCap) == 10);
+  CHECK(game.value(kSticks) == 0);
+  CHECK(store.write(b(kNutsGet, true)));
+  CHECK(game.value(kNutCap) == 20);
+  CHECK(game.value(kNuts) == 0);
+  // A bigger bag already: left alone. IsGet false: nothing.
+  game.hold(kStickCap, K::int32, 30);
+  CHECK(store.write(b(kSticksGet, true)));
+  CHECK(game.value(kStickCap) == 30);
+  MapStore fresh = game_with_grant_flags();
+  ItemFlagStore other(fresh);
+  CHECK(other.write(b(kSticksGet, false)));
+  CHECK(fresh.value(kStickCap) == 0);
 }
 
 TEST_CASE("item grants: a flag the game cannot write is skipped, the item still arrives") {
@@ -714,4 +773,208 @@ TEST_CASE("item grants: a flag the game cannot write is skipped, the item still 
   CHECK(store.write(owned(kSlingshot)));
   CHECK(game.value(kSlingshot) == 1);
   CHECK(store.stats().granted == 0);
+}
+
+// Issue 130 (found by Lixyas): the Kokiri Shop sells a Deku Shield only to a
+// player who has none ("You already have a Deku Shield. We have a
+// one-shield-per-person policy here", message Shop_31), and reads that from
+// the player's own PouchData.Weapon_Shield_Deku.StockNum. The shop's own
+// stock and sold-out state are not shared. So a shield bought by one player
+// is owned by all (max), and the shop is right to refuse the others. These
+// pin down the shield lost afterwards (burnt, or taken by a Like Like).
+TEST_CASE("game items: a Deku Shield lost in a player's game comes back from the host") {
+  auto hw = game();
+  GameFlagStore host_game(hw);
+  ItemFlagStore host_store(host_game);
+  auto pw = game();
+  GameFlagStore player_game(pw);
+  ItemFlagStore player_store(player_game);
+  hold_int(hw, kDekuShield, 1);  // the host bought it
+  hold_int(pw, kDekuShield, 1);  // and the player got it
+  FlagWatcher host(item_shared_flags(), FlagRole::host);
+  FlagWatcher player(item_shared_flags(), FlagRole::player);
+  host.frame(host_store);
+  player.frame(player_store);
+
+  apply_ints(pw);
+  hold_int(pw, kDekuShield, 0);  // the player's shield burns
+  const auto lost = player.frame(player_store);
+  REQUIRE_FALSE(lost.empty());
+  deliver(host, lost);
+  const auto answer = host.frame(host_store);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);  // the host keeps its own
+  REQUIRE_FALSE(answer.empty());
+  deliver(player, answer);
+  player.frame(player_store);
+  // Back in the player's pouch: it equips it from the menu, and the shop
+  // still sells it no second one (it has one).
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
+}
+
+TEST_CASE("game items: a Deku Shield the host loses comes back, lost by all, it is bought again") {
+  auto hw = game();
+  GameFlagStore host_game(hw);
+  ItemFlagStore host_store(host_game);
+  auto pw = game();
+  GameFlagStore player_game(pw);
+  ItemFlagStore player_store(player_game);
+  hold_int(hw, kDekuShield, 1);
+  hold_int(pw, kDekuShield, 1);
+  FlagWatcher host(item_shared_flags(), FlagRole::host);
+  FlagWatcher player(item_shared_flags(), FlagRole::player);
+  host.frame(host_store);
+  player.frame(player_store);
+
+  // The host's shield burns: the player keeps its own and answers with it,
+  // so the host's comes back too.
+  apply_ints(hw);
+  hold_int(hw, kDekuShield, 0);
+  deliver(player, host.frame(host_store));
+  deliver(host, player.frame(player_store));
+  host.frame(host_store);
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
+
+  // Both lose it (no one has one left): both pouches stay empty, so the shop
+  // sells one again; one player buying it gives it to the other and takes
+  // nothing from anyone.
+  apply_ints(hw);
+  apply_ints(pw);
+  hold_int(hw, kDekuShield, 0);
+  hold_int(pw, kDekuShield, 0);
+  deliver(player, host.frame(host_store));
+  deliver(host, player.frame(player_store));
+  deliver(player, host.frame(host_store));
+  player.frame(player_store);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 0);
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 0);
+  apply_ints(hw);
+  apply_ints(pw);
+  hold_int(pw, kDekuShield, 1);  // the player buys one
+  deliver(host, player.frame(player_store));
+  deliver(player, host.frame(host_store));
+  player.frame(player_store);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
+}
+
+TEST_CASE("item grants: nothing is granted on the title screen, a loaded save is mended (issue 138)") {
+  constexpr std::uint32_t kSticksGet = 0xc4e21ac2, kSticks = 0xb9494411, kStickCap = 0x457616b0;
+  MapStore game = game_with_grant_flags();
+  coop::host::LoadMend load;
+
+  // Title screen: the join snapshot brings the Slingshot and a stick pickup.
+  CHECK_FALSE(load.frame(false));
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.write(owned(kSlingshot)));
+    CHECK(store.write(b(kSticksGet, true)));
+    CHECK(store.stats().granted == 0);
+  }
+  CHECK(game.value(kSlingshot) == 1);
+  CHECK(game.value(kSeedCap) == 0);
+  CHECK(game.value(kStickCap) == 0);
+  CHECK(game.value(kSticks) == 0);
+
+  // The save loads with its own values (room for 0), then Link appears.
+  CHECK_FALSE(load.frame(false));
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.mend() == 4);  // seed room, seeds, IsGet seeds, stick room
+  }
+  CHECK(game.value(kSeedCap) == 30);
+  CHECK(game.value(kStickCap) == 10);
+  CHECK(game.value(kSeeds) == 30);  // the Slingshot came on the title: its whole grant now
+  CHECK(game.value(kSticks) == 0);  // IsGet gives room only
+
+  // The load writes its 0 again in the next frame: the mend runs again.
+  game.hold(kSeedCap, K::int32, 0);
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.mend() == 1);
+  }
+  CHECK(game.value(kSeedCap) == 30);
+  // After the mend frames, an item held from before gets room only.
+  while (load.frame(true)) {
+  }
+  CHECK_FALSE(load.pending(kSlingshot));
+  game.hold(kSeedCap, K::int32, 0);
+  game.hold(kSeeds, K::int32, 3);
+  CHECK_FALSE(load.frame(false));
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    store.mend();
+  }
+  CHECK(game.value(kSeedCap) == 30);
+  CHECK(game.value(kSeeds) == 3);
+
+}
+
+TEST_CASE("item grants: the mend runs kFrames after each load") {
+  coop::host::LoadMend load;
+  CHECK_FALSE(load.frame(false));
+  unsigned frames = 0;
+  while (load.frame(true)) ++frames;
+  CHECK(frames == coop::host::LoadMend::kFrames);
+  CHECK_FALSE(load.frame(true));
+  CHECK_FALSE(load.frame(false));  // a scene load
+  CHECK(load.frame(true));
+}
+
+TEST_CASE("item grants: an item that comes during a scene load gets its whole grant after it") {
+  MapStore game = game_with_grant_flags();
+  coop::host::LoadMend load;
+  load.frame(true);
+  while (load.frame(true)) {
+  }
+  CHECK_FALSE(load.frame(false));  // a door: no Link for a moment
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.write(owned(kBow)));  // the other player opened the Bow chest
+    CHECK(store.write(owned(kBombBagS)));
+  }
+  CHECK(game.value(kBow) == 1);
+  CHECK(game.value(kArrows) == 0);
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    store.mend();
+  }
+  CHECK(game.value(kArrowCap) == 30);
+  CHECK(game.value(kArrows) == 30);
+  CHECK(game.value(kBombCap) == 20);
+  CHECK(game.value(kBombs) == 20);
+}
+
+TEST_CASE("item grants: a pending item's grant leaves a bigger bag and more ammo alone") {
+  MapStore game = game_with_grant_flags();
+  coop::host::LoadMend load;
+  CHECK_FALSE(load.frame(false));
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.write(owned(kBow)));
+  }
+  game.hold(kArrowCap, K::int32, 50);  // the save loads with a big quiver
+  game.hold(kArrows, K::int32, 45);
+  CHECK(load.frame(true));
+  {
+    ItemFlagStore store(game, &load);
+    CHECK(store.mend() == 1);  // IsGet.Item_Arrow_Normal only
+  }
+  CHECK(game.value(kArrowCap) == 50);
+  CHECK(game.value(kArrows) == 45);
+}
+
+TEST_CASE("item grants: a mend leaves a bigger bag and items not held alone") {
+  MapStore game = game_with_grant_flags();
+  game.hold(kSlingshot, K::int32, 1);
+  game.hold(kSeedCap, K::int32, 50);
+  ItemFlagStore store(game);
+  CHECK(store.mend() == 0);
+  CHECK(game.value(kSeedCap) == 50);
+  CHECK(game.value(kArrowCap) == 0);  // no Bow
+  CHECK(game.value(kBombCap) == 0);   // no bomb bag
 }

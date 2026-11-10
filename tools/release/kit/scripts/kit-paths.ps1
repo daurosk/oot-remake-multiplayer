@@ -41,6 +41,169 @@ function Get-KitLoadDir([string]$User) {
     return Join-Path $User 'load'
 }
 
+# Code and cheat mods the emulator would load for Ocarina of Time, which co-op does not allow
+# (issue 136: a mod's code patches can sit where co-op's own go, and cheats change the game under
+# the sync). Mods that only replace game files (romfs: textures, models) are allowed (Caleb,
+# 2026-11-10: texture fixes). Looked at the way Fritchii's Add-Ons list does: each folder in
+# <load>\0400486024DEC000 with a non-empty exefs or cheats folder, loose cheat_* files there,
+# and the SD card's atmosphere\contents\0400486024DEC000\exefs (called "SDMC" there). A mod turned off in the game's
+# Add-Ons (qt-config.ini [DisabledAddOns]) does not count, and neither does co-op's own puppet
+# pack (coop-puppet). Returns one line per mod: its folder.
+$KitGameId = '0400486024DEC000'
+function Get-KitSdmcDir([string]$User) {
+    $ini = Join-Path $User 'config\qt-config.ini'
+    if (Test-Path -LiteralPath $ini) {
+        foreach ($line in [System.IO.File]::ReadAllLines($ini)) {
+            if ($line -match '^sdmc_directory=(.+)$') { return [System.IO.Path]::GetFullPath($Matches[1]) }
+        }
+    }
+    return Join-Path $User 'sdmc'
+}
+function Get-KitDisabledAddons([string]$User) {
+    $ini = Join-Path $User 'config\qt-config.ini'
+    $names = @()
+    if (-not (Test-Path -LiteralPath $ini)) { return $names }
+    $game = [Convert]::ToUInt64($KitGameId, 16).ToString()
+    $inSection = $false
+    $titles = @{}
+    $disabled = @{}
+    foreach ($line in [System.IO.File]::ReadAllLines($ini)) {
+        if ($line -match '^\[(.+)\]\s*$') { $inSection = $Matches[1] -eq 'DisabledAddOns'; continue }
+        if (-not $inSection) { continue }
+        if ($line -match '^(\d+)\\title_id=(\d+)\s*$') { $titles[$Matches[1]] = $Matches[2] }
+        elseif ($line -match '^(\d+)\\disabled\\\d+\\d=(.+?)\s*$') {
+            if (-not $disabled.ContainsKey($Matches[1])) { $disabled[$Matches[1]] = @() }
+            $disabled[$Matches[1]] += $Matches[2]
+        }
+    }
+    # (Fritchii also takes the disabled list of an update's parent title; Ocarina has none.)
+    foreach ($i in $titles.Keys) {
+        if ($titles[$i] -eq $game -and $disabled.ContainsKey($i)) { $names += $disabled[$i] }
+    }
+    return $names
+}
+function Test-KitModPart([string]$Dir, [string[]]$Parts) {
+    foreach ($part in $Parts) {
+        $sub = Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $part } | Select-Object -First 1
+        if ($sub -and (Get-ChildItem -LiteralPath $sub.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) { return $true }
+    }
+    return $false
+}
+# Dark's Dynamic FPS mod, which Fritchii v5.7 has built in: a mod folder with an exefs patch
+# for this build that writes into Dark's two ranges (main+0x6e6cc4, 4 bytes, and
+# main+0x3c46200, 120 bytes; patch offsets count the 0x100-byte NSO header) is neither loaded
+# nor listed in Add-Ons, unless the built-in is turned off there (patch_manager.cpp,
+# IsBuiltinDynamicFpsMod). Co-op's hook allows it too, so such a folder is no mod here.
+$KitMainBuild = 'E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348'
+$KitDynamicFpsName = 'Dynamic FPS by Dark (built-in)'
+$KitDynamicFpsRanges = @(@(0x6e6dc4, 0x6e6dc8), @(0x3c46300, 0x3c46378))  # file offsets (+0x100)
+# The byte ranges an IPS or IPS32 file writes, as @(begin, end) file offsets; none when it is
+# not one or has no EOF mark (Fritchii then applies none of it either).
+function Get-KitIpsRanges([string]$Path) {
+    $b = [System.IO.File]::ReadAllBytes($Path)
+    $magic = [System.Text.Encoding]::ASCII.GetString($b, 0, [Math]::Min(5, $b.Length))
+    if ($magic -ne 'PATCH' -and $magic -ne 'IPS32') { return @() }
+    $w = if ($magic -eq 'IPS32') { 4 } else { 3 }
+    $ranges = @()
+    $i = 5
+    while ($i + $w -le $b.Length) {
+        $tag = [System.Text.Encoding]::ASCII.GetString($b, $i, $w)
+        if (($w -eq 3 -and $tag -eq 'EOF') -or ($w -eq 4 -and $tag -eq 'EEOF')) { return , $ranges }
+        $off = 0L
+        for ($k = 0; $k -lt $w; $k++) { $off = $off * 256 + $b[$i + $k] }
+        $i += $w
+        if ($i + 2 -gt $b.Length) { return @() }
+        $size = $b[$i] * 256 + $b[$i + 1]
+        $i += 2
+        if ($size -eq 0) {
+            if ($i + 3 -gt $b.Length) { return @() }
+            $size = $b[$i] * 256 + $b[$i + 1]
+            $i += 3
+        } else { $i += $size }
+        if ($size -gt 0) { $ranges += , @($off, ($off + $size)) }
+    }
+    return @()
+}
+# An IPSwitch (.pchtxt) file: its build id and the ranges its enabled patches write.
+function Get-KitPchtxt([string]$Path) {
+    $build = ''
+    $shift = 0L
+    $ranges = @()
+    $on = $null
+    foreach ($raw in [System.IO.File]::ReadAllLines($Path)) {
+        $line = $raw.Trim()
+        if (-not $line -or $line.StartsWith('//') -or $line.StartsWith('#')) { continue }
+        if ($line.Length -gt 2 -and $line[0] -eq '@') {
+            switch -regex ($line) {
+                '^@[nN]' { $build = $line.Substring([Math]::Min(8, $line.Length)).Trim() }
+                '^@[sS]' { return @{ Build = $build; Ranges = $ranges } }
+                '^@[eE]' { $on = $true }
+                '^@[dD]' { $on = $false }
+                '^@flag offset_shift\s+(\S+)' { $shift = [Convert]::ToInt64($Matches[1], $(if ($Matches[1] -match '^0[xX]') { 16 } else { 10 })) }
+            }
+            continue
+        }
+        if ($null -eq $on -or -not $on) { continue }
+        if ($line -notmatch '^([0-9A-Fa-f]+)') { continue }
+        $off = [Convert]::ToInt64($Matches[1], 16) + $shift
+        $q = $line.IndexOfAny([char[]]@('"', "'"))
+        if ($q -ge 0) {
+            $end = $line.IndexOf($line[$q], $q + 1)
+            $len = if ($end -gt $q) { $end - $q - 1 } else { $line.Length - $q - 1 }
+        } else {
+            $hex = ($line -split '[\s/]+')[-1]
+            $len = [int][Math]::Floor($hex.Length / 2)
+        }
+        if ($len -gt 0) { $ranges += , @($off, ($off + $len)) }
+    }
+    return @{ Build = $build; Ranges = $ranges }
+}
+function Test-KitDynamicFpsMod([string]$Dir, [string[]]$Off) {
+    if ($Off -contains $KitDynamicFpsName) { return $false }  # the built-in is off: the mod loads
+    $exefs = Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'exefs' } | Select-Object -First 1
+    if (-not $exefs) { return $false }
+    $want = $KitMainBuild.PadRight(64, '0')
+    foreach ($f in Get-ChildItem -LiteralPath $exefs.FullName -File -ErrorAction SilentlyContinue) {
+        $ranges = @()
+        if ($f.Extension -eq '.ips') {
+            $name = $f.Name.Substring(0, $f.Name.IndexOf('.'))
+            if ($name.PadRight(64, '0') -cne $want) { continue }  # the emulator compares as written
+            $ranges = Get-KitIpsRanges $f.FullName
+        } elseif ($f.Extension -eq '.pchtxt') {
+            $p = Get-KitPchtxt $f.FullName
+            if ($p.Build.PadRight(64, '0') -ne $want) { continue }
+            $ranges = $p.Ranges
+        } else { continue }
+        foreach ($r in $ranges) {
+            foreach ($d in $KitDynamicFpsRanges) {
+                if ($r[0] -lt $d[1] -and $d[0] -lt $r[1]) { return $true }
+            }
+        }
+    }
+    return $false
+}
+
+function Get-KitMods([string]$User) {
+    $found = @()
+    $off = @(Get-KitDisabledAddons $User)
+    $load = Join-Path (Get-KitLoadDir $User) $KitGameId
+    if (Test-Path -LiteralPath $load) {
+        foreach ($mod in Get-ChildItem -LiteralPath $load -Directory -ErrorAction SilentlyContinue) {
+            if ($mod.Name -eq 'coop-puppet' -or $off -contains $mod.Name) { continue }
+            if (Test-KitDynamicFpsMod $mod.FullName $off) { continue }  # Fritchii uses its built-in instead
+            if (Test-KitModPart $mod.FullName @('exefs', 'cheats')) { $found += $mod.FullName }  # romfs alone is fine
+        }
+        # Loose cheat files (cheat_*), which the emulator lists as "Cheats" by file name.
+        foreach ($f in Get-ChildItem -LiteralPath $load -File -Filter 'cheat_*' -ErrorAction SilentlyContinue) {
+            if ($off -notcontains $f.Name) { $found += $f.FullName }
+        }
+    }
+    $sd = Join-Path (Get-KitSdmcDir $User) "atmosphere\contents\$KitGameId"
+    if ((Test-Path -LiteralPath $sd) -and $off -notcontains 'SDMC' -and
+        (Test-KitModPart $sd @('exefs'))) { $found += $sd }
+    return $found
+}
+
 # Reads coop-options.ini: NAME=value lines for LICHII_COOP_* switches and the emulator's
 # own EDEN_NX2_* switches. Blank lines and lines starting with # or ; are skipped, and so
 # is auto_update (play.ps1 reads it, the emulator does not). Returns an ordered table.
@@ -88,5 +251,45 @@ function Set-AmdGplDefault([scriptblock]$Query = { Get-CimInstance Win32_VideoCo
         'amd+nvidia' {
             return 'AMD and NVIDIA GPUs found: the game uses NVIDIA, shader libraries stay on. Crashes in amdvlk64.dll: add EDEN_NX2_GPL=0 to coop-options.ini.'
         }
+    }
+}
+
+# The pack tool's own hash, as tools\puppet_pack\build.py (tool_hash) writes it into
+# coop_puppet.json: SHA-256 over "<name>:<sha256 of the file>`n" for each *.py in the folder
+# (not tests\), names in ordinal order. Nothing when the folder is not there.
+function Get-PuppetToolHash([string]$ToolDir) {
+    if (-not $ToolDir -or -not (Test-Path -LiteralPath $ToolDir -PathType Container)) { return }
+    $files = @(Get-ChildItem -LiteralPath $ToolDir -File -ErrorAction Stop | Where-Object { $_.Extension -eq '.py' })
+    $names = [string[]]@($files | ForEach-Object { $_.Name })
+    [Array]::Sort($names, [StringComparer]::Ordinal)
+    $text = New-Object System.Text.StringBuilder
+    foreach ($n in $names) {
+        $h = (Get-FileHash -LiteralPath (Join-Path $ToolDir $n) -Algorithm SHA256).Hash.ToLowerInvariant()
+        [void]$text.Append("${n}:$h`n")
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text.ToString()))
+    } finally { $sha.Dispose() }
+    return (-join ($bytes | ForEach-Object { $_.ToString('x2') }))
+}
+
+# The puppet pack (coop_puppet.json, written by make-puppet-pack.cmd) against the kit's pack
+# tool (tools\puppet_pack): a line asking the player to make the pack again, or nothing. A pack
+# made before issue 131 has no "sound": true, so the other players' Links make no sound; a pack
+# whose tool_sha256 is not the kit's tool hash was made by another version of the tool (a hash,
+# not file times: a kit zip's times are the builder's local time). Never throws: the start goes on.
+function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
+    try {
+        $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop
+        if ($json.sound -ne $true) {
+            return 'Puppet pack: made without the other players'' sounds. Run make-puppet-pack.cmd again to hear their footsteps, sword and voice.'
+        }
+        $tool = Get-PuppetToolHash $ToolDir
+        if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {
+            return 'Puppet pack: made by another version of the pack tool. Run make-puppet-pack.cmd again for the latest puppet fixes.'
+        }
+    } catch {
+        return 'Puppet pack: coop_puppet.json could not be read. Run make-puppet-pack.cmd again.'
     }
 }

@@ -12,7 +12,7 @@ so co-op can draw player markers in the world.
  1 file changed, 7 insertions(+)
 
 diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-index 28b704d5a8..23364626a9 100644
+index 127baeb55a..88c0fb65b1 100644
 --- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 +++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 @@ -81,6 +81,9 @@

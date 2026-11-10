@@ -384,6 +384,9 @@ constexpr std::uint32_t kSticks = 0xb9494411, kSticksGet = 0xc4e21ac2;
 // Sorted by item. A capacity's name is the struct hash and the member name:
 // the struct's own name is not known, so its hash is not flag_hash(name).
 constexpr ItemGrant kGrants[] = {
+  // IsGet.Item_DekuNut: nuts were got once (a pickup), so there is room for
+  // them; the first pickup is what gives it in the game (issue 138).
+  COOP_CAP(kNutsGet, "DekuNut", kCapNut, 20),
   // Item_NutBag_Small: 20, the original's first nut capacity.
   COOP_CAP(0x19b80dbc, "DekuNut", kCapNut, 20),
   COOP_AMMO(0x19b80dbc, "Item_DekuNut", kNuts, 20),
@@ -429,6 +432,9 @@ constexpr ItemGrant kGrants[] = {
   // Item_BombBag_Large: 40.
   COOP_CAP(0xbd3ca2c6, "Bomb", kCapBomb, 40),
   COOP_AMMO(0xbd3ca2c6, "Item_Bomb", kBombs, 40),
+  // IsGet.Item_DekuStick: sticks were got once (issue 138: a player could
+  // not pick up sticks after the other's first one).
+  COOP_CAP(kSticksGet, "DekuStick", kCapStick, 10),
   // Item_Quiver_Large: 50.
   COOP_CAP(0xd331c7da, "Arrow", kCapArrow, 50),
   COOP_AMMO(0xd331c7da, "Item_Arrow_Normal", kArrows, 50),
@@ -450,6 +456,8 @@ constexpr ItemGrant kGrants[] = {
 #undef COOP_AMMO
 #undef COOP_GOT
 
+constexpr bool is_capacity(const ItemGrant& g) { return g.name.starts_with("0xf80f8077."); }
+
 struct GrantLess {
   bool operator()(const ItemGrant& a, std::uint32_t b) const { return a.item < b; }
   bool operator()(std::uint32_t a, const ItemGrant& b) const { return a < b.item; }
@@ -465,8 +473,14 @@ std::span<const ItemGrant> item_grants(std::uint32_t item) {
   return {first, last};
 }
 
-void ItemFlagStore::grant(std::uint32_t item) {
+void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
+  if (!ready_) {
+    // No Link: a load would undo it. A new item gets it all at the mend.
+    if (new_item && load_ != nullptr) load_->note_new(item);
+    return;
+  }
   for (const ItemGrant& g : item_grants(item)) {
+    if (!new_item && !is_capacity(g)) continue;  // an item held already: capacity only
     const FlagKey key{g.hash, 0};
     const auto now = inner_.read(key);
     // Unknown value: written over nothing, so a grant can never lower one.
@@ -507,18 +521,39 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   if (!now || now->kind != entry.kind) return inner_.write(entry);
   protocol::FlagEntry merged = entry;
   merged.value = merge_item(item->rule, item->kind, now->value, entry.value);
+  const bool int_item = item->kind == protocol::FlagKind::int32;
+  const auto held = [&](std::uint32_t v) { return int_item ? as_int(v) >= 1 : v != 0; };
   if (merged.value == now->value) {
     ++stats_.kept;
-    return true;
+  } else {
+    if (!inner_.write(merged)) return false;
+    ++stats_.merged;
   }
-  if (!inner_.write(merged)) return false;
-  ++stats_.merged;
-  // A new item: also what the game gives with it (issue 128).
-  if (item->kind == protocol::FlagKind::int32 && as_int(now->value) <= 0 &&
-      as_int(merged.value) >= 1) {
-    grant(key.hash);
-  }
+  // What the game gives with the item (issues 128, 138): all of it for an
+  // item new to this game; for one it holds already, the capacity only, so
+  // a game that got the item before without it (test5 saves: sticks and
+  // seeds owned with room for 0) is mended on the next write or snapshot.
+  if (held(merged.value)) grant(key.hash, !held(now->value));
   return true;
+}
+
+std::size_t ItemFlagStore::mend() {
+  const std::uint64_t before = stats_.granted;
+  std::uint32_t last = 0;
+  bool any = false;
+  for (const ItemGrant& g : kGrants) {
+    if (any && g.item == last) continue;  // each item once
+    any = true;
+    last = g.item;
+    const ItemFlag* item = find_item(g.item);
+    if (item == nullptr) continue;
+    const auto now = inner_.read(FlagKey{g.item, 0});
+    if (!now || now->kind != item->kind) continue;
+    const bool held = item->kind == protocol::FlagKind::int32 ? as_int(now->value) >= 1
+                                                              : now->value != 0;
+    if (held) grant(g.item, load_ != nullptr && load_->pending(g.item));
+  }
+  return static_cast<std::size_t>(stats_.granted - before);
 }
 
 bool ItemFlagStore::is_count(FlagKey key) {

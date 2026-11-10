@@ -545,7 +545,7 @@ TEST_CASE("an empty session forgets the game build the first player set") {
   CHECK(std::holds_alternative<Welcome>(msgs[0].message));
 }
 
-TEST_CASE("one address may hold only 4 connections without HELLO; one more is refused") {
+TEST_CASE("one address may hold only 4 connections without HELLO, one more is refused") {
   Harness h;
   constexpr std::uint32_t kHome = 0x0100007F;  // 127.0.0.1 as ENet keeps it
   constexpr std::uint32_t kAway = 0x0200000A;
@@ -664,7 +664,7 @@ std::vector<T> messages_of(const Harness& h, ConnectionId id) {
 
 }  // namespace
 
-TEST_CASE("the first player hosts; each joiner is told who hosts, then sent the table") {
+TEST_CASE("the first player hosts, each joiner is told who hosts, then sent the table") {
   Harness h;
   CHECK(h.session.host() == std::nullopt);
   h.join(1, "Link");
@@ -895,7 +895,7 @@ TEST_CASE("a large table goes to a joiner in parts") {
   CHECK(total == 3 * kMaxFlagEntries + 1);
 }
 
-TEST_CASE("a new host's snapshot merges in; on a clash the server's value stays") {
+TEST_CASE("a new host's snapshot merges in, on a clash the server's value stays") {
   Harness h;
   h.join(1, "Link");
   h.join(2, "Zelda");
@@ -977,7 +977,7 @@ TEST_CASE("the table is kept while anyone is in and forgotten when the session e
   CHECK(messages_of<FlagSnapshot>(h, 2) == std::vector<FlagSnapshot>{FlagSnapshot{0, 1, {}}});
 }
 
-TEST_CASE("the flag table has a size limit; values past it are relayed but not kept") {
+TEST_CASE("the flag table has a size limit, values past it are relayed but not kept") {
   SessionConfig small;
   small.max_flags = 2;
   Harness h(small);
@@ -1109,7 +1109,7 @@ TEST_CASE("a killed build restarted on the same PC takes its old place after 1 s
   CHECK(h.session.player_count() == 3);
 }
 
-TEST_CASE("a rejoining host hands over as on any leave; alone it hosts again with the table") {
+TEST_CASE("a rejoining host hands over as on any leave, alone it hosts again with the table") {
   Harness h;
   h.join(1, "Link", kHomePc);
   h.join(2, "Zelda", kOtherPc);
@@ -1146,7 +1146,7 @@ TEST_CASE("a rejoin into a full session takes the old place instead of being ref
   CHECK(refused_reason(hello_on(h, 10, "Ruto", kHomePc)) == RefuseReason::server_full);
 }
 
-TEST_CASE("a live player's name stays refused, from any PC; another PC never takes over") {
+TEST_CASE("a live player's name stays refused, from any PC, another PC never takes over") {
   Harness h;
   h.join(1, "Link", kHomePc);
   h.join(2, "Zelda", kOtherPc);
@@ -1324,7 +1324,7 @@ TEST_CASE("when the owner leaves, the next game takes it with epoch + 1 and the 
   CHECK(h.session.stats().owner_changes == 1);
 }
 
-TEST_CASE("unloading or leaving the scene hands it over; nobody left forgets it") {
+TEST_CASE("unloading or leaving the scene hands it over, nobody left forgets it") {
   ObjectHarness h;
   h.receive(1, present_in("Graveyard", {placed(7), placed(8)}), kChannelOwnership);
   h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
@@ -1373,7 +1373,7 @@ TEST_CASE("a removed enemy stays owned by nobody until no game has it, then is f
   CHECK(h.session.object_count() == 0);
 }
 
-TEST_CASE("the owner of a placed object may name its actor to the scene; nobody else may") {
+TEST_CASE("the owner of a placed object may name its actor to the scene, nobody else may") {
   ObjectHarness h;
   h.receive(1, present_in("Graveyard", {placed(9)}), kChannelOwnership);
   h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
@@ -1395,7 +1395,7 @@ TEST_CASE("the owner of a placed object may name its actor to the scene; nobody 
   CHECK(h.session.stats().object_refused == 2);
 }
 
-TEST_CASE("a made object belongs to its maker; it goes on every screen when the maker leaves") {
+TEST_CASE("a made object belongs to its maker, it goes on every screen when the maker leaves") {
   ObjectHarness h;
   h.receive(1, present_in("Graveyard", {}), kChannelOwnership);
   h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
@@ -1802,6 +1802,27 @@ TEST_CASE("sword hits on a sign are passed on and the last four kept for those w
   CHECK(got.front().at[0] == 2.0f);
   CHECK(got.front().player_number == 1);
 }
+
+TEST_CASE("a sign's cut words are passed on and the latest kept for those who come later") {
+  ObjectHarness h;
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.clear();
+  SignCut cut;
+  cut.scene = "Kakariko";
+  cut.hash = 0x70;
+  cut.words = {{(4ull << 32) | 0x18, 1}};
+  h.receive(1, cut, kChannelSession);
+  cut.words = {{(4ull << 32) | 0x18, 2}, {(4ull << 32) | 0x20, 3}};
+  h.receive(1, cut, kChannelSession);
+  CHECK(messages_to<SignCut>(h, 2).size() == 2);
+  CHECK(messages_to<SignCut>(h, 1).empty());
+  h.clear();
+  h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
+  const auto got = messages_to<SignCut>(h, 3);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().words.size() == 2);
+  CHECK(got.front().player_number == 1);
+}
 // ------------------------------------------------------ ownership rules
 // docs/objects.md "Enemies": the distance rule, the fight lock, groups, the
 // hand-over that carries the state, and what a player entering a scene gets.
@@ -2018,7 +2039,7 @@ TEST_CASE("a boss stays in its fight for 60 s") {
   CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));
 }
 
-TEST_CASE("a hit by the player near it, its owner well away, takes it at once; the hit is kept") {
+TEST_CASE("a hit by the player near it, its owner well away, takes it at once, the hit is kept") {
   OwnerHarness h;
   h.stand(1, 50);
   h.stand(2, 2);
@@ -2302,7 +2323,7 @@ TEST_CASE("a group: the parts follow the root's owner and share its fight") {
   CHECK(messages_to<ObjectOwner>(h, 1).back() == ObjectOwner{placed(8), 2, 1, group});
 }
 
-TEST_CASE("group entries that make no sense are turned away; a root's root is the group's") {
+TEST_CASE("group entries that make no sense are turned away, a root's root is the group's") {
   OwnerHarness h;
   h.receive(1, present_in("Field", {placed(7), placed(8), placed(9)}), kChannelOwnership);
   h.receive(1, ObjectGroup{0, {{placed(8), placed(7), 0}}}, kChannelOwnership);
@@ -2400,7 +2421,7 @@ TEST_CASE("the owner's remove right after it stops listing its made enemy remove
   CHECK(messages_to<ObjectOwner>(h, 2).empty());
 }
 
-TEST_CASE("a late message does not take back a scene the player left; a real return does") {
+TEST_CASE("a late message does not take back a scene the player left, a real return does") {
   OwnerHarness h;
   h.receive(1, standing("Kakariko", 0), kChannelPlayerSamples);
   REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));

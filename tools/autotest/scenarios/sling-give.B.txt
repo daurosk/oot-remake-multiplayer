@@ -1,0 +1,24 @@
+# sling-give: B loads into the Deku Tree entrance with A, then opens the pause menu after A got
+# the Slingshot (see sling-give.A.txt) for a shot of the Slingshot and its seeds.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 2400
+press PLUS
+wait 120
+mark menu
+wait 240
+mark menu2
+press B
+wait 300
+mark late

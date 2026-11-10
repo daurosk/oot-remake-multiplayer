@@ -1,0 +1,30 @@
+# sling-stick (#138, #128): as sling-give, from saves with NO Slingshot and NO Deku Sticks (save_flags.py:
+# Weapon_Range_SlingShot, seeds, seed capacity, bullet bags, Item_DekuStick 0xb9494411, its IsGet
+# 0xc4e21ac2 and the stick capacity 0x457616b0 at 0). A gets the Slingshot, then a Deku Stick.
+# Expect B: Slingshot with seeds and capacity 30; sticks are per player, so B gets no stick and its
+# stick capacity stays as it was (log 0x457616b0, 0xb9494411 in B: no change).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,A:LICHII_COOP_CHEATS=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1200
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 300
+give PouchData.Item_DekuStick.StockNum
+wait 600
+mark given
+wait 1800
+mark late

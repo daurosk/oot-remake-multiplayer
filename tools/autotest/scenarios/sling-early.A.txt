@@ -1,0 +1,26 @@
+# sling-early (#138 check 7): as sling-give, but A gets the Slingshot about 30 s after it pressed
+# Continue, while B (started a few seconds later) is still loading its save or the warp. After its
+# load B must log "coop: items: ... capacities mended after a load" and end with seeds and
+# capacity 30 (B's menu shot).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,A:LICHII_COOP_CHEATS=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+give PouchData.Weapon_Range_SlingShot.StockNum
+mark given
+wait 1800
+mark after
+wait 1800
+mark late

@@ -46,6 +46,13 @@ One PC, two games, played by hand on 2026-11-09.
 - **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
 - **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.
 
+## Code and cheat mods are not supported in co-op
+
+Co-op does not allow mods that change the game's code, or cheats (issue 136). A mod's code patches can sit where co-op's own go (the Hyrule Cheat Menu's does), and cheats, refills or God Mode change the game under the sync and hide or fake sync bugs. **Texture and model mods are fine**: mods that only replace game files (a `romfs` folder), such as fixes for missing Water Temple or Fairy Fountain textures. If a mod changes models, every player should use the same one, or the games may differ.
+
+- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a code or cheat mod is installed for the game (a mod folder with an `exefs` or `cheats` folder, a loose `cheat_*` file, or code on the SD card), and name it. Mods turned off in the game's Add-Ons do not count, and neither does Dark's Dynamic FPS mod (Fritchii skips that one for its built-in Dynamic FPS).
+- When the game's code is patched where co-op patches it anyway (a mod started another way), co-op stays off. The panel says **"Co-op is off: a code mod is installed"**.
+
 ## Other notes
 
 - Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks.

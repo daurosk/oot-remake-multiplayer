@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "coop/host/flag_watcher.hpp"
+#include "coop/host/game_items.hpp"
 #include "coop/protocol/codec.hpp"
 
 using namespace coop::host;
@@ -542,4 +543,142 @@ TEST_CASE("flag watcher: at most kMaxLearned pickups are learned from messages")
   w.frame(store);
   CHECK(w.stats().pickups_learned == FlagWatcher::kMaxLearned);
   CHECK(w.pickups() == FlagWatcher::kMaxLearned);
+}
+TEST_CASE("flag watcher: a save load does not undo or send back what the group set (issue 129)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.set_loading(true);  // the title screen: no Link yet
+  w.frame(store);
+  // The group's switch comes in before the save loads.
+  CHECK(w.receive(state({entry(kDoor, 1)})));
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+
+  // The save loads: its own 0 is written over it, and its own progress (the
+  // chest) comes in with it.
+  store.set(kDoor, 0);
+  store.set(kChest, 1);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 1)});
+  CHECK(store.get(kDoor) == 1);  // put back, not sent
+  CHECK(w.stats().load_reverts == 1);
+
+  // Link is there, but the load still runs a moment: the same again.
+  w.set_loading(false);
+  CHECK(w.settling());
+  store.set(kDoor, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+
+  // A group value written during the load and lost to it comes back too.
+  CHECK(w.receive(state({entry(kKey0, 1)})));
+  w.frame(store);
+  store.set(kKey0, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kKey0) == 1);
+  CHECK(w.stats().load_reverts == 3);
+
+  // After the settle time the game's own changes go out as before, a switch
+  // turned back off included.
+  for (int i = 0; i < FlagWatcher::kSettleFrames; ++i) w.frame(store);
+  CHECK_FALSE(w.settling());
+  store.set(kDoor, 0);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kDoor, 0)});
+}
+
+TEST_CASE("flag watcher: a load puts the group's Int back, a flag the game will not take is let be") {
+  FakeStore store = game();
+  store.values[kKey1] = entry(kKey1, 2, proto::FlagKind::int32);  // a water level
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kKey1, 3, proto::FlagKind::int32), entry(kChest, 1)})));
+  w.frame(store);
+  REQUIRE(store.get(kKey1) == 3);
+
+  w.set_loading(true);
+  store.values[kKey1] = entry(kKey1, 2, proto::FlagKind::int32);
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kKey1) == 3);
+
+  // A per-player flag the game refuses to be written: its load value is the
+  // game's own, sent as any change.
+  store.unwritable.insert(kChest);
+  store.set(kChest, 0);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 0)});
+}
+
+TEST_CASE("flag watcher, host: a host's own load does not send the group's switch back to 0") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  CHECK(only<proto::FlagState>(w.frame(store)) == std::vector{entry(kDoor, 1)});
+  w.set_loading(true);
+  store.set(kDoor, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+}
+
+TEST_CASE("flag watcher: during a load an Int goes out unless it is the old value coming back") {
+  FakeStore store = game();
+  store.values[kKey1] = entry(kKey1, 2, proto::FlagKind::int32);
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kKey1, 3, proto::FlagKind::int32)})));
+  w.frame(store);
+  w.set_loading(true);
+  // More progress than the group's (a save, or the game's own change): sent.
+  store.values[kKey1] = entry(kKey1, 5, proto::FlagKind::int32);
+  CHECK(only<proto::FlagSet>(w.frame(store)) ==
+        std::vector{entry(kKey1, 5, proto::FlagKind::int32)});
+  CHECK(w.stats().load_reverts == 0);
+}
+
+TEST_CASE("flag watcher: trade and max items under a load, through the item store") {
+  constexpr FlagKey kEgg{0x07f10aafu, 0};       // PouchData.Item_PocketEgg.StockNum, mirror
+  constexpr FlagKey kHookshot{0x8573d2cdu, 0};  // PouchData.Item_Hookshot.StockNum, max
+  FakeStore game_store;
+  game_store.values[kEgg] = entry(kEgg, 0, proto::FlagKind::int32);
+  game_store.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kEgg, kHookshot}), FlagRole::player);
+  w.frame(store);
+  // The group's egg (the game had none) and Hookshot 2.
+  CHECK(w.receive(state({entry(kEgg, 1, proto::FlagKind::int32),
+                         entry(kHookshot, 2, proto::FlagKind::int32)})));
+  w.frame(store);
+  REQUIRE(game_store.get(kEgg) == 1);
+  REQUIRE(game_store.get(kHookshot) == 2);
+
+  // A scene change, then Link is back: the egg hatches in the settle time.
+  // Back to its value before the group's, but the game's own change: sent.
+  w.set_loading(true);
+  w.frame(store);
+  w.set_loading(false);
+  REQUIRE(w.settling());
+  game_store.values[kEgg] = entry(kEgg, 0, proto::FlagKind::int32);
+  CHECK(only<proto::FlagSet>(w.frame(store)) ==
+        std::vector{entry(kEgg, 0, proto::FlagKind::int32)});
+  CHECK(game_store.get(kEgg) == 0);
+
+  // A load (no Link) puts the save's Hookshot back: the group's is written
+  // once and stays, nothing is sent.
+  w.set_loading(true);
+  game_store.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kHookshot) == 2);
+  CHECK(w.frame(store).empty());
+  CHECK(w.stats().load_reverts == 1);
+}
+
+TEST_CASE("flag watcher: a reconnect forgets the group's values") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kDoor, 1)})));
+  w.frame(store);
+  w.reset();  // a new session: the server may not have it any more
+  w.set_loading(true);
+  store.set(kDoor, 0);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kDoor, 0)});
+  CHECK(w.stats().load_reverts == 0);
 }

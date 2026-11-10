@@ -14,6 +14,7 @@
 #include "coop/host/player_reader.hpp"
 #include "coop_fairy.h"
 #include "coop_puppet.h"
+#include "coop_sites.h"
 #include "coop_svc.h"
 
 namespace {
@@ -193,6 +194,41 @@ TEST_CASE("puppet cave: the call and the cave decode to the right places") {
         svc = svc || w == (0xd4000001u | (CoopSvc::kPuppetSvc << 5));
     }
     CHECK(svc);
+}
+
+TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' bytes are not (#136)") {
+    const auto put = [](std::vector<std::uint8_t>& v, std::uint64_t at, std::uint32_t word) {
+        std::memcpy(v.data() + at, &word, 4);
+    };
+    // A main as shipped: the hooked calls hold the game's words, the caves are zero.
+    std::vector<std::uint8_t> main(CoopSvc::kCaveEnd, 0);
+    for (const auto& h : CoopSvc::kHooks) put(main, h.offset, h.original);
+    put(main, CoopHold::kHookOffset, CoopHold::kHookOriginal);
+    CHECK_FALSE(CoopSites::ChangedSite(main).has_value());
+    // The emulator's own built-ins and other bytes in the padding are not ours.
+    main[0x3c46200] = 0xff;  // Dynamic FPS
+    main[0x3c46e00] = 0xff;  // Fritchii v5.7 high refresh
+    CHECK_FALSE(CoopSites::ChangedSite(main).has_value());
+    // The Hyrule Cheat Menu v0.1 writes its stubs from main+0x3c46280: our cave.
+    auto mod = main;
+    put(mod, 0x3c46280, 0xd503201f);
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(0x3c46280));
+    // A changed hook word, the hold hook, a byte of the hold table.
+    mod = main;
+    put(mod, CoopSvc::kHooks[1].offset, 0x94000000);
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopSvc::kHooks[1].offset));
+    mod = main;
+    mod[CoopHold::kHookOffset] ^= 1;
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopHold::kHookOffset));
+    mod = main;
+    mod[CoopHold::kTableOffset + CoopHold::kTableSize - 1] = 1;
+    CHECK(CoopSites::ChangedSite(mod) ==
+          std::optional<std::uint64_t>(CoopHold::kTableOffset + CoopHold::kTableSize - 1));
+    // With the NSO header in front, and a module too short to tell.
+    std::vector<std::uint8_t> nso(0x100, 0);
+    nso.insert(nso.end(), main.begin(), main.end());
+    CHECK_FALSE(CoopSites::ChangedSite(nso, 0x100).has_value());
+    CHECK_FALSE(CoopSites::ChangedSite(std::vector<std::uint8_t>(16, 0xff)).has_value());
 }
 
 TEST_CASE("puppet: a quaternion turns into the matrix the reader reads back") {
@@ -590,7 +626,7 @@ TEST_CASE("puppet animation: play the command, set its frame, correct only when 
     CHECK(d.Slots()[0].anim_name == "Run");
 }
 
-TEST_CASE("puppet animation: the other slots synced from slot 0; pose request written") {
+TEST_CASE("puppet animation: the other slots synced from slot 0, pose request written") {
     Game g;
     Director d;
     MakeLive(d, g);
@@ -912,7 +948,7 @@ CoopPuppet::Input Drawing(std::vector<Target> targets, std::uint64_t drawn_since
 }
 }  // namespace
 
-TEST_CASE("puppet join: no create while the game loads; at once when it draws") {
+TEST_CASE("puppet join: no create while the game loads, at once when it draws") {
     Game g;
     Director d;
     // The scene is readable at 0 but the loading screen has no camera.
@@ -1158,7 +1194,7 @@ TEST_CASE("puppet gear: the debug log lists every slot that holds a piece") {
     CHECK(slots.find("slot 0:") == std::string::npos);
 }
 
-TEST_CASE("puppet gear: nothing is worn while parked; a piece left behind is worn again") {
+TEST_CASE("puppet gear: nothing is worn while parked, a piece left behind is worn again") {
     Game g;
     std::vector<std::string> log;
     Director d([&](const std::string& line) { log.push_back(line); });
@@ -1252,7 +1288,7 @@ TEST_CASE("puppet: a create the game refuses is asked again after 1 s") {
     CHECK(d.Slots()[0].phase == Phase::creating);
 }
 
-TEST_CASE("puppet: refused creates slow down; one with a request is waited for") {
+TEST_CASE("puppet: refused creates slow down, one with a request is waited for") {
     Game g;
     std::vector<std::string> log;
     Director d([&](const std::string& line) { log.push_back(line); });

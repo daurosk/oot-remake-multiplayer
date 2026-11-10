@@ -133,6 +133,24 @@ $user = Join-Path $emu 'user'
 if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
     Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
 }
+$running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
+
+# A copied kit: point the emulator's saved folders at this copy (kit-paths.ps1).
+$fixed = Repair-KitPaths $user
+if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
+# No code or cheat mods with co-op (issue 136): stop before anything starts, and say where they are. After the
+# copied-kit fix above, so this kit's own load and SD folders are read.
+$mods = @(Get-KitMods $user)
+if ($mods.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'These mods for Ocarina of Time change the game''s code or are cheats:'
+    foreach ($m in $mods) { Write-Host "  $m" }
+    Write-Host 'Code and cheat mods are not supported in co-op; texture and model mods are fine.'
+    Write-Host 'Remove those folders, or turn them off: in the emulator, right-click the game,'
+    Write-Host 'Properties, Add-Ons, untick them. Then start again.'
+    exit 1
+}
 if ($Mode -eq 'host') {
     $serverExe = Join-Path $kit 'server\coop_server.exe'
     $serverUp = Get-Process coop_server -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }
@@ -143,12 +161,6 @@ if ($Mode -eq 'host') {
         Start-Sleep -Seconds 2
     }
 }
-$running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
-if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
-
-# A copied kit: point the emulator's saved folders at this copy (kit-paths.ps1).
-$fixed = Repair-KitPaths $user
-if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
 
 # Switches from coop-options.ini (the lines without a '#' in front). They win over the AMD rule below.
 $options = Read-KitOptions (Join-Path $kit 'coop-options.ini')
@@ -164,7 +176,12 @@ foreach ($key in $options.Keys) {
 $gpl = Set-AmdGplDefault
 if ($gpl) { Write-Host $gpl }
 $pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
-if (Test-Path -LiteralPath $pack) { Write-Host 'Puppet pack: found.' }
+if (Test-Path -LiteralPath $pack) {
+    Write-Host 'Puppet pack: found.'
+    # Made before sound or before the kit's pack tool changed (kit-paths.ps1): say so, start anyway.
+    $hint = Get-PuppetPackHint $pack (Join-Path $kit 'tools\puppet_pack')
+    if ($hint) { Write-Host $hint }
+}
 else {
     Write-Host 'Puppet pack: not made yet, so the other players show only as markers.'
     Write-Host '  Make it once with make-puppet-pack.cmd (SETUP.md, "The puppet pack").'

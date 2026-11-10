@@ -1,0 +1,23 @@
+# sling-early: B loads into the Deku Tree with A, then opens the pause menu (see sling-early.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 2400
+press PLUS
+wait 120
+mark menu
+wait 240
+mark menu2
+press B
+wait 300
+mark late

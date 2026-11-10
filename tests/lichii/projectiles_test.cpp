@@ -240,7 +240,7 @@ TEST_CASE("shots: a copy's blast covers drops near it in place and time") {
     CHECK(b.Size() == 0);
 }
 
-TEST_CASE("shots: our arrow is sent turned; a fast one gone was a hit") {
+TEST_CASE("shots: our arrow is sent turned, a fast one gone was a hit") {
     CoopSpawn::Sync sync;
     std::vector<proto::Message> send;
     std::vector<Copy> copies;

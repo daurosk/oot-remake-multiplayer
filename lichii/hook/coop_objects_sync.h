@@ -167,7 +167,9 @@ public:
     // bomb is the game's own bomb, so the owner's real bomb and our copy both
     // hit. Such a drop on a copy is not sent to the owner (its own bomb hits
     // its enemy); on an enemy we own it is kept as credit for kBlastCreditUs,
-    // and a DAMAGE that comes for the same bomb takes the credit first.
+    // and a DAMAGE that comes for the same bomb takes the credit first. A
+    // DAMAGE taken first is kept as debit for the same time; a blast drop
+    // after it is written back up by that much.
     using BlastNear = std::function<bool(const coop::protocol::Vec3&, std::uint64_t)>;
     void SetBlastNear(BlastNear near) { blast_near_ = std::move(near); }
     static constexpr std::uint64_t kBlastCreditUs = 2'000'000;
@@ -291,6 +293,11 @@ private:
         // Owner side: life a copy bomb's blast took here (BlastNear).
         std::int32_t blast_credit = 0;
         std::uint64_t blast_until = 0;
+        // Owner side: life a DAMAGE from another game took; a copy blast
+        // that comes after it (the copy went off at the remove, one network
+        // delay late) gives that much back, so the bomb hits once.
+        std::int32_t damage_debit = 0;
+        std::uint64_t debit_until = 0;
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
         coop::protocol::Vec3 first_position{};  // where it was first seen

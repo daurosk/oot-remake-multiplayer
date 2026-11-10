@@ -612,11 +612,83 @@ TEST_CASE("shots: the owner takes a hit once when a copy bomb and the DAMAGE bot
     CHECK(step.writes[0].life == 3);
 
     // The credit runs out after 2 s: a later DAMAGE is taken whole.
-    blasts.Add({0.0f, 0.0f, 0.0f}, 1'000 * kMs);
-    Tick(sync, 1'020 * kMs, 2, 1);
+    blasts.Add({0.0f, 0.0f, 0.0f}, 3'000 * kMs);
+    Tick(sync, 3'020 * kMs, 2, 1);
     d.amount = 1;
     sync.Receive(d);
-    step = Tick(sync, 4'000 * kMs, 2, 1);
+    step = Tick(sync, 6'000 * kMs, 2, 1);
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].life == 1);
+}
+
+TEST_CASE("shots: a copy blast after the thrower's DAMAGE is put back, so the hit counts once") {
+    shots::Blasts blasts;
+    CoopObjects::Sync sync;
+    sync.SetBlastNear([&](const proto::Vec3& at, std::uint64_t now) { return blasts.Near(at, now); });
+    Tick(sync, 0, 8, 1);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    sync.Receive(proto::ObjectOwner{id, 1, 0, 0});
+    Tick(sync, 10 * kMs, 8, 1);
+
+    // Player 2's first bomb (no fuse known): its DAMAGE comes first.
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 2;
+    sync.Receive(d);
+    auto step = Tick(sync, 50 * kMs, 8, 1);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 6);
+    Tick(sync, 60 * kMs, 6, 1);
+
+    // Then our copy goes off at the remove and the game takes 2 again.
+    blasts.Add({0.0f, 0.0f, 0.0f}, 120 * kMs);
+    step = Tick(sync, 140 * kMs, 4, 1);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 6);  // written back up
+    CHECK(sync.BlastDrops() == 1);
+    // Nothing is left as credit: the next DAMAGE is taken whole.
+    Tick(sync, 160 * kMs, 6, 1);
+    d.amount = 1;
+    sync.Receive(d);
+    step = Tick(sync, 200 * kMs, 6, 1);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 5);
+}
+
+TEST_CASE("shots: a bomb copy the owner removed as gone is no blast") {
+    shots::TheBlasts().Reset();
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    std::map<std::uint64_t, std::uint64_t> live;
+    std::uint64_t now = 10'000'000;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 7};
+    spawn.actor = "Item_Bomb";
+    spawn.state.time = {now, 0};
+    spawn.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(spawn, 1));
+    now += 33 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    live[copies[0].key] = 0x9000;
+    now += 33 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    // The help-box bomb: gone within a second; the director deletes ours.
+    proto::ObjectRemove remove;
+    remove.id = spawn.id;
+    remove.reason = proto::RemoveReason::gone;
+    remove.position = {1.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(remove, 1));
+    copies.clear();
+    now += 33 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::remove);
+    live.clear();
+    now += 33 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    CHECK(shots::TheBlasts().Size() == 0);
 }

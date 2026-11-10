@@ -183,9 +183,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             r.address = it->second;
             copy_addresses_.insert(r.address);
             r.live = true;
-        } else if (r.live && !r.blasted && Explodes(r.actor)) {
+        } else if (r.live && !r.blasted && Explodes(r.actor) &&
+                   (!r.removed || *r.removed == proto::RemoveReason::exploded)) {
             // Our copy bomb went off by itself (its own fuse, or a hit): its
-            // blast may hurt this game's enemies.
+            // blast may hurt this game's enemies. Not one the owner removed
+            // as gone: the director deleted that one, nothing went off.
             CoopProjectiles::TheBlasts().Add(r.track.At(now_us, false), now_us);
             r.blasted = true;
         }

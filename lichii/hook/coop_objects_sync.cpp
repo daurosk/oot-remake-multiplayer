@@ -370,11 +370,22 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     // makes this hit in its game.
                     ++blast_drops_;
                     if (owner->second.player == self) {
-                        if (now_us >= o.blast_until) {
-                            o.blast_credit = 0;
+                        if (o.damage_debit > 0 && now_us < o.debit_until) {
+                            // The thrower's DAMAGE came first: this is the
+                            // same hit again. Put it back.
+                            const std::int32_t back = std::min(o.damage_debit, drop);
+                            o.damage_debit -= back;
+                            drop -= back;
+                            life->life += back;
+                            writes.push_back({o.address, life->life, 0, {}});
                         }
-                        o.blast_credit += drop;
-                        o.blast_until = now_us + kBlastCreditUs;
+                        if (drop > 0) {
+                            if (now_us >= o.blast_until) {
+                                o.blast_credit = 0;
+                            }
+                            o.blast_credit += drop;
+                            o.blast_until = now_us + kBlastCreditUs;
+                        }
                     }
                     drop = 0;
                 }
@@ -825,6 +836,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     continue;
                 }
             }
+            if (now_us >= o->debit_until) {
+                o->damage_debit = 0;
+            }
+            o->damage_debit += amount;
+            o->debit_until = now_us + kBlastCreditUs;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number);
             o->fight_until = now_us + kFightUs;

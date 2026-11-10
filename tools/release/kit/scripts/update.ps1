@@ -546,7 +546,7 @@ function Invoke-KitUpdate {
             }
         }
         if ($script:PackToolChanged) {
-            Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play.'
+            Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play, for the other players'' sounds and the latest puppet fixes.'
         }
         Write-Host 'Every player needs the same version: tell the others to update too.'
         if ($Launch) { return 3 }

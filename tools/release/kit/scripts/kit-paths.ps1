@@ -90,3 +90,26 @@ function Set-AmdGplDefault([scriptblock]$Query = { Get-CimInstance Win32_VideoCo
         }
     }
 }
+
+# The puppet pack (coop_puppet.json, written by make-puppet-pack.cmd) against the kit's pack
+# tool (tools\puppet_pack): a line asking the player to make the pack again, or nothing. A pack
+# made before issue 131 has no "sound": true, so the other players' Links make no sound; a pack
+# older than the tool misses what the tool fixed since. Never throws: the start goes on.
+function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
+    try {
+        $made = Get-Item -LiteralPath $Manifest -ErrorAction Stop
+        $json = [System.IO.File]::ReadAllText($made.FullName) | ConvertFrom-Json -ErrorAction Stop
+        if ($json.sound -ne $true) {
+            return 'Puppet pack: made without the other players'' sounds. Run make-puppet-pack.cmd again to hear their footsteps, sword and voice.'
+        }
+        if ($ToolDir -and (Test-Path -LiteralPath $ToolDir)) {
+            $newest = Get-ChildItem -LiteralPath $ToolDir -Filter *.py -File -ErrorAction Stop |
+                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if ($newest -and $newest.LastWriteTimeUtc -gt $made.LastWriteTimeUtc) {
+                return 'Puppet pack: older than this kit''s pack tool. Run make-puppet-pack.cmd again for the other players'' sounds and the latest puppet fixes.'
+            }
+        }
+    } catch {
+        return 'Puppet pack: coop_puppet.json could not be read. Run make-puppet-pack.cmd again.'
+    }
+}

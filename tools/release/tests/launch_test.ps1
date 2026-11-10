@@ -83,6 +83,27 @@ try {
 } finally {
     Remove-Item -LiteralPath $opt -Force -ErrorAction SilentlyContinue
 }
+
+# --- The puppet pack hint (kit-paths.ps1, issue 131): sound, and a pack older than the tool.
+$ph = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-pack-hint-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    $man = Join-Path $ph 'coop_puppet.json'; $tool = Join-Path $ph 'puppet_pack'
+    Write-File (Join-Path $tool 'build.py') '# tool'
+    (Get-Item (Join-Path $tool 'build.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-2)
+    Write-File $man '{"tool": "tools/puppet_pack", "actors": []}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'without the other players'' sounds.*make-puppet-pack\.cmd') 'a pack without "sound": run make-puppet-pack again'
+    Write-File $man '{"actors": [], "sound": false}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'sounds') 'a --no-sound pack: the same line'
+    Write-File $man '{"actors": [], "sound": true}'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'a pack with sound, newer than the tool: nothing said'
+    Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool folder: nothing said'
+    (Get-Item (Join-Path $tool 'build.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(1)
+    Check ((Get-PuppetPackHint $man $tool) -match 'older than this kit''s pack tool') 'a pack older than the tool: run make-puppet-pack again'
+    Write-File $man '{ not json'
+    Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
+} finally {
+    Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
+}
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-launch-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $oldApi = $env:OOT_COOP_UPDATE_API
@@ -196,6 +217,13 @@ try {
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -match 'Option: EDEN_NX2_GPL=1' -and ($out -join ' ') -notmatch 'AMD GPU found') 'EDEN_NX2_GPL in coop-options.ini is passed and wins over the AMD rule'
     Test-Started $kit 'EDEN_NX2_GPL option'
+
+    # A puppet pack made before sound: one line asks for make-puppet-pack, and the game starts.
+    $kit = Join-Path $tmp 'kit pack'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\coop-puppet\coop_puppet.json" '{"actors": []}'
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -match 'Puppet pack: found\. Puppet pack: made without the other players'' sounds\. Run make-puppet-pack\.cmd again') "an old puppet pack: the sound line [$(($out | Select-String 'Puppet pack') -join ' / ')]"
+    Test-Started $kit 'old puppet pack'
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

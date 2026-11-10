@@ -27,26 +27,47 @@ if (-not $python) {
     exit 1
 }
 $exe = $python[0]; $pre = @($python | Select-Object -Skip 1)
+# Windows PowerShell stops on a native program's error output under 'Stop'; this one
+# is expected (no zstandard), so let it through.
+$ErrorActionPreference = 'Continue'
 & $exe @pre -c 'import zstandard' 2>$null
+$ErrorActionPreference = 'Stop'
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'Python is missing the zstandard package. In a Command Prompt:'
     Write-Host "  $($python -join ' ') -m pip install zstandard"
     exit 1
 }
 
+# The dump check: finds the emulator's dump (Dump RomFS writes to the dump folder) and
+# says, one line per problem, what is wrong with it and what to do.
+$check = Join-Path $kit 'tools\puppet_pack\dumpcheck.py'
+function Test-Dump([string[]]$More) {
+    $out = & $exe @pre -I $check --user-dir $user @More
+    $code = $LASTEXITCODE
+    $found = $null
+    foreach ($line in $out) {
+        if ($line -like 'romfs=*') { $found = $line.Substring(6) } else { Write-Host $line }
+    }
+    return @{ Code = $code; Romfs = $found }
+}
+
 if (-not $Romfs) {
-    # The emulator's Dump RomFS writes here.
-    $dumped = Get-ChildItem (Join-Path $user 'dump') -Directory -Recurse -Filter romfs -ErrorAction SilentlyContinue |
-        Where-Object { Test-Path (Join-Path $_.FullName 'Pack\ZsDic.pack.zs') } | Select-Object -First 1
-    $hint = if ($dumped) { $dumped.FullName } else { '' }
-    Write-Host "The game's romfs folder: the one that holds Pack, Model, AS, RSDB and System (SETUP.md, 'The puppet pack', says how to dump it)."
-    $answer = Read-Host "Romfs folder$(if ($hint) { " [$hint]" })"
-    $Romfs = if ($answer) { $answer.Trim().Trim('"') } else { $hint }
+    $r = Test-Dump @()
+    if ($r.Code -eq 1) { Write-Host 'Fix the dump as above, then run make-puppet-pack.cmd again.'; exit 1 }
+    if ($r.Code -eq 0) {
+        $Romfs = $r.Romfs
+        Write-Host "Found the game's RomFS dump: $Romfs"
+    } else {
+        Write-Host ''
+        Write-Host "If your RomFS dump is somewhere else, type its folder (the one that holds Pack, Model, AS, RSDB and System); else press Enter to stop."
+        $answer = Read-Host 'Romfs folder'
+        if (-not $answer) { exit 1 }
+        $Romfs = $answer.Trim().Trim('"')
+    }
 }
-if (-not $Romfs -or -not (Test-Path -LiteralPath (Join-Path $Romfs 'Pack\ZsDic.pack.zs'))) {
-    Write-Host "Not a romfs folder (no Pack\ZsDic.pack.zs): $Romfs"
-    exit 1
-}
+$r = Test-Dump @('--romfs', $Romfs)
+if ($r.Code -ne 0) { Write-Host 'Fix the dump as above, then run make-puppet-pack.cmd again.'; exit 1 }
+$Romfs = $r.Romfs
 
 # The longest file it writes; Python (and the emulator) cannot use paths past 259
 # characters unless Windows long paths are on.

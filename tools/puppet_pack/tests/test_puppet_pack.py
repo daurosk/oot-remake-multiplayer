@@ -2,6 +2,8 @@
 
     python tools/puppet_pack/tests/test_puppet_pack.py
 """
+import contextlib
+import io
 import json
 import os
 import random
@@ -13,7 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, rstb, sarc  # noqa: E402
 
 try:
     import zstandard
@@ -418,6 +420,123 @@ class LoadRootTest(unittest.TestCase):
     def test_configured_missing_folder(self):
         self.write_ini(os.path.join(self.dir, "gone").replace("\\", "/"))
         self.assertEqual(build.load_root(self.user), os.path.join(self.user, "load"))
+
+
+class DumpCheckTest(unittest.TestCase):
+    """What the emulator's Dump RomFS can leave behind, and what the check says."""
+
+    FILES = (
+        "Pack/ZsDic.pack.zs",
+        "Pack/Actor/Player_Child.pack.zs",
+        "Pack/Actor/Player_Adult.pack.zs",
+        "RSDB/ActorInfo.Product.111.rstbl.byml.zs",
+        "RSDB/GameActorInfo.Product.111.rstbl.byml.zs",
+        "System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs",
+        "Model/Some.bfres.zs",
+    )
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.user = os.path.join(self.dir, "user")
+        self.romfs = os.path.join(self.user, "dump", dumpcheck.TITLE_ID, "romfs")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def put(self, rel, data=dumpcheck.ZSTD_MAGIC + b"rest"):
+        path = os.path.join(self.romfs, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def full_dump(self):
+        for rel in self.FILES:
+            self.put(rel)
+
+    def codes(self, **kw):
+        return [p.code for p in dumpcheck.check_romfs(self.romfs, **kw)]
+
+    def run_main(self, *extra):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = dumpcheck.main(["--user-dir", self.user, *extra])
+        return code, out.getvalue()
+
+    def test_complete_dump_is_found(self):
+        self.full_dump()
+        self.assertEqual(self.codes(), [])
+        code, out = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertIn(f"romfs={self.romfs}", out)
+
+    def test_no_dump(self):
+        code, out = self.run_main()
+        self.assertEqual(code, 2)
+        self.assertIn("No RomFS dump found", out)
+        self.assertIn("prod.keys", out)
+
+    def test_keys_one_folder_too_deep(self):
+        deep = os.path.join(self.user, "keys", "keys")
+        os.makedirs(deep)
+        open(os.path.join(deep, "prod.keys"), "w").close()
+        codes = [p.code for p in dumpcheck.check_setup(self.user)]
+        self.assertIn("keys-deep", codes)
+        self.assertNotIn("keys", codes)
+
+    def test_skeleton(self):
+        os.makedirs(os.path.join(self.romfs, "Pack", "Actor"))
+        self.assertEqual(self.codes(), ["skeleton"])
+        self.assertEqual(self.run_main()[0], 1)
+
+    def test_partial(self):
+        self.full_dump()
+        os.remove(os.path.join(self.romfs, "Pack", "Actor", "Player_Adult.pack.zs"))
+        self.assertEqual(self.codes(), ["partial"])
+
+    def test_stopped_mid_file(self):
+        self.full_dump()
+        self.put("Pack/Actor/Player_Child.pack.zs", b"\0" * 64)
+        self.assertEqual(self.codes(), ["damaged"])
+
+    def test_manual_dumped_instead(self):
+        self.put("html-document/index.html", b"<html>")
+        self.assertEqual(self.codes(), ["not-game"])
+
+    def test_base_game_without_update(self):
+        for rel in self.FILES:
+            self.put(rel.replace(".111.", ".100."))
+        self.assertEqual(self.codes(), ["version"])
+        self.assertEqual(self.codes(any_version=True), [])
+
+    def test_two_versions(self):
+        self.full_dump()
+        self.put("RSDB/ActorInfo.Product.100.rstbl.byml.zs")
+        self.assertEqual(self.codes(), ["mixed"])
+
+    def test_dump_root_setting(self):
+        other = os.path.join(self.dir, "elsewhere")
+        self.romfs = os.path.join(other, dumpcheck.TITLE_ID, "romfs")
+        self.full_dump()
+        os.makedirs(os.path.join(self.user, "config"))
+        with open(os.path.join(self.user, "config", "qt-config.ini"), "w", encoding="utf-8") as f:
+            f.write(f"dump_directory={other.replace(os.sep, '/')}\n")
+        self.assertEqual([os.path.normcase(p) for p in dumpcheck.find_dumps(self.user)],
+                         [os.path.normcase(self.romfs)])
+
+    def test_parent_folder_given(self):
+        self.full_dump()
+        for given in (os.path.join(self.user, "dump"), os.path.dirname(self.romfs), self.romfs):
+            self.assertEqual(dumpcheck.resolve(given), self.romfs)
+        code, out = self.run_main("--romfs", os.path.join(self.user, "dump"))
+        self.assertEqual(code, 0)
+
+    def test_build_main_refuses_bad_dump(self):
+        os.makedirs(os.path.join(self.romfs, "Pack"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = build.main(["--romfs", self.romfs, "--mod-dir", os.path.join(self.dir, "mod")])
+        self.assertEqual(code, 1)
+        self.assertIn("Skeleton", err.getvalue())
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import byml, rstb, sarc, zs  # noqa: E402
+from . import byml, dumpcheck, rstb, sarc, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -368,7 +368,15 @@ def main(argv=None):
     g.add_argument("--mod-dir", help="the mod folder to write (its romfs/ is made inside)")
     g.add_argument("--user-dir", help="the emulator's user folder; writes load/<title id>/<mod name>")
     ap.add_argument("--mod-name", default=DEFAULT_MOD_NAME)
+    ap.add_argument("--any-version", action="store_true",
+                    help=f"accept a dump that is not game data version {dumpcheck.EXPECTED_VERSION}")
     a = ap.parse_args(argv)
+    a.romfs = dumpcheck.resolve(a.romfs)
+    problems = dumpcheck.check_romfs(a.romfs, a.any_version)
+    if problems:
+        for p in problems:
+            print(f"error: {p}", file=sys.stderr)
+        return 1
     if a.mod_dir:
         mod_dir = a.mod_dir
     else:

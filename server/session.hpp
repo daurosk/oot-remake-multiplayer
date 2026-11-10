@@ -81,6 +81,12 @@ struct SessionConfig {
   float handover_chase_m = 20.0f;
   std::uint64_t handover_hold_us = 3'000'000;
   std::uint64_t handover_cooldown_us = 5'000'000;
+  // Issue 101: a game that is not the owner says its copy chases its own
+  // Link (OBJECT_PRESENT flag targeting). Its game is the only one whose
+  // enemy moves right, so out of a fight the object goes to that player once
+  // it has said so for handover_chased_us, wherever the owner's enemy
+  // stands. The owner saying the same is a fight, which keeps it.
+  std::uint64_t handover_chased_us = 500'000;
   // How long the owner has to answer HANDOVER_ASK with its state before the
   // server moves the object with the last sample it relayed.
   std::uint64_t handover_answer_us = 500'000;
@@ -179,6 +185,7 @@ struct Stats {
   std::uint64_t object_table_full = 0;  // objects turned away: max_objects
   std::uint64_t handover_asked = 0;       // HANDOVER_ASK sent to an owner
   std::uint64_t handover_unanswered = 0;  // moved with the last relayed sample
+  std::uint64_t handover_chased = 0;      // asked because a copy chased its player
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)
   std::uint64_t stale_scenes = 0;         // a late message's old scene, not taken back
@@ -306,6 +313,8 @@ class Session {
     // The player the distance rule would give it to, and since when.
     std::optional<ConnectionId> candidate;
     std::uint64_t candidate_since = 0;
+    // Games other than the owner whose copy chases their Link, and since when.
+    std::map<ConnectionId, std::uint64_t> chased_by;
     // A HANDOVER_ASK the owner has not answered yet.
     struct Ask {
       ConnectionId to = 0;
@@ -393,6 +402,10 @@ class Session {
   bool unfit_owner(const Connection& c, std::uint64_t now_us) const;
   void mark_fight(Object& o, std::uint64_t now_us);
   bool in_fight(const Object& o, std::uint64_t now_us) const;
+  // The game that has said longest (at least handover_chased_us) that its
+  // copy of `o`, or of one of its members, chases its Link; not the owner.
+  std::optional<ConnectionId> chased_by(const Object& o, ConnectionId owner,
+                                        std::uint64_t now_us) const;
   std::uint32_t group_of(const Object& o) const;
   protocol::ObjectOwner owner_message(const protocol::ObjectId& oid, const Object& o) const;
   // Takes it out of its group (its own members go free) and forgets it.

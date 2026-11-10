@@ -1362,7 +1362,14 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn);
-    // The camera as the hook's markers judge it (kCameraStale there).
+    StampDrawing(input, now_ms);
+    g_director->SetInput(std::move(input));
+}
+
+void StampDrawing(Input& input, std::uint64_t now_ms) {
+    // The camera as the hook's markers judge it (kCameraStale there). Called
+    // by the puppets and the fairies in the same frame: the second call finds
+    // the run already begun and gives the same answer.
     static bool camera_seen = false;           // the present thread only
     static std::uint64_t drawn_since_ms = 0;
     const auto camera = CoopCamera::Latest();
@@ -1377,7 +1384,6 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     input.camera = camera_seen;
     input.drawn_since_ms = drawn_since_ms;
     input.settle_ms = 1000;
-    g_director->SetInput(std::move(input));
 }
 
 } // namespace CoopPuppet

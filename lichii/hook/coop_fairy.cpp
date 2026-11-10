@@ -48,6 +48,11 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
     CoopPuppet::Input out;
     out.main_base = puppets.main_base;
     out.scene = puppets.scene;
+    // The puppets' wait for the drawing after a load: a fairy made during the
+    // loading screen is refused or never drawn (issue 93), so she waits too.
+    out.camera = puppets.camera;
+    out.drawn_since_ms = puppets.drawn_since_ms;
+    out.settle_ms = puppets.settle_ms;
     if (puppets.scene != scene_) {
         scene_ = puppets.scene;
         tracks_.clear();
@@ -297,7 +302,8 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     glue.main_base.store(main_base);
-    const auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
+    auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
+    CoopPuppet::StampDrawing(puppets, now_ms);
     glue.director->SetInput(glue.follower->Follow(puppets, now_ms));
 }
 

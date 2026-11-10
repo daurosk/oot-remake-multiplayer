@@ -30,7 +30,7 @@ Bottle hashes: A `IsValid` 0xf39ce410 / `BottleItem` 0x7d48df76; B 0x000ff6ea / 
 
 Song hashes (`IsGet.Item_Melody_…`): ZeldaLullaby 0x01c20002, EponaSong 0xb492ac33, SariaSong 0xd3f8bfcc, SunSong 0x165dd1ad, TimeSong 0x03b3450e, StormSong 0x2b39dd4f, ForestMinuet 0xdc0a0b54, FireBolero 0x49041ab9, WaterSerenade 0x3fa63986, ShadowNocturne 0xc2fb95f4, SpiritRequiem 0x802a36a8, LightPrelude 0xd6320ba4, ScarecrowSong 0x5e86fb4d.
 
-Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related and were not needed: 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077 (Int for Rupee, Bomb, Arrow, DekuStick, DekuNut and one more, perhaps capacities). Both are open.
+Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related (both now read for bombs, see [Bombs from the cheat](#bombs-from-the-cheat-issue-125)): 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077, the ammo capacities ([below](#ammo-capacity-and-what-comes-with-an-item-issue-128)).
 
 ## Rules
 
@@ -50,6 +50,34 @@ Choices made here:
 - **Ammo**: the bag, quiver and wallet tiers are shared (max); the count in them is per player.
 - **Magic**: `MPMax` and the spells are shared (max); `MP` is per player.
 - `FairyBless_*` items are per player for now: they are temporary blessings, not owned items (inferred).
+
+## Ammo capacity and what comes with an item (issue 128)
+
+Int struct 0xf80f8077 holds how much of each ammo a player can carry; its members were named by hashing candidates against the struct's member hashes in `GameDataList`. The struct's own name is not known, so the flags have only hashes. All default to 0, reset type 32, saved.
+
+| Member | Flag hash | Values seen in saves |
+|---|---|---|
+| Rupee | 0xe0010a50 | 200 with a wallet |
+| DekuSeed | 0xae8cc742 | 50 |
+| Bomb | 0xe753508b | 20 with the small bomb bag |
+| Arrow | 0x418db791 | 0 without a quiver |
+| DekuStick | 0x457616b0 | 10 |
+| DekuNut | 0x735b00f7 | 20 |
+
+The game's own get scene sets the capacity and the starting ammo with the item. An item that arrives from another player has no get scene, so the receiving game had the item with 0/0 (a player test: the shared Slingshot with no seeds, and no way out of the slingshot room). Now `ItemFlagStore`, when it gives a game an owned item that game did not have (0 to 1 or more), also raises that item's grants (`item_grants()` in `coop/host/game_items.hpp`) to at least these values, the original game's numbers:
+
+| Item | Capacity | Ammo (count, at least) | Also |
+|---|---|---|---|
+| Slingshot | DekuSeed 30 | `Item_DekuSeed` 30 | `IsGet.Item_DekuSeed` |
+| Bullet bag small / medium / large | DekuSeed 30 / 40 / 50 | filled to it | |
+| Bow | Arrow 30 | `Item_Arrow_Normal` 30 | `IsGet.Item_Arrow_Normal` |
+| Quiver small / medium / large | Arrow 30 / 40 / 50 | filled to it | |
+| Bomb bag small / medium / large | Bomb 20 / 30 / 40 | filled to it | `IsGet.Item_Bomb` (small) |
+| Nut bag small / medium / large | DekuNut 20 / 30 / 40 | filled to it | `IsGet.Item_DekuNut` (small) |
+| Stick bag small / medium / large | DekuStick 10 / 20 / 30 | filled to it | `IsGet.Item_DekuStick` (small) |
+| Wallet small / medium | Rupee 200 / 500 | none | |
+
+A value already at or above the floor is left alone, so nothing is taken away. A game that gets the item itself is left to the game. The ammo stays per player afterwards: only this one fill is written. The large wallet is left out (its size is not known). Not checked in a game: that the game reads the capacity from these flags (the cheat that sets them, `LICHII_COOP_OBJECTS_CHEAT`, gave working bombs), and the sizes of the remake's bags beyond the ones in the table above.
 
 ## Pouch items
 
@@ -245,6 +273,28 @@ The same kit, both saves reset to the child save; game A and the server first, g
 - **A Gold Skulltula is two 64-bit keys, set at token pickup.** The Kakariko tree Skulltula: in each game its own token pickup set `0x6a8d9b2373d08fc9` and `0x6a8d9b2373d08fcb` 0 -> 1 in the same scan as `Item_Token_Gold.StockNum` +1 (the clocks of A and B line up 412 s apart, so each game's pickup and the other's token arriving match). Other placements show the same pairs (key and key + 2). Not split yet: whether the kill alone sets either.
 - **Shared, the keys cross but a loaded Skulltula stays.** With both keys in the run's shared-flags file, A's pickup set them in B in the same second, yet B, already in the scene, still got the Skulltula out of the tree and its token: both games ended +2. The game reads the key when the actor is placed, not after. Anchor does the same flag sync and also deletes a Gold Skulltula (`EN_SW`) or token (`EN_SI`) actor every frame its flag is set; we need that step too (object side). Not checked: that the Skulltula is gone in B after a scene change.
 
+## Bombs from the cheat (issue 125)
+
+With `LICHII_COOP_OBJECTS_CHEAT=1` the bomb bag, 20 bombs and the bomb capacity were set, the bombs showed on ZR with 20, but every ZR made an `Item_Bomb` over Link's head that was gone 0.1 s later, the count stayed 20 and nothing was thrown (autotest `spawn-bomb`, runs 20261109-054214 and 20261110-010524).
+
+**Not the co-op code.** In run 010524 the spawn sync was off (no `coop: spawn: on` line), no delete was asked by the objects sync, the drops or the director (none of their delete lines or counts), and the bomb is not a shared object (`IsShared`, `IsDrop` say no). Writing the cheat every 2 frames instead of once a second changed nothing (s5-spawn-sync-2).
+
+**What a real bomb bag sets that the cheat did not.** The autotest kits' save baselines hold a second user profile whose saves come from a player who got the bag in the game (slots 0 to 3 and 5: 10 to 14 bombs). Compared flag by flag with the autotest profile's six saves (no bombs) and that profile's slot 4 (no bombs), with the flag types from `GameDataList`, these bomb flags are set in every bomb save and 0 in every other:
+
+| Flag | Struct, member | Real saves | Cheat before |
+|---|---|---|---|
+| `PouchData.Item_Bomb.StockNum`, `IsGet.Item_Bomb`, bag `StockNum` and `IsGet`, capacity 0xe753508b | (known) | set | set |
+| UInt 0xc7ecb4a1 | 0xf5ab6461 (one UInt per assignable item and bottle), `Item_Bomb` | 35 (the slingshot 34): the order the items were got in | 0 |
+| Bool 0x6e5e7d9a | 0x541947d0 (53 members: `Bomb`, `Bottle`, `DekuNut`, `DekuStick`, `Ocarina`, `SlingShot`, `Bow`, ...), `Bomb` | 1 | 0 |
+| Bool 0xfced7932 | 0x57f52eb8 (the same 53 members), `Bomb` | 1 | 0 |
+| Bool 0x4d345bbe | 0x41f3e410 (199 members, one per item, like `IsGet`), `Item_BombBag_Small` | 1 | 0 |
+
+The struct `PouchData.Item_Bomb` has no member but `StockNum`. The capacity struct 0xf80f8077 is Rupee, DekuSeed, Bomb, Arrow, DekuStick and DekuNut (member names hashed). The two 53-member structs are most likely the item help boxes (shown and closed): the slingshot's members are 1 in every save that has the slingshot, and the cheat's first ZR opened the "Bomb" help box. `0x41f3e410.Item_Bomb` is 0 in one real save, so it is not needed. Which of the four the game checks when Link takes a bomb out is not known.
+
+**The fix (not run yet).** The cheat (`lichii/hook/coop_cheat_items.cpp`, tested in `tests/lichii/cheat_items_test.cpp`) now also sets the three Bools and gives the bomb the next get order after the highest of the 42 items. UInt flags are written through the game's UInt queue (`GameFlags::set_uint`, [flags.md](flags.md)). A save with real bombs is left as it is.
+
+**Checks in the next run.** A taken bomb lowers the count, so the cheat tops it up again and logs `coop: objects: cheat Item_Bomb 19 -> 20`; the bomb stays on the list (`coop: objects: + Item_Bomb`, no `-` line for over a second). Without that line, the bombs are still the problem; the other way is to load one of the real bomb saves.
+
 ## Not done
 
 1. Gold Skulltula placement keys: one known (above); the rest (`Obj_RupeeToken`, 85 placements, and any others) to read from the Banc placements; a loaded Skulltula or token removed when its key is set by another player; heart piece placement keys.
@@ -268,6 +318,6 @@ Not checked in a game: that a Skulltula's placement hash is the key the game set
 
 - The walk logs `coop: objects: our Link's life L of M, MaxLife flag F (quarter hearts)` each time M or F changes, so B's log shows whether F rose after A's container and whether M followed.
 - `LICHII_COOP_DEBUG_FLAGS=1` logs the int flag change itself.
-- `LICHII_COOP_HEARTS_TO_LINK=1` (test switch, off by default) writes F into the component's max when F is higher (at most 80 quarters), and logs `our Link's max life M -> F`.
+- The walk writes F into the component's max when F is higher (at most 80 quarters; never lowers it), and logs `our Link's max life M -> F (from MaxLife)`. On by default since branch `hearts-default`; `LICHII_COOP_HEARTS_TO_LINK=0` turns it off. It runs in the object walk, so it needs `LICHII_COOP_OBJECTS=1` (on in the kit).
 
-The run: both games with `LICHII_COOP_OBJECTS=1 LICHII_COOP_DEBUG_FLAGS=1`, A raises MaxLife (the cheat window's heart container button, or a real container), then read B's log and screen. If F rises and M does not and B's hearts stay: run again with `LICHII_COOP_HEARTS_TO_LINK=1` on B; if B's hearts then grow, make that the default. Heart pieces stay as they are: the count is shared, and four pieces become a heart only in the pickup itself (live check above).
+The run: both games with `LICHII_COOP_OBJECTS=1 LICHII_COOP_DEBUG_FLAGS=1`, A raises MaxLife (the cheat window's heart container button, or a real container), then read B's log and screen. If F rises and M does not and B's hearts stay: run again with `LICHII_COOP_HEARTS_TO_LINK=1` on B; if B's hearts then grow, make that the default. Done: the integrate-p4 run (autotest `hearts`, the cheat's MaxLife 16 -> 20) showed that without the switch B's game wrote 16 back within 1 s, and with it B logged `our Link's max life 16 -> 20 (from MaxLife)` and the flag stayed 20. So it is on by default now. Not run yet: a real heart container pickup, and four real heart pieces (does the game raise MaxLife when the fourth makes a heart?). Heart pieces stay as they are: the count is shared, and four pieces become a heart only in the pickup itself (live check above).

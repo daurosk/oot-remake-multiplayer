@@ -60,6 +60,28 @@ SharedFlags item_shared_flags(bool with_off = false);
 std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t local,
                          std::uint32_t incoming, std::optional<std::uint32_t> base = {});
 
+// What the game gives with an item, besides the item itself: the ammo
+// capacity (Int struct 0xf80f8077, one member per ammo) and the ammo it
+// starts with. The game writes these in its own get scene; an item that
+// arrives from another player has no get scene, so ItemFlagStore writes them
+// when it gives a game an item it did not have (issue 128: a shared
+// Slingshot came with 0/0 seeds). Each value is a floor: a flag already at
+// or above it is left alone. Values follow the original game's get-item
+// code: Slingshot and Bow come with 30 and the small bag or quiver, a bag
+// upgrade fills the new capacity.
+struct ItemGrant {
+  std::uint32_t item;       // the item's PouchData.<item>.StockNum hash
+  std::string_view name;    // the granted flag's name in the game
+  std::uint32_t hash;       // the granted flag's hash
+  protocol::FlagKind kind;  // boolean or int32
+  std::int32_t value;       // at least this after the grant (bool: 1 = true)
+};
+
+// The grants of the item with StockNum hash `item` (empty for most items).
+std::span<const ItemGrant> item_grants(std::uint32_t item);
+// Every grant, sorted by item.
+std::span<const ItemGrant> all_item_grants();
+
 // A FlagStore that merges item flags on write and passes everything else
 // (other world flags, 64-bit keys) through unchanged. Reads are the inner
 // store's. Keeps no state beyond counters.
@@ -78,16 +100,23 @@ class ItemFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override;
   // A named count item (ItemRule::count).
   bool is_count(FlagKey key) override;
+  // An int item merged from 0 (or less) to 1 or more in the game also raises
+  // its grants (item_grants) to their floor, per-player flags included.
+  // Only writes through this store do that; the game's own gets are left
+  // to the game.
 
   struct Stats {
     std::uint64_t merged = 0;   // item writes that changed the game's value
     std::uint64_t kept = 0;     // item writes that left the game's value as it was
     std::uint64_t refused = 0;  // item writes with the wrong kind, or per player
     std::uint64_t added = 0;    // count deltas added to the game's value
+    std::uint64_t granted = 0;  // grant flags raised (ammo, capacity) with a new item
   };
   const Stats& stats() const { return stats_; }
 
  private:
+  void grant(std::uint32_t item);
+
   FlagStore& inner_;
   Stats stats_;
 };

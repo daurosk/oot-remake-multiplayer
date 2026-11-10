@@ -110,9 +110,14 @@ wait 90
 press ZR 10
 wait 20
 mark item3
-wait 60
+wait 120
 press B 10
-wait 90
+wait 180
+# The bottle swing was still running at 90 ticks in chunk 2 (2026-11-10): PLUS was lost, the
+# L/R/DUP/A presses went to the game, and the later PLUS and ZR ended on the Save screen
+# (menu-4 showed no menu). Wait out the swing; a second B is harmless when nothing is held.
+press B 10
+wait 60
 # 4: Bombs (bottle -> up 2). The first ZR opens a "Bomb" help box (spawn-bomb); A closes it.
 press PLUS 12
 wait 90

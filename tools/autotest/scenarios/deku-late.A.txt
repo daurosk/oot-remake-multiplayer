@@ -1,0 +1,30 @@
+# deku-late (chunk 3 late batch): both games load into the Deku Tree entrance room (warp
+# InsideTheDekuTree Entrance) and stay there. A sets the slingshot room's eye switch bool
+# (room-switches, A:LICHII_COOP_SET_BOOL=b3a4fe84 after 80 s): expect "bool 0xb3a4fe84 ... 0 -> 1"
+# in A and in B within about 1 s; both logs at start "coop: dungeon: sharing N dungeon flags and keys".
+# A gets bombs from the cheat at about 100 s (slingshot-ammo, what comes with an item): expect B
+# to get the bag and its 20 bombs. Enemy-kills: the Deku Babas of the entrance room: owner lines
+# and "share placed N copies" in both logs.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,A:LICHII_COOP_CHEATS=1,A:LICHII_COOP_SET_BOOL=b3a4fe84,A:LICHII_COOP_SET_AFTER=80
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1200
+give bombs
+wait 600
+mark look
+wait 1800
+mark late

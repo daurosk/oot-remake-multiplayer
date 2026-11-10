@@ -71,13 +71,13 @@ FIXED_COMPONENTS = {
 DROP_INFO_FIELDS = ("ActorName", "ELinkUserName", "SLinkUserName")
 # Always calculated while loaded: the puppet is wherever its player is.
 INFO_OVERRIDES = {"CalcRadius": 100000.0, "CoreUsedLevel": byml.UInt(0)}
-# The row whose InstanceHeapSize caps the puppet's. Player_Adult asks 10,245,064 bytes (input,
-# physics, AI and the adult's items), more than any ordinary actor in the game (the largest is
-# 8,886,792); the game's create of CoopPuppet_Adult with that size wrote its new object at address 0
-# and dropped the request every time (issue 111). Player_Base (the adult model and animations, the
-# player's components) asks 6,012,792; Dark Link, the same model with AI and physics, 5,723,776.
-# The child's 5,692,448 is below the cap and stays as it was (proven in game).
-HEAP_CAP_ROW = "Player_Base"
+# The puppet's ActorParam is the player's merged with its $parent, Player_Base, in one file. The
+# game parses an ActorParam in a heap of its size-table entry, and the player's entry is sized for
+# its own file only: Player_Adult's ActorParam is a 776-byte stub (entry 6,232) and Player_Base's
+# has its own entry (13,336). With the player's entry alone the adult puppet's 1,508-byte file ran
+# out of heap: the 0x98-byte engine__actor__ActorParam object (factory main+0x9a9300) got a null
+# pointer and every create was dropped (issue 111). The puppet's entry is the sum of the entries of
+# every file in the $parent chain that flatten_actor_param merges (actor_param_chain).
 
 # Room left in a size-table entry above the bytes we wrote.
 PACK_SIZE_MARGIN = 0x1000
@@ -118,8 +118,8 @@ def _strings(v):
         yield v
 
 
-def flatten_actor_param(members, actor):
-    """The actor's ActorParam with its `$parent` chain merged in (child wins)."""
+def actor_param_chain(members, actor):
+    """The actor's ActorParam and its `$parent` chain: [(member path, document)], the actor first."""
     chain = []
     path = actor_param_path(actor)
     seen = set()
@@ -130,8 +130,14 @@ def flatten_actor_param(members, actor):
         if path not in members:
             raise BuildError(f"{path} is not in the pack")
         doc = byml.loads(members[path])
-        chain.append(doc)
+        chain.append((path, doc))
         path = ref_to_member(doc.get("$parent")) if isinstance(doc, dict) else None
+    return chain
+
+
+def flatten_actor_param(members, actor):
+    """The actor's ActorParam with its `$parent` chain merged in (child wins)."""
+    chain = [doc for _, doc in actor_param_chain(members, actor)]
     comps = {}
     for doc in reversed(chain):
         comps.update(doc.get("Components", {}))
@@ -225,13 +231,14 @@ def _num(v):
     return v.v if isinstance(v, byml._Num) else v
 
 
-def info_row(player_row, actor, heap_cap=None):
+def info_row(player_row, actor, heap=None):
+    """The puppet's ActorInfo row: the player's, less its player-only fields. `heap`, when given,
+    sets InstanceHeapSize (a test switch, `--heap`), keeping the field's BYML type."""
     row = {k: v for k, v in player_row.items() if k not in DROP_INFO_FIELDS}
     row.update(INFO_OVERRIDES)
-    heap = row.get("InstanceHeapSize")
-    if heap_cap is not None and heap is not None and _num(heap) > _num(heap_cap):
-        # Keep the field's BYML type (the game's rows hold a plain int).
-        row["InstanceHeapSize"] = type(heap)(_num(heap_cap))
+    if heap is not None:
+        old = row.get("InstanceHeapSize")
+        row["InstanceHeapSize"] = type(old)(int(heap)) if isinstance(old, byml._Num) else int(heap)
     row["__RowId"] = actor
     return row
 
@@ -283,7 +290,9 @@ def recompress(dicts, original_raw, data):
     return dicts.compress(data, name)
 
 
-def build(romfs, mod_dir, log=print):
+def build(romfs, mod_dir, log=print, heaps=None):
+    """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111)."""
+    heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
     dicts = zs.Dicts.from_romfs(romfs)
@@ -301,10 +310,6 @@ def build(romfs, mod_dir, log=print):
     gai = byml.loads(gai_old)
     table = rstb.Rstb.loads(dicts.decompress(rs_raw))
     ai_rows = {r["__RowId"]: r for r in ai}
-    if HEAP_CAP_ROW not in ai_rows:
-        raise BuildError(f"ActorInfo has no row {HEAP_CAP_ROW}")
-    heap_cap = ai_rows[HEAP_CAP_ROW].get("InstanceHeapSize")
-
     made = []
     new_ai, new_gai = [], []
     for v in VARIANTS:
@@ -319,17 +324,21 @@ def build(romfs, mod_dir, log=print):
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
             raise BuildError(f"ActorInfo has no row {player}")
-        new_ai.append(info_row(ai_rows[player], actor, heap_cap))
+        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor)))
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
         table.add_new(strip_zs(dst_rel), pack_size)
-        player_ap = table.get(actor_param_path(player))
-        if player_ap is None:
-            raise BuildError(f"the size table has no {actor_param_path(player)}")
-        table.add_new(actor_param_path(actor), max(player_ap, len(ap) + PACK_SIZE_MARGIN))
+        chain_ap = 0
+        for path, _ in actor_param_chain(members, player):
+            size = table.get(path)
+            if size is None:
+                raise BuildError(f"the size table has no {path}")
+            chain_ap += size
+        ap_size = max(chain_ap, len(ap) + PACK_SIZE_MARGIN)
+        table.add_new(actor_param_path(actor), ap_size)
         made.append({"actor": actor, "from": player, "pack": dst_rel, "pack_bytes": len(pack),
-                     "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)),
+                     "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
                      "members": names, "equipment_keys": keys})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
@@ -391,6 +400,8 @@ def main(argv=None):
     ap.add_argument("--mod-name", default=DEFAULT_MOD_NAME)
     ap.add_argument("--any-version", action="store_true",
                     help=f"accept a dump that is not game data version {dumpcheck.EXPECTED_VERSION}")
+    ap.add_argument("--heap", action="append", default=[], metavar="ACTOR=BYTES",
+                    help="test switch: set a puppet's InstanceHeapSize, e.g. CoopPuppet_Adult=20000000")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -427,8 +438,15 @@ def _main_build(a, romfs):
         if os.path.normcase(root) != os.path.normcase(os.path.join(a.user_dir, "load")):
             print(f"note: the emulator's settings load mods from {root}")
         mod_dir = os.path.join(root, TITLE_ID, a.mod_name)
+    heaps = {}
+    for h in a.heap:
+        name, sep, size = h.partition("=")
+        if not sep or name not in (puppet_name(v) for v in VARIANTS) or not size.isdigit():
+            print(f"error: --heap {h}: want CoopPuppet_Child=BYTES or CoopPuppet_Adult=BYTES", file=sys.stderr)
+            return 2
+        heaps[name] = int(size)
     try:
-        build(romfs, mod_dir)
+        build(romfs, mod_dir, heaps=heaps)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -279,19 +279,31 @@ class BuildPackTest(unittest.TestCase):
         again = build.upsert_rows(out, [new])
         self.assertEqual(len(again), 4)
 
-    def test_info_row_heap_cap(self):
-        # Issue 111: the adult puppet asked Player_Adult's 10 MB instance heap and was never made.
+    def test_actor_param_chain(self):
+        members = fake_player_pack("Adult")
+        self.assertEqual([p for p, _ in build.actor_param_chain(members, "Player_Adult")],
+                         ["Actor/Player_Adult.engine__actor__ActorParam.bgyml",
+                          "Actor/Player_Base.engine__actor__ActorParam.bgyml"])
+        # No $parent: the file alone. A deeper chain: every file.
+        solo = {"Actor/S.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {}})}
+        self.assertEqual(len(build.actor_param_chain(solo, "S")), 1)
+        deep = dict(members)
+        base = byml.loads(deep["Actor/Player_Base.engine__actor__ActorParam.bgyml"])
+        base["$parent"] = "Work/Actor/Root.engine__actor__ActorParam.gyml"
+        deep["Actor/Player_Base.engine__actor__ActorParam.bgyml"] = byml.dumps(base)
+        deep["Actor/Root.engine__actor__ActorParam.bgyml"] = byml.dumps({"Components": {}})
+        self.assertEqual(len(build.actor_param_chain(deep, "Player_Adult")), 3)
+
+    def test_info_row_heap(self):
         adult = {"__RowId": "Player_Adult", "InstanceHeapSize": 10245064}
-        child = {"__RowId": "Player_Child", "InstanceHeapSize": 5692448}
-        self.assertEqual(build.info_row(adult, "A", 6012792)["InstanceHeapSize"], 6012792)
-        self.assertEqual(build.info_row(child, "C", 6012792)["InstanceHeapSize"], 5692448)
-        self.assertEqual(build.info_row(adult, "A")["InstanceHeapSize"], 10245064)
+        self.assertEqual(build.info_row(adult, "A")["InstanceHeapSize"], 10245064)  # the player's
+        row = build.info_row(adult, "A", 20000000)  # --heap
+        self.assertEqual(row["InstanceHeapSize"], 20000000)
+        self.assertEqual(row["__RowId"], "A")
         self.assertEqual(adult["InstanceHeapSize"], 10245064)  # the game's row is not changed
-        big = {"__RowId": "P", "InstanceHeapSize": byml.UInt(9000000)}
-        capped = build.info_row(big, "A", byml.UInt(6000000))["InstanceHeapSize"]
-        self.assertIsInstance(capped, byml.UInt)
-        self.assertEqual(capped.v, 6000000)
-        self.assertNotIn("InstanceHeapSize", build.info_row({"__RowId": "X"}, "A", 6012792))
+        big = build.info_row({"__RowId": "P", "InstanceHeapSize": byml.UInt(9000000)}, "A", 6000000)
+        self.assertIsInstance(big["InstanceHeapSize"], byml.UInt)
+        self.assertEqual(big["InstanceHeapSize"].v, 6000000)
 
 
 @unittest.skipIf(zstandard is None, "needs the zstandard package")
@@ -331,6 +343,7 @@ class FullBuildTest(unittest.TestCase):
         t.set("RSDB/GameActorInfo.Product.999.rstbl.byml", 500)
         for v in ("Child", "Adult"):
             t.set(f"Actor/Player_{v}.engine__actor__ActorParam.bgyml", 8000)
+        t.set("Actor/Player_Base.engine__actor__ActorParam.bgyml", 13336)
         self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(t.dumps()))
 
     def tearDown(self):
@@ -366,8 +379,8 @@ class FullBuildTest(unittest.TestCase):
         rows = {r["__RowId"]: r for r in byml.loads(d.decompress(ai_raw))}
         self.assertEqual(list(rows), ["Animal", "CoopPuppet_Adult", "CoopPuppet_Child", "Player_Adult",
                                       "Player_Base", "Player_Child"])
-        # The adult puppet's heap is capped at Player_Base's; the child keeps its own; the game's rows stay.
-        self.assertEqual(rows["CoopPuppet_Adult"]["InstanceHeapSize"], 6012792)
+        # Each puppet keeps its player's instance heap; the game's rows stay.
+        self.assertEqual(rows["CoopPuppet_Adult"]["InstanceHeapSize"], 10245064)
         self.assertEqual(rows["CoopPuppet_Child"]["InstanceHeapSize"], 5692448)
         self.assertEqual(rows["Player_Adult"]["InstanceHeapSize"], 10245064)
         gai = byml.loads(d.decompress(build.read(os.path.join(out, "RSDB/GameActorInfo.Product.999.rstbl.byml.zs"))))
@@ -375,11 +388,15 @@ class FullBuildTest(unittest.TestCase):
         t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
             out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
         self.assertGreater(t.get("Pack/Actor/CoopPuppet_Child.pack"), 0)
-        self.assertEqual(t.get("Actor/CoopPuppet_Adult.engine__actor__ActorParam.bgyml"), 8000)
+        # Issue 111: the merged ActorParam gets the player's entry plus Player_Base's.
+        self.assertEqual(t.get("Actor/CoopPuppet_Adult.engine__actor__ActorParam.bgyml"), 8000 + 13336)
+        self.assertEqual(t.get("Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"), 8000 + 13336)
+        self.assertEqual(t.get("Actor/Player_Adult.engine__actor__ActorParam.bgyml"), 8000)
         self.assertGreaterEqual(t.get("RSDB/ActorInfo.Product.999.rstbl.byml"), 1000)
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
-        self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 6012792])
+        self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 10245064])
+        self.assertEqual([a["param_size"] for a in man["actors"]], [21336, 21336])
         for a in man["actors"]:
             self.assertIn("EquipmentUser_Weapon", a["equipment_keys"])
             self.assertIn("EquipmentUser_Shield", a["equipment_keys"])
@@ -389,6 +406,36 @@ class FullBuildTest(unittest.TestCase):
         build.build(self.romfs, mod, log=lambda *_: None)
         for r, b in first.items():
             self.assertEqual(build.read(os.path.join(out, r)), b)
+
+    def test_build_heap_switch(self):
+        from puppet_pack import zs
+        mod = os.path.join(self.dir, "mod2")
+        m = build.build(self.romfs, mod, log=lambda *_: None, heaps={"CoopPuppet_Adult": 20000000})
+        self.assertEqual([a["instance_heap"] for a in m["actors"]], [5692448, 20000000])
+        rows = byml.loads(zs.Dicts.from_romfs(self.romfs).decompress(build.read(
+            os.path.join(mod, "romfs", "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+        heap = {r["__RowId"]: r.get("InstanceHeapSize") for r in rows}
+        self.assertEqual(heap["CoopPuppet_Adult"], 20000000)
+        self.assertEqual(heap["Player_Adult"], 10245064)  # the switch never touches the game's row
+
+    def test_missing_parent_size_fails(self):
+        t = rstb.Rstb()
+        t.set("RSDB/ActorInfo.Product.999.rstbl.byml", 1000)
+        t.set("RSDB/GameActorInfo.Product.999.rstbl.byml", 500)
+        for v in ("Child", "Adult"):
+            t.set(f"Actor/Player_{v}.engine__actor__ActorParam.bgyml", 8000)
+        self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs",
+                   zstandard.ZstdCompressor().compress(t.dumps()))
+        with self.assertRaises(build.BuildError):
+            build.build(self.romfs, os.path.join(self.dir, "mod4"), log=lambda *_: None)
+
+    def test_main_heap_switch(self):
+        mod = os.path.join(self.dir, "mod3")
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--heap", "Bad=1", "--any-version"]), 2)
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--heap", "CoopPuppet_Adult=20000000"]), 0)
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertEqual(man["actors"][1]["instance_heap"], 20000000)
 
     def test_place_test(self):
         from puppet_pack import place_test, zs

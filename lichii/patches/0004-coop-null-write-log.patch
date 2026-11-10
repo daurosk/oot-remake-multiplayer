@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 00:48:47 -0900
+Subject: [PATCH] coop: log who writes to guest address 0
+
+A write to address 0 is an object built at a null pointer: an allocation
+that failed, then the constructor's vtable store. With memory aborts
+ignored the game runs on and the log only shows "Unmapped Write64 @ 0x0".
+Log the pc, lr, sp and up to 10 return addresses from the frame-pointer
+chain, the first 16 times in a run, so the caller can be found in main
+(oot-remake-multiplayer issue 111: the adult puppet's create).
+---
+ src/core/arm/dynarmic/arm_dynarmic_64.cpp | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/src/core/arm/dynarmic/arm_dynarmic_64.cpp b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+index b489e79568..46c9c14637 100644
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include <atomic>
+ #include <cstdlib>
++#include <string>
+ #if defined(_M_X64) || defined(__x86_64__)
+ #include <immintrin.h>
+ #endif
+@@ -75,6 +76,24 @@ std::optional<u32> DynarmicCallbacks64::MemoryReadCode(u64 vaddr) {
+ }
+ 
+ void DynarmicCallbacks64::MemoryWrite(Dynarmic::A64::VAddr vaddr, u64 value, std::size_t size) {
++#ifdef LICHII_COOP
++    // A write to guest address 0 is an object built at a null pointer (an allocation that
++    // failed, then the constructor's vtable store): say who called, by the frame-pointer chain.
++    if (vaddr == 0) [[unlikely]] {
++        static std::atomic<u32> logged{};
++        if (logged.fetch_add(1) < 16) {
++            std::string chain;
++            u64 fp = m_parent.m_jit->GetRegister(29);
++            for (int i = 0; i < 10 && fp != 0 && (fp & 7) == 0 && m_memory.IsValidVirtualAddressRange(fp, 16); ++i) {
++                chain += fmt::format(" {:#x}", m_memory.Read64(fp + 8) & 0xffffffffffffULL);
++                fp = m_memory.Read64(fp);
++            }
++            LOG_ERROR(Core_ARM, "Write to address 0 = {:#x} ({} bytes) at pc {:#x} lr {:#x} sp {:#x}; return addresses:{}",
++                      value, size, m_parent.m_jit->GetPC(), m_parent.m_jit->GetRegister(30) & 0xffffffffffffULL,
++                      m_parent.m_jit->GetSP(), chain);
++        }
++    }
++#endif
+     if (CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Write)) {
+         switch (size) {
+         case sizeof(u64): return m_memory.Write64(vaddr, u64(value));

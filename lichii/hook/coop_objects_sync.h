@@ -124,6 +124,16 @@ bool IsRolled(std::string_view name);
 // a copy, and deletes the copy if its own one turns up.
 bool IsAnnounced(std::string_view name);
 
+// An enemy animation that plays as it dies ("Die", "Dead_Fall",
+// "Damage_Death"): a word Die, Dead or Death at the start or after '_'. An
+// owned enemy that leaves the walk while playing one died, even when its life
+// could not be read (the big Skulltula has none we can read; issue 133).
+bool IsDeathAnimation(std::string_view name);
+
+// An animation name without its level-of-detail suffix ("Wait_ModelOnlyLOD"
+// is "Wait"), so a far copy's LOD variant is not another animation.
+std::string_view AnimationBase(std::string_view name);
+
 // Enemies made of several actors (docs/objects.md, "Groups"): a boss and its
 // parts, an enemy and what it summons. Each part follows a root of one of the
 // names `roots` (the first name found wins, then the nearest), within `reach`
@@ -139,6 +149,13 @@ const GroupPart* PartOf(std::string_view name);
 // A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
 // and the roots of boss groups); never a picture book _Dictionary actor.
 bool IsBoss(std::string_view name);
+
+// Issue 88: the hearts the game draws come from our Link's Life component,
+// not from the shared PlayerStatus.MaxLife flag. The max (quarter hearts) to
+// write into the component: the flag when another player raised it above
+// ours (at most 20 hearts), else nothing. Never lowers it.
+inline constexpr std::int32_t kMostLifeQuarters = 20 * 4;
+std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag);
 
 // One shared actor of a walk, for GroupsOf.
 struct GroupInput {
@@ -250,6 +267,54 @@ public:
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
     static constexpr int kMissedWalks = 2;
+
+    // Present thread, every frame, before the Mover puts the copies back
+    // (issue 101): `put` is where the Mover put the actor at `address` last
+    // frame, `now` where the game's own frame left it. An enemy copy we do
+    // not own whose own AI pulls it towards our Link (kChaseStepM or more a
+    // frame, within kChaseReachM) with no gap over kChaseGapUs for
+    // kChaseHoldUs is chasing us: OBJECT_PRESENT then flags it targeting for
+    // kChaseKeepUs, and the server gives it to us. An enemy we own that comes
+    // towards our Link at kChaseSpeed or more is flagged the same way, which
+    // the server takes as a fight, so it stays ours.
+    void NoteDrift(std::uint64_t address, const coop::protocol::Vec3& put,
+                   const coop::protocol::Vec3& now, std::uint64_t now_us);
+    static constexpr float kChaseReachM = 40.0f;
+    static constexpr float kChaseStepM = 0.02f;
+    static constexpr float kChaseSpeed = 1.0f;  // metres a second
+    static constexpr std::uint64_t kChaseHoldUs = 1'000'000;
+    static constexpr std::uint64_t kChaseGapUs = 400'000;
+    static constexpr std::uint64_t kChaseKeepUs = 2'000'000;
+
+    // Issue 132: an enemy that does not move to fight (a Deku Baba rising
+    // out of the ground, a big Skulltula dropping) shows no drift. Its copy
+    // still wants to act: within kWakeM of our Link, its own AI plays another
+    // animation than the owner's latest. Seen so in walks with no gap over
+    // kChaseGapUs for kChaseHoldUs, it is flagged targeting like a chase, and
+    // the server gives it to us. An enemy we own within kWakeM of our Link
+    // that plays another animation than the one it rested in when first seen
+    // is flagged too (a fight to the server), so it stays with the game whose
+    // Link woke it. Off with SetWake(false) (LICHII_COOP_OBJECTS_WAKE=0).
+    void SetWake(bool on) { wake_ = on; }
+    static constexpr float kWakeM = 10.0f;
+    // The owner side flags a woken enemy only this long after it left its
+    // rest animation, so an enemy that patrols or flies near its owner's
+    // Link is not held in a fight for good (that would stop the chase rule).
+    static constexpr std::uint64_t kWakeOwnUs = 4'000'000;
+    // A copy's kill counts for a resend this long after our hit took it to 0.
+    static constexpr std::uint64_t kKilledKeepUs = 5'000'000;
+
+    // Issue 133. Hits on an enemy whose owner is not known yet are kept this
+    // long and sent once it is (another game's), dropped if it is ours.
+    static constexpr std::uint64_t kHitKeepUs = 2'000'000;
+    // A copy we killed here that the owner's samples still show alive after
+    // kHitHoldUs: the DAMAGE is sent again for the life the owner shows, at
+    // most this many times, and the copy is not healed back.
+    static constexpr int kResendMax = 2;
+    // A copy whose owner said it died (OBJECT_REMOVE, reason dead) and that
+    // is still on our walk this long after is deleted with the game's delete
+    // request (its own death, if the life we wrote started one, is done).
+    static constexpr std::uint64_t kDeadGraceUs = 3'000'000;
     // Present thread, every frame: where each copy we do not own should be.
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
 
@@ -282,6 +347,19 @@ public:
 
     // Present thread: not connected or the game went away. Forgets everything.
     void Reset();
+
+    // Network thread, on a reconnect: the server's epochs may start again
+    // at 0, so the owners we know of placed objects are forgotten at the
+    // next Tick (issue 133). The server sends each owner again.
+    // OBJECT_OWNERs of the old connection not yet applied go too, so none
+    // lands after the forget with its old, higher epoch.
+    void ForgetOwners() {
+        std::lock_guard lock(inbox_mutex_);
+        forget_owners_ = true;
+        std::erase_if(inbox_, [](const coop::protocol::Message& m) {
+            return std::holds_alternative<coop::protocol::ObjectOwner>(m);
+        });
+    }
 
     // For tests and logs.
     std::size_t Count() const { return objects_.size(); }
@@ -357,7 +435,23 @@ private:
         bool reacts = false;                    // an enemy: hurts go through the game
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
+        // Chasing our Link (NoteDrift): the run of steps towards it.
+        std::uint64_t chase_first = 0;
+        std::uint64_t chase_last = 0;
+        std::uint64_t chase_until = 0;
+        // Issue 132: the animation it was first seen in (an owned enemy at rest).
+        std::string rest_animation;
+        std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
+        // Our own hit took its life to 0 here (the DAMAGE resend's mark).
+        std::uint64_t killed_at = 0;
+        // Issue 133: resends of a DAMAGE for a copy we killed here, and when
+        // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
+        int resent = 0;
+        std::uint64_t dead_at = 0;
     };
+
+    // One step of `o` towards our Link at `now_us` (NoteDrift).
+    static void ChaseStep(Object& o, std::uint64_t now_us);
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
@@ -407,6 +501,8 @@ private:
     std::uint8_t self_ = 0;
     std::set<std::uint64_t> taken_;             // key64 flags seen set to 1
     std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken
+    std::set<std::uint64_t> dead_;    // copies whose owner said dead kDeadGraceUs ago
+    bool wake_ = true;
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts written directly after the wait
@@ -415,6 +511,7 @@ private:
 
     mutable std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;
+    bool forget_owners_ = false;  // guarded by inbox_mutex_
 };
 
 } // namespace CoopObjects

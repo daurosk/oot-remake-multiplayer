@@ -37,6 +37,45 @@ TEST_CASE("dungeon: the Water Temple's water level and switches are in the list"
     CHECK(shutter);
 }
 
+TEST_CASE("dungeon: a room gimmick's played event is shared, story scenes and bosses are not") {
+    std::set<std::string> names;
+    std::size_t played = 0;
+    for (const auto& f : CoopDungeon::Flags()) {
+        names.insert(f.name);
+        const std::string name = f.name;
+        if (name.rfind("HavePlayedEvent.", 0) == 0) {
+            ++played;
+            CHECK_FALSE(f.is_int);
+            for (const char* left_out : {"Boss", "Navi", "Talk", "Meet", "Ruto", "SageOf",
+                                         "HavePlayedEvent.Common_", "HavePlayedEvent.Dm_",
+                                         "HavePlayedEvent.Demo_"}) {
+                CHECK_MESSAGE(name.find(left_out) == std::string::npos, name);
+            }
+        }
+    }
+    // Issue 129: the Deku Tree slingshot room's ladder, and its room cleared.
+    CHECK(names.count("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder") == 1);
+    CHECK(names.count("InsideTheDekuTree_RoomC_Cleared") == 1);
+    // The other Deku Tree rooms' gimmicks, and some of every kind elsewhere.
+    CHECK(names.count("HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomD_PlatformUp") == 1);
+    CHECK(names.count("HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop") == 1);
+    CHECK(names.count("HavePlayedEvent.DodongoCavern_Gimmick_EyeSwitch") == 1);
+    CHECK(names.count("HavePlayedEvent.ForestTemple_Room22_ShutterOpen") == 1);
+    CHECK(names.count("HavePlayedEvent.ShadowTemple_Room06_SilverToken_Unlock") == 1);
+    // One-way rides and camera shots that are no room's state stay out.
+    for (const char* out :
+         {"HavePlayedEvent.ShadowTemple_Gimmick_Departure", "HavePlayedEvent.ForestTemple_Room11_ElevatorStart",
+          "HavePlayedEvent.ForestTemple_Room11_RoomSpin", "HavePlayedEvent.ForestTemple_Room22_RoomSpin",
+          "HavePlayedEvent.FocusOnGimmick_Basic", "HavePlayedEvent.FocusOnGimmick_NoSE",
+          "HavePlayedEvent.TrapTreasureBoxOpen", "HavePlayedEvent.TreasureBoxAppear_Room04",
+          "HavePlayedEvent.InsideGanonCastle_LookBarrierFromDoor_Fire",
+          "HavePlayedEvent.GanonCastle_Dungeon_SeeTowerBarrier",
+          "HavePlayedEvent.GanonCastle_Dungeon_SeeTowerBarrier_FromDoor"}) {
+        CHECK_MESSAGE(names.count(out) == 0, out);
+    }
+    CHECK(played > 180);
+}
+
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {
     std::optional<host::SharedFlags> none;
     CHECK(CoopDungeon::Merge(none, false) == 0);
@@ -172,4 +211,41 @@ TEST_CASE("dungeon: a chest opened in one game opens in the other and never clos
     wb.receive(proto::Message{proto::FlagState{2, {{chest, proto::FlagKind::boolean, 0}}}});
     wb.frame(b);
     CHECK(b.values[chest].value == 1);
+}
+
+TEST_CASE("dungeon: the slingshot room's ladder event played in A is set in B (issue 129)") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list.has_value());
+    const auto ladder =
+        host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder"), 0);
+    const auto cleared = host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomC_Cleared"), 0);
+
+    Game a;
+    Game b;
+    for (Game* g : {&a, &b}) {
+        g->set(ladder, 0);
+        g->set(cleared, 0);
+    }
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wa.frame(a);
+    wb.frame(b);
+
+    // A shoots the eye switch: its game plays the event and clears the room.
+    a.set(ladder, 1);
+    a.set(cleared, 1);
+    const auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    const auto* set = std::get_if<proto::FlagSet>(&m);
+    REQUIRE(set);
+    CHECK(set->flags.size() == 2);
+
+    wb.receive(proto::Message{proto::FlagState{1, set->flags}});
+    wb.frame(b);
+    CHECK(b.values[ladder].value == 1);
+    CHECK(b.values[cleared].value == 1);
 }

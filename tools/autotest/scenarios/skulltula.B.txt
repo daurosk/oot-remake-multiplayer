@@ -9,7 +9,10 @@ stick 0 -1 150
 wait 480
 mark graveyard
 goto -24.0 16.0 1.0 900
-goto -25.0 20.5 0.8 900 # about 7 m from the Skulltula
+goto -25.0 20.5 0.8 900
+# Chunk 2 (2026-11-10): from here (7.5 m) the Skulltula was too small and dark in B's shots.
+# Closer, west of A (A stops at about -22.4 21.7: something blocks it further east).
+goto -24.6 23.6 0.5 600 # about 5 m from the Skulltula, 2.5 m from A
 toward -20.20 26.40 20
 mark watching
 wait 1800

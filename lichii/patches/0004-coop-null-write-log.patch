@@ -14,7 +14,7 @@ chain, the first 16 times in a run, so the caller can be found in main
  1 file changed, 19 insertions(+)
 
 diff --git a/src/core/arm/dynarmic/arm_dynarmic_64.cpp b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
-index b489e79568..46c9c14637 100644
+index 4699654ed3..597363a8f7 100644
 --- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
 +++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
 @@ -6,6 +6,7 @@
@@ -25,7 +25,7 @@ index b489e79568..46c9c14637 100644
  #if defined(_M_X64) || defined(__x86_64__)
  #include <immintrin.h>
  #endif
-@@ -75,6 +76,24 @@ std::optional<u32> DynarmicCallbacks64::MemoryReadCode(u64 vaddr) {
+@@ -79,6 +80,24 @@ std::optional<u32> DynarmicCallbacks64::MemoryReadCode(u64 vaddr) {
  }
  
  void DynarmicCallbacks64::MemoryWrite(Dynarmic::A64::VAddr vaddr, u64 value, std::size_t size) {

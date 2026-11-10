@@ -15,15 +15,15 @@ stops it when it closes.
  src/core/CMakeLists.txt                          |  4 ++++
  .../hle/service/nvdrv/devices/nvdisp_disp0.cpp   |  6 ++++++
  src/core/hle/service/nx2_gsv.h                   |  6 ++++++
- src/yuzu/CMakeLists.txt                          |  4 ++++
+ src/yuzu/CMakeLists.txt                          |  5 +++++
  src/yuzu/main_window.cpp                         | 10 ++++++++++
- 6 files changed, 46 insertions(+)
+ 6 files changed, 47 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e847462b0..cc4ab7bdce 100644
+index f6009ff51b..7784525446 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -728,6 +728,22 @@ if (MSVC AND CXX_CLANG)
+@@ -731,6 +731,22 @@ if (MSVC AND CXX_CLANG)
      link_libraries(llvm-mingw-runtime)
  endif()
  
@@ -47,10 +47,10 @@ index 8e847462b0..cc4ab7bdce 100644
  
  if (ENABLE_DEBUG_TOOLS)
 diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
-index c229ee21c8..a1df9c8e5a 100644
+index 63168a5ed4..a20b8e40f4 100644
 --- a/src/core/CMakeLists.txt
 +++ b/src/core/CMakeLists.txt
-@@ -1320,4 +1320,8 @@ elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS_RELEA
+@@ -1324,4 +1324,8 @@ elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS_RELEA
      set_source_files_properties(${lichii_kernel_sources} PROPERTIES COMPILE_OPTIONS -fno-lto)
  endif()
  
@@ -84,10 +84,10 @@ index b8a8979315..b7c3d805df 100644
  
  void nvdisp_disp0::WaitForComposite() {
 diff --git a/src/core/hle/service/nx2_gsv.h b/src/core/hle/service/nx2_gsv.h
-index 7b0f3006e1..1e93b157ff 100644
+index 9584ca3806..6a43fc7155 100644
 --- a/src/core/hle/service/nx2_gsv.h
 +++ b/src/core/hle/service/nx2_gsv.h
-@@ -82,6 +82,9 @@
+@@ -83,6 +83,9 @@
  #include "core/hle/service/sm/sm.h"
  #include "core/hle/service/server_manager.h"
  #include "core/hle/service/service.h"
@@ -97,7 +97,7 @@ index 7b0f3006e1..1e93b157ff 100644
  
  namespace Service {
  
-@@ -2427,6 +2430,9 @@ private:
+@@ -2459,6 +2462,9 @@ private:
          system.SpeedLimiter().DoSpeedLimiting(system.CoreTiming().GetGlobalTimeUs());
          system.GetPerfStats().EndSystemFrame();
          system.GetPerfStats().BeginSystemFrame();
@@ -108,20 +108,21 @@ index 7b0f3006e1..1e93b157ff 100644
  
      // EDEN_NX2_FRAME_CAPTURE=<dir>: every 120th present, save what the renderer shows as
 diff --git a/src/yuzu/CMakeLists.txt b/src/yuzu/CMakeLists.txt
-index 2475ab500d..e3322ac2fb 100644
+index f96bd5be8e..d3104c7085 100644
 --- a/src/yuzu/CMakeLists.txt
 +++ b/src/yuzu/CMakeLists.txt
-@@ -510,4 +510,8 @@ endif()
- # Remember that the linker is incredibly stupid.
- target_link_libraries(yuzu PRIVATE OpenSSL::SSL OpenSSL::Crypto SDL3::SDL3)
- 
+@@ -516,4 +516,9 @@ if (TARGET nxformat::static_nozstd)
+     target_link_libraries(yuzu PRIVATE nxformat::static_nozstd)
+     target_compile_definitions(yuzu PRIVATE LICHII_NX_TOOLS)
+ endif()
++
 +if (LICHII_COOP)
 +    include("${LICHII_COOP_DIR}/lichii/hook/qt.cmake")
 +endif()
 +
  create_target_directory_groups(yuzu)
 diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
-index 0af8cfe631..3cbda0e713 100644
+index f71ba48628..34b1cacec9 100644
 --- a/src/yuzu/main_window.cpp
 +++ b/src/yuzu/main_window.cpp
 @@ -16,6 +16,10 @@
@@ -135,7 +136,7 @@ index 0af8cfe631..3cbda0e713 100644
  #ifdef HAS_RESHADE
  #include "configuration/configure_post_processing.h"
  #include "video_core/post_processing/fx_preset.h"
-@@ -1090,6 +1094,9 @@ void MainWindow::WebBrowserRequestExit() {
+@@ -1094,6 +1098,9 @@ void MainWindow::WebBrowserRequestExit() {
  void MainWindow::InitializeWidgets() {
      render_window = new GRenderWindow(this, input_subsystem);
      render_window->hide();
@@ -145,7 +146,7 @@ index 0af8cfe631..3cbda0e713 100644
  
      game_list = new GameList(QtCommon::vfs, QtCommon::provider.get(), *play_time_manager,
                               *QtCommon::system, this);
-@@ -5720,6 +5727,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
+@@ -5793,6 +5800,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
          return;
      }
      LOG_INFO(Frontend, "Closing frontend after emulation cleanup");

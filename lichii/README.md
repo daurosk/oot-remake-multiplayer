@@ -42,7 +42,7 @@ The program is `build\coop\bin\lichii.exe`. Leave out the two `LICHII_COOP` opti
 
 `CMAKE_PROJECT_TOP_LEVEL_INCLUDES` brings in this repo's `cmake/trim_paths.cmake` before the emulator's first `project()`: every source path compiled into the program (the log prints them with each line) is cut down to the part below the source root (`src\core\core.cpp`), and the `.pdb` is named without its folder. Without it the program carries the folders it was built in, and `tools/release/make_kit.ps1` refuses it for a kit. It needs CMake 3.24 and a fresh configure (or a full rebuild).
 
-`_CL_` is needed with MSVC (found at `fritchii-v4.1`; `fritchii-v5`, `fritchii-v5.5` and `fritchii-v5.6` keep the same flags in `src/CMakeLists.txt`, and was built with it): the emulator turns the four "declaration hides another" warnings (C4456 to C4459) into errors, and `src/common/frizti_settings.cpp`, `src/video_core/engines/kepler_compute.cpp`, `maxwell_3d.cpp` and `renderer_vulkan/vk_rasterizer.cpp` trip them. MSVC appends `_CL_` after every other flag, so this switches those four off without changing the emulator's source.
+`_CL_` is needed with MSVC (found at `fritchii-v4.1`; `fritchii-v5`, `fritchii-v5.5`, `fritchii-v5.6` and `fritchii-v5.7` keep the same flags in `src/CMakeLists.txt`, and was built with it): the emulator turns the four "declaration hides another" warnings (C4456 to C4459) into errors, and `src/common/frizti_settings.cpp`, `src/video_core/engines/kepler_compute.cpp`, `maxwell_3d.cpp` and `renderer_vulkan/vk_rasterizer.cpp` trip them. MSVC appends `_CL_` after every other flag, so this switches those four off without changing the emulator's source.
 
 ## What the patch touches
 
@@ -77,7 +77,7 @@ Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same
 
 The patches stay at 10 files and about 90 lines; everything else is in `hook/`.
 
-Moves so far: `fritchii-v5` to `fritchii-v5.5` (2026-11-09, 37 commits, mostly the Vulkan renderer, shaders and settings; all three patches applied as they were), then `fritchii-v5.6` (2026-11-10, 108 commits after v5.5).
+Moves so far: `fritchii-v5` to `fritchii-v5.5` (2026-11-09, 37 commits, mostly the Vulkan renderer, shaders and settings; all three patches applied as they were), then `fritchii-v5.6` (2026-11-10, 108 commits after v5.5), then `fritchii-v5.7` (2026-11-10, below).
 
 For v5.6, 0001 and 0003 applied as they were, at new line numbers. 0002 needed one change: v5.6 no longer puts `TrackOcarinaCamera` inside `#ifdef EGLANTINE_STREAMLINE` in `RasterizerVulkan::PrepareDraw`, so our `CoopCamera::Track` call now sits just before it, with no `#ifdef EGLANTINE_STREAMLINE` around it. `nx2_gsv.h`, `patch_manager.cpp` and `main_window.cpp` changed a lot in v5.6, but the lines our calls sit beside are the same. `svc.cpp`, `nvdisp_disp0.cpp` and the kernel did not change.
 
@@ -87,6 +87,17 @@ What in v5.6 matters to co-op:
 - **"Preparing shaders" runs once more** (about 15 minutes) on the first start of a v5.6 build, in every kit and every test folder. Autotest runs need a longer first timeout.
 - **Mods that patch the same spot as Fritchii's built-in patches now win over them.** Our cave in `main` (0003) is written after the built-in patches, in `PatchNSO`, as before.
 - Fritchii now offers its own update when it starts (v4 to v5.5 users). That is the updater below, and a co-op build does not have it.
+
+Then `fritchii-v5.7` (2026-11-10, for test6). 0002, 0003 and 0004 applied as they were, at new line numbers. 0001 needed one change: v5.7 adds an `nx_tools` block (.nx archives) at the end of `src/yuzu/CMakeLists.txt`, right where our `qt.cmake` include sits; both blocks are kept, ours after it. The updater is still only built with `ENABLE_UPDATE_CHECKER`, so 0001's refusal still covers it.
+
+What in v5.7 matters to co-op:
+- **Its high refresh code (Ctrl+U) moved to main+0x3C46E00..0x3C46F10**, at the free end of the page, because the Hyrule Cheat Menu mod uses the spot after Dark's routine. Before (v5.6) it lived at main+0x3C46280, where our cave (0003, `CoopGameBuild` `svc_cave`) is, so turning Ctrl+U on while playing wrote over our cave. In v5.7 a live Ctrl+U writes only its call (main+0x6E6CC4), the water hook (main+0x475F8) and main+0x3C46E00.., none of which our code uses (our cave 0x3C46280..0x3C46300, the AI hold 0x3C46300.., its table 0x3C46400..0x3C46610). One thing stays as it was: when the setting is on at start, the built-in patch writes its cave before ours, and our check that main+0x3C46280..0x3C47000 is free fails, so "coop puppet" is skipped (the log says `main+0x3c46e00 is not free`). Keep Ctrl+U off when starting a co-op game; narrowing that check to the bytes we use is a possible follow-up.
+- **Stretched or glowing geometry and white areas after area changes fixed** (the GPU kept showing freed memory that was reused). Should make long co-op sessions with many scene changes cleaner.
+- **No out-of-memory crash on 16 GB PCs**, less VRAM (about 6 GB instead of up to 10 GB) and more free RAM: two emulators on one PC (the autotests) should fit better.
+- **About 5 fps more in fights, less stutter after area changes, shorter hitches on loads and kills** (file reads no longer held to 40 MB/s): loads finish sooner, which shortens the window where our flags and objects wait for a scene.
+- **.nx games** (Convert to NX in the game list): another way to keep the game. The puppet pack tool still needs the romfs (`.nup` or a dump folder), not an `.nx`.
+- **"Preparing shaders" runs once after the update** (a few minutes; the driver keeps most of its cache). The kit's `Update.bat` moves the old shader cache aside whenever `lichii.exe` changes, so the first start of test6 prepares them anew.
+- Fritchii's tuned settings are applied once more on the first start of v5.7 (its own `qt-config.ini` change; a kit's player settings in `emulator\user\config` are kept by the update).
 
 ### The emulator's own updater
 

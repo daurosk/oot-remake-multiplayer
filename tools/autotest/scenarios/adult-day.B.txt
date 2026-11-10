@@ -2,7 +2,7 @@
 # Run with -NoLoad: the warp is asked before the save is loaded, because the game takes it
 # only during an event (the one after a save loads), and this file loads the save itself.
 mark start
-warp KakarikoVillage_Child Kakariko_WellSide
+warp KakarikoVillage_Adult Kakariko_WellSide
 wait 1200               # the title screen
 mark title
 press A

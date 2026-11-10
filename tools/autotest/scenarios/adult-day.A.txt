@@ -1,4 +1,4 @@
-# adult-day: as adult.A.txt, but in Kakariko by day (KakarikoVillage_Adult, Kakariko_WellSide) so the adult puppet can be seen (#111); B stays child in KakarikoVillage_Child at the same start.
+# adult-day: as adult.A.txt, but in Kakariko by day (KakarikoVillage_Adult, Kakariko_WellSide) so the adult puppet can be seen (#111); B is adult in the same scene (a child B in KakarikoVillage_Child keeps the puppet idle: other scene).
 # Run with -NoLoad: the warp is asked before the save is loaded, because the game takes it
 # only during an event (the one after a save loads), and this file loads the save itself.
 #! noload

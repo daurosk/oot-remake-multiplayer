@@ -1,0 +1,37 @@
+# deku-hit (v5.7 smoke, enemy kills #133): both games load into the Deku Tree entrance; A walks
+# to the Deku Baba at -71.33 3.50 (floor, y 82) and swings the sword (Y) at it several times.
+# Expect A "hit record Enemy_Dekubaba", owner/damage lines, and B the same Baba hit or gone
+# ("share got damage", "dead in its owner's game" or "share gone ... Enemy_Dekubaba").
+#! noload
+#! start coop: test warp done
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+goto -68.5 3.5 1.5 900
+toward -71.33 3.5 10
+press Y
+wait 40
+press Y
+wait 40
+mark swing
+toward -71.33 3.5 6
+press Y
+wait 40
+press Y
+wait 40
+press Y
+wait 120
+mark hit
+wait 600
+mark late

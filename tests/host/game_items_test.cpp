@@ -40,6 +40,7 @@ constexpr std::uint32_t kForestKeys = 0x90237092;      // DungeonInfo.ForestTemp
 constexpr std::uint32_t kGoldTokens = 0x04735978;      // PouchData.Item_Token_Gold.StockNum, count
 constexpr std::uint32_t kHeartPieces = 0x51ec97b3;     // PouchData.Obj_Heart_Piece.StockNum, count
 constexpr std::uint32_t kMaxLife = 0xfbe01da1;         // PlayerStatus.MaxLife, max
+constexpr std::uint32_t kDekuShield = 0x7ca64f23;      // PouchData.Weapon_Shield_Deku.StockNum, max
 constexpr std::uint32_t kWorldBool = 0x11, kWorldInt = 0x22;  // not items
 
 // The GameDataMgr layout of docs/flags.md, as in game_flags_test.cpp, with
@@ -101,7 +102,8 @@ void queue(FakeMemory& m, std::uint64_t base, std::uint64_t buf, std::uint64_t s
 
 const std::vector<std::uint32_t> kBools{kHookshotGet, kBottleAValid, kWorldBool};
 const std::vector<std::uint32_t> kInts{kHookshot,   kPocketEgg,  kRupees, kBottleA,
-                                       kBottleAItem, kForestKeys, kWorldInt, kMaxLife};
+                                       kBottleAItem, kForestKeys, kWorldInt, kMaxLife,
+                                       kDekuShield};
 
 std::size_t at(const std::vector<std::uint32_t>& v, std::uint32_t h) {
   for (std::size_t i = 0; i < v.size(); ++i)
@@ -127,6 +129,20 @@ void hold_bool(Writable& w, std::uint32_t h, bool v) {
 }
 void hold_int(Writable& w, std::uint32_t h, std::int32_t v) {
   w.mem.put_u32(kIntEntries + kIntStride * at(kInts, h) + kIntValue, static_cast<std::uint32_t>(v));
+}
+
+// The game's applier: the queued Int writes go into the table and the queue
+// is emptied (its round moves on), as the game does each frame. Without it a
+// read keeps returning the newest queued value.
+void apply_ints(Writable& w) {
+  const std::uint64_t word_at = kMgr + 0xd0 + 0x30;
+  const std::uint32_t word = *coop::host::read_u32(w.mem, word_at);
+  for (std::uint32_t k = 0; k < (word & 0xfffff); ++k) {
+    const std::uint32_t value = *coop::host::read_u32(w.mem, kIntQueue + 12 * k);
+    const std::uint32_t hash = *coop::host::read_u32(w.mem, kIntQueue + 12 * k + 4);
+    w.mem.put_u32(kIntEntries + kIntStride * at(kInts, hash) + kIntValue, value);
+  }
+  w.mem.put_u32(word_at, (((word >> 28) + 1) & 0xf) << 28);
 }
 
 protocol::FlagEntry b(std::uint32_t h, bool v) { return {h, 0, K::boolean, v ? 1u : 0u}; }
@@ -714,4 +730,87 @@ TEST_CASE("item grants: a flag the game cannot write is skipped, the item still 
   CHECK(store.write(owned(kSlingshot)));
   CHECK(game.value(kSlingshot) == 1);
   CHECK(store.stats().granted == 0);
+}
+
+// Issue 130 (found by Lixyas): the Kokiri Shop sells a Deku Shield only to a
+// player who has none ("You already have a Deku Shield. We have a
+// one-shield-per-person policy here", message Shop_31), and reads that from
+// the player's own PouchData.Weapon_Shield_Deku.StockNum. The shop's own
+// stock and sold-out state are not shared. So a shield bought by one player
+// is owned by all (max), and the shop is right to refuse the others. These
+// pin down the shield lost afterwards (burnt, or taken by a Like Like).
+TEST_CASE("game items: a Deku Shield lost in a player's game comes back from the host") {
+  auto hw = game();
+  GameFlagStore host_game(hw);
+  ItemFlagStore host_store(host_game);
+  auto pw = game();
+  GameFlagStore player_game(pw);
+  ItemFlagStore player_store(player_game);
+  hold_int(hw, kDekuShield, 1);  // the host bought it
+  hold_int(pw, kDekuShield, 1);  // and the player got it
+  FlagWatcher host(item_shared_flags(), FlagRole::host);
+  FlagWatcher player(item_shared_flags(), FlagRole::player);
+  host.frame(host_store);
+  player.frame(player_store);
+
+  apply_ints(pw);
+  hold_int(pw, kDekuShield, 0);  // the player's shield burns
+  const auto lost = player.frame(player_store);
+  REQUIRE_FALSE(lost.empty());
+  deliver(host, lost);
+  const auto answer = host.frame(host_store);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);  // the host keeps its own
+  REQUIRE_FALSE(answer.empty());
+  deliver(player, answer);
+  player.frame(player_store);
+  // Back in the player's pouch: it equips it from the menu, and the shop
+  // still sells it no second one (it has one).
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
+}
+
+TEST_CASE("game items: a Deku Shield the host loses comes back, lost by all, it is bought again") {
+  auto hw = game();
+  GameFlagStore host_game(hw);
+  ItemFlagStore host_store(host_game);
+  auto pw = game();
+  GameFlagStore player_game(pw);
+  ItemFlagStore player_store(player_game);
+  hold_int(hw, kDekuShield, 1);
+  hold_int(pw, kDekuShield, 1);
+  FlagWatcher host(item_shared_flags(), FlagRole::host);
+  FlagWatcher player(item_shared_flags(), FlagRole::player);
+  host.frame(host_store);
+  player.frame(player_store);
+
+  // The host's shield burns: the player keeps its own and answers with it,
+  // so the host's comes back too.
+  apply_ints(hw);
+  hold_int(hw, kDekuShield, 0);
+  deliver(player, host.frame(host_store));
+  deliver(host, player.frame(player_store));
+  host.frame(host_store);
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
+
+  // Both lose it (no one has one left): both pouches stay empty, so the shop
+  // sells one again; one player buying it gives it to the other and takes
+  // nothing from anyone.
+  apply_ints(hw);
+  apply_ints(pw);
+  hold_int(hw, kDekuShield, 0);
+  hold_int(pw, kDekuShield, 0);
+  deliver(player, host.frame(host_store));
+  deliver(host, player.frame(player_store));
+  deliver(player, host.frame(host_store));
+  player.frame(player_store);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 0);
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 0);
+  apply_ints(hw);
+  apply_ints(pw);
+  hold_int(pw, kDekuShield, 1);  // the player buys one
+  deliver(host, player.frame(player_store));
+  deliver(player, host.frame(host_store));
+  player.frame(player_store);
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
+  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
 }

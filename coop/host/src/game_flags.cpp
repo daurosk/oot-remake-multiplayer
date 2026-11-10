@@ -24,8 +24,11 @@ struct Table {
 constexpr Table kBool{0x10, 0x18, 0x20, 0x2c, 0x18, 0x16, 0x30, 0x38, 0x40, 8};
 constexpr Table kInt{0xd0, 0xd8, 0xe0, 0xec, 0x28, 0x1c, 0xf0, 0xf8, 0x100, 12};
 // UInt (type 20, M + 0x790): the Int layout 0x6c0 further on, as the getter
-// 0x57a5e0 and the setter 0x57b030 read it (entries of 0x28, value at +0x1c,
-// 12-byte queue slots {u32 value, u32 hash}).
+// 0x57a4e0 and the setter 0x57af30 read it (entries of 0x28, value at +0x1c,
+// 12-byte queue slots {u32 value, u32 hash, u32 1}: unlike the Int setter,
+// the UInt setter also stores 1 at +8, 0x57b018). Both fall back to a second
+// table (slots at M + 0x800) for a hash not in this one; that is not read,
+// so such a flag is not found here.
 constexpr Table kUInt{0x790, 0x798, 0x7a0, 0x7ac, 0x28, 0x1c, 0x7b0, 0x7b8, 0x7c0, 12};
 // String64 (type 16, M + 0x610): entries of 0x108, char* to the text at
 // +0x68, s32 buffer size at +0x70 (0x3758110). Queue not read.
@@ -113,9 +116,11 @@ std::optional<std::uint32_t> queued(GameMemory& m, std::uint64_t mgr, std::uint6
 }
 
 // Takes a slot, writes it, marks it finished: the game's setter (0x682b20).
+// `word8`: a u32 the setter also stores at slot + 8 (the UInt setter stores 1).
 bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
              std::uint64_t buf_at, std::uint64_t word_at, std::uint64_t slot_size,
-             std::uint32_t value, std::uint32_t id, bool value_is_byte) {
+             std::uint32_t value, std::uint32_t id, bool value_is_byte,
+             std::optional<std::uint32_t> word8 = std::nullopt) {
   const auto cap = read_u32(m, mgr + cap_at);
   const auto buf = read_ptr(m, mgr + buf_at);
   if (!cap || !buf) return false;
@@ -133,6 +138,11 @@ bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
   std::memcpy(value_bytes.data(), &value, 4);
   if (!m.write(at + 4, id_bytes)) return false;
   if (!m.write(at, std::span(value_bytes).first(value_is_byte ? 1 : 4))) return false;
+  if (word8) {
+    std::array<std::uint8_t, 4> bytes{};
+    std::memcpy(bytes.data(), &*word8, 4);
+    if (!m.write(at + 8, bytes)) return false;
+  }
   for (int t = 0; t < kCasTries; ++t) {
     const auto w = read_u32(m, word_addr);
     if (!w) return false;
@@ -294,7 +304,7 @@ bool GameFlags::set_uint(WritableGameMemory& m, std::uint32_t hash, std::uint32_
   const auto mgr = manager(m);
   if (!mgr || !find(m, *mgr, kUInt, hash)) return false;
   return enqueue(m, *mgr, kUInt.queue_cap, kUInt.queue_buf, kUInt.queue_word, kUInt.slot_size,
-                 value, hash, false);
+                 value, hash, false, 1u);
 }
 
 bool GameFlags::set_key64(WritableGameMemory& m, std::uint64_t key, bool value) {

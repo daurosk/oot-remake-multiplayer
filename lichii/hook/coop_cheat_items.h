@@ -30,10 +30,18 @@
 
 namespace CoopCheatItems {
 
+// What TopUp has already said, kept by the caller for the session.
+struct State {
+    bool order_missing_noted = false;
+};
+
 // One pass: tops up what is below its value. Returns one log line per write
 // ("cheat <what> <was> -> <now>"). A flag that cannot be read (the flag
 // manager is not up yet, at the title screen) is left for the next pass; a
-// write the queue refused says so and is tried again on the next pass.
-std::vector<std::string> TopUp(coop::host::WritableGameMemory& memory);
+// write the queue refused says so and is tried again on the next pass. When
+// the flags are up but the bomb's get order is not in the UInt table (it may
+// be in the game's fallback table, which is not read), that is said once:
+// "cheat get order Item_Bomb not found".
+std::vector<std::string> TopUp(coop::host::WritableGameMemory& memory, State& state);
 
 } // namespace CoopCheatItems

@@ -51,6 +51,7 @@ constexpr std::array<BoolFlag, 3> kBombBools{{
 // bottle. In the real saves each item got the next number when it was got
 // (slingshot 34, bombs 35 in one save).
 constexpr std::uint32_t kBombGetOrder = 0xc7ecb4a1;  // member Item_Bomb
+constexpr std::uint32_t kStockBomb = 0xdb1bcd4f;     // read: are the flags up?
 constexpr std::array<std::uint32_t, 42> kGetOrders{{
     0x117375f7, 0x22c20fa9, 0x3b9434e0, 0x3e70dbc1, 0x4301162b, 0x438c1f7b, 0x4ad60f93,
     0x549ee15c, 0x55f6470d, 0x56573d03, 0x58c854bc, 0x642ffd7f, 0x6a1e2459, 0x73666cdf,
@@ -67,7 +68,7 @@ std::string Note(const char* what, long long was, long long now, bool set) {
 
 } // namespace
 
-std::vector<std::string> TopUp(coop::host::WritableGameMemory& memory) {
+std::vector<std::string> TopUp(coop::host::WritableGameMemory& memory, State& state) {
     std::vector<std::string> out;
     GameFlags flags(memory);
     for (const IntItem& item : kIntItems) {
@@ -86,7 +87,12 @@ std::vector<std::string> TopUp(coop::host::WritableGameMemory& memory) {
             out.push_back(Note(b.name, 0, 1, GameFlags::set_bool(memory, b.hash, true)));
         }
     }
-    if (flags.get_uint(kBombGetOrder) == 0u) {
+    const auto order = flags.get_uint(kBombGetOrder);
+    if (!order && !state.order_missing_noted && flags.get_int(kStockBomb)) {
+        state.order_missing_noted = true;  // the flags are up, the UInt is not there
+        out.push_back("cheat get order Item_Bomb not found");
+    }
+    if (order == 0u) {
         std::uint32_t highest = 0;
         for (const std::uint32_t h : kGetOrders) {
             if (const auto v = flags.get_uint(h); v && *v > highest) {

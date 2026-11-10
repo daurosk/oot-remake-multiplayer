@@ -46,7 +46,8 @@ class GameFlags {
   // in that table, or memory cannot be read. Hash 0 is never a flag.
   std::optional<bool> get_bool(std::uint32_t hash);
   std::optional<std::int32_t> get_int(std::uint32_t hash);
-  // A UInt flag (type 20; 0x57a5e0 reads it, 0x57b030 sets it).
+  // A UInt flag (type 20; 0x57a4e0 reads it, 0x57af30 sets it). A hash only in
+  // the game's fallback UInt table (M + 0x800, not read) is not found.
   std::optional<std::uint32_t> get_uint(std::uint32_t hash);
   // A 64-bit-key flag (Bool64bitKey). A key not in the table is nothing,
   // not false: the table holds every key the game knows.

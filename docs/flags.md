@@ -32,7 +32,7 @@ A lookup starts at `hash % slot count` and steps forward by one, wrapping, until
 | Bool (0) | M + 0x10 | 0x18 | u8 at +0x16; saved copy at +0x17 | 8 bytes: u8 value at +0, u32 hash at +4 |
 | BoolArray (1) | M + 0x70 | 0x40, has a vtable | bits at `*(+0x28)` in u32 words, lowest bit first; element count u32 at +0x20 | not read |
 | Int (2) | M + 0xd0 | 0x28 | u32 at +0x1c | 12 bytes: u32 value at +0, u32 hash at +4 |
-| UInt (20) | M + 0x790 | 0x28 | u32 at +0x1c | 12 bytes: u32 value at +0, u32 hash at +4 |
+| UInt (20) | M + 0x790 | 0x28 | u32 at +0x1c | 12 bytes: u32 value at +0, u32 hash at +4, u32 1 at +8 |
 
 All checked in the getters and setters below. The BoolArray element count at +0x20 is from a bounds test in the applier, so its meaning is inferred.
 
@@ -61,8 +61,8 @@ Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back t
 | 0x682b20 | Bool set (M, value, hash): queues | Checked |
 | 0x837070 | Int get | Checked |
 | 0x163b70 | Int set: queues | Checked |
-| 0x57a5e0 | UInt get: the Int getter with every table offset 0x6c0 further on | Checked (issue 125) |
-| 0x57b030 (a second copy near 0x57bdd8) | UInt set: queues, as the Int setter, at +0x7b0 / +0x7b8 / +0x7c0 | Checked (issue 125) |
+| 0x57a4e0 | UInt get: the Int getter with every table offset 0x6c0 further on; a hash not found falls back to a second table (slots M + 0x800, count M + 0x80c), not read | Checked (issue 125) |
+| 0x57af30 | UInt set: queues at +0x7b0 / +0x7b8 / +0x7c0 like the Int setter, but also stores u32 1 at slot + 8 (0x57b018); the fallback table goes to 0x376be00 on M + 0x7e8 | Checked (issue 125) |
 | 0x838960, 0x3761680 | 64-bit key get (M, out, key) | Checked |
 | 0x3761720 | 64-bit key set (M, value, key): finds the record, then 0xf071c0 queues it | Checked |
 | 0xb99980 | Applies the queues (M). Called from 0x3b500a0, in the GameData module | Checked for Bool and 64-bit keys |

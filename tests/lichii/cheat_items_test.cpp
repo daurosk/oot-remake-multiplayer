@@ -118,7 +118,8 @@ bool Has(const std::vector<std::string>& lines, const std::string& text) {
 
 TEST_CASE("cheat items: a save without bombs gets everything a real bomb bag sets") {
     auto w = game();
-    const auto lines = CoopCheatItems::TopUp(w);
+    CoopCheatItems::State state;
+    const auto lines = CoopCheatItems::TopUp(w, state);
     GameFlags f(w);
     CHECK(f.get_int(kStockBomb) == 20);
     CHECK(f.get_int(kCapBomb) == 20);
@@ -137,11 +138,12 @@ TEST_CASE("cheat items: a save without bombs gets everything a real bomb bag set
     CHECK_FALSE(Has(lines, "queue busy"));
 
     // The game has not applied the queues yet; the next pass sees them anyway.
-    CHECK(CoopCheatItems::TopUp(w).empty());
+    CHECK(CoopCheatItems::TopUp(w, state).empty());
 }
 
 TEST_CASE("cheat items: a save with real bombs keeps its own values") {
     auto w = game();
+    CoopCheatItems::State state;
     saved(w.mem, kInt, kInts, kStockBomb, 14);
     saved(w.mem, kInt, kInts, kCapBomb, 20);
     saved(w.mem, kInt, kInts, kStockBag, 1);
@@ -149,7 +151,7 @@ TEST_CASE("cheat items: a save with real bombs keeps its own values") {
         saved(w.mem, kBool, kBools, h, 1);
     }
     saved(w.mem, kUInt, kUInts, kOrderBomb, 35);
-    const auto lines = CoopCheatItems::TopUp(w);
+    const auto lines = CoopCheatItems::TopUp(w, state);
     GameFlags f(w);
     CHECK(Has(lines, "cheat Item_Bomb 14 -> 20"));
     CHECK_FALSE(Has(lines, "Bomb 0 -> 1"));
@@ -159,15 +161,31 @@ TEST_CASE("cheat items: a save with real bombs keeps its own values") {
 
 TEST_CASE("cheat items: nothing before the flag manager is up, and a full queue is retried") {
     auto w = game();
+    CoopCheatItems::State state;
     w.mem.put_u64(FakeMemory::kBase + 0x4e842a8, 0);
-    CHECK(CoopCheatItems::TopUp(w).empty());
+    CHECK(CoopCheatItems::TopUp(w, state).empty());
 
     auto v = game();
+    CoopCheatItems::State vstate;
     v.mem.put_u32(kMgr + kUInt.base + 0x30, 0x30000000 | kQueueCap);  // UInt queue full
-    const auto lines = CoopCheatItems::TopUp(v);
+    const auto lines = CoopCheatItems::TopUp(v, vstate);
     CHECK(Has(lines, "cheat get order Item_Bomb 0 -> 19 (queue busy, again next second)"));
     v.mem.put_u32(kMgr + kUInt.base + 0x30, 0x40000000);  // the game emptied it
-    const auto again = CoopCheatItems::TopUp(v);
+    const auto again = CoopCheatItems::TopUp(v, vstate);
     REQUIRE(again.size() == 1);
     CHECK(again[0] == "cheat get order Item_Bomb 0 -> 19");
+}
+
+TEST_CASE("cheat items: a get order not in the UInt table is said once, not at the title") {
+    auto w = game();
+    CoopCheatItems::State state;
+    w.mem.put_u64(FakeMemory::kBase + 0x4e842a8, 0);  // title screen: nothing at all
+    CHECK(CoopCheatItems::TopUp(w, state).empty());
+    w.mem.put_u64(FakeMemory::kBase + 0x4e842a8, kMgr);
+    table(w.mem, kUInt, {kOrderSlingshot, kOrderStick});  // no Item_Bomb in the table
+    const auto lines = CoopCheatItems::TopUp(w, state);
+    CHECK(Has(lines, "cheat get order Item_Bomb not found"));
+    CHECK_FALSE(Has(lines, "get order Item_Bomb 0 ->"));
+    CHECK(Has(lines, "cheat Item_Bomb 0 -> 20"));  // the rest is still given
+    CHECK_FALSE(Has(CoopCheatItems::TopUp(w, state), "not found"));
 }

@@ -178,10 +178,13 @@ TEST_CASE("game flags: UInt flags are read and queued like Int, in their own tab
   REQUIRE(GameFlags::set_uint(w, 0x44, 35));
   CHECK(coop::host::read_u32(w.mem, kUIntQueue) == 35u);
   CHECK(coop::host::read_u32(w.mem, kUIntQueue + 4) == 0x44u);
+  CHECK(coop::host::read_u32(w.mem, kUIntQueue + 8) == 1u);  // as the game's UInt setter
   CHECK(coop::host::read_u32(w.mem, kMgr + 0x7c0) == 0x30100001u);  // 1 taken, 1 finished
   CHECK(coop::host::read_u32(w.mem, kUIntEntries + 0x1c) == 0xfffffff0u);  // not applied yet
   CHECK(f.get_uint(0x44) == 35u);                                         // but seen
   CHECK(coop::host::read_u32(w.mem, kIntQueue + 4) == 0u);  // the Int queue is untouched
+  REQUIRE(GameFlags::set_int(w, 0x22, 5));
+  CHECK(coop::host::read_u32(w.mem, kIntQueue + 8) == 0u);  // an Int slot has no third word
 }
 
 TEST_CASE("game flags: refused when unknown, full, or the queue was applied meanwhile") {

@@ -1418,7 +1418,7 @@ private:
     // The cheat items (coop_cheat_items.h), topped up once a second.
     void Cheat(Core::System& system) {
         CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
-        for (const auto& note : CoopCheatItems::TopUp(memory)) {
+        for (const auto& note : CoopCheatItems::TopUp(memory, cheat_state_)) {
             LOG_INFO(Core, "coop: objects: {}", note);
         }
     }
@@ -1564,6 +1564,7 @@ private:
     u64 drift_at_ = 0;
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopEvery::Every cheat_every_{CoopEvery::kSecondUs};
+    CoopCheatItems::State cheat_state_;
     CoopEvery::Every share_every_{CoopEvery::kTwoFramesUs};
     bool sharing_ = false;
     std::size_t blast_drops_logged_ = 0;

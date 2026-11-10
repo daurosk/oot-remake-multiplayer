@@ -1651,6 +1651,30 @@ TEST_CASE("a break goes to the players in its scene once and to those who come l
   CHECK(messages_to<WorldBreak>(h, 4).size() == 2);
 }
 
+TEST_CASE("a late break from the scene just left is passed on there but does not take the player back") {
+  ObjectHarness h;
+  h.receive(1, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);
+  h.receive(1, broke("Kakariko", 0x11), kChannelSession);
+  // Player 1 walks into the Market; a break its game made in Kakariko just
+  // before arrives after the new scene's sample.
+  h.receive(1, sample_in("Market"), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, broke("Kakariko", 0x22), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 2) == std::vector<WorldBreak>{by(1, broke("Kakariko", 0x22))});
+  CHECK(messages_to<WorldBreak>(h, 3).empty());
+  // Still in the Market: a break there reaches player 3.
+  h.clear();
+  h.receive(1, broke("Market", 0x33), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 3) == std::vector<WorldBreak>{by(1, broke("Market", 0x33))});
+  CHECK(messages_to<WorldBreak>(h, 2).empty());
+  // And a real walk back to Kakariko is taken at once, with what is kept there.
+  h.clear();
+  h.receive(1, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 1).size() == 2);
+}
+
 TEST_CASE("a break that the game put back is forgotten") {
   ObjectHarness h;
   h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);

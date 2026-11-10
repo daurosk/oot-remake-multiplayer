@@ -262,6 +262,7 @@ class Session {
     // The scene each of its two streams said last (see stale_scene).
     std::string sample_scene;
     std::string present_scene;
+    std::string world_scene;  // GRASS_CUT and WORLD_* (they say it too)
     // The objects it has loaded in that scene: placed ones, and made enemies
     // it listed. Projectiles are not listed here: they are found by owner.
     std::set<protocol::ObjectId> present;

@@ -435,13 +435,13 @@ bool Session::set_scene(ConnectionId id, Connection& c, const std::string& scene
                         std::uint64_t now_us) {
   if (c.scene == scene) return true;
   const std::set<ObjectId> present = std::exchange(c.present, {});
-  c.scene = scene;
+  const std::string left = std::exchange(c.scene, scene);
   c.position.reset();  // the old scene's place means nothing here
   c.replay_due = true;
   c.owners_told_at = now_us;
   drop_all_objects(id, c.number, present, now_us);
-  forget_empty_grass(c.previous_scene);
-  forget_empty_world(c.previous_scene);
+  forget_empty_grass(left);
+  forget_empty_world(left);
   // What was broken and moved here before this player came (docs/world.md).
   for (const Message& m : world_.replay(scene)) {
     send(id, kChannelSession, m);
@@ -701,9 +701,10 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
 // bit for bit) is not passed on, so a cut can never go round between games.
 void Session::on_grass_cut(ConnectionId id, Connection& c, GrassCut& cut,
                            std::uint64_t now_us) {
-  // The sender is there, whatever its last sample said; a cut from a scene
-  // it left a moment ago is late and dropped.
-  if (!set_scene(id, c, cut.scene, now_us)) return;
+  // The sender is there, whatever its last sample said, unless the cut is a
+  // late one from the scene it has left (stale_scene): then it is still a cut
+  // in that scene, kept and passed on, but the player stays where it is.
+  if (!stale_scene(c.world_scene, c, cut.scene)) set_scene(id, c, cut.scene, now_us);
   cut.player_number = c.number;
   auto& cuts = grass_[cut.scene];
   const auto same = [&cut](const GrassCut& o) {
@@ -728,20 +729,20 @@ void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Mes
                        std::uint64_t now_us) {
   set_sender(message, c.number);
   if (auto* b = std::get_if<WorldBreak>(&message)) {
-    // The sender is there, whatever its last sample said; false: late, from
-    // a scene it left a moment ago.
-    if (!set_scene(id, c, b->scene, now_us)) return;
+    // As for grass cuts: a late break from the scene just left is still a
+    // break there, but does not take the player back.
+    if (!stale_scene(c.world_scene, c, b->scene)) set_scene(id, c, b->scene, now_us);
     if (!world_.on_break(*b)) {
       ++stats_.world_repeated;
       return;
     }
     send_to_scene(b->scene, id, channel, message);
   } else if (auto* p = std::get_if<WorldPlace>(&message)) {
-    if (!set_scene(id, c, p->scene, now_us)) return;
+    if (!stale_scene(c.world_scene, c, p->scene)) set_scene(id, c, p->scene, now_us);
     world_.on_place(*p);
     send_to_scene(p->scene, id, channel, message);
   } else if (auto* h = std::get_if<WorldHit>(&message)) {
-    if (!set_scene(id, c, h->scene, now_us)) return;
+    if (!stale_scene(c.world_scene, c, h->scene)) set_scene(id, c, h->scene, now_us);
     world_.on_hit(*h);
     send_to_scene(h->scene, id, channel, message);
   } else if (auto* v = std::get_if<WorldMove>(&message)) {

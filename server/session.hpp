@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -122,6 +123,10 @@ struct Stats {
   std::uint64_t owner_changes = 0;      // owner set or moved (not first owner)
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
+  // Field grass (docs/world.md). Relayed ones count in relayed too.
+  std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene
+  std::uint64_t grass_repeated = 0;  // GRASS_CUT the scene already has: not passed on
+  std::uint64_t grass_replayed = 0;  // kept cuts sent to a player who entered the scene
   std::uint64_t object_table_full = 0;  // objects turned away: max_objects
 
   std::uint64_t errors(protocol::Error e) const {
@@ -226,6 +231,11 @@ class Session {
   void on_object_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message);
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d);
+  void on_grass_cut(ConnectionId id, Connection& c, protocol::GrassCut& cut);
+  // Forgets the cuts of a scene no joined player is in: the grass grows back
+  // in a game that loads the scene again, so the cuts end with the last game
+  // that still shows them.
+  void forget_empty_grass(const std::string& scene);
   // The player is in `scene` now; leaving another scene lets go of its objects.
   void set_scene(ConnectionId id, Connection& c, const std::string& scene);
   // The player no longer has the object loaded (unload, scene change, leave):
@@ -264,6 +274,10 @@ class Session {
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;
   // Shared objects, by id. Forgotten when no game has them loaded.
   std::map<protocol::ObjectId, Object> objects_;
+  // The field grass cut in each scene (GRASS_CUT), oldest first, at most
+  // kMaxGrassCuts a scene; sent to a player who enters the scene. Forgotten
+  // when no player is in the scene.
+  std::map<std::string, std::deque<protocol::GrassCut>> grass_;
   std::vector<Action> actions_;
   Stats stats_;
 };

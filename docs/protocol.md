@@ -236,8 +236,9 @@ One cut of the field grass the foliage module draws (no actor; [world.md](world.
 | 28 | `GRASS_CUT` | 0 | both | `u8` player field, `str` scene (1 to 64 chars), 3 x `f32` position (finite), `f32` radius (above 0, at most 100), `u8` flags (the game's, passed on unread), 9 x `f32`: three points of the swing (each finite or NaN) |
 
 - Sent once for each cut the sender's game makes; a cut it made for another player is not sent back.
-- A game in the same scene makes the same cut; any other drops it. Nothing is kept.
-- The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+- A game in the same scene makes the same cut; any other drops it.
+- The server takes the cut's scene as the sender's scene, keeps the cut in that scene's list (at most 512, the oldest go first) and relays it to the other players in that scene, with the sender's number in the player field. A cut the scene's list already has (position and radius the same, bit for bit) is neither kept again nor relayed.
+- A player whose scene changes to one with a list (its `PLAYER_SAMPLE` scene, `OBJECT_PRESENT` or a cut of its own), a late joiner too, gets every cut in it, oldest first. A scene's list is forgotten when no player is in it any more: the grass grows back in a game that loads the scene again, so the cuts end with the last game that still shows them.
 
 ### Objects (stage 5)
 

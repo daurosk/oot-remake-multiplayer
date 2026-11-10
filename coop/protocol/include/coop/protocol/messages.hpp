@@ -675,6 +675,8 @@ struct TimeOfDay {
 // the cut is a sphere only). flags is the game's byte, passed on unread.
 // Every game in the same scene makes the same cut. Relayed to everyone else.
 inline constexpr float kMaxGrassCutRadius = 100.0f;
+// Cuts the server keeps for one scene, for a player who enters it later.
+inline constexpr std::size_t kMaxGrassCuts = 512;
 
 struct GrassCut {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed

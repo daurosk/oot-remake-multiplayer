@@ -64,7 +64,8 @@ public:
                                                const std::string& scene, std::uint64_t now_ms);
 
     // Network thread: another game's cut, kept to be made while our scene is
-    // the same (the scene is set by Look).
+    // the same (the scene is set by Look). The server keeps each scene's cuts
+    // and sends them again to a game that enters it (docs/world.md).
     void Receive(const coop::protocol::GrassCut& cut);
 
     // Svc cave (coop_svc.h AddCaller): makes the received cuts, at most
@@ -77,19 +78,29 @@ public:
 
 private:
     static constexpr std::size_t kCutsPerFrame = 8;
-    static constexpr std::size_t kMaxWaiting = 64;
+    static constexpr std::size_t kMaxWaiting = coop::protocol::kMaxGrassCuts;
     static constexpr std::uint64_t kEchoMs = 3000;
+    static constexpr std::uint64_t kSettleMs = 2000;
 
     std::optional<CoopPuppet::Call> Next(CoopPuppet::Guest& guest, std::uint64_t now_ms);
+    void SetReady(bool ready);
+
+    struct Waiting {
+        std::string scene;
+        Slot slot;
+    };
 
     mutable std::mutex mutex_;
     // Look's side
     std::uint64_t scene_address_ = 0;
     std::optional<std::uint64_t> last_index_;
+    std::string settle_scene_;
+    std::uint64_t settle_ms_ = 0;
     // shared
     std::string scene_;
     std::uint64_t main_ = 0;
-    std::deque<Slot> waiting_;
+    std::deque<Waiting> waiting_;
+    bool ready_ = false;  // the walk sees our scene's foliage queue
     std::deque<std::pair<std::uint64_t, Slot>> made_;  // (time ms, slot) for the echo
     std::uint64_t made_count_ = 0;
     std::vector<std::string> notes_;

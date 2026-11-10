@@ -271,7 +271,9 @@ std::vector<coop::protocol::GrassCut> GrassSync::Look(const ReadWord& read, std:
         main_ = main;
         if (scene != scene_) {
             scene_ = scene;
-            waiting_.clear();  // cuts of the scene we left
+            // Cuts of the scene we left go; ones for this scene that came
+            // before we knew we were here (the server's replay) stay.
+            std::erase_if(waiting_, [&scene](const Waiting& w) { return w.scene != scene; });
         }
         while (!made_.empty() && now_ms - made_.front().first > kEchoMs) {
             made_.pop_front();
@@ -280,10 +282,13 @@ std::vector<coop::protocol::GrassCut> GrassSync::Look(const ReadWord& read, std:
     if (!s) {
         scene_address_ = 0;
         last_index_.reset();
+        SetReady(false);
         return out;
     }
-    if (*s != scene_address_) {
+    if (*s != scene_address_ || scene != settle_scene_) {
         scene_address_ = *s;
+        settle_scene_ = scene;
+        settle_ms_ = now_ms;
         last_index_.reset();
     }
     const auto capacity = read(*s + 0x20);
@@ -293,6 +298,9 @@ std::vector<coop::protocol::GrassCut> GrassSync::Look(const ReadWord& read, std:
     if (!entries || !written || cap == 0 || cap > 4096 || (cap & (cap - 1)) != 0) {
         return out;
     }
+    // Ready once the scene and its foliage scene stayed the same a while: on
+    // a scene change the name can change before the foliage is the new one.
+    SetReady(!scene.empty() && now_ms - settle_ms_ >= kSettleMs);
     if (!last_index_ || *written < *last_index_) {
         last_index_ = *written;  // the queue is new to us: only cuts from now on
         return out;
@@ -348,17 +356,33 @@ std::vector<coop::protocol::GrassCut> GrassSync::Look(const ReadWord& read, std:
     return out;
 }
 
+void GrassSync::SetReady(bool ready) {
+    std::lock_guard lock(mutex_);
+    ready_ = ready;
+}
+
 void GrassSync::Receive(const coop::protocol::GrassCut& cut) {
     std::lock_guard lock(mutex_);
-    if (cut.scene != scene_ || waiting_.size() >= kMaxWaiting) {
+    // A cut for a scene we are not in is kept only while no cut of ours says
+    // where we are: the server replays a scene's cuts when our first sample
+    // there reaches it, which can be before our objects walk saw the scene.
+    if (waiting_.size() >= kMaxWaiting || (cut.scene != scene_ && ready_)) {
         return;
     }
-    waiting_.push_back(ToSlot(cut));
+    waiting_.push_back({cut.scene, ToSlot(cut)});
 }
 
 std::optional<CoopPuppet::Call> GrassSync::Next(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     std::lock_guard lock(mutex_);
-    if (waiting_.empty() || main_ == 0 || this_frame_ >= kCutsPerFrame) {
+    // Only once the walk has seen this scene's foliage queue: a cut made
+    // while the scene loads would go to the one we left.
+    if (waiting_.empty() || main_ == 0 || !ready_ || this_frame_ >= kCutsPerFrame) {
+        return std::nullopt;
+    }
+    while (!waiting_.empty() && waiting_.front().scene != scene_) {
+        waiting_.pop_front();
+    }
+    if (waiting_.empty()) {
         return std::nullopt;
     }
     if (block_ == 0) {
@@ -376,7 +400,7 @@ std::optional<CoopPuppet::Call> GrassSync::Next(CoopPuppet::Guest& guest, std::u
         waiting_.clear();
         return std::nullopt;
     }
-    const Slot slot = waiting_.front();
+    const Slot slot = waiting_.front().slot;
     waiting_.pop_front();
     if (!guest.Write(block_, slot.data(), slot.size())) {
         return std::nullopt;

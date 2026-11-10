@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -1469,4 +1470,112 @@ TEST_CASE("objects are forgotten when the session empties") {
   h.session.disconnected(2, h.now);
   h.session.disconnected(3, h.now);
   CHECK(h.session.object_count() == 0);
+}
+
+// ---------------------------------------------------------------- field grass
+
+namespace {
+
+GrassCut cut_at(const std::string& scene, float x) {
+  GrassCut c;
+  c.scene = scene;
+  c.position = Vec3{x, 20.0f, 3.0f};
+  c.radius = 1.5f;
+  c.flags = 1;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  c.sweep = {Vec3{nan, nan, nan}, Vec3{nan, nan, nan}, Vec3{nan, nan, nan}};
+  return c;
+}
+
+PlayerSample sample_in(const std::string& scene) {
+  PlayerSample s;
+  s.time.server_time_us = 1;
+  s.scene = scene;
+  return s;
+}
+
+GrassCut from(std::uint8_t player, GrassCut c) {
+  c.player_number = player;
+  return c;
+}
+
+}  // namespace
+
+TEST_CASE("a grass cut goes to the players in its scene, once") {
+  ObjectHarness h;
+  h.receive(2, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);
+  h.clear();
+
+  // Player 1's own sample has not said where it is: the cut does.
+  h.receive(1, cut_at("HyruleField_Child", 1), kChannelSession);
+  CHECK(messages_to<GrassCut>(h, 1).empty());
+  CHECK(messages_to<GrassCut>(h, 2) ==
+        std::vector<GrassCut>{from(1, cut_at("HyruleField_Child", 1))});
+  CHECK(messages_to<GrassCut>(h, 3).empty());
+  CHECK(h.session.stats().grass_relayed == 1);
+
+  // The same cut again, from the game that made it for player 1: not passed on.
+  h.clear();
+  h.receive(2, cut_at("HyruleField_Child", 1), kChannelSession);
+  CHECK(messages_to<GrassCut>(h, 1).empty());
+  CHECK(h.session.stats().grass_repeated == 1);
+}
+
+TEST_CASE("a player who enters a scene gets the grass cut there before") {
+  ObjectHarness h;
+  h.receive(1, cut_at("HyruleField_Child", 1), kChannelSession);
+  h.receive(1, cut_at("HyruleField_Child", 2), kChannelSession);
+  h.receive(1, cut_at("Market", 3), kChannelSession);  // player 1 is in the Market now
+  h.clear();
+
+  // Nobody was left in the field when player 1 went: its grass has grown back.
+  h.receive(2, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  CHECK(messages_to<GrassCut>(h, 2).empty());
+
+  // The Market's cut is kept while player 1 is there.
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);
+  CHECK(messages_to<GrassCut>(h, 3) == std::vector<GrassCut>{from(1, cut_at("Market", 3))});
+  CHECK(h.session.stats().grass_replayed == 1);
+
+  // Player 2 cuts in the field; player 1 walks in and gets it, in order.
+  h.receive(2, cut_at("HyruleField_Child", 4), kChannelSession);
+  h.receive(2, cut_at("HyruleField_Child", 5), kChannelSession);
+  h.clear();
+  h.receive(1, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  CHECK(messages_to<GrassCut>(h, 1) ==
+        std::vector<GrassCut>{from(2, cut_at("HyruleField_Child", 4)),
+                              from(2, cut_at("HyruleField_Child", 5))});
+
+  // A player who joins late gets them with its first sample there.
+  h.join(4, "Ruto");
+  h.clear();
+  h.receive(4, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  CHECK(messages_to<GrassCut>(h, 4).size() == 2);
+}
+
+TEST_CASE("the cuts of a scene end when its last player leaves or the list is full") {
+  ObjectHarness h;
+  h.receive(1, cut_at("HyruleField_Child", 1), kChannelSession);
+  h.receive(2, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  h.session.disconnected(1, h.now);  // player 2 still shows the cut
+  h.receive(3, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  CHECK(messages_to<GrassCut>(h, 3).size() == 1);
+  h.session.disconnected(2, h.now);
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);  // the field is empty
+  h.clear();
+  h.receive(3, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  CHECK(messages_to<GrassCut>(h, 3).empty());
+
+  // Only the newest kMaxGrassCuts are kept.
+  for (std::size_t i = 0; i < kMaxGrassCuts + 3; ++i) {
+    h.now += 100'000;  // under the rate limit
+    h.receive(3, cut_at("HyruleField_Child", 100.0f + static_cast<float>(i)), kChannelSession);
+  }
+  h.join(1, "Link");
+  h.clear();
+  h.receive(1, sample_in("HyruleField_Child"), kChannelPlayerSamples);
+  const auto got = messages_to<GrassCut>(h, 1);
+  REQUIRE(got.size() == kMaxGrassCuts);
+  CHECK(got.front() == from(3, cut_at("HyruleField_Child", 103.0f)));
 }

@@ -1,6 +1,7 @@
 #include "session.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <set>
 #include <utility>
 
@@ -227,6 +228,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (auto* d = std::get_if<Damage>(&message)) {
     on_damage(id, c, *d);
+    return;
+  }
+  if (auto* cut = std::get_if<GrassCut>(&message)) {
+    on_grass_cut(id, c, *cut);
     return;
   }
   if (std::holds_alternative<ObjectSpawn>(message) ||
@@ -486,8 +491,47 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d) {
 void Session::set_scene(ConnectionId id, Connection& c, const std::string& scene) {
   if (c.scene == scene) return;
   const std::set<ObjectId> present = std::exchange(c.present, {});
-  c.scene = scene;
+  const std::string left = std::exchange(c.scene, scene);
   drop_all_objects(id, c.number, present);
+  forget_empty_grass(left);
+  // The grass the others cut here before this player came.
+  if (auto it = grass_.find(scene); it != grass_.end()) {
+    for (const GrassCut& cut : it->second) {
+      send(id, kChannelSession, cut);
+      ++stats_.grass_replayed;
+    }
+  }
+}
+
+// Field grass (docs/world.md "Field grass"): kept per scene and relayed to
+// the players in it. A cut the scene already has (the same place and size,
+// bit for bit) is not passed on, so a cut can never go round between games.
+void Session::on_grass_cut(ConnectionId id, Connection& c, GrassCut& cut) {
+  set_scene(id, c, cut.scene);  // the sender is there, whatever its last sample said
+  cut.player_number = c.number;
+  auto& cuts = grass_[cut.scene];
+  const auto same = [&cut](const GrassCut& o) {
+    return std::memcmp(o.position.data(), cut.position.data(), sizeof(float) * 3) == 0 &&
+           std::memcmp(&o.radius, &cut.radius, sizeof(float)) == 0;
+  };
+  if (std::any_of(cuts.begin(), cuts.end(), same)) {
+    ++stats_.grass_repeated;
+    return;
+  }
+  if (cuts.size() >= kMaxGrassCuts) cuts.pop_front();
+  cuts.push_back(cut);
+  send_to_scene(cut.scene, id, kChannelSession, cut);
+  ++stats_.relayed;
+  ++stats_.grass_relayed;
+}
+
+void Session::forget_empty_grass(const std::string& scene) {
+  auto it = grass_.find(scene);
+  if (it == grass_.end()) return;
+  for (const auto& [id, c] : connections_) {
+    if (c.state == State::joined && c.scene == scene) return;
+  }
+  grass_.erase(it);
 }
 
 void Session::drop_all_objects(ConnectionId id, std::uint8_t number,
@@ -624,6 +668,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
   // After PLAYER_LEFT, so the others learn the owner left before the new
   // owner is announced; the leaver is out of connections_ by now.
   drop_all_objects(id, c.number, c.present);
+  forget_empty_grass(c.scene);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
       (reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
@@ -631,6 +676,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason) {
     host_.reset();
     flags_.clear();
     objects_.clear();
+    grass_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before

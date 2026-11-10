@@ -453,18 +453,19 @@ TEST_CASE("grass: another game's cut is made through the game's call, and not se
     Setup(g);
     CoopWorld::GrassSync grass;
     CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1000).empty());
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 3000).empty());  // settled
     proto::GrassCut theirs = Sword();
     theirs.player_number = 2;
     proto::GrassCut elsewhere = theirs;
     elsewhere.scene = "KakarikoVillage_Child";
     grass.Receive(elsewhere);  // not our scene: dropped
     grass.Receive(theirs);
-    auto call = grass.Step(g, false, 0, 1010);
+    auto call = grass.Step(g, false, 0, 3010);
     REQUIRE(call);
     CHECK(call->function == kMain + 0x14c6c90);  // malloc, once
     CHECK(call->x[0] == 0x40);
     const std::uint64_t block = 0x2100009000;
-    call = grass.Step(g, true, block, 1010);
+    call = grass.Step(g, true, block, 3010);
     REQUIRE(call);
     CHECK(call->function == kMain + CoopWorld::kCutFoliage);
     CHECK(call->x[0] == kModule);
@@ -472,14 +473,14 @@ TEST_CASE("grass: another game's cut is made through the game's call, and not se
     CoopWorld::GrassSync::Slot written{};
     REQUIRE(g.Read(block, written.data(), written.size()));
     CHECK(written == CoopWorld::GrassSync::ToSlot(Sword()));
-    CHECK_FALSE(grass.Step(g, true, 1, 1010));  // nothing more to make
+    CHECK_FALSE(grass.Step(g, true, 1, 3010));  // nothing more to make
     CHECK(grass.Made() == 1);
     // the game queues the cut we asked for: it is not sent back
     GameCuts(g, 0, written);
-    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1100).empty());
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 3100).empty());
     // our own cut at the same place later is sent
     GameCuts(g, 1, written);
-    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 1200).size() == 1);
+    CHECK(grass.Look(g.Reader(), kMain, "HyruleField_Child", 3200).size() == 1);
 }
 
 TEST_CASE("grass: at most eight cuts a frame, the rest the next frame") {
@@ -487,6 +488,7 @@ TEST_CASE("grass: at most eight cuts a frame, the rest the next frame") {
     Setup(g);
     CoopWorld::GrassSync grass;
     (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 1000);
+    (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 3000);
     for (int i = 0; i < 10; ++i) {
         proto::GrassCut c = Sword();
         c.position[2] += static_cast<float>(i);
@@ -504,4 +506,37 @@ TEST_CASE("grass: at most eight cuts a frame, the rest the next frame") {
     }
     CHECK(calls == 2);
     CHECK(grass.Made() == 10);
+}
+
+TEST_CASE("grass: cuts that come before the scene settles are made once it has") {
+    FakeGame g;
+    Setup(g);
+    CoopWorld::GrassSync grass;
+    // The server's replay can come before our walk saw the new scene.
+    proto::GrassCut theirs = Sword();
+    theirs.player_number = 2;
+    proto::GrassCut old = theirs;
+    old.scene = "KakarikoVillage_Child";
+    grass.Receive(theirs);
+    grass.Receive(old);
+    CHECK_FALSE(grass.Step(g, false, 0, 900));  // no scene yet: nothing made
+    (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 1000);
+    CHECK_FALSE(grass.Step(g, false, 0, 1500));  // not settled yet
+    (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 3000);
+    auto call = grass.Step(g, false, 0, 3000);  // malloc
+    REQUIRE(call);
+    call = grass.Step(g, true, 0x2100009000, 3000);
+    REQUIRE(call);
+    CHECK(call->function == kMain + CoopWorld::kCutFoliage);
+    CHECK_FALSE(grass.Step(g, true, 1, 3000));  // Kakariko's was dropped
+    CHECK(grass.Made() == 1);
+    // the foliage scene changes under the same name: wait again
+    g.Word(kHolder + 0x338, 0);
+    (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 3100);
+    g.Word(kHolder + 0x338, kFolScene);
+    (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 3200);
+    grass.Receive(theirs);
+    CHECK_FALSE(grass.Step(g, false, 0, 3300));
+    (void)grass.Look(g.Reader(), kMain, "HyruleField_Child", 5300);
+    CHECK(grass.Step(g, false, 0, 5300));
 }

@@ -1,0 +1,21 @@
+# grass-late, B: joins after A cut, loads into the same place, looks at A's cut turf at 186 22
+# from 191 28. With the server's per-scene list, B's grass there is cut too.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark arrived
+goto 191 28 1.0 600
+toward 186 22 15
+wait 300
+mark watching
+wait 600
+mark watched

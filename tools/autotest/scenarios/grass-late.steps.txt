@@ -1,0 +1,15 @@
+# grass-late: grass cut before a player came is cut for that player too, and grows back once
+# nobody is left in the scene. Run: tools\autotest\run.ps1 -Scenario grass-late -Timeout 600
+# Read: B's log `coop: grass: got cut from P1` (the server's replay) and `cuts of the others
+# made here`, the shots s5-grass-late.B-*-watching; after both quit and B comes back alone,
+# B's second log has no `got cut` line and s10 shows the turf whole.
+start A
+play A grass-late.A.txt        # A warps in and cuts; B is not there yet
+start B
+play B grass-late.B.txt        # B joins late and looks at the turf
+shot both-in
+close A
+close B                        # nobody in the field: the server forgets its cuts
+start B
+play B grass-late.B.txt        # B alone again: the field's grass is whole
+shot b-alone

@@ -867,7 +867,7 @@ TEST_CASE("a reader without the new types skips them") {
   CHECK(stage0_decode(must_encode(Chat{0, "hi"}), back) == Error::none);
   // And this build in turn skips a type newer than itself.
   Bytes future;
-  put_u16(future, 29);
+  put_u16(future, 39);
   put_u16(future, 0);
   CHECK(decode_bytes(future) == Error::unknown_type);
 }
@@ -1145,6 +1145,62 @@ TEST_CASE("bad times of day are refused") {
   CHECK(decode(b, m) == Error::bad_value);
   b = must_encode(TimeOfDay{0, 10, 0});
   b[kHeaderSize + 4] = 0xff;  // seconds past one day
+  CHECK(decode(b, m) == Error::bad_value);
+}
+
+TEST_CASE("object group has its number, channel and layout; only a client sends it") {
+  CHECK(static_cast<int>(MessageType::object_group) == 29);
+  CHECK(channel_of(MessageType::object_group) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::object_group, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::object_group));
+  CHECK_FALSE(may_send(Sender::server, MessageType::object_group));
+  const ObjectId part{ObjectKind::placed, 0, 0x0102030405060708ull};
+  const ObjectId boss{ObjectKind::made, 2, 9};
+  const Message g = ObjectGroup{0, {{part, boss, object_group::boss}}};
+  CHECK(check_received(g, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(g, Sender::server, kChannelOwnership) == Error::wrong_sender);
+  const Bytes b = must_encode(g);
+  // u8 player, u16 count, then member id, root id (10 bytes each), u8 flags.
+  REQUIRE(b.size() == kHeaderSize + 3 + 21);
+  CHECK(b[kHeaderSize + 1] == 1);
+  CHECK(b[kHeaderSize + 3] == 0);      // member: placed
+  CHECK(b[kHeaderSize + 5] == 0x08);   // its hash, little-endian
+  CHECK(b[kHeaderSize + 13] == 1);     // root: made
+  CHECK(b[kHeaderSize + 14] == 2);     // by player 2
+  CHECK(b[kHeaderSize + 23] == object_group::boss);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == g);
+}
+
+TEST_CASE("bad object groups are refused") {
+  const ObjectId a{ObjectKind::placed, 0, 1};
+  const ObjectId c{ObjectKind::placed, 0, 2};
+  Bytes out;
+  CHECK(encode(ObjectGroup{0, {}}, out) == Error::bad_value);                    // empty
+  CHECK(encode(ObjectGroup{0, {{a, c, 0}, {a, a, 0}}}, out) == Error::bad_value);  // a member twice
+  CHECK(encode(ObjectGroup{0, {{a, c, 2}}}, out) == Error::bad_value);           // an unknown flag
+  CHECK(encode(ObjectGroup{5, {{a, c, 0}}}, out) == Error::bad_value);
+  CHECK(encode(ObjectGroup{0, {{a, ObjectId{ObjectKind::placed, 1, 2}, 0}}}, out) ==
+        Error::bad_value);  // a placed id with a maker
+  std::vector<ObjectGroupEntry> many;
+  for (std::uint64_t i = 0; i <= kMaxGroupEntries; ++i) {
+    many.push_back({ObjectId{ObjectKind::placed, 0, i}, c, 0});
+  }
+  CHECK(encode(ObjectGroup{0, many}, out) == Error::bad_value);
+  many.pop_back();
+  CHECK(encode(ObjectGroup{0, many}, out) == Error::none);
+  CHECK(out.size() == kHeaderSize + 3 + 21 * kMaxGroupEntries);
+
+  Message m;
+  Bytes b = must_encode(ObjectGroup{0, {{a, c, 0}}});
+  b[kHeaderSize + 23] = 0x80;  // an unknown flag
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(ObjectGroup{0, {{a, c, 0}}});
+  b[kHeaderSize + 1] = 2;  // two entries said, one sent
+  CHECK(decode(b, m) == Error::truncated);
+  b = must_encode(ObjectGroup{0, {{a, c, 0}}});
+  b[kHeaderSize + 1] = 0;  // none said
   CHECK(decode(b, m) == Error::bad_value);
 }
 

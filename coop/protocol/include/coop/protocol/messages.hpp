@@ -15,7 +15,9 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 4;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: GRASS_CUT, WORLD_*, DROP_*
+// 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
+// (types 28 to 39) and the server sending HANDOVER_ASK.
+inline constexpr std::uint16_t kProtocolVersion = 4;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -73,7 +75,7 @@ enum class MessageType : std::uint16_t {
   player_pose = 26,
   time_of_day = 27,
   grass_cut = 28,
-  // 29 to 31: enemy ownership on the server.
+  object_group = 29,  // 30, 31: kept for enemy ownership
   world_break = 32,
   world_move = 33,
   world_place = 34,
@@ -683,6 +685,31 @@ struct TimeOfDay {
   bool operator==(const TimeOfDay&) const = default;
 };
 
+// OBJECT_GROUP (client only, not relayed): which objects belong together, so
+// the server keeps them with one owner (docs/objects.md "Groups"). Each entry
+// names a member and its root: a boss part and the boss, a summoned enemy and
+// its summoner. An entry whose root is the member itself takes the member
+// out of any group; it is also how a lone object is marked a boss.
+namespace object_group {
+inline constexpr std::uint8_t boss = 1u << 0;  // the member is a boss: 60 s fight lock
+}  // namespace object_group
+
+struct ObjectGroupEntry {
+  ObjectId member;
+  ObjectId root;
+  std::uint8_t flags = 0;  // object_group bits
+  bool operator==(const ObjectGroupEntry&) const = default;
+};
+
+// Most entries in one OBJECT_GROUP. 1 to this many, no member twice.
+inline constexpr std::size_t kMaxGroupEntries = 256;
+
+struct ObjectGroup {
+  std::uint8_t player_number = kPlayerSelf;
+  std::vector<ObjectGroupEntry> entries;
+  bool operator==(const ObjectGroup&) const = default;
+};
+
 // GRASS_CUT (docs/world.md, "Field grass"): one cut of the field grass the
 // game's foliage module draws (no actor), as the game queued it: a sphere at
 // position with radius, and for a sword, three points of the swing (NaN when
@@ -822,7 +849,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
-                             TimeOfDay, GrassCut, WorldBreak, WorldMove,
+                             TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk>;
 

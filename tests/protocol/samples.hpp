@@ -79,6 +79,7 @@ inline std::vector<Message> object_messages() {
   all.push_back(ObjectOwner{kPlacedId, 2, 9, 4});
   all.push_back(ObjectOwner{kMadeId, 0, 0, 0});
   all.push_back(HandoverAsk{kPlacedId, 9, 3});
+  all.push_back(ObjectGroup{0, {{kPlacedId, kMadeId, object_group::boss}, {kMadeId, kMadeId, 0}}});
   all.push_back(HandoverState{0, kPlacedId, 9, full_object_state()});
   all.push_back(ObjectSpawn{0, kMadeId, "NormalArrow", object_spawn::projectile, full_object_state()});
   all.push_back(ObjectSample{1, kPlacedId, 65535, full_object_state()});

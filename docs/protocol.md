@@ -261,13 +261,17 @@ Shared enemies and projectiles; the design and the reasons are in [objects.md](o
 The server's rules today (`server/session.cpp`):
 
 - A player's scene is the one of its latest `OBJECT_PRESENT` or `PLAYER_SAMPLE` scene. Changing scene lets go of everything it had loaded or made in the old one.
-- `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. Made ids in the list are ignored.
+- `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. A made id in the list counts only for a made enemy the server knows (the lister has its copy and may be given it); unknown made ids and projectiles are ignored. Every 10 s the answer to a list is `OBJECT_OWNER` for everything in it.
+- A scene a player left under 3 s ago is not taken back from a late `OBJECT_PRESENT` or `PLAYER_SAMPLE`; the message is ignored.
+- At a player's first `OBJECT_PRESENT` in a scene the server sends it every `OBJECT_SPAWN` still alive there (player field: the owner; the last relayed state), each followed by `OBJECT_OWNER` when the owner is not the maker or the epoch is not 0.
 - `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` of a made id only from the maker named in the id, once; of a placed id only from its current owner, in its scene (relayed, nothing registered). Anything else is dropped.
-- `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner.
-- When the owner of a placed object unloads it, changes scene or leaves, the game with the lowest number that still has it takes it with epoch + 1: it gets `HANDOVER_STATE` with the last relayed sample (player field: the old owner) when there was one, then everyone in the scene gets `OBJECT_OWNER`. Nobody left: the object is forgotten.
-- A made object goes when its maker lets go of it: the others in the scene get `OBJECT_REMOVE` (gone, at its last position) from the server.
+- `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner. It starts the object's fight (12 s, 60 s for a boss).
+- The server moves an object by the rules in [objects.md](objects.md) ("Enemies": the player near it out of a fight, a hit from the player near it, an owner that is loading, paused 6 s or dead 10 s, a group member after its root). It sends the owner `HANDOVER_ASK`; the owner answers `HANDOVER_STATE` with the ask's epoch (anything else is dropped); the server then sends the new owner `HANDOVER_STATE` with epoch + 1 (player field: the old owner) and everyone in the scene `OBJECT_OWNER`. No answer in 500 ms: the same with the last relayed sample. Until then the old owner's samples are still relayed.
+- `OBJECT_REMOVE` with reason dead from the owner before the last change, with the epoch before, is taken for 2 s after it and passed on with the current epoch.
+- `OBJECT_GROUP` is not relayed. An entry is taken when both ids are known in the sender's scene and the sender has the member loaded; a root that follows another root gives its root; an entry naming itself leaves its group. `OBJECT_OWNER` then carries the group (the same number for the root and its members) and is sent to the scene when it changes.
+- When the owner of a placed object unloads it, changes scene or leaves, the nearest game that still has it (the lowest number when places are not known) takes it with epoch + 1: it gets `HANDOVER_STATE` with the last relayed sample (player field: the old owner) when there was one, then everyone in the scene gets `OBJECT_OWNER`. Nobody left: the object is forgotten.
+- A made object goes when its owner lets go of it: the others in the scene get `OBJECT_REMOVE` (gone, at its last position) from the server. A made enemy another game has listed goes to that game instead, like a placed one. An owner that stops listing its made enemy without an `OBJECT_REMOVE` has let go of it after 1 s.
 - A removed placed object stays, owned by nobody, until no game lists it, so a copy that is still loaded cannot bring it back.
-- Not yet: `HANDOVER_ASK` (a client's `HANDOVER_STATE` is dropped), the fight lock, the distance hand-over and groups.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
@@ -278,6 +282,7 @@ The server's rules today (`server/session.cpp`):
 | 22 | `OBJECT_SPAWN` | 2 | both | `u8` player field, object id (kind made; or kind placed, from its owner: the actor of a placed object that other games may not have loaded, such as a Gold Skulltula one game shook out of a tree), actor name (string, 1 to 64), `u8` flags (bit 0 projectile), then object components |
 | 23 | `OBJECT_SAMPLE` | 4 | both | `u8` player field, object id, `u16` epoch, then object components |
 | 24 | `OBJECT_REMOVE` | 2 | both | `u8` player field, object id, `u16` epoch, `u8` reason (0 gone, 1 dead, 2 exploded, 3 hit, 4 picked up), position (3 x f32) |
+| 29 | `OBJECT_GROUP` | 2 | client | `u8` player field, `u16` count (1 to 256), then per entry: member object id, root object id, `u8` flags (bit 0 the member is a boss; other bits refused). No member twice |
 | 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32) |
 
 An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 4 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
@@ -302,7 +307,7 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
 - **Stage 4:** `FLAG_SET`, `FLAG_STATE` and `FLAG_SNAPSHOT` (above) share world flags through the host.
-- **Stage 5:** the object messages (below). The server's ownership rules and the hold times are not in a build yet.
+- **Stage 5:** the object messages (above). The server's ownership rules are built; the hook's side of the hand-over and of groups is not.
 
 ## Versioning
 
@@ -314,6 +319,7 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 - `PLAYER_EQUIP` component 10, `held`, was added this way (2026-11-09) and the version stayed 3: a build without it skips it, and its puppets show no held item. The server reads and writes the message again when it relays, so a server without it drops the component: the held item needs a server that has it.
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
+- Version 4 (2026-11-09, for 0.1.0-test4): the messages of types 28 to 39 (`OBJECT_GROUP` is 29), and the server now sends `HANDOVER_ASK` and moves objects between players, which a version 3 game does not answer. One bump for all of them.
 - Version 4 (2026-11-09): the drop messages (types 36 to 38), with the other messages of the same release. No layout changed; the version went up so that every game in a session shares drops or none does.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
 - Version 4 (2026-11-09): `GRASS_CUT` (type 28), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35). No layout changed; the version went up so that a version 3 server, which does not know the type and would not relay it, is refused at `HELLO`.

@@ -51,7 +51,13 @@ param(
     # Copy each kit's saves as they are now into <kit>\autotest-save\ (its baseline), then stop.
     [switch]$TakeBaseline,
     # Leave the saves as they are (the game continues from whatever it saved last).
-    [switch]$NoRestore
+    [switch]$NoRestore,
+    # Co-op off: no server, and coop.ini names none (the log says "coop: off"), so nothing is
+    # shared and the game is not patched for co-op unless a switch asks for it. The test script,
+    # the object walk (LICHII_COOP_DEBUG_OBJECTS) and the objects cheat still run. Default
+    # switches then: LICHII_COOP_DEBUG_OBJECTS=1 only. For telling a game behaviour from one of
+    # ours (issue 125).
+    [switch]$NoCoop
 )
 $ErrorActionPreference = 'Stop'
 
@@ -83,6 +89,7 @@ if (-not $TakeBaseline -and -not $steps -and -not (Test-Path $scA)) { throw "no 
 #   #! start REGEX             the game log must match REGEX once the save is loaded (default: a
 #                              Graveyard object, the save point); checked after load.txt, or at
 #                              the end for a script that loads itself
+if ($NoCoop -and -not $PSBoundParameters.ContainsKey('Switches')) { $Switches = @('LICHII_COOP_DEBUG_OBJECTS=1') }
 $headNoLoad = $false; $headSwitches = @(); $headStart = $null
 $headFile = if ($steps) { $steps } elseif (Test-Path $scA) { $scA } else { $null }
 if ($headFile) {
@@ -104,7 +111,7 @@ if ($headSwitches.Count) {
 if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not (@($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() }) -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
 
 $Server = Resolve $Server
-if (-not $TakeBaseline -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+if (-not $TakeBaseline -and -not $NoCoop -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
 
 # The folders a kit's emulator really uses: qt-config.ini can point nand/sdmc/load/dump anywhere
 # (kits copied from another kit keep that kit's absolute paths).
@@ -369,6 +376,7 @@ $serverRuns = 0
 $switchEnv = [ordered]@{}
 # Starts the server (again); its output goes to server-out.txt, then server-out-2.txt, ...
 function Start-Server {
+    if ($NoCoop) { return }
     $script:serverRuns++
     $sfx = if ($script:serverRuns -gt 1) { "-$($script:serverRuns)" } else { '' }
     $script:serverProc = Start-Process $Server -ArgumentList "--port $Port" -PassThru -WindowStyle Minimized `
@@ -404,7 +412,8 @@ function Start-Game([string]$x) {
         }
         Write-Host "game ${x}: saves restored from $(Baseline-Dir $kits[$x])"
     }
-    Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') "server = 127.0.0.1`r`nport = $Port`r`nname = $x"
+    $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $Port`r`nname = $x" }
+    Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') $ini
     Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
     Set-Content -Encoding ascii $s.Script ''
     if (Test-Path $s.Log) {
@@ -425,6 +434,11 @@ function Start-Game([string]$x) {
         if (-not $old.ContainsKey($k)) { $old[$k] = [Environment]::GetEnvironmentVariable($k) }
         [Environment]::SetEnvironmentVariable($k, $switchEnv[$key])
     }
+    if ($NoCoop) {
+        # No server from the environment either.
+        if (-not $old.ContainsKey('LICHII_COOP_SERVER')) { $old['LICHII_COOP_SERVER'] = $env:LICHII_COOP_SERVER }
+        Remove-Item Env:LICHII_COOP_SERVER -ErrorAction SilentlyContinue
+    }
     $env:LICHII_COOP_TEST_SCRIPT = $s.Script
     $s.Proc = Start-Process (Join-Path $s.Emu 'lichii.exe') -ArgumentList "-g `"$Game`"" -WorkingDirectory $s.Emu -PassThru
     Remove-Item Env:LICHII_COOP_TEST_SCRIPT
@@ -433,15 +447,17 @@ function Start-Game([string]$x) {
     $expectedExit[$x] = $false
     Note "started ${x}: pid $($s.Proc.Id)"
 }
-# Waits until the game has a window and has joined the server.
+# Waits until the game has a window and has joined the server (with -NoCoop: has said
+# "coop: off").
 function Wait-Joined([string]$x) {
+    $joined = if ($NoCoop) { 'coop: off' } else { 'coop: welcomed as player' }
     $start = Get-Date
     while ($true) {
         $s = $st[$x]
         if ($s.Proc.HasExited) { throw "game $x closed while starting" }
         $s.Proc.Refresh()
-        if ($s.Proc.MainWindowHandle -ne 0 -and (Read-Log $x) -match 'coop: welcomed as player') { break }
-        if (((Get-Date) - $start).TotalSeconds -gt $Timeout) { throw "game $x did not join the server in $Timeout s" }
+        if ($s.Proc.MainWindowHandle -ne 0 -and (Read-Log $x) -match $joined) { break }
+        if (((Get-Date) - $start).TotalSeconds -gt $Timeout) { throw "game $x did not reach '$joined' in $Timeout s" }
         Start-Sleep -Milliseconds 500
     }
 }

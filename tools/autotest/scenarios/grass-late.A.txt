@@ -1,0 +1,29 @@
+# grass-late, A: loads into Hyrule Field (child) in front of Kakariko with the test-only warp,
+# then cuts field grass at about 186 22 (sword twice and a spin) before B has joined.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark arrived
+goto 186 22 1.0 900
+wait 300
+toward 186 26 10
+hold Y 8
+wait 240
+toward 182 22 10
+hold Y 8
+wait 240
+hold Y 90               # a spin attack
+wait 300
+mark cut-done
+goto 189 30 1.0 900     # out of the cut turf, so B sees it bare
+toward 186 22 15
+mark aside

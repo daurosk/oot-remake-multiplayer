@@ -4,7 +4,7 @@ Caleb (2026-11-09): every world object the same for all players. A pot or crate 
 
 Game build e0f3ccfaf50065ae (1.1.1). **Checked** means read from the romfs or the code; **live** means seen in a run.
 
-## Breakables (first cut, branch `world-sync`)
+## Breakables (first cut, branch `world-sync`; more in "Broken for everyone" below)
 
 ### What breaks
 
@@ -60,16 +60,69 @@ Most switch states are 64-bit-key flags of the switch's placement ([flags.md](fl
 
 `tools/autotest/run.ps1 -Scenario rock`: A walks to the Graveyard's liftable rock with `goto` ([testing.md](testing.md), "Input scripts"), lifts and throws it; B stands 6.5 m away facing it. The `coop: objects: share gone` and `share life` lines in the two logs and B's screenshots show the break on both. `sign` (Kakariko signpost, cut with the sword) and `crate` are there for the cases above that are not shared yet.
 
-## Field grass (not an actor): research, not shared yet
+## Field grass (not an actor): shared with GRASS_CUT
 
-Read from the plain `main` of build e0f3ccfaf50065ae with `nso_index.py` (integration's tool); the game was not run.
+The grass of the fields is drawn by `game::foliage::Module`; a cut is no actor and no flag. Read from the plain `main` of build e0f3ccfaf50065ae and checked in one autotest run (2026-11-09, `coop-kit\shots\grass\20261109-145729`).
 
-- The grass of the fields is drawn by `game::foliage::Module`. Its turf shader binds a buffer named `SsboGrassCut` (the code at main+0x2c02600), next to `SsboUnitPlacement`, `SsboGather` and `SsboVegeBehaviour`. So a cut is an entry in a buffer the shader reads, not an actor.
-- Path, checked in the code: the module pointer is at main+0x4e22540; when its byte +0x30 has bit 0 clear, `[module+0xf0]+0x338` is the foliage scene (the game's own 0x2c013c0). `SsboGrassCut` is the 0x30 bytes at scene+0x58, `SsboGather` at scene+0x88.
-- Other names in the binary: `OneshotTryCutFoliage` (an AI one-shot, name used at 0x296776c), `PlayerCutGrass`, `IsCutGrass`, `FoliageCutRadius` (0xa03484, 0x30fee8c), `EnableGrassCut`, `GrassCutBoost`, `GrassCutEffectEmitRate` (foliage parameters), `game__drop__FoliageDropParam`.
-- Not known: the layout inside the buffer (one entry per cut, a grid, a ring), what writes it, and whether writing an entry from outside is enough for the shader to hide the grass (the buffer may be a copy of a list kept elsewhere).
+**Where a cut goes.** The module pointer is at main+0x4e22540; when its byte +0x30 has bit 0 clear, `[module+0xf0]+0x338` is the foliage scene (the game's own 0x2c013c0). Every cut is a 0x3c-byte slot the game takes from a free list (slots at scene+0x48, the list head at +0x50) and puts on a queue at scene+0x20: u32 capacity (16 in Hyrule Field), entries of 16 bytes at +0x28 (slot pointer, then sequence: i + 1 while queued, i + capacity once taken out), u64 read index +0x30, u64 write index +0x38 (0xb808f0 pushes). The renderer takes the slots out the same frame and copies each into the `SsboGrassCut` buffer its shader reads.
 
-`LICHII_COOP_DEBUG_OBJECTS=1` logs it (`CoopWorld::FoliageProbe`, `coop: foliage:` lines): the path once, then every 8-byte word that changes in scene+0x40..0xc0 and in what the six words of `SsboGrassCut` point to, two pointers deep (0x200 bytes each), with where our Link stood. At most 60 lines per block, 1,500 per session.
+**The slot.** +0x00 position (3 x f32), +0x0c radius, +0x10 0.3 (the game's), +0x14 a flags byte, then three points of a sword swing at +0x18, +0x24 and +0x30 (3 x f32 each; NaN when the cut is a sphere only). Two places fill it: the sword (0x2ea4880, all of it) and `0xb80800(module, request)`, which copies a whole 0x3c-byte request into a free slot and queues it (used by the AI node `OneshotTryCutFoliage`, 0x29676a0, with position, radius, flags 4 and NaN points, and by two more callers at 0x303e464 and 0x438c9c). It does nothing with a radius under 0.01.
 
-Next: one run where grass is cut (steps in the coordinator's notes), then read which words changed and how they relate to where Link stood. From that: the entry layout, then a GRASS_CUT message (protocol 4 or 5) that carries a cut's position and size and is written into the other games' buffers, or replayed through the game's own cut call if the buffer turns out to be a copy.
+**Seen live.** Each sword swing queued 3 slots (write index 0 -> 3 -> 6), a spin attack 13, at Link's sword. Cutting the actor tufts (below) queued slots at each tuft too.
 
+**The sync** (`CoopWorld::GrassSync`, coop_world.cpp). Each objects walk reads the queue's new entries and sends each slot as `GRASS_CUT` (protocol 4: scene, position, radius, flags, the three points; [protocol.md](protocol.md)). A game in the same scene makes the cut with the game's own call: at the svc cave it writes the request into a 0x40-byte block it mallocs once and calls 0xb80800(module, block), at most 8 a frame. That cut comes back through its own queue; a slot the same as one it made in the last 3 s (position and radius, bit for bit) is not sent again. A cut for another scene is dropped. Logs: `coop: grass: cut at ... sent`, `coop: grass: got cut from P...`, `coop: grass: N cuts of the others made here`.
+
+**Late and returning players.** The server keeps each scene's cuts (at most 512) while anyone is in that scene and sends them to a player who comes in, a late joiner too ([protocol.md](protocol.md), `GRASS_CUT`). The game makes them only once its walk has seen the new scene's foliage queue stay the same for 2 s, so none lands in the scene it left. When the last player leaves a scene its cuts are forgotten: the game grows the grass back when a scene is loaded again, so a player who comes back to an empty scene finds it whole, as in the one-player game. Scenario `grass-late` checks both.
+
+`LICHII_COOP_DEBUG_OBJECTS=1` still logs the research probe (`CoopWorld::FoliageProbe`, `coop: foliage:` lines): the path once (with `(off)` and no walk while the module's byte +0x30 has bit 0 set), then every 8-byte word that changes in the scene's first 0x400 bytes and in what the six words of `SsboGrassCut` point to, two pointers deep (0x200 bytes each), with where our Link stood. A word that changed six times is a counter: it is logged once more as `noisy` and then left out. At most 60 lines per block in each scene, 1,500 per session.
+
+
+
+## Broken for everyone, moved for everyone (`WorldSync`, branch `world-sync-3`)
+
+`CoopWorld::WorldSync` (coop_world.cpp) shares placed breakables and movables by their placement hash, beside the enemy sharing above (which still carries a breakable's life). Three messages, protocol 4 ([protocol.md](protocol.md)). **Unit-tested only: nothing in this section has been seen in a game yet.**
+
+**`WORLD_BREAK`.** A game sends it once when a placed breakable breaks there: its life read at 0 (or no longer readable), or it left the actor list next to our Link (the rule above: 8 m when it was moved, 3 m when not). The second kind waits 0.7 s and is dropped when the area unloaded instead: four or more tracked objects went within that time and one of them was more than 8 m away, or our Link was not in the walk. The server keeps each scene's breaks (at most 1,024) while anyone is in the scene, passes each on once, and sends them to a player who enters. A game that gets one:
+
+- has had the object for a while: writes life 0, so the game breaks it itself. If the object still stands, it is deleted with the game's own delete call: grass after 0.4 s whatever its life says (the Kokiri-side tufts kept standing at life 0), anything without a life after 0.4 s, anything else after 6 s and only if its life is back above 0 (a crate takes 4.6 s to go by itself).
+- sees the object for the first time after the break (a late joiner, an area that loaded later): deletes it at once, no break effect.
+- A game that saw its own copy go and sees it again 3 s or more later (a respawning pot) sends the break with `restored`; everyone forgets the break.
+
+When the last player leaves a scene the server forgets its breaks, as the game restores everything on a reload.
+
+**`WORLD_MOVE` and `WORLD_PLACE`.** The game whose own Link is within 15 m of a placed movable or breakable that left its rest place (5 cm for blocks, 15 cm for pots and rocks) is its mover: it sends `WORLD_MOVE` (place and rotation, at most 20 a second, unreliable) while it moves and `WORLD_PLACE` (reliable) when it has been still 0.4 s. The others put their copy where the mover's was 100 ms ago, every frame, through the same setter the enemy copies use, then hold it at the rest place for 0.5 s and let it be; for 1.5 s after that their own copy settling is not taken as a move. One mover at a time: a game does not start sending while another's moves come in, and when two start together the lower player number keeps it. The server keeps each object's last rest place per scene (at most 256) for a player who enters later. The enemy sharing no longer places these objects (`WorldSync::Places`).
+
+### Table: what breaks or moves, and how it is shared
+
+| Object | Actor names | How it breaks or moves | Shared by | Proven |
+|---|---|---|---|---|
+| Field grass | none (foliage) | sword, spin, AI cut | `GRASS_CUT`, server list per scene | unit tests; not in a game |
+| Grass tufts | `Obj_Plant_Grass_*`, `Land_kokiri_Plant_A_02_DropFixed_03`, 3 more | sword | life + `WORLD_BREAK`, deleted 0.4 s later | unit tests; life 0 alone failed in a game |
+| Pots | `Obj_Pot_*`, `*SkullPot_*`, `*ArcheryPot_*` | sword, thrown | life, `WORLD_BREAK`; carried: `WORLD_MOVE` | unit tests; not in a game |
+| Crates | `Obj_BrokenBox_*` | sword (life 5) | life, `WORLD_BREAK` | life path seen in a game (3 runs) |
+| Liftable rocks | `Obj_LiftRock_*` | lifted, thrown | gone-near-Link, `WORLD_BREAK`; carried: `WORLD_MOVE` | thrown break seen in a game; carry not |
+| Bomb and hammer rocks, cracked walls and floors | `*BrokenRock_*`, `*CrackWall_*`, `*CrackFloor_*` | bomb, hammer | life, `WORLD_BREAK` | unit tests only |
+| Ice pillars, beehive, spider webs | `Obj_BrokenIcePillar_*`, `*Beehive_*`, `*SpiderWeb_*` | hit, fire | life, `WORLD_BREAK` | unit tests only |
+| Red ice | `Obj_RedIce_*` | blue fire (no life: it goes) | gone-near-Link, `WORLD_BREAK`, deleted | unit tests only |
+| Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | `WORLD_HIT`: the swing is replayed on the others' sign (below) | unit tests only; the replayed hit may not cut |
+| Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE` | unit tests only |
+| Rolling rocks | `*RollingRock_*` | roll by themselves | each game's own (not shared) | - |
+| Bomb flowers | `Obj_BombFlower_*` | picked, thrown, explode | not shared here (the fruit is made by the game, no placement) | - |
+| Moving floors, lifts, shutters, water level | `*MoveFloor_*`, `*ElevatorLift_*`, `*SwitchShutter_*`, `*WaterPlane_*` | driven by switches | the switch flags ([flags.md](flags.md)); not positions | - |
+
+### Signs (issue 90): what the pack says
+
+Read from `Obj_GuidePost_A_02.pack` (romfs, 2026-11-09): a cuttable sign's life is `Signboard`, a child of `Obj_Invincible` with `IsDamagedWhileInvincibile`, so a hit never lowers its life; the cut is done by its `DestructionParam` (a `_fracture` shape whose pieces come off where the sword hit) and its AI is `CuttableSignboard`. It keeps no blackboard value for "cut". So a cut cannot be read from life or a flag.
+
+**What is built (`WORLD_HIT`, type 35; not seen in a game).** The swing is shared, not the cut. Every sword swing is already read for the field grass: the game queues its foliage cut slots with three points of the blade. When a point of our own swing is within 1.5 m (level) and 2.5 m (height) of a sign, the hook sends `WORLD_HIT` with the sign's placement hash, the nearest point and where our Link stood (at most one per sign every 0.3 s). Every other game in the scene gives its own sign one hit at that point, from that place, through the hit replay the enemy sharing has (`Mover::AddHit`: the game's own damage call), so that game's destruction takes the pieces off itself. The server keeps the last 4 hits of each sign per scene for a player who enters later; they are given once the sign has been loaded 0.3 s.
+
+Open, to see in a run: (1) the swing is only read where the foliage module is on (outdoor scenes with grass; a sign in a scene without it is not shared); (2) whether the replayed hit makes the destruction cut, and the same pieces; if not, the other way is to find the Destruction component's state with a memory compare while a sign is cut and write it; (3) a swing near a sign that did not cut it in the sender's game is sent too, and the receiving game decides by its own geometry.
+
+### To check in a game (nothing here was run)
+
+1. Pot: A breaks a pot with the sword, B sees it break (`coop: world: ... broken here (life 0): sent` in A, `got break` and `broken by another player` in B). B enters the scene later: the pot is not there (`was broken before we saw it: deleted`).
+2. Tufts by the Kokiri side of Hyrule Field: A cuts, B's tuft goes (`still stands after the break: deleted`).
+3. A carries a pot or rock: B sees it in the air at A's puppet (`moved here: sending` in A, `moved by another player` in B); does the setter move a physics object, and does it drop when let be?
+4. A pushes a block (Forest Temple, Kakariko well): B's block follows and stays (`at rest: place sent`, `put where another player left it`). Does B's block keep its place after the 0.5 s hold, and can B push it afterwards?
+5. A door or room change next to pots: no `broken here (gone next to Link)` line may appear (it should say `left with the area`).
+6. Sign: A cuts the signpost by the Graveyard gate (scenario `sign`): A logs `our sword passed it: hit sent`, B `hit by another player's sword`; does B's sign lose the same pieces? And for B entering later?

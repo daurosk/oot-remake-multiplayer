@@ -227,6 +227,32 @@ Every game shows the host's time of day ([time.md](time.md)).
 - A game whose clock jumped by itself (the Sun's Song, sleeping, an event) sends it with the jump bit, and every other game, the host's too, takes it at once.
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
 
+### Field grass (`GRASS_CUT`)
+
+One cut of the field grass the foliage module draws (no actor; [world.md](world.md), "Field grass"), as the sender's game queued it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 28 | `GRASS_CUT` | 0 | both | `u8` player field, `str` scene (1 to 64 chars), 3 x `f32` position (finite), `f32` radius (above 0, at most 100), `u8` flags (the game's, passed on unread), 9 x `f32`: three points of the swing (each finite or NaN) |
+
+- Sent once for each cut the sender's game makes; a cut it made for another player is not sent back.
+- A game in the same scene makes the same cut; any other drops it.
+- The server takes the cut's scene as the sender's scene, keeps the cut in that scene's list (at most 512, the oldest go first) and relays it to the other players in that scene, with the sender's number in the player field. A cut the scene's list already has (position and radius the same, bit for bit) is neither kept again nor relayed.
+- A player whose scene changes to one with a list (its `PLAYER_SAMPLE` scene, `OBJECT_PRESENT` or a cut of its own), a late joiner too, gets every cut in it, oldest first. A scene's list is forgotten when no player is in it any more: the grass grows back in a game that loads the scene again, so the cuts end with the last game that still shows them.
+
+### Shared world objects (`WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`)
+
+Placed breakables and movables, by placement hash ([world.md](world.md), "Broken for everyone, moved for everyone"). All three start with `u8` player field, `str` scene (1 to 64 chars), `u64` placement hash (not 0, not all ones), and go to the players in the sender's scene.
+
+| Type | Name | Channel | From | Body after the head |
+|---|---|---|---|---|
+| 32 | `WORLD_BREAK` | 0 | both | 3 x `f32` position (finite), `u8` flags (bit 0: restored) |
+| 33 | `WORLD_MOVE` | 4 | both | `u64` server time, 3 x `f32` position, 4 x `f32` rotation (unit quaternion x y z w), `u8` flags (bit 0: carried) |
+| 34 | `WORLD_PLACE` | 0 | both | 3 x `f32` position, 4 x `f32` rotation |
+| 35 | `WORLD_HIT` | 0 | both | 3 x `f32` where the sword was, 3 x `f32` where the player stood (a cut sign) |
+
+The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one) and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. The last 4 `WORLD_HIT` of each object (at most 128 objects a scene) are kept and sent the same way. Types 29 to 31 are the enemy ownership messages.
+
 ### Objects (stage 5)
 
 Shared enemies and projectiles; the design and the reasons are in [objects.md](objects.md). The server keeps an object table (below); the hook does not send these yet.
@@ -288,3 +314,4 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
 - Version 4 (2026-11-09): the drop messages (types 36 to 38), with the other messages of the same release. No layout changed; the version went up so that every game in a session shares drops or none does.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
+- Version 4 (2026-11-09): `GRASS_CUT` (type 28), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35). No layout changed; the version went up so that a version 3 server, which does not know the type and would not relay it, is refused at `HELLO`.

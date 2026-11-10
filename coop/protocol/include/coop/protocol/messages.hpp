@@ -15,7 +15,7 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 4;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the drop messages
+inline constexpr std::uint16_t kProtocolVersion = 4;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: GRASS_CUT, WORLD_*, DROP_*
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -72,6 +72,12 @@ enum class MessageType : std::uint16_t {
   damage = 25,
   player_pose = 26,
   time_of_day = 27,
+  grass_cut = 28,
+  // 29 to 31: enemy ownership on the server.
+  world_break = 32,
+  world_move = 33,
+  world_place = 34,
+  world_hit = 35,
   drop_spawn = 36,
   drop_take = 37,
   drop_ask = 38,
@@ -671,6 +677,97 @@ struct TimeOfDay {
   bool operator==(const TimeOfDay&) const = default;
 };
 
+// GRASS_CUT (docs/world.md, "Field grass"): one cut of the field grass the
+// game's foliage module draws (no actor), as the game queued it: a sphere at
+// position with radius, and for a sword, three points of the swing (NaN when
+// the cut is a sphere only). flags is the game's byte, passed on unread.
+// Every game in the same scene makes the same cut. Relayed to everyone else.
+inline constexpr float kMaxGrassCutRadius = 100.0f;
+// Cuts the server keeps for one scene, for a player who enters it later.
+inline constexpr std::size_t kMaxGrassCuts = 512;
+
+struct GrassCut {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::string scene;                         // the sender's scene, not empty
+  Vec3 position{};
+  float radius = 0.0f;                       // above 0, at most kMaxGrassCutRadius
+  std::uint8_t flags = 0;
+  std::array<Vec3, 3> sweep{};               // each value finite or NaN
+  bool operator==(const GrassCut& o) const;  // NaN equals NaN here
+};
+
+// WORLD_BREAK (docs/world.md, "Broken for everyone"): the placed breakable
+// with this placement hash was broken in the sender's scene (a pot, a crate,
+// a rock, a grass tuft, a cracked wall). The server keeps each scene's
+// breaks while anyone is in it and sends them to a player who enters, so a
+// pot broken before a player came is gone for that player too. With
+// `restored` the game put the object back (a pot that respawns): the break
+// is forgotten.
+namespace world_break {
+inline constexpr std::uint8_t restored = 1u << 0;
+}  // namespace world_break
+inline constexpr std::size_t kMaxWorldBreaks = 1024;  // kept per scene
+
+struct WorldBreak {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::string scene;                         // the sender's scene, not empty
+  std::uint64_t hash = 0;                    // placement hash, not 0 and not ~0
+  Vec3 position{};                           // where it was (finite)
+  std::uint8_t flags = 0;                    // world_break bits
+  bool operator==(const WorldBreak&) const = default;
+};
+
+// WORLD_MOVE: where the sender's game has a placed object it is moving (a
+// push block, a pot or rock in Link's hands or in flight), about 20 a
+// second while it moves. Unreliable, relayed to the sender's scene, not kept.
+namespace world_move {
+inline constexpr std::uint8_t carried = 1u << 0;  // in the mover's hands
+}  // namespace world_move
+
+struct WorldMove {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  std::uint64_t time_us = 0;  // server time of the reading
+  Vec3 position{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};  // unit
+  std::uint8_t flags = 0;                  // world_move bits
+  bool operator==(const WorldMove&) const = default;
+};
+
+// WORLD_PLACE: the object has come to rest here after a move. Reliable; the
+// server keeps the latest one of each object per scene (while anyone is in
+// the scene) for a player who enters later.
+inline constexpr std::size_t kMaxWorldPlaces = 256;  // kept per scene
+
+struct WorldPlace {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  Vec3 position{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+  bool operator==(const WorldPlace&) const = default;
+};
+
+
+// WORLD_HIT (docs/world.md, "Signs"): the sender's sword swing passed the
+// placed object with this hash (a sign: its life never drops, the cut is
+// made by the game's destruction of the pieces the sword met). Each other
+// game gives its own copy the same hit, at the same place, through the
+// game's own damage call. The server keeps the last kMaxWorldHitsPerObject
+// of each object per scene for a player who enters later.
+inline constexpr std::size_t kMaxWorldHitsPerObject = 4;
+inline constexpr std::size_t kMaxWorldHitObjects = 128;  // per scene
+
+struct WorldHit {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  Vec3 at{};    // where the sword was (finite)
+  Vec3 from{};  // where the player who swung stood (finite)
+  bool operator==(const WorldHit&) const = default;
+};
+
 // Shared drops (docs/objects.md, "Drops"): the rupees, hearts and ammo an
 // enemy, a pot, grass or a rock leaves. Every game announces the drops its
 // own game rolls with DROP_SPAWN; where two games rolled for the same thing
@@ -719,7 +816,9 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
-                             TimeOfDay, DropSpawn, DropTake, DropAsk>;
+                             TimeOfDay, GrassCut, WorldBreak, WorldMove,
+                             WorldPlace, WorldHit, DropSpawn, DropTake,
+                             DropAsk>;
 
 MessageType type_of(const Message& message);
 

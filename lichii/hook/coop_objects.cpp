@@ -109,6 +109,18 @@ constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 // Rolled enemies' copies in the spawn director: their keys have the top bit.
 constexpr u64 kEnemyKey = u64{1} << 63;
 constexpr unsigned kMoverCallerOrder = 30;  // after the puppets, spawn copies (10) and fairies (20)
+constexpr unsigned kGrassCallerOrder = 40;  // the others' field grass cuts (coop_world.h)
+
+CoopWorld::GrassSync& TheGrass() {
+    static CoopWorld::GrassSync grass;
+    return grass;
+}
+
+u64 SteadyNowMs() {
+    return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count());
+}
 // Animations (docs/puppet.md "Animation"): the AS controller is
 // [[[actor + 0x270] + 0x40] + 0x18] + 0x18; slot 0 is [controller + 0x20];
 // its command name char* +0x10, rate f32 +0xd4, frame f32 +0xe8. The play
@@ -681,6 +693,7 @@ public:
         if (session == nullptr || !scene || scene->empty() || server_now_us == 0) {
             if (sharing_) {
                 sync_.Reset();
+                world_.Reset();
                 sharing_ = false;
             }
             return;
@@ -723,6 +736,11 @@ public:
                                    [](CoopPuppet::Guest& guest, bool after_call,
                                       std::uint64_t result, std::uint64_t now_ms) {
                                        return TheMover().Step(guest, after_call, result, now_ms);
+                                   });
+                CoopSvc::AddCaller(kGrassCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t now_ms) {
+                                       return TheGrass().Step(guest, after_call, result, now_ms);
                                    });
                 return true;
             }();
@@ -770,6 +788,67 @@ public:
         }
         for (const auto& note : sync_.TakeNotes()) {
             LOG_INFO(Core, "coop: objects: share {}", note);
+        }
+        // Breaks and moves of placed world objects (docs/world.md).
+        {
+            CoopWorld::WorldSync::Out world;
+            world_.Tick(*scene, self, server_now_us, seen, player_, world);
+            for (auto& m : world.send) {
+                send.emplace_back(std::move(m));
+            }
+            writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            if (!world.hits.empty()) {
+                // A sign another player's sword passed: the same hit on ours.
+                u64 link = 0;
+                for (const auto& [a, known] : names_) {
+                    if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                        link = a;
+                        break;
+                    }
+                }
+                for (const auto& hit : world.hits) {
+                    if (link == 0) {
+                        break;
+                    }
+                    Mover::Hit h;
+                    h.actor = hit.address;
+                    h.attacker = link;
+                    h.amount = 1;
+                    h.at = hit.at;
+                    h.from = hit.from;
+                    TheMover().AddHit(h);
+                }
+            }
+            for (const auto& note : world.notes) {
+                if (world_lines_ < 2000) {
+                    ++world_lines_;
+                    LOG_INFO(Core, "coop: {}", note);
+                }
+            }
+        }        // Field grass (docs/world.md): our new cuts go out, the others' are
+        // made at the svc cave.
+        for (auto& cut : TheGrass().Look([&r](u64 address) { return r.Get<u64>(address); }, main_,
+                                         *scene, SteadyNowMs())) {
+            LOG_INFO(Core, "coop: grass: cut at {:.2f} {:.2f} {:.2f} radius {:.2f} flags {:#x} sent",
+                     cut.position[0], cut.position[1], cut.position[2], cut.radius, cut.flags);
+            {
+                CoopWorld::WorldSync::Out swing;  // a sign the sword passed (docs/world.md)
+                world_.Swing(cut, player_, server_now_us, swing);
+                for (auto& m : swing.send) {
+                    send.emplace_back(std::move(m));
+                }
+                for (const auto& note : swing.notes) {
+                    LOG_INFO(Core, "coop: {}", note);
+                }
+            }
+            send.emplace_back(std::move(cut));
+        }
+        for (const auto& note : TheGrass().TakeNotes()) {
+            LOG_INFO(Core, "coop: {}", note);
+        }
+        if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
+            grass_made_logged_ = made;
+            LOG_INFO(Core, "coop: grass: {} cuts of the others made here", made);
         }
         for (const Seen& s : seen) {
             if (!s.animation || !IsShared(s.name)) {
@@ -823,11 +902,34 @@ public:
         } else if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
             LOG_INFO(Core, "coop: objects: share got damage {} for {:#x}", d->amount,
                      d->id.value);
-        }
-        sync_.Receive(m);
+        } else if (const auto* g = std::get_if<coop::protocol::GrassCut>(&m)) {
+            LOG_INFO(Core, "coop: grass: got cut from P{} in {} at {:.2f} {:.2f} {:.2f} radius {:.2f}",
+                     g->player_number, g->scene, g->position[0], g->position[1], g->position[2],
+                     g->radius);
+            TheGrass().Receive(*g);
+            return;
+        } else if (std::holds_alternative<coop::protocol::WorldBreak>(m) ||
+                   std::holds_alternative<coop::protocol::WorldPlace>(m) ||
+                   std::holds_alternative<coop::protocol::WorldHit>(m) ||
+                   std::holds_alternative<coop::protocol::WorldMove>(m)) {
+            if (const auto* b = std::get_if<coop::protocol::WorldBreak>(&m)) {
+                LOG_INFO(Core, "coop: world: got break {:#x} from P{} in {}{}", b->hash,
+                         b->player_number, b->scene,
+                         (b->flags & coop::protocol::world_break::restored) != 0 ? " (back)" : "");
+            } else if (const auto* p = std::get_if<coop::protocol::WorldPlace>(&m)) {
+                LOG_INFO(Core, "coop: world: got place {:#x} from P{} at {:.2f} {:.2f} {:.2f}",
+                         p->hash, p->player_number, p->position[0], p->position[1], p->position[2]);
+            }
+            world_.Receive(m);
+            return;
+        }        sync_.Receive(m);
     }
 
     bool debug_ = false;
+    u64 grass_made_logged_ = 0;
+    CoopWorld::WorldSync world_;
+    std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
+    int world_lines_ = 0;
     CoopWorld::FoliageProbe foliage_;
     bool cheat_ = false;
     bool share_ = false;
@@ -860,6 +962,7 @@ private:
             first_ = true;
             names_.clear();
             sync_.Reset();
+            world_.Reset();
             LOG_INFO(Core, "coop: objects: main at {:#x}", main_);
         }
         return true;
@@ -899,7 +1002,7 @@ private:
                 }
                 player = at;
             }
-            if (IsShared(known.first) ||
+            if (IsShared(known.first) || CoopWorld::IsMovable(known.first) ||
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
                 Seen s;
                 s.address = a;
@@ -925,6 +1028,7 @@ private:
         }
         names_ = std::move(names);
         sync_.SetPlayer(player);
+        player_ = player;
         if (debug_) {  // research: the field grass that is no actor (world.md)
             for (const std::string& line : foliage_.Look(
                      [&r](u64 address) { return r.Get<u64>(address); }, main_, player)) {
@@ -1100,7 +1204,10 @@ private:
     void Place(Core::System& system, u64 now_us) {
         std::vector<PoseWrite> poses;
         sync_.Poses(now_us, poses);
-        auto& memory = system.ApplicationMemory();
+        // A placed world object goes where coop_world says, or stays where
+        // this game has it: the enemy sharing does not place those.
+        std::erase_if(poses, [this](const PoseWrite& w) { return world_.Places(w.address); });
+        world_.Poses(now_us, poses);        auto& memory = system.ApplicationMemory();
         Reader r(memory);
         std::unordered_map<u64, coop::protocol::Vec3> placed;
         std::vector<Mover::Pose> wish;
@@ -1137,8 +1244,11 @@ private:
         placed_ = std::move(placed);
         std::vector<PlayWish> plays;
         sync_.Plays(now_us, plays);
-        TheMover().Want(main_, std::move(wish), sync_.Removes(), std::move(plays));
-        if (now_us - drift_at_ >= kDriftLogUs) {
+        std::vector<u64> removes = sync_.Removes();
+        for (const u64 a : world_.Removes()) {
+            removes.push_back(a);
+        }
+        TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));        if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
             if (drift_count_ > 0 || moved > 0 || deleted > 0 || played > 0 || framed > 0 ||
                 sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {

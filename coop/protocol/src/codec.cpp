@@ -1200,6 +1200,177 @@ Error decode_body(Reader& r, TimeOfDay& m) {
   return Error::none;
 }
 
+// u8 player, str scene (1 to 64 chars), 3 x f32 position (finite), f32
+// radius (above 0, at most 100), u8 flags, 9 x f32 sweep (finite or NaN).
+bool finite_or_nan(float f) { return std::isfinite(f) || std::isnan(f); }
+bool same_float(float a, float b) {
+  return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b) ||
+         (std::isnan(a) && std::isnan(b)) || a == b;
+}
+Error check_grass_cut(const GrassCut& m) {
+  if (m.scene.empty()) return Error::bad_value;
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  if (!all_finite(m.position) || !std::isfinite(m.radius) || m.radius <= 0.0f ||
+      m.radius > kMaxGrassCutRadius) {
+    return Error::bad_value;
+  }
+  for (const Vec3& v : m.sweep) {
+    for (float f : v) {
+      if (!finite_or_nan(f)) return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+Error encode_body(const GrassCut& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_grass_cut(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  for (float f : m.position) w.f32(f);
+  w.f32(m.radius);
+  w.u8(m.flags);
+  for (const Vec3& v : m.sweep) {
+    for (float f : v) w.f32(f);
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, GrassCut& m) {
+  m = GrassCut{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  for (float& f : m.position) COOP_READ(r.f32(f));
+  COOP_READ(r.f32(m.radius));
+  COOP_READ(r.u8(m.flags));
+  for (Vec3& v : m.sweep) {
+    for (float& f : v) COOP_READ(r.f32(f));
+  }
+  return check_grass_cut(m);
+}
+
+// The shared head of the WORLD_* messages: u8 player, str scene (1 to 64
+// chars), u64 placement hash (not 0, not ~0).
+Error check_world(std::uint8_t player, const std::string& scene, std::uint64_t hash) {
+  if (!valid_player_or_self(player) || scene.empty() || hash == 0 ||
+      hash == ~std::uint64_t{0}) {
+    return Error::bad_value;
+  }
+  return check_string(scene, kMaxSceneChars);
+}
+
+bool unit_quat(const Quat& q) {
+  if (!all_finite(q)) return false;
+  const float n = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+  return n > 0.98f && n < 1.02f;
+}
+
+// head, 3 x f32 position (finite), u8 flags.
+Error encode_body(const WorldBreak& m, Writer& w) {
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.position) || (m.flags & ~world_break::restored) != 0) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.hash);
+  for (float f : m.position) w.f32(f);
+  w.u8(m.flags);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, WorldBreak& m) {
+  m = WorldBreak{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.hash));
+  for (float& f : m.position) COOP_READ(r.f32(f));
+  COOP_READ(r.u8(m.flags));
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.position) || (m.flags & ~world_break::restored) != 0) return Error::bad_value;
+  return Error::none;
+}
+
+// head, u64 server time, 3 x f32 position (finite), 4 x f32 rotation (unit
+// quaternion x y z w), u8 flags.
+Error encode_body(const WorldMove& m, Writer& w) {
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.position) || !unit_quat(m.rotation) || (m.flags & ~world_move::carried) != 0) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.hash);
+  w.u64(m.time_us);
+  for (float f : m.position) w.f32(f);
+  for (float f : m.rotation) w.f32(f);
+  w.u8(m.flags);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, WorldMove& m) {
+  m = WorldMove{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.hash));
+  COOP_READ(r.u64(m.time_us));
+  for (float& f : m.position) COOP_READ(r.f32(f));
+  for (float& f : m.rotation) COOP_READ(r.f32(f));
+  COOP_READ(r.u8(m.flags));
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.position) || !unit_quat(m.rotation) || (m.flags & ~world_move::carried) != 0) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
+// head, 3 x f32 position (finite), 4 x f32 rotation (unit quaternion).
+Error encode_body(const WorldPlace& m, Writer& w) {
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.position) || !unit_quat(m.rotation)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.hash);
+  for (float f : m.position) w.f32(f);
+  for (float f : m.rotation) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, WorldPlace& m) {
+  m = WorldPlace{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.hash));
+  for (float& f : m.position) COOP_READ(r.f32(f));
+  for (float& f : m.rotation) COOP_READ(r.f32(f));
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.position) || !unit_quat(m.rotation)) return Error::bad_value;
+  return Error::none;
+}
+
+// head, 3 x f32 at (finite), 3 x f32 from (finite).
+Error encode_body(const WorldHit& m, Writer& w) {
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.at) || !all_finite(m.from)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.hash);
+  for (float f : m.at) w.f32(f);
+  for (float f : m.from) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, WorldHit& m) {
+  m = WorldHit{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.hash));
+  for (float& f : m.at) COOP_READ(r.f32(f));
+  for (float& f : m.from) COOP_READ(r.f32(f));
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.at) || !all_finite(m.from)) return Error::bad_value;
+  return Error::none;
+}
+
 // DROP_SPAWN: u8 player, object id (made), scene, actor, position, u64 time,
 // u8 flags (bits 0 and 1, the others 0).
 Error encode_body(const DropSpawn& m, Writer& w) {
@@ -1282,8 +1453,7 @@ Error decode_body(Reader& r, DropAsk& m) {
   return Error::none;
 }
 
-Error decode_body(Reader& r, PlayerPose& m) {
-  m = PlayerPose{};
+Error decode_body(Reader& r, PlayerPose& m) {  m = PlayerPose{};
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_READ(r.u64(m.time.server_time_us));
@@ -1362,8 +1532,9 @@ MessageType type_of(const Message& message) {
       MessageType::object_present, MessageType::object_owner, MessageType::handover_ask,
       MessageType::handover_state, MessageType::object_spawn, MessageType::object_sample,
       MessageType::object_remove, MessageType::damage, MessageType::player_pose,
-      MessageType::time_of_day,   MessageType::drop_spawn,  MessageType::drop_take,
-      MessageType::drop_ask,
+      MessageType::time_of_day, MessageType::grass_cut, MessageType::world_break,
+      MessageType::world_move, MessageType::world_place, MessageType::world_hit,
+      MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1383,6 +1554,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::host:
       return kChannelProgress;
     case MessageType::object_sample:
+    case MessageType::world_move:
       return kChannelObjectSamples;
     case MessageType::object_present:
     case MessageType::object_owner:
@@ -1414,6 +1586,10 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::join_partner:
     case MessageType::player_equip:
     case MessageType::time_of_day:
+    case MessageType::grass_cut:
+    case MessageType::world_break:
+    case MessageType::world_place:
+    case MessageType::world_hit:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1424,6 +1600,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::player_pose:
       return channel == kChannelPlayerSamples;
     case MessageType::object_sample:
+    case MessageType::world_move:
       return channel == kChannelObjectSamples;
     case MessageType::object_present:
     case MessageType::object_owner:
@@ -1473,6 +1650,11 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::object_remove:
     case MessageType::damage:
     case MessageType::time_of_day:
+    case MessageType::grass_cut:
+    case MessageType::world_break:
+    case MessageType::world_move:
+    case MessageType::world_place:
+    case MessageType::world_hit:
     case MessageType::drop_spawn:
     case MessageType::drop_take:
     case MessageType::drop_ask:
@@ -1498,8 +1680,11 @@ auto* player_field(M& message) {
                       std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
                       std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose> ||
-                      std::is_same_v<T, TimeOfDay> || std::is_same_v<T, DropSpawn> ||
-                      std::is_same_v<T, DropTake> || std::is_same_v<T, DropAsk>) {
+                      std::is_same_v<T, TimeOfDay> || std::is_same_v<T, GrassCut> ||
+                      std::is_same_v<T, WorldBreak> || std::is_same_v<T, WorldMove> ||
+                      std::is_same_v<T, WorldPlace> || std::is_same_v<T, WorldHit> ||
+                      std::is_same_v<T, DropSpawn> || std::is_same_v<T, DropTake> ||
+                      std::is_same_v<T, DropAsk>) {
           field = &m.player_number;
         }
       },
@@ -1591,6 +1776,11 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::damage: return decode_as<Damage>(body, out);
     case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
     case MessageType::time_of_day: return decode_as<TimeOfDay>(body, out);
+    case MessageType::grass_cut: return decode_as<GrassCut>(body, out);
+    case MessageType::world_break: return decode_as<WorldBreak>(body, out);
+    case MessageType::world_move: return decode_as<WorldMove>(body, out);
+    case MessageType::world_place: return decode_as<WorldPlace>(body, out);
+    case MessageType::world_hit: return decode_as<WorldHit>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);
@@ -1620,6 +1810,20 @@ std::optional<RefuseReason> check_hello(const Hello& hello,
     return RefuseReason::wrong_game_build;
   }
   return std::nullopt;
+}
+
+bool GrassCut::operator==(const GrassCut& o) const {
+  if (player_number != o.player_number || scene != o.scene || flags != o.flags ||
+      !same_float(radius, o.radius)) {
+    return false;
+  }
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (!same_float(position[i], o.position[i])) return false;
+    for (std::size_t j = 0; j < 3; ++j) {
+      if (!same_float(sweep[i][j], o.sweep[i][j])) return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace coop::protocol

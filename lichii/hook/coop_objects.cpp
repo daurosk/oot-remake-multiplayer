@@ -1014,8 +1014,10 @@ public:
     // Network thread.
     void Receive(const coop::protocol::Message& m) {
         if (const auto* o = std::get_if<coop::protocol::ObjectOwner>(&m)) {
-            LOG_INFO(Core, "coop: objects: share owner {:#x} is player {} epoch {} group {}",
-                     o->id.value, o->owner, o->epoch, o->group);
+            if (owner_log_.Changed(*o)) {  // owner and epoch only: a group change alone is not logged here
+                LOG_INFO(Core, "coop: objects: share owner {:#x} is player {} epoch {} group {}",
+                         o->id.value, o->owner, o->epoch, o->group);
+            }
         } else if (const auto* d = std::get_if<coop::protocol::Damage>(&m)) {
             LOG_INFO(Core, "coop: objects: share got damage {} for {:#x}", d->amount,
                      d->id.value);
@@ -1596,6 +1598,7 @@ private:
     std::size_t blast_drops_logged_ = 0;
     std::size_t present_logged_ = ~std::size_t{0};
     std::vector<coop::protocol::ObjectGroupEntry> group_logged_;
+    CoopObjects::OwnerLog owner_log_;  // network thread
     std::size_t enemies_logged_ = 0;
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;
@@ -1664,10 +1667,13 @@ std::vector<std::uint64_t> OwnedActors() {
 }
 
 void OnEvent(const coop::net::Event& event) {
+    Objects& objects = Instance();
+    if (event.kind == coop::net::EventKind::reconnected) {
+        objects.owner_log_.Clear();  // a restarted server may hand out the same owner and epoch again
+    }
     if (event.kind != coop::net::EventKind::message) {
         return;
     }
-    Objects& objects = Instance();
     if (objects.share_) {
         objects.Receive(event.message);
     }

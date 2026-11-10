@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "coop/host/player_reader.hpp"
+#include "coop_fairy.h"
 #include "coop_puppet.h"
 #include "coop_svc.h"
 
@@ -1357,4 +1358,28 @@ TEST_CASE("puppet gear: a tool is equipped with the tool kind and drawn on its o
     std::array<char, block::kGearCapacity> name{};
     g.guest.Read(text, name.data(), name.size());
     CHECK(std::string(name.data()) == "Weapon_Boomerang");
+}
+
+TEST_CASE("fairy join: the fairy waits for the drawing after a load, as her puppet (issue 93)") {
+    // The fairies' director is fed by CoopFairy::Follower. Before issue 93 the
+    // follower dropped the camera fields, so a fairy was asked for during the
+    // loading screen: refused, or made and never drawn.
+    Game g;
+    Director d;
+    CoopFairy::Follower follower;
+    auto puppets = Drawing({At(1, 0, 0, 0)}, 0);
+    puppets.settle_ms = 1000;
+    d.SetInput(follower.Follow(puppets, 0));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 1);  // the block only
+    CHECK(calls[0].function == kBase + addr::kMalloc);
+    CHECK(Frame(d, g, 3000).empty());
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    // Drawn again from 3400: created once it has drawn kDrawnMs.
+    puppets.drawn_since_ms = 3400;
+    d.SetInput(follower.Follow(puppets, 3400));
+    CHECK(Frame(d, g, 3400 + Director::kDrawnMs - 1).empty());
+    calls = Frame(d, g, 3400 + Director::kDrawnMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
 }

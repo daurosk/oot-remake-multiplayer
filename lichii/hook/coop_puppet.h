@@ -485,6 +485,13 @@ Director& TheDirector();
 // zero time: none.
 std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us);
 
+// The present thread: fills `input`'s camera, drawn_since_ms and settle_ms
+// from the renderer's camera (coop_camera.h), so a create waits until the
+// game draws again after a load. Publish does it for the puppets; CoopFairy
+// does it for the fairies, whose creates were refused or never drawn while a
+// scene loaded (issue 93).
+void StampDrawing(Input& input, std::uint64_t now_ms);
+
 // CoopHook::OnFrame, once per present, with no lock held. `session` may be
 // null (not connected): then only the debug puppet is planned.
 // `local_event`: coop::host::local_event_hides (our cutscene; not the Ocarina).

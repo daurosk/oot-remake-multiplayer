@@ -282,3 +282,15 @@ TEST_CASE("fairy: hidden, held or shown with her puppet") {
         CHECK(std::string(out.targets[0].why) == "why");
     }
 }
+
+TEST_CASE("fairy: carries her puppet's wait for the drawing (issue 93)") {
+    Follower f(Still());
+    Input in = Puppets(1, {0, 0, 0});
+    in.camera = true;
+    in.drawn_since_ms = 1234;
+    in.settle_ms = 1000;
+    const auto out = f.Follow(in, 2000);
+    CHECK(out.camera);
+    CHECK(out.drawn_since_ms == 1234);
+    CHECK(out.settle_ms == 1000);
+}

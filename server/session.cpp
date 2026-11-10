@@ -700,11 +700,14 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
 // the players in it. A cut the scene already has (the same place and size,
 // bit for bit) is not passed on, so a cut can never go round between games.
 void Session::on_grass_cut(ConnectionId id, Connection& c, GrassCut& cut,
-                           std::uint64_t now_us) {
-  // The sender is there, whatever its last sample said, unless the cut is a
-  // late one from the scene it has left (stale_scene): then it is still a cut
-  // in that scene, kept and passed on, but the player stays where it is.
-  if (!stale_scene(c.world_scene, c, cut.scene)) set_scene(id, c, cut.scene, now_us);
+                           std::uint64_t /*now_us*/) {
+  // A cut never moves the player: only its samples and OBJECT_PRESENT do. A
+  // late one from the scene it has left is still a cut there, kept and passed
+  // on. One for a scene nobody is in is dropped: that grass has grown back.
+  if (!scene_has_player(cut.scene)) {
+    ++stats_.world_unkept;
+    return;
+  }
   cut.player_number = c.number;
   auto& cuts = grass_[cut.scene];
   const auto same = [&cut](const GrassCut& o) {
@@ -726,23 +729,32 @@ void Session::on_grass_cut(ConnectionId id, Connection& c, GrassCut& cut,
 // scene in world_ and replayed by set_scene; moves are only passed on. All
 // three go to the players in the sender's scene.
 void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Message& message,
-                       std::uint64_t now_us) {
+                       std::uint64_t /*now_us*/) {
   set_sender(message, c.number);
+  // As for grass cuts: these never move the player, and one for a scene
+  // nobody is in is not kept (the games there have reset it).
   if (auto* b = std::get_if<WorldBreak>(&message)) {
-    // As for grass cuts: a late break from the scene just left is still a
-    // break there, but does not take the player back.
-    if (!stale_scene(c.world_scene, c, b->scene)) set_scene(id, c, b->scene, now_us);
+    if (!scene_has_player(b->scene)) {
+      ++stats_.world_unkept;
+      return;
+    }
     if (!world_.on_break(*b)) {
       ++stats_.world_repeated;
       return;
     }
     send_to_scene(b->scene, id, channel, message);
   } else if (auto* p = std::get_if<WorldPlace>(&message)) {
-    if (!stale_scene(c.world_scene, c, p->scene)) set_scene(id, c, p->scene, now_us);
+    if (!scene_has_player(p->scene)) {
+      ++stats_.world_unkept;
+      return;
+    }
     world_.on_place(*p);
     send_to_scene(p->scene, id, channel, message);
   } else if (auto* h = std::get_if<WorldHit>(&message)) {
-    if (!stale_scene(c.world_scene, c, h->scene)) set_scene(id, c, h->scene, now_us);
+    if (!scene_has_player(h->scene)) {
+      ++stats_.world_unkept;
+      return;
+    }
     world_.on_hit(*h);
     send_to_scene(h->scene, id, channel, message);
   } else if (auto* v = std::get_if<WorldMove>(&message)) {
@@ -753,19 +765,20 @@ void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Mes
   ++stats_.world_relayed;
 }
 
-void Session::forget_empty_world(const std::string& scene) {
+bool Session::scene_has_player(const std::string& scene) const {
+  if (scene.empty()) return false;
   for (const auto& [id, c] : connections_) {
-    if (c.state == State::joined && c.scene == scene) return;
+    if (c.state == State::joined && c.scene == scene) return true;
   }
-  world_.forget(scene);
+  return false;
 }
 
-void Session::forget_empty_grass(const std::string& scene) {  auto it = grass_.find(scene);
-  if (it == grass_.end()) return;
-  for (const auto& [id, c] : connections_) {
-    if (c.state == State::joined && c.scene == scene) return;
-  }
-  grass_.erase(it);
+void Session::forget_empty_world(const std::string& scene) {
+  if (!scene_has_player(scene)) world_.forget(scene);
+}
+
+void Session::forget_empty_grass(const std::string& scene) {
+  if (!scene_has_player(scene)) grass_.erase(scene);
 }
 
 // Not relayed. A member follows its root's owner (run_ownership), shares its

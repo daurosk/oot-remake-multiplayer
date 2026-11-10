@@ -1505,9 +1505,9 @@ TEST_CASE("a grass cut goes to the players in its scene, once") {
   ObjectHarness h;
   h.receive(2, sample_in("HyruleField_Child"), kChannelPlayerSamples);
   h.receive(3, sample_in("Market"), kChannelPlayerSamples);
+  h.receive(1, sample_in("HyruleField_Child"), kChannelPlayerSamples);
   h.clear();
 
-  // Player 1's own sample has not said where it is: the cut does.
   h.receive(1, cut_at("HyruleField_Child", 1), kChannelSession);
   CHECK(messages_to<GrassCut>(h, 1).empty());
   CHECK(messages_to<GrassCut>(h, 2) ==
@@ -1524,9 +1524,11 @@ TEST_CASE("a grass cut goes to the players in its scene, once") {
 
 TEST_CASE("a player who enters a scene gets the grass cut there before") {
   ObjectHarness h;
+  h.receive(1, sample_in("HyruleField_Child"), kChannelPlayerSamples);
   h.receive(1, cut_at("HyruleField_Child", 1), kChannelSession);
   h.receive(1, cut_at("HyruleField_Child", 2), kChannelSession);
-  h.receive(1, cut_at("Market", 3), kChannelSession);  // player 1 is in the Market now
+  h.receive(1, sample_in("Market"), kChannelPlayerSamples);
+  h.receive(1, cut_at("Market", 3), kChannelSession);
   h.clear();
 
   // Nobody was left in the field when player 1 went: its grass has grown back.
@@ -1557,6 +1559,7 @@ TEST_CASE("a player who enters a scene gets the grass cut there before") {
 
 TEST_CASE("the cuts of a scene end when its last player leaves or the list is full") {
   ObjectHarness h;
+  h.receive(1, sample_in("HyruleField_Child"), kChannelPlayerSamples);
   h.receive(1, cut_at("HyruleField_Child", 1), kChannelSession);
   h.receive(2, sample_in("HyruleField_Child"), kChannelPlayerSamples);
   h.session.disconnected(1, h.now);  // player 2 still shows the cut
@@ -1675,6 +1678,41 @@ TEST_CASE("a late break from the scene just left is passed on there but does not
   CHECK(messages_to<WorldBreak>(h, 1).size() == 2);
 }
 
+TEST_CASE("a late cut or break never takes the player back to the scene it left") {
+  // No break or cut from player 1 before: nothing primes the scene it is in.
+  ObjectHarness h;
+  h.receive(1, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.receive(3, sample_in("Market"), kChannelPlayerSamples);
+  h.receive(1, sample_in("Market"), kChannelPlayerSamples);
+  h.clear();
+  // Made in Kakariko just before the walk, arriving after the Market sample.
+  h.receive(1, cut_at("Kakariko", 1), kChannelSession);
+  h.receive(1, broke("Kakariko", 0x22), kChannelSession);
+  CHECK(messages_to<GrassCut>(h, 2) == std::vector<GrassCut>{from(1, cut_at("Kakariko", 1))});
+  CHECK(messages_to<WorldBreak>(h, 2) == std::vector<WorldBreak>{by(1, broke("Kakariko", 0x22))});
+  h.receive(1, sample_in("Market"), kChannelPlayerSamples);
+  CHECK(h.session.stats().stale_scenes == 0);
+  // Player 1 is in the Market: a break there by player 3 reaches it.
+  h.clear();
+  h.receive(3, broke("Market", 0x33), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 1) == std::vector<WorldBreak>{by(3, broke("Market", 0x33))});
+  CHECK(messages_to<WorldBreak>(h, 2).empty());
+}
+
+TEST_CASE("a late cut or break for a scene nobody is in is not kept") {
+  ObjectHarness h;
+  h.receive(1, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.receive(1, sample_in("Market"), kChannelPlayerSamples);  // Kakariko is empty
+  h.receive(1, cut_at("Kakariko", 1), kChannelSession);
+  h.receive(1, broke("Kakariko", 0x22), kChannelSession);
+  CHECK(h.session.stats().world_unkept == 2);
+  h.clear();
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  CHECK(messages_to<GrassCut>(h, 2).empty());
+  CHECK(messages_to<WorldBreak>(h, 2).empty());
+}
+
 TEST_CASE("a break that the game put back is forgotten") {
   ObjectHarness h;
   h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
@@ -1727,6 +1765,7 @@ TEST_CASE("moves are passed on, the last rest place is kept for those who come l
 
 TEST_CASE("the breaks and places of a scene end when its last player leaves") {
   ObjectHarness h;
+  h.receive(1, sample_in("Kakariko"), kChannelPlayerSamples);
   h.receive(1, broke("Kakariko", 0x11), kChannelSession);
   h.receive(1, rested("Kakariko", 0x12, 1.0f), kChannelSession);
   h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);

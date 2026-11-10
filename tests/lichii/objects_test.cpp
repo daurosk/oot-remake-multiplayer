@@ -508,6 +508,68 @@ TEST_CASE("objects: a chest opened elsewhere goes only while it was loaded close
     CHECK(sync.Removes().empty());
 }
 
+namespace {
+
+Seen Chest(std::uint64_t address, std::uint64_t hash = 0x3c5bb811b4cf54dd) {
+    Seen chest;
+    chest.address = address;
+    chest.name = "Obj_TBox_A_01";
+    chest.hash = hash;
+    chest.position = {1.0f, 0.0f, 1.0f};
+    return chest;
+}
+
+} // namespace
+
+TEST_CASE("objects: keys written while no walk ran remove nothing (title, save load, join snapshot)") {
+    // Before the first Tick of the run.
+    Sync sync;
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 0, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    CHECK_FALSE(sync.Taken(0x3c5bb811b4cf54dd));
+
+    // After a pause of the walks (a load of the same scene): dropped too.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 3000 * kMs, {Chest(0x600), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3010 * kMs, {Chest(0x600), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+
+    // Across a scene change: the next scene's chest was made knowing the key.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 3020 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    Tick(sync, 3030 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    CHECK(sync.Removes().empty());
+
+    // While the walks run, a take still removes the chest loaded then.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 3040 * kMs, {Enemy(0x200, 0x22, 2)}, 1, "Other");
+    Tick(sync, 3050 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
+}
+
+TEST_CASE("objects: a chest beside our Link is not removed (we may be opening it too)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chest
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) said |= n.find("our Link is beside it") != std::string::npos;
+    CHECK(said);
+    // Walking away later does not remove it: the bind window is over.
+    sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
+    Tick(sync, 30 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    // Another chest of the same take, far away, in the window: removed.
+    sync.Take(0x1111);
+    Tick(sync, 40 * kMs, {Chest(0x900, 0x1111), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x900});
+}
+
 TEST_CASE("objects: a take for a chest not loaded removes nothing that loads later") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});

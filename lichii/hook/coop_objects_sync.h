@@ -344,7 +344,7 @@ public:
     // Any thread: the flag watcher wrote this placement key 0 to 1 for another
     // player (a chest opened, a pickup taken elsewhere; FlagWatcher::
     // take_written_for_others). The actors with that hash loaded in the next
-    // two Ticks are removed here; ones loaded after it are left alone, since the
+    // two Ticks are removed here, unless our Link is within kTakeNearM; ones loaded after it are left alone, since the
     // game made them knowing the key (a chest shows open). Forgotten at a
     // scene change (docs/items.md, "Chests").
     void Take(std::uint64_t hash);
@@ -510,10 +510,20 @@ private:
     // two Ticks after it came (the first walk was collected before Taken()
     // knew the key); only those are removed.
     static constexpr unsigned kTakeBindTicks = 2;
+    // A take is kept only when the Tick before came at most this long ago: one
+    // that came while no walk ran (title screen, save load, scene load: the
+    // join snapshot) is for actors the game makes knowing the key.
+    static constexpr std::uint64_t kTakeGapUs = 1'500'000;
+    // An actor this close to our Link is not removed: we may be opening that
+    // chest ourselves (both players at once), or standing on it.
+    static constexpr float kTakeNearM = 3.0f;
     struct Taking {
         unsigned ticks = 0;
         std::set<std::uint64_t> addresses;
+        bool near_said = false;
     };
+    std::uint64_t last_tick_us_ = 0;
+    bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)
     std::map<std::uint64_t, Taking> taken_;
     std::vector<std::uint64_t> takes_in_;  // guarded by inbox_mutex_
     std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken

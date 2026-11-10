@@ -422,6 +422,7 @@ void Sync::Reset() {
     // twice, and the server keeps made ids until they are removed.
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
+    takes_in_.clear();  // the new scene's actors are made knowing every key
 }
 
 std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
@@ -554,14 +555,30 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             std::lock_guard lock(inbox_mutex_);
             takes.swap(takes_in_);
         }
-        for (const std::uint64_t hash : takes) {
-            taken_.try_emplace(hash);
+        // Takes that came while no walk ran are for actors made after them.
+        const bool gap = !ticked_ || now_us < last_tick_us_ ||
+                         now_us - last_tick_us_ > kTakeGapUs;
+        if (!gap) {
+            for (const std::uint64_t hash : takes) {
+                taken_.try_emplace(hash);
+            }
+        } else if (!takes.empty()) {
+            notes_.emplace_back(std::to_string(takes.size()) +
+                                " keys written for others while no walk ran: nothing removed for them");
         }
+        last_tick_us_ = now_us;
+        ticked_ = true;
     }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
             if (const auto t = taken_.find(s.hash); t != taken_.end()) {
-                if (t->second.ticks < kTakeBindTicks && t->second.addresses.insert(s.address).second) {
+                const bool near = player_ && Finite(*player_) && Finite(s.position) &&
+                                  Distance(*player_, s.position) < kTakeNearM;
+                if (near && t->second.ticks < kTakeBindTicks && !t->second.near_said) {
+                    t->second.near_said = true;
+                    notes_.emplace_back(s.name + ": taken or opened in another game, left here: our Link is beside it");
+                }
+                if (!near && t->second.ticks < kTakeBindTicks && t->second.addresses.insert(s.address).second) {
                     char key[24];
                     std::snprintf(key, sizeof key, "%#llx", static_cast<unsigned long long>(s.hash));
                     notes_.emplace_back(s.name + " " + key + ": taken or opened in another game, removed here");

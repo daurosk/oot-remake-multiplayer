@@ -4,7 +4,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 **Every player needs the same release.** test6 speaks **protocol 6**: a test6 game and a test5 (or older) game or server refuse each other when they connect, so every player updates (`Update.bat` in the kit folder, or answer **Y** when `Host.bat` / `Join.bat` offer it). Then run `make-puppet-pack.cmd` once more: the puppet pack now carries Link's sounds.
 
-**The emulator is Fritchii v5.7.** The first start after the update prepares the shaders again, which takes a while; leave **Ctrl+U** (high refresh) off until the game has started once.
+**The emulator is Fritchii v5.7.** The first start after the update prepares the shaders again, which takes a while. (Our tests start with Ctrl+U, high refresh, off; turn it on in the game as usual.)
 
 ## Works (seen in two-game tests)
 
@@ -15,10 +15,10 @@ This is an early test release. Everything under "Works" was seen in our two-game
 - **Ammo comes with a shared item** ([issue 128](https://github.com/daurosk/oot-remake-multiplayer/issues/128)): when one player gets the Slingshot, the others get it with 30/30 seeds, not 0/0. The same for the bomb bag (20 bombs) and the other ammo items.
 - **No more stuck ammo after joining** ([issue 138](https://github.com/daurosk/oot-remake-multiplayer/issues/138)): a player who joins from the title screen, or is loading while an item arrives, gets the item's capacity and ammo once the save has loaded ("capacities mended" in the log). Seen for Deku Sticks (10/10) and the Slingshot (30/30).
 - **Heart containers**: a heart container raises every player's maximum health (seen with the test cheat).
-- **Dungeons**: switches, doors, cleared rooms, water levels and the dungeons' one-time objects (chests, webs, cracked walls) are shared through the game's saved flags. A switch the others set stays set when you load your save ([issue 129](https://github.com/daurosk/oot-remake-multiplayer/issues/129)).
-- **Chests** ([issue 87](https://github.com/daurosk/oot-remake-multiplayer/issues/87)): 60 chests outside the dungeons are shared too. A chest another player opens while you are in the same room disappears from your game (it should show open when you come back: not checked yet); a chest right beside you is left alone, so two players opening one chest at once do not break it.
+- **Dungeons**: switches, doors, cleared rooms, water levels and the dungeons' one-time objects are shared through the game's saved flags (seen with one Deku Tree chest; webs and cracked walls not checked yet). A switch the others set stays set when you load your save ([issue 129](https://github.com/daurosk/oot-remake-multiplayer/issues/129)).
+- **Chests** ([issue 87](https://github.com/daurosk/oot-remake-multiplayer/issues/87)): 60 chests outside the dungeons are shared too. A chest another player opens while you are in the same room disappears from your game (seen with one chest, in the logs; that it shows open when you come back is not checked yet). A chest right beside you is left alone, so that two players opening one chest at once do not break it; that case has not been tried yet.
 - **Boss rooms**: when one player enters a boss room, the others are moved in with them and the intro starts together (Water Temple).
-- **Enemies**: their position, animation and life follow the player who owns them; a kill in one game is a kill in all. The Deku Babas of the Deku Tree's first room show in every game. Townspeople and animals stand and move the same in every game.
+- **Enemies**: their position, animation and life follow the player who owns them. The Deku Babas of the Deku Tree's first room are placed in the other game too (seen in the logs; whether all show, and kills seen from both games, are not checked yet: below). Townspeople and animals stand and move the same in every game.
 - **Cut signs** ([issue 90](https://github.com/daurosk/oot-remake-multiplayer/issues/90)): a sign cut in one game is cut in the others too (all its pieces' values are written there; not yet seen on the other screen).
 - **Things a player makes**: Deku seeds and Deku nuts appear in the other games; a pulled bomb is copied to the other games.
 

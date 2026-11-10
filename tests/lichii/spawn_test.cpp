@@ -212,7 +212,8 @@ TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back")
     sync.Tick(kScene, 2, now, {Made(0x9000, 10.2f)}, live, send, copies);
     CHECK(send.empty());
 
-    // The owner's sample moves it, with its velocity carried a little ahead.
+    // The owner's sample moves it, with its velocity carried on from the
+    // sample's time on the server clock (99 ms at 10 m/s).
     proto::ObjectSample sample;
     sample.id = spawn.id;
     sample.state.time = {5'100'000, 1};
@@ -229,7 +230,7 @@ TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back")
     copies.clear();
     now += 100 * kMs;
     sync.Tick(kScene, 2, now, {Made(0x9000, 12.0f)}, live, send, copies);
-    CHECK(copies[0].position[0] == doctest::Approx(13.0f));
+    CHECK(copies[0].position[0] == doctest::Approx(12.99f));
 
     // The owner's bomb exploded: so does the copy, at the owner's place.
     proto::ObjectRemove remove;

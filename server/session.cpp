@@ -255,7 +255,8 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   // Where the player is and whether its game runs, for the ownership rules.
   // The place of a sample from a scene it has just left is not its place.
   if (const auto* sample = std::get_if<PlayerSample>(&message)) {
-    const bool here = !sample->scene || set_scene(id, c, *sample->scene, now_us);
+    const bool here = !sample->scene || (!stale_scene(c.sample_scene, c, *sample->scene) &&
+                                         set_scene(id, c, *sample->scene, now_us));
     if (here && sample->position) {
       c.position = *sample->position;
       c.position_at = now_us;
@@ -418,17 +419,23 @@ void Session::on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us)
   c.status = flags;
 }
 
+// PLAYER_SAMPLE and OBJECT_PRESENT each say the scene, from different threads
+// of the game, and cross at a scene change. A stream that changes its scene
+// is believed at once; one that only repeats what it said before, while the
+// other has moved on, is late and is not.
+bool Session::stale_scene(std::string& said, const Connection& c, const std::string& scene) {
+  const bool repeat = scene == said;
+  said = scene;
+  if (!repeat || scene == c.scene) return false;
+  ++stats_.stale_scenes;
+  return true;
+}
+
 bool Session::set_scene(ConnectionId id, Connection& c, const std::string& scene,
                         std::uint64_t now_us) {
   if (c.scene == scene) return true;
-  if (!c.previous_scene.empty() && scene == c.previous_scene &&
-      now_us - c.scene_changed_at < config_.scene_flap_us) {
-    ++stats_.stale_scenes;
-    return false;
-  }
   const std::set<ObjectId> present = std::exchange(c.present, {});
-  c.previous_scene = std::exchange(c.scene, scene);
-  c.scene_changed_at = now_us;
+  c.scene = scene;
   c.position.reset();  // the old scene's place means nothing here
   c.replay_due = true;
   c.owners_told_at = now_us;
@@ -474,7 +481,7 @@ void Session::replay_spawns(ConnectionId id, const Connection& c) {
 
 void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPresent& p,
                                 std::uint64_t now_us) {
-  if (!set_scene(id, c, p.scene, now_us)) return;
+  if (stale_scene(c.present_scene, c, p.scene) || !set_scene(id, c, p.scene, now_us)) return;
   if (c.replay_due) {
     c.replay_due = false;
     replay_spawns(id, c);

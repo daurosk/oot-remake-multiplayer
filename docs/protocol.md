@@ -262,7 +262,7 @@ The server's rules today (`server/session.cpp`):
 
 - A player's scene is the one of its latest `OBJECT_PRESENT` or `PLAYER_SAMPLE` scene. Changing scene lets go of everything it had loaded or made in the old one.
 - `OBJECT_PRESENT` is not relayed. The first game to list a placed object owns it (epoch 0) and everyone in that scene gets `OBJECT_OWNER`; a later game listing it gets `OBJECT_OWNER` alone. A made id in the list counts only for a made enemy the server knows (the lister has its copy and may be given it); unknown made ids and projectiles are ignored. Every 10 s the answer to a list is `OBJECT_OWNER` for everything in it.
-- A scene a player left under 3 s ago is not taken back from a late `OBJECT_PRESENT` or `PLAYER_SAMPLE`; the message is ignored.
+- `PLAYER_SAMPLE` and `OBJECT_PRESENT` both say the sender's scene. One that names a new scene for its own kind changes the player's scene at once; one that repeats the scene its kind said before, after the other kind moved the player on, is late and is ignored.
 - At a player's first `OBJECT_PRESENT` in a scene the server sends it every `OBJECT_SPAWN` still alive there (player field: the owner; the last relayed state), each followed by `OBJECT_OWNER` when the owner is not the maker or the epoch is not 0.
 - `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` of a made id only from the maker named in the id, once; of a placed id only from its current owner, in its scene (relayed, nothing registered). Anything else is dropped.
 - `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner. It starts the object's fight (12 s, 60 s for a boss).

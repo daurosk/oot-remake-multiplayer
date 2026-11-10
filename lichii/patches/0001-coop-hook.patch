@@ -11,19 +11,19 @@ per guest present, in both present paths (nx2 and nvdisp), after the speed
 limiter. The main window starts co-op once the render window exists and
 stops it when it closes.
 ---
- CMakeLists.txt                                      | 12 ++++++++++++
- src/core/CMakeLists.txt                             |  4 ++++
- src/core/hle/service/nvdrv/devices/nvdisp_disp0.cpp |  6 ++++++
- src/core/hle/service/nx2_gsv.h                      |  6 ++++++
- src/yuzu/CMakeLists.txt                             |  4 ++++
- src/yuzu/main_window.cpp                            | 10 ++++++++++
- 6 files changed, 42 insertions(+)
+ CMakeLists.txt                                   | 16 ++++++++++++++++
+ src/core/CMakeLists.txt                          |  4 ++++
+ .../hle/service/nvdrv/devices/nvdisp_disp0.cpp   |  6 ++++++
+ src/core/hle/service/nx2_gsv.h                   |  6 ++++++
+ src/yuzu/CMakeLists.txt                          |  4 ++++
+ src/yuzu/main_window.cpp                         | 10 ++++++++++
+ 6 files changed, 46 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e847462b0..e4058e94ef 100644
+index 8e847462b0..cc4ab7bdce 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -728,6 +728,18 @@ if (MSVC AND CXX_CLANG)
+@@ -728,6 +728,22 @@ if (MSVC AND CXX_CLANG)
      link_libraries(llvm-mingw-runtime)
  endif()
  
@@ -33,6 +33,10 @@ index 8e847462b0..e4058e94ef 100644
 +    set(LICHII_COOP_DIR "" CACHE PATH "Checkout of oot-remake-multiplayer")
 +    if (NOT EXISTS "${LICHII_COOP_DIR}/lichii/hook/coop_hook.cpp")
 +        message(FATAL_ERROR "LICHII_COOP_DIR must point at an oot-remake-multiplayer checkout")
++    endif()
++    # Fritchii's updater would install a plain release over the co-op build.
++    if (ENABLE_UPDATE_CHECKER)
++        message(FATAL_ERROR "LICHII_COOP needs ENABLE_UPDATE_CHECKER=OFF")
 +    endif()
 +    set(COOP_BUILD_TESTS OFF)
 +    set(COOP_BUILD_PROGRAMS OFF)
@@ -80,10 +84,10 @@ index b8a8979315..b7c3d805df 100644
  
  void nvdisp_disp0::WaitForComposite() {
 diff --git a/src/core/hle/service/nx2_gsv.h b/src/core/hle/service/nx2_gsv.h
-index 8a1e7661c3..7da1ee1fda 100644
+index 7b0f3006e1..1e93b157ff 100644
 --- a/src/core/hle/service/nx2_gsv.h
 +++ b/src/core/hle/service/nx2_gsv.h
-@@ -80,6 +80,9 @@
+@@ -82,6 +82,9 @@
  #include "core/hle/service/sm/sm.h"
  #include "core/hle/service/server_manager.h"
  #include "core/hle/service/service.h"
@@ -93,7 +97,7 @@ index 8a1e7661c3..7da1ee1fda 100644
  
  namespace Service {
  
-@@ -2310,6 +2313,9 @@ private:
+@@ -2427,6 +2430,9 @@ private:
          system.SpeedLimiter().DoSpeedLimiting(system.CoreTiming().GetGlobalTimeUs());
          system.GetPerfStats().EndSystemFrame();
          system.GetPerfStats().BeginSystemFrame();
@@ -104,10 +108,10 @@ index 8a1e7661c3..7da1ee1fda 100644
  
      // EDEN_NX2_FRAME_CAPTURE=<dir>: every 120th present, save what the renderer shows as
 diff --git a/src/yuzu/CMakeLists.txt b/src/yuzu/CMakeLists.txt
-index 0a3d33862e..e20405edbb 100644
+index 2475ab500d..e3322ac2fb 100644
 --- a/src/yuzu/CMakeLists.txt
 +++ b/src/yuzu/CMakeLists.txt
-@@ -504,4 +504,8 @@ endif()
+@@ -510,4 +510,8 @@ endif()
  # Remember that the linker is incredibly stupid.
  target_link_libraries(yuzu PRIVATE OpenSSL::SSL OpenSSL::Crypto SDL3::SDL3)
  
@@ -117,7 +121,7 @@ index 0a3d33862e..e20405edbb 100644
 +
  create_target_directory_groups(yuzu)
 diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
-index cc2ba56561..a342237691 100644
+index 0af8cfe631..3cbda0e713 100644
 --- a/src/yuzu/main_window.cpp
 +++ b/src/yuzu/main_window.cpp
 @@ -16,6 +16,10 @@
@@ -131,7 +135,7 @@ index cc2ba56561..a342237691 100644
  #ifdef HAS_RESHADE
  #include "configuration/configure_post_processing.h"
  #include "video_core/post_processing/fx_preset.h"
-@@ -1089,6 +1093,9 @@ void MainWindow::WebBrowserRequestExit() {
+@@ -1090,6 +1094,9 @@ void MainWindow::WebBrowserRequestExit() {
  void MainWindow::InitializeWidgets() {
      render_window = new GRenderWindow(this, input_subsystem);
      render_window->hide();
@@ -141,7 +145,7 @@ index cc2ba56561..a342237691 100644
  
      game_list = new GameList(QtCommon::vfs, QtCommon::provider.get(), *play_time_manager,
                               *QtCommon::system, this);
-@@ -5613,6 +5620,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
+@@ -5720,6 +5727,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
          return;
      }
      LOG_INFO(Frontend, "Closing frontend after emulation cleanup");

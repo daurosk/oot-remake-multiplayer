@@ -1,0 +1,25 @@
+# pot-drops, B: loads into the same spot, stands east of the first pot facing it, then follows
+# A south and watches the pair.
+mark start
+warp KakarikoVillage_Child Kakariko_MountainTrailSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark arrived
+goto -45.5 -17.0 0.8 600 # 11 m east of the pot
+toward -56.92 -16.01 20
+mark watching
+wait 2100               # A lifts, throws, picks up
+goto -42.2 0.0 1.0 1200
+goto -40.0 5.0 0.8 600  # south-east of the pair
+toward -42.6 10.0 20
+mark watching2
+wait 2400
+mark end

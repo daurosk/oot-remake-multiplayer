@@ -1,0 +1,16 @@
+# skulltula, B: also walks out and back in at night (so its Graveyard has the Skulltula too),
+# then stands south-west of it and faces it, so B's screen shows it and then shows it gone.
+mark start
+wait 2700               # a little after A, so the two do not meet in the gate
+stick 0 -1 120
+wait 480
+mark kakariko
+stick 0 -1 150
+wait 480
+mark graveyard
+goto -24.0 16.0 1.0 900
+goto -25.0 20.5 0.8 900 # about 7 m from the Skulltula
+toward -20.20 26.40 20
+mark watching
+wait 1800
+mark end

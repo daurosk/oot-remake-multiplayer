@@ -1,6 +1,8 @@
 # adult: A loads straight into the Graveyard as adult (Graveyard_Adult; the test warp also sets Sequence_IsChildhood), then walks, runs, turns and swings; B stays child.
 # Run with -NoLoad: the warp is asked before the save is loaded, because the game takes it
 # only during an event (the one after a save loads), and this file loads the save itself.
+#! noload
+#! start coop: test warp done
 mark start
 warp Graveyard_Adult
 wait 1200               # the title screen

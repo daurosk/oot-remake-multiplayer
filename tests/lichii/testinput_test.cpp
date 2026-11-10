@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -306,4 +309,25 @@ TEST_CASE("testinput: wear names a gear slot and a piece") {
     CHECK(requests[0].kind == Kind::wear);
     CHECK(requests[0].start == "head");
     CHECK(requests[0].name == "Armor_Child_Mask_Keaton");
+}
+
+// Every input script in tools/autotest/scenarios parses (the steps files are the runner's,
+// not the emulator's), so a bad line shows here and not first in a game run.
+TEST_CASE("testinput: every autotest scenario script parses") {
+    const std::filesystem::path dir =
+        std::filesystem::path(COOP_TEST_SOURCE_DIR) / ".." / "tools" / "autotest" / "scenarios";
+    REQUIRE(std::filesystem::is_directory(dir));
+    int checked = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        const std::string name = entry.path().filename().string();
+        if (entry.path().extension() != ".txt" || name.find(".steps.") != std::string::npos) {
+            continue;
+        }
+        std::ifstream in(entry.path(), std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string error;
+        CHECK_MESSAGE(Parse(text, error).has_value(), name << ": " << error);
+        ++checked;
+    }
+    CHECK(checked > 40);
 }

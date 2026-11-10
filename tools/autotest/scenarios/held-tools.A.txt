@@ -1,57 +1,184 @@
-# held-tools (issue 92): child items in the hand. A is given the boomerang, Deku sticks, the
-# Fairy Ocarina and a bottle, then steps aside to face B and uses whatever item is on the
-# quick-select (R moves to the next, ZR uses it), five times; B watches A's puppet.
-# Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1".
-# Expect in B's log at each mark: "P1 PLAYER_EQUIP: ... slots 0 '...' 1 '...' 2 '...' 5 '...'
-# 6 '...'" naming the item in its hand slot, "P1 wears <piece> '<name>'" and "P1 equipment
-# slot N in hand"; then "put away" after B. Which slot each item uses is what this run shows.
+# held-tools (issue 92): child tools in the hand. Items reach ZR only through the pause menu's
+# Items page (R is a quick-select carousel, so the old "R then ZR" never changed the item and A
+# never held a new tool). A puts each tool on ZR there (A on it), closes the menu and uses it
+# with ZR facing B; B watches A's puppet.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
+# Items page of the auto save (shot 2026-11-09, probe-bomb): column 0 from the top: Deku Stick,
+# (empty), Bombs, Deku Nut, Bottle; column 1 top: Fairy Slingshot (on ZR; the cursor opens on
+# it). Moves below assume the cursor opens on the item last put on ZR: each `menu-*` mark is a
+# screenshot to check that. Presses are 10-12 ticks: 6 were missed at 22 game fps.
+# Pages (menu-gear, spawn-bomb): L four times reaches the first page (Collection), R R is Items.
+# Expect in B's log at each item mark: "P1 PLAYER_EQUIP: ... slots ..." naming the piece in a
+# hand slot, "P1 wears <piece> '<name>'", "P1 equipment slot N in hand"; "put away" after B.
 # A's own "slots (local" lines (LICHII_COOP_DEBUG_ANIM) list every slot that holds a piece.
-# Deku sticks are a per-player item: if B's log says "NOT given", A needs sticks in its save.
+# The boomerang is given only to see where the Items page shows it (mark menu-1): it has no
+# known place yet, so it is not used.
 mark start
+give bombs
 give PouchData.Item_Boomerang.StockNum
-give PouchData.Item_DekuStick.StockNum
-give PouchData.Item_StickBag_Small.StockNum
-give PouchData.Item_Ocarina_Fairy.StockNum
-give PouchData.BottleA.StockNum
 wait 120
 stick 0 0.6 100
 stick 0.7 0 30
 stick 0 -0.4 12
 wait 60
 mark before
-press R
+# 1: Deku Stick (slingshot -> left)
+press PLUS 12
+wait 90
+press L 10
 wait 30
-hold ZR 90
+press L 10
+wait 30
+press L 10
+wait 30
+press L 10
+wait 30
+press R 10
+wait 30
+press R 10
+wait 60
+mark menu-1
+press DLEFT 10
+wait 30
+mark menu-1-stick
+press A 10
+wait 45
+press PLUS 12
+wait 90
+press ZR 10
+wait 60
 mark item1
 wait 30
-press B
+press B 10
 wait 90
-press R
+# 2: Deku Nut (stick -> down 3)
+press PLUS 12
+wait 90
+press L 10
 wait 30
-hold ZR 90
+press L 10
+wait 30
+press L 10
+wait 30
+press L 10
+wait 30
+press R 10
+wait 30
+press R 10
+wait 60
+mark menu-2
+press DDOWN 10
+wait 25
+press DDOWN 10
+wait 25
+press DDOWN 10
+wait 30
+mark menu-2-nut
+press A 10
+wait 45
+press PLUS 12
+wait 90
+press ZR 10
+wait 12
 mark item2
-wait 30
-press B
+wait 60
+press B 10
 wait 90
-press R
+# 3: Bottle (nut -> down 1)
+press PLUS 12
+wait 90
+press L 10
 wait 30
-hold ZR 90
+press L 10
+wait 30
+press L 10
+wait 30
+press L 10
+wait 30
+press R 10
+wait 30
+press R 10
+wait 60
+mark menu-3
+press DDOWN 10
+wait 30
+mark menu-3-bottle
+press A 10
+wait 45
+press PLUS 12
+wait 90
+press ZR 10
+wait 20
 mark item3
-wait 30
-press B
+wait 60
+press B 10
 wait 90
-press R
+# 4: Bombs (bottle -> up 2). The first ZR opens a "Bomb" help box (spawn-bomb); A closes it.
+press PLUS 12
+wait 90
+press L 10
 wait 30
-hold ZR 90
+press L 10
+wait 30
+press L 10
+wait 30
+press L 10
+wait 30
+press R 10
+wait 30
+press R 10
+wait 60
+mark menu-4
+press DUP 10
+wait 25
+press DUP 10
+wait 30
+mark menu-4-bombs
+press A 10
+wait 45
+press PLUS 12
+wait 90
+press ZR 10
+wait 60
+mark help
+press A 10
+wait 45
+press ZR 10
+wait 30
 mark item4
-wait 30
-press B
+press ZR 10              # throw it
+wait 150
+# 5: Fairy Slingshot (bombs -> up 2, right 1)
+press PLUS 12
 wait 90
-press R
+press L 10
 wait 30
-hold ZR 90
+press L 10
+wait 30
+press L 10
+wait 30
+press L 10
+wait 30
+press R 10
+wait 30
+press R 10
+wait 60
+mark menu-5
+press DUP 10
+wait 25
+press DUP 10
+wait 25
+press DRIGHT 10
+wait 30
+mark menu-5-slingshot
+press A 10
+wait 45
+press PLUS 12
+wait 90
+hold ZR 60
 mark item5
+hold ZR 20
 wait 30
-press B
+press B 10
 wait 150
 mark end

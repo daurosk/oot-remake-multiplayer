@@ -2,6 +2,8 @@
 # warp (run with -NoLoad). A cuts field grass (the foliage module's, no actor; docs/world.md
 # "Field grass") at about 186 22 while B watches from 191 28, then cuts three of the 13 tufts
 # (actors, at about 164 26) while B watches from 171 28. B should see both cut.
+#! noload
+#! start coop: test warp done
 mark start
 warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
 wait 1200               # the title screen

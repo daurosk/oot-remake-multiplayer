@@ -3,6 +3,7 @@
 # Expect in B's log: "P1 wears held 'Weapon_Range_SlingShot'", then "P1 equipment slot 3 in
 # hand" while A aims and "slot 3 put away" after B. Run with LICHII_COOP_DEBUG_ANIM=1 for the
 # "slots (puppet" lines.
+#! switches LICHII_COOP_DEBUG_ANIM=1
 mark start
 stick 0 0.6 100
 stick 0.7 0 30

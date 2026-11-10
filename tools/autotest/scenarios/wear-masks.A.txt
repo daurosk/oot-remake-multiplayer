@@ -2,6 +2,7 @@
 # the test-only `wear` (only the flag changes): Skull, Spooky, Bunny, Gerudo, then none.
 # Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1".
 # Expect in B's log: "P1 wears head 'Armor_Child_Mask_Skull'" and so on; B's shots at each mark.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 stick 0 0.6 100
 stick 0.7 0 30

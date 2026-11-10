@@ -1229,7 +1229,7 @@ GrassCut Cut() {
 
 TEST_CASE("grass cuts have their number, channel and layout") {
   CHECK(static_cast<int>(MessageType::grass_cut) == 28);
-  CHECK(kProtocolVersion == 4);
+  CHECK(kProtocolVersion == 5);
   CHECK(channel_of(MessageType::grass_cut) == kChannelSession);
   CHECK_FALSE(allowed_on_channel(MessageType::grass_cut, kChannelPlayerSamples));
   CHECK(may_send(Sender::client, MessageType::grass_cut));
@@ -1426,4 +1426,37 @@ TEST_CASE("bad drop messages are refused") {
   b = must_encode(DropAsk{0, "s"});
   b.push_back(0);
   CHECK(decode(b, m) != Error::none);
+}
+
+TEST_CASE("boss room messages have their number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::boss_room) == 50);
+  CHECK(channel_of(MessageType::boss_room) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::boss_room, kChannelOwnership));
+  CHECK(may_send(Sender::client, MessageType::boss_room));
+  CHECK(may_send(Sender::server, MessageType::boss_room));
+  Message m = BossRoom{0, "ForestTemple", 3, BossState::intro_end};
+  CHECK(check_received(m, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(m, 2));
+  CHECK(sender_of(m) == 2);
+  const Bytes b = must_encode(m);
+  REQUIRE(b.size() == kHeaderSize + 1 + (2 + 12) + 1 + 1);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == m);
+}
+
+TEST_CASE("bad boss room messages are refused") {
+  Bytes out;
+  CHECK(encode(BossRoom{0, "", 0, BossState::in_room}, out) == Error::bad_value);
+  CHECK(encode(BossRoom{0, "s", kMaxBossRoom + 1, BossState::in_room}, out) == Error::bad_value);
+  CHECK(encode(BossRoom{0, "s", 0, static_cast<BossState>(0)}, out) == Error::bad_value);
+  CHECK(encode(BossRoom{0, "s", 0, static_cast<BossState>(6)}, out) == Error::bad_value);
+  CHECK(encode(BossRoom{5, "s", 0, BossState::left}, out) == Error::bad_value);
+  Message m;
+  Bytes b = must_encode(BossRoom{0, "s", 0, BossState::defeated});
+  b.back() = 6;  // an unknown state
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(BossRoom{0, "s", 0, BossState::defeated});
+  b[b.size() - 2] = kMaxBossRoom + 1;
+  CHECK(decode(b, m) == Error::bad_value);
 }

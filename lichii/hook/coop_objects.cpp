@@ -804,7 +804,7 @@ public:
         if (pose_ && sharing_) {
             Place(system, server_now_us);
         }
-        if (!share_.Due(CoopEvery::NowUs())) {
+        if (!share_every_.Due(CoopEvery::NowUs())) {
             return;
         }
         Reader r(system.ApplicationMemory());
@@ -1591,7 +1591,7 @@ private:
     u64 drift_at_ = 0;
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopEvery::Every cheat_every_{CoopEvery::kSecondUs};
-    CoopEvery::Every share_{CoopEvery::kTwoFramesUs};
+    CoopEvery::Every share_every_{CoopEvery::kTwoFramesUs};
     bool sharing_ = false;
     std::size_t blast_drops_logged_ = 0;
     std::size_t present_logged_ = ~std::size_t{0};

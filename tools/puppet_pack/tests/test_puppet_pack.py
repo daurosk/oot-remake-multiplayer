@@ -299,6 +299,19 @@ class BuildPackTest(unittest.TestCase):
         with self.assertRaises(build.BuildError):
             build.build_pack(members, "Child")
 
+    def test_tool_hash(self):
+        # The same files and hash as launch_test.ps1 (Get-PuppetToolHash): both sides agree.
+        d = tempfile.mkdtemp(prefix="puppet_pack_hash_")
+        try:
+            for name, data in (("b_c.py", b"print(1)\n"), ("Zeta.py", b"x\r\n"), ("__init__.py", b""), ("a.pyc", b"no")):
+                with open(os.path.join(d, name), "wb") as f:
+                    f.write(data)
+            os.mkdir(os.path.join(d, "tests"))
+            self.assertEqual(build.tool_hash(d), "b9d822a64cc6285dd1aa300d77f64ea0c86f775240885dad79ae4f2f7694f5e0")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(len(build.tool_hash()), 64)  # the tool's own folder
+
     def test_ref_to_member(self):
         self.assertEqual(build.ref_to_member("?Component/X.bgyml"), "Component/X.bgyml")
         self.assertEqual(build.ref_to_member("Work/Component/X.gyml"), "Component/X.bgyml")
@@ -443,6 +456,7 @@ class FullBuildTest(unittest.TestCase):
         for a in man["actors"]:
             self.assertIn("EquipmentUser_Weapon", a["equipment_keys"])
             self.assertIn("EquipmentUser_Shield", a["equipment_keys"])
+        self.assertEqual(man["tool_sha256"], build.tool_hash())  # the kit compares it (pack-hint)
         # Running again gives the same files.
         first = {r: build.read(os.path.join(out, r)) for r in
                  ("RSDB/ActorInfo.Product.999.rstbl.byml.zs", "Pack/Actor/CoopPuppet_Child.pack.zs")}

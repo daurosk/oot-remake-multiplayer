@@ -164,7 +164,12 @@ foreach ($key in $options.Keys) {
 $gpl = Set-AmdGplDefault
 if ($gpl) { Write-Host $gpl }
 $pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
-if (Test-Path -LiteralPath $pack) { Write-Host 'Puppet pack: found.' }
+if (Test-Path -LiteralPath $pack) {
+    Write-Host 'Puppet pack: found.'
+    # Made before sound or before the kit's pack tool changed (kit-paths.ps1): say so, start anyway.
+    $hint = Get-PuppetPackHint $pack (Join-Path $kit 'tools\puppet_pack')
+    if ($hint) { Write-Host $hint }
+}
 else {
     Write-Host 'Puppet pack: not made yet, so the other players show only as markers.'
     Write-Host '  Make it once with make-puppet-pack.cmd (SETUP.md, "The puppet pack").'

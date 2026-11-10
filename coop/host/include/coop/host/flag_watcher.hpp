@@ -29,6 +29,7 @@
 #include <set>
 #include <span>
 #include <variant>
+#include <utility>
 #include <vector>
 
 #include "coop/host/flags.hpp"
@@ -94,6 +95,14 @@ class FlagWatcher {
   static constexpr std::size_t kMaxLearned = 4096;
   std::size_t pickups() const { return pickups_.size(); }
 
+  // The 64-bit keys this watcher wrote 0 to 1 into the game for another
+  // player (a chest opened, a pickup taken elsewhere), oldest first, since
+  // the last call; at most kMaxWrittenForOthers are kept. A key the game
+  // already had at 1 (opened here, the host's echo of it) is not in it. The
+  // hook removes what is loaded of these (docs/items.md, "Chests").
+  std::vector<FlagKey> take_written_for_others() { return std::exchange(written_for_others_, {}); }
+  static constexpr std::size_t kMaxWrittenForOthers = 1024;
+
   // The host left and this player takes over, or the other way round. Keeps
   // what is known of the game; drops a snapshot being held.
   void set_role(FlagRole role);
@@ -131,6 +140,9 @@ class FlagWatcher {
   SharedFlags shared_;
   FlagRole role_;
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
+  std::vector<FlagKey> written_for_others_;  // take_written_for_others
+  // Notes a 64-bit key about to be written to 1 when the game has it at 0.
+  void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);
   std::size_t learned_ = 0;
   bool learn_ = false;
   std::vector<Incoming> queue_;

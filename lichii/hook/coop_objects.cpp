@@ -1005,6 +1005,8 @@ public:
         sync_.ForgetOwners();  // the server's epochs may start at 0 again (issue 133)
     }
 
+    void Take(std::uint64_t key) { sync_.Take(key); }  // any thread (Sync::Take locks)
+
     void Receive(const coop::protocol::Message& m) {
         if (const auto* o = std::get_if<coop::protocol::ObjectOwner>(&m)) {
             if (owner_log_.Changed(*o)) {  // owner and epoch only: a group change alone is not logged here
@@ -1651,6 +1653,16 @@ std::vector<std::uint64_t> OwnedActors() {
         }
     }
     return out;
+}
+
+void TakenForOthers(const std::vector<std::uint64_t>& keys) {
+    if (keys.empty()) {
+        return;
+    }
+    Objects& objects = Instance();
+    for (const std::uint64_t key : keys) {
+        objects.Take(key);
+    }
 }
 
 void OnEvent(const coop::net::Event& event) {

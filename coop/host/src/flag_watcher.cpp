@@ -79,6 +79,17 @@ bool FlagWatcher::share_pickup(FlagKey key) {
   return true;
 }
 
+void FlagWatcher::note_for_others(FlagStore& store, const FlagEntry& entry) {
+  const FlagKey key = key_of(entry);
+  if (key.kind != FlagKeyKind::key64 || entry.kind != protocol::FlagKind::boolean ||
+      entry.value == 0 || written_for_others_.size() >= kMaxWrittenForOthers) {
+    return;
+  }
+  const std::optional<FlagEntry> before = store.read(key);
+  if (before && before->value != 0) return;  // the game has it already (set here)
+  written_for_others_.push_back(key);
+}
+
 bool FlagWatcher::takes(const FlagEntry& entry) {
   const FlagKey key = key_of(entry);
   const bool one = entry.kind == protocol::FlagKind::boolean && entry.value != 0;
@@ -265,11 +276,15 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
   for (const auto& entry : set.flags) {
     const FlagKey key = key_of(entry);
     if (!takes(entry)) continue;
+    note_for_others(store, entry);
     const bool written = store.write(entry);
     if (written) {
       ++stats_.applied;
     } else {
       ++stats_.write_failures;
+      if (!written_for_others_.empty() && written_for_others_.back() == key) {
+        written_for_others_.pop_back();
+      }
     }
     // Answer with what the game holds now, which may not be what was asked.
     std::optional<FlagEntry> now = store.read(key);
@@ -301,9 +316,13 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
                                as_int(known->second.value));
     }
   }
+  note_for_others(store, to_write);
   if (!store.write(to_write)) {
     ++stats_.write_failures;
     unwritten_[key] = entry;
+    if (!written_for_others_.empty() && written_for_others_.back() == key) {
+      written_for_others_.pop_back();  // not written: tried again later
+    }
     return false;
   }
   ++stats_.applied;

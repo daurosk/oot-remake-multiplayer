@@ -341,8 +341,15 @@ public:
     std::uint8_t Decider() const { return decider_; }
     std::size_t Refused() const { return refused_count_; }
 
-    // Present thread: a placement key set to 1 by a flag message. Collect
-    // asks this for actors that are not shared, to report them too.
+    // Any thread: the flag watcher wrote this placement key 0 to 1 for another
+    // player (a chest opened, a pickup taken elsewhere; FlagWatcher::
+    // take_written_for_others). The actors with that hash loaded in the next
+    // two Ticks are removed here; ones loaded after it are left alone, since the
+    // game made them knowing the key (a chest shows open). Forgotten at a
+    // scene change (docs/items.md, "Chests").
+    void Take(std::uint64_t hash);
+    // Present thread: a placement key taken in this scene. Collect asks this
+    // for actors that are not shared, to report them too.
     bool Taken(std::uint64_t hash) const { return taken_.contains(hash); }
 
     // Present thread: not connected or the game went away. Forgets everything.
@@ -499,7 +506,16 @@ private:
     std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
     bool hurt_ = false;
     std::uint8_t self_ = 0;
-    std::set<std::uint64_t> taken_;             // key64 flags seen set to 1
+    // Take(): each key taken in this scene, and the actors that had it in the
+    // two Ticks after it came (the first walk was collected before Taken()
+    // knew the key); only those are removed.
+    static constexpr unsigned kTakeBindTicks = 2;
+    struct Taking {
+        unsigned ticks = 0;
+        std::set<std::uint64_t> addresses;
+    };
+    std::map<std::uint64_t, Taking> taken_;
+    std::vector<std::uint64_t> takes_in_;  // guarded by inbox_mutex_
     std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken
     std::set<std::uint64_t> dead_;    // copies whose owner said dead kDeadGraceUs ago
     bool wake_ = true;

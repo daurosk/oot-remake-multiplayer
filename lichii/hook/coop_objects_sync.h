@@ -140,6 +140,13 @@ const GroupPart* PartOf(std::string_view name);
 // and the roots of boss groups); never a picture book _Dictionary actor.
 bool IsBoss(std::string_view name);
 
+// Issue 88: the hearts the game draws come from our Link's Life component,
+// not from the shared PlayerStatus.MaxLife flag. The max (quarter hearts) to
+// write into the component: the flag when another player raised it above
+// ours (at most 20 hearts), else nothing. Never lowers it.
+inline constexpr std::int32_t kMostLifeQuarters = 20 * 4;
+std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag);
+
 // One shared actor of a walk, for GroupsOf.
 struct GroupInput {
     coop::protocol::ObjectId id;
@@ -250,6 +257,24 @@ public:
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
     static constexpr int kMissedWalks = 2;
+
+    // Present thread, every frame, before the Mover puts the copies back
+    // (issue 101): `put` is where the Mover put the actor at `address` last
+    // frame, `now` where the game's own frame left it. An enemy copy we do
+    // not own whose own AI pulls it towards our Link (kChaseStepM or more a
+    // frame, within kChaseReachM) with no gap over kChaseGapUs for
+    // kChaseHoldUs is chasing us: OBJECT_PRESENT then flags it targeting for
+    // kChaseKeepUs, and the server gives it to us. An enemy we own that comes
+    // towards our Link at kChaseSpeed or more is flagged the same way, which
+    // the server takes as a fight, so it stays ours.
+    void NoteDrift(std::uint64_t address, const coop::protocol::Vec3& put,
+                   const coop::protocol::Vec3& now, std::uint64_t now_us);
+    static constexpr float kChaseReachM = 40.0f;
+    static constexpr float kChaseStepM = 0.02f;
+    static constexpr float kChaseSpeed = 1.0f;  // metres a second
+    static constexpr std::uint64_t kChaseHoldUs = 1'000'000;
+    static constexpr std::uint64_t kChaseGapUs = 400'000;
+    static constexpr std::uint64_t kChaseKeepUs = 2'000'000;
     // Present thread, every frame: where each copy we do not own should be.
     void Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const;
 
@@ -357,7 +382,14 @@ private:
         bool reacts = false;                    // an enemy: hurts go through the game
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
+        // Chasing our Link (NoteDrift): the run of steps towards it.
+        std::uint64_t chase_first = 0;
+        std::uint64_t chase_last = 0;
+        std::uint64_t chase_until = 0;
     };
+
+    // One step of `o` towards our Link at `now_us` (NoteDrift).
+    static void ChaseStep(Object& o, std::uint64_t now_us);
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,

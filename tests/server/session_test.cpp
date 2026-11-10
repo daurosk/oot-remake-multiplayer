@@ -2061,6 +2061,127 @@ TEST_CASE("hits by a player in the same fight as the owner do not move the enemy
   CHECK(h.asks() == 0);
 }
 
+// Issue 101: an enemy chased player 2 from afar in 2's game; its owner's
+// enemy (at x = 0) stayed home, so no distance said 2 was near it.
+namespace {
+ObjectPresent chasing_in(const std::string& scene, std::vector<ObjectId> ids) {
+  ObjectPresent p = present_in(scene, std::move(ids));
+  for (ObjectPresence& e : p.objects) e.flags = object_presence::awake | object_presence::targeting;
+  return p;
+}
+}  // namespace
+
+TEST_CASE("issue 101: a copy that chases its player gives that player the enemy, wherever it is") {
+  OwnerHarness h;
+  h.stand(1, 34);
+  h.stand(2, 60);  // led its copy far off
+  h.run(4 * kSecond);
+  CHECK(h.asks() == 0);  // no distance rule can see it
+  h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(250'000);
+  CHECK(h.asks() == 0);
+  h.run(500'000);
+  REQUIRE(h.asks() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
+  CHECK(h.session.stats().handover_chased == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+
+  // Now the owner, 2 says the same: a fight, it stays. 1's copy chasing 1
+  // later does not pull it back while 2's own enemy chases 2.
+  h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.clear();
+  h.run(10 * kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+}
+
+TEST_CASE("issue 101: a chase shorter than 500 ms, or one the owner's enemy shares, moves nothing") {
+  {
+    OwnerHarness h;
+    h.stand(1, 34);
+    h.stand(2, 60);
+    h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+    h.run(250'000);
+    h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+    h.run(4 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+  {
+    // Both games' enemies chase their own Link: the owner's report is a fight.
+    OwnerHarness h;
+    h.stand(1, 3);
+    h.stand(2, 4);
+    h.receive(1, chasing_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+    h.run(4 * kSecond);
+    CHECK(h.asks() == 0);
+    CHECK(h.session.object_in_fight(placed(7), h.now));
+  }
+  {
+    // A chaser that unloaded it is not given it.
+    OwnerHarness h;
+    h.stand(1, 34);
+    h.stand(2, 60);
+    h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(2, present_in("Field", {}), kChannelOwnership);
+    h.run(4 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("issue 101: a chase of a group's part moves the root, and the part with it") {
+  OwnerHarness h;
+  h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(8), placed(7), 0}}}, kChannelOwnership);
+  h.stand(1, 34);
+  h.stand(2, 60);
+  h.clear();
+  ObjectPresent p = present_in("Field", {placed(7), placed(8)});
+  p.objects[1].flags = object_presence::targeting;
+  h.receive(2, p, kChannelOwnership);
+  h.run(750'000);
+  auto asks = messages_to<HandoverAsk>(h, 1);
+  REQUIRE(asks.size() == 1);
+  CHECK(asks[0] == HandoverAsk{placed(7), 0, 2});
+  // The owner does not answer: the root moves, then the part follows it.
+  h.run(kSecond);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  asks = messages_to<HandoverAsk>(h, 1);
+  REQUIRE(asks.size() == 2);
+  CHECK(asks[1] == HandoverAsk{placed(8), 0, 2});
+}
+
+TEST_CASE("issue 101: a hit where the hitter's copy stands, far from the owner's enemy, takes it") {
+  {
+    OwnerHarness h;
+    h.stand(1, 34);
+    h.stand(2, 60);
+    h.clear();
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, Vec3{59, 0, 1}}, kChannelOwnership);
+    CHECK(h.asks() == 1);
+  }
+  {
+    // Without where it hit, 2 is 60 m from the owner's enemy: nothing moves.
+    OwnerHarness h;
+    h.stand(1, 34);
+    h.stand(2, 60);
+    h.clear();
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+    CHECK(h.asks() == 0);
+  }
+  {
+    // The owner fighting its own enemy near it keeps it.
+    OwnerHarness h;
+    h.stand(1, 3);
+    h.stand(2, 30);
+    h.clear();
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, Vec3{29, 0, 0}}, kChannelOwnership);
+    CHECK(h.asks() == 0);
+  }
+}
+
 TEST_CASE("a kill by the old owner that crossed the hand-over still counts, for 2 s") {
   OwnerHarness h;
   h.stand(1, 50);

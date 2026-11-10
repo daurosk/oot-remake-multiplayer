@@ -1061,9 +1061,8 @@ public:
     s32 link_life_logged_ = -1;
     s32 link_max_logged_ = -1;
     s32 flag_max_logged_ = -1;
-    bool hearts_to_link_ = false;  // LICHII_COOP_HEARTS_TO_LINK=1 (issue 88 test)
+    bool hearts_to_link_ = true;  // LICHII_COOP_HEARTS_TO_LINK, on unless =0 (issue 88)
     Core::Memory::Memory* memory_ = nullptr;  // set by Share for Collect
-    static constexpr s32 kMostQuarters = 20 * 4;
     bool cheat_ = false;
     bool share_ = false;
 
@@ -1152,14 +1151,15 @@ private:
                                  "coop: objects: our Link's life {} of {}, MaxLife flag {} (quarter hearts)",
                                  life, max, flag);
                     }
-                    // Test switch: a MaxLife raised by another player is put
-                    // into the component the hearts are drawn from.
-                    if (hearts_to_link_ && max > 0 && flag > max && flag <= kMostQuarters &&
-                        memory_ != nullptr &&
+                    // On by default (=0 turns it off): a MaxLife raised by
+                    // another player is put into the component the hearts are
+                    // drawn from, so a heart container crosses (issue 88).
+                    const auto raised = hearts_to_link_ ? RaisedMaxLife(max, flag) : std::nullopt;
+                    if (raised && memory_ != nullptr &&
                         memory_->IsValidVirtualAddressRange(value->second + 8, 4)) {
-                        memory_->Write32(value->second + 8, static_cast<u32>(flag));
+                        memory_->Write32(value->second + 8, static_cast<u32>(*raised));
                         LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
-                                 max, flag);
+                                 max, *raised);
                     }
                 }
             }
@@ -1380,14 +1380,16 @@ private:
                 continue;
             }
             if (const auto before = placed_.find(w.address); before != placed_.end()) {
+                coop::protocol::Vec3 now{};
                 float d2 = 0.0f;
                 for (std::size_t i = 0; i < 3; ++i) {
-                    const float d =
-                        r.Get<float>(w.address + kActorPosition + 4 * i).value_or(0.0f) -
-                        before->second[i];
+                    now[i] = r.Get<float>(w.address + kActorPosition + 4 * i).value_or(0.0f);
+                    const float d = now[i] - before->second[i];
                     d2 += d * d;
                 }
                 const float d = std::sqrt(d2);
+                // A copy whose own AI pulls it at our Link (issue 101).
+                sync_.NoteDrift(w.address, before->second, now, now_us);
                 drift_sum_ += d;
                 drift_max_ = std::max(drift_max_, d);
                 ++drift_count_;
@@ -1634,7 +1636,7 @@ Objects& Instance() {
         objects.ai_hold_ = EnvNumber("LICHII_COOP_OBJECTS_AI_HOLD");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
-        objects.hearts_to_link_ = EnvFlag("LICHII_COOP_HEARTS_TO_LINK");
+        objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
         return true;
     }();
     (void)once;

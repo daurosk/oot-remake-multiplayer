@@ -348,6 +348,7 @@ public:
         std::array<float, 3> at{};    // the copy's place
         std::array<float, 3> from{};  // the hitter's place (ours when not known)
         u64 asked_ms = 0;             // set by AddHit
+        bool exact = false;           // `at` is where the blade was, not the actor's foot
     };
 
     // Present thread: hits to replay at the next game frame.
@@ -637,7 +638,7 @@ private:
         std::memcpy(&rec[0], &h.attacker, 8);
         rec[2] = id;
         rec[0x2c4 / 4 - kHitRecord / 4] = id;
-        const std::array<float, 3> at{h.at[0], h.at[1] + 1.0f, h.at[2]};
+        const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
         std::memcpy(&rec[0x27c / 4 - kHitRecord / 4], at.data(), 12);
         std::memcpy(&rec[0x2a0 / 4 - kHitRecord / 4], h.from.data(), 12);
         rec[3] = 0;  // present last, below
@@ -864,6 +865,7 @@ public:
                     h.amount = 1;
                     h.at = hit.at;
                     h.from = hit.from;
+                    h.exact = true;
                     TheMover().AddHit(h);
                 }
             }

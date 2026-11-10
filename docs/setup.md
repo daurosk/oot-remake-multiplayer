@@ -83,9 +83,9 @@ It sends nothing about you: one request for the list of releases, and the two do
 
 ## Troubleshooting
 
-- **"RomFS extraction failed" at the dump (step 4).** The kit's emulator needs the same things as for playing: your keys in `emulator\user\keys`, the firmware installed, and the game's update installed in the kit's emulator itself (**File > Install Files to NAND**), not only in another emulator. Check step 2, then dump again and choose the **Full** dump. Keep the progress window open until it says it is done; closing it stops the dump.
+- **"RomFS extraction failed" at the dump (step 4).** The kit's emulator needs the same things as for playing: your keys in `emulator\user\keys`, the firmware installed, and the game's update installed in the kit's emulator itself (**File > Install Files to NAND**), not only in another emulator. Check step 2, then dump again and choose the full dump. Keep the progress window open until it says it is done; closing it stops the dump.
 - **"No keys", or the game does not show in the list or does not start.** The kit's emulator does not see your keys. Check that `emulator\user\keys\prod.keys` exists (not one folder deeper) and that you copied from the right place (step 2: a portable install keeps them next to its exe, not in `%APPDATA%\eden`). Restart the emulator after copying.
-- **Where is the log?** `emulator\user\log\eden_log.txt` in your kit folder. Some log lines name a folder such as `C:\...\src\...`: that is where the emulator was built, not your folder, and it is not a problem.
+- **Where is the log?** `emulator\user\log\eden_log.txt` in your kit folder. Log lines name the emulator's source files, such as `src\core\...`. In test3 and older kits they show a full folder such as `C:\...\src\...`: that is where the emulator was built, not your folder, and it is not a problem (from test4 on, only the `src\...` part is shown).
 - **Still stuck?** Close the emulator, run `collect-logs.cmd` and report it (below).
 
 ## Reporting a problem

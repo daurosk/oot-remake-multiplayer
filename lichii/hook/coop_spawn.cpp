@@ -376,7 +376,14 @@ bool Director::Due(const Copy& c, std::uint64_t now_ms) const {
         return false;
     }
     const auto r = remade_.find(c.key);
-    return r == remade_.end() || now_ms - r->second.gone_ms >= kRemakeDelayMs;
+    if (r == remade_.end()) {
+        return true;
+    }
+    // A copy waiting to be made again: the input in force now decides. A
+    // copy killed here is seen gone at once, but Sync sends remakes 0 only
+    // after it missed two walks, within the delay.
+    return c.remakes != 0 && r->second.count <= c.remakes &&
+           now_ms - r->second.gone_ms >= kRemakeDelayMs;
 }
 
 const Copy* Director::Wanted(std::uint64_t key) const {

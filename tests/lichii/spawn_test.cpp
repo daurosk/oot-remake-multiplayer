@@ -484,3 +484,56 @@ TEST_CASE("spawn: a copy without remakes that went by itself is not made again")
     CHECK_FALSE(d.Step(guest, false, 0, 5000));
     CHECK(d.Live().empty());
 }
+
+TEST_CASE("spawn: a copy waiting to be made again is not made once the input says remakes 0") {
+    // Review of issue 124: a copy killed here is gone for the director at once,
+    // while Sync sends remakes 0 only after two missed walks.
+    namespace addr = CoopPuppet::addr;
+    constexpr std::uint64_t base = 0x8000000;
+    constexpr std::uint64_t block = 0x30000000;
+    constexpr std::uint64_t actor = 0x40000000;
+    constexpr std::uint64_t request = 0x50000000;
+    FakeGuest guest;
+    guest.Map(base + addr::kActorManagerPtr, 8);
+    guest.Map(base + addr::kGotCreateDefault, 8);
+    guest.Set(base + addr::kActorManagerPtr, std::uint64_t{0x20000000});
+    guest.Map(block, CoopSpawn::Director::kSlots * CoopSpawn::Director::kSlotSize);
+    guest.Map(actor, 0x600);
+    guest.Map(request, 0x10);
+    guest.Set(actor, std::uint64_t{0xabc});
+    guest.Set(actor + addr::kActorState, std::uint32_t{addr::kStatePresent});
+
+    std::vector<std::string> said;
+    CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
+    Copy copy;
+    copy.key = (1ULL << 63) | 3;
+    copy.actor = "Enemy_Stalchild";
+    copy.place = false;
+    copy.remakes = 3;
+    d.SetEnemies(base, {copy});
+    REQUIRE(d.Step(guest, false, 0, 0));
+    auto c = d.Step(guest, true, block, 0);
+    REQUIRE(c);
+    const std::uint64_t handle = c->x[3];
+    d.Step(guest, true, 0, 0);
+    guest.Set(handle, request);
+    guest.Set(request, std::uint32_t{addr::kRequestReady});
+    REQUIRE(d.Step(guest, false, 0, 16));
+    d.Step(guest, true, actor, 16);
+    CHECK_FALSE(d.Step(guest, false, 0, 33));
+    REQUIRE(d.Live().count(copy.key) == 1);
+
+    // Killed here: gone while the input still says 3, so a remake is planned.
+    guest.Set(actor + addr::kActorState, std::uint32_t{8});
+    CHECK_FALSE(d.Step(guest, false, 0, 100));
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("made again (1 of 3)") != std::string::npos;
+    }));
+    // Two walks later Sync knows it died: remakes 0. Nothing is made, then or later.
+    copy.remakes = 0;
+    d.SetEnemies(base, {copy});
+    CHECK_FALSE(d.Step(guest, false, 0, 200));
+    CHECK_FALSE(d.Step(guest, false, 0, 1200));
+    CHECK_FALSE(d.Step(guest, false, 0, 5000));
+    CHECK(d.Live().empty());
+}

@@ -283,12 +283,30 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::create:
         Say(who + ": create " + slot.actor_name + " requested (returned " +
             Hex(result & 0xffffffff) + "), handle slot " + Hex(slot.handle));
-        if ((result & 0xffffffff) == 0) {
-            // Refused (seen right after a load deleted the puppet, while the
-            // old scene goes): nothing was made, so ask again soon.
-            Say(who + ": create refused; trying again in 1 s");
-            slot.phase = Phase::idle;
+        if ((result & 0xffffffff) != 0) {
+            slot.refused = 0;
+            break;
+        }
+        // Refused (seen right after a load deleted the puppet, while the old
+        // scene goes): the handle stayed empty and nothing was made, so ask
+        // again soon. Should the game have queued a request after all, wait
+        // for it as for any create, so there are never two.
+        if (std::uint64_t queued = 0; ReadValue(guest, slot.handle, queued) && queued != 0) {
+            break;
+        }
+        ++slot.refused;
+        slot.phase = Phase::idle;
+        if (slot.refused < kRefusedFast) {
             slot.retry_ms = now_ms + kRefusedRetryMs;
+            if (slot.refused == 1) {
+                Say(who + ": create refused; trying again each second");
+            }
+        } else {
+            slot.retry_ms = now_ms + kRefusedSlowMs;
+            if (slot.refused == kRefusedFast) {
+                Say(who + ": create refused " + std::to_string(kRefusedFast) +
+                    " times; trying again every 5 s");
+            }
         }
         break;
     case Pending::take:

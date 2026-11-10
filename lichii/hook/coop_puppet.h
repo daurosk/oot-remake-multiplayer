@@ -265,6 +265,9 @@ public:
     // unloaded or loaded) made nothing; it is asked again after this, not
     // after the create timeout and the 5 s wait.
     static constexpr std::uint64_t kRefusedRetryMs = 1000;
+    // After this many refusals in a row (a long load or cutscene), every 5 s.
+    static constexpr int kRefusedFast = 3;
+    static constexpr std::uint64_t kRefusedSlowMs = 5000;
     // A live puppet whose player drops out of the plan in the same scene
     // (a stalled or late peer fades to 0 for a moment) is kept this long
     // before it is deleted, so a hiccup does not delete and create it again.
@@ -308,6 +311,7 @@ private:
         bool wait_said = false;       // "waiting for the game to draw" logged
         std::string wanted_actor;     // the actor its target asked for, last seen
         std::uint64_t wanted_since_ms = 0;  // since when (Input::settle_ms)
+        int refused = 0;                    // creates refused in a row
         std::string anim_name;        // played on it; "" none yet
         std::uint32_t anim_serial = 0;
         std::uint64_t anim_buffer = 0;  // which name buffer is next

@@ -379,5 +379,6 @@ try {
     }
     foreach ($x in $kits.Keys) { if (Test-Path $st[$x].Log) { Copy-Item $st[$x].Log "$out\eden_log-$x.txt" } }
 }
+if (-not $failed -and $stepFails) { $failed = "$stepFails expect step(s) failed: see counts.txt" }
 if ($failed) { Set-Content "$out\FAILED.txt" $failed }
 $out

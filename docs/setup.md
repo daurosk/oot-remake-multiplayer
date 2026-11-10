@@ -59,7 +59,7 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 
 Do not use the emulator's **Dump RomFS** for a `.nup`: you do not need it, and it often fails with "RomFS Extraction Failed" (for example when your keys are older than the game's update).
 
-**Which file do you have?** Look at the file you added to the emulator's game list in step 3: its name ends in `.nup`, `.nsp` or `.xci` (the game list also shows the file type). `.nup`: the steps above are all you need. `.nsp` or `.xci`: see below.
+**Which file do you have?** Look at the file you added to the emulator's game list in step 3: its name ends in `.nup`, `.nsp` or `.xci` (the game list also shows it in its **File type** column: NUP, NSP or XCI). `.nup`: the steps above are all you need. `.nsp` or `.xci`: see below.
 
 The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed). Without the pack, co-op still works, but the other players show only as a name and a dot.
 

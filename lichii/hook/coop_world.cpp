@@ -78,6 +78,13 @@ bool IsMovable(std::string_view name) {
            name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_");
 }
 
+bool IsSign(std::string_view name) {
+    return name.starts_with("Obj_") &&
+           (name.find("SignBoard_") != std::string_view::npos ||
+            name.find("Signboard_") != std::string_view::npos ||
+            name.find("GuidePost_") != std::string_view::npos);
+}
+
 bool IsGrassActor(std::string_view name) {
     if (name.starts_with("Obj_Plant_Grass_")) {
         return true;
@@ -131,6 +138,9 @@ const std::string* SceneOfMessage(const proto::Message& m) {
     if (const auto* p = std::get_if<proto::WorldPlace>(&m)) {
         return &p->scene;
     }
+    if (const auto* h = std::get_if<proto::WorldHit>(&m)) {
+        return &h->scene;
+    }
     return nullptr;
 }
 
@@ -172,6 +182,7 @@ void WorldSync::Reset() {
     remote_.clear();
     gone_.clear();
     went_.clear();
+    hits_.clear();
     early_.clear();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
@@ -249,6 +260,11 @@ void WorldSync::Drain(std::uint64_t now_us) {
                 if (r.samples.size() > kKeepSamples) {
                     r.samples.pop_front();
                 }
+            }
+        } else if (const auto* h = std::get_if<proto::WorldHit>(&m)) {
+            auto& waiting = hits_[h->hash];
+            if (waiting.size() < proto::kMaxWorldHitsPerObject) {
+                waiting.emplace_back(h->at, h->from);
             }
         } else if (const auto* p = std::get_if<proto::WorldPlace>(&m)) {
             Remote& r = remote_[p->hash];
@@ -461,6 +477,46 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
     }
 }
 
+void WorldSync::Swing(const proto::GrassCut& cut, const std::optional<proto::Vec3>& player,
+                      std::uint64_t now_us, Out& out) {
+    if (cut.scene != scene_ || std::isnan(cut.sweep[0][0])) {
+        return;  // a sphere cut (an AI's), no sword
+    }
+    std::vector<proto::Vec3> points{cut.position};
+    for (const proto::Vec3& p : cut.sweep) {
+        if (Finite(p)) {
+            points.push_back(p);
+        }
+    }
+    for (auto& [address, o] : objects_) {
+        if (!o.sign || now_us - o.hit_sent_us < kHitEveryUs) {
+            continue;
+        }
+        const proto::Vec3* best = nullptr;
+        float best_level = kSignReachM;
+        for (const proto::Vec3& p : points) {
+            const float dx = p[0] - o.position[0];
+            const float dz = p[2] - o.position[2];
+            const float level = std::sqrt(dx * dx + dz * dz);
+            if (level <= best_level && std::fabs(p[1] - o.position[1]) <= kSignHighM) {
+                best_level = level;
+                best = &p;
+            }
+        }
+        if (best == nullptr) {
+            continue;
+        }
+        o.hit_sent_us = now_us;
+        proto::WorldHit h;
+        h.scene = scene_;
+        h.hash = o.hash;
+        h.at = *best;
+        h.from = player && Finite(*player) ? *player : *best;
+        out.send.emplace_back(std::move(h));
+        out.notes.push_back(Line("world: %016llx %s: our sword passed it: hit sent%s", o.hash, o.name, ""));
+    }
+}
+
 void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_us,
                      const std::vector<CoopObjects::Seen>& seen,
                      const std::optional<proto::Vec3>& player, Out& out) {
@@ -473,6 +529,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         remote_.clear();
         gone_.clear();
         went_.clear();
+        hits_.clear();
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
             if (*SceneOfMessage(m) == scene_) {
@@ -509,6 +566,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             o.name = s.name;
             o.breakable = breakable;
             o.grass = IsGrassActor(s.name);
+            o.sign = IsSign(s.name);
             o.life = life;
             o.position = s.position;
             o.rotation = s.rotation;
@@ -606,6 +664,16 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
     std::erase_if(went_, [now_us](const auto& w) { return now_us - w.first > 4 * kGoneHoldUs; });
 
     for (auto& [address, o] : objects_) {
+        // Another player's swings at this sign, once our copy has settled in.
+        if (const auto waiting = hits_.find(o.hash);
+            waiting != hits_.end() && o.sign && now_us - o.first_us >= kHitWaitUs) {
+            for (const auto& [at, from] : waiting->second) {
+                out.hits.push_back({address, at, from});
+            }
+            out.notes.push_back(Line("world: %016llx %s hit by another player's sword%s", o.hash,
+                                     o.name, ""));
+            hits_.erase(waiting);
+        }
         if (const auto b = broken_.find(o.hash); b != broken_.end()) {
             MakeBreak(o, b->second, now_us, out);
             o.ours = false;

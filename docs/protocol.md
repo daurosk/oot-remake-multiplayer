@@ -249,8 +249,9 @@ Placed breakables and movables, by placement hash ([world.md](world.md), "Broken
 | 32 | `WORLD_BREAK` | 0 | both | 3 x `f32` position (finite), `u8` flags (bit 0: restored) |
 | 33 | `WORLD_MOVE` | 4 | both | `u64` server time, 3 x `f32` position, 4 x `f32` rotation (unit quaternion x y z w), `u8` flags (bit 0: carried) |
 | 34 | `WORLD_PLACE` | 0 | both | 3 x `f32` position, 4 x `f32` rotation |
+| 35 | `WORLD_HIT` | 0 | both | 3 x `f32` where the sword was, 3 x `f32` where the player stood (a cut sign) |
 
-The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one) and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. Types 29 to 31 are the enemy ownership messages; 35 is kept for cut signs.
+The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one) and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. The last 4 `WORLD_HIT` of each object (at most 128 objects a scene) are kept and sent the same way. Types 29 to 31 are the enemy ownership messages.
 
 ### Objects (stage 5)
 
@@ -300,4 +301,4 @@ The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
-- Version 4 (2026-11-09): `GRASS_CUT` (type 28), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE` (32 to 34). No layout changed; the version went up so that a version 3 server, which does not know the type and would not relay it, is refused at `HELLO`.
+- Version 4 (2026-11-09): `GRASS_CUT` (type 28), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35). No layout changed; the version went up so that a version 3 server, which does not know the type and would not relay it, is refused at `HELLO`.

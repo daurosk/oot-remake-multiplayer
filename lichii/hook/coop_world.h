@@ -36,6 +36,9 @@ bool IsBreakable(std::string_view name);
 // one, the slider box).
 bool IsMovable(std::string_view name);
 
+// Signs a sword cuts (their life never drops: WORLD_HIT shares the swing).
+bool IsSign(std::string_view name);
+
 // Grass that is an actor: a tuft that is cut is deleted at once in the other
 // games (writing life 0 did not remove it, run of 2026-11-09).
 bool IsGrassActor(std::string_view name);
@@ -77,10 +80,22 @@ public:
     static constexpr std::uint64_t kQuietUs = 1'500'000;     // after following: no claim while it settles
     static constexpr std::uint64_t kBehindUs = 100'000;      // copies show the mover this late
     static constexpr std::size_t kKeepSamples = 16;
+    static constexpr float kSignReachM = 1.5f;  // a swing this near a sign (level) is sent
+    static constexpr float kSignHighM = 2.5f;   // and no more than this above or below its foot
+    static constexpr std::uint64_t kHitEveryUs = 300'000;  // per sign
+    static constexpr std::uint64_t kHitWaitUs = 300'000;   // a sign just loaded is hit this late
 
     struct Out {
         std::vector<coop::protocol::Message> send;
         std::vector<CoopObjects::LifeWrite> lives;
+        // Another player's sword hits to give our copies (signs), through
+        // the game's own damage call.
+        struct Hit {
+            std::uint64_t address = 0;
+            coop::protocol::Vec3 at{};
+            coop::protocol::Vec3 from{};
+        };
+        std::vector<Hit> hits;
         std::vector<std::string> notes;  // log lines
     };
 
@@ -92,6 +107,12 @@ public:
     void Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_us,
               const std::vector<CoopObjects::Seen>& seen,
               const std::optional<coop::protocol::Vec3>& player, Out& out);
+
+    // Present thread, after Tick: one sword swing of our own Link, as the
+    // game queued it for the grass (GrassSync::Look; sweep points NaN when
+    // it was no sword). A sign it passed gets WORLD_HIT.
+    void Swing(const coop::protocol::GrassCut& cut,
+               const std::optional<coop::protocol::Vec3>& player, std::uint64_t now_us, Out& out);
 
     // Present thread, every frame: where the copies another game moves go.
     void Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const;
@@ -132,6 +153,8 @@ private:
         std::string name;
         bool breakable = false;
         bool grass = false;
+        bool sign = false;
+        std::uint64_t hit_sent_us = 0;
         std::optional<std::int32_t> life;
         coop::protocol::Vec3 position{};
         std::optional<CoopObjects::Mat3> rotation;
@@ -172,6 +195,8 @@ private:
     std::map<std::uint64_t, Break> broken_;    // by placement hash, this scene
     std::map<std::uint64_t, Remote> remote_;   // by placement hash, this scene
     std::vector<Gone> gone_;
+    // Hits for signs, until our copy is there to take them (by hash).
+    std::map<std::uint64_t, std::vector<std::pair<coop::protocol::Vec3, coop::protocol::Vec3>>> hits_;
     std::vector<std::pair<std::uint64_t, bool>> went_;  // (time, far) of everything that left lately
     std::vector<coop::protocol::Message> early_;  // for a scene we are not in yet
     std::uint8_t self_ = 0;

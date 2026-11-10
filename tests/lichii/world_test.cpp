@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -972,4 +973,57 @@ TEST_CASE("world: Reset and a reused address start clean") {
     // The same address with another placement is another object: no break from the life change.
     CHECK(Walk(w, 2100 * kMs, {Thing(0x100, 0x77, 0, "Obj_Pot_A_01")}).send.empty());
     CHECK(w.Count() == 1);
+}
+
+TEST_CASE("world: our sword passing a sign sends a hit; another player's hit is given to our sign") {
+    const char* sign = "Obj_GuidePost_A_02";
+    CHECK(CoopWorld::IsSign(sign));
+    CHECK(CoopWorld::IsSign("Obj_Kokiri_Signboard_A_01"));
+    CHECK_FALSE(CoopWorld::IsSign("Obj_Pot_A_01"));
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x70, 100, sign), Thing(0x200, 0x71, 100, sign, {30.0f, 2.0f, 3.0f})});
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    proto::GrassCut swing;
+    swing.scene = kScene;
+    swing.position = {1.0f, 3.0f, 4.5f};  // 1.5 m off: just in reach
+    swing.radius = 0.5f;
+    swing.sweep = {proto::Vec3{1.2f, 3.1f, 3.4f}, proto::Vec3{0.4f, 3.0f, 3.9f}, proto::Vec3{nan, nan, nan}};
+    WorldSync::Out out;
+    w.Swing(swing, kLink, 1100 * kMs, out);
+    REQUIRE(Sent<proto::WorldHit>(out).size() == 1);
+    const proto::WorldHit hit = Sent<proto::WorldHit>(out)[0];
+    CHECK(hit.hash == 0x70);
+    CHECK(hit.at == proto::Vec3{1.2f, 3.1f, 3.4f});  // the nearest point of the swing
+    CHECK(hit.from == kLink);
+    CHECK(proto::encode(proto::Message{hit}).has_value());
+    // The next slots of the same swing do not send it again; a later swing does.
+    out = {};
+    w.Swing(swing, kLink, 1150 * kMs, out);
+    CHECK(out.send.empty());
+    w.Swing(swing, kLink, 1500 * kMs, out);
+    CHECK(Sent<proto::WorldHit>(out).size() == 1);
+    // A cut that is no sword swing (an AI's sphere), or one for another scene, is nothing.
+    out = {};
+    proto::GrassCut sphere = swing;
+    sphere.sweep = {proto::Vec3{nan, nan, nan}, proto::Vec3{nan, nan, nan}, proto::Vec3{nan, nan, nan}};
+    w.Swing(sphere, kLink, 3000 * kMs, out);
+    swing.scene = "Market";
+    w.Swing(swing, kLink, 3000 * kMs, out);
+    CHECK(out.send.empty());
+
+    // The other game: the hit waits for the sign, then goes to it once.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {});
+    proto::WorldHit got = hit;
+    got.player_number = 1;
+    b.Receive(got);
+    CHECK(Walk(b, 1100 * kMs, {}).hits.empty());
+    CHECK(Walk(b, 2000 * kMs, {Thing(0x900, 0x70, 100, sign)}).hits.empty());  // just loaded
+    const auto given = Walk(b, 2400 * kMs, {Thing(0x900, 0x70, 100, sign)});
+    REQUIRE(given.hits.size() == 1);
+    CHECK(given.hits[0].address == 0x900);
+    CHECK(given.hits[0].at == hit.at);
+    CHECK(given.hits[0].from == kLink);
+    CHECK(given.send.empty());
+    CHECK(Walk(b, 2500 * kMs, {Thing(0x900, 0x70, 100, sign)}).hits.empty());
 }

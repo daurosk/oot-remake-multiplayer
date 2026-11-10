@@ -36,12 +36,26 @@ void WorldStore::on_place(const WorldPlace& p) {
   }
 }
 
+void WorldStore::on_hit(const WorldHit& h) {
+  Scene& s = scenes_[h.scene];
+  auto it = s.hits.find(h.hash);
+  if (it == s.hits.end()) {
+    if (s.hits.size() >= kMaxWorldHitObjects) return;
+    it = s.hits.emplace(h.hash, std::deque<WorldHit>{}).first;
+  }
+  it->second.push_back(h);
+  if (it->second.size() > kMaxWorldHitsPerObject) it->second.pop_front();
+}
+
 std::vector<Message> WorldStore::replay(const std::string& scene) const {
   std::vector<Message> out;
   auto it = scenes_.find(scene);
   if (it == scenes_.end()) return out;
   for (std::uint64_t hash : it->second.order) out.emplace_back(it->second.breaks.at(hash));
   for (const auto& [hash, place] : it->second.places) out.emplace_back(place);
+  for (const auto& [hash, hits] : it->second.hits) {
+    for (const WorldHit& h : hits) out.emplace_back(h);
+  }
   return out;
 }
 

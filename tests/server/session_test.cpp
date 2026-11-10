@@ -1716,3 +1716,24 @@ TEST_CASE("the breaks and places of a scene end when its last player leaves") {
   CHECK(messages_to<WorldBreak>(h, 3).empty());
   CHECK(messages_to<WorldPlace>(h, 3).empty());
 }
+
+TEST_CASE("sword hits on a sign are passed on and the last four kept for those who come later") {
+  ObjectHarness h;
+  h.receive(2, sample_in("Kakariko"), kChannelPlayerSamples);
+  h.clear();
+  WorldHit hit;
+  hit.scene = "Kakariko";
+  hit.hash = 0x70;
+  for (int i = 0; i < 6; ++i) {
+    hit.at = Vec3{static_cast<float>(i), 1.0f, 2.0f};
+    h.receive(1, hit, kChannelSession);
+  }
+  CHECK(messages_to<WorldHit>(h, 2).size() == 6);
+  CHECK(messages_to<WorldHit>(h, 1).empty());
+  h.clear();
+  h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
+  const auto got = messages_to<WorldHit>(h, 3);
+  REQUIRE(got.size() == kMaxWorldHitsPerObject);
+  CHECK(got.front().at[0] == 2.0f);
+  CHECK(got.front().player_number == 1);
+}

@@ -104,7 +104,7 @@ When the last player leaves a scene the server forgets its breaks, as the game r
 | Bomb and hammer rocks, cracked walls and floors | `*BrokenRock_*`, `*CrackWall_*`, `*CrackFloor_*` | bomb, hammer | life, `WORLD_BREAK` | unit tests only |
 | Ice pillars, beehive, spider webs | `Obj_BrokenIcePillar_*`, `*Beehive_*`, `*SpiderWeb_*` | hit, fire | life, `WORLD_BREAK` | unit tests only |
 | Red ice | `Obj_RedIce_*` | blue fire (no life: it goes) | gone-near-Link, `WORLD_BREAK`, deleted | unit tests only |
-| Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | **not shared** (issue 90, below) | no |
+| Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | `WORLD_HIT`: the swing is replayed on the others' sign (below) | unit tests only; the replayed hit may not cut |
 | Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE` | unit tests only |
 | Rolling rocks | `*RollingRock_*` | roll by themselves | each game's own (not shared) | - |
 | Bomb flowers | `Obj_BombFlower_*` | picked, thrown, explode | not shared here (the fruit is made by the game, no placement) | - |
@@ -112,7 +112,11 @@ When the last player leaves a scene the server forgets its breaks, as the game r
 
 ### Signs (issue 90): what the pack says
 
-Read from `Obj_GuidePost_A_02.pack` (romfs, 2026-11-09): a cuttable sign's life is `Signboard`, a child of `Obj_Invincible` with `IsDamagedWhileInvincibile`, so a hit never lowers its life; the cut is done by its `DestructionParam` (a `_fracture` shape whose pieces come off where the sword hit) and its AI is `CuttableSignboard`. It keeps no blackboard value for "cut". So a cut cannot be read from life or a flag. Two ways left, both need a run: read the Destruction component's state for the pieces that came off (find it with a memory compare while a sign is cut), or send the sword hit itself (place, direction) and replay it on the other games' sign with the hit replay the enemy sharing has (`Mover::AddHit`). Type 35 is kept free for it.
+Read from `Obj_GuidePost_A_02.pack` (romfs, 2026-11-09): a cuttable sign's life is `Signboard`, a child of `Obj_Invincible` with `IsDamagedWhileInvincibile`, so a hit never lowers its life; the cut is done by its `DestructionParam` (a `_fracture` shape whose pieces come off where the sword hit) and its AI is `CuttableSignboard`. It keeps no blackboard value for "cut". So a cut cannot be read from life or a flag.
+
+**What is built (`WORLD_HIT`, type 35; not seen in a game).** The swing is shared, not the cut. Every sword swing is already read for the field grass: the game queues its foliage cut slots with three points of the blade. When a point of our own swing is within 1.5 m (level) and 2.5 m (height) of a sign, the hook sends `WORLD_HIT` with the sign's placement hash, the nearest point and where our Link stood (at most one per sign every 0.3 s). Every other game in the scene gives its own sign one hit at that point, from that place, through the hit replay the enemy sharing has (`Mover::AddHit`: the game's own damage call), so that game's destruction takes the pieces off itself. The server keeps the last 4 hits of each sign per scene for a player who enters later; they are given once the sign has been loaded 0.3 s.
+
+Open, to see in a run: (1) the swing is only read where the foliage module is on (outdoor scenes with grass; a sign in a scene without it is not shared); (2) whether the replayed hit makes the destruction cut, and the same pieces; if not, the other way is to find the Destruction component's state with a memory compare while a sign is cut and write it; (3) a swing near a sign that did not cut it in the sender's game is sent too, and the receiving game decides by its own geometry.
 
 ### To check in a game (nothing here was run)
 
@@ -120,4 +124,5 @@ Read from `Obj_GuidePost_A_02.pack` (romfs, 2026-11-09): a cuttable sign's life 
 2. Tufts by the Kokiri side of Hyrule Field: A cuts, B's tuft goes (`still stands after the break: deleted`).
 3. A carries a pot or rock: B sees it in the air at A's puppet (`moved here: sending` in A, `moved by another player` in B); does the setter move a physics object, and does it drop when let be?
 4. A pushes a block (Forest Temple, Kakariko well): B's block follows and stays (`at rest: place sent`, `put where another player left it`). Does B's block keep its place after the 0.5 s hold, and can B push it afterwards?
+6. Sign: A cuts the signpost by the Graveyard gate (scenario `sign`): A logs `our sword passed it: hit sent`, B `hit by another player's sword`; does B's sign lose the same pieces? And for B entering later?
 5. A door or room change next to pots: no `broken here (gone next to Link)` line may appear (it should say `left with the area`).

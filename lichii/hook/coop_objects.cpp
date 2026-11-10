@@ -797,6 +797,28 @@ public:
                 send.emplace_back(std::move(m));
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            if (!world.hits.empty()) {
+                // A sign another player's sword passed: the same hit on ours.
+                u64 link = 0;
+                for (const auto& [a, known] : names_) {
+                    if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                        link = a;
+                        break;
+                    }
+                }
+                for (const auto& hit : world.hits) {
+                    if (link == 0) {
+                        break;
+                    }
+                    Mover::Hit h;
+                    h.actor = hit.address;
+                    h.attacker = link;
+                    h.amount = 1;
+                    h.at = hit.at;
+                    h.from = hit.from;
+                    TheMover().AddHit(h);
+                }
+            }
             for (const auto& note : world.notes) {
                 if (world_lines_ < 2000) {
                     ++world_lines_;
@@ -809,6 +831,16 @@ public:
                                          *scene, SteadyNowMs())) {
             LOG_INFO(Core, "coop: grass: cut at {:.2f} {:.2f} {:.2f} radius {:.2f} flags {:#x} sent",
                      cut.position[0], cut.position[1], cut.position[2], cut.radius, cut.flags);
+            {
+                CoopWorld::WorldSync::Out swing;  // a sign the sword passed (docs/world.md)
+                world_.Swing(cut, player_, server_now_us, swing);
+                for (auto& m : swing.send) {
+                    send.emplace_back(std::move(m));
+                }
+                for (const auto& note : swing.notes) {
+                    LOG_INFO(Core, "coop: {}", note);
+                }
+            }
             send.emplace_back(std::move(cut));
         }
         for (const auto& note : TheGrass().TakeNotes()) {
@@ -878,6 +910,7 @@ public:
             return;
         } else if (std::holds_alternative<coop::protocol::WorldBreak>(m) ||
                    std::holds_alternative<coop::protocol::WorldPlace>(m) ||
+                   std::holds_alternative<coop::protocol::WorldHit>(m) ||
                    std::holds_alternative<coop::protocol::WorldMove>(m)) {
             if (const auto* b = std::get_if<coop::protocol::WorldBreak>(&m)) {
                 LOG_INFO(Core, "coop: world: got break {:#x} from P{} in {}{}", b->hash,

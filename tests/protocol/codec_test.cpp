@@ -1283,3 +1283,25 @@ TEST_CASE("bad world messages are refused") {
   CHECK(encode(p, out) == Error::bad_value);
   CHECK(out.empty());
 }
+
+TEST_CASE("a world hit has its number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::world_hit) == 35);
+  WorldHit h;
+  h.scene = "Kakariko";
+  h.hash = 0x70;
+  h.at = {1.0f, 2.0f, 3.0f};
+  h.from = {1.5f, 2.0f, 4.0f};
+  CHECK(channel_of(Message{h}) == kChannelSession);
+  CHECK(check_received(Message{h}, Sender::client, kChannelSession) == Error::none);
+  const Bytes b = must_encode(h);
+  CHECK(b.size() == kHeaderSize + 1 + 2 + 8 + 8 + 12 + 12);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<WorldHit>(back) == h);
+  Bytes out;
+  h.from[1] = std::numeric_limits<float>::infinity();
+  CHECK(encode(h, out) == Error::bad_value);
+  h.from[1] = 0.0f;
+  h.hash = 0;
+  CHECK(encode(h, out) == Error::bad_value);
+}

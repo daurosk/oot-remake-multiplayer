@@ -77,6 +77,7 @@ enum class MessageType : std::uint16_t {
   world_break = 32,
   world_move = 33,
   world_place = 34,
+  world_hit = 35,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -746,6 +747,24 @@ struct WorldPlace {
 };
 
 
+// WORLD_HIT (docs/world.md, "Signs"): the sender's sword swing passed the
+// placed object with this hash (a sign: its life never drops, the cut is
+// made by the game's destruction of the pieces the sword met). Each other
+// game gives its own copy the same hit, at the same place, through the
+// game's own damage call. The server keeps the last kMaxWorldHitsPerObject
+// of each object per scene for a player who enters later.
+inline constexpr std::size_t kMaxWorldHitsPerObject = 4;
+inline constexpr std::size_t kMaxWorldHitObjects = 128;  // per scene
+
+struct WorldHit {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t hash = 0;
+  Vec3 at{};    // where the sword was (finite)
+  Vec3 from{};  // where the player who swung stood (finite)
+  bool operator==(const WorldHit&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -753,7 +772,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, WorldBreak, WorldMove,
-                             WorldPlace>;
+                             WorldPlace, WorldHit>;
 
 MessageType type_of(const Message& message);
 

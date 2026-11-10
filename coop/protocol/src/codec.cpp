@@ -1347,6 +1347,30 @@ Error decode_body(Reader& r, WorldPlace& m) {
   return Error::none;
 }
 
+// head, 3 x f32 at (finite), 3 x f32 from (finite).
+Error encode_body(const WorldHit& m, Writer& w) {
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.at) || !all_finite(m.from)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.hash);
+  for (float f : m.at) w.f32(f);
+  for (float f : m.from) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, WorldHit& m) {
+  m = WorldHit{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.hash));
+  for (float& f : m.at) COOP_READ(r.f32(f));
+  for (float& f : m.from) COOP_READ(r.f32(f));
+  COOP_TRY(check_world(m.player_number, m.scene, m.hash));
+  if (!all_finite(m.at) || !all_finite(m.from)) return Error::bad_value;
+  return Error::none;
+}
+
 Error decode_body(Reader& r, PlayerPose& m) {  m = PlayerPose{};
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
@@ -1427,7 +1451,7 @@ MessageType type_of(const Message& message) {
       MessageType::handover_state, MessageType::object_spawn, MessageType::object_sample,
       MessageType::object_remove, MessageType::damage, MessageType::player_pose,
       MessageType::time_of_day, MessageType::grass_cut, MessageType::world_break,
-      MessageType::world_move, MessageType::world_place,
+      MessageType::world_move, MessageType::world_place, MessageType::world_hit,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1479,6 +1503,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::grass_cut:
     case MessageType::world_break:
     case MessageType::world_place:
+    case MessageType::world_hit:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1540,6 +1565,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::world_break:
     case MessageType::world_move:
     case MessageType::world_place:
+    case MessageType::world_hit:
       return true;
   }
   return false;
@@ -1564,7 +1590,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose> ||
                       std::is_same_v<T, TimeOfDay> || std::is_same_v<T, GrassCut> ||
                       std::is_same_v<T, WorldBreak> || std::is_same_v<T, WorldMove> ||
-                      std::is_same_v<T, WorldPlace>) {
+                      std::is_same_v<T, WorldPlace> || std::is_same_v<T, WorldHit>) {
           field = &m.player_number;
         }
       },
@@ -1660,6 +1686,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::world_break: return decode_as<WorldBreak>(body, out);
     case MessageType::world_move: return decode_as<WorldMove>(body, out);
     case MessageType::world_place: return decode_as<WorldPlace>(body, out);
+    case MessageType::world_hit: return decode_as<WorldHit>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;

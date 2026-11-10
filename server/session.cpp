@@ -235,7 +235,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     return;
   }
   if (std::holds_alternative<WorldBreak>(message) || std::holds_alternative<WorldMove>(message) ||
-      std::holds_alternative<WorldPlace>(message)) {
+      std::holds_alternative<WorldPlace>(message) || std::holds_alternative<WorldHit>(message)) {
     on_world(id, c, channel, message);
     return;
   }
@@ -552,6 +552,10 @@ void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Mes
     set_scene(id, c, p->scene);
     world_.on_place(*p);
     send_to_scene(p->scene, id, channel, message);
+  } else if (auto* h = std::get_if<WorldHit>(&message)) {
+    set_scene(id, c, h->scene);
+    world_.on_hit(*h);
+    send_to_scene(h->scene, id, channel, message);
   } else if (auto* v = std::get_if<WorldMove>(&message)) {
     if (v->scene != c.scene) return;  // late, from the scene it left
     send_to_scene(v->scene, id, channel, message);

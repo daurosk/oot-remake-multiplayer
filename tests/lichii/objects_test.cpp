@@ -1533,13 +1533,13 @@ TEST_CASE("objects: a copy whose own AI acts near our Link is flagged targeting 
 }
 
 TEST_CASE("objects: an enemy of ours woken near our Link is flagged too, so it stays ours") {
-    auto run = [](float x, const std::string& now) {
+    auto run = [](float x, const std::string& now, std::uint64_t until = 1500) {
         Sync sync;
         sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
         Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait_Ground")});
         Own(sync, *sync.IdOf(0x100), 1);
         std::optional<std::uint8_t> flags;
-        for (std::uint64_t t = 66; t <= 1500; t += 66) {
+        for (std::uint64_t t = 66; t <= until; t += 66) {
             for (const auto& p :
                  All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, now)}))) {
                 flags = p.objects[0].flags;
@@ -1549,5 +1549,56 @@ TEST_CASE("objects: an enemy of ours woken near our Link is flagged too, so it s
     };
     CHECK(run(5.0f, "Attack"));
     CHECK_FALSE(run(5.0f, "Wait_Ground"));
+    CHECK_FALSE(run(5.0f, "Wait_Ground_ModelOnlyLOD"));  // its far variant is still rest
     CHECK_FALSE(run(15.0f, "Attack"));
+    // One that keeps flying or patrolling near us is not held for good: the
+    // flag ends 4 s after it woke (plus the 2 s it is kept), so a chase by
+    // another game can still take it.
+    CHECK_FALSE(run(5.0f, "Fly", 9000));
+}
+
+TEST_CASE("objects: animation names without their LOD suffix") {
+    CHECK(std::string(CoopObjects::AnimationBase("Wait_ModelOnlyLOD")) == "Wait");
+    CHECK(std::string(CoopObjects::AnimationBase("Fly_LOD")) == "Fly");
+    CHECK(std::string(CoopObjects::AnimationBase("Wait")) == "Wait");
+    CHECK(std::string(CoopObjects::AnimationBase("_LOD")) == "_LOD");
+
+    // A copy in its LOD variant of the owner's animation is not woken.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait")});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    const auto flags = Wake(sync, id, 10, 1500, 5.0f, "Wait_ModelOnlyLOD", "Wait");
+    CHECK_FALSE((flags && (*flags & kTargeting) != 0));
+}
+
+TEST_CASE("objects: a copy brought to 0 by its owner and alive again is healed, not hit") {
+    // We hit it once, long before; then the owner's own samples took it to
+    // 0 and back (a revive). No DAMAGE for the owner's whole life.
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 1)});
+    REQUIRE(All<proto::Damage>(Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 1)})).size() == 1);
+    sync.Receive(OwnerSample(id, 2, 5000 * kMs, 0.0f, 0, "Die"));
+    REQUIRE(Tick(sync, 5000 * kMs, {Enemy(0x100, 0x11, 1)}).writes.size() == 1);  // to 0
+    sync.Receive(OwnerSample(id, 2, 8000 * kMs, 0.0f, 2, "Wait"));
+    auto step = Tick(sync, 8000 * kMs, {Enemy(0x100, 0x11, 0)});
+    CHECK(All<proto::Damage>(step).empty());
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 2);
+}
+
+TEST_CASE("objects: owners queued from before a reconnect are not applied after the forget") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 1)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2, 3);  // the old server's, not yet taken by a Tick
+    sync.ForgetOwners();
+    Own(sync, id, 1, 0);  // the new server's
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 1)});
+    CHECK(sync.OwnerOf(id) == 1);
 }

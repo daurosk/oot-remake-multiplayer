@@ -271,6 +271,15 @@ bool IsAnnounced(std::string_view name) {
     return name == "Enemy_Skulltula_Gold";
 }
 
+std::string_view AnimationBase(std::string_view name) {
+    for (const std::string_view suffix : {"_ModelOnlyLOD", "_LOD"}) {
+        if (name.size() > suffix.size() && name.ends_with(suffix)) {
+            return name.substr(0, name.size() - suffix.size());
+        }
+    }
+    return name;
+}
+
 bool IsDeathAnimation(std::string_view name) {
     for (const std::string_view word : {"Die", "Dead", "Death"}) {
         for (std::size_t at = name.find(word); at != std::string_view::npos;
@@ -623,6 +632,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         o.hit_since = now_us;
                     }
                     o.hit_sum += drop;
+                    if (life->life <= 0 && o.killed_at == 0) {
+                        o.killed_at = now_us;  // our hit took it: a resend may follow
+                        o.resent = 0;
+                    }
                     // Its own game is playing the hit reaction now.
                     o.react_at = now_us;
                     o.react_over = !o.received.empty() && o.received.back().animation
@@ -632,6 +645,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
             o.life = life->life;
             o.max = life->max;
+            if (life->life > 0) {
+                o.killed_at = 0;  // alive again: a later kill is a new one
+            }
         }
     }
     hidden_ = std::move(hidden);
@@ -870,9 +886,18 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
                 // Woken by our Link (issue 132): out of the animation it
                 // rested in, near us. Keeps it ours.
-                const std::string now_playing = o.animation ? o.animation->name : std::string();
-                if (wake_ && d <= kWakeM && !now_playing.empty() && !o.rest_animation.empty() &&
-                    now_playing != o.rest_animation) {
+                // Only for kWakeOwnUs after it woke, so one that patrols or
+                // flies near us is not held in a fight for good.
+                const std::string_view now_playing =
+                    o.animation ? AnimationBase(o.animation->name) : std::string_view();
+                const bool resting = now_playing.empty() || o.rest_animation.empty() ||
+                                     now_playing == AnimationBase(o.rest_animation);
+                if (resting) {
+                    o.woke_at = 0;
+                } else if (o.woke_at == 0) {
+                    o.woke_at = now_us;
+                }
+                if (wake_ && d <= kWakeM && o.woke_at != 0 && now_us - o.woke_at < kWakeOwnUs) {
                     ChaseStep(o, now_us);
                 }
             } else if (wake_ && owner != owners_.end() && owner->second.player != 0 &&
@@ -884,7 +909,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // the owner's enemy (issue 132): it wants to act on our Link.
                 const auto& wanted = o.received.back().animation;
                 if (o.animation && !o.animation->name.empty() && wanted &&
-                    !wanted->name.empty() && o.animation->name != wanted->name) {
+                    !wanted->name.empty() &&
+                    AnimationBase(o.animation->name) != AnimationBase(wanted->name)) {
                     ChaseStep(o, now_us);
                 }
             }
@@ -1180,8 +1206,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 // Who hit it is not sent: its owner is the best guess.
                 Lower(*o, life, now_us, writes, sample->player_number);
                 o->fight_until = now_us + kFightUs;
-            } else if (life > have && !holding && have <= 0 && o->hit_at != 0 &&
-                       o->dead_at == 0 && o->resent < kResendMax) {
+            } else if (life > have && !holding && have <= 0 && o->killed_at != 0 &&
+                       now_us - o->killed_at < kKilledKeepUs && o->dead_at == 0 &&
+                       o->resent < kResendMax) {
                 // We killed it here and the owner's enemy still lives (the
                 // DAMAGE was lost, or crossed a change of owner): not healed
                 // back, the hit is sent again (issue 133). After kResendMax

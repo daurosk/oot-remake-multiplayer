@@ -130,6 +130,10 @@ bool IsAnnounced(std::string_view name);
 // could not be read (the big Skulltula has none we can read; issue 133).
 bool IsDeathAnimation(std::string_view name);
 
+// An animation name without its level-of-detail suffix ("Wait_ModelOnlyLOD"
+// is "Wait"), so a far copy's LOD variant is not another animation.
+std::string_view AnimationBase(std::string_view name);
+
 // Enemies made of several actors (docs/objects.md, "Groups"): a boss and its
 // parts, an enemy and what it summons. Each part follows a root of one of the
 // names `roots` (the first name found wins, then the nearest), within `reach`
@@ -293,6 +297,12 @@ public:
     // Link woke it. Off with SetWake(false) (LICHII_COOP_OBJECTS_WAKE=0).
     void SetWake(bool on) { wake_ = on; }
     static constexpr float kWakeM = 10.0f;
+    // The owner side flags a woken enemy only this long after it left its
+    // rest animation, so an enemy that patrols or flies near its owner's
+    // Link is not held in a fight for good (that would stop the chase rule).
+    static constexpr std::uint64_t kWakeOwnUs = 4'000'000;
+    // A copy's kill counts for a resend this long after our hit took it to 0.
+    static constexpr std::uint64_t kKilledKeepUs = 5'000'000;
 
     // Issue 133. Hits on an enemy whose owner is not known yet are kept this
     // long and sent once it is (another game's), dropped if it is ours.
@@ -341,9 +351,14 @@ public:
     // Network thread, on a reconnect: the server's epochs may start again
     // at 0, so the owners we know of placed objects are forgotten at the
     // next Tick (issue 133). The server sends each owner again.
+    // OBJECT_OWNERs of the old connection not yet applied go too, so none
+    // lands after the forget with its old, higher epoch.
     void ForgetOwners() {
         std::lock_guard lock(inbox_mutex_);
         forget_owners_ = true;
+        std::erase_if(inbox_, [](const coop::protocol::Message& m) {
+            return std::holds_alternative<coop::protocol::ObjectOwner>(m);
+        });
     }
 
     // For tests and logs.
@@ -426,6 +441,9 @@ private:
         std::uint64_t chase_until = 0;
         // Issue 132: the animation it was first seen in (an owned enemy at rest).
         std::string rest_animation;
+        std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
+        // Our own hit took its life to 0 here (the DAMAGE resend's mark).
+        std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when
         // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
         int resent = 0;

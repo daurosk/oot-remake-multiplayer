@@ -212,6 +212,40 @@ One path for every kind of hit, as TotK's `TOTK_SYNC_DAMAGE` found worked best (
 **Two-game test (Caleb, 2026-11-09, Hyrule Field at night, child saves).** Two Stalchild spawned in each game (hash ~0, so ids by the scene rule). Game A owned both; each sword hit in A lowered life in B, 2 to 1 to 0 (`coop: objects: share life` lines in B), and both died on both screens. Seen as not done yet: B shows no flinch and no head knocked off on the first hit (only the life value is written, not the hit reaction), and each game's Stalchild chase their own Link (positions are not written into copies).
 
 
+## Drops
+
+Caleb (2026-11-09): monster drops are synced, so if one player collects one it disappears. Code: `lichii/hook/coop_drops.{h,cpp}`, tests in `tests/lichii/drops_test.cpp`; messages `DROP_SPAWN`, `DROP_TAKE`, `DROP_ASK` ([protocol.md](protocol.md), "Drops"). On unless `LICHII_COOP_DROPS=0`; it needs the svc cave (`LICHII_COOP_PUPPET` or `LICHII_COOP_SPAWN`).
+
+**What was wrong.** An enemy dies in every game (its owner's death is copied), a pot breaks in every game, and each game's own game then rolls its own random drop. So one game showed a green rupee, the other a heart or nothing, and a pickup in one left the other's lying.
+
+**What counts as a drop.** An actor the game made (no placement hash) named `Obj_Rupee_Green`, `_Blue`, `_Red`, `_Purple`, `_Silver`, `_Gold`, `Obj_Heart`, `Obj_MagicJar_Small`, `_Large`, `Obj_ArrowBundle_Small`, `_Medium`, `_Large`, `Obj_Bomb`, `Obj_Bombchu`, `Obj_DekuNut`, `Obj_DekuSeed`, `Obj_DekuStick`, `Obj_Arrow_Fire` (names from the actor packs; only `Obj_Rupee_Green` was seen live as a drop). Not fairies (they fly off and heal one player), not heart pieces, containers or tokens (one-time pickups are flags, [items.md](items.md)). A placed rupee has a hash and is left alone; `LICHII_COOP_DROPS_PLACED=1` shares those too, and a placed one that turns up later is logged.
+
+**How the other games' own random drop is replaced, and why.** The game's own roll is not stopped: where the game decides a drop was not found, and a patch there could not be tried while no game may run. Instead every roll is let happen and the actor list is watched, the way the rolled Stalchild are handled:
+
+- A drop actor that is new on the list (not there at the scene's first walk, not a copy) is announced once with `DROP_SPAWN`: its own id (maker and counter), name, place and server time. The flag "owned" is set when something this game owns (an enemy, a pot, a crate: `CoopObjects::OwnedActors`) stood within 3 m of it in the last 5 s.
+- Two announcements from different games within 3 m and 3 s of each other are the rolls for the same thing. One stays: the one flagged owned, then the one from the lower player number. Every game works this out from the announcements alone, so all end with the same drop whatever order the messages came in (tested for a third game both ways).
+- A game whose own roll lost keeps that actor as the winner's when it is the same kind (nothing is seen to change), else deletes it with the game's delete request (0xa6490, through `CoopDrops::Remover`, svc caller 40, which first checks the address still holds a live actor of that name). A game with no actor for the winner makes one by name at the winner's place through the spawn director (`Director::SetDrops`, `Act::release`: once made, the director lets go of the slot and the drop lies by itself). It waits 0.5 s before making it, so its own roll can be kept instead.
+- So a thing drops the same item at the same place everywhere. When the winner's game rolled nothing but another game rolled something, that one stays for everybody: a drop is a little more likely than alone.
+
+Why not the scene's decider alone (as for Stalchild): in a large scene the decider may be far away with the pot not loaded, and the player who broke it would get nothing.
+
+**Pickups and blinking out.** A drop of ours that is off the list for two walks, with our Link within 2.5 m of where it last was, was picked up; with Link within 15 m (`LICHII_COOP_DROPS_NEAR`, 0 for never) it blinked out; further away it was only unloaded here and nothing is told. Three or more gone in one walk, or no Link on the list, is an unload. A pickup or a blink-out goes out as `DROP_TAKE` and every game deletes its own actor of that drop. The game gives the collector the item itself; rupees, hearts and ammo stay per player.
+
+**A player who comes in later** sends `DROP_ASK` with its scene at its first walk there. Every game in that scene answers 0.5 s later with `DROP_SPAWN` (flag "again") for each drop it still shows, where it lies now; a game that knows the id ignores it, the newcomer makes each at once.
+
+At most 20 drop messages a second leave one game (the rest wait their turn), so a field of cut grass cannot use up the server's limit.
+
+**Not proven: nothing here has run in a game** (no game was allowed to run while this was written; the unit tests pass and the emulator builds with it). To check with two games:
+
+1. A killed enemy and a broken pot leave the same item at the same place in both games, and the log shows `coop: drops: sent ...` in one and `got ...` in the other.
+2. Whether a drop made by the create request can be picked up, gives the item, and blinks out like a real one.
+3. Picking one up in either game removes it in the other within a moment (`sent take` / `got take`, `deletes asked`).
+4. A drop left alone blinks out in both; a player walking away does not take it from the other (if it does, drops unload nearer than 15 m: lower `LICHII_COOP_DROPS_NEAR`).
+5. A player entering the scene later sees the drops lying there.
+6. That drops have no placement hash (else the log says `is placed ... not shared`).
+
+Known limits: two players picking the same drop up within the network delay both get it. Two different things that drop within 3 m and 3 s of each other in two games count as one. A drop unloaded here is not made again when we come back near it.
+
 ## Protocol proposal
 
 All on the channels [protocol.md](protocol.md) reserves: channel 2 (reliable) for ownership, spawns, removes and damage, channel 4 (unreliable, sequenced) for object samples. Type numbers are given when the code is written, after whatever other stages have taken by then (the next free is 17 today).

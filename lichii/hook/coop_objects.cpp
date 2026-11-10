@@ -831,6 +831,9 @@ public:
     CoopWorld::FoliageProbe foliage_;
     bool cheat_ = false;
     bool share_ = false;
+
+    // Present thread: the shared things this game owns (for coop_drops).
+    auto OwnedNow() const { return sync_.Owned(); }
     bool pose_ = true;
     bool hurt_ = true;
     bool replay_ = false;
@@ -1364,6 +1367,17 @@ void Share(Core::System& system, coop::host::Session* session,
     if (objects.share_) {
         objects.Share(system, session, scene, server_now_us);
     }
+}
+
+std::vector<std::uint64_t> OwnedActors() {
+    Objects& objects = Instance();
+    std::vector<std::uint64_t> out;
+    if (objects.share_) {
+        for (const auto& [address, name] : objects.OwnedNow()) {
+            out.push_back(address);
+        }
+    }
+    return out;
 }
 
 void OnEvent(const coop::net::Event& event) {

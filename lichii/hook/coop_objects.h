@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace Core {
 class System;
@@ -33,5 +34,9 @@ void Share(Core::System& system, coop::host::Session* session,
 
 // Network thread, from the session's on_event: takes the object messages.
 void OnEvent(const coop::net::Event& event);
+
+// Present thread: the actors of the shared things this game owns now (for
+// coop_drops: a drop beside one of them is its owner's to decide).
+std::vector<std::uint64_t> OwnedActors();
 
 } // namespace CoopObjects

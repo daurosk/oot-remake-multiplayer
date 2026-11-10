@@ -15,7 +15,7 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 3;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY
+inline constexpr std::uint16_t kProtocolVersion = 4;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the drop messages
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -72,6 +72,9 @@ enum class MessageType : std::uint16_t {
   damage = 25,
   player_pose = 26,
   time_of_day = 27,
+  drop_spawn = 36,
+  drop_take = 37,
+  drop_ask = 38,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -668,13 +671,55 @@ struct TimeOfDay {
   bool operator==(const TimeOfDay&) const = default;
 };
 
+// Shared drops (docs/objects.md, "Drops"): the rupees, hearts and ammo an
+// enemy, a pot, grass or a rock leaves. Every game announces the drops its
+// own game rolls with DROP_SPAWN; where two games rolled for the same thing
+// (near in place and time) the one from the owner of what dropped it stays,
+// then the one from the lower player number. Relayed to everyone else.
+namespace drop_spawn {
+inline constexpr std::uint8_t owned = 1u << 0;  // the sender owns what dropped it
+inline constexpr std::uint8_t again = 1u << 1;  // told again for a player who came later
+}  // namespace drop_spawn
+
+struct DropSpawn {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  ObjectId id;             // kind made: the game that rolled it and its counter
+  std::string scene;       // 1 to 64 characters
+  std::string actor;       // the game's actor name, 1 to 64 characters
+  Vec3 position{};
+  std::uint64_t time_us = 0;  // server time when its maker first saw it
+  std::uint8_t flags = 0;     // drop_spawn bits
+  bool operator==(const DropSpawn&) const = default;
+};
+
+// DROP_TAKE: a drop is gone from the sender's game; every game removes it.
+enum class DropTakeReason : std::uint8_t {
+  picked_up = 0,  // the sender's Link collected it
+  gone = 1,       // it blinked out
+};
+
+struct DropTake {
+  std::uint8_t player_number = kPlayerSelf;
+  ObjectId id;
+  DropTakeReason reason = DropTakeReason::picked_up;
+  bool operator==(const DropTake&) const = default;
+};
+
+// DROP_ASK: the sender just came into this scene; every game there tells
+// the drops it still has again (DROP_SPAWN with `again`).
+struct DropAsk {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;  // 1 to 64 characters
+  bool operator==(const DropAsk&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
-                             TimeOfDay>;
+                             TimeOfDay, DropSpawn, DropTake, DropAsk>;
 
 MessageType type_of(const Message& message);
 

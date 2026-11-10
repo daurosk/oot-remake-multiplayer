@@ -51,6 +51,7 @@
 #include "coop_cheats.h"
 #include "coop_flags.h"
 #include "coop_fairy.h"
+#include "coop_drops.h"
 #include "coop_dungeon.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
@@ -222,6 +223,7 @@ public:
             Chat(event, client);
             CoopObjects::OnEvent(event);
             CoopSpawn::OnEvent(event);
+            CoopDrops::OnEvent(event);
             CoopTime::OnEvent(event);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
@@ -300,6 +302,7 @@ public:
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
         CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
+        CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
         Place(view);

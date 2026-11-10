@@ -19,7 +19,7 @@ in oot-remake-multiplayer):
  2 files changed, 14 insertions(+)
 
 diff --git a/src/core/file_sys/patch_manager.cpp b/src/core/file_sys/patch_manager.cpp
-index 15fcd5f5dc..f78bce8111 100644
+index c7b765d7dd..5ebd14cb68 100644
 --- a/src/core/file_sys/patch_manager.cpp
 +++ b/src/core/file_sys/patch_manager.cpp
 @@ -42,6 +42,9 @@
@@ -32,7 +32,7 @@ index 15fcd5f5dc..f78bce8111 100644
  
  namespace FileSys {
  namespace {
-@@ -875,6 +878,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
+@@ -877,6 +880,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
              replaced.push_back(patch.replaces);
          }
      }

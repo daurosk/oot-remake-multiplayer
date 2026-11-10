@@ -132,6 +132,10 @@ try {
     Write-File "$newKit\scripts\new.ps1" 'new script'
     Write-File "$newKit\coop-options.ini" "LICHII_COOP_PUPPET=1`r`n# Time of day. To turn it off:`r`n# LICHII_COOP_TIME=0`r`n"
     Write-File "$newKit\MANIFEST.txt" "# Files`r`nHost.bat`r`n"
+    # The emulator's own folder as Fritchii v5.6+ ships it (qt.conf, Qt plugins).
+    Write-File "$newKit\emulator\qt.conf" 'new qt.conf'
+    Write-File "$newKit\emulator\plugins\platforms\qwindows.dll" 'new qwindows'
+    Write-File "$newKit\emulator\Qt6Core.dll" 'new qt core'
     New-Item -ItemType Directory -Force -Path "$newKit\logs" | Out-Null
     $assets = Join-Path $tmp 'assets'
     New-Item -ItemType Directory -Force -Path $assets | Out-Null
@@ -301,6 +305,27 @@ try {
     Remove-Item -LiteralPath "$kit\emulator\user\cache" -Recurse -Force
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
     Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -notmatch 'shader') 'no shader cache: the update runs and says nothing about it'
+    # Fritchii v5.6 -> v5.7 (test5 -> test6): the whole emulator folder is the new one, a DLL
+    # the old emulator had and the new one does not is gone, the shader cache is moved aside
+    # (v5.7 prepares its shaders again), and the player's files stay.
+    $kit = Join-Path $tmp 'kit-v57'; New-OldKit $kit
+    Write-File "$kit\emulator\lichii.exe" 'Fritchii v5.6 coop: loaded'
+    Write-File "$kit\emulator\qt.conf" 'old qt.conf'
+    Write-File "$kit\emulator\plugins\platforms\qwindows.dll" 'old qwindows'
+    Write-File "$kit\emulator\Qt6Core.dll" 'old qt core'
+    Write-File "$kit\emulator\only-in-v56.dll" 'old dll'
+    Write-File "$kit\MANIFEST.txt" "# Files`r`nHost.bat`r`nemulator\lichii.exe`r`nemulator\qt.conf`r`nemulator\plugins\platforms\qwindows.dll`r`nemulator\Qt6Core.dll`r`nemulator\only-in-v56.dll`r`nVERSION.txt`r`n"
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0) "v5.6 -> v5.7: the update ran ($(($out | Select-Object -Last 1) -join ' '))"
+    Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'v5.6 -> v5.7: the emulator is the new one'
+    Check ((Read-File "$kit\emulator\qt.conf") -eq 'new qt.conf') 'v5.6 -> v5.7: qt.conf is the new one'
+    Check ((Read-File "$kit\emulator\plugins\platforms\qwindows.dll") -eq 'new qwindows') 'v5.6 -> v5.7: the Qt plugins are the new ones'
+    Check ((Read-File "$kit\emulator\Qt6Core.dll") -eq 'new qt core') 'v5.6 -> v5.7: the DLLs are the new ones'
+    Check (-not (Test-Path "$kit\emulator\only-in-v56.dll")) 'v5.6 -> v5.7: a DLL the new emulator does not have is gone'
+    Check ((Read-File "$kit\backup-v0.1.0-test2\emulator\only-in-v56.dll") -eq 'old dll') 'v5.6 -> v5.7: and kept in the backup'
+    Check (-not (Test-Path "$kit\emulator\user\cache\shader")) 'v5.6 -> v5.7: the shader cache is moved aside'
+    Check ((Read-File "$kit\backup-v0.1.0-test2\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'v5.6 -> v5.7: into the backup'
+    Test-PlayerKept $kit 'v5.6 -> v5.7'
     Write-File "$tmp\exe\a.exe" 'build a'; Write-File "$tmp\exe\a2.exe" 'build a'; Write-File "$tmp\exe\b.exe" 'build b'
     Check (-not (Test-KitEmulatorChanged "$tmp\exe\a.exe" "$tmp\exe\a2.exe")) 'the same exe is the same emulator'
     Check (Test-KitEmulatorChanged "$tmp\exe\a.exe" "$tmp\exe\b.exe") 'another exe is another emulator'

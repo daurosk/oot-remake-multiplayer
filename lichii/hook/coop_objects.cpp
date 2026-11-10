@@ -944,6 +944,11 @@ public:
         for (const auto& note : TheGrass().TakeNotes()) {
             LOG_INFO(Core, "coop: {}", note);
         }
+        // Sign probe (issue 90, docs/world.md "Signs: the probe"): what a cut changes.
+        for (const auto& note : world_.ProbeSigns(
+                 [&r](u64 address) { return r.Get<u64>(address); }, server_now_us)) {
+            LOG_INFO(Core, "coop: {}", note);
+        }
         if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
             grass_made_logged_ = made;
             LOG_INFO(Core, "coop: grass: {} cuts of the others made here", made);

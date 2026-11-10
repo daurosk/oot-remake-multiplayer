@@ -41,7 +41,7 @@ One PC, two games, played by hand on 2026-11-09.
 
 - **Heart containers**: picking one up does not raise the other players' maximum health. Heart pieces count up, but four of them do not make a heart for the others.
 - **Gold Skulltulas**: the token count is shared, but the Skulltula you took may still be there in the other games.
-- **Cut signs** are not shared: a sign cut in one game stays whole in the others.
+- **Cut signs** may not be shared: the sword swing is sent to the others and given to their sign, but whether that cuts it there has not been seen yet. A sign cut in one game may stay whole in the others.
 - **Tunic, boots and masks** are not shown on the other players' Link.
 - **Two PCs**: never tested. Delay, firewalls and routers are the unknowns.
 - **Game version**: only build `e0f3ccfaf50065ae` of the game is supported; every player needs that one.

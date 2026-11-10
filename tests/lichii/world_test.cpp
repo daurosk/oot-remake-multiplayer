@@ -1027,3 +1027,151 @@ TEST_CASE("world: our sword passing a sign sends a hit; another player's hit is 
     CHECK(given.send.empty());
     CHECK(Walk(b, 2500 * kMs, {Thing(0x900, 0x70, 100, sign)}).hits.empty());
 }
+namespace {
+
+// A sign in fake memory for the probe: the actor, its component table at
+// +0x270 and two components (table +0x10 and +0x2b8).
+struct FakeSign {
+    static constexpr std::uint64_t kActor = 0x10000000;
+    static constexpr std::uint64_t kTable = 0x20000000;
+    static constexpr std::uint64_t kLife = 0x30000000;
+    static constexpr std::uint64_t kCut = 0x40000000;
+    std::map<std::uint64_t, std::uint64_t> words;
+    int reads = 0;
+
+    FakeSign() {
+        words[kActor + 0x270] = kTable;
+        words[kTable + 0x10] = kCut;
+        words[kTable + 0x2b8] = kLife;
+        words[kTable + 0x2c0] = kLife;  // the same component twice: read once
+    }
+    std::optional<std::uint64_t> operator()(std::uint64_t a) {
+        ++reads;
+        const auto in = [a](std::uint64_t base, std::uint64_t size) { return a >= base && a < base + size; };
+        if (!in(kActor, 0x600) && !in(kTable, 0x300) && !in(kLife, 0x200) && !in(kCut, 0x200)) {
+            return std::nullopt;
+        }
+        const auto it = words.find(a);
+        return it == words.end() ? 0 : it->second;
+    }
+};
+
+} // namespace
+
+TEST_CASE("sign probe: names where a word is") {
+    using CoopWorld::SignProbe;
+    CHECK(SignProbe::Where(0x4a8) == "actor+0x4a8");
+    CHECK(SignProbe::Where((1ull << 32) | 0x2b8) == "table+0x2b8");
+    CHECK(SignProbe::Where(((2ull + 0x57) << 32) | 0x40) == "c+0x2b8+0x40");
+    CHECK(SignProbe::Where(0) == "actor+0x0");
+    CHECK(SignProbe::Where(2ull << 32) == "c+0x0+0x0");
+}
+
+TEST_CASE("sign probe: logs what a cut changed, without the counters") {
+    using CoopWorld::SignProbe;
+    FakeSign mem;
+    SignProbe p;
+    auto read = [&mem](std::uint64_t a) { return mem(a); };
+    const SignProbe::Sign sign{FakeSign::kActor, 0x70, "Obj_GuidePost_A_02", {1.0f, 2.0f, 3.0f}};
+    const std::optional<proto::Vec3> link = proto::Vec3{2.0f, 2.0f, 3.0f};
+    CHECK(p.Look(read, {sign}, link, 1000 * kMs).empty());  // first copy
+    mem.words[FakeSign::kLife + 0x8] = 1;                    // a counter
+    CHECK(p.Look(read, {sign}, link, 1500 * kMs).empty());  // too soon for a copy
+    CHECK(p.Look(read, {sign}, link, 2000 * kMs).empty());  // second copy: the counter is noisy
+    // The cut: a word of a component, a bit of the actor, a new table entry.
+    mem.words[FakeSign::kLife + 0x8] = 2;
+    mem.words[FakeSign::kCut + 0x40] = 1;
+    mem.words[FakeSign::kActor + 0x4a8] = 0x800000;
+    p.Hit(sign, true, 2600 * kMs);  // the swing is read later than the cut
+    p.Hit(sign, false, 2700 * kMs);  // a second hit does not start again
+    CHECK(p.Look(read, {sign}, link, 2800 * kMs).empty());
+    auto lines = p.Look(read, {sign}, link, 3100 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("sign probe: 0000000000000070 Obj_GuidePost_A_02 our cut +0.5 s: 2 words changed:") == 0);
+    CHECK(lines[0].find("c+0x10+0x40:0>1") != std::string::npos);
+    CHECK(lines[0].find("actor+0x4a8:0>800000") != std::string::npos);
+    CHECK(lines[0].find("c+0x2b8+0x8") == std::string::npos);  // the counter
+    CHECK(p.Look(read, {sign}, link, 4000 * kMs).empty());
+    lines = p.Look(read, {sign}, link, 4600 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("our cut +2.0 s: 2 words changed") != std::string::npos);
+    // Done: copies start again, with nothing to report.
+    CHECK(p.Look(read, {sign}, link, 5000 * kMs).empty());
+    CHECK(p.Look(read, {sign}, link, 7000 * kMs).empty());
+}
+
+TEST_CASE("sign probe: a given hit, a hit with no copy before it, a far sign") {
+    using CoopWorld::SignProbe;
+    FakeSign mem;
+    SignProbe p;
+    auto read = [&mem](std::uint64_t a) { return mem(a); };
+    const SignProbe::Sign sign{FakeSign::kActor, 0x70, "Obj_GuidePost_A_02", {1.0f, 2.0f, 3.0f}};
+    // Far from our Link: not read.
+    CHECK(p.Look(read, {sign}, proto::Vec3{40.0f, 2.0f, 3.0f}, 1000 * kMs).empty());
+    CHECK(mem.reads == 0);
+    // Hit with no copy from before it.
+    p.Hit(sign, false, 1100 * kMs);
+    auto lines = p.Look(read, {sign}, proto::Vec3{40.0f, 2.0f, 3.0f}, 1700 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("given hit +0.6 s: no copy from before the hit") != std::string::npos);
+    // A given hit lands after the call: a copy taken just now is from before it.
+    SignProbe q;
+    const std::optional<proto::Vec3> near = proto::Vec3{6.0f, 2.0f, 3.0f};
+    CHECK(q.Look(read, {sign}, near, 1000 * kMs).empty());
+    q.Hit(sign, false, 1000 * kMs);
+    mem.words[FakeSign::kCut + 0x48] = 5;
+    lines = q.Look(read, {sign}, near, 1500 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("given hit +0.5 s: 1 words changed: c+0x10+0x48:0>5") != std::string::npos);
+    // A sign that left the walk is forgotten; with a hit still to report, that is logged.
+    lines = q.Look(read, {}, near, 1600 * kMs);  // its +2 s line was still to come
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("given hit: gone after the hit (+0.6 s)") != std::string::npos);
+    CHECK(q.Look(read, {sign}, near, 1700 * kMs).empty());
+    q.Hit(sign, true, 2000 * kMs);
+    lines = q.Look(read, {}, near, 2300 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0] == "sign probe: 0000000000000070 Obj_GuidePost_A_02 our cut: gone after the hit (+0.3 s)");
+    CHECK(q.Look(read, {}, near, 2400 * kMs).empty());
+    CHECK(q.Look(read, {sign}, near, 3600 * kMs).empty());
+}
+
+TEST_CASE("sign probe: WorldSync gives it our swing and another player's hit") {
+    const char* name = "Obj_GuidePost_A_02";
+    FakeSign mem;
+    auto read = [&mem](std::uint64_t a) { return mem(a); };
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    CHECK(w.ProbeSigns(read, 1000 * kMs).empty());
+    mem.words[FakeSign::kCut + 0x40] = 1;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    proto::GrassCut swing;
+    swing.scene = kScene;
+    swing.position = {1.2f, 3.0f, 3.4f};
+    swing.radius = 0.5f;
+    swing.sweep = {proto::Vec3{1.2f, 3.1f, 3.4f}, proto::Vec3{nan, nan, nan}, proto::Vec3{nan, nan, nan}};
+    WorldSync::Out out;
+    w.Swing(swing, kLink, 1400 * kMs, out);
+    REQUIRE(Sent<proto::WorldHit>(out).size() == 1);
+    Walk(w, 1900 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    auto lines = w.ProbeSigns(read, 1900 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("our cut +0.5 s: 1 words changed: c+0x10+0x40:0>1") != std::string::npos);
+
+    // The other game: the given hit starts the probe there.
+    FakeSign other;
+    auto read_b = [&other](std::uint64_t a) { return other(a); };
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    CHECK(b.ProbeSigns(read_b, 1000 * kMs).empty());
+    proto::WorldHit got = Sent<proto::WorldHit>(out)[0];
+    got.player_number = 1;
+    b.Receive(got);
+    REQUIRE(Walk(b, 1500 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).hits.size() == 1);
+    CHECK(b.ProbeSigns(read_b, 1500 * kMs).empty());
+    other.words[FakeSign::kCut + 0x40] = 1;  // the replayed hit cut it the same way
+    Walk(b, 2000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)});
+    lines = b.ProbeSigns(read_b, 2000 * kMs);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("given hit +0.5 s: 1 words changed: c+0x10+0x40:0>1") != std::string::npos);
+}

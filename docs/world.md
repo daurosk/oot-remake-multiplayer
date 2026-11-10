@@ -104,7 +104,7 @@ When the last player leaves a scene the server forgets its breaks, as the game r
 | Bomb and hammer rocks, cracked walls and floors | `*BrokenRock_*`, `*CrackWall_*`, `*CrackFloor_*` | bomb, hammer | life, `WORLD_BREAK` | unit tests only |
 | Ice pillars, beehive, spider webs | `Obj_BrokenIcePillar_*`, `*Beehive_*`, `*SpiderWeb_*` | hit, fire | life, `WORLD_BREAK` | unit tests only |
 | Red ice | `Obj_RedIce_*` | blue fire (no life: it goes) | gone-near-Link, `WORLD_BREAK`, deleted | unit tests only |
-| Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | `WORLD_HIT`: the swing is replayed on the others' sign (below) | unit tests only; the replayed hit may not cut |
+| Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | `WORLD_HIT`: the swing is replayed on the others' sign (below) | unit tests only; the replayed hit may not cut (the sign probe, below, shows it in the next run) |
 | Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE` | unit tests only |
 | Rolling rocks | `*RollingRock_*` | roll by themselves | each game's own (not shared) | - |
 | Bomb flowers | `Obj_BombFlower_*` | picked, thrown, explode | not shared here (the fruit is made by the game, no placement) | - |
@@ -125,6 +125,15 @@ Read from `Obj_GuidePost_A_02.pack` (romfs, 2026-11-09): a cuttable sign's life 
 
 Open, to see in a run: (1) the swing is only read where the foliage module is on (outdoor scenes with grass; a sign in a scene without it is not shared); (2) whether the replayed hit makes the destruction cut, and the same pieces; if not, the other way is to find the Destruction component's state with a memory compare while a sign is cut and write it; (3) a swing near a sign that did not cut it in the sender's game is sent too, and the receiving game decides by its own geometry.
 
+### Signs: the probe (issue 90)
+
+Point (2) above is answered by the next run, without a memory tool: the hook compares the sign's memory before and after a hit (`CoopWorld::SignProbe` in `lichii/hook/coop_world.{h,cpp}`, tested in `tests/lichii/world_test.cpp`; always on, it reads only signs within 12 m of our Link, the nearest 3, once a second).
+
+- What it keeps: the actor (+0..+0x600), its component table (+0x270 -> +0..+0x300) and the first 0x200 bytes of every component the table points to, copied again every second while nothing hit the sign. A word that changes between two such copies is a counter or a timer and is left out of the lines.
+- When it logs: our swing passed the sign (`our cut`: compared with a copy at least 0.25 s older than the moment the swing was read, since the grass queue is read a little after the swing), or another player's hit was given to it (`given hit`: the copy from before the hit was handed to the Mover). 0.5 s and 2 s after, one line each: `coop: sign probe: <hash> <name> our cut +0.5 s: N words changed: <where>:<before>><after> ...` (at most 24 shown). A sign that leaves the walk before its lines are done (the cut deleted or replaced the actor) logs `... our cut: gone after the hit (+T s)` instead. `<where>` is `actor+0x..`, `table+0x..` or `c+<table entry>+0x..` (a word of the component that table entry points to; `c+0x2b8+..` is the Life component).
+- How to read it: the game that cut the sign shows what a cut changes. If the game that got the hit shows the same words changing the same way, the replay cut its sign (the same pieces, as far as these words go). If it shows nothing (or only a few hit-record words in `c+0x2b8`), the replay did not cut, and the words from the cutting game are the state to write instead, in a next step.
+- Limits: a sign hit before it was within 12 m for a second has no copy from before (`no copy from before the hit`); a word the cut changes deeper than 0x200 bytes into a component, or behind a second pointer, is not seen.
+
 ### To check in a game (nothing here was run)
 
 1. Pot: A breaks a pot with the sword, B sees it break (`coop: world: ... broken here (life 0): sent` in A, `got break` and `broken by another player` in B). B enters the scene later: the pot is not there (`was broken before we saw it: deleted`).
@@ -132,4 +141,4 @@ Open, to see in a run: (1) the swing is only read where the foliage module is on
 3. A carries a pot or rock: B sees it in the air at A's puppet (`moved here: sending` in A, `moved by another player` in B); does the setter move a physics object, and does it drop when let be?
 4. A pushes a block (Forest Temple, Kakariko well): B's block follows and stays (`at rest: place sent`, `put where another player left it`). Does B's block keep its place after the 0.5 s hold, and can B push it afterwards?
 5. A door or room change next to pots: no `broken here (gone next to Link)` line may appear (it should say `left with the area`).
-6. Sign: A cuts the signpost by the Graveyard gate (scenario `sign`): A logs `our sword passed it: hit sent`, B `hit by another player's sword`; does B's sign lose the same pieces? And for B entering later?
+6. Sign: A cuts the signpost by the Graveyard gate (scenario `sign`): A logs `our sword passed it: hit sent`, B `hit by another player's sword`; does B's sign lose the same pieces? And for B entering later? Read the `coop: sign probe:` lines of both games (above): the same words changed in B as in A means the replay cut it.

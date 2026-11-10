@@ -247,6 +247,22 @@ try {
     Write-File "$kit\emulator\user\config\qt-config.ini" "[DisabledAddOns]`r`nsize=1`r`n1\title_id=288309953924349952`r`n1\disabled\size=1`r`n1\disabled\1\d=Hyrule-Cheat-Menu`r`n"
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Test-Started $kit 'a mod turned off in Add-Ons'
+    # A copied kit whose qt-config.ini still names the first kit's folders: the check reads this
+    # kit's own (after Repair-KitPaths), not the other's.
+    $first = Join-Path $tmp 'kit first'; New-Kit $first 'v0.1.0-test4' 'old'
+    Write-File "$first\emulator\user\load\0400486024DEC000\Hyrule-Cheat-Menu\exefs\subsdk8" 'x'
+    $firstUser = "$first\emulator\user".Replace('\', '/')
+    $kit = Join-Path $tmp 'kit copy clean'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$firstUser/load/`r`nsdmc_directory=$firstUser/sdmc/`r`n"
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -notmatch 'Co-op does not work with game mods') 'a clean copy of a kit with a mod: not stopped by the other kit''s mod'
+    Test-Started $kit 'a clean copied kit'
+    $kit = Join-Path $tmp 'kit copy mod'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Write-File "$kit\emulator\user\load\0400486024DEC000\Own-Mod\romfs\a.bin" 'x'
+    $cleanUser = "$tmp\kit copy clean\emulator\user".Replace('\', '/')
+    Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$cleanUser/load/`r`n"
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -match 'Own-Mod' -and ($out -join ' ') -notmatch 'Emulator started') 'a copied kit with its own mod: stopped, naming it'
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

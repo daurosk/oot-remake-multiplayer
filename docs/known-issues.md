@@ -50,7 +50,7 @@ One PC, two games, played by hand on 2026-11-09.
 
 Co-op does not allow game mods (issue 136). A mod's code patches can sit where co-op's own go (the Hyrule Cheat Menu's does), and cheats, refills or God Mode change the game under the sync and hide or fake sync bugs.
 
-- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a mod is installed for the game, and name its folder. Mods turned off in the game's Add-Ons do not count, and neither does co-op's own `coop-puppet` pack.
+- `Host.bat`, `Join.bat` and `play.cmd` stop before anything starts when a mod is installed for the game, and name its folder. Mods turned off in the game's Add-Ons do not count, and neither does co-op's own `coop-puppet` pack, nor Dark's Dynamic FPS mod (Fritchii skips that one for its built-in Dynamic FPS). Loose `cheat_*` files count.
 - When the game's code is patched where co-op patches it anyway (a mod started another way), co-op stays off. The panel says **"Co-op is off: a game mod is installed"**.
 
 ## Other notes

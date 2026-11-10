@@ -133,7 +133,14 @@ $user = Join-Path $emu 'user'
 if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
     Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
 }
-# No game mods with co-op (issue 136): stop before anything starts, and say where they are.
+$running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
+
+# A copied kit: point the emulator's saved folders at this copy (kit-paths.ps1).
+$fixed = Repair-KitPaths $user
+if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
+# No game mods with co-op (issue 136): stop before anything starts, and say where they are. After the
+# copied-kit fix above, so this kit's own load and SD folders are read.
 $mods = @(Get-KitMods $user)
 if ($mods.Count -gt 0) {
     Write-Host ''
@@ -153,12 +160,6 @@ if ($Mode -eq 'host') {
         Start-Sleep -Seconds 2
     }
 }
-$running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
-if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
-
-# A copied kit: point the emulator's saved folders at this copy (kit-paths.ps1).
-$fixed = Repair-KitPaths $user
-if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
 
 # Switches from coop-options.ini (the lines without a '#' in front). They win over the AMD rule below.
 $options = Read-KitOptions (Join-Path $kit 'coop-options.ini')

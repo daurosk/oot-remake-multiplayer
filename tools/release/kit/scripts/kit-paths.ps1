@@ -41,17 +41,52 @@ function Get-KitLoadDir([string]$User) {
     return Join-Path $User 'load'
 }
 
-# Reads coop-options.ini: NAME=value lines for LICHII_COOP_* switches. Blank lines and
-# lines starting with # or ; are skipped, and so is auto_update (play.ps1 reads it, the
-# emulator does not). Returns an ordered table.
+# Reads coop-options.ini: NAME=value lines for LICHII_COOP_* switches and the emulator's
+# own EDEN_NX2_* switches. Blank lines and lines starting with # or ; are skipped, and so
+# is auto_update (play.ps1 reads it, the emulator does not). Returns an ordered table.
 function Read-KitOptions([string]$Path) {
     $values = [ordered]@{}
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
         if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^auto_update\s*=') { continue }
-        if ($t -match '^(LICHII_COOP_[A-Z0-9_]+)\s*=\s*(.*)$') { $values[$Matches[1]] = $Matches[2] }
-        else { Write-Host "coop-options.ini: skipped '$t' (only LICHII_COOP_NAME=value lines)" }
+        if ($t -match '^((LICHII_COOP|EDEN_NX2)_[A-Z0-9_]+)\s*=\s*(.*)$') { $values[$Matches[1]] = $Matches[3] }
+        else { Write-Host "coop-options.ini: skipped '$t' (only LICHII_COOP_NAME=value or EDEN_NX2_NAME=value lines)" }
     }
     return $values
+}
+
+# Fritchii v5's graphics pipeline libraries ("shader libraries") crash AMD's Windows driver
+# (amdvlk64.dll, issue 118); Fritchii v5.4 and later switch them off on AMD by themselves.
+# Which video cards this PC has: 'amd' (an AMD card and no NVIDIA one), 'amd+nvidia', or ''.
+# With an NVIDIA card the emulator uses it (it lists NVIDIA first and takes the first card),
+# so AMD's driver is not used. $Query returns the cards (Win32_VideoController by default);
+# a query that fails counts as no AMD card.
+function Get-AmdGpuKind([scriptblock]$Query = { Get-CimInstance Win32_VideoController -ErrorAction Stop }) {
+    try { $cards = @(& $Query) } catch { return '' }
+    $amd = $false; $nvidia = $false
+    foreach ($card in $cards) {
+        $text = "$($card.Name) | $($card.AdapterCompatibility)"
+        if ($text -match '\bAMD\b|Radeon|Advanced Micro Devices') { $amd = $true }
+        if ($text -match 'NVIDIA') { $nvidia = $true }
+    }
+    if (-not $amd) { return '' }
+    if ($nvidia) { return 'amd+nvidia' }
+    return 'amd'
+}
+
+# Sets EDEN_NX2_GPL=0 (shader libraries off) on a PC whose card is AMD, unless the player
+# already set EDEN_NX2_GPL (in Windows or in coop-options.ini, which play.ps1 reads first).
+# Returns the line to show, or nothing.
+function Set-AmdGplDefault([scriptblock]$Query = { Get-CimInstance Win32_VideoController -ErrorAction Stop }) {
+    if ($env:EDEN_NX2_GPL) { return }
+    switch (Get-AmdGpuKind $Query) {
+        'amd' {
+            $env:EDEN_NX2_GPL = '0'
+            return 'AMD GPU found: shader libraries off (EDEN_NX2_GPL=0)'
+        }
+        'amd+nvidia' {
+            return 'AMD and NVIDIA GPUs found: the game uses NVIDIA, shader libraries stay on. Crashes in amdvlk64.dll: add EDEN_NX2_GPL=0 to coop-options.ini.'
+        }
+    }
 }

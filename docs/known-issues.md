@@ -4,6 +4,10 @@ This is an early test release. Everything below was checked on one PC with two c
 
 Every player needs the same release. v0.1.0-test2 and v0.1.0-test3 speak protocol 3. **Protocol 4** arrives with v0.1.0-test4: a protocol 3 game cannot join a protocol 4 server, or the other way round, so every player updates (`Update.bat`). A v0.1.0-test1 game cannot join a test2 or later server.
 
+## AMD graphics cards
+
+- **test4 crashes on AMD cards** (`amdvlk64.dll` in Windows' Event Viewer; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)): AMD's driver crashes with the emulator's shader libraries. Fixed in test4.2: the kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details and the one line for older kits or a PC with both cards.
+
 ## Found in the first play test of this build (being fixed)
 
 One PC, two games, played by hand on 2026-11-09.

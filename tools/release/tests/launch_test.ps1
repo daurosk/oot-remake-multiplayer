@@ -43,6 +43,46 @@ function New-Kit([string]$Dir, [string]$Tag, [string]$Marker) {
     New-Item -ItemType Directory -Force -Path (Join-Path $Dir 'logs') | Out-Null
 }
 
+# --- The AMD rule and EDEN_NX2_* options (kit-paths.ps1, issue 118), with a fake card list.
+. (Join-Path $kitSrc 'scripts\kit-paths.ps1')
+function New-Card([string]$Name, [string]$Maker) { [pscustomobject]@{ Name = $Name; AdapterCompatibility = $Maker } }
+$amdCard = { New-Card 'AMD Radeon RX 6750 XT' 'Advanced Micro Devices, Inc.' }
+$nvCard = { New-Card 'NVIDIA GeForce RTX 3070' 'NVIDIA' }
+$oldGpl = $env:EDEN_NX2_GPL
+try {
+    Check ((Get-AmdGpuKind $amdCard) -eq 'amd') 'an AMD card is found'
+    Check ((Get-AmdGpuKind { New-Card 'Radeon RX 580 Series' '' }) -eq 'amd') 'a Radeon name alone is enough'
+    Check ((Get-AmdGpuKind { New-Card 'Some card' 'Advanced Micro Devices, Inc.' }) -eq 'amd') 'the maker alone is enough'
+    Check ((Get-AmdGpuKind $nvCard) -eq '') 'an NVIDIA card is not AMD'
+    Check ((Get-AmdGpuKind { New-Card 'Intel(R) UHD Graphics' 'Intel Corporation'; New-Card 'AMD Radeon RX 7600' 'Advanced Micro Devices, Inc.' }) -eq 'amd') 'Intel and AMD: AMD'
+    Check ((Get-AmdGpuKind { New-Card 'AMD Radeon(TM) Graphics' 'Advanced Micro Devices, Inc.'; New-Card 'NVIDIA GeForce RTX 5090' 'NVIDIA' }) -eq 'amd+nvidia') 'AMD and NVIDIA: told apart'
+    Check ((Get-AmdGpuKind { throw 'no CIM' }) -eq '') 'a failing query counts as no AMD card'
+    Check ((Get-AmdGpuKind { }) -eq '') 'no cards: no AMD card'
+
+    $env:EDEN_NX2_GPL = $null
+    $line = Set-AmdGplDefault $amdCard
+    Check ($env:EDEN_NX2_GPL -eq '0' -and $line -eq 'AMD GPU found: shader libraries off (EDEN_NX2_GPL=0)') "AMD: EDEN_NX2_GPL=0 and one line [$line]"
+    $env:EDEN_NX2_GPL = $null
+    $line = Set-AmdGplDefault $nvCard
+    Check (-not $env:EDEN_NX2_GPL -and -not $line) 'NVIDIA: nothing set, nothing said'
+    $line = Set-AmdGplDefault { throw 'no CIM' }
+    Check (-not $env:EDEN_NX2_GPL -and -not $line) 'a failing query: nothing set, nothing said'
+    $line = Set-AmdGplDefault { New-Card 'AMD Radeon(TM) Graphics' 'Advanced Micro Devices, Inc.'; New-Card 'NVIDIA GeForce RTX 5090' 'NVIDIA' }
+    Check (-not $env:EDEN_NX2_GPL -and $line -match 'NVIDIA.*EDEN_NX2_GPL=0') 'AMD and NVIDIA: left on, with a hint'
+    $env:EDEN_NX2_GPL = '1'
+    $line = Set-AmdGplDefault { New-Card 'AMD Radeon RX 6750 XT' '' }
+    Check ($env:EDEN_NX2_GPL -eq '1' -and -not $line) 'the player''s EDEN_NX2_GPL wins over the AMD rule'
+} finally {
+    $env:EDEN_NX2_GPL = $oldGpl
+}
+$opt = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-options-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.ini')
+try {
+    [System.IO.File]::WriteAllText($opt, "auto_update = ask`r`nLICHII_COOP_PUPPET=1`r`n# EDEN_NX2_GPL=1`r`nEDEN_NX2_GPL = 1`r`nEDEN_OTHER=1`r`n")
+    $o = Read-KitOptions $opt 6>$null
+    Check ((($o.Keys | ForEach-Object { "$_=$($o[$_])" }) -join ',') -eq 'LICHII_COOP_PUPPET=1,EDEN_NX2_GPL=1') "coop-options.ini passes EDEN_NX2_* lines, not other EDEN_ ones [$(($o.Keys | ForEach-Object { "$_=$($o[$_])" }) -join ',')]"
+} finally {
+    Remove-Item -LiteralPath $opt -Force -ErrorAction SilentlyContinue
+}
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-launch-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $oldApi = $env:OOT_COOP_UPDATE_API
@@ -150,6 +190,12 @@ try {
     Check (($out -join ' ') -match 'did not finish') 'an unfinished update is named'
     Check (((Get-Played $kit) -join '|') -eq 'new NoUpdate' -and -not (Test-Path "$kit\update-in-progress.txt")) 'an unfinished update is done, then the new kit starts'
 
+    # EDEN_NX2_GPL from coop-options.ini reaches the emulator and the AMD rule leaves it.
+    $kit = Join-Path $tmp 'kit gpl'; New-Kit $kit 'v0.1.0-test4' 'old'
+    Add-Content -LiteralPath "$kit\coop-options.ini" -Value 'EDEN_NX2_GPL=1'
+    Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
+    Check (($out -join ' ') -match 'Option: EDEN_NX2_GPL=1' -and ($out -join ' ') -notmatch 'AMD GPU found') 'EDEN_NX2_GPL in coop-options.ini is passed and wins over the AMD rule'
+    Test-Started $kit 'EDEN_NX2_GPL option'
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

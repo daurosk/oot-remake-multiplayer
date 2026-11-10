@@ -5,6 +5,9 @@
 # Expect in B's log, as held-tools: the item in its slot ("slots 0 ... 6"), "P1 wears ...",
 # "P1 equipment slot N in hand", "put away". Bombs in hand are an actor of their own
 # (Item_Bomb), not a slot piece: they show in the objects lines, not here.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 warp Graveyard_Adult
 wait 1200

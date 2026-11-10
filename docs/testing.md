@@ -290,6 +290,27 @@ What it does:
 
 The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`. Give them as one comma list, `-Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS_CHEAT=1"`: with `powershell -File` that is how several arrive anyway (before 2026-11-09 such a list was set as one wrong variable, so the switches were silently off). The list replaces the default, and the runner prints each switch it sets.
 
+### Start place
+
+Every scenario starts from the same save. The game autosaves on each scene change (six rotating slots per user) and Continue loads the newest, so after a run that walked into Kakariko the next run used to start in Kakariko (chunk 1, 2026-11-09). The runner now copies each kit's **save baseline** (`<kit>\autotest-save\<user>\0400486024DEC000\`, outside the repo) back over the kit's saves before every boot, `start` steps included. Setting it up once:
+
+1. `tools\autotest\kit-paths.ps1` shows which `nand`, `sdmc`, `load` and `dump` folders each kit's emulator really uses (`emulator\user\config\qt-config.ini`). On 2026-11-09 auto-A and auto-B both used `obj-A`'s NAND, so the two games also shared saves and autosaves. `kit-paths.ps1 -Fix` (games closed) points them back at each kit's own `emulator\user\...` and keeps the old file as `qt-config.ini.bak-<time>`. The runner refuses to run while A and B share one NAND.
+2. `tools\autotest\run.ps1 -Scenario walk -TakeBaseline` copies each kit's saves as they are into its baseline and stops. Take it while the newest save is the child in the Graveyard at 10:01 (auto-A's own NAND still had that on 2026-11-09: newest autosave 2026-11-08 22:10).
+3. Without a baseline the runner stops and says so; `-NoRestore` runs on whatever was saved last.
+
+After `load.txt` the runner checks that each game reached the save point: its log must show a Graveyard object (`coop: objects: + ...Graveyard...`, needs `LICHII_COOP_DEBUG_OBJECTS=1`, on by default) within 15 s, else the run stops with `start.txt` saying which game loaded elsewhere.
+
+**Scenario headers.** Lines starting `#!` in the A script (or steps file) are read by the runner; the emulator sees comments:
+
+| Line | Does |
+|---|---|
+| `#! noload` | the script loads the save itself (as `-NoLoad`) |
+| `#! switches A=1,B=2` | added to the switches (a name also given in `-Switches` keeps the command line's value) |
+| `#! start REGEX` | what the log must show once loaded; checked at the end for a `noload` script (`#! start coop: test warp done` for the warp scenarios) |
+| `#! timeout 300` | seconds per phase, as `-Timeout` (which wins) |
+
+**Screenshots of the game, not the cheats window.** With `LICHII_COOP_CHEATS=1` the cheats window could be the process's main window, and the screenshots showed it. The runner now picks the process's largest visible window that is not "Co-op item cheats".
+
 ### Steps files
 
 A scenario can instead be `scenarios\<name>.steps.txt`, which drives both games and the server step by step, for tests where a game quits, crashes or joins late. One command a line (`#` starts a comment):
@@ -333,6 +354,14 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 Buttons: `A B X Y L R ZL ZR PLUS MINUS LCLICK RCLICK DUP DDOWN DLEFT DRIGHT`, and full stick directions `LSTICK_UP` (`_DOWN`, `_LEFT`, `_RIGHT`) and `RSTICK_...`. `#` starts a comment. At the end the log has `coop: test script done`; a bad line is logged as `coop: test script <file>: line N: why` and nothing is played.
 
 Gear scenarios (checked 2026-11-09, with `LICHII_COOP_DEBUG_ANIM=1` added to `-Switches` for the `slots` lines): `back` (A stands with its back to B, then draws the sword, guards, puts away; B sees A's sword and shield where A's own Link has them), `backwarp` (the same after both warp into Kakariko; `-NoLoad`) and `late` (B loads the save 30 s after A; `-NoLoad`). See [puppet.md](puppet.md).
+
+Chunk 2 scenarios (written 2026-11-10, not run yet; each file's header lists its log lines):
+
+- `held-tools` (#92): A puts the Deku Stick, Deku Nut, a bottle, bombs and the slingshot on ZR through the pause menu's Items page, one at a time, and uses each facing B. R is a quick-select carousel, not "next item", so the chunk 1 version never changed A's item. The menu moves assume the cursor opens on the item last put on ZR; each `menu-*` mark is a screenshot to check that, and `menu-1` shows where the given boomerang sits.
+- `skulltula` (#89): the Graveyard's nocturnal Gold Skulltula (on a web at -20.20 104.30 26.40). The save is at 10:01, so the header sets the host's clock to 20:00 75 s after joining and both games walk out to Kakariko and back to load the Graveyard at night; A shoots it with the slingshot while targeting, then jumps for the token; B watches.
+- `pot-drops` (#102): both warp to `Kakariko_MountainTrailSide`; A lifts and throws (A, ZR) the pot 16 m west of it and then the pair 28 m south, and walks over where each broke. Lifting breaks a pot for sure, where chunk 1's sword swings at the house pots never reached them.
+- `stalchild`: Hyrule Field at night (clock set by the header); A walks to where two Stalchildren rose in a chunk 1 run (about 173 29) and fights at once (ZL, Y), then walks over the fight for the drops; B watches from 8 m.
+- `rock` needed no change: it failed in chunk 1 only because the game started in Kakariko.
 
 Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at the well) and `water` (both load into the Water Temple entrance; checked 2026-11-09: both logs `warp done` after about 50 s, screenshots in the temple). Warping a game that is already playing works only while an event runs.
 

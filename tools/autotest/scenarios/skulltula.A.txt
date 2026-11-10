@@ -1,0 +1,65 @@
+# skulltula (#89): the Graveyard's Gold Skulltula taken in A is gone in B.
+# Graveyard_Child_Static has one nocturnal Enemy_Skulltula_Gold on a web at x -20.20, y 104.30,
+# z 26.40 (the web, Land_SkulltulaGold_SpiderWeb_A_01, at z 26.70: the wall is north of it).
+# The save is at 10:01 (day), so the host's clock is set to 20:00 75 s after joining (the
+# scenario starts about 45 s after joining) and both games walk out to Kakariko and back in,
+# so the Graveyard loads again at night. A shoots it with the slingshot (on ZR in the save)
+# while targeting (ZL), then walks under the token and jumps (X) to take it.
+#! switches LICHII_COOP_TIME_TEST_SET=72000@75,LICHII_COOP_DEBUG_TIME=1
+#! timeout 300
+# Logs: A "coop: objects: + Enemy_Skulltula_Gold ... at -20.20 104.30 26.40" after the reload
+# (not there: still day; look at LICHII_COOP_DEBUG_TIME lines), then "- Enemy_Skulltula_Gold"
+# when it dies; B "one-time pickup ... is shared from now on" for its key, then a flags line
+# setting that key and B's "- Enemy_Skulltula_Gold" (gone in B). Token count: A and B
+# PouchData.Item_Token_Gold.StockNum +1 (flags lines). Note in the report whether the key was
+# set at the kill or at the token (docs/items.md asks).
+mark start
+wait 2400               # the host sets 20:00 about 30 s in
+mark night
+stick 0 -1 120          # out to Kakariko (as stray-out)
+wait 480
+mark kakariko
+stick 0 -1 150          # and back in (as stray-back): the Graveyard loads again, at night
+wait 480
+mark graveyard
+goto -24.0 16.0 1.0 900
+goto -20.2 22.5 0.5 900 # 4 m south of the Skulltula
+toward -20.20 26.40 15
+mark at-skulltula
+wait 600                # B gets back in and faces it
+toward -20.20 26.40 10
+hold ZL 30
+mark targeted
+hold ZL+ZR 50           # aim
+hold ZL 20              # let go: fire
+wait 30
+hold ZL 10
+hold ZL+ZR 50
+hold ZL 20
+wait 30
+mark shot2
+hold ZL 10
+hold ZL+ZR 50
+hold ZL 20
+wait 30
+hold ZL 10
+hold ZL+ZR 50
+hold ZL 20
+wait 60
+mark shot4
+press B 10
+wait 60
+mark token              # where the token is now (on the wall or fallen)
+goto -20.2 25.8 0.4 300 # under it
+wait 30
+press X 10              # jump for it
+wait 60
+press X 10
+wait 60
+toward -20.20 26.40 10
+press A 10              # in case it is in reach and needs A
+wait 90
+mark taken
+goto -20.2 22.5 0.5 300
+wait 300
+mark end

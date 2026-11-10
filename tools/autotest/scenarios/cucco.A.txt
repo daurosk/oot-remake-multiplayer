@@ -2,6 +2,8 @@
 # A walks to the cucco at (-11.0, 28.5), picks it up, carries it next to B and
 # puts it down. B's screen should show the puppet holding A's cucco without it
 # falling or looping (docs/objects.md, "Animations and hit reactions").
+#! noload
+#! start coop: test warp done
 mark start
 warp KakarikoVillage_Child Kakariko_WellSide
 wait 1200               # the title screen

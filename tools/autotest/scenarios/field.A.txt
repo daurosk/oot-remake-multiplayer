@@ -3,6 +3,8 @@
 # A (the decider of the rolls, player 1) stands and fights with ZL+Y; B starts 0 m away, walks
 # 25 m off and back (field.B.txt). Checks: enemy copies move and play in B (5 s objects
 # lines), owners and epochs, drops of a killed Stalchild in both games. Run with -NoLoad.
+#! noload
+#! start coop: test warp done
 mark start
 warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
 wait 1200               # the title screen

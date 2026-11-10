@@ -6,6 +6,9 @@
 # Expect in B's log: "P1 wears armor 'Armor_Adult_Goron'", "P1 wears boots
 # 'Armor_Adult_HoverBoot'", "P1 wears hand 'Armor_Adult_Gauntlet_Silver'", and so on; look at
 # B's shots at each mark for the colour and the boots.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 warp Graveyard_Adult
 wait 1200

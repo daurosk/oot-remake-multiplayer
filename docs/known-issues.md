@@ -45,5 +45,5 @@ One PC, two games, played by hand on 2026-11-09.
 ## Other notes
 
 - Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks.
-- If an emulator is killed (not closed), its name stays taken on the server for a few seconds.
+- If an emulator is killed (not closed) and started again at once, joining takes a moment: the game asks again by itself for up to 12 seconds while the server lets the old one go. A name someone else really uses shows "name taken" after those 12 seconds.
 - The kit's emulator is portable and never reads or writes `%APPDATA%\eden`.

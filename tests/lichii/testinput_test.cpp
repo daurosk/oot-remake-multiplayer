@@ -289,3 +289,20 @@ TEST_CASE("testinput: warp and give are handed to the hook once, in order") {
     REQUIRE(log.size() == 1);
     CHECK(log[0] == "mark after");
 }
+
+TEST_CASE("testinput: wear names a gear slot and a piece") {
+    std::string error;
+    CHECK_FALSE(Parse("wear head\n", error));
+    CHECK_FALSE(Parse("wear hat Armor_Child_Mask_Keaton\n", error));
+    CHECK(WearFlag("head") == std::optional<std::string>("EquipHeadArmor"));
+    CHECK(WearFlag("Boots") == std::optional<std::string>("EquipBoot"));
+    CHECK_FALSE(WearFlag("hand"));
+    Runner r(Must("wear head Armor_Child_Mask_Keaton\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::wear);
+    CHECK(requests[0].start == "head");
+    CHECK(requests[0].name == "Armor_Child_Mask_Keaton");
+}

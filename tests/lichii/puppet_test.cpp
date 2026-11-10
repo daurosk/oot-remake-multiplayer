@@ -1073,17 +1073,35 @@ TEST_CASE("puppet gear: nothing is worn while parked; a piece left behind is wor
     g.guest.Set(kPiece + addr::kActorPosition, CoopPuppet::Vec3{own[0], own[1] + 0.9f, own[2]});
     CHECK(Frame(d, g, 50).empty());
 
-    // It stayed 500 below (made while parked): worn again, once a second at most.
+    // Far for one reading only (a frame behind a jump): nothing.
     g.guest.Set(kPiece + addr::kActorPosition, CoopPuppet::Vec3{own[0], own[1] - 499.0f, own[2]});
-    calls = Frame(d, g, 60);
+    CHECK(Frame(d, g, 60).empty());
+    g.guest.Set(kPiece + addr::kActorPosition, CoopPuppet::Vec3{own[0], own[1] + 0.9f, own[2]});
+    CHECK(Frame(d, g, 200).empty());
+
+    // It stays 500 below (made while parked): still far 100 ms later, worn again.
+    g.guest.Set(kPiece + addr::kActorPosition, CoopPuppet::Vec3{own[0], own[1] - 499.0f, own[2]});
+    CHECK(Frame(d, g, 300).empty());  // first far reading
+    calls = Frame(d, g, 400);
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kEquip);
-    bool said = false;
+    CHECK(Frame(d, g, 450).empty());
+    CHECK(Frame(d, g, 1300).empty());  // at most once a second
+
+    // Wearing it again does not bring it up: two more tries, then given up with one line.
+    CHECK(Frame(d, g, 1400).empty());
+    CHECK(Frame(d, g, 1500).size() == 1);  // try 2
+    CHECK(Frame(d, g, 2600).empty());
+    CHECK(Frame(d, g, 2700).size() == 1);  // try 3
+    CHECK(Frame(d, g, 3800).empty());
+    CHECK(Frame(d, g, 3900).empty());       // given up
+    CHECK(Frame(d, g, 6000).empty());
+    int tries = 0;
+    int given_up = 0;
     for (const auto& line : log) {
-        said = said || line.find("left behind") != std::string::npos;
+        tries += line.find("worn again") != std::string::npos ? 1 : 0;
+        given_up += line.find("given up") != std::string::npos ? 1 : 0;
     }
-    CHECK(said);
-    CHECK(Frame(d, g, 70).empty());
-    CHECK(Frame(d, g, 900).empty());
-    CHECK(Frame(d, g, 1100).size() == 1);
+    CHECK(tries == 3);
+    CHECK(given_up == 1);
 }

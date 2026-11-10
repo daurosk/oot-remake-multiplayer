@@ -273,6 +273,8 @@ public:
     // the puppet was parked under the floor, seen 2026-11-09): worn again.
     static constexpr float kGearFar = 5.0f;
     static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
+    static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
+    static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
     // A create waits until the game has drawn this long without a break,
     // begun after the last scene change or puppet loss (a load drops the
     // camera)...
@@ -324,6 +326,8 @@ private:
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::array<std::uint32_t, 5> hold_id{};  // the piece each change was made for
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
+        std::array<std::uint64_t, 5> far_since_ms{};  // first far reading of each piece; 0 near
+        std::array<std::uint8_t, 5> rewear_tries{};   // re-wears since the piece was last near
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {

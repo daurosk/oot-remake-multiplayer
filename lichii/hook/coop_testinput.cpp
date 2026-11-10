@@ -151,6 +151,24 @@ double Wrap(double a) {
     return a;
 }
 
+} // namespace
+
+// wear: the PlayerStatus flag of each gear slot (docs/items.md), or nothing.
+std::optional<std::string> WearFlag(std::string_view slot) {
+    std::string low(slot);
+    for (auto& ch : low) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (low == "weapon") return "EquipWeapon";
+    if (low == "shield") return "EquipShield";
+    if (low == "head") return "EquipHeadArmor";
+    if (low == "armor") return "EquipArmor";
+    if (low == "boots") return "EquipBoot";
+    return std::nullopt;
+}
+
+namespace {
+
 constexpr std::uint32_t kGotoTicks = 600;  // 10 s
 constexpr float kMovedM = 0.4f;            // movement that teaches the camera model
 constexpr double kMinMagnitude = 0.45;     // slower near the point, never a crawl
@@ -251,6 +269,13 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::give;
             step.mark = std::string(w[1]);
+        } else if (cmd == "WEAR") {
+            if (w.size() != 3 || !WearFlag(w[1])) {
+                return fail("want: wear weapon|shield|head|armor|boots NAME");
+            }
+            step.kind = Kind::wear;
+            step.start = std::string(w[1]);
+            step.mark = std::string(w[2]);
         } else if (cmd == "MARK") {
             if (w.size() != 2) {
                 return fail("want: mark NAME (one word)");
@@ -345,7 +370,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             ++index_;  // the next step starts when this one did
             continue;
         }
-        if (s.kind == Kind::warp || s.kind == Kind::give) {
+        if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
             continue;
@@ -642,6 +667,20 @@ void Warp(Core::System& system, const std::string& scene, const std::string& sta
              flags.find_type(childhood).value_or(-1));
 }
 
+// wear: writes the String64 flag PlayerStatus.Equip<slot> straight into the
+// game's table. Only the flag changes (the sampler sends it in PLAYER_EQUIP,
+// so the other games' puppets wear it); this game's own Link is not changed.
+void Wear(Core::System& system, const std::string& slot, const std::string& name) {
+    const auto flag = WearFlag(slot);
+    if (!flag) {
+        return;
+    }
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    const bool ok = coop::host::GameFlags::set_string64_now(
+        memory, coop::host::flag_hash(std::string("PlayerStatus.") + *flag), name);
+    LOG_INFO(Core, "coop: test wear {} {}: {}", slot, name, ok ? "set" : "NOT set");
+}
+
 // give: bombs, bow and hookshot are the item flags of each; any other name is
 // given as it is. Needs LICHII_COOP_CHEATS=1 (applied on the co-op frame).
 void Give(const std::string& item) {
@@ -779,6 +818,8 @@ void OnFrame(Core::System& system) {
         if (request.kind == Kind::warp) {
             Warp(system, request.name, request.start);
             g_state.warp = State::PendingWarp{request.name, request.start, now, now, player};
+        } else if (request.kind == Kind::wear) {
+            Wear(system, request.start, request.name);
         } else {
             Give(request.name);
         }

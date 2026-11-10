@@ -488,7 +488,7 @@ TEST_CASE("objects: a pickup another game took is removed here") {
     CHECK(present[0].objects.size() == 1);
 }
 
-TEST_CASE("objects: the owner sends its enemy's animation; a copy is asked to play it") {
+TEST_CASE("objects: the owner sends its enemy's animation, a copy is asked to play it") {
     Sync owner;
     Seen e = Enemy(0x100, 0x11, 2);
     e.animation = proto::Animation{"Wait", 3.0f, 1.0f};
@@ -733,7 +733,7 @@ TEST_CASE("objects: a Gold Skulltula shaken out of a tree is announced and copie
     CHECK(c.Creates().empty());
 }
 
-TEST_CASE("objects: a hurt carries the hitter's place; an animal's life is written") {
+TEST_CASE("objects: a hurt carries the hitter's place, an animal's life is written") {
     Sync sync;
     sync.SetHurt(true);
     Tick(sync, 0, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f, "Animal_Cucco")});

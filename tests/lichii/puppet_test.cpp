@@ -590,7 +590,7 @@ TEST_CASE("puppet animation: play the command, set its frame, correct only when 
     CHECK(d.Slots()[0].anim_name == "Run");
 }
 
-TEST_CASE("puppet animation: the other slots synced from slot 0; pose request written") {
+TEST_CASE("puppet animation: the other slots synced from slot 0, pose request written") {
     Game g;
     Director d;
     MakeLive(d, g);
@@ -912,7 +912,7 @@ CoopPuppet::Input Drawing(std::vector<Target> targets, std::uint64_t drawn_since
 }
 }  // namespace
 
-TEST_CASE("puppet join: no create while the game loads; at once when it draws") {
+TEST_CASE("puppet join: no create while the game loads, at once when it draws") {
     Game g;
     Director d;
     // The scene is readable at 0 but the loading screen has no camera.
@@ -1158,7 +1158,7 @@ TEST_CASE("puppet gear: the debug log lists every slot that holds a piece") {
     CHECK(slots.find("slot 0:") == std::string::npos);
 }
 
-TEST_CASE("puppet gear: nothing is worn while parked; a piece left behind is worn again") {
+TEST_CASE("puppet gear: nothing is worn while parked, a piece left behind is worn again") {
     Game g;
     std::vector<std::string> log;
     Director d([&](const std::string& line) { log.push_back(line); });
@@ -1252,7 +1252,7 @@ TEST_CASE("puppet: a create the game refuses is asked again after 1 s") {
     CHECK(d.Slots()[0].phase == Phase::creating);
 }
 
-TEST_CASE("puppet: refused creates slow down; one with a request is waited for") {
+TEST_CASE("puppet: refused creates slow down, one with a request is waited for") {
     Game g;
     std::vector<std::string> log;
     Director d([&](const std::string& line) { log.push_back(line); });

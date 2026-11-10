@@ -259,7 +259,7 @@ TEST_CASE("host sampler: straight from guest memory") {
   CHECK((*d.samples[0].velocity)[0] == doctest::Approx(0.5 / (kFrameUs / 1e6)));
 }
 
-TEST_CASE("host sampler: animation goes in the sample; a new command sends, a new frame does not") {
+TEST_CASE("host sampler: animation goes in the sample, a new command sends, a new frame does not") {
   Sampler s;
   std::uint64_t now = kStart;
   auto r = at(1.0f);

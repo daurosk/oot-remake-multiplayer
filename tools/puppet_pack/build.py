@@ -10,6 +10,8 @@ Writes, under <mod folder>/romfs:
   System/Resource/ResourceSizeTable.Product.<v>.<platform>.rsizetable.zs (plus new entries)
 and <mod folder>/coop_puppet.json describing what it made.
 
+The puppets keep Link's sound components (docs/puppet.md, Sound); --no-sound leaves them out.
+
 Everything is made from the files in --romfs; nothing from the game is in this tool.
 The input is never changed, and the tables are always rebuilt from the game's own
 copies, so running the tool again gives the same result.
@@ -52,6 +54,13 @@ KEEP_COMPONENTS = (
     "ModelInfoRef",
 )
 
+# Sound (issue 131): the player's AS node events (AnimationEvent/AsNode/Player_*.root.baev:
+# `AtSound`, `Voice`, `ChangeSeFloorContact`) fire on the actor's SLink user, and the
+# footstep component plays the steps from the feet bones. The puppet runs the same AS, so
+# with these and the ActorInfo `SLinkUserName` its own animation plays Link's sounds at the
+# puppet. `--no-sound` leaves them out (the pack as before).
+SOUND_COMPONENTS = ("SLinkRef", "SoundFootStepRef")
+
 # The puppet is no use without these: no AS, no model, nowhere to put a sword.
 REQUIRED_COMPONENTS = ("ASRef", "ModelInfoRef", "EquipmentUserRef")
 # Blackboard keys of the EquipmentUser: the instance parameters a create request can set.
@@ -67,8 +76,10 @@ FIXED_COMPONENTS = {
     "XLinkRef": "?Component/XLink/ActorBasic.engine__component__XLinkParam.bgyml",
 }
 
-# ActorInfo fields of the player row that belong to the player only.
-DROP_INFO_FIELDS = ("ActorName", "ELinkUserName", "SLinkUserName")
+# ActorInfo fields of the player row that belong to the player only. SLinkUserName names the
+# sound user and is kept unless the pack is built without sound.
+DROP_INFO_FIELDS = ("ActorName", "ELinkUserName")
+SOUND_INFO_FIELDS = ("SLinkUserName",)
 # Always calculated while loaded: the puppet is wherever its player is.
 INFO_OVERRIDES = {"CalcRadius": 100000.0, "CoreUsedLevel": byml.UInt(0)}
 # The puppet's ActorParam is the player's merged with its $parent, Player_Base, in one file. The
@@ -144,11 +155,12 @@ def flatten_actor_param(members, actor):
     return comps
 
 
-def make_actor_param(player_components):
+def make_actor_param(player_components, sound=True):
     missing = [k for k in REQUIRED_COMPONENTS if k not in player_components]
     if missing:
         raise BuildError(f"the player's ActorParam has no {', '.join(missing)}")
-    comps = {k: player_components[k] for k in KEEP_COMPONENTS if k in player_components}
+    keep = KEEP_COMPONENTS + (SOUND_COMPONENTS if sound else ())
+    comps = {k: player_components[k] for k in keep if k in player_components}
     comps.update(FIXED_COMPONENTS)
     return {"Components": comps}
 
@@ -216,10 +228,10 @@ def equipment_keys(files, actor_param):
     return sorted(keys)
 
 
-def build_pack(members, variant):
+def build_pack(members, variant, sound=True):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant."""
     player = f"Player_{variant}"
-    doc = make_actor_param(flatten_actor_param(members, player))
+    doc = make_actor_param(flatten_actor_param(members, player), sound)
     files = collect_members(members, doc)
     keys = equipment_keys(files, doc)
     ap = byml.dumps(doc)
@@ -231,10 +243,11 @@ def _num(v):
     return v.v if isinstance(v, byml._Num) else v
 
 
-def info_row(player_row, actor, heap=None):
+def info_row(player_row, actor, heap=None, sound=True):
     """The puppet's ActorInfo row: the player's, less its player-only fields. `heap`, when given,
     sets InstanceHeapSize (a test switch, `--heap`), keeping the field's BYML type."""
-    row = {k: v for k, v in player_row.items() if k not in DROP_INFO_FIELDS}
+    drop = DROP_INFO_FIELDS + (() if sound else SOUND_INFO_FIELDS)
+    row = {k: v for k, v in player_row.items() if k not in drop}
     row.update(INFO_OVERRIDES)
     if heap is not None:
         old = row.get("InstanceHeapSize")
@@ -290,8 +303,9 @@ def recompress(dicts, original_raw, data):
     return dicts.compress(data, name)
 
 
-def build(romfs, mod_dir, log=print, heaps=None):
-    """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111)."""
+def build(romfs, mod_dir, log=print, heaps=None, sound=True):
+    """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111).
+    `sound`: False builds the puppets without Link's sounds (issue 131)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -319,12 +333,12 @@ def build(romfs, mod_dir, log=print, heaps=None):
         if not os.path.isfile(src):
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names, keys = build_pack(members, v)
+        pack, ap, names, keys = build_pack(members, v, sound)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
             raise BuildError(f"ActorInfo has no row {player}")
-        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor)))
+        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor), sound))
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
@@ -359,6 +373,7 @@ def build(romfs, mod_dir, log=print, heaps=None):
         "tool": "tools/puppet_pack",
         "title_id": TITLE_ID,
         "actors": made,
+        "sound": sound,
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
@@ -402,6 +417,8 @@ def main(argv=None):
                     help=f"accept a dump that is not game data version {dumpcheck.EXPECTED_VERSION}")
     ap.add_argument("--heap", action="append", default=[], metavar="ACTOR=BYTES",
                     help="test switch: set a puppet's InstanceHeapSize, e.g. CoopPuppet_Adult=20000000")
+    ap.add_argument("--no-sound", action="store_true",
+                    help="build the puppets without Link's sounds (the pack before issue 131)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -446,7 +463,7 @@ def _main_build(a, romfs):
             return 2
         heaps[name] = int(size)
     try:
-        build(romfs, mod_dir, heaps=heaps)
+        build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

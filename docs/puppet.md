@@ -561,6 +561,8 @@ The remote player's real Navi position is not sent: the fairy is placed from the
 
 The wing beat is the local Navi's, not the other player's own: the remote Navi's pose and colour are not sent (no protocol change).
 
+**Missing after a load (issue 93), fixed in two steps.** In v0.1.0-test2 a puppet could be without its Navi for up to 15 s after a scene load. The game refuses a create (it returns 0) while a scene unloads or loads, and the director then waited the 10 s create timeout and 5 s more. PR 100 asks again after 1 s (`kRefusedRetryMs`). The cause was still there: the fairies' director never had the [camera gate](#spawn-and-move-what-is-built) the puppets have (`Follower::Follow` passed on only the base and the scene, not `camera`, `drawn_since_ms` and `settle_ms`). So each fairy was asked for during the loading screen, where she is refused or, like a puppet, made and never drawn. Now `CoopPuppet::StampDrawing` fills those fields for both directors and the follower passes them on, so a Navi is made when her puppet is (unit tests `fairy join` in puppet_test, `carries her puppet's wait` in fairy_test). Not yet run in the game.
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.

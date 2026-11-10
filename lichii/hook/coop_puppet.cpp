@@ -355,16 +355,7 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
                           ReadValue(guest, eu + addr::kEquipSlotBits + slot.hold_slot, bits);
         const std::uint8_t want = slot.hold_in_hand ? addr::kEquipBitInHand : addr::kEquipBitAway;
         const auto bit = static_cast<std::uint8_t>(1u << slot.hold_slot);
-        // The setter leaves the byte alone when the piece is in that state
-        // already: then the slot record's byte tells.
-        std::uint8_t hand = 0xff;
-        if (read) {
-            ReadValue(guest,
-                      eu + addr::kEquipRecords + addr::kEquipRecordStride * slot.hold_slot +
-                          addr::kEquipRecordInHand,
-                      hand);
-        }
-        if (read && ((bits & want) != 0 || hand == (slot.hold_in_hand ? 1 : 0))) {
+        if (read && (bits & want) != 0) {
             slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
             slot.in_hand = static_cast<std::uint8_t>(slot.hold_in_hand ? (slot.in_hand | bit)
                                                                        : (slot.in_hand & ~bit));
@@ -375,7 +366,7 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
             if (anim_) {
                 Say(who + " equipment slot " + std::to_string(slot.hold_slot) +
                     (slot.hold_in_hand ? " in hand" : " put away") + " not taken (byte " +
-                    Hex(bits) + ", record " + Hex(hand) + ")");
+                    Hex(bits) + ")");
             }
         }
         break;
@@ -568,6 +559,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.hold_known = 0;
     slot.hold_retry_ms = 0;
     slot.hold_id = {};
+    slot.far_since_ms = {};
+    slot.rewear_tries = {};
     pending_ = Pending::create;
     return c;
 }
@@ -657,6 +650,12 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
                 "): " + SlotsText(guest, player, std::nullopt));
         }
     }
+    if (target.show == Show::hide) {
+        return std::nullopt;  // parked: a piece made now would stay down there
+    }
+    if (target.show == Show::show && now_ms >= slot.rewear_ms) {
+        LeftBehind(slot, guest, now_ms);
+    }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];
         if (!want || want->empty() || *want == slot.worn[i] ||
@@ -693,12 +692,81 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
     return std::nullopt;
 }
 
+// A worn sword or shield far from its puppet does not follow it: the game
+// made it while the puppet was parked under the floor (Show::hide), or it
+// stayed behind when the puppet came back up. It is worn again, so the game
+// makes it anew at the puppet (and the in-hand state is set again for the
+// new piece, Hold).
+void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    Vec3 own{};
+    if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0 ||
+        !ReadValue(guest, slot.actor + addr::kActorPosition, own)) {
+        return;
+    }
+    for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
+        const int s = kGearSlots[i];
+        if (s < 0 || slot.worn[i].empty()) {
+            continue;
+        }
+        const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
+        std::uint32_t id = 0xFFFFFFFFu;
+        std::uint64_t holder = 0;
+        std::uint64_t piece = 0;
+        std::uint32_t state = 0;
+        Vec3 at{};
+        if (!ReadValue(guest, link + addr::kEquipSlotId, id) || id == 0xFFFFFFFFu ||
+            !ReadValue(guest, link + addr::kEquipSlotHolder, holder) || holder == 0 ||
+            !ReadValue(guest, holder + addr::kHolderActor, piece) || piece == 0 ||
+            !ReadValue(guest, piece + addr::kActorState, state) || state != addr::kStatePresent ||
+            !ReadValue(guest, piece + addr::kActorPosition, at)) {
+            continue;
+        }
+        const float far = std::sqrt((at[0] - own[0]) * (at[0] - own[0]) +
+                                    (at[1] - own[1]) * (at[1] - own[1]) +
+                                    (at[2] - own[2]) * (at[2] - own[2]));
+        if (!(far > kGearFar)) {
+            slot.far_since_ms[i] = 0;
+            slot.rewear_tries[i] = 0;  // where it belongs: a later miss may try again
+            continue;
+        }
+        // Far on one reading may be a piece one frame behind a puppet that
+        // jumped: it must still be far a moment later.
+        if (slot.far_since_ms[i] == 0) {
+            slot.far_since_ms[i] = now_ms;
+            continue;
+        }
+        if (now_ms - slot.far_since_ms[i] < kFarForMs) {
+            continue;
+        }
+        char text[32];
+        std::snprintf(text, sizeof(text), "%.1f", static_cast<double>(far));
+        const std::string what =
+            "P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + slot.worn[i] + "'";
+        if (slot.rewear_tries[i] >= kRewearTries) {
+            if (slot.rewear_tries[i] == kRewearTries) {
+                Say(what + " still left behind (" + text + " away) after " +
+                    std::to_string(kRewearTries) + " tries: given up");
+                ++slot.rewear_tries[i];
+            }
+            continue;
+        }
+        ++slot.rewear_tries[i];
+        Say(what + " left behind (" + text + " away): worn again");
+        slot.worn[i].clear();
+        slot.far_since_ms[i] = 0;
+        slot.rewear_ms = now_ms + kRewearMs;
+    }
+}
+
 // One change of an equipment slot's state for a live puppet: a worn piece
 // its player holds in the hand while the puppet's is put away, or the other
 // way round. A piece just worn is put away, so only "in hand" is asked then.
 std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& guest,
                                    std::uint64_t now_ms) {
-    if (!target.drawn || now_ms < slot.hold_retry_ms) {
+    if (!target.drawn || now_ms < slot.hold_retry_ms || target.show == Show::hide) {
         return std::nullopt;
     }
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {

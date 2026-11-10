@@ -44,7 +44,6 @@ class PlayerReader {
   // every frame's reader the same DrawnState, or drawn pieces are lost.
   struct DrawnMemo {
     std::uint32_t id = 0xFFFFFFFFu;  // the piece in the slot; ~0 none
-    std::uint8_t hand = 0;           // the slot record's in-hand byte
     bool drawn = false;
   };
   using DrawnState = std::array<DrawnMemo, 8>;

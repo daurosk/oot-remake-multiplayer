@@ -112,13 +112,14 @@ inline constexpr std::uint8_t kEquipBitInHand = 0x2;
 inline constexpr std::uint8_t kEquipBitAway = 0x4;
 // The byte is a request the game clears when the change is done (seen in a
 // two-player run, 2026-11-09), and a setter does nothing when the piece is in
-// that state already. Both setters keep a byte per slot in the user's slot
-// records (EquipmentUser + 0x4b0, 0xa8 each, byte at +0xa4): 1 in hand, 0 put
-// away. Read from the dump, not run.
+// that state already. The user's slot records (EquipmentUser + 0x4b0, 0xa8
+// each) are only logged (LICHII_COOP_DEBUG_ANIM): their byte at +0xa4 read 1
+// with the sword out and put away alike (autotest, 2026-11-09), so it is not
+// the state.
 inline constexpr std::uint64_t kEquipRecords = 0x4b0;
 inline constexpr std::uint64_t kEquipRecordStride = 0xa8;
 inline constexpr std::uint64_t kEquipRecordInHand = 0xa4;
-inline constexpr std::uint64_t kEquipRecordFlags = 0xa0;  // u32; 0x800 while put away
+inline constexpr std::uint64_t kEquipRecordFlags = 0xa0;  // u32, logged only
 // The game's own way to move an actor that has a physics body, as the AI
 // node ExecuteActorForceSetMtx (run 0x2622e50): write +0x31c..+0x34b, then
 // call vtable slot 0x218, which is 0x4c6580(actor, 0) for the vtable every
@@ -272,6 +273,12 @@ public:
     static constexpr float kFrameSlack = 3.0f;
     // A hidden puppet is moved this far down, under the floor.
     static constexpr float kHideDrop = 500.0f;
+    // A worn piece this far from its shown puppet was left behind (made while
+    // the puppet was parked under the floor, seen 2026-11-09): worn again.
+    static constexpr float kGearFar = 5.0f;
+    static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
+    static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
+    static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
     // A create waits until the game has drawn this long without a break,
     // begun after the last scene change or puppet loss (a load drops the
     // camera)...
@@ -322,6 +329,9 @@ private:
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::array<std::uint32_t, 5> hold_id{};  // the piece each change was made for
+        std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
+        std::array<std::uint64_t, 5> far_since_ms{};  // first far reading of each piece; 0 near
+        std::array<std::uint8_t, 5> rewear_tries{};   // re-wears since the piece was last near
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {
@@ -339,6 +349,7 @@ private:
                               std::uint64_t now_ms);
     std::optional<Call> Hold(Slot& slot, const Target& target, Guest& guest,
                              std::uint64_t now_ms);
+    void LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Move(Slot& slot, Guest& guest);
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);

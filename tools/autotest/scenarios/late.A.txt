@@ -1,0 +1,38 @@
+# late: A loads the save and stands; B loads the same save about 30 s later, so A's puppet in B
+# is made while B runs its own after-load event (parked under the floor), as in Caleb's
+# 2026-11-09 run. Then the steps of back.A.txt. Run with -NoLoad.
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark loaded
+wait 2700
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 0.4 12
+wait 60
+mark back-0s
+wait 300
+mark back-5s
+wait 300
+mark back-10s
+press Y
+wait 150
+mark sword-out
+wait 150
+mark sword-out-5s
+hold ZL 150
+mark guard
+hold ZL 150
+mark guard-5s
+press B
+wait 150
+mark put-away
+wait 150
+mark put-away-5s

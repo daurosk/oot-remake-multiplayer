@@ -1,0 +1,13 @@
+# late: B loads the save about 30 s after A (see late.A.txt), then watches A. Run with -NoLoad.
+wait 1800
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 600
+mark b-loaded
+wait 3600

@@ -16,9 +16,12 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "coop_puppet.h"
 
@@ -75,6 +78,61 @@ private:
     Settings settings_;
     std::map<std::uint8_t, Track> tracks_;
     std::string scene_;
+};
+
+// The game's live actor list (coop_objects.cpp reads the same, build
+// e0f3ccfaf50065ae): main + kManagerPtr -> manager; manager + kLists ->
+// lists; the list head is lists + kListHead, a ring of nodes, each node's
+// owner at node + kNodeOwner, and an actor's own node at actor + kActorNode.
+namespace addr {
+inline constexpr std::uint64_t kManagerPtr = 0x4e91888;
+inline constexpr std::uint64_t kLists = 0x118;
+inline constexpr std::uint64_t kListHead = 0x670;
+inline constexpr std::uint64_t kNodeOwner = 0x10;
+inline constexpr std::uint64_t kActorNode = 0x538;
+inline constexpr std::uint64_t kActorName = 0x260;  // -> the actor's name, a C string
+inline constexpr std::uint64_t kActorState = 0x2c;  // 4: present
+inline constexpr std::uint32_t kStatePresent = 4;
+inline constexpr std::size_t kMaxWalk = 8192;
+}  // namespace addr
+
+// The first present actor called `name` on the actor list; 0 none. The calc
+// thread (or a test).
+std::uint64_t FindActor(CoopPuppet::Guest& guest, std::uint64_t main_base, std::string_view name);
+
+// The wing beat: the fairy actor (Dm_Npc_Navi) plays no animation of its own,
+// so each frame the local player's own Navi's skeleton pose is copied onto
+// every fairy (CoopPose::CopySkeleton). The fairies so flap and turn as the
+// local Navi does. The calc thread only.
+class Wings {
+public:
+    using Log = std::function<void(const std::string&)>;
+    explicit Wings(std::string source = "Npc_Navi", Log log = {})
+        : source_(std::move(source)), log_(std::move(log)) {}
+
+    // Once a frame with the live fairy actors. Looks for the local Navi at
+    // most every kSearchMs while she is not found.
+    void Frame(CoopPuppet::Guest& guest, std::uint64_t main_base,
+               const std::vector<std::uint64_t>& fairies, std::uint64_t now_ms);
+
+    std::uint64_t navi() const { return navi_; }
+    unsigned copies() const { return copies_; }  // fairy frames copied, all told
+
+    static constexpr std::uint64_t kSearchMs = 500;
+
+private:
+    bool StillNavi(CoopPuppet::Guest& guest);
+    void Say(const std::string& text) const {
+        if (log_) log_(text);
+    }
+
+    std::string source_;
+    Log log_;
+    std::uint64_t navi_ = 0;
+    std::uint64_t search_ms_ = 0;
+    bool searched_ = false;
+    unsigned copies_ = 0;
+    std::map<std::uint64_t, std::string> notes_;  // per fairy actor: the last note logged
 };
 
 // CoopHook::OnFrame, right after CoopPuppet::Publish, with the same

@@ -15,7 +15,9 @@
 
 namespace coop::protocol {
 
-inline constexpr std::uint16_t kProtocolVersion = 3;  // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY
+// 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
+// (types 28 to 39) and the server sending HANDOVER_ASK.
+inline constexpr std::uint16_t kProtocolVersion = 4;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -72,6 +74,7 @@ enum class MessageType : std::uint16_t {
   damage = 25,
   player_pose = 26,
   time_of_day = 27,
+  object_group = 29,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -668,13 +671,38 @@ struct TimeOfDay {
   bool operator==(const TimeOfDay&) const = default;
 };
 
+// OBJECT_GROUP (client only, not relayed): which objects belong together, so
+// the server keeps them with one owner (docs/objects.md "Groups"). Each entry
+// names a member and its root: a boss part and the boss, a summoned enemy and
+// its summoner. An entry whose root is the member itself takes the member
+// out of any group; it is also how a lone object is marked a boss.
+namespace object_group {
+inline constexpr std::uint8_t boss = 1u << 0;  // the member is a boss: 60 s fight lock
+}  // namespace object_group
+
+struct ObjectGroupEntry {
+  ObjectId member;
+  ObjectId root;
+  std::uint8_t flags = 0;  // object_group bits
+  bool operator==(const ObjectGroupEntry&) const = default;
+};
+
+// Most entries in one OBJECT_GROUP. 1 to this many, no member twice.
+inline constexpr std::size_t kMaxGroupEntries = 256;
+
+struct ObjectGroup {
+  std::uint8_t player_number = kPlayerSelf;
+  std::vector<ObjectGroupEntry> entries;
+  bool operator==(const ObjectGroup&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
                              FlagSnapshot, Host, PlayerEquip, ObjectPresent,
                              ObjectOwner, HandoverAsk, HandoverState, ObjectSpawn,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
-                             TimeOfDay>;
+                             TimeOfDay, ObjectGroup>;
 
 MessageType type_of(const Message& message);
 

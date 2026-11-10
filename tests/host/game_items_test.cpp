@@ -768,7 +768,7 @@ TEST_CASE("game items: a Deku Shield lost in a player's game comes back from the
   CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
 }
 
-TEST_CASE("game items: a Deku Shield the host loses comes back; lost by all, it is bought again") {
+TEST_CASE("game items: a Deku Shield the host loses comes back, lost by all, it is bought again") {
   auto hw = game();
   GameFlagStore host_game(hw);
   ItemFlagStore host_store(host_game);

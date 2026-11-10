@@ -1,10 +1,13 @@
 // Tests for the shared dungeon flags (lichii/hook/coop_dungeon.cpp).
 #include <doctest/doctest.h>
 
+#include <map>
 #include <set>
 #include <string>
 
 #include "coop_dungeon.h"
+#include "coop/host/flag_watcher.hpp"
+#include "coop/protocol/codec.hpp"
 
 namespace host = coop::host;
 
@@ -39,16 +42,134 @@ TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or doe
     CHECK(CoopDungeon::Merge(none, false) == 0);
     CHECK_FALSE(none.has_value());
 
+    const std::size_t all = CoopDungeon::Flags().size() + CoopDungeon::Keys().size();
     const std::size_t n = CoopDungeon::Merge(none, true);
     REQUIRE(none.has_value());
-    CHECK(n == CoopDungeon::Flags().size());
+    CHECK(n == all);
+    CHECK(none->contains(host::FlagKey::key64_flag(CoopDungeon::Keys()[0].key)));
     CHECK(none->contains(host::FlagKey(host::flag_hash("WaterTemple_Room00_WaterLevel"), 0)));
 
     // An existing list keeps its own flags; a flag already there counts once.
     const auto mine = host::FlagKey(0x12345678, 0);
     const auto dup = host::FlagKey(CoopDungeon::Flags()[0].hash, 0);
     std::optional<host::SharedFlags> some = host::SharedFlags({mine, dup});
-    CHECK(CoopDungeon::Merge(some, true) == CoopDungeon::Flags().size() - 1);
+    CHECK(CoopDungeon::Merge(some, true) == all - 1);
     CHECK(some->contains(mine));
-    CHECK(some->size() == CoopDungeon::Flags().size() + 1);
+    CHECK(some->size() == all + 1);
+}
+
+namespace {
+
+bool HasKey(std::uint64_t key, const char* dungeon, const char* actor) {
+    for (const auto& k : CoopDungeon::Keys()) {
+        if (k.key == key) {
+            return std::string(k.dungeon) == dungeon && std::string(k.actor) == actor;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("dungeon: the placement keys are one each, and only things that stay done") {
+    std::set<std::uint64_t> seen;
+    std::map<std::string, std::size_t> per_dungeon;
+    std::size_t chests = 0;
+    for (const auto& k : CoopDungeon::Keys()) {
+        CHECK(k.key != 0);
+        CHECK(k.key != ~std::uint64_t{0});
+        CHECK_MESSAGE(seen.insert(k.key).second, k.actor);
+        const std::string actor = k.actor;
+        // Pots, enemies and grass come back on a scene load: not in the list.
+        CHECK_MESSAGE(!actor.starts_with("Obj_Pot_"), actor);
+        CHECK_MESSAGE(actor.find("Grass") == std::string::npos, actor);
+        CHECK_MESSAGE((!actor.starts_with("Enemy_") || actor == "Enemy_Skulltula_Gold" ||
+                       actor == "Enemy_Anubis" || actor.starts_with("Enemy_MiddleBoss")),
+                      actor);
+        chests += actor.starts_with("Obj_TBox") ? 1 : 0;
+        ++per_dungeon[k.dungeon];
+    }
+    CHECK(CoopDungeon::Keys().size() == 500);
+    CHECK(chests == 140);
+    CHECK(per_dungeon.size() == 13);
+    CHECK(per_dungeon["InsideTheDekuTree"] == 37);
+    CHECK(per_dungeon["DodongoCavern"] == 36);
+}
+
+TEST_CASE("dungeon: the Deku Tree's and Dodongo's Cavern's chests are in the list") {
+    CHECK(HasKey(0x9dc359c40cd5dfe7ull, "InsideTheDekuTree", "Obj_TBox_A_01"));
+    CHECK(HasKey(0x0b66198d17d6584eull, "InsideTheDekuTree", "Obj_TBox_A_02"));
+    CHECK(HasKey(0x77750b6072f44277ull, "DodongoCavern", "Obj_TBox_A_01"));
+    CHECK(HasKey(0x686c7d83d07add16ull, "DodongoCavern", "Obj_TBox_A_06"));
+}
+
+namespace {
+
+class Game : public host::FlagStore {
+public:
+    std::map<host::FlagKey, coop::protocol::FlagEntry> values;
+    void set(host::FlagKey key, std::uint32_t v) {
+        values[key] = {key, coop::protocol::FlagKind::boolean, v};
+    }
+    std::optional<coop::protocol::FlagEntry> read(host::FlagKey key) override {
+        const auto it = values.find(key);
+        if (it == values.end()) return std::nullopt;
+        return it->second;
+    }
+    bool write(const coop::protocol::FlagEntry& e) override {
+        if (!values.contains(e.key)) return false;
+        values[e.key] = e;
+        return true;
+    }
+};
+
+} // namespace
+
+TEST_CASE("dungeon: a chest opened in one game opens in the other and never closes again") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list.has_value());
+    const auto chest = host::FlagKey::key64_flag(0x9dc359c40cd5dfe7ull);  // Deku Tree
+    const auto level = host::FlagKey(host::flag_hash("WaterTemple_Room00_WaterLevel"), 0);
+
+    Game a;
+    Game b;
+    for (Game* g : {&a, &b}) {
+        g->set(chest, 0);
+        g->set(level, 2);
+    }
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    for (host::FlagWatcher* w : {&wa, &wb}) {  // as the hook does with pickups on
+        for (const auto& k : CoopDungeon::Keys()) w->share_pickup(host::FlagKey::key64_flag(k.key));
+    }
+    wa.frame(a);
+    wb.frame(b);
+
+    a.set(chest, 1);
+    const auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    const auto* set = std::get_if<proto::FlagSet>(&m);
+    REQUIRE(set);
+    REQUIRE(set->flags.size() == 1);
+    CHECK(set->flags[0].key == chest);
+    CHECK(set->flags[0].value == 1);
+
+    // The host's answer reaches B: B's chest is open.
+    wb.receive(proto::Message{proto::FlagState{1, set->flags}});
+    wb.frame(b);
+    CHECK(b.values[chest].value == 1);
+
+    // B leaves the dungeon and the game reads 0 for a moment: not sent, and
+    // a 0 coming in is not written over it.
+    b.set(chest, 0);
+    CHECK(wb.frame(b).empty());
+    b.set(chest, 1);
+    wb.frame(b);
+    wb.receive(proto::Message{proto::FlagState{2, {{chest, proto::FlagKind::boolean, 0}}}});
+    wb.frame(b);
+    CHECK(b.values[chest].value == 1);
 }

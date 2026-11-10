@@ -4,7 +4,7 @@
 # sharing N dungeon flags and keys". Shots at "look": in B the map is changed (open chest / no web).
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_FLAGS=1,A:LICHII_COOP_SET_KEY64=771092ae2f3b7100
+#! switches LICHII_COOP_DEBUG_FLAGS=1,A:LICHII_COOP_SET_KEY64=771092ae2f3b7100,A:LICHII_COOP_SET_AFTER=80
 #! timeout 300
 mark start
 warp InsideTheDekuTree Entrance
@@ -21,3 +21,5 @@ wait 2400
 mark after
 wait 600
 mark look
+wait 1800
+mark late

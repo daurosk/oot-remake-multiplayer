@@ -363,6 +363,118 @@ std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t l
   return local;
 }
 
+namespace {
+
+// Ammo capacities (Int struct 0xf80f8077; member names Rupee, DekuSeed, Bomb,
+// Arrow, DekuStick, DekuNut found by hashing them against the struct's
+// member hashes in GameDataList). Default 0: no ammo of that kind is held.
+constexpr std::uint32_t kCapSeed = 0xae8cc742, kCapBomb = 0xe753508b, kCapArrow = 0x418db791,
+                        kCapStick = 0x45762db0, kCapNut = 0x735a1ff7, kCapRupee = 0xe0013650;
+// Ammo counts (per player) and their IsGet flags (docs/items.md).
+constexpr std::uint32_t kSeeds = 0x5fadf7fc, kSeedsGet = 0x29888e1e;
+constexpr std::uint32_t kArrows = 0x518ec74b, kArrowsGet = 0x572701ea;
+constexpr std::uint32_t kBombs = 0xdb1bcd4f, kBombsGet = 0x2bb00768;
+constexpr std::uint32_t kNuts = 0xf30d9f54, kNutsGet = 0x00c2ee37;
+constexpr std::uint32_t kSticks = 0xb9494411, kSticksGet = 0xc4e21ac2;
+
+#define COOP_CAP(item, member, hash, n) {item, "0xf80f8077." member, hash, K::int32, n}
+#define COOP_AMMO(item, name, hash, n) {item, "PouchData." name ".StockNum", hash, K::int32, n}
+#define COOP_GOT(item, name, hash) {item, "IsGet." name, hash, K::boolean, 1}
+
+// Sorted by item. A capacity's name is the struct hash and the member name:
+// the struct's own name is not known, so its hash is not flag_hash(name).
+constexpr ItemGrant kGrants[] = {
+  // Item_NutBag_Small: 20, the original's first nut capacity.
+  COOP_CAP(0x19b80dbc, "DekuNut", kCapNut, 20),
+  COOP_AMMO(0x19b80dbc, "Item_DekuNut", kNuts, 20),
+  COOP_GOT(0x19b80dbc, "Item_DekuNut", kNutsGet),
+  // Item_Wallet_Small: 200 (an adult's wallet, read from a save). No fill.
+  COOP_CAP(0x1d74617e, "Rupee", kCapRupee, 200),
+  // Item_Wallet_Medium: 500 (the original's giant's wallet). No fill.
+  COOP_CAP(0x2d2c874b, "Rupee", kCapRupee, 500),
+  // Item_StickBag_Small: 10.
+  COOP_CAP(0x2fe6ab1a, "DekuStick", kCapStick, 10),
+  COOP_AMMO(0x2fe6ab1a, "Item_DekuStick", kSticks, 10),
+  COOP_GOT(0x2fe6ab1a, "Item_DekuStick", kSticksGet),
+  // Item_Quiver_Medium: 40.
+  COOP_CAP(0x3bb370e1, "Arrow", kCapArrow, 40),
+  COOP_AMMO(0x3bb370e1, "Item_Arrow_Normal", kArrows, 40),
+  // Item_StickBag_Medium: 20.
+  COOP_CAP(0x41db7ab5, "DekuStick", kCapStick, 20),
+  COOP_AMMO(0x41db7ab5, "Item_DekuStick", kSticks, 20),
+  // Item_StickBag_Large: 30.
+  COOP_CAP(0x48e53698, "DekuStick", kCapStick, 30),
+  COOP_AMMO(0x48e53698, "Item_DekuStick", kSticks, 30),
+  // Item_BulletBag_Large: 50.
+  COOP_CAP(0x7b9673f5, "DekuSeed", kCapSeed, 50),
+  COOP_AMMO(0x7b9673f5, "Item_DekuSeed", kSeeds, 50),
+  // Weapon_Range_SlingShot: the small bullet bag and 30 seeds.
+  COOP_CAP(0x80d34ce9, "DekuSeed", kCapSeed, 30),
+  COOP_AMMO(0x80d34ce9, "Item_DekuSeed", kSeeds, 30),
+  COOP_GOT(0x80d34ce9, "Item_DekuSeed", kSeedsGet),
+  // Weapon_Range_Bow: the small quiver and 30 arrows.
+  COOP_CAP(0x938d56bf, "Arrow", kCapArrow, 30),
+  COOP_AMMO(0x938d56bf, "Item_Arrow_Normal", kArrows, 30),
+  COOP_GOT(0x938d56bf, "Item_Arrow_Normal", kArrowsGet),
+  // Item_BulletBag_Medium: 40.
+  COOP_CAP(0x9a30a9e5, "DekuSeed", kCapSeed, 40),
+  COOP_AMMO(0x9a30a9e5, "Item_DekuSeed", kSeeds, 40),
+  // Item_Quiver_Small: 30.
+  COOP_CAP(0xa8c3e1fb, "Arrow", kCapArrow, 30),
+  COOP_AMMO(0xa8c3e1fb, "Item_Arrow_Normal", kArrows, 30),
+  // Item_BombBag_Small: 20.
+  COOP_CAP(0xb0a1bf51, "Bomb", kCapBomb, 20),
+  COOP_AMMO(0xb0a1bf51, "Item_Bomb", kBombs, 20),
+  COOP_GOT(0xb0a1bf51, "Item_Bomb", kBombsGet),
+  // Item_BombBag_Large: 40.
+  COOP_CAP(0xbd3ca2c6, "Bomb", kCapBomb, 40),
+  COOP_AMMO(0xbd3ca2c6, "Item_Bomb", kBombs, 40),
+  // Item_Quiver_Large: 50.
+  COOP_CAP(0xd331c7da, "Arrow", kCapArrow, 50),
+  COOP_AMMO(0xd331c7da, "Item_Arrow_Normal", kArrows, 50),
+  // Item_NutBag_Large: 40.
+  COOP_CAP(0xd60e4b23, "DekuNut", kCapNut, 40),
+  COOP_AMMO(0xd60e4b23, "Item_DekuNut", kNuts, 40),
+  // Item_BulletBag_Small: 30.
+  COOP_CAP(0xdc52acaf, "DekuSeed", kCapSeed, 30),
+  COOP_AMMO(0xdc52acaf, "Item_DekuSeed", kSeeds, 30),
+  // Item_BombBag_Medium: 30.
+  COOP_CAP(0xe5ff45aa, "Bomb", kCapBomb, 30),
+  COOP_AMMO(0xe5ff45aa, "Item_Bomb", kBombs, 30),
+  // Item_NutBag_Medium: 30.
+  COOP_CAP(0xeaa1785e, "DekuNut", kCapNut, 30),
+  COOP_AMMO(0xeaa1785e, "Item_DekuNut", kNuts, 30),
+};
+
+#undef COOP_CAP
+#undef COOP_AMMO
+#undef COOP_GOT
+
+struct GrantLess {
+  bool operator()(const ItemGrant& a, std::uint32_t b) const { return a.item < b; }
+  bool operator()(std::uint32_t a, const ItemGrant& b) const { return a < b.item; }
+};
+
+}  // namespace
+
+std::span<const ItemGrant> all_item_grants() { return kGrants; }
+
+std::span<const ItemGrant> item_grants(std::uint32_t item) {
+  const auto [first, last] =
+      std::equal_range(std::begin(kGrants), std::end(kGrants), item, GrantLess{});
+  return {first, last};
+}
+
+void ItemFlagStore::grant(std::uint32_t item) {
+  for (const ItemGrant& g : item_grants(item)) {
+    const FlagKey key{g.hash, 0};
+    const auto now = inner_.read(key);
+    if (now && now->kind != g.kind) continue;
+    if (now && as_int(now->value) >= g.value) continue;
+    if (inner_.write(protocol::FlagEntry{key, g.kind, as_bits(g.value)})) ++stats_.granted;
+  }
+}
+
 bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const FlagKey key = key_of(entry);
   const bool named = key.kind == protocol::FlagKeyKind::named && key.index == 0;
@@ -400,6 +512,11 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   }
   if (!inner_.write(merged)) return false;
   ++stats_.merged;
+  // A new item: also what the game gives with it (issue 128).
+  if (item->kind == protocol::FlagKind::int32 && as_int(now->value) <= 0 &&
+      as_int(merged.value) >= 1) {
+    grant(key.hash);
+  }
   return true;
 }
 

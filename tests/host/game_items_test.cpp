@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <map>
 #include <set>
 #include <vector>
 
@@ -515,4 +516,159 @@ TEST_CASE("game items: a late joiner gets the host's items and keeps its own") {
     CHECK(joiner.frame(js).empty());
     CHECK(host.frame(hs).empty());
   }
+}
+
+namespace {
+
+// A flag store over a map, for the grants: holds Int and Bool flags by hash.
+class MapStore final : public coop::host::FlagStore {
+ public:
+  std::optional<protocol::FlagEntry> read(FlagKey key) override {
+    const auto it = flags.find(key.hash);
+    if (it == flags.end()) return std::nullopt;
+    return protocol::FlagEntry{key, it->second.first, it->second.second};
+  }
+  bool write(const protocol::FlagEntry& entry) override {
+    const auto it = flags.find(entry.key.hash);
+    if (it == flags.end() || it->second.first != entry.kind) return false;
+    it->second.second = entry.value;
+    ++writes;
+    return true;
+  }
+  void hold(std::uint32_t hash, K kind, std::int32_t value) {
+    flags[hash] = {kind, static_cast<std::uint32_t>(value)};
+  }
+  std::int32_t value(std::uint32_t hash) const {
+    return static_cast<std::int32_t>(flags.at(hash).second);
+  }
+  std::map<std::uint32_t, std::pair<K, std::uint32_t>> flags;
+  int writes = 0;
+};
+
+constexpr std::uint32_t kSlingshot = 0x80d34ce9;     // PouchData.Weapon_Range_SlingShot.StockNum
+constexpr std::uint32_t kBulletBagM = 0x9a30a9e5;    // PouchData.Item_BulletBag_Medium.StockNum
+constexpr std::uint32_t kBow = 0x938d56bf;           // PouchData.Weapon_Range_Bow.StockNum
+constexpr std::uint32_t kBombBagS = 0xb0a1bf51;      // PouchData.Item_BombBag_Small.StockNum
+constexpr std::uint32_t kSeeds = 0x5fadf7fc;         // PouchData.Item_DekuSeed.StockNum, per player
+constexpr std::uint32_t kSeedsGet = 0x29888e1e;      // IsGet.Item_DekuSeed
+constexpr std::uint32_t kSeedCap = 0xae8cc742;       // 0xf80f8077.DekuSeed
+constexpr std::uint32_t kArrows = 0x518ec74b, kArrowCap = 0x418db791;
+constexpr std::uint32_t kBombs = 0xdb1bcd4f, kBombCap = 0xe753508b;
+
+// A game holding every grant flag at 0 and the given items.
+MapStore game_with_grant_flags() {
+  MapStore store;
+  for (const auto& g : coop::host::all_item_grants()) store.hold(g.hash, g.kind, 0);
+  for (const auto& item : item_flags()) {
+    if (item.kind == K::int32) store.hold(item.hash, K::int32, 0);
+  }
+  return store;
+}
+
+protocol::FlagEntry owned(std::uint32_t hash, std::int32_t n = 1) {
+  return protocol::FlagEntry{FlagKey{hash, 0}, K::int32, static_cast<std::uint32_t>(n)};
+}
+
+}  // namespace
+
+TEST_CASE("item grants: the table is sorted and names its flags") {
+  const auto grants = coop::host::all_item_grants();
+  REQUIRE(!grants.empty());
+  std::uint32_t last = 0;
+  for (const auto& g : grants) {
+    CAPTURE(g.name);
+    CHECK(g.item >= last);
+    last = g.item;
+    // Every granting item is an owned item that is shared by max.
+    const auto* item = find_item(g.item);
+    REQUIRE(item != nullptr);
+    CHECK(item->rule == ItemRule::max);
+    CHECK(item->kind == K::int32);
+    CHECK(g.value > 0);
+    if (g.name.starts_with("0xf80f8077.")) {
+      CHECK(g.kind == K::int32);  // a capacity: the struct's name is not known
+      CHECK(find_item(g.hash) == nullptr);
+    } else {
+      // Ammo counts are per-player items, IsGet flags are shared items.
+      CHECK(protocol::flag_hash(g.name) == g.hash);
+      const auto* granted = find_item(g.hash);
+      REQUIRE(granted != nullptr);
+      CHECK(granted->kind == g.kind);
+      CHECK(granted->rule == (g.kind == K::int32 ? ItemRule::per_player : ItemRule::any));
+    }
+    CHECK(!coop::host::item_grants(g.item).empty());
+  }
+  CHECK(coop::host::item_grants(0x8573d2cd).empty());  // the Hookshot needs no ammo
+}
+
+TEST_CASE("item grants: a shared Slingshot comes with its bag and 30 seeds (issue 128)") {
+  MapStore game = game_with_grant_flags();
+  game.hold(kSeedsGet, K::boolean, 0);
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kSlingshot)));
+  CHECK(game.value(kSlingshot) == 1);
+  CHECK(game.value(kSeedCap) == 30);
+  CHECK(game.value(kSeeds) == 30);
+  CHECK(game.value(kSeedsGet) == 1);
+  CHECK(store.stats().granted == 3);
+
+  // The same item again, or the chest opened later through the share: no
+  // second grant, the seeds used meanwhile stay used.
+  game.hold(kSeeds, K::int32, 12);
+  CHECK(store.write(owned(kSlingshot)));
+  CHECK(game.value(kSeeds) == 12);
+  CHECK(store.stats().granted == 3);
+}
+
+TEST_CASE("item grants: only raise, never lower") {
+  MapStore game = game_with_grant_flags();
+  // A game with a bigger bag and more seeds already (an odd save).
+  game.hold(kSeedCap, K::int32, 50);
+  game.hold(kSeeds, K::int32, 45);
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kSlingshot)));
+  CHECK(game.value(kSeedCap) == 50);
+  CHECK(game.value(kSeeds) == 45);
+}
+
+TEST_CASE("item grants: a bag upgrade raises the capacity and fills it") {
+  MapStore game = game_with_grant_flags();
+  game.hold(kSlingshot, K::int32, 1);
+  game.hold(kSeedCap, K::int32, 30);
+  game.hold(kSeeds, K::int32, 7);
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kBulletBagM)));
+  CHECK(game.value(kSeedCap) == 40);
+  CHECK(game.value(kSeeds) == 40);
+}
+
+TEST_CASE("item grants: Bow and bomb bag follow the same rule") {
+  MapStore game = game_with_grant_flags();
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kBow)));
+  CHECK(game.value(kArrowCap) == 30);
+  CHECK(game.value(kArrows) == 30);
+  CHECK(store.write(owned(kBombBagS)));
+  CHECK(game.value(kBombCap) == 20);
+  CHECK(game.value(kBombs) == 20);
+}
+
+TEST_CASE("item grants: a game that owns the item gets nothing extra") {
+  MapStore game = game_with_grant_flags();
+  game.hold(kSlingshot, K::int32, 1);  // its own chest: the game gave the seeds itself
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kSlingshot)));
+  CHECK(game.value(kSeeds) == 0);
+  CHECK(game.value(kSeedCap) == 0);
+  CHECK(store.stats().granted == 0);
+  CHECK(store.stats().kept == 1);
+}
+
+TEST_CASE("item grants: a flag the game cannot write is skipped, the item still arrives") {
+  MapStore game;
+  game.hold(kSlingshot, K::int32, 0);  // no capacity, seed or IsGet flags in this game
+  ItemFlagStore store(game);
+  CHECK(store.write(owned(kSlingshot)));
+  CHECK(game.value(kSlingshot) == 1);
+  CHECK(store.stats().granted == 0);
 }

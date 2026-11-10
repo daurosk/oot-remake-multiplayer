@@ -30,7 +30,7 @@ Bottle hashes: A `IsValid` 0xf39ce410 / `BottleItem` 0x7d48df76; B 0x000ff6ea / 
 
 Song hashes (`IsGet.Item_Melody_…`): ZeldaLullaby 0x01c20002, EponaSong 0xb492ac33, SariaSong 0xd3f8bfcc, SunSong 0x165dd1ad, TimeSong 0x03b3450e, StormSong 0x2b39dd4f, ForestMinuet 0xdc0a0b54, FireBolero 0x49041ab9, WaterSerenade 0x3fa63986, ShadowNocturne 0xc2fb95f4, SpiritRequiem 0x802a36a8, LightPrelude 0xd6320ba4, ScarecrowSong 0x5e86fb4d.
 
-Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related and were not needed: 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077 (Int for Rupee, Bomb, Arrow, DekuStick, DekuNut and one more, perhaps capacities). Both are open.
+Not part of the inventory: `PlayerStatus` also holds position, retry and UI state. Two unnamed structs look item-related and were not needed: 0xf5ab6461 (UInt per assignable item and bottle, perhaps a get order for the menu) and 0xf80f8077, the ammo capacities (below). The first is open.
 
 ## Rules
 
@@ -50,6 +50,34 @@ Choices made here:
 - **Ammo**: the bag, quiver and wallet tiers are shared (max); the count in them is per player.
 - **Magic**: `MPMax` and the spells are shared (max); `MP` is per player.
 - `FairyBless_*` items are per player for now: they are temporary blessings, not owned items (inferred).
+
+## Ammo capacity and what comes with an item (issue 128)
+
+Int struct 0xf80f8077 holds how much of each ammo a player can carry; its members were named by hashing candidates against the struct's member hashes in `GameDataList`. The struct's own name is not known, so the flags have only hashes. All default to 0, reset type 32, saved.
+
+| Member | Flag hash | Values seen in saves |
+|---|---|---|
+| Rupee | 0xe0013650 | 200 with a wallet |
+| DekuSeed | 0xae8cc742 | 50 |
+| Bomb | 0xe753508b | 20 with the small bomb bag |
+| Arrow | 0x418db791 | 0 without a quiver |
+| DekuStick | 0x45762db0 | 10 |
+| DekuNut | 0x735a1ff7 | 20 |
+
+The game's own get scene sets the capacity and the starting ammo with the item. An item that arrives from another player has no get scene, so the receiving game had the item with 0/0 (a player test: the shared Slingshot with no seeds, and no way out of the slingshot room). Now `ItemFlagStore`, when it gives a game an owned item that game did not have (0 to 1 or more), also raises that item's grants (`item_grants()` in `coop/host/game_items.hpp`) to at least these values, the original game's numbers:
+
+| Item | Capacity | Ammo (count, at least) | Also |
+|---|---|---|---|
+| Slingshot | DekuSeed 30 | `Item_DekuSeed` 30 | `IsGet.Item_DekuSeed` |
+| Bullet bag small / medium / large | DekuSeed 30 / 40 / 50 | filled to it | |
+| Bow | Arrow 30 | `Item_Arrow_Normal` 30 | `IsGet.Item_Arrow_Normal` |
+| Quiver small / medium / large | Arrow 30 / 40 / 50 | filled to it | |
+| Bomb bag small / medium / large | Bomb 20 / 30 / 40 | filled to it | `IsGet.Item_Bomb` (small) |
+| Nut bag small / medium / large | DekuNut 20 / 30 / 40 | filled to it | `IsGet.Item_DekuNut` (small) |
+| Stick bag small / medium / large | DekuStick 10 / 20 / 30 | filled to it | `IsGet.Item_DekuStick` (small) |
+| Wallet small / medium | Rupee 200 / 500 | none | |
+
+A value already at or above the floor is left alone, so nothing is taken away. A game that gets the item itself is left to the game. The ammo stays per player afterwards: only this one fill is written. The large wallet is left out (its size is not known). Not checked in a game: that the game reads the capacity from these flags (the cheat that sets them, `LICHII_COOP_OBJECTS_CHEAT`, gave working bombs), and the sizes of the remake's bags beyond the ones in the table above.
 
 ## Pouch items
 

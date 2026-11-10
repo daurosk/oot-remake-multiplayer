@@ -941,12 +941,13 @@ public:
                 LOG_INFO(Core, "coop: {}", note);
             }
             for (const auto& w : sign_words_) {
-                const auto table = r.Ptr(w.address + kActorComponents);
-                const auto part = table ? r.Ptr(*table + 8 * ((w.key >> 32) - 2)) : std::nullopt;
-                const u64 at = part ? *part + (w.key & 0xffffffffu) : 0;
-                const auto now = at != 0 ? r.Get<u64>(at) : std::nullopt;
-                if (now && CoopWorld::SignWordWritable(*now, w.value)) {
-                    memory_->Write64(at, w.value);
+                const auto at = world_.SignWordTarget(
+                    [&r](u64 address) { return r.Get<u64>(address); }, w);
+                if (at) {
+                    memory_->Write64(*at, w.value);
+                } else {
+                    LOG_INFO(Core, "coop: world: {:016x} sign word {} not written (checks)", w.hash,
+                             CoopWorld::SignProbe::Where(w.key));
                 }
             }
             sign_words_.clear();

@@ -275,7 +275,9 @@ void WorldSync::Drain(std::uint64_t now_us) {
                 waiting.emplace_back(h->at, h->from);
             }
         } else if (const auto* c = std::get_if<proto::SignCut>(&m)) {
-            cuts_[c->hash] = c->words;
+            if (cuts_.contains(c->hash) || cuts_.size() < proto::kMaxWorldHitObjects) {
+                cuts_[c->hash] = c->words;
+            }
         } else if (const auto* p = std::get_if<proto::WorldPlace>(&m)) {
             Remote& r = remote_[p->hash];
             r.place = Sample{now_us, p->position, p->rotation};
@@ -691,16 +693,24 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             o.hit_given_us = now_us;
         }
         // Another player's cut of this sign: its words, once the hits are in.
+        // Written only into components the probe has read whole (it copies
+        // a sign once it is near): until then it waits.
         if (const auto cut = cuts_.find(o.hash);
             cut != cuts_.end() && o.sign && now_us - o.first_us >= kHitWaitUs &&
-            !hits_.contains(o.hash) && now_us - o.hit_given_us >= kCutAfterHitUs) {
+            !hits_.contains(o.hash) && now_us - o.hit_given_us >= kCutAfterHitUs &&
+            probe_.Copied(address, o.hash)) {
+            std::size_t taken = 0;
             for (const proto::SignWord& w : cut->second) {
-                if (!HeapPointer(w.value)) {  // the rest is checked against our word at the write
-                    out.words.push_back({address, w.key, w.value});
+                const auto part = probe_.PartOf(address, o.hash, (w.key >> 32) - 2);
+                if (!SignCutKeyAllowed(w.key) || HeapPointer(w.value) || !part) {
+                    continue;
                 }
+                out.words.push_back({address, o.hash, w.key, w.value, *part});
+                ++taken;
             }
-            char more[48];
-            std::snprintf(more, sizeof more, ": %zu words written", cut->second.size());
+            char more[64];
+            std::snprintf(more, sizeof more, ": %zu of %zu words to write", taken,
+                          cut->second.size());
             out.notes.push_back(Line("world: %016llx %s cut by another player%s", o.hash, o.name, more));
             cuts_.erase(cut);
         }
@@ -1281,6 +1291,24 @@ bool PoseWord(std::uint64_t v) {
 
 } // namespace
 
+bool SignCutKeyAllowed(std::uint64_t key) {
+    // (component table entry offset, byte offset in the component)
+    static constexpr std::array<std::pair<std::uint64_t, std::uint64_t>, 11> kCutWords{{
+        {0x58, 0x120}, {0x60, 0xc8},                  // NaN -> a float
+        {0x70, 0x18},                                 // flag 0x80000 (high half)
+        {0x130, 0xb0}, {0x130, 0xc0},                 // contacts, their 0x400 bit
+        {0x160, 0x60}, {0x160, 0x70},                 // the same, second component
+        {0x268, 0x98}, {0x268, 0xa0}, {0x268, 0xa8},  // the cut point
+        {0x268, 0x1e8},                               // flag 0x80000
+    }};
+    const std::uint64_t region = key >> 32;
+    if (region < 2) {
+        return false;
+    }
+    const std::pair<std::uint64_t, std::uint64_t> word{(region - 2) * 8, key & 0xffffffffu};
+    return std::find(kCutWords.begin(), kCutWords.end(), word) != kCutWords.end();
+}
+
 bool SignWordWritable(std::uint64_t current, std::uint64_t value) {
     if (HeapPointer(value) || HeapPointer(current) || PoseWord(current)) {
         return false;
@@ -1299,7 +1327,7 @@ std::vector<proto::SignWord> SignProbe::CutWords(const Snapshot& before, const S
             continue;
         }
         const auto was = before.find(key);
-        if (was == before.end() || was->second == is || HeapPointer(is) ||
+        if (!SignCutKeyAllowed(key) || was == before.end() || was->second == is || HeapPointer(is) ||
             HeapPointer(was->second) || (PoseWord(is) && PoseWord(was->second))) {
             continue;
         }
@@ -1415,6 +1443,63 @@ std::vector<std::string> SignProbe::Look(const ReadWord& read, const std::vector
         }
     }
     return out;
+}
+
+const SignProbe::Snapshot* SignProbe::CopyOf(std::uint64_t address, std::uint64_t hash) const {
+    const auto it = signs_.find(address);
+    if (it == signs_.end() || it->second.hash != hash) {
+        return nullptr;
+    }
+    const State& s = it->second;
+    if (!s.bases.empty()) {
+        return &s.bases.back().words;
+    }
+    return s.event && s.event->base ? &s.event->base->words : nullptr;
+}
+
+bool SignProbe::Copied(std::uint64_t address, std::uint64_t hash) const {
+    return CopyOf(address, hash) != nullptr;
+}
+
+std::optional<SignProbe::Part> SignProbe::PartOf(std::uint64_t address, std::uint64_t hash,
+                                                 std::uint64_t entry) const {
+    const Snapshot* copy = CopyOf(address, hash);
+    if (copy == nullptr || entry >= kTableWords) {
+        return std::nullopt;
+    }
+    const auto table = copy->find(Key(kRegionActor, kActorTable));
+    const auto part = copy->find(Key(kRegionTable, 8 * entry));
+    if (table == copy->end() || part == copy->end() || !ProbePointer(table->second) ||
+        !ProbePointer(part->second)) {
+        return std::nullopt;
+    }
+    if (!copy->contains(Key(kRegionComponent + entry, 8 * (kComponentWords - 1)))) {
+        return std::nullopt;  // not read whole (or read under another entry)
+    }
+    return Part{table->second, part->second};
+}
+
+std::optional<std::uint64_t> WorldSync::SignWordTarget(const SignProbe::ReadWord& read,
+                                                       const Out::Word& w) const {
+    const auto o = objects_.find(w.address);
+    if (o == objects_.end() || o->second.hash != w.hash || !o->second.sign ||
+        !SignCutKeyAllowed(w.key) || !ProbePointer(w.part.table) ||
+        !ProbePointer(w.part.component)) {
+        return std::nullopt;
+    }
+    const auto table = read(w.address + SignProbe::kActorTable);
+    const std::uint64_t entry = (w.key >> 32) - 2;
+    const auto part =
+        table && *table == w.part.table ? read(*table + 8 * entry) : std::nullopt;
+    const std::uint64_t offset = w.key & 0xffffffffu;
+    if (!part || *part != w.part.component || offset >= 8 * SignProbe::kComponentWords) {
+        return std::nullopt;
+    }
+    const auto now = read(*part + offset);
+    if (!now || !SignWordWritable(*now, w.value)) {
+        return std::nullopt;
+    }
+    return *part + offset;
 }
 
 void SignProbe::Reset() {

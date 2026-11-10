@@ -101,6 +101,16 @@ public:
     // Where a word was read, for logs: actor+0x.., table+0x.., c+0x2b8+0x...
     static std::string Where(std::uint64_t key);
 
+    // The sign's component table and the component in table entry `entry`,
+    // as the probe's latest copy of this sign has them (it read the whole
+    // 0x200 bytes of that component): nothing when it has no such copy.
+    struct Part {
+        std::uint64_t table = 0;
+        std::uint64_t component = 0;
+    };
+    std::optional<Part> PartOf(std::uint64_t address, std::uint64_t hash, std::uint64_t entry) const;
+    bool Copied(std::uint64_t address, std::uint64_t hash) const;  // the probe has a copy
+
 private:
     using Snapshot = std::map<std::uint64_t, std::uint64_t>;  // key (Where) -> word
     struct Base {
@@ -123,6 +133,7 @@ private:
     };
 
     static Snapshot Read(const ReadWord& read, std::uint64_t address);
+    const Snapshot* CopyOf(std::uint64_t address, std::uint64_t hash) const;
     // What of a cut can be written into another game's sign: component
     // words (not the Life hit record, not counters seen before the hit),
     // no heap pointers, no transforms of the pieces.
@@ -138,6 +149,11 @@ private:
 // sign has there now): never a heap pointer either way, never over a
 // transform (two real floats), and two real floats only into an empty word.
 bool SignWordWritable(std::uint64_t current, std::uint64_t value);
+
+// The words a sign's cut changes (docs/world.md, "Signs: the cut words",
+// from the run of 2026-11-10), as SIGN_CUT keys: only these are sent and
+// written, into components the probe has read 0x200 bytes of.
+bool SignCutKeyAllowed(std::uint64_t key);
 
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the
@@ -197,8 +213,10 @@ public:
         // component table entry (key >> 32) - 2, byte offset key & 0xffffffff.
         struct Word {
             std::uint64_t address = 0;  // the actor
+            std::uint64_t hash = 0;
             std::uint64_t key = 0;
             std::uint64_t value = 0;
+            SignProbe::Part part;       // as the probe saw them
         };
         std::vector<Word> words;
         std::vector<std::string> notes;  // log lines
@@ -231,6 +249,13 @@ public:
     void ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us, Out& out);
 
     void Reset();
+
+    // Where one of another player's cut words goes in our sign, read again
+    // just before the write: nothing unless the actor is still that sign,
+    // its table and component are the ones the probe saw (pointers), the
+    // key is on the list and the word may be written (SignWordWritable).
+    std::optional<std::uint64_t> SignWordTarget(const SignProbe::ReadWord& read,
+                                                const Out::Word& w) const;
 
     // For tests and logs.
     std::size_t Count() const { return objects_.size(); }

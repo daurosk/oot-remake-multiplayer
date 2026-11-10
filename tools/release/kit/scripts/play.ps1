@@ -150,7 +150,7 @@ if ($running) { Write-Host 'This emulator is already running; close it first to 
 $fixed = Repair-KitPaths $user
 if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
 
-# Switches from coop-options.ini (the lines without a '#' in front).
+# Switches from coop-options.ini (the lines without a '#' in front). They win over the AMD rule below.
 $options = Read-KitOptions (Join-Path $kit 'coop-options.ini')
 foreach ($key in $options.Keys) {
     $value = $options[$key]
@@ -160,6 +160,9 @@ foreach ($key in $options.Keys) {
     Set-Item -Path "env:$key" -Value $value
     Write-Host "Option: $key=$value"
 }
+# AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).
+$gpl = Set-AmdGplDefault
+if ($gpl) { Write-Host $gpl }
 $pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
 if (Test-Path -LiteralPath $pack) { Write-Host 'Puppet pack: found.' }
 else {

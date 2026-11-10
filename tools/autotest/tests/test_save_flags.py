@@ -118,15 +118,17 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual(sf.main(["bombs", pattern]), 0)
         for path in self.slots:
             self.assertEqual(sf.get(sf.read_file(path), 2, 0xdb1bcd4f), 20)
-            folder = os.listdir(os.path.dirname(path))
-            backups = [f for f in folder if f.startswith("progress.sav.bak-")]
+            # The baseline folder holds only the save (the runner copies it all
+            # into the game's saves); the old file is in autotest-save-backup.
+            self.assertEqual(os.listdir(os.path.dirname(path)), ["progress.sav"])
+            kept = sf.backup_dir(path)
+            self.assertIn(os.sep + "autotest-save-backup" + os.sep, kept)
+            backups = os.listdir(kept)
             self.assertEqual(len(backups), 1)
-            with open(os.path.join(os.path.dirname(path), backups[0]), "rb") as f:
-                self.assertEqual(f.read(), old)
-            self.assertFalse([f for f in folder if ".tmp-" in f])  # no temp file left
+            self.assertTrue(backups[0].startswith("progress.sav.bak-"))
+            self.assertEqual(sf.read_file(os.path.join(kept, backups[0])), old)
         self.assertEqual(sf.main(["bombs", self.slots[0]]), 0)  # nothing to change: no new backup
-        self.assertEqual(len([f for f in os.listdir(os.path.dirname(self.slots[0]))
-                              if ".bak-" in f]), 1)
+        self.assertEqual(len(os.listdir(sf.backup_dir(self.slots[0]))), 1)
         self.assertEqual(sf.main(["set", self.slots[0], "int:0xdb1bcd4f=7"]), 0)
         self.assertEqual(sf.get(sf.read_file(self.slots[0]), 2, 0xdb1bcd4f), 7)
         self.assertEqual(sf.main(["set", self.slots[0], "int:0x99=1"]), 1)  # not in the save
@@ -164,7 +166,7 @@ class CommandLineTest(unittest.TestCase):
             f.write(old[:-1] + b"")  # the game wrote it
         with self.assertRaises(sf.SaveError):
             sf.write_save(self.slots[0], old, bytes(new))
-        self.assertFalse([f for f in os.listdir(os.path.dirname(self.slots[0])) if ".bak-" in f])
+        self.assertFalse(os.path.exists(sf.backup_dir(self.slots[0])))
 
 
 if __name__ == "__main__":

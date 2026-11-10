@@ -23,8 +23,9 @@ Windows shells do not. Only saves in a kit's baseline are touched: a path
 must be <...>/autotest-save/<user>/<title>/slot_NN/progress.sav, and nothing
 under %APPDATA% or %LOCALAPPDATA% (a player's own saves, the emulator's
 NAND) is ever read or written. Before a change the file is copied to
-progress.sav.bak-<time>, and the new bytes go to a temp file that then
-replaces it. Close the game first: it writes its saves on every scene change.
+<kit>/autotest-save-backup/<user>/<title>/slot_NN/progress.sav.bak-<time>
+(outside the baseline, which the runner copies into the game's saves), and
+the new bytes go to a temp file that then replaces it. Close the game first: it writes its saves on every scene change.
 """
 import argparse
 import glob
@@ -144,14 +145,24 @@ def expand(patterns):
     return out
 
 
+def backup_dir(path):
+    """<kit>/autotest-save-backup/<user>/<title>/slot_NN for a checked path."""
+    parts = os.path.normpath(path).split(os.sep)
+    parts[-5] = parts[-5] + "-backup"
+    return os.sep.join(parts[:-1])
+
+
 def write_save(path, old, new):
-    """Backs `old` up next to the file, then replaces it with `new` through a
-    temp file. Refuses when the file changed since it was read."""
+    """Backs `old` up beside the baseline (backup_dir), then replaces the file
+    with `new` through a temp file. Refuses when the file changed since it was
+    read."""
     index(new)  # the changed bytes are still a whole save
     with open(path, "rb") as f:
         if f.read() != old:
             raise SaveError(f"{path}: changed since it was read (is the game running?)")
-    stem = f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+    folder = backup_dir(path)
+    os.makedirs(folder, exist_ok=True)
+    stem = os.path.join(folder, f"progress.sav.bak-{time.strftime('%Y%m%d-%H%M%S')}")
     backup, n = stem, 0
     while os.path.exists(backup):
         n += 1
@@ -267,7 +278,7 @@ def main(argv=None):
             backup = write_save(path, old, bytes(data))
             for h, before, after in done:
                 print(f"{path}: {h:#010x} {before} -> {after}")
-            print(f"{path}: old file kept as {os.path.basename(backup)}")
+            print(f"{path}: old file kept as {backup}")
         return 0
     except (SaveError, OSError) as e:
         print(f"save_flags: {e}", file=sys.stderr)

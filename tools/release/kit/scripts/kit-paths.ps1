@@ -42,13 +42,14 @@ function Get-KitLoadDir([string]$User) {
 }
 
 # Reads coop-options.ini: NAME=value lines for LICHII_COOP_* switches. Blank lines and
-# lines starting with # or ; are skipped. Returns an ordered table.
+# lines starting with # or ; are skipped, and so is auto_update (play.ps1 reads it, the
+# emulator does not). Returns an ordered table.
 function Read-KitOptions([string]$Path) {
     $values = [ordered]@{}
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
-        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';')) { continue }
+        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^auto_update\s*=') { continue }
         if ($t -match '^(LICHII_COOP_[A-Z0-9_]+)\s*=\s*(.*)$') { $values[$Matches[1]] = $Matches[2] }
         else { Write-Host "coop-options.ini: skipped '$t' (only LICHII_COOP_NAME=value lines)" }
     }

@@ -4,11 +4,15 @@
 #        play.cmd -Server 192.168.1.20 -Name Saria [-Port 27510]   no questions
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
+# On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
+# says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
+# Every later play.ps1 must accept -NoUpdate.
 param(
     [string]$Mode = '',
     [string]$Server = '',
     [string]$Name = '',
-    [string]$Port = ''
+    [string]$Port = '',
+    [switch]$NoUpdate
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
@@ -20,17 +24,74 @@ $ini = Join-Path $emu 'user\config\coop.ini'
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
-# A newer release? One short question to GitHub; nothing is shown when there is none or no
-# network. Update.bat does the update. Given 6 s at most: a slow name lookup or proxy search
-# is not bounded by the request's own timeout, so the check is stopped when it takes longer.
+# Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
+function Read-YesNo([string]$Question, [int]$Seconds) {
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected) {
+        Write-Host "$Question [Y/n]"
+        $line = [Console]::In.ReadLine()
+        return -not ($line -and $line.Trim() -match '^(?i)(n|no)$')
+    }
+    Write-Host -NoNewline "$Question [Y/n] (yes in $Seconds s) "
+    $end = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $end) {
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'N') { Write-Host 'n'; return $false }
+            if ($key.Key -eq 'Y' -or $key.Key -eq 'Enter') { Write-Host 'y'; return $true }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host 'y'
+    return $true
+}
+
+# A newer co-op release? One short question to GitHub (update.ps1 -Status), given 6 s at
+# most: a slow name lookup or proxy search is not bounded by the request's own timeout, so it
+# is stopped when it takes longer. No network, or GitHub down: nothing is said and this kit
+# starts as it is.
 $updater = Join-Path $PSScriptRoot 'update.ps1'
-if (Test-Path $updater) {
+if (-not $NoUpdate -and (Test-Path $updater)) {
+    $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $status = ''
+    $out = [System.IO.Path]::GetTempFileName()
     try {
-        $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-        $check = Start-Process -FilePath $ps -NoNewWindow -PassThru -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$updater`"", '-Check', '-Kit', "`"$kit`"")
-        if (-not $check.WaitForExit(6000)) { $check.Kill() }
+        $check = Start-Process -FilePath $ps -NoNewWindow -PassThru -RedirectStandardOutput $out -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$updater`"", '-Status', '-Kit', "`"$kit`"")
+        if ($check.WaitForExit(6000)) { $status = ([System.IO.File]::ReadAllText($out)).Trim() } else { $check.Kill() }
     } catch { }
+    Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+    if ($status -match '^(newer (\S+)|unfinished)$') {
+        $what = if ($Matches[2]) { "Co-op $($Matches[2]) is out." } else { 'An update of this kit did not finish.' }
+        $when = 'ask'
+        foreach ($line in @(Get-Content -LiteralPath (Join-Path $kit 'coop-options.ini') -ErrorAction SilentlyContinue)) {
+            if ($line -match '^\s*auto_update\s*=\s*(ask|yes|no)\s*$') { $when = $Matches[1].ToLowerInvariant() }
+        }
+        $go = switch ($when) {
+            'yes' { Write-Host "$what Updating (auto_update = yes in coop-options.ini)."; $true }
+            'no' { Write-Host "$what Close the games and run Update.bat to update (auto_update = no)."; $false }
+            default { Read-YesNo "$what Update now? Your saves, keys and settings are kept." 10 }
+        }
+        if ($go) {
+            # The update replaces this script, so it runs from a copy, and the new kit's own
+            # play.ps1 starts the game afterwards.
+            $copy = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-update-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+            Copy-Item -LiteralPath $updater -Destination $copy
+            & $ps -NoProfile -ExecutionPolicy Bypass -File $copy -Kit $kit -Launch
+            $code = $LASTEXITCODE
+            Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue
+            if ($code -eq 3) {
+                $next = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'play.ps1'))
+                foreach ($pair in @(@('-Mode', $Mode), @('-Server', $Server), @('-Name', $Name), @('-Port', $Port))) {
+                    if ($pair[1]) { $next += $pair }
+                }
+                & $ps @next -NoUpdate
+                exit $LASTEXITCODE
+            }
+            if ($code -ne 0) { Write-Host 'The update did not happen; this version starts as it is.' }
+        }
+    }
 }
 
 $current = Read-CoopIni $ini

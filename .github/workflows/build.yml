@@ -48,6 +48,8 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Kit updater tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/update_test.ps1
+      - name: Kit launch-update tests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/launch_test.ps1
 
   linux:
     runs-on: ubuntu-latest

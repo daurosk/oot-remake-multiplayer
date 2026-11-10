@@ -16,13 +16,16 @@ stick 0 1 60
 goto -5.9 70.5 0.6      # just east of the post
 toward -7.46 71.12 8
 mark at-post
-press A                 # read it
+# Chunk 2 (2026-11-10): Link stood at the prompt ("Check" shown) but the default 6-tick press
+# did nothing. Let the stick settle first and press for 12 ticks (held-tools: 6 were missed).
+wait 20
+press A 12              # read it
 wait 240
 mark reading
-press A                 # through the text
+press A 12              # through the text
 wait 60
-press A
+press A 12
 wait 60
-press B
+press B 12
 wait 180
 mark closed

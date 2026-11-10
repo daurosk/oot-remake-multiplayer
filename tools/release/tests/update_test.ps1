@@ -108,6 +108,7 @@ try {
         Write-File "$Dir\emulator\user\keys\prod.keys" 'my keys'
         Write-File "$Dir\emulator\user\nand\user\save\0000\save.bin" 'my save'
         Write-File "$Dir\emulator\user\load\0400486024DEC000\coop-puppet\romfs\pack.bin" 'my pack'
+        Write-File "$Dir\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin" 'old shaders'
         Write-File "$Dir\logs\server.log" 'my log'
         Write-File "$Dir\tools\gone.txt" 'a kit file the new kit drops'
         Write-File "$Dir\notes.txt" 'my own file'
@@ -181,6 +182,9 @@ try {
     Check ((Read-File "$kit\backup-v0.1.0-test2\Host.bat") -eq 'old host') 'the old Host.bat is in the backup'
     Check ((Read-File "$kit\backup-v0.1.0-test2\tools\gone.txt") -eq 'a kit file the new kit drops') 'a removed file is in the backup'
     Check ((Read-File "$kit\backup-v0.1.0-test2\coop-options.ini") -eq "LICHII_COOP_PUPPET=0`r`n") 'the old coop-options.ini is in the backup'
+    Check (-not (Test-Path "$kit\emulator\user\cache\shader")) 'a new emulator: the shader cache is moved away'
+    Check ((Read-File "$kit\backup-v0.1.0-test2\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'into the backup'
+    Check (($out -join ' ') -match 'old shader cache was moved') 'and the player is told'
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
     Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'newest version') 'a second run has nothing to do'
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit (Join-Path $tmp 'no-kit') -Check -Api $good 2>&1
@@ -208,6 +212,7 @@ try {
     Check ($LASTEXITCODE -ne 0 -and ($out -join ' ') -match 'old files are back') "a failed copy is rolled back"
     Check ((Read-File "$kit\Host.bat") -eq 'old host') 'Host.bat is the old one again'
     Check ((Read-File "$kit\emulator\lichii.exe") -eq 'old exe') 'the emulator is the old one'
+    Check ((Read-File "$kit\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'the shader cache is back in place'
     Check (-not (Test-Path "$kit\scripts\new.ps1")) 'the new file is gone again'
     Check ((Get-KitVersion $kit) -eq 'v0.1.0-test2') 'VERSION.txt is the old one'
     Test-PlayerKept $kit 'rolled back'
@@ -256,7 +261,27 @@ try {
     Check ((Get-KitVersion $kit) -eq 'v0.1.0-test2') 'VERSION.txt is the old one'
     Check (-not (Test-Path "$kit\update-in-progress.txt")) 'no marker after a clean rollback'
     Check (-not (Test-Path "$kit\scripts\new.ps1")) 'the new file is gone again'
+    Check ((Read-File "$kit\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'the shader cache is back after a write failed'
+    Check (-not (Test-Path "$kit\backup-v0.1.0-test2\emulator\user\cache\shader")) 'and not left in the backup'
     Test-PlayerKept $kit 'rolled back after a write'
+
+    # Same emulator (as test4 -> test4.1): the shader cache stays.
+    $kit = Join-Path $tmp 'kit9'; New-OldKit $kit
+    Copy-Item -LiteralPath "$newKit\emulator\lichii.exe" -Destination "$kit\emulator\lichii.exe" -Force
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'Updated to v0\.1\.0-test3') 'an update with the same emulator ran'
+    Check ((Read-File "$kit\emulator\user\cache\shader\0100F2C0115B6000\vulkan.bin") -eq 'old shaders') 'same emulator: the shader cache is kept'
+    Check (-not (Test-Path "$kit\backup-v0.1.0-test2\emulator\user\cache")) 'and not copied to the backup'
+    Check (($out -join ' ') -notmatch 'shader') 'and nothing is said about it'
+    # A new emulator and no shader cache yet: nothing to move, nothing said.
+    $kit = Join-Path $tmp 'kit10'; New-OldKit $kit
+    Remove-Item -LiteralPath "$kit\emulator\user\cache" -Recurse -Force
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -notmatch 'shader') 'no shader cache: the update runs and says nothing about it'
+    Write-File "$tmp\exe\a.exe" 'build a'; Write-File "$tmp\exe\a2.exe" 'build a'; Write-File "$tmp\exe\b.exe" 'build b'
+    Check (-not (Test-KitEmulatorChanged "$tmp\exe\a.exe" "$tmp\exe\a2.exe")) 'the same exe is the same emulator'
+    Check (Test-KitEmulatorChanged "$tmp\exe\a.exe" "$tmp\exe\b.exe") 'another exe is another emulator'
+    Check (Test-KitEmulatorChanged "$tmp\exe\missing.exe" "$tmp\exe\b.exe") 'no old exe counts as another emulator'
     # The one-file Update.bat, dropped into an old kit that has no scripts\update.ps1.
     $kit = Join-Path $tmp 'kit 4 (with spaces)'; New-OldKit $kit
     & (Join-Path $release 'make_update_bat.ps1') -Out "$kit\Update.bat"

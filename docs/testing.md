@@ -298,6 +298,8 @@ Every scenario starts from the same save. The game autosaves on each scene chang
 2. `tools\autotest\run.ps1 -Scenario walk -TakeBaseline` copies each kit's saves as they are into its baseline and stops. Take it while the newest save is the child in the Graveyard at 10:01 (auto-A's own NAND still had that on 2026-11-09: newest autosave 2026-11-08 22:10).
 3. Without a baseline the runner stops and says so; `-NoRestore` runs on whatever was saved last.
 
+**Items in the baseline save.** `tools/autotest/save_flags.py` changes flag values in a closed save (`slot_NN/progress.sav`), so a scenario can start from a save that already holds an item, as a player's own save would. `bombs` writes what a real small bomb bag sets (docs/items.md, "Bombs from the cheat"), never lowering a value; `get` and `set` read and write single flags (`int:0xHASH=20`, `bool:`, `uint:`, `enum:`). Only values already in the save change, nothing moves, and there is no checksum. Run it on a copy of the kit's baseline only (never on a player's own saves), with the games closed, on every slot of the autotest user (Continue loads the newest), for example `python tools\autotest\save_flags.py bombs <kit>\autotest-save\<user>\0400486024DEC000\slot_0*\progress.sav`, for both kits. Tested in `tools/autotest/tests/test_save_flags.py`.
+
 After `load.txt` the runner checks that each game reached the save point: its log must show a Graveyard object (`coop: objects: + ...Graveyard...`, needs `LICHII_COOP_DEBUG_OBJECTS=1`, on by default) within 15 s, else the run stops with `start.txt` saying which game loaded elsewhere.
 
 **Scenario headers.** Lines starting `#!` in the A script (or steps file) are read by the runner; the emulator sees comments:

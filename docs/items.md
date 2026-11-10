@@ -295,6 +295,10 @@ The struct `PouchData.Item_Bomb` has no member but `StockNum`. The capacity stru
 
 **Checks in the next run.** A taken bomb lowers the count, so the cheat tops it up again and logs `coop: objects: cheat Item_Bomb 19 -> 20`; the bomb stays on the list (`coop: objects: + Item_Bomb`, no `-` line for over a second). Without that line, the bombs are still the problem; the other way is to load one of the real bomb saves.
 
+**Run of 2026-11-10 (chunk 3, spawn-bomb 20261110-094355): still 0.1 s.** All four flags were written (`cheat 0x541947d0.Bomb 0 -> 1` and the rest, `get order Item_Bomb 0 -> 19`, no "not found"), and they reached the game: the "Bomb" help box no longer came up at the first ZR. Yet every ZR made an `Item_Bomb` that left the list 0.05 to 0.11 s later, and the count stayed 20. So the flags a real bag sets are not enough when they are written into a running game. What all the cheat's runs share is that the bombs arrive after the save has loaded (the load puts the saved 0 back, and the cheat writes again about a second later), in a scene loaded without them. Likely (not checked in the code): the game sets up what an item needs (the bomb actor's resources, or a copy of the pouch) when the save or the scene loads, from what is owned then.
+
+**Next: bombs in the save itself.** `tools/autotest/save_flags.py bombs` writes the same flags into the kits' baseline saves ([testing.md](testing.md)), so the game loads them as it loads a player's own bombs. If the bombs then stay, the cheat is the problem, not the flags. A shared bomb bag then needs a scene change before its bombs work, which is the same for every item a player gets from another player (a follow-up for #128). If they still go after 0.1 s with the bombs in the save, the cause is elsewhere, and the next try is the real bomb save (the kits' second user profile, slot 0).
+
 ## Not done
 
 1. Gold Skulltula placement keys: one known (above); the rest (`Obj_RupeeToken`, 85 placements, and any others) to read from the Banc placements; a loaded Skulltula or token removed when its key is set by another player; heart piece placement keys.

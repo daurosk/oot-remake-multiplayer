@@ -1,0 +1,21 @@
+# drops, B: as pots.B.txt (watches the crate, then follows A into the house), then stays.
+mark start
+wait 120
+stick 0 -1 300          # its save is further up the Graveyard path than A's
+wait 420
+mark kakariko
+stick 0 1 60
+goto -6.0 70.5 1.0
+goto -7.0 56.0 1.5 900
+goto -9.0 49.0 1.0 900
+wait 900                # watch the crate, its drop and the pickup
+goto -23.6 33.6 0.6 900 # follow A round to the house's west door
+goto -23.6 30.2 0.5 600
+toward -21.90 30.17 15
+press A
+wait 150
+goto -20.4 30.3 0.5 600 # just inside
+toward -16.9 30.6 15
+mark watching
+wait 1800
+mark end

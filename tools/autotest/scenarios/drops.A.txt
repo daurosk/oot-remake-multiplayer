@@ -1,0 +1,70 @@
+# drops: the pots run (crate, then the two pots in the house), then A walks over each spot to pick
+# up what dropped there. B watches (drops.B.txt). Logs: coop: drops: in both.
+mark start
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard
+wait 420                # Kakariko loads
+mark kakariko
+stick 0 1 60            # out of the gate passage
+goto -6.0 70.5 1.0
+goto -7.0 56.0 1.5 900
+mark south
+goto -8.6 42.6 0.6 900
+mark at-crate
+toward -8.09 40.95 8
+press Y
+wait 25
+toward -8.09 40.95 4
+press Y
+wait 25
+toward -8.09 40.95 4
+press Y
+wait 25
+mark hit3
+toward -8.09 40.95 4
+press Y
+wait 25
+toward -8.09 40.95 4
+press Y
+wait 25
+toward -8.09 40.95 4
+press Y
+wait 60
+mark hit6
+wait 60
+mark crate-drop         # the crate's drop lies here in both games
+goto -8.09 40.95 0.3 300  # onto the crate's spot: pick it up
+wait 90
+goto -8.6 42.6 0.4 300
+wait 60
+mark crate-picked
+goto -23.6 33.6 0.6 900 # past the house's north-west corner (the pots are inside it)
+goto -23.6 30.2 0.5 600 # outside its west door (Obj_Kakariko_Door_A_09 at -21.90, 30.17)
+mark at-door
+toward -21.90 30.17 15
+press A                 # open
+wait 150
+mark opened
+goto -19.8 30.3 0.5 600 # inside
+mark inside
+goto -16.9 29.7 0.4 600 # between the two pots, on their south side
+mark at-pots
+toward -16.59 30.70 8
+press Y
+wait 30
+mark cut1
+toward -17.52 30.68 8
+press Y
+wait 30
+mark cut2
+wait 60
+mark pots-drop
+goto -16.59 30.40 0.3 300 # onto each pot's spot
+wait 60
+goto -17.52 30.40 0.3 300
+wait 60
+goto -16.9 29.7 0.4 300
+wait 120
+mark pots-picked
+wait 600                # leave anything else to blink out
+mark end

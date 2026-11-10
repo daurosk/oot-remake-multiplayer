@@ -1,0 +1,106 @@
+# field: both games load the save into Hyrule Field at night, outside Kakariko
+# (HyruleField_FrontOfKakarikoVillage, about 200,159,19), where Stalchildren rise near Link.
+# A (the decider of the rolls, player 1) stands and fights with ZL+Y; B starts 0 m away, walks
+# 25 m off and back (field.B.txt). Checks: enemy copies move and play in B (5 s objects
+# lines), owners and epochs, drops of a killed Stalchild in both games. Run with -NoLoad.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400                # the save loads, then the warp lands (about 30 s)
+mark field
+wait 600                # the first Stalchildren rise
+mark rise
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight1
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight2
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight3
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight4
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight5
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight6
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight7
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight8
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight9
+hold ZL 30
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 20
+hold ZL+Y 8
+hold ZL 40
+mark fight10
+press B
+wait 300
+mark drops              # what the dead ones left
+goto 200.4 19.3 0.5 600 # back to the start spot: picks up what lies there
+wait 300
+mark end

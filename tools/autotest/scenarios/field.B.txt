@@ -1,0 +1,23 @@
+# field, B: loads into the same spot, walks 25 m north-west (away from A), waits there, and
+# comes back while A fights: the enemies near B are B's to own when A is far (F1's distance rule).
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400                # the save loads, then the warp lands (about 30 s)
+mark field
+wait 300
+goto 182.0 36.0 1.0 900 # 25 m away
+mark away
+wait 1500
+goto 199.0 21.0 1.0 900 # back beside A
+mark back
+wait 2400
+mark end

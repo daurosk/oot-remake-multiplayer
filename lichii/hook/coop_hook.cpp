@@ -397,11 +397,13 @@ public:
             std::optional<std::uint64_t> round_trip_us;
             std::uint64_t server_now_us;
             std::vector<coop::net::Player> players;
+            bool name_retry;
         };
         // One lock at a time: the network lock, then the presence lock.
         const Net net = session_->with_client([](coop::net::Client& c) {
             const bool on = c.state() == coop::net::State::connected;
-            return Net{c.state(), c.round_trip_us(), on ? c.server_now_us() : 0, c.players()};
+            return Net{c.state(), c.round_trip_us(), on ? c.server_now_us() : 0, c.players(),
+                       c.retrying_name_taken()};
         });
         std::optional<std::string> own_scene;
         {
@@ -441,7 +443,8 @@ public:
         if (!on) {
             // The client drops the room on a lost connection; still show ourselves.
             PlayerRow self{0, settings_.name, true};
-            self.state = welcomed_once_ && net.state != coop::net::State::refused
+            self.state = net.name_retry ? "name in use, asking again"
+                         : welcomed_once_ && net.state != coop::net::State::refused
                              ? "reconnecting"
                              : std::string(coop::net::to_string(net.state));
             self.scene = own_scene;

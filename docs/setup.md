@@ -53,9 +53,14 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 
 The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed):
 
-1. Start `Join.bat`, right-click the game in the list and choose **Dump RomFS**, then the full dump. It writes several GB to `emulator\user\dump\0400486024DEC000\romfs\`. Close the emulator when it is done.
-2. Double-click `make-puppet-pack.cmd`. It finds the dump and builds the pack in under a minute. If it cannot find the dump, it asks for the folder that holds `Pack`, `Model`, `AS`, `RSDB` and `System`.
-3. You can delete the `dump` folder afterwards.
+**If your game is a `.nup` file** (most players): double-click `make-puppet-pack.cmd`. It finds the `.nup` in the emulator's game list folders (step 3), or asks for it (type its path, or drag the file into the window). It reads the game files straight from the `.nup`, so it needs no keys and no dump, and builds the pack in under a minute.
+
+**If your game is an `.nsp` or `.xci`** (or the tool cannot use your `.nup`), dump its RomFS first:
+
+1. Check first: the game starts in the kit's emulator (step 3), and the game **update** is installed in the kit's emulator (step 2), not only in another emulator. Without it you dump the old base game, which co-op cannot use.
+2. Start `Join.bat`, right-click the game in the list and choose **Dump RomFS**. If it asks which RomFS, pick **Program [0400486024DEC000]**. Then pick **Full** (not Skeleton). It writes several GB to `emulator\user\dump\0400486024DEC000\romfs\` and needs that much free space plus 1 GB. Keep the progress window open until it says **RomFS Extraction Succeeded!**; then close the emulator.
+3. Double-click `make-puppet-pack.cmd`. It checks the dump and builds the pack. If something is wrong it says what and how to fix it (see [Troubleshooting](#troubleshooting)). If it finds nothing, it asks for the `.nup` or the folder that holds `Pack`, `Model`, `AS`, `RSDB` and `System`.
+4. You can delete the `dump` folder afterwards.
 
 Without the pack, co-op still works, but the other players show only as a name and a dot.
 
@@ -87,7 +92,21 @@ It sends nothing about you: one request for the list of releases, and the two do
 
 ## Troubleshooting
 
-- **"RomFS extraction failed" at the dump (step 4).** The kit's emulator needs the same things as for playing: your keys in `emulator\user\keys`, the firmware installed, and the game's update installed in the kit's emulator itself (**File > Install Files to NAND**), not only in another emulator. Check step 2, then dump again and choose the full dump. Keep the progress window open until it says it is done; closing it stops the dump.
+- **"RomFS Extraction Failed! There was an error copying the RomFS files or the user cancelled the operation." (step 4).** With a `.nup` game you do not need Dump RomFS: run `make-puppet-pack.cmd` and give it the `.nup`. Otherwise: the emulator shows this one message for nearly every failure and writes nothing about the dump itself in its log. In order:
+  - Your keys are older than the game's update. The log (`emulator\user\log\eden_log.txt`) then has `Cannot decrypt ...: keys for gen 0x17+ required.`, and `make-puppet-pack.cmd` says **"Your prod.keys are too old for this game's update"**. Gen 0x17 needs `master_key_16` in `prod.keys`; keys that stop at `master_key_15` cannot decrypt the update. The game can still run from a `.nup`, which is not encrypted. Fix: build the pack from the `.nup` (step 4), or dump newer keys from your console.
+  - It came at once, before any progress bar: the emulator cannot read the game. Check that `emulator\user\keys\prod.keys` exists (the "No keys" item below), the firmware is installed, and the game starts in this emulator.
+  - You pressed Cancel or closed a window: the dump-mode question, the "which RomFS" list, or the progress window. Dump again and keep the progress window open.
+  - It came part way through: writing failed (disk full, the kit on a USB stick that was pulled out, or a too-deep folder). Free up space or move the kit to a short folder such as `C:\oot-coop`, then dump again.
+- **"There is not enough free space at ... to extract the RomFS" (step 4).** The full dump needs the game's size plus 1 GB on the kit's drive. Free up space, or move the kit to another drive, then dump again.
+- **make-puppet-pack.cmd says ".nup ... is damaged", "is cut short" or "has no ...".** The `.nup` file is incomplete (a copy or download that did not finish) or does not hold the whole updated game. Copy it again from where you made it.
+- **make-puppet-pack.cmd says "Found no .nup game file ... and no RomFS dump".** Give it your `.nup` (type the path or drag it in). With an `.nsp`/`.xci`: the dump did not finish (it deletes its folder when it fails), or it went to another folder (**Emulation > Configure > System > Filesystem > Dump Root**; the tool looks there too). It lists what usually stops the dump: no keys, nothing in the NAND, little free space, a deep folder. Fix those and dump again, or type the folder of a dump you have elsewhere.
+- **"... has folders but no files: that is a Skeleton dump."** You picked Skeleton. Delete the folder it names and dump again with **Full**.
+- **"The dump is not complete: no ..." or "The dump has empty or damaged files".** The dump stopped part way (emulator closed, crashed, PC slept, disk filled). Delete the folder it names and dump again; keep the progress window open until it says it succeeded.
+- **"... is not the game's RomFS ... the manual or legal text was dumped instead."** In the "which RomFS" list you picked HTML document or Legal information. Delete the folder and dump again, picking **Program [0400486024DEC000]**.
+- **"This dump is game data version 100; co-op needs 111".** The kit's emulator does not have the game update, so it dumped the base game. Install the update (**File > Install Files to NAND**, or copy your `nand` folder, step 2), check the game starts as the updated version, delete the dump and dump again.
+- **"Python is missing the zstandard package" or "No Python found".** Do what it says (a Command Prompt line), then run `make-puppet-pack.cmd` again.
+- **"The kit folder is too deep for Windows".** Move the whole kit folder to a short path such as `C:\oot-coop` and run it again.
+- **Still failing?** Comment on [issue 115](https://github.com/daurosk/oot-remake-multiplayer/issues/115) with the exact message (a screenshot of the box), everything `make-puppet-pack.cmd` printed, your `VERSION.txt`, and the zip from `collect-logs.cmd`.
 - **"No keys", or the game does not show in the list or does not start.** The kit's emulator does not see your keys. Check that `emulator\user\keys\prod.keys` exists (not one folder deeper) and that you copied from the right place (step 2: a portable install keeps them next to its exe, not in `%APPDATA%\eden`). Restart the emulator after copying.
 - **Where is the log?** `emulator\user\log\eden_log.txt` in your kit folder. Log lines name the emulator's source files, such as `src\core\...`. In test3 and older kits they show a full folder such as `C:\...\src\...`: that is where the emulator was built, not your folder, and it is not a problem (from test4 on, only the `src\...` part is shown).
 - **Still stuck?** Close the emulator, run `collect-logs.cmd` and report it (below).

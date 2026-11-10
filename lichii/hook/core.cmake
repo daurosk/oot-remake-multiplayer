@@ -8,6 +8,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_dungeon.cpp"
     "${_coop_hook}/coop_fairy.cpp"
     "${_coop_hook}/coop_flags.cpp"
+    "${_coop_hook}/coop_pickups.cpp"
     "${_coop_hook}/coop_hook.cpp"
     "${_coop_hook}/coop_objects.cpp"
     "${_coop_hook}/coop_objects_sync.cpp"

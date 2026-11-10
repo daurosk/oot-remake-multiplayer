@@ -13,7 +13,10 @@ Session::Session(net::Client& client, SessionSettings settings)
       on_event_(std::move(settings.on_event)),
       presence_(settings.presence) {
   sharing_ = settings.shared.has_value();
-  if (settings.shared) watcher_.emplace(std::move(*settings.shared), FlagRole::player);
+  if (settings.shared) {
+    watcher_.emplace(std::move(*settings.shared), FlagRole::player);
+    watcher_->set_learn_pickups(settings.learn_pickups);
+  }
 }
 
 FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStore* flags) {

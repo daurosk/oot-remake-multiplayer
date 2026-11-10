@@ -143,6 +143,13 @@ std::optional<SharedFlags> SharedFlags::load(const std::filesystem::path& path,
   return parse(text.str(), error);
 }
 
+bool SharedFlags::add(FlagKey key) {
+  const auto at = std::lower_bound(keys_.begin(), keys_.end(), key);
+  if ((at != keys_.end() && *at == key) || keys_.size() >= kMaxFlags) return false;
+  keys_.insert(at, key);
+  return true;
+}
+
 bool SharedFlags::contains(FlagKey key) const {
   return std::binary_search(keys_.begin(), keys_.end(), key);
 }

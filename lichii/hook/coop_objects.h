@@ -31,6 +31,12 @@ void OnFrame(Core::System& system);
 void Share(Core::System& system, coop::host::Session* session,
            const std::optional<std::string>& scene, std::uint64_t server_now_us);
 
+// Issue 88 (docs/items.md, "Heart containers"): the game's PlayerStatus.MaxLife
+// flag as the session left it this frame (quarter hearts; nothing when not
+// readable). The walk logs it beside our Link's Life component; with
+// LICHII_COOP_HEARTS_TO_LINK=1 it also raises the component's max to it.
+void SetMaxLife(std::optional<std::int32_t> quarters);
+
 // Network thread, from the session's on_event: takes the object messages.
 void OnEvent(const coop::net::Event& event);
 

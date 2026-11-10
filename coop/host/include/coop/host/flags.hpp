@@ -87,6 +87,9 @@ class SharedFlags {
                                          std::string* error = nullptr);
 
   bool contains(FlagKey key) const;
+  // Adds one key at run time (a one-time pickup seen in the game). False when
+  // it was there already or the list is full.
+  bool add(FlagKey key);
   const std::vector<FlagKey>& keys() const { return keys_; }
   std::size_t size() const { return keys_.size(); }
   bool empty() const { return keys_.empty(); }

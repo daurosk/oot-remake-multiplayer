@@ -105,6 +105,9 @@ public:
     static constexpr std::uint64_t kDeleteWaitUs = 3'000'000;  // a delete that never came true
     static constexpr std::uint64_t kKeepUs = 60'000'000;       // a gone drop is remembered
     static constexpr std::uint64_t kTellAfterUs = 500'000;     // after a DROP_ASK
+    // A pickup or blink-out is told this late, so that leaving the scene (or
+    // more drops going: an unload) in the meantime can still call it off.
+    static constexpr std::uint64_t kTakeHoldUs = 500'000;
     static constexpr unsigned kSendsPerSecond = 20;
     static constexpr std::size_t kMaxDrops = 256;
 
@@ -186,6 +189,13 @@ private:
     std::uint8_t self_ = 0;
     float near_m_ = kNearM;
     std::vector<Ghost> ghosts_;
+    // Takes not told yet (kTakeHoldUs), with when the drop left the list.
+    struct HeldTake {
+        coop::protocol::DropTake take;
+        std::uint64_t since_us = 0;
+    };
+    std::vector<HeldTake> held_;
+    std::uint64_t last_now_ = 0;  // `now` never goes back inside Tick
     bool first_walk_ = true;
     std::set<std::uint64_t> old_;  // on the list at the first walk of a scene
     std::map<coop::protocol::ObjectId, Drop> drops_;

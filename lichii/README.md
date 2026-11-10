@@ -32,11 +32,13 @@ From a "x64 Native Tools" prompt (or after `vcvarsall.bat x64`), in `fritchii-sr
 
 ```bat
 set _CL_=/wd4456 /wd4457 /wd4458 /wd4459
-cmake -S . -B build/coop -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DYUZU_TESTS=OFF -DYUZU_ROOM=OFF -DYUZU_ROOM_STANDALONE=OFF -DENABLE_UPDATE_CHECKER=OFF -DUSE_DISCORD_PRESENCE=OFF -DYUZU_USE_BUNDLED_QT=OFF "-DCMAKE_PREFIX_PATH=<qt folder>/6.8.3/msvc2022_64" -DLICHII_COOP=ON "-DLICHII_COOP_DIR=C:/path/to/oot-remake-multiplayer"
+cmake -S . -B build/coop -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DYUZU_TESTS=OFF -DYUZU_ROOM=OFF -DYUZU_ROOM_STANDALONE=OFF -DENABLE_UPDATE_CHECKER=OFF -DUSE_DISCORD_PRESENCE=OFF -DYUZU_USE_BUNDLED_QT=OFF "-DCMAKE_PREFIX_PATH=<qt folder>/6.8.3/msvc2022_64" -DLICHII_COOP=ON "-DLICHII_COOP_DIR=C:/path/to/oot-remake-multiplayer" "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=C:/path/to/oot-remake-multiplayer/cmake/trim_paths.cmake"
 cmake --build build/coop --target yuzu -j 8
 ```
 
 The program is `build\coop\bin\lichii.exe`. Leave out the two `LICHII_COOP` options for the plain emulator.
+
+`CMAKE_PROJECT_TOP_LEVEL_INCLUDES` brings in this repo's `cmake/trim_paths.cmake` before the emulator's first `project()`: every source path compiled into the program (the log prints them with each line) is cut down to the part below the source root (`src\core\core.cpp`), and the `.pdb` is named without its folder. Without it the program carries the folders it was built in, and `tools/release/make_kit.ps1` refuses it for a kit. It needs CMake 3.24 and a fresh configure (or a full rebuild).
 
 `_CL_` is needed with MSVC (found at `fritchii-v4.1`; `fritchii-v5` keeps the same flags in `src/CMakeLists.txt`, and was built with it): the emulator turns the four "declaration hides another" warnings (C4456 to C4459) into errors, and `src/common/frizti_settings.cpp`, `src/video_core/engines/kepler_compute.cpp`, `maxwell_3d.cpp` and `renderer_vulkan/vk_rasterizer.cpp` trip them. MSVC appends `_CL_` after every other flag, so this switches those four off without changing the emulator's source.
 

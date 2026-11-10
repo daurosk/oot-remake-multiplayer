@@ -7,6 +7,9 @@ option(COOP_BUILD_PROGRAMS "Build the server and tools/coop_test" ON)
 option(COOP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC or Clang)" OFF)
 option(COOP_TSAN "Build with ThreadSanitizer (GCC or Clang; not with COOP_SANITIZE)" OFF)
 
+# No build machine folders in the programs (the server goes into the kit).
+include(cmake/trim_paths.cmake)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

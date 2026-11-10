@@ -733,17 +733,40 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 }
             }
         } else if (const auto* owner = std::get_if<proto::ObjectOwner>(&m)) {
+            const auto had = owners_.find(owner->id);
+            const std::uint8_t before = had != owners_.end() ? had->second.player : 0;
+            if (had != owners_.end() && owner->epoch < had->second.epoch) {
+                continue;  // an older change, late
+            }
             owners_[owner->id] = {owner->owner, owner->epoch};
+            Object* o = owner->owner != before ? find(owner->id) : nullptr;
+            if (o == nullptr) {
+                continue;
+            }
+            // Another owner: its samples alone place the enemy from now on,
+            // none of the old owner's are blended in.
+            o->received.clear();
             if (owner->owner == self) {
-                if (Object* o = find(owner->id)) {
-                    o->received.clear();  // ours now: nothing pulls it
-                }
+                // Ours now, where it stands here: nothing pulls it. A hit of
+                // ours not yet sent is already in its life, and the others
+                // get its state at once.
+                o->hit_sum = 0;
+                o->hit_at = 0;
+                o->react_at = 0;
+                o->sent_once = false;
+            } else if (before == self) {
+                // No longer ours: a hurt we were giving it as the owner is
+                // the new owner's to give.
+                o->late_left = 0;
             }
         } else if (const auto* sample = std::get_if<proto::ObjectSample>(&m)) {
             Object* o = find(sample->id);
             const auto own = owners_.find(sample->id);
             if (o == nullptr || (own != owners_.end() && own->second.player == self)) {
                 continue;
+            }
+            if (own != owners_.end() && sample->epoch < own->second.epoch) {
+                continue;  // from an owner before the last change
             }
             if (sample->state.position && Finite(*sample->state.position)) {
                 const std::uint64_t t = sample->state.time.server_time_us;
@@ -775,6 +798,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (o == nullptr || !o->life || damage->amount <= 0) {
                 continue;
             }
+            if (damage->player_number == self) {
+                continue;  // our own hit, sent before it became ours: already in its life
+            }
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             Lower(*o, std::max(0, have - damage->amount), now_us, writes, damage->player_number);
             o->fight_until = now_us + kFightUs;
@@ -790,8 +816,10 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             send.emplace_back(std::move(state));
         } else if (const auto* handed = std::get_if<proto::HandoverState>(&m)) {
             Object* o = find(handed->id);
+            // The lower life of the two, so an enemy never heals across a
+            // hand-over. Its place stays our own enemy's.
             if (o != nullptr && handed->state.life && o->life &&
-                handed->state.life->life != *o->life) {
+                handed->state.life->life < *o->life) {
                 write(*o, handed->state.life->life);
             }
         }

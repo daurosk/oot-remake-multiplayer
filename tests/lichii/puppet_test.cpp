@@ -79,6 +79,8 @@ private:
 // request that is not filled in until Spawn().
 struct Game {
     FakeGuest guest;
+    std::uint64_t create_result = 1;  // what the game's create returns
+    bool queue_anyway = false;        // a request in the handle even so
     Game() {
         guest.Map(kBase + addr::kActorManagerPtr, 8);
         guest.Map(kBase + addr::kGotCreateDefault, 8);
@@ -131,7 +133,10 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
         if (call->function == kBase + addr::kMalloc) {
             result = kHeap;
         } else if (call->function == kBase + addr::kCreate) {
-            result = 1;
+            result = g.create_result;
+            if (g.queue_anyway) {
+                g.Request(call->x[3]);
+            }
         } else if (call->function == kBase + addr::kRequestDelete) {
             result = 1;
         } else if (call->function == kBase + addr::kTakeCreated) {
@@ -1104,4 +1109,53 @@ TEST_CASE("puppet gear: nothing is worn while parked; a piece left behind is wor
     }
     CHECK(tries == 3);
     CHECK(given_up == 1);
+}
+
+TEST_CASE("puppet: a create the game refuses is asked again after 1 s") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    g.create_result = 0;  // the old scene is still going
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);  // the block, the create
+    CHECK(calls[1].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(Frame(d, g, Director::kRefusedRetryMs - 1).empty());
+    g.create_result = 1;
+    calls = Frame(d, g, Director::kRefusedRetryMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(d.Slots()[0].phase == Phase::creating);
+}
+
+TEST_CASE("puppet: refused creates slow down; one with a request is waited for") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    g.create_result = 0;
+    REQUIRE(Frame(d, g, 0).size() == 2);  // the block, refused 1
+    REQUIRE(Frame(d, g, 1000).size() == 1);  // refused 2
+    REQUIRE(Frame(d, g, 2000).size() == 1);  // refused 3: now every 5 s
+    CHECK(Frame(d, g, 3000).empty());
+    CHECK(Frame(d, g, 6999).empty());
+    auto calls = Frame(d, g, 7000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+    int said = 0;
+    for (const auto& line : log) {
+        said += line.find("refused") != std::string::npos ? 1 : 0;
+    }
+    CHECK(said == 2);  // the first and the slow-down, not every try
+
+    // Returned 0 but a request is in the handle: it is waited for, no new create.
+    Game g2;
+    Director d2;
+    d2.SetInput(Wants({At(1, 0, 0, 0)}));
+    g2.create_result = 0;
+    g2.queue_anyway = true;
+    calls = Frame(d2, g2, 0);
+    REQUIRE(calls.size() == 2);
+    CHECK(d2.Slots()[0].phase == Phase::creating);
+    CHECK(Frame(d2, g2, 1500).empty());
 }

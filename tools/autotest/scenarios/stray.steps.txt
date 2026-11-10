@@ -1,0 +1,29 @@
+# stray: no puppet Link or fairy is left anywhere it should not be. Each `expect` counts the
+# puppets (CoopPuppet_*) and puppet fairies (Dm_Npc_Navi) alive in each game from the objects
+# debug log; both games load the same Graveyard save, so each should see one of each while
+# they are in the same scene and none otherwise. Run: tools\autotest\run.ps1 -Scenario stray
+start A B
+load A B
+expect both-loaded A=1 B=1
+play A stray-out.A.txt         # A walks down out of the Graveyard into Kakariko
+expect a-in-kakariko A=0 B=0
+play A stray-back.A.txt        # and back up into the Graveyard
+expect a-back A=1 B=1
+close B                        # B quits: it leaves the server
+expect b-left A=0
+start B                        # B joins late
+load B
+expect b-rejoined A=1 B=1
+kill B                         # B crashes
+expect b-crashed A=0
+start B
+load B
+expect b-back A=1 B=1
+server stop                    # the server goes away under both
+expect server-down A=0 B=0
+server start
+expect server-back A=1 B=1
+close B                        # B comes back as adult Link
+start B
+play B stray-adult.B.txt
+expect b-adult A=1 B=1

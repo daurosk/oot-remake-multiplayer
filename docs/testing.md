@@ -288,6 +288,23 @@ What it does:
 
 The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`. Give them as one comma list, `-Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS_CHEAT=1"`: with `powershell -File` that is how several arrive anyway (before 2026-11-09 such a list was set as one wrong variable, so the switches were silently off). The list replaces the default, and the runner prints each switch it sets.
 
+### Steps files
+
+A scenario can instead be `scenarios\<name>.steps.txt`, which drives both games and the server step by step, for tests where a game quits, crashes or joins late. One command a line (`#` starts a comment):
+
+| Line | Does |
+|---|---|
+| `start A B` | boots the games named (again), waits until each has joined; an earlier log of that game is kept as `eden_log-<x>-<n>.txt` |
+| `load A B` | plays `load.txt` in the games named (title screen to the save) |
+| `play A file.txt B file.txt` | plays those input scripts and waits for both |
+| `close B` / `kill B` | closes B's window (it leaves the server) / ends it at once (a crash) |
+| `server stop` / `server start` | the server goes away / comes back on the same port |
+| `sleep 10` | seconds |
+| `expect name A=1 B=0` | waits up to `-ExpectWait` seconds (default 30) until each game named has that many puppets (`CoopPuppet_*`) and as many puppet fairies (`Dm_Npc_Navi`) alive, counted from the objects debug lines (`LICHII_COOP_DEBUG_OBJECTS=1`, on by default); writes PASS or FAIL to `counts.txt` and takes a screenshot. A FAIL does not stop the test; at the end `FAILED.txt` says how many failed |
+| `shot name` | a screenshot of both |
+
+`stray` (checked 2026-11-09 on main c8ea805: 9 of 9 counts right) loads both games into the Graveyard, sends A to Kakariko and back, then has B quit, join late, crash and rejoin, stops and restarts the server, and brings B back as adult Link; at each step it checks that no puppet or fairy is left where it should not be.
+
 ### Input scripts
 
 The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([coop_testinput.h](../lichii/hook/coop_testinput.h)). It looks at the file about twice a second; each time the file changes, it plays it from the start into player 1's pad, on top of the real keyboard. The window needs no focus. Time is counted in ticks of 1/60 s of real time.

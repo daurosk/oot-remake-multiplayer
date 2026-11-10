@@ -1505,6 +1505,33 @@ Error decode_body(Reader& r, DropAsk& m) {
   return Error::none;
 }
 
+// BOSS_ROOM: u8 player, scene, u8 room (0 to 15), u8 state (1 to 5).
+Error encode_body(const BossRoom& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  if (m.scene.empty() || m.room > kMaxBossRoom) return Error::bad_value;
+  const auto state = static_cast<std::uint8_t>(m.state);
+  if (state < 1 || state > 5) return Error::bad_value;
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u8(m.room);
+  w.u8(state);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, BossRoom& m) {
+  m = BossRoom{};
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  std::uint8_t state = 0;
+  COOP_READ(r.u8(m.room));
+  COOP_READ(r.u8(state));
+  if (m.scene.empty() || m.room > kMaxBossRoom || state < 1 || state > 5) return Error::bad_value;
+  m.state = static_cast<BossState>(state);
+  return Error::none;
+}
+
 Error decode_body(Reader& r, PlayerPose& m) {  m = PlayerPose{};
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
@@ -1588,6 +1615,7 @@ MessageType type_of(const Message& message) {
       MessageType::world_break,
       MessageType::world_move, MessageType::world_place, MessageType::world_hit,
       MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
+      MessageType::boss_room,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1644,6 +1672,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::world_break:
     case MessageType::world_place:
     case MessageType::world_hit:
+    case MessageType::boss_room:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1714,6 +1743,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::drop_spawn:
     case MessageType::drop_take:
     case MessageType::drop_ask:
+    case MessageType::boss_room:
       return true;
   }
   return false;
@@ -1741,7 +1771,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, WorldBreak> || std::is_same_v<T, WorldMove> ||
                       std::is_same_v<T, WorldPlace> || std::is_same_v<T, WorldHit> ||
                       std::is_same_v<T, DropSpawn> || std::is_same_v<T, DropTake> ||
-                      std::is_same_v<T, DropAsk>) {
+                      std::is_same_v<T, DropAsk> || std::is_same_v<T, BossRoom>) {
           field = &m.player_number;
         }
       },
@@ -1842,6 +1872,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);
+    case MessageType::boss_room: return decode_as<BossRoom>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
   }
   return Error::unknown_type;

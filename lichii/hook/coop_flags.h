@@ -14,6 +14,7 @@
 #include "common/common_types.h"
 #include "coop/host/flags.hpp"
 #include "coop/host/game_flags.hpp"
+#include "coop_every.h"
 
 namespace Core::Memory {
 class Memory;
@@ -92,7 +93,8 @@ private:
     std::optional<std::chrono::steady_clock::time_point> up_at_;
     std::optional<std::optional<bool>> watch_last_;
     std::optional<std::optional<bool>> watch_bool_last_;
-    std::uint64_t frames_ = 0;
+    CoopEvery::Every scan_{CoopEvery::kQuarterUs};
+    CoopEvery::Every relog_{5 * CoopEvery::kSecondUs};
     Table bools_, ints_, keys_;
 };
 

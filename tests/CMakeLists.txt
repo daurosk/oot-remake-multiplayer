@@ -21,6 +21,7 @@ add_executable(coop_tests
   lichii/fairy_test.cpp
   lichii/objects_test.cpp
   lichii/spawn_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_spawn.cpp
+  lichii/projectiles_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_projectiles.cpp
   lichii/drops_test.cpp
   lichii/dungeon_test.cpp
   lichii/pose_test.cpp
@@ -28,7 +29,11 @@ add_executable(coop_tests
   lichii/pickups_test.cpp
   lichii/testinput_test.cpp
   lichii/time_test.cpp
+  lichii/every_test.cpp
+  lichii/game_build_test.cpp
+  lichii/boss_test.cpp
   # These hook files have no emulator code, so they are tested on their own.
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_drops.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dungeon.cpp

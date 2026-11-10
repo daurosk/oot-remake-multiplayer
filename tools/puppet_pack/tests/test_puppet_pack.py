@@ -279,6 +279,20 @@ class BuildPackTest(unittest.TestCase):
         again = build.upsert_rows(out, [new])
         self.assertEqual(len(again), 4)
 
+    def test_info_row_heap_cap(self):
+        # Issue 111: the adult puppet asked Player_Adult's 10 MB instance heap and was never made.
+        adult = {"__RowId": "Player_Adult", "InstanceHeapSize": 10245064}
+        child = {"__RowId": "Player_Child", "InstanceHeapSize": 5692448}
+        self.assertEqual(build.info_row(adult, "A", 6012792)["InstanceHeapSize"], 6012792)
+        self.assertEqual(build.info_row(child, "C", 6012792)["InstanceHeapSize"], 5692448)
+        self.assertEqual(build.info_row(adult, "A")["InstanceHeapSize"], 10245064)
+        self.assertEqual(adult["InstanceHeapSize"], 10245064)  # the game's row is not changed
+        big = {"__RowId": "P", "InstanceHeapSize": byml.UInt(9000000)}
+        capped = build.info_row(big, "A", byml.UInt(6000000))["InstanceHeapSize"]
+        self.assertIsInstance(capped, byml.UInt)
+        self.assertEqual(capped.v, 6000000)
+        self.assertNotIn("InstanceHeapSize", build.info_row({"__RowId": "X"}, "A", 6012792))
+
 
 @unittest.skipIf(zstandard is None, "needs the zstandard package")
 class FullBuildTest(unittest.TestCase):
@@ -303,8 +317,11 @@ class FullBuildTest(unittest.TestCase):
                        zstandard.ZstdCompressor(dict_data=pack_dict).compress(p))
         plain = zstandard.ZstdCompressor()
         ai = [{"__RowId": "Animal", "CalcRadius": 1.0},
-              {"__RowId": "Player_Adult", "ActorName": "Player", "FmdbName": "Player_Adult"},
-              {"__RowId": "Player_Child", "ActorName": "Player", "FmdbName": "Player_Child"}]
+              {"__RowId": "Player_Adult", "ActorName": "Player", "FmdbName": "Player_Adult",
+               "InstanceHeapSize": 10245064},
+              {"__RowId": "Player_Base", "FmdbName": "Player_Adult", "InstanceHeapSize": 6012792},
+              {"__RowId": "Player_Child", "ActorName": "Player", "FmdbName": "Player_Child",
+               "InstanceHeapSize": 5692448}]
         gai = [{"__RowId": r["__RowId"]} for r in ai]
         self.ai_bytes = byml.dumps(ai)
         self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(self.ai_bytes))
@@ -346,8 +363,13 @@ class FullBuildTest(unittest.TestCase):
             self.assertIn(f"Actor/CoopPuppet_{v}.engine__actor__ActorParam.bgyml", files)
         ai_raw = build.read(os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))
         self.assertEqual(zs.frame_dict_id(ai_raw), 0)
-        ids = [r["__RowId"] for r in byml.loads(d.decompress(ai_raw))]
-        self.assertEqual(ids, ["Animal", "CoopPuppet_Adult", "CoopPuppet_Child", "Player_Adult", "Player_Child"])
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(ai_raw))}
+        self.assertEqual(list(rows), ["Animal", "CoopPuppet_Adult", "CoopPuppet_Child", "Player_Adult",
+                                      "Player_Base", "Player_Child"])
+        # The adult puppet's heap is capped at Player_Base's; the child keeps its own; the game's rows stay.
+        self.assertEqual(rows["CoopPuppet_Adult"]["InstanceHeapSize"], 6012792)
+        self.assertEqual(rows["CoopPuppet_Child"]["InstanceHeapSize"], 5692448)
+        self.assertEqual(rows["Player_Adult"]["InstanceHeapSize"], 10245064)
         gai = byml.loads(d.decompress(build.read(os.path.join(out, "RSDB/GameActorInfo.Product.999.rstbl.byml.zs"))))
         self.assertIn({"__RowId": "CoopPuppet_Child"}, gai)
         t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
@@ -357,6 +379,7 @@ class FullBuildTest(unittest.TestCase):
         self.assertGreaterEqual(t.get("RSDB/ActorInfo.Product.999.rstbl.byml"), 1000)
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
+        self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 6012792])
         for a in man["actors"]:
             self.assertIn("EquipmentUser_Weapon", a["equipment_keys"])
             self.assertIn("EquipmentUser_Shield", a["equipment_keys"])

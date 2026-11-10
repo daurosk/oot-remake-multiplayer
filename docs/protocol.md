@@ -1,4 +1,4 @@
-# Wire protocol, version 4
+# Wire protocol, version 5
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -63,7 +63,7 @@ A killed emulator stays in the session until the server times it out, so its res
 - it comes from the same IP address as that player, and
 - the server has heard nothing from that player for 1 second (a server option; 0 turns the takeover off). Every build answers the server's `PING` every 250 ms, so a live player is never this quiet.
 
-Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the host handed on as on any leave, and the new connection is welcomed with the old player's number. Otherwise the `HELLO` is refused as name taken as before: someone on another PC, or anyone while the player is still talking, cannot push a player out by using their name. A build restarted within that second is refused, so the client asks again: a `REFUSED` name taken is tried again every 1.5 s for 12 s (`name_taken_retry_ms`, `name_taken_retry_for_ms` in `ClientConfig`; 0 turns it off) before it is reported. That covers the second of silence on the same PC, and also a restart that comes from another address (the same PC joining by its LAN address after `127.0.0.1`), which waits for the server to time the old player out (10 s). Any other refusal is reported at once and not retried. While it retries the client is in `waiting_retry` and reports nothing; a name that someone else is really using is reported after the 12 s.
+Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the host handed on as on any leave, and the new connection is welcomed with the old player's number. Otherwise the `HELLO` is refused as name taken as before: someone on another PC, or anyone while the player is still talking, cannot push a player out by using their name. A build restarted within that second is refused, so the client asks again: a `REFUSED` name taken is tried again every 1.5 s for 12 s (`name_taken_retry_ms`, `name_taken_retry_for_ms` in `ClientConfig`; either one 0 turns it off, and the interval is at least 100 ms) before it is reported. The 12 s count from the first name taken in a row: an attempt that ends any other way (timeout, lost connection) closes the window, so a later name taken gets the full 12 s again. That covers the second of silence on the same PC, and also a restart that comes from another address (the same PC joining by its LAN address after `127.0.0.1`), which waits for the server to time the old player out (10 s). Any other refusal is reported at once and not retried. While it retries the client is in `waiting_retry` and reports nothing (`retrying_name_taken()` is true, and the player list shows "name in use, asking again"); a name that someone else is really using is reported after the 12 s.
 
 ## Keep-alive and clock
 
@@ -308,6 +308,16 @@ The rupees, hearts and ammo that an enemy, a pot, grass or a rock leaves ([objec
 
 Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from any game that still shows the drop, so the maker in its id need not be the sender.
 
+### Boss rooms (`BOSS_ROOM`)
+
+Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field and keeps nothing.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 50 | `BOSS_ROOM` | 0 | both | `u8` player field, scene (string, 1 to 64: the dungeon), `u8` room (0 to 15, the index in `coop_boss.h`'s table), `u8` state: 1 in the room (sent on entering and every 2 s while there), 2 intro started, 3 intro over (the fight has begun), 4 left the room, 5 the boss is beaten; others refused |
+
+Types 51 to 54 are kept for boss rooms and not used.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -327,3 +337,4 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
 - Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
 - Version 4 (2026-11-09, for 0.1.0-test4): one bump for all the messages of types 28 to 38: `GRASS_CUT` (28), `OBJECT_GROUP` (29), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35), `DROP_SPAWN`, `DROP_TAKE`, `DROP_ASK` (36 to 38); 30, 31 and 39 are kept free. No earlier layout changed. The version went up because the server now sends `HANDOVER_ASK` and moves objects between players, which a version 3 game does not answer, and so that a version 3 server, which would not relay the new types, is refused at `HELLO`: every game in a session shares grass, breaks and drops, or none does.
+- Version 5 (chunk 2): `BOSS_ROOM` (50). No earlier layout changed. The version went up so that a version 4 game, which would never move into the boss room or leave the intro with the others, is refused at `HELLO`.

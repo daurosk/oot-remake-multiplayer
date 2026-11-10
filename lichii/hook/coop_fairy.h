@@ -138,9 +138,10 @@ private:
 // CoopHook::OnFrame, right after CoopPuppet::Publish, with the same
 // arguments. The first call reads the settings (on with the puppets;
 // LICHII_COOP_FAIRY=0 off, LICHII_COOP_FAIRY_ACTOR another actor) and
-// registers the fairy director with the cave.
+// registers the fairy director with the cave. Each Navi shows, holds or
+// hides as her puppet does (CoopPuppet::Collect, the same `local_event`).
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
-             const std::optional<Vec3>& position, coop::host::Session* session,
-             std::uint64_t server_now_us);
+             const std::optional<Vec3>& position, bool local_event,
+             coop::host::Session* session, std::uint64_t server_now_us);
 
 } // namespace CoopFairy

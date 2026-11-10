@@ -2,7 +2,7 @@
 
 This is an early test release. Everything below was checked on one PC with two copies of the game talking through the server (two emulator windows, often driven by the [autotest](../tools/autotest) scripts), and then played once by hand in two games on that PC. **It has not been played on two PCs yet**, over a LAN or the internet: that is what this release is for. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)).
 
-Every player needs the same release. v0.1.0-test2 and v0.1.0-test3 speak protocol 3. **Protocol 4** arrives with v0.1.0-test4: a protocol 3 game cannot join a protocol 4 server, or the other way round, so every player updates (`Update.bat`). A v0.1.0-test1 game cannot join a test2 or later server.
+Every player needs the same release. v0.1.0-test2 and v0.1.0-test3 speak protocol 3. **Protocol 4** arrives with v0.1.0-test4: a protocol 3 game cannot join a protocol 4 server, or the other way round, so every player updates (`Update.bat`). Builds from chunk 2 on speak **protocol 5** and refuse protocol 4 the same way. A v0.1.0-test1 game cannot join a test2 or later server.
 
 ## AMD graphics cards
 

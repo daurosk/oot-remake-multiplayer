@@ -27,6 +27,7 @@
 #include "core/memory.h"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
+#include "coop_every.h"
 #include "coop_puppet.h"
 #include "coop_svc.h"
 #include "coop_time_sync.h"
@@ -43,7 +44,6 @@ constexpr std::uint64_t kTimeNowOverride = 0x50;
 constexpr std::uint64_t kTimeAsked = 0x48;
 constexpr std::uint64_t kSetTime = 0x34522d0;
 constexpr int kCallerOrder = 40;  // after the puppets, spawn (10), fairy (20), objects (30)
-constexpr unsigned kEveryFrames = 15;
 constexpr std::uint64_t kDebugEveryUs = 2'000'000;
 
 std::string Env(const char* name) {
@@ -112,7 +112,7 @@ std::optional<T> Get(Core::Memory::Memory& memory, std::uint64_t address) {
 struct Glue {
     bool on = false;
     bool debug = false;
-    unsigned frame = 0;
+    CoopEvery::Every every{CoopEvery::kQuarterUs};
     std::uint64_t debug_at = 0;
     bool connected = false;
     // LICHII_COOP_TIME_TEST_SET=<seconds>[@<delay s>] (tests only): <delay>
@@ -186,7 +186,7 @@ struct Glue {
 
     void Frame(Core::System& system, std::uint64_t main, coop::host::Session* session,
                std::uint64_t now_us) {
-        if (!on || ++frame % kEveryFrames != 0) {
+        if (!on || !every.Due(CoopEvery::NowUs())) {
             return;
         }
         if (main == 0 || now_us == 0 || session == nullptr) {

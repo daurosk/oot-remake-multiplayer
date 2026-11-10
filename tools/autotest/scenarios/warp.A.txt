@@ -1,6 +1,8 @@
 # warp: both games load the save straight into Kakariko, at the well (Kakariko_WellSide) with the test-only warp.
 # Run with -NoLoad: the warp is asked before the save is loaded, because the game takes it
 # only during an event (the one after a save loads), and this file loads the save itself.
+#! noload
+#! start coop: test warp done
 mark start
 warp KakarikoVillage_Child Kakariko_WellSide
 wait 1200               # the title screen

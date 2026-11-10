@@ -42,7 +42,16 @@ param(
     [switch]$KeepOpen,
     # Copy the screen where each game is instead of asking the window to print itself, so the
     # co-op overlay windows on top (name tags, chat) are in the screenshots too.
-    [switch]$ScreenCopy
+    [switch]$ScreenCopy,
+    # The game's saves (title folder in each NAND user folder). Before every boot the runner copies
+    # each kit's baseline (<kit>\autotest-save\) back over the kit's saves, because the game
+    # autosaves on every scene change and Continue loads the newest save: without this, a run
+    # that walks into Kakariko makes the next run start there.
+    [string]$TitleId = '0400486024DEC000',
+    # Copy each kit's saves as they are now into <kit>\autotest-save\ (its baseline), then stop.
+    [switch]$TakeBaseline,
+    # Leave the saves as they are (the game continues from whatever it saved last).
+    [switch]$NoRestore
 )
 $ErrorActionPreference = 'Stop'
 
@@ -59,15 +68,117 @@ if (-not $Game) {
     $Game = Get-ChildItem (Split-Path (Split-Path $KitA)) -Filter *.nup -File -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
 }
-if (-not $Game -or -not (Test-Path -LiteralPath $Game)) { throw "no game file; pass -Game" }
+if (-not $TakeBaseline -and (-not $Game -or -not (Test-Path -LiteralPath $Game))) { throw "no game file; pass -Game" }
 if (-not $Shots) { $Shots = Resolve "$(Split-Path $KitA)\shots" }
 $scA = "$here\scenarios\$Scenario.A.txt"
 $scB = "$here\scenarios\$Scenario.B.txt"
 $steps = "$here\scenarios\$Scenario.steps.txt"
 if (-not (Test-Path $steps)) { $steps = $null }
-if (-not $steps -and -not (Test-Path $scA)) { throw "no scenario $scA" }
+if (-not $TakeBaseline -and -not $steps -and -not (Test-Path $scA)) { throw "no scenario $scA" }
+
+# Header lines in the A script (or the steps file), which the emulator reads as comments:
+#   #! noload                  the script loads the save itself (as -NoLoad)
+#   #! switches NAME=v,NAME=v  added to the switches (-Switches given on the command line win)
+#   #! timeout 300             seconds for each phase (as -Timeout, which wins)
+#   #! start REGEX             the game log must match REGEX once the save is loaded (default: a
+#                              Graveyard object, the save point); checked after load.txt, or at
+#                              the end for a script that loads itself
+$headNoLoad = $false; $headSwitches = @(); $headStart = $null
+$headFile = if ($steps) { $steps } elseif (Test-Path $scA) { $scA } else { $null }
+if ($headFile) {
+    foreach ($l in Get-Content $headFile) {
+        if ($l -match '^#!\s*noload\s*$') { $headNoLoad = $true }
+        elseif ($l -match '^#!\s*switches\s+(.+)$') { $headSwitches += @($Matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+        elseif ($l -match '^#!\s*start\s+(.+)$') { $headStart = $Matches[1].Trim() }
+        elseif ($l -match '^#!\s*timeout\s+(\d+)\s*$' -and -not $PSBoundParameters.ContainsKey('Timeout')) { $Timeout = [int]$Matches[1] }
+    }
+}
+if ($headNoLoad -and -not $NoLoad) { Write-Host "scenario header: noload"; $NoLoad = [switch]$true }
+if ($headSwitches.Count) {
+    $given = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { ($_.Trim() -split '=', 2)[0] })
+    foreach ($e in $headSwitches) {
+        $k = ($e -split '=', 2)[0]
+        if (-not $PSBoundParameters.ContainsKey('Switches') -or $given -notcontains $k) { $Switches += $e }
+    }
+}
+if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not ($Switches -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
+
 $Server = Resolve $Server
-if (-not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+if (-not $TakeBaseline -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+
+# The folders a kit's emulator really uses: qt-config.ini can point nand/sdmc/load/dump anywhere
+# (kits copied from another kit keep that kit's absolute paths).
+function Kit-Dir([string]$kit, [string]$name) {
+    $user = Join-Path $kit 'emulator\user'
+    $ini = Join-Path $user 'config\qt-config.ini'
+    if (Test-Path $ini) {
+        $text = Get-Content -Raw $ini
+        $isDefault = $text -match "(?m)^${name}_directory\\default=true\s*$"
+        $m = [regex]::Match($text, "(?m)^${name}_directory=(.*?)\s*$")
+        if (-not $isDefault -and $m.Success -and $m.Groups[1].Value) { return [IO.Path]::GetFullPath($m.Groups[1].Value) }
+    }
+    [IO.Path]::GetFullPath((Join-Path $user $name))
+}
+# Each NAND user folder that has this game's saves: <nand>\user\save\0000000000000000\<user>\<title>.
+function Save-Folders([string]$kit) {
+    $root = Join-Path (Kit-Dir $kit 'nand') 'user\save\0000000000000000'
+    if (-not (Test-Path $root)) { return @() }
+    @(Get-ChildItem $root -Directory | ForEach-Object { Join-Path $_.FullName $TitleId } | Where-Object { Test-Path $_ })
+}
+function Baseline-Dir([string]$kit) { Join-Path $kit 'autotest-save' }
+# The baseline holds <user>\<title>\... for each user folder.
+function Take-Baseline([string]$kit) {
+    $base = Baseline-Dir $kit
+    $folders = Save-Folders $kit
+    if (-not $folders.Count) { throw "no saves of $TitleId under $(Kit-Dir $kit 'nand')" }
+    if (Test-Path $base) { Remove-Item -Recurse -Force $base }
+    foreach ($f in $folders) {
+        $user = Split-Path -Leaf (Split-Path $f)
+        New-Item -ItemType Directory -Force (Join-Path $base $user) | Out-Null
+        Copy-Item -Recurse $f (Join-Path $base $user)
+    }
+    $newest = Get-ChildItem -Recurse $base -Filter progress.sav | Sort-Object LastWriteTime | Select-Object -Last 1
+    Write-Host "baseline of $kit taken from $(Kit-Dir $kit 'nand'): $($folders.Count) user folder(s), newest $($newest.Directory.Name) $($newest.LastWriteTime)"
+}
+function Restore-Save([string]$kit) {
+    $base = Baseline-Dir $kit
+    if (-not (Test-Path $base)) {
+        throw "no save baseline at $base. Load the kit once by hand (or check that its newest save is the Graveyard one), then run: tools\autotest\run.ps1 -TakeBaseline (or pass -NoRestore). docs/testing.md, 'Start place'"
+    }
+    $root = Join-Path (Kit-Dir $kit 'nand') 'user\save\0000000000000000'
+    foreach ($u in Get-ChildItem $base -Directory) {
+        $dst = Join-Path $root "$($u.Name)\$TitleId"
+        if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+        New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+        Copy-Item -Recurse (Join-Path $u.FullName $TitleId) (Split-Path $dst)
+    }
+}
+
+$kitList = [ordered]@{ A = $KitA; B = $KitB }
+$nandA = Kit-Dir $KitA 'nand'; $nandB = Kit-Dir $KitB 'nand'
+foreach ($x in $kitList.Keys) {
+    foreach ($n in 'nand', 'sdmc', 'load') {
+        $d = Kit-Dir $kitList[$x] $n
+        if (-not $d.StartsWith($kitList[$x] + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "WARNING: kit $x uses $n folder $d (outside the kit). tools\autotest\kit-paths.ps1 -Fix points it back."
+            if ($n -eq 'nand' -and -not $NoRestore) { throw "kit $x's NAND is outside the kit; the save restore would overwrite $d. Run kit-paths.ps1 -Fix or pass -NoRestore." }
+        }
+    }
+}
+if (-not $NoRestore -and $nandA -eq $nandB) {
+    throw "kits A and B share one NAND ($nandA), so they share saves and autosaves. Run tools\autotest\kit-paths.ps1 -Fix (or pass -NoRestore)"
+}
+if ($TakeBaseline) {
+    foreach ($x in $kitList.Keys) { Take-Baseline $kitList[$x] }
+    return
+}
+if (-not $NoRestore) {
+    foreach ($x in $kitList.Keys) {
+        if (-not (Test-Path (Baseline-Dir $kitList[$x]))) {
+            throw "no save baseline at $(Baseline-Dir $kitList[$x]). Check that the kit's newest save is the Graveyard one, then run: tools\autotest\run.ps1 -Scenario walk -TakeBaseline (or pass -NoRestore). docs/testing.md, 'Start place'"
+        }
+    }
+}
 
 $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -81,8 +192,45 @@ public class AutotestWin {
  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int ht, uint f);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+ delegate bool EnumProc(IntPtr h, IntPtr l);
+ [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+ [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
  public struct RECT { public int L,T,R,B; }
  public struct POINT { public int X,Y; }
+ // The visible top-level windows of one process, as "0xHANDLE 'title'", so the steps log
+ // shows a dialog (such as "Are you sure you want to close Lichii?", title "Lichii") that
+ // appeared beside the game window.
+ public static string Windows(int pid) {
+  var list = new System.Collections.Generic.List<string>();
+  EnumWindows((h, l) => {
+   uint p; GetWindowThreadProcessId(h, out p);
+   if (p == (uint)pid && IsWindowVisible(h)) {
+    var s = new System.Text.StringBuilder(256); GetWindowText(h, s, 256);
+    list.Add(string.Format("0x{0:x} '{1}'", h.ToInt64(), s));
+   }
+   return true;
+  }, IntPtr.Zero);
+  return string.Join(", ", list.ToArray());
+ }
+ // The game's own window of process pid: the largest visible top-level window that is not the
+ // co-op cheats window (with LICHII_COOP_CHEATS=1 that window can be the process's
+ // MainWindowHandle, and the screenshots caught it instead of the game).
+ public static IntPtr GameWindow(int pid) {
+  IntPtr best = IntPtr.Zero; long bestArea = 0;
+  EnumWindows((h, p) => {
+   uint wp; GetWindowThreadProcessId(h, out wp);
+   if (wp != (uint)pid || !IsWindowVisible(h)) return true;
+   var s = new System.Text.StringBuilder(256); GetWindowText(h, s, 256);
+   if (s.ToString().StartsWith("Co-op item cheats")) return true;
+   RECT r; GetClientRect(h, out r);
+   long area = (long)(r.R - r.L) * (r.B - r.T);
+   if (area > bestArea) { bestArea = area; best = h; }
+   return true;
+  }, IntPtr.Zero);
+  return best;
+ }
  // Real pixels: without this a scaled desktop gives rects in scaled units and the copy
  // misses part of the window.
  public static void DpiAware() { SetProcessDPIAware(); }
@@ -138,12 +286,51 @@ function Read-Log($x) {
 }
 function Count($text, $pattern) { ([regex]::Matches($text, $pattern)).Count }
 
-function Shot-Both([string]$name) {
+# steps.txt beside the screenshots: what the driver did and when (local time to the ms), and
+# each game's process and windows, so a game that ends by itself can be matched to the logs
+# (issue 112: game A's frontend shut down 0.2 s after B rejoined, cause not known).
+function Note([string]$text) {
+    $line = "{0:HH:mm:ss.fff} {1}" -f (Get-Date), $text
+    Add-Content "$out\steps.txt" $line
+}
+function Note-Games([string]$when) {
     foreach ($x in $kits.Keys) {
         $p = $st[$x].Proc
-        if ($p -and -not $p.HasExited) {
-            $p.Refresh()
-            [void][AutotestWin]::Shot($p.MainWindowHandle, (Join-Path $out "$name-$x.png"), [bool]$ScreenCopy)
+        if (-not $p) { Note "$when ${x}: not started"; continue }
+        if ($p.HasExited) { Note "$when ${x}: pid $($p.Id) exited (code $($p.ExitCode))"; continue }
+        $p.Refresh()
+        Note ("$when ${x}: pid $($p.Id) main 0x{0:x} windows: {1}" -f [int64]$p.MainWindowHandle, [AutotestWin]::Windows($p.Id))
+    }
+}
+# Games the driver did not close or kill but that are gone: logged with the step, and they
+# fail the run (a game that quits on its own is a bug, whoever asked it to).
+$expectedExit = @{}
+function Check-Exits([string]$step) {
+    foreach ($x in $kits.Keys) {
+        $p = $st[$x].Proc
+        if ($p -and $p.HasExited -and -not $expectedExit[$x]) {
+            $expectedExit[$x] = $true
+            $msg = "game $x ended by itself during $step (exit code $($p.ExitCode)); its log: eden_log-$x*.txt, look for 'Shutdown requested'"
+            Write-Host $msg; Note $msg
+            Add-Content "$out\counts.txt" "FAIL $msg"
+            $script:stepFails++
+        }
+    }
+}
+
+# The game window of game x (not the cheats window), or 0.
+function Game-Window([string]$x) {
+    $p = $st[$x].Proc
+    if (-not $p -or $p.HasExited) { return [IntPtr]::Zero }
+    $h = [AutotestWin]::GameWindow($p.Id)
+    if ($h -eq [IntPtr]::Zero) { $p.Refresh(); $h = $p.MainWindowHandle }
+    $h
+}
+function Shot-Both([string]$name) {
+    foreach ($x in $kits.Keys) {
+        $h = Game-Window $x
+        if ($h -ne [IntPtr]::Zero) {
+            [void][AutotestWin]::Shot($h, (Join-Path $out "$name-$x.png"), [bool]$ScreenCopy)
         }
     }
 }
@@ -192,6 +379,16 @@ function Stop-Server {
     if ($script:serverProc -and -not $script:serverProc.HasExited) { Stop-Process -Id $script:serverProc.Id -Force }
     Start-Sleep 1
 }
+# The kits' emulators ask "Are you sure you want to close Lichii?" when their window is closed
+# (confirmStop=0, Ask_Always). Nobody answers it in a test, so `close B` waited 20 s and then
+# ended B like a crash, and the question stayed open until then (issue 112). Ask_Never (2) makes
+# `close` a real leave. Only the [UI] key changes; the rest of qt-config.ini is kept.
+function Set-NoCloseQuestion([string]$ini) {
+    if (-not (Test-Path $ini)) { return }
+    $text = [IO.File]::ReadAllText($ini)
+    $new = $text -replace '(?m)^confirmStop\\default=.*$', 'confirmStop\default=false' -replace '(?m)^confirmStop=.*$', 'confirmStop=2'
+    if ($new -ne $text) { [IO.File]::WriteAllText($ini, $new) }
+}
 # Starts one game. A log left by an earlier run of it in this test is kept as eden_log-<x>-<n>.txt.
 function Start-Game([string]$x) {
     $s = $st[$x]
@@ -199,7 +396,16 @@ function Start-Game([string]$x) {
     $left = @(Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $s.Emu 'lichii.exe') })
     $left | Stop-Process -Force
     $left | ForEach-Object { [void]$_.WaitForExit(15000) }
+    if (-not $NoRestore) {
+        # A game just ended may hold its save files a moment longer.
+        for ($t = 0; ; $t++) {
+            try { Restore-Save $kits[$x]; break }
+            catch { if ($t -ge 20 -or $_.Exception.Message -like 'no save baseline*') { throw }; Start-Sleep -Milliseconds 500 }
+        }
+        Write-Host "game ${x}: saves restored from $(Baseline-Dir $kits[$x])"
+    }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') "server = 127.0.0.1`r`nport = $Port`r`nname = $x"
+    Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
     Set-Content -Encoding ascii $s.Script ''
     if (Test-Path $s.Log) {
         if ($s.Runs -gt 0) { Copy-Item $s.Log "$out\eden_log-$x-$($s.Runs).txt" }
@@ -211,12 +417,18 @@ function Start-Game([string]$x) {
     }
     $s.Runs++
     $old = @{}
-    foreach ($k in $switchEnv.Keys) { $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $switchEnv[$k]) }
+    foreach ($key in $switchEnv.Keys) {
+        $k = $key
+        if ($key -match '^([AB]):(.+)$') { if ($Matches[1] -ne $x) { continue }; $k = $Matches[2] }
+        $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $switchEnv[$key])
+    }
     $env:LICHII_COOP_TEST_SCRIPT = $s.Script
     $s.Proc = Start-Process (Join-Path $s.Emu 'lichii.exe') -ArgumentList "-g `"$Game`"" -WorkingDirectory $s.Emu -PassThru
     Remove-Item Env:LICHII_COOP_TEST_SCRIPT
     foreach ($k in $old.Keys) { [Environment]::SetEnvironmentVariable($k, $old[$k]) }
     $s.Done = 0; $s.Marks = 0
+    $expectedExit[$x] = $false
+    Note "started ${x}: pid $($s.Proc.Id)"
 }
 # Waits until the game has a window and has joined the server.
 function Wait-Joined([string]$x) {
@@ -234,11 +446,10 @@ function Wait-Joined([string]$x) {
 function Place-Windows {
     $i = 0
     foreach ($x in $kits.Keys) {
-        $p = $st[$x].Proc
-        if ($p -and -not $p.HasExited) {
-            $p.Refresh()
-            [void][AutotestWin]::ShowWindow($p.MainWindowHandle, 9)
-            [AutotestWin]::Place($p.MainWindowHandle, 960 * $i, 0, 960, 600)
+        $h = Game-Window $x
+        if ($h -ne [IntPtr]::Zero) {
+            [void][AutotestWin]::ShowWindow($h, 9)
+            [AutotestWin]::Place($h, 960 * $i, 0, 960, 600)
         }
         $i++
     }
@@ -256,6 +467,21 @@ function Live-Actors([string]$x) {
         if ($m.Groups[1].Value -eq '+') { $live[$key] = $m.Groups[2].Value } else { $live.Remove($key) }
     }
     $live
+}
+# Did game x get to the scenario's start place (the `#! start` regex, default a Graveyard object
+# after load.txt)? Waits up to $wait s; writes start.txt beside the screenshots.
+function Check-Start([string]$x, [int]$wait) {
+    if (-not $headStart) { return $true }
+    $start = Get-Date
+    while (-not ((Read-Log $x) -match $headStart)) {
+        if (((Get-Date) - $start).TotalSeconds -ge $wait) {
+            Add-Content "$out\start.txt" "FAIL ${x}: no '$headStart' in the log (it loaded somewhere else, or LICHII_COOP_DEBUG_OBJECTS is off)"
+            return $false
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    Add-Content "$out\start.txt" "PASS ${x}: '$headStart'"
+    $true
 }
 function Puppet-Count([string]$x) {
     $names = @((Live-Actors $x).Values)
@@ -285,6 +511,7 @@ function Run-Steps([string]$file) {
         $w = @($line -split '\s+')
         $rest = @(if ($w.Count -gt 1) { $w[1..($w.Count - 1)] })
         Write-Host "step ${n}: $line"
+        Note "step ${n}: $line"
         switch ($w[0]) {
             'start' {
                 foreach ($x in $rest) { Start-Game $x; Start-Sleep 3 }
@@ -294,6 +521,7 @@ function Run-Steps([string]$file) {
             'load' {
                 $f = @{}; foreach ($x in $rest) { $f[$x] = "$here\scenarios\load.txt" }
                 Play $f "s$n-load" $Every
+                foreach ($x in $rest) { if (-not (Check-Start $x 15)) { $script:stepFails++ } }
             }
             'play' {
                 $f = @{}; for ($i = 0; $i + 1 -lt $rest.Count; $i += 2) { $f[$rest[$i]] = "$here\scenarios\$($rest[$i + 1])" }
@@ -301,9 +529,19 @@ function Run-Steps([string]$file) {
             }
             'close' {
                 $p = $st[$rest[0]].Proc
-                if ($p -and -not $p.HasExited) { [void]$p.CloseMainWindow(); if (-not $p.WaitForExit(20000)) { Write-Host "game $($rest[0]) did not close: ended"; Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
+                $expectedExit[$rest[0]] = $true
+                if ($p -and -not $p.HasExited) {
+                    $p.Refresh()
+                    Note ("close $($rest[0]): pid $($p.Id) main window 0x{0:x}" -f [int64]$p.MainWindowHandle)
+                    [void]$p.CloseMainWindow()
+                    if (-not $p.WaitForExit(20000)) {
+                        $msg = "game $($rest[0]) did not close in 20 s: ended. Its windows: $([AutotestWin]::Windows($p.Id))"
+                        Write-Host $msg; Note $msg
+                        Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000)
+                    }
+                }
             }
-            'kill' { $p = $st[$rest[0]].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
+            'kill' { $expectedExit[$rest[0]] = $true; $p = $st[$rest[0]].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
             'server' { if ($rest[0] -eq 'stop') { Stop-Server } else { Start-Server } }
             'sleep' { Start-Sleep -Seconds ([double]$rest[0]) }
             'shot' { Shot-Both "s$n-$($rest[0])" }
@@ -332,6 +570,8 @@ function Run-Steps([string]$file) {
             }
             default { throw "steps line ${n}: unknown '$($w[0])'" }
         }
+        Note-Games "after step ${n}"
+        Check-Exits "step ${n} ($line)"
     }
 }
 
@@ -342,7 +582,8 @@ try {
 
     # powershell -File passes -Switches "A=1","B=1" as one string "A=1,B=1": split on commas.
     $Switches = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
-    foreach ($e in $Switches) { if ($e -notmatch '^[A-Za-z_][A-Za-z0-9_]*=') { throw "switch '$e': want NAME=value" } }
+    # A:NAME=value or B:NAME=value goes to that game only (for example a key set in A alone).
+    foreach ($e in $Switches) { if ($e -notmatch '^([AB]:)?[A-Za-z_][A-Za-z0-9_]*=') { throw "switch '$e': want NAME=value or A:NAME=value" } }
     foreach ($e in $Switches) { $k, $v = $e -split '=', 2; Write-Host "switch $k=$v"; $switchEnv[$k] = $v }
 
     if ($steps) {
@@ -361,9 +602,15 @@ try {
             Play @{ A = $load; B = $load } 'load' $Every
             Shot-Both 'loaded'
             Write-Host "save loaded"
+            foreach ($x in $kits.Keys) {
+                if (-not (Check-Start $x 15)) { throw "game $x did not start at the save point ('$headStart'): see start.txt" }
+            }
         }
         $files = @{ A = $scA; B = $(if (Test-Path $scB) { $scB } else { $null }) }
         Play $files $Scenario $Every
+        if ($NoLoad -and $headStart) {
+            foreach ($x in $kits.Keys) { if (-not (Check-Start $x 0)) { $stepFails++ } }
+        }
     }
     Start-Sleep 1
     Shot-Both 'end'
@@ -374,7 +621,7 @@ try {
     try { Shot-Both 'failed' } catch {}
 } finally {
     if (-not $KeepOpen) {
-        foreach ($x in $kits.Keys) { $p = $st[$x].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+        foreach ($x in $kits.Keys) { $expectedExit[$x] = $true; $p = $st[$x].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
         Stop-Server
     }
     foreach ($x in $kits.Keys) { if (Test-Path $st[$x].Log) { Copy-Item $st[$x].Log "$out\eden_log-$x.txt" } }

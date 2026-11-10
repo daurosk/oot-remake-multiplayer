@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_projectiles.h"
 #include "coop_puppet.h"
 
 namespace Core {
@@ -50,6 +51,8 @@ struct Seen {
     std::uint64_t address = 0;
     std::string name;
     Vec3 position{};
+    // The actor's 3x3 at +0x328 (rows), when the walk read one.
+    std::optional<CoopPuppet::Mat3> rotation;
 };
 
 // What the director should do with one copy.
@@ -64,19 +67,22 @@ struct Copy {
     Act act = Act::show;
     // Off for enemy copies (coop_objects): the Mover places them each frame.
     bool place = true;
+    // Projectile copies (coop_projectiles.h): the owner's turn, written with
+    // the place, and the game's own setter called after the write so the
+    // physics takes the new place (as the objects' Mover does).
+    std::optional<CoopPuppet::Mat3> rotation;
+    bool setter = false;
 };
 
 class Sync {
 public:
     static constexpr std::uint64_t kSampleEveryUs = 33'000;  // 30 a second
     static constexpr std::uint64_t kStillEveryUs = 500'000;
-    static constexpr std::uint64_t kAheadMaxUs = 150'000;    // extrapolation cap
+    static constexpr std::uint64_t kAheadMaxUs = CoopProjectiles::Track::kAheadMaxUs;
     static constexpr std::uint64_t kCopyLifeUs = 20'000'000; // no remove came: dropped
     static constexpr float kClaimDistance = 1.5f;            // a fresh copy found on the list
     static constexpr unsigned kGoneWalks = 2;
-    // A bomb gone sooner than this did not explode: taking one out the first
-    // time makes a bomb that lasts about 0.1 s while the game shows its help.
-    static constexpr std::uint64_t kExplodeMinUs = 1'000'000;
+    static constexpr std::uint64_t kExplodeMinUs = CoopProjectiles::kExplodeMinUs;
 
     // Network thread: OBJECT_SPAWN, OBJECT_SAMPLE, OBJECT_REMOVE. Applied on
     // the next Tick.
@@ -90,8 +96,16 @@ public:
 
     void Reset();
 
+    // Projectile copies get the game's setter after each place write
+    // (Copy::setter). LICHII_COOP_SHOTS_SETTER=0 turns it off.
+    void SetSetter(bool on) { setter_ = on; }
+
     std::size_t Mine() const { return mine_.size(); }
     std::size_t Copies() const { return copies_.size(); }
+    // Our bombs' fuse as learnt so far (coop_projectiles.h).
+    const CoopProjectiles::FuseClock& Fuse() const { return fuse_; }
+    // Bomb copies blown up on the owner's fuse before its remove came.
+    std::size_t BlownOnTime() const { return blown_on_time_; }
 
 private:
     struct Own {
@@ -99,6 +113,7 @@ private:
         std::string name;
         Vec3 position{};
         Vec3 velocity{};
+        std::optional<coop::protocol::Quat> rotation;
         std::uint64_t seen_at = 0;
         Vec3 sent_position{};
         std::uint64_t sent_at = 0;
@@ -109,12 +124,17 @@ private:
     struct Remote {
         std::uint64_t key = 0;
         std::string actor;
-        Vec3 position{};
-        Vec3 velocity{};
-        std::uint64_t sample_us = 0;  // the owner's time of `position`
-        std::uint64_t got_us = 0;     // our time when it came
+        CoopProjectiles::Track track;  // the owner's samples on the server clock
+        std::optional<coop::protocol::Quat> rotation;
+        std::uint64_t got_us = 0;     // our time of the latest message
         std::optional<coop::protocol::RemoveReason> removed;
         std::uint64_t address = 0;    // once the director made it
+        // A bomb: when the owner's fuse runs out (server clock). Blown then
+        // even if the owner's remove has not come yet.
+        std::optional<std::uint64_t> blow_at;
+        bool blasted = false;         // added to TheBlasts once
+        bool live = false;            // the director had it on the list
+        Vec3 Position() const { return track.Empty() ? Vec3{} : track.Last().position; }
     };
 
     void Apply(std::uint64_t now_us);
@@ -127,6 +147,9 @@ private:
     std::set<std::uint64_t> copy_addresses_;
     std::uint64_t counter_ = 0;
     std::uint64_t next_key_ = 1;
+    CoopProjectiles::FuseClock fuse_;  // kept across scenes: the game's fuse
+    std::size_t blown_on_time_ = 0;
+    bool setter_ = true;
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;
@@ -174,6 +197,9 @@ private:
 
     void NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms);
     std::optional<CoopPuppet::Call> Next(CoopPuppet::Guest& guest, std::uint64_t now_ms);
+    // The game's setter (the actor's vtable slot 0x218) for a copy whose
+    // place was written this frame. Not counted in kMaxCallsPerFrame.
+    std::optional<CoopPuppet::Call> NextSetter(CoopPuppet::Guest& guest);
     std::uint64_t SlotBase(std::size_t i) const { return block_ + i * kSlotSize; }
     const Copy* Wanted(std::uint64_t key) const;
     void Say(const std::string& text) const;
@@ -198,6 +224,7 @@ private:
     Pending pending_ = Pending::none;
     std::size_t pending_slot_ = 0;
     int calls_ = 0;
+    std::vector<std::size_t> setters_;  // slots placed this frame
 };
 
 Director& TheDirector();

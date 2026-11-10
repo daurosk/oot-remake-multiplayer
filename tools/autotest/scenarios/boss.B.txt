@@ -1,0 +1,21 @@
+# boss: B loads into the Water Temple entrance; boss-room should move it into A's boss room.
+# After about 80 s B walks to the room's exit (goto -4.5 -60) and should be pulled back in.
+mark start
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+wait 3000
+mark b-walk-out
+goto -4.5 -60 1.5 900
+mark b-at-exit
+wait 2400
+mark end

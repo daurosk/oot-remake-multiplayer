@@ -1,0 +1,19 @@
+# deku-web: B, the same warp as A (no key set here).
+# InsideTheDekuTree Entrance); only A sets key64 0x03de66423437a955 (A:LICHII_COOP_SET_KEY64). Expect A
+# "key64 0x03de66423437a955 ... 0 -> 1" and B the same within about 1 s; both logs at start "coop: dungeon:
+# sharing N dungeon flags and keys". Shots at "look": in B the web is changed (open chest / no web).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+mark look

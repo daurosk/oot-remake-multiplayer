@@ -12,10 +12,10 @@ so co-op can draw player markers in the world.
  1 file changed, 7 insertions(+)
 
 diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-index ac3a698db9..87c31693a8 100644
+index 28b704d5a8..23364626a9 100644
 --- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 +++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-@@ -77,6 +77,9 @@
+@@ -81,6 +81,9 @@
  #include "video_core/nx2_debug_control.h"
  #include "video_core/nx2_perf.h"
  #include "video_core/nx2_profile.h"
@@ -25,7 +25,7 @@ index ac3a698db9..87c31693a8 100644
  
  namespace Vulkan {
  
-@@ -544,6 +547,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
+@@ -892,6 +895,10 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
          return;
      }
  
@@ -33,6 +33,6 @@ index ac3a698db9..87c31693a8 100644
 +    CoopCamera::Track(texture_cache, buffer_cache, device_memory, maxwell3d->regs,
 +                      render_trace_frame);
 +#endif
- #ifdef EGLANTINE_STREAMLINE
      TrackOcarinaCamera();
      TrackOcarinaActor(pipeline->ShaderHashes()[1], is_indexed, is_indirect);
+     TracePendingCpuWrites(false, pipeline->ShaderHashes());

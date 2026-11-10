@@ -45,25 +45,65 @@ inline bool in_cutscene(std::uint8_t status_flags) {
   return (status_flags & protocol::status::in_cutscene) != 0;
 }
 
+// What a player is doing, as far as drawing their puppet goes, from the AS
+// command in their main slot (PlayerSample field 7; docs/puppet.md, "Cases").
+// The names are the commands in AS/Player_Child and Player_Adult (romfs,
+// read 2026-11-09); that slot 0 plays them by these names is seen for
+// "Wait", "Walk", "Run" and "EvtWait", not yet for these.
+enum class Activity : std::uint8_t {
+  none,
+  riding,   // on a horse: "HorseMove", "HorseRide", "Evt_Horse_Talk_N", ...
+  ocarina,  // playing the Ocarina freely: "OcarinaReadyStart", "Ocarina_Adult_B_lp", ...
+};
+
+inline Activity activity_of(std::optional<std::string_view> anim) {
+  if (!anim) return Activity::none;
+  const std::string_view a = *anim;
+  // Getting off ends on the ground; walking up to the horse is on foot.
+  if (a.find("Horse") != std::string_view::npos && a.substr(0, 7) != "Dismoun" &&
+      a != "HorseAccess") {
+    return Activity::riding;
+  }
+  // "DemoOcarina..." is a cutscene (a song taught): not free playing.
+  if (a.substr(0, 7) == "Ocarina") return Activity::ocarina;
+  return Activity::none;
+}
+
+// Whether our own event hides the other players. Every event does, except
+// the Ocarina played freely: the game runs it as an event (inferred), and
+// nothing is staged there that a puppet could walk into.
+inline bool local_event_hides(bool event_running, std::optional<std::string_view> own_anim) {
+  return event_running && activity_of(own_anim) != Activity::ocarina;
+}
+
 enum class Visibility : std::uint8_t {
-  hide,  // other scene, or scene unknown: do not draw
-  hold,  // same scene, but a cutscene runs: draw frozen at the last pose
-  show,  // same scene, nobody in a cutscene: draw and move as usual
+  hide,  // other scene, scene unknown, or our cutscene: no puppet, no marker
+  park,  // same place, but the puppet cannot be drawn right (riding a horse
+         // we do not have): puppet kept out of sight, marker kept
+  hold,  // same place, but their cutscene runs: draw frozen at the last pose
+  show,  // same place, nobody in a cutscene: draw and move as usual
 };
 
 // What to do with one remote player this frame.
 // - Different or unknown place (same_place: either era counts): hide.
-// - Our own cutscene running: hide every puppet, so none walks into the
-//   game's staged shot (puppets are not actors the event knows about).
-// - Their cutscene running: hold, since their samples would show them
-//   being moved by an event we do not see.
+// - Our own cutscene running (`local_hides`, see local_event_hides): hide
+//   every puppet, so none walks into the game's staged shot (puppets are not
+//   actors the event knows about).
+// - They ride a horse: park. Their Epona is not in our game, so the puppet
+//   would sit in the air at saddle height.
+// - Their cutscene running: hold, since their samples would show them being
+//   moved by an event we do not see. Not while they play the Ocarina: then
+//   they stand and play, and show copies that.
 inline Visibility visibility(std::optional<std::string_view> local_scene,
-                             bool local_in_cutscene,
+                             bool local_hides,
                              std::optional<std::string_view> remote_scene,
-                             std::uint8_t remote_status_flags) {
+                             std::uint8_t remote_status_flags,
+                             std::optional<std::string_view> remote_anim = std::nullopt) {
   if (!same_place(local_scene, remote_scene)) return Visibility::hide;
-  if (local_in_cutscene) return Visibility::hide;
-  if (in_cutscene(remote_status_flags)) return Visibility::hold;
+  if (local_hides) return Visibility::hide;
+  const Activity theirs = activity_of(remote_anim);
+  if (theirs == Activity::riding) return Visibility::park;
+  if (in_cutscene(remote_status_flags) && theirs != Activity::ocarina) return Visibility::hold;
   return Visibility::show;
 }
 

@@ -1,0 +1,21 @@
+# stalchild, B: loads into the same spot, then stands 8 m east of the fight and faces it, so
+# B's screen shows the copies rise, fight, die and drop.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark field
+wait 1500
+goto 186.0 24.0 1.0 900
+toward 174.0 27.0 20
+mark watching
+wait 3600
+mark end

@@ -46,13 +46,16 @@
 #include "coop/overlay/overlay.hpp"
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
+#include "coop_boss.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
 #include "coop_flags.h"
+#include "coop_game_build.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_drops.h"
+#include "coop_every.h"
 #include "coop_dungeon.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
@@ -67,8 +70,9 @@ namespace {
 
 // The game and build the addresses in coop/host are for.
 constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
-constexpr const char* kGameBuildId = "e0f3ccfaf50065ae";
-constexpr const char* kGameVersion = "1.1.1";
+// The builds it knows: coop_game_build.h (docs/game-builds.md).
+constexpr std::string_view kGameBuildId = CoopGameBuild::kPrimary.id;
+constexpr std::string_view kGameVersion = CoopGameBuild::kPrimary.version;
 constexpr const char* kBuildId = "lichii fritchii-v5 coop";
 
 // A frame older than this means the game is not running (stopped, paused).
@@ -76,7 +80,7 @@ constexpr auto kFrameStale = std::chrono::seconds(1);
 // A camera older than this is from a scene no longer drawn (a menu, a load).
 constexpr auto kCameraStale = std::chrono::milliseconds(250);
 // With LICHII_COOP_DEBUG_CAMERA, how often the local player's projection is logged.
-constexpr std::uint64_t kDebugLogFrames = 120;
+constexpr std::uint64_t kDebugLogUs = 2 * CoopEvery::kSecondUs;
 
 // The overlay's defaults are for centimetres; Ocarina's world unit is about a
 // metre (the first run: a child Link walks about 2.5 units a second and the
@@ -199,8 +203,8 @@ public:
         config.host = settings_.server;
         config.port = settings_.port;
         config.hello.build_id = kBuildId;
-        config.hello.game_build_id = kGameBuildId;
-        config.hello.game_version = kGameVersion;
+        config.hello.game_build_id = std::string(kGameBuildId);
+        config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
@@ -233,10 +237,16 @@ public:
             CoopSpawn::OnEvent(event);
             CoopDrops::OnEvent(event);
             CoopTime::OnEvent(event);
+            CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
         session_ = std::make_unique<coop::host::Session>(*client_, std::move(session));
+        if (pickups_ && CoopDungeon::On()) {  // docs/dungeon.md: chests, silver rupees, cleared rooms stay done
+            for (const auto& k : CoopDungeon::Keys()) {
+                session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
+            }
+        }
         thread_ = std::thread([this] { Run(); });
         return true;
     }
@@ -292,8 +302,14 @@ public:
                                         ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
                                         : std::nullopt);
         }
+        // Our own event hides the others (puppet, Navi, marker); playing the
+        // Ocarina does not (coop/host/scene.hpp, local_event_hides).
+        const bool event =
+            reading && coop::host::local_event_hides(
+                           reading->event_running.value_or(false),
+                           reading->animation ? std::optional<std::string_view>(reading->animation->name)
+                                              : std::nullopt);
         if (report.connected) {
-            const bool event = reading && reading->event_running.value_or(false);
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
                 auto shown = coop::overlay::collect(p, report.server_now_us);
                 for (auto& s : shown) {
@@ -316,10 +332,9 @@ public:
                 return shown;
             });
         }
-        CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position,
-                            reading && reading->event_running.value_or(false),
+        CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
-        CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position,
+        CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
@@ -327,6 +342,10 @@ public:
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
+        // Boss rooms together (docs/dungeons-boss.md).
+        CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
+                        reading && reading->event_running.value_or(false),
+                        report.connected ? session_.get() : nullptr, report.server_now_us);
         Place(view);
 
         std::lock_guard lock(view_mutex_);
@@ -378,11 +397,13 @@ public:
             std::optional<std::uint64_t> round_trip_us;
             std::uint64_t server_now_us;
             std::vector<coop::net::Player> players;
+            bool name_retry;
         };
         // One lock at a time: the network lock, then the presence lock.
         const Net net = session_->with_client([](coop::net::Client& c) {
             const bool on = c.state() == coop::net::State::connected;
-            return Net{c.state(), c.round_trip_us(), on ? c.server_now_us() : 0, c.players()};
+            return Net{c.state(), c.round_trip_us(), on ? c.server_now_us() : 0, c.players(),
+                       c.retrying_name_taken()};
         });
         std::optional<std::string> own_scene;
         {
@@ -422,7 +443,8 @@ public:
         if (!on) {
             // The client drops the room on a lost connection; still show ourselves.
             PlayerRow self{0, settings_.name, true};
-            self.state = welcomed_once_ && net.state != coop::net::State::refused
+            self.state = net.name_retry ? "name in use, asking again"
+                         : welcomed_once_ && net.state != coop::net::State::refused
                              ? "reconnecting"
                              : std::string(coop::net::to_string(net.state));
             self.scene = own_scene;
@@ -439,7 +461,6 @@ private:
         if (!view.game) {
             return;
         }
-        ++frames_;
         const auto camera = CoopCamera::Latest();
         const bool fresh = camera && view.at - camera->at < kCameraStale;
         if (fresh != camera_seen_) {
@@ -451,7 +472,7 @@ private:
                 LOG_INFO(Core, "coop: camera lost, markers off");
             }
         }
-        const bool log = debug_camera_ && frames_ % kDebugLogFrames == 0;
+        const bool log = debug_camera_ && debug_log_.Due(CoopEvery::NowUs());
         if (!fresh) {
             view.camera_note = "markers: no camera";
             if (log) {
@@ -577,6 +598,7 @@ private:
         auto* process = system.ApplicationProcess();
         if (process == nullptr) {
             view.game_note = "no game";
+            build_warned_ = nullptr;  // the next game start warns again
             return std::nullopt;
         }
         if (system.GetApplicationProcessProgramID() != kOcarinaProgramId) {
@@ -584,12 +606,11 @@ private:
             return std::nullopt;
         }
         const auto build = Hex(system.GetApplicationProcessBuildID(), 8);
-        if (build != kGameBuildId) {
-            view.game_note = "game build " + build + ", co-op needs " + kGameBuildId;
-            if (!build_warned_) {
-                build_warned_ = true;
-                LOG_WARNING(Core, "coop: game build {} is not {}; nothing is read or sent", build,
-                            kGameBuildId);
+        if (CoopGameBuild::Find(build) == nullptr) {
+            view.game_note = CoopGameBuild::PanelRefusal(build);
+            if (build_warned_ != process) {
+                build_warned_ = process;  // once per game start
+                LOG_WARNING(Core, "coop: {}", CoopGameBuild::LogRefusal(build));
             }
             return std::nullopt;
         }
@@ -816,10 +837,10 @@ private:
     // Present thread only.
     coop::overlay::Overlay overlay_{MarkerSettings()};
     bool camera_seen_ = false;
-    std::uint64_t frames_ = 0;
+    CoopEvery::Every debug_log_{kDebugLogUs};
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
-    bool build_warned_ = false;
+    Kernel::KProcess* build_warned_ = nullptr;  // the process last warned about
     FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};

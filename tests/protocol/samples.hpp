@@ -101,6 +101,8 @@ inline std::vector<Message> object_messages() {
   all.push_back(DropTake{0, kMadeId, DropTakeReason::picked_up});
   all.push_back(DropTake{3, kMadeId, DropTakeReason::gone});
   all.push_back(DropAsk{0, "Graveyard"});
+  all.push_back(BossRoom{0, "InsideTheDekuTree", 0, BossState::in_room});
+  all.push_back(BossRoom{4, "SpiritTemple", 7, BossState::defeated});
   return all;
 }
 

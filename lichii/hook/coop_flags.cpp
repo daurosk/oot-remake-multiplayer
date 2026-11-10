@@ -25,8 +25,7 @@ constexpr u64 kKeyCount = 0xc58, kKeyRecords = 0xc60, kKeyRecordSize = 0x10, kKe
 
 // Tables larger than this are taken as a misread, not scanned.
 constexpr u32 kMaxEntries = 1u << 20;
-// How often the debug scan runs, in frames, and how many changes one scan logs.
-constexpr std::uint64_t kScanFrames = 15;
+// How many changes one debug scan logs (the scan runs every CoopEvery::kQuarterUs).
 constexpr int kMaxLogged = 40;
 
 std::optional<std::string> Env(const char* name) {
@@ -196,21 +195,23 @@ void FlagDebug::Reset() {
     watch_last_.reset();
     watch_bool_last_.reset();
     up_at_.reset();
-    frames_ = 0;
+    scan_.Reset();
+    relog_.Reset();
 }
 
 void FlagDebug::Frame(EmulatorMemory& memory) {
     if (!on_ && !watch_key_ && !watch_bool_ && !set_key_ && !set_bool_) {
         return;
     }
-    ++frames_;
-    if (frames_ % kScanFrames != 0) {
+    const auto now_us = CoopEvery::NowUs();
+    if (!scan_.Due(now_us)) {
         return;
     }
+    const bool relog = relog_.Due(now_us);  // a watched value is logged every 5 s
     coop::host::GameFlags flags(memory);
     if (watch_key_) {
         const auto now = flags.get_key64(*watch_key_);
-        if (!watch_last_ || *watch_last_ != now || frames_ % (kScanFrames * 20) == 0) {
+        if (!watch_last_ || *watch_last_ != now || relog) {
             LOG_INFO(Core, "coop: flags debug: get_key64({:#x}) = {}{}", *watch_key_, Value(now),
                      watch_last_ && *watch_last_ != now
                          ? " (was " + Value(*watch_last_) + ")"
@@ -220,8 +221,7 @@ void FlagDebug::Frame(EmulatorMemory& memory) {
     }
     if (watch_bool_) {
         const auto now = flags.get_bool(*watch_bool_);
-        if (!watch_bool_last_ || *watch_bool_last_ != now ||
-            frames_ % (kScanFrames * 20) == 0) {
+        if (!watch_bool_last_ || *watch_bool_last_ != now || relog) {
             LOG_INFO(Core, "coop: flags debug: get_bool({:#010x}) = {}{}", *watch_bool_,
                      Value(now),
                      watch_bool_last_ && *watch_bool_last_ != now

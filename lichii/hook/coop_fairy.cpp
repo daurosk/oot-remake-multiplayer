@@ -74,6 +74,8 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
         f.actor = settings_.actor;
         f.position = track.at;
         f.rotation = p.rotation;
+        f.show = p.show;  // hidden, held or shown with her puppet
+        f.why = p.why;
         out.targets.push_back(std::move(f));
     }
     tracks_ = std::move(kept);
@@ -282,39 +284,20 @@ Glue& TheGlue() {
 } // namespace
 
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
-             const std::optional<Vec3>& position, coop::host::Session* session,
-             std::uint64_t server_now_us) {
+             const std::optional<Vec3>& position, bool local_event,
+             coop::host::Session* session, std::uint64_t server_now_us) {
     Glue& glue = TheGlue();
     if (!glue.on) {
         return;
     }
-    // The same remotes CoopPuppet::Publish reads, so the plans agree.
-    std::vector<CoopPuppet::Remote> remotes;
-    if (session != nullptr && server_now_us != 0) {
-        session->with_presence([&](coop::presence::Presence& p) {
-            for (const std::uint8_t n : p.players()) {
-                const auto pose = p.shown(n, server_now_us);
-                if (!pose) {
-                    continue;
-                }
-                CoopPuppet::Remote r;
-                r.number = n;
-                r.position = pose->position;
-                r.rotation = pose->rotation;
-                r.fade = pose->fade;
-                if (const auto* player = p.player(n)) {
-                    r.scene = player->scene();
-                }
-                remotes.push_back(std::move(r));
-            }
-        });
-    }
+    // The same remotes CoopPuppet::Publish plans from, so the plans agree.
+    const std::vector<CoopPuppet::Remote> remotes = CoopPuppet::Collect(session, server_now_us);
     const auto now_ms = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     glue.main_base.store(main_base);
-    const auto puppets = glue.planner->Plan(main_base, scene, position, false, remotes, now_ms);
+    const auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
     glue.director->SetInput(glue.follower->Follow(puppets, now_ms));
 }
 

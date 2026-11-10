@@ -43,6 +43,9 @@ constexpr std::uint64_t ms_to_us(std::uint32_t ms) {
   return static_cast<std::uint64_t>(ms) * 1000u;
 }
 
+// A REFUSED name taken is asked again no faster than this.
+constexpr std::uint32_t kNameTakenRetryFloorMs = 100;
+
 // The longest packet a message can fill: the 4-byte header and a body of
 // at most 65535 bytes. ENet refuses anything longer before assembling it.
 constexpr std::size_t kMaxPacketBytes = 4 + 0xffff;
@@ -214,6 +217,9 @@ void Client::end_attempt(DropReason reason) {
     peer_ = nullptr;
   }
   const bool was_connected = state_ == State::connected;
+  // Only a REFUSED name taken keeps the retry window going; any other end
+  // of an attempt closes it, so a later name taken gets its full window.
+  name_taken_since_us_ = 0;
   players_.clear();
   clear_shared();
   early_.clear();
@@ -347,12 +353,13 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
       // Our own crashed build may still hold the name for a moment (see
       // name_taken_retry_ms): ask again before giving up.
       if (refused->reason == proto::RefuseReason::name_taken &&
-          config_.name_taken_retry_for_ms != 0) {
+          config_.name_taken_retry_for_ms != 0 && config_.name_taken_retry_ms != 0) {
         const std::uint64_t now = now_us();
         if (name_taken_since_us_ == 0) name_taken_since_us_ = now;
         if (elapsed(now, name_taken_since_us_) < ms_to_us(config_.name_taken_retry_for_ms)) {
           ++name_taken_retries_;
-          retry_at_us_ = now + ms_to_us(std::max<std::uint32_t>(config_.name_taken_retry_ms, 1));
+          retry_at_us_ = now + ms_to_us(std::max<std::uint32_t>(config_.name_taken_retry_ms,
+                                                                kNameTakenRetryFloorMs));
           state_ = State::waiting_retry;
           return;
         }

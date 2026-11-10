@@ -269,3 +269,16 @@ TEST_CASE("fairy: Wings copies the local Navi's pose onto every fairy each frame
     CHECK(wings.navi() == navi);
     CHECK(wings.copies() == 8);
 }
+
+TEST_CASE("fairy: hidden, held or shown with her puppet") {
+    Follower f(Still());
+    for (const auto show : {CoopPuppet::Show::hide, CoopPuppet::Show::hold, CoopPuppet::Show::show}) {
+        Input in = Puppets(2, {10, 0, 5});
+        in.targets[0].show = show;
+        in.targets[0].why = "why";
+        const auto out = f.Follow(in, 1000);
+        REQUIRE(out.targets.size() == 1);
+        CHECK(out.targets[0].show == show);
+        CHECK(std::string(out.targets[0].why) == "why");
+    }
+}

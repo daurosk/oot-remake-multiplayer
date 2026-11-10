@@ -1,5 +1,7 @@
 # backwarp: as warp (both load into Kakariko, the puppets are made while the games run the
 # event after the load, so parked under the floor), then the steps of back.A.txt. Run with -NoLoad.
+#! noload
+#! start coop: test warp done
 mark start
 warp KakarikoVillage_Child Kakariko_WellSide
 wait 1200               # the title screen

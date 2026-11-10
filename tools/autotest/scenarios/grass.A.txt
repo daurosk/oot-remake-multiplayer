@@ -3,6 +3,8 @@
 # A cuts field grass (not an actor: the foliage module's SsboGrassCut buffer, docs/world.md) in three
 # places, standing still before and after each swing, then a spin attack, then three of the 13 grass
 # tufts that are actors (Land_kokiri_Plant_A_02_DropFixed_03 at about 164 27); B watches the tufts.
+#! noload
+#! start coop: test warp done
 mark start
 warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
 wait 1200               # the title screen

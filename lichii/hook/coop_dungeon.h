@@ -29,11 +29,27 @@ struct Flag {
 // one player alone (where they stand, Navi's hints, the camera) are left out.
 std::span<const Flag> Flags();
 
-// Adds the dungeon flags to `shared` when `on`, making the list when there is
+// One placed thing whose "done" is a 64-bit-key flag keyed by its placement
+// hash (a chest opened, a silver rupee taken, a room's enemies beaten, a wall
+// blown open): the key, the dungeon (Banc folder) and the actor, for logs.
+struct Key {
+    std::uint64_t key;
+    const char* dungeon;
+    const char* actor;
+};
+
+// Every such saved (ResetTypeValue 24) key placed in a dungeon. They are
+// one-time: once 1 in any game, 1 in all (shared as pickups, docs/dungeon.md).
+std::span<const Key> Keys();
+
+// Adds the dungeon flags and keys to `shared` when `on`, making the list when there is
 // none. Flags already there are kept once. Returns how many it added.
 std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on);
 
 // Merge, on unless LICHII_COOP_DUNGEON=0; logs what it did.
 void AddShared(std::optional<coop::host::SharedFlags>& shared);
+
+// False when LICHII_COOP_DUNGEON=0 (then the keys are not shared either).
+bool On();
 
 } // namespace CoopDungeon

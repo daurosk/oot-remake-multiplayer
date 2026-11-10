@@ -3,6 +3,8 @@
 # builds needs no new patch.
 set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
+    "${_coop_hook}/coop_boss.cpp"
+    "${_coop_hook}/coop_boss_game.cpp"
     "${_coop_hook}/coop_camera.cpp"
     "${_coop_hook}/coop_cheats.cpp"
     "${_coop_hook}/coop_drops.cpp"
@@ -14,6 +16,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_objects.cpp"
     "${_coop_hook}/coop_objects_sync.cpp"
     "${_coop_hook}/coop_pose.cpp"
+    "${_coop_hook}/coop_projectiles.cpp"
     "${_coop_hook}/coop_puppet.cpp"
     "${_coop_hook}/coop_settings.cpp"
     "${_coop_hook}/coop_spawn.cpp"

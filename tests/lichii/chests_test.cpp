@@ -109,7 +109,7 @@ TEST_CASE("chests: a chest opened in A is written in B and reported for B's load
     CHECK(wa.take_written_for_others().empty());
 }
 
-TEST_CASE("chests: a late joiner's snapshot reports the chests it opens; a key the game cannot write is not") {
+TEST_CASE("chests: a late joiner's snapshot reports the chests it opens, a key the game cannot write is not") {
     std::optional<host::SharedFlags> list;
     CoopChests::Merge(list, true);
     const auto open = host::FlagKey::key64_flag(CoopChests::Keys()[0].key);

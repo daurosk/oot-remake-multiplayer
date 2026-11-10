@@ -288,7 +288,7 @@ What it does:
 3. Plays `scenarios\<name>.A.txt` in A and `<name>.B.txt` in B (none: B stands still), and captures both windows every `-Every` seconds (default 3) and at each `mark` line.
 4. Closes both games and the server, copies the emulator and server logs beside the screenshots, and prints the folder: `coop-kit\shots\<scenario>\<date-time>\` (outside the repo: game screenshots are never committed). A run that went wrong leaves `FAILED.txt` there with the reason.
 
-The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`. Give them as one comma list, `-Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS_CHEAT=1"`: with `powershell -File` that is how several arrive anyway (before 2026-11-09 such a list was set as one wrong variable, so the switches were silently off). The list replaces the default, and the runner prints each switch it sets.
+The co-op switches are `-Switches` (default puppet, objects and object debug lines on), as `NAME=value`. Give them as one comma list, `-Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS_CHEAT=1"`: with `powershell -File` that is how several arrive anyway (before 2026-11-09 such a list was set as one wrong variable, so the switches were silently off). The list replaces the default, and the runner prints each switch it sets. A switch written `A:NAME=value` (or `B:`) is set for that game only, for example a key that only A sets (`deku-map`, `deku-web`).
 
 ### Start place
 
@@ -362,6 +362,8 @@ Chunk 2 scenarios (written 2026-11-10, not run yet; each file's header lists its
 - `pot-drops` (#102): both warp to `Kakariko_MountainTrailSide`; A lifts and throws (A, ZR) the pot 16 m west of it and then the pair 28 m south, and walks over where each broke. Lifting breaks a pot for sure, where chunk 1's sword swings at the house pots never reached them.
 - `stalchild`: Hyrule Field at night (clock set by the header); A walks to where two Stalchildren rose in a chunk 1 run (about 173 29) and fights at once (ZL, Y), then walks over the fight for the drops; B watches from 8 m.
 - `rock` needed no change: it failed in chunk 1 only because the game started in Kakariko.
+
+Chunk 2 test turn scenarios (2026-11-10): `boss` (A loads into the Water Temple boss room, B into the entrance and should be moved in, then walks out and should be pulled back; boss-room and object-groups lines) and `deku-map` / `deku-web` (both load into the Deku Tree entrance, only A sets one dungeon key64; dungeon-sync).
 
 Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at the well) and `water` (both load into the Water Temple entrance; checked 2026-11-09: both logs `warp done` after about 50 s, screenshots in the temple). Warping a game that is already playing works only while an event runs.
 

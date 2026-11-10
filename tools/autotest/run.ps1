@@ -417,7 +417,11 @@ function Start-Game([string]$x) {
     }
     $s.Runs++
     $old = @{}
-    foreach ($k in $switchEnv.Keys) { $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $switchEnv[$k]) }
+    foreach ($key in $switchEnv.Keys) {
+        $k = $key
+        if ($key -match '^([AB]):(.+)$') { if ($Matches[1] -ne $x) { continue }; $k = $Matches[2] }
+        $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $switchEnv[$key])
+    }
     $env:LICHII_COOP_TEST_SCRIPT = $s.Script
     $s.Proc = Start-Process (Join-Path $s.Emu 'lichii.exe') -ArgumentList "-g `"$Game`"" -WorkingDirectory $s.Emu -PassThru
     Remove-Item Env:LICHII_COOP_TEST_SCRIPT
@@ -578,7 +582,8 @@ try {
 
     # powershell -File passes -Switches "A=1","B=1" as one string "A=1,B=1": split on commas.
     $Switches = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
-    foreach ($e in $Switches) { if ($e -notmatch '^[A-Za-z_][A-Za-z0-9_]*=') { throw "switch '$e': want NAME=value" } }
+    # A:NAME=value or B:NAME=value goes to that game only (for example a key set in A alone).
+    foreach ($e in $Switches) { if ($e -notmatch '^([AB]:)?[A-Za-z_][A-Za-z0-9_]*=') { throw "switch '$e': want NAME=value or A:NAME=value" } }
     foreach ($e in $Switches) { $k, $v = $e -split '=', 2; Write-Host "switch $k=$v"; $switchEnv[$k] = $v }
 
     if ($steps) {

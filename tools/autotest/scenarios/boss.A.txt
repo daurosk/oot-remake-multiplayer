@@ -1,0 +1,35 @@
+# boss (#106 boss-room, object-groups): A loads the save straight into the Water Temple boss
+# room (warp WaterTemple StartPos_SageOfWater, taken in the event after the save loads); B loads
+# into the temple entrance (WaterTemple_FromLakeHylia) and should be moved in by boss-room.
+# Expect A: "coop: boss: in the boss room of WaterTemple", "sent 2" at the intro. B within 1 s:
+# "player 1 says 2", "another player is in the boss room ... moving in (try 1)", then "moved Link
+# to" or "asked the scene change"; later "intro ended" in both within about 1 s. B then walks
+# out (goto -4.5 -60): "left the boss room", pulled back in. object-groups: "group <member>
+# follows <root> (boss)" and "share owner ... group G" with the same non-zero G in both logs.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 400
+mark start
+warp WaterTemple StartPos_SageOfWater
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+wait 1200
+mark intro
+wait 1800
+mark fight
+wait 1800
+mark b-out
+wait 1800
+mark b-back
+wait 600
+mark end

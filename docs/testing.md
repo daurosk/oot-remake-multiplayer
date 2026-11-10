@@ -245,6 +245,8 @@ After the test, run `collect-logs.cmd` on both PCs anyway and send both zips, ev
 
 On each PC with a problem, close the emulator (the log is complete only after it closes), then double-click `collect-logs.cmd`. It writes `coop-logs-<PC name>-<date>.zip` in the kit folder with the emulator log, `coop.ini`, `coop-options.ini`, the puppet pack's `coop_puppet.json` (file names and hashes only), the server logs (on PC 1), `VERSION.txt`, the newest crash dumps and a note of the PC's Windows, GPU and addresses. Send that zip back. It has no keys, saves or game files.
 
+<!-- kit: TESTING.md ends here -->
+
 ## Making the kit
 
 On the PC that builds (needs the patched emulator built from this repo's `main` as [lichii/README.md](../lichii/README.md) says, and this repo's server built Release):
@@ -267,7 +269,7 @@ It writes `..\coop-kit\oot-coop-<yyyymmdd-hhmm>\` and a zip of it beside the mai
 | `-IncludePdb` | Adds `lichii.pdb` (about 60 MB) for crash dumps with symbols. |
 | `-NoZip` | No zip. |
 
-It refuses an emulator built without co-op, one that has Fritchii's own updater (build with `-DENABLE_UPDATE_CHECKER=OFF`: that updater would offer a plain Fritchii in place of the co-op one) and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. With the zip it writes `<zip>.sha256` and copies `Update.bat` beside it. A release gets all three as assets: `Update.bat` checks a download against the `.sha256` and refuses a release without one, and the standalone `Update.bat` is how a kit from before the updater (v0.1.0-test2) gets it ([setup.md, Updating](setup.md#updating)). The kit's `MANIFEST.txt` lists its own files, so the next update can remove the ones a newer kit drops. Tests of the updater: `powershell -File tools\release\tests\update_test.ps1` (CI runs them).
+It refuses a kit in which any file names the build PC's user folder (`tools/release/check_paths.ps1`, tested by `tools/release/tests/paths_test.ps1`): build the emulator with trimmed paths ([lichii/README.md](../lichii/README.md)). The kit's Python is checked without leaving `__pycache__` behind, `VERSION.txt` names commits and versions but no folders or PC name, and the kit's `TESTING.md` is this page up to this section. It also refuses an emulator built without co-op, one that has Fritchii's own updater (build with `-DENABLE_UPDATE_CHECKER=OFF`: that updater would offer a plain Fritchii in place of the co-op one) and a Debug server, and writes which commits went in to `VERSION.txt`. It copies the pack builder (`tools/puppet_pack`, without its tests) but never a pack: no game data goes in a kit. With the zip it writes `<zip>.sha256` and copies `Update.bat` beside it. A release gets all three as assets: `Update.bat` checks a download against the `.sha256` and refuses a release without one, and the standalone `Update.bat` is how a kit from before the updater (v0.1.0-test2) gets it ([setup.md, Updating](setup.md#updating)). The kit's `MANIFEST.txt` lists its own files, so the next update can remove the ones a newer kit drops. Tests of the updater: `powershell -File tools\release\tests\update_test.ps1` (CI runs them).
 
 To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
 

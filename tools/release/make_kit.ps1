@@ -5,6 +5,8 @@
 # guides (SETUP.md, PLAY-LAN.md, PLAY-ONLINE.md, KNOWN-ISSUES.md), TESTING.md, the licence
 # texts (licenses\, THIRD_PARTY_NOTICES.md), SOURCE.txt (where this build's source is),
 # MANIFEST.txt (the kit's own files, for Update.bat) and VERSION.txt.
+# It refuses to finish when the build machine's user folder appears in any file of the
+# kit (check_paths.ps1): build the emulator with trimmed paths (lichii/README.md).
 # No game files, keys or firmware go in, and no puppet pack: each PC adds its own and
 # builds the pack from its own romfs (docs/testing.md).
 #
@@ -36,6 +38,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 . (Join-Path $here 'kit\scripts\coop-ini.ps1')
+. (Join-Path $here 'check_paths.ps1')
 
 function Invoke-Git([string]$Dir) {
     $out = & git.exe -C $Dir @args 2>$null
@@ -168,9 +171,9 @@ foreach ($f in 'build.py', '__init__.py', 'byml.py', 'rstb.py', 'sarc.py', 'zs.p
 # Optionally a Python for it.
 $pythonNote = 'not included (each PC needs Python 3 and zstandard)'
 if ($Python) {
-    $info = & $Python -I -c 'import sys, os, zstandard; print(sys.base_prefix); print(os.path.dirname(zstandard.__file__)); print(sys.version.split()[0])' 2>$null
-    if ($LASTEXITCODE -ne 0 -or $info.Count -lt 3) { throw "$Python is not a Python with the zstandard package." }
-    $pyHome = $info[0].Trim(); $zstd = $info[1].Trim(); $pyVersion = $info[2].Trim()
+    $info = & $Python -I -B -c 'import sys, os, zstandard; print(sys.base_prefix); print(os.path.dirname(zstandard.__file__)); print(sys.version.split()[0]); print(zstandard.__version__)' 2>$null
+    if ($LASTEXITCODE -ne 0 -or $info.Count -lt 4) { throw "$Python is not a Python with the zstandard package." }
+    $pyHome = $info[0].Trim(); $zstd = $info[1].Trim(); $pyVersion = $info[2].Trim(); $zstdVersion = $info[3].Trim()
     $pyOut = Join-Path $kit 'python'
     # Python's own files, without other packages, tests, Tk, headers or pip.
     $leaveOut = 'Lib\site-packages', 'Lib\test', 'Lib\idlelib', 'Lib\tkinter', 'Lib\ensurepip', 'tcl', 'include', 'libs', 'Scripts' |
@@ -183,13 +186,21 @@ if ($Python) {
     # Its licence travels with it (in the dist-info folder).
     Get-ChildItem (Split-Path -Parent $zstd) -Directory -Filter 'zstandard-*.dist-info' |
         ForEach-Object { Copy-Item $_.FullName $site -Recurse }
-    & (Join-Path $pyOut 'python.exe') -I -c 'import zstandard' 2>$null
+    # -B: no __pycache__ in the kit (compiled files carry the folder they were made in).
+    & (Join-Path $pyOut 'python.exe') -I -B -c 'import zstandard' 2>$null
     if ($LASTEXITCODE -ne 0) { throw "The kit's Python cannot import zstandard." }
-    $pythonNote = "Python $pyVersion from $pyHome, zstandard from $zstd"
+    $pythonNote = "Python $pyVersion, zstandard $zstdVersion"
 }
 Copy-Text (Join-Path $here 'kit\coop.ini.template') (Join-Path $kit 'scripts\coop.ini.template')
 New-Item -ItemType Directory -Force -Path (Join-Path $kit 'logs') | Out-Null
+# TESTING.md: the part for players. How the kit is made and the automatic tests are about
+# this repo and its build PC, so they stop at the marker line.
 Copy-Text (Join-Path $repo 'docs\testing.md') (Join-Path $kit 'TESTING.md')
+$testing = [System.IO.File]::ReadAllText((Join-Path $kit 'TESTING.md'))
+$cut = $testing.IndexOf('<!-- kit: TESTING.md ends here -->')
+if ($cut -lt 0) { throw 'docs\testing.md has no "<!-- kit: TESTING.md ends here -->" line.' }
+$testing = $testing.Substring(0, $cut).TrimEnd() + "`r`n`r`nHow the kit is made, and the automatic tests: docs/testing.md in the co-op repo (SOURCE.txt).`r`n"
+[System.IO.File]::WriteAllText((Join-Path $kit 'TESTING.md'), $testing, [System.Text.UTF8Encoding]::new($false))
 foreach ($doc in @(@('setup.md', 'SETUP.md'), @('play-lan.md', 'PLAY-LAN.md'), @('play-online.md', 'PLAY-ONLINE.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))) {
     Copy-Text (Join-Path $repo "docs\$($doc[0])") (Join-Path $kit $doc[1])
 }
@@ -237,19 +248,17 @@ $source = @(
 
 $version = @(
     "kit: $name$(if ($Release) { " (release $Release)" })",
-    "built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz') on $($env:COMPUTERNAME)",
+    "built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')",
     "co-op repo (this script): $(Describe-Commit $repo)",
     "co-op hook built into the emulator: $(Describe-Commit $hookDir)",
-    "  from $hookDir",
     "server built from: $(Describe-Commit $serverSource)",
-    "  $server",
     "Fritchii pin: $($pin.tag) $($pin.commit)",
     "Fritchii source built: $(Describe-Commit $emuSource)",
     "  $(Invoke-Git $emuSource describe --tags --always)",
     "emulator build type: $emuType",
     "lichii.exe: $((Get-Item $lichii).LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')), $((Get-FileHash $lichii -Algorithm SHA256).Hash.Substring(0, 16)) (sha256, first 16)",
     "coop_server.exe: $((Get-Item $server).LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')), $((Get-FileHash $server -Algorithm SHA256).Hash.Substring(0, 16)) (sha256, first 16)",
-    "visual c++ runtime: $(if ($crt) { $crt.FullName } else { 'not included' })",
+    "visual c++ runtime: $(if ($crt) { "$($crt.Name) $(Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent $crt.FullName)))" } else { 'not included' })",
     "puppet pack tool: tools\puppet_pack from the co-op repo above; packs are built on each PC",
     "python: $pythonNote",
     "default port: $Port"
@@ -262,6 +271,24 @@ $banned = Get-ChildItem $kit -Recurse -File | Where-Object {
     $_.FullName -match '\\emulator\\user\\(nand|sdmc|load|dump|cache|shader|keys\\.+)'
 }
 if ($banned) { throw "The kit holds files that must not ship: $(($banned | Select-Object -First 5 | ForEach-Object FullName) -join ', ')" }
+
+# No compiled Python: it names the folder it was compiled in, and Python makes it again.
+Get-ChildItem $kit -Recurse -Directory -Force -Filter '__pycache__' | Sort-Object FullName -Descending |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+
+# Nothing may name the build machine's user folder (issue 103: a player read the
+# emulator's source paths in his log as someone else's). A .pdb holds the build's
+# folders by design; it ships only with -IncludePdb, for crash dumps, so it only warns.
+$userFolder = [Environment]::GetFolderPath('UserProfile')
+$hits = @(Find-UserPath $kit (Get-UserPathNeedles $userFolder))
+$pdbHits = @($hits | Where-Object { $_.File -like '*.pdb' })
+$hits = @($hits | Where-Object { $_.File -notlike '*.pdb' })
+if ($pdbHits) { Write-Warning "These name the build PC's user folder (symbols, -IncludePdb): $(($pdbHits | ForEach-Object File) -join ', ')" }
+if ($hits) {
+    throw ("The build PC's user folder ($userFolder) appears in $($hits.Count) kit file(s): " +
+        "$(($hits | Select-Object -First 8 | ForEach-Object { $_.File.Substring($kit.Length + 1) }) -join ', '). " +
+        'Build the emulator with trimmed paths (lichii/README.md, CMAKE_PROJECT_TOP_LEVEL_INCLUDES) and the server from this repo.')
+}
 
 # MANIFEST.txt: the kit's own files. The next Update.bat removes those of them the newer kit
 # no longer has; the player's files (emulator\user\, logs\, coop-options.ini) are not listed.

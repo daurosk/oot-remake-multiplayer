@@ -165,6 +165,29 @@ Caleb (2026-11-09): every player must see the same Stalchild rise out of the gro
 - **Held bombs.** A bomb in a player's hands is sent as samples like any other; the receiver may instead attach the copy to that player's puppet hand. Measured later.
 - **What projectiles do to the world.** A bombed wall, a shot eye switch, a lit torch: what is saved goes through shared flags ([protocol.md](protocol.md), stage 4). What is not saved (a timed switch, a torch) is not shared at first and is listed under "Not done".
 
+#### What is built (branch `projectiles`, issue 85)
+
+The copies are still the game's own actors made by the spawn sync ([spawns.md](spawns.md), `LICHII_COOP_SPAWN=1`); the `CoopShot_*` packs above are not made. On top of it, `lichii/hook/coop_projectiles.{h,cpp}` (tested in `tests/lichii/projectiles_test.cpp`) holds the rules below, used by `coop_spawn.cpp` and `coop_objects_sync.cpp`. No new message: everything rides on `OBJECT_SPAWN`, `OBJECT_SAMPLE` and `OBJECT_REMOVE` components that protocol 4 already has (rotation, fuse), so the protocol version stays.
+
+| Kind | Actor | Copy's path | Its end |
+|---|---|---|---|
+| Bomb | `Item_Bomb` | samples (held, thrown, rolling) | blown up at the owner's fuse; `exploded` if it lived 1 s |
+| Bombchu | `Item_Bombchu` | samples | blown up at the owner's remove |
+| Deku nut | `Item_DekuNut` | samples, carried on along its arc | deleted; `hit` if it went at 3 m/s or more |
+| Slingshot seed | `Shootable_DekuSeed` | the same | the same |
+| Arrow (all elements) | `NormalArrow` | the same | the same |
+| Boomerang | `Weapon_Boomerang` | samples (it homes and turns back) | deleted |
+| Hookshot, longshot tip | `Shootable_Hook`, `Shootable_HookLong` | samples | deleted |
+
+- **Turned the owner's way.** The maker reads the 3x3 at actor +0x328 with the place and sends it as a quaternion in the spawn and every sample. The copy is created with that turn in the create argument, and each game frame the director writes place and turn as one 48-byte block at +0x31c, then calls the actor's own vtable slot 0x218 `(actor, 0)` (0x4c6580 on every actor seen; the director checks the slot points into main), as `ExecuteActorForceSetMtx` does, so the physics takes the new place. `LICHII_COOP_SHOTS_SETTER=0` leaves the call out.
+- **The same path at the same time.** A copy is placed where the owner's projectile is *now*: the latest sample carried on by its velocity for the time since the sample's server time (at most 250 ms), with the fall that two samples show (velocity y lost per second, 0 to 60 m/s²) for arrows, seeds and nuts. Before, it was carried on by the time since the message arrived, so a copy ran one network delay behind.
+- **Explosions at the same moment.** The maker learns its game's bomb fuse from its own bombs (the middle of the last 7 that lived 1 to 10 s; log `coop: shots: our bombs' fuse is ...`). From then on its bombs' spawn and samples carry `fuse` (seconds left). Another game blows its copy up when the server clock reaches the sample's time plus that fuse, without waiting for the remove (`coop: shots: bomb copy blown on the owner's fuse`); the remove still blows it up if it comes first (a bomb hit by fire), and the first bomb of a session, with no fuse known yet, goes off at the remove as before.
+- **No hit taken twice.** A copy bomb is a real bomb in its game, so it hurts that game's enemies too. Each copy that goes off (by the owner's fuse, its remove, or by itself) is noted with its place and time. The objects sync then treats a life drop within 6 m of it, from 0.2 s before to 1.2 s after, as that blast's: on a copy it is not sent as `DAMAGE` (the owner's own bomb deals it there), and on an enemy we own it is kept as credit for 2 s, which a `DAMAGE` from the thrower's game for the same bomb uses up first (log `coop: shots: life drop by a projectile copy's blast kept back`).
+- **Why it went.** `OBJECT_REMOVE` says `exploded` for a bomb or bombchu that lived 1 s, `hit` for a nut, seed or arrow that left the list at 3 m/s or more (it struck something), else `gone`.
+- **Arrow elements.** Fire, ice and light arrows are all `NormalArrow` (inferred). The shooter's element is already known to every game from its `PLAYER_EQUIP` arrow; `ElementOf` and `CauseOf` turn it into a damage cause. The copy is a plain arrow: how the game gives an arrow its element was not found.
+
+Not proven: nothing of this has run in a game. Thrown from the puppet: the copy starts where the owner's projectile was made (the owner's hand), and the puppet stands at the owner's place 100 ms late, so the two should meet; not seen.
+
 ### Enemies
 
 The rules answer each way the TotK sync broke ([protocol.md](protocol.md) "Rules it is built on"; the TotK port's `docs/online-sync.md`, section 3).

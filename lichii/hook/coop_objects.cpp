@@ -79,6 +79,7 @@
 #include "coop_objects_sync.h"
 #include "coop_spawn.h"
 #include "coop_pickups.h"
+#include "coop_projectiles.h"
 #include <atomic>
 #include "coop_world.h"
 
@@ -834,6 +835,10 @@ public:
             (void)registered;
             CoopSpawn::UseDirector();  // makes the rolled enemies another game decided
             sync_.SetHurt(hurt_);
+            // A projectile copy's blast here is not our hit (docs/objects.md, "Projectiles").
+            sync_.SetBlastNear([](const coop::protocol::Vec3& at, std::uint64_t now) {
+                return CoopProjectiles::TheBlasts().Near(at, now);
+            });
             take_at_ = server_now_us + 3'000'000;
             LOG_INFO(Core, "coop: objects: share on, poses {}, hurt {}", pose_ ? "on" : "off",
                      hurt_ ? "through the game" : "written as life");
@@ -852,6 +857,11 @@ public:
             sync_.Bind(live);
         }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        if (sync_.BlastDrops() != blast_drops_logged_) {
+            blast_drops_logged_ = sync_.BlastDrops();
+            LOG_INFO(Core, "coop: shots: life drop by a projectile copy's blast kept back ({} so far)",
+                     blast_drops_logged_);
+        }
         {
             std::vector<CoopSpawn::Copy> enemies;
             for (const EnemyCopy& e : sync_.Creates()) {
@@ -1563,6 +1573,7 @@ private:
     unsigned frame_ = 0;
     unsigned share_frame_ = 0;
     bool sharing_ = false;
+    std::size_t blast_drops_logged_ = 0;
     std::size_t present_logged_ = ~std::size_t{0};
     std::size_t enemies_logged_ = 0;
     std::size_t refused_logged_ = 0;

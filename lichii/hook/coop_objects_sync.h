@@ -23,6 +23,7 @@
 
 #include <array>
 #include <deque>
+#include <functional>
 
 #include <cstdint>
 #include <map>
@@ -161,6 +162,17 @@ public:
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
     void SetHurt(bool on) { hurt_ = on; }
 
+    // Projectiles (coop_projectiles.h): true for a life drop at a place and
+    // server time that a projectile copy's blast here may have made. A copy
+    // bomb is the game's own bomb, so the owner's real bomb and our copy both
+    // hit. Such a drop on a copy is not sent to the owner (its own bomb hits
+    // its enemy); on an enemy we own it is kept as credit for kBlastCreditUs,
+    // and a DAMAGE that comes for the same bomb takes the credit first.
+    using BlastNear = std::function<bool(const coop::protocol::Vec3&, std::uint64_t)>;
+    void SetBlastNear(BlastNear near) { blast_near_ = std::move(near); }
+    static constexpr std::uint64_t kBlastCreditUs = 2'000'000;
+    std::size_t BlastDrops() const { return blast_drops_; }  // drops kept back so far
+
     // Network thread: OBJECT_OWNER, OBJECT_SAMPLE, HANDOVER_ASK,
     // HANDOVER_STATE, DAMAGE. Others are ignored. Applied on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -276,6 +288,9 @@ private:
         // much is the game taking that same hit.
         std::int32_t late_left = 0;
         std::uint64_t late_until = 0;
+        // Owner side: life a copy bomb's blast took here (BlastNear).
+        std::int32_t blast_credit = 0;
+        std::uint64_t blast_until = 0;
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
         coop::protocol::Vec3 first_position{};  // where it was first seen
@@ -331,6 +346,8 @@ private:
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts written directly after the wait
+    BlastNear blast_near_;
+    std::size_t blast_drops_ = 0;
 
     mutable std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;

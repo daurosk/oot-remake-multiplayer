@@ -364,6 +364,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     ++hurt_late_;
                 }
                 const auto owner = owners_.find(o.id);
+                if (drop > 0 && blast_near_ && owner != owners_.end() &&
+                    owner->second.player != 0 && blast_near_(s.position, now_us)) {
+                    // A projectile copy went off here: the owner's own bomb
+                    // makes this hit in its game.
+                    ++blast_drops_;
+                    if (owner->second.player == self) {
+                        if (now_us >= o.blast_until) {
+                            o.blast_credit = 0;
+                        }
+                        o.blast_credit += drop;
+                        o.blast_until = now_us + kBlastCreditUs;
+                    }
+                    drop = 0;
+                }
                 if (drop > 0 && owner != owners_.end() && owner->second.player != 0 &&
                     owner->second.player != self) {
                     if (o.hit_sum == 0) {
@@ -801,8 +815,18 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (damage->player_number == self) {
                 continue;  // our own hit, sent before it became ours: already in its life
             }
+            std::int32_t amount = damage->amount;
+            if (o->blast_credit > 0 && now_us < o->blast_until) {
+                // A copy bomb here took this hit already.
+                const std::int32_t taken = std::min(o->blast_credit, amount);
+                o->blast_credit -= taken;
+                amount -= taken;
+                if (amount <= 0) {
+                    continue;
+                }
+            }
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
-            Lower(*o, std::max(0, have - damage->amount), now_us, writes, damage->player_number);
+            Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number);
             o->fight_until = now_us + kFightUs;
         } else if (const auto* ask = std::get_if<proto::HandoverAsk>(&m)) {
             proto::HandoverState state;

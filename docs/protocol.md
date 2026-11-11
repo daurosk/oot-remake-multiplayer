@@ -352,5 +352,5 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 6 (chunk 4): `SIGN_CUT` (80; 80 to 84 kept for signs). No earlier layout changed. The version went up so that a version 5 server, which would not relay it, is refused at `HELLO`.
 - Version 7 (chunk 5, test7): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
 - Version 8 (test8): `FLAG_ORIGIN` (150; 150 to 154 kept), from the server only. A version 7 game would refuse it as unknown, so every game and the server must be 8.
-- Version 9 (test9, chunk 7 "everything in sync"): world-objects adds no message (171 to 175 kept): the placed rolling boulders now go as `WORLD_MOVE`, which a version 8 game would not follow, so every game must be 9.
+  - Also in 8 (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 7 also brings `FLAG_RESET` (135; 135 to 139 kept for saves, branch `host-save`): the host's save load sets every game's shared flags to the save's values. A version 6 server would not relay it.

@@ -55,6 +55,9 @@ struct SessionConfig {
   // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce.
   // Empty: no password, HELLO is answered at once as before.
   std::string join_password;
+  // PvP (coop_server --pvp): players hurt each other. The host may change it
+  // in the session (PVP_MODE); every player gets the server's value.
+  bool pvp = false;
   // Guessing the join password: an address that sends max_wrong_passwords
   // wrong proofs within wrong_password_window_us is closed at connect for
   // wrong_password_block_us (counted in password_blocked). 0: no limit.
@@ -203,6 +206,10 @@ struct Stats {
   std::uint64_t after_refused = 0;   // packets from a connection being closed
   std::uint64_t rate_limited = 0;    // over a player's message rate
   std::uint64_t relayed = 0;         // messages passed on (once per message)
+  // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
+  std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
+  std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
+  std::uint64_t pvp_mode_refused = 0;   // PVP_MODE from a player who does not host
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
@@ -319,6 +326,8 @@ class Session {
   std::size_t player_count() const;
   // The host's player number; none while the session is empty.
   std::optional<std::uint8_t> host() const;
+  // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
+  bool pvp() const { return pvp_; }
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.
@@ -449,6 +458,8 @@ class Session {
   void on_object_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::uint64_t now_us);
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d, std::uint64_t now_us);
+  void on_pvp_mode(ConnectionId id, Connection& c, const protocol::PvpMode& m);
+  void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us);
   void on_grass_cut(ConnectionId id, Connection& c, protocol::GrassCut& cut,
@@ -547,6 +558,10 @@ class Session {
   std::map<ConnectionId, Connection> connections_;
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
+  // PvP now: config_.pvp until the host changes it; back to config_.pvp when
+  // the session empties. `pvp_set_by_` is PVP_MODE's set_by (0: the server).
+  bool pvp_ = false;
+  std::uint8_t pvp_set_by_ = 0;
   // Every shared flag value the host has sent, by key. Kept when
   // the host leaves; forgotten when the session empties.
   std::map<protocol::FlagKey, protocol::FlagEntry> flags_;

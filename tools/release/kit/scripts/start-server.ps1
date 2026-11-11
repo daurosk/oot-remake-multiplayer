@@ -30,12 +30,16 @@ if ($Bind.Trim()) {
 # and is never printed or logged.
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
-$password = (Read-KitServerAccess (Join-Path $kit 'coop-options.ini')).Password
+$serverAccess = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
+$password = $serverAccess.Password
 if ($password) {
     if (-not (Test-CoopPassword $password)) { Write-Host 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1 }
     $env:OOT_COOP_SERVER_PASSWORD = $password
     $access += @('--password-env', 'OOT_COOP_SERVER_PASSWORD')
 }
+# PvP (coop-options.ini pvp = on): players can hurt each other. The host's value is the
+# whole session's; the host can change it in the game with /pvp.
+if ($serverAccess.Pvp) { $access += @('--pvp', 'on') }
 
 $logs = Join-Path $kit 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -45,6 +49,8 @@ Write-Host "Co-op server on UDP port $Port. Log: $log"
 Write-Host 'Keep this window open while you play; closing it (or Ctrl+C) stops the server.'
 if ($password) { Write-Host 'Join password: on (server_password in coop-options.ini). Send it to your friends with the address.' }
 else { Write-Host 'Join password: none (set one with server_password in coop-options.ini).' }
+if ($serverAccess.Pvp) { Write-Host 'PvP: on (pvp in coop-options.ini): players can hurt each other. /pvp off in the game chat turns it off.' }
+else { Write-Host 'PvP: off (players cannot hurt each other; pvp = on in coop-options.ini, or /pvp on in the game chat).' }
 # Which address the others type (hosting.ps1): VPN, internet (one HTTPS question to a fixed
 # service, unless coop-options.ini says public_address_lookup = no), home network. The best
 # one goes to the clipboard.

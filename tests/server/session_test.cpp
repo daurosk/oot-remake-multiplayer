@@ -3312,3 +3312,71 @@ TEST_CASE("the host's save: SAVE_ASK goes to the host, SAVE_PART from the host t
   CHECK(messages_to<SavePart>(h, 2).size() == 200);
   CHECK(h.session.stats().rate_limited == 0);
 }
+
+TEST_CASE("pvp: off by default, nothing told at join, hits dropped") {
+  Harness h;
+  CHECK_FALSE(h.session.pvp());
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  CHECK(messages_of<PvpMode>(h, 1).empty());
+  CHECK(messages_of<PvpMode>(h, 2).empty());
+  h.clear();
+  h.receive(1, PvpHit{0, 2, 1, 4, {1, 2, 3}, {0, 2, 3}}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().pvp_hits_dropped == 1);
+}
+
+TEST_CASE("pvp: --pvp on is told at join; hits go to their victim only") {
+  SessionConfig config;
+  config.pvp = true;
+  Harness h(config);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  CHECK(messages_of<PvpMode>(h, 2) == std::vector<PvpMode>{PvpMode{0, true}});
+  h.clear();
+  h.receive(1, PvpHit{0, 3, 1, 4, {1, 2, 3}, {0, 2, 3}}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  const auto hit = only_message_to<PvpHit>(h, 3);
+  REQUIRE(hit);
+  CHECK(hit->player_number == 1);
+  CHECK(hit->amount == 4);
+  CHECK(h.session.stats().pvp_hits_relayed == 1);
+  // To a player who is not there: dropped.
+  h.clear();
+  h.receive(1, PvpHit{0, 4, 1, 4, {}, {}}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  // The victim's answer goes to everyone else, with its sender written in.
+  h.receive(3, PvpHurt{0, 1, 4, 8, 0}, kChannelOwnership);
+  CHECK(only_message_to<PvpHurt>(h, 1) == PvpHurt{3, 1, 4, 8, 0});
+  CHECK(only_message_to<PvpHurt>(h, 2) == PvpHurt{3, 1, 4, 8, 0});
+  // A hurt by itself is nobody's.
+  h.clear();
+  h.receive(3, PvpHurt{0, 3, 4, 8, 0}, kChannelOwnership);
+  CHECK(h.sent.empty());
+}
+
+TEST_CASE("pvp: only the host changes it, for everyone; an empty session goes back") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(2, PvpMode{0, true}, kChannelSession);  // a guest cannot
+  CHECK_FALSE(h.session.pvp());
+  CHECK(only_message_to<PvpMode>(h, 2) == PvpMode{0, false});
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().pvp_mode_refused == 1);
+  h.clear();
+  h.receive(1, PvpMode{0, true}, kChannelSession);
+  CHECK(h.session.pvp());
+  CHECK(only_message_to<PvpMode>(h, 1) == PvpMode{1, true});
+  CHECK(only_message_to<PvpMode>(h, 2) == PvpMode{1, true});
+  // A newcomer learns it at join.
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_of<PvpMode>(h, 3) == std::vector<PvpMode>{PvpMode{1, true}});
+  // Everyone leaves: the next session starts from the server's own value.
+  for (ConnectionId id : {1u, 2u, 3u}) h.session.disconnected(id, h.now);
+  h.collect();
+  CHECK_FALSE(h.session.pvp());
+}

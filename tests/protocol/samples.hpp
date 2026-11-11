@@ -103,6 +103,13 @@ inline std::vector<Message> object_messages() {
   all.push_back(DropAsk{0, "Graveyard"});
   all.push_back(BossRoom{0, "InsideTheDekuTree", 0, BossState::in_room});
   all.push_back(BossRoom{4, "SpiritTemple", 7, BossState::defeated});
+  all.push_back(PvpMode{0, true});
+  all.push_back(PvpMode{2, false});
+  all.push_back(PvpHit{0, 2, static_cast<std::uint8_t>(DamageCause::sword), 4, {1.0f, 2.0f, 3.0f}, {0.5f, 2.0f, 3.5f}});
+  all.push_back(PvpHit{3, 1, 200, kMaxPvpLife, {0.0f, 0.0f, 0.0f}, {-1.0f, -2.0f, -3.0f}});
+  all.push_back(PvpHurt{0, 1, 4, 8, 0});
+  all.push_back(PvpHurt{2, 4, 0, 12, pvp_hurt::guarded});
+  all.push_back(PvpHurt{1, 3, 6, 0, pvp_hurt::died});
   return all;
 }
 

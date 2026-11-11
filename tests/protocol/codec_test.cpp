@@ -1546,3 +1546,69 @@ TEST_CASE("save ask and save part: types 206 and 207, session channel, both ways
   b.pop_back();  // one byte short
   CHECK(decode(b, back) != Error::none);
 }
+
+TEST_CASE("pvp messages: types 241 to 243, mode on the session channel, hits and hurts on ownership") {
+  CHECK(static_cast<int>(MessageType::pvp_mode) == 241);
+  CHECK(static_cast<int>(MessageType::pvp_hit) == 242);
+  CHECK(static_cast<int>(MessageType::pvp_hurt) == 243);
+  CHECK(channel_of(MessageType::pvp_mode) == kChannelSession);
+  CHECK(channel_of(MessageType::pvp_hit) == kChannelOwnership);
+  CHECK(channel_of(MessageType::pvp_hurt) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::pvp_hit, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::pvp_mode, kChannelOwnership));
+  for (const auto t : {MessageType::pvp_mode, MessageType::pvp_hit, MessageType::pvp_hurt}) {
+    CHECK(may_send(Sender::client, t));
+    CHECK(may_send(Sender::server, t));
+  }
+
+  Message mode = PvpMode{0, true};
+  CHECK_FALSE(sender_of(mode));  // no player field: the server says who set it
+  Bytes b = must_encode(mode);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == mode);
+
+  Message hit = PvpHit{0, 2, static_cast<std::uint8_t>(DamageCause::sword), 4, {1, 2, 3}, {4, 5, 6}};
+  CHECK(check_received(hit, Sender::client, kChannelOwnership) == Error::none);
+  CHECK_FALSE(set_sender(hit, 2));  // nobody hits themselves
+  CHECK(set_sender(hit, 1));
+  CHECK(sender_of(hit) == 1);
+  b = must_encode(hit);
+  REQUIRE(b.size() == kHeaderSize + 3 + 4 + 24);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == hit);
+
+  Message hurt = PvpHurt{0, 1, 4, 8, pvp_hurt::died};
+  CHECK_FALSE(set_sender(hurt, 1));
+  CHECK(set_sender(hurt, 3));
+  b = must_encode(hurt);
+  REQUIRE(b.size() == kHeaderSize + 2 + 8 + 1);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == hurt);
+}
+
+TEST_CASE("bad pvp messages are refused") {
+  Bytes out;
+  CHECK(encode(PvpMode{kMaxPlayers + 1, true}, out) == Error::bad_value);
+  CHECK(encode(PvpHit{0, 0, 1, 4, {}, {}}, out) == Error::bad_value);   // no victim
+  CHECK(encode(PvpHit{2, 2, 1, 4, {}, {}}, out) == Error::bad_value);   // itself
+  CHECK(encode(PvpHit{0, 1, 1, 0, {}, {}}, out) == Error::bad_value);   // nothing
+  CHECK(encode(PvpHit{0, 1, 1, kMaxPvpLife + 1, {}, {}}, out) == Error::bad_value);
+  CHECK(encode(PvpHit{0, 1, 1, 4, {std::nanf(""), 0, 0}, {}}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 0, 1, 1, 0}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 1, -1, 1, 0}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 1, 1, kMaxPvpLife + 1, 0}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 1, 1, 1, 4}, out) == Error::bad_value);  // unknown flag
+
+  Message m;
+  Bytes b = must_encode(PvpMode{0, true});
+  b.back() = 2;  // neither off nor on
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(PvpHurt{0, 1, 1, 1, 0});
+  b.back() = 4;
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(PvpHit{0, 1, 1, 4, {}, {}});
+  b[kHeaderSize + 3] = 0xff;  // amount far over the most
+  CHECK(decode(b, m) == Error::bad_value);
+}

@@ -79,7 +79,7 @@ std::uint64_t Stats::dropped() const {
   return total;
 }
 
-Session::Session(SessionConfig config) : config_(std::move(config)) {}
+Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp) {}
 
 bool Session::connected(ConnectionId id, std::uint64_t now_us,
                         std::optional<std::uint32_t> address) {
@@ -302,6 +302,9 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   // FLAG_STATE relayed after this.
   if (!host_) host_ = id;
   send(id, kChannelProgress, Host{connections_.at(*host_).number});
+  // PvP on: told at join, after HOST. Off is not told: every
+  // game starts each connection with PvP off (docs/protocol.md, "PvP").
+  if (pvp_) send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
   send_snapshot(id);
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
@@ -359,6 +362,19 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_damage(id, c, *d, now_us);
     return;
   }
+  if (const auto* mode = std::get_if<PvpMode>(&message)) {
+    on_pvp_mode(id, c, *mode);
+    return;
+  }
+  if (std::holds_alternative<PvpHit>(message)) {
+    on_pvp_hit(id, c, message);
+    return;
+  }
+  // A PVP_HURT naming its own sender as the attacker is nobody's.
+  if (std::holds_alternative<PvpHurt>(message) && !set_sender(message, c.number)) {
+    ++stats_.pvp_hits_dropped;
+    return;
+  }
   if (const auto* group = std::get_if<ObjectGroup>(&message)) {
     on_object_group(id, c, *group);
     return;
@@ -394,6 +410,43 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (sender_of(message)) set_sender(message, c.number);
   send_to_others(id, channel, message);
+  ++stats_.relayed;
+}
+
+// The host changes PvP for everyone (its /pvp). Anyone else's is ignored, so
+// nobody is hurt in a session whose host did not choose it. Everyone, the
+// host included, gets the new value; an unchanged value is told back to the
+// host alone, so its game still learns the session's.
+void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
+  if (!host_ || *host_ != id) {
+    ++stats_.pvp_mode_refused;
+    send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+    return;
+  }
+  if (m.on == pvp_) {
+    send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
+    return;
+  }
+  pvp_ = m.on;
+  pvp_set_by_ = c.number;
+  const PvpMode now{pvp_set_by_, pvp_};
+  send(id, kChannelSession, now);
+  send_to_others(id, kChannelSession, now);
+  log(std::string("PvP turned ") + (pvp_ ? "on" : "off") + " by player " +
+      std::to_string(c.number));
+}
+
+// To the victim only, and only while PvP is on: a game with PvP off never
+// gets a hit, whatever an attacker's game believes.
+void Session::on_pvp_hit(ConnectionId id, Connection& c, Message& message) {
+  const std::uint8_t victim = std::get<PvpHit>(message).victim;
+  const auto target = pvp_ ? connection_of(victim) : std::nullopt;
+  if (!target || *target == id || !set_sender(message, c.number)) {
+    ++stats_.pvp_hits_dropped;
+    return;
+  }
+  send(*target, kChannelOwnership, message);
+  ++stats_.pvp_hits_relayed;
   ++stats_.relayed;
 }
 
@@ -1664,6 +1717,8 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   if (player_count() == 0) {
     session_game_build_.clear();
     host_.reset();
+    pvp_ = config_.pvp;
+    pvp_set_by_ = 0;
     flags_.clear();
     objects_.clear();
     grass_.clear();

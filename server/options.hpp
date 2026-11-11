@@ -27,6 +27,8 @@ struct CommandLine {
   // line (where other programs can read it); main() reads that variable.
   std::string password;
   std::string password_env;
+  // --pvp on|off: players hurt each other (docs/play-online.md, "PvP").
+  bool pvp = false;
   bool help = false;
 };
 

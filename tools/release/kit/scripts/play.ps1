@@ -157,7 +157,13 @@ if ($Mode -eq 'host') {
     if ($serverUp) { Write-Host 'The server from this kit is already running.' }
     else {
         Write-Host "Starting the server in its own window (UDP port $Port). Keep that window open while you play."
-        Start-Process -FilePath (Join-Path $kit 'start-server.cmd') -ArgumentList $Port -WorkingDirectory $kit | Out-Null
+        $serverArgs = @("$Port")
+        $access = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
+        if ($access.Allow -match '^[0-9./, ]+$') { $serverArgs += @('-Allow', ($access.Allow -replace '\s', '')) }
+        elseif ($access.Allow) { Write-Host "coop-options.ini: server_allow '$($access.Allow)' is not a list of IPv4 addresses (25.1.2.3,26.0.0.0/8); the server was not started."; exit 1 }
+        if ($access.Bind -match '^[0-9.]+$') { $serverArgs += @('-Bind', $access.Bind) }
+        elseif ($access.Bind) { Write-Host "coop-options.ini: server_bind '$($access.Bind)' is not an IPv4 address (25.1.2.3); the server was not started."; exit 1 }
+        Start-Process -FilePath (Join-Path $kit 'start-server.cmd') -ArgumentList $serverArgs -WorkingDirectory $kit | Out-Null
         Start-Sleep -Seconds 2
     }
 }

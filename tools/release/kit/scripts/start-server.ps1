@@ -1,7 +1,12 @@
 # Runs the co-op server from this kit and writes its output to logs\server-<date>.log.
-# Usage: start-server.cmd [port] [more coop_server options]
+# Usage: start-server.cmd [port] [-Allow 25.1.2.3,26.0.0.0/8] [-Bind 25.1.2.3] [more coop_server options]
+# -Allow: only these IPv4 addresses (or ranges) may join; -Bind: listen on this one address of
+# this PC only (its Hamachi or Radmin address). play.ps1 passes coop-options.ini's server_allow
+# and server_bind here.
 param(
-    [int]$Port = @PORT@,
+    [Parameter(Position = 0)][int]$Port = @PORT@,
+    [string]$Allow = '',
+    [string]$Bind = '',
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
 )
 $ErrorActionPreference = 'Continue'
@@ -9,6 +14,16 @@ $kit = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $kit 'server\coop_server.exe'
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 if ($Port -lt 1 -or $Port -gt 65535) { Write-Host "The port must be 1 to 65535."; exit 1 }
+$access = @()
+$range = '^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$'
+foreach ($a in @($Allow -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+    if ($a -notmatch $range) { Write-Host "server_allow: '$a' is not an IPv4 address (25.1.2.3) or range (26.0.0.0/8)."; exit 1 }
+    $access += @('--allow', $a)
+}
+if ($Bind.Trim()) {
+    if ($Bind.Trim() -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Write-Host "server_bind: '$Bind' is not an IPv4 address (25.1.2.3)."; exit 1 }
+    $access += @('--bind', $Bind.Trim())
+}
 
 $logs = Join-Path $kit 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -33,7 +48,8 @@ if (Test-Path -LiteralPath $versionFile) {
     if ($first -match '\(release ([^)]+)\)') { $release = $Matches[1] }
 }
 
-$args2 = @('--port', "$Port") + @($Rest | Where-Object { $_ })
+if ($Allow.Trim()) { Write-Host "Only these addresses may join (server_allow): $Allow" }
+$args2 = @('--port', "$Port") + $access + @($Rest | Where-Object { $_ })
 & $exe @args2 2>&1 | ForEach-Object {
     $text = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
     if ($release -and $text -match 'refused a connection, reason 1\b') {

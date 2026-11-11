@@ -225,8 +225,8 @@ function Get-KitInstallOrder([string[]]$Files) {
 }
 
 # The switch names a coop-options.ini mentions, set or behind a '#': the emulator's
-# LICHII_COOP_... switches and the kit's own auto_update.
-$OptionName = '(LICHII_COOP_[A-Z0-9_]+|auto_update)'
+# LICHII_COOP_... switches and the kit's own auto_update, server_allow and server_bind.
+$OptionName = '(LICHII_COOP_[A-Z0-9_]+|auto_update|server_allow|server_bind)'
 function Get-KitOptionNames([string[]]$Lines) {
     $names = @{}
     foreach ($l in $Lines) {

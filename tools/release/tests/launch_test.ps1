@@ -80,6 +80,16 @@ try {
     [System.IO.File]::WriteAllText($opt, "auto_update = ask`r`nLICHII_COOP_PUPPET=1`r`n# EDEN_NX2_GPL=1`r`nEDEN_NX2_GPL = 1`r`nEDEN_OTHER=1`r`n")
     $o = Read-KitOptions $opt 6>$null
     Check ((($o.Keys | ForEach-Object { "$_=$($o[$_])" }) -join ',') -eq 'LICHII_COOP_PUPPET=1,EDEN_NX2_GPL=1') "coop-options.ini passes EDEN_NX2_* lines, not other EDEN_ ones [$(($o.Keys | ForEach-Object { "$_=$($o[$_])" }) -join ',')]"
+    # server_allow / server_bind (net-security): read for the server, never set for the emulator.
+    [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`nserver_allow = 25.1.2.3, 26.0.0.0/8 `r`nserver_bind=25.1.2.3`r`nLICHII_COOP_PUPPET=1`r`n")
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    $o = Read-KitOptions $opt 6>$null
+    Check ((($o.Keys) -join ',') -eq 'LICHII_COOP_PUPPET' -and -not $said) 'server_allow and server_bind are not emulator switches and are not warned about'
+    $a = Read-KitServerAccess $opt
+    Check ($a.Allow -eq '25.1.2.3, 26.0.0.0/8' -and $a.Bind -eq '25.1.2.3') "server_allow and server_bind are read [$($a.Allow)|$($a.Bind)]"
+    [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`n")
+    $a = Read-KitServerAccess $opt
+    Check ($a.Allow -eq '' -and $a.Bind -eq '') 'server_allow behind # is off'
 } finally {
     Remove-Item -LiteralPath $opt -Force -ErrorAction SilentlyContinue
 }

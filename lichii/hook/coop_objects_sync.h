@@ -102,8 +102,14 @@ struct LifeWrite {
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
 // not Navi, held equipment or invisible helpers) and the breakable world
-// objects (coop_world.h).
+// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
 bool IsShared(std::string_view name);
+
+// An order puzzle each game runs on its own (issue 149): the Scrub Brothers
+// (hit 2, 3, 1) and the Lost Woods stage scrubs. Their order is counted in
+// the game's own code from its own hits; only the solve is shared (a dungeon
+// flag, docs/dungeon.md).
+bool IsOwnPuzzle(std::string_view name);
 
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver

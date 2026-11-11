@@ -305,6 +305,16 @@ TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
 }
 
+TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
+    CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_Deku_Brothers"));
+    CHECK(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku_Brothers"));
+    CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_ForestStage"));
+    // The lone scrubs and business scrubs stay shared enemies.
+    CHECK(CoopObjects::IsShared("Enemy_Scrub_Deku"));
+    CHECK(CoopObjects::IsShared("Enemy_Scrub_Business_Seed"));
+    CHECK_FALSE(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku"));
+}
+
 TEST_CASE("objects: a rotation matrix goes to a quaternion and back") {
     // A turn of 90 degrees about y, then an arbitrary one.
     const CoopObjects::Mat3 turn{0, 0, 1, 0, 1, 0, -1, 0, 0};

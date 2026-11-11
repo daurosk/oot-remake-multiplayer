@@ -116,6 +116,21 @@ TEST_CASE("dungeon: a room gimmick's played event is shared, story scenes and bo
     CHECK(played > 180);
 }
 
+TEST_CASE("dungeon: one player's failed or reset attempt is not shared (issue 149)") {
+    // Set by a room graph when one player's try fails or a timed switch runs out;
+    // shared, it would reach another player in the middle of their own try.
+    std::set<std::string> names;
+    for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+    for (const char* out : {"InsideTheDekuTree_RoomK_Failure", "FireTemple_Room08_SwitchWasReset",
+                            "FireTemple_Room10_SwitchWasReset", "FireTemple_Room13_SwitchWasReset",
+                            "InsideGanonCastle_Dungeon_Room08_CandleWasReset"}) {
+        CHECK_MESSAGE(names.count(out) == 0, out);
+    }
+    // The puzzle solved is shared: the Scrub Brothers' room opens for everyone.
+    CHECK(names.count("InsideTheDekuTree_RoomK_Cleared") == 1);
+    CHECK(names.count("InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003") == 1);
+}
+
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {
     std::optional<host::SharedFlags> none;
     CHECK(CoopDungeon::Merge(none, false) == 0);

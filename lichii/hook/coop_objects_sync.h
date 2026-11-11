@@ -566,9 +566,16 @@ private:
     static constexpr std::uint64_t kTakeBreakUs = 1'500'000;
     // A chest (Obj_TBox_*) taken here, away from our Link, is given this long
     // to show itself open (its own AI reads the shared opened flag, issue 87:
-    // an animation with "Open" in it, seen while our Link is not beside it);
-    // one still closed after that is removed. Counted from the first take.
+    // its animation changes, after the take, to one with "Open" in it, seen
+    // while our Link is not beside it); one still closed after that is
+    // removed. Counted from the first take.
     static constexpr std::uint64_t kChestOpenWaitUs = 1'500'000;
+    // A chest whose animation changed to one with "Open" in it this recently
+    // when the take came is opening now: beside our Link, ours opened it too
+    // (both at once); away from it, its AI reacted to the flag. Only a change
+    // counts: a closed chest's own idle animation may have "Open" in its name
+    // (integrate-p8: an untouched closed chest was taken for "both at once").
+    static constexpr std::uint64_t kChestOpeningUs = 2'000'000;
     struct Taking {
         unsigned ticks = 0;
         std::set<std::uint64_t> addresses;
@@ -576,7 +583,15 @@ private:
         std::map<std::uint64_t, std::uint64_t> broke_at;  // address: when life 0 was written
         std::uint64_t since_us = 0;          // when the take came
         std::set<std::uint64_t> shown_open;  // chests that showed themselves open
+        std::map<std::uint64_t, std::string> bound_animation;  // each chest's animation when bound
     };
+    // Every loaded chest's animation and when it last changed (0: the same
+    // since it was first seen), for the opening tests above.
+    struct ChestAnimation {
+        std::string name;
+        std::uint64_t changed_us = 0;
+    };
+    std::map<std::uint64_t, ChestAnimation> chest_animations_;
     std::uint64_t last_tick_us_ = 0;
     bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)
     std::map<std::uint64_t, Taking> taken_;

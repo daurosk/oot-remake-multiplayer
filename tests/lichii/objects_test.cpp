@@ -634,19 +634,73 @@ TEST_CASE("objects: a chest beside our Link shows open or goes, it is never left
     Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
     sync.TakeNotes();
-    // Ours was opening already when the other's flag came (both at once): it
-    // stays, and the log says its content may count twice.
+    // Ours started opening just before the other's flag came (both at once):
+    // its animation changed to "Open" with our Link beside it. It stays, and
+    // the log says its content may count twice.
     Seen opening = Chest(0x600, 0x2222);
-    opening.animation = proto::Animation{};
-    opening.animation->name = "Open";
+    opening.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    Tick(sync, 25 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    opening.animation = proto::Animation{"Open", 0.0f, 1.0f};
+    Tick(sync, 28 * kMs, {opening, Enemy(0x100, 0x11, 2)});
     sync.Take(0x2222);
-    Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 30 * kMs, {opening, Enemy(0x100, 0x11, 2)});
     Tick(sync, 40 * kMs, {opening, Enemy(0x100, 0x11, 2)});
     Tick(sync, 2000 * kMs, {opening, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     bool said = false;
     for (const auto& n : sync.TakeNotes()) said |= n.find("at once") != std::string::npos;
     CHECK(said);
+}
+
+TEST_CASE("objects: a closed chest whose idle has Open in its name is not taken for opened (integrate-p8)") {
+    // B never touched the chest; its closed idle animation has "Open" in its
+    // name and has not changed since the chest was made.
+    for (const bool beside : {false, true}) {
+        Sync sync;
+        sync.SetPlayer(beside ? proto::Vec3{1.5f, 0.0f, 1.0f} : proto::Vec3{20.0f, 0.0f, 1.0f});
+        Seen chest = Chest(0x500);
+        chest.animation = proto::Animation{"OpenWait", 0.0f, 1.0f};
+        Tick(sync, 0, {chest, Enemy(0x100, 0x11, 2)});
+        Tick(sync, 5000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+        sync.Take(chest.hash);
+        Tick(sync, 5010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+        Tick(sync, 5020 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+        if (beside) {
+            CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});  // at once
+        } else {
+            CHECK(sync.Removes().empty());  // its wait to show itself open
+            Tick(sync, 6600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+            CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+        }
+        for (const auto& n : sync.TakeNotes()) {
+            CHECK(n.find("at once") == std::string::npos);
+            CHECK(n.find("shows open here") == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("objects: a chest away from our Link that starts opening as the flag comes shows open (issue 87)") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
+    Seen chest = Chest(0x500);
+    chest.animation = proto::Animation{"OpenWait", 0.0f, 1.0f};
+    Tick(sync, 0, {chest, Enemy(0x100, 0x11, 2)});
+    // Its AI read the shared opened flag a frame before the key's take.
+    chest.animation = proto::Animation{"Open", 0.0f, 1.0f};
+    Tick(sync, 1000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    sync.Take(chest.hash);
+    Tick(sync, 1010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1020 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 4000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool shows = false;
+    bool at_once = false;
+    for (const auto& n : sync.TakeNotes()) {
+        shows |= n.find("shows open here") != std::string::npos;
+        at_once |= n.find("at once") != std::string::npos;
+    }
+    CHECK(shows);
+    CHECK_FALSE(at_once);
 }
 
 TEST_CASE("objects: a chest waiting to show itself open goes when our Link comes beside it (issue 87)") {

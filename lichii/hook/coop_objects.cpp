@@ -58,6 +58,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <tuple>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -382,12 +383,15 @@ public:
     }
 
     // Present thread: copies that just became ours, to clear the setter's
-    // bit of at the next game frame (issue 150, opt-in).
+    // bit of at the next game frame (issues 150, 157; on unless
+    // LICHII_COOP_OBJECTS_RELEASE=0).
     void Release(const std::vector<u64>& actors) {
         std::lock_guard lock(mutex_);
         for (const u64 a : actors) {
-            if (releases_.size() < 32) {
+            if (releases_.size() < 64) {
                 releases_.push_back(a);
+            } else {
+                ++release_dropped_;
             }
             // A pose wished before it became ours would set the bit again
             // in the same frame: it is no copy any more.
@@ -396,9 +400,11 @@ public:
     }
 
     // Releases made since the last ask: bit found set and cleared, and not.
-    std::pair<std::size_t, std::size_t> TakeReleases() {
+    // Also the ones dropped because the frame's list was full.
+    std::tuple<std::size_t, std::size_t, std::size_t> TakeReleases() {
         std::lock_guard lock(mutex_);
-        return {std::exchange(released_, 0), std::exchange(release_clear_, 0)};
+        return {std::exchange(released_, 0), std::exchange(release_clear_, 0),
+                std::exchange(release_dropped_, 0)};
     }
 
     void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes,
@@ -816,6 +822,7 @@ private:
     std::vector<u64> releases_;
     std::size_t released_ = 0;       // bit 23 was set: cleared
     std::size_t release_clear_ = 0;  // bit 23 was already clear
+    std::size_t release_dropped_ = 0;  // over 64 in one frame: not looked at
     std::unordered_set<u64> held_before_;  // BSA components in last frame's table
     std::size_t hold_set_ = 0;
     std::size_t hold_kept_ = 0;
@@ -1728,12 +1735,12 @@ private:
                          r.Name(drift_worst_), drift_max_);
             }
             if (release_) {
-                const auto [cleared, clear] = TheMover().TakeReleases();
-                if (cleared + clear > 0) {
+                const auto [cleared, clear, dropped] = TheMover().TakeReleases();
+                if (cleared + clear + dropped > 0) {
                     LOG_INFO(Core,
                              "coop: objects: release: {} that became ours had bit 23 set "
-                             "(cleared), {} had it clear",
-                             cleared, clear);
+                             "(cleared), {} had it clear, {} skipped (over 64 in a frame)",
+                             cleared, clear, dropped);
                 }
             }
             if (ai_hold_ != 0) {

@@ -370,7 +370,7 @@ Chunk 2 scenarios (written 2026-11-10, first run in the chunk 2 test turn, see t
 - `stalchild`: Hyrule Field at night (clock set by the header); A walks to where two Stalchildren rose in a chunk 1 run (about 173 29) and fights at once (ZL, Y), then walks over the fight for the drops; B watches from 8 m.
 - `rock` needed no change: it failed in chunk 1 only because the game started in Kakariko.
 
-Test9 enemy scenarios (branch `enemy-sync`, not run yet; each file's header has what to look for):
+Test8 enemy scenarios (branch `enemy-sync`, not run yet; each file's header has what to look for):
 
 - `deku-wake` (#132, #133): both games in the Deku Tree entrance room; A wakes and fights the Baba at -22.81 -1.82, B the one at -71.33 3.50, about 49 m apart. Both Babas must be up on both screens at `risen`, and each killed Baba gone on both at `after-kill`.
 - `chase` (#101): Hyrule Field at night (clock set by the header); A stands 40 m east of where the Stalchildren rise, B raises them and walks to A with them behind it. At `came` A's screen must show them next to B's puppet; A's `share worst copy` lines (debug, every 5 s when a copy is 1 m or more from where the Mover put it) name any copy the setter does not hold.

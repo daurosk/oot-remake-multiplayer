@@ -58,6 +58,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/launch_test.ps1
       - name: Kit mod check tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/mods_test.ps1
+      - name: Kit log masking tests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/log_mask_test.ps1
 
   linux:
     runs-on: ubuntu-latest

@@ -1,0 +1,67 @@
+# Tests for the log masking in collect-logs.ps1 (tools/release/kit/scripts/log-mask.ps1):
+# every kind of address, ports kept, the same address the same tag, MAC addresses, the user
+# name in paths, and version numbers left alone. Strings only, no files.
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\release\tests\log_mask_test.ps1
+# Exits 1 when a check fails.
+$ErrorActionPreference = 'Stop'
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\scripts\log-mask.ps1')
+
+$failed = 0
+function Check([bool]$Ok, [string]$What) {
+    if ($Ok) { Write-Host "ok   $What" } else { Write-Host "FAIL $What"; $script:failed++ }
+}
+function Mask([string]$Text, $State = (New-MaskState)) { Protect-LogText $Text $State 'Testuser' 'TESTPC-01' }
+
+# One line per kind.
+$lines = [ordered]@{
+    'server = 192.168.1.20'         = 'server = <lan-1>'
+    'server = 10.0.0.5'             = 'server = <lan-1>'
+    'server = 172.20.3.4'           = 'server = <lan-1>'
+    'server = 100.101.102.103'      = 'server = <tailscale-1>'
+    'server = 25.1.2.3'             = 'server = <hamachi-1>'
+    'server = 26.12.34.56'          = 'server = <radmin-1>'
+    'server = 127.0.0.1'            = 'server = <loopback-1>'
+    'server = 8.8.8.8'              = 'server = <public-1>'
+    'peer fe80::1c2b:3a4d:5e6f:7a8b%12 up' = 'peer <lan-1> up'
+    'peer fd12:3456:789a::1 up'     = 'peer <lan-1> up'
+    'peer fd7a:115c:a1e0::1234:5678 up' = 'peer <tailscale-1> up'
+    'peer 2620:9b::1900:abcd up'    = 'peer <hamachi-1> up'
+    'peer ::1 up'                   = 'peer <loopback-1> up'
+    'peer 2001:db8:85a3::8a2e:370:7334 up' = 'peer <public-1> up'
+}
+foreach ($k in $lines.Keys) { $got = Mask $k; Check ($got -eq $lines[$k]) "'$k' -> '$($lines[$k])' (got '$got')" }
+
+# The hook's startup line keeps its port; IPv6 in brackets keeps its port too.
+$got = Mask "coop: on, server 203.0.113.5:9050, name 'Link'"
+Check ($got -eq "coop: on, server <public-1>:9050, name 'Link'") "hook line keeps the port (got '$got')"
+$got = Mask 'listening on [2001:db8::5]:27510'
+Check ($got -eq 'listening on [<public-1>]:27510') "IPv6 with a port (got '$got')"
+
+# The same address is the same tag everywhere (state shared across files), a new one the next.
+$s = New-MaskState
+$a = Mask 'join 203.0.113.5:9050' $s
+$b = Mask 'from 198.51.100.7, again 203.0.113.5' $s
+$c = Mask 'lan 192.168.0.2' $s
+Check ($a -eq 'join <public-1>:9050' -and $b -eq 'from <public-2>, again <public-1>' -and $c -eq 'lan <lan-1>') "numbered tags across files (got '$a' / '$b' / '$c')"
+$d = Mask 'peer 2001:DB8::5 and 2001:db8:0::5' $s
+Check ($d -eq 'peer <public-3> and <public-3>') "IPv6 written two ways is one tag (got '$d')"
+
+# MAC addresses, the user name and the PC name.
+$got = Mask 'adapter 00-1A-2B-3C-4D-5E and 00:1a:2b:3c:4d:5f'
+Check ($got -eq 'adapter <mac> and <mac>') "MAC addresses (got '$got')"
+$got = Mask 'loaded C:\Users\Jane Doe\Desktop\kit\emulator\lichii.exe'
+Check ($got -eq 'loaded C:\Users\<user>\Desktop\kit\emulator\lichii.exe') "user name in a path (got '$got')"
+$got = Mask 'path c:/users/jdoe/AppData'
+Check ($got -eq 'path c:/users/<user>/AppData') "user name in a forward-slash path (got '$got')"
+$got = Mask 'D:\games\Testuser\kit on TESTPC-01'
+Check ($got -eq 'D:\games\<user>\kit on <pc>') "user name and PC name on their own (got '$got')"
+
+# What must stay.
+foreach ($keep in @('game 1.1.1 (v131072)', 'Microsoft Windows NT 10.0.26200.0', 'driver 32.0.15.6094',
+                    'bind 0.0.0.0:27510', '[12:34:56.789] tick', 'Core::Frontend started', 'protocol 9, build v0.1.0')) {
+    $got = Mask $keep
+    Check ($got -eq $keep) "'$keep' stays (got '$got')"
+}
+
+if ($failed) { Write-Host "$failed failed"; exit 1 }
+Write-Host 'all passed'

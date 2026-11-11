@@ -11,7 +11,7 @@ Say which release you used (its `VERSION.txt`), what you did, and what happened.
 
 ## What the co-op opens
 
-- **The host** runs `coop_server.exe`. It listens on **one UDP port, 27510** (or the port in `emulator\user\config\coop.ini`). Nothing else is opened. Nothing is opened on your router unless you forward the port yourself.
+- **The host** runs `coop_server.exe`. It listens on **one UDP port, 27510** (or the port in `emulator\user\config\coop.ini`) while its window is open, and closes it when it exits. Nothing else is opened: no UPnP, and nothing changes the firewall or the router. A firewall rule or port forward you add by hand stays until you delete it.
 - **Players who join** open no port. Their game connects out to the host's server and only talks to it.
 - **`Update.bat`** (and the update check when `Host.bat`, `Join.bat` or `play.cmd` start) asks GitHub for this repository's releases over HTTPS, downloads only from `https://github.com/daurosk/oot-remake-multiplayer/releases/download/`, and checks the zip's SHA-256 against the `.sha256` file of the same release before it changes anything. Nothing in the download is run before that check.
 
@@ -29,9 +29,10 @@ The people you play with share your game's progress: items, songs, flags, enemie
 
 ## Safe hosting
 
-- Prefer a virtual LAN (Radmin VPN, Hamachi, ZeroTier, Tailscale) over port forwarding: only the people in your private network can reach the server. Only join VPN networks of people you know.
-- Open the firewall only for the addresses that need it: `remoteip=localsubnet` on a LAN, `remoteip=25.0.0.0/8` for Hamachi, `26.0.0.0/8` for Radmin VPN ([play-lan.md](docs/play-lan.md#firewall), [play-online.md](docs/play-online.md)). Never allow the port on Public networks for every address.
+- Prefer a password-protected Radmin VPN or Hamachi network (or ZeroTier, Tailscale) over port forwarding: only the people in your private network can reach the server. Only join VPN networks of people you know.
+- Make the firewall rule as narrow as it can be: for the program (`program=...\server\coop_server.exe`, not only the port, so nothing else that later listens on 27510 is let in), on Private networks where possible (`profile=private`), and only from the addresses that need it (`remoteip=localsubnet` on a LAN, `25.0.0.0/8` for Hamachi, `26.0.0.0/8` for Radmin VPN). The commands are in [play-lan.md](docs/play-lan.md#firewall) and [play-online.md](docs/play-online.md). Never allow the port on Public networks for every address.
+- When you are done, delete the firewall rule and any router port forward: our programs never add or remove them for you ([When you are done](docs/play-online.md#when-you-are-done)).
 - In the host's `coop-options.ini`, `server_allow` lists the addresses that may join and `server_bind` makes the server listen on your VPN address only ([Who can join](docs/play-online.md#who-can-join)).
-- With port forwarding, share your public address only with the people you play with, and remove the forwarding rule when you stop playing for a while.
+- With port forwarding, share your public address only with the people you play with.
 - Close the server window when you are done: nothing listens once it is closed.
 - Download the kit and updates only from this repository's [releases](https://github.com/daurosk/oot-remake-multiplayer/releases).

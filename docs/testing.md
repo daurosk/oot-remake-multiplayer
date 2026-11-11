@@ -110,11 +110,14 @@ The two PCs must reach each other over UDP:
 
 `start-server.cmd` prints PC 1's addresses when it starts.
 
-On PC 1 (the server), allow the server's UDP port in Windows Firewall once, from a PowerShell or Command Prompt run as administrator:
+On PC 1 (the server), allow the server in Windows Firewall once, from a Command Prompt run as administrator, in the kit folder (put in your own path):
 
 ```
-netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510
+cd /d "C:\Games\oot-coop"
+netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow program="%CD%\server\coop_server.exe" protocol=UDP localport=27510 profile=private remoteip=localsubnet
 ```
+
+For Tailscale use `profile=any remoteip=100.64.0.0/10` instead of the last two (Windows calls the Tailscale adapter Public); the rule still lets in only the server, and only from tailnet addresses.
 
 (Or click **Allow** for private networks when Windows asks about `coop_server.exe` the first time.) Use the same port in the rule if you start the server on another port. To remove the rule after testing:
 

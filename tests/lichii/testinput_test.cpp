@@ -381,3 +381,16 @@ TEST_CASE("testinput: every autotest scenario script parses") {
     }
     CHECK(checked > 40);
 }
+
+TEST_CASE("testinput: chat sends the rest of the line, spaces kept") {
+    std::string error;
+    CHECK_FALSE(Parse("chat\n", error));
+    Runner r(Must("chat /teleport  Saria the  Kokiri   # a comment\nchat hello\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::chat);
+    CHECK(requests[0].name == "/teleport  Saria the  Kokiri");
+    CHECK(requests[1].name == "hello");
+}

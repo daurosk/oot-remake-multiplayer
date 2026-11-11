@@ -289,6 +289,14 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             if (w.size() == 3) {
                 step.start = std::string(w[2]);
             }
+        } else if (cmd == "CHAT") {
+            if (w.size() < 2) {
+                return fail("want: chat TEXT");
+            }
+            step.kind = Kind::chat;
+            const auto from = static_cast<std::size_t>(w[1].data() - line.data());
+            const auto to = static_cast<std::size_t>(w.back().data() + w.back().size() - line.data());
+            step.mark = std::string(line.substr(from, to - from));
         } else if (cmd == "GIVE") {
             if (w.size() != 2) {
                 return fail("want: give ITEM");
@@ -404,7 +412,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             continue;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign) {
+            s.kind == Kind::assign || s.kind == Kind::chat) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
             continue;
@@ -541,6 +549,7 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include "coop_every.h"
 #include "coop_camera.h"
 #include "coop_flags.h"
+#include "coop_hook.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
@@ -878,6 +887,9 @@ void OnFrame(Core::System& system) {
             Wear(system, request.start, request.name);
         } else if (request.kind == Kind::assign) {
             Assign(system, request.name);
+        } else if (request.kind == Kind::chat) {
+            const bool sent = CoopHook::SendChat(request.name);
+            LOG_INFO(Core, "coop: test chat '{}': {}", request.name, sent ? "sent" : "NOT sent");
         } else {
             Give(request.name);
         }

@@ -49,9 +49,12 @@ inline constexpr std::uint8_t kChannelCount = 5;
 // alone is enough. ENet's default of 1392 makes 1420-byte IP packets, more
 // than a VPN adapter carries (Hamachi about 1404, Tailscale 1280): those were
 // split or dropped, and a large reliable message (a snapshot) was sent again
-// until the connection timed out (issue 143). 1200 + 28 header bytes fits
-// them all. Not part of the protocol version: ENet agrees on it at connect.
-inline constexpr std::uint32_t kDatagramBytes = 1200;
+// until the connection timed out (issue 143). A home line can be smaller
+// still: a DS-Lite (IPv4 in IPv6) or PPPoE tunnel, one reporter's at 1200
+// bytes, where 1200-byte datagrams (1228-byte packets) did not fit either.
+// 1100 + 28 header bytes fits them all. Not part of the protocol version:
+// ENet agrees on it at connect.
+inline constexpr std::uint32_t kDatagramBytes = 1100;
 
 // Message type numbers on the wire. Never renumber; add new ones at the end.
 enum class MessageType : std::uint16_t {

@@ -1744,3 +1744,16 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
+
+TEST_CASE("objects: a boss is alive while its actor is there with life left (issue 109)") {
+    Seen boss = Chest(0x900, 0);
+    boss.name = "Enemy_DungeonBoss_Morpha";
+    Seen part = Chest(0x910, 0);
+    part.name = "Enemy_DungeonBoss_Morpha_Tentacle";
+    CHECK_FALSE(CoopObjects::BossAlive({part}, "Enemy_DungeonBoss_Morpha"));  // gone
+    CHECK(CoopObjects::BossAlive({part, boss}, "Enemy_DungeonBoss_Morpha"));   // no life read
+    boss.life = coop::protocol::ObjectLife{12, 20};
+    CHECK(CoopObjects::BossAlive({boss}, "Enemy_DungeonBoss_Morpha"));
+    boss.life = coop::protocol::ObjectLife{0, 20};
+    CHECK_FALSE(CoopObjects::BossAlive({boss}, "Enemy_DungeonBoss_Morpha"));
+}

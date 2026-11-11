@@ -115,6 +115,11 @@ bool IsShared(std::string_view name);
 // (issue 138).
 bool RemovedWhenTaken(std::string_view name);
 
+// Issue 109: whether boss actor `boss` is alive in one walk: true when an
+// actor of that name is there with life left (or no life read), false when
+// none is there or every one is at 0 life.
+bool BossAlive(const std::vector<Seen>& seen, std::string_view boss);
+
 // The id of an enemy the scene made without a placement hash: the scene, the
 // actor name and its place in the order such enemies of that name appeared
 // in this scene visit (first seen first; the same walk ordered by x, then z).

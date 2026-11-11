@@ -19,6 +19,7 @@
 // We do the same from the cave.
 
 #include "coop_boss.h"
+#include "coop_objects.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -224,6 +225,11 @@ struct Glue {
             local.position = Vec{(*position)[0], (*position)[1], (*position)[2]};
         }
         local.event = event;
+        if (scene) {
+            if (const Room* room = RoomOfScene(*scene)) {
+                local.boss_alive = CoopObjects::LastBossAlive(room->boss);
+            }
+        }
         local.self = session->with_client([](coop::net::Client& c) { return c.player_number(); });
         Actions act = sync.Tick(local, now_us);
         for (const auto& line : act.log) {

@@ -276,3 +276,88 @@ TEST_CASE("boss: a player who walks out during the fight is pulled back") {
     CHECK(Has(a, proto::BossState::left));
     CHECK(a.pull);
 }
+
+namespace {
+
+Local Alive(Vec p, bool event, std::optional<bool> alive, std::uint8_t self = 2) {
+    Local l = At("ForestTemple", p, event, self);
+    l.boss_alive = alive;
+    return l;
+}
+
+// In the room with the fight begun (the intro played).
+void ToFight(Sync& s, std::uint8_t self = 2) {
+    s.Tick(Alive(Forest().arrive, false, true, self), 1 * kS);
+    s.Tick(Alive(Forest().arrive, true, true, self), 2 * kS);
+    s.Tick(Alive(Forest().arrive, false, true, self), 5 * kS);
+    REQUIRE(s.phase() == Sync::Phase::fight);
+}
+
+} // namespace
+
+TEST_CASE("boss: an event in the fight with the boss alive is not its death (issue 109)") {
+    Sync s;
+    ToFight(s);
+    // A grab or a phase change: an event, the boss still there.
+    auto a = s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::outro);
+    // The heartbeat goes on while it is decided.
+    a = s.Tick(Alive(Forest().arrive, true, true), 33 * kS);
+    CHECK(Has(a, proto::BossState::in_room));
+    // It ends with the boss alive: back to the fight, nothing beaten.
+    a = s.Tick(Alive(Forest().arrive, false, true), 36 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::fight);
+
+    // Walking out now: still a fight elsewhere, so pulled back.
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
+    a = s.Tick(Alive(kForestEntrance, false, true), 37 * kS);
+    CHECK(Has(a, proto::BossState::left));
+    CHECK(a.pull);
+}
+
+TEST_CASE("boss: the boss gone during the event is its death") {
+    Sync s;
+    ToFight(s);
+    s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+    auto a = s.Tick(Alive(Forest().arrive, true, false), 34 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::outro);
+    s.Tick(Alive(Forest().arrive, false, false), 50 * kS);
+    CHECK(s.phase() == Sync::Phase::done);
+    // Walking out of a beaten room: not pulled back (allowed).
+    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    a = s.Tick(Alive(kForestEntrance, false, false), 51 * kS);
+    CHECK_FALSE(a.pull);
+}
+
+TEST_CASE("boss: an event that runs 15 s is the death even if the boss is still seen") {
+    Sync s;
+    ToFight(s);
+    s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+    auto a = s.Tick(Alive(Forest().arrive, true, true), 44 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    a = s.Tick(Alive(Forest().arrive, true, true), 45 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    s.Tick(Alive(Forest().arrive, false, true), 60 * kS);
+    CHECK(s.phase() == Sync::Phase::done);
+}
+
+TEST_CASE("boss: the boss dead when the event starts, or no reading, is the death at once") {
+    Sync s;
+    ToFight(s);
+    auto a = s.Tick(Alive(Forest().arrive, true, false), 30 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    Sync t;
+    ToFight(t);
+    a = t.Tick(Alive(Forest().arrive, true, std::nullopt), 30 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    // A reading lost during the event: decided at its end, as before.
+    Sync u;
+    ToFight(u);
+    u.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+    a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK(u.phase() == Sync::Phase::done);
+}

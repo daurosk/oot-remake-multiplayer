@@ -88,6 +88,7 @@
 #include "coop_world.h"
 
 namespace CoopObjects {
+void NoteBosses(const std::vector<Seen>& seen);  // issue 109, below
 namespace {
 
 constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
@@ -795,6 +796,7 @@ public:
         if (!Collect(r, seen)) {
             return;
         }
+        NoteBosses(seen);
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
         if (self == 0) {
@@ -1698,6 +1700,37 @@ void OnEvent(const coop::net::Event& event) {
     if (objects.share_) {
         objects.Receive(event.message);
     }
+}
+
+namespace {
+
+// The bosses of the last walk, for LastBossAlive (issue 109).
+std::mutex g_bosses_mutex;
+std::vector<Seen> g_bosses;
+std::uint64_t g_bosses_at = 0;
+constexpr std::uint64_t kBossesFreshUs = 1'500'000;
+
+} // namespace
+
+void NoteBosses(const std::vector<Seen>& seen) {
+    std::vector<Seen> bosses;
+    for (const Seen& s : seen) {
+        if (s.name.starts_with("Enemy_DungeonBoss_")) {
+            bosses.push_back(s);
+        }
+    }
+    std::lock_guard lock(g_bosses_mutex);
+    g_bosses = std::move(bosses);
+    g_bosses_at = CoopEvery::NowUs();
+}
+
+std::optional<bool> LastBossAlive(std::string_view boss) {
+    std::lock_guard lock(g_bosses_mutex);
+    const std::uint64_t now = CoopEvery::NowUs();
+    if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
+        return std::nullopt;
+    }
+    return BossAlive(g_bosses, boss);
 }
 
 } // namespace CoopObjects

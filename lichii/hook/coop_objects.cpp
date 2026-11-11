@@ -492,10 +492,14 @@ public:
         }
         while (next_remove_ < work_removes_.size()) {
             const u64 a = work_removes_[next_remove_++];
-            asked_.insert(a);
             if (!Alive(guest, a)) {
+                // Not awake now (another room, asleep): asked again on a
+                // later frame. Marked asked only once really asked, or a
+                // dead copy asleep when first asked stays for good (issue
+                // 133: enemies left standing, frozen, for a late entrant).
                 continue;
             }
+            asked_.insert(a);
             ++deleted_;
             CoopPuppet::Call c;
             c.function = main_ + kRequestDelete;

@@ -192,6 +192,9 @@ struct Stats {
   std::uint64_t group_links = 0;          // OBJECT_GROUP entries taken
   std::uint64_t group_refused = 0;        // OBJECT_GROUP entries turned away
   std::uint64_t late_removes = 0;         // a kill from the owner before, taken
+  std::uint64_t dead_told = 0;            // a placed enemy's kill told to a game that came later
+  std::uint64_t dead_respawned = 0;       // a witness's game listed a killed enemy again
+  std::uint64_t dead_unkept = 0;          // a kill not kept: the scene's list was full
 
   std::uint64_t errors(protocol::Error e) const {
     return by_error[static_cast<std::size_t>(e)];
@@ -357,6 +360,11 @@ class Session {
   void on_world(ConnectionId id, Connection& c, std::uint8_t channel, protocol::Message& message,
                 std::uint64_t now_us);
   void forget_empty_world(const std::string& scene);
+  void forget_empty_dead(const std::string& scene);
+  // A placed enemy listed by game `id`: true when it is dead for that game
+  // (told now, or still its dying copy); false when it is alive for it.
+  bool dead_for(ConnectionId id, Connection& c, const std::string& scene,
+                const protocol::ObjectId& oid);
   // Whether a joined player is in this scene now.
   bool scene_has_player(const std::string& scene) const;
   // The player is in `scene` now; leaving another scene lets go of its
@@ -445,6 +453,19 @@ class Session {
   // kMaxGrassCuts a scene; sent to a player who enters the scene. Forgotten
   // when no player is in the scene.
   std::map<std::string, std::deque<protocol::GrassCut>> grass_;
+  // Placed enemies killed in a scene (issue 133, docs/objects.md "Kills for
+  // late entrants"): who saw it die (the games that had it loaded, and
+  // whether each still lists its dying copy) and where. A game that did not
+  // see it die gets OBJECT_REMOVE dead when it lists it. A witness that lists
+  // it again after it left its list respawned it (a room loaded again): the
+  // record goes. Forgotten when no player is in the scene.
+  struct Dead {
+    std::map<ConnectionId, bool> witnesses;  // true: still lists it
+    protocol::Vec3 position{};
+    std::uint8_t by = 1;  // the player whose game said it died (the sender field)
+  };
+  std::map<std::string, std::map<protocol::ObjectId, Dead>> dead_;
+  static constexpr std::size_t kMaxDeadPerScene = 1024;
   WorldStore world_;
   std::vector<Action> actions_;
   Stats stats_;

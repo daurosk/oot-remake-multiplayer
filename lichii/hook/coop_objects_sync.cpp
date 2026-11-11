@@ -939,7 +939,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // Copies their owner saw die that are still here after the grace.
     dead_.clear();
     for (const auto& [address, o] : objects_) {
-        if (o.dead_at != 0 && now_us - o.dead_at >= kDeadGraceUs) {
+        if (o.dead_at != 0 && (o.dead_now || now_us - o.dead_at >= kDeadGraceUs)) {
             dead_.insert(address);
         }
     }
@@ -1274,12 +1274,22 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 remove->id.kind == proto::ObjectKind::placed &&
                 (had == owners_.end() || remove->epoch >= had->second.epoch)) {
                 if (Object* o = find(remove->id); o != nullptr && o->reacts && o->dead_at == 0) {
+                    // Our game kills it itself (life 0 through the game), so
+                    // its own kill counts: a room's enemy counter and shutter,
+                    // the kill it keeps for a room reload. The delete after
+                    // kDeadGraceUs is the fallback. A kill from before we
+                    // came (no owner was ever named to us: a late entrant or
+                    // a rejoin, issue 133) whose life we cannot read goes at
+                    // once.
                     if (o->life && *o->life > 0) {
                         Lower(*o, 0, now_us, writes, remove->player_number);
+                    } else if (had == owners_.end() && !o->life) {
+                        o->dead_now = true;
                     }
                     o->dead_at = now_us;
+                    notes_.emplace_back(had == owners_.end() ? "killed before we came: " + o->name
+                                                             : "dead in its owner's game: " + o->name);
                     o->hit_sum = 0;
-                    notes_.emplace_back("dead in its owner's game: " + o->name);
                 }
                 // Nobody's now: no samples, poses or plays for it.
                 if (had != owners_.end()) {

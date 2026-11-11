@@ -480,6 +480,7 @@ private:
         // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
         int resent = 0;
         std::uint64_t dead_at = 0;
+        bool dead_now = false;  // a kill from before we came: deleted at once
     };
 
     // One step of `o` towards our Link at `now_us` (NoteDrift).

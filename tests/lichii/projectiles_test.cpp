@@ -805,3 +805,36 @@ TEST_CASE("shots: a bomb copy the owner removed as gone is no blast") {
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     CHECK(shots::TheBlasts().Size() == 0);
 }
+
+// Issue 169: a bomb in its owner's hands.
+TEST_CASE("shots: a bomb over Link, moving with him, is in his hands") {
+    const proto::Vec3 link{10.0f, 0.0f, 5.0f};
+    CHECK(shots::InHands({10.2f, 1.3f, 5.1f}, link, 0.0f));    // over a child's head
+    CHECK(shots::InHands({10.0f, 2.2f, 5.0f}, link, 1.0f));    // an adult's raised arms
+    CHECK_FALSE(shots::InHands({10.0f, 0.1f, 5.0f}, link, 0.0f));  // at his feet
+    CHECK_FALSE(shots::InHands({11.5f, 1.3f, 5.0f}, link, 0.0f));  // beside him
+    CHECK_FALSE(shots::InHands({10.0f, 3.5f, 5.0f}, link, 0.0f));  // thrown up high
+    CHECK_FALSE(shots::InHands({10.2f, 1.3f, 5.1f}, link, 8.0f));  // flying past
+    CHECK_FALSE(shots::InHands({NAN, 1.3f, 5.1f}, link, 0.0f));
+    CHECK(shots::HeldByAnimation("Lifted") == true);
+    CHECK(shots::HeldByAnimation("Thrown") == false);
+    CHECK_FALSE(shots::HeldByAnimation("Bomb_Blink").has_value());
+}
+
+TEST_CASE("shots: a held bomb's path is read between two samples, never carried on") {
+    shots::HeldPath path;
+    CHECK(path.Empty());
+    path.Add({1'000'000, {0.0f, 1.0f, 0.0f}, {}});
+    path.Add({1'100'000, {1.0f, 1.0f, 0.0f}, {}});
+    path.Add({1'050'000, {9.0f, 9.0f, 9.0f}, {}});  // older: dropped
+    path.Add({1'200'000, {NAN, 1.0f, 0.0f}, {}});   // not finite: dropped
+    CHECK(path.At(900'000)[0] == doctest::Approx(0.0f));
+    CHECK(path.At(1'050'000)[0] == doctest::Approx(0.5f));
+    CHECK(path.At(1'500'000)[0] == doctest::Approx(1.0f));
+    for (std::uint64_t t = 2'000'000; t < 2'000'000 + 20 * 33'000; t += 33'000) {
+        path.Add({t, {float(t) / 1e6f, 1.0f, 0.0f}, {}});
+    }
+    CHECK(path.At(0)[0] > 2.0f);  // only the newest kKeep are kept
+    path.Clear();
+    CHECK(path.Empty());
+}

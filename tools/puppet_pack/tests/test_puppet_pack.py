@@ -436,7 +436,41 @@ class BuildPackTest(unittest.TestCase):
         # The hook's CoopSpawn::StandIn makes these same ones.
         self.assertEqual([n for _, n in build.STAND_INS],
                          ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong",
-                          "CoopShot_Lure", "CoopShot_SinkingLure"])
+                          "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb"])
+
+    def test_bomb_stand_in_keeps_its_animations(self):
+        # Issue 169: the held bomb's stand-in has the model and the animation set (its fuse can
+        # blink), and no physics, life, liftable or AI.
+        bomb = {"Components": {
+            "ModelInfoRef": "?Component/ModelInfo/Item_Bomb.engine__component__ModelInfo.bgyml",
+            "ASRef": "?AS/LiftableExplodeObject_BallBomb.root.asb",
+            "ASInfoRef": "?Component/ASInfo/Default.engine__component__ASInfo.bgyml",
+            "AnimationRef": "?Component/AnimationParam/Bomb.engine__component__AnimationParam.bgyml",
+            "PhysicsRef": "?Component/Physics/Item_Bomb.engine__component__PhysicsParam.bgyml",
+            "LifeRef": "?Component/LifeParam/Item_Bomb.game__component__LifeParam.bgyml",
+            "LiftableRef": "?Component/LiftableParam/Item_Bomb.game__component__LiftableParam.bgyml",
+            "AIInfoRef": "?AI/AIInfo/Item_Bomb.engine__actor__AIInfo.bgyml",
+        }}
+        members = {
+            "Actor/Item_Bomb.engine__actor__ActorParam.bgyml": byml.dumps(bomb),
+            "Component/ModelInfo/Item_Bomb.engine__component__ModelInfo.bgyml":
+                byml.dumps({"FmdbName": "Obj_Bomb"}),
+            "Component/AnimationParam/Bomb.engine__component__AnimationParam.bgyml": byml.dumps({}),
+            "Component/Physics/Item_Bomb.engine__component__PhysicsParam.bgyml": byml.dumps({}),
+        }
+        pack, ap, names = build.build_stand_in(members, "Item_Bomb", "CoopShot_Bomb")
+        comps = byml.loads(ap)["Components"]
+        for k in ("ModelInfoRef", "ASRef", "ASInfoRef", "AnimationRef"):
+            self.assertEqual(comps[k], bomb["Components"][k])
+        for k in ("PhysicsRef", "LifeRef", "LiftableRef", "AIInfoRef"):
+            self.assertNotIn(k, comps)
+        self.assertIn("Component/AnimationParam/Bomb.engine__component__AnimationParam.bgyml", names)
+        self.assertNotIn("Component/Physics/Item_Bomb.engine__component__PhysicsParam.bgyml", names)
+        # Other stand-ins stay model-only.
+        _, seed_ap, _ = build.build_stand_in(
+            {"Actor/Shootable_DekuSeed.engine__actor__ActorParam.bgyml": byml.dumps(bomb)},
+            "Shootable_DekuSeed", "CoopShot_Seed")
+        self.assertNotIn("ASRef", byml.loads(seed_ap)["Components"])
 
     def test_actor_param_chain(self):
         members = fake_player_pack("Adult")

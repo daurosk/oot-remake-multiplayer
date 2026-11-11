@@ -130,6 +130,41 @@ std::uint32_t AmmoFlag(Kind kind);
 // The speed a made-up flight of `kind` goes at, metres a second.
 float ShotSpeed(Kind kind);
 
+// Issue 169: a bomb in its owner's hands. The owner's game holds it over
+// Link (the game binds it to Link's hands); every other game shows it as a
+// model-only stand-in with no physics, kept in the puppet's hands, until it
+// is thrown. Held means: above Link's feet, close to him sideways, and moving
+// with him (a thrown bomb that passes the box moves much faster than Link).
+inline constexpr float kHeldReach = 0.9f;   // metres from Link, sideways
+inline constexpr float kHeldLow = 0.3f;     // metres above Link's feet
+inline constexpr float kHeldHigh = 2.8f;    // an adult's raised arms and some
+inline constexpr float kHeldSlip = 2.0f;    // m/s apart from Link at most
+bool InHands(const Vec3& item, const Vec3& link, float speed_apart);
+// What the bomb's own animation says (AS LiftableExplodeObject_BallBomb:
+// Lifted, Thrown, Wait, Bomb_Wait, Bomb_Blink, Explode): true for Lifted,
+// false for Thrown, nothing for the others (the box decides).
+std::optional<bool> HeldByAnimation(std::string_view name);
+// The copy of a held bomb is shown this late, as the puppet holding it is
+// (Presence::Settings::show_delay_us), so it stays in the puppet's hands.
+inline constexpr std::uint64_t kHeldBehindUs = 100'000;
+
+// The owner's latest samples of a held bomb (server clock), so its copy can
+// be shown kHeldBehindUs late, between two of them.
+class HeldPath {
+public:
+    static constexpr std::size_t kKeep = 16;
+    // Older or equal times, and points that are not finite, are dropped.
+    void Add(const Point& p);
+    void Clear() { points_.clear(); }
+    bool Empty() const { return points_.empty(); }
+    // Where it was at `time_us`: between the two samples around it; the
+    // first before them, the last after them (never carried on).
+    Vec3 At(std::uint64_t time_us) const;
+
+private:
+    std::deque<Point> points_;
+};
+
 // Why an owner's projectile left the list after `lifetime_us`, last seen
 // moving at `speed` metres a second.
 coop::protocol::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, float speed);

@@ -164,6 +164,61 @@ void Track::Stop(const Vec3& at) {
     stopped_ = true;
 }
 
+// ---------------------------------------------------------------- held bombs
+
+bool InHands(const Vec3& item, const Vec3& link, float speed_apart) {
+    if (!Finite(item) || !Finite(link) || !std::isfinite(speed_apart)) {
+        return false;
+    }
+    const float dx = item[0] - link[0];
+    const float dz = item[2] - link[2];
+    const float up = item[1] - link[1];
+    return std::sqrt(dx * dx + dz * dz) <= kHeldReach && up >= kHeldLow && up <= kHeldHigh &&
+           speed_apart <= kHeldSlip;
+}
+
+std::optional<bool> HeldByAnimation(std::string_view name) {
+    if (name == "Lifted") {
+        return true;
+    }
+    if (name == "Thrown") {
+        return false;
+    }
+    return std::nullopt;
+}
+
+void HeldPath::Add(const Point& p) {
+    if (!Finite(p.position) || (!points_.empty() && p.time_us <= points_.back().time_us)) {
+        return;
+    }
+    points_.push_back(p);
+    while (points_.size() > kKeep) {
+        points_.pop_front();
+    }
+}
+
+Vec3 HeldPath::At(std::uint64_t time_us) const {
+    if (points_.empty()) {
+        return {};
+    }
+    if (time_us <= points_.front().time_us) {
+        return points_.front().position;
+    }
+    for (std::size_t i = 1; i < points_.size(); ++i) {
+        const Point& b = points_[i];
+        if (time_us <= b.time_us) {
+            const Point& a = points_[i - 1];
+            const float t = float(time_us - a.time_us) / float(b.time_us - a.time_us);
+            Vec3 at{};
+            for (int k = 0; k < 3; ++k) {
+                at[k] = a.position[k] + (b.position[k] - a.position[k]) * t;
+            }
+            return at;
+        }
+    }
+    return points_.back().position;
+}
+
 // ---------------------------------------------------------------- FuseClock
 
 void FuseClock::Lived(std::uint64_t lifetime_us) {

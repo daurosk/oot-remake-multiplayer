@@ -54,6 +54,12 @@ Test7 players never saw a seed fly. The test logs (spawn-seed 2026-11-10 18:01, 
 
 Each of our projectiles that leaves the list now logs how it moved: `coop: shots: our Shootable_DekuSeed #... gone (reason N) after T ms: went D m from where it was made, top speed S m/s` (`Sync::Flights`). A shot seed with D under a metre means its place does not move in flight, and the copy needs its path from elsewhere (the shooter's aim and the seed's speed).
 
+**The shot's moment from the ammo, and a made-up flight.** So the copy flies whichever way it is, the maker reads its seed and arrow counts every walk (`PouchData.Item_DekuSeed.StockNum` 0x5fadf7fc, `Item_Arrow_Normal` 0x518ec74b; `CoopProjectiles::AmmoWatch`). When one goes down, the newest nocked `Shootable_DekuSeed` or `NormalArrow` of ours was let go then (`Sync::Shot`; log `coop: shots: our Shootable_DekuSeed let go (N left)`).
+- If its place moved faster than 8 m/s in the next 100 ms, nothing changes: its samples carry the flight.
+- If not, its flight is made up and sent in place of its place, as ordinary `OBJECT_SAMPLE`s. It goes straight from where it sat, along the +z axis of its turn (+0x328), at 40 m/s for a seed and 56 m/s for an arrow, for at most 0.4 s, then holds. Its remove carries the end of that flight. Log: `... did not move in its place after the shot: its flight is sent from the shot, from X Y Z at VX VY VZ m/s`. No new message, and the receiving games need no change.
+- Switches, for the in-game check: `LICHII_COOP_SHOT_AXIS` (0 to 5: +x +y +z -x -y -z of the turn, default 2) if the copies fly the wrong way, and `LICHII_COOP_SHOT_SPEED` (m/s).
+- Not covered: the hookshot tip (no ammo count) and a shot of the last seed or arrow if the count is not read in time. Bombs, bombchus, nuts and the boomerang are thrown actors with their own physics and keep their samples.
+
 ## Not done
 
 - Compiled into the emulator and run with two games (2026-11-09, `tools/autotest` scenarios `spawn-seed` and `spawn-bomb`, `LICHII_COOP_SPAWN=1`, Graveyard save of the auto kits). In the logs, two slingshot seeds and a Deku Nut from A reach B. B creates each copy 50 to 70 ms after it arrives and deletes it when A's remove comes (seeds about 0.5 s later, the nut 0.3 s). The copies were not seen in screenshots: they are small, live under half a second, and the save's cow stands in front of both Links. The server must be a build with object owners (`server: object owners`, 2026-11-08); the older kit servers drop every object message.

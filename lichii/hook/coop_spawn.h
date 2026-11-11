@@ -113,6 +113,36 @@ public:
     // Bomb copies blown up on the owner's fuse before its remove came.
     std::size_t BlownOnTime() const { return blown_on_time_; }
 
+    // A shot's flight when the game's place does not show it (issue 158).
+    // The seed and the arrow are made when they are nocked and sit in the
+    // sling or on the string until let go. Whether their place (+0x31c)
+    // moves in flight is not known (every shot seed so far went as "gone",
+    // slow at its end). So the moment of the shot comes from the ammo count
+    // (CoopProjectiles::AmmoWatch), and when the nocked one has not moved
+    // fast kShotGraceUs later, its flight is sent for the copies: straight
+    // along its turn's axis (`axis`: 0 to 2 +x +y +z, 3 to 5 -x -y -z) at
+    // its kind's speed, for at most kShotFlightUs, as ordinary samples.
+    static constexpr std::uint64_t kShotGraceUs = 100'000;
+    static constexpr std::uint64_t kShotFlightUs = 400'000;
+    static constexpr float kFlySpeed = 8.0f;  // faster: its place shows the flight
+    struct ShotSettings {
+        int axis = 2;
+        std::optional<float> speed;  // m/s for every kind; unset: ShotSpeed(kind)
+    };
+    void SetShots(ShotSettings settings) { shot_settings_ = settings; }
+    // Present thread, before Tick: our `actor` (Shootable_DekuSeed,
+    // NormalArrow) was let go now. The newest nocked one of that name is it.
+    // False when none of ours is on the list.
+    bool Shot(std::string_view actor, std::uint64_t now_us);
+    // Shots whose flight Tick made up since the last Tick (for the log).
+    struct MadeUp {
+        coop::protocol::ObjectId id;
+        std::string name;
+        Vec3 from{};
+        Vec3 velocity{};
+    };
+    const std::vector<MadeUp>& MadeUpFlights() const { return made_up_; }
+
     // One of ours that left the list, and how it moved (issue 158: whether
     // a slingshot seed's place moves in flight, or the game keeps it at the
     // sling). For the log.
@@ -123,6 +153,8 @@ public:
         float far = 0.0f;        // the farthest from where it was first seen, metres
         float top_speed = 0.0f;  // between two walks, metres a second
         coop::protocol::RemoveReason reason = coop::protocol::RemoveReason::gone;
+        bool shot = false;       // let go (its ammo count went down)
+        bool made_up = false;    // its flight was sent from the shot, not its place
     };
     // The ones that left in the last Tick.
     const std::vector<Flight>& Flights() const { return flights_; }
@@ -143,6 +175,12 @@ private:
         Vec3 made_position{};
         float far = 0.0f;
         float top_speed = 0.0f;
+        // The shot (issue 158).
+        std::optional<std::uint64_t> shot_at;
+        float shot_top_speed = 0.0f;  // since the shot
+        bool made_up = false;
+        Vec3 shot_from{};
+        Vec3 shot_velocity{};
     };
     struct Remote {
         std::uint64_t key = 0;
@@ -161,6 +199,9 @@ private:
     };
 
     void Apply(std::uint64_t now_us);
+    // Issue 158: the made-up flight, once the grace is over (Shot).
+    void MakeUpFlight(Own& m, std::uint64_t now_us);
+    Vec3 ShotPlace(const Own& m, std::uint64_t now_us) const;
 
     std::string scene_;
     bool first_walk_ = true;
@@ -173,6 +214,8 @@ private:
     CoopProjectiles::FuseClock fuse_;  // kept across scenes: the game's fuse
     std::size_t blown_on_time_ = 0;
     std::vector<Flight> flights_;
+    std::vector<MadeUp> made_up_;
+    ShotSettings shot_settings_;
     bool setter_ = true;
 
     std::mutex inbox_mutex_;
@@ -188,6 +231,10 @@ private:
 // (no physics, sensor, attack or AI), so it is drawn wherever it is put, and
 // it can hit nothing. Empty when the actor has none.
 std::string_view StandIn(std::string_view actor);
+
+// Axis `axis` of a turn (0 to 2: +x +y +z columns of its matrix, 3 to 5 the
+// same reversed), as a made-up shot flies along it (Sync::SetShots).
+Vec3 ShotAxis(const coop::protocol::Quat& rotation, int axis);
 
 // The stand-ins a puppet pack has: the CoopShot_* names its coop_puppet.json
 // lists (build.py writes them under "shots"). A pack built before the

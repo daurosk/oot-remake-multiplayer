@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <variant>
@@ -219,6 +221,124 @@ TEST_CASE("spawn: a seed's flight is summed up when it goes (issue 158)") {
     // Told once.
     sync.Tick(kScene, 1, now + 33 * kMs, {}, none, send, copies);
     CHECK(sync.Flights().empty());
+}
+
+namespace {
+
+// A nocked seed at x, turned `rotation`.
+Seen Nocked(float x, const CoopPuppet::Mat3& rotation) {
+    Seen s = Made(0x7000, x, "Shootable_DekuSeed");
+    s.rotation = rotation;
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("spawn: a shot seed whose place stays in the sling gets a made-up flight (issue 158)") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    const CoopPuppet::Mat3 turn{1, 0, 0, 0, 1, 0, 0, 0, 1};  // +z is (0, 0, 1)
+    std::uint64_t now = 1'000'000;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    CHECK_FALSE(sync.Shot("Shootable_DekuSeed", now));  // nothing nocked yet
+    for (int i = 0; i < 3; ++i) {
+        now += 33 * kMs;
+        sync.Tick(kScene, 1, now, {Nocked(0.0f, turn)}, none, send, copies);
+    }
+    REQUIRE(sync.Shot("Shootable_DekuSeed", now));
+    const std::uint64_t shot = now;
+    send.clear();
+    // Its place does not move. Within the grace nothing is made up...
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Nocked(0.0f, turn)}, none, send, copies);
+    CHECK(sync.MadeUpFlights().empty());
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Nocked(0.0f, turn)}, none, send, copies);
+    CHECK(sync.MadeUpFlights().empty());
+    // ...then it is: along +z at the seed's speed, from the sling.
+    now += 40 * kMs;
+    sync.Tick(kScene, 1, now, {Nocked(0.0f, turn)}, none, send, copies);
+    REQUIRE(sync.MadeUpFlights().size() == 1);
+    const float speed = CoopProjectiles::ShotSpeed(CoopProjectiles::Kind::seed);
+    CHECK(sync.MadeUpFlights()[0].velocity[2] == doctest::Approx(speed));
+    auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE_FALSE(samples.empty());
+    const auto& last = samples.back();
+    const float t = float(now - shot) / 1e6f;
+    CHECK((*last.state.position)[0] == doctest::Approx(0.0f));
+    CHECK((*last.state.position)[2] == doctest::Approx(2.0f + speed * t));  // Made puts z at 2
+    CHECK((*last.state.velocity)[2] == doctest::Approx(speed));
+    // Past kShotFlightUs it holds at the end of its flight.
+    send.clear();
+    now = shot + CoopSpawn::Sync::kShotFlightUs + 50 * kMs;
+    sync.Tick(kScene, 1, now, {Nocked(0.0f, turn)}, none, send, copies);
+    samples = Of<proto::ObjectSample>(send);
+    REQUIRE(samples.size() == 1);
+    const float end = 2.0f + speed * float(CoopSpawn::Sync::kShotFlightUs) / 1e6f;
+    CHECK((*samples[0].state.position)[2] == doctest::Approx(end));
+    CHECK((*samples[0].state.velocity)[2] == doctest::Approx(0.0f));
+    // Gone: removed at the end of its flight, and said so.
+    send.clear();
+    sync.Tick(kScene, 1, now + 33 * kMs, {}, none, send, copies);
+    sync.Tick(kScene, 1, now + 66 * kMs, {}, none, send, copies);
+    const auto removes = Of<proto::ObjectRemove>(send);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].position[2] == doctest::Approx(end));
+    REQUIRE(sync.Flights().size() == 1);
+    CHECK(sync.Flights()[0].shot);
+    CHECK(sync.Flights()[0].made_up);
+}
+
+TEST_CASE("spawn: a shot seed whose place flies is sent as it flies") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    const CoopPuppet::Mat3 turn{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    std::uint64_t now = 1'000'000;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Nocked(0.0f, turn)}, none, send, copies);
+    REQUIRE(sync.Shot("Shootable_DekuSeed", now));
+    send.clear();
+    for (float x : {1.0f, 2.0f, 3.0f, 4.0f}) {
+        now += 33 * kMs;
+        sync.Tick(kScene, 1, now, {Nocked(x, turn)}, none, send, copies);
+        CHECK(sync.MadeUpFlights().empty());
+    }
+    const auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE_FALSE(samples.empty());
+    CHECK((*samples.back().state.position)[0] == doctest::Approx(4.0f));
+}
+
+TEST_CASE("spawn: the axis a made-up shot flies along") {
+    const float s = std::sqrt(0.5f);
+    const proto::Quat yaw90{0, s, 0, s};  // 90 degrees about y: +z turns to +x
+    const auto z = CoopSpawn::ShotAxis(yaw90, 2);
+    CHECK(z[0] == doctest::Approx(1.0f));
+    CHECK(z[2] == doctest::Approx(0.0f).epsilon(1e-4));
+    const auto back = CoopSpawn::ShotAxis(yaw90, 5);
+    CHECK(back[0] == doctest::Approx(-1.0f));
+    const auto x = CoopSpawn::ShotAxis({0, 0, 0, 1}, 0);
+    CHECK(x[0] == doctest::Approx(1.0f));
+}
+
+TEST_CASE("shots: the ammo watch tells a drop once") {
+    CoopProjectiles::AmmoWatch w;
+    using CoopProjectiles::Kind;
+    CHECK_FALSE(w.Dropped(Kind::seed, 30));  // the first read is no drop
+    CHECK_FALSE(w.Dropped(Kind::seed, std::nullopt));  // unreadable: kept
+    CHECK(w.Dropped(Kind::seed, 29));
+    CHECK_FALSE(w.Dropped(Kind::seed, 29));
+    CHECK_FALSE(w.Dropped(Kind::arrow, 10));  // kinds apart
+    CHECK_FALSE(w.Dropped(Kind::seed, 30));   // picked up
+    CHECK(w.Dropped(Kind::seed, 28));
+    w.Reset();
+    CHECK_FALSE(w.Dropped(Kind::seed, 5));
+    CHECK(CoopProjectiles::AmmoFlag(Kind::seed) == 0x5fadf7fcu);
+    CHECK(CoopProjectiles::AmmoFlag(Kind::bomb) == 0u);
 }
 
 TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back") {

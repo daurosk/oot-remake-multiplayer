@@ -900,6 +900,7 @@ public:
             for (const std::uint64_t key : world.taken_keys) {
                 CoopWorld::QueueTakenKey(key);  // a token taken elsewhere: its Skulltula's key
             }
+            block_fixes_ = std::move(world.blocks);  // issue 147, written below
             if (!world.hits.empty()) {
                 // A sign another player's sword passed: the same hit on ours.
                 u64 link = 0;
@@ -973,6 +974,40 @@ public:
                 }
             }
             sign_words_.clear();
+            // Issue 147: a block another game moved rests here now; its own
+            // memory's old rest place gets the new one.
+            for (const auto& fix : block_fixes_) {
+                const auto scan = CoopWorld::RestWords(
+                    [&r](u64 address) { return r.Get<u64>(address); }, fix.address, fix.from,
+                    fix.to);
+                std::string where;
+                for (const auto& w : scan.where) {
+                    where += " " + w;
+                }
+                if (scan.too_many) {
+                    LOG_INFO(Core, "coop: world: {:016x} {} rest place {:.2f} {:.2f} {:.2f} found {} times, "
+                                   "not written (too many):{}",
+                             fix.hash, fix.name, fix.from[0], fix.from[1], fix.from[2],
+                             scan.where.size(), where);
+                    continue;
+                }
+                // The searched sizes are not known object sizes (review):
+                // written only with LICHII_COOP_BLOCK_REST=1; otherwise only
+                // where they would go is logged, for a run to name the word.
+                static const bool write_rest = EnvFlag("LICHII_COOP_BLOCK_REST");
+                if (write_rest) {
+                    for (const auto& w : scan.writes) {
+                        memory_->Write32(w.address, w.value);
+                    }
+                }
+                LOG_INFO(Core, "coop: world: {:016x} {} old rest {:.2f} {:.2f} {:.2f} -> {:.2f} {:.2f} {:.2f}: "
+                               "{} places {}{}{}",
+                         fix.hash, fix.name, fix.from[0], fix.from[1], fix.from[2], fix.to[0],
+                         fix.to[1], fix.to[2], scan.where.size(),
+                         write_rest ? "rewritten" : "found, not written (LICHII_COOP_BLOCK_REST off)",
+                         where.empty() ? "" : ":", where);
+            }
+            block_fixes_.clear();
         }
         // Test7 (docs/dungeon.md "Live dungeon actions"): which words of a
         // switch, water plane or lift step when it changes. Reads only.
@@ -1141,6 +1176,7 @@ public:
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
+    std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     // Issue 144: shared changes to actors near our Link wait while it is in an
     // event (coop_guard.h). Where each actor of the last walk was, kills and
@@ -1286,6 +1322,7 @@ private:
                 gimmicks_.push_back(std::move(g));
             }
             if (IsShared(known.first) || CoopWorld::IsWorldObject(known.first) ||
+                CoopWorld::IsBlockAnchor(known.first) ||  // moved with its block (issue 147)
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
                 Seen s;
                 s.address = a;

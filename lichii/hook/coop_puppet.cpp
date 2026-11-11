@@ -1158,6 +1158,12 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
 Gear GearOf(const coop::protocol::Equipment& e) {
     Gear gear{e.weapon, e.shield,     e.head,         e.armor, e.boots,   e.held,
               e.hand,   e.sub_weapon, e.third_weapon, e.tool,  e.sub_tool};
+    // The Ocarina and its belt holder (issue 152): "Item_Ocarina_Fairy" and
+    // "Item_Ocarina_Fairy_Holder" (or _Time); none while the player has none.
+    if (e.ocarina && e.ocarina->starts_with("Item_Ocarina_")) {
+        gear[kGearOcarinaHolder] = *e.ocarina + "_Holder";
+        gear[kGearOcarina] = e.ocarina;
+    }
     // What is really in the sword hand (a Deku stick) goes before the
     // equipped sword's name; an empty slot leaves the flag's name.
     if (e.weapon_slot && !e.weapon_slot->empty()) {

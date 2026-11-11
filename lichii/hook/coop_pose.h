@@ -19,6 +19,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop/protocol/messages.hpp"
+
 namespace coop::net {
 class Client;
 struct Event;
@@ -56,6 +58,21 @@ inline constexpr std::size_t kMaxBones = 512;
 inline constexpr int kSendHz = 30;
 // A part counts as moving once it differs from the first read by more than this.
 inline constexpr float kMoved = 1e-4f;
+
+// Held pieces (issue 158). The pieces in a Link's hands have skeletons of
+// their own that the game animates apart from Link's: the slingshot's band
+// pulled back with a seed in it, then let go when it shoots; the bow's string.
+// The puppet's copy of the piece is not animated by anyone, so it stayed
+// pulled back after the shot. Each piece out in a hand slot below (the
+// EquipmentUser's hand slots: 1 SubWeapon, 2 ThirdWeapon, 3 Bow, 5 Tool,
+// 6 SubTool; not the sword or shield) is sent as a PLAYER_POSE of its own
+// skeleton, every bone, and written onto the piece of that skeleton in the
+// puppet's hands. No new message: the skeleton id tells the poses apart.
+inline constexpr std::array<std::uint32_t, 5> kPieceSlots{1, 2, 3, 5, 6};
+inline constexpr std::uint32_t kMaxPieceBones = 64;      // bigger: not sent
+inline constexpr std::uint64_t kPieceRefreshMs = 250;    // an unchanged piece, again
+inline constexpr std::uint64_t kTrackForgetMs = 5000;    // a skeleton not heard from
+inline constexpr std::size_t kMaxTracks = 8;             // skeletons kept per player
 
 // One bone of a pose: the parts that move.
 struct BonePose {
@@ -121,8 +138,13 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
                  std::uint64_t now_ms);
 // Network thread: send the newest local pose when it is time.
 void Send(coop::net::Client& client, std::uint64_t now_ms);
+// What Send sends now: Link's pose, then each held piece that changed (or
+// every kPieceRefreshMs while it holds still). Empty when it is not time.
+std::vector<coop::protocol::PlayerPose> TakeOutgoing(std::uint64_t server_now_us,
+                                                     std::uint64_t now_ms);
 // Network thread: keep a received PLAYER_POSE.
 void OnEvent(const coop::net::Event& event, std::uint64_t now_ms);
+void Receive(const coop::protocol::PlayerPose& pose, std::uint64_t now_ms);
 // LICHII_COOP_DEBUG_POSE=1: a line a second with bone counts and rates.
 // The pose copy wins over the AS commands: a puppet whose poses arrive plays
 // no AS command of its own (see Drives). LICHII_COOP_POSE_AS=1 (as_too) plays

@@ -514,6 +514,16 @@ Two local games in the Graveyard (child), autotest scenario `pose` (`tools/autot
 
 The first two-game run had every write refused: the player reaches its model through component +0x0, +0x60 as well, but the puppet does not; component +0x8 works for both.
 
+### Held pieces (issue 158)
+
+Test7: B saw A's slingshot pulled back with a seed in it, and it stayed that way after A shot. The pose copy wrote Link's skeleton only. The slingshot in Link's hand is an actor of its own (`Weapon_Range_SlingShot` in EquipmentUser hand slot 3) with its own skeleton, which the game animates on A: pulled back while aiming, let go at the shot. Nothing animates the puppet's copy of it.
+
+- **Sent.** Each frame the hook reads the pieces in the local Link's hand slots 1, 2, 3, 5 and 6 (`CoopPose::kPieceSlots`; not the sword in 0 or the shield in 4) that are out (state 4; a put-away slingshot is state 6). A piece with at most 64 bones goes as a `PLAYER_POSE` of its own skeleton, every bone with rotation, translation and scale, right after Link's pose. An unchanged piece is sent again only every 250 ms.
+- **Written.** The receiver keeps one pose track per skeleton id for each player. Each frame it writes Link's track onto the puppet and, for every piece out in the puppet's own hand slots, the track of that piece's skeleton. The skeleton id (bone count and model name) tells the poses apart, so there is no new message. A skeleton not heard from for 5 s is dropped; at most 8 are kept per player.
+- **Covers.** The slingshot's band, and the same way the bow's string, the boomerang or hookshot in hand, if the game animates them by bones.
+- `LICHII_COOP_DEBUG_POSE=1` adds `held pieces <n> ours, <n> sent/s, <n> written/s` to the line it logs each second.
+- Not run in a game yet: that the band is a bone animation (and not, say, a material swap) and that the game does not undo the write.
+
 ### Not done (pose)
 
 1. The AS commands stop only while poses arrive; if poses stop for more than 1 s the next sample's animation is played again (the slot's last command keeps playing until then).

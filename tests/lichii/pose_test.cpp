@@ -273,3 +273,89 @@ TEST_CASE("pose: CopySkeleton copies every bone between skeletons of one size") 
     CHECK_FALSE(CoopPose::CopySkeleton(g, link, fairy, &note));
     CHECK(note == "no skeleton on the source");
 }
+
+namespace {
+
+// `piece` in `actor`'s hand slot `slot`, in `state` (4 out, 6 put away).
+void Hold(FakeGuest& g, std::uint64_t actor, std::uint32_t slot, std::uint64_t piece,
+          std::uint32_t state = 4) {
+    namespace pa = CoopPuppet::addr;
+    const std::uint64_t parts = actor + 0x1000;  // as MakeActor maps it
+    const std::uint64_t eu = actor + 0x8000, holder = actor + 0x9000;
+    g.Map(eu, 0x400);
+    g.Map(holder, 0x400);
+    g.Put(parts + pa::kPartsEquipmentUser, eu);
+    for (std::uint32_t s = 0; s < 8; ++s) {
+        if (g.Get<std::uint32_t>(eu + pa::kEquipSlots + pa::kEquipSlotStride * s + pa::kEquipSlotId) == 0) {
+            g.Put(eu + pa::kEquipSlots + pa::kEquipSlotStride * s + pa::kEquipSlotId, 0xFFFFFFFFu);
+        }
+    }
+    const std::uint64_t link = eu + pa::kEquipSlots + pa::kEquipSlotStride * slot;
+    g.Put(link + pa::kEquipSlotId, std::uint32_t{0x40 + slot});
+    g.Put(link + pa::kEquipSlotHolder, holder + 0x40 * slot);
+    g.Put(holder + 0x40 * slot + pa::kHolderActor, piece);
+    g.Put(piece + pa::kActorState, state);
+}
+
+}  // namespace
+
+TEST_CASE("pose: the piece in a hand goes as a pose of its own skeleton (issue 158)") {
+    FakeGuest g;
+    const std::uint64_t player = 0x600000000, puppet = 0x700000000;
+    const std::uint64_t sling = 0x610000000, copy = 0x710000000, sword = 0x620000000;
+    MakeActor(g, player, "Player_Child");
+    MakeActor(g, puppet, "Player_Child");
+    const std::uint64_t mine = MakeActor(g, sling, "Weapon_Range_SlingShot_t158");
+    const std::uint64_t theirs = MakeActor(g, copy, "Weapon_Range_SlingShot_t158");
+    MakeActor(g, sword, "Weapon_Sword_t158");
+    MakePlayerChain(g, player);
+    Hold(g, player, 3, sling);
+    Hold(g, player, 0, sword);  // the sword is not a piece that is sent
+    Hold(g, puppet, 3, copy);
+    CoopPose::SetLog({}, false);
+    const std::uint32_t id = CoopPose::SkeletonId(kBones, "Weapon_Range_SlingShot_t158");
+    const std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets{{3, puppet}};
+
+    // Ours is pulled back: bone 2 moved, and the puppet's copy is still at rest.
+    g.Put(mine + 2 * paddr::kLocalStride + 0x50, CoopPose::Vec3{0.0f, -0.3f, 0.0f});
+    CoopPose::OnCalcFrame(g, kMain, puppets, 100'000);
+    auto out = CoopPose::TakeOutgoing(5, 100'000);
+    REQUIRE(out.size() == 2);  // Link's pose, then the slingshot's
+    CHECK(out[1].skeleton == id);
+    CHECK(out[1].bones.size() == kBones);  // every bone of a piece
+    for (auto& m : out) {
+        m.player_number = 3;
+        CoopPose::Receive(m, 100'000);
+    }
+    CoopPose::OnCalcFrame(g, kMain, puppets, 100'016);
+    CHECK(Near(g.Get<float>(theirs + 2 * paddr::kLocalStride + 0x54), -0.3f));
+
+    // Unchanged: not sent again until kPieceRefreshMs has gone.
+    CoopPose::OnCalcFrame(g, kMain, puppets, 100'050);
+    CHECK(CoopPose::TakeOutgoing(5, 100'050).size() == 1);
+    CoopPose::OnCalcFrame(g, kMain, puppets, 100'000 + CoopPose::kPieceRefreshMs + 10);
+    CHECK(CoopPose::TakeOutgoing(5, 100'000 + CoopPose::kPieceRefreshMs + 10).size() == 2);
+
+    // Shot: the band goes back. The puppet's copy lets go too.
+    g.Put(mine + 2 * paddr::kLocalStride + 0x50, CoopPose::Vec3{0.0f, 0.0f, 0.0f});
+    CoopPose::OnCalcFrame(g, kMain, puppets, 100'400);
+    out = CoopPose::TakeOutgoing(5, 100'400);
+    REQUIRE(out.size() == 2);
+    for (auto& m : out) {
+        m.player_number = 3;
+        CoopPose::Receive(m, 100'400);
+    }
+    CoopPose::OnCalcFrame(g, kMain, puppets, 100'800);  // one interval on: the newest
+    CHECK(Near(g.Get<float>(theirs + 2 * paddr::kLocalStride + 0x54), 0.0f));
+
+    // Put away (state 6): neither sent nor written.
+    Hold(g, player, 3, sling, 6);
+    Hold(g, puppet, 3, copy, 6);
+    g.Put(theirs + 2 * paddr::kLocalStride + 0x54, 0.7f);
+    CoopPose::OnCalcFrame(g, kMain, puppets, 101'000);
+    CHECK(CoopPose::TakeOutgoing(5, 101'000).size() == 1);
+    CoopPose::OnCalcFrame(g, kMain, puppets, 101'016);
+    CHECK(g.Get<float>(theirs + 2 * paddr::kLocalStride + 0x54) == 0.7f);
+    // Poses still came lately: the puppet plays no AS command of its own.
+    CHECK(CoopPose::Drives(3, 101'016));
+}

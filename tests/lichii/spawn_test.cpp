@@ -185,6 +185,42 @@ TEST_CASE("spawn: a seed is removed as gone, and other actors are not shared") {
     CHECK(removes[0].id.maker == 2);
 }
 
+TEST_CASE("spawn: a seed's flight is summed up when it goes (issue 158)") {
+    // Nocked in the sling at x 0, then shot: 1 m and 2 m on in 33 ms steps.
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    for (int i = 0; i < 3; ++i) {
+        now += 33 * kMs;
+        sync.Tick(kScene, 1, now, {Made(0x7000, 0.0f, "Shootable_DekuSeed")}, none, send, copies);
+        CHECK(sync.Flights().empty());
+    }
+    for (float x : {1.0f, 2.0f}) {
+        now += 33 * kMs;
+        sync.Tick(kScene, 1, now, {Made(0x7000, x, "Shootable_DekuSeed")}, none, send, copies);
+    }
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    CHECK(sync.Flights().empty());  // missed once: not gone yet
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    REQUIRE(sync.Flights().size() == 1);
+    const auto& f = sync.Flights()[0];
+    CHECK(f.name == "Shootable_DekuSeed");
+    CHECK(f.far == doctest::Approx(2.0f));
+    CHECK(f.top_speed == doctest::Approx(1.0f / 0.033f).epsilon(0.01));
+    CHECK(f.lived_us == 6 * 33 * kMs);
+    CHECK(f.reason == proto::RemoveReason::hit);
+    REQUIRE(Of<proto::ObjectRemove>(send).size() == 1);
+    CHECK(Of<proto::ObjectRemove>(send)[0].id == f.id);
+    // Told once.
+    sync.Tick(kScene, 1, now + 33 * kMs, {}, none, send, copies);
+    CHECK(sync.Flights().empty());
+}
+
 TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back") {
     CoopSpawn::Sync sync;
     std::vector<proto::Message> send;

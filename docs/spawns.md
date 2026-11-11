@@ -48,6 +48,12 @@ Players on test6 saw the other player aim the slingshot, but never the seed. The
   - The stand-ins' ActorInfo rows take the puppet's overrides (CalcRadius 100000, CoreUsedLevel 0), so a far shot is still calculated.
 - Bombs, bombchus, nuts and the boomerang are unchanged: they have their own AI and are drawn as copies (the nut's flash was seen by players).
 
+## Does the seed's place move in flight? (issue 158)
+
+Test7 players never saw a seed fly. The test logs (spawn-seed 2026-11-10 18:01, slingshot 2026-11-09) show the seed's life on A: made when the slingshot is drawn, sitting in the sling while A aims (its copy in B's game is the seed B sees in the puppet's sling); shot when ZR is let go; gone 0.1 to 0.35 s later; and a new one made in the sling at once for the next shot. Every shot seed was removed as `gone`, not `hit`: at its last two walks it moved under 3 m/s. So either the game keeps a flying shootable's +0x31c at the sling (and the copy never moves), or the seed stops before it goes. Which one is not known.
+
+Each of our projectiles that leaves the list now logs how it moved: `coop: shots: our Shootable_DekuSeed #... gone (reason N) after T ms: went D m from where it was made, top speed S m/s` (`Sync::Flights`). A shot seed with D under a metre means its place does not move in flight, and the copy needs its path from elsewhere (the shooter's aim and the seed's speed).
+
 ## Not done
 
 - Compiled into the emulator and run with two games (2026-11-09, `tools/autotest` scenarios `spawn-seed` and `spawn-bomb`, `LICHII_COOP_SPAWN=1`, Graveyard save of the auto kits). In the logs, two slingshot seeds and a Deku Nut from A reach B. B creates each copy 50 to 70 ms after it arrives and deletes it when A's remove comes (seeds about 0.5 s later, the nut 0.3 s). The copies were not seen in screenshots: they are small, live under half a second, and the save's cow stands in front of both Links. The server must be a build with object owners (`server: object owners`, 2026-11-08); the older kit servers drop every object message.

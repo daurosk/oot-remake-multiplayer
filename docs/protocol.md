@@ -219,7 +219,7 @@ How it moves:
 
 ### Pose (`PLAYER_POSE`)
 
-The local Link's skeleton after its animation, so the puppet can copy it bone by bone ([puppet.md](puppet.md), "Pose"). On channel 3 with `PLAYER_SAMPLE`, unreliable: a lost pose is replaced by the next one.
+The local Link's skeleton after its animation, so the puppet can copy it bone by bone ([puppet.md](puppet.md), "Pose"). On channel 3 with `PLAYER_SAMPLE`, unreliable: a lost pose is replaced by the next one. Since protocol 8 a player also sends a `PLAYER_POSE` for each piece out in Link's hands (the slingshot, the bow), with that piece's own skeleton id and every bone ([puppet.md](puppet.md), "Held pieces"); the receiver keeps one track per skeleton id and writes each onto the piece of that skeleton. The layout is unchanged.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|

@@ -177,6 +177,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         scene_ = scene;
     }
     Apply(now_us);
+    flights_.clear();
 
     for (auto& [id, r] : copies_) {
         if (const auto it = copies_live.find(r.key); it != copies_live.end() && it->second != 0) {
@@ -219,6 +220,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (s.rotation) {
                 m.rotation = CoopObjects::QuatOf(*s.rotation);
             }
+            if (dt > 0.0) {
+                const Vec3& v = m.velocity;
+                m.top_speed = std::max(m.top_speed, std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]));
+            }
+            m.far = std::max(m.far, Distance(m.position, m.made_position));
             m.seen_at = now_us;
             m.missed = 0;
             const bool moved = Distance(m.position, m.sent_position) > 0.01f;
@@ -259,7 +265,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         Own m;
         m.id = {proto::ObjectKind::made, self, ++counter_};
         m.name = s.name;
-        m.position = m.sent_position = s.position;
+        m.position = m.sent_position = m.made_position = s.position;
         m.seen_at = m.sent_at = now_us;
         m.made_at = now_us;
         if (s.rotation) {
@@ -301,6 +307,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         out.position = m.position;
         send.emplace_back(out);
+        flights_.push_back({m.id, m.name, lived, m.far, m.top_speed, out.reason});
         it = mine_.erase(it);
     }
     // Addresses the game may give to a new actor later.
@@ -878,6 +885,13 @@ public:
             logged_blown_ = sync_.BlownOnTime();
             LOG_INFO(Core, "coop: shots: bomb copy blown on the owner's fuse ({} so far)",
                      logged_blown_);
+        }
+        for (const auto& f : sync_.Flights()) {
+            LOG_INFO(Core,
+                     "coop: shots: our {} #{:#x} gone (reason {}) after {} ms: went {:.2f} m from "
+                     "where it was made, top speed {:.1f} m/s",
+                     f.name, f.id.value, static_cast<int>(f.reason), f.lived_us / 1000, f.far,
+                     f.top_speed);
         }
         if (send.empty()) {
             return;

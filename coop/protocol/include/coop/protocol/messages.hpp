@@ -689,6 +689,8 @@ struct Damage {
 // and scale (both scaled by kPoseUnit, so +-4). flags is the game's own bone
 // flag byte, passed on unread. skeleton names the skeleton (bone count and a
 // check of its layout); a puppet with another skeleton ignores the message.
+// A piece in Link's hands (the slingshot, the bow) goes as a pose of its own
+// skeleton, every bone, and is written onto the piece of that skeleton.
 inline constexpr std::size_t kMaxPoseBones = 512;
 inline constexpr float kPoseUnit = 8192.0f;
 

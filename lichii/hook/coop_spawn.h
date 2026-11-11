@@ -113,6 +113,20 @@ public:
     // Bomb copies blown up on the owner's fuse before its remove came.
     std::size_t BlownOnTime() const { return blown_on_time_; }
 
+    // One of ours that left the list, and how it moved (issue 158: whether
+    // a slingshot seed's place moves in flight, or the game keeps it at the
+    // sling). For the log.
+    struct Flight {
+        coop::protocol::ObjectId id;
+        std::string name;
+        std::uint64_t lived_us = 0;
+        float far = 0.0f;        // the farthest from where it was first seen, metres
+        float top_speed = 0.0f;  // between two walks, metres a second
+        coop::protocol::RemoveReason reason = coop::protocol::RemoveReason::gone;
+    };
+    // The ones that left in the last Tick.
+    const std::vector<Flight>& Flights() const { return flights_; }
+
 private:
     struct Own {
         coop::protocol::ObjectId id;
@@ -126,6 +140,9 @@ private:
         std::uint32_t sequence = 0;
         unsigned missed = 0;
         std::uint64_t made_at = 0;
+        Vec3 made_position{};
+        float far = 0.0f;
+        float top_speed = 0.0f;
     };
     struct Remote {
         std::uint64_t key = 0;
@@ -155,6 +172,7 @@ private:
     std::uint64_t next_key_ = 1;
     CoopProjectiles::FuseClock fuse_;  // kept across scenes: the game's fuse
     std::size_t blown_on_time_ = 0;
+    std::vector<Flight> flights_;
     bool setter_ = true;
 
     std::mutex inbox_mutex_;

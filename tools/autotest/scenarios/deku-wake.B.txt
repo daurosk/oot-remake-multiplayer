@@ -1,0 +1,39 @@
+# deku-wake, B: loads with A, goes to the Baba at -71.33 3.50 (as deku-hit) and fights it while A
+# fights the one at -22.81 -1.82 (see deku-wake.A.txt). B's hits come within 3 s of arriving, so
+# B may still be the non-owner when it hits (the #133 case).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+goto -68.5 3.5 1.5 900
+toward -71.33 3.5 10
+wait 120
+toward -71.33 3.5 6
+hold ZL 20
+hold ZL+Y 8
+hold ZL 16
+hold ZL+Y 8
+hold ZL 30
+mark risen
+toward -71.33 3.5 6
+hold ZL+Y 8
+hold ZL 16
+hold ZL+Y 8
+hold ZL 16
+hold ZL+Y 8
+hold ZL 30
+mark fight
+wait 300
+mark after-kill
+toward -22.81 -1.82 10      # look over at A's Baba
+wait 600
+mark end

@@ -1,0 +1,29 @@
+# chase, B: raises the Stalchildren at 179 25.5, lets them come at it, then runs to A at 213 14
+# with them behind it (see chase.A.txt).
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+wait 1200               # night comes about 15 s after landing
+goto 186.0 22.0 1.0 900
+goto 179.0 25.5 1.0 600
+wait 240                # they rise and come
+mark risen
+goto 190.0 21.0 1.0 300 # back off slowly towards A
+wait 60
+goto 200.0 18.0 1.0 300
+wait 60
+goto 210.0 15.0 1.5 400
+toward 179.0 25.5 10    # turn round to face them
+mark came
+wait 300
+mark end

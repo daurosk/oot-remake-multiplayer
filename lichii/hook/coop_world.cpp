@@ -323,8 +323,8 @@ void WorldSync::MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& 
             (o.life_written_us == 0 || now_us - o.life_written_us >= kFallerRetryUs)) {
             if (o.faller_tries == kFallerTries) {
                 ++o.faller_tries;
-                out.notes.push_back(Line("world: %016llx %s did not fall on life 0 (%d tries): left standing",
-                                         o.hash, o.name, kFallerTries));
+                out.notes.push_back(Line("world: %016llx %s did not fall on life 0 (%s): left standing",
+                                         o.hash, o.name, std::to_string(kFallerTries) + " tries"));
                 return;
             }
             ++o.faller_tries;

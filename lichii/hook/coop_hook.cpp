@@ -399,6 +399,9 @@ public:
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);
             });
         }
+        if (memory) {  // docs/flags.md, "Saves": no scene for a while is the title screen
+            session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
+        }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
         // Issue 129, LICHII_COOP_LIVE_EVENTS=1: a held gimmick event is
         // started here too, so its result happens live (coop_live_events.h).

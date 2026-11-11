@@ -18,6 +18,16 @@ void push(std::vector<Outgoing>& out, const protocol::Message& message) {
 
 bool is_delta(const FlagEntry& e) { return e.kind == protocol::FlagKind::count_delta; }
 
+// Saved progress going back: a Bool from set to 0, an Int lower.
+bool went_back(const FlagEntry& before, const FlagEntry& now) {
+  if (before.kind != now.kind) return false;
+  if (now.kind == protocol::FlagKind::boolean) return before.value != 0 && now.value == 0;
+  if (now.kind == protocol::FlagKind::int32) {
+    return static_cast<std::int32_t>(now.value) < static_cast<std::int32_t>(before.value);
+  }
+  return false;
+}
+
 // The game's value `now` is older than the group's (FlagWatcher::set_loading):
 // a Bool back from 1 to 0, or, while there is no Link at all (`loading`),
 // an Int (not a count) back to exactly the value it held before the group's
@@ -220,7 +230,10 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   if (settling() && !window_) {
     window_ = true;
     moved_ = false;
-  } else if (!settling() && window_) {
+    backward_ = 0;
+    no_scene_frames_ = 0;
+  }
+  if (window_ && loading_ && !scene_readable_) ++no_scene_frames_; else if (!settling() && window_) {
     window_ = false;
     end_window(store, resets);
   }
@@ -361,12 +374,9 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
     now->key = key;
     const auto it = last_.find(key);
     if (it == last_.end() || it->second == *now) continue;
-    // dungeon-live's room switches (one_way_) reset with their room: a load's
-    // change of one is neither put back nor sent in a reset (its 0 never goes out).
-    if (one_way_.contains(key)) {
-      it->second = *now;
-      continue;
-    }
+    // A room's own switch state the game resets itself (one way) is the
+    // room's: never reset for the group, never put back.
+    if (one_way_.contains(key)) continue;
     if (role_ == FlagRole::host) {
       changed[key] = *now;  // the save's value goes to everyone
       last_[key] = *now;
@@ -502,24 +512,57 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
-    if (window_ && (loading_ || moved_)) {
-      // No Link: a named flag moving is a save load (a door moves none). In
-      // the settle frames after a door, the game's own changes go as before.
-      // A one-way room switch (dungeon-live) goes to 0 whenever its room is left:
-      // that is no save load.
-      if (loading_ && key.kind == FlagKeyKind::named && !one_way_.contains(key)) moved_ = true;
-      // dungeon-live's room switches (one_way_) reset with their room: never put back.
+    if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
+        went_back(it->second, *now) && ++backward_ >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames) {
+      // The title screen (no scene) and saved progress going back: a save
+      // was loaded. A door, warp, cutscene, time travel or death keeps a
+      // scene, and its flags going back are the room's or the story's.
+      moved_ = true;
+    }
+    if (window_ && moved_) {
       if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
         // The group's value back at once, so a room loading now has it.
         const auto group = group_.find(key);
-        if (group != group_.end() && group->second != *now && store.write_exact(group->second)) {
-          ++stats_.load_reverts;
-          ++stats_.applied;
-          it->second = group->second;
-          continue;
+        if (group != group_.end() && group->second != *now) {
+          if (store.holds(key)) {
+            unwritten_[key] = group->second;
+            it->second = *now;
+            continue;
+          }
+          if (store.write_exact(group->second)) {
+            ++stats_.load_reverts;
+            ++stats_.applied;
+            it->second = group->second;
+            continue;
+          }
         }
       }
-      continue;  // nothing is sent from a load; end_window decides
+      continue;  // a save load sends nothing; end_window decides
+    }
+    if (window_ && loading_) {
+      // No Link, no sign of a save load yet: a guest puts the group's value
+      // back at once as before (backwards(), issue 129); nothing goes out
+      // until Link is back, when the rules below take what is left.
+      if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
+        const auto group = group_.find(key);
+        const auto older = group_before_.find(key);
+        if (group != group_.end() &&
+            backwards(group->second, older != group_before_.end() ? &older->second : nullptr, *now, true)) {
+          if (store.holds(key)) {
+            ++stats_.load_reverts;
+            unwritten_[key] = group->second;
+            continue;
+          }
+          if (store.write(group->second)) {
+            ++stats_.load_reverts;
+            ++stats_.applied;
+            it->second = group->second;
+            unwritten_.erase(key);
+            continue;
+          }
+        }
+      }
+      continue;
     }
     const FlagEntry before = it->second;
     it->second = *now;

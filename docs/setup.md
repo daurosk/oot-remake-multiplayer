@@ -104,7 +104,7 @@ It sends nothing about you: one request for the list of releases, and the two do
 
 ## Saves
 
-The host's save decides. Everyone's progress is shared while you play, but when the host loads a save, every game in the session goes back to that save's progress: items, keys, chests, doors and switches. A guest who loads a save gets the host's progress, and nothing changes for the others. To undo something (a door that locked you out, a key used in the wrong place), the host loads an older save. Rupees, ammo, hearts and where you stand stay your own.
+The host's save decides. Everyone's progress is shared while you play, but when the host loads a save, every game in the session goes back to that save's progress: items, keys, chests, doors and switches. A guest who loads a save gets the host's progress, and nothing changes for the others. To undo something (a door that locked you out, a key used in the wrong place), the host loads an older save. Rupees, ammo, hearts and where you stand stay your own. Be careful: if the host restarts the game and loads its save, **everything the guests did since the host last saved is undone** for everyone: chests, keys, doors, items. The host should save often, especially after the guests make progress.
 
 ## Troubleshooting
 

@@ -569,6 +569,16 @@ bool ItemFlagStore::write_exact(const protocol::FlagEntry& entry) {
   exact_ = true;
   const bool ok = write(entry);
   exact_ = false;
+  // Hearts lowered by the host's save: life is never left above the new
+  // maximum (PlayerStatus.Life, per player, is held to it).
+  constexpr std::uint32_t kMaxLife = 0xfbe01da1, kLife = 0x31ab5580;
+  if (ok && entry.key.hash == kMaxLife && entry.kind == protocol::FlagKind::int32) {
+    const FlagKey life_key{kLife, 0};
+    if (const auto life = inner_.read(life_key);
+        life && life->kind == protocol::FlagKind::int32 && as_int(life->value) > as_int(entry.value)) {
+      inner_.write(protocol::FlagEntry{life_key, protocol::FlagKind::int32, entry.value});
+    }
+  }
   return ok;
 }
 

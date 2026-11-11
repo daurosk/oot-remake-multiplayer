@@ -105,6 +105,17 @@ inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 // a call that was taken is told from one that was not. The slot's link is at
 // EquipmentUser + 0x20 + 0x18 * slot (u32 id at +0x10, ~0 empty).
 inline constexpr std::uint64_t kEquipChangeState = 0xe34c40;
+// Taking armor off: 0x10aceb0(eu, index, 0) empties the EquipmentUser's
+// armor link `index` (eu + 0xe0 + 0x18 * index, the same {holder, id} shape
+// as a hand slot) and deletes its piece. The game's own GameData path
+// (0x2df6c80) calls it this way when a PlayerStatus.Equip* armor flag is "":
+// kind 7 (head) index 0, 8 (upper) 1, 9 (lower) 2, 10 (hand) 3. It returns
+// 0 when there was a piece it could not take off.
+inline constexpr std::uint64_t kUnequipArmor = 0x10aceb0;
+inline constexpr std::uint32_t kArmorKindFirst = 7;   // ArmorHead
+inline constexpr std::uint32_t kArmorKindLast = 10;   // ArmorHand
+inline constexpr std::uint64_t kArmorLinks = 0xe0;    // kArmorLinkCount links of kEquipSlotStride
+inline constexpr std::uint32_t kArmorLinkCount = 13;
 inline constexpr std::uint32_t kEquipStateInHand = 1;
 inline constexpr std::uint32_t kEquipStateAway = 2;
 inline constexpr std::uint64_t kEquipSlots = 0x20;
@@ -168,6 +179,11 @@ inline constexpr std::array<std::uint32_t, kGearCount> kGearKinds{0, 6, 7, 8, 9,
 inline constexpr std::array<const char*, kGearCount> kGearNames{
     "weapon", "shield",     "head",         "armor", "boots",   "held",
     "hand",   "sub weapon", "third weapon", "tool",  "sub tool", "ocarina holder", "ocarina"};
+// Armor (mask, tunic, boots, gauntlets): taken off with addr::kUnequipArmor.
+constexpr bool GearIsArmor(std::size_t i) {
+    return i < kGearCount && kGearKinds[i] >= addr::kArmorKindFirst &&
+           kGearKinds[i] <= addr::kArmorKindLast;
+}
 // Pieces the game keeps elsewhere while they are put away (seen for the
 // slingshot: state 6), so the left-behind check looks at them only in hand.
 constexpr bool GearIsCarried(std::size_t i) {
@@ -385,15 +401,17 @@ private:
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
-        // A worn piece its player took off (a mask, boots, a lost shield): the
-        // game's call to take one off is not known, so the puppet is made
-        // again without it (Equip, issue 91).
+        // A worn piece its player took off: armor (mask, tunic, boots,
+        // gauntlets) with the game's own call (addr::kUnequipArmor); a sword
+        // or a shield, for which no call is known, or armor the call
+        // refused, makes the puppet again without it (Equip, issue 91).
         bool remake = false;
         std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
+        std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, hold, move
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);

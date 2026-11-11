@@ -1,0 +1,43 @@
+# wear-masks-real (issue 91): A really puts masks on, as a player does: the mask is given,
+# put on ZR (`assign`) and used (ZR), then used again to take it off. `wear-masks` only
+# set the flag, and the masks never showed on the puppet (chunk 5 shots): this run shows how
+# the game itself wears one. A steps aside to face B; B watches A's puppet.
+# Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1".
+# Look at:
+# - A's shots: the mask on A's own Link at skull, bunny, keaton; none at off.
+# - A's log, "slots (local player" lines: which hand slot (slot N) or armor link (armor N)
+#   holds the mask while it is worn. B's log, "P1 PLAYER_EQUIP": whether `head` names it.
+# - B's log: "P1 wears head 'Armor_Child_Mask_Skull'"; at off "P1 takes off head ...
+#   (returned 0x1)" and no new "create CoopPuppet_Child". B's shots: the mask on A's puppet,
+#   then none.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+give PouchData.Armor_Child_Mask_Skull.StockNum
+give PouchData.Armor_Child_Mask_Bunny.StockNum
+give PouchData.Armor_Child_Mask_Keaton.StockNum
+wait 120
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+assign SkullMask
+wait 30
+press ZR 10            # puts the Skull Mask on
+wait 240
+mark skull
+assign BunnyMask
+wait 30
+press ZR 10            # the Bunny Hood in its place
+wait 240
+mark bunny
+assign KeatonMask
+wait 30
+press ZR 10
+wait 240
+mark keaton
+press ZR 10            # the same mask again: taken off
+wait 300
+mark off
+wait 300
+mark end

@@ -1,0 +1,50 @@
+# wear-boots-real (issue 91): adult A really puts boots on, as a player does: given, put on
+# ZR (`assign`) and used (ZR), then used again to take them off. `wear-adult` only set the
+# flags. A loads straight into Kakariko by day as adult (as adult-day; run with -NoLoad; B is
+# adult there too, wear-boots-real.B.txt).
+# Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1".
+# Look at:
+# - A's shots: the boots on A's own Link at hover and iron; plain boots at off.
+# - B's log: "P1 PLAYER_EQUIP" (does `boots` name them, or a hand slot?), "P1 wears boots
+#   'Armor_Adult_HoverBoot'", then 'Armor_Adult_HeavyBoot'; at off "P1 takes off boots ...
+#   (returned 0x1)" and no new "create CoopPuppet_Adult". B's shots: the boots on the puppet.
+# - A's "slots (local player" lines: which slot or armor link holds the boots.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Armor_Adult_HoverBoot.StockNum
+give PouchData.Armor_Adult_HeavyBoot.StockNum
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+assign HoverBoot
+wait 30
+press ZR 10            # Hover Boots on
+wait 240
+mark hover
+assign HeavyBoot
+wait 30
+press ZR 10            # Iron Boots in their place
+wait 240
+mark iron
+press ZR 10            # the same boots again: taken off
+wait 300
+mark off
+wait 300
+mark end

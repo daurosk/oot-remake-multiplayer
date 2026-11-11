@@ -225,12 +225,12 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     moved_ = false;
     back_keys_.clear();
     no_scene_frames_ = 0;
-  }
-  if (window_ && loading_ && !scene_readable_) ++no_scene_frames_;
-  see_save_load(); else if (!settling() && window_) {
+  } else if (!settling() && window_) {
     window_ = false;
     end_window(store, resets);
   }
+  if (window_ && loading_ && !scene_readable_) ++no_scene_frames_;
+  see_save_load();
 
   Table changes;
   if (!holding_) {

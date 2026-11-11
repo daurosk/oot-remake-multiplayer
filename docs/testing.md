@@ -388,7 +388,7 @@ Chunk 2 test turn scenarios (2026-11-10): `boss` (A loads into the Water Temple 
 
 Chunk 7 world-objects scenarios (2026-11-11, `-NoLoad`; they use the test-only `place` step to reach rooms no walk can; each file's header lists the log lines and shots that pass): `deku-ladder` (#129: A opens the slingshot room chest, the trap, and shoots the eye switch; B by the door watches the trap floor and the ladder), `deku-block` (#147: A pushes the basement block, then B pushes it on from where A left it: no snap back), `boulder` (#84: both in the Kokiri Sword crawlspace; the rolling boulder at the same place in both) and `pots-place` (#84: A lifts and throws one Kakariko pot and cuts another; B sees both go). `sign` now has B press ZL so its camera frames the post (#90).
 
-PvP scenario (branch `pvp`, test10, `-NoLoad`; not run yet): `pvp` (both land in Hyrule Field in front of Kakariko; A swings at B with PvP off, types `/pvp on`, swings three more times, then `/pvp off` and swings once more; the A file's header lists the log lines and shots that pass).
+PvP scenario (branch `pvp`, `-NoLoad`; not run yet): `pvp` (both land in Hyrule Field in front of Kakariko; A swings at B with PvP off, types `/pvp on`, swings three more times, then `/pvp off` and swings once more; the A file's header lists the log lines and shots that pass).
 
 Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at the well) and `water` (both load into the Water Temple entrance; checked 2026-11-09: both logs `warp done` after about 50 s, screenshots in the temple). Warping a game that is already playing works only while an event runs.
 

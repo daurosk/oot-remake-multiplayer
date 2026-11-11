@@ -1,4 +1,4 @@
-# pvp (branch pvp, test10): A swings its sword at B's Link with PvP off, then turns PvP on
+# pvp (branch pvp): A swings its sword at B's Link with PvP off, then turns PvP on
 # (A hosts: it joins first) and swings again. Hyrule Field in front of Kakariko, by day (the
 # sword is read from the foliage cut, so the area needs the game's grass). B stands still at
 # 213 14 (pvp.B.txt); A stands 1.2 m east of it, faces it and swings.

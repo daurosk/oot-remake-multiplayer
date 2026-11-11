@@ -101,6 +101,7 @@ enum class Kind {
     warp,    // test only: scene change
     give,    // test only: an item
     wear,    // test only: a PlayerStatus.Equip* flag (what the puppets in other games wear)
+    assign,  // test only: the item on ZR (PlayerStatus.AssignableItem.Child and .Adult)
 };
 
 struct Step {
@@ -109,7 +110,8 @@ struct Step {
     std::uint64_t buttons = 0;
     std::optional<Stick> left;   // unset: the real stick
     std::optional<Stick> right;
-    std::string mark;  // mark: its name; warp: the scene; give: the item; wear: the piece
+    std::string mark;  // mark: its name; warp: the scene; give: the item; wear: the piece;
+                       // assign: the item's name in the button enum (Bow, Hookshot, Hammer)
     std::string start; // warp: the start position name (empty: the scene's own); wear: the slot
     float x = 0.0f;  // goto and toward: the world point (x, z)
     float z = 0.0f;
@@ -128,6 +130,12 @@ std::optional<Script> Parse(std::string_view text, std::string& error);
 // wear SLOT: the PlayerStatus flag name for weapon, shield, head, armor or
 // boots (any case), e.g. "EquipHeadArmor"; nothing for another word.
 std::optional<std::string> WearFlag(std::string_view slot);
+
+// assign ITEM: true for a value of the item button enum
+// (PlayerStatus.AssignableItem.Child / .Adult in GameDataList: Empty,
+// DekuStick, Bomb, SlingShot, Hookshot, Longshot, Hammer, Bow, ...), as the
+// game spells it.
+bool AssignableItem(std::string_view name);
 
 // What the pad gets now.
 struct Output {

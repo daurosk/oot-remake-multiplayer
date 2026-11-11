@@ -47,6 +47,8 @@ constexpr std::uint64_t kArrEntries = 0x8300000000ull, kArrSlots = 0x8310000000u
 constexpr std::uint64_t kKeys = 0x8400000000ull, kKeyQueue = 0x8410000000ull;
 constexpr std::uint64_t kUIntEntries = 0x8500000000ull, kUIntSlots = 0x8510000000ull,
                         kUIntQueue = 0x8520000000ull;
+constexpr std::uint64_t kEnumEntries = 0x8600000000ull, kEnumSlots = 0x8610000000ull,
+                        kEnumQueue = 0x8620000000ull;
 constexpr std::uint32_t kCap = 7, kQueueCap = 4;
 
 void zero(FakeMemory& m, std::uint64_t a, std::size_t n) {
@@ -90,6 +92,8 @@ Writable game() {
   queue(m, 0xd0, kIntQueue, 12);
   table(m, 0x790, kUIntEntries, kUIntSlots, 0x28, {0x44});
   queue(m, 0x790, kUIntQueue, 12);
+  table(m, 0x250, kEnumEntries, kEnumSlots, 0x38, {0x66});
+  queue(m, 0x250, kEnumQueue, 8);
   table(m, 0x70, kArrEntries, kArrSlots, 0x40, {0x33});
   m.put_u32(kArrEntries + 0x20, 40);
   m.put_u64(kArrEntries + 0x28, kArrBits);
@@ -185,6 +189,24 @@ TEST_CASE("game flags: UInt flags are read and queued like Int, in their own tab
   CHECK(coop::host::read_u32(w.mem, kIntQueue + 4) == 0u);  // the Int queue is untouched
   REQUIRE(GameFlags::set_int(w, 0x22, 5));
   CHECK(coop::host::read_u32(w.mem, kIntQueue + 8) == 0u);  // an Int slot has no third word
+}
+
+TEST_CASE("game flags: Enum flags hold a name's hash, queued in 8-byte slots (held-gear-2)") {
+  auto w = game();
+  w.mem.put_u32(kEnumEntries + 0x1c, coop::host::flag_hash("Empty"));
+  GameFlags f(w);
+  CHECK(f.get_enum(0x66) == coop::host::flag_hash("Empty"));
+  CHECK(coop::host::flag_hash("Empty") == 0xbe69de49u);  // GameDataList's default for the item buttons
+  CHECK_FALSE(f.get_enum(0x44));  // a UInt is not an Enum
+  CHECK_FALSE(GameFlags::set_enum(w, 0x22, 1));
+  REQUIRE(GameFlags::set_enum(w, 0x66, coop::host::flag_hash("Bow")));
+  CHECK(coop::host::read_u32(w.mem, kEnumQueue) == coop::host::flag_hash("Bow"));
+  CHECK(coop::host::read_u32(w.mem, kEnumQueue + 4) == 0x66u);
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x280) == 0x30100001u);  // 1 taken, 1 finished
+  CHECK(f.get_enum(0x66) == coop::host::flag_hash("Bow"));
+  REQUIRE(GameFlags::set_enum(w, 0x66, coop::host::flag_hash("Hookshot")));
+  CHECK(coop::host::read_u32(w.mem, kEnumQueue + 8) == coop::host::flag_hash("Hookshot"));  // next slot
+  CHECK(f.get_enum(0x66) == coop::host::flag_hash("Hookshot"));  // newest wins
 }
 
 TEST_CASE("game flags: refused when unknown, full, or the queue was applied meanwhile") {

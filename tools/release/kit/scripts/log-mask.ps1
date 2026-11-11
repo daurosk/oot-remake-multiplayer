@@ -62,7 +62,7 @@ function Protect-LogText([string]$Text, [hashtable]$State,
     # --password x): a set value becomes (removed); an empty one stays empty, so a reader
     # sees none was set.
     $t = [regex]::Replace($t, '(?im)^([ \t]*[\w.]*(?:password|secret|token)\w*[ \t]*[=:])[ \t]*[^\s][^\r\n]*', '$1 (removed)')
-    $t = [regex]::Replace($t, '(?i)(--?[\w-]*(?:password|secret|token)[\w-]*)(?:[ \t]+|=)(?!-)\S+', '$1 (removed)')
+    $t = [regex]::Replace($t, '(?i)(?<![\w-])(--?[\w-]*(?:password|secret|token)[\w-]*)(?:[ \t]+|=)(?!-)\S+', '$1 (removed)')
     # MAC addresses first (their colon form would otherwise look like IPv6 groups), also
     # the dotted form aabb.ccdd.eeff.
     $t = [regex]::Replace($t, '(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])', '<mac>')

@@ -85,7 +85,7 @@ Check ($got -eq 'C:\Users\<user>\kit') "but it is replaced in a path (got '$got'
 
 # What must stay.
 foreach ($keep in @('game 1.1.1 (v131072)', 'Microsoft Windows NT 10.0.26200.0', 'driver 32.0.15.6094',
-                    'bind 0.0.0.0:27510', '[12:34:56.789] tick', 'Core::Frontend started', 'protocol 9, build v0.1.0', 'v1.2.3.4', 'fritchii-v5.8.4')) {
+                    'bind 0.0.0.0:27510', '[12:34:56.789] tick', 'Core::Frontend started', 'protocol 9, build v0.1.0', 'v1.2.3.4', 'join-password 191', 'server-password set','fritchii-v5.8.4')) {
     $got = Mask $keep
     Check ($got -eq $keep) "'$keep' stays (got '$got')"
 }

@@ -106,6 +106,9 @@ STAND_INS = (
     ("NormalArrow", "CoopShot_Arrow"),
     ("Shootable_Hook", "CoopShot_Hook"),
     ("Shootable_HookLong", "CoopShot_HookLong"),
+    # Issue 151: another player's cast lure, seen but never bitten by a fish here.
+    ("Weapon_Lure", "CoopShot_Lure"),
+    ("Weapon_SinkingLure", "CoopShot_SinkingLure"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
 # ActorInfo fields of the shootable that a model-only actor must not take over.

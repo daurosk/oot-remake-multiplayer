@@ -107,6 +107,9 @@ public:
     void SetSetter(bool on) { setter_ = on; }
 
     std::size_t Mine() const { return mine_.size(); }
+    // Issue 151: where our own cast lures are (CoopProjectiles::IsLure), as
+    // of the last walk.
+    std::vector<Vec3> OwnLures() const;
     std::size_t Copies() const { return copies_.size(); }
     // Our bombs' fuse as learnt so far (coop_projectiles.h).
     const CoopProjectiles::FuseClock& Fuse() const { return fuse_; }
@@ -170,6 +173,10 @@ private:
 // (no physics, sensor, attack or AI), so it is drawn wherever it is put, and
 // it can hit nothing. Empty when the actor has none.
 std::string_view StandIn(std::string_view actor);
+// Issue 151: shared actors whose copy is only ever the stand-in. A lure made
+// as the game's own Weapon_Lure would be a lure the fish here can bite, so
+// with no stand-in in the pack (or after it failed) no copy is made at all.
+bool StandInOnly(std::string_view actor);
 
 // The stand-ins a puppet pack has: the CoopShot_* names its coop_puppet.json
 // lists (build.py writes them under "shots"). A pack built before the

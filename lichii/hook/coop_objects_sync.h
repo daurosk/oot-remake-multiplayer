@@ -106,10 +106,16 @@ struct LifeWrite {
 bool IsShared(std::string_view name);
 
 // A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
-// (hit 2, 3, 1), the Lost Woods stage scrubs, and the fishing pond's fish and
-// owner. Their state is kept in the game's own code from its own player;
-// only the solve or the prize is shared (docs/dungeon.md, docs/items.md).
+// (hit 2, 3, 1), the Lost Woods stage scrubs, and the fishing pond's owner.
+// Their state is kept in the game's own code from its own player; only the
+// solve or the prize is shared (docs/dungeon.md, docs/items.md). The pond's
+// fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
+
+// Issue 151 (fishing-2): a fish (Animal_Fish_*). Shared like any animal, with
+// one owner game; the lure rules in Sync (SetLures) move a fish to the game
+// whose lure it goes for, and a fish its owner catches is gone for everyone.
+bool IsFish(std::string_view name);
 
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver
@@ -305,6 +311,24 @@ public:
     // with their life never read at 0. One that leaves further away was
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
+
+    // Issue 151 (fishing-2). Present thread, before Tick: where our own cast
+    // lures are (CoopProjectiles::TheLures). A fish copy we do not own whose
+    // own AI swims it towards one of them (kLureStepM or more a frame, within
+    // kLureReachM, or held within kLureHookM: it bites) for kChaseHoldUs is
+    // flagged targeting, so the server hands it to us and our game runs the
+    // bite and the fight. A fish we own within kLureHookM of our lure, or
+    // coming at it at kLureSpeed or more within kLureReachM, is flagged the
+    // same way (a fight to the server), so it stays ours while it is hooked
+    // and reeled in. A fish we own that leaves the walk within kCatchNearM of
+    // our Link was caught here (landed, in Link's hands): OBJECT_REMOVE dead,
+    // and every other game deletes its copy at once.
+    void SetLures(std::vector<coop::protocol::Vec3> lures) { lures_ = std::move(lures); }
+    static constexpr float kLureReachM = 6.0f;
+    static constexpr float kLureStepM = 0.005f;
+    static constexpr float kLureHookM = 1.0f;
+    static constexpr float kLureSpeed = 0.2f;  // metres a second
+    static constexpr float kCatchNearM = 3.0f;
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
     static constexpr int kMissedWalks = 2;
@@ -489,6 +513,7 @@ private:
         std::uint64_t debit_until = 0;
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
+        bool fish = false;                      // IsFish: the lure rules
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         // Chasing our Link (NoteDrift): the run of steps towards it.
@@ -540,6 +565,9 @@ private:
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
+    std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
+    // The nearest of our lures to `at` (metres), or nothing with none.
+    std::optional<float> LureDistance(const coop::protocol::Vec3& at) const;
     std::vector<std::string> notes_;
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)

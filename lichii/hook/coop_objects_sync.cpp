@@ -150,20 +150,20 @@ bool IsOwnPuzzle(std::string_view name) {
     // dungeon flag and opens the room for everyone. The Lost Woods stage scrubs
     // (Enemy_Scrub_ForestStage, ScrubForestStage_ProcessOrderIndex) are an
     // ordered show of the same kind.
-    // Issue 151. The fishing pond (Lake Hylia, in the Hyrule Field Banc) is a
-    // minigame each game plays alone: its fish (Animal_Fish_Bass x18,
-    // Animal_Fish_Loach, and the Animal_Fish_Blue that swim there and in the
-    // rivers) bite, fight and are weighed by that game's own lure and rod
-    // (Weapon_Lure, not shared), and the owner (Npc_Hylia_Fishman_001_Child,
-    // _Adult) hands over the rod and judges the catch in that game's events.
-    // Shared as copies, a fish in the game that did not own it was moved and
-    // animated by the owner's samples, so it could not follow or bite that
-    // player's lure, and the owner's talk animations came from the other game.
-    // Only the prizes are shared (MiniGame_Fishing_GetHeartPiece and
-    // _GetGoldScale, coop/host game_items).
+    // Issue 151. The fishing pond's owner (Npc_Hylia_Fishman_001_Child,
+    // _Adult, Lake Hylia, in the Hyrule Field Banc) takes each player's fee,
+    // hands over the rod and judges the catch in that game's own events, so
+    // each game runs its own; shared, his talk animations came from the
+    // other game. Only the prizes are shared (MiniGame_Fishing_GetHeartPiece
+    // and _GetGoldScale, coop/host game_items). The fish are shared (IsFish,
+    // fishing-2): the lure rules give each fish to the game whose lure it
+    // goes for.
     return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
-           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Animal_Fish_") ||
-           name.starts_with("Npc_Hylia_Fishman");
+           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman");
+}
+
+bool IsFish(std::string_view name) {
+    return name.starts_with("Animal_Fish_");
 }
 
 bool IsRolled(std::string_view name) {
@@ -602,19 +602,47 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
     }
 }
 
+std::optional<float> Sync::LureDistance(const proto::Vec3& at) const {
+    std::optional<float> best;
+    for (const proto::Vec3& lure : lures_) {
+        if (!Finite(lure)) {
+            continue;
+        }
+        const float d = Distance(at, lure);
+        if (!best || d < *best) {
+            best = d;
+        }
+    }
+    return best;
+}
+
 void Sync::NoteDrift(std::uint64_t address, const proto::Vec3& put, const proto::Vec3& now,
                      std::uint64_t now_us) {
-    if (!player_ || !Finite(put) || !Finite(now)) {
+    if (!Finite(put) || !Finite(now)) {
         return;
     }
     const auto it = objects_.find(address);
-    if (it == objects_.end() || !it->second.reacts) {
+    if (it == objects_.end() || !(it->second.reacts || it->second.fish)) {
         return;
     }
     Object& o = it->second;
     const auto owner = owners_.find(o.id);
     if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
         return;  // ours, or nobody's: the Mover does not place it
+    }
+    if (o.fish) {
+        // Issue 151: our game's fish swims at our lure, or holds on it (a
+        // bite). Another player's lure is a stand-in here that no fish sees.
+        const auto before = LureDistance(put);
+        const auto after = LureDistance(now);
+        if (before && after && *after <= kLureReachM &&
+            (*before - *after >= kLureStepM || *after <= kLureHookM)) {
+            ChaseStep(o, now_us);
+        }
+        return;
+    }
+    if (!player_) {
+        return;
     }
     auto distance = [this](const proto::Vec3& at) {
         float d2 = 0.0f;
@@ -977,6 +1005,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
         o.reacts = s->name.starts_with("Enemy_");
+        o.fish = IsFish(s->name);
         o.first_position = s->position;
         if (s->animation) {
             o.rest_animation = s->animation->name;
@@ -1195,6 +1224,34 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
             }
         }
+        // Issue 151: a fish of ours at our lure (a bite, a fight, reeled
+        // in) or coming at it stays ours.
+        if (o.fish && !lures_.empty()) {
+            const auto owner = owners_.find(o.id);
+            if (owner != owners_.end() && owner->second.player == self) {
+                std::optional<float> best;
+                float speed = 0.0f;
+                for (const proto::Vec3& lure : lures_) {
+                    if (!Finite(lure)) {
+                        continue;
+                    }
+                    const float d = Distance(o.position, lure);
+                    if (best && d >= *best) {
+                        continue;
+                    }
+                    best = d;
+                    speed = 0.0f;
+                    if (d > 0.0f) {
+                        for (std::size_t i = 0; i < 3; ++i) {
+                            speed += o.velocity[i] * (lure[i] - o.position[i]) / d;
+                        }
+                    }
+                }
+                if (best && (*best <= kLureHookM || (*best <= kLureReachM && speed >= kLureSpeed))) {
+                    ChaseStep(o, now_us);
+                }
+            }
+        }
         if (o.chase_until > now_us) {
             flags |= proto::object_presence::targeting;
         }
@@ -1303,7 +1360,13 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             // take the life we wrote. Rolled ones say it in Tick already.
             const bool died = (o.life && *o.life <= 0) ||
                               (o.animation && IsDeathAnimation(o.animation->name));
-            if (o.reacts && died && o.id.kind == proto::ObjectKind::placed) {
+            // A fish of ours gone in our Link's hands: caught here (issue
+            // 151), gone for everyone.
+            const bool caught = o.fish && player_ && Distance(o.position, *player_) <= kCatchNearM;
+            if (caught) {
+                notes_.emplace_back("caught here: " + o.name);
+            }
+            if (((o.reacts && died) || caught) && o.id.kind == proto::ObjectKind::placed) {
                 proto::ObjectRemove r;
                 r.id = o.id;
                 r.epoch = owner->second.epoch;
@@ -1394,7 +1457,13 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (remove->reason == proto::RemoveReason::dead &&
                 remove->id.kind == proto::ObjectKind::placed &&
                 (had == owners_.end() || remove->epoch >= had->second.epoch)) {
-                if (Object* o = find(remove->id); o != nullptr && o->reacts && o->dead_at == 0) {
+                Object* o = find(remove->id);
+                if (o != nullptr && o->fish && o->dead_at == 0) {
+                    // Issue 151: caught in its owner's game. Ours goes now.
+                    o->dead_now = true;
+                    o->dead_at = now_us;
+                    notes_.emplace_back("caught in its owner's game: " + o->name);
+                } else if (o != nullptr && o->reacts && o->dead_at == 0) {
                     // Our game kills it itself (life 0 through the game), so
                     // its own kill counts: a room's enemy counter and shutter,
                     // the kill it keeps for a room reload. The delete after

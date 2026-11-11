@@ -25,6 +25,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "coop/protocol/messages.hpp"
 
@@ -147,5 +148,22 @@ private:
 };
 
 Blasts& TheBlasts();
+
+// Issue 151 (fishing-2). A cast lure: Weapon_Lure or Weapon_SinkingLure. The
+// spawn sync shares ours (copies are model-only stand-ins, so another
+// player's lure is seen and no fish here can bite it) and puts where they
+// are here; the objects sync asks, so a fish that goes for our lure (or that
+// our lure has hooked) is handed to our game. Any thread may call.
+bool IsLure(std::string_view actor);
+class Lures {
+public:
+    void Set(std::vector<Vec3> at);
+    std::vector<Vec3> Get() const;
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<Vec3> at_;
+};
+Lures& TheLures();
 
 } // namespace CoopProjectiles

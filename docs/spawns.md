@@ -46,6 +46,7 @@ Players on test6 saw the other player aim the slingshot, but never the seed. The
   - A pack built before this change lists none, so its copies are the game's own actors, as before. The kit's pack hint already asks for a rebuild when the tool changes.
   - A stand-in that never becomes an actor (create failed, timed out or dropped, or the take gave none) is made again. After 3 failures in a row the director logs `<actor>: CoopShot_... could not be made 3 times in a row; the game's own actor is used` and uses the game's own actor for the rest of the session.
   - The stand-ins' ActorInfo rows take the puppet's overrides (CalcRadius 100000, CoreUsedLevel 0), so a far shot is still calculated.
+- **Lures (issue 151, fishing-2):** a cast lure (`Weapon_Lure`, `Weapon_SinkingLure`) is shared the same way, as `CoopShot_Lure` and `CoopShot_SinkingLure` (their model `Item_Lure` / `Weapon_SinkingLure` and LOD). A lure copy is only ever the stand-in (`CoopSpawn::StandInOnly`): the game's own lure in another game would be a lure that game's fish go for. With no stand-in in the pack, or after 3 failed tries, no lure copy is made. Our own lures' places also go to the objects sync for the fish rules ([objects.md](objects.md), "Fish and lures").
 - Bombs, bombchus, nuts and the boomerang are unchanged: they have their own AI and are drawn as copies (the nut's flash was seen by players).
 
 ## Not done

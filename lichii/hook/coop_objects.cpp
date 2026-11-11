@@ -1439,6 +1439,7 @@ private:
         }
         names_ = std::move(names);
         sync_.SetPlayer(player);
+        sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
         if (debug_) {  // research: the field grass that is no actor (world.md)
             for (const std::string& line : foliage_.Look(

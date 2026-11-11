@@ -370,9 +370,10 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual(row["__RowId"], "CoopShot_Seed")
         with self.assertRaises(build.BuildError):
             build.make_stand_in_param({"PhysicsRef": "x"})
-        # The hook's CoopSpawn::StandIn makes these same four.
+        # The hook's CoopSpawn::StandIn makes these same ones.
         self.assertEqual([n for _, n in build.STAND_INS],
-                         ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong"])
+                         ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong",
+                          "CoopShot_Lure", "CoopShot_SinkingLure"])
 
     def test_actor_param_chain(self):
         members = fake_player_pack("Adult")

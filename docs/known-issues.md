@@ -49,7 +49,7 @@ Co-op does not allow mods that change the game's code, or cheats ([issue 136](ht
 
 ## Low frame rate
 
-- Slow or uneven (for example under 20 fps): see [setup.md, "Low frame rate"](setup.md#low-frame-rate). In short: the first 10 to 15 minutes stutter while shaders are built; click the **60 FPS** button at the bottom of the emulator window to switch to 30 FPS; laptops plugged in and on the graphics card; a current graphics driver. The kit's emulator already uses the fastest settings.
+- Slow or uneven (for example under 20 fps): see [setup.md, "Low frame rate"](setup.md#low-frame-rate). In short: if a "Preparing shaders" screen shows when the game starts, let it finish (after "Play now" it keeps running beside the game and slows it; close the emulator and start again to finish it); the first 10 to 15 minutes stutter while shaders are built; click the **60 FPS** button at the bottom of the emulator window to switch to 30 FPS; laptops plugged in and on the graphics card; a current graphics driver. The kit's emulator already uses the fastest settings.
 - The co-op code reads the game at most every 33 ms (4 to 30 times a second), and its debug logging is off by default. How much frame time it costs has not been measured yet.
 
 ## Other notes

@@ -144,6 +144,57 @@ TEST_CASE("notify: the watcher says who made what it writes") {
   CHECK(got[0].from == 1);
 }
 
+namespace {
+
+// One count flag (a dungeon's small keys): a count delta adds to it.
+class CountStore : public coop::host::FlagStore {
+ public:
+  proto::FlagEntry value;
+  std::optional<proto::FlagEntry> read(coop::host::FlagKey) override { return value; }
+  bool write(const proto::FlagEntry& e) override {
+    if (e.kind == proto::FlagKind::count_delta) {
+      value.value = static_cast<std::uint32_t>(static_cast<std::int32_t>(value.value) +
+                                               static_cast<std::int32_t>(e.value));
+    } else {
+      value = e;
+    }
+    return true;
+  }
+  bool is_count(coop::host::FlagKey) override { return true; }
+};
+
+}  // namespace
+
+TEST_CASE("notify: the host tells a player's key, which comes as a count delta") {
+  const proto::FlagKey keys(proto::flag_hash("DungeonInfo.InsideTheDekuTree.SmallKeyNum"), std::uint16_t{0});
+  CountStore store;
+  store.value = proto::FlagEntry{keys, proto::FlagKind::int32, 1};
+  FlagWatcher w(coop::host::SharedFlags({keys}), coop::host::FlagRole::host);
+  w.frame(store);  // the baseline
+  // The host's Session names the asker (player 2); its client hands the
+  // delta over in a FLAG_STATE of its own (player 1, the host).
+  const proto::FlagEntry plus_one{keys, proto::FlagKind::count_delta, 1};
+  w.receive(proto::Message{proto::FlagOrigin{2, {plus_one}}});
+  w.receive(proto::Message{proto::FlagState{1, {plus_one}}});
+  w.frame(store);
+  const auto got = w.take_received();
+  REQUIRE(got.size() == 1);
+  CHECK(got[0].from == 2);
+  CHECK(got[0].before.value == 1);
+  CHECK(got[0].after.value == 2);
+  Notifier n = Make();
+  const auto lines = n.Take(got, 1, 0);
+  REQUIRE(lines.size() == 1);
+  CHECK(lines[0] == "Tobi found a Small Key (Deku Tree) - the group has 2");
+
+  // The origin is used once: the next delta with none is the host's own.
+  w.receive(proto::Message{proto::FlagState{1, {plus_one}}});
+  w.frame(store);
+  const auto again = w.take_received();
+  REQUIRE(again.size() == 1);
+  CHECK(again[0].from == 1);
+}
+
 TEST_CASE("notify: FLAG_ORIGIN is the server's, with a player and flags") {
   const proto::FlagKey key(proto::flag_hash("IsGet.Item_Bomb"), std::uint16_t{0});
   proto::FlagOrigin m{2, {proto::FlagEntry{key, proto::FlagKind::boolean, 1}}};

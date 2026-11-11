@@ -269,6 +269,8 @@ class FlagWatcher {
   bool recording_ = false;  // applying another game's message
   std::vector<Received> received_;
   std::map<FlagKey, std::pair<std::uint8_t, std::uint64_t>> origin_;  // asker, frame
+  // from_ becomes the asker FLAG_ORIGIN named for key (if fresh); used once.
+  void take_origin(const FlagKey& key);
   std::uint64_t frames_ = 0;
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer

@@ -117,6 +117,6 @@ Yes, once your game has saved. Shared progress means the items, songs, chests, k
 | `connection lost; reconnecting` | The host's connection dropped or the server window was closed. It reconnects on its own when the server is back. |
 | High ping (over about 150 ms) or the others jump around | Distance or a slow connection. With a virtual LAN, try port forwarding instead. Close downloads and streams. |
 | The others show as a dot, not as Link | You have no puppet pack yet ([setup.md, step 4](setup.md#4-the-puppet-pack)), or they are in another area. |
-| Something else | Close the emulator, run `collect-logs.cmd`, and send the zip with a short description. |
+| Something else | Close the emulator, run `collect-logs.cmd`, and send the zip privately (Discord DM) with a short description, never on a public issue. Addresses in it are masked. |
 
 The log is `emulator\user\log\eden_log.txt`; the co-op lines start with `coop:`. The server's log is in the host's `logs\` folder.

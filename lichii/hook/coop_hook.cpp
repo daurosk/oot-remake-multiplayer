@@ -1024,9 +1024,10 @@ private:
             LOG_WARNING(Core,
                         "coop: connection lost; reconnecting (nothing from the server for {} ms, "
                         "round trip {} ms, loss {}%, datagram {} bytes, largest message sent {} "
-                        "bytes)",
+                        "bytes, ENet waiting {} bytes, lost fragment bytes taken off its count {})",
                         event.link.quiet_ms, event.link.round_trip_ms, event.link.loss_percent,
-                        event.link.mtu, event.link.largest_sent);
+                        event.link.mtu, event.link.largest_sent, event.link.waiting_bytes,
+                        event.link.mended_bytes);
             break;
         case EventKind::player_joined:
             LOG_INFO(Core, "coop: player {} '{}' joined", event.player, event.nickname);

@@ -117,6 +117,11 @@ struct ClientConfig {
   std::uint32_t timeout_ms = 10000;
   // ENet's datagram size (its MTU), see protocol::kDatagramBytes.
   std::uint32_t mtu = protocol::kDatagramBytes;
+  // Most bytes ENet may hold for us between services (fragments of messages
+  // not yet whole, and whole ones not yet taken); a server cannot make us
+  // hold more. 8 MB is twice a whole flag snapshot at the server's max_flags.
+  // The count is kept true after each service (enet_waiting.hpp).
+  std::size_t max_waiting_bytes = std::size_t{8} << 20;
   // Give up on an attempt with no WELCOME or REFUSED by then.
   std::uint32_t handshake_timeout_ms = 10000;
   // Delay before the next attempt: doubles from the first to the most.
@@ -223,6 +228,10 @@ struct LinkInfo {
   std::uint32_t loss_percent = 0;   // ENet's packet loss estimate
   std::uint32_t mtu = 0;            // the datagram size both sides agreed
   std::uint32_t largest_sent = 0;   // our largest message on this connection, bytes
+  std::uint32_t waiting_bytes = 0;  // what ENet holds for us now (enet_waiting.hpp)
+  // What ENet counted for unassembled messages it threw away and we took off
+  // again on this connection (lost fragments; issue 175).
+  std::uint64_t mended_bytes = 0;
 };
 
 struct Event {

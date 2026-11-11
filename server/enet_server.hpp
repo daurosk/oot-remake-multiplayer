@@ -52,6 +52,10 @@ class EnetServer {
 
   const Session& session() const { return session_; }
 
+  // Bytes ENet had counted for players' lost fragments and we took off again
+  // (coop/net/enet_waiting.hpp): above 0 means the line loses packets.
+  std::uint64_t mended_bytes() const { return mended_bytes_; }
+
  private:
   std::uint64_t now_us() const;
   void handle(const ENetEvent& event);
@@ -62,6 +66,7 @@ class EnetServer {
   ENetHost* host_ = nullptr;
   std::map<ConnectionId, ENetPeer*> peers_;
   ConnectionId next_id_ = 1;
+  std::uint64_t mended_bytes_ = 0;
   std::chrono::steady_clock::time_point start_;
 };
 

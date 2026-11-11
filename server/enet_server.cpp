@@ -4,7 +4,10 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <string>
 #include <utility>
+
+#include "coop/net/enet_waiting.hpp"
 
 namespace coop::server {
 
@@ -79,6 +82,9 @@ void EnetServer::service(std::uint32_t timeout_ms) {
   }
   session_.tick(now_us());
   apply_actions();
+  // ENet forgets to take a player's lost fragments off its count; past
+  // kMaxWaitingBytes it would refuse (and never acknowledge) all they send.
+  for (auto& [id, peer] : peers_) mended_bytes_ += net::mend_waiting_data(*peer);
   enet_host_flush(host_);
 }
 
@@ -107,7 +113,13 @@ void EnetServer::handle(const ENetEvent& event) {
     case ENET_EVENT_TYPE_DISCONNECT: {
       ConnectionId id = id_of(event.peer);
       peers_.erase(id);
-      session_.disconnected(id, now_us());
+      const ENetPeer& p = *event.peer;
+      session_.disconnected(
+          id, now_us(),
+          "round trip " + std::to_string(p.roundTripTime) + " ms, loss " +
+              std::to_string(static_cast<std::uint64_t>(p.packetLoss) * 100 /
+                             ENET_PEER_PACKET_LOSS_SCALE) +
+              "%, waiting " + std::to_string(p.totalWaitingData) + " bytes");
       event.peer->data = nullptr;
       break;
     }

@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop/net/enet_waiting.hpp"
 #include "coop/protocol/codec.hpp"
 
 namespace coop::net {
@@ -49,11 +50,6 @@ constexpr std::uint32_t kNameTakenRetryFloorMs = 100;
 // The longest packet a message can fill: the 4-byte header and a body of
 // at most 65535 bytes. ENet refuses anything longer before assembling it.
 constexpr std::size_t kMaxPacketBytes = 4 + 0xffff;
-// Most bytes ENet may hold for us between services (fragments of messages not
-// yet whole, and whole ones not yet taken). ENet's default is 32 MB; a server
-// cannot make us hold more than this. 8 MB is twice a whole flag snapshot at
-// the server's max_flags.
-constexpr std::size_t kMaxWaitingBytes = 8u << 20;
 
 // PONGs answer at most this many PINGs at once, then one per interval.
 constexpr std::uint64_t kPongBurst = 4;
@@ -176,7 +172,7 @@ bool Client::start() {
   host_ = enet_host_create(nullptr, 1, proto::kChannelCount, 0, 0);
   if (host_ == nullptr) return false;
   host_->maximumPacketSize = kMaxPacketBytes;
-  host_->maximumWaitingData = kMaxWaitingBytes;
+  host_->maximumWaitingData = config_.max_waiting_bytes;
   host_->mtu = std::clamp<std::uint32_t>(config_.mtu, ENET_PROTOCOL_MINIMUM_MTU,
                                          ENET_PROTOCOL_MAXIMUM_MTU);  // issue 143
   begin_attempt();
@@ -328,6 +324,11 @@ void Client::service(std::uint32_t wait_ms) {
       break;
   }
   if (peer_ != nullptr) {
+    // ENet forgets to take thrown-away fragments off its count; past the cap
+    // it would refuse (and never acknowledge) the server's packets.
+    link_.mended_bytes += mend_waiting_data(*peer_);
+    link_.waiting_bytes = static_cast<std::uint32_t>(
+        std::min<std::size_t>(peer_->totalWaitingData, 0xffffffffu));
     link_.round_trip_ms = peer_->roundTripTime;
     link_.loss_percent = static_cast<std::uint32_t>(
         static_cast<std::uint64_t>(peer_->packetLoss) * 100 / ENET_PEER_PACKET_LOSS_SCALE);

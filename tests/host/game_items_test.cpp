@@ -167,7 +167,8 @@ TEST_CASE("game items: every name hashes to its hash, sorted, each once") {
     if (item.name.starts_with("PouchData.")) CHECK(item.kind == K::int32);
     const bool dungeon_bool =
         item.name.starts_with("DungeonInfo.") && !item.name.ends_with(".SmallKeyNum");
-    if (item.name.starts_with("IsGet.") || dungeon_bool)
+    // IsGet.Weapon_Shield_Deku is each player's own (issue 130).
+    if ((item.name.starts_with("IsGet.") && item.name != "IsGet.Weapon_Shield_Deku") || dungeon_bool)
       CHECK((item.kind == K::boolean && item.rule == ItemRule::any));
     CHECK(item.on);  // every rule is on, counts included
   }
@@ -215,12 +216,12 @@ TEST_CASE("game items: the shared list") {
   CHECK_FALSE(shared.contains(FlagKey{kBottleAItem, 0}));
   CHECK(shared.contains(FlagKey{kForestKeys, 0}));  // counts travel as deltas
   CHECK(shared.contains(FlagKey{kMaxLife, 0}));
-  CHECK(shared.size() == 302 - 18);
+  CHECK(shared.size() == 302 - 20);  // 20 per player, the Deku Shield's two included (issue 130)
   const auto all = item_shared_flags(true);
   CHECK(all.contains(FlagKey{kForestKeys, 0}));
   CHECK(all.contains(FlagKey{kMaxLife, 0}));
   CHECK_FALSE(all.contains(FlagKey{kRupees, 0}));
-  CHECK(all.size() == 302 - 18);
+  CHECK(all.size() == 302 - 20);
 }
 
 TEST_CASE("game items: merge rules") {

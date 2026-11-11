@@ -100,6 +100,11 @@ struct SessionConfig {
   // and only the owner's game runs the boss right (the other copies follow
   // its pose), and the boss then turns on that player. 0: off.
   std::uint64_t boss_hitter_cooldown_us = 8'000'000;
+  // ... and only when its owner has not hit it itself for this long (a life
+  // drop in the owner's samples with no DAMAGE passed on just before), so
+  // two players hitting in turn do not bounce it (each hand-over can jump a
+  // phase: the state carries only place, turn, animation and life).
+  std::uint64_t boss_owner_hit_hold_us = 6'000'000;
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
@@ -332,6 +337,7 @@ class Session {
     std::optional<std::int32_t> hit_base;
     std::int64_t hit_sum = 0;
     std::uint64_t hit_at = 0;
+    std::uint64_t owner_hit_at = 0;  // the owner's own hit (its samples' life fell); 0: none
     std::uint64_t orphan_since = 0;  // a made enemy its owner stopped listing
   };
   using Objects = std::map<protocol::ObjectId, Object>;
@@ -409,6 +415,8 @@ class Session {
   bool unfit_owner(const Connection& c, std::uint64_t now_us) const;
   void mark_fight(Object& o, std::uint64_t now_us);
   bool in_fight(const Object& o, std::uint64_t now_us) const;
+  // The owner hit it itself within boss_owner_hit_hold_us (issue 150).
+  bool owner_hit_lately(const Object& o, std::uint64_t now_us) const;
   // The game that has said longest (at least handover_chased_us) that its
   // copy of `o`, or of one of its members, chases its Link; not the owner.
   std::optional<ConnectionId> chased_by(const Object& o, ConnectionId owner,

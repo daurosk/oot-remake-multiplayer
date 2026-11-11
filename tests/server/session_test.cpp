@@ -2066,6 +2066,34 @@ TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s")
   CHECK(h.session.stats().boss_to_hitter == 2);
 }
 
+TEST_CASE("issue 150: two players hitting in turn do not bounce the boss") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  // 45 s of turns: the owner hits (its life falls in its samples), 1 s later
+  // player 2 hits, 2 s after that the owner again; the boss stays.
+  std::int32_t life = 100;  // enough for every round's two hits
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
+  for (int round = 0; round < 15; ++round) {
+    --life;
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
+    h.run(kSecond);
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+    h.run(250'000);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, --life)}, kChannelObjectSamples);  // 2's hit taken
+    h.run(1'750'000);  // the owner's next own hit is well past the hit window
+  }
+  CHECK(h.session.stats().boss_to_hitter == 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  // The owner stops hitting: 6 s later player 2's hit takes it.
+  h.run(6 * kSecond);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_hitter == 1);
+}
+
 TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies keep the distance rule") {
   OwnerHarness h;
   h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);

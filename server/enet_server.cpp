@@ -84,7 +84,13 @@ void EnetServer::service(std::uint32_t timeout_ms) {
   apply_actions();
   // ENet forgets to take a player's lost fragments off its count; past
   // kMaxWaitingBytes it would refuse (and never acknowledge) all they send.
-  for (auto& [id, peer] : peers_) mended_bytes_ += net::mend_waiting_data(*peer);
+  for (auto& [id, peer] : peers_) {
+    mended_bytes_ += net::mend_waiting_data(*peer);
+    links_[id] = LinkSeen{peer->roundTripTime,
+                          static_cast<enet_uint32>(static_cast<std::uint64_t>(peer->packetLoss) * 100 /
+                                                   ENET_PEER_PACKET_LOSS_SCALE),
+                          peer->totalWaitingData};
+  }
   enet_host_flush(host_);
 }
 
@@ -113,13 +119,15 @@ void EnetServer::handle(const ENetEvent& event) {
     case ENET_EVENT_TYPE_DISCONNECT: {
       ConnectionId id = id_of(event.peer);
       peers_.erase(id);
-      const ENetPeer& p = *event.peer;
-      session_.disconnected(
-          id, now_us(),
-          "round trip " + std::to_string(p.roundTripTime) + " ms, loss " +
-              std::to_string(static_cast<std::uint64_t>(p.packetLoss) * 100 /
-                             ENET_PEER_PACKET_LOSS_SCALE) +
-              "%, waiting " + std::to_string(p.totalWaitingData) + " bytes");
+      // As seen at the end of the last round: ENet has reset the peer by now.
+      std::string link;
+      if (auto seen = links_.find(id); seen != links_.end()) {
+        link = "round trip " + std::to_string(seen->second.round_trip_ms) + " ms, loss " +
+               std::to_string(seen->second.loss_percent) + "%, waiting " +
+               std::to_string(seen->second.waiting_bytes) + " bytes";
+        links_.erase(seen);
+      }
+      session_.disconnected(id, now_us(), link);
       event.peer->data = nullptr;
       break;
     }

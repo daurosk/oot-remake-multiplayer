@@ -3,11 +3,13 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -522,4 +524,181 @@ TEST_CASE("loopback: the server sends long samples as unreliable fragments") {
   CHECK(packet_flags(kChannelOwnership) == ENET_PACKET_FLAG_RELIABLE);
   CHECK(packet_flags(kChannelPlayerSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
   CHECK(packet_flags(kChannelObjectSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+}
+
+namespace {
+
+// UDP between a client and the server that loses some of the client's
+// datagrams on the way, as a line over the internet does (issue 175).
+class LossyPath {
+ public:
+  explicit LossyPath(std::uint16_t server_port) {
+    outer_ = open();
+    inner_ = open();
+    ENetAddress got{};
+    REQUIRE(enet_socket_get_address(outer_, &got) == 0);
+    port_ = got.port;
+    REQUIRE(enet_address_set_host_ip(&server_, "127.0.0.1") == 0);
+    server_.port = server_port;
+  }
+  ~LossyPath() {
+    enet_socket_destroy(outer_);
+    enet_socket_destroy(inner_);
+  }
+  LossyPath(const LossyPath&) = delete;
+  LossyPath& operator=(const LossyPath&) = delete;
+
+  std::uint16_t port() const { return port_; }
+  void service() {
+    std::uint8_t data[65536];
+    ENetBuffer buffer{};
+    for (;;) {  // client to server, some lost
+      ENetAddress from{};
+      buffer.data = data;
+      buffer.dataLength = sizeof data;
+      const int n = enet_socket_receive(outer_, &from, &buffer, 1);
+      if (n <= 0) break;
+      client_ = from;
+      have_client_ = true;
+      if (lose_to_server && lose_to_server(static_cast<std::size_t>(n))) {
+        ++lost;
+        continue;
+      }
+      pass(inner_, server_, data, static_cast<std::size_t>(n));
+    }
+    for (;;) {  // server to client
+      ENetAddress from{};
+      buffer.data = data;
+      buffer.dataLength = sizeof data;
+      const int n = enet_socket_receive(inner_, &from, &buffer, 1);
+      if (n <= 0) break;
+      if (have_client_) pass(outer_, client_, data, static_cast<std::size_t>(n));
+    }
+  }
+
+  std::function<bool(std::size_t)> lose_to_server;
+  int lost = 0;
+
+ private:
+  static ENetSocket open() {
+    const ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    REQUIRE(s != ENET_SOCKET_NULL);
+    ENetAddress any{};
+    REQUIRE(enet_address_set_host_ip(&any, "127.0.0.1") == 0);
+    any.port = 0;
+    REQUIRE(enet_socket_bind(s, &any) == 0);
+    REQUIRE(enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1) == 0);
+    return s;
+  }
+  static void pass(ENetSocket out, const ENetAddress& to, std::uint8_t* data, std::size_t n) {
+    ENetBuffer b{};
+    b.data = data;
+    b.dataLength = n;
+    enet_socket_send(out, &to, &b, 1);
+  }
+
+  ENetSocket outer_ = ENET_SOCKET_NULL;
+  ENetSocket inner_ = ENET_SOCKET_NULL;
+  ENetAddress server_{};
+  ENetAddress client_{};
+  bool have_client_ = false;
+  std::uint16_t port_ = 0;
+};
+
+// Link's pose: about 3.4 KB, three full datagrams and a short one.
+PlayerPose link_pose(std::uint32_t sequence) {
+  PlayerPose pose;
+  pose.skeleton = 7;
+  pose.time.sequence = sequence;
+  for (std::uint16_t b = 0; b < 200; ++b) {
+    PoseBone bone;
+    bone.bone = b;
+    bone.rotation = std::array<std::int16_t, 4>{1, 2, 3, static_cast<std::int16_t>(b)};
+    bone.translation = std::array<std::int16_t, 3>{4, 5, 6};
+    pose.bones.push_back(bone);
+  }
+  return pose;
+}
+
+void send_fast(Client& c, const Message& m) {
+  auto bytes = encode(m);
+  REQUIRE(bytes.has_value());
+  ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(),
+                                     static_cast<enet_uint32>(ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT));
+  REQUIRE(enet_peer_send(c.peer, channel_of(m), p) == 0);
+}
+
+}  // namespace
+
+TEST_CASE("loopback: a guest's lost pose fragments do not fill the server's 1 MB waiting count (issue 175)") {
+  EnetLife enet;
+  std::vector<std::string> lines;
+  ServerOptions options;
+  options.port = 0;
+  options.session.log = [&](const std::string& line) { lines.push_back(line); };
+  EnetServer server(options);
+  REQUIRE(server.start());
+  LossyPath path(server.port());
+
+  Client c;
+  c.connect(path.port());
+  auto step = [&] {
+    path.service();
+    server.service(0);
+    path.service();
+    c.pump();
+  };
+  auto run_until = [&](const std::function<bool()>& done, int ms) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+      step();
+      if (done()) return true;
+    }
+    return false;
+  };
+  REQUIRE(run_until([&] { return c.connected; }, 2000));
+  c.send(hello_from("Link"), kChannelSession);
+  REQUIRE(run_until([&] { return c.find<Welcome>() != nullptr; }, 2000));
+
+  // Every ninth full datagram lost: every third pose misses a fragment and is
+  // thrown away by ENet. 3000 poses: about 3 MB of them, far past the 1 MB cap
+  // (some fewer if ENet holds back fast packets on a busy line).
+  int big = 0;
+  path.lose_to_server = [&big](std::size_t n) { return n > 1000 && ++big % 9 == 0; };
+  for (std::uint32_t i = 0; i < 3000; ++i) {
+    send_fast(c, link_pose(i));
+    step();
+  }
+  run_until([] { return false; }, 100);
+  CHECK(path.lost > 0);
+  CHECK(server.mended_bytes() > (std::uint64_t{1} << 20));
+
+  // A reliable PING after it is still taken and answered.
+  path.lose_to_server = nullptr;
+  c.send(Ping{4242}, kChannelSession);
+  CHECK(run_until([&] {
+    for (const Received& r : c.inbox) {
+      const auto* pong = std::get_if<Pong>(&r.message);
+      if (pong != nullptr && pong->ping_sender_time_us == 4242) return true;
+    }
+    return false;
+  }, 2000));
+
+  // One more pose that loses a fragment and stays waiting; then the guest
+  // leaves. The drop line has the link from before ENet reset the peer.
+  path.lose_to_server = [](std::size_t n) { return n > 1000; };
+  send_fast(c, link_pose(5000));
+  run_until([] { return false; }, 100);
+  path.lose_to_server = nullptr;
+  enet_peer_disconnect(c.peer, 0);
+  REQUIRE(run_until([&] { return c.disconnected && server.session().player_count() == 0; }, 2000));
+  std::string left;
+  for (const std::string& line : lines) {
+    if (line.find("left: Link") != std::string::npos) left = line;
+  }
+  CAPTURE(left);
+  REQUIRE_FALSE(left.empty());
+  CHECK(left.find("round trip 500 ms") == std::string::npos);  // ENet's reset value
+  CHECK(left.find("round trip ") != std::string::npos);
+  CHECK(left.find("waiting 0 bytes") == std::string::npos);    // the stuck pose counts
 }

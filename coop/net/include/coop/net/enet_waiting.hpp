@@ -23,6 +23,11 @@
 
 #include <cstddef>
 
+// Written against ENet 1.3.18's peer.c (its list layout, and where it adds to
+// and takes from the count). A new ENet: check those again, then change this.
+static_assert(ENET_VERSION == ENET_VERSION_CREATE(1, 3, 18),
+              "check coop/net/enet_waiting.hpp against the new ENet's peer.c");
+
 namespace coop::net {
 
 // Bytes of the packets that really wait in `peer`'s queues: not yet whole or

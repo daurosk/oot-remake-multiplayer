@@ -582,6 +582,17 @@ std::span<const ItemGrant> item_grants(std::uint32_t item) {
   return {first, last};
 }
 
+std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t silver,
+                                              std::int32_t gold, std::uint32_t current) {
+  constexpr std::uint32_t kOrder[] = {lift::kNone, lift::kLow, lift::kMiddle, lift::kHigh};
+  const auto* at = std::find(std::begin(kOrder), std::end(kOrder), current);
+  if (at == std::end(kOrder)) return std::nullopt;  // not a grade we know: leave it
+  const int have = static_cast<int>(at - std::begin(kOrder));
+  const int want = gold >= 1 ? 3 : silver >= 1 ? 2 : goron >= 1 ? 1 : 0;
+  if (want <= have) return std::nullopt;  // never lowered
+  return kOrder[want];
+}
+
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
   if (!ready_) {
     // No Link: a load would undo it. A new item gets it all at the mend.

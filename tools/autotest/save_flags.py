@@ -16,7 +16,8 @@ in the table are changed; nothing is added or moved.
   save_flags.py list AUTOTEST_SAVE        each user's slots and their bombs
   save_flags.py get SAVE int:0xdb1bcd4f [bool:0x2bb00768 ...]
   save_flags.py set SAVE int:0xdb1bcd4f=20 [bool:0x2bb00768=1 ...]
-  save_flags.py bombs SAVE [SAVE ...]     what a real small bomb bag sets
+  save_flags.py bombs SAVE [SAVE ...]     what a real small bomb bag sets, with the
+                                          Goron's Bracelet and its lift grade
 
 SAVE may be a pattern (slot_0*/progress.sav); it is expanded here, as the
 Windows shells do not. Only saves in a kit's baseline are touched: a path
@@ -54,7 +55,19 @@ BOMBS = [
     ("bool", 0xfced7932, 1),  # 0x57f52eb8.Bomb
     ("bool", 0x4d345bbe, 1),  # 0x41f3e410.Item_BombBag_Small
     ("bool", 0xa795bc63, 1),  # 0x41f3e410.Item_Bomb
+    # The Goron's Bracelet, which the story gives before the bomb bag. A bomb
+    # is lifted out of the bag: without a lift grade (below) every pulled bomb
+    # is deleted 0.1 s later (issue 125). These are what real bomb saves hold.
+    ("int", 0xd1317941, 1),   # PouchData.Armor_Child_Gauntlet_Goron.StockNum
+    ("bool", 0x9880707e, 1),  # IsGet.Armor_Child_Gauntlet_Goron
+    ("bool", 0x6fd3dd83, 1),  # 0x41f3e410.Armor_Child_Gauntlet_Goron
+    ("bool", 0xc235578c, 1),  # 0x541947d0.GoronGauntlet
+    ("bool", 0x0bf185b8, 1),  # 0x57f52eb8.GoronGauntlet
 ]
+# PlayerStatus.LiftGrade (Enum None/Low/Middle/High, values flag_hash of the
+# names): what Link can lift. Raised from None to Low, never lowered.
+LIFT_GRADE = 0x59979321
+LIFT_NONE, LIFT_LOW = 0xb6eede09, 0xd9e40095
 BOMB_GET_ORDER = 0xc7ecb4a1  # UInt, struct 0xf5ab6461, member Item_Bomb
 GET_ORDERS = [
     0x117375f7, 0x22c20fa9, 0x3b9434e0, 0x3e70dbc1, 0x4301162b, 0x438c1f7b, 0x4ad60f93,
@@ -228,6 +241,8 @@ def bomb_changes(data):
         changes.append((TYPES[kind], h, value))
     if get(data, TYPES["uint"], BOMB_GET_ORDER) == 0:
         changes.append((TYPES["uint"], BOMB_GET_ORDER, max(orders, default=0) + 1))
+    if get(data, TYPES["enum"], LIFT_GRADE) == LIFT_NONE:
+        changes.append((TYPES["enum"], LIFT_GRADE, LIFT_LOW))
     return changes
 
 

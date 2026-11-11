@@ -27,6 +27,7 @@ def autotest_like():
     return make_save({
         0: [(h, 0) for k, h, _ in sf.BOMBS if k == "bool"] + [(0xdb1bcd4f, 0)],
         2: [(h, 0) for k, h, _ in sf.BOMBS if k == "int"],
+        6: [(sf.LIFT_GRADE, sf.LIFT_NONE)],
         20: [(sf.BOMB_GET_ORDER, 0), (0xcba88c4f, 18), (0xaf5154ab, 15)],
     })
 
@@ -36,15 +37,22 @@ class SaveFlagsTest(unittest.TestCase):
         data = autotest_like()
         before = bytes(data)
         done = sf.set_values(data, sf.bomb_changes(data))
-        self.assertEqual(len(done), len(sf.BOMBS) + 1)
+        self.assertEqual(len(done), len(sf.BOMBS) + 2)  # + the get order and the lift grade
         self.assertEqual(sf.get(data, 2, 0xdb1bcd4f), 20)
         self.assertEqual(sf.get(data, 2, 0xe753508b), 20)
         self.assertEqual(sf.get(data, 0, 0x6e5e7d9a), 1)
         self.assertEqual(sf.get(data, 20, sf.BOMB_GET_ORDER), 19)
+        # Issue 125: the bracelet and its lift grade, or the bomb cannot be lifted.
+        self.assertEqual(sf.get(data, 2, 0xd1317941), 1)
+        self.assertEqual(sf.get(data, 0, 0x9880707e), 1)
+        self.assertEqual(sf.get(data, 6, sf.LIFT_GRADE), sf.LIFT_LOW)
         self.assertEqual(sf.get(data, 0, 0xdb1bcd4f), 0)  # the Bool of the same hash: untouched
         self.assertEqual(len(data), len(before))
         changed = sum(1 for a, b in zip(before, data) if a != b)
-        self.assertEqual(changed, len(done))  # one byte per value here, nothing else
+        # Only the changed values' bytes, nothing else (an enum value is a hash: up to 4 bytes).
+        expected = sum(sum(1 for a, b in zip(struct.pack("<I", old), struct.pack("<I", new)) if a != b)
+                       for _, old, new in done)
+        self.assertEqual(changed, expected)
 
     def test_a_real_bomb_save_is_never_lowered(self):
         data = autotest_like()
@@ -56,6 +64,15 @@ class SaveFlagsTest(unittest.TestCase):
         sf.set_values(data, changes)
         self.assertEqual(sf.get(data, 2, 0xdb1bcd4f), 25)
         self.assertEqual(sf.get(data, 20, sf.BOMB_GET_ORDER), 35)
+
+    def test_a_higher_lift_grade_is_kept(self):
+        data = autotest_like()
+        high = 0x165af889  # flag_hash("High"): the Golden Gauntlets
+        sf.set_values(data, [(6, sf.LIFT_GRADE, high)])
+        changes = sf.bomb_changes(data)
+        self.assertFalse(any(h == sf.LIFT_GRADE for _, h, _ in changes))
+        sf.set_values(data, changes)
+        self.assertEqual(sf.get(data, 6, sf.LIFT_GRADE), high)
 
     def test_missing_flag_changes_nothing(self):
         data = make_save({2: [(0xdb1bcd4f, 0)]})

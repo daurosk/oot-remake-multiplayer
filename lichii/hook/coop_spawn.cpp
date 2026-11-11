@@ -1229,7 +1229,7 @@ public:
         std::vector<Copy> copies;
         {
             // Issue 169: our Link's place tells which of our bombs is held.
-            EmulatorMemory game(memory, main_);
+            CoopHook::EmulatorMemory game(memory, main_);
             sync_.SetLink(coop::host::PlayerReader(game).read_position());
         }
         sync_.Tick(*scene, self, now_us, seen, TheDirector().Live(), send, copies);

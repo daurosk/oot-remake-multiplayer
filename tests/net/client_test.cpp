@@ -1896,7 +1896,7 @@ class SmallPath {
     return s;
   }
   void pass(ENetSocket out, const ENetAddress& to, std::uint8_t* data, std::size_t n) {
-    largest = std::max(largest, n);
+    largest = (std::max)(largest, n);
     if (n > max_payload_) {
       ++dropped;
       return;
@@ -1941,10 +1941,10 @@ TEST_CASE("client: over a 1200-byte path (DS-Lite, VPN) nothing is dropped and b
   for (const std::size_t path : {std::size_t{1200}, std::size_t{1280}, std::size_t{1404}}) {
     CAPTURE(path);
     FakeServer server;  // ENet's default size: our client's smaller one wins
-    SmallPath small(server.port(), path);
-    server.also_service = [&] { small.service(); };
+    SmallPath path_link(server.port(), path);
+    server.also_service = [&] { path_link.service(); };
     ClientConfig config = config_for(server);
-    config.port = small.port();
+    config.port = path_link.port();
     Client client(config);
     Events events;
     REQUIRE(client.start());
@@ -1963,8 +1963,8 @@ TEST_CASE("client: over a 1200-byte path (DS-Lite, VPN) nothing is dropped and b
     CHECK(std::get<proto::PlayerPose>(server.received[*server.find<proto::PlayerPose>(from)].message).bones ==
           pose.bones);
 
-    CHECK(small.dropped == 0);
-    CHECK(small.largest <= proto::kDatagramBytes);
+    CHECK(path_link.dropped == 0);
+    CHECK(path_link.largest <= proto::kDatagramBytes);
     CHECK(client.state() == State::connected);
     CHECK(events.count(EventKind::disconnected) == 0);
   }
@@ -1972,10 +1972,10 @@ TEST_CASE("client: over a 1200-byte path (DS-Lite, VPN) nothing is dropped and b
 
 TEST_CASE("client: the same path with ENet's default datagrams loses the snapshot (why issue 143 cut players)") {
   FakeServer server;
-  SmallPath small(server.port(), 1200);
-  server.also_service = [&] { small.service(); };
+  SmallPath path_link(server.port(), 1200);
+  server.also_service = [&] { path_link.service(); };
   ClientConfig config = config_for(server);
-  config.port = small.port();
+  config.port = path_link.port();
   config.mtu = ENET_HOST_DEFAULT_MTU;  // test6 and before: 1392
   Client client(config);
   Events events;
@@ -1983,7 +1983,7 @@ TEST_CASE("client: the same path with ENet's default datagrams loses the snapsho
   welcome_as(client, server, events, 2, {{1, "Saria"}});  // small packets pass
   server.send(big_snapshot(), proto::kChannelProgress);
   CHECK_FALSE(wait_event(client, server, events, EventKind::flag_snapshot, 1500));
-  CHECK(small.dropped > 0);  // every full datagram, sent again and again until ENet's timeout
+  CHECK(path_link.dropped > 0);  // every full datagram, sent again and again until ENet's timeout
 }
 
 TEST_CASE("client: link() counts the time since the server's last packet") {

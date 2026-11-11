@@ -441,6 +441,13 @@ bool Session::set_scene(ConnectionId id, Connection& c, const std::string& scene
   c.replay_due = true;
   c.owners_told_at = now_us;
   drop_all_objects(id, c.number, present, now_us);
+  // Its game unloads the scene: none of its dying copies is listed there
+  // any more, so coming back with the enemy on its list is a respawn.
+  if (auto ds = dead_.find(left); ds != dead_.end()) {
+    for (auto& [oid, d] : ds->second) {
+      if (auto w = d.witnesses.find(id); w != d.witnesses.end()) w->second = false;
+    }
+  }
   forget_empty_grass(left);
   forget_empty_world(left);
   forget_empty_dead(left);

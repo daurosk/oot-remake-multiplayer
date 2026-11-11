@@ -2526,3 +2526,20 @@ TEST_CASE("a copy still dying in a witness's game is no respawn, and an empty sc
   CHECK(messages_to<ObjectRemove>(h, 3).empty());
   CHECK(h.session.object_owner(placed(7)) == owned(3, 0));
 }
+
+TEST_CASE("a witness that leaves the scene and comes back with the enemy listed has respawned it") {
+  ObjectHarness h;
+  h.receive(1, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectRemove{0, placed(7), 0, RemoveReason::dead, {}}, kChannelOwnership);
+  h.receive(1, present_in("DekuTree", {}), kChannelOwnership);
+  // B leaves while its dying copy was still listed, and comes back: its game
+  // loaded the room anew, so the enemy is alive and shared again (owned by
+  // B), not left with no owner. A stays in the scene.
+  h.receive(2, present_in("Field", {}), kChannelOwnership);
+  h.clear();
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 0));
+  CHECK(h.session.stats().dead_respawned == 1);
+}

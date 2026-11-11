@@ -794,6 +794,18 @@ class NupTest(unittest.TestCase):
             with self.assertRaises(nup.NupError):
                 n.read("Pack/Nope.zs")
 
+    def test_nup_files_has_the_stand_in_sources(self):
+        # The test8 pack built from a .nup had "shots": []: only REQUIRED was extracted, so
+        # every STAND_INS source was "left out". They are read from the .nup when it has them.
+        self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS},
+                         set(dumpcheck.OPTIONAL))
+        seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"
+        nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, dict(self.base, **{seed: (b"seed", nup.CODEC_RAW)}))])
+        with nup.Nup(self.path) as n:
+            files = dumpcheck.nup_files(n)
+        self.assertEqual(files[seed], seed)
+        self.assertNotIn("Pack/Actor/NormalArrow.pack.zs", files)  # optional: not there, no error
+
     def test_standalone_update(self):
         nup.write_nup(self.path, [(self.TID, 0x20000, nup.KIND_UPDATE, self.update)])
         with nup.Nup(self.path) as n:

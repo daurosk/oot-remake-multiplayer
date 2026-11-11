@@ -56,6 +56,12 @@ Check ($got -eq 'path c:/users/<user>/AppData') "user name in a forward-slash pa
 $got = Mask 'D:\games\Testuser\kit on TESTPC-01'
 Check ($got -eq 'D:\games\<user>\kit on <pc>') "user name and PC name on their own (got '$got')"
 
+# Passwords in coop.ini and coop-options.ini; an empty one stays empty.
+$got = Mask "[coop]`r`nserver = 25.1.2.3`r`npassword = hunter2 x`r`n"
+Check ($got -eq "[coop]`r`nserver = <hamachi-1>`r`npassword = (removed)`r`n") "coop.ini password removed (got '$got')"
+$got = Mask "server_password=s3cret`nserver_allow = 81.2.3.4`nserver_password =`n"
+Check ($got -eq "server_password= (removed)`nserver_allow = <public-1>`nserver_password =`n") "coop-options.ini server_password removed, empty kept (got '$got')"
+
 # What must stay.
 foreach ($keep in @('game 1.1.1 (v131072)', 'Microsoft Windows NT 10.0.26200.0', 'driver 32.0.15.6094',
                     'bind 0.0.0.0:27510', '[12:34:56.789] tick', 'Core::Frontend started', 'protocol 9, build v0.1.0')) {

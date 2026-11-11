@@ -81,5 +81,5 @@ if (Test-Path $tar) {
 }
 Remove-Item -LiteralPath $stage -Recurse -Force
 Write-Host "Wrote $zip ($($found + 1) files)."
-Write-Host 'IP addresses, MAC addresses, your Windows user name and PC name are masked in it.'
+Write-Host 'IP addresses, MAC addresses, passwords, your Windows user name and PC name are masked in it.'
 Write-Host 'Send it privately (a Discord DM to the maintainer). Do not attach it to a public issue.'

@@ -2,7 +2,8 @@
 # Dot-source it. Each IPv4/IPv6 address becomes its kind with a number, so a reader can
 # still see which lines mean the same machine: <lan-1>, <tailscale-1>, <hamachi-1>,
 # <radmin-1>, <loopback-1>, <public-1>. Ports stay. MAC addresses become <mac>, the
-# Windows user name (in C:\Users\<name> and on its own) becomes <user>, the PC name <pc>.
+# Windows user name (in C:\Users\<name> and on its own) becomes <user>, the PC name <pc>,
+# and a set password (password = ..., server_password = ...) becomes (removed).
 # Works on strings only; tools\release\tests\log_mask_test.ps1 checks it.
 
 # A new state: one per zip, so the same address gets the same tag in every file.
@@ -57,6 +58,9 @@ function Protect-LogText([string]$Text, [hashtable]$State,
                          [string]$UserName = $env:USERNAME, [string]$PcName = $env:COMPUTERNAME) {
     if (-not $Text) { return $Text }
     $t = $Text
+    # Passwords and other secrets in ini files (password = ..., server_password = ...):
+    # a set value becomes (removed); an empty one stays empty, so a reader sees none was set.
+    $t = [regex]::Replace($t, '(?im)^([ \t]*[\w.]*(?:password|secret|token)\w*[ \t]*=)[ \t]*[^\s][^\r\n]*', '$1 (removed)')
     # MAC addresses first (their colon form would otherwise look like IPv6 groups).
     $t = [regex]::Replace($t, '(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])', '<mac>')
     # IPv6 (before IPv4, so ::ffff:1.2.3.4 is one address).

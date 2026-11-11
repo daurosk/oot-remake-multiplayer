@@ -617,6 +617,122 @@ const char* const kTuft = "Land_kokiri_Plant_A_02_DropFixed_03";
 
 } // namespace
 
+// ------------------------------------------------- locked doors (docs/dungeon.md)
+
+namespace {
+
+const char* const kLock = "Obj_DoorChainLock_A_01";
+const std::string kTemple = "WaterTemple";
+const proto::Vec3 kFar{1.0f, 2.0f, 10.0f};  // seven metres from Thing's default place
+
+std::vector<Seen> LockAt(std::uint64_t address = 0x100) { return {Thing(address, 0x11, std::nullopt, kLock)}; }
+
+WorldSync::Out TempleWalk(WorldSync& w, std::uint64_t ms, std::vector<Seen> seen, proto::Vec3 link = kLink,
+                          std::uint8_t self = 2) {
+    return Walk(w, ms * kMs, seen, link, self, kTemple);
+}
+
+} // namespace
+
+TEST_CASE("doors: a small-key lock is a kept breakable, a shop's night lock is not") {
+    CHECK(CoopWorld::IsLock("Obj_DoorChainLock_A_01"));
+    CHECK(CoopWorld::IsLock("Obj_DoorChainLock_A_04"));
+    CHECK(CoopWorld::IsLock("Obj_SpiritTemple_DoorChainLock_A_01"));
+    CHECK(CoopWorld::IsBreakable("Obj_DoorChainLock_A_02"));
+    CHECK_FALSE(CoopWorld::IsLock("Obj_HrlCity_Shop_DoorChainLock_A_01"));
+    CHECK_FALSE(CoopWorld::IsLock("Dm_Obj_DoorChainLock_A_01"));
+    CHECK(CoopWorld::SmallKeyFlag("WaterTemple") == 0x877bdceeu);  // DungeonInfo.WaterTemple.SmallKeyNum
+    CHECK(CoopWorld::SmallKeyFlag("InsideTheDekuTree") == 0x0914ba07u);
+    CHECK(CoopWorld::SmallKeyFlag("KakarikoVillage") == 0u);
+}
+
+TEST_CASE("doors: our lock opened next to Link goes out as a kept break") {
+    WorldSync w;
+    TempleWalk(w, 1000, LockAt());
+    TempleWalk(w, 5000, LockAt());
+    TempleWalk(w, 5100, {});
+    TempleWalk(w, 5200, {});
+    const auto out = TempleWalk(w, 6000, {});
+    const auto sent = Sent<proto::WorldBreak>(out);
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == 0x11);
+    CHECK(sent[0].flags == proto::world_break::kept);
+    CHECK(out.key_refunds.empty());
+}
+
+TEST_CASE("doors: another player's lock goes here when our Link is away, and stays gone on a reload") {
+    WorldSync w;
+    TempleWalk(w, 1000, LockAt(), kFar);
+    TempleWalk(w, 5000, LockAt(), kFar);
+    w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
+    TempleWalk(w, 5100, LockAt(), kFar);
+    CHECK(w.Removes().empty());
+    TempleWalk(w, 5600, LockAt(), kFar);
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x100});
+    // Deleted: it leaves the walk, no key back.
+    TempleWalk(w, 5700, {}, kFar);
+    auto out = TempleWalk(w, 5800, {}, kFar);
+    CHECK(out.key_refunds.empty());
+    // Its room loads again later: the lock is back in this game, never "restored".
+    out = TempleWalk(w, 30000, LockAt(0x300), kFar);
+    CHECK(Sent<proto::WorldBreak>(out).empty());
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x300});
+}
+
+TEST_CASE("doors: a lock at our Link's feet is not taken, and opening it then gives our key back") {
+    WorldSync w;
+    TempleWalk(w, 1000, LockAt());
+    TempleWalk(w, 5000, LockAt());
+    w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
+    for (std::uint64_t t = 5100; t < 9000; t += 100) {
+        TempleWalk(w, t, LockAt());
+        CHECK(w.Removes().empty());
+    }
+    // Our player opens it (the game takes the lock): one key back, once.
+    TempleWalk(w, 9100, {});
+    auto out = TempleWalk(w, 9200, {});
+    CHECK(out.key_refunds == std::vector<std::uint32_t>{0x877bdceeu});
+    CHECK(Sent<proto::WorldBreak>(out).empty());  // the scene has this break already
+    for (std::uint64_t t = 9300; t < 11000; t += 100) {
+        CHECK(TempleWalk(w, t, {}).key_refunds.empty());
+    }
+}
+
+TEST_CASE("doors: a lock at our feet that we walk away from is deleted, no key back") {
+    WorldSync w;
+    TempleWalk(w, 1000, LockAt());
+    TempleWalk(w, 5000, LockAt());
+    w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
+    TempleWalk(w, 5100, LockAt());
+    TempleWalk(w, 6000, LockAt(), kFar);
+    TempleWalk(w, 6500, LockAt(), kFar);
+    CHECK(w.Removes() == std::vector<std::uint64_t>{0x100});
+    TempleWalk(w, 6600, {}, kFar);
+    CHECK(TempleWalk(w, 6700, {}, kFar).key_refunds.empty());
+}
+
+TEST_CASE("doors: both opened the lock at once: the higher player number gives its key back") {
+    for (const std::uint8_t self : {std::uint8_t{1}, std::uint8_t{3}}) {
+        WorldSync w;
+        TempleWalk(w, 1000, LockAt(), kLink, self);
+        TempleWalk(w, 5000, LockAt(), kLink, self);
+        TempleWalk(w, 5100, {}, kLink, self);
+        TempleWalk(w, 5200, {}, kLink, self);
+        REQUIRE(Sent<proto::WorldBreak>(TempleWalk(w, 6000, {}, kLink, self)).size() == 1);
+        auto other = BreakOf(0x11, proto::world_break::kept, kTemple);
+        other.player_number = 2;
+        w.Receive(other);
+        const auto out = TempleWalk(w, 6100, {}, kLink, self);
+        if (self == 3) {
+            CHECK(out.key_refunds == std::vector<std::uint32_t>{0x877bdceeu});
+        } else {
+            CHECK(out.key_refunds.empty());
+        }
+        w.Receive(other);  // told twice: still one key
+        CHECK(TempleWalk(w, 6200, {}, kLink, self).key_refunds.empty());
+    }
+}
+
 TEST_CASE("world: movables, grass actors and the new breakables by name") {
     for (const char* name : {"Obj_MovableBox_A_01", "Obj_ForestTemple_MovableBox_A_03",
                              "Obj_LonLonRanch_MovableBox_A_01", "Obj_SliderBox_A_01",

@@ -21,6 +21,7 @@ class WorldStore {
  public:
   // Keeps a break; with `restored` forgets it. False when nothing changed
   // (the scene has this break already, or had none to forget): not relayed.
+  // A `kept` break (a lock) is kept apart: forget() leaves it.
   bool on_break(const protocol::WorldBreak& b);
   // Keeps the object's latest rest place. Always relayed.
   void on_place(const protocol::WorldPlace& p);
@@ -30,8 +31,12 @@ class WorldStore {
   void on_sign_cut(const protocol::SignCut& c);
   // Everything a player entering `scene` must be told, breaks first.
   std::vector<protocol::Message> replay(const std::string& scene) const;
+  // Forgets what the game puts back on a reload; kept breaks stay.
   void forget(const std::string& scene);
-  void clear() { scenes_.clear(); }
+  void clear() {
+    scenes_.clear();
+    kept_.clear();
+  }
 
   std::size_t breaks(const std::string& scene) const;
   std::size_t places(const std::string& scene) const;
@@ -45,6 +50,8 @@ class WorldStore {
     std::map<std::uint64_t, protocol::SignCut> cuts;
   };
   std::map<std::string, Scene> scenes_;
+  // Kept breaks (locks), per scene, oldest first: for the whole session.
+  std::map<std::string, std::vector<protocol::WorldBreak>> kept_;
 };
 
 }  // namespace coop::server

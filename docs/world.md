@@ -108,6 +108,7 @@ When the last player leaves a scene the server forgets its breaks, as the game r
 | Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE` | unit tests only |
 | Rolling rocks | `*RollingRock_*` | roll by themselves | each game's own (not shared) | - |
 | Bomb flowers | `Obj_BombFlower_*` | picked, thrown, explode | not shared here (the fruit is made by the game, no placement) | - |
+| Small-key door locks | `Obj_DoorChainLock_*`, `Obj_SpiritTemple_DoorChainLock_*` (not the Market shops') | opened with a key (the game deletes the lock) | gone-near-Link, `WORLD_BREAK` with `kept` (kept by the server for the session), deleted; never while our Link is within 2.5 m; a lock opened twice gives one key back ([dungeon.md](dungeon.md), "Locked doors") | unit tests only |
 | Moving floors, lifts, shutters, water level | `*MoveFloor_*`, `*ElevatorLift_*`, `*SwitchShutter_*`, `*WaterPlane_*` | driven by switches | the switch flags ([flags.md](flags.md)); not positions | - |
 
 ### Signs (issue 90): what the pack says

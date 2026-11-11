@@ -47,6 +47,12 @@ void OnEvent(const coop::net::Event& event);
 // there). What of them is loaded now is removed (docs/items.md, "Chests").
 void TakenForOthers(const std::vector<std::uint64_t>& keys);
 
+// Small keys to give back to our game (the SmallKeyNum flag of the dungeon,
+// once each): a door's lock this game opened after another player already
+// had, or at the same moment with the higher player number (docs/dungeon.md,
+// "Locked doors"). Taken by the hook, which adds 1 to each in the game.
+std::vector<std::uint32_t> TakeKeyRefunds();
+
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).
 std::vector<std::uint64_t> OwnedActors();

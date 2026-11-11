@@ -1331,7 +1331,14 @@ TEST_CASE("bad world messages are refused") {
   b.scene.clear();
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
-  b.flags = 2;
+  b.flags = 4;
+  CHECK(encode(b, out) == Error::bad_value);
+  // A lock's break is kept, never restored: both bits at once are refused.
+  b.flags = world_break::kept;
+  Message kept_back;
+  REQUIRE(decode(must_encode(Message{b}), kept_back) == Error::none);
+  CHECK(std::get<WorldBreak>(kept_back).flags == world_break::kept);
+  b.flags = world_break::kept | world_break::restored;
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
   b.position[2] = std::numeric_limits<float>::infinity();

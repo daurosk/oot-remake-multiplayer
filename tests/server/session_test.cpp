@@ -1729,6 +1729,35 @@ TEST_CASE("a break that the game put back is forgotten") {
   CHECK(messages_to<WorldBreak>(h, 3).empty());
 }
 
+TEST_CASE("a lock's break is kept when the scene empties, and a second player's is passed on") {
+  ObjectHarness h;
+  h.receive(1, sample_in("WaterTemple"), kChannelPlayerSamples);
+  h.receive(2, sample_in("WaterTemple"), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, broke("WaterTemple", 0x11, world_break::kept), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 2) ==
+        std::vector<WorldBreak>{by(1, broke("WaterTemple", 0x11, world_break::kept))});
+  // Player 2 opened the same lock at once: the others hear it (one key goes back).
+  h.clear();
+  h.receive(2, broke("WaterTemple", 0x11, world_break::kept), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 1) ==
+        std::vector<WorldBreak>{by(2, broke("WaterTemple", 0x11, world_break::kept))});
+  CHECK(h.session.stats().world_repeated == 1);
+  // A pot broken there too. Both leave: the pot is forgotten, the lock is not.
+  h.receive(1, broke("WaterTemple", 0x22), kChannelSession);
+  h.receive(1, sample_in("LakeHylia"), kChannelPlayerSamples);
+  h.receive(2, sample_in("LakeHylia"), kChannelPlayerSamples);
+  h.clear();
+  h.receive(3, sample_in("WaterTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 3) ==
+        std::vector<WorldBreak>{by(1, broke("WaterTemple", 0x11, world_break::kept))});
+  // A late joiner who comes in gets it too.
+  h.join(4, "Ruto");
+  h.clear();
+  h.receive(4, sample_in("WaterTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 4).size() == 1);
+}
+
 TEST_CASE("moves are passed on, the last rest place is kept for those who come later") {
   ObjectHarness h;
   h.receive(1, sample_in("ForestTemple"), kChannelPlayerSamples);

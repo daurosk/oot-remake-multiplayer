@@ -321,6 +321,19 @@ public:
             }
             CoopObjects::TakenForOthers(keys);
         }
+        if (game_store) {  // a lock opened twice: our second key back (docs/dungeon.md)
+            for (const std::uint32_t key : CoopObjects::TakeKeyRefunds()) {
+                const auto now = game_store->read(coop::protocol::FlagKey{key, 0});
+                if (now && now->kind == coop::protocol::FlagKind::int32) {
+                    auto back = *now;
+                    back.value = static_cast<std::uint32_t>(static_cast<std::int32_t>(now->value) + 1);
+                    const bool ok = game_store->write(back);
+                    LOG_INFO(Core, "coop: doors: small key {:#x} given back ({} -> {}){}", key,
+                             static_cast<std::int32_t>(now->value), static_cast<std::int32_t>(back.value),
+                             ok ? "" : ": the write failed");
+                }
+            }
+        }
         if (game_store) {  // issue 88: what the session left in MaxLife (docs/items.md)
             const auto max_life = game_store->read(coop::protocol::FlagKey{0xfbe01da1u, 0});
             CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32

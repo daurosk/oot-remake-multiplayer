@@ -200,6 +200,16 @@ constexpr std::size_t kMaxWalk = 8192;
 
 // LICHII_COOP_OBJECTS_CHEAT: what it sets is in coop_cheat_items.h.
 
+// Keys to give back for locks opened twice (WorldSync::Out::key_refunds).
+std::mutex& KeyRefundMutex() {
+    static std::mutex m;
+    return m;
+}
+std::vector<std::uint32_t>& KeyRefundQueue() {
+    static std::vector<std::uint32_t> q;
+    return q;
+}
+
 bool EnvFlag(const char* name) {
 #ifdef _WIN32
     char* value = nullptr;
@@ -877,6 +887,11 @@ public:
                 send.emplace_back(std::move(m));
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            if (!world.key_refunds.empty()) {
+                std::lock_guard lock(KeyRefundMutex());
+                auto& refunds = KeyRefundQueue();
+                refunds.insert(refunds.end(), world.key_refunds.begin(), world.key_refunds.end());
+            }
             sign_words_ = std::move(world.words);  // written after the probe's look
             if (!world.hits.empty()) {
                 // A sign another player's sword passed: the same hit on ours.
@@ -1674,6 +1689,13 @@ std::vector<std::uint64_t> OwnedActors() {
             out.push_back(address);
         }
     }
+    return out;
+}
+
+std::vector<std::uint32_t> TakeKeyRefunds() {
+    std::lock_guard lock(KeyRefundMutex());
+    std::vector<std::uint32_t> out;
+    out.swap(KeyRefundQueue());
     return out;
 }
 

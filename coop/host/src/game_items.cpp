@@ -56,6 +56,7 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Weapon_Sword_Giant", 0x1e824efa, K::boolean, R::any, true},
   {"PlayerStatus.AssignableItem.BottleInfo.BottleB.BottleItem", 0x1edd164a, K::uint32, R::per_player, true},
   {"PouchData.Item_Medal_Shadow.StockNum", 0x204d2063, K::int32, R::max, true},
+  {"MiniGame_Fishing_GetGoldScale", 0x2079723b, K::boolean, R::any, true},  // fishing pond prize won (issue 151)
   {"PouchData.Pouch_Amiibo.StockNum", 0x20820479, K::int32, R::max, true},
   {"IsGet.Item_Quiver_Large", 0x21985b09, K::boolean, R::any, true},
   {"PouchData.Armor_Adult_Goron.StockNum", 0x21ecbd19, K::int32, R::max, true},
@@ -286,6 +287,7 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Item_Stone_Water", 0xeec383f5, K::boolean, R::any, true},
   {"PouchData.Armor_Child_Mask_Spooky.StockNum", 0xf046629e, K::int32, R::max, true},
   {"PouchData.Item_NayruLove.StockNum", 0xf0828cd0, K::int32, R::max, true},
+  {"MiniGame_Fishing_GetHeartPiece", 0xf1891f6e, K::boolean, R::any, true},  // fishing pond prize won (issue 151)
   {"IsGet.Item_ZeldaLetter", 0xf19393b5, K::boolean, R::any, true},
   {"PouchData.Weapon_Sword_Master.StockNum", 0xf1c45294, K::int32, R::max, true},
   {"DungeonInfo.ForestTemple.IsGetCompass", 0xf240eeb2, K::boolean, R::any, true},

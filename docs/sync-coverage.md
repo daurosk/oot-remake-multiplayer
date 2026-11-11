@@ -112,7 +112,7 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 
 ## Per-player state (not shared on purpose)
 
-Position, life (except the max), magic, rupee count, what is in the hands and on the buttons, bottles' contents, equipped gear, the camera, Navi's hints, "in battle", the Lens of Truth, which room a player is in, one-way rides. These rows must stay per player; a fix must not share them.
+Position, life (except the max), magic, rupee count, what is in the hands and on the buttons, bottles' contents, equipped gear, the camera, Navi's hints, "in battle", the Lens of Truth, which room a player is in, one-way rides. Minigames played alone: the Scrub Brothers' order (issue 149) and the fishing pond (issue 151: its fish, the owner, the rod and lure, the catch record `MiniGame_Fishing_RecordFishSize_Child`/`_Adult` and the tutorial flags); only their prizes are shared. These rows must stay per player; a fix must not share them.
 
 ## P1 list (test7)
 

@@ -1,5 +1,6 @@
-# held-adult (issue 92): adult items in the hand. A loads straight into the Graveyard as adult
-# (as adult.A.txt; run with -NoLoad), is given the bow, the hookshot, the hammer and bombs,
+# held-adult (issue 92): adult items in the hand. A loads straight into Kakariko by day as adult
+# (KakarikoVillage_Adult, Kakariko_WellSide, as adult-day; run with -NoLoad; B is adult there too,
+# held-adult.B.txt), is given the bow, the hookshot, the hammer and bombs,
 # steps aside to face B and uses the quick-select item five times (R next, ZR use, B away).
 # Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1".
 # Expect in B's log, as held-tools: the item in its slot ("slots 0 ... 6"), "P1 wears ...",
@@ -9,7 +10,7 @@
 #! start coop: test warp done
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
-warp Graveyard_Adult
+warp KakarikoVillage_Adult Kakariko_WellSide
 wait 1200
 mark title
 press A
@@ -33,36 +34,31 @@ wait 60
 mark before
 press R
 wait 30
-hold ZR 90
-mark item1
+hold ZR 90 item1       # the mark halfway, the item still out
 wait 30
 press B
 wait 90
 press R
 wait 30
-hold ZR 90
-mark item2
+hold ZR 90 item2       # the mark halfway, the item still out
 wait 30
 press B
 wait 90
 press R
 wait 30
-hold ZR 90
-mark item3
+hold ZR 90 item3       # the mark halfway, the item still out
 wait 30
 press B
 wait 90
 press R
 wait 30
-hold ZR 90
-mark item4
+hold ZR 90 item4       # the mark halfway, the item still out
 wait 30
 press B
 wait 90
 press R
 wait 30
-hold ZR 90
-mark item5
+hold ZR 90 item5       # the mark halfway, the item still out
 wait 30
 press B
 wait 150

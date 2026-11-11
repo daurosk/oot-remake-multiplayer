@@ -1,0 +1,77 @@
+# deku-ladder (world-objects, #129): both load into the Deku Tree entrance, then are put in the
+# slingshot room (InsideTheDekuTree room C) with the test-only `place` step. Positions are the
+# Banc's (InsideTheDekuTree_Static/_Dynamic): chest Obj_TBox at -54.4 112.0 12.2 on the ledge;
+# trap floors Obj_InsideTheDekuTree_FallingFloor_A_01/_A_02 (keys 0xe9f286aa47fef9b1,
+# 0x61f7b4da35494840) at -39.8 / -42.8, 109.8, 11; eye switch Obj_EyeSwitch_A_02 7e02ddfa92027117
+# at -35.6 114.3 10.7, ladder Obj_InsideTheDekuTree_FallingLadder_A_01 1d19b26c66591963 at
+# -37.1 115.5 10.8 on its pillar Stopper_A_01; the room's door (ShutterFrame) at -30.5 109.8 10.2.
+# A stands on the chest ledge, opens the chest (the trap), then shoots the eye with the slingshot.
+# B stands by the door, facing the ladder, and only watches.
+# Expect:
+#  - A "coop: test place -51.80 112.60 12.20: done", B "... -33.20 110.30 10.40: done".
+#  - chest: B "key64 0x0b66198d17d6584e ... 0 -> 1" and the trap keys above 0 -> 1 within ~1 s.
+#    Shot "trap": the floor fallen in B as in A (PASS live; only after a reload = partial).
+#  - eye: A "bool 0xb3a4fe84 ... 0 -> 1" (HavePlayedEvent ..._Gimmick_FallingLadder) and
+#    "bool 0x77279a83 ... 0 -> 1" (RoomC_Cleared). B: "room gimmick flags from another player
+#    held until we leave this dungeon or load", then (LIVE_EVENTS) "coop: dungeon: starting the event InsideTheDekuTree_Gimmick_FallingLadder here (another player played it)", the
+#    flag 0 -> 1 in B, the hold ends. World: A "1d19b26c66591963 Obj_InsideTheDekuTree_
+#    FallingLadder_A_01 moved here: sending", "... at rest: place sent"; B "... moved by another
+#    player" / "put where another player left it". Shots "ladder" and "late": the ladder down in
+#    B as in A, and it stays down.
+#  - The aim is a guess (eye 2 m above the ledge, 16.5 m away): if "shot1"/"shot2" show the
+#    seed missing, raise the rstick lines; the flag lines tell if the eye was hit at all.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,LICHII_COOP_GIMMICK_PROBE=1,A:LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -51.8 112.6 12.2
+wait 240
+mark placed
+goto -53.3 12.2 0.4 300  # in front of the chest
+toward -54.4 12.2 8
+press A                  # open it: the item get, and the trap floor goes
+wait 300
+press A
+wait 120
+press A
+wait 120
+press A
+wait 240
+mark trap
+wait 300
+toward -35.6 10.7 10     # face the eye switch across the room
+wait 30
+hold ZR 60 aim1
+hold ZR 30
+wait 60
+mark shot1
+rstick 0 0.4 6           # a little higher
+hold ZR 60 aim2
+hold ZR 30
+wait 60
+mark shot2
+rstick 0 0.4 6
+hold ZR 60 aim3
+hold ZR 30
+wait 120
+press B
+mark ladder
+wait 900
+mark late

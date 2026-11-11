@@ -1815,6 +1815,7 @@ TEST_CASE("client: datagrams are VPN-safe and a large snapshot still arrives who
   REQUIRE(server.last_peer != nullptr);
   CHECK(server.last_peer->mtu == proto::kDatagramBytes);
   CHECK(proto::kDatagramBytes + 28 <= 1280);  // IP and UDP headers: fits Tailscale and Hamachi
+  CHECK(proto::kDatagramBytes + 28 <= 1200);  // and a DS-Lite tunnel of 1200 (issue 143)
 
   // A snapshot many datagrams long comes through in full.
   proto::FlagSnapshot big{0, 1, {}};
@@ -1880,7 +1881,7 @@ int queued(ENetPeer* peer, enet_uint8 command) {
 TEST_CASE("client: a sample longer than a datagram stays unreliable, in unreliable fragments") {
   // Issue 143 review: ENet sends a packet on an unreliable channel that does
   // not fit one datagram as RELIABLE fragments unless asked otherwise; with
-  // 1200-byte datagrams a big pose could stall its channel as before.
+  // VPN-sized datagrams (kDatagramBytes) a big pose could stall its channel as before.
   CHECK(coop::net::packet_flags(proto::kChannelSession) == ENET_PACKET_FLAG_RELIABLE);
   CHECK(coop::net::packet_flags(proto::kChannelOwnership) == ENET_PACKET_FLAG_RELIABLE);
   CHECK(coop::net::packet_flags(proto::kChannelPlayerSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);

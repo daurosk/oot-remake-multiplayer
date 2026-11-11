@@ -119,6 +119,8 @@ class Planner {
   }
   // A player left: its ask goes.
   void forget(std::uint8_t player) { asks_.erase(player); }
+  // Nothing owed: no ask and no reload.
+  bool idle() const { return !reload_ && asks_.empty(); }
   // Whether a send waits for the game's next save after the host's load.
   bool waiting() const { return (reload_ || !asks_.empty()) && loaded_at_.has_value(); }
   // What to send now, given the newest slot's write time (nothing when the

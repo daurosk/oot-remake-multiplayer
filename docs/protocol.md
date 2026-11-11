@@ -93,6 +93,8 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
 | 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
+| 206 | `SAVE_ASK` | 0 | both | `u8` player field: a guest asks the host for its save (protocol 9; types 206 to 215 are for the save transfer, below) |
+| 207 | `SAVE_PART` | 0 | both | `u8` player field, `u8` to player (0 every guest), `u32` transfer id, `u8` reason (1 join, 2 host load), `u32` total size (1 to 1 MiB), `u32` CRC-32 of all of it, `u16` index, `u16` count, then the part's bytes (below) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
@@ -141,6 +143,16 @@ The first player in hosts. When the host leaves, the remaining player with the l
 ### Saves: the host's save decides (protocol 7, `FLAG_RESET`)
 
 Caleb (2026-11-11): "Let's make it follow the hosts save." A host's build sends `FLAG_RESET` after its own save load, with every shared flag its load changed, as its game has them now, 0s included. The server takes it from the host only, keeps each value (replacing what it had, as with `FLAG_STATE`) and relays it to everyone else with the host's number. Every player writes each value exactly: no merging (max, OR) and no one-way rule, so items, keys, chests and switches go back to the host's save. A player's own save load sends nothing and changes nothing for the group: that game takes the group's values back. Progress made while playing still merges as before. When the host leaves, the new host's state is the truth from then on, with no reset. How a build tells a save load from a door, and when it sends, is in [flags.md](flags.md), "Saves". A build without protocol 7 does not know type 135; all players need the same release.
+
+### Save transfer: the host's save file (protocol 9, `SAVE_ASK` and `SAVE_PART`)
+
+Issue 167: a guest plays from the host's save file, not its own. The data is one save slot of the game's save folder (`slot_NN\progress.sav` and `caption.sav`, about 170 KB), packed by `coop/host/save_transfer.hpp` (`OOTSAVE1`, then each file's name and bytes; only those two names are allowed, never `option.sav`, `account.sav` or a path).
+
+- A guest's game (one that uses the co-op save folder, [flags.md](flags.md), "The host's save file") sends `SAVE_ASK` once a run, when it is connected and knows the host. The server passes it to the host only, with the asker's number; an ask from the host itself or with no host is dropped.
+- The host answers with its newest slot (by `progress.sav`'s write time) as `SAVE_PART`s to the asker (`to player` = the asker, reason 1). After its own save load the host waits until the game writes a save after it (the game saves at every door), then sends that slot to every guest (`to player` 0, reason 2); an ask that came meanwhile gets that one.
+- Parts: the packed slot cut into 16384-byte parts (the last one the rest), `count` = ceil(total / 16384), at most 64 parts for 1 MiB. Every part carries the whole header, so each is checked alone: the codec refuses a wrong count, index, part size, reason, a size over 1 MiB, and reason 1 to player 0. The host sends a part a frame; the server takes `SAVE_PART` from the host only (outside the per-player byte budget, like `FLAG_SNAPSHOT`) and passes it to the named player, or to every other player for 0; a part for a player who is not there is dropped.
+- A guest keeps the parts of one transfer id (a newer id starts again), takes them out of order or twice, refuses a part not from the host or whose header differs from the transfer's, and checks the CRC-32 (zlib's) when all are in: a damaged save is dropped and the next one waited for.
+- A build without these messages refuses them as unknown types, so the server and every game must be protocol 9.
 
 ### Shared flags (stage 1 step 4)
 
@@ -355,6 +367,7 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 7 (chunk 5): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
 - Version 7 also brings `FLAG_RESET` (135; 135 to 139 kept for saves, branch `host-save`): the host's save load sets every game's shared flags to the save's values. A version 6 server would not relay it.
 - Version 8: `FLAG_ORIGIN` (150; 150 to 154 kept), from the server only. A version 7 game would refuse it as unknown, so every game and the server must be 8.
+- Version 9 (chunk 8) also brings `SAVE_ASK` (206) and `SAVE_PART` (207); 206 to 215 kept for the save transfer (branch `host-save-load`, issue 167). A version 8 server would not relay them.
 - Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).

@@ -66,6 +66,22 @@ A player test (2026-11-10, v0.1.0-test4.2): in the slingshot room the trap was n
 
 `CoopDungeon::AddShared` adds the 971 flags (781 from the scan, 190 played gimmick events) and the 500 placement keys to the session's shared list (`docs/flags.md`), next to the items and the user's flags file, unless `LICHII_COOP_DUNGEON=0`. The flag watcher then carries every change live: the player who pressed the switch writes the flag in their game, the host's answer sets it in every game, and the other games' room logic reads it like its own.
 
+## Live dungeon actions (test7, branch `dungeon-live`)
+
+Caleb (2026-11-11): "if a player stands on a button that opens something, it should open on the other players screen and also if something drains water." What is live now, what is not, and how the next run finds the rest:
+
+| Action | Where the game keeps it | Live in every game? | How / next step |
+|---|---|---|---|
+| A switch that stays pressed (floor, eye, crystal), the door or shutter it opens | Named saved flags (`…_Switch_…`, `…_OpenDoor…`) | Yes, by flag (above) | Whether a door already loaded opens at once: the next run (check list in `reports/dungeon-live.md`) |
+| Room switch flags that are not saved: `ForestTemple_Room17_Switch_On_02`, `SpiritTemple_Room31_LightHit`, `GerudoTrainingGround_Gate`, `ForestTemple_Room00_AppearWolfosSwitch`, `WaterTemple_Room22_Cleared_Provisional` | Named flags of reset types 9 and 40 | **Yes, new** (`CoopDungeon::LiveFlags`) | Found by hashing the dungeon logic strings against every reset type: only 31 dungeon flags are not saved; the rest are one player's own (`OnThe…Floor`, Navi, `IsAfterSceneCreate`), enemies alive, or a one-way ride, and stay out |
+| A floor switch held only while someone stands on it; timed switches; torches that burn out | In the actors (`Obj_StepSwitch_*`, `Obj_SwitchHit_*`, `*CandleStick_*`), no flag | **Not yet** | The gimmick probe (below) finds the words that hold the state; the next branch sends and writes them, as `SIGN_CUT` does for signs |
+| Water level (Water Temple's three levels) | Named Int `WaterTemple_Room00_WaterLevel` (saved, shared) and the played `WaterTemple_WaterLevelChange…` events (shared) | The flag yes; the water moving in a game whose room is loaded: **not known** | The probe watches the `*WaterPlane*` actors: if a plane's words step in B when A changes the level, it moves live; if not, the plane's words from A are the state to write |
+| Other drains and fills (Deku Tree basement, Well, Jabu) | Named flags where the logic has them; else the water plane actors | Flags yes; planes not known | As above |
+| Push and pull blocks | Actor positions | Yes (`WORLD_MOVE`, `WORLD_PLACE`, [world.md](world.md)) | - |
+| Lifts, moving floors | Driven by switch flags; their positions in the actor | By flag | One-way rides stay each player's own (above); the probe shows the others |
+
+**The gimmick probe** (`CoopWorld::GimmickProbe`, `lichii/hook/coop_world.{h,cpp}`; on unless `LICHII_COOP_GIMMICK_PROBE=0`; reads only). Every 0.5 s it copies the 4 nearest gimmicks within 15 m of our Link: `*StepSwitch_*`, `*EyeSwitch_*`, `*SwitchHit_*`, `*SolarSwitch_*`, `*SwitchCandleStick_*`, `*WaterPlane*`, `*SwitchShutter_*`, `*CandleStick_*`, `*ElevatorLift*`, `*MoveFloor_*`. Each copy is the actor, its component table and 0x200 bytes of each component, as the sign probe reads a sign. It logs each word that stepped (equal in the two copies before, different now): `coop: gimmick probe: <hash> <name> <d> m from our Link: N words stepped: actor+0x..:<before>><after> c+0x..+0x..:...`. A word that steps more than 6 times (a timer, a counter, a moving part) is muted. `gimmick probe: watching <hash> <name>` marks each one it starts to copy. In the run, pressing a switch in A shows its words in A's log; B's log shows whether B's copy of that switch changed with it.
+
 ## Not done
 
 1. **Not run in a dungeon.** The test saves are a child in the Graveyard; no scripted run reaches a dungeon. What is not known: whether a door, shutter or water plane already loaded in the other game reacts at once to a flag set from outside, or only when its room loads again. The graphs poll with `Hold…` nodes, which suggests at once; the Water Temple's level change also plays an event (`HavePlayedEvent.WaterTemple_WaterLevelChange01`), and whether the water moves without that event playing is not known.

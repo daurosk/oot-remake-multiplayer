@@ -1534,6 +1534,20 @@ std::span<const Flag> Flags() {
     return kFlags;
 }
 
+namespace {
+constexpr std::array kLiveFlags = std::to_array<Flag>({
+    {0x5dab0bf9, false, "ForestTemple_Room00_AppearWolfosSwitch"},
+    {0x32eeccea, false, "ForestTemple_Room17_Switch_On_02"},
+    {0xe419453a, false, "GerudoTrainingGround_Gate"},
+    {0xfa42fe59, false, "SpiritTemple_Room31_LightHit"},
+    {0x8f7d6ea5, false, "WaterTemple_Room22_Cleared_Provisional"},
+});
+} // namespace
+
+std::span<const Flag> LiveFlags() {
+    return kLiveFlags;
+}
+
 std::span<const Key> Keys() {
     return kKeys;
 }
@@ -1548,6 +1562,9 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     }
     const std::size_t before = shared ? shared->size() : 0;
     for (const Flag& f : kFlags) {
+        keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
+    }
+    for (const Flag& f : kLiveFlags) {
         keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
     }
     for (const Key& k : kKeys) {

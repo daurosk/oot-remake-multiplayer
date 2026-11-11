@@ -952,6 +952,14 @@ public:
             }
             sign_words_.clear();
         }
+        // Test7 (docs/dungeon.md "Live dungeon actions"): which words of a
+        // switch, water plane or lift step when it changes. Reads only.
+        if (gimmick_probe_on_) {
+            for (const auto& line : gimmick_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
+                                                        gimmicks_, player_, server_now_us)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
         if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
             grass_made_logged_ = made;
             LOG_INFO(Core, "coop: grass: {} cuts of the others made here", made);
@@ -1063,6 +1071,9 @@ public:
     bool debug_ = false;
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
+    CoopWorld::GimmickProbe gimmick_probe_;  // test7: on unless LICHII_COOP_GIMMICK_PROBE=0
+    std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
+    bool gimmick_probe_on_ = true;
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     int world_lines_ = 0;
@@ -1115,6 +1126,7 @@ private:
     // The shared actors of one whole walk, with life and place. False when
     // the list changed under us (try the next frame).
     bool Collect(Reader& r, std::vector<Seen>& out) {
+        gimmicks_.clear();  // test7: dungeon gimmicks for the probe
         std::vector<u64> actors;
         if (!List(r, actors)) {
             return false;
@@ -1173,6 +1185,16 @@ private:
                                  max, *raised);
                     }
                 }
+            }
+            if (gimmick_probe_on_ && CoopWorld::IsGimmick(known.first)) {
+                CoopWorld::GimmickProbe::Gimmick g;
+                g.address = a;
+                g.hash = known.second;
+                g.name = known.first;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    g.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                gimmicks_.push_back(std::move(g));
             }
             if (IsShared(known.first) || CoopWorld::IsMovable(known.first) ||
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
@@ -1627,6 +1649,7 @@ Objects& Instance() {
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
+        objects.gimmick_probe_on_ = EnvOn("LICHII_COOP_GIMMICK_PROBE");
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a
         // Stalchild loses its head on every screen. An amount alone at

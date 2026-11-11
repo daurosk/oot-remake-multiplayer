@@ -81,7 +81,8 @@ TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or doe
     CHECK(CoopDungeon::Merge(none, false) == 0);
     CHECK_FALSE(none.has_value());
 
-    const std::size_t all = CoopDungeon::Flags().size() + CoopDungeon::Keys().size();
+    const std::size_t all =
+        CoopDungeon::Flags().size() + CoopDungeon::LiveFlags().size() + CoopDungeon::Keys().size();
     const std::size_t n = CoopDungeon::Merge(none, true);
     REQUIRE(none.has_value());
     CHECK(n == all);
@@ -248,4 +249,23 @@ TEST_CASE("dungeon: the slingshot room's ladder event played in A is set in B (i
     wb.frame(b);
     CHECK(b.values[ladder].value == 1);
     CHECK(b.values[cleared].value == 1);
+}
+
+TEST_CASE("dungeon: the room switch flags that are not saved are shared live too") {
+    std::set<std::uint32_t> saved;
+    for (const auto& f : CoopDungeon::Flags()) saved.insert(f.hash);
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list);
+    bool switch_on = false;
+    for (const auto& f : CoopDungeon::LiveFlags()) {
+        CHECK_MESSAGE(host::flag_hash(f.name) == f.hash, f.name);
+        CHECK(saved.count(f.hash) == 0);
+        CHECK(list->contains(host::FlagKey(f.hash, std::uint16_t{0})));
+        // Never one player's own state.
+        CHECK(std::string(f.name).find("OnThe") == std::string::npos);
+        CHECK(std::string(f.name).find("Navi") == std::string::npos);
+        switch_on |= std::string(f.name) == "ForestTemple_Room17_Switch_On_02";
+    }
+    CHECK(switch_on);
 }

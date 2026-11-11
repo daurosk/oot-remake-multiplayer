@@ -29,7 +29,7 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
     return std::nullopt;
 }
 
-std::set<std::string> ParseNames(std::string_view text) {
+std::optional<std::set<std::string>> ParseNames(std::string_view text) {
     std::set<std::string> out;
     const auto trim = [](std::string_view s) {
         while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
@@ -49,6 +49,9 @@ std::set<std::string> ParseNames(std::string_view text) {
             break;
         }
         text.remove_prefix(comma + 1);
+    }
+    if (out.empty()) {
+        return std::nullopt;  // no names: not "all"
     }
     return out;
 }

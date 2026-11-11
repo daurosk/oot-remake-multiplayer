@@ -274,8 +274,15 @@ public:
             // the Deku Tree ladder); "all" for every held gimmick event.
             const std::string names = EnvString("LICHII_COOP_LIVE_EVENT_NAMES");
             if (!names.empty()) {
-                live_decider_ = CoopLiveEvents::Decider(CoopLiveEvents::ParseNames(names));
+                if (auto parsed = CoopLiveEvents::ParseNames(names)) {
+                    live_decider_ = CoopLiveEvents::Decider(std::move(*parsed));
+                } else {
+                    live_events_ = false;
+                    LOG_INFO(Core, "coop: dungeon: LICHII_COOP_LIVE_EVENT_NAMES names no event: live events off");
+                }
             }  // issue 129: start another player's gimmick event here (coop_live_events.h)
+        }
+        if (live_events_) {
             CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 std::lock_guard lock(live_mutex_);

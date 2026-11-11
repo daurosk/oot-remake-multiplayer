@@ -137,9 +137,16 @@ TEST_CASE("live events: no manager or no malloc asks nothing and frees what was 
 
 TEST_CASE("live events: the names list from the environment") {
     CHECK(CoopLiveEvents::ParseNames("a, b ,,c") == std::set<std::string>{"a", "b", "c"});
-    CHECK(CoopLiveEvents::ParseNames(" all ").empty());  // every held gimmick event
+    const auto all = CoopLiveEvents::ParseNames(" all ");  // every held gimmick event
+    REQUIRE(all.has_value());
+    CHECK(all->empty());
     CHECK(CoopLiveEvents::ParseNames("InsideTheDekuTree_Gimmick_FallingLadder") ==
           std::set<std::string>{"InsideTheDekuTree_Gimmick_FallingLadder"});
+    // A value that names nothing is no event at all, never "all".
+    CHECK_FALSE(CoopLiveEvents::ParseNames("").has_value());
+    CHECK_FALSE(CoopLiveEvents::ParseNames(" , ").has_value());
+    CHECK_FALSE(CoopLiveEvents::ParseNames(",,").has_value());
+    CHECK(CoopLiveEvents::ParseNames("all, a") == std::set<std::string>{"all", "a"});  // only "all" alone
 }
 
 TEST_CASE("live events: a build without a name buffer still frees its members before the block is reused") {

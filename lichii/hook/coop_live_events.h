@@ -68,8 +68,10 @@ private:
 };
 
 // LICHII_COOP_LIVE_EVENT_NAMES: "a,b,c" (spaces trimmed, empty parts
-// dropped), or "all" for every held gimmick event (an empty set).
-std::set<std::string> ParseNames(std::string_view text);
+// dropped), or exactly "all" for every held gimmick event (an empty set,
+// as Decider takes it). Nothing when the text names no event (" , "): then
+// no live events at all.
+std::optional<std::set<std::string>> ParseNames(std::string_view text);
 
 // The cave side: starts the asked events, one at a time. Pure over Guest.
 class Requester {

@@ -1,0 +1,15 @@
+mark start
+warp HyruleField_Child MiniGame_Fishing_PlayerStart
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 1800
+mark end

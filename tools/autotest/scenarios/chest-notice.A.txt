@@ -1,0 +1,25 @@
+# chest-notice (#155, chat-notify check 4): deku-map, with A also setting the chest's named
+# opened flag (bool 0xe4fb555d, coop_chests.cpp kOpened for key64 0x771092ae2f3b7100) the way a
+# real open does, at 80 s. Expect B "coop: notice: A opened a chest" (the notice reads the named
+# opened flag; key64 alone, as in deku-map, gives none). Check 6 is the fishing run (B:NOTIFY=0).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,A:LICHII_COOP_SET_KEY64=771092ae2f3b7100,A:LICHII_COOP_SET_BOOL=e4fb555d,A:LICHII_COOP_SET_AFTER=80
+#! timeout 300
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+mark look
+wait 1800
+mark late

@@ -169,8 +169,8 @@ TEST_CASE("a fifth player is refused as server full and dropped") {
 TEST_CASE("a wrong protocol version is refused, even when the rest cannot be read") {
   Harness h;
   h.connect(1);
-  // A HELLO of version 8 (not ours) whose body is just the version: unreadable as v0.
-  Bytes b = {1, 0, 2, 0, 8, 0};
+  // A HELLO of version 99 (not ours) whose body is just the version: unreadable as v0.
+  Bytes b = {1, 0, 2, 0, 99, 0};
   h.receive_raw(1, b, kChannelSession);
   const auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused.has_value());
@@ -810,19 +810,26 @@ TEST_CASE("flag set goes to the host only, the host's own back to itself") {
   h.clear();
 
   h.receive(2, FlagSet{0, {flag(5, 1)}}, kChannelProgress);
-  REQUIRE(h.sent.size() == 1);
+  // The set to the host; who asked (FLAG_ORIGIN) to the others but the host.
+  REQUIRE(h.sent.size() == 2);
   CHECK(h.sent[0].to == 1);
   CHECK(h.sent[0].channel == kChannelProgress);
   CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{2, {flag(5, 1)}});
+  CHECK(h.sent[1].to == 3);
+  CHECK(h.sent[1].channel == kChannelProgress);
+  CHECK(std::get<FlagOrigin>(h.sent[1].message) == FlagOrigin{2, {flag(5, 1)}});
   // A FLAG_SET changes nothing on the server: only the host's answer does.
   CHECK(h.session.flag_count() == 0);
 
   h.clear();
   h.receive(1, FlagSet{0, {flag(6, 2)}}, kChannelProgress);
-  REQUIRE(h.sent.size() == 1);
+  REQUIRE(h.sent.size() == 3);
   CHECK(h.sent[0].to == 1);
   CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{1, {flag(6, 2)}});
+  CHECK(std::get<FlagOrigin>(h.sent[1].message) == FlagOrigin{1, {flag(6, 2)}});
+  CHECK(std::get<FlagOrigin>(h.sent[2].message) == FlagOrigin{1, {flag(6, 2)}});
   CHECK(h.session.stats().flag_relayed == 2);
+  CHECK(h.session.stats().origins_sent == 3);
 }
 
 TEST_CASE("flag state is taken from the host only, kept, and relayed to everyone else") {

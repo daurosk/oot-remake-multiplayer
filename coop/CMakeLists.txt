@@ -36,6 +36,7 @@ add_library(coop_host STATIC
   host/src/flag_watcher.cpp
   host/src/game_flags.cpp
   host/src/game_items.cpp
+  host/src/notify.cpp
   host/src/game_memory.cpp
   host/src/player_reader.cpp
   host/src/sampler.cpp

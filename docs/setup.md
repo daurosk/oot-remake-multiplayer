@@ -116,6 +116,10 @@ What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, 
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
 
+## Chat notices
+
+When another player's progress reaches your game, a line in the chat says so (only in your game, nothing is sent): "Tobi got the Fairy Slingshot - you got one too!", "Tobi found a Small Key (Deku Tree) - the group has 2", "Tobi got a Heart Container - your max health went up", "Tobi got the map (Deku Tree)", "Tobi learned Zelda's Lullaby", "Tobi got a Gold Skulltula token (12)", "Tobi opened a chest". Joining a session says one line ("Synced with the group: 14 items, 3 songs"), and so does the host loading a save. At most 4 lines in 3 seconds; the rest is one "...and N more" line. To turn them off, set `LICHII_COOP_NOTIFY=0`.
+
 ## Saves
 
 The host's save decides. Everyone's progress is shared while you play, but when the host loads a save, every game in the session goes back to that save's progress: items, keys, chests, doors and switches. A guest who loads a save gets the host's progress, and nothing changes for the others. To undo something (a door that locked you out, a key used in the wrong place), the host loads an older save. Rupees, ammo, hearts and where you stand stay your own. Be careful: if the host restarts the game and loads its save, **everything the guests did since the host last saved is undone** for everyone: chests, keys, doors, items. The host should save often, especially after the guests make progress.

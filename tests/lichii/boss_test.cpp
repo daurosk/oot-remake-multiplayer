@@ -432,6 +432,28 @@ TEST_CASE("boss: an event right after a skipped intro is not the boss's death (i
     CHECK(Has(a, proto::BossState::defeated));
 }
 
+TEST_CASE("boss: a shut boss door left in a save by an older build is opened once per load (issue 148)") {
+    CoopBoss::StaleBossFlags stale;
+    std::set<std::string> set{"InsideTheDekuTree_BossArea_ShutIn", "FireTemple_BossGroundChange"};
+    const auto is_set = [&](std::string_view n) { return set.contains(std::string(n)); };
+    // Loading: nothing yet. Then the dungeon, Link at its entrance: both set flags, once.
+    CHECK(stale.Check(std::nullopt, std::nullopt, is_set).empty());
+    CHECK(stale.Check(std::string("InsideTheDekuTree"), std::nullopt, is_set).empty());  // place not read yet
+    auto out = stale.Check(std::string("InsideTheDekuTree"), Vec{0.0f, 0.0f, 0.0f}, is_set);
+    CHECK(out.size() == 2);
+    CHECK(stale.Check(std::string("InsideTheDekuTree"), Vec{0.0f, 0.0f, 0.0f}, is_set).empty());  // once
+    // A reload into the same scene checks again.
+    stale.Check(std::nullopt, std::nullopt, is_set);
+    CHECK(stale.Check(std::string("InsideTheDekuTree"), Vec{0.0f, 0.0f, 0.0f}, is_set).size() == 2);
+    // Loaded straight into a boss room (a real fight, a respawn there): left alone.
+    stale.Check(std::nullopt, std::nullopt, is_set);
+    CHECK(stale.Check(std::string("ForestTemple"), Forest().arrive, is_set).empty());
+    // Nothing set: nothing to do.
+    set.clear();
+    stale.Check(std::nullopt, std::nullopt, is_set);
+    CHECK(stale.Check(std::string("Graveyard_Child"), Vec{}, is_set).empty());
+}
+
 TEST_CASE("boss: the boss's bodies are the boss actor, and Koume and Kotake for Twinrova") {
     for (const auto& room : CoopBoss::Rooms()) {
         const auto bodies = CoopBoss::Bodies(room);

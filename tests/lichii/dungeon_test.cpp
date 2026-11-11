@@ -255,7 +255,7 @@ TEST_CASE("dungeon: a player's place in a boss fight is never shared, the group'
     // it back from the group (the join snapshot). Those flags are left out.
     std::set<std::uint32_t> listed;
     for (const auto& f : CoopDungeon::Flags()) listed.insert(f.hash);
-    REQUIRE(CoopDungeon::NotShared().size() == 4);
+    REQUIRE(CoopDungeon::NotShared().size() == 6);  // with Dodongo's and the Fire Temple's arena floors
     for (const auto name : CoopDungeon::NotShared()) {
         CHECK_FALSE(listed.contains(host::flag_hash(std::string(name))));
     }

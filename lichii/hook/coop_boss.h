@@ -39,6 +39,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -210,6 +211,22 @@ private:
 };
 
 const char* PhaseName(Sync::Phase phase);
+
+// Issue 148: test6 shared the boss fight's "shut in" flags, so saves made then can hold a
+// shut boss door for good. Once per scene load, at the first frame where Link's place is
+// known and Link is in no boss room, the names of CoopDungeon::NotShared() flags that are
+// still set are given back to be cleared (0) in this game. Inside a boss room they are left
+// alone (a real fight). Pure: the hook reads and writes the flags.
+class StaleBossFlags {
+public:
+    std::vector<std::string_view> Check(const std::optional<std::string>& scene,
+                                        const std::optional<Vec>& position,
+                                        const std::function<bool(std::string_view)>& is_set);
+
+private:
+    std::optional<std::string> scene_;
+    bool armed_ = false;
+};
 
 // The emulator side (coop_boss_game.cpp). LICHII_COOP_BOSS=0 turns it off;
 // LICHII_COOP_BOSS_MOVE=matrix (default: auto) never uses the scene change;

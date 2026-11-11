@@ -4,6 +4,7 @@
 // docs/dungeons-boss.md). No emulator code.
 
 #include "coop_boss.h"
+#include "coop_dungeon.h"
 
 #include <algorithm>
 #include <cmath>
@@ -119,6 +120,33 @@ Vec ArrivalFor(const Room& room, std::uint8_t number) {
         v.z += kArrivalSpread * std::sin(angle);
     }
     return v;
+}
+
+std::vector<std::string_view> StaleBossFlags::Check(const std::optional<std::string>& scene,
+                                                    const std::optional<Vec>& position,
+                                                    const std::function<bool(std::string_view)>& is_set) {
+    if (!scene) {
+        scene_.reset();  // loading: the scene after it (the same one too) arms it again
+        return {};
+    }
+    if (!scene_ || *scene_ != *scene) {
+        scene_ = scene;
+        armed_ = true;
+    }
+    if (!armed_ || !position) {
+        return {};
+    }
+    armed_ = false;  // once per scene load
+    if (RoomAt(*scene, *position) != nullptr) {
+        return {};  // in a boss room: maybe a real fight
+    }
+    std::vector<std::string_view> out;
+    for (const std::string_view name : CoopDungeon::NotShared()) {
+        if (is_set(name)) {
+            out.push_back(name);
+        }
+    }
+    return out;
 }
 
 const char* PhaseName(Sync::Phase phase) {

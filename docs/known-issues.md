@@ -45,11 +45,11 @@ Co-op does not allow mods that change the game's code, or cheats ([issue 136](ht
 ## AMD graphics cards
 
 - AMD's driver crashed with the emulator's shader libraries (`amdvlk64.dll`; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)). The kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details.
-- Without them, new places stutter longer the first time on AMD than on NVIDIA. Fritchii makes up for that with its "Preparing shaders" step, which needs Fritchii's `recipes` folder beside the emulator; the newest kit does not have that folder yet, so AMD players get neither (not yet measured). [setup.md, "Low frame rate"](setup.md#low-frame-rate), step 8, has what helps now.
+- Without them, new places stutter longer the first time on AMD than on NVIDIA. Fritchii makes up for that with its "Preparing shaders" step on the first start (the kit has Fritchii's shader recipe for it): let it finish, also after a driver update. [setup.md, "Low frame rate"](setup.md#low-frame-rate), steps 1 and 8, has more.
 
 ## Low frame rate
 
-- Slow or uneven (for example under 20 fps): see [setup.md, "Low frame rate"](setup.md#low-frame-rate). In short: if a "Preparing shaders" screen shows when the game starts, let it finish (after "Play now" it keeps running beside the game and slows it; close the emulator and start again to finish it); the first 10 to 15 minutes stutter while shaders are built; click the **60 FPS** button at the bottom of the emulator window to switch to 30 FPS; laptops plugged in and on the graphics card; a current graphics driver. The kit's emulator already uses the fastest settings.
+- Slow or uneven (for example under 20 fps): see [setup.md, "Low frame rate"](setup.md#low-frame-rate). In short: let the "Preparing shaders" screen of the first start finish (after "Play now" it keeps running beside the game and slows it; close the emulator and start again to finish it); the first 10 to 15 minutes stutter while shaders are built; click the **60 FPS** button at the bottom of the emulator window to switch to 30 FPS; laptops plugged in and on the graphics card; a current graphics driver. The kit's emulator already uses the fastest settings.
 - The co-op code reads the game at most every 33 ms (4 to 30 times a second), and its debug logging is off by default. How much frame time it costs has not been measured yet.
 
 ## Other notes

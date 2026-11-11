@@ -1,8 +1,10 @@
 # teleport-free (#156): /teleport to another scene in free play, no talk (teleport-anywhere-2
 # check 1-2). B stays in the Graveyard where the save starts; A walks to Kakariko and types
-# /teleport B. A's log: "asked the scene change to Graveyard_Child ...: scene set, switch on",
-# "scene change taken: switch off", "scene change cleared", "boss: moved Link"; probe lines
-# (LICHII_COOP_SCENE_PROBE=1): switch=1 -> loading=1 -> switch=0, and no second load after.
+# /teleport B. A's log: "asked the scene change to Graveyard_Child ...: scene set",
+# "starting the event DefaultParentEvent", "live event DefaultParentEvent asked of the game",
+# "scene change taken", "scene change cleared", "boss: moved Link"; probe lines
+# (LICHII_COOP_SCENE_PROBE=1): banc="Graveyard_Child" -> event=1 -> event=0 -> loading=1, and
+# no second load after.
 #! switches A:LICHII_COOP_SCENE_PROBE=1
 start A B
 load A B

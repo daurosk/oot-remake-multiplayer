@@ -15,15 +15,15 @@
 //    loading, an event, no Link; cannot warp: its boss fight).
 // 3. On accept (Trip::Accepted): the same scene moves our Link there at once;
 //    another scene asks the game's scene change, at that scene's entrance
-//    start point nearest the player (NearestStart), the way its Main sequence
-//    takes one in free play (docs/scenes.md "Free-play scene change": the
-//    String64 Sequence_ReservedNextBanc plus the Bool 0x3fc35576 that makes
-//    Main's selector pick its BancChange case), asks it again every 0.5 s
-//    until the game takes it (it starts loading, or empties the request),
-//    drops the Bool once taken (so Main does not take an empty request
-//    again), then waits for the scene to settle, asks the player again for
-//    where it stands now, and moves there. During an event the event's own
-//    scene change takes the same request.
+//    start point nearest the player (NearestStart), the way a loading zone
+//    does (docs/scenes.md "Free-play scene change"): the String64s
+//    Sequence_ReservedNextBanc and ...NextStartPosName, then a short game
+//    event (kSceneEvent), since the game loads a reserved scene when an event
+//    ends. Asks again every 0.5 s and starts the event again every 3 s until
+//    the game takes it (it starts loading, or empties the request), then
+//    waits for the scene to settle, asks the player again for where it
+//    stands now, and moves there. An event already running (a talk) takes
+//    the same request when it ends.
 // Another scene with no start point known is refused: without one the game
 // keeps the old scene's start name, which the new scene does not have, and
 // the picture stays black after the load (docs/scenes.md "The start point").
@@ -144,6 +144,12 @@ public:
     static constexpr std::uint64_t kSettleUs = 1'500'000;
     // A taken scene change that ended somewhere else is asked again after this.
     static constexpr std::uint64_t kRearmUs = 5'000'000;
+    // The game loads a requested scene when an event ends (a loading zone is
+    // an event: docs/scenes.md "Free-play scene change"), so with the request
+    // set this short event is started (one wait node, no actor, no picture),
+    // again after this if the game has not taken the request.
+    static constexpr const char* kSceneEvent = "DefaultParentEvent";
+    static constexpr std::uint64_t kEventAgainUs = 3'000'000;
 
     struct Actions {
         std::vector<std::string> lines;      // chat notices
@@ -153,6 +159,7 @@ public:
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
         bool cancel_scene = false;           // clear our scene change request and its switch (arrived, given up)
         bool release = false;                // the game took it: drop only the free-play switch
+        bool start_event = false;            // with the request set: start kSceneEvent (no event runs)
         // With cancel_scene, not arrived (given up, the player left, a new
         // /teleport) and no load ran in this trip: put back the start name the
         // game had before our first ask, so it does not keep a start of a
@@ -186,6 +193,7 @@ private:
     Vec at_{};                    // travelling: the first answer's place, the fallback
     std::uint64_t since_us_ = 0;  // travelling: since the first ask
     std::uint64_t asked_us_ = 0;  // travelling: the last ask
+    std::uint64_t event_us_ = 0;  // travelling: the last kSceneEvent started
     std::uint64_t settle_us_ = 0; // settling: since the scene was in
     bool taken_ = false;          // travelling: the game took the request
     bool seen_request_ = false;   // travelling: the game's flag showed our request

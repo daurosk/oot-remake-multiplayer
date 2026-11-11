@@ -336,12 +336,14 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     at_ = to;
     since_us_ = now_us;
     asked_us_ = now_us;
+    event_us_ = now_us;
     settle_us_ = 0;
     taken_ = false;
     seen_request_ = false;
     loaded_ = false;
     a.scene = scene_;
     a.start = start_;
+    a.start_event = true;  // no event runs here (Accepted refuses during one)
     a.lines.push_back("teleport: going to " + name_ + " in " + scene_);
     if (CoopDungeon::IsDungeonScene(scene_)) {
         a.lines.push_back("teleport: " + name_ + " is in a dungeon: you may need its items to get on from there");
@@ -436,6 +438,12 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
                 asked_us_ = now_us;
                 a.scene = scene_;
                 a.start = start_;
+            }
+            // The game takes the request when an event ends: start one if
+            // none runs and the last one did not take it.
+            if (!local.event && !local.loading_banc && now_us - event_us_ >= kEventAgainUs) {
+                event_us_ = now_us;
+                a.start_event = true;
             }
             return a;
         }

@@ -8,12 +8,19 @@
 //   a scene of its own, so "in the boss room" is a test on where Link stands:
 //   the dungeon's scene and a circle and height band around the room, taken
 //   from the room's placements in the RomFS (Rooms()).
-// - A game whose Link is in a boss room sends BOSS_ROOM in_room at once and
-//   every 2 s while there. Another game in the same dungeon scene whose Link
-//   is not in that room is moved in (Pull), again every 3 s up to 5 times;
-//   this is also what puts back a player who joins or respawns during the
-//   fight (the game respawns a dead Link at the dungeon's entrance, the same
-//   scene).
+// - A game whose Link is in a boss room sends BOSS_ROOM at once and every 2 s
+//   while there, saying how far it is: in_room (only near the room: its
+//   circle also takes in the way to the door), intro_start (its intro runs:
+//   it is inside and the door has shut behind it), intro_end (the fight).
+//   Another game in the same dungeon scene whose Link is not in that room is
+//   moved in (Pull), again every 3 s up to 5 times, but only once a player
+//   there has started the intro or the fight: never on in_room alone (issue
+//   148: B was moved in when A came near the room; the door shut in B's game
+//   and A, still on the way, was locked out). This is also what puts back a
+//   player who joins or respawns during the fight (the game respawns a dead
+//   Link at the dungeon's entrance, the same scene). A room entered with no
+//   intro for kNoIntroUs counts as a fight here, but moves no one in: no
+//   event says the player is past the door.
 // - The first event that starts in the room is the intro (intro_start); when
 //   it ends, intro_end. A game whose own intro still runs once any other
 //   player in that room has finished theirs skips the rest of it (the game's
@@ -160,6 +167,7 @@ private:
         std::uint8_t room = 0;
         bool in_room = false;   // last heard in the room
         bool fighting = false;  // their intro is over (or never ran)
+        bool committed = false; // their intro started or their fight is on: they are past the door (issue 148)
         std::uint64_t heard_at = 0;
     };
     void Take(const coop::protocol::BossRoom& m, std::uint64_t now_us);
@@ -180,6 +188,7 @@ private:
     bool skip_asked_ = false;
     std::uint64_t skip_since_ = 0;
     bool event_ = false;  // last Tick's event
+    bool committed_ = false;  // our intro started in this room: our heartbeat says how far (issue 148)
     std::uint64_t last_now_ = 0;  // the clock never goes back (server time can)
     std::optional<std::string> scene_;  // the scene of the last Tick with one
     std::vector<std::uint8_t> defeated_;  // rooms beaten while we were in this scene

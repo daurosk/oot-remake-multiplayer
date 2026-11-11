@@ -223,10 +223,11 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   if (settling() && !window_) {
     window_ = true;
     moved_ = false;
-    backward_ = 0;
+    back_keys_.clear();
     no_scene_frames_ = 0;
   }
-  if (window_ && loading_ && !scene_readable_) ++no_scene_frames_; else if (!settling() && window_) {
+  if (window_ && loading_ && !scene_readable_) ++no_scene_frames_;
+  see_save_load(); else if (!settling() && window_) {
     window_ = false;
     end_window(store, resets);
   }
@@ -356,6 +357,14 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     if (!store.is_count(key)) note_group(entry, nullptr);
     last_[key] = entry;
   }
+}
+
+void FlagWatcher::see_save_load() {
+  if (!window_ || !loading_ || moved_) return;
+  if (static_cast<int>(back_keys_.size()) < kSaveLoadMin || no_scene_frames_ < kTitleFrames) return;
+  moved_ = true;
+  seen_flags_ = static_cast<int>(back_keys_.size());
+  seen_frames_ = no_scene_frames_;
 }
 
 void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
@@ -506,11 +515,13 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
     if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
-        went_back(it->second, *now) && ++backward_ >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames) {
+        went_back(it->second, *now)) {
       // The title screen (no scene) and saved progress going back: a save
       // was loaded. A door, warp, cutscene, time travel or death keeps a
       // scene, and its flags going back are the room's or the story's.
-      moved_ = true;
+      // Distinct flags: one held at 0 for many frames counts once.
+      back_keys_.insert(key);
+      see_save_load();
     }
     if (window_ && moved_) {
       if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {

@@ -932,3 +932,54 @@ TEST_CASE("flag watcher, host: the title screen with only one flag back is no sa
   }
   CHECK(w.stats().host_resets == 0);
 }
+
+TEST_CASE("flag watcher, host: one flag held at 0 for many frames counts once") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);
+  store.set(kDoor, 0);  // one flag back, seen again every frame of the title
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 10; ++i) w.frame(store);
+  CHECK_FALSE(w.take_save_load().has_value());
+  w.set_scene(true);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher, host: flags back early in the title, the title long enough later: a save load") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  store.set(kKey0, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);
+  w.frame(store);
+  store.set(kDoor, 0);  // the save is read early...
+  store.set(kKey0, 0);
+  w.frame(store);
+  CHECK_FALSE(w.take_save_load().has_value());  // ...the title has not lasted yet
+  // Nothing changes any more; the title goes on until it has lasted.
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  const auto seen = w.take_save_load();
+  REQUIRE(seen.has_value());
+  CHECK(seen->flags == 2);
+  CHECK(seen->frames >= FlagWatcher::kTitleFrames);
+  CHECK_FALSE(w.take_save_load().has_value());  // once
+  w.set_scene(true);
+  w.set_loading(false);
+  std::vector<proto::FlagEntry> reset;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) {
+      if (const auto* r = std::get_if<proto::FlagReset>(&m)) reset.insert(reset.end(), r->flags.begin(), r->flags.end());
+    }
+  }
+  CHECK(reset == std::vector{entry(kDoor, 0), entry(kKey0, 0)});
+}

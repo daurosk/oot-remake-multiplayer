@@ -78,6 +78,10 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     report.hosting = watcher_->role() == FlagRole::host;
     report.holding = watcher_->holding();
     report.host_reset = watcher_->take_reset();
+    if (const auto seen = watcher_->take_save_load()) {
+      report.save_load_flags = seen->flags;
+      report.save_load_frames = seen->frames;
+    }
   }
   report.queued = out.size();
 

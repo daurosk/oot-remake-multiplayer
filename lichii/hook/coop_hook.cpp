@@ -47,6 +47,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_teleport_game.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
@@ -261,6 +262,7 @@ public:
             CoopDrops::OnEvent(event);
             CoopTime::OnEvent(event);
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
+            CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -550,6 +552,12 @@ public:
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
                         reading && reading->event_running.value_or(false),
                         report.connected ? session_.get() : nullptr, report.server_now_us);
+        // /teleport <player> (docs/setup.md "Chat commands"), after the boss
+        // rooms: it reads whether our boss fight runs.
+        CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopTeleport::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         Place(view);
 
         std::lock_guard lock(view_mutex_);
@@ -577,6 +585,9 @@ public:
 
     // Chat and the player list (coop_hook.h). Any thread.
     bool SendChat(const std::string& text) {
+        if (CoopTeleport::OnChat(text, *session_)) {
+            return true;  // a command: done here, its answer shows as a notice
+        }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
         if (sent) {

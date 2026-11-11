@@ -86,6 +86,20 @@ Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 
 `coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again.
 
+## Chat commands
+
+Press Enter in the game to open the chat box. A line that starts with `/teleport` (or `/tp`) is a command, not chat:
+
+- `/teleport` alone lists the other players.
+- `/teleport <player>` takes you to that player. The whole name works in any case, and so does the start of a name if only one player's name starts that way, or the player's number (`/teleport 2`).
+  - The other player's game answers with where they last stood on their feet, so you never land in a wall or in mid-air.
+  - In the same scene you are moved there at once.
+  - In another scene the game changes scene first. It does that only during an event, so if nothing happens, talk to someone or read a sign. After the load you are moved next to them. A scene change not taken in 60 seconds is given up.
+  - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link. A dungeon gives a warning: you may need its items to get on from there.
+  - A player with a build from before test8 does not answer: "no answer from" after 5 seconds.
+
+`LICHII_COOP_TELEPORT=0` turns it off in your game: the command says so, and the others' requests to come to you are refused.
+
 ## Updating
 
 Every player needs the same version: a game of one version cannot join a server of another.

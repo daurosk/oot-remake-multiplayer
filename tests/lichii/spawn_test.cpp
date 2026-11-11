@@ -286,6 +286,8 @@ TEST_CASE("spawn: a shot seed whose place stays in the sling gets a made-up flig
     const auto removes = Of<proto::ObjectRemove>(send);
     REQUIRE(removes.size() == 1);
     CHECK(removes[0].position[2] == doctest::Approx(end));
+    // A guessed end: the copies are not held there (issue 166).
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
     REQUIRE(sync.Flights().size() == 1);
     CHECK(sync.Flights()[0].shot);
     CHECK(sync.Flights()[0].made_up);

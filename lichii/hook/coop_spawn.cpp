@@ -340,6 +340,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         } else {
             out.reason = proto::RemoveReason::gone;
         }
+        if (m.made_up && out.reason == proto::RemoveReason::hit) {
+            // A made-up flight's end is a guess: the copies are not held there
+            // (issue 166 landing), they go at once.
+            out.reason = proto::RemoveReason::gone;
+        }
         if (out.reason == proto::RemoveReason::exploded && CoopProjectiles::Find(m.name)->fused) {
             fuse_.Lived(lived);  // the game's fuse, for our next bombs' copies
         }

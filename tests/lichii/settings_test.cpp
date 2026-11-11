@@ -232,3 +232,22 @@ TEST_CASE("settings: any error turns co-op off") {
   CHECK(errors[0].find("unknown key 'prot'") != std::string::npos);
   CHECK_FALSE(s.enabled());
 }
+
+TEST_CASE("settings: the join password from coop.ini and LICHII_COOP_PASSWORD") {
+  Settings s;
+  std::vector<std::string> errors;
+  CHECK(s.password.empty());
+  ApplyIni("server = 26.1.2.3\npassword = hunter2\n", s, errors);
+  CHECK(errors.empty());
+  CHECK(s.password == "hunter2");
+  // A '#' with no space before it stays part of the password.
+  ApplyIni("password = a#b  # the comment\n", s, errors);
+  CHECK(errors.empty());
+  CHECK(s.password == "a#b");
+  apply_env({{"LICHII_COOP_PASSWORD", "fromenv"}}, s, errors);
+  CHECK(errors.empty());
+  CHECK(s.password == "fromenv");
+  ApplyIni(std::string("password = ") + std::string(129, 'x') + "\n", s, errors);
+  CHECK(errors.size() == 1);
+  CHECK(s.password == "fromenv");
+}

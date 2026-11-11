@@ -1,4 +1,4 @@
-# Wire protocol, version 8
+# Wire protocol, version 9
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -51,11 +51,21 @@ Each rule answers a way the TotK online sync was seen to break.
 ## Handshake
 
 1. The client connects and sends `HELLO`: protocol version (`u16`), build id (string, up to 64 characters: emulator or recomp, and its version), game build id (string, up to 32, for example `e0f3ccfaf50065ae`), game version (string, up to 16, for example `1.1.1`), nickname (string, 1 to 16 characters). The protocol version is the first 2 bytes of the body in every version of the protocol, so a server can read it, and refuse with the right reason, even from a `HELLO` whose rest it cannot read.
-2. The server answers `WELCOME` or `REFUSED`.
+2. The server answers `WELCOME` or `REFUSED`; a server with a join password first answers `JOIN_CHALLENGE` (see "Join password" below), and `WELCOME` or `REFUSED` follows the client's `JOIN_PROOF`.
    - `WELCOME`: `u8` the player's number (1 to 4), `u64` server time, `u16` tick rate (not 0), `u8` count (at most 4), then for each player already in: `u8` number, nickname. Every number in it is different, and the new player's own is not in the list.
-   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces). A reason the client does not know is kept and shown as unknown.
+   - `REFUSED`: `u8` reason, which the client shows: 1 wrong protocol version, 2 wrong game build, 3 server full, 4 name taken, 5 bad name (a nickname of nothing but spaces), 6 bad password (the join password did not match, protocol 9). A reason the client does not know is kept and shown as unknown.
 3. No `HELLO` within 10 seconds: the server drops the connection.
 4. One address may hold at most 4 connections that have not sent `HELLO` yet (a server option; 0 for no limit). The server drops one more at once, without `REFUSED`.
+
+### Join password (protocol 9, types 191 to 195)
+
+The host may set a join password (`coop_server --password TEXT`, or `--password-env NAME` to read it from an environment variable so it is not on the command line; the kit's `server_password` in `coop-options.ini`). Empty means none, and the handshake is as above.
+
+1. With a password, the server checks the `HELLO`'s protocol version (a wrong one is refused as before) and then, before any other check, answers `JOIN_CHALLENGE` (191, channel 0, server only): 32 bytes, a fresh random nonce for this connection (the OS's random source).
+2. The client answers `JOIN_PROOF` (192, channel 0, client only): 32 bytes, HMAC-SHA256 keyed with the password's UTF-8 bytes over the nonce. A client with no password answers with the empty password's proof. It answers one challenge per connection.
+3. The server compares in constant time. Right: the usual checks (game build, name, full) and `WELCOME` or `REFUSED`. Wrong: `REFUSED` 6, bad password, and the connection is closed; the client shows "wrong join password" and does not retry.
+
+The password never goes on the wire, and a proof is good for one nonce only, so a recorded proof is refused on any other connection. The server sends one challenge per connection (a second `HELLO` gets none), takes one proof, and the 10 s `HELLO` timeout covers the proof too; a connection waiting for its proof counts as half-open. A `JOIN_PROOF` from a joined player is dropped, never relayed. Someone who records a challenge and its proof can still try passwords offline against it, as with any password check without a key exchange: use a long password used nowhere else. Passwords are at most 128 bytes with no control characters; the kit also refuses spaces.
 
 ### Rejoin after a crash
 
@@ -95,6 +105,8 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
 | 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
+| 191 | `JOIN_CHALLENGE` | 0 | server | 32-byte nonce (protocol 9, "Join password"; 191 to 195 kept for it) |
+| 192 | `JOIN_PROOF` | 0 | client | 32-byte HMAC-SHA256(password, nonce) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
@@ -360,3 +372,4 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
+- Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.

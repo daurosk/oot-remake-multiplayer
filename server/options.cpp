@@ -20,6 +20,15 @@ bool parse_number(const std::string& text, T& out) {
 
 }  // namespace
 
+const char* password_problem(std::string_view password) {
+  if (password.size() > protocol::kMaxJoinPasswordBytes) return "longer than 128 bytes";
+  for (const char ch : password) {
+    const auto b = static_cast<unsigned char>(ch);
+    if (b < 0x20 || b == 0x7f) return "has a control character";
+  }
+  return nullptr;
+}
+
 std::optional<CommandLine> parse_command_line(const std::vector<std::string>& args,
                                               std::string& error) {
   CommandLine line;
@@ -76,6 +85,21 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         line.allowed.push_back(*r);
         start = comma + 1;
       }
+    } else if (arg == "--password" || arg == "--password-env") {
+      if (!has_value || args[i + 1].empty()) {
+        error = arg + " needs a value";
+        return std::nullopt;
+      }
+      const std::string& value = args[++i];
+      if (arg == "--password") {
+        if (const char* why = password_problem(value)) {
+          error = std::string("--password: ") + why;
+          return std::nullopt;
+        }
+        line.password = value;
+      } else {
+        line.password_env = value;
+      }
     } else {
       error = "unknown argument: " + arg;
       return std::nullopt;
@@ -87,6 +111,7 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
 const char* usage() {
   return "usage: coop_server [--port N] [--bind ADDRESS] [--allow LIST]\n"
          "                   [--game-build ID] [--max-half-open N] [--run-for-ms N]\n"
+         "                   [--password TEXT | --password-env NAME]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
          "                   example its Hamachi or Radmin address (default: all)\n"
@@ -96,7 +121,10 @@ const char* usage() {
          "                   first player to join decides)\n"
          "  --max-half-open N  most connections one address may hold before\n"
          "                   sending HELLO (default 4, 0 for no limit)\n"
-         "  --run-for-ms N   stop by itself after N milliseconds\n";
+         "  --run-for-ms N   stop by itself after N milliseconds\n"
+         "  --password TEXT  players must give this join password (default: none)\n"
+         "  --password-env NAME  the join password is in this environment\n"
+         "                   variable (keeps it off the command line)\n";
 }
 
 }  // namespace coop::server

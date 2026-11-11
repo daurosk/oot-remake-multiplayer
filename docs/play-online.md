@@ -18,9 +18,9 @@ Only if the host can change their router and has a public IP address (no CGNAT: 
 
 1. Start `Host.bat` once and read the server window: the **Same house** line is your PC's address (for example `192.168.1.20`), the **Over the internet** line your public address.
 2. On your router's settings page (often `192.168.1.1`; the address and password are usually on a sticker on the router), under **Port forwarding**, add: protocol **UDP**, port **27510**, to your PC's Same-house address.
-3. **Safety:** ask the others for their public address (they open [api.ipify.org](https://api.ipify.org)) and put them in `coop-options.ini` beside `Host.bat`: remove the `#` in front of `server_allow` and write, for example, `server_allow = 81.2.3.4,82.5.6.7`. Then nobody else can join ([Who can join](#who-can-join)).
+3. **Safety:** ask the others for their public address (they open [api.ipify.org](https://api.ipify.org)) and put them in `coop-options.ini` beside `Host.bat`: remove the `#` in front of `server_allow` and write, for example, `server_allow = 81.2.3.4,82.5.6.7`. Then nobody else can join ([Who can join](#who-can-join)). Also set a **join password**: `Host.bat` asks for one the first time; give it to the others with the address. Their addresses can change; the password still keeps strangers out when you have to widen `server_allow`.
 4. Run `check-hosting.cmd` while the server window is open and run the firewall command it prints under **Over the internet with port forwarding** (in Command Prompt as administrator). It allows only `coop_server.exe`, and with `server_allow` set only those addresses. It applies on networks Windows calls Private: if the check says your home network is Public, switch it to Private as it says.
-5. Close and start `Host.bat` again, and send the **Over the internet** address to the others.
+5. Close and start `Host.bat` again, and send the **Over the internet** address and the join password to the others.
 
 **Others:** double-click `Join.bat` and paste the host's address.
 
@@ -80,12 +80,15 @@ A virtual LAN adds a little delay when it cannot connect the PCs directly; the p
 
 ## Who can join
 
-By default anyone who can reach the server's port may join. Two lines in the host's `coop-options.ini` (beside `Host.bat`) narrow that:
+By default anyone who can reach the server's port may join. Three lines in the host's `coop-options.ini` (beside `Host.bat`) narrow that:
 
+- `server_password = ...`: the **join password** (protocol 9). `Host.bat` asks for it the first time and saves it here (Enter for none); send it to your friends with the address. `Join.bat` asks for it each time (Enter keeps the last one, `-` for none) and keeps it in `emulator\user\config\coop.ini`. A player with a wrong or no password is turned away and their `Join.bat` window says `wrong join password`. The password itself never goes over the network: the server sends a random number, and the game answers with a proof made from the password and that number (HMAC-SHA256), which is no good for any other connection. No spaces, at most 128 characters; pick one you use nowhere else. To change it, change the line and start `Host.bat` again; delete the line to be asked again. `check-hosting.cmd` says whether one is set.
 - `server_allow = 25.1.2.3,25.4.5.6`: only these addresses may connect; anyone else is turned away at once. Use the others' Hamachi (`25.`), Radmin (`26.`) or Tailscale (`100.`) addresses, or with port forwarding their public addresses (api.ipify.org on their PC). A whole range: `26.0.0.0/8`.
 - `server_bind = 25.1.2.3`: the server listens only on this address of your own PC (your Hamachi or Radmin address), so it cannot be reached through your home network or Wi-Fi at all.
 
-Remove the `#` in front of the line, put in the addresses and start `Host.bat` again. The server window then says `listening on port 27510 (only 25.1.2.3, ...)` and `only the N address range(s) given with --allow may connect`. A player who is turned away is counted as `not allowed` when the server stops. More in [SECURITY.md](../SECURITY.md).
+**A password is not enough on its own.** Use it together with a VPN (Radmin, Hamachi, Tailscale: only people in your network can reach the port at all) or, with port forwarding, together with `server_allow`. With port forwarding the port is open to the whole internet, and the password is then what keeps strangers out.
+
+For `server_allow` and `server_bind`: remove the `#` in front of the line, put in the addresses and start `Host.bat` again. The server window then says `listening on port 27510 (only 25.1.2.3, ...)` and `only the N address range(s) given with --allow may connect`. A player who is turned away is counted as `not allowed` when the server stops. More in [SECURITY.md](../SECURITY.md).
 
 ## When you are done
 

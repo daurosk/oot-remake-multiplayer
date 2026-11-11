@@ -1,4 +1,5 @@
-// Co-op settings for the emulator: server address, port and player name.
+// Co-op settings for the emulator: server address, port, player name and
+// join password.
 // From coop.ini in the emulator's config folder, then environment variables,
 // which win. Co-op stays off unless a server is set. No emulator code here.
 #pragma once
@@ -17,15 +18,17 @@ struct Settings {
     std::string server;            // IP or host name; empty means co-op off
     std::uint16_t port = 27510;    // protocol default
     std::string name = "Player";   // nickname, 1 to 16 characters
+    std::string password;          // join password; empty: none
     bool enabled() const { return !server.empty(); }
 };
 
 // Reads `key = value` lines. Blank lines, `#` or `;` comments and `[section]`
-// headers are skipped. Keys: server (`host` or `host:port`), port, name.
+// headers are skipped. Keys: server (`host` or `host:port`), port, name, password.
 // Each problem is added to `errors` with its line number.
 void ApplyIni(std::string_view text, Settings& settings, std::vector<std::string>& errors);
 
-// LICHII_COOP_SERVER, LICHII_COOP_PORT, LICHII_COOP_NAME, when set.
+// LICHII_COOP_SERVER, LICHII_COOP_PORT, LICHII_COOP_NAME, LICHII_COOP_PASSWORD,
+// when set.
 // `get` returns a variable's value, or nothing when it is not set.
 void ApplyEnvironment(const std::function<std::optional<std::string>(const char*)>& get,
                       Settings& settings, std::vector<std::string>& errors);

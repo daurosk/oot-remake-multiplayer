@@ -502,6 +502,54 @@ TEST_CASE("client: an attempt that ends another way closes the name taken window
   CHECK(client.state() == State::waiting_retry);
 }
 
+TEST_CASE("client: a JOIN_CHALLENGE is answered once with the proof of the join password") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  proto::JoinNonce nonce{};
+  for (std::size_t i = 0; i < nonce.size(); ++i) nonce[i] = static_cast<std::uint8_t>(i * 7);
+  server.send(proto::JoinChallenge{nonce}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return server.find<proto::JoinProof>().has_value(); }));
+  const auto& proof = std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message);
+  CHECK(proof.proof == proto::join_proof("hunter2", nonce));
+  CHECK(proof.proof != proto::join_proof("hunter3", nonce));
+
+  // A second challenge on the same connection gets no second proof: a fake
+  // server cannot collect proofs for nonces of its choosing on one connection.
+  proto::JoinNonce other = nonce;
+  other[0] ^= 1;
+  server.send(proto::JoinChallenge{other}, proto::kChannelSession);
+  pump(client, server, [] { return false; }, 200);
+  CHECK(std::count_if(server.received.begin(), server.received.end(), [](const Received& r) {
+          return std::holds_alternative<proto::JoinProof>(r.message);
+        }) == 1);
+
+  server.send(proto::Refused{proto::RefuseReason::bad_password}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::refused));
+  const Event& refused = events.all[*events.find(EventKind::refused)];
+  CHECK(refused.refuse_reason == proto::RefuseReason::bad_password);
+  CHECK(refuse_reason_text(refused.refuse_reason).starts_with("wrong join password"));
+  CHECK(client.state() == State::refused);
+}
+
+TEST_CASE("client: with no join password a challenge is answered with the empty password's proof") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  proto::JoinNonce nonce{};
+  nonce[5] = 42;
+  server.send(proto::JoinChallenge{nonce}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return server.find<proto::JoinProof>().has_value(); }));
+  CHECK(std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message).proof ==
+        proto::join_proof("", nonce));
+}
+
 TEST_CASE("client: an unknown refusal reason is kept") {
   FakeServer server;
   Client client(config_for(server));
@@ -709,7 +757,8 @@ TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::server_full) == "server full");
   CHECK(refuse_reason_text(proto::RefuseReason::name_taken) == "name taken");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_name) == "bad name");
-  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(6)) == "unknown reason");
+  CHECK(refuse_reason_text(proto::RefuseReason::bad_password).starts_with("wrong join password"));
+  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(7)) == "unknown reason");
 }
 
 TEST_CASE("client: send_chat sends CHAT and refuses empty, long or bad text") {

@@ -109,7 +109,9 @@ bool Session::connected(ConnectionId id, std::uint64_t now_us,
 std::size_t Session::half_open_count(std::uint32_t address) const {
   return static_cast<std::size_t>(
       std::count_if(connections_.begin(), connections_.end(), [&](const auto& entry) {
-        return entry.second.state == State::awaiting_hello && entry.second.address == address;
+        return (entry.second.state == State::awaiting_hello ||
+                entry.second.state == State::awaiting_proof) &&
+               entry.second.address == address;
       }));
 }
 
@@ -151,11 +153,59 @@ void Session::received(ConnectionId id, std::uint8_t channel,
     }
     return;
   }
+  if (c.state == State::awaiting_proof) {
+    if (const auto* proof = std::get_if<JoinProof>(&message)) {
+      on_join_proof(id, c, *proof, now_us);
+    } else if (std::holds_alternative<Hello>(message)) {
+      ++stats_.repeated_hello;  // one HELLO, one nonce: no fresh nonce on asking again
+    } else {
+      ++stats_.before_welcome;
+    }
+    return;
+  }
+  if (std::holds_alternative<JoinProof>(message)) {
+    ++stats_.stray_proof;  // a joined player's: never relayed
+    return;
+  }
   on_player_message(id, c, channel, message, bytes.size(), now_us);
 }
 
 void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
                        std::uint64_t now_us) {
+  if (hello.protocol_version != kProtocolVersion) {
+    refuse(id, c, RefuseReason::wrong_protocol_version, now_us,
+           version_note(hello.protocol_version));
+    return;
+  }
+  // The password comes before every other check, so someone without it
+  // learns nothing about the session (its game build, names, how full).
+  if (!config_.join_password.empty()) {
+    c.state = State::awaiting_proof;
+    c.pending_hello = hello;
+    c.nonce = random_nonce();
+    send(id, kChannelSession, JoinChallenge{c.nonce});
+    return;
+  }
+  admit(id, c, hello, now_us);
+}
+
+void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& proof,
+                            std::uint64_t now_us) {
+  const Hello hello = *c.pending_hello;
+  c.pending_hello.reset();
+  const bool right = same_proof(proof.proof, join_proof(config_.join_password, c.nonce));
+  c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
+  if (!right) {
+    ++stats_.bad_password;
+    refuse(id, c, RefuseReason::bad_password, now_us, "wrong join password");
+    return;
+  }
+  c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
+  admit(id, c, hello, now_us);
+}
+
+void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
+                    std::uint64_t now_us) {
   std::string expected = config_.game_build_id;
   if (expected.empty()) {
     expected = player_count() == 0 ? hello.game_build_id : session_game_build_;
@@ -1567,7 +1617,7 @@ void Session::tick(std::uint64_t now_us) {
   std::vector<ConnectionId> late_hello;  // not a player: dropped without PLAYER_LEFT
   std::vector<ConnectionId> silent;
   for (auto& [id, c] : connections_) {
-    if (c.state == State::awaiting_hello &&
+    if ((c.state == State::awaiting_hello || c.state == State::awaiting_proof) &&
         now_us - c.connected_at >= config_.hello_timeout_us) {
       late_hello.push_back(id);
     } else if (c.state == State::closing &&

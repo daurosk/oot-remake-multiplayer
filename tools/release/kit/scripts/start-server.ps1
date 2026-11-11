@@ -2,7 +2,7 @@
 # Usage: start-server.cmd [port] [-Allow 25.1.2.3,26.0.0.0/8] [-Bind 25.1.2.3] [more coop_server options]
 # -Allow: only these IPv4 addresses (or ranges) may join; -Bind: listen on this one address of
 # this PC only (its Hamachi or Radmin address). play.ps1 passes coop-options.ini's server_allow
-# and server_bind here.
+# and server_bind here; the join password (server_password) is read from coop-options.ini here.
 param(
     [Parameter(Position = 0)][int]$Port = @PORT@,
     [string]$Allow = '',
@@ -25,12 +25,26 @@ if ($Bind.Trim()) {
     $access += @('--bind', $Bind.Trim())
 }
 
+# The join password (coop-options.ini server_password, Host.bat asks for it once). It goes to
+# the server in an environment variable of this window only, never on its command line,
+# and is never printed or logged.
+. (Join-Path $PSScriptRoot 'coop-ini.ps1')
+. (Join-Path $PSScriptRoot 'kit-paths.ps1')
+$password = (Read-KitServerAccess (Join-Path $kit 'coop-options.ini')).Password
+if ($password) {
+    if (-not (Test-CoopPassword $password)) { Write-Host 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1 }
+    $env:OOT_COOP_SERVER_PASSWORD = $password
+    $access += @('--password-env', 'OOT_COOP_SERVER_PASSWORD')
+}
+
 $logs = Join-Path $kit 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 $log = Join-Path $logs ('server-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date))
 
 Write-Host "Co-op server on UDP port $Port. Log: $log"
 Write-Host 'Keep this window open while you play; closing it (or Ctrl+C) stops the server.'
+if ($password) { Write-Host 'Join password: on (server_password in coop-options.ini). Send it to your friends with the address.' }
+else { Write-Host 'Join password: none (set one with server_password in coop-options.ini).' }
 # Which address the others type (hosting.ps1): VPN, internet (one HTTPS question to a fixed
 # service, unless coop-options.ini says public_address_lookup = no), home network. The best
 # one goes to the clipboard.

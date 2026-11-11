@@ -13,11 +13,14 @@
 #include <variant>
 #include <vector>
 
+#include "coop/protocol/join_password.hpp"
+
 namespace coop::protocol {
 
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
-// (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 8;
+// (types 28 to 39) and the server sending HANDOVER_ASK; 9: the join password
+// (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
+inline constexpr std::uint16_t kProtocolVersion = 9;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -98,6 +101,8 @@ enum class MessageType : std::uint16_t {
   sign_cut = 80,   // 80 to 84: signs (docs/world.md, "Signs")
   flag_reset = 135,  // 135 to 139: the host's save load (docs/protocol.md, "Saves")
   flag_origin = 150,  // 150 to 154: who made a shared change (docs/protocol.md, "Who did it")
+  join_challenge = 191,  // 191 to 195: the join password (docs/protocol.md, "Join password")
+  join_proof = 192,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -176,11 +181,27 @@ enum class RefuseReason : std::uint8_t {
   server_full = 3,
   name_taken = 4,
   bad_name = 5,  // empty or nothing but spaces
+  bad_password = 6,  // the server has a join password and the JOIN_PROOF did not match
 };
 
 struct Refused {
   RefuseReason reason = RefuseReason::wrong_protocol_version;
   bool operator==(const Refused&) const = default;
+};
+
+// JOIN_CHALLENGE, server to client, in answer to a HELLO when the server has
+// a join password: a fresh random nonce for this connection only. The client
+// answers with JOIN_PROOF; WELCOME or REFUSED follows.
+struct JoinChallenge {
+  JoinNonce nonce{};
+  bool operator==(const JoinChallenge&) const = default;
+};
+
+// JOIN_PROOF, client to server: join_proof(password, nonce) for the nonce of
+// this connection's JOIN_CHALLENGE (an empty password when it has none).
+struct JoinProof {
+  JoinProofBytes proof{};
+  bool operator==(const JoinProof&) const = default;
 };
 
 struct PlayerJoined {
@@ -965,7 +986,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
-                             DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin>;
+                             DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
+                             JoinChallenge, JoinProof>;
 
 MessageType type_of(const Message& message);
 

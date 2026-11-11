@@ -141,8 +141,44 @@ if (-not (Test-CoopServer $Server)) { Write-Host "Bad server address: $Server"; 
 if (-not (Test-CoopName $Name)) { Write-Host "Bad name: $Name"; exit 1 }
 if ($Port -notmatch '^\d{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) { Write-Host "Bad port: $Port"; exit 1 }
 
-Write-CoopIni $template $ini $Server $Port $Name
-Write-Host "Co-op: server $Server, port $Port, name $Name   (play.cmd change to change the name)"
+# The join password (protocol 9). Host.bat: asked once and saved as server_password in
+# coop-options.ini (an empty line there means none); this game uses the same one. Join.bat
+# and play.cmd change: asked each time, Enter keeps the saved one, '-' clears it.
+$optionsFile = Join-Path $kit 'coop-options.ini'
+$Password = $current.password
+if ($Mode -eq 'host') {
+    $Password = (Read-KitServerAccess $optionsFile).Password
+    if ($null -eq $Password) {
+        Write-Host 'A join password keeps out anyone who finds your server: players type it in Join.bat.'
+        Write-Host 'Pick one without spaces and send it to your friends with the address. Enter: no password.'
+        do {
+            $answer = Read-Host 'Join password for your server'
+            $Password = if ($answer) { $answer.Trim() } else { '' }
+            $ok = -not $Password -or (Test-CoopPassword $Password)
+            if (-not $ok) { Write-Host 'No spaces, at most 128 characters.' }
+        } until ($ok)
+        Set-KitServerPassword $optionsFile $Password
+        Write-Host "Saved in coop-options.ini (server_password). Delete that line to be asked again."
+    }
+    elseif ($Password -and -not (Test-CoopPassword $Password)) {
+        Write-Host 'coop-options.ini: server_password has a space or is longer than 128 characters; the server was not started.'
+        exit 1
+    }
+}
+elseif ($Mode -eq 'join' -or $ask) {
+    Write-Host 'Join password: only if the host gave you one. Enter keeps the one in [ ], - for none.'
+    do {
+        $answer = Read-Host "Join password$(if ($Password) { ' [saved]' })"
+        if ($answer -and $answer.Trim() -eq '-') { $Password = '' }
+        elseif ($answer -and $answer.Trim()) { $Password = $answer.Trim() }
+        $ok = -not $Password -or (Test-CoopPassword $Password)
+        if (-not $ok) { Write-Host 'A join password has no spaces and at most 128 characters. Ask the host for it again.'; $Password = '' }
+    } until ($ok)
+}
+if ($Password -and -not (Test-CoopPassword $Password)) { Write-Host 'coop.ini: the join password has a space or is too long.'; exit 1 }
+
+Write-CoopIni $template $ini $Server $Port $Name $Password
+Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'none' })   (play.cmd change to change the name)"
 
 $user = Join-Path $emu 'user'
 if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
@@ -235,6 +271,7 @@ if ($Mode -eq 'join' -and $game) {
         if ($state -like 'refused:*') {
             Write-Host "The host's server said no: $($state.Substring(9))."
             Write-Host 'name taken: pick another name with play.cmd change. wrong protocol version: everyone runs Update.bat.'
+            Write-Host 'wrong join password: start Join.bat again and type the password the host sent you (- for none).'
             exit 1
         }
         if ($state -eq 'trying') {

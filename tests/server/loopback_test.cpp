@@ -204,7 +204,7 @@ TEST_CASE("loopback: a wrong protocol version gets REFUSED and is disconnected")
   Client c;
   c.connect(server.port());
   REQUIRE(pump_until(server, {&c}, [&] { return c.connected; }));
-  const std::uint8_t raw[] = {1, 0, 2, 0, 9, 0};  // HELLO, version 9
+  const std::uint8_t raw[] = {1, 0, 2, 0, 99, 0};  // HELLO, version 99: never this build's
   ENetPacket* p = enet_packet_create(raw, sizeof raw, ENET_PACKET_FLAG_RELIABLE);
   REQUIRE(enet_peer_send(c.peer, kChannelSession, p) == 0);
   REQUIRE(pump_until(server, {&c}, [&] { return c.disconnected; }));

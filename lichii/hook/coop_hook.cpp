@@ -233,6 +233,7 @@ public:
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
+        config.join_password = settings_.password;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
             LOG_ERROR(Core, "coop: ENet did not start; co-op is off");
@@ -1337,8 +1338,8 @@ void Start() {
         LOG_INFO(Core, "coop: off (no server in {} or LICHII_COOP_SERVER)", ini.string());
         return;
     }
-    LOG_INFO(Core, "coop: on, server {}:{}, name '{}'", settings.server, settings.port,
-             settings.name);
+    LOG_INFO(Core, "coop: on, server {}:{}, name '{}', join password {}", settings.server,
+             settings.port, settings.name, settings.password.empty() ? "none" : "set");
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (coop->Begin()) {
         g_coop = std::move(coop);

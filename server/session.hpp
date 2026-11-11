@@ -51,6 +51,10 @@ struct SessionConfig {
   std::string game_build_id;
   std::uint16_t tick_rate = 60;
   std::uint64_t hello_timeout_us = 10'000'000;    // connect to HELLO
+  // The join password (coop_server --password): a player must answer the
+  // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce.
+  // Empty: no password, HELLO is answered at once as before.
+  std::string join_password;
   std::uint64_t silence_timeout_us = 10'000'000;  // nothing heard from a player
   std::uint64_t ping_interval_us = 250'000;
   // A refused connection the transport has not closed this long after the
@@ -203,6 +207,10 @@ struct Stats {
   // HELLOs that took over a stale player of the same name (see
   // rejoin_stale_us).
   std::uint64_t rejoined = 0;
+  // JOIN_PROOFs that did not match the join password (each one refused).
+  std::uint64_t bad_password = 0;
+  // JOIN_PROOFs nobody asked for: no challenge open on that connection.
+  std::uint64_t stray_proof = 0;
 
   // JOIN_PARTNER (stage 1 step 3). Relayed ones count in relayed too.
   std::uint64_t join_relayed = 0;
@@ -309,7 +317,8 @@ class Session {
   bool object_in_fight(const protocol::ObjectId& id, std::uint64_t now_us) const;
 
  private:
-  enum class State : std::uint8_t { awaiting_hello, joined, closing };
+  // awaiting_proof: HELLO came, JOIN_CHALLENGE sent, JOIN_PROOF not yet.
+  enum class State : std::uint8_t { awaiting_hello, awaiting_proof, joined, closing };
 
   struct Connection {
     State state = State::awaiting_hello;
@@ -323,6 +332,9 @@ class Session {
     double byte_budget = 0;
     std::uint64_t budget_time = 0;
     std::optional<std::uint32_t> address;
+    // While awaiting_proof: the HELLO to admit and the nonce it was sent.
+    std::optional<protocol::Hello> pending_hello;
+    protocol::JoinNonce nonce{};
     std::uint8_t number = 0;  // 1 to 4 once joined
     std::string nickname;
     // The scene the player is in, from its latest OBJECT_PRESENT or
@@ -393,6 +405,11 @@ class Session {
 
   void on_hello(ConnectionId id, Connection& c, const protocol::Hello& hello,
                 std::uint64_t now_us);
+  void on_join_proof(ConnectionId id, Connection& c, const protocol::JoinProof& proof,
+                     std::uint64_t now_us);
+  // The checks after the password, then WELCOME.
+  void admit(ConnectionId id, Connection& c, const protocol::Hello& hello,
+             std::uint64_t now_us);
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::size_t bytes, std::uint64_t now_us);
   void on_join_partner(ConnectionId id, Connection& c, protocol::JoinPartner& j);

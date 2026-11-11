@@ -63,3 +63,28 @@ TEST_CASE("command line: --bind and --allow") {
     CHECK(!error.empty());
   }
 }
+
+TEST_CASE("command line: --password and --password-env") {
+  std::string error;
+  auto none = parse_command_line({}, error);
+  REQUIRE(none.has_value());
+  CHECK(none->password.empty());
+  CHECK(none->password_env.empty());
+
+  auto set = parse_command_line({"--password", "hunter2"}, error);
+  REQUIRE(set.has_value());
+  CHECK(set->password == "hunter2");
+  auto env = parse_command_line({"--password-env", "OOT_COOP_SERVER_PASSWORD"}, error);
+  REQUIRE(env.has_value());
+  CHECK(env->password_env == "OOT_COOP_SERVER_PASSWORD");
+
+  for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
+           {"--password"}, {"--password", ""}, {"--password", std::string(129, 'x')},
+           {"--password", "tab\there"}, {"--password-env"}}) {
+    error.clear();
+    CHECK(!parse_command_line(bad, error).has_value());
+    CHECK(!error.empty());
+  }
+  CHECK(password_problem(std::string(128, 'x')) == nullptr);
+  CHECK(password_problem("") == nullptr);
+}

@@ -81,6 +81,13 @@ const Room* RoomByIndex(std::uint8_t index) {
     return index < kRooms.size() ? &kRooms[index] : nullptr;
 }
 
+std::span<const std::string_view> Bodies(const Room& room) {
+    static constexpr std::array<std::string_view, 3> kTwinrovaBodies{
+        "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake"};
+    if (room.boss == kTwinrovaBodies[0]) return kTwinrovaBodies;
+    return {&room.boss, 1};
+}
+
 const Room* RoomOfScene(std::string_view scene) {
     for (const Room& r : kRooms) {
         if (r.scene == scene) {
@@ -191,6 +198,14 @@ void Sync::Take(const proto::BossRoom& m, std::uint64_t now_us) {
     }
 }
 
+void Sync::Defeat(Actions& out) {
+    Say(out, *here_, proto::BossState::defeated);
+    if (std::find(defeated_.begin(), defeated_.end(), here_->index) == defeated_.end()) {
+        defeated_.push_back(here_->index);
+    }
+    out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
+}
+
 void Sync::Say(Actions& out, const Room& room, proto::BossState state) {
     proto::BossRoom m;
     m.scene = std::string(room.scene);
@@ -259,6 +274,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             out.log.push_back("left the boss room of " + std::string(here_->scene));
         }
         here_ = room;
+        provisional_ = false;
         entered_at_ = now_us;
         intro_at_ = 0;
         skip_asked_ = false;
@@ -307,15 +323,36 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         case Phase::fight:
             if (rose) {
                 phase_ = Phase::outro;
-                Say(out, *here_, proto::BossState::defeated);
-                if (!beaten(*here_)) {
-                    defeated_.push_back(here_->index);
+                outro_at_ = now_us;
+                if (local.boss_alive.has_value() && *local.boss_alive) {
+                    // Maybe the death, maybe a grab: decided while it runs.
+                    provisional_ = true;
+                    out.log.push_back("an event in the fight; the boss is still there: waiting to see");
+                } else {
+                    Defeat(out);
                 }
-                out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
             }
             break;
         case Phase::outro:
-            if (fell) {
+            if (provisional_) {
+                const bool gone = local.boss_alive.has_value() && !*local.boss_alive;
+                const bool long_event = now_us - outro_at_ >= kLongEventUs;
+                if (gone || (long_event && local.event)) {
+                    provisional_ = false;
+                    Defeat(out);
+                    if (!gone) out.log.back() += " after a long event";
+                } else if (fell) {
+                    provisional_ = false;
+                    if (!local.boss_alive.has_value()) {
+                        Defeat(out);  // no reading at the end: as before
+                    } else {
+                        phase_ = Phase::fight;
+                        out.log.push_back("the event is over and the boss is alive: the fight goes on");
+                        break;
+                    }
+                }
+            }
+            if (fell && !provisional_ && phase_ == Phase::outro) {
                 phase_ = Phase::done;
             }
             break;
@@ -345,7 +382,8 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 skip_at_ = now_us;
             }
         }
-        const bool fighting = phase_ == Phase::waiting || phase_ == Phase::intro || phase_ == Phase::fight;
+        const bool fighting = phase_ == Phase::waiting || phase_ == Phase::intro || phase_ == Phase::fight ||
+                              (phase_ == Phase::outro && provisional_);
         if (fighting && now_us - sent_at_ >= kSendEveryUs) {
             Say(out, *here_, proto::BossState::in_room);
             sent_at_ = now_us;

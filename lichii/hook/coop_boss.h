@@ -18,9 +18,16 @@
 //   it ends, intro_end. A game whose own intro still runs once any other
 //   player in that room has finished theirs skips the rest of it (the game's
 //   own force skip), so all leave the intro together.
-// - The next event in the room after the fight began is the boss's death
-//   (outro): defeated. Nobody is pulled into that room again until they leave
-//   the dungeon's scene.
+// - The next event in the room after the fight began may be the boss's death
+//   (outro). When the game says whether the boss is alive (Local::boss_alive,
+//   from the object walk), that event is only taken as the death once the
+//   boss is gone or at 0 life, or once it has run kLongEventUs; an event that
+//   ends with the boss alive (a grab, a phase change) goes back to the fight,
+//   so the others are still pulled in (issue 109: a walk-out after such an
+//   event was not pulled back, and its false "defeated" stopped every game).
+//   Without that reading, the first event is the death, as before. After a
+//   real defeat nobody is pulled into that room again until they leave the
+//   dungeon's scene: walking out of a beaten boss room is allowed.
 #pragma once
 
 #include <array>
@@ -75,6 +82,11 @@ struct Room {
     std::span<const std::string_view> parts;  // actor names of the boss and its parts
 };
 
+// The actors that are the boss itself, for "is it alive" (issue 109): the
+// boss actor, and for Twinrova also Koume and Kotake (its first phase). Not
+// its eggs, minions, hands, tentacles or shots.
+std::span<const std::string_view> Bodies(const Room& room);
+
 // The eight boss rooms, by index: 0 to 2 child, 3 to 7 adult.
 std::span<const Room> Rooms();
 const Room* RoomByIndex(std::uint8_t index);
@@ -109,6 +121,10 @@ struct Local {
     std::optional<Vec> position;
     bool event = false;                // an event (cutscene) runs
     std::uint8_t self = 0;             // our player number, 1 to 4 (0 unknown)
+    // The dungeon's boss as the object walk saw it last: true while its actor
+    // is there with life left, false once it is gone or at 0 life, nothing
+    // when the walk does not run (LICHII_COOP_OBJECTS off, or stale).
+    std::optional<bool> boss_alive;
 };
 
 class Sync {
@@ -122,6 +138,9 @@ public:
     // In the room this long without an event: the intro was not played
     // (seen before, for example), so the fight has begun.
     static constexpr std::uint64_t kNoIntroUs = 10'000'000;
+    // An event in the fight this long is the boss's death even when the walk
+    // still sees the boss (a dead boss actor may stay with its life unread).
+    static constexpr std::uint64_t kLongEventUs = 15'000'000;
 
     // Network thread: BOSS_ROOM from the others. Taken on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -144,12 +163,15 @@ private:
         std::uint64_t heard_at = 0;
     };
     void Take(const coop::protocol::BossRoom& m, std::uint64_t now_us);
+    void Defeat(Actions& out);  // our game saw the boss's death
     void Say(Actions& out, const Room& room, coop::protocol::BossState state);
     bool FightActive(const Room& room, std::uint64_t now_us) const;
     bool OtherFinishedIntro(const Room& room, std::uint64_t now_us) const;
 
     // Our side.
     const Room* here_ = nullptr;
+    bool provisional_ = false;   // outro from an event while the boss may be alive
+    std::uint64_t outro_at_ = 0;
     Phase phase_ = Phase::none;
     std::uint64_t entered_at_ = 0;
     std::uint64_t sent_at_ = 0;

@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cstring>
+#include <array>
 #include <optional>
 #include <string>
 #include <variant>
@@ -1809,4 +1810,33 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
     Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
+}
+
+TEST_CASE("objects: a boss is alive while a body actor has life left, unknown without life (issue 109)") {
+    constexpr std::array<std::string_view, 1> kMorpha{"Enemy_DungeonBoss_Morpha"};
+    Seen boss = Chest(0x900, 0);
+    boss.name = "Enemy_DungeonBoss_Morpha";
+    Seen part = Chest(0x910, 0);
+    part.name = "Enemy_DungeonBoss_Morpha_Tentacle";
+    part.life = coop::protocol::ObjectLife{5, 5};
+    CHECK(CoopObjects::BossAlive({part}, kMorpha) == std::optional<bool>(false));  // gone; a part is not the body
+    CHECK_FALSE(CoopObjects::BossAlive({part, boss}, kMorpha).has_value());       // no life read: unknown
+    boss.life = coop::protocol::ObjectLife{12, 20};
+    CHECK(CoopObjects::BossAlive({boss}, kMorpha) == std::optional<bool>(true));
+    boss.life = coop::protocol::ObjectLife{0, 20};
+    CHECK(CoopObjects::BossAlive({boss}, kMorpha) == std::optional<bool>(false));
+
+    // Twinrova's first phase is Koume and Kotake: alive while either is.
+    constexpr std::array<std::string_view, 3> kTwinrova{
+        "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake"};
+    Seen koume = Chest(0x920, 0);
+    koume.name = "Enemy_DungeonBoss_Koume";
+    koume.life = coop::protocol::ObjectLife{8, 8};
+    Seen kotake = koume;
+    kotake.address = 0x930;
+    kotake.name = "Enemy_DungeonBoss_Kotake";
+    kotake.life = coop::protocol::ObjectLife{0, 8};
+    CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(true));
+    koume.life = coop::protocol::ObjectLife{0, 8};
+    CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
 }

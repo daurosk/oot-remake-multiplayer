@@ -111,6 +111,20 @@ bool RemovedWhenTaken(std::string_view name) {
     return false;
 }
 
+std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
+    bool unknown = false;
+    for (const Seen& s : seen) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) == bodies.end()) continue;
+        if (!s.life) {
+            unknown = true;
+        } else if (s.life->life > 0) {
+            return true;
+        }
+    }
+    if (unknown) return std::nullopt;
+    return false;
+}
+
 bool IsShared(std::string_view name) {
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment

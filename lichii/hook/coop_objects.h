@@ -9,7 +9,9 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Core {
@@ -46,6 +48,11 @@ void OnEvent(const coop::net::Event& event);
 // watcher wrote 0 to 1 for another player (a chest opened, a pickup taken
 // there). What of them is loaded now is removed (docs/items.md, "Chests").
 void TakenForOthers(const std::vector<std::uint64_t>& keys);
+
+// Issue 109 (coop_boss): whether the boss with body actors `bodies` was
+// alive in the last walk of LICHII_COOP_OBJECTS (BossAlive); nothing when
+// no walk ran in the last 1.5 s, or its life is not read. Any thread.
+std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies);
 
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).

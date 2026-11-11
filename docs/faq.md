@@ -35,6 +35,10 @@ In the kit: `emulator\user\nand\user\save\`. They are your own and stay on your 
 
 We never ship save files, keys, firmware or the game in a release or in this repository: each player uses their own.
 
+## The update did not happen
+
+`Host.bat`, `Join.bat` and `Update.bat` say why and how to update by hand. Most often: the emulator is still open (close it), there is no network, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). By hand: download the newest `oot-coop-....zip` from the [releases](https://github.com/daurosk/oot-remake-multiplayer/releases), unzip it to a new short folder, copy `emulator\user` and `coop-options.ini` from your old kit into it, and play from there.
+
 ## My coop-options.ini is missing a line I see in the release
 
 From this release on, `Update.bat` and every start of `Host.bat` / `Join.bat` add each key a newer kit has and your file lacks, at the end of the file under "Added by Update.bat", with its comment. Your own lines stay as they are. Before that, an update could miss new keys (such as `server_allow`); copy the line from the release's `coop-options.ini` into yours, or start the kit once after updating.

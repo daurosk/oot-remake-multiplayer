@@ -48,10 +48,25 @@ function Read-YesNo([string]$Question, [int]$Seconds) {
     return $true
 }
 
-# A newer co-op release? One short question to GitHub (update.ps1 -Status), given 6 s at
+# Waits for a key, $Seconds at most, so a message is read before the game starts.
+function Wait-AnyKey([int]$Seconds) {
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected) { return }
+    Write-Host -NoNewline "Press a key to go on (goes on in $Seconds s) "
+    $end = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $end) {
+        if ([Console]::KeyAvailable) { [Console]::ReadKey($true) | Out-Null; break }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host ''
+}
+
+# A newer co-op release? One short question to GitHub (update.ps1 -Status), given 15 s at
 # most: a slow name lookup or proxy search is not bounded by the request's own timeout, so it
-# is stopped when it takes longer. No network, or GitHub down: nothing is said and this kit
-# starts as it is.
+# is stopped when it takes longer. No answer, or an update that fails, is said in one line
+# with what to do, and this kit starts as it is; a failed update waits for a key first, so
+# its message is read before the game window covers it.
 $updater = Join-Path $PSScriptRoot 'update.ps1'
 if (-not $NoUpdate -and (Test-Path $updater)) {
     $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -60,9 +75,16 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
     try {
         $check = Start-Process -FilePath $ps -NoNewWindow -PassThru -RedirectStandardOutput $out -ArgumentList @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$updater`"", '-Status', '-Kit', "`"$kit`"")
-        if ($check.WaitForExit(6000)) { $status = ([System.IO.File]::ReadAllText($out)).Trim() } else { $check.Kill() }
-    } catch { }
+        if ($check.WaitForExit(15000)) { $status = ([System.IO.File]::ReadAllText($out)).Trim() } else {
+            $check.Kill()
+            $status = 'failed GitHub did not answer in 15 s'
+        }
+    } catch { $status = "failed $($_.Exception.Message)" }
     Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+    if ($status -match '^failed (.*)') {
+        Write-Host "Could not check for a new co-op version: $($Matches[1])."
+        Write-Host 'Every player needs the same version. To check again, run Update.bat; releases: https://github.com/daurosk/oot-remake-multiplayer/releases'
+    }
     if ($status -match '^(newer (\S+)|unfinished)$') {
         $what = if ($Matches[2]) { "Co-op $($Matches[2]) is out." } else { 'An update of this kit did not finish.' }
         $when = 'ask'
@@ -90,7 +112,10 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
                 & $ps @next -NoUpdate
                 exit $LASTEXITCODE
             }
-            if ($code -ne 0) { Write-Host 'The update did not happen; this version starts as it is.' }
+            if ($code -ne 0) {
+                Write-Host 'The update did not happen (above: why, and how to update by hand); this version starts as it is.'
+                Wait-AnyKey 60
+            }
         }
     }
 }

@@ -31,6 +31,11 @@ jobs:
             while read -r tag; do v=$(ver "$tag"); if [ -n "$v" ]; then printf '%s %s\n' "$v" "$tag"; fi; done |
             sort -V | tail -n 1 | cut -d' ' -f2)
           if [ -z "$newest" ]; then echo "No release of $repo found."; exit 0; fi
+          # The tag comes from another repository: it goes into a jq filter and an
+          # issue below, so only plain tag names are used (letters, digits, . _ -).
+          case "$newest" in
+            *[!A-Za-z0-9._-]*) echo "Odd tag name from $repo, not used: $newest"; exit 1 ;;
+          esac
           echo "Pinned: $pin ($(ver "$pin")). Newest of $repo: $newest ($(ver "$newest"))."
           higher=$(printf '%s\n%s\n' "$(ver "$pin")" "$(ver "$newest")" | sort -V | tail -n 1)
           if [ "$(ver "$newest")" = "$(ver "$pin")" ] || [ "$higher" = "$(ver "$pin")" ]; then

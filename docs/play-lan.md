@@ -34,10 +34,12 @@ Only the host needs this, and only UDP port 27510 (or the port in `emulator\user
 If the others cannot connect, allow the port by hand: open **Command Prompt as administrator** on the host and run
 
 ```
-netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510 profile=private
+netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510 profile=private remoteip=localsubnet
 ```
 
-Windows must also see your network as **Private** (Settings > Network & internet > your connection > Network profile type). On a **Public** network the rule above does not apply; use `profile=any` instead of `profile=private`, or switch the network to Private.
+`remoteip=localsubnet` lets in only PCs on your own home network, not the whole internet.
+
+Windows must also see your network as **Private** (Settings > Network & internet > your connection > Network profile type). On a **Public** network the rule above does not apply. Switching your home network to Private is the better fix; never allow the port on Public networks for every address (a café or hotel Wi-Fi is a Public network too). If you must, keep `remoteip=localsubnet` and use `profile=any`.
 
 To remove the rule later:
 

@@ -7,6 +7,8 @@ The others must be able to reach the host's PC on **UDP port 27510** (or the por
 - **(a) Port forwarding**: the host opens the port on their router. Fastest, nothing to install, but the host needs access to the router and a public IP address.
 - **(b) A virtual LAN** such as Radmin VPN, Hamachi, ZeroTier or Tailscale: everyone installs the same free program and joins one private network, then it works as on a LAN. Nothing to change on any router.
 
+**Which is safer?** (b). With a virtual LAN only the people in your private network can reach the server. With port forwarding anyone on the internet who learns your address can try to connect: keep the address to the people you play with and list them in `server_allow` (see [Who can join](#who-can-join)).
+
 **When do you need (b)?** When the host cannot forward a port: no access to the router, a shared network (dorm, work, school, hotel), mobile internet, or an internet provider that uses CGNAT (your router's WAN address is not the address that [whatismyip](https://www.whatismyip.com) shows, or starts with `100.64.` to `100.127.`). If you are not sure, try (b): it always works.
 
 ## (a) Port forwarding
@@ -22,7 +24,7 @@ The others must be able to reach the host's PC on **UDP port 27510** (or the por
 
 **Others:** double-click `Join.bat` and type the host's public address.
 
-Your public address can change from time to time (most home connections); check it again before each session. Only share it with people you play with.
+Your public address can change from time to time (most home connections); check it again before each session. Only share it with people you play with, and list theirs in `server_allow` ([Who can join](#who-can-join)). Remove the forwarding rule when you stop playing for a while.
 
 ## (b) Radmin VPN (or another virtual LAN)
 
@@ -35,7 +37,13 @@ Radmin VPN is free and needs no account. ZeroTier and Tailscale work the same wa
 3. **The others:** click **Network > Join network** and enter that name and password.
 4. Everyone now sees each other in the Radmin VPN window. Each PC has a Radmin address that starts with `26.` (shown at the top of the window, for example `26.12.34.56`).
 
-**Host:** double-click `Host.bat` and send your `26.x.x.x` address to the others. If they cannot connect, allow the port in the firewall ([play-lan.md, Firewall](play-lan.md#firewall) with `profile=any`): Windows often treats the Radmin VPN adapter as a Public network.
+**Host:** double-click `Host.bat` and send your `26.x.x.x` address to the others. If they cannot connect, allow the port in the firewall for Radmin addresses only: Windows often treats the Radmin VPN adapter as a Public network. In **Command Prompt as administrator**:
+
+```
+netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510 profile=any remoteip=26.0.0.0/8
+```
+
+For ZeroTier use your network's range instead of `26.0.0.0/8` (my.zerotier.com shows it), for Tailscale `100.64.0.0/10`.
 
 **Others:** double-click `Join.bat` and type the host's `26.x.x.x` address.
 
@@ -53,16 +61,28 @@ Hamachi (LogMeIn) works the same way as Radmin VPN. Its addresses start with `25
 
 **Firewall (host only).** Windows treats the Hamachi adapter as a **Public** network. The server listens on **UDP port 27510** (or the port in `emulator\user\config\coop.ini`), so `coop_server.exe` must be allowed on Public networks. Only the server has to be allowed: the emulator only connects out, on the host's PC too. Either:
 
-- When Windows Firewall asks about `coop_server.exe`, tick **Public networks** as well as Private, then **Allow access**. If you missed that question: Windows Security > Firewall & network protection > **Allow an app through firewall** > Change settings, find `coop_server` and tick **Public**.
-- Or open **Command Prompt as administrator** and run the rule from [play-lan.md, Firewall](play-lan.md#firewall) with `profile=any`:
+- Open **Command Prompt as administrator** and allow the port for Hamachi addresses only (`25.x.x.x`):
 
   ```
-  netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510 profile=any
+  netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510 profile=any remoteip=25.0.0.0/8
   ```
+
+- Ticking **Public networks** when Windows Firewall asks about `coop_server.exe` also works, but then the server can be reached from any Public network your PC is on (a café or hotel Wi-Fi too). Prefer the rule above.
+
+Only join Hamachi networks of people you know: everyone in the network can reach your server.
 
 **Check that it works.** When someone joins, the host's server window shows `player 2 joined: <name>`. The joining player's log (`emulator\user\log\eden_log.txt`) has `coop: welcomed as player 2 on 25.x.x.x:27510`. If the joiner's panel stays on `connecting`, see Troubleshooting below. Check first that both of you are shown as online (green) in the Hamachi window.
 
 A virtual LAN adds a little delay when it cannot connect the PCs directly; the ping in the game's co-op panel shows how much.
+
+## Who can join
+
+By default anyone who can reach the server's port may join. Two lines in the host's `coop-options.ini` (beside `Host.bat`) narrow that:
+
+- `server_allow = 25.1.2.3,25.4.5.6`: only these addresses may connect; anyone else is turned away at once. Use the others' Hamachi (`25.`), Radmin (`26.`) or Tailscale (`100.`) addresses, or with port forwarding their public addresses (whatismyip.com on their PC). A whole range: `26.0.0.0/8`.
+- `server_bind = 25.1.2.3`: the server listens only on this address of your own PC (your Hamachi or Radmin address), so it cannot be reached through your home network or Wi-Fi at all.
+
+Remove the `#` in front of the line, put in the addresses and start `Host.bat` again. The server window then says `listening on port 27510 (only 25.1.2.3, ...)` and `only the N address range(s) given with --allow may connect`. A player who is turned away is counted as `not allowed` when the server stops. More in [SECURITY.md](../SECURITY.md).
 
 ## Does shared progress stay in my save after I disconnect?
 

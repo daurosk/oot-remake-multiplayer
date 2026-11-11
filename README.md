@@ -25,6 +25,8 @@ What works in it: the other players as Link (child and adult) with Navi and a na
 
 Known issues of test7: the ocarina is not shown in the other players' hands and its songs are not heard; fishing with two players is not shared; order puzzles split between two players do not count; bosses target one player at a time. See [Known issues](docs/known-issues.md) and the release notes.
 
+**Safety.** Only the host opens a port: UDP 27510 for the co-op server; players who join open nothing. The server and the games check every message against fixed limits and never write where a message says, and the updater downloads only this project's releases over HTTPS and checks their SHA-256. Prefer a virtual LAN to port forwarding, open the firewall only for your LAN or VPN addresses, and list the players who may join with `server_allow` in the host's `coop-options.ini` ([Who can join](docs/play-online.md#who-can-join)). Details and how to report a problem: [SECURITY.md](SECURITY.md).
+
 Every player needs the same release: a game of one release refuses a server of another. A kit from test3 on updates itself with `Update.bat` (a test2 kit: download `Update.bat` from the newest release first; see [Updating](docs/setup.md#updating)).
 
 ## Status

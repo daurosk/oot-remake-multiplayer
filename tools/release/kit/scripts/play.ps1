@@ -255,8 +255,14 @@ foreach ($key in $options.Keys) {
     Write-Host "Option: $key=$value"
 }
 # AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).
-$gpl = Set-AmdGplDefault
+$cardList = $null
+try { $cardList = @(Get-CimInstance Win32_VideoController -OperationTimeoutSec 5 -ErrorAction Stop) } catch { }
+$cardQuery = if ($null -ne $cardList) { { $cardList }.GetNewClosure() } else { { throw 'no card list' } }
+$gpl = Set-AmdGplDefault $cardQuery
 if ($gpl) { Write-Host $gpl }
+# Built-in graphics only: point to the 30 FPS button (docs/setup.md, "Low frame rate").
+$speed = Get-GpuSpeedHint $cardQuery
+if ($speed) { Write-Host $speed }
 $pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
 if (Test-Path -LiteralPath $pack) {
     Write-Host 'Puppet pack: found.'

@@ -58,32 +58,48 @@ function Protect-LogText([string]$Text, [hashtable]$State,
                          [string]$UserName = $env:USERNAME, [string]$PcName = $env:COMPUTERNAME) {
     if (-not $Text) { return $Text }
     $t = $Text
-    # Passwords and other secrets in ini files (password = ..., server_password = ...):
-    # a set value becomes (removed); an empty one stays empty, so a reader sees none was set.
-    $t = [regex]::Replace($t, '(?im)^([ \t]*[\w.]*(?:password|secret|token)\w*[ \t]*=)[ \t]*[^\s][^\r\n]*', '$1 (removed)')
-    # MAC addresses first (their colon form would otherwise look like IPv6 groups).
+    # Passwords and other secrets (password = ..., server_password=..., Password : ...,
+    # --password x): a set value becomes (removed); an empty one stays empty, so a reader
+    # sees none was set.
+    $t = [regex]::Replace($t, '(?im)^([ \t]*[\w.]*(?:password|secret|token)\w*[ \t]*[=:])[ \t]*[^\s][^\r\n]*', '$1 (removed)')
+    $t = [regex]::Replace($t, '(?i)(--?[\w-]*(?:password|secret|token)[\w-]*)(?:[ \t]+|=)(?!-)\S+', '$1 (removed)')
+    # MAC addresses first (their colon form would otherwise look like IPv6 groups), also
+    # the dotted form aabb.ccdd.eeff.
     $t = [regex]::Replace($t, '(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])', '<mac>')
-    # IPv6 (before IPv4, so ::ffff:1.2.3.4 is one address).
-    $t = [regex]::Replace($t, '(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:[0-9A-Fa-f]{0,4}|\d{1,3}(?:\.\d{1,3}){3})(?:%[\w.-]+)?(?![\w:])', {
+    $t = [regex]::Replace($t, '(?<![\w.])[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}(?![\w.])', '<mac>')
+    # IPv6 (before IPv4, so ::ffff:1.2.3.4 is one address: the dotted ending is tried
+    # first). A mapped IPv4 (::ffff:a.b.c.d) gets the tag of that IPv4.
+    $t = [regex]::Replace($t, '(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]{0,4})(?:%[\w.-]+)?(?![\w:]|\.\d)', {
         param($m)
         $kind = Get-MaskKind6 $m.Value
         if (-not $kind) { return $m.Value }
         $ip = [System.Net.IPAddress]::Parse(($m.Value -replace '%.*$', ''))
+        if ($ip.IsIPv4MappedToIPv6) {
+            $v4 = $ip.MapToIPv4().ToString()
+            $kind4 = Get-MaskKind4 $v4
+            if ($kind4) { return Get-MaskTag $State $kind4 $v4 }
+        }
         Get-MaskTag $State $kind $ip.ToString()
     })
-    # IPv4: four numbers, not part of a longer dotted number (a version like 1.1.1 or
-    # 10.0.26200.0 stays).
-    $t = [regex]::Replace($t, '(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d]|\.\d)', {
+    # IPv4: four numbers, not part of a longer dotted number and not a version (1.1.1,
+    # 10.0.26200.0 and v1.2.3.4 stay).
+    $t = [regex]::Replace($t, '(?<![\d.vV])\d{1,3}(?:\.\d{1,3}){3}(?![\d]|\.\d)', {
         param($m)
         $kind = Get-MaskKind4 $m.Value
         if (-not $kind) { return $m.Value }
         Get-MaskTag $State $kind $m.Value
     })
+    # A host name typed as the server (server = myhost.example.org) becomes <host>;
+    # localhost and masked addresses stay.
+    $t = [regex]::Replace($t, '(?im)^([ \t]*server[ \t]*=[ \t]*)(?!localhost\b)([A-Za-z][\w.-]*)', '$1<host>')
     # The user name in paths (C:\Users\name, C:/Users/name, \\?\C:\Users\name).
     $t = [regex]::Replace($t, '(?i)([A-Z]:[\\/]+Users[\\/]+)[^\\/\r\n"''<>|:*?]+', '$1<user>')
-    # The user name and the PC name on their own (3 letters or more, whole words only).
-    foreach ($p in @(@($UserName, '<user>'), @($PcName, '<pc>'))) {
-        if ($p[0] -and $p[0].Length -ge 3) {
+    # The user name and the PC name on their own, whole words only. A short or common
+    # user name (Link, User, Admin, Player) would mangle every log line, so the user name
+    # needs 5 letters or more and must not be one of those.
+    $common = @('admin', 'administrator', 'user', 'users', 'owner', 'player', 'guest', 'link', 'zelda', 'navi', 'default', 'public')
+    foreach ($p in @(@($UserName, '<user>', 5), @($PcName, '<pc>', 3))) {
+        if ($p[0] -and $p[0].Length -ge $p[2] -and $common -notcontains $p[0].ToLowerInvariant()) {
             $t = [regex]::Replace($t, '(?i)(?<![\w])' + [regex]::Escape($p[0]) + '(?![\w])', $p[1])
         }
     }

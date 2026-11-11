@@ -62,9 +62,30 @@ Check ($got -eq "[coop]`r`nserver = <hamachi-1>`r`npassword = (removed)`r`n") "c
 $got = Mask "server_password=s3cret`nserver_allow = 81.2.3.4`nserver_password =`n"
 Check ($got -eq "server_password= (removed)`nserver_allow = <public-1>`nserver_password =`n") "coop-options.ini server_password removed, empty kept (got '$got')"
 
+$got = Mask "Password : abc`n--password hunter2 --port 27510`n-password=xyz"
+Check ($got -eq "Password : (removed)`n--password (removed) --port 27510`n-password (removed)") "other password forms removed (got '$got')"
+
+# IPv4-mapped IPv6: no octet leaks, and it shares the plain IPv4's tag.
+$s = New-MaskState
+$a = Mask 'from ::ffff:203.0.113.9 and 203.0.113.9' $s
+$b = Mask 'peer [::ffff:192.168.1.5]:9050' $s
+$c = Mask 'nat64 64:ff9b::203.0.113.1 ok. end 2001:db8::5.' $s
+Check ($a -eq 'from <public-1> and <public-1>' -and $b -eq 'peer [<lan-1>]:9050') "IPv4-mapped IPv6 (got '$a' / '$b')"
+Check ($c -notmatch '113' -and $c -match 'end <public-\d>\.$') "embedded IPv4 and an address before a full stop (got '$c')"
+
+# A server host name, the dotted MAC form, and a short or common user name left alone.
+$got = Mask "server = myhost.duckdns.org`nserver = localhost`nserver_allow = 1.2.3.4"
+Check ($got -eq "server = <host>`nserver = localhost`nserver_allow = <public-1>") "server host name (got '$got')"
+$got = Mask 'mac aabb.ccdd.eeff'
+Check ($got -eq 'mac <mac>') "dotted MAC (got '$got')"
+$got = Protect-LogText 'Link spawned near Link_actor' (New-MaskState) 'Link' 'PC1'
+Check ($got -eq 'Link spawned near Link_actor') "a common user name is not replaced on its own (got '$got')"
+$got = Protect-LogText 'C:\Users\Link\kit' (New-MaskState) 'Link' 'PC1'
+Check ($got -eq 'C:\Users\<user>\kit') "but it is replaced in a path (got '$got')"
+
 # What must stay.
 foreach ($keep in @('game 1.1.1 (v131072)', 'Microsoft Windows NT 10.0.26200.0', 'driver 32.0.15.6094',
-                    'bind 0.0.0.0:27510', '[12:34:56.789] tick', 'Core::Frontend started', 'protocol 9, build v0.1.0')) {
+                    'bind 0.0.0.0:27510', '[12:34:56.789] tick', 'Core::Frontend started', 'protocol 9, build v0.1.0', 'v1.2.3.4', 'fritchii-v5.8.4')) {
     $got = Mask $keep
     Check ($got -eq $keep) "'$keep' stays (got '$got')"
 }

@@ -100,7 +100,12 @@ bool IsMovable(std::string_view name) {
         return false;
     }
     return name.find("MovableBox_") != std::string_view::npos ||
-           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_");
+           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_") || IsRoller(name);
+}
+
+bool IsRoller(std::string_view name) {
+    return name.starts_with("Obj_") && name.find("RollingRock_") != std::string_view::npos &&
+           name.find("RollingRockArea") == std::string_view::npos;
 }
 
 bool IsBlockAnchor(std::string_view name) {
@@ -894,7 +899,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         v.time_us = now_us;
         v.position = o.position;
         v.rotation = UnitQuat(o.rotation);
-        if (!o.shifter && player && Distance(*player, o.position) <= 1.5f) {
+        if (!o.shifter && !o.roller && player && Distance(*player, o.position) <= 1.5f) {
             v.flags |= proto::world_move::carried;
         }
         out.send.emplace_back(std::move(v));
@@ -1046,6 +1051,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                 o.count = KeyCountOf(scene_).value_or("");
             }
             o.shifter = shifter;
+            o.roller = IsRoller(s.name);
             o.hold = shifter && HoldsPlace(s.name);
             o.life = life;
             o.position = s.position;

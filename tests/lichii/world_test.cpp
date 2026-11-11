@@ -817,16 +817,21 @@ TEST_CASE("doors: both opened the lock at once: the higher player number gives i
 TEST_CASE("world: movables, grass actors and the new breakables by name") {
     for (const char* name : {"Obj_MovableBox_A_01", "Obj_ForestTemple_MovableBox_A_03",
                              "Obj_LonLonRanch_MovableBox_A_01", "Obj_SliderBox_A_01",
-                             "Obj_AmosStatue_A_01"}) {
+                             "Obj_AmosStatue_A_01", "Obj_Kokiri_RollingRock_A_01", "Obj_RollingRock_A_05",
+                             "Obj_Firetemple_RollingRock_A_01"}) {
         CAPTURE(name);
         CHECK(CoopWorld::IsMovable(name));
         CHECK_FALSE(CoopWorld::IsBreakable(name));
     }
     for (const char* name : {"Obj_MovableBox_BasePosAnchor", "Obj_Pot_A_01", "Obj_Deku_MoveFloor_A_01",
-                             "Enemy_MovableBox_A_01", "Obj_RollingRock_A_01"}) {
+                             "Enemy_MovableBox_A_01", "Land_Kokiri_RollingRockArea_A_01",
+                             "FldObj_AirWall_RollingRock", "RollingRockSpawnActor_DeathMountainTrail"}) {
         CAPTURE(name);
         CHECK_FALSE(CoopWorld::IsMovable(name));
     }
+    CHECK(CoopWorld::IsRoller("Obj_Kokiri_RollingRock_A_01"));
+    CHECK_FALSE(CoopWorld::IsRoller("Obj_MovableBox_A_01"));
+    CHECK_FALSE(CoopWorld::IsPushBlock("Obj_Kokiri_RollingRock_A_01"));
     CHECK(CoopWorld::IsBreakable("Obj_Zora_GuidePost_A_01"));
     CHECK(CoopWorld::IsBreakable("Obj_RedIce_A_01"));
     CHECK(CoopWorld::IsGrassActor(kTuft));
@@ -1117,6 +1122,47 @@ TEST_CASE("world: two players moving one object: the lower number keeps it") {
     u.Poses(1400 * kMs, poses);
     REQUIRE(poses.size() == 1);
     CHECK(poses[0].position[0] == doctest::Approx(9.0f));
+}
+
+TEST_CASE("world: a rolling boulder rolls for everyone as the nearest game rolls it (issue 84)") {
+    const char* rock = "Obj_Kokiri_RollingRock_A_01";
+    auto at = [rock](std::uint64_t t) {
+        // It rolls 2 m a second along x past our Link, never resting.
+        return Thing(0x100, 0x60, std::nullopt, rock, {1.0f + static_cast<float>(t - 1000) / 500.0f, 2.0f, 3.0f});
+    };
+    WorldSync a;  // player 1, beside it
+    Walk(a, 1000 * kMs, {at(1000)}, kLink, 1);
+    std::size_t moves = 0;
+    for (std::uint64_t t = 1100; t <= 3000; t += 100) {
+        const auto out = Walk(a, t * kMs, {at(t)}, kLink, 1);
+        for (const auto& m : Sent<proto::WorldMove>(out)) {
+            CHECK(m.flags == 0);  // rolling past Link is not carrying it
+            ++moves;
+        }
+        CHECK(Sent<proto::WorldPlace>(out).empty());  // it never rests
+    }
+    CHECK(moves >= 15);
+    CHECK(a.MoverOf(0x60) == 1);
+    // Player 2 rolls its own copy too, beside it, but player 1's rolls come in: it follows them.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {at(1000)}, kLink, 2);
+    b.Receive(MoveOf(0x60, 1050 * kMs, 1.1f, 1));
+    CHECK(Sent<proto::WorldMove>(Walk(b, 1100 * kMs, {at(1100)}, kLink, 2)).empty());
+    for (std::uint64_t t = 1200; t <= 2000; t += 100) {
+        b.Receive(MoveOf(0x60, (t - 50) * kMs, 1.0f + static_cast<float>(t - 1050) / 500.0f, 1));
+        CHECK(Walk(b, t * kMs, {at(t + 300)}, kLink, 2).send.empty());  // its own roll drifted ahead
+    }
+    CHECK(b.MoverOf(0x60) == 1);
+    std::vector<CoopObjects::PoseWrite> poses;
+    b.Poses(2000 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].position[0] < 1.0f + 1000.0f / 500.0f);  // player 1's place, not its own
+    // Player 1 leaves: its rolls stop; after the quiet time player 2 rolls it for the others.
+    bool took = false;
+    for (std::uint64_t t = 2100; t <= 5000 && !took; t += 100) {
+        took = !Sent<proto::WorldMove>(Walk(b, t * kMs, {at(t)}, kLink, 2)).empty();
+    }
+    CHECK(took);
 }
 
 TEST_CASE("world: a block first seen after it was moved goes to its rest place") {

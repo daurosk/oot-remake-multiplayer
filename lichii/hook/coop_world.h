@@ -34,8 +34,18 @@ bool IsBreakable(std::string_view name);
 
 // True for the objects a player moves without breaking them: push and pull
 // blocks of every dungeon (the MovableBox family, the Armos statue that is
-// one, the slider box).
+// one, the slider box), and the placed rolling boulders (IsRoller).
 bool IsMovable(std::string_view name);
+
+// The placed boulders that roll on their own (issue 84: the Kokiri Sword
+// crawlspace's Obj_Kokiri_RollingRock_A_01; the Fire Temple, Gerudo Training
+// Ground, Spirit Temple, Water Temple and Ganon's Castle ones; 22 placements
+// in all). Every game rolls its own, so they drift apart; shared as a
+// movable: the game nearest to it that moves it first (the lower player
+// number if two) sends its rolls, the others follow. Never "carried". Not
+// the spawned Death Mountain Trail rocks (no placement hash) nor the
+// RollingRockArea scenery.
+bool IsRoller(std::string_view name);
 
 // A door's lock (Obj_DoorChainLock_*, Obj_SpiritTemple_DoorChainLock_*; a door
 // set places one on each side): it goes when opened and the opener's game
@@ -523,6 +533,7 @@ private:
         coop::protocol::Vec3 sent_position{};
         bool following = false;            // another game's moves are placed
         bool stirred = false;              // moved since the walk before
+        bool roller = false;               // IsRoller: rolls on its own
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it

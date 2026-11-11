@@ -33,8 +33,11 @@ namespace {
 // a room graph sets (InsideTheDekuTree_RoomK_Failure, the Scrub Brothers' wrong
 // order; FireTemple_Room08/10/13_SwitchWasReset;
 // InsideGanonCastle_Dungeon_Room08_CandleWasReset). Shared, one player's
-// failure would reach another in the middle of their own try. The solve itself
-// (InsideTheDekuTree_RoomK_Cleared, ..._EnemyScrubDekuDestroy_003) is shared.
+// failure would reach another in the middle of their own try. Nothing in the
+// romfs or main reads them (Room10's is read but never written), so leaving
+// them out cannot strand a switch. The solve itself
+// (InsideTheDekuTree_RoomK_Cleared, ..._EnemyScrubDekuDestroy_003) is shared,
+// and so are _001/_002 (each set once when a lone scrub is beaten).
 constexpr std::array kFlags = std::to_array<Flag>({
     {0xfff1ad87, false, "BottomOfTheWell_BubbleAppear"},
     {0x0b5b3b0c, false, "BottomOfTheWell_CoffinRoomCheck"},

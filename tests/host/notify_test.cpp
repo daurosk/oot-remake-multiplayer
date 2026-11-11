@@ -57,7 +57,7 @@ TEST_CASE("notify: one line for what another player's change gave us") {
   CHECK(lines[0] == "Player 3 got a Heart Container - your max health went up");  // no name known
   lines = n.Take({Bool("DungeonInfo.InsideTheDekuTree.IsGetMap", 2), Bool("IsGet.Item_Melody_ZeldaLullaby", 2),
                   Int("PouchData.Item_Token_Gold.StockNum", 11, 12, 2)},
-                 1, 1300);
+                 1, 1300 + Notifier::kWindowMs);  // after the window of the lines above
   REQUIRE(lines.size() == 3);
   CHECK(lines[0] == "Tobi got the map (Deku Tree)");
   CHECK(lines[1] == "Tobi learned Zelda's Lullaby");

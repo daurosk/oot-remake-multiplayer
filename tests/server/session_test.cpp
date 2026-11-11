@@ -169,8 +169,8 @@ TEST_CASE("a fifth player is refused as server full and dropped") {
 TEST_CASE("a wrong protocol version is refused, even when the rest cannot be read") {
   Harness h;
   h.connect(1);
-  // A HELLO of version 8 (not ours) whose body is just the version: unreadable as v0.
-  Bytes b = {1, 0, 2, 0, 8, 0};
+  // A HELLO of version 99 (not ours) whose body is just the version: unreadable as v0.
+  Bytes b = {1, 0, 2, 0, 99, 0};
   h.receive_raw(1, b, kChannelSession);
   const auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused.has_value());

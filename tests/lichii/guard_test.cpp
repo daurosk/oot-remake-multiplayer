@@ -119,7 +119,7 @@ TEST_CASE("guard: a held change is dropped when its address holds another actor 
     CHECK(r.released == 1);
 }
 
-TEST_CASE("guard: two held hurts both land; a hurt behind a written life becomes that life") {
+TEST_CASE("guard: two held hurts both land, and a hurt behind a written life becomes that life") {
     who = {{0x100, 0xa}};
     CoopGuard::Held<Life> held{[](Life& kept, Life&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
     const Local talking{true, Vec3{0, 0, 0}};

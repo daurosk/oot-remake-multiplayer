@@ -526,8 +526,10 @@ private:
     // that came while no walk ran (title screen, save load, scene load: the
     // join snapshot) is for actors the game makes knowing the key.
     static constexpr std::uint64_t kTakeGapUs = 1'500'000;
-    // An actor this close to our Link is not removed: we may be opening that
-    // chest ourselves (both players at once), or standing on it.
+    // An actor this close to our Link is not removed (a pickup we may be
+    // taking ourselves). Not for chests (issue 87): a chest beside us shows
+    // itself open (our own opening at the same time, or the shared flag) or
+    // goes after kChestOpenWaitUs, so it is never opened twice.
     static constexpr float kTakeNearM = 3.0f;
     // A chest (Obj_TBox_*) taken here is given this long to show itself open
     // (its own AI reads the shared opened flag, issue 87: an animation with

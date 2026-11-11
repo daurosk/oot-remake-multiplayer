@@ -586,27 +586,52 @@ TEST_CASE("objects: a chest opened elsewhere that shows itself open stays, open 
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x600});
 }
 
-TEST_CASE("objects: a chest beside our Link is not removed (we may be opening it too)") {
+TEST_CASE("objects: a pickup beside our Link is not removed (we may be taking it too)") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
-    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chest
-    sync.Take(0x3c5bb811b4cf54dd);
-    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from it
+    Seen heart = Chest(0x500);
+    heart.name = "Obj_Heart_Piece";
+    sync.Take(heart.hash);
+    Tick(sync, 10 * kMs, {heart, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {heart, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     bool said = false;
     for (const auto& n : sync.TakeNotes()) said |= n.find("our Link is beside it") != std::string::npos;
     CHECK(said);
     // Walking away later does not remove it: the bind window is over.
     sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
-    Tick(sync, 30 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 30 * kMs, {heart, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
-    // Another chest of the same take, far away, in the window: removed.
+    // Another of the same kind far away, in the window: removed at once.
+    Seen far = heart;
+    far.address = 0x900;
+    far.hash = 0x1111;
     sync.Take(0x1111);
-    Tick(sync, 40 * kMs, {Chest(0x900, 0x1111), Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes().empty());  // its wait to show itself open
-    Tick(sync, 1600 * kMs, {Chest(0x900, 0x1111), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 40 * kMs, {far, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x900});
+}
+
+TEST_CASE("objects: a chest beside our Link shows open or goes, it is never left closed (issue 87)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chests
+    // Closed after the wait: removed, so it cannot be opened (and give) twice.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    Tick(sync, 1600 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+    // Both players opening at once: ours plays its opening, it stays.
+    Seen opening = Chest(0x600, 0x2222);
+    opening.animation = proto::Animation{};
+    opening.animation->name = "Open";
+    sync.Take(0x2222);
+    Tick(sync, 1610 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1620 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3500 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
 }
 
 TEST_CASE("objects: a take for a chest not loaded removes nothing that loads later") {

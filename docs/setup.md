@@ -1,6 +1,6 @@
 # Setting up the co-op test release
 
-This is an early test build (v0.1.0-test2) of online co-op for the Ocarina of Time remake on the Fritchii emulator. Expect bugs; [known-issues.md](known-issues.md) lists what works and what does not yet. After this page, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet) says how to play together.
+This is an early test build of online co-op (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)) for the Ocarina of Time remake on the Fritchii emulator. Expect bugs; [known-issues.md](known-issues.md) lists what works and what does not yet. After this page, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet) says how to play together.
 
 ## What you need
 

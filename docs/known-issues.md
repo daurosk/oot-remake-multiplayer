@@ -1,4 +1,4 @@
-# Known issues in the test release (v0.1.0-test6)
+# Known issues in the test release (the newest on the releases page)
 
 This is an early test release. Everything under "Works" was seen in our two-game tests: two copies of the game on one PC talking through the server, driven by the [autotest](../tools/autotest) scripts, with the logs and screenshots of both games read afterwards. Testers have played earlier releases on separate PCs, over a LAN and the internet. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)).
 

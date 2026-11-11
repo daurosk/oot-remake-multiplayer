@@ -589,7 +589,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                          now_us - last_tick_us_ > kTakeGapUs;
         if (!gap) {
             for (const std::uint64_t hash : takes) {
-                taken_.try_emplace(hash);
+                taken_.try_emplace(hash).first->second.since_us = now_us;
             }
         } else if (!takes.empty()) {
             notes_.emplace_back(std::to_string(takes.size()) +
@@ -610,9 +610,28 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (!near && t->second.ticks < kTakeBindTicks && t->second.addresses.insert(s.address).second) {
                     char key[24];
                     std::snprintf(key, sizeof key, "%#llx", static_cast<unsigned long long>(s.hash));
-                    notes_.emplace_back(s.name + " " + key + ": taken or opened in another game, removed here");
+                    notes_.emplace_back(s.name + " " + key +
+                                        (s.name.starts_with("Obj_TBox_")
+                                             ? ": opened in another game, waiting to see it open here"
+                                             : ": taken or opened in another game, removed here"));
                 }
                 if (t->second.addresses.contains(s.address)) {
+                    // A chest may show itself open from the shared flag (issue
+                    // 87): left so; removed only if still closed after the wait.
+                    if (s.name.starts_with("Obj_TBox_")) {
+                        Taking& tk = t->second;
+                        const bool open = s.animation &&
+                                          s.animation->name.find("Open") != std::string::npos;
+                        if (open || tk.shown_open.contains(s.address)) {
+                            if (tk.shown_open.insert(s.address).second) {
+                                notes_.emplace_back(s.name + ": opened in another game, shows open here");
+                            }
+                            continue;
+                        }
+                        if (now_us - tk.since_us < kChestOpenWaitUs) {
+                            continue;  // not yet: it may still open itself
+                        }
+                    }
                     hidden.insert(s.address);
                     continue;  // gone for everyone: not shared, not sent
                 }

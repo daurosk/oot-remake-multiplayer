@@ -126,6 +126,8 @@ class Session {
   // loaded in the game (FlagWatcher::share_pickup). False when flags are not
   // shared or it was known.
   bool share_pickup(FlagKey key) { return watcher_ && watcher_->share_pickup(key); }
+  // FlagWatcher::share_one_way (a named Bool, one way).
+  bool share_one_way(FlagKey key) { return watcher_ && watcher_->share_one_way(key); }
   // Emulator thread only: FlagWatcher::take_written_for_others (empty when
   // flags are not shared).
   std::vector<FlagKey> take_written_for_others() {

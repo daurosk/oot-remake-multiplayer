@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -62,15 +63,15 @@ TEST_CASE("chests: Merge adds the keys, or nothing when off") {
     std::optional<host::SharedFlags> none;
     CHECK(CoopChests::Merge(none, false) == 0);
     CHECK_FALSE(none.has_value());
-    CHECK(CoopChests::Merge(none, true) == CoopChests::Keys().size());
+    CHECK(CoopChests::Merge(none, true) == CoopChests::Keys().size() + CoopChests::OpenedFlags().size());
     REQUIRE(none.has_value());
     CHECK(none->contains(host::FlagKey::key64_flag(CoopChests::Keys()[0].key)));
     // With the dungeon list first, nothing is counted twice.
     std::optional<host::SharedFlags> both;
     CoopDungeon::Merge(both, true);
     const std::size_t dungeon = both->size();
-    CHECK(CoopChests::Merge(both, true) == CoopChests::Keys().size());
-    CHECK(both->size() == dungeon + CoopChests::Keys().size());
+    CHECK(CoopChests::Merge(both, true) == CoopChests::Keys().size() + CoopChests::OpenedFlags().size());
+    CHECK(both->size() == dungeon + CoopChests::Keys().size() + CoopChests::OpenedFlags().size());
 }
 
 TEST_CASE("chests: a chest opened in A is written in B and reported for B's loaded copy, not A's") {
@@ -169,5 +170,63 @@ TEST_CASE("chests: a Deku Tree chest opened in A is written in B and reported fo
     wb.frame(b);
     CHECK(b.values[chest].value == 1);
     CHECK(wb.take_written_for_others() == std::vector<host::FlagKey>{chest});
+    CHECK(wa.take_written_for_others().empty());
+}
+
+TEST_CASE("chests: every chest's opened flag, the Deku Tree's and the Graveyard's included (issue 87)") {
+    std::set<std::uint32_t> flags;
+    std::set<std::uint64_t> keys;
+    std::size_t deku = 0;
+    for (const auto& o : CoopChests::OpenedFlags()) {
+        CHECK(o.flag != 0);
+        CHECK(flags.insert(o.flag).second);
+        CHECK(keys.insert(o.key).second);
+        CHECK(std::string_view(o.actor).find("TBox") != std::string_view::npos);
+        CHECK(std::string_view(o.actor).find("Shop_TBox") == std::string_view::npos);
+        deku += std::string_view(o.area) == "InsideTheDekuTree" ? 1 : 0;
+    }
+    CHECK(CoopChests::OpenedFlags().size() == 194);
+    CHECK(deku == 6);
+    // The live check of docs/flags.md: the flower-grave chest set Bool 0x39e4b7ec.
+    CHECK(CoopChests::KeyOfOpened(0x39e4b7ecu) == std::optional<std::uint64_t>{0xeab569abb9d4d59aull});
+    // The Deku Tree's compass chest (the test6 report) has one.
+    bool compass = false;
+    for (const auto& o : CoopChests::OpenedFlags()) compass |= o.key == 0x80d8145de418987bull;
+    CHECK(compass);
+    CHECK_FALSE(CoopChests::KeyOfOpened(0x12345678u).has_value());
+}
+
+TEST_CASE("chests: Merge shares the opened flags too, opened in A, B's chest is reported (issue 87)") {
+    std::optional<host::SharedFlags> list;
+    CoopChests::Merge(list, true);
+    REQUIRE(list.has_value());
+    const auto& o = CoopChests::OpenedFlags()[0];
+    const auto flag = host::FlagKey(o.flag, 0);
+    CHECK(list->contains(flag));
+    Game a;
+    Game b;
+    a.set(flag, 0);
+    b.set(flag, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    for (host::FlagWatcher* w : {&wa, &wb}) {  // as the hook does with pickups on
+        for (const auto& f : CoopChests::OpenedFlags()) w->share_one_way(host::FlagKey(f.flag, 0));
+    }
+    wa.frame(a);
+    wb.frame(b);
+    a.set(flag, 1);  // A opens the chest: its game sets the chest's own Bool
+    proto::Message m;
+    const auto* set = AsSet(wa.frame(a), m);
+    REQUIRE(set);
+    const proto::FlagState state{1, set->flags};
+    wa.receive(proto::Message{state});
+    wb.receive(proto::Message{state});
+    wa.frame(a);
+    wb.frame(b);
+    CHECK(b.values[flag].value == 1);
+    const auto taken = wb.take_written_for_others();
+    REQUIRE(taken == std::vector<host::FlagKey>{flag});
+    // The hook turns it into the chest's placement key for the objects walk.
+    CHECK(CoopChests::KeyOfOpened(taken[0].hash) == std::optional<std::uint64_t>{o.key});
     CHECK(wa.take_written_for_others().empty());
 }

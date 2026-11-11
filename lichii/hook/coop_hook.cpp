@@ -254,6 +254,10 @@ public:
             for (const auto& k : CoopChests::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
+            // What a real opening sets (issue 87): the chest's own Bool.
+            for (const auto& o : CoopChests::OpenedFlags()) {
+                session_->share_one_way(coop::protocol::FlagKey(o.flag, std::uint16_t{0}));
+            }
         }
         thread_ = std::thread([this] { Run(); });
         return true;
@@ -317,7 +321,11 @@ public:
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
             std::vector<std::uint64_t> keys;
             for (const auto& k : taken) {
-                keys.push_back(k.key);
+                if (k.kind == coop::protocol::FlagKeyKind::key64) {
+                    keys.push_back(k.key);
+                } else if (const auto chest = CoopChests::KeyOfOpened(k.hash)) {
+                    keys.push_back(*chest);  // a chest's opened flag: that chest (issue 87)
+                }
             }
             CoopObjects::TakenForOthers(keys);
         }

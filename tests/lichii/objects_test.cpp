@@ -494,17 +494,20 @@ TEST_CASE("objects: a chest opened elsewhere goes only while it was loaded close
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // A chest first gets kChestOpenWaitUs to show itself open (issue 87).
+    CHECK(sync.Removes().empty());
+    Tick(sync, 1600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
     // The room loads again in the same scene (a new actor): the game made it
     // open, knowing the key. Left alone.
     chest.address = 0x600;
-    Tick(sync, 900 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1700 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     // Another scene and back: the take is forgotten, nothing goes.
-    Tick(sync, 1000 * kMs, {}, 1, "Other");
+    Tick(sync, 1800 * kMs, {}, 1, "Other");
     CHECK_FALSE(sync.Taken(chest.hash));
     chest.address = 0x700;
-    Tick(sync, 2000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2800 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
 
@@ -546,7 +549,41 @@ TEST_CASE("objects: keys written while no walk ran remove nothing (title, save l
     sync.Take(0x3c5bb811b4cf54dd);
     Tick(sync, 3040 * kMs, {Enemy(0x200, 0x22, 2)}, 1, "Other");
     Tick(sync, 3050 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    CHECK(sync.Removes().empty());  // the chest's wait to show itself open
+    Tick(sync, 4600 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
+}
+
+TEST_CASE("objects: a chest opened elsewhere that shows itself open stays, open (issue 87)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(0x3c5bb811b4cf54dd);
+    Seen chest = Chest(0x500);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    // Its own AI read the shared opened flag and plays the opened pose.
+    chest.animation = proto::Animation{};
+    chest.animation->name = "OpenWait";
+    Tick(sync, 600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) {
+        said |= n.find("shows open here") != std::string::npos;
+    }
+    CHECK(said);
+    // Still closed after the wait: removed (the fallback).
+    Seen closed = Chest(0x600, 0x77);
+    closed.animation = proto::Animation{};
+    closed.animation->name = "CloseWait";
+    sync.Take(0x77);
+    Tick(sync, 2010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2020 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3000 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    Tick(sync, 3600 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x600});
 }
 
 TEST_CASE("objects: a chest beside our Link is not removed (we may be opening it too)") {
@@ -567,6 +604,8 @@ TEST_CASE("objects: a chest beside our Link is not removed (we may be opening it
     // Another chest of the same take, far away, in the window: removed.
     sync.Take(0x1111);
     Tick(sync, 40 * kMs, {Chest(0x900, 0x1111), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());  // its wait to show itself open
+    Tick(sync, 1600 * kMs, {Chest(0x900, 0x1111), Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x900});
 }
 
@@ -1740,7 +1779,9 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     sync.Take(chest.hash);
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     Tick(sync, 20 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());  // the chest's wait to show itself open
+    Tick(sync, 1600 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
-    Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1610 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }

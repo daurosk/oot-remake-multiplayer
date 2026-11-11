@@ -62,7 +62,11 @@ public:
 
     // `puppets` is what the puppet planner gives for this frame. Returns the
     // same input with each target a fairy beside its puppet (same numbers).
-    CoopPuppet::Input Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms);
+    // `live`: CoopPuppet::LivePuppets(), bit n while puppet n's actor is live
+    // and not parked; a fairy whose puppet is not (still being made, refused,
+    // gone) is parked under the floor (issue 145).
+    CoopPuppet::Input Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
+                             std::uint32_t live = ~0u);
 
     const Settings& settings() const { return settings_; }
 

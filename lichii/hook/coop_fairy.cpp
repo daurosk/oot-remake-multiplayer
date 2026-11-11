@@ -44,7 +44,8 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
     return out;
 }
 
-CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms) {
+CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
+                                   std::uint32_t live) {
     CoopPuppet::Input out;
     out.main_base = puppets.main_base;
     out.scene = puppets.scene;
@@ -81,6 +82,13 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
         f.rotation = p.rotation;
         f.show = p.show;  // hidden, held or shown with her puppet
         f.why = p.why;
+        // Issue 145: never without her puppet. Placed from the puppet's
+        // current spot either way (parked under it), so she shows there
+        // when she may.
+        if (p.show != CoopPuppet::Show::hide && !(p.number < 32 && (live >> p.number & 1u) != 0)) {
+            f.show = CoopPuppet::Show::hide;
+            f.why = "her puppet is not shown";
+        }
         out.targets.push_back(std::move(f));
     }
     tracks_ = std::move(kept);
@@ -304,7 +312,8 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     glue.main_base.store(main_base);
     auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
     CoopPuppet::StampDrawing(puppets, now_ms);
-    glue.director->SetInput(glue.follower->Follow(puppets, now_ms));
+    glue.director->SetInput(
+        glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets()));
 }
 
 } // namespace CoopFairy

@@ -888,6 +888,38 @@ TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor")
     CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
 }
 
+TEST_CASE("puppet: LiveMask has a live puppet shown or held, not one parked or gone (issue 145)") {
+    Game g;
+    Director d;
+    CHECK(d.LiveMask() == 0u);
+    MakeLive(d, g);
+    d.SetInput(Wants({Playing("Wait", 9.0f, 1)}));
+    Frame(d, g, 20);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    const std::uint32_t bit = 1u << d.Slots()[0].number;
+    CHECK(d.LiveMask() == bit);
+
+    Target held = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hold);
+    d.SetInput(Wants({held}));
+    Frame(d, g, 30);
+    CHECK(d.LiveMask() == bit);  // held: still there to see
+
+    Target hidden = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hide);
+    d.SetInput(Wants({hidden}));
+    Frame(d, g, 40);
+    CHECK(d.LiveMask() == 0u);  // parked under the floor
+
+    held.show = CoopPuppet::Show::show;
+    d.SetInput(Wants({held}));
+    Frame(d, g, 50);
+    CHECK(d.LiveMask() == bit);
+
+    d.SetInput(Wants({}));  // the player left: kept for the grace, but not shown
+    Frame(d, g, 60);
+    CHECK(d.Slots()[0].phase == Phase::live);
+    CHECK(d.LiveMask() == 0u);
+}
+
 TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation passed on") {
     CoopPuppet::Planner p;
     std::vector<CoopPuppet::Remote> remotes(3);

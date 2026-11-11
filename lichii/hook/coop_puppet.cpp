@@ -199,7 +199,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         scene_ = input_.scene;
         scene_since_ms_ = now_ms;
     }
+    std::uint32_t live = 0;  // LiveMask(): rebuilt each frame
     if (input_.main_base == 0) {
+        live_mask_.store(0, std::memory_order_relaxed);
         return;
     }
     for (auto& slot : slots_) {
@@ -255,6 +257,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                         ShowText(t->show) + (*t->why ? std::string(" (") + t->why + ")" : std::string()));
                     slot.shown = t->show;
                 }
+                if (t->show != Show::hide && slot.number < 32) {
+                    live |= 1u << slot.number;
+                }
                 if (t->show == Show::show) {
                     Pose(slot, guest, t->position, &t->rotation, now_ms);
                 } else if (t->show == Show::hide) {
@@ -278,6 +283,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             break;
         }
     }
+    live_mask_.store(live, std::memory_order_relaxed);
     Status(guest, now_ms);
 }
 
@@ -1323,6 +1329,10 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
 Director& TheDirector() {
     Configure({}, false, {});
     return *g_director;
+}
+
+std::uint32_t LivePuppets() {
+    return g_configured && g_director ? g_director->LiveMask() : 0;
 }
 
 std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us) {

@@ -273,6 +273,19 @@ try {
     Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$cleanUser/load/`r`n"
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -match 'Own-Mod' -and ($out -join ' ') -notmatch 'Emulator started') 'a copied kit with its own mod: stopped, naming it'
+    # Join.bat: what the host pasted is made plain (spaces, :port, a trailing dot), a typo is
+    # asked again, and the address is kept for next time.
+    $kit = Join-Path $tmp 'kit join'; New-Kit $kit 'v0.1.0-test4' 'join'
+    $env:OOT_COOP_UPDATE_API = (Join-Path $tmp 'no-such-releases.json')
+    $in = Join-Path $tmp 'join.txt'
+    [System.IO.File]::WriteAllText($in, "26.1.2`r`n  26.1.2.3:27511. `r`nSaria`r`n")
+    $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
+    $ini = Read-File "$kit\emulator\user\config\coop.ini"
+    Check (($out -join ' ') -match "'26\.1\.2' is not an address") 'Join.bat: a typo is asked again'
+    Check ($ini -match '(?m)^server = 26\.1\.2\.3\s*$' -and $ini -match '(?m)^port = 27511\s*$') "Join.bat: ' 26.1.2.3:27511. ' is saved as server 26.1.2.3, port 27511"
+    [System.IO.File]::WriteAllText($in, "`r`n")
+    $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
+    Check (($out -join ' ') -match 'server 26\.1\.2\.3, port 27511' -and ($out -join ' ') -match 'Emulator started') 'Join.bat: Enter keeps the last address'
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

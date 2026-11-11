@@ -29,15 +29,23 @@ $logs = Join-Path $kit 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 $log = Join-Path $logs ('server-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date))
 
-Write-Host "Co-op server on UDP port $Port. Players on other PCs use one of these addresses:"
-try {
-    Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-        Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
-        ForEach-Object { Write-Host ('  {0,-16} ({1})' -f $_.IPAddress, $_.InterfaceAlias) }
-} catch { Write-Host '  (run ipconfig to see them)' }
-Write-Host "Players on this PC use 127.0.0.1. Log: $log"
-Write-Host 'Ctrl+C stops the server.'
-Write-Host ''
+Write-Host "Co-op server on UDP port $Port. Log: $log"
+Write-Host 'Keep this window open while you play; closing it (or Ctrl+C) stops the server.'
+# Which address the others type (hosting.ps1): VPN, internet (one HTTPS question to a fixed
+# service, unless coop-options.ini says public_address_lookup = no), home network. The best
+# one goes to the clipboard.
+. (Join-Path $PSScriptRoot 'hosting.ps1')
+$lookup = $true
+foreach ($line in @(Get-Content -LiteralPath (Join-Path $kit 'coop-options.ini') -ErrorAction SilentlyContinue)) {
+    if ($line -match '^\s*public_address_lookup\s*=\s*(no|off|false|0)\s*$') { $lookup = $false }
+}
+$public = ''
+if ($lookup -and -not $Bind.Trim()) { $public = Get-PublicAddress 4000 }
+$addresses = Get-JoinAddresses (Get-LocalAddresses) $public $Bind.Trim()
+$best = Get-BestJoinAddress $addresses $Port
+$copied = ''
+if ($best) { try { Set-Clipboard -Value $best -ErrorAction Stop; $copied = $best } catch { } }
+foreach ($line in (Format-JoinBlock $addresses $Port ($lookup -and -not $Bind.Trim() -and -not $public) $Allow.Trim() $copied)) { Write-Host $line }
 
 # This kit's co-op release (VERSION.txt), named when the server refuses a game of another
 # version, so the players know which one to update to.
@@ -48,7 +56,6 @@ if (Test-Path -LiteralPath $versionFile) {
     if ($first -match '\(release ([^)]+)\)') { $release = $Matches[1] }
 }
 
-if ($Allow.Trim()) { Write-Host "Only these addresses may join (server_allow): $Allow" }
 $args2 = @('--port', "$Port") + $access + @($Rest | Where-Object { $_ })
 & $exe @args2 2>&1 | ForEach-Object {
     $text = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }

@@ -52,7 +52,7 @@ bool EnvOn(const char* name) {
 
 bool Wanted() {
     return EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET") ||
-           EnvOn("LICHII_COOP_SPAWN");
+           EnvOn("LICHII_COOP_SPAWN") || EnvOn("LICHII_COOP_LIVE_EVENTS");
 }
 
 // Settings for the puppets, once, when the patch goes in.

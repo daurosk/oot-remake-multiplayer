@@ -480,7 +480,7 @@ TEST_CASE("shots: the director writes a copy's turn and calls the game's setter"
     CoopSpawn::Director d;
     Copy copy;
     copy.key = 1;
-    copy.actor = "NormalArrow";
+    copy.actor = "Item_DekuNut";  // seeds, arrows and hook tips are stand-ins (no setter)
     copy.position = {1.0f, 2.0f, 3.0f};
     copy.rotation = kTurned;
     copy.setter = true;

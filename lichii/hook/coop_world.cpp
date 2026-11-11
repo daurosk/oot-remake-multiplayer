@@ -8,7 +8,9 @@
 #include <cstring>
 #include <utility>
 
+#include "coop/host/game_items.hpp"
 #include "coop/protocol/codec.hpp"
+#include "coop/protocol/messages.hpp"
 
 namespace CoopWorld {
 
@@ -48,7 +50,30 @@ constexpr std::array<std::string_view, 4> kGrass{
 
 } // namespace
 
+bool IsLock(std::string_view name) {
+    return name.starts_with("Obj_") && name.find("DoorChainLock") != std::string_view::npos &&
+           name.find("HrlCity") == std::string_view::npos;
+}
+
+std::uint32_t SmallKeyFlag(std::string_view scene) {
+    // The dungeons with a DungeonInfo.<name>.SmallKeyNum (coop/host game_items).
+    static constexpr std::array<std::string_view, 14> kKeyScenes{
+        "InsideTheDekuTree", "DodongoCavern", "InsideJabuJabuBelly", "ForestTemple",
+        "FireTemple", "WaterTemple", "ShadowTemple", "SpiritTemple", "BottomOfTheWell",
+        "IceCavern", "GerudoTrainingGround", "InsideGanonCastle", "GerudoFortress",
+        "FinalBattleField"};
+    for (const auto s : kKeyScenes) {
+        if (s == scene) {
+            return coop::protocol::flag_hash("DungeonInfo." + std::string(scene) + ".SmallKeyNum");
+        }
+    }
+    return 0;
+}
+
 bool IsBreakable(std::string_view name) {
+    if (IsLock(name)) {
+        return true;
+    }
     for (const auto grass : kGrass) {
         if (name == grass) {
             return true;
@@ -78,11 +103,147 @@ bool IsMovable(std::string_view name) {
            name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_");
 }
 
+bool IsBlockAnchor(std::string_view name) {
+    return name == "Obj_MovableBox_BasePosAnchor";
+}
+
+bool IsPushBlock(std::string_view name) {
+    return IsMovable(name) && (name.find("MovableBox_") != std::string_view::npos ||
+                               name.starts_with("Obj_SliderBox_"));
+}
+
 bool IsSign(std::string_view name) {
     return name.starts_with("Obj_") &&
            (name.find("SignBoard_") != std::string_view::npos ||
             name.find("Signboard_") != std::string_view::npos ||
             name.find("GuidePost_") != std::string_view::npos);
+}
+
+bool IsFaller(std::string_view name) {
+    // The Fire Temple's hammer pillars, and its hammer floor switches (life
+    // SwitchHit: life 0 presses it once, its flag does the rest).
+    return name.starts_with("Obj_FireTemple_HammerSlipPillar_") ||
+           name.starts_with("Obj_HammerSwitch_");
+}
+
+bool IsLyingKey(std::string_view name) {
+    return name.starts_with("Obj_Dungeon_SmallKey");
+}
+
+bool IsGoldToken(std::string_view name) {
+    return name == "Obj_Token_Gold";
+}
+
+std::uint64_t TokenId(std::uint64_t skulltula_hash) {
+    const std::uint64_t id = skulltula_hash ^ 0x746f6b656e5f6f6bULL;  // "token_ok"
+    return id == 0 || id == ~std::uint64_t{0} ? id ^ 1u : id;  // never 0 or ~0 on the wire
+}
+
+bool IsShifter(std::string_view name) {
+    // From the romfs (breakables-2): no LifeRef, moved or turned by their AI
+    // when hit, and no 64-bit key, so before this nothing of them was shared.
+    return name.starts_with("Obj_FireTemple_HammerDropFloor_") ||
+           name.starts_with("Obj_FireTemple_HammerDropPillar_") ||
+           name.starts_with("Obj_FireTemple_HammerStair_") ||
+           name.starts_with("Obj_InsideTheDekuTree_FallingLadder_") ||
+           name == "Obj_InsideTheDekuTree_FallingFloor_A_03" ||
+           name == "Obj_ShadowTemple_FallingFloor_A_03";
+}
+
+bool IsWorldObject(std::string_view name) {
+    return IsBreakable(name) || IsMovable(name) || IsFaller(name) || IsLyingKey(name) ||
+           IsGoldToken(name) || IsShifter(name);
+}
+
+// A shifter whose AI would put it back up (hammer drop floors, pillars and
+// stair, the Deku Tree ladder): held at the place it was given. The
+// falling floors `_A_03` have no AI in their packs: the normal settle.
+bool HoldsPlace(std::string_view name) {
+    return IsShifter(name) && name.find("FallingFloor_A_03") == std::string_view::npos;
+}
+
+std::optional<std::string> KeyCountOf(std::string_view scene) {
+    // The scene, then the part before its first '_' (GerudoFortress_Adult).
+    for (const std::string_view base : {scene, scene.substr(0, scene.find('_'))}) {
+        const std::string name = "DungeonInfo." + std::string(base) + ".SmallKeyNum";
+        for (const auto& item : coop::host::item_flags()) {
+            if (item.name == name) {
+                return name;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+namespace {
+std::mutex give_back_mutex;
+std::vector<std::string> give_backs;
+std::vector<std::uint64_t> taken_keys;
+} // namespace
+
+void QueueGiveBack(std::string count) {
+    std::lock_guard lock(give_back_mutex);
+    if (give_backs.size() < 64) {
+        give_backs.push_back(std::move(count));
+    }
+}
+
+void QueueTakenKey(std::uint64_t key) {
+    std::lock_guard lock(give_back_mutex);
+    if (taken_keys.size() < 256) {
+        taken_keys.push_back(key);
+    }
+}
+
+std::vector<std::uint64_t> TakeTakenKeys() {
+    std::lock_guard lock(give_back_mutex);
+    return std::exchange(taken_keys, {});
+}
+
+std::vector<std::string> TakeGiveBacks() {
+    std::lock_guard lock(give_back_mutex);
+    return std::exchange(give_backs, {});
+}
+
+std::string SetTakenKey(coop::host::FlagStore& game, std::uint64_t key) {
+    char hex[24];
+    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
+    const auto flag = coop::protocol::FlagKey::key64_flag(key);
+    if (const auto now = game.read(flag); now && now->value != 0) {
+        return std::string("world: key64 ") + hex + " is 1 already";
+    }
+    if (!game.write(coop::protocol::FlagEntry(flag, coop::protocol::FlagKind::boolean, 1))) {
+        return std::string("world: key64 ") + hex + ": write failed";
+    }
+    return std::string("world: key64 ") + hex + " set to 1 (a token taken elsewhere)";
+}
+
+std::string GiveBack(coop::host::FlagStore& game, std::string_view count) {
+    const std::optional<std::string> name = count.empty() ? std::nullopt
+                                                           : std::optional<std::string>(count);
+    if (!name) {
+        return "world: no count to give one back to";
+    }
+    for (const auto& item : coop::host::item_flags()) {
+        if (item.name != *name) {
+            continue;
+        }
+        const coop::host::FlagKey key(item.hash, 0);
+        const auto now = game.read(key);
+        if (!now) {
+            return "world: " + *name + " not readable: nothing given back";
+        }
+        const auto was = static_cast<std::int32_t>(now->value);
+        if (was <= 0) {
+            return "world: " + *name + " is " + std::to_string(was) + ": nothing to give back";
+        }
+        if (!game.write(coop::protocol::FlagEntry(key, item.kind, static_cast<std::uint32_t>(was - 1)))) {
+            return "world: " + *name + ": write failed";
+        }
+        return "world: one given back: " + *name + " " + std::to_string(was) + " -> " +
+               std::to_string(was - 1);
+    }
+    return "world: " + *name + " is no item flag";
 }
 
 bool IsGrassActor(std::string_view name) {
@@ -98,6 +259,19 @@ namespace proto = coop::protocol;
 
 constexpr std::uint64_t kNoHash = ~std::uint64_t{0};
 constexpr std::size_t kMaxInbox = 4096;
+
+// The angle in radians between two turns (0 when either is unknown).
+float Turn(const std::optional<CoopObjects::Mat3>& a, const std::optional<CoopObjects::Mat3>& b) {
+    if (!a || !b) {
+        return 0.0f;
+    }
+    float trace = 0.0f;  // of a transposed times b: the sum of the products
+    for (std::size_t i = 0; i < 9; ++i) {
+        trace += (*a)[i] * (*b)[i];
+    }
+    const float c = std::clamp((trace - 1.0f) / 2.0f, -1.0f, 1.0f);
+    return std::acos(c);
+}
 
 float Distance(const proto::Vec3& a, const proto::Vec3& b) {
     const float x = a[0] - b[0];
@@ -189,7 +363,14 @@ void WorldSync::Reset() {
     went_.clear();
     hits_.clear();
     cuts_.clear();
+    skulltulas_.clear();
+    token_spots_.clear();
     early_.clear();
+    anchors_.clear();
+    anchor_holds_.clear();
+    refunds_.clear();
+    refund_notes_.clear();
+    own_drops_.clear();
     player_.reset();
     probe_.Reset();
     std::lock_guard lock(inbox_mutex_);
@@ -214,6 +395,68 @@ std::vector<std::uint64_t> WorldSync::Removes() const {
         }
     }
     return out;
+}
+
+std::optional<std::string> WorldSync::TookKey(std::uint64_t hash) const {
+    for (const Gone& g : gone_) {
+        if (g.object.key && g.object.hash == hash) {
+            return g.object.count;
+        }
+    }
+    for (const auto& [address, o] : objects_) {
+        if (!o.key || o.hash != hash || !player_ || !Finite(o.position) ||
+            Distance(*player_, o.position) > kBreakReachM) {
+            continue;
+        }
+        // Off the walk next to our Link: taken. Still on it but lifted from
+        // where it lay: Link is picking it up (the game raises it to his
+        // hands before it goes), so the count rises here too.
+        if (o.missed > 0 || Distance(o.position, o.first_position) >= kLiftedM) {
+            return o.count;
+        }
+    }
+    return std::nullopt;
+}
+
+std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at) {
+    if (!Finite(at)) {
+        return 0;
+    }
+    auto& spots = token_spots_[scene_];
+    std::uint64_t best = 0;
+    float best_m = kTokenNearM;
+    for (const auto& [hash, where] : skulltulas_) {
+        if (const float m = Distance(where, at); m <= best_m) {
+            best = TokenId(hash);
+            best_m = m;
+        }
+    }
+    if (best == 0) {
+        best_m = kTokenSpotM;
+        for (const auto& [id, where] : spots) {
+            if (const float m = Distance(where, at); m <= best_m) {
+                best = id;
+                best_m = m;
+            }
+        }
+    }
+    if (best != 0 && spots.size() < 512) {
+        spots[best] = at;
+    }
+    return best;
+}
+
+void WorldSync::Token(const proto::WorldBreak& b) {
+    auto& spots = token_spots_[scene_];
+    for (const auto& [hash, where] : skulltulas_) {
+        if (TokenId(hash) == b.hash) {
+            if (spots.size() < 512 && Finite(b.position)) {
+                spots.emplace(b.hash, b.position);
+            }
+            taken_keys_.push_back(hash);
+            return;
+        }
+    }
 }
 
 void WorldSync::Drain(std::uint64_t now_us) {
@@ -243,7 +486,29 @@ void WorldSync::Drain(std::uint64_t now_us) {
             } else if (const auto known = broken_.find(b->hash); known == broken_.end()) {
                 Break k;
                 k.got_us = now_us;
+                k.kept = (b->flags & proto::world_break::kept) != 0;
                 broken_.emplace(b->hash, k);
+                // Our own take of the same small key that has not gone out
+                // yet: the key is already off our walk next to our Link (or
+                // waiting out kGoneHoldUs). Theirs was first: ours goes back.
+                if (const auto count = TookKey(b->hash)) {
+                    give_back_.push_back(*count);
+                }
+                Token(*b);
+            } else if ((b->flags & proto::world_break::kept) != 0 && known->second.local) {
+                // Both games opened this lock at once: two keys went for one
+                // door. The higher player number gives its key back.
+                if (b->player_number != self_ && self_ > b->player_number &&
+                    !known->second.refunded) {
+                    Refund(known->second, b->hash, now_us, "opened by both at once");
+                }
+            } else if (known->second.local && known->second.key) {
+                // We took this small key too, and the server, which keeps the
+                // first break only, relayed theirs: they were first. Ours goes
+                // back, so the shared count rose once (issue 102).
+                known->second.key = false;
+                give_back_.push_back(known->second.count);
+                Token(*b);
             } else if (known->second.local && now_us - known->second.got_us < kEchoUs) {
                 // The life 0 we read a moment ago was this player's break
                 // (it reached our copy through the enemy sharing first).
@@ -297,18 +562,115 @@ void WorldSync::LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out
     Break k;
     k.got_us = now_us;
     k.local = true;
+    k.key = o.key;
+    k.count = o.count;
+    k.kept = o.kept;
+    // Our own lock: the key our game spent on it is used up here, so it can
+    // never also pay for another lock's give-back.
+    k.paid = o.kept && TakeOwnDrop(now_us);
     broken_.emplace(o.hash, k);
     proto::WorldBreak b;
     b.scene = scene_;
     b.hash = o.hash;
     b.position = Finite(o.position) ? o.position : proto::Vec3{};
+    if (o.kept) {
+        b.flags = proto::world_break::kept;
+        if (SmallKeyFlag(scene_) == 0 && !no_key_logged_) {
+            no_key_logged_ = true;
+            out.notes.push_back(Line("world: %016llx %s opened in a scene with no small key count%s",
+                                     o.hash, o.name, " (a second key here cannot go back)"));
+        }
+    }
     out.send.emplace_back(std::move(b));
     out.notes.push_back(Line("world: %016llx %s broken here (%s): sent", o.hash, o.name, how));
+}
+
+void WorldSync::Refund(Break& b, std::uint64_t hash, std::uint64_t now_us, const char* why) {
+    const std::uint32_t key = SmallKeyFlag(scene_);
+    if (key == 0) {
+        return;  // no key count here (logged once by LocalBreak)
+    }
+    // Both at once: our own break already took the key we spent on it (paid).
+    // Else a drop of our count must be there, and is used up.
+    if (!b.paid && !TakeOwnDrop(now_us)) {
+        // Our count did not drop: our player spent nothing on it (the room
+        // unloaded beside us, or another's spend came in): nothing back.
+        refund_notes_.push_back(Line("world: %016llx lock %s, but no key of ours went: none back%s",
+                                     hash, why, ""));
+        return;
+    }
+    b.paid = false;
+    b.refunded = true;
+    refunds_.push_back(key);
+    refund_notes_.push_back(Line("world: %016llx lock %s: one key back%s", hash, why, ""));
+}
+
+bool WorldSync::TakeOwnDrop(std::uint64_t now_us) {
+    const std::uint32_t key = SmallKeyFlag(scene_);
+    std::erase_if(own_drops_, [now_us](const auto& d) { return now_us - d.second > kOwnDropUs; });
+    const auto drop = std::find_if(own_drops_.begin(), own_drops_.end(),
+                                   [key](const auto& d) { return d.first == key; });
+    if (key == 0 || drop == own_drops_.end()) {
+        return false;
+    }
+    own_drops_.erase(drop);
+    return true;
+}
+
+void WorldSync::OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us) {
+    if (own_drops_.size() < 16) {
+        own_drops_.emplace_back(key_flag, now_us);
+    }
+}
+
+void WorldSync::ForgetKept() {
+    std::erase_if(broken_, [](const auto& b) { return b.second.kept; });
+    for (auto& [address, o] : objects_) {
+        if (o.kept) {
+            o.remove = false;
+            o.life_written_us = 0;
+        }
+    }
 }
 
 void WorldSync::MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& out) {
     if (o.remove || b.local) {
         return;  // our own break: the game is doing it
+    }
+    if (o.kept && player_ && Finite(o.position) && Distance(*player_, o.position) <= kLockHoldM) {
+        // Our Link is at this door: never take the lock from under them (they
+        // may be opening it). Deleted once they step away.
+        return;
+    }
+    if (o.key) {
+        // Taken in another game: ours goes at once (no life, no wait), also
+        // in a game that loads the room later (the server's break).
+        o.remove = true;
+        out.notes.push_back(
+            Line("world: %016llx %s taken by another player: deleted%s", o.hash, o.name, ""));
+        return;
+    }
+    if (o.faller) {
+        // It falls and stays (a bridge): never deleted. Life 0 makes the
+        // game drop it; written again each second until the life reads 0
+        // (a pillar that loaded fallen reads 0 already, nothing to write),
+        // at most kFallerTries times: then one line, and it is left standing.
+        if (o.life && *o.life > 0 && o.faller_tries <= kFallerTries &&
+            (o.life_written_us == 0 || now_us - o.life_written_us >= kFallerRetryUs)) {
+            if (o.faller_tries == kFallerTries) {
+                ++o.faller_tries;
+                out.notes.push_back(Line("world: %016llx %s did not fall on life 0 (%s): left standing",
+                                         o.hash, o.name, std::to_string(kFallerTries) + " tries"));
+                return;
+            }
+            ++o.faller_tries;
+            out.lives.push_back({o.address, 0, 0, {}});
+            out.notes.push_back(Line("world: %016llx %s %s", o.hash, o.name,
+                                     o.life_written_us == 0 ? "felled by another player"
+                                                            : "still standing: life 0 again"));
+            o.life_written_us = now_us;
+        }
+        return;
     }
     if (b.got_us <= o.first_us + kStaleUs) {
         // Broken before we ever saw it (we came later, or it loaded later).
@@ -379,6 +741,14 @@ std::optional<WorldSync::Sample> WorldSync::PoseAt(const Remote& r, std::uint64_
 }
 
 void WorldSync::Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const {
+    for (const auto& [address, hold] : anchor_holds_) {
+        if (now_us < hold.until_us) {
+            CoopObjects::PoseWrite w;
+            w.address = address;
+            w.position = hold.to;  // place only: the anchor keeps its turn
+            out.push_back(w);
+        }
+    }
     for (const auto& [address, o] : objects_) {
         if (!o.following || o.remove) {
             continue;
@@ -399,6 +769,9 @@ void WorldSync::Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>&
 
 void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
                      const std::optional<proto::Vec3>& player, Out& out) {
+    if (o.faller || o.key) {
+        return;  // its fall (or its taking) is the break, not a move
+    }
     const auto found = remote_.find(o.hash);
     Remote* r = found != remote_.end() ? &found->second : nullptr;
     bool remote = r != nullptr && !r->samples.empty() && now_us - r->got_us < kRemoteHoldUs;
@@ -422,30 +795,70 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
                 Line("world: %016llx %s put where another player left it%s", o.hash, o.name, ""));
         }
     }
-    const bool settling = !o.ours && o.settle_us != 0 && now_us - o.settle_us < kSettleUs;
+    // A shifter with an AI is held where it was put for good: its AI would
+    // put it back up (it was not hit here).
+    const bool settling =
+        !o.ours && o.settle_us != 0 && (o.hold || now_us - o.settle_us < kSettleUs);
     if (!o.ours && (remote || settling)) {
+        if (!o.following && !o.follow_from && !o.breakable && IsPushBlock(o.name)) {
+            o.follow_from = o.rest;  // where our copy rested before (issue 147)
+        }
         if (!o.following && remote) {
             out.notes.push_back(
                 Line("world: %016llx %s moved by another player%s", o.hash, o.name, ""));
         }
         o.following = true;
         o.rest = o.position;
+        o.rest_rotation = o.rotation;
         o.quiet_until = now_us + kQuietUs;
         return;
     }
     if (o.following) {
         o.following = false;
         o.rest = o.position;
+        o.rest_rotation = o.rotation;
         o.quiet_until = now_us + kQuietUs;
+        if (o.follow_from && Finite(o.position) &&
+            Distance(*o.follow_from, o.position) > kBlockStartM) {
+            // Issue 147: our block's own memory still says it rests at
+            // follow_from; the glue rewrites that (RestWords), and its base
+            // anchor, found there, is put where it rests now.
+            Out::BlockFix fix;
+            fix.address = o.address;
+            fix.hash = o.hash;
+            fix.name = o.name;
+            fix.from = *o.follow_from;
+            fix.to = o.position;
+            float best = kAnchorNearM;
+            for (const Anchor& a : anchors_) {
+                const float d = Distance(a.position, fix.from);
+                if (d <= best) {
+                    best = d;
+                    fix.anchor = a.address;
+                }
+            }
+            if (fix.anchor != 0) {
+                anchor_holds_[fix.anchor] = {fix.to, now_us + kAnchorHoldUs};
+            }
+            out.notes.push_back(Line("world: %016llx %s came to rest where another player left it; "
+                                     "its base anchor%s",
+                                     o.hash, o.name,
+                                     fix.anchor != 0 ? " is put there too" : " was not found near its old place"));
+            out.blocks.push_back(std::move(fix));
+        }
+        o.follow_from.reset();
     }
     if (now_us < o.quiet_until) {
         o.rest = o.position;  // settling after another game's move: no claim
+        o.rest_rotation = o.rotation;
         return;
     }
     if (!o.ours) {
         const bool near = player && Distance(*player, o.position) <= kMoverReachM;
-        if (!near || !Finite(o.position) ||
-            Distance(o.position, o.rest) <= (o.breakable ? kLooseStartM : kBlockStartM)) {
+        const bool shifted = Distance(o.position, o.rest) > (o.breakable ? kLooseStartM : kBlockStartM);
+        // A shifter may only turn (the Deku Tree's ladder tips over on its foot).
+        const bool turned = o.shifter && Turn(o.rest_rotation, o.rotation) > kShiftTurnRad;
+        if (!near || !Finite(o.position) || (!shifted && !turned)) {
             return;
         }
         o.ours = true;
@@ -469,6 +882,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         out.send.emplace_back(std::move(p));
         o.ours = false;
         o.rest = o.position;
+        o.rest_rotation = o.rotation;
         out.notes.push_back(Line("world: %016llx %s at rest: place sent%s", o.hash, o.name, ""));
         return;
     }
@@ -480,7 +894,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         v.time_us = now_us;
         v.position = o.position;
         v.rotation = UnitQuat(o.rotation);
-        if (player && Distance(*player, o.position) <= 1.5f) {
+        if (!o.shifter && player && Distance(*player, o.position) <= 1.5f) {
             v.flags |= proto::world_move::carried;
         }
         out.send.emplace_back(std::move(v));
@@ -546,6 +960,8 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         went_.clear();
         hits_.clear();
         cuts_.clear();
+        skulltulas_.clear();  // token_spots_ stay: a room loaded again
+        anchor_holds_.clear();
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
             if (*SceneOfMessage(m) == scene_) {
@@ -554,15 +970,54 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         }
         early_.clear();
     }
-    Drain(now_us);
-
-    std::set<std::uint64_t> now_seen;
     for (const CoopObjects::Seen& s : seen) {
+        if (s.name == "Enemy_Skulltula_Gold" && s.hash != 0 && s.hash != kNoHash &&
+            Finite(s.position)) {
+            skulltulas_[s.hash] = s.position;
+        }
+    }
+    Drain(now_us);
+    for (std::string& count : give_back_) {
+        out.notes.push_back("world: taken here and by another player at once (" + count +
+                            "): theirs came first, ours goes back");
+        out.give_back.push_back(std::move(count));
+    }
+    give_back_.clear();
+    out.taken_keys.insert(out.taken_keys.end(), taken_keys_.begin(), taken_keys_.end());
+    taken_keys_.clear();
+
+    // A token has no placement: it gets its Skulltula's id (TokenId).
+    std::vector<CoopObjects::Seen> with_tokens;
+    const std::vector<CoopObjects::Seen>* walk = &seen;
+    if (std::any_of(seen.begin(), seen.end(),
+                    [](const CoopObjects::Seen& s) { return IsGoldToken(s.name); })) {
+        with_tokens = seen;
+        for (CoopObjects::Seen& s : with_tokens) {
+            if (IsGoldToken(s.name) && (s.hash == 0 || s.hash == kNoHash)) {
+                s.hash = IdentifyToken(s.position);
+            }
+        }
+        walk = &with_tokens;
+    }
+
+    anchors_.clear();
+    std::erase_if(anchor_holds_, [now_us](const auto& h) { return now_us >= h.second.until_us; });
+    for (const CoopObjects::Seen& s : seen) {
+        if (IsBlockAnchor(s.name)) {
+            anchors_.push_back({s.address, s.position});
+        }
+    }
+    std::set<std::uint64_t> now_seen;
+    for (const CoopObjects::Seen& s : *walk) {
         if (s.hash == 0 || s.hash == kNoHash) {
             continue;
         }
-        const bool breakable = IsBreakable(s.name);
-        if (!breakable && !IsMovable(s.name)) {
+        const bool faller = IsFaller(s.name);
+        const bool token = IsGoldToken(s.name);
+        const bool key = IsLyingKey(s.name) || token;
+        const bool shifter = IsShifter(s.name);
+        const bool breakable = IsBreakable(s.name) || faller || key;
+        if (!breakable && !shifter && !IsMovable(s.name)) {
             continue;
         }
         now_seen.insert(s.address);
@@ -583,15 +1038,26 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             o.breakable = breakable;
             o.grass = IsGrassActor(s.name);
             o.sign = IsSign(s.name);
+            o.faller = faller;
+            o.key = key;
+            if (token) {
+                o.count = kTokenCount;
+            } else if (key) {
+                o.count = KeyCountOf(scene_).value_or("");
+            }
+            o.shifter = shifter;
+            o.hold = shifter && HoldsPlace(s.name);
             o.life = life;
             o.position = s.position;
             o.rotation = s.rotation;
             o.first_position = s.position;
             o.first_us = now_us;
             o.rest = s.position;
+            o.rest_rotation = s.rotation;
             o.sent_position = s.position;
+            o.kept = IsLock(s.name);
             if (const auto b = broken_.find(s.hash);
-                b != broken_.end() && b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
+                !o.kept && b != broken_.end() && b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
                 (!life || *life > 0)) {
                 // We saw it go and here it is again: the game put it back.
                 broken_.erase(b);
@@ -610,6 +1076,9 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         Object& o = it->second;
         o.missed = 0;
         o.stirred = Finite(s.position) && Distance(s.position, o.position) > 0.003f;
+        if (o.shifter && Turn(o.rotation, s.rotation) > 0.005f) {
+            o.stirred = true;  // still turning
+        }
         o.position = s.position;
         o.rotation = s.rotation;
         // As the enemy sharing reads it: a breakable whose life can no longer
@@ -638,6 +1107,13 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         if (const auto b = broken_.find(o.hash); b != broken_.end()) {
             b->second.seen_go = true;
             b->second.gone_us = now_us;
+            if (o.kept && !b->second.local && !b->second.refunded && !o.remove && player &&
+                from_link <= kLockHoldM + kBreakReachM) {
+                // Another game's lock that we did not delete went next to our
+                // Link: opened here too (a second key), or the room unloaded.
+                // Decided after the same wait and unload test as a break.
+                gone_.push_back({o, now_us, true});
+            }
         } else if (o.breakable && player && (!o.life || *o.life > 0)) {
             const bool moved = Distance(o.position, o.first_position) >= 0.5f;
             if (from_link <= (moved ? kBreakNearM : kBreakReachM)) {
@@ -668,6 +1144,10 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         if (together >= kUnloadCount && any_far) {
             out.notes.push_back(Line("world: %016llx %s left with the area: no break%s",
                                      it->object.hash, it->object.name, ""));
+        } else if (it->refund) {
+            if (const auto b = broken_.find(it->object.hash); b != broken_.end() && !b->second.refunded) {
+                Refund(b->second, it->object.hash, now_us, "opened here after another player");
+            }
         } else {
             LocalBreak(it->object, now_us, "gone next to Link", out);
             if (const auto b = broken_.find(it->object.hash); b != broken_.end()) {
@@ -678,6 +1158,13 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         it = gone_.erase(it);
     }
     std::erase_if(went_, [now_us](const auto& w) { return now_us - w.first > 4 * kGoneHoldUs; });
+    // Keys given back for locks opened twice (Drain and the walk above).
+    out.key_refunds.insert(out.key_refunds.end(), refunds_.begin(), refunds_.end());
+    refunds_.clear();
+    for (auto& note : refund_notes_) {
+        out.notes.push_back(std::move(note));
+    }
+    refund_notes_.clear();
 
     for (auto& [address, o] : objects_) {
         // Another player's swings at this sign, once our copy has settled in.
@@ -1529,6 +2016,191 @@ void WorldSync::ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us
                                  it != objects_.end() ? it->second.name : std::string("?"), more));
         out.send.emplace_back(std::move(m));
     }
+}
+
+bool IsGimmick(std::string_view name) {
+    if (!name.starts_with("Obj_")) {
+        return false;
+    }
+    constexpr std::string_view kParts[] = {
+        "StepSwitch_", "EyeSwitch_", "SwitchHit_", "SolarSwitch_", "SwitchCandleStick_",
+        "WaterPlane", "SwitchShutter_", "CandleStick_", "ElevatorLift", "MoveFloor_",
+    };
+    for (const std::string_view p : kParts) {
+        if (name.find(p) != std::string_view::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void GimmickProbe::Reset() {
+    states_.clear();
+    last_us_ = 0;
+}
+
+std::vector<std::string> GimmickProbe::Look(const SignProbe::ReadWord& read,
+                                            const std::vector<Gimmick>& gimmicks,
+                                            const std::optional<proto::Vec3>& player, std::uint64_t now_us) {
+    std::vector<std::string> lines;
+    if (!player || (last_us_ != 0 && now_us >= last_us_ && now_us - last_us_ < kEveryUs)) {
+        return lines;
+    }
+    last_us_ = now_us;
+    std::vector<const Gimmick*> near;
+    for (const Gimmick& g : gimmicks) {
+        if (Distance(*player, g.position) <= kNearM) {
+            near.push_back(&g);
+        }
+    }
+    std::sort(near.begin(), near.end(), [&](const Gimmick* a, const Gimmick* b) {
+        return Distance(*player, a->position) < Distance(*player, b->position);
+    });
+    if (near.size() > kMaxGimmicks) {
+        near.resize(kMaxGimmicks);
+    }
+    std::set<std::uint64_t> looked;
+    for (const Gimmick* g : near) {
+        looked.insert(g->address);
+        State& st = states_[g->address];
+        if (st.hash != g->hash || st.name != g->name) {
+            st = State{};
+            st.hash = g->hash;
+            st.name = g->name;
+            if (lines_ < kMaxLines) {
+                ++lines_;
+                lines.push_back(Line("gimmick probe: watching %016llx %s", g->hash, g->name, ""));
+            }
+        }
+        SignProbe::Snapshot now = SignProbe::Read(read, g->address);
+        if (now.empty()) {
+            continue;
+        }
+        if (st.copies.size() == 2) {
+            const SignProbe::Snapshot& a = st.copies[0];
+            const SignProbe::Snapshot& b = st.copies[1];
+            std::string shown;
+            std::size_t count = 0;
+            for (const auto& [key, value] : now) {
+                const auto ia = a.find(key);
+                const auto ib = b.find(key);
+                if (ia == a.end() || ib == b.end() || ia->second != ib->second || ib->second == value) {
+                    continue;  // not stable before, or no step
+                }
+                int& n = st.steps[key];
+                if (++n > kNoisySteps) {
+                    continue;  // muted: it steps too often
+                }
+                ++count;
+                if (count <= kMaxShown) {
+                    char word[96];
+                    std::snprintf(word, sizeof word, " %s:%llx>%llx", SignProbe::Where(key).c_str(),
+                                  static_cast<unsigned long long>(ib->second),
+                                  static_cast<unsigned long long>(value));
+                    shown += word;
+                }
+            }
+            if (count != 0 && lines_ < kMaxLines) {
+                ++lines_;
+                const float d = Distance(*player, g->position);
+                char more[80];
+                std::snprintf(more, sizeof more, "%.1f m from our Link: %zu words stepped:", d, count);
+                lines.push_back(Line("gimmick probe: %016llx %s %s", g->hash, g->name, more) + shown);
+            }
+        }
+        st.copies.push_back(std::move(now));
+        while (st.copies.size() > 2) {
+            st.copies.pop_front();
+        }
+    }
+    // Forget what is out of reach (unloaded, or far): a fresh start when back.
+    for (auto it = states_.begin(); it != states_.end();) {
+        it = looked.contains(it->first) ? std::next(it) : states_.erase(it);
+    }
+    return lines;
+}
+
+RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                   std::uint64_t actor, const proto::Vec3& from, const proto::Vec3& to) {
+    RestScan out;
+    if (!Finite(from) || !Finite(to) || Distance(from, to) < WorldSync::kBlockStartM ||
+        std::max({std::fabs(from[0]), std::fabs(from[1]), std::fabs(from[2])}) < 1.0f) {
+        return out;
+    }
+    struct Region {
+        std::uint64_t base = 0;
+        std::size_t bytes = 0;
+        std::string name;
+    };
+    std::vector<Region> regions{{actor, 0x600, "actor"}};
+    std::set<std::uint64_t> taken{actor};
+    char text[48];
+    if (const auto table = read(actor + SignProbe::kActorTable); table && HeapPointer(*table)) {
+        for (std::uint64_t at = 0; at < SignProbe::kTableWords * 8; at += 8) {
+            const auto c = read(*table + at);
+            if (c && HeapPointer(*c) && taken.insert(*c).second) {
+                std::snprintf(text, sizeof text, "c+%#llx", static_cast<unsigned long long>(at));
+                regions.push_back({*c, SignProbe::kComponentWords * 8, text});
+            }
+        }
+        if (const auto physics = read(*table + 0x50); physics && HeapPointer(*physics)) {
+            if (const auto root = read(*physics + 0x20); root && HeapPointer(*root) &&
+                                                         taken.insert(*root).second) {
+                regions.push_back({*root, 0x400, "physics root"});
+            }
+        }
+    }
+    const auto matches = [&](const std::optional<float>& v, int axis) {
+        return v && std::isfinite(*v) && *v != 0.0f && std::fabs(*v - from[axis]) <= kRestMatchM;
+    };
+    const auto bits = [](float f) {
+        std::uint32_t b = 0;
+        std::memcpy(&b, &f, 4);
+        return b;
+    };
+    std::size_t triplets = 0;
+    for (const Region& region : regions) {
+        std::vector<std::optional<float>> f(region.bytes / 4);
+        for (std::size_t w = 0; w < region.bytes / 8; ++w) {
+            if (const auto v = read(region.base + 8 * w)) {
+                float lo = 0.0f, hi = 0.0f;
+                const auto lo_bits = static_cast<std::uint32_t>(*v);
+                const auto hi_bits = static_cast<std::uint32_t>(*v >> 32);
+                std::memcpy(&lo, &lo_bits, 4);
+                std::memcpy(&hi, &hi_bits, 4);
+                f[2 * w] = lo;
+                f[2 * w + 1] = hi;
+            }
+        }
+        std::set<std::size_t> used;
+        for (std::size_t i = 0; i < f.size(); ++i) {
+            const std::uint64_t offset = 4 * i;
+            if (region.name == "actor" && offset >= 0x31c && offset < 0x34c) {
+                continue;  // its own place and turn: the setter wrote them
+            }
+            for (const std::size_t stride : {std::size_t{1}, std::size_t{4}}) {
+                if (i + 2 * stride >= f.size() || used.contains(i) || used.contains(i + stride) ||
+                    used.contains(i + 2 * stride) || !matches(f[i], 0) || !matches(f[i + stride], 1) ||
+                    !matches(f[i + 2 * stride], 2)) {
+                    continue;
+                }
+                for (int axis = 0; axis < 3; ++axis) {
+                    const std::size_t k = i + axis * stride;
+                    used.insert(k);
+                    out.writes.push_back({region.base + 4 * k, bits(to[axis])});
+                }
+                std::snprintf(text, sizeof text, "+%#llx", static_cast<unsigned long long>(offset));
+                out.where.push_back(region.name + text + (stride == 4 ? " (matrix)" : ""));
+                ++triplets;
+                break;
+            }
+        }
+    }
+    if (triplets > kMaxRestTriplets) {
+        out.too_many = true;
+        out.writes.clear();
+    }
+    return out;
 }
 
 } // namespace CoopWorld

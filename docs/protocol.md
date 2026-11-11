@@ -1,4 +1,4 @@
-# Wire protocol, version 5
+# Wire protocol, version 7
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -21,6 +21,7 @@ Each rule answers a way the TotK online sync was seen to break.
 ## Transport
 
 - ENet over UDP, default port **27510** (changeable in settings).
+- Datagrams of at most **1100 bytes** (ENet's MTU, `kDatagramBytes`), set on the server and in every game; ENet takes the smaller of the two sides at connect, so this is not part of the protocol version. ENet's default 1392 made 1420-byte IP packets, more than a VPN carries (Hamachi about 1404, Tailscale 1280; issue 143). Larger messages are split by ENet into several datagrams.
 - Channels:
 
 | Channel | Kind | Carries |
@@ -90,6 +91,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 13 | `FLAG_SET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries (below) |
 | 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries |
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
+| 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
@@ -134,6 +136,10 @@ Any other kind is refused, since the rest of the body cannot be read. The other 
 ### Who hosts
 
 The first player in hosts. When the host leaves, the remaining player with the lowest number takes over; a player who joins later never takes over by joining, even with a lower number. The server tells a joining player who hosts with `HOST` (after `WELCOME`, before its `FLAG_SNAPSHOT`), and tells everyone with `HOST` when the host changes. `HOST` is on channel 1, so a new host learns that it hosts before any `FLAG_SET` relayed to it. Channels are not ordered against each other, so a build may get `HOST` and its snapshot before `WELCOME`; it keeps them until `WELCOME` comes.
+
+### Saves: the host's save decides (protocol 7, `FLAG_RESET`)
+
+Caleb (2026-11-11): "Let's make it follow the hosts save." A host's build sends `FLAG_RESET` after its own save load, with every shared flag its load changed, as its game has them now, 0s included. The server takes it from the host only, keeps each value (replacing what it had, as with `FLAG_STATE`) and relays it to everyone else with the host's number. Every player writes each value exactly: no merging (max, OR) and no one-way rule, so items, keys, chests and switches go back to the host's save. A player's own save load sends nothing and changes nothing for the group: that game takes the group's values back. Progress made while playing still merges as before. When the host leaves, the new host's state is the truth from then on, with no reset. How a build tells a save load from a door, and when it sends, is in [flags.md](flags.md), "Saves". A build without protocol 7 does not know type 135; all players need the same release.
 
 ### Shared flags (stage 1 step 4)
 
@@ -252,13 +258,13 @@ Placed breakables and movables, by placement hash ([world.md](world.md), "Broken
 
 | Type | Name | Channel | From | Body after the head |
 |---|---|---|---|---|
-| 32 | `WORLD_BREAK` | 0 | both | 3 x `f32` position (finite), `u8` flags (bit 0: restored) |
+| 32 | `WORLD_BREAK` | 0 | both | 3 x `f32` position (finite), `u8` flags (bit 0: restored; bit 1: kept, a small-key door's lock, [dungeon.md](dungeon.md) "Locked doors"; not both; other bits refused) |
 | 33 | `WORLD_MOVE` | 4 | both | `u64` server time, 3 x `f32` position, 4 x `f32` rotation (unit quaternion x y z w), `u8` flags (bit 0: carried) |
 | 34 | `WORLD_PLACE` | 0 | both | 3 x `f32` position, 4 x `f32` rotation |
 | 35 | `WORLD_HIT` | 0 | both | 3 x `f32` where the sword was, 3 x `f32` where the player stood (a cut sign) |
 | 80 | `SIGN_CUT` | 0 | both | `u8` player, scene, `u64` hash, `u16` count (1 to 48), then count x (`u64` key, `u64` value): the words of the sign's components its cut changed. Key = (2 + component table entry, below 0x60) << 32, ored with the byte offset in that component (below 0x200, a multiple of 8) |
 
-The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one) and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. The last 4 `WORLD_HIT` of each object (at most 128 objects a scene) are kept and sent the same way, and the latest `SIGN_CUT` of each sign (at most 128 a scene) after them. Types 29 to 31 are the enemy ownership messages.
+The server keeps a scene's breaks (at most 1,024, a repeated one is not passed on, `restored` removes one; a `kept` break, at most 256 a scene, is kept for the whole session, also while nobody is in the scene, and a second player's `kept` break of the same object is passed on though not kept again; at most 2,048 kept breaks in all; they are all forgotten when the host loads a save, `FLAG_RESET`). Only a lock's break carries `kept` (the hook sets it for `Obj_DoorChainLock` actors only); the server cannot check it, so a game sending `kept` for anything else keeps that object gone for the session and each object's last `WORLD_PLACE` (at most 256 objects) while a player is in the scene, and sends them to a player who enters it. `WORLD_MOVE` is passed on only, and dropped when the sender is not in that scene. The last 4 `WORLD_HIT` of each object (at most 128 objects a scene) are kept and sent the same way, and the latest `SIGN_CUT` of each sign (at most 128 a scene) after them. Types 29 to 31 are the enemy ownership messages.
 
 ### Objects (stage 5)
 
@@ -271,10 +277,10 @@ The server's rules today (`server/session.cpp`):
 - `PLAYER_SAMPLE` and `OBJECT_PRESENT` both say the sender's scene. One that names a new scene for its own kind changes the player's scene at once; one that repeats the scene its kind said before, after the other kind moved the player on, is late and is ignored.
 - At a player's first `OBJECT_PRESENT` in a scene the server sends it every `OBJECT_SPAWN` still alive there (player field: the owner; the last relayed state), each followed by `OBJECT_OWNER` when the owner is not the maker or the epoch is not 0.
 - `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` of a made id only from the maker named in the id, once; of a placed id only from its current owner, in its scene (relayed, nothing registered). Anything else is dropped.
-- `DAMAGE` goes to the owner alone, whatever its epoch; dropped when there is no owner or it comes from the owner. It starts the object's fight (12 s, 60 s for a boss).
+- `DAMAGE` goes to the owner alone, whatever its epoch; one on a boss or a part of its group from a non-owner also asks the boss over to the hitter, at most every 8 s (issue 150, [dungeons-boss.md](dungeons-boss.md)); dropped when there is no owner or it comes from the owner. It starts the object's fight (12 s, 60 s for a boss).
 - The server moves an object by the rules in [objects.md](objects.md) ("Enemies": the player near it out of a fight, a hit from the player near it, an owner that is loading, paused 6 s or dead 10 s, a group member after its root). It sends the owner `HANDOVER_ASK`; the owner answers `HANDOVER_STATE` with the ask's epoch (anything else is dropped); the server then sends the new owner `HANDOVER_STATE` with epoch + 1 (player field: the old owner) and everyone in the scene `OBJECT_OWNER`. No answer in 500 ms: the same with the last relayed sample. Until then the old owner's samples are still relayed.
 - `OBJECT_REMOVE` with reason dead from the owner before the last change, with the epoch before, is taken for 2 s after it and passed on with the current epoch.
-- An owner also sends `OBJECT_REMOVE` reason dead for a placed enemy that died in its game (issue 133, [objects.md](objects.md) "Kills and woken enemies"); the server keeps the id, owned by nobody, until no game lists it. Receivers end their copy. No new message: the server took this from protocol 4 on.
+- An owner also sends `OBJECT_REMOVE` reason dead for a placed enemy that died in its game (issue 133, [objects.md](objects.md) "Kills and woken enemies"); the server keeps the id, owned by nobody, until no game lists it. Receivers end their copy. No new message: the server took this from protocol 4 on. The server also remembers it per scene, and a game that lists it later without having seen it die (a late entrant or a rejoin) gets the same `OBJECT_REMOVE` dead from the server, with no owner, until a game that saw it die lists it again (respawned) or the scene is empty ([objects.md](objects.md) "Kills for late entrants").
 - `OBJECT_GROUP` is not relayed. An entry is taken when both ids are known in the sender's scene and the sender has the member loaded; a root that follows another root gives its root; an entry naming itself leaves its group. `OBJECT_OWNER` then carries the group (the same number for the root and its members) and is sent to the scene when it changes.
 - When the owner of a placed object unloads it, changes scene or leaves, the nearest game that still has it (the lowest number when places are not known) takes it with epoch + 1: it gets `HANDOVER_STATE` with the last relayed sample (player field: the old owner) when there was one, then everyone in the scene gets `OBJECT_OWNER`. Nobody left: the object is forgotten.
 - A made object goes when its owner lets go of it: the others in the scene get `OBJECT_REMOVE` (gone, at its last position) from the server. A made enemy another game has listed goes to that game instead, like a placed one. An owner that stops listing its made enemy without an `OBJECT_REMOVE` has let go of it after 1 s.
@@ -341,3 +347,5 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 4 (2026-11-09, for 0.1.0-test4): one bump for all the messages of types 28 to 38: `GRASS_CUT` (28), `OBJECT_GROUP` (29), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35), `DROP_SPAWN`, `DROP_TAKE`, `DROP_ASK` (36 to 38); 30, 31 and 39 are kept free. No earlier layout changed. The version went up because the server now sends `HANDOVER_ASK` and moves objects between players, which a version 3 game does not answer, and so that a version 3 server, which would not relay the new types, is refused at `HELLO`: every game in a session shares grass, breaks and drops, or none does.
 - Version 5 (chunk 2): `BOSS_ROOM` (50). No earlier layout changed. The version went up so that a version 4 game, which would never move into the boss room or leave the intro with the others, is refused at `HELLO`.
 - Version 6 (chunk 4): `SIGN_CUT` (80; 80 to 84 kept for signs). No earlier layout changed. The version went up so that a version 5 server, which would not relay it, is refused at `HELLO`.
+- Version 7 (chunk 5, test7): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
+- Version 7 also brings `FLAG_RESET` (135; 135 to 139 kept for saves, branch `host-save`): the host's save load sets every game's shared flags to the save's values. A version 6 server would not relay it.

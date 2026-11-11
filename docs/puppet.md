@@ -250,6 +250,16 @@ Read from the dump (static; nothing of this was run):
 - **Tests.** `tools/autotest/scenarios/held-tools.A.txt` (child: boomerang, sticks, ocarina, bottle), `held-adult.A.txt` (bow, hookshot, hammer, bombs; `-NoLoad`), `wear-adult.A.txt` (tunics, boots, gauntlets; `-NoLoad`), `wear-masks.A.txt`. The test `wear` command takes `hand` for the gauntlets.
 - **Not known until a run:** whether kinds 1, 2, 11, 12 put those tools in the puppet's hand (the slingshot's kind 5 is not proven either), whether a tool needs more than its slot (an ocarina is played with its own animation), and whether a bottle is an actor in a slot at all.
 
+### Taking a piece off (issue 91, branch `held-gear`)
+
+Seen in test6 (held-tools, 2026-11-10): the Deku stick and the bottle go into the puppet's hand on slot 1 (SubWeapon), and the slingshot on slot 3. A Deku nut or a bomb is no slot piece: it is a thrown object, which the objects sync shows.
+
+An empty name means nothing in that slot, and how to take a piece off a puppet is not known (no unequip call is proven). Two cases:
+- **Carried pieces** (the held item, slots 1, 2, 5, 6): put away, as the player's own are.
+- **Worn pieces** (sword, shield, mask, tunic, boots, gauntlets): the old code left them on, so a mask taken off stayed on the other Links. Now a worn piece whose name stays empty for 1.5 s (`Director::kTakeOffMs`, so a moment of nothing during a load does not count) gets the puppet deleted and made again without it. The log says `P<n> takes off <kind> '<name>': puppet made again without it`. The puppet is gone for a moment then. The test command `wear <slot> none` empties a flag. `wear-masks` ends with the mask off, and `wear-adult` ends with the green tunic, no boots and no gauntlets.
+
+The adult scenarios (`held-adult`, `wear-adult`) now play in Kakariko by day with both players adult (as `adult-day`). In the dark adult Graveyard the shots showed nothing. `hold ZR 90 item1` takes its mark halfway through the hold, while the aimed item is still in the hand.
+
 ### Not done (equipment)
 
 0. Which hand slot each tool uses is still not seen in a game (see "The other hand slots"): the scenarios `held-tools` and `held-adult` show it.
@@ -396,7 +406,7 @@ The planner runs `coop::host::visibility` (`coop/host/scene.hpp`) for each remot
 | show, our Ocarina song starts an event | A song that starts an event where it is played (Zelda's Lullaby on a Triforce plate, the Song of Time block) keeps our slot 0 on an `Ocarina_*` command for the first moments, so the others stay visible at the start of that shot until our animation changes. Known, small |
 | show | Pose written every frame, animation as above |
 
-The overlay markers follow the same rule: `Coop::Frame` (`coop_hook.cpp`) notes each player `visibility` hides, and `Place` builds no marker for them. Park, hold and show keep the marker. Each puppet's Navi (`CoopFairy::Publish`) plans from the same remote list (`CoopPuppet::Collect`) and the same event flag, and is parked, held or shown with her puppet.
+The overlay markers follow the same rule: `Coop::Frame` (`coop_hook.cpp`) notes each player `visibility` hides, and `Place` builds no marker for them. Park, hold and show keep the marker. Each puppet's Navi (`CoopFairy::Publish`) plans from the same remote list (`CoopPuppet::Collect`) and the same event flag, and is parked, held or shown with her puppet; she is also parked while her puppet's actor is not live and shown (Fairy, issue 145).
 
 Every change is logged once: `coop: puppet: P<n> show -> hide (our cutscene)`, `... hide -> show`, `... show -> hold (their cutscene)`, `... show -> hide (riding)`; the fairy's lines start `fairy coop: puppet:`. A puppet made again starts at `show`.
 
@@ -547,6 +557,8 @@ Each puppet gets a Navi that hovers by its right shoulder and trails it (`lichii
 | On and off | On with the puppets (`LICHII_COOP_PUPPET` or `LICHII_COOP_DEBUG_PUPPET`); `LICHII_COOP_FAIRY=0` turns it off. |
 
 The remote player's real Navi position is not sent: the fairy is placed from the puppet only (no protocol change).
+
+**Never without her puppet (issue 145).** Testers on test6 saw another player's Navi float in their room in the Deku Tree while that player was about 40 units away in the compass room, with no Link to be seen. The fairy was planned from the same remotes as the puppet, but not from whether the puppet's actor was really there and shown: a puppet still being made, refused, gone, or (seen 2026-11-09, below) made but not drawn left its Navi alone. Now the puppet director keeps `LiveMask()` (bit n while puppet n's actor is live in this scene and shown or held) and `CoopFairy::Follower::Follow` parks a fairy under the floor while her puppet's bit is off (`why`: "her puppet is not shown"). There is no distance rule: the puppet has none of its own, so a partner far off in a field or a big room keeps both. She is placed from the puppet's current spot, so she appears at its shoulder when she may. Tested in `fairy_test.cpp` and `puppet_test.cpp`; not yet seen in a game.
 
 **Proven in game (2026-11-09).** Kakariko Village (child), two local instances, keys posted, no one playing. Each game logs `fairy ... P<n> Dm_Npc_Navi spawned after` about 0.8 to 1.4 s, at 1 unit above its puppet. With the two Links 6 units apart, each screen shows the other player's puppet with a glowing Navi at its shoulder. Seen on the way: a puppet created while its player was about 47 units away was not drawn when he came close (its fairy was); the same puppet created nearby is drawn. That is the puppet, not the fairy (see Not done).
 

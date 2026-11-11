@@ -29,6 +29,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <set>
 #include <string>
 #include <string_view>
@@ -36,6 +37,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_guard.h"
 
 namespace CoopObjects {
 
@@ -100,8 +102,14 @@ struct LifeWrite {
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
 // not Navi, held equipment or invisible helpers) and the breakable world
-// objects (coop_world.h).
+// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
 bool IsShared(std::string_view name);
+
+// An order puzzle each game runs on its own (issue 149): the Scrub Brothers
+// (hit 2, 3, 1) and the Lost Woods stage scrubs. Their order is counted in
+// the game's own code from its own hits; only the solve is shared (a dungeon
+// flag, docs/dungeon.md).
+bool IsOwnPuzzle(std::string_view name);
 
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver
@@ -114,6 +122,13 @@ bool IsShared(std::string_view name);
 // going away, so its actor stays; the room shows it done when it loads again
 // (issue 138).
 bool RemovedWhenTaken(std::string_view name);
+
+// Issue 109: whether a boss is alive in one walk, from its body actors
+// `bodies` (Twinrova: Koume, Kotake and Twinrova; never its eggs, minions or
+// shots). True when one of them is there with life left; false when none is
+// there, or every one there is at 0 life; nothing when one is there whose
+// life was not read (unknown: the boss logic then keeps its old rule).
+std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
 
 // The id of an enemy the scene made without a placement hash: the scene, the
 // actor name and its place in the order such enemies of that name appeared
@@ -194,6 +209,10 @@ struct EnemyCopy {
     std::string name;
     coop::protocol::Vec3 position{};
     bool removed = false;   // the maker's one is gone: delete ours
+    // Our copy went by itself while the maker's one lives (a Stalchild's own
+    // AI sinks it, issue 124): how often the director makes it again. 0 once
+    // our copy was seen dead.
+    std::uint8_t remakes = 0;
 };
 
 // The server repeats OBJECT_OWNER for every shared object about every 10 s.
@@ -241,6 +260,7 @@ public:
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
     static constexpr std::uint64_t kCreateWaitUs = 3'000'000;  // then a roll near it is ours to delete
+    static constexpr std::uint8_t kRemakes = 3;  // EnemyCopy::remakes for a live one
     static constexpr std::uint64_t kLateUs = 3'000'000;  // after the scene's first walk: came later
 
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
@@ -289,6 +309,10 @@ public:
     // kChaseKeepUs, and the server gives it to us. An enemy we own that comes
     // towards our Link at kChaseSpeed or more is flagged the same way, which
     // the server takes as a fight, so it stays ours.
+    // A life write this Sync asked for earlier, made in the game only now (it waited
+    // while our Link was in an event, coop_guard.h, issue 144). The drop to `life` that the
+    // next walks see is that write landing, not a hit of our Link's: not sent as DAMAGE.
+    void Written(std::uint64_t address, std::int32_t life, std::uint64_t now_us);
     void NoteDrift(std::uint64_t address, const coop::protocol::Vec3& put,
                    const coop::protocol::Vec3& now, std::uint64_t now_us);
     static constexpr float kChaseReachM = 40.0f;
@@ -467,6 +491,7 @@ private:
         // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
         int resent = 0;
         std::uint64_t dead_at = 0;
+        bool dead_now = false;  // a kill from before we came: deleted at once
     };
 
     // One step of `o` towards our Link at `now_us` (NoteDrift).
@@ -490,6 +515,9 @@ private:
         std::uint64_t got_us = 0;
         std::uint64_t address = 0;  // once the director made it and it was seen
         bool removed = false;
+        // Our copy left the walk dead (life 0 or a death animation): the
+        // director must not make it again (issue 124).
+        bool dead = false;
     };
     std::uint8_t DeciderOf(std::uint8_t self, std::uint64_t now_us) const;
     std::string scene_;
@@ -526,14 +554,44 @@ private:
     // that came while no walk ran (title screen, save load, scene load: the
     // join snapshot) is for actors the game makes knowing the key.
     static constexpr std::uint64_t kTakeGapUs = 1'500'000;
-    // An actor this close to our Link is not removed: we may be opening that
-    // chest ourselves (both players at once), or standing on it.
-    static constexpr float kTakeNearM = 3.0f;
+    // An actor this close to our Link is not removed (a pickup we may be
+    // taking ourselves). Not for chests (issue 87): a chest still closed
+    // this close to our Link goes at once, so our Link cannot open it a
+    // second time; one ours was already opening when the flag came (both at
+    // once) stays, logged, as its content may count twice.
+    static constexpr float kTakeNearM = CoopGuard::kChestNearM;
+    // A taken breakable that still has life gets life 0 first, so the game
+    // plays its own break (a web, a cracked wall); deleted only if it still
+    // stands this long after (a break with no life to write is deleted at once).
+    static constexpr std::uint64_t kTakeBreakUs = 1'500'000;
+    // A chest (Obj_TBox_*) taken here, away from our Link, is given this long
+    // to show itself open (its own AI reads the shared opened flag, issue 87:
+    // its animation changes, after the take, to one with "Open" in it, seen
+    // while our Link is not beside it); one still closed after that is
+    // removed. Counted from the first take.
+    static constexpr std::uint64_t kChestOpenWaitUs = 1'500'000;
+    // A chest whose animation changed to one with "Open" in it this recently
+    // when the take came is opening now: beside our Link, ours opened it too
+    // (both at once); away from it, its AI reacted to the flag. Only a change
+    // counts: a closed chest's own idle animation may have "Open" in its name
+    // (integrate-p8: an untouched closed chest was taken for "both at once").
+    static constexpr std::uint64_t kChestOpeningUs = 2'000'000;
     struct Taking {
         unsigned ticks = 0;
         std::set<std::uint64_t> addresses;
         bool near_said = false;
+        std::map<std::uint64_t, std::uint64_t> broke_at;  // address: when life 0 was written
+        std::uint64_t since_us = 0;          // when the take came
+        std::set<std::uint64_t> shown_open;  // chests that showed themselves open
+        std::map<std::uint64_t, std::string> bound_animation;  // each chest's animation when bound
     };
+    // Every loaded chest's animation and when it last changed (0: the same
+    // since it was first seen), for the opening tests above.
+    struct ChestAnimation {
+        std::string name;
+        std::uint64_t changed_us = 0;
+    };
+    std::map<std::uint64_t, ChestAnimation> chest_animations_;
     std::uint64_t last_tick_us_ = 0;
     bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)
     std::map<std::uint64_t, Taking> taken_;

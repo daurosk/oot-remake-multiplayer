@@ -2,9 +2,11 @@
 // messages and copies, and the director's calls at the cave.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -369,4 +371,335 @@ TEST_CASE("spawn: a seed copy the owner removed is deleted") {
     CHECK(c->x[0] == actor);
     CHECK_FALSE(d.Step(guest, true, 0, 33));
     CHECK(d.Live().empty());
+}
+
+TEST_CASE("spawn: a rolled enemy copy that went by itself is made again, at most remakes times") {
+    // Issue 124: a Stalchild copy sank into the ground by its own AI 2 s after
+    // it was made, while the decider's one still fought, and was never made again.
+    namespace addr = CoopPuppet::addr;
+    constexpr std::uint64_t base = 0x8000000;
+    constexpr std::uint64_t block = 0x30000000;
+    constexpr std::uint64_t request = 0x50000000;
+    FakeGuest guest;
+    guest.Map(base + addr::kActorManagerPtr, 8);
+    guest.Map(base + addr::kGotCreateDefault, 8);
+    guest.Set(base + addr::kActorManagerPtr, std::uint64_t{0x20000000});
+    guest.Map(block, CoopSpawn::Director::kSlots * CoopSpawn::Director::kSlotSize);
+    guest.Map(request, 0x10);
+
+    std::vector<std::string> said;
+    CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
+    Copy copy;
+    copy.key = (1ULL << 63) | 1;
+    copy.actor = "Enemy_Stalchild";
+    copy.place = false;
+    copy.remakes = 2;
+    d.SetEnemies(base, {copy});
+
+    // Creates the copy as `actor` at now_ms; true when it was made.
+    const auto make = [&](std::uint64_t actor, std::uint64_t now_ms) {
+        guest.Map(actor, 0x600);
+        guest.Set(actor, std::uint64_t{0xabc});
+        guest.Set(actor + addr::kActorState, std::uint32_t{addr::kStatePresent});
+        auto c = d.Step(guest, false, 0, now_ms);
+        if (c && c->function == base + addr::kMalloc) {
+            c = d.Step(guest, true, block, now_ms);
+        }
+        if (!c || c->function != base + addr::kCreate) {
+            return false;
+        }
+        const std::uint64_t handle = c->x[3];
+        CHECK_FALSE(d.Step(guest, true, 0, now_ms));
+        guest.Set(handle, request);
+        guest.Set(request, std::uint32_t{addr::kRequestReady});
+        c = d.Step(guest, false, 0, now_ms + 16);
+        REQUIRE(c);
+        CHECK(c->function == base + addr::kTakeCreated);
+        CHECK_FALSE(d.Step(guest, true, actor, now_ms + 16));
+        CHECK_FALSE(d.Step(guest, false, 0, now_ms + 33));  // Live() is set at a new frame
+        return d.Live().count(copy.key) == 1 && d.Live().at(copy.key) == actor;
+    };
+
+    REQUIRE(make(0x40000000, 0));
+    // Its own AI deletes it: gone, and not made again at once.
+    guest.Set(std::uint64_t{0x40000000} + addr::kActorState, std::uint32_t{8});
+    CHECK_FALSE(d.Step(guest, false, 0, 2000));
+    CHECK(d.Live().empty());
+    CHECK_FALSE(d.Step(guest, false, 0, 2500));
+    // A second later it is made again.
+    REQUIRE(make(0x41000000, 3000));
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("went by itself; made again (1 of 2)") != std::string::npos;
+    }));
+
+    guest.Set(std::uint64_t{0x41000000} + addr::kActorState, std::uint32_t{8});
+    CHECK_FALSE(d.Step(guest, false, 0, 4000));
+    REQUIRE(make(0x42000000, 5000));
+
+    // The third time it stays gone.
+    guest.Set(std::uint64_t{0x42000000} + addr::kActorState, std::uint32_t{8});
+    CHECK_FALSE(d.Step(guest, false, 0, 6000));
+    CHECK_FALSE(make(0x43000000, 8000));
+    CHECK(d.Live().empty());
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("not made again") != std::string::npos;
+    }));
+}
+
+TEST_CASE("spawn: a copy without remakes that went by itself is not made again") {
+    namespace addr = CoopPuppet::addr;
+    constexpr std::uint64_t base = 0x8000000;
+    constexpr std::uint64_t block = 0x30000000;
+    constexpr std::uint64_t actor = 0x40000000;
+    constexpr std::uint64_t request = 0x50000000;
+    FakeGuest guest;
+    guest.Map(base + addr::kActorManagerPtr, 8);
+    guest.Map(base + addr::kGotCreateDefault, 8);
+    guest.Set(base + addr::kActorManagerPtr, std::uint64_t{0x20000000});
+    guest.Map(block, CoopSpawn::Director::kSlots * CoopSpawn::Director::kSlotSize);
+    guest.Map(actor, 0x600);
+    guest.Map(request, 0x10);
+    guest.Set(actor, std::uint64_t{0xabc});
+    guest.Set(actor + addr::kActorState, std::uint32_t{addr::kStatePresent});
+
+    CoopSpawn::Director d;
+    Copy copy;
+    copy.key = (1ULL << 63) | 2;
+    copy.actor = "Enemy_Stalchild";
+    copy.place = false;
+    d.SetEnemies(base, {copy});
+    REQUIRE(d.Step(guest, false, 0, 0));
+    auto c = d.Step(guest, true, block, 0);
+    REQUIRE(c);
+    const std::uint64_t handle = c->x[3];
+    d.Step(guest, true, 0, 0);
+    guest.Set(handle, request);
+    guest.Set(request, std::uint32_t{addr::kRequestReady});
+    REQUIRE(d.Step(guest, false, 0, 16));
+    d.Step(guest, true, actor, 16);
+    CHECK_FALSE(d.Step(guest, false, 0, 33));
+    REQUIRE(d.Live().count(copy.key) == 1);
+
+    guest.Set(actor + addr::kActorState, std::uint32_t{8});
+    CHECK_FALSE(d.Step(guest, false, 0, 100));
+    CHECK_FALSE(d.Step(guest, false, 0, 5000));
+    CHECK(d.Live().empty());
+}
+
+TEST_CASE("spawn: a copy waiting to be made again is not made once the input says remakes 0") {
+    // Review of issue 124: a copy killed here is gone for the director at once,
+    // while Sync sends remakes 0 only after two missed walks.
+    namespace addr = CoopPuppet::addr;
+    constexpr std::uint64_t base = 0x8000000;
+    constexpr std::uint64_t block = 0x30000000;
+    constexpr std::uint64_t actor = 0x40000000;
+    constexpr std::uint64_t request = 0x50000000;
+    FakeGuest guest;
+    guest.Map(base + addr::kActorManagerPtr, 8);
+    guest.Map(base + addr::kGotCreateDefault, 8);
+    guest.Set(base + addr::kActorManagerPtr, std::uint64_t{0x20000000});
+    guest.Map(block, CoopSpawn::Director::kSlots * CoopSpawn::Director::kSlotSize);
+    guest.Map(actor, 0x600);
+    guest.Map(request, 0x10);
+    guest.Set(actor, std::uint64_t{0xabc});
+    guest.Set(actor + addr::kActorState, std::uint32_t{addr::kStatePresent});
+
+    std::vector<std::string> said;
+    CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
+    Copy copy;
+    copy.key = (1ULL << 63) | 3;
+    copy.actor = "Enemy_Stalchild";
+    copy.place = false;
+    copy.remakes = 3;
+    d.SetEnemies(base, {copy});
+    REQUIRE(d.Step(guest, false, 0, 0));
+    auto c = d.Step(guest, true, block, 0);
+    REQUIRE(c);
+    const std::uint64_t handle = c->x[3];
+    d.Step(guest, true, 0, 0);
+    guest.Set(handle, request);
+    guest.Set(request, std::uint32_t{addr::kRequestReady});
+    REQUIRE(d.Step(guest, false, 0, 16));
+    d.Step(guest, true, actor, 16);
+    CHECK_FALSE(d.Step(guest, false, 0, 33));
+    REQUIRE(d.Live().count(copy.key) == 1);
+
+    // Killed here: gone while the input still says 3, so a remake is planned.
+    guest.Set(actor + addr::kActorState, std::uint32_t{8});
+    CHECK_FALSE(d.Step(guest, false, 0, 100));
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("made again (1 of 3)") != std::string::npos;
+    }));
+    // Two walks later Sync knows it died: remakes 0. Nothing is made, then or later.
+    copy.remakes = 0;
+    d.SetEnemies(base, {copy});
+    CHECK_FALSE(d.Step(guest, false, 0, 200));
+    CHECK_FALSE(d.Step(guest, false, 0, 1200));
+    CHECK_FALSE(d.Step(guest, false, 0, 5000));
+    CHECK(d.Live().empty());
+}
+
+namespace {
+
+// A guest with a director's block and one actor ready to be taken.
+struct StandInRig {
+    static constexpr std::uint64_t base = 0x8000000;
+    static constexpr std::uint64_t block = 0x30000000;
+    static constexpr std::uint64_t actor = 0x40000000;
+    static constexpr std::uint64_t request = 0x50000000;
+    FakeGuest guest;
+    StandInRig() {
+        namespace addr = CoopPuppet::addr;
+        guest.Map(base + addr::kActorManagerPtr, 8);
+        guest.Map(base + addr::kGotCreateDefault, 8);
+        guest.Set(base + addr::kActorManagerPtr, std::uint64_t{0x20000000});
+        guest.Map(block, CoopSpawn::Director::kSlots * CoopSpawn::Director::kSlotSize);
+        guest.Map(actor, 0x600);
+        guest.Map(request, 0x10);
+        guest.Set(actor, std::uint64_t{0xabc});
+        guest.Set(actor + addr::kActorState, std::uint32_t{addr::kStatePresent});
+    }
+    // The name a create call asks for.
+    std::string Name(const CoopPuppet::Call& c) {
+        char name[32]{};
+        REQUIRE(guest.Read(guest.Get<std::uint64_t>(c.x[1]), name, 31));
+        return name;
+    }
+};
+
+} // namespace
+
+// Issue 85: a seed, arrow or hookshot copy is made from our stand-in pack (the
+// game's own shootable made without a shooter is never drawn), placed as the
+// puppet is (place and the pending transform, no setter call).
+TEST_CASE("spawn: a seed copy is the stand-in the pack has, placed as the puppet is") {
+    namespace addr = CoopPuppet::addr;
+    using R = StandInRig;
+    CHECK(std::string(CoopSpawn::StandIn("Shootable_DekuSeed")) == "CoopShot_Seed");
+    CHECK(std::string(CoopSpawn::StandIn("NormalArrow")) == "CoopShot_Arrow");
+    CHECK(std::string(CoopSpawn::StandIn("Shootable_Hook")) == "CoopShot_Hook");
+    CHECK(std::string(CoopSpawn::StandIn("Shootable_HookLong")) == "CoopShot_HookLong");
+    CHECK(CoopSpawn::StandIn("Item_Bomb").empty());
+    CHECK(CoopSpawn::StandIn("Item_DekuNut").empty());
+    CHECK(CoopSpawn::StandIn("Weapon_Boomerang").empty());
+
+    StandInRig rig;
+    CoopSpawn::Director d;
+    d.SetStandIns({"CoopShot_Seed"});
+    Copy copy;
+    copy.key = 7;
+    copy.actor = "Shootable_DekuSeed";
+    copy.position = {1.0f, 2.0f, 3.0f};
+    copy.rotation = std::array<float, 9>{0, 0, 1, 0, 1, 0, -1, 0, 0};
+    copy.setter = true;
+    d.SetInput(R::base, {copy});
+    REQUIRE(d.Step(rig.guest, false, 0, 0));  // malloc
+    auto c = d.Step(rig.guest, true, R::block, 0);
+    REQUIRE(c);
+    REQUIRE(c->function == R::base + addr::kCreate);
+    CHECK(rig.Name(*c) == "CoopShot_Seed");
+    const std::uint64_t handle = c->x[3];
+    d.Step(rig.guest, true, 0, 0);
+    rig.guest.Set(handle, R::request);
+    rig.guest.Set(R::request, std::uint32_t{addr::kRequestReady});
+    REQUIRE(d.Step(rig.guest, false, 0, 16));  // take
+    d.Step(rig.guest, true, R::actor, 16);
+
+    // Live: the place and the pending transform are written, the setter is not called.
+    copy.position = {5.0f, 6.0f, 7.0f};
+    d.SetInput(R::base, {copy});
+    CHECK_FALSE(d.Step(rig.guest, false, 0, 33));
+    CHECK(rig.guest.Get<float>(R::actor + addr::kActorPosition) == doctest::Approx(5.0f));
+    CHECK(rig.guest.Get<float>(R::actor + addr::kActorPositionRequest + 8) == doctest::Approx(7.0f));
+    CHECK(rig.guest.Get<float>(R::actor + addr::kActorRotationRequest + 8) == doctest::Approx(1.0f));
+    CHECK(d.Live().at(7) == R::actor);
+}
+
+// A name the pack does not list is never asked for (an old pack, or no pack):
+// straight to the game's own actor.
+TEST_CASE("spawn: without the stand-in in the pack, the copy is the game's own seed") {
+    using R = StandInRig;
+    namespace addr = CoopPuppet::addr;
+    CHECK(CoopSpawn::StandInsIn("{\"actors\": [], \"sound\": true}").empty());
+    CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Seed\"}, {\"actor\": \"CoopShot_Hook\"}]}") ==
+          std::set<std::string>{"CoopShot_Hook", "CoopShot_Seed"});
+    CHECK(CoopSpawn::StandInsIn("CoopShot_SeedX").empty());
+
+    for (const bool listed_other : {false, true}) {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        if (listed_other) {
+            d.SetStandIns({"CoopShot_Arrow"});
+        }
+        Copy copy;
+        copy.key = 1;
+        copy.actor = "Shootable_DekuSeed";
+        d.SetInput(R::base, {copy});
+        REQUIRE(d.Step(rig.guest, false, 0, 0));
+        auto c = d.Step(rig.guest, true, R::block, 0);
+        REQUIRE(c);
+        REQUIRE(c->function == R::base + addr::kCreate);
+        CHECK(rig.Name(*c) == "Shootable_DekuSeed");
+    }
+}
+
+// A stand-in that never becomes an actor (failed, timed out, dropped, or the
+// take gave none) is made again; only kStandInTries failures in a row turn it
+// off for the session.
+TEST_CASE("spawn: a failed stand-in is tried again, then the game's own actor is used") {
+    using R = StandInRig;
+    namespace addr = CoopPuppet::addr;
+    StandInRig rig;
+    constexpr std::uint64_t failed = 0x51000000;
+    rig.guest.Map(failed, 0x10);
+    rig.guest.Set(failed, std::uint32_t{5});
+    std::vector<std::string> said;
+    CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
+    d.SetStandIns({"CoopShot_Seed"});
+    Copy copy;
+    copy.key = 1;
+    copy.actor = "Shootable_DekuSeed";
+    d.SetInput(R::base, {copy});
+    REQUIRE(d.Step(rig.guest, false, 0, 0));  // malloc
+    auto c = d.Step(rig.guest, true, R::block, 0);
+    std::uint64_t now = 0;
+    std::vector<std::string> asked;
+    // Each create of the stand-in fails a different way: state 5, a drop, no actor.
+    for (int round = 0; round < 4 && c && c->function == R::base + addr::kCreate; ++round) {
+        asked.push_back(rig.Name(*c));
+        const std::uint64_t handle = c->x[3];
+        d.Step(rig.guest, true, 0, now);
+        now += 16;
+        if (round == 0) {
+            rig.guest.Set(handle, failed);
+            c = d.Step(rig.guest, false, 0, now);  // failure seen, made again at once
+        } else if (round == 1) {
+            rig.guest.Set(handle, R::request);
+            rig.guest.Set(R::request, std::uint32_t{addr::kRequestDrop});
+            c = d.Step(rig.guest, false, 0, now);  // the drop call
+            REQUIRE(c);
+            REQUIRE(c->function == R::base + addr::kDropCreate);
+            d.Step(rig.guest, true, 0, now);
+            now += 16;
+            c = d.Step(rig.guest, false, 0, now);
+        } else {
+            rig.guest.Set(handle, R::request);
+            rig.guest.Set(R::request, std::uint32_t{addr::kRequestReady});
+            c = d.Step(rig.guest, false, 0, now);  // the take
+            REQUIRE(c);
+            REQUIRE(c->function == R::base + addr::kTakeCreated);
+            d.Step(rig.guest, true, 0, now);  // it gave no actor
+            now += 16;
+            c = d.Step(rig.guest, false, 0, now);
+        }
+        now += 16;
+    }
+    REQUIRE(asked.size() == 4);
+    CHECK(asked[0] == "CoopShot_Seed");
+    CHECK(asked[1] == "CoopShot_Seed");
+    CHECK(asked[2] == "CoopShot_Seed");
+    CHECK(asked[3] == "Shootable_DekuSeed");
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("could not be made 3 times in a row") != std::string::npos;
+    }));
 }

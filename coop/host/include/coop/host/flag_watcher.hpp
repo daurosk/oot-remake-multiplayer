@@ -26,6 +26,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <span>
 #include <variant>
@@ -57,6 +58,9 @@ struct FlagStats {
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
+  std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
+  std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
+  std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
 };
 
 class FlagWatcher {
@@ -87,6 +91,19 @@ class FlagWatcher {
   // to 0 through the session (a key that the game resets on a scene change
   // must not put the pickup back for the others). False: already a pickup.
   bool share_pickup(FlagKey key);
+  // A named Bool that the game itself sets back to 0 (a room's own switch
+  // state, reset when the room is left: docs/dungeon.md "Live dungeon
+  // actions"): shared one way like a pickup (a 1 is sent and written, a 0 is
+  // never sent and never written over a 1), and never written back after a
+  // load (the room must be able to reset). False: already one way.
+  bool share_one_way(FlagKey key);
+  // The pickup rule for a named Bool (a chest's opened flag,
+  // issue 87: the game records a chest opened in a named Bool of its own,
+  // not in the placement's 64-bit key). It is also noted in
+  // take_written_for_others when written 0 to 1 for another player. False:
+  // already shared one way.
+  // (chest-live's; a load's 0 is still written back, unlike share_one_way.)
+  bool share_pickup_named(FlagKey key);
   // With learning on, an incoming 64-bit key set to 1 that this game does not
   // share yet is taken as a pickup too (the player who took it was in a scene
   // this game has not loaded). At most kMaxLearned keys. Off by default here;
@@ -96,13 +113,25 @@ class FlagWatcher {
   static constexpr std::size_t kMaxLearned = 4096;
   std::size_t pickups() const { return pickups_.size(); }
 
-  // The 64-bit keys this watcher wrote 0 to 1 into the game for another
+  // The 64-bit keys, and the named Bools shared by the pickup rule (share_pickup_named),
+  // this watcher wrote 0 to 1 into the game for another
   // player (a chest opened, a pickup taken elsewhere), oldest first, since
   // the last call; at most kMaxWrittenForOthers are kept. A key the game
   // already had at 1 (opened here, the host's echo of it) is not in it. The
   // hook removes what is loaded of these (docs/items.md, "Chests").
   std::vector<FlagKey> take_written_for_others() { return std::exchange(written_for_others_, {}); }
+  // One-way Bools (FlagStore::is_one_way) the game dropped to 0 and diff()
+  // wrote back to 1 since the last call, for the log (issue 146). Each key
+  // only the first time it is put back; stats().one_way_restores counts all.
+  std::vector<FlagKey> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
+
+  // The counts (small keys, ...) our game itself lowered since the last call,
+  // one entry per drop, oldest first: what the game did, never a total this
+  // watcher wrote in (another player's spend). The hook gives a lock's second
+  // key back only against one of these (docs/dungeon.md, "Locked doors").
+  std::vector<FlagKey> take_own_count_drops() { return std::exchange(own_count_drops_, {}); }
+  static constexpr std::size_t kMaxOwnCountDrops = 64;
 
   // The host left and this player takes over, or the other way round. Keeps
   // what is known of the game; drops a snapshot being held.
@@ -114,13 +143,30 @@ class FlagWatcher {
   // flags, also over ones the group set just before (issue 129: a switch
   // shared by the snapshot was reset by the joiner's save load, sent back as
   // 0, and the group's later 1 was written while the load ran and lost).
-  // While loading and kSettleFrames after, a shared flag that the game moves
+  // Saves (Caleb, 2026-11-11, docs/flags.md "Saves"): the host's save is the
+  // truth. While there is no Link nothing is sent. A save was loaded when,
+  // in one window, no scene was loaded for kTitleFrames (the title screen
+  // or file select) and kSaveLoadMin named flags went back (a Bool to 0, an
+  // Int lower) with no Link. A door, warp, cutscene, time travel or death
+  // keeps a scene loaded, and its room "enter" flags do not count then. Then nothing is sent until the window ends, when
+  // the host sends what its load changed as FLAG_RESET, which replaces the
+  // group's values, and a player's game takes the group's values back for
+  // what its load changed (the group is not changed). One-way room flags
+  // the game resets itself are never part of it. Without that sign, the
+  // rules below hold as before.
+  // Also, for a player, while loading and kSettleFrames after, a shared flag that the game moves
   // away from the group's value backwards (a Bool from 1 to 0; while
   // loading only, not in the settle time, an Int back to exactly the value
   // it had before the group's value came; counts are left to their delta
   // rule) is not sent: the group's value is written back. A Bool going to 1,
   // or an Int to any other value, is the game's own change and is sent.
   void set_loading(bool loading);
+  // Whether a scene (Banc) is loaded this frame. None for kTitleFrames in a
+  // load window means the title screen or file select: the only way to a
+  // save load (docs/flags.md, "Saves"). Default: loaded.
+  void set_scene(bool readable) { scene_readable_ = readable; }
+  static constexpr int kTitleFrames = 30;
+  static constexpr int kSaveLoadMin = 2;
   static constexpr int kSettleFrames = 120;
   bool settling() const { return loading_ || settle_left_ > 0; }
 
@@ -130,6 +176,25 @@ class FlagWatcher {
   // may have been lost with the connection.
   void reset();
 
+  // True once after the host's save load reached this game: as host, its
+  // FLAG_RESET went out; as player, one was applied. The game then drops its
+  // own session-wide state the save undoes (docs/flags.md, "Saves").
+  bool take_reset() { return std::exchange(reset_seen_, false); }
+
+  // Once, when a save load was seen in a load window: how many distinct
+  // flags went back, and how many frames had no scene (for the log line).
+  struct SaveLoadSeen {
+    int flags = 0;
+    int frames = 0;
+  };
+  std::optional<SaveLoadSeen> take_save_load() {
+    if (seen_flags_ == 0) return std::nullopt;
+    SaveLoadSeen s{seen_flags_, seen_frames_};
+    seen_flags_ = 0;
+    seen_frames_ = 0;
+    return s;
+  }
+
   // A FLAG_SNAPSHOT has started and its last part has not come yet.
   bool holding() const { return holding_; }
   // Local changes sent and not answered yet.
@@ -138,12 +203,22 @@ class FlagWatcher {
   const SharedFlags& shared() const { return shared_; }
 
  private:
-  using Incoming = std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot>;
+  using Incoming =
+      std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot, protocol::FlagReset>;
   using Table = std::map<FlagKey, protocol::FlagEntry>;
 
   void handle(FlagStore& store, Incoming& message, Table& answers);
   void apply_state(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
   void apply_snapshot(FlagStore& store);
+  // The host's save load (FLAG_RESET): every value written exactly.
+  void apply_reset(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
+  // A load window (settling()) ends. Host: when its save load moved named
+  // flags, the flags that moved go out as FLAG_RESET. Player: when its own
+  // save load moved them, they go back to what the group had before.
+  void end_window(FlagStore& store, std::vector<Outgoing>& out);
+  // Takes the save-load sign when both parts are in (kSaveLoadMin distinct
+  // flags back, kTitleFrames with no scene); from frame() and from diff().
+  void see_save_load();
   void answer_set(FlagStore& store, const protocol::FlagSet& set, Table& answers);
   bool write(FlagStore& store, const protocol::FlagEntry& entry);
   void add(FlagStore& store, const protocol::FlagEntry& delta);
@@ -159,7 +234,11 @@ class FlagWatcher {
   SharedFlags shared_;
   FlagRole role_;
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
+  std::set<FlagKey> one_way_;  // one-way named flags, no load write-back (share_one_way)
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
+  std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
+  std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
+  std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);
   std::size_t learned_ = 0;
@@ -173,6 +252,16 @@ class FlagWatcher {
   Table group_before_;  // an Int's value in our game just before group_ took it
   bool loading_ = false;
   int settle_left_ = 0;
+  // A load window (docs/flags.md, "Saves"): from the first loading frame to
+  // the end of the settle frames. Nothing is sent from inside it.
+  bool window_ = false;
+  bool moved_ = false;  // a save was loaded in it (the title seen, kSaveLoadMin flags back)
+  std::set<FlagKey> back_keys_;  // distinct named flags gone back with no Link in this window
+  int seen_flags_ = 0;           // take_save_load: the sign was taken with these
+  int seen_frames_ = 0;
+  int no_scene_frames_ = 0;  // frames in this window with no scene loaded
+  bool scene_readable_ = true;  // set_scene
+  bool reset_seen_ = false;  // take_reset
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;

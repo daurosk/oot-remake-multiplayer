@@ -28,6 +28,15 @@ bool IsPickup(std::string_view name) {
         name == "Obj_Heart_Container" || name.starts_with("Obj_RupeeToken_")) {
         return true;
     }
+    // Placed rupees and recovery hearts (breakables, issue 102): only placed
+    // ones are noted (a drop has no placement hash). Every placement of them
+    // has a 64-bit key that the game never resets (ResetTypeValue 24, read
+    // from the romfs). The minigames' rupees are each player's own game.
+    // Not the lying small keys: they have no 64-bit key at all; taking one
+    // goes as a WORLD_BREAK (CoopWorld::IsLyingKey).
+    if (name.starts_with("Obj_Rupee_") || name == "Obj_Heart" || name == "Obj_Heart_InWater") {
+        return true;
+    }
     // Obj_Heart_Piece, its digging-hole and minigame kinds, the Gerudo Valley one.
     return name.starts_with("Obj_") && name.find("Heart_Piece") != std::string_view::npos;
 }

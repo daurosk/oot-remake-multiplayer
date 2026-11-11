@@ -4,6 +4,7 @@
 // docs/dungeons-boss.md). No emulator code.
 
 #include "coop_boss.h"
+#include "coop_dungeon.h"
 
 #include <algorithm>
 #include <cmath>
@@ -81,6 +82,13 @@ const Room* RoomByIndex(std::uint8_t index) {
     return index < kRooms.size() ? &kRooms[index] : nullptr;
 }
 
+std::span<const std::string_view> Bodies(const Room& room) {
+    static constexpr std::array<std::string_view, 3> kTwinrovaBodies{
+        "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake"};
+    if (room.boss == kTwinrovaBodies[0]) return kTwinrovaBodies;
+    return {&room.boss, 1};
+}
+
 const Room* RoomOfScene(std::string_view scene) {
     for (const Room& r : kRooms) {
         if (r.scene == scene) {
@@ -114,6 +122,33 @@ Vec ArrivalFor(const Room& room, std::uint8_t number) {
     return v;
 }
 
+std::vector<std::string_view> StaleBossFlags::Check(const std::optional<std::string>& scene,
+                                                    const std::optional<Vec>& position,
+                                                    const std::function<bool(std::string_view)>& is_set) {
+    if (!scene) {
+        scene_.reset();  // loading: the scene after it (the same one too) arms it again
+        return {};
+    }
+    if (!scene_ || *scene_ != *scene) {
+        scene_ = scene;
+        armed_ = true;
+    }
+    if (!armed_ || !position) {
+        return {};
+    }
+    armed_ = false;  // once per scene load
+    if (RoomAt(*scene, *position) != nullptr) {
+        return {};  // in a boss room: maybe a real fight
+    }
+    std::vector<std::string_view> out;
+    for (const std::string_view name : CoopDungeon::NotShared()) {
+        if (is_set(name)) {
+            out.push_back(name);
+        }
+    }
+    return out;
+}
+
 const char* PhaseName(Sync::Phase phase) {
     switch (phase) {
     case Sync::Phase::none: return "none";
@@ -139,6 +174,7 @@ void Sync::Reset() {
     here_ = nullptr;
     phase_ = Phase::none;
     entered_at_ = sent_at_ = intro_at_ = skip_at_ = skip_since_ = 0;
+    committed_ = false;
     skip_asked_ = false;
     event_ = false;
     last_now_ = 0;
@@ -171,24 +207,36 @@ void Sync::Take(const proto::BossRoom& m, std::uint64_t now_us) {
     case proto::BossState::intro_start:
         r.in_room = true;
         r.fighting = false;
+        r.committed = true;
         break;
     case proto::BossState::intro_end:
         r.in_room = true;
         r.fighting = true;
+        r.committed = true;
         break;
     case proto::BossState::left:
         r.in_room = false;
         r.fighting = false;
+        r.committed = false;
         break;
     case proto::BossState::defeated:
         r.in_room = false;
         r.fighting = false;
+        r.committed = false;
         if (scene_ && *scene_ == m.scene &&
             std::find(defeated_.begin(), defeated_.end(), m.room) == defeated_.end()) {
             defeated_.push_back(m.room);
         }
         break;
     }
+}
+
+void Sync::Defeat(Actions& out) {
+    Say(out, *here_, proto::BossState::defeated);
+    if (std::find(defeated_.begin(), defeated_.end(), here_->index) == defeated_.end()) {
+        defeated_.push_back(here_->index);
+    }
+    out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
 }
 
 void Sync::Say(Actions& out, const Room& room, proto::BossState state) {
@@ -201,7 +249,10 @@ void Sync::Say(Actions& out, const Room& room, proto::BossState state) {
 
 bool Sync::FightActive(const Room& room, std::uint64_t now_us) const {
     for (const auto& [number, r] : remotes_) {
-        if (r.in_room && r.room == room.index && r.scene == room.scene && now_us - r.heard_at <= kFightQuietUs) {
+        // Only a player past the door (intro started, or fighting): one who is
+        // only near the room pulls no one (issue 148).
+        if (r.in_room && r.committed && r.room == room.index && r.scene == room.scene &&
+            now_us - r.heard_at <= kFightQuietUs) {
             return true;
         }
     }
@@ -259,9 +310,11 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             out.log.push_back("left the boss room of " + std::string(here_->scene));
         }
         here_ = room;
+        provisional_ = false;
         entered_at_ = now_us;
         intro_at_ = 0;
         skip_asked_ = false;
+        committed_ = false;
         phase_ = Phase::none;
         if (here_ != nullptr) {
             pulls_ = 0;
@@ -278,6 +331,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 if (local.event) {  // came in with an event running: that is the intro
                     phase_ = Phase::intro;
                     intro_at_ = now_us;
+                    committed_ = true;
                     Say(out, *here_, proto::BossState::intro_start);
                     out.log.push_back("intro started (" + std::string(here_->intro) + ")");
                 }
@@ -289,33 +343,60 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             if (rose) {
                 phase_ = Phase::intro;
                 intro_at_ = now_us;
+                committed_ = true;
                 Say(out, *here_, proto::BossState::intro_start);
                 out.log.push_back("intro started (" + std::string(here_->intro) + ")");
             } else if (now_us - entered_at_ >= kNoIntroUs) {
+                // No event said we are past the door (we may stand on the way
+                // to it): a fight here, but nobody is moved in for it (issue 148).
                 phase_ = Phase::fight;
-                Say(out, *here_, proto::BossState::intro_end);
-                out.log.push_back("no intro: the fight has begun");
+                fight_at_ = now_us;
+                out.log.push_back("no intro: the fight has begun here (the others are not moved in)");
             }
             break;
         case Phase::intro:
             if (fell) {
                 phase_ = Phase::fight;
+                fight_at_ = now_us;
                 Say(out, *here_, proto::BossState::intro_end);
                 out.log.push_back(skip_asked_ ? "intro ended (skipped to follow the others)" : "intro ended");
             }
             break;
         case Phase::fight:
-            if (rose) {
+            if (rose && now_us - fight_at_ < kMinFightUs) {
+                out.log.push_back("an event right after the intro: the rest of it, not the boss's death");
+            } else if (rose) {
                 phase_ = Phase::outro;
-                Say(out, *here_, proto::BossState::defeated);
-                if (!beaten(*here_)) {
-                    defeated_.push_back(here_->index);
+                outro_at_ = now_us;
+                if (local.boss_alive.has_value() && *local.boss_alive) {
+                    // Maybe the death, maybe a grab: decided while it runs.
+                    provisional_ = true;
+                    out.log.push_back("an event in the fight; the boss is still there: waiting to see");
+                } else {
+                    Defeat(out);
                 }
-                out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
             }
             break;
         case Phase::outro:
-            if (fell) {
+            if (provisional_) {
+                const bool gone = local.boss_alive.has_value() && !*local.boss_alive;
+                const bool long_event = now_us - outro_at_ >= kLongEventUs;
+                if (gone || (long_event && local.event)) {
+                    provisional_ = false;
+                    Defeat(out);
+                    if (!gone) out.log.back() += " after a long event";
+                } else if (fell) {
+                    provisional_ = false;
+                    if (!local.boss_alive.has_value()) {
+                        Defeat(out);  // no reading at the end: as before
+                    } else {
+                        phase_ = Phase::fight;
+                        out.log.push_back("the event is over and the boss is alive: the fight goes on");
+                        break;
+                    }
+                }
+            }
+            if (fell && !provisional_ && phase_ == Phase::outro) {
                 phase_ = Phase::done;
             }
             break;
@@ -345,9 +426,15 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 skip_at_ = now_us;
             }
         }
-        const bool fighting = phase_ == Phase::waiting || phase_ == Phase::intro || phase_ == Phase::fight;
+        const bool fighting = phase_ == Phase::waiting || phase_ == Phase::intro || phase_ == Phase::fight ||
+                              (phase_ == Phase::outro && provisional_);
         if (fighting && now_us - sent_at_ >= kSendEveryUs) {
-            Say(out, *here_, proto::BossState::in_room);
+            // The heartbeat says how far we are, so a game that joins late
+            // knows whether to move in (issue 148).
+            const auto state = !committed_ ? proto::BossState::in_room
+                               : phase_ == Phase::intro ? proto::BossState::intro_start
+                                                        : proto::BossState::intro_end;
+            Say(out, *here_, state);
             sent_at_ = now_us;
         }
         return out;

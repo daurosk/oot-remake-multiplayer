@@ -75,6 +75,13 @@ struct FrameReport {
   bool hosting = false;                 // the watcher's role is host
   bool holding = false;                 // a snapshot is coming in parts: hold the game
   std::size_t queued = 0;               // messages and flag lists queued to send
+  // The host's save load reached this game this frame (FlagWatcher::
+  // take_reset): drop session-wide state the save undoes (docs/flags.md, "Saves").
+  bool host_reset = false;
+  // A save load was seen this frame (FlagWatcher::take_save_load): distinct
+  // flags gone back, frames with no scene. 0 when not.
+  int save_load_flags = 0;
+  int save_load_frames = 0;
 };
 
 class Session {
@@ -83,6 +90,11 @@ class Session {
   Session(const Session&) = delete;
   Session& operator=(const Session&) = delete;
 
+  // Emulator thread, before frame(): whether a scene (Banc) is loaded now
+  // (PlayerReader::read_scene). Its absence for a while in a load is the
+  // title screen, the sign of a save load (FlagWatcher::set_scene).
+  void set_scene_readable(bool readable) { scene_readable_ = readable; }
+
   // Emulator thread, once per emulated frame. `reading` is this frame's
   // PlayerReader::read() (nothing when the game is not the right one);
   // `flags` the game's flags, or null when they cannot be reached this frame
@@ -90,6 +102,7 @@ class Session {
   FrameReport frame(const std::optional<PlayerReading>& reading, FlagStore* flags);
   FrameReport frame(GameMemory& memory, FlagStore* flags) {
     PlayerReader reader(memory, &drawn_state_);
+    scene_readable_ = reader.read_scene().has_value();
     return frame(reader.read(), flags);
   }
 
@@ -126,10 +139,25 @@ class Session {
   // loaded in the game (FlagWatcher::share_pickup). False when flags are not
   // shared or it was known.
   bool share_pickup(FlagKey key) { return watcher_ && watcher_->share_pickup(key); }
+  // FlagWatcher::share_one_way. Emulator thread only, like share_pickup.
+  bool share_one_way(FlagKey key) { return watcher_ && watcher_->share_one_way(key); }
+  // FlagWatcher::share_pickup_named (a named Bool, the pickup rule).
+  bool share_pickup_named(FlagKey key) { return watcher_ && watcher_->share_pickup_named(key); }
   // Emulator thread only: FlagWatcher::take_written_for_others (empty when
   // flags are not shared).
+  std::vector<FlagKey> take_one_way_restores() {
+    return watcher_ ? watcher_->take_one_way_restores() : std::vector<FlagKey>{};
+  }
+  // How many times a one-way Bool was put back this session (for the log).
+  std::uint64_t one_way_restores() const {
+    return watcher_ ? watcher_->stats().one_way_restores : 0;
+  }
   std::vector<FlagKey> take_written_for_others() {
     return watcher_ ? watcher_->take_written_for_others() : std::vector<FlagKey>{};
+  }
+  // Emulator thread only: FlagWatcher::take_own_count_drops.
+  std::vector<FlagKey> take_own_count_drops() {
+    return watcher_ ? watcher_->take_own_count_drops() : std::vector<FlagKey>{};
   }
 
   // Emulator thread only (the parts frame() uses), for tests and the overlay.
@@ -158,6 +186,7 @@ class Session {
   Sampler sampler_;
   std::optional<FlagWatcher> watcher_;
   bool reset_sampler_ = false;
+  bool scene_readable_ = true;  // set_scene_readable
   PlayerReader::DrawnState drawn_state_{};  // frame(GameMemory&)'s readers share it
 
   // Guarded by net_mutex_.

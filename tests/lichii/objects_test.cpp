@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cstring>
+#include <array>
 #include <optional>
 #include <string>
 #include <variant>
@@ -304,6 +305,16 @@ TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
 }
 
+TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
+    CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_Deku_Brothers"));
+    CHECK(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku_Brothers"));
+    CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_ForestStage"));
+    // The lone scrubs and business scrubs stay shared enemies.
+    CHECK(CoopObjects::IsShared("Enemy_Scrub_Deku"));
+    CHECK(CoopObjects::IsShared("Enemy_Scrub_Business_Seed"));
+    CHECK_FALSE(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku"));
+}
+
 TEST_CASE("objects: a rotation matrix goes to a quaternion and back") {
     // A turn of 90 degrees about y, then an arbitrary one.
     const CoopObjects::Mat3 turn{0, 0, 1, 0, 1, 0, -1, 0, 0};
@@ -494,17 +505,20 @@ TEST_CASE("objects: a chest opened elsewhere goes only while it was loaded close
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // A chest first gets kChestOpenWaitUs to show itself open (issue 87).
+    CHECK(sync.Removes().empty());
+    Tick(sync, 1600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
     // The room loads again in the same scene (a new actor): the game made it
     // open, knowing the key. Left alone.
     chest.address = 0x600;
-    Tick(sync, 900 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1700 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     // Another scene and back: the take is forgotten, nothing goes.
-    Tick(sync, 1000 * kMs, {}, 1, "Other");
+    Tick(sync, 1800 * kMs, {}, 1, "Other");
     CHECK_FALSE(sync.Taken(chest.hash));
     chest.address = 0x700;
-    Tick(sync, 2000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2800 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
 
@@ -546,28 +560,178 @@ TEST_CASE("objects: keys written while no walk ran remove nothing (title, save l
     sync.Take(0x3c5bb811b4cf54dd);
     Tick(sync, 3040 * kMs, {Enemy(0x200, 0x22, 2)}, 1, "Other");
     Tick(sync, 3050 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    CHECK(sync.Removes().empty());  // the chest's wait to show itself open
+    Tick(sync, 4600 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
 }
 
-TEST_CASE("objects: a chest beside our Link is not removed (we may be opening it too)") {
+TEST_CASE("objects: a chest opened elsewhere that shows itself open stays, open (issue 87)") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
-    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chest
     sync.Take(0x3c5bb811b4cf54dd);
-    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Seen chest = Chest(0x500);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    // Its own AI read the shared opened flag and plays the opened pose.
+    chest.animation = proto::Animation{};
+    chest.animation->name = "OpenWait";
+    Tick(sync, 600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) {
+        said |= n.find("shows open here") != std::string::npos;
+    }
+    CHECK(said);
+    // Still closed after the wait: removed (the fallback).
+    Seen closed = Chest(0x600, 0x77);
+    closed.animation = proto::Animation{};
+    closed.animation->name = "CloseWait";
+    sync.Take(0x77);
+    Tick(sync, 2010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2020 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3000 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    Tick(sync, 3600 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x600});
+}
+
+TEST_CASE("objects: a pickup beside our Link is not removed (we may be taking it too)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from it
+    Seen heart = Chest(0x500);
+    heart.name = "Obj_Heart_Piece";
+    sync.Take(heart.hash);
+    Tick(sync, 10 * kMs, {heart, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {heart, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     bool said = false;
     for (const auto& n : sync.TakeNotes()) said |= n.find("our Link is beside it") != std::string::npos;
     CHECK(said);
     // Walking away later does not remove it: the bind window is over.
     sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
-    Tick(sync, 30 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 30 * kMs, {heart, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
-    // Another chest of the same take, far away, in the window: removed.
+    // Another of the same kind far away, in the window: removed at once.
+    Seen far = heart;
+    far.address = 0x900;
+    far.hash = 0x1111;
     sync.Take(0x1111);
-    Tick(sync, 40 * kMs, {Chest(0x900, 0x1111), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 40 * kMs, {far, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x900});
+}
+
+TEST_CASE("objects: a chest beside our Link shows open or goes, it is never left closed (issue 87)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chests
+    // Closed beside our Link: removed at once, before our Link can open it
+    // and get its content a second time.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+    sync.TakeNotes();
+    // Ours started opening just before the other's flag came (both at once):
+    // its animation changed to "Open" with our Link beside it. It stays, and
+    // the log says its content may count twice.
+    Seen opening = Chest(0x600, 0x2222);
+    opening.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    Tick(sync, 25 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    opening.animation = proto::Animation{"Open", 0.0f, 1.0f};
+    Tick(sync, 28 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    sync.Take(0x2222);
+    Tick(sync, 30 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 40 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2000 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) said |= n.find("at once") != std::string::npos;
+    CHECK(said);
+}
+
+TEST_CASE("objects: a closed chest whose idle has Open in its name is not taken for opened (integrate-p8)") {
+    // B never touched the chest; its closed idle animation has "Open" in its
+    // name and has not changed since the chest was made.
+    for (const bool beside : {false, true}) {
+        Sync sync;
+        sync.SetPlayer(beside ? proto::Vec3{1.5f, 0.0f, 1.0f} : proto::Vec3{20.0f, 0.0f, 1.0f});
+        Seen chest = Chest(0x500);
+        chest.animation = proto::Animation{"OpenWait", 0.0f, 1.0f};
+        Tick(sync, 0, {chest, Enemy(0x100, 0x11, 2)});
+        Tick(sync, 5000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+        sync.Take(chest.hash);
+        Tick(sync, 5010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+        Tick(sync, 5020 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+        if (beside) {
+            CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});  // at once
+        } else {
+            CHECK(sync.Removes().empty());  // its wait to show itself open
+            Tick(sync, 6600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+            CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+        }
+        for (const auto& n : sync.TakeNotes()) {
+            CHECK(n.find("at once") == std::string::npos);
+            CHECK(n.find("shows open here") == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("objects: a chest away from our Link that starts opening as the flag comes shows open (issue 87)") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
+    Seen chest = Chest(0x500);
+    chest.animation = proto::Animation{"OpenWait", 0.0f, 1.0f};
+    Tick(sync, 0, {chest, Enemy(0x100, 0x11, 2)});
+    // Its AI read the shared opened flag a frame before the key's take.
+    chest.animation = proto::Animation{"Open", 0.0f, 1.0f};
+    Tick(sync, 1000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    sync.Take(chest.hash);
+    Tick(sync, 1010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1020 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 4000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool shows = false;
+    bool at_once = false;
+    for (const auto& n : sync.TakeNotes()) {
+        shows |= n.find("shows open here") != std::string::npos;
+        at_once |= n.find("at once") != std::string::npos;
+    }
+    CHECK(shows);
+    CHECK_FALSE(at_once);
+}
+
+TEST_CASE("objects: a chest waiting to show itself open goes when our Link comes beside it (issue 87)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});  // far
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());  // waiting
+    // A second take of the same key (its opened flag a frame later) does
+    // not start the wait again.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 30 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    // Our Link walks up to it, still closed: it goes at once.
+    sync.SetPlayer(proto::Vec3{2.0f, 0.0f, 1.0f});
+    Tick(sync, 500 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+}
+
+TEST_CASE("objects: a second take of a key does not start the chest's wait again") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    sync.Take(0x3c5bb811b4cf54dd);  // the same chest's other flag, later
+    Tick(sync, 1000 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    Tick(sync, 1520 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});  // 1.5 s from the first
 }
 
 TEST_CASE("objects: a take for a chest not loaded removes nothing that loads later") {
@@ -756,6 +920,72 @@ TEST_CASE("objects: one game rolls Stalchild, the others delete theirs and make 
     b.Bind({});
     Tick(b, 600 * kMs, {}, 2);
     CHECK(b.Creates().empty());
+}
+
+TEST_CASE("objects: a decided Stalchild copy that sank by itself is made again, a dead one is not") {
+    // Issue 124 (chunk 2 test, B's log): B made A's three Stalchild, each played
+    // its own 'Disappear' 2 s later and left B's list while A's still fought.
+    Sync a;  // player 1: decides
+    Sync b;  // player 2
+    a.Receive(Where(2, kScene, 0));
+    b.Receive(Where(1, kScene, 0));
+    const auto spawns = All<proto::ObjectSpawn>(
+        Tick(a, 100 * kMs, {Enemy(0x100, ~0ULL, 2, 7.0f), Enemy(0x101, ~0ULL, 2, 20.0f)}, 1));
+    REQUIRE(spawns.size() == 2);
+    Tick(b, 100 * kMs, {}, 2);  // B is in the scene first
+    b.Receive(spawns[0]);
+    b.Receive(spawns[1]);
+    Tick(b, 150 * kMs, {}, 2);
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 2);
+    for (const auto& c : creates) {
+        CHECK(c.remakes == Sync::kRemakes);
+    }
+    const auto key_at = [&](float x) {
+        for (const auto& c : b.Creates()) {
+            if (c.position[0] == x) return c.key;
+        }
+        return std::uint64_t{0};
+    };
+    const std::uint64_t sinks = key_at(7.0f), dies = key_at(20.0f);
+
+    // Both made and listed.
+    Seen sinking = Enemy(0x600, ~0ULL, 2, 7.0f);
+    Seen dying = Enemy(0x601, ~0ULL, 2, 20.0f);
+    b.Bind({{sinks, 0x600}, {dies, 0x601}});
+    Tick(b, 200 * kMs, {sinking, dying}, 2);
+    REQUIRE(b.IdOf(0x600));
+    REQUIRE(b.IdOf(0x601));
+
+    // One sinks by its own AI; the other is killed here (life 0, 'Die').
+    sinking.animation = proto::Animation{"Disappear", 0.0f, 1.0f};
+    dying.life = proto::ObjectLife{0, 2};
+    dying.animation = proto::Animation{"Die", 0.0f, 1.0f};
+    b.Bind({{sinks, 0x600}, {dies, 0x601}});
+    Tick(b, 250 * kMs, {sinking, dying}, 2);
+    b.Bind({});
+    Tick(b, 300 * kMs, {}, 2);
+    Tick(b, 350 * kMs, {}, 2);
+    CHECK_FALSE(b.IdOf(0x600));
+    CHECK_FALSE(b.IdOf(0x601));
+
+    // A's are still alive: both stay wanted; only the sunk one may come back.
+    creates = b.Creates();
+    REQUIRE(creates.size() == 2);
+    for (const auto& c : creates) {
+        CHECK_FALSE(c.removed);
+        CHECK(c.remakes == (c.key == sinks ? Sync::kRemakes : 0));
+    }
+
+    // The director makes it again near A's one: B waits for it instead of
+    // deleting it as an own roll, and it takes A's id again.
+    Tick(b, 1400 * kMs, {Enemy(0x700, ~0ULL, 2, 7.2f)}, 2);
+    CHECK(b.Removes().empty());
+    CHECK(b.Refused() == 0);
+    b.Bind({{sinks, 0x700}});
+    Tick(b, 1450 * kMs, {Enemy(0x700, ~0ULL, 2, 7.2f)}, 2);
+    REQUIRE(b.IdOf(0x700));
+    CHECK(*b.IdOf(0x700) == spawns[0].id);
 }
 
 TEST_CASE("objects: alone or first in the scene, a game rolls its own Stalchild") {
@@ -1721,7 +1951,10 @@ TEST_CASE("objects: only chests, pickups and things that go away are removed whe
                              "Land_Well_Waterfall_A_01", "Obj_ForestTemple_GhostPicture_A_01",
                              "Enemy_Anubis", "Obj_ShadowTemple_SkullPot_A_01",
                              "Obj_ShadowTemple_SpikeBoard_A_01", "Obj_ShadowTemple_FallingFloor_A_01",
-                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild"}) {
+                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild",
+                             "Obj_MiniGame_SmallKey",
+                             // no 64-bit key: taking one is a WORLD_BREAK (breakables-2)
+                             "Obj_Dungeon_SmallKey", "Obj_Dungeon_SmallKey_GerudoFortress_03"}) {
         CAPTURE(name);
         CHECK_FALSE(CoopObjects::RemovedWhenTaken(name));
     }
@@ -1740,7 +1973,170 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     sync.Take(chest.hash);
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     Tick(sync, 20 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());  // the chest's wait to show itself open
+    Tick(sync, 1600 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
-    Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1610 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
+}
+
+TEST_CASE("objects: a boss is alive while a body actor has life left, unknown without life (issue 109)") {
+    constexpr std::array<std::string_view, 1> kMorpha{"Enemy_DungeonBoss_Morpha"};
+    Seen boss = Chest(0x900, 0);
+    boss.name = "Enemy_DungeonBoss_Morpha";
+    Seen part = Chest(0x910, 0);
+    part.name = "Enemy_DungeonBoss_Morpha_Tentacle";
+    part.life = coop::protocol::ObjectLife{5, 5};
+    CHECK(CoopObjects::BossAlive({part}, kMorpha) == std::optional<bool>(false));  // gone; a part is not the body
+    CHECK_FALSE(CoopObjects::BossAlive({part, boss}, kMorpha).has_value());       // no life read: unknown
+    boss.life = coop::protocol::ObjectLife{12, 20};
+    CHECK(CoopObjects::BossAlive({boss}, kMorpha) == std::optional<bool>(true));
+    boss.life = coop::protocol::ObjectLife{0, 20};
+    CHECK(CoopObjects::BossAlive({boss}, kMorpha) == std::optional<bool>(false));
+
+    // Twinrova's first phase is Koume and Kotake: alive while either is.
+    constexpr std::array<std::string_view, 3> kTwinrova{
+        "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake"};
+    Seen koume = Chest(0x920, 0);
+    koume.name = "Enemy_DungeonBoss_Koume";
+    koume.life = coop::protocol::ObjectLife{8, 8};
+    Seen kotake = koume;
+    kotake.address = 0x930;
+    kotake.name = "Enemy_DungeonBoss_Kotake";
+    kotake.life = coop::protocol::ObjectLife{0, 8};
+    CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(true));
+    koume.life = coop::protocol::ObjectLife{0, 8};
+    CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
+}
+
+TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is deleted only if it stands") {
+    // breakables-2 (test6 players): the Deku Tree web burnt in A just vanished
+    // in B. One with a life (a bomb web, a cracked wall) gets life 0 first, so
+    // the game breaks it; the delete is the fallback.
+    Sync sync;
+    Seen web;
+    web.address = 0x700;
+    web.name = "Obj_InsideTheDekuTree_SpiderWeb_A_02";
+    web.hash = 0x2016a1ad3261af2a;
+    web.position = {5.0f, 2.0f, 1.0f};
+    web.life = proto::ObjectLife{1, 1};
+    Tick(sync, 0, {web});
+    sync.Take(web.hash);
+    auto step = Tick(sync, 10 * kMs, {web});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].address == 0x700);
+    CHECK(step.writes[0].life == 0);
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(sync.Removes().empty());
+    // Its break plays: not deleted, not written again.
+    step = Tick(sync, 800 * kMs, {web});
+    CHECK(step.writes.empty());
+    CHECK(sync.Removes().empty());
+    // Still standing 1.5 s on: deleted after all.
+    Tick(sync, 1600 * kMs, {web});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
+
+    // One with no life (the floor web you fall through) goes at once, as before.
+    Sync other;
+    Seen floor = web;
+    floor.name = "Obj_InsideTheDekuTree_SpiderWeb_A_01";
+    floor.hash = 0x3de66423437a955;
+    floor.life.reset();
+    Tick(other, 0, {floor});
+    other.Take(floor.hash);
+    step = Tick(other, 10 * kMs, {floor});
+    CHECK(step.writes.empty());
+    CHECK(other.Removes() == std::vector<std::uint64_t>{0x700});
+}
+
+TEST_CASE("objects: a kill from before we came dies through our game, deleted only as a fallback (issue 133)") {
+    // The server tells a late entrant: no owner was ever named to us. Our
+    // game must kill it itself, so its room counter and kill key count.
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)}, 2);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    sync.Receive(Dead(id, 1));
+    auto step = Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    CHECK(sync.Removes().empty());
+    CHECK(All<proto::Damage>(step).empty());
+    // Still standing after the grace: deleted.
+    Tick(sync, 3100 * kMs, {Enemy(0x100, 0x11, 0)}, 2);
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
+
+    // One whose life we cannot read goes at once.
+    Sync blind;
+    Seen e = Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Skulltula");
+    e.life.reset();
+    Tick(blind, 0, {e}, 2);
+    blind.Receive(Dead(*blind.IdOf(0x100), 1));
+    CHECK(Tick(blind, 50 * kMs, {e}, 2).writes.empty());
+    CHECK(blind.Removes() == std::vector<std::uint64_t>{0x100});
+}
+
+TEST_CASE("objects: a life write held through our event lands later and is no hit of ours (#144)") {
+    // The owner's hit asks for life 4 -> 3; the write waits 2 s (our Link in a talk with it),
+    // so the walk reads 4 all that time. Then it lands: with Written the drop is ours, no DAMAGE.
+    const auto run = [](bool told) {
+        Sync sync;
+        sync.SetHurt(true);
+        Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        proto::ObjectSample s;
+        s.player_number = 2;
+        s.id = id;
+        s.state.life = proto::ObjectLife{3, 4};
+        sync.Receive(s);
+        std::size_t asked = 0;
+        for (std::uint64_t t = 10; t < 2000; t += 50) {
+            asked += Tick(sync, t * kMs, {Enemy(0x100, 0x11, 4)}).writes.size();  // held: not made
+        }
+        CHECK(asked >= 1);
+        if (told) {
+            sync.Written(0x100, 3, 2000 * kMs);
+        }
+        std::size_t damage = 0;
+        for (std::uint64_t t = 2000; t < 3000; t += 50) {
+            damage += All<proto::Damage>(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 3)})).size();
+        }
+        return damage;
+    };
+    CHECK(run(true) == 0);
+    CHECK(run(false) >= 1);  // the bug the review found: the late drop went back as our hit
+}
+
+TEST_CASE("objects: Written for an actor the Sync does not know, or a life not lower, does nothing") {
+    Sync sync;
+    sync.Written(0x999, 0, 0);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 3)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    sync.Written(0x100, 5, 0);  // not a drop
+    // Our own hit afterwards still goes to the owner.
+    Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(All<proto::Damage>(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
+}
+
+TEST_CASE("objects: a released write the game ignores is written as life, and our next hit still goes") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    // A held write to 3 lands at 2000 ms, but the game never takes it (life stays 4).
+    sync.Written(0x100, 3, 2000 * kMs);
+    std::size_t rewritten = 0;
+    for (std::uint64_t t = 2000; t < 2600; t += 50) {
+        // Until the Sync writes the life itself the game keeps 4; that write lands at once.
+        for (const auto& w : Tick(sync, t * kMs, {Enemy(0x100, 0x11, rewritten ? 3 : 4)}).writes) {
+            rewritten += w.life == 3 ? 1 : 0;
+        }
+    }
+    CHECK(rewritten == 1);  // after kHurtWaitUs the life is written as the owner has it
+    // Our Link's real hit afterwards (3 -> 2) goes to the owner: nothing left over swallows it.
+    Tick(sync, 2700 * kMs, {Enemy(0x100, 0x11, 3)});
+    Tick(sync, 4000 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(All<proto::Damage>(Tick(sync, 4300 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
 }

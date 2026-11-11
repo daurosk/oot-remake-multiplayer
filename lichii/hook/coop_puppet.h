@@ -13,6 +13,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -290,6 +291,10 @@ public:
         std::string anim_name;  // what was last played on it
     };
     std::vector<SlotView> Slots() const;  // the calc thread, or tests
+    // Any thread: bit n set while puppet n's actor is live in this scene and
+    // shown or held (not parked for a hide), as of the last calc frame. The
+    // fairies follow it, so a Navi never shows without her puppet (issue 145).
+    std::uint32_t LiveMask() const { return live_mask_.load(std::memory_order_relaxed); }
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
 
@@ -316,6 +321,7 @@ public:
     static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
     static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
     static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
+    static constexpr std::uint64_t kTakeOffMs = 1500;  // a slot empty this long: the piece is taken off
     // A create waits until the game has drawn this long without a break,
     // begun after the last scene change or puppet loss (a load drops the
     // camera)...
@@ -371,6 +377,11 @@ private:
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
+        // A worn piece its player took off (a mask, boots, a lost shield): the
+        // game's call to take one off is not known, so the puppet is made
+        // again without it (Equip, issue 91).
+        bool remake = false;
+        std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {
@@ -418,6 +429,7 @@ private:
     std::uint8_t pending_slot_ = 0;
     int calls_ = 0;  // this frame
     std::uint64_t frames_ = 0;
+    std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
     std::uint64_t frames_at_status_ = 0;
     std::uint64_t status_ms_ = 0;
     std::string scene_;               // input_.scene as last seen
@@ -478,6 +490,8 @@ private:
 // Configure once, before the game starts (CoopSvc does it).
 void Configure(PlannerSettings settings, bool verbose, Director::Log log);
 Director& TheDirector();
+// Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
+std::uint32_t LivePuppets();
 
 // Every remote player presence shows at `server_now_us`, with scene, status,
 // age, newest animation and gear: what Publish plans from. CoopFairy plans

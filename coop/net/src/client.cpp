@@ -76,17 +76,17 @@ std::size_t utf8_chars(std::string_view text) {
   return n;
 }
 
-// Channels 0 to 2 are reliable and ordered, 3 and 4 unreliable and sequenced
-// (ENet's default for a packet without flags).
-enet_uint32 packet_flags(std::uint8_t channel) {
-  return channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
-}
-
 using proto::valid_flag;
 
 FlagKey key_of(const proto::FlagEntry& flag) { return flag.key; }
 
 }  // namespace
+
+std::uint32_t packet_flags(std::uint8_t channel) {
+  return channel < proto::kChannelPlayerSamples
+             ? static_cast<std::uint32_t>(ENET_PACKET_FLAG_RELIABLE)
+             : static_cast<std::uint32_t>(ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+}
 
 std::string_view to_string(State state) {
   switch (state) {
@@ -115,6 +115,7 @@ std::string_view to_string(EventKind kind) {
     case EventKind::player_status: return "player status";
     case EventKind::flag_state: return "flag state";
     case EventKind::flag_snapshot: return "flag snapshot";
+    case EventKind::flag_reset: return "flag reset";
     case EventKind::join_request: return "join request";
     case EventKind::join_accepted: return "join accepted";
     case EventKind::join_refused: return "join refused";
@@ -170,6 +171,8 @@ bool Client::start() {
   host_ = enet_host_create(nullptr, 1, proto::kChannelCount, 0, 0);
   if (host_ == nullptr) return false;
   host_->maximumPacketSize = kMaxPacketBytes;
+  host_->mtu = std::clamp<std::uint32_t>(config_.mtu, ENET_PROTOCOL_MINIMUM_MTU,
+                                         ENET_PROTOCOL_MAXIMUM_MTU);  // issue 143
   begin_attempt();
   return true;
 }
@@ -188,6 +191,8 @@ void Client::stop() {
 
 void Client::begin_attempt() {
   attempt_started_us_ = now_us();
+  last_receive_us_ = 0;
+  link_ = LinkInfo{};
   ENetAddress address{};
   address.port = config_.port;
   if (!address_known_) {
@@ -226,6 +231,7 @@ void Client::end_attempt(DropReason reason) {
   Event event;
   event.kind = was_connected ? EventKind::disconnected : EventKind::connect_failed;
   event.drop_reason = reason;
+  event.link = link();  // state_ is still the one that ended
   push(std::move(event));
 
   ++failed_attempts_;
@@ -260,6 +266,7 @@ void Client::service(std::uint32_t wait_ms) {
       case ENET_EVENT_TYPE_CONNECT:
         if (event.peer == peer_ && state_ == State::connecting) {
           proto::Hello hello = config_.hello;
+          last_receive_us_ = now_us();  // the server answered the connect
           if (send_raw(hello, proto::channel_of(hello))) {
             hello_sent_us_ = now_us();
             state_ = State::handshaking;
@@ -270,6 +277,7 @@ void Client::service(std::uint32_t wait_ms) {
         break;
       case ENET_EVENT_TYPE_RECEIVE:
         if (event.peer == peer_) {
+          last_receive_us_ = now_us();
           on_receive(event.packet->data, event.packet->dataLength,
                      event.channelID);
         }
@@ -313,7 +321,24 @@ void Client::service(std::uint32_t wait_ms) {
     case State::stopped:
       break;
   }
+  if (peer_ != nullptr) {
+    link_.round_trip_ms = peer_->roundTripTime;
+    link_.loss_percent = static_cast<std::uint32_t>(
+        static_cast<std::uint64_t>(peer_->packetLoss) * 100 / ENET_PEER_PACKET_LOSS_SCALE);
+    link_.mtu = peer_->mtu;
+  }
   enet_host_flush(host_);
+}
+
+LinkInfo Client::link() const {
+  LinkInfo out = link_;
+  if (state_ == State::connecting || state_ == State::handshaking ||
+      state_ == State::connected) {
+    const std::uint64_t since = last_receive_us_ != 0 ? last_receive_us_ : attempt_started_us_;
+    out.quiet_ms = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(elapsed(now_us(), since) / 1000, 0xffffffffu));
+  }
+  return out;
 }
 
 void Client::on_receive(const std::uint8_t* data, std::size_t size,
@@ -605,6 +630,8 @@ bool Client::send_raw(const proto::Message& message, std::uint8_t channel) {
     enet_packet_destroy(packet);
     return false;
   }
+  link_.largest_sent = std::max<std::uint32_t>(link_.largest_sent,
+                                               static_cast<std::uint32_t>(bytes.size()));
   return true;
 }
 
@@ -737,6 +764,25 @@ bool Client::set_flags(std::span<const proto::FlagEntry> flags) {
   return true;
 }
 
+bool Client::send_flag_reset(std::span<const proto::FlagEntry> flags) {
+  if (state_ != State::connected || !is_host()) return false;
+  std::vector<proto::Message> messages;
+  for (std::size_t at = 0; at < flags.size(); at += proto::kMaxFlagEntries) {
+    const auto part = flags.subspan(at, std::min(proto::kMaxFlagEntries, flags.size() - at));
+    proto::Message message = proto::FlagReset{proto::kPlayerSelf, {part.begin(), part.end()}};
+    if (proto::check_received(message, proto::Sender::client, proto::kChannelProgress) !=
+        proto::Error::none) {
+      return false;
+    }
+    messages.push_back(std::move(message));
+  }
+  for (const proto::Message& message : messages) {
+    if (!send_raw(message, proto::kChannelProgress)) return false;
+  }
+  store_flags(flags);
+  return true;
+}
+
 bool Client::send_flag_snapshot(std::span<const proto::FlagEntry> flags) {
   if (!is_host()) return false;
   const auto parts = proto::split_snapshot(flags);
@@ -825,7 +871,15 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
                           std::optional<Event>& out) {
   Event event;
   event.channel = channel;
-  if (const auto* state = std::get_if<proto::FlagState>(&message)) {
+  if (const auto* reset = std::get_if<proto::FlagReset>(&message)) {
+    // The host's save load: its values replace ours, 0s included.
+    if (host_number_ == 0 || reset->player_number != host_number_) return false;
+    store_flags(reset->flags);
+    settle_pending(reset->flags);
+    event.kind = EventKind::flag_reset;
+    event.player = reset->player_number;
+    event.flags = reset->flags;
+  } else if (const auto* state = std::get_if<proto::FlagState>(&message)) {
     // Only the host's, as HOST named it: that may be a host whose
     // PLAYER_LEFT (channel 0) is already in, or us (the server's value on a
     // clash with our snapshot).

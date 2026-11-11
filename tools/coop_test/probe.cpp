@@ -188,6 +188,7 @@ void Probe::handle(const net::Event& event) {
     case net::EventKind::player_status:
     case net::EventKind::flag_state:
     case net::EventKind::flag_snapshot:
+    case net::EventKind::flag_reset:
     case net::EventKind::join_request:
     case net::EventKind::join_accepted:
     case net::EventKind::join_refused:

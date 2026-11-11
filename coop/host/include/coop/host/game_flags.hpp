@@ -49,6 +49,10 @@ class GameFlags {
   // A UInt flag (type 20; 0x57a4e0 reads it, 0x57af30 sets it). A hash only in
   // the game's fallback UInt table (M + 0x800, not read) is not found.
   std::optional<std::uint32_t> get_uint(std::uint32_t hash);
+  // An Enum flag (type 6; 0x7e73d0 reads it, 0x3e0980 sets it): the value is
+  // the flag_hash of the value's name (PlayerStatus.AssignableItem.Adult:
+  // "Bow" is flag_hash("Bow")).
+  std::optional<std::uint32_t> get_enum(std::uint32_t hash);
   // A 64-bit-key flag (Bool64bitKey). A key not in the table is nothing,
   // not false: the table holds every key the game knows.
   std::optional<bool> get_key64(std::uint64_t key);
@@ -66,6 +70,7 @@ class GameFlags {
   static bool set_bool(WritableGameMemory& memory, std::uint32_t hash, bool value);
   static bool set_int(WritableGameMemory& memory, std::uint32_t hash, std::int32_t value);
   static bool set_uint(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t value);
+  static bool set_enum(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t value);
   static bool set_key64(WritableGameMemory& memory, std::uint64_t key, bool value);
 
   // Test only (tools/autotest warp): writes a String64 flag's text straight

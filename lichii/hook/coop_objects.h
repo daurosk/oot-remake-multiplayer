@@ -9,7 +9,9 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Core {
@@ -39,6 +41,11 @@ void Share(Core::System& system, coop::host::Session* session,
 // that off).
 void SetMaxLife(std::optional<std::int32_t> quarters);
 
+// Emulator thread, each frame: whether our own Link is in an event (a talk, a
+// cutscene). While it is, shared changes to actors near it wait (coop_guard.h,
+// issue 144).
+void SetLocalEvent(bool in_event);
+
 // Network thread, from the session's on_event: takes the object messages.
 void OnEvent(const coop::net::Event& event);
 
@@ -46,6 +53,22 @@ void OnEvent(const coop::net::Event& event);
 // watcher wrote 0 to 1 for another player (a chest opened, a pickup taken
 // there). What of them is loaded now is removed (docs/items.md, "Chests").
 void TakenForOthers(const std::vector<std::uint64_t>& keys);
+
+// Issue 109 (coop_boss): whether the boss with body actors `bodies` was
+// alive in the last walk of LICHII_COOP_OBJECTS (BossAlive); nothing when
+// no walk ran in the last 1.5 s, or its life is not read. Any thread.
+std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies);
+// Small keys to give back to our game (the SmallKeyNum flag of the dungeon,
+// once each): a door's lock this game opened after another player already
+// had, or at the same moment with the higher player number (docs/dungeon.md,
+// "Locked doors"). Taken by the hook, which adds 1 to each in the game.
+std::vector<std::uint32_t> TakeKeyRefunds();
+// Our own game lowered these counts (Session::take_own_count_drops): a key
+// spent here. A lock's second key goes back only against one of these.
+void OwnCountDrops(const std::vector<std::uint32_t>& key_flags);
+// The host loaded a save (host-save's FLAG_RESET): forget the kept lock
+// breaks (WorldSync::ForgetKept). For the integrator to call on that event.
+void ForgetKeptBreaks();
 
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).

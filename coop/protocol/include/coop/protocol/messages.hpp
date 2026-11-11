@@ -17,7 +17,7 @@ namespace coop::protocol {
 
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
 // (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 6;
+inline constexpr std::uint16_t kProtocolVersion = 7;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -44,6 +44,17 @@ inline constexpr std::uint8_t kChannelOwnership = 2;
 inline constexpr std::uint8_t kChannelPlayerSamples = 3;
 inline constexpr std::uint8_t kChannelObjectSamples = 4;
 inline constexpr std::uint8_t kChannelCount = 5;
+// The largest UDP payload ENet puts in one datagram (its MTU), on the server
+// and in every game; ENet takes the smaller of the two sides, so either side
+// alone is enough. ENet's default of 1392 makes 1420-byte IP packets, more
+// than a VPN adapter carries (Hamachi about 1404, Tailscale 1280): those were
+// split or dropped, and a large reliable message (a snapshot) was sent again
+// until the connection timed out (issue 143). A home line can be smaller
+// still: a DS-Lite (IPv4 in IPv6) or PPPoE tunnel, one reporter's at 1200
+// bytes, where 1200-byte datagrams (1228-byte packets) did not fit either.
+// 1100 + 28 header bytes fits them all. Not part of the protocol version:
+// ENet agrees on it at connect.
+inline constexpr std::uint32_t kDatagramBytes = 1100;
 
 // Message type numbers on the wire. Never renumber; add new ones at the end.
 enum class MessageType : std::uint16_t {
@@ -85,6 +96,7 @@ enum class MessageType : std::uint16_t {
   drop_ask = 38,
   boss_room = 50,  // 50 to 54: boss rooms (docs/dungeons-boss.md)
   sign_cut = 80,   // 80 to 84: signs (docs/world.md, "Signs")
+  flag_reset = 135,  // 135 to 139: the host's save load (docs/protocol.md, "Saves")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -394,6 +406,19 @@ struct FlagState {
   std::uint8_t player_number = kPlayerSelf;  // 0 from the host, 1 to 4 relayed
   std::vector<FlagEntry> flags;
   bool operator==(const FlagState&) const = default;
+};
+
+// FLAG_RESET: the host loaded a save. The flags its load changed, as its
+// game has them now, 0s included. Sent by the host only; the server keeps
+// the values (replacing what it had) and relays it to everyone else, who
+// write them exactly: no merging (max, OR) and no one-way rule, so the
+// group's state follows the host's save (docs/flags.md, "Saves"). Same
+// entries as FLAG_STATE (1 to kMaxFlagEntries, no count deltas); a longer
+// reset is several messages in a row.
+struct FlagReset {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the host, 1 to 4 relayed
+  std::vector<FlagEntry> flags;
+  bool operator==(const FlagReset&) const = default;
 };
 
 // FLAG_SNAPSHOT: every shared flag, in parts 0 to part_count - 1, sent in
@@ -756,10 +781,16 @@ struct GrassCut {
 // breaks while anyone is in it and sends them to a player who enters, so a
 // pot broken before a player came is gone for that player too. With
 // `restored` the game put the object back (a pot that respawns): the break
-// is forgotten.
+// is forgotten. `kept` a break that lasts (a small-key door's lock, which the
+// opener's game saves): the server keeps it for the session, also while
+// nobody is in the scene, and passes on a second player's break of it too
+// (both opened it: one key is given back, docs/dungeon.md "Locked doors").
 namespace world_break {
 inline constexpr std::uint8_t restored = 1u << 0;
+inline constexpr std::uint8_t kept = 1u << 1;
 }  // namespace world_break
+inline constexpr std::size_t kMaxWorldKept = 256;        // kept breaks per scene
+inline constexpr std::size_t kMaxWorldKeptTotal = 2048;  // and in all (the game has 98 locks)
 inline constexpr std::size_t kMaxWorldBreaks = 1024;  // kept per scene
 
 struct WorldBreak {
@@ -921,7 +952,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
-                             DropAsk, BossRoom, SignCut>;
+                             DropAsk, BossRoom, SignCut, FlagReset>;
 
 MessageType type_of(const Message& message);
 

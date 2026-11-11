@@ -311,6 +311,56 @@ TEST_CASE("testinput: wear names a gear slot and a piece") {
     CHECK(requests[0].name == "Armor_Child_Mask_Keaton");
 }
 
+TEST_CASE("testinput: a hold's mark is said halfway, with the keys still down") {
+    std::string error;
+    CHECK_FALSE(Parse("hold ZR 60 aim extra\n", error));
+    Runner r(Must("hold ZR 60 aim\nmark after\n"));
+    std::vector<std::string> log;
+    CHECK(At(r, Tick(10), &log).buttons == kZR);
+    CHECK(log.empty());
+    CHECK(At(r, Tick(31), &log).buttons == kZR);  // past halfway: the mark, ZR still held
+    CHECK(log == std::vector<std::string>{"mark aim"});
+    CHECK(At(r, Tick(40), &log).buttons == kZR);
+    CHECK(log.size() == 1);  // once
+    At(r, Tick(61), &log);
+    CHECK(log == std::vector<std::string>{"mark aim", "mark after"});
+    // A frame late past the whole hold still says it, before the next mark.
+    Runner late(Must("hold ZR 60 aim\nmark after\n"));
+    std::vector<std::string> log2;
+    At(late, Tick(100), &log2);
+    CHECK(log2 == std::vector<std::string>{"mark aim", "mark after"});
+}
+
+TEST_CASE("testinput: assign puts an item on ZR by the button enum's name (held-gear-2)") {
+    std::string error;
+    CHECK_FALSE(Parse("assign\n", error));
+    CHECK_FALSE(Parse("assign bow\n", error));  // the game's spelling only
+    CHECK_FALSE(Parse("assign Weapon_Range_Bow\n", error));
+    CHECK(AssignableItem("Bow"));
+    CHECK(AssignableItem("Hookshot"));
+    CHECK(AssignableItem("Hammer"));
+    CHECK(AssignableItem("SlingShot"));
+    CHECK_FALSE(AssignableItem("Slingshot"));
+    Runner r(Must("assign Hookshot\nmark after\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::assign);
+    CHECK(requests[0].name == "Hookshot");
+    CHECK(log == std::vector<std::string>{"mark after"});
+}
+
+TEST_CASE("testinput: wear SLOT none takes a piece off") {
+    Runner r(Must("wear head none\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].start == "head");
+    CHECK(requests[0].name == "none");  // the emulator side writes "" for it
+}
+
 // Every input script in tools/autotest/scenarios parses (the steps files are the runner's,
 // not the emulator's), so a bad line shows here and not first in a game run.
 TEST_CASE("testinput: every autotest scenario script parses") {

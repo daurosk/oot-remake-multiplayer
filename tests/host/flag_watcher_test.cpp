@@ -544,45 +544,63 @@ TEST_CASE("flag watcher: at most kMaxLearned pickups are learned from messages")
   CHECK(w.stats().pickups_learned == FlagWatcher::kMaxLearned);
   CHECK(w.pickups() == FlagWatcher::kMaxLearned);
 }
-TEST_CASE("flag watcher: a save load does not undo or send back what the group set (issue 129)") {
+TEST_CASE("flag watcher: a guest's save load takes the group's values and sends nothing (issue 129, saves)") {
   FakeStore store = game();
   FlagWatcher w(shared(), FlagRole::player);
   w.set_loading(true);  // the title screen: no Link yet
   w.frame(store);
-  // The group's switch comes in before the save loads.
-  CHECK(w.receive(state({entry(kDoor, 1)})));
+  // The group's switch and key come in before the save loads.
+  CHECK(w.receive(state({entry(kDoor, 1), entry(kKey0, 1)})));
   CHECK(w.frame(store).empty());
   CHECK(store.get(kDoor) == 1);
 
-  // The save loads: its own 0 is written over it, and its own progress (the
-  // chest) comes in with it.
+  w.set_scene(false);  // the title screen and file select: no scene loaded
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  // The save loads: an older one, so two of them go back to 0 (with the
+  // title screen before, the sign of a save load), and its own progress (the chest) comes in with it. Nothing
+  // goes out: a guest's load never changes the group (docs/flags.md, "Saves").
   store.set(kDoor, 0);
+  store.set(kKey0, 0);
   store.set(kChest, 1);
-  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 1)});
-  CHECK(store.get(kDoor) == 1);  // put back, not sent
-  CHECK(w.stats().load_reverts == 1);
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);  // put back at once
+  CHECK(store.get(kKey0) == 1);
+  CHECK(w.stats().load_reverts == 2);
 
   // Link is there, but the load still runs a moment: the same again.
+  w.set_scene(true);
   w.set_loading(false);
   CHECK(w.settling());
   store.set(kDoor, 0);
   CHECK(w.frame(store).empty());
   CHECK(store.get(kDoor) == 1);
 
-  // A group value written during the load and lost to it comes back too.
-  CHECK(w.receive(state({entry(kKey0, 1)})));
-  w.frame(store);
-  store.set(kKey0, 0);
-  CHECK(w.frame(store).empty());
-  CHECK(store.get(kKey0) == 1);
-  CHECK(w.stats().load_reverts == 3);
-
-  // After the settle time the game's own changes go out as before, a switch
-  // turned back off included.
-  for (int i = 0; i < FlagWatcher::kSettleFrames; ++i) w.frame(store);
+  // The window ends: the save's own chest goes back to the group's 0.
+  for (int i = 0; i < FlagWatcher::kSettleFrames; ++i) CHECK(w.frame(store).empty());
   CHECK_FALSE(w.settling());
+  CHECK(store.get(kChest) == 0);
+  // After it the game's own changes go out as before.
   store.set(kDoor, 0);
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kDoor, 0)});
+}
+
+TEST_CASE("flag watcher: one flag back with no Link is no save load: the old rules hold for a guest") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kDoor, 1)})));
+  w.frame(store);
+  // A cutscene or time travel with no Link: one flag back, one forward.
+  w.set_loading(true);
+  store.set(kDoor, 0);
+  store.set(kChest, 1);
+  CHECK(w.frame(store).empty());  // nothing goes out while there is no Link
+  CHECK(store.get(kDoor) == 1);   // backwards(): the group's value back at once
+  w.set_loading(false);
+  // Link is back: the forward change is the game's own, sent as always.
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 1)});
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) w.frame(store);
+  CHECK(store.get(kChest) == 1);  // not put back: no save load
 }
 
 TEST_CASE("flag watcher: a load puts the group's Int back, a flag the game will not take is let be") {
@@ -599,26 +617,99 @@ TEST_CASE("flag watcher: a load puts the group's Int back, a flag the game will 
   CHECK(w.frame(store).empty());
   CHECK(store.get(kKey1) == 3);
 
-  // A per-player flag the game refuses to be written: its load value is the
-  // game's own, sent as any change.
+  // A per-player flag the game refuses to be written: nothing is sent during
+  // the load; once it is over, its value is the game's own, sent as any change.
   store.unwritable.insert(kChest);
   store.set(kChest, 0);
-  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 0)});
+  CHECK(w.frame(store).empty());
+  w.set_loading(false);
+  std::vector<proto::FlagEntry> sent;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) {
+      if (const auto* set = std::get_if<proto::FlagSet>(&m)) sent.insert(sent.end(), set->flags.begin(), set->flags.end());
+    }
+  }
+  CHECK(sent == std::vector{entry(kChest, 0)});
 }
 
-TEST_CASE("flag watcher, host: a host's own load does not send the group's switch back to 0") {
+TEST_CASE("flag watcher, host: the host's save load resets the group to its save") {
   FakeStore store = game();
   FlagWatcher w(shared(), FlagRole::host);
   w.frame(store);
   store.set(kDoor, 1);
-  CHECK(only<proto::FlagState>(w.frame(store)) == std::vector{entry(kDoor, 1)});
+  store.set(kKey0, 1);
+  w.frame(store);
+  // The host goes to the title screen and loads an older save: the door is
+  // shut and the key unused in it.
   w.set_loading(true);
+  w.set_scene(false);  // the title screen and file select: no scene loaded
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
   store.set(kDoor, 0);
-  CHECK(w.frame(store).empty());
-  CHECK(store.get(kDoor) == 1);
+  store.set(kKey0, 0);
+  CHECK(w.frame(store).empty());  // nothing during the load
+  CHECK(store.get(kDoor) == 0);   // the host's save is the truth: not put back
+  w.set_scene(true);
+  w.set_loading(false);
+  std::vector<proto::FlagEntry> reset;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) {
+      CHECK_FALSE(std::holds_alternative<proto::FlagState>(m));
+      if (const auto* r = std::get_if<proto::FlagReset>(&m)) reset.insert(reset.end(), r->flags.begin(), r->flags.end());
+    }
+  }
+  CHECK(reset == std::vector{entry(kDoor, 0), entry(kKey0, 0)});
+  CHECK(w.stats().host_resets == 1);
+  CHECK(w.take_reset());        // the game's hook clears its session-wide state once
+  CHECK_FALSE(w.take_reset());
 }
 
-TEST_CASE("flag watcher: during a load an Int goes out unless it is the old value coming back") {
+TEST_CASE("flag watcher, host: a cutscene, warp, time travel or death with no Link is no reset") {
+  struct Case {
+    const char* what;
+    std::vector<std::pair<FlagKey, std::uint32_t>> during;  // what the game writes with no Link
+  };
+  const std::vector<Case> cases{
+      {"a cutscene sets story flags", {{kChest, 1}, {kKey0, 1}}},
+      {"a warp", {}},
+      {"time travel: one flag back, others forward", {{kDoor, 0}, {kChest, 1}}},
+      {"a death and respawn", {}},
+  };
+  for (const auto& c : cases) {
+    CAPTURE(c.what);
+    FakeStore store = game();
+    FlagWatcher w(shared(), FlagRole::host);
+    w.frame(store);
+    store.set(kDoor, 1);
+    w.frame(store);
+    w.set_loading(true);
+    for (const auto& [k, v] : c.during) store.set(k, v);
+    CHECK(w.frame(store).empty());
+    w.set_loading(false);
+    for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+      for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+    }
+    CHECK(w.stats().host_resets == 0);
+  }
+}
+
+TEST_CASE("flag watcher, host: a door is no save load: no reset") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  w.set_loading(true);
+  w.frame(store);
+  w.set_loading(false);
+  store.set(kDoor, 1);  // the host's own change right after the door
+  std::vector<proto::Message> all;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (auto& m : decode(w.frame(store))) all.push_back(std::move(m));
+  }
+  REQUIRE(all.size() == 1);
+  CHECK(std::get<proto::FlagState>(all[0]).flags == std::vector{entry(kDoor, 1)});
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher: a guest's load with only progress forward is no save load: it is sent when Link is back") {
   FakeStore store = game();
   store.values[kKey1] = entry(kKey1, 2, proto::FlagKind::int32);
   FlagWatcher w(shared(), FlagRole::player);
@@ -626,10 +717,10 @@ TEST_CASE("flag watcher: during a load an Int goes out unless it is the old valu
   CHECK(w.receive(state({entry(kKey1, 3, proto::FlagKind::int32)})));
   w.frame(store);
   w.set_loading(true);
-  // More progress than the group's (a save, or the game's own change): sent.
   store.values[kKey1] = entry(kKey1, 5, proto::FlagKind::int32);
-  CHECK(only<proto::FlagSet>(w.frame(store)) ==
-        std::vector{entry(kKey1, 5, proto::FlagKind::int32)});
+  CHECK(w.frame(store).empty());  // nothing while there is no Link
+  w.set_loading(false);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kKey1, 5, proto::FlagKind::int32)});
   CHECK(w.stats().load_reverts == 0);
 }
 
@@ -679,6 +770,331 @@ TEST_CASE("flag watcher: a reconnect forgets the group's values") {
   w.reset();  // a new session: the server may not have it any more
   w.set_loading(true);
   store.set(kDoor, 0);
+  CHECK(w.frame(store).empty());  // nothing while there is no Link
+  w.set_loading(false);
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kDoor, 0)});
   CHECK(w.stats().load_reverts == 0);
+}
+
+TEST_CASE("flag watcher: a FLAG_RESET is written exactly, 0s and one-way keys included (saves, #148)") {
+  constexpr FlagKey kPickup = FlagKey::key64_flag(0x77);
+  FakeStore store = game();
+  store.set(kPickup, 0);
+  FlagWatcher w(SharedFlags({kChest, kDoor, kKey0, kKey1}), FlagRole::player);
+  CHECK(w.share_pickup(kPickup));
+  w.frame(store);
+  // The newer state: the boss door shut, a chest taken (#148).
+  CHECK(w.receive(state({entry(kDoor, 1), entry(kPickup, 1)})));
+  w.frame(store);
+  REQUIRE(store.get(kDoor) == 1);
+  REQUIRE(store.get(kPickup) == 1);
+  // A 0 in a FLAG_STATE is not taken for the one-way key...
+  CHECK(w.receive(state({entry(kPickup, 0)})));
+  w.frame(store);
+  CHECK(store.get(kPickup) == 1);
+  // ...but the host's save load sets both back.
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kDoor, 0), entry(kPickup, 0)}}}));
+  CHECK(w.frame(store).empty());  // nothing is sent back
+  CHECK(store.get(kDoor) == 0);
+  CHECK(store.get(kPickup) == 0);
+  CHECK(w.stats().reset_applied == 2);
+  CHECK(w.take_reset());
+  CHECK_FALSE(w.take_reset());
+  CHECK(w.frame(store).empty());
+}
+
+TEST_CASE("flag watcher: a FLAG_RESET lowers an item through the item store (no max merge)") {
+  constexpr FlagKey kHookshot{0x8573d2cdu, 0};  // PouchData.Item_Hookshot.StockNum, max
+  FakeStore game_store;
+  game_store.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kHookshot}), FlagRole::player);
+  w.frame(store);
+  // A FLAG_STATE 0 does not take it away (max)...
+  CHECK(w.receive(state({entry(kHookshot, 0, proto::FlagKind::int32)})));
+  w.frame(store);
+  CHECK(game_store.get(kHookshot) == 1);
+  // ...the host's save without it does.
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kHookshot, 0, proto::FlagKind::int32)}}}));
+  w.frame(store);
+  CHECK(game_store.get(kHookshot) == 0);
+}
+
+TEST_CASE("flag watcher: a host ignores a FLAG_RESET, and a new host does not reset") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kDoor, 1)})));
+  w.frame(store);
+  w.set_role(FlagRole::host);  // the host left: we take over, no load
+  for (int i = 0; i < 5; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
+  CHECK_FALSE(w.take_reset());
+  CHECK_FALSE(w.receive(proto::Message{proto::FlagReset{2, {entry(kDoor, 0)}}}));
+  CHECK(store.get(kDoor) == 1);
+}
+
+namespace {
+constexpr FlagKey kDekuMap{0x89787395u, 0};      // DungeonInfo.InsideTheDekuTree.IsGetMap
+constexpr FlagKey kDekuCompass{0x06c51ff2u, 0};  // DungeonInfo.InsideTheDekuTree.IsGetCompass
+constexpr FlagKey kGotBomb{0x2bb00768u, 0};      // IsGet.Item_Bomb: OR too, not one-way
+FakeStore dungeon_game() {
+  FakeStore store;
+  for (FlagKey k : {kDekuMap, kDekuCompass, kGotBomb}) store.set(k, 0);
+  return store;
+}
+}  // namespace
+
+TEST_CASE("flag watcher: a dungeon map or compass the game drops to 0 is put back (issue 146)") {
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  CHECK(store.is_one_way(kDekuMap));
+  CHECK(store.is_one_way(kDekuCompass));
+  CHECK_FALSE(store.is_one_way(kGotBomb));
+  CHECK_FALSE(store.is_one_way(kChest));  // not an item
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuCompass, kGotBomb}), FlagRole::player);
+  w.frame(store);
+  game_store.set(kDekuMap, 1);
+  game_store.set(kGotBomb, 1);
+  w.frame(store);  // both go out
+  // The game takes them back, with no load: the map is written back and
+  // nothing is sent for it; any other OR item still goes out as it is.
+  game_store.set(kDekuMap, 0);
+  game_store.set(kGotBomb, 0);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kGotBomb, 0)});
+  CHECK(game_store.get(kDekuMap) == 1);
+  CHECK(w.stats().one_way_restores == 1);
+  CHECK(w.take_one_way_restores() == std::vector<FlagKey>{kDekuMap});
+  CHECK(w.take_one_way_restores().empty());
+  CHECK(w.frame(store).empty());  // and it stays
+  CHECK(game_store.get(kDekuMap) == 1);
+  // Again: put back again, counted, but given for the log only the first time.
+  game_store.set(kDekuMap, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kDekuMap) == 1);
+  CHECK(w.stats().one_way_restores == 2);
+  CHECK(w.take_one_way_restores().empty());
+  // While loading the one-way rule stays out (the load revert has that window).
+  w.set_loading(true);
+  game_store.set(kDekuMap, 0);
+  w.frame(store);
+  CHECK(w.stats().one_way_restores == 2);
+  CHECK(w.take_one_way_restores().empty());
+}
+
+TEST_CASE("flag watcher: both players open the map chest at the same time and both keep the map (issue 146)") {
+  FakeStore host_game = dungeon_game();
+  FakeStore player_game = dungeon_game();
+  ItemFlagStore host_store(host_game);
+  ItemFlagStore player_store(player_game);
+  const SharedFlags flags({kDekuMap, kDekuCompass, kGotBomb});
+  FlagWatcher host(flags, FlagRole::host);
+  FlagWatcher player(flags, FlagRole::player);
+  host.frame(host_store);
+  player.frame(player_store);
+
+  // The same frame: each game's own chest sets the map.
+  host_game.set(kDekuMap, 1);
+  player_game.set(kDekuMap, 1);
+  const auto from_host = host.frame(host_store);
+  const auto from_player = player.frame(player_store);
+  for (const auto& m : decode(from_player)) CHECK(host.receive(m));
+  const auto answer = host.frame(host_store);
+  for (const auto& m : decode(from_host)) CHECK(player.receive(m));
+  for (const auto& m : decode(answer)) CHECK(player.receive(m));
+  for (int i = 0; i < 5; ++i) {
+    for (const auto& m : decode(player.frame(player_store))) CHECK(host.receive(m));
+    for (const auto& m : decode(host.frame(host_store))) CHECK(player.receive(m));
+    CHECK(host_game.get(kDekuMap) == 1);
+    CHECK(player_game.get(kDekuMap) == 1);
+  }
+
+  // One game's own chest flow then drops it (the second chest's get): it
+  // comes back there, and the other game is not touched.
+  player_game.set(kDekuMap, 0);
+  CHECK(player.frame(player_store).empty());
+  CHECK(player_game.get(kDekuMap) == 1);
+  CHECK(host_game.get(kDekuMap) == 1);
+  host_game.set(kDekuMap, 0);
+  CHECK(host.frame(host_store).empty());
+  CHECK(host_game.get(kDekuMap) == 1);
+}
+
+TEST_CASE("flag watcher: a named Bool shared one way (a chest's opened flag) is noted and never closed again") {
+  FakeStore store = game();
+  FlagWatcher w(SharedFlags({kKey0}), FlagRole::player);
+  CHECK(w.share_pickup_named(kChest));
+  CHECK_FALSE(w.share_pickup_named(kChest));                          // once
+  CHECK_FALSE(w.share_pickup_named(FlagKey::key64_flag(0x1234)));      // 64-bit keys: share_pickup
+  CHECK(w.shared().contains(kChest));
+  w.frame(store);
+
+  // Opened in another game: written here and noted for the hook.
+  CHECK(w.receive(state({entry(kChest, 1)})));
+  w.frame(store);
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.take_written_for_others() == std::vector<FlagKey>{kChest});
+  // A 0 coming in is not taken, and the game's own 0 is not sent.
+  CHECK(w.receive(state({entry(kChest, 0)})));
+  w.frame(store);
+  CHECK(store.get(kChest) == 1);
+  store.set(kChest, 0);
+  CHECK(w.frame(store).empty());
+  // A plain shared named flag is not noted.
+  FakeStore other = game();
+  FlagWatcher plain(SharedFlags({kDoor}), FlagRole::player);
+  plain.frame(other);
+  CHECK(plain.receive(state({entry(kDoor, 1)})));
+  plain.frame(other);
+  CHECK(plain.take_written_for_others().empty());
+}
+
+TEST_CASE("flag watcher: a one-way room flag the game resets is no save load and no part of a reset") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  CHECK(w.share_one_way(kChest));  // a room's own switch state
+  w.frame(store);
+  store.set(kChest, 1);
+  w.frame(store);
+  // A door out of that room: the game sets it back to 0 itself, and one
+  // more flag goes back (time travel, say): no save load.
+  w.set_loading(true);
+  store.set(kChest, 0);
+  store.set(kDoor, 0);
+  w.frame(store);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
+
+  // A real save load (two saved flags back) leaves the one-way flag out.
+  store.set(kDoor, 1);
+  store.set(kKey0, 1);
+  store.set(kChest, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);  // the title screen and file select: no scene loaded
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  store.set(kDoor, 0);
+  store.set(kKey0, 0);
+  store.set(kChest, 0);
+  w.frame(store);
+  w.set_scene(true);
+  w.set_loading(false);
+  std::vector<proto::FlagEntry> reset;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) {
+      if (const auto* r = std::get_if<proto::FlagReset>(&m)) reset.insert(reset.end(), r->flags.begin(), r->flags.end());
+    }
+  }
+  CHECK(reset == std::vector{entry(kDoor, 0), entry(kKey0, 0)});
+}
+
+TEST_CASE("item store: a reset that lowers the hearts holds life to the new maximum") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  constexpr FlagKey kLife{0x31ab5580u, 0};
+  FakeStore game_store;
+  game_store.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);
+  game_store.values[kLife] = entry(kLife, 18, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  CHECK(store.write_exact(entry(kMaxLife, 12, proto::FlagKind::int32)));
+  CHECK(game_store.get(kMaxLife) == 12);
+  CHECK(game_store.get(kLife) == 12);
+  // Life under the new maximum is left alone.
+  game_store.values[kLife] = entry(kLife, 8, proto::FlagKind::int32);
+  CHECK(store.write_exact(entry(kMaxLife, 10, proto::FlagKind::int32)));
+  CHECK(game_store.get(kLife) == 8);
+}
+
+TEST_CASE("flag watcher, host: two flags back with a scene loaded is no save load (doors, enter flags, death)") {
+  // A door out of a room whose "enter" flags reset, a Game Over continue in
+  // the same scene, a warp: Link is gone a moment, the scene stays loaded.
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  store.set(kKey0, 1);
+  w.frame(store);
+  w.set_loading(true);
+  store.set(kDoor, 0);
+  store.set(kKey0, 0);
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 5; ++i) w.frame(store);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher, host: the title screen with only one flag back is no save load") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  store.set(kDoor, 0);
+  w.frame(store);
+  w.set_scene(true);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher, host: one flag held at 0 for many frames counts once") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);
+  store.set(kDoor, 0);  // one flag back, seen again every frame of the title
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 10; ++i) w.frame(store);
+  CHECK_FALSE(w.take_save_load().has_value());
+  w.set_scene(true);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher, host: flags back early in the title, the title long enough later: a save load") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  store.set(kKey0, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);
+  w.frame(store);
+  store.set(kDoor, 0);  // the save is read early...
+  store.set(kKey0, 0);
+  w.frame(store);
+  CHECK_FALSE(w.take_save_load().has_value());  // ...the title has not lasted yet
+  // Nothing changes any more; the title goes on until it has lasted.
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  const auto seen = w.take_save_load();
+  REQUIRE(seen.has_value());
+  CHECK(seen->flags == 2);
+  CHECK(seen->frames >= FlagWatcher::kTitleFrames);
+  CHECK_FALSE(w.take_save_load().has_value());  // once
+  w.set_scene(true);
+  w.set_loading(false);
+  std::vector<proto::FlagEntry> reset;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) {
+      if (const auto* r = std::get_if<proto::FlagReset>(&m)) reset.insert(reset.end(), r->flags.begin(), r->flags.end());
+    }
+  }
+  CHECK(reset == std::vector{entry(kDoor, 0), entry(kKey0, 0)});
 }

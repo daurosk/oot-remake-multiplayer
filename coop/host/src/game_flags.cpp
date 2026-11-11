@@ -32,6 +32,10 @@ constexpr Table kInt{0xd0, 0xd8, 0xe0, 0xec, 0x28, 0x1c, 0xf0, 0xf8, 0x100, 12};
 constexpr Table kUInt{0x790, 0x798, 0x7a0, 0x7ac, 0x28, 0x1c, 0x7b0, 0x7b8, 0x7c0, 12};
 // String64 (type 16, M + 0x610): entries of 0x108, char* to the text at
 // +0x68, s32 buffer size at +0x70 (0x3758110). Queue not read.
+// Enum (type 6, M + 0x250): entries of 0x38, value (the name's hash) at
+// +0x1c, 8-byte queue slots {u32 value, u32 hash}, as the getter 0x7e73d0
+// and the setter 0x3e0980 read them.
+constexpr Table kEnum{0x250, 0x258, 0x260, 0x26c, 0x38, 0x1c, 0x270, 0x278, 0x280, 8};
 constexpr Table kString64{0x610, 0x618, 0x620, 0x62c, 0x108, 0, 0, 0, 0, 0};
 constexpr std::uint64_t kStringText = 0x68, kStringSize = 0x70;
 // The game's String64 buffers hold 64 bytes; more is not a String64.
@@ -200,6 +204,19 @@ std::optional<std::uint32_t> GameFlags::get_uint(std::uint32_t hash) {
   return read_u32(memory_, *entries + kUInt.stride * *index + kUInt.value);
 }
 
+std::optional<std::uint32_t> GameFlags::get_enum(std::uint32_t hash) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  const auto index = find(memory_, *mgr, kEnum, hash);
+  if (!index) return std::nullopt;
+  if (const auto q = queued(memory_, *mgr, kEnum.queue_cap, kEnum.queue_buf, kEnum.queue_word,
+                            kEnum.slot_size, hash))
+    return *q;
+  const auto entries = read_ptr(memory_, *mgr + kEnum.entries);
+  if (!entries) return std::nullopt;
+  return read_u32(memory_, *entries + kEnum.stride * *index + kEnum.value);
+}
+
 std::optional<bool> GameFlags::get_key64(std::uint64_t key) {
   const auto mgr = manager(memory_);
   if (!mgr) return std::nullopt;
@@ -305,6 +322,13 @@ bool GameFlags::set_uint(WritableGameMemory& m, std::uint32_t hash, std::uint32_
   if (!mgr || !find(m, *mgr, kUInt, hash)) return false;
   return enqueue(m, *mgr, kUInt.queue_cap, kUInt.queue_buf, kUInt.queue_word, kUInt.slot_size,
                  value, hash, false, 1u);
+}
+
+bool GameFlags::set_enum(WritableGameMemory& m, std::uint32_t hash, std::uint32_t value) {
+  const auto mgr = manager(m);
+  if (!mgr || !find(m, *mgr, kEnum, hash)) return false;
+  return enqueue(m, *mgr, kEnum.queue_cap, kEnum.queue_buf, kEnum.queue_word, kEnum.slot_size,
+                 value, hash, false);
 }
 
 bool GameFlags::set_key64(WritableGameMemory& m, std::uint64_t key, bool value) {

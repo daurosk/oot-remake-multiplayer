@@ -371,6 +371,21 @@ std::map<std::uint64_t, std::uint64_t> Director::Live() const {
     return live_;
 }
 
+bool Director::Due(const Copy& c, std::uint64_t now_ms) const {
+    if (c.act != Act::show || started_.count(c.key) != 0) {
+        return false;
+    }
+    const auto r = remade_.find(c.key);
+    if (r == remade_.end()) {
+        return true;
+    }
+    // A copy waiting to be made again: the input in force now decides. A
+    // copy killed here is seen gone at once, but Sync sends remakes 0 only
+    // after it missed two walks, within the delay.
+    return c.remakes != 0 && r->second.count <= c.remakes &&
+           now_ms - r->second.gone_ms >= kRemakeDelayMs;
+}
+
 const Copy* Director::Wanted(std::uint64_t key) const {
     for (const Copy& c : copies_) {
         if (c.key == key) {
@@ -409,6 +424,9 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
             } else {
                 slot.taken = result;
                 slot.phase = Phase::live;
+                if (slot.stand_in) {
+                    stand_in_fails_[slot.copy_of] = 0;
+                }
                 Say(slot.actor + ": copy " + std::to_string(slot.key) + " is actor " + Hex(result));
             }
             slot.request = 0;
@@ -433,6 +451,38 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
         }
     }
     return NextSetter(guest);
+}
+
+std::string_view StandIn(std::string_view actor) {
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 4> kStandIns{{
+        {"Shootable_DekuSeed", "CoopShot_Seed"},
+        {"NormalArrow", "CoopShot_Arrow"},
+        {"Shootable_Hook", "CoopShot_Hook"},
+        {"Shootable_HookLong", "CoopShot_HookLong"},
+    }};
+    for (const auto& [shared, stand_in] : kStandIns) {
+        if (shared == actor) {
+            return stand_in;
+        }
+    }
+    return {};
+}
+
+std::set<std::string> StandInsIn(std::string_view manifest) {
+    std::set<std::string> out;
+    for (const std::string_view shared :
+         {"Shootable_DekuSeed", "NormalArrow", "Shootable_Hook", "Shootable_HookLong"}) {
+        const std::string quoted = "\"" + std::string(StandIn(shared)) + "\"";
+        if (manifest.find(quoted) != std::string_view::npos) {
+            out.insert(std::string(StandIn(shared)));
+        }
+    }
+    return out;
+}
+
+void Director::SetStandIns(std::set<std::string> names) {
+    std::lock_guard lock(mutex_);
+    stand_ins_ = std::move(names);
 }
 
 std::optional<CoopPuppet::Call> Director::NextSetter(CoopPuppet::Guest& guest) {
@@ -483,8 +533,10 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
         block_ = 0;
         allocating_ = false;
         started_.clear();
+        remade_.clear();
         slots_.assign(kSlots, Slot{});
     }
+    std::erase_if(remade_, [this](const auto& e) { return Wanted(e.first) == nullptr; });
     std::map<std::uint64_t, std::uint64_t> live;
     for (std::size_t i = 0; i < slots_.size(); ++i) {
         Slot& slot = slots_[i];
@@ -517,6 +569,22 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
             if (!ReadValue(guest, slot.taken, vtable) || vtable != slot.vtable ||
                 !ReadValue(guest, slot.taken + addr::kActorState, state) || Gone(state)) {
                 slot.phase = Phase::done;  // it went by itself (a fuse, a hit)
+                if (const Copy* c = Wanted(slot.key);
+                    c != nullptr && c->act == Act::show && c->remakes != 0) {
+                    Remade& r = remade_[slot.key];
+                    if (r.count < c->remakes) {
+                        ++r.count;
+                        r.gone_ms = now_ms;
+                        started_.erase(slot.key);
+                        Say(slot.actor + ": copy " + std::to_string(slot.key) +
+                            " went by itself; made again (" + std::to_string(r.count) + " of " +
+                            std::to_string(c->remakes) + ")");
+                    } else {
+                        Say(slot.actor + ": copy " + std::to_string(slot.key) +
+                            " went by itself; not made again (made " + std::to_string(r.count) +
+                            " times already)");
+                    }
+                }
             } else if (const Copy* c = Wanted(slot.key); c != nullptr && c->act != Act::remove && c->place) {
                 if (c->rotation) {
                     // Place and turn are one block at +0x31c, as the Mover writes them.
@@ -527,7 +595,15 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 } else {
                     WriteValue(guest, slot.taken + addr::kActorPosition, c->position);
                 }
-                if (c->setter && c->act == Act::show) {
+                if (slot.stand_in) {
+                    // No physics to hand the place to: the engine's pending
+                    // transform too, as the puppet is placed (CoopPuppet::Director::Pose).
+                    WriteValue(guest, slot.taken + addr::kActorPositionRequest, c->position);
+                    if (c->rotation) {
+                        WriteValue(guest, slot.taken + addr::kActorRotationRequest, *c->rotation);
+                    }
+                }
+                if (c->setter && c->act == Act::show && !slot.stand_in) {
                     setters_.push_back(i);
                 }
                 if (c->act == Act::explode && !slot.exploded) {
@@ -548,6 +624,18 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
             }
         }
         if (slot.phase == Phase::done) {
+            if (slot.stand_in && slot.taken == 0) {
+                // A stand-in that never became an actor (create failed,
+                // timed out or dropped, or the take gave none): the copy is
+                // made again; after kStandInTries in a row, as the game's
+                // own actor for the rest of the session.
+                started_.erase(slot.key);
+                if (++stand_in_fails_[slot.copy_of] >= kStandInTries &&
+                    no_stand_in_.insert(slot.copy_of).second) {
+                    Say(slot.copy_of + ": " + slot.actor + " could not be made " +
+                        std::to_string(kStandInTries) + " times in a row; the game's own actor is used");
+                }
+            }
             slot = Slot{};
             continue;
         }
@@ -562,7 +650,7 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
 std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     namespace addr = CoopPuppet::addr;
     const bool any_new = std::any_of(copies_.begin(), copies_.end(), [&](const Copy& c) {
-        return c.act == Act::show && started_.count(c.key) == 0;
+        return Due(c, now_ms);
     });
     if (block_ == 0) {
         if (!any_new || allocating_ || now_ms < retry_ms_) {
@@ -631,7 +719,7 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         return std::nullopt;
     }
     for (const Copy& copy : copies_) {
-        if (copy.act != Act::show || started_.count(copy.key) != 0) {
+        if (!Due(copy, now_ms)) {
             continue;
         }
         const auto free = std::find_if(slots_.begin(), slots_.end(),
@@ -651,8 +739,17 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         std::memcpy(arg.data() + 0x30, scale.data(), 12);
         std::memcpy(arg.data() + 0x40, &create_default, 8);
         arg[0x98] = 1;
+        std::string_view stand_in = no_stand_in_.count(copy.actor) != 0 ? std::string_view{}
+                                                                         : StandIn(copy.actor);
+        if (!stand_in.empty()) {
+            std::lock_guard lock(mutex_);
+            if (stand_ins_.count(std::string(stand_in)) == 0) {
+                stand_in = {};  // the pack has none: never ask for an unknown actor
+            }
+        }
+        const std::string name = stand_in.empty() ? copy.actor : std::string(stand_in);
         std::array<char, 0x40> text{};
-        std::memcpy(text.data(), copy.actor.data(), std::min<std::size_t>(copy.actor.size(), 0x3f));
+        std::memcpy(text.data(), name.data(), std::min<std::size_t>(name.size(), 0x3f));
         if (!guest.Write(b, arg.data(), arg.size()) ||
             !guest.Write(b + 0x118, text.data(), text.size()) ||
             !WriteValue(guest, b + 0x100, b + 0x118) ||
@@ -663,7 +760,9 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         started_.insert(copy.key);
         *free = Slot{};
         free->key = copy.key;
-        free->actor = copy.actor;
+        free->actor = name;
+        free->copy_of = copy.actor;
+        free->stand_in = !stand_in.empty();
         free->phase = Phase::creating;
         free->since_ms = now_ms;
         CoopPuppet::Call c;
@@ -675,7 +774,7 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         c.x[4] = 1;
         pending_ = Pending::create;
         pending_slot_ = i;
-        Say(copy.actor + ": create copy " + std::to_string(copy.key));
+        Say(name + ": create copy " + std::to_string(copy.key));
         return c;
     }
     return std::nullopt;
@@ -695,8 +794,12 @@ Director& TheDirector() {
 } // namespace CoopSpawn
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <unordered_map>
 
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
@@ -955,8 +1058,33 @@ Director& TheDirector() {
     return director;
 }
 
+// The stand-ins the installed puppet pack has (issue 85): every mod folder's
+// coop_puppet.json under load/<title id>. None found: no stand-in is asked for.
+std::set<std::string> PackStandIns() {
+    std::set<std::string> names;
+    std::error_code ec;
+    const auto title = Common::FS::GetEdenPath(Common::FS::EdenPath::LoadDir) / "0400486024DEC000";
+    for (const auto& mod : std::filesystem::directory_iterator(title, ec)) {
+        std::ifstream in(mod.path() / "coop_puppet.json", std::ios::binary);
+        if (!in) {
+            continue;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        names.merge(StandInsIn(text));
+    }
+    return names;
+}
+
 void UseDirector() {
     static const bool registered = [] {
+        auto names = PackStandIns();
+        std::string list;
+        for (const auto& n : names) {
+            list += (list.empty() ? "" : ", ") + n;
+        }
+        LOG_INFO(Core, "coop: spawn: stand-ins in the puppet pack: {}",
+                 list.empty() ? "none (copies are the game's own actors; rebuild the puppet pack)" : list);
+        TheDirector().SetStandIns(std::move(names));
         CoopSvc::AddCaller(10, [](CoopPuppet::Guest& guest, bool after_call,
                                   std::uint64_t result, std::uint64_t now_ms) {
             return TheDirector().Step(guest, after_call, result, now_ms);

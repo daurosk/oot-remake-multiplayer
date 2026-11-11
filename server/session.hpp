@@ -55,6 +55,12 @@ struct SessionConfig {
   // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce.
   // Empty: no password, HELLO is answered at once as before.
   std::string join_password;
+  // Guessing the join password: an address that sends max_wrong_passwords
+  // wrong proofs within wrong_password_window_us is closed at connect for
+  // wrong_password_block_us (counted in password_blocked). 0: no limit.
+  std::uint32_t max_wrong_passwords = 5;
+  std::uint64_t wrong_password_window_us = 60'000'000;
+  std::uint64_t wrong_password_block_us = 60'000'000;
   std::uint64_t silence_timeout_us = 10'000'000;  // nothing heard from a player
   std::uint64_t ping_interval_us = 250'000;
   // A refused connection the transport has not closed this long after the
@@ -211,6 +217,10 @@ struct Stats {
   std::uint64_t bad_password = 0;
   // JOIN_PROOFs nobody asked for: no challenge open on that connection.
   std::uint64_t stray_proof = 0;
+  // Connections closed at connect: their address made too many wrong
+  // guesses at the join password lately (max_wrong_passwords). Not packets,
+  // so not in dropped().
+  std::uint64_t password_blocked = 0;
 
   // JOIN_PARTNER (stage 1 step 3). Relayed ones count in relayed too.
   std::uint64_t join_relayed = 0;
@@ -297,6 +307,8 @@ class Session {
   std::vector<Action> take_actions();
 
   const Stats& stats() const { return stats_; }
+  // Addresses with recent wrong join passwords (max_wrong_passwords).
+  std::size_t wrong_guess_addresses() const { return wrong_guesses_.size(); }
   std::size_t player_count() const;
   // The host's player number; none while the session is empty.
   std::optional<std::uint8_t> host() const;
@@ -554,6 +566,18 @@ class Session {
   WorldStore world_;
   std::vector<Action> actions_;
   Stats stats_;
+  // Wrong join passwords by address (max_wrong_passwords). An entry goes
+  // when its window and its block are both over (tick sweeps them), so the
+  // map holds only addresses that guessed wrong in the last minute or two.
+  struct WrongGuesses {
+    std::uint32_t count = 0;
+    std::uint64_t first_at = 0;       // the first wrong guess of this window
+    std::uint64_t blocked_until = 0;  // 0: not blocked
+  };
+  std::map<std::uint32_t, WrongGuesses> wrong_guesses_;
+  static constexpr std::size_t kMaxWrongGuessAddresses = 4096;
+  // Counts a wrong proof from `address`; blocks it at the limit.
+  void note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us);
 };
 
 }  // namespace coop::server

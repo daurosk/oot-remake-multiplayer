@@ -3170,3 +3170,85 @@ TEST_CASE("join password: the checks after it still run (a name taken is refused
   REQUIRE(refused);
   CHECK(refused->reason == RefuseReason::name_taken);
 }
+
+TEST_CASE("join password: 5 wrong guesses from one address close it at connect for 60 s") {
+  Harness h(with_password("hunter2"));
+  const std::uint32_t guesser = 0x0A000001;
+  const std::uint32_t friend_address = 0x0A000002;
+  ConnectionId next = 1;
+  for (int i = 0; i < 5; ++i) {
+    const ConnectionId id = next++;
+    h.connect(id, guesser);
+    h.clear();
+    h.receive(id, hello_from("Ganon"), kChannelSession);
+    auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge);
+    h.receive(id, JoinProof{join_proof("guess" + std::to_string(i), challenge->nonce)},
+              kChannelSession);
+  }
+  CHECK(h.session.stats().bad_password == 5);
+  CHECK(h.session.wrong_guess_addresses() == 1);
+
+  // The 6th is closed at connect, before it can send anything, right password or not.
+  CHECK_FALSE(h.session.connected(next++, h.now, guesser));
+  CHECK(h.session.stats().password_blocked == 1);
+  // Another address is not touched.
+  JoinNonce nonce{};
+  {
+    const ConnectionId id = next++;
+    h.connect(id, friend_address);
+    h.clear();
+    h.receive(id, hello_from("Zelda"), kChannelSession);
+    auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge);
+    h.receive(id, JoinProof{join_proof("hunter2", challenge->nonce)}, kChannelSession);
+    CHECK(h.session.player_count() == 1);
+  }
+
+  // Still blocked just before the minute is over.
+  h.now += 59'000'000;
+  h.session.tick(h.now);
+  h.collect();
+  CHECK_FALSE(h.session.connected(next++, h.now, guesser));
+  CHECK(h.session.stats().password_blocked == 2);
+
+  // After 60 s the address may try again, and the right password gets in.
+  h.now += 1'000'000;
+  h.session.tick(h.now);
+  h.collect();
+  CHECK(h.session.wrong_guess_addresses() == 0);  // swept: the map does not keep it
+  const ConnectionId id = next++;
+  h.connect(id, guesser);
+  h.clear();
+  h.receive(id, hello_from("Link"), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, id);
+  REQUIRE(challenge);
+  nonce = challenge->nonce;
+  h.clear();
+  h.receive(id, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  bool welcomed = false;
+  for (const Sent& s : h.to(id)) welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
+  CHECK(welcomed);  // (Zelda timed out meanwhile: the fake clock jumped a minute)
+}
+
+TEST_CASE("join password: 4 wrong guesses, then a minute without, start the count again") {
+  Harness h(with_password("hunter2"));
+  const std::uint32_t address = 0x0A000003;
+  ConnectionId next = 1;
+  auto guess_wrong = [&] {
+    const ConnectionId id = next++;
+    h.connect(id, address);
+    h.clear();
+    h.receive(id, hello_from("Ganon"), kChannelSession);
+    auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge);
+    h.receive(id, JoinProof{join_proof("nope", challenge->nonce)}, kChannelSession);
+  };
+  for (int i = 0; i < 4; ++i) guess_wrong();
+  h.now += 60'000'000;
+  h.session.tick(h.now);
+  h.collect();
+  for (int i = 0; i < 4; ++i) guess_wrong();
+  CHECK(h.session.connected(next++, h.now, address));
+  CHECK(h.session.stats().password_blocked == 0);
+}

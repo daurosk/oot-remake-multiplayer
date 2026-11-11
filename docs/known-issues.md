@@ -46,6 +46,11 @@ Co-op does not allow mods that change the game's code, or cheats ([issue 136](ht
 
 - AMD's driver crashed with the emulator's shader libraries (`amdvlk64.dll`; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)). The kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details.
 
+## Low frame rate
+
+- Slow or uneven (for example under 20 fps): see [setup.md, "Low frame rate"](setup.md#low-frame-rate). In short: the first 10 to 15 minutes stutter while shaders are built; click the **60 FPS** button at the bottom of the emulator window to switch to 30 FPS; laptops plugged in and on the graphics card; a current graphics driver. The kit's emulator already uses the fastest settings.
+- The co-op code reads the game at most every 33 ms (4 to 30 times a second), and its debug logging is off by default. How much frame time it costs has not been measured yet.
+
 ## Other notes
 
 - Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks (and Public for Hamachi or Radmin VPN, [play-online.md](play-online.md)).

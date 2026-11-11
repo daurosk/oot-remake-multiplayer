@@ -155,6 +155,19 @@ The host's save decides. Everyone's progress is shared while you play, but when 
 - **Where is the log?** `emulator\user\log\eden_log.txt` in your kit folder. Log lines name the emulator's source files, such as `src\core\...`. An older kit shows a full folder such as `C:\...\src\...`: that is where the emulator was built, not your folder, and it is not a problem.
 - **Still stuck?** Close the emulator, run `collect-logs.cmd` and report it (below).
 
+## Low frame rate
+
+The kit's emulator already starts with the fastest settings for this game (Vulkan, 1x resolution, low GPU accuracy, shaders built in the background). You do not need to change anything in its settings, and turning things up (a higher resolution, higher accuracy, frame generation) makes it slower. The frame rate is shown at the bottom of the emulator window (`Game: ... FPS`). If the game is slow or uneven, go through these in order:
+
+1. **The first minutes stutter, and that is normal.** The first time you play, and after an update that brings a new emulator, the emulator builds the game's shaders as it goes: each new place, effect or enemy stutters the first time you see it. Play 10 to 15 minutes; it gets smooth, and stays smooth the next time you play (the shaders are kept). Do not delete `emulator\user\cache\shader` to fix this: that starts it over.
+2. **Switch to 30 FPS.** Click the **60 FPS** button at the bottom of the emulator window once; it turns into **30 FPS** at once, also in the middle of a game. The game keeps its normal speed, only fewer frames are drawn. The emulator also asks this on its very first start. A PC that gets under 30 at 60 FPS is usually steady at 30. Not yet tested by us with one player at 30 and the other at 60; tell us if anything looks wrong.
+3. **Laptops: plug in the charger** and set Windows to **Best performance** (Settings > System > Power & battery > Power mode). On battery, most laptops slow the processor and graphics a lot.
+4. **Make sure the game runs on your graphics card, not the built-in graphics.** Laptops often have both. In Windows: Settings > System > Display > Graphics, **Browse** to `emulator\lichii.exe` in your kit folder, add it, click it, **Options**, **High performance**, Save. Then close and restart the emulator. `Host.bat` and `Join.bat` say `Only built-in graphics found` when the PC has no graphics card at all (then step 2 is the main fix).
+5. **Update your graphics driver**: NVIDIA (the NVIDIA app), AMD (AMD Software: Adrenalin Edition) or Intel (Intel Driver & Support Assistant). Old drivers build shaders slowly and stutter more. Restart the PC after.
+6. **Close other programs**: browser tabs playing video, other games, screen recorders, Discord screen sharing. Run one copy of the game per PC: two on one PC share its power.
+7. **Is the PC strong enough?** Switch emulation leans mostly on the processor. A rough guide (not measured by us): a 4-core processor from before about 2017 (Intel Core i5 6th generation or older, AMD FX) or built-in graphics only (Intel UHD or HD Graphics) will struggle even at 30 FPS. A 6-core processor from about 2019 on (such as a Ryzen 5 3600 or Core i5-10400) with a graphics card such as a GTX 1060 or RX 580 or newer, and 16 GB of memory, is comfortable. Free space on the drive helps the shader cache.
+8. **Still slow?** Close the emulator, run `collect-logs.cmd` and send the zip with the FPS you see and where in the game (it records your processor, graphics card and driver, memory, whether a laptop is plugged in, and the emulator's graphics settings; no game files or passwords).
+
 ## Reporting a problem
 
 Close the emulator, double-click `collect-logs.cmd` and send the zip it makes, with what you did and what went wrong, on the repo's issue page.

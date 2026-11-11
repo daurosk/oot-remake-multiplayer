@@ -46,6 +46,24 @@ $about = @(
     "windows: $([System.Environment]::OSVersion.VersionString)"
 )
 try { $about += Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object { "gpu: $($_.Name), driver $($_.DriverVersion)" } } catch {}
+# For low frame rates (docs/setup.md, "Low frame rate"): the CPU, memory, battery and power plan.
+try { $about += Get-CimInstance Win32_Processor -ErrorAction Stop | ForEach-Object { "cpu: $($_.Name.Trim()), $($_.NumberOfCores) cores, $($_.NumberOfLogicalProcessors) threads" } } catch {}
+try { $about += Get-CimInstance Win32_ComputerSystem -ErrorAction Stop | ForEach-Object { 'memory: {0:N1} GB' -f ($_.TotalPhysicalMemory / 1GB) } } catch {}
+try {
+    $about += Get-CimInstance Win32_Battery -ErrorAction Stop | ForEach-Object {
+        "battery: $($_.EstimatedChargeRemaining)%, $(if ($_.BatteryStatus -eq 2) { 'plugged in' } else { 'NOT plugged in' })"
+    }
+} catch {}
+try { $plan = (& powercfg /getactivescheme) -join ' '; if ($plan) { $about += "power plan: $($plan.Trim())" } } catch {}
+# The emulator's graphics and speed settings: only these keys from qt-config.ini, never the
+# whole file (it can hold an account token).
+$qtConfig = Join-Path $user 'config\qt-config.ini'
+if (Test-Path -LiteralPath $qtConfig) {
+    $keys = 'backend|vulkan_device|resolution_setup|gpu_accuracy|use_vsync|oot_30fps|use_asynchronous_shaders|use_disk_shader_cache|scaling_filter|anti_aliasing|oot_anti_aliasing|use_speed_limit|speed_limit|cpu_accuracy|use_multi_core|astc_recompression|nvidia_dlss|frame_gen|frame_gen_multiplier'
+    try {
+        $about += [System.IO.File]::ReadAllLines($qtConfig) | Where-Object { $_ -match "^($keys)=" } | ForEach-Object { "setting: $_" }
+    } catch {}
+}
 try {
     $about += Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
         Where-Object { $_.IPAddress -notlike '169.254.*' } | ForEach-Object { "ip: $($_.IPAddress) ($($_.InterfaceAlias))" }

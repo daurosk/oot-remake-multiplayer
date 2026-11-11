@@ -75,6 +75,25 @@ try {
 } finally {
     $env:EDEN_NX2_GPL = $oldGpl
 }
+# --- Built-in graphics only: the 30 FPS hint (kit-paths.ps1, docs/setup.md "Low frame rate").
+function Test-Hint([scriptblock]$Cards) { [bool](Get-GpuSpeedHint $Cards) }
+Check (Test-Hint { New-Card 'Intel(R) UHD Graphics 620' 'Intel Corporation' }) 'Intel UHD alone: hint'
+Check (Test-Hint { New-Card 'Intel(R) Arc(TM) Graphics' 'Intel Corporation' }) 'Intel Arc built-in graphics: hint'
+Check (Test-Hint { New-Card 'AMD Radeon(TM) Graphics' 'Advanced Micro Devices, Inc.' }) 'Ryzen built-in Radeon: hint'
+Check (Test-Hint { New-Card 'AMD Radeon(TM) RX Vega 10 Graphics' 'Advanced Micro Devices, Inc.' }) 'Ryzen RX Vega 10: hint'
+Check (Test-Hint { New-Card 'AMD Radeon 780M Graphics' 'Advanced Micro Devices, Inc.'; New-Card 'Microsoft Basic Display Adapter' '(Standard display types)' }) 'Radeon 780M and a basic adapter: hint'
+Check ((Get-GpuSpeedHint { New-Card 'Intel(R) UHD Graphics' 'Intel Corporation' }) -match '30 FPS.*Low frame rate') 'the hint names the 30 FPS button and the setup section'
+Check (-not (Test-Hint { New-Card 'Intel(R) UHD Graphics' 'Intel Corporation'; New-Card 'NVIDIA GeForce RTX 3050 Laptop GPU' 'NVIDIA' })) 'laptop with NVIDIA: no hint'
+Check (-not (Test-Hint { New-Card 'AMD Radeon(TM) Graphics' 'Advanced Micro Devices, Inc.'; New-Card 'AMD Radeon RX 6600M' 'Advanced Micro Devices, Inc.' })) 'Ryzen with a Radeon RX: no hint'
+Check (-not (Test-Hint { New-Card 'AMD Radeon RX 7900 XTX' 'Advanced Micro Devices, Inc.' })) 'Radeon RX: no hint'
+Check (-not (Test-Hint { New-Card 'AMD Radeon RX Vega 64' 'Advanced Micro Devices, Inc.' })) 'Radeon RX Vega 64 card: no hint'
+Check (-not (Test-Hint { New-Card 'Intel(R) Arc(TM) A770 Graphics' 'Intel Corporation' })) 'Intel Arc A770 card: no hint'
+Check (-not (Test-Hint { New-Card 'Parsec Virtual Display Adapter' 'Parsec Cloud, Inc.' })) 'only a virtual adapter: no hint'
+Check (-not (Test-Hint { })) 'no cards: no hint'
+Check (-not (Test-Hint { throw 'no CIM' })) 'a failing query: no hint'
+$fixedList = @(New-Card 'Intel(R) UHD Graphics' 'Intel Corporation')
+Check (Test-Hint ({ $fixedList }.GetNewClosure())) 'a card list read once (play.ps1) works as the query'
+
 $opt = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-options-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.ini')
 try {
     [System.IO.File]::WriteAllText($opt, "auto_update = ask`r`nLICHII_COOP_PUPPET=1`r`n# EDEN_NX2_GPL=1`r`nEDEN_NX2_GPL = 1`r`nEDEN_OTHER=1`r`n")

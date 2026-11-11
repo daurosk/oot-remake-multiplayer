@@ -266,6 +266,27 @@ function Set-AmdGplDefault([scriptblock]$Query = { Get-CimInstance Win32_VideoCo
     }
 }
 
+# Low frame rates (docs/setup.md, "Low frame rate"): a PC with only built-in graphics (Intel
+# UHD/Iris/Arc Graphics, AMD Radeon ... Graphics in a Ryzen) and no graphics card often runs the
+# game under 30 fps at 60 FPS. Returns a line telling the player about the 30 FPS button, or
+# nothing (a graphics card found, no cards, or a query that fails). Virtual and remote-desktop
+# adapters do not count.
+function Get-GpuSpeedHint([scriptblock]$Query = { Get-CimInstance Win32_VideoController -OperationTimeoutSec 5 -ErrorAction Stop }) {
+    try { $cards = @(& $Query) } catch { return }
+    $builtIn = @()
+    foreach ($card in $cards) {
+        $name = "$($card.Name)"
+        $text = "$name | $($card.AdapterCompatibility)"
+        if ($text -match 'Microsoft|Remote|Virtual|Parsec|Citrix|VMware|Hyper-V|DisplayLink|spacedesk|Idd') { continue }
+        if ($text -match 'NVIDIA') { return }
+        if ($name -match 'Radeon.*\b(RX\s*\d{3,4}|RX\s*Vega\s*(56|64)\b|Pro|VII|R[79]\s)') { return }
+        if ($name -match 'Arc.*\b(Pro|[AB]\d{3})\b') { return }
+        if ($text -match 'Intel|\bAMD\b|Radeon|Advanced Micro Devices') { $builtIn += $name }
+    }
+    if (-not $builtIn) { return }
+    return "Only built-in graphics found ($($builtIn -join ', ')). If the game runs slowly, click the 60 FPS button at the bottom of the emulator window to switch to 30 FPS (SETUP.md, `"Low frame rate`")."
+}
+
 # The pack tool's own hash, as tools\puppet_pack\build.py (tool_hash) writes it into
 # coop_puppet.json: SHA-256 over "<name>:<sha256 of the file>`n" for each *.py in the folder
 # (not tests\), names in ordinal order. Nothing when the folder is not there.

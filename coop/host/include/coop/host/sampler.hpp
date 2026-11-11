@@ -2,7 +2,8 @@
 
 // Builds the local player's PLAYER_SAMPLE, PLAYER_STATUS and PLAYER_EQUIP
 // messages, once per emulated frame, as docs/protocol.md asks: a sample every
-// frame the player moves and at least 4 a second while still, a status and
+// frame the player moves (at most one per min_gap_us) and at least 4 a second
+// while still, a status and
 // the equipment on every change. It returns encoded messages; the caller
 // sends them (coop::net::Client).
 
@@ -20,6 +21,11 @@ struct SamplerSettings {
   // Longest time between two samples while still. 200 ms keeps above 4 a
   // second even when frames come late.
   std::uint64_t keepalive_us = 200'000;
+  // Shortest time between two samples, except for a scene or age change
+  // (issue 106): frame() runs once per presented frame, and high refresh
+  // (Ctrl+U) presents up to 165 a second. 14 ms lets every frame through at
+  // 60 (with jitter) and gives 48-60 a second at 120-165.
+  std::uint64_t min_gap_us = 14'000;
   // Smaller changes than this, in game units, are not movement.
   float still_distance = 1.0e-3f;
   // Smaller changes in any quaternion component are not turning.

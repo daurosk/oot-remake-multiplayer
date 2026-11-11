@@ -1,0 +1,40 @@
+# boulder (world-objects, #84): both load into Kokiri Forest as child and are put in the Kokiri
+# Sword crawlspace, where Obj_Kokiri_RollingRock_A_01 ddf5d8b2c6895c82 rolls (Banc
+# KokiriForest_Child_Static: -79.94 120.75 26.99; the path pieces Land_Kokiri_RollingRockArea_*
+# run x -79..-94, z 17..47, ground y ~118.6). A stands at the north end, B at the south end;
+# both within 15 m of the boulder; they watch it for 40 s.
+# Expect: A (player 1) "world: ddf5d8b2c6895c82 Obj_Kokiri_RollingRock_A_01 moved here: sending"
+# and no "at rest" while it rolls; B "... moved by another player" and no "moved here:
+# sending" after the first ~2 s (both see it roll at once, so B may claim one walk before A's
+# moves arrive; the lower number then hands it to A). Shots every 3 s: the boulder at the same place on the path in both
+# (A's view and B's view differ; compare against the path pieces). FAIL = B's boulder somewhere
+# else on the path than A's at the same time, or B still sending after ~2 s.
+# The crawlspace hurts Link when the boulder hits him; a knock-back is fine.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp KokiriForest_Child
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -81.74 119.3 34.03
+wait 240
+toward -79.94 26.99 10
+press ZL 10
+mark placed
+wait 1200
+mark mid
+toward -79.94 26.99 6
+press ZL 10
+wait 1200
+mark end

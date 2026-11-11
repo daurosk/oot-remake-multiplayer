@@ -56,6 +56,7 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Weapon_Sword_Giant", 0x1e824efa, K::boolean, R::any, true},
   {"PlayerStatus.AssignableItem.BottleInfo.BottleB.BottleItem", 0x1edd164a, K::uint32, R::per_player, true},
   {"PouchData.Item_Medal_Shadow.StockNum", 0x204d2063, K::int32, R::max, true},
+  {"MiniGame_Fishing_GetGoldScale", 0x2079723b, K::boolean, R::any, true},  // fishing pond prize won (issue 151)
   {"PouchData.Pouch_Amiibo.StockNum", 0x20820479, K::int32, R::max, true},
   {"IsGet.Item_Quiver_Large", 0x21985b09, K::boolean, R::any, true},
   {"PouchData.Armor_Adult_Goron.StockNum", 0x21ecbd19, K::int32, R::max, true},
@@ -111,7 +112,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_Arrow_Normal.StockNum", 0x518ec74b, K::int32, R::per_player, true},
   {"PouchData.Item_CojiroCucco.StockNum", 0x51d89ef0, K::int32, R::mirror, true},
   {"PouchData.Obj_Heart_Piece.StockNum", 0x51ec97b3, K::int32, R::count, true},
-  {"IsGet.Weapon_Shield_Deku", 0x5217da1e, K::boolean, R::any, true},
+  {"IsGet.Weapon_Shield_Deku", 0x5217da1e, K::boolean, R::per_player, true},  // issue 130
   {"PouchData.BottleD.StockNum", 0x5324f9d3, K::int32, R::any, true},
   {"PouchData.Item_Ocarina_Time.StockNum", 0x54e2a3d1, K::int32, R::max, true},
   {"PouchData.Item_NormalBoot.StockNum", 0x55e804de, K::int32, R::max, true},
@@ -154,7 +155,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.SpiritTemple.SmallKeyNum", 0x79eeec8e, K::int32, R::count, true},
   {"IsGet.Weapon_Sword_Master", 0x7ae38e5b, K::boolean, R::any, true},
   {"PouchData.Item_BulletBag_Large.StockNum", 0x7b9673f5, K::int32, R::max, true},
-  {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::max, true},
+  {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::per_player, true},  // issue 130
   {"PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem", 0x7d48df76, K::uint32, R::per_player, true},
   {"PouchData.Item_Stone_Fire.StockNum", 0x7d69ad47, K::int32, R::max, true},
   {"DungeonInfo.BottomOfTheWell.SmallKeyNum", 0x7dd79d10, K::int32, R::count, true},
@@ -286,6 +287,7 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Item_Stone_Water", 0xeec383f5, K::boolean, R::any, true},
   {"PouchData.Armor_Child_Mask_Spooky.StockNum", 0xf046629e, K::int32, R::max, true},
   {"PouchData.Item_NayruLove.StockNum", 0xf0828cd0, K::int32, R::max, true},
+  {"MiniGame_Fishing_GetHeartPiece", 0xf1891f6e, K::boolean, R::any, true},  // fishing pond prize won (issue 151)
   {"IsGet.Item_ZeldaLetter", 0xf19393b5, K::boolean, R::any, true},
   {"PouchData.Weapon_Sword_Master.StockNum", 0xf1c45294, K::int32, R::max, true},
   {"DungeonInfo.ForestTemple.IsGetCompass", 0xf240eeb2, K::boolean, R::any, true},
@@ -324,6 +326,111 @@ std::uint32_t as_bits(std::int64_t value) {
 
 }  // namespace
 
+// Read from the romfs (Banc/*/*_Static.bcett.byml: every Enemy_Skulltula_Gold
+// placement's Hash), with the maps each is in.
+constexpr std::uint64_t kGoldSkulltulas[] = {
+    0x02974596f92cf377ull,  // WaterTemple
+    0x032f42f523be6425ull,  // Graveyard
+    0x0341f2c03598c861ull,  // DesertColossus
+    0x04be4a8ff29f2099ull,  // HyruleField
+    0x04e03ac27985e328ull,  // DeathMountainTrail
+    0x07e6e21142cc54dbull,  // GoronCity
+    0x0af4d6f063d3ae9full,  // HyruleField
+    0x0b8e43abfa0b5f86ull,  // DeathMountainTrail
+    0x0d53e429a1ef383dull,  // DodongoCavern
+    0x10434342a3917ebdull,  // DodongoCavern
+    0x165fc0bc0aca1f6cull,  // IceCavern
+    0x1bf5f0176ef03bdaull,  // ForestTemple
+    0x1e38e8d23596eecfull,  // HyruleField
+    0x22c0f7dff5ebb86dull,  // HyruleCastle
+    0x25e6072d4df023b3ull,  // HyruleField
+    0x2aa39f00aaa2d331ull,  // ForestTemple
+    0x2df265292516bdf0ull,  // KakarikoVillage
+    0x35fb354fac262d36ull,  // BottomOfTheWell
+    0x3c2b585ac5c0443eull,  // LostWood
+    0x3d0de5adaeb73cc9ull,  // WaterTemple
+    0x3f5b150f16d84603ull,  // DodongoCavern
+    0x4696b2730de0516cull,  // SpiritTemple
+    0x4d1b7e35ca0c6484ull,  // FireTemple
+    0x4e13cc311cd04df4ull,  // GanonCastle
+    0x58c75badf059ca54ull,  // DeathMountainCrater
+    0x5e3ae6a7cf3ac292ull,  // FireTemple
+    0x61576befd16c499aull,  // HyruleField
+    0x62c340f0b876c195ull,  // KokiriForest
+    0x63446d12663daa83ull,  // ZoraFountain
+    0x63701a2cf70b201cull,  // IceCavern
+    0x6689bdebc95368ebull,  // HyruleField
+    0x6789388e9fb9c92cull,  // BottomOfTheWell
+    0x6a8d9b2373d08fcbull,  // KakarikoVillage
+    0x70b0fca66ca4808aull,  // SpiritTemple
+    0x738f5746cc517702ull,  // GerudoValley
+    0x758ce7b4868447fbull,  // DodongoCavern
+    0x781e0de8eed42373ull,  // HyruleField
+    0x78ae4fd90b3cfaaaull,  // ZoraRiver
+    0x7a74bc651f9fe024ull,  // ShadowTemple
+    0x7c1a05315f83c34dull,  // Market
+    0x7d8ec14bdd1f6341ull,  // HyruleField
+    0x7f28485fa5d3688full,  // HyruleCastle
+    0x7f498ada1c2e9c7aull,  // FireTemple
+    0x8186bcb07d6c2cf9ull,  // LostWood
+    0x81ed4ed76699e3d8ull,  // GerudoFortress
+    0x8325fea55edfbe97ull,  // ZoraRiver
+    0x845ba51dc18c855eull,  // ZoraFountain
+    0x853b892663c0215dull,  // ZoraDomain
+    0x858f5000ad57b2ccull,  // KokiriForest
+    0x8c8bb95471d20d02ull,  // SpiritTemple
+    0x8e87908cb035e950ull,  // ShadowTemple
+    0x9222e742b73d3d2cull,  // SpiritTemple
+    0x97824c2ffeaa877cull,  // ZoraRiver
+    0x984021bc20419ebeull,  // ForestTemple
+    0x99ca89963485df11ull,  // ForestTemple
+    0x9ae3d0ac392e6cdaull,  // DesertColossus
+    0x9c95fd41b89c058aull,  // InsideJabuJabuBelly
+    0x9fc92497f014dbd5ull,  // InsideJabuJabuBelly
+    0xa017ce09904c2dceull,  // GerudoValley
+    0xa0973706f6415ecdull,  // WaterTemple
+    0xa1632e322c612b97ull,  // KakarikoVillage
+    0xa6a4e87da18fa678ull,  // HyruleField
+    0xa8d6182a5c956e16ull,  // BottomOfTheWell
+    0xabad0e9f0d471156ull,  // ZoraRiver
+    0xb0f77b17cfb37458ull,  // FireTemple
+    0xb3d9f353599eea53ull,  // SpiritTemple
+    0xb4ece769e6f3a206ull,  // GerudoFortress
+    0xbc85efca2b222cd9ull,  // GerudoValley
+    0xbce05898ce61f1c0ull,  // InsideTheDekuTree
+    0xbdfe13c37f356829ull,  // DodongoCavern
+    0xc03f282ff60942b6ull,  // InsideJabuJabuBelly
+    0xc1858a4fcd84a28eull,  // HyruleField
+    0xc3c68d0ac4b85831ull,  // KakarikoVillage
+    0xc8db3346f78ea31bull,  // SacredForestMeadow
+    0xcc175a90e0014905ull,  // FireTemple
+    0xcdb49f5d0a67fcf6ull,  // IceCavern
+    0xceed596f17934971ull,  // HountedWasteland
+    0xd0f7e5ffa76ba288ull,  // DesertColossus
+    0xd1cef51cf294fb86ull,  // KakarikoVillage
+    0xd23a7a2c9eced9ceull,  // ShadowTemple
+    0xd3d86d3d6988ed8cull,  // GerudoValley
+    0xd4883a16973b1d06ull,  // KakarikoVillage
+    0xd731ea6a04d0fd01ull,  // WaterTemple
+    0xd7ffbe169189e50dull,  // ShadowTemple
+    0xdc8113831c56b194ull,  // HyruleField
+    0xddd260afb6f2989aull,  // InsideJabuJabuBelly
+    0xdf73f3739cef466bull,  // InsideTheDekuTree
+    0xe03a2965df9f7b30ull,  // WaterTemple
+    0xe91f6be796358ffcull,  // Graveyard
+    0xeafe60e592e9a3fbull,  // ShadowTemple
+    0xecdc46b409ed7d38ull,  // KokiriForest
+    0xf0dac245e2fc448eull,  // ZoraFountain
+    0xf1d32c06612da232ull,  // DeathMountainTrail
+    0xf2e27d6a27026acfull,  // InsideTheDekuTree
+    0xf46b1710ed0620d1ull,  // ForestTemple
+    0xf5359b24fc86ac22ull,  // DeathMountainTrail
+    0xf6fa6ef0ca152948ull,  // LostWood
+    0xfad8931a0011e1d4ull,  // InsideTheDekuTree
+    0xfbbc2d490276c68eull,  // GoronCity
+    0xfcd7f04dcf755e8eull,  // DeathMountainCrater
+};
+
 std::span<const ItemFlag> item_flags() { return kItems; }
 
 const ItemFlag* find_item(std::uint32_t hash) {
@@ -331,6 +438,8 @@ const ItemFlag* find_item(std::uint32_t hash) {
                                    [](const ItemFlag& e, std::uint32_t h) { return e.hash < h; });
   return it != std::end(kItems) && it->hash == hash ? &*it : nullptr;
 }
+
+std::span<const std::uint64_t> gold_skulltula_keys() { return kGoldSkulltulas; }
 
 SharedFlags item_shared_flags(bool with_off) {
   std::vector<FlagKey> keys;
@@ -473,6 +582,17 @@ std::span<const ItemGrant> item_grants(std::uint32_t item) {
   return {first, last};
 }
 
+std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t silver,
+                                              std::int32_t gold, std::uint32_t current) {
+  constexpr std::uint32_t kOrder[] = {lift::kNone, lift::kLow, lift::kMiddle, lift::kHigh};
+  const auto* at = std::find(std::begin(kOrder), std::end(kOrder), current);
+  if (at == std::end(kOrder)) return std::nullopt;  // not a grade we know: leave it
+  const int have = static_cast<int>(at - std::begin(kOrder));
+  const int want = gold >= 1 ? 3 : silver >= 1 ? 2 : goron >= 1 ? 1 : 0;
+  if (want <= have) return std::nullopt;  // never lowered
+  return kOrder[want];
+}
+
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
   if (!ready_) {
     // No Link: a load would undo it. A new item gets it all at the mend.
@@ -531,7 +651,7 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   }
   // What the game gives with the item (issues 128, 138): all of it for an
   // item new to this game; for one it holds already, the capacity only, so
-  // a game that got the item before without it (test5 saves: sticks and
+  // a game that got the item before without it (older saves: sticks and
   // seeds owned with room for 0) is mended on the next write or snapshot.
   if (held(merged.value)) grant(key.hash, !held(now->value));
   return true;

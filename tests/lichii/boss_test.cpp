@@ -149,7 +149,7 @@ TEST_CASE("boss: no intro within 10 s means the fight has begun here, but moves 
 }
 
 TEST_CASE("boss: a player only near the room pulls no one, one whose intro started does (issue 148)") {
-    // Deku Tree, test6: A came near the boss room; B was moved in and the door shut in B's game
+    // Deku Tree, player test: A came near the boss room; B was moved in and the door shut in B's game
     // while A, still on the way to it, was locked out.
     Sync b;
     b.Tick(At("ForestTemple", kForestEntrance, false, 2), 1 * kS);

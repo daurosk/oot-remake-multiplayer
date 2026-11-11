@@ -105,6 +105,17 @@ inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 // a call that was taken is told from one that was not. The slot's link is at
 // EquipmentUser + 0x20 + 0x18 * slot (u32 id at +0x10, ~0 empty).
 inline constexpr std::uint64_t kEquipChangeState = 0xe34c40;
+// Taking armor off: 0x10aceb0(eu, index, 0) empties the EquipmentUser's
+// armor link `index` (eu + 0xe0 + 0x18 * index, the same {holder, id} shape
+// as a hand slot) and deletes its piece. The game's own GameData path
+// (0x2df6c80) calls it this way when a PlayerStatus.Equip* armor flag is "":
+// kind 7 (head) index 0, 8 (upper) 1, 9 (lower) 2, 10 (hand) 3. It returns
+// 0 when there was a piece it could not take off.
+inline constexpr std::uint64_t kUnequipArmor = 0x10aceb0;
+inline constexpr std::uint32_t kArmorKindFirst = 7;   // ArmorHead
+inline constexpr std::uint32_t kArmorKindLast = 10;   // ArmorHand
+inline constexpr std::uint64_t kArmorLinks = 0xe0;    // kArmorLinkCount links of kEquipSlotStride
+inline constexpr std::uint32_t kArmorLinkCount = 13;
 inline constexpr std::uint32_t kEquipStateInHand = 1;
 inline constexpr std::uint32_t kEquipStateAway = 2;
 inline constexpr std::uint64_t kEquipSlots = 0x20;
@@ -147,32 +158,45 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 // slot), and whatever sits in hand slots 1, 2, 5 and 6 (kinds 1, 2, 11, 12:
 // which of the Deku stick, boomerang, hookshot, bottle and ocarina uses
 // which is for a game run to show; all four are sent and worn the same way).
-inline constexpr std::size_t kGearCount = 11;
+// The Ocarina (issue 152) is no hand slot: the player wears it as two
+// accessories on the belt (Item_Ocarina_Fairy_Holder and Item_Ocarina_Fairy,
+// or _Time; both packs have an AccessoryParam, and the player's
+// EquipmentUserParam binds Accessory1 and Accessory4 to the bone Pod_B), and
+// its playing animations take it in hand. The puppet wears the same two, as
+// Accessory1 (kind 13) and Accessory4 (kind 16), from PLAYER_EQUIP's ocarina.
+inline constexpr std::size_t kGearCount = 13;
 inline constexpr std::size_t kGearHeld = 5;  // index of the held item
 inline constexpr std::size_t kGearHand = 6;  // the gauntlets
 inline constexpr std::size_t kGearSubWeapon = 7;
 inline constexpr std::size_t kGearThirdWeapon = 8;
 inline constexpr std::size_t kGearTool = 9;
 inline constexpr std::size_t kGearSubTool = 10;
+inline constexpr std::size_t kGearOcarinaHolder = 11;
+inline constexpr std::size_t kGearOcarina = 12;
 using Gear = std::array<std::optional<std::string>, kGearCount>;
 inline constexpr std::array<std::uint32_t, kGearCount> kGearKinds{0, 6, 7, 8, 9, 5,
-                                                                  10, 1, 2, 11, 12};
+                                                                  10, 1, 2, 11, 12, 13, 16};
 inline constexpr std::array<const char*, kGearCount> kGearNames{
     "weapon", "shield",     "head",         "armor", "boots",   "held",
-    "hand",   "sub weapon", "third weapon", "tool",  "sub tool"};
+    "hand",   "sub weapon", "third weapon", "tool",  "sub tool", "ocarina holder", "ocarina"};
+// Armor (mask, tunic, boots, gauntlets): taken off with addr::kUnequipArmor.
+constexpr bool GearIsArmor(std::size_t i) {
+    return i < kGearCount && kGearKinds[i] >= addr::kArmorKindFirst &&
+           kGearKinds[i] <= addr::kArmorKindLast;
+}
 // Pieces the game keeps elsewhere while they are put away (seen for the
 // slingshot: state 6), so the left-behind check looks at them only in hand.
 constexpr bool GearIsCarried(std::size_t i) {
-    return i == kGearHeld || i >= kGearSubWeapon;
+    return i == kGearHeld || (i >= kGearSubWeapon && i <= kGearSubTool);
 }
 // The equipment slot each of them lands in (seen in the game: the sword in
 // slot 0, the shield in slot 4, the slingshot in slot 3); -1: not a piece
 // that is drawn or put away.
-inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1, 1, 2, 5, 6};
+inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1, 1, 2, 5, 6, -1, -1};
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x680;
+inline constexpr std::uint64_t kSize = 0x700;
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -190,7 +214,7 @@ inline constexpr std::uint64_t kAnimCapacity = 0x50;  // 64 characters and the 0
 // the equip call is given.
 inline constexpr std::uint64_t kGearText = 0x300;
 inline constexpr std::uint64_t kGearCapacity = 0x40;
-inline constexpr std::uint64_t kGearPtr = 0x5c0;  // kGearCount x 8 bytes
+inline constexpr std::uint64_t kGearPtr = 0x640;  // kGearCount x 8 bytes (to 0x6a8)
 }  // namespace block
 
 // Guest memory, as the director sees it. Failures are quiet.
@@ -377,15 +401,17 @@ private:
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
-        // A worn piece its player took off (a mask, boots, a lost shield): the
-        // game's call to take one off is not known, so the puppet is made
-        // again without it (Equip, issue 91).
+        // A worn piece its player took off: armor (mask, tunic, boots,
+        // gauntlets) with the game's own call (addr::kUnequipArmor); a sword
+        // or a shield, for which no call is known, or armor the call
+        // refused, makes the puppet again without it (Equip, issue 91).
         bool remake = false;
         std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
+        std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, hold, move
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);

@@ -89,6 +89,48 @@ TEST_CASE("host sampler: every frame while moving") {
   CHECK(s.next_sequence() == 120);
 }
 
+TEST_CASE("host sampler: high refresh does not send more samples (issue 106)") {
+  // 165 presents a second, moving every one: about 55 samples a second, not 165.
+  Sampler s;
+  constexpr std::uint64_t kFastUs = 6'061;
+  std::vector<std::uint64_t> times;
+  for (int i = 0; i < 165; ++i) {
+    for (const auto& p : decode(s.frame(at(0.05f * static_cast<float>(i)), kStart + i * kFastUs)).samples) {
+      times.push_back(p.time.server_time_us);
+    }
+  }
+  CHECK(times.size() >= 48);
+  CHECK(times.size() <= 60);
+  for (std::size_t i = 1; i < times.size(); ++i) CHECK(times[i] - times[i - 1] >= 14'000);
+  // The last place is sent once the player stops, even from a frame held back.
+  const std::uint64_t stop = kStart + 165 * kFastUs;
+  for (int i = 0; i < 4; ++i) s.frame(at(9.0f), stop + i * kFastUs);
+  REQUIRE(s.last_sample());
+  CHECK(s.last_sample()->position == Vec3{9.0f, 0.0f, 0.0f});
+}
+
+TEST_CASE("host sampler: every frame at 60 with uneven frames") {
+  Sampler s;
+  std::uint64_t now = kStart;
+  for (int i = 0; i < 60; ++i) {
+    now += (i % 2 == 0) ? 15'000 : 18'334;
+    CHECK(decode(s.frame(at(0.1f * static_cast<float>(i)), now)).samples.size() == 1);
+  }
+}
+
+TEST_CASE("host sampler: a scene or age change is sent at once, inside the gap") {
+  Sampler s;
+  s.frame(at(1.0f), kStart);
+  auto r = at(1.0f);
+  r.scene = "spot01";
+  CHECK(decode(s.frame(r, kStart + 2'000)).samples.size() == 1);
+  r.age = proto::Age::child;
+  CHECK(decode(s.frame(r, kStart + 4'000)).samples.size() == 1);
+  r.position = {2.0f, 0.0f, 0.0f};
+  CHECK(decode(s.frame(r, kStart + 6'000)).samples.empty());  // a move waits
+  CHECK(decode(s.frame(r, kStart + 4'000 + 14'000)).samples.size() == 1);
+}
+
 TEST_CASE("host sampler: at least 4 a second while still, and not every frame") {
   Sampler s;
   std::vector<std::uint64_t> times;
@@ -178,6 +220,7 @@ TEST_CASE("host sampler: velocity") {
   }
   SUBCASE("none when the clock did not move on") {
     Sampler s;
+    s.frame(at(0.0f), kStart - kFrameUs);  // sent, no velocity: the next still frame is not
     s.frame(at(0.0f), kStart);
     const auto d = decode(s.frame(at(1.0f), kStart));
     REQUIRE(d.samples.size() == 1);

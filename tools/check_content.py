@@ -1,10 +1,17 @@
-"""Fail if the repository contains game content or large binaries.
+"""Fail if the repository contains game content or large binaries, or names a release.
 
 Checks every file tracked by git (or every file under the repository when git
 is not available). Exit code 0 means clean, 1 means something must be removed.
+
+Release names (Caleb, 2026-11-11: "nothing should reference old releases in the
+repo"): the newest build is on the releases page, and history notes give the
+date or the issue instead of the release. Text files are searched for "test"
+followed by a number as a whole word, and for the tag form (v, 0.1.0, dash, test).
+Example tags in tests use another word ("beta").
 """
 
 import os
+import re
 import subprocess
 import sys
 
@@ -16,6 +23,10 @@ BLOCKED_EXTENSIONS = {
 BLOCKED_NAMES = {"prod.keys", "title.keys", "main.npdm"}
 BLOCKED_DIRS = {"romfs", "exefs", "nand", "keys"}
 MAX_BYTES = 2 * 1024 * 1024
+
+RELEASE_NAME = re.compile(r"\btest[0-9]+(?:\.[0-9]+)?\b|\bv?0\.1\.0-test", re.IGNORECASE)
+# Files that may name a release because they cannot change ("path": "why").
+RELEASE_NAME_ALLOWED = {}
 
 
 def tracked_files(root):
@@ -49,17 +60,44 @@ def problem(root, path):
     return None
 
 
+def release_names(root, path):
+    """The lines of a text file that name a release, as "line N: text"."""
+    if path.replace("\\", "/") in RELEASE_NAME_ALLOWED:
+        return []
+    full = os.path.join(root, path)
+    if not os.path.isfile(full) or os.path.getsize(full) > MAX_BYTES:
+        return []
+    with open(full, "rb") as f:
+        data = f.read()
+    if b"\0" in data:
+        return []  # a binary file
+    found = []
+    for number, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+        if RELEASE_NAME.search(line):
+            found.append(f"line {number}: {line.strip()[:120]}")
+    return found
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     bad = []
+    named = []
     for path in tracked_files(root):
         reason = problem(root, path)
         if reason:
             bad.append(f"{path}: {reason}")
+        for line in release_names(root, path):
+            named.append(f"{path}: {line}")
     if bad:
         print("Content guard failed. Remove these files:")
         for line in bad:
             print("  " + line)
+    if named:
+        print("Content guard failed. These lines name a release; say it without one")
+        print("(the newest build is on the releases page; history gives the date or the issue):")
+        for line in named:
+            print("  " + line)
+    if bad or named:
         return 1
     print("Content guard passed.")
     return 0

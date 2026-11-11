@@ -17,6 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
+. (Join-Path $PSScriptRoot 'hosting.ps1')
 $kit = Split-Path -Parent $PSScriptRoot
 $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
@@ -105,14 +106,28 @@ if (-not $Name) { $Name = $current.name }
 if (-not $Port) { $Port = if ($current.port) { $current.port } else { '@PORT@' } }
 
 if ($askServer -or -not $Server) {
-    Write-Host 'Server address: the IP of the PC running start-server.cmd (start-server shows it).'
-    Write-Host 'Use 127.0.0.1 if the server runs on this PC. host:port also works.'
+    Write-Host 'The host''s address: paste what the host sent you (right-click or Ctrl+V pastes here).'
+    Write-Host 'The host''s server window shows it, and copies it for them. Enter keeps the one in [ ].'
     do {
-        $answer = Read-Host "Server address$(if ($Server) { " [$Server]" })"
-        if ($answer) { $Server = $answer.Trim() }
-        $ok = Test-CoopServer $Server
-        if (-not $ok) { Write-Host 'Letters, digits, dots and dashes only, optionally :port.' }
+        $answer = Read-Host "Host's address$(if ($Server) { " [$Server]" })"
+        $typed = if ($answer -and $answer.Trim()) { $answer } else { $Server }
+        # Pasted with spaces, a trailing dot or :port: made plain (hosting.ps1).
+        $parsed = ConvertTo-JoinAddress $typed
+        $ok = $parsed -and (Test-CoopServer $parsed.Server)
+        if ($ok) {
+            $Server = $parsed.Server
+            if ($parsed.Port) { $Port = $parsed.Port }
+            elseif ($answer -and $answer.Trim()) { $Port = '@PORT@' }  # a new address without :port: the usual port
+        }
+        else {
+            Write-Host "'$typed' is not an address. It looks like 26.12.34.56 or 192.168.1.20 (four numbers"
+            Write-Host 'with dots), sometimes with :port at the end. Ask the host to copy it from their server window.'
+        }
     } until ($ok)
+}
+elseif ($serverGiven) {
+    $parsed = ConvertTo-JoinAddress $Server
+    if ($parsed) { $Server = $parsed.Server; if ($parsed.Port -and -not $PSBoundParameters.ContainsKey('Port')) { $Port = $parsed.Port } }
 }
 if ($ask -or -not $Name) {
     do {
@@ -157,7 +172,13 @@ if ($Mode -eq 'host') {
     if ($serverUp) { Write-Host 'The server from this kit is already running.' }
     else {
         Write-Host "Starting the server in its own window (UDP port $Port). Keep that window open while you play."
-        Start-Process -FilePath (Join-Path $kit 'start-server.cmd') -ArgumentList $Port -WorkingDirectory $kit | Out-Null
+        $serverArgs = @("$Port")
+        $access = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
+        if ($access.Allow -match '^[0-9./, ]+$') { $serverArgs += @('-Allow', ($access.Allow -replace '\s', '')) }
+        elseif ($access.Allow) { Write-Host "coop-options.ini: server_allow '$($access.Allow)' is not a list of IPv4 addresses (25.1.2.3,26.0.0.0/8); the server was not started."; exit 1 }
+        if ($access.Bind -match '^[0-9.]+$') { $serverArgs += @('-Bind', $access.Bind) }
+        elseif ($access.Bind) { Write-Host "coop-options.ini: server_bind '$($access.Bind)' is not an IPv4 address (25.1.2.3); the server was not started."; exit 1 }
+        Start-Process -FilePath (Join-Path $kit 'start-server.cmd') -ArgumentList $serverArgs -WorkingDirectory $kit | Out-Null
         Start-Sleep -Seconds 2
     }
 }
@@ -188,5 +209,42 @@ else {
     if ($env:LICHII_COOP_PUPPET) { Remove-Item env:LICHII_COOP_PUPPET; Write-Host 'Option: LICHII_COOP_PUPPET off (no pack)' }
 }
 
-Start-Process -FilePath $exe -WorkingDirectory $emu | Out-Null
+$started = Get-Date
+$game = Start-Process -FilePath $exe -WorkingDirectory $emu -PassThru
 Write-Host 'Emulator started. Load the game; the co-op panel is in the top-left corner of the game.'
+
+# Join.bat: watch the emulator's log until the join worked or clearly did not, and then say
+# so in plain words (hosting.ps1 has the three likely causes). Ends when the emulator closes,
+# after 15 minutes, or once connected; closing this window does not touch the game.
+if ($Mode -eq 'join' -and $game) {
+    $logFile = Join-Path $user 'log\eden_log.txt'
+    $shown = Format-JoinAddress $Server ([int]$Port)
+    Write-Host "This window says when you are connected to $shown (you may also close it)."
+    $trying = $null; $helped = $false; $state = ''
+    while (-not $game.HasExited -and ((Get-Date) - $started).TotalMinutes -lt 15) {
+        Start-Sleep -Seconds 2
+        $text = ''
+        try {
+            if ((Test-Path -LiteralPath $logFile) -and (Get-Item -LiteralPath $logFile).LastWriteTime -ge $started.AddSeconds(-2)) {
+                $stream = [System.IO.File]::Open($logFile, 'Open', 'Read', 'ReadWrite, Delete')
+                try { $text = [System.IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
+            }
+        } catch { }
+        $state = Get-JoinState $text
+        if ($state -eq 'welcomed') { Write-Host "Connected to $shown. Have fun!"; break }
+        if ($state -like 'refused:*') {
+            Write-Host "The host's server said no: $($state.Substring(9))."
+            Write-Host 'name taken: pick another name with play.cmd change. wrong protocol version: everyone runs Update.bat.'
+            exit 1
+        }
+        if ($state -eq 'trying') {
+            if (-not $trying) { $trying = Get-Date }
+            elseif (-not $helped -and ((Get-Date) - $trying).TotalSeconds -ge 30) {
+                Write-Host ''
+                foreach ($line in (Get-JoinFailureHelp $shown)) { Write-Host $line }
+                Write-Host 'The game keeps trying by itself; this window says when it connects.'
+                $helped = $true
+            }
+        }
+    }
+}

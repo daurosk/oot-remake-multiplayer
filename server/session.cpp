@@ -29,6 +29,32 @@ bool blank_name(const std::string& name) {
   return std::all_of(name.begin(), name.end(), [](char ch) { return ch == ' '; });
 }
 
+// Characters that show as nothing or turn the text around (zero-width
+// spaces and joiners, bidi controls, the soft hyphen, the byte order mark).
+// In a name they make "Link" and "Li<ZWSP>nk" look the same, so a player could
+// pass for another; such names are refused. The codec has checked the UTF-8.
+bool invisible(std::uint32_t cp) {
+  return cp == 0x00AD || cp == 0x034F || cp == 0x061C || cp == 0x115F || cp == 0x1160 ||
+         cp == 0x17B4 || cp == 0x17B5 || cp == 0x180E || (cp >= 0x200B && cp <= 0x200F) ||
+         (cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2060 && cp <= 0x206F) || cp == 0x3164 ||
+         cp == 0xFEFF || cp == 0xFFA0 || (cp >= 0xFE00 && cp <= 0xFE0E) ||
+         (cp >= 0xFFF0 && cp <= 0xFFF8) || (cp >= 0xE0000 && cp <= 0xE0FFF);
+}
+
+bool hidden_characters(const std::string& name) {
+  for (std::size_t i = 0; i < name.size();) {
+    const auto c = static_cast<unsigned char>(name[i]);
+    std::size_t extra = c < 0x80 ? 0 : c < 0xE0 ? 1 : c < 0xF0 ? 2 : 3;
+    std::uint32_t cp = extra == 0 ? c : extra == 1 ? (c & 0x1Fu) : extra == 2 ? (c & 0x0Fu) : (c & 0x07u);
+    for (std::size_t k = 1; k <= extra && i + k < name.size(); ++k) {
+      cp = (cp << 6) | (static_cast<unsigned char>(name[i + k]) & 0x3Fu);
+    }
+    if (invisible(cp)) return true;
+    i += extra + 1;
+  }
+  return false;
+}
+
 
 // For the server's window when a game of another protocol version is refused:
 // which side is out of date, and what to do about it.
@@ -57,6 +83,16 @@ Session::Session(SessionConfig config) : config_(std::move(config)) {}
 
 bool Session::connected(ConnectionId id, std::uint64_t now_us,
                         std::optional<std::uint32_t> address) {
+  if (!config_.allowed.empty()) {
+    const bool ok = address && std::any_of(config_.allowed.begin(), config_.allowed.end(),
+                                           [&](const AddressRange& r) {
+                                             return r.contains(ipv4_of(*address));
+                                           });
+    if (!ok) {
+      ++stats_.not_allowed;
+      return false;
+    }
+  }
   if (address && config_.max_half_open_per_address != 0 &&
       half_open_count(*address) >= config_.max_half_open_per_address) {
     ++stats_.half_open_limited;
@@ -115,7 +151,7 @@ void Session::received(ConnectionId id, std::uint8_t channel,
     }
     return;
   }
-  on_player_message(id, c, channel, message, now_us);
+  on_player_message(id, c, channel, message, bytes.size(), now_us);
 }
 
 void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
@@ -130,7 +166,7 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
                                                            : std::string());
     return;
   }
-  if (blank_name(hello.nickname)) {
+  if (blank_name(hello.nickname) || hidden_characters(hello.nickname)) {
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
   }
@@ -175,6 +211,7 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
   c.last_ping = now_us;
   c.reliable_budget = 2.0 * config_.reliable_per_second;
   c.unreliable_budget = 2.0 * config_.unreliable_per_second;
+  c.byte_budget = 2.0 * config_.bytes_per_second;
   c.budget_time = now_us;
   if (player_count() == 1) session_game_build_ = hello.game_build_id;
 
@@ -190,9 +227,10 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
 }
 
 void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
-                                Message& message, std::uint64_t now_us) {
+                                Message& message, std::size_t bytes, std::uint64_t now_us) {
   if (std::holds_alternative<Pong>(message)) return;  // our PING answered
-  if (!within_rate(c, channel, now_us)) {
+  if (std::holds_alternative<FlagSnapshot>(message)) bytes = 0;  // see bytes_per_second
+  if (!within_rate(c, channel, bytes, now_us)) {
     ++stats_.rate_limited;
     return;
   }
@@ -307,6 +345,16 @@ void Session::on_flag_set(Connection& c, Message& message) {
   send(*host_, kChannelProgress, message);
   ++stats_.flag_relayed;
   ++stats_.relayed;
+  // Who asked, for everyone else (docs/protocol.md, "Who did it"): sent
+  // before the host's answer, on the same channel, so it comes first.
+  std::vector<std::uint8_t> bytes;
+  if (encode(Message{FlagOrigin{c.number, std::get<FlagSet>(message).flags}}, bytes) != Error::none) return;
+  for (const auto& [id, other] : connections_) {
+    if (other.number != c.number && id != *host_ && other.state == State::joined) {
+      actions_.push_back(SendAction{id, kChannelProgress, bytes});
+      ++stats_.origins_sent;
+    }
+  }
 }
 
 void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
@@ -1181,6 +1229,46 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
+    // A boss in a fight: the player clearly nearer it than its owner (issue
+    // 150). Its AI chases only its owner's Link, so the near one gets it.
+    if (o.boss && config_.boss_near_hold_us != 0 && in_fight(o, now_us)) {
+      std::optional<ConnectionId> want;
+      const bool may = (o.changed_at == 0 ||
+                        now_us - o.changed_at >= config_.boss_hitter_cooldown_us) &&
+                       !owner_hit_lately(o, now_us);
+      const auto theirs = may ? distance_to(oc, o, now_us) : std::nullopt;
+      if (theirs) {
+        double best = 0;
+        for (ConnectionId other : o.present) {
+          if (other == owner || !has_loaded(other, o)) continue;
+          const Connection& pc = connections_.at(other);
+          if (pc.status & kBusy) continue;
+          const auto mine = distance_to(pc, o, now_us);
+          if (!mine || *mine > config_.boss_near_m ||
+              *mine + config_.boss_near_margin_m > *theirs) {
+            continue;
+          }
+          if (!want || *mine < best) {
+            want = other;
+            best = *mine;
+          }
+        }
+      }
+      if (!want) {
+        o.candidate.reset();
+      } else {
+        if (o.candidate != want) {
+          o.candidate = want;
+          o.candidate_since = now_us;
+        }
+        if (now_us - o.candidate_since >= config_.boss_near_hold_us) {
+          ++stats_.boss_to_near;
+          ask_handover(oid, o, *want, now_us);
+        }
+      }
+      continue;
+    }
+
     const bool settled =
         o.changed_at == 0 || now_us - o.changed_at >= config_.handover_cooldown_us;
     if (!settled || in_fight(o, now_us)) {
@@ -1339,7 +1427,8 @@ std::optional<ConnectionId> Session::connection_of(std::uint8_t number) const {
   return std::nullopt;
 }
 
-bool Session::within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us) {
+bool Session::within_rate(Connection& c, std::uint8_t channel, std::size_t bytes,
+                          std::uint64_t now_us) {
   double seconds = static_cast<double>(now_us - c.budget_time) / 1e6;
   c.budget_time = now_us;
   auto refill = [seconds](double& budget, std::uint32_t per_second) {
@@ -1347,10 +1436,67 @@ bool Session::within_rate(Connection& c, std::uint8_t channel, std::uint64_t now
   };
   refill(c.reliable_budget, config_.reliable_per_second);
   refill(c.unreliable_budget, config_.unreliable_per_second);
+  refill(c.byte_budget, config_.bytes_per_second);
   double& budget = channel <= kChannelOwnership ? c.reliable_budget : c.unreliable_budget;
-  if (budget < 1.0) return false;
+  const double size = static_cast<double>(bytes);
+  // The unreliable channels (poses, samples) may not use the last quarter
+  // second of bytes: it stays for the reliable ones (flags, items, chat), so
+  // a pose flood near the limit never drops a player's progress.
+  const bool reliable = channel <= kChannelOwnership;
+  const double reserve = reliable ? 0.0 : config_.bytes_per_second / 4.0;
+  if (budget < 1.0 || (bytes != 0 && c.byte_budget - size < reserve)) return false;
   budget -= 1.0;
+  c.byte_budget -= size;
   return true;
+}
+
+bool AddressRange::contains(std::uint32_t ipv4) const {
+  if (prefix == 0) return true;
+  const std::uint32_t mask = prefix >= 32 ? 0xFFFFFFFFu : ~(0xFFFFFFFFu >> prefix);
+  return (ipv4 & mask) == (first & mask);
+}
+
+std::optional<AddressRange> parse_address_range(std::string_view text) {
+  AddressRange r;
+  std::uint32_t value = 0;
+  std::size_t i = 0;
+  for (int part = 0; part < 4; ++part) {
+    if (part > 0) {
+      if (i >= text.size() || text[i] != '.') return std::nullopt;
+      ++i;
+    }
+    std::uint32_t n = 0;
+    std::size_t digits = 0;
+    while (i < text.size() && text[i] >= '0' && text[i] <= '9' && digits < 4) {
+      n = n * 10 + static_cast<std::uint32_t>(text[i] - '0');
+      ++i;
+      ++digits;
+    }
+    if (digits == 0 || digits > 3 || n > 255) return std::nullopt;
+    value = (value << 8) | n;
+  }
+  if (i < text.size()) {
+    if (text[i] != '/') return std::nullopt;
+    ++i;
+    std::uint32_t n = 0;
+    std::size_t digits = 0;
+    while (i < text.size() && text[i] >= '0' && text[i] <= '9' && digits < 3) {
+      n = n * 10 + static_cast<std::uint32_t>(text[i] - '0');
+      ++i;
+      ++digits;
+    }
+    if (digits == 0 || i != text.size() || n > 32) return std::nullopt;
+    r.prefix = static_cast<std::uint8_t>(n);
+  }
+  r.first = value;
+  return r;
+}
+
+std::uint32_t ipv4_of(std::uint32_t enet_host) {
+  unsigned char b[4];
+  std::memcpy(b, &enet_host, 4);
+  return (std::uint32_t{b[0]} << 24) | (std::uint32_t{b[1]} << 16) | (std::uint32_t{b[2]} << 8) |
+         std::uint32_t{b[3]};
 }
 
 void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason,

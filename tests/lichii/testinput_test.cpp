@@ -381,3 +381,35 @@ TEST_CASE("testinput: every autotest scenario script parses") {
     }
     CHECK(checked > 40);
 }
+
+TEST_CASE("testinput: chat sends the rest of the line, spaces kept") {
+    std::string error;
+    CHECK_FALSE(Parse("chat\n", error));
+    Runner r(Must("chat /teleport  Saria the  Kokiri   # a comment\nchat hello\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::chat);
+    CHECK(requests[0].name == "/teleport  Saria the  Kokiri");
+    CHECK(requests[1].name == "hello");
+}
+
+TEST_CASE("testinput: place hands the hook a world point, then the script goes on (world-objects)") {
+    std::string error;
+    CHECK_FALSE(Parse("place 1 2\n", error));
+    CHECK_FALSE(Parse("place 1 2 x\n", error));
+    CHECK_FALSE(Parse("place 1 2 3 4\n", error));
+    Runner r(Must("place -37.2 109.8 13.5\nmark there\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::place);
+    CHECK(requests[0].at[0] == doctest::Approx(-37.2f));
+    CHECK(requests[0].at[1] == doctest::Approx(109.8f));
+    CHECK(requests[0].at[2] == doctest::Approx(13.5f));
+    REQUIRE(log.size() == 1);
+    CHECK(log[0] == "mark there");
+    CHECK(r.Done());
+}

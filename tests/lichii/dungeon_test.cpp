@@ -535,7 +535,7 @@ TEST_CASE("dungeon: a held flag names its event, for the live start") {
     CHECK(store.held_keys()[0] == ladder);
 }
 
-TEST_CASE("dungeon: what played live on test6 stays live (basement water, torch room)") {
+TEST_CASE("dungeon: what played live in a player test stays live (basement water, torch room)") {
     namespace proto = coop::protocol;
     const auto water = host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop"), 0);
     const auto torches = host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomH_CandleStick"), 0);
@@ -556,7 +556,7 @@ TEST_CASE("dungeon: what played live on test6 stays live (basement water, torch 
                                                    {torches, proto::FlagKind::boolean, 1},
                                                    {level, proto::FlagKind::boolean, 1}}}});
     wb.frame(store);
-    CHECK(b.values[water].value == 1);  // written at once, B in the Deku Tree: as on test6
+    CHECK(b.values[water].value == 1);  // written at once, B in the Deku Tree: as in the player test
     CHECK(b.values[torches].value == 1);
     CHECK(b.values[level].value == 1);
     CHECK(store.held() == 0);
@@ -606,7 +606,7 @@ TEST_CASE("dungeon: a held flag that a load puts back to 0 is kept for later, ne
 }
 
 TEST_CASE("dungeon: a player's place in a boss fight is never shared, the group's progress is (issue 148)") {
-    // Test6, Deku Tree: the boss door shut for a player still outside, and every reload got
+    // Player test, Deku Tree: the boss door shut for a player still outside, and every reload got
     // it back from the group (the join snapshot). Those flags are left out.
     std::set<std::uint32_t> listed;
     for (const auto& f : CoopDungeon::Flags()) listed.insert(f.hash);

@@ -1098,3 +1098,283 @@ TEST_CASE("flag watcher, host: flags back early in the title, the title long eno
   }
   CHECK(reset == std::vector{entry(kDoor, 0), entry(kKey0, 0)});
 }
+
+// Issue 89: a Gold Skulltula's token stayed in the other game, which counted
+// it again. The token count is guarded by the Skulltulas' keys (guard_count).
+namespace {
+
+constexpr FlagKey kTokens{0x04735978u, 0};
+const FlagKey kSkull = FlagKey::key64_flag(0x032f42f523be6425ull);
+const FlagKey kSkull2 = FlagKey::key64_flag(0x6a8d9b2373d08fcbull);
+
+// The game's flags with the token count, a count as ItemFlagStore makes it.
+class TokenStore : public FakeStore {
+ public:
+  bool is_count(FlagKey key) override { return key == kTokens; }
+  bool write(const proto::FlagEntry& e) override {
+    if (e.kind != proto::FlagKind::count_delta) return FakeStore::write(e);
+    const FlagKey key = key_of(e);
+    if (!values.contains(key)) return false;
+    proto::FlagEntry now = values[key];
+    now.value = static_cast<std::uint32_t>(static_cast<std::int32_t>(now.value) +
+                                           static_cast<std::int32_t>(e.value));
+    return FakeStore::write(now);
+  }
+  void tokens(std::int32_t n) {
+    values[kTokens] = proto::FlagEntry{kTokens, proto::FlagKind::int32, static_cast<std::uint32_t>(n)};
+  }
+  std::int32_t tokens() const { return static_cast<std::int32_t>(values.at(kTokens).value); }
+};
+
+TokenStore token_game() {
+  TokenStore store;
+  for (FlagKey k : {kChest, kDoor, kKey0, kKey1, kHearts}) store.set(k, 0);
+  store.set(kSkull, 0);
+  store.set(kSkull2, 0);
+  store.tokens(5);
+  return store;
+}
+
+SharedFlags token_shared() { return SharedFlags({kChest, kTokens}); }
+
+proto::FlagEntry token_delta(std::int32_t n) {
+  return {kTokens, proto::FlagKind::count_delta, static_cast<std::uint32_t>(n)};
+}
+proto::FlagEntry token_total(std::int32_t n) {
+  return {kTokens, proto::FlagKind::int32, static_cast<std::uint32_t>(n)};
+}
+
+void guard(FlagWatcher& w) {
+  const FlagKey sources[] = {kSkull, kSkull2};
+  w.guard_count(kTokens, sources);
+}
+
+// Every entry of a frame's messages, in order.
+std::vector<proto::FlagEntry> entries(const std::vector<Outgoing>& out) {
+  std::vector<proto::FlagEntry> all;
+  for (const auto& m : decode(out)) {
+    if (const auto* s = std::get_if<proto::FlagSet>(&m)) all.insert(all.end(), s->flags.begin(), s->flags.end());
+    if (const auto* s = std::get_if<proto::FlagState>(&m)) all.insert(all.end(), s->flags.begin(), s->flags.end());
+  }
+  return all;
+}
+
+bool has(const std::vector<proto::FlagEntry>& all, const proto::FlagEntry& e) {
+  return std::find(all.begin(), all.end(), e) != all.end();
+}
+
+// Frames until the hold is over; what they sent.
+std::vector<proto::FlagEntry> run_hold(FlagWatcher& w, FlagStore& store) {
+  std::vector<proto::FlagEntry> all;
+  for (std::uint64_t f = 0; f <= FlagWatcher::kGuardHoldFrames; ++f) {
+    const auto e = entries(w.frame(store));
+    all.insert(all.end(), e.begin(), e.end());
+  }
+  return all;
+}
+
+}  // namespace
+
+TEST_CASE("token guard: the Skulltulas' keys are shared from the start") {
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  CHECK(w.shared().contains(kSkull));
+  CHECK(w.shared().contains(kSkull2));
+  CHECK(w.pickups() == 2);
+}
+
+TEST_CASE("token guard: a token taken here counts at once") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  // The pickup: the Skulltula's key and the count in the same scan.
+  store.set(kSkull, 1);
+  store.tokens(6);
+  const auto sent = entries(w.frame(store));
+  CHECK(has(sent, entry(kSkull, 1)));
+  CHECK(has(sent, token_delta(1)));
+  CHECK(run_hold(w, store).empty());
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().counts_guarded == 0);
+}
+
+TEST_CASE("token guard: the key a little after the count still counts") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  store.tokens(6);
+  CHECK(w.frame(store).empty());  // held
+  CHECK(w.frame(store).empty());
+  store.set(kSkull, 1);
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(run_hold(w, store).empty());
+  CHECK(store.tokens() == 6);
+}
+
+TEST_CASE("token guard: a token another player took, counted again here, is put back") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  // Another player took the Skulltula: its key, and the group's count 6.
+  w.receive(state({entry(kSkull, 1), token_total(6)}));
+  w.frame(store);
+  CHECK(store.get(kSkull) == 1);
+  CHECK(store.tokens() == 6);
+  CHECK(w.take_written_for_others() == std::vector{kSkull});
+  // The token stayed here and our Link takes it: the game counts it again
+  // and sets the key it has already.
+  store.tokens(7);
+  CHECK(run_hold(w, store).empty());  // nothing goes out
+  CHECK(store.tokens() == 6);         // and the count is the group's again
+  CHECK(w.stats().counts_guarded == 1);
+  const auto told = w.take_counts_guarded();
+  REQUIRE(told.size() == 1);
+  CHECK(told[0].count == kTokens);
+  CHECK(told[0].amount == 1);
+  // Then the world sync gives the same token back (both took it): our game
+  // goes to 5; that is put back up once, and nothing is sent.
+  store.tokens(5);
+  CHECK(w.frame(store).empty());
+  CHECK(store.tokens() == 6);
+  // A real token later still counts.
+  store.set(kSkull2, 1);
+  store.tokens(7);
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+}
+
+TEST_CASE("token guard: a give-back while the gain is held cancels it") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  w.receive(state({entry(kSkull, 1), token_total(6)}));
+  w.frame(store);
+  store.tokens(7);
+  CHECK(w.frame(store).empty());
+  store.tokens(6);  // the world sync's give-back
+  CHECK(run_hold(w, store).empty());
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().counts_guarded == 0);
+}
+
+TEST_CASE("token guard: a gain with no take anywhere is sent after the hold") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  store.tokens(6);  // the cheat window's give
+  CHECK(w.frame(store).empty());
+  CHECK(run_hold(w, store) == std::vector{token_delta(1)});
+  CHECK(store.tokens() == 6);
+}
+
+TEST_CASE("token guard: a join snapshot's keys are no take now") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  proto::FlagSnapshot part;
+  part.part = 0;
+  part.part_count = 1;
+  part.flags = {entry(kSkull, 1), token_total(6)};
+  w.receive(part);
+  w.frame(store);
+  CHECK(store.get(kSkull) == 1);
+  store.tokens(7);
+  CHECK(run_hold(w, store) == std::vector{token_delta(1)});
+}
+
+TEST_CASE("token guard: the host's total keeps a held gain in our game") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  store.tokens(6);  // ours, held
+  CHECK(w.frame(store).empty());
+  w.receive(state({token_total(8)}));  // two tokens from others
+  w.frame(store);
+  CHECK(store.tokens() == 9);
+  store.set(kSkull, 1);  // our key comes: ours counts
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 9);
+}
+
+TEST_CASE("token guard, host: a player's take, counted again by the host, is put back") {
+  TokenStore store = token_game();
+  FlagWatcher h(token_shared(), FlagRole::host);
+  guard(h);
+  h.frame(store);
+  proto::FlagSet set;
+  set.player_number = 2;
+  set.flags = {entry(kSkull, 1), token_delta(1)};
+  h.receive(set);
+  CHECK(has(entries(h.frame(store)), token_total(6)));
+  CHECK(store.tokens() == 6);
+  // The token stayed in the host's game and its Link takes it.
+  store.tokens(7);
+  CHECK(h.frame(store).empty());
+  // A player's own token meanwhile: the host's answer leaves the held gain out.
+  set.flags = {entry(kSkull2, 1), token_delta(1)};
+  h.receive(set);
+  CHECK(has(entries(h.frame(store)), token_total(7)));
+  CHECK(store.tokens() == 8);
+  CHECK_FALSE(has(run_hold(h, store), token_total(8)));
+  CHECK(store.tokens() == 7);
+  CHECK(h.stats().counts_guarded == 1);
+}
+
+TEST_CASE("game ticks: calls become 1/60 s of the clock (issue 106)") {
+  coop::host::GameTicks none;
+  CHECK(none.step() == 1);  // no clock: one call is one frame
+  CHECK(none.step() == 1);
+
+  std::uint64_t now = 1'000'000;
+  // `calls` intervals: calls + 1 calls span one second; the first is 1 tick.
+  auto run = [&](std::uint64_t every_us, int calls) {
+    coop::host::GameTicks t;
+    t.set_clock([&] { return now; });
+    unsigned sum = 0;
+    for (int i = 0; i <= calls; ++i) {
+      sum += t.step();
+      now += every_us;
+    }
+    return sum;
+  };
+  const unsigned at165 = run(6'061, 165);  // one second of high refresh
+  CHECK(at165 >= 59);
+  CHECK(at165 <= 62);
+  const unsigned at60 = run(16'667, 60);
+  CHECK(at60 >= 59);
+  CHECK(at60 <= 62);
+  const unsigned at30 = run(33'333, 30);
+  CHECK(at30 >= 59);
+  CHECK(at30 <= 62);
+
+  coop::host::GameTicks t;
+  t.set_clock([&] { return now; });
+  t.step();
+  now += 3'000'000;  // a 3 s stall counts as a few frames, as one call did
+  CHECK(t.step() == coop::host::GameTicks::kMaxStep);
+}
+
+TEST_CASE("flag watcher: the settle lasts 2 s at 165 presents a second, not 0.73 s (issue 106)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  std::uint64_t now = 5'000'000;
+  w.set_clock([&] { return now; });
+  w.set_loading(true);
+  w.frame(store);
+  now += 6'061;
+  w.set_loading(false);
+  const std::uint64_t loaded = now;
+  while (w.settling() && now - loaded < 5'000'000) {
+    w.frame(store);
+    now += 6'061;
+  }
+  const std::uint64_t settle = now - loaded;
+  CHECK(settle >= 1'950'000);
+  CHECK(settle <= 2'100'000);
+}

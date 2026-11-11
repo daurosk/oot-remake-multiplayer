@@ -36,7 +36,7 @@ std::span<const Flag> Flags();
 // room: a switch on, a light switch hit, a gate, a room's provisional clear.
 // Shared one way (FlagWatcher::share_one_way: a 1 crosses, the game's own
 // reset to 0 does not, no write-back after a load). The hook calls it for
-// each (test7, "temple actions", docs/dungeon.md). Left out:
+// each ("temple actions", docs/dungeon.md). Left out:
 // ForestTemple_Room00_AppearWolfosSwitch, a sensor of where one player is.
 // Found by hashing the dungeon logic graphs' strings against GameDataList,
 // all reset types; the rest of the 31 non-saved hits are one player's own

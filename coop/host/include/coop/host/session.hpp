@@ -62,6 +62,9 @@ struct SessionSettings {
   // FlagWatcher::set_learn_pickups: take another game's 64-bit key set to 1
   // as a one-time pickup even when this game has not seen its actor.
   bool learn_pickups = false;
+  // The steady clock the flag watcher counts its frames on (issue 106,
+  // GameTicks). Empty: one frame() is one frame (tests).
+  GameTicks::Clock clock;
   // Called on the network thread, under the network lock, for every client
   // event after the session has handled it (for logging). It may use the
   // client it is given but must not call into the Session.
@@ -78,6 +81,9 @@ struct FrameReport {
   // The host's save load reached this game this frame (FlagWatcher::
   // take_reset): drop session-wide state the save undoes (docs/flags.md, "Saves").
   bool host_reset = false;
+  // Values other players' changes wrote into our game this frame (the chat
+  // notices, coop/host/notify.hpp).
+  std::vector<FlagWatcher::Received> received;
   // A save load was seen this frame (FlagWatcher::take_save_load): distinct
   // flags gone back, frames with no scene. 0 when not.
   int save_load_flags = 0;
@@ -158,6 +164,17 @@ class Session {
   // Emulator thread only: FlagWatcher::take_own_count_drops.
   std::vector<FlagKey> take_own_count_drops() {
     return watcher_ ? watcher_->take_own_count_drops() : std::vector<FlagKey>{};
+  }
+  // Emulator thread only: FlagWatcher::guard_count (issue 89, the Gold
+  // Skulltula tokens). False when flags are not shared.
+  bool guard_count(FlagKey count, std::span<const FlagKey> sources) {
+    if (!watcher_) return false;
+    watcher_->guard_count(count, sources);
+    return true;
+  }
+  // Emulator thread only: FlagWatcher::take_counts_guarded.
+  std::vector<FlagWatcher::CountGuarded> take_counts_guarded() {
+    return watcher_ ? watcher_->take_counts_guarded() : std::vector<FlagWatcher::CountGuarded>{};
   }
 
   // Emulator thread only (the parts frame() uses), for tests and the overlay.

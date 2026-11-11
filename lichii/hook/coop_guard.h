@@ -6,7 +6,7 @@
 // read, so every actor within kEventNearM of our Link waits while an event runs, and the
 // change is made right after the event ends.
 //
-// Seen in test6: B beat a Deku Scrub and was in its talk; A beat the same scrub in A's game; the
+// Seen in a player test: B beat a Deku Scrub and was in its talk; A beat the same scrub in A's game; the
 // kill reached B's scrub during B's talk and B's event waited on an actor that was gone, until
 // A finished A's own talk. The chest rule (chest-sync: a chest beside our Link is not removed)
 // uses the same distance test, Near.

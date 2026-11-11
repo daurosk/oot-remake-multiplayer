@@ -15,6 +15,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -27,6 +28,22 @@ namespace coop::server {
 
 // The transport's own number for a connection, never reused while it lives.
 using ConnectionId = std::uint32_t;
+
+// An IPv4 address or a range of them ("25.1.2.3", "25.0.0.0/8"), as numbers
+// with the first dotted part highest. For --allow.
+struct AddressRange {
+  std::uint32_t first = 0;
+  std::uint8_t prefix = 32;  // 0 to 32 leading bits that must match
+  bool contains(std::uint32_t ipv4) const;
+  bool operator==(const AddressRange&) const = default;
+};
+
+// "a.b.c.d" or "a.b.c.d/N"; nothing for anything else (names, IPv6).
+std::optional<AddressRange> parse_address_range(std::string_view text);
+
+// ENet's address number (the four bytes as they came, in memory order) as a
+// number with the first dotted part highest.
+std::uint32_t ipv4_of(std::uint32_t enet_host);
 
 struct SessionConfig {
   // The game build every player must run. Empty: the first player to join
@@ -46,6 +63,17 @@ struct SessionConfig {
   // messages a second) stay well under them.
   std::uint32_t reliable_per_second = 60;
   std::uint32_t unreliable_per_second = 240;
+  // Most message bytes a player may send a second, both kinds together, with
+  // bursts of up to twice that. The message counts alone let a player relay
+  // 300 messages of up to 64 KB a second (19 MB/s) to every other player; the
+  // protocol's own traffic is a few tens of KB a second. FLAG_SNAPSHOT is not
+  // counted: it goes to the server only and max_flags bounds it. The
+  // unreliable channels leave a quarter second of it for the reliable ones.
+  std::uint32_t bytes_per_second = 1u << 20;
+  // Only addresses in these ranges may connect (coop_server --allow); empty:
+  // any address. A connection from elsewhere is closed at once and counted
+  // in not_allowed.
+  std::vector<AddressRange> allowed;
   // Most connections one address may hold that have not sent HELLO yet, so
   // one machine cannot fill every transport slot with silent connections.
   // One more is refused at once (see connected). 0: no limit.
@@ -105,6 +133,16 @@ struct SessionConfig {
   // two players hitting in turn do not bounce it (each hand-over can jump a
   // phase: the state carries only place, turn, animation and life).
   std::uint64_t boss_owner_hit_hold_us = 6'000'000;
+  // Issue 150: the boss's AI fights only its owner's Link. A fit player
+  // within boss_near_m of a boss (its root) and boss_near_margin_m nearer it
+  // than its owner, for boss_near_hold_us in a row, takes it while it is in
+  // its fight (out of one the plain distance rule applies): then the boss
+  // turns on the near one. Not while its owner hits it
+  // (boss_owner_hit_hold_us) and not within boss_hitter_cooldown_us of the
+  // last change. boss_near_hold_us 0: off.
+  float boss_near_m = 15.0f;
+  float boss_near_margin_m = 4.0f;
+  std::uint64_t boss_near_hold_us = 4'000'000;
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
@@ -159,6 +197,9 @@ struct Stats {
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().
   std::uint64_t half_open_limited = 0;
+  // Connections closed at connect: their address is not in config.allowed.
+  // Not packets, so not in dropped().
+  std::uint64_t not_allowed = 0;
   // HELLOs that took over a stale player of the same name (see
   // rejoin_stale_us).
   std::uint64_t rejoined = 0;
@@ -172,7 +213,8 @@ struct Stats {
   std::uint64_t join_dropped = 0;
   // FLAG_SET and FLAG_STATE relayed (stage 1 step 4); in relayed too.
   std::uint64_t flag_relayed = 0;
-  std::uint64_t host_resets = 0;  // FLAG_RESETs from the host (its save load)
+  std::uint64_t host_resets = 0;   // FLAG_RESETs from the host (its save load)
+  std::uint64_t origins_sent = 0;  // FLAG_ORIGIN: who asked, to the others (chat notices)
   std::uint64_t flag_refused = 0;     // FLAG_STATE or FLAG_SNAPSHOT not from the host
   std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
   std::uint64_t flag_clashes = 0;     // host snapshot entries that differed (server kept)
@@ -185,6 +227,7 @@ struct Stats {
   std::uint64_t owner_changes = 0;      // owner set or moved (not first owner)
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
+  std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
   // Field grass (docs/world.md). Relayed ones count in relayed too.
   std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene
@@ -276,6 +319,7 @@ class Session {
     // Message budgets for the rate limits, in messages, refilled with time.
     double reliable_budget = 0;
     double unreliable_budget = 0;
+    double byte_budget = 0;
     std::uint64_t budget_time = 0;
     std::optional<std::uint32_t> address;
     std::uint8_t number = 0;  // 1 to 4 once joined
@@ -349,7 +393,7 @@ class Session {
   void on_hello(ConnectionId id, Connection& c, const protocol::Hello& hello,
                 std::uint64_t now_us);
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
-                         protocol::Message& message, std::uint64_t now_us);
+                         protocol::Message& message, std::size_t bytes, std::uint64_t now_us);
   void on_join_partner(ConnectionId id, Connection& c, protocol::JoinPartner& j);
   void on_flag_set(Connection& c, protocol::Message& message);
   void on_flag_state(ConnectionId id, Connection& c, protocol::Message& message);
@@ -445,7 +489,7 @@ class Session {
   void send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
                      std::uint8_t channel, const protocol::Message& m);
   std::optional<ConnectionId> connection_of(std::uint8_t number) const;
-  bool within_rate(Connection& c, std::uint8_t channel, std::uint64_t now_us);
+  bool within_rate(Connection& c, std::uint8_t channel, std::size_t bytes, std::uint64_t now_us);
   // why: more for the server's log (which version is older), or empty.
   void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
               std::uint64_t now_us, const std::string& why = {});

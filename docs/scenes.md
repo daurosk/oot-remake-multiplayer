@@ -25,7 +25,7 @@ One line each for the callers:
 
 ## Join-partner warp (dropped)
 
-**Dropped (Caleb, 2026-11-09): "we dont need warp to partner".** Nothing below is built; it stays as research only.
+**Dropped (Caleb, 2026-11-09): "we dont need warp to partner"; back as `/teleport <player>`** (docs/setup.md "Chat commands", `lichii/hook/coop_teleport*`). It uses `JOIN_PARTNER` as below and the boss rooms' two moves ([dungeons-boss.md](dungeons-boss.md)): the same scene moves Link in place; another scene asks the sequence's scene change (taken only while an event runs), then moves Link next to the player. Way 1 below (what a loading zone sets) would make the scene change work in free play too; it is not found yet.
 
 ### How the game changes scene
 

@@ -1,0 +1,44 @@
+# deku-block (world-objects, #147): both load into the Deku Tree entrance and are put in the
+# basement beside the push block Obj_MovableBox_A_01 7155a64297e96d5a (Banc: -51.06 79.27 47.1;
+# its goal Obj_Gimmick_AnswerPosAnchor 7ee3f23dddbf19be at -51.06 79.27 42.6, so it is pushed
+# toward -z; floor around y 79.3-79.6). A pushes it one step, steps aside; B then pushes the same
+# block from where it is now, twice. A stands well back (+z) of the block and walks into it,
+# so the block's size need not be known. If "placed" shows Link inside a wall, change the z.
+# Expect (both with LICHII_COOP_BLOCK_REST=1):
+#  - A: "world: 7155a64297e96d5a Obj_MovableBox_A_01 moved here: sending", then "at rest: place sent".
+#  - B: "... moved by another player", ~0.5 s after the rest "came to rest where another player
+#    left it; its base anchor is put there too" and "old rest x y z -> x y z: N places rewritten".
+#  - B's pushes ("b-push1", "b-push2"): the block moves on from where A left it in both games, no
+#    snap of B's Link or the block back to the start (shots "b-push1", "b-push2", "end"; B's log
+#    "moved here: sending" from the new place; A "moved by another player" and its own "old rest").
+#  - FAIL = B's Link or block jumps back to z ~47.1 at "b-push1".
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_BLOCK_REST=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -51.06 79.9 50.2
+wait 240
+mark placed
+toward -51.06 40.0 150   # walk into the block and push it one step toward -z
+wait 120
+mark a-pushed
+place -47.5 79.9 50.2    # step aside for B
+wait 600
+toward -51.06 47.0 10    # watch the block
+press ZL 10
+mark a-watch
+wait 2400
+mark end

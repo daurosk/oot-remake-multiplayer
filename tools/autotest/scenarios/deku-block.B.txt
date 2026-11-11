@@ -1,0 +1,32 @@
+# deku-block, B: put in the basement beside A, watches A's push, then pushes the same block
+# twice from where A left it (see deku-block.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -54.5 79.9 50.2    # beside A, out of its way
+wait 240
+toward -51.06 47.0 10
+press ZL 10
+mark b-placed
+wait 600                 # A pushes now
+mark b-watched
+place -51.06 79.9 50.2   # behind the block, where A stood
+wait 240
+toward -51.06 40.0 150   # push it on
+wait 120
+mark b-push1
+toward -51.06 40.0 150   # and once more
+wait 120
+mark b-push2
+wait 1200
+mark b-end

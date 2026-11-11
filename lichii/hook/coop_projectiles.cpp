@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace CoopProjectiles {
@@ -192,6 +193,43 @@ std::optional<float> FuseClock::Left(std::uint64_t age_us) const {
 
 // ---------------------------------------------------------------- reasons
 
+bool AmmoWatch::Dropped(Kind kind, std::optional<std::int32_t> count) {
+    if (!count || *count < 0) {
+        return false;
+    }
+    std::int32_t& last = last_[static_cast<std::size_t>(kind)];
+    // One shot takes one: a bigger drop (the host's save load lowering the
+    // count, a load) is no shot, so no nocked seed is marked shot by it.
+    const bool dropped = last >= 0 && *count == last - 1;
+    last = *count;
+    return dropped;
+}
+
+std::uint32_t AmmoFlag(Kind kind) {
+    switch (kind) {
+    case Kind::seed:
+        return 0x5fadf7fc;  // Item_DekuSeed
+    case Kind::arrow:
+        return 0x518ec74b;  // Item_Arrow_Normal
+    default:
+        return 0;
+    }
+}
+
+// From the data files: the bow's BowParam has an initial speed of 1.875 a
+// frame (about 56 m/s at 30 frames a second) and a range of 20. The
+// slingshot has only the default BowParam; its seed is taken a little slower.
+float ShotSpeed(Kind kind) {
+    switch (kind) {
+    case Kind::arrow:
+        return 56.0f;
+    case Kind::seed:
+        return 40.0f;
+    default:
+        return 30.0f;
+    }
+}
+
 proto::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, float speed) {
     if (info.blasts) {
         // A bomb or bombchu that lived at all went off; one gone at once was
@@ -251,6 +289,25 @@ void Blasts::Reset() {
 Blasts& TheBlasts() {
     static Blasts blasts;
     return blasts;
+}
+
+bool IsLure(std::string_view actor) {
+    return actor == "Weapon_Lure" || actor == "Weapon_SinkingLure";
+}
+
+void Lures::Set(std::vector<Vec3> at) {
+    std::lock_guard lock(mutex_);
+    at_ = std::move(at);
+}
+
+std::vector<Vec3> Lures::Get() const {
+    std::lock_guard lock(mutex_);
+    return at_;
+}
+
+Lures& TheLures() {
+    static Lures lures;
+    return lures;
 }
 
 } // namespace CoopProjectiles

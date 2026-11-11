@@ -55,12 +55,16 @@ TEST_CASE("time: the host says its clock once a second, others do not") {
     CHECK(send.empty());
 }
 
-TEST_CASE("time: a guest moves to the host's clock when two minutes off") {
+TEST_CASE("time: a guest takes the host's clock on joining when two minutes off") {
     Sync guest;
     std::vector<proto::Message> send;
+    Sync near;
+    near.Tick(36'000, false, 0, send);
+    near.Receive(From(1, 36'100));  // under two minutes: kept
+    CHECK_FALSE(near.Tick(36'005, false, 100 * kMs, send));
+    near.Receive(From(1, 80'000));  // after the first word: no join set
+    CHECK_FALSE(near.Tick(36'010, false, 200 * kMs, send));
     guest.Tick(36'000, false, 0, send);
-    guest.Receive(From(1, 36'100));  // under two minutes: kept
-    CHECK_FALSE(guest.Tick(36'005, false, 100 * kMs, send));
     guest.Receive(From(1, 80'000));  // far: set
     const auto set = guest.Tick(36'010, false, 200 * kMs, send);
     REQUIRE(set);
@@ -69,16 +73,88 @@ TEST_CASE("time: a guest moves to the host's clock when two minutes off") {
     send.clear();
     guest.Tick(80'001, false, 300 * kMs, send);
     CHECK(send.empty());
-    // Not again within two seconds, then again.
-    guest.Receive(From(1, 10'000));
-    CHECK_FALSE(guest.Tick(80'002, false, 400 * kMs, send));
-    guest.Receive(From(1, 10'000));
-    CHECK(guest.Tick(80'003, false, 2300 * kMs, send) == 10'000u);
     // Round midnight counts the short way.
     Sync late;
     late.Tick(86'380, false, 0, send);
     late.Receive(From(1, 30));
     CHECK_FALSE(late.Tick(86'381, false, 100 * kMs, send));
+}
+
+TEST_CASE("time: while playing, a guest sets its clock only when an hour off, running, once a minute") {
+    Sync guest;
+    std::vector<proto::Message> send;
+    guest.Tick(36'000, false, 0, send);
+    guest.Receive(From(1, 40'000));
+    REQUIRE(guest.Tick(36'000, false, 250 * kMs, send) == 40'000u);
+    // Our clock runs 100 a second from the set.
+    std::uint32_t ours = 40'000;
+    std::uint64_t t = 250 * kMs;
+    const auto run = [&](std::uint64_t until_us, std::uint32_t host_ahead, bool clock_runs) {
+        std::optional<std::uint32_t> got;
+        while (t < until_us) {
+            t += 250 * kMs;
+            if (clock_runs) ours += 25;
+            guest.Receive(From(1, (ours + host_ahead) % proto::kSecondsPerDay));
+            if (const auto set = guest.Tick(ours, false, t, send)) {
+                got = set;
+                ours = *set;
+            }
+        }
+        return got;
+    };
+    // 20 in-game minutes off (a time change stopped our clock): kept.
+    CHECK_FALSE(run(90'000 * kMs, 1'200, true));
+    // Two hours off while our clock stands (indoors): kept.
+    CHECK_FALSE(run(100'000 * kMs, 7'200, false));
+    // Two hours off and our clock runs again: set once it ran 2 s.
+    const auto set = run(103'000 * kMs, 7'200, true);
+    REQUIRE(set);
+    // Still off right after (the host moved on): not again within a minute.
+    CHECK_FALSE(run(150'000 * kMs, 7'200, true));
+    CHECK(run(170'000 * kMs, 7'200, true));
+}
+
+TEST_CASE("time: a set that stops the clock does not set it again and again (issue 159)") {
+    // Live (stalchild run, 2026-11-09): each set runs the game's time change,
+    // which stops the guest's clock for about 8 s while the host's runs on
+    // (about 100 in-game seconds a real second). With the old two-minute
+    // limit the guest set its clock every 2-3 s, and every set made the
+    // area's grass and objects again.
+    Sync guest;
+    std::vector<proto::Message> send;
+    std::uint32_t host = 36'000;
+    std::uint32_t ours = 30'000;
+    std::uint64_t frozen_until = 0;
+    int sets = 0;
+    for (std::uint64_t t = 0; t <= 600'000 * kMs; t += 250 * kMs) {
+        host = (host + 25) % proto::kSecondsPerDay;
+        if (t >= frozen_until) ours = (ours + 25) % proto::kSecondsPerDay;
+        guest.Receive(From(1, host));
+        if (const auto set = guest.Tick(ours, false, t, send)) {
+            ++sets;
+            ours = *set;
+            frozen_until = t + 8'000 * kMs;
+        }
+    }
+    CHECK(sets == 1);  // joining only, in ten minutes
+}
+
+TEST_CASE("time: host clock stands, guest runs: no set") {
+    // The host is indoors or in a dungeon (its clock stands) while the guest
+    // runs outdoors: the drift grows past an hour, but the guest keeps its own.
+    Sync guest;
+    std::vector<proto::Message> send;
+    guest.Tick(36'000, false, 0, send);
+    guest.Receive(From(1, 36'000));
+    CHECK_FALSE(guest.Tick(36'000, false, 250 * kMs, send));
+    std::uint32_t ours = 36'000;
+    int sets = 0;
+    for (std::uint64_t t = 500 * kMs; t <= 600'000 * kMs; t += 250 * kMs) {
+        ours = (ours + 25) % proto::kSecondsPerDay;
+        guest.Receive(From(1, 36'000));  // the host's clock stands
+        if (guest.Tick(ours, false, t, send)) ++sets;
+    }
+    CHECK(sets == 0);
 }
 
 TEST_CASE("time: a clock that jumps by itself is sent as a jump, and everyone takes a jump") {

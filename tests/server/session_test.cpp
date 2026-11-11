@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <ostream>
@@ -169,8 +170,8 @@ TEST_CASE("a fifth player is refused as server full and dropped") {
 TEST_CASE("a wrong protocol version is refused, even when the rest cannot be read") {
   Harness h;
   h.connect(1);
-  // A HELLO of version 8 (not ours) whose body is just the version: unreadable as v0.
-  Bytes b = {1, 0, 2, 0, 8, 0};
+  // A HELLO of version 99 (not ours) whose body is just the version: unreadable as v0.
+  Bytes b = {1, 0, 2, 0, 99, 0};
   h.receive_raw(1, b, kChannelSession);
   const auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused.has_value());
@@ -810,19 +811,26 @@ TEST_CASE("flag set goes to the host only, the host's own back to itself") {
   h.clear();
 
   h.receive(2, FlagSet{0, {flag(5, 1)}}, kChannelProgress);
-  REQUIRE(h.sent.size() == 1);
+  // The set to the host; who asked (FLAG_ORIGIN) to the others but the host.
+  REQUIRE(h.sent.size() == 2);
   CHECK(h.sent[0].to == 1);
   CHECK(h.sent[0].channel == kChannelProgress);
   CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{2, {flag(5, 1)}});
+  CHECK(h.sent[1].to == 3);
+  CHECK(h.sent[1].channel == kChannelProgress);
+  CHECK(std::get<FlagOrigin>(h.sent[1].message) == FlagOrigin{2, {flag(5, 1)}});
   // A FLAG_SET changes nothing on the server: only the host's answer does.
   CHECK(h.session.flag_count() == 0);
 
   h.clear();
   h.receive(1, FlagSet{0, {flag(6, 2)}}, kChannelProgress);
-  REQUIRE(h.sent.size() == 1);
+  REQUIRE(h.sent.size() == 3);
   CHECK(h.sent[0].to == 1);
   CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{1, {flag(6, 2)}});
+  CHECK(std::get<FlagOrigin>(h.sent[1].message) == FlagOrigin{1, {flag(6, 2)}});
+  CHECK(std::get<FlagOrigin>(h.sent[2].message) == FlagOrigin{1, {flag(6, 2)}});
   CHECK(h.session.stats().flag_relayed == 2);
+  CHECK(h.session.stats().origins_sent == 3);
 }
 
 TEST_CASE("flag state is taken from the host only, kept, and relayed to everyone else") {
@@ -2101,7 +2109,9 @@ TEST_CASE("another player's fight flags do not start a fight") {
 }
 
 TEST_CASE("a boss stays in its fight for 60 s") {
-  OwnerHarness h;
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;  // the near-player rule below is its own case
+  OwnerHarness h(config);
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
   CHECK(h.session.object_group(placed(7)) == 0u);  // alone: no group
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
@@ -2198,6 +2208,119 @@ TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies ke
   h0.clear();
   h0.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
   CHECK(h0.asks() == 0);
+}
+
+TEST_CASE("issue 150: a boss in its fight goes to the player clearly nearer it, held 4 s") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  REQUIRE(h.session.object_in_fight(placed(7), h.now));
+  h.stand(1, 12);  // the owner by the wall
+  h.stand(2, 3);   // player 2 at the boss
+  h.clear();
+  // That life drop was the owner's own hit: 6 s of hold first.
+  h.run(6 * kSecond);
+  CHECK(h.asks() == 0);
+  h.run(3 * kSecond + 500'000);
+  CHECK(h.asks() == 0);
+  h.run(kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_near == 1);
+}
+
+TEST_CASE("issue 150: after a near-player move the boss stays 8 s, then needs the 4 m margin again") {
+  // Handed to player 2 by the near rule.
+  auto handed = [](OwnerHarness& h) {
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    h.run(10 * kSecond + 500'000);
+    REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 11)}, kChannelOwnership);
+    REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+    h.clear();
+  };
+  {  // the players swap places: not back before 8 s + 4 s held
+    OwnerHarness h;
+    handed(h);
+    h.stand(1, 1);
+    h.stand(2, 12);
+    h.run(7 * kSecond + 500'000);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    h.run(4 * kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    h.run(kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
+  }
+  {  // player 1 comes back, but only 3 m nearer than the new owner: it stays
+    OwnerHarness h;
+    handed(h);
+    h.stand(1, 1);
+    h.stand(2, 4);
+    h.run(20 * kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  }
+}
+
+TEST_CASE("issue 150: no near-player move when both stand close, one is too far, or the owner hits it") {
+  {  // 2 is nearer, but not by 4 m
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 6);
+    h.stand(2, 3);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+  {  // 2 is over 15 m from it
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 40);
+    h.stand(2, 20);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+  {  // the owner keeps hitting it (its life falls in its samples)
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    std::int32_t life = 40;
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
+    for (int i = 0; i < 5; ++i) {
+      h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, --life)}, kChannelObjectSamples);
+      h.run(2 * kSecond);
+    }
+    CHECK(h.asks() == 0);
+  }
+  {  // the switch
+    SessionConfig off = quiet_config();
+    off.boss_near_hold_us = 0;
+    OwnerHarness h(off);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("issue 150: a DAMAGE of 0 (a stun in the hitter's game) asks for the boss, harmless to the owner") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  CHECK(messages_to<HandoverState>(h, 2) ==
+        std::vector<HandoverState>{{1, placed(7), 1, state_at(0, 12)}});
 }
 
 TEST_CASE("a hit by the player near it, its owner well away, takes it at once, the hit is kept") {
@@ -2623,7 +2746,7 @@ TEST_CASE("owners are said again every 10 s, for a game that forgot them") {
   CHECK(messages_to<ObjectOwner>(h, 2).empty());
 }
 
-// Issue 133 (test6, Discord testers): A killed a Deku Tree room, B came in
+// Issue 133 (Discord testers): A killed a Deku Tree room, B came in
 // later and found the enemies still standing. The server had forgotten them
 // once no game had them loaded.
 TEST_CASE("a kill is told to a game that loads the enemy later, until a witness respawns it") {
@@ -2703,4 +2826,202 @@ TEST_CASE("a witness that leaves the scene and comes back with the enemy listed 
   CHECK(messages_to<ObjectRemove>(h, 2).empty());
   CHECK(h.session.object_owner(placed(7)) == owned(2, 0));
   CHECK(h.session.stats().dead_respawned == 1);
+}
+
+// ---- Security (net-security) ----
+
+namespace {
+
+// ENet's form of an IPv4 address: the four bytes in memory order.
+std::uint32_t enet_address(unsigned char a, unsigned char b, unsigned char c, unsigned char d) {
+  const unsigned char bytes[4] = {a, b, c, d};
+  std::uint32_t out = 0;
+  std::memcpy(&out, bytes, 4);
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("security: a player relaying big messages is held to the byte rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // TEST_PAYLOAD is relayed as it came; 60 KB each, 100 at once, used to
+  // reach every other player whole (6 MB in one go, 15 MB/s sustained).
+  TestPayload big{1, std::vector<std::uint8_t>(60'000, 0)};
+  const std::size_t size = bytes_of(big).size();
+  for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
+  // Unreliable: down to the quarter second kept for the reliable channels.
+  const std::size_t reserve = (1u << 20) / 4;
+  const std::size_t burst = (2 * (1u << 20) - reserve) / size;  // 30
+  CHECK(h.to(2).size() == burst);
+  CHECK(h.session.stats().rate_limited == 100 - burst);
+  // A second later one second's worth more goes through.
+  h.clear();
+  h.now += 1'000'000;
+  for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
+  const std::size_t left = 2 * (1u << 20) - burst * size;  // what the burst did not use
+  CHECK(h.to(2).size() == (left + (1u << 20) - reserve) / size);
+  // The other player is not affected, and small messages flow again once
+  // the budget has refilled.
+  h.clear();
+  h.receive(2, Chat{0, "hi"}, kChannelSession);
+  CHECK(h.to(1).size() == 1);
+  h.now += 100'000;
+  h.clear();
+  h.receive(1, Chat{0, "hi"}, kChannelSession);
+  CHECK(h.to(2).size() == 1);
+}
+
+TEST_CASE("security: the protocol's own traffic stays under the byte rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  PlayerSample sample;
+  sample.time = {1, 1};
+  sample.position = Vec3{1, 2, 3};
+  sample.scene = std::string(kMaxSceneChars, 'x');
+  sample.animation = Animation{std::string(kMaxAnimationChars, 'a'), 1.0f, 0.0f};
+  // 60 full samples and 10 chats of 200 characters a second for 10 seconds.
+  int sent = 0;
+  for (int i = 0; i < 600; ++i) {
+    h.now += 16'667;
+    h.receive(1, sample, kChannelPlayerSamples);
+    ++sent;
+    if (i % 6 == 0) {
+      h.receive(1, Chat{0, std::string(kMaxChatChars, 'c')}, kChannelSession);
+      ++sent;
+    }
+  }
+  CHECK(h.to(2).size() == static_cast<std::size_t>(sent));
+  CHECK(h.session.stats().rate_limited == 0);
+}
+
+TEST_CASE("security: full poses with held pieces stay under the byte rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // The heaviest real traffic (docs/puppet.md, "Pose"): Link's 300 bones with
+  // rotation, translation and scale, 30 a second, plus two held pieces of 64
+  // bones (sling-fire), and 60 samples a second, for 10 seconds.
+  auto pose = [](std::uint32_t skeleton, std::uint16_t bones) {
+    PlayerPose p;
+    p.time = {1, 1};
+    p.skeleton = skeleton;
+    for (std::uint16_t b = 0; b < bones; ++b) {
+      PoseBone bone;
+      bone.bone = b;
+      bone.rotation = std::array<std::int16_t, 4>{1, 2, 3, 4};
+      bone.translation = std::array<std::int16_t, 3>{1, 2, 3};
+      bone.scale = std::array<std::int16_t, 3>{1, 2, 3};
+      p.bones.push_back(bone);
+    }
+    return p;
+  };
+  const PlayerPose link = pose(1, 300);
+  const PlayerPose sling = pose(2, 64);
+  const PlayerPose shield = pose(3, 64);
+  PlayerSample sample;
+  sample.time = {1, 1};
+  sample.position = Vec3{1, 2, 3};
+  int sent = 0;
+  for (int i = 0; i < 600; ++i) {
+    h.now += 16'667;
+    h.receive(1, sample, kChannelPlayerSamples);
+    ++sent;
+    if (i % 2 == 0) {
+      h.receive(1, link, kChannelPlayerSamples);
+      h.receive(1, sling, kChannelPlayerSamples);
+      h.receive(1, shield, kChannelPlayerSamples);
+      sent += 3;
+    }
+  }
+  CHECK(h.to(2).size() == static_cast<std::size_t>(sent));
+  CHECK(h.session.stats().rate_limited == 0);
+}
+
+TEST_CASE("security: an unreliable flood leaves bytes for the reliable channels") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  TestPayload big{1, std::vector<std::uint8_t>(60'000, 0)};
+  for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
+  CHECK(h.session.stats().rate_limited > 0);
+  h.clear();
+  // Same moment, no refill: the player's chat still goes.
+  h.receive(1, Chat{0, std::string(kMaxChatChars, 'c')}, kChannelSession);
+  CHECK(h.to(2).size() == 1);
+}
+
+TEST_CASE("security: --allow lets only the listed addresses connect") {
+  SessionConfig config;
+  config.allowed = {*parse_address_range("25.0.0.0/8"), *parse_address_range("192.168.1.20")};
+  Session s(config);
+  CHECK(s.connected(1, 0, enet_address(25, 1, 2, 3)));
+  CHECK(s.connected(2, 0, enet_address(192, 168, 1, 20)));
+  CHECK(!s.connected(3, 0, enet_address(192, 168, 1, 21)));
+  CHECK(!s.connected(4, 0, enet_address(26, 1, 2, 3)));
+  CHECK(!s.connected(5, 0, std::nullopt));  // no address: not allowed either
+  CHECK(s.stats().not_allowed == 3);
+  CHECK(s.stats().dropped() == 0);  // connections, not packets
+  // Without --allow, anyone.
+  Session open{SessionConfig{}};
+  CHECK(open.connected(1, 0, enet_address(8, 8, 8, 8)));
+  CHECK(open.stats().not_allowed == 0);
+}
+
+TEST_CASE("security: address ranges parse strictly") {
+  const auto one = parse_address_range("25.1.2.3");
+  REQUIRE(one.has_value());
+  CHECK(one->first == 0x19010203u);
+  CHECK(one->prefix == 32);
+  CHECK(one->contains(0x19010203u));
+  CHECK(!one->contains(0x19010204u));
+  const auto net = parse_address_range("100.64.0.0/10");
+  REQUIRE(net.has_value());
+  CHECK(net->contains(ipv4_of(enet_address(100, 100, 1, 1))));
+  CHECK(!net->contains(ipv4_of(enet_address(100, 128, 0, 1))));
+  CHECK(parse_address_range("0.0.0.0/0")->contains(0xFFFFFFFFu));
+  for (const char* bad : {"", "25", "25.1.2", "25.1.2.3.4", "256.1.1.1", "25.1.2.3/33", "25.1.2.3/",
+                          "25.1.2.3/8x", "a.b.c.d", "25.1.2.3 ", " 25.1.2.3", "::1", "localhost",
+                          "1234.1.1.1", "25..2.3"}) {
+    CAPTURE(bad);
+    CHECK(!parse_address_range(bad).has_value());
+  }
+  CHECK(ipv4_of(enet_address(1, 2, 3, 4)) == 0x01020304u);
+}
+
+TEST_CASE("security: names with invisible or bidi characters are refused") {
+  Harness h;
+  h.join(1, "Link");
+  h.clear();
+  const char* cases[] = {
+      "Li" "\xE2\x80\x8B" "nk",       // zero-width space: looks like Link
+      "" "\xE2\x80\xAE" "kniL",       // right-to-left override
+      "Link" "\xE2\x81\xA0" "",       // word joiner
+      "" "\xEF\xBB\xBF" "Link",       // byte order mark
+      "Li" "\xC2\xAD" "nk",       // soft hyphen
+      "Link\U000E0041",   // tag character
+  };
+  ConnectionId id = 10;
+  for (const char* name : cases) {
+    CAPTURE(name);
+    ++id;
+    h.connect(id);
+    h.receive(id, hello_from(name), kChannelSession);
+    const auto refused = only_message_to<Refused>(h, id);
+    REQUIRE(refused.has_value());
+    CHECK(refused->reason == RefuseReason::bad_name);
+    h.clear();
+  }
+  // Ordinary letters from other scripts are fine.
+  h.join(30, "Zelda" "\xC3\xA9" "");
+  h.join(31, "" "\xE3\x83\xAA" "" "\xE3\x83\xB3" "" "\xE3\x82\xAF" "");
+  // An emoji with its presentation selector (U+2764 U+FE0F, a red heart).
+  h.join(32, "Link " "\xE2\x9D\xA4" "\xEF\xB8\x8F");
+  CHECK(h.session.player_count() == 4);
 }

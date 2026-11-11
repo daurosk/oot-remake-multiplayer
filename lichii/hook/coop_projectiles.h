@@ -20,11 +20,13 @@
 // No emulator code: tested in tests/lichii/projectiles_test.cpp.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "coop/protocol/messages.hpp"
 
@@ -108,6 +110,26 @@ private:
     std::deque<std::uint64_t> lives_;
 };
 
+// The moment of a shot, from the shooter's ammo (issue 158): the seed and
+// the arrow sit nocked until let go, and their count goes down then. One
+// AmmoWatch per game; Dropped is asked once a walk per kind with the count
+// read now (nothing when the flags cannot be read: the last count is kept).
+class AmmoWatch {
+public:
+    // True once for each read exactly one lower than the one before (a
+    // bigger drop is a save load or the like, not a shot).
+    bool Dropped(Kind kind, std::optional<std::int32_t> count);
+    void Reset() { last_.fill(-1); }
+
+private:
+    std::array<std::int32_t, 8> last_{-1, -1, -1, -1, -1, -1, -1, -1};
+};
+// The ammo count's flag (PouchData.<item>.StockNum, docs/items.md) for a
+// kind that sits nocked: seeds and arrows. 0 for the others.
+std::uint32_t AmmoFlag(Kind kind);
+// The speed a made-up flight of `kind` goes at, metres a second.
+float ShotSpeed(Kind kind);
+
 // Why an owner's projectile left the list after `lifetime_us`, last seen
 // moving at `speed` metres a second.
 coop::protocol::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, float speed);
@@ -147,5 +169,22 @@ private:
 };
 
 Blasts& TheBlasts();
+
+// Issue 151 (fishing-2). A cast lure: Weapon_Lure or Weapon_SinkingLure. The
+// spawn sync shares ours (copies are model-only stand-ins, so another
+// player's lure is seen and no fish here can bite it) and puts where they
+// are here; the objects sync asks, so a fish that goes for our lure (or that
+// our lure has hooked) is handed to our game. Any thread may call.
+bool IsLure(std::string_view actor);
+class Lures {
+public:
+    void Set(std::vector<Vec3> at);
+    std::vector<Vec3> Get() const;
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<Vec3> at_;
+};
+Lures& TheLures();
 
 } // namespace CoopProjectiles

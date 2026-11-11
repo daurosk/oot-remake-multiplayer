@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <mutex>
 
 #include "coop/net/client.hpp"
@@ -313,19 +314,34 @@ struct State {
     std::vector<std::uint8_t> moving;  // pose_part bits, sticky
     // Local pose, from the calc thread, for the network thread.
     std::optional<Pose> outbox;
+    // The pieces in our hands (kPieceSlots), every bone each: the slingshot's
+    // band and seed, the bow's string.
+    std::vector<Pose> pieces_outbox;
     std::uint32_t outbox_serial = 0;
     std::uint32_t sent_serial = 0;
     std::uint64_t last_send_ms = 0;
     std::uint32_t sequence = 0;
     std::size_t last_size = 0;
-    // Received, per player 1 to 4.
-    std::array<Track, 5> tracks;
+    // What each piece skeleton was last sent as, and when: an unchanged
+    // piece is sent again only after kPieceRefreshMs.
+    struct PieceSent {
+        std::vector<proto::PoseBone> bones;
+        std::uint64_t ms = 0;
+    };
+    std::map<std::uint32_t, PieceSent> pieces_sent;
+    // Received, per player 1 to 4, one track per skeleton: Link's body and
+    // each held piece arrive as poses of their own skeleton.
+    std::array<std::map<std::uint32_t, Track>, 5> tracks;
     // What was last written to each puppet, to see whether the game keeps it.
     std::vector<Written> written_last;
     // Counters for the debug line.
     std::uint64_t log_ms = 0;
     unsigned sent = 0, received = 0, written = 0, refused = 0, kept = 0, overwritten = 0;
+    unsigned pieces_sent_n = 0, pieces_written = 0;
 };
+
+// What was last written: kept for this many actors (puppets and pieces).
+constexpr std::size_t kWrittenKeep = 32;
 
 State& S() {
     static State state;
@@ -375,6 +391,55 @@ std::optional<Pose> ReadLocal(State& s, CoopPuppet::Guest& guest, std::uint64_t 
         pose.bones.push_back(out);
     }
     return pose;
+}
+
+// Calc thread, under the lock: every bone of a held piece, as a pose. A
+// piece is small, so all its bones go, not only the ones that moved since a
+// first read: the puppet's copy of the piece may start in another state
+// (pulled back) than ours did.
+std::optional<Pose> ReadPiece(CoopPuppet::Guest& guest, const Skeleton& skel) {
+    if (skel.count > kMaxPieceBones) return std::nullopt;
+    std::vector<LocalMtx> bones(skel.count);
+    if (!guest.Read(skel.local, bones.data(), bones.size() * sizeof(LocalMtx))) {
+        return std::nullopt;
+    }
+    Pose pose;
+    pose.skeleton = SkeletonId(skel.count, skel.model);
+    for (std::size_t i = 0; i < bones.size(); ++i) {
+        const LocalMtx& b = bones[i];
+        if (!std::isfinite(b.rows[0]) || !std::isfinite(b.translation[0])) return std::nullopt;
+        BonePose out;
+        out.bone = static_cast<std::uint16_t>(i);
+        out.flags = static_cast<std::uint8_t>((b.flags & addr::kFlagMask) >> addr::kFlagShift);
+        out.rotation = RowsToQuat(RowsOf(b));
+        out.translation = Vec3{b.translation[0], b.translation[1], b.translation[2]};
+        out.scale = Vec3{b.scale[0], b.scale[1], b.scale[2]};
+        pose.bones.push_back(out);
+    }
+    return pose;
+}
+
+// The pieces in an actor's hands (kPieceSlots) that are out and drawn now.
+std::vector<std::uint64_t> HeldPieces(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    namespace pa = CoopPuppet::addr;
+    std::vector<std::uint64_t> out;
+    std::uint64_t parts = 0, eu = 0;
+    if (!ReadValue(guest, actor + pa::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + pa::kPartsEquipmentUser, eu) || eu == 0) {
+        return out;
+    }
+    for (const std::uint32_t slot : kPieceSlots) {
+        const std::uint64_t link = eu + pa::kEquipSlots + pa::kEquipSlotStride * slot;
+        std::uint32_t id = 0xFFFFFFFFu, state = 0;
+        std::uint64_t holder = 0, piece = 0;
+        if (ReadValue(guest, link + pa::kEquipSlotId, id) && id != 0xFFFFFFFFu &&
+            ReadValue(guest, link + pa::kEquipSlotHolder, holder) && holder != 0 &&
+            ReadValue(guest, holder + pa::kHolderActor, piece) && piece != 0 && piece != actor &&
+            ReadValue(guest, piece + pa::kActorState, state) && state == pa::kStatePresent) {
+            out.push_back(piece);
+        }
+    }
+    return out;
 }
 
 // Calc thread, under the lock: the pose onto a puppet's skeleton.
@@ -451,9 +516,41 @@ bool Drives(std::uint8_t number, std::uint64_t now_ms) {
     State& s = S();
     std::lock_guard lock(s.mutex);
     if (!s.no_as || number == 0 || number >= s.tracks.size()) return false;
-    const std::uint64_t last = s.tracks[number].last_ms();
+    std::uint64_t last = 0;
+    for (const auto& [skeleton, track] : s.tracks[number]) last = std::max(last, track.last_ms());
     return last != 0 && now_ms - std::min(now_ms, last) < kFreshMs;
 }
+
+namespace {
+
+// Calc thread, under the lock: the pose for `actor` (a puppet or a piece in
+// its hands) from `number`'s poses of that skeleton, written. Nothing when
+// no pose of its skeleton has come.
+enum class Wrote { none, written, refused };
+Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uint64_t actor,
+               std::uint64_t now_ms) {
+    const auto skel = FindSkeleton(guest, actor);
+    if (!skel) return Wrote::none;
+    const std::uint32_t id = SkeletonId(skel->count, skel->model);
+    std::optional<Pose> pose;
+    if (number == 0) {
+        if (!s.debug) return Wrote::none;
+        if (s.outbox && s.outbox->skeleton == id) {
+            pose = s.outbox;  // the debug puppet mirrors us
+        } else {
+            for (const Pose& p : s.pieces_outbox) {
+                if (p.skeleton == id) pose = p;
+            }
+        }
+    } else {
+        const auto& tracks = s.tracks[number];
+        if (const auto it = tracks.find(id); it != tracks.end()) pose = it->second.At(now_ms);
+    }
+    if (!pose) return Wrote::none;
+    return WritePose(s, guest, actor, *pose) ? Wrote::written : Wrote::refused;
+}
+
+}  // namespace
 
 void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
                  const std::vector<std::pair<std::uint8_t, std::uint64_t>>& puppets,
@@ -465,23 +562,36 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
         if (auto local = ReadLocal(s, guest, player)) {
             s.last_size = local->bones.size();
             s.outbox = std::move(local);
+            s.pieces_outbox.clear();
+            for (const std::uint64_t piece : HeldPieces(guest, player)) {
+                if (const auto skel = FindSkeleton(guest, piece)) {
+                    if (auto pose = ReadPiece(guest, *skel)) {
+                        s.pieces_outbox.push_back(std::move(*pose));
+                    }
+                }
+            }
             ++s.outbox_serial;
         }
     }
     for (const auto& [number, actor] : puppets) {
         if (actor == 0 || number >= s.tracks.size()) continue;
-        std::optional<Pose> pose;
-        if (number == 0) {
-            if (s.debug) pose = s.outbox;  // the debug puppet mirrors us
-        } else {
-            pose = s.tracks[number].At(now_ms);
-        }
-        if (!pose) continue;
-        if (WritePose(s, guest, actor, *pose)) {
+        const Wrote body = WriteFor(s, guest, number, actor, now_ms);
+        if (body == Wrote::written) {
             ++s.written;
-        } else {
-            ++s.refused;
+        } else if (body == Wrote::refused ||
+                   (number != 0 && !s.tracks[number].empty())) {
+            ++s.refused;  // poses come, none of this puppet's skeleton (age)
         }
+        for (const std::uint64_t piece : HeldPieces(guest, actor)) {
+            const Wrote w = WriteFor(s, guest, number, piece, now_ms);
+            if (w == Wrote::written) {
+                ++s.pieces_written;
+            }
+        }
+    }
+    if (s.written_last.size() > kWrittenKeep) {
+        s.written_last.erase(s.written_last.begin(),
+                             s.written_last.end() - static_cast<std::ptrdiff_t>(kWrittenKeep));
     }
     if (s.debug && now_ms - s.log_ms >= 1000) {
         s.log_ms = now_ms;
@@ -495,49 +605,91 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
                    std::to_string(s.first.size()) + " bones, " + std::to_string(s.last_size) +
                    " moving; " + std::to_string(s.sent) + " sent/s, " +
                    std::to_string(s.received) + " received/s, " + std::to_string(s.written) +
-                   " written/s, " + std::to_string(s.refused) + " refused/s; last write kept " +
+                   " written/s, " + std::to_string(s.refused) + " refused/s; held pieces " +
+                   std::to_string(s.pieces_outbox.size()) + " ours, " +
+                   std::to_string(s.pieces_sent_n) + " sent/s, " + std::to_string(s.pieces_written) +
+                   " written/s; last write kept " +
                    std::to_string(s.kept) + ", overwritten " + std::to_string(s.overwritten) +
                    facing);
         s.sent = s.received = s.written = s.refused = s.kept = s.overwritten = 0;
+        s.pieces_sent_n = s.pieces_written = 0;
     }
 }
 
-void Send(coop::net::Client& client, std::uint64_t now_ms) {
-    proto::PlayerPose message;
-    {
-        State& s = S();
-        std::lock_guard lock(s.mutex);
-        if (!s.outbox || s.outbox_serial == s.sent_serial ||
-            now_ms - s.last_send_ms < 1000 / kSendHz) {
-            return;
-        }
-        s.sent_serial = s.outbox_serial;
-        s.last_send_ms = now_ms;
-        message.time = {client.server_now_us(), ++s.sequence};
-        message.skeleton = s.outbox->skeleton;
-        message.bones.reserve(s.outbox->bones.size());
-        for (const BonePose& b : s.outbox->bones) {
-            proto::PoseBone out;
-            out.bone = b.bone;
-            out.flags = b.flags;
-            if (b.rotation) out.rotation = Pack(*b.rotation);
-            if (b.translation) out.translation = PackUnit(*b.translation);
-            if (b.scale) out.scale = PackUnit(*b.scale);
-            message.bones.push_back(out);
-        }
-        ++s.sent;
+namespace {
+
+std::vector<proto::PoseBone> Encode(const Pose& pose) {
+    std::vector<proto::PoseBone> bones;
+    bones.reserve(pose.bones.size());
+    for (const BonePose& b : pose.bones) {
+        proto::PoseBone out;
+        out.bone = b.bone;
+        out.flags = b.flags;
+        if (b.rotation) out.rotation = Pack(*b.rotation);
+        if (b.translation) out.translation = PackUnit(*b.translation);
+        if (b.scale) out.scale = PackUnit(*b.scale);
+        bones.push_back(out);
     }
-    client.send(message);
+    return bones;
+}
+
+}  // namespace
+
+std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::uint64_t now_ms) {
+    std::vector<proto::PlayerPose> out;
+    State& s = S();
+    std::lock_guard lock(s.mutex);
+    if (!s.outbox || s.outbox_serial == s.sent_serial ||
+        now_ms - s.last_send_ms < 1000 / kSendHz) {
+        return out;
+    }
+    s.sent_serial = s.outbox_serial;
+    s.last_send_ms = now_ms;
+    proto::PlayerPose body;
+    body.time = {server_now_us, ++s.sequence};
+    body.skeleton = s.outbox->skeleton;
+    body.bones = Encode(*s.outbox);
+    out.push_back(std::move(body));
+    ++s.sent;
+    // Each piece in our hands as a pose of its own skeleton: when it changed,
+    // or now and then while it holds still (a late joiner, a lost packet).
+    for (const Pose& piece : s.pieces_outbox) {
+        std::vector<proto::PoseBone> bones = Encode(piece);
+        auto& last = s.pieces_sent[piece.skeleton];
+        if (last.ms != 0 && last.bones == bones && now_ms - last.ms < kPieceRefreshMs) continue;
+        last.bones = bones;
+        last.ms = now_ms;
+        proto::PlayerPose m;
+        m.time = {server_now_us, ++s.sequence};
+        m.skeleton = piece.skeleton;
+        m.bones = std::move(bones);
+        out.push_back(std::move(m));
+        ++s.pieces_sent_n;
+    }
+    std::erase_if(s.pieces_sent, [&](const auto& kv) {
+        return now_ms - kv.second.ms > 10 * kPieceRefreshMs;  // put away long ago
+    });
+    return out;
+}
+
+void Send(coop::net::Client& client, std::uint64_t now_ms) {
+    for (const proto::PlayerPose& m : TakeOutgoing(client.server_now_us(), now_ms)) {
+        client.send(m);
+    }
 }
 
 void OnEvent(const coop::net::Event& event, std::uint64_t now_ms) {
     if (event.kind != coop::net::EventKind::message) return;
     const auto* m = std::get_if<proto::PlayerPose>(&event.message);
     if (m == nullptr) return;
+    Receive(*m, now_ms);
+}
+
+void Receive(const proto::PlayerPose& m, std::uint64_t now_ms) {
     Pose pose;
-    pose.skeleton = m->skeleton;
-    pose.bones.reserve(m->bones.size());
-    for (const proto::PoseBone& b : m->bones) {
+    pose.skeleton = m.skeleton;
+    pose.bones.reserve(m.bones.size());
+    for (const proto::PoseBone& b : m.bones) {
         BonePose out;
         out.bone = b.bone;
         out.flags = b.flags;
@@ -548,8 +700,20 @@ void OnEvent(const coop::net::Event& event, std::uint64_t now_ms) {
     }
     State& s = S();
     std::lock_guard lock(s.mutex);
-    if (m->player_number == 0 || m->player_number >= s.tracks.size()) return;
-    s.tracks[m->player_number].Push(std::move(pose), now_ms);
+    if (m.player_number == 0 || m.player_number >= s.tracks.size()) return;
+    auto& tracks = s.tracks[m.player_number];
+    tracks[m.skeleton].Push(std::move(pose), now_ms);
+    // Skeletons not heard from for a while (a piece put away, the other age).
+    std::erase_if(tracks, [&](const auto& kv) {
+        return now_ms - std::min(now_ms, kv.second.last_ms()) > kTrackForgetMs;
+    });
+    while (tracks.size() > kMaxTracks) {
+        auto oldest = tracks.begin();
+        for (auto it = tracks.begin(); it != tracks.end(); ++it) {
+            if (it->second.last_ms() < oldest->second.last_ms()) oldest = it;
+        }
+        tracks.erase(oldest);
+    }
     ++s.received;
 }
 

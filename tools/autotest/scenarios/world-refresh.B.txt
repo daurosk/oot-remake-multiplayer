@@ -1,0 +1,40 @@
+# world-refresh (issue 159), B (guest): loads into the same place as A, cuts three tufts at about
+# 164 26 and the field grass by them, then stands still for 60 s watching them. Each mark's
+# screenshot must show the same cut tufts and grass.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark arrived
+wait 600                # A walks to its place
+goto 166.5 26.5 0.5 1200
+wait 120
+mark tufts-before
+toward 164.5 26.1 15
+hold Y 8
+wait 60
+toward 164.2 26.2 15
+hold Y 8
+wait 60
+toward 163.4 26.0 15
+hold Y 8
+wait 60
+hold Y 90               # a spin attack: field grass too
+wait 300
+mark tufts-cut
+wait 1200
+mark still-20s
+wait 1200
+mark still-40s
+wait 1200
+mark still-60s
+wait 300
+mark end

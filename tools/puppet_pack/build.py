@@ -61,6 +61,23 @@ KEEP_COMPONENTS = (
 # puppet. `--no-sound` leaves them out (the pack as before).
 SOUND_COMPONENTS = ("SLinkRef", "SoundFootStepRef")
 
+# The player's footstep param has `ProcType` Player (murmur3 hash 145979025): the steps are
+# worked out by the player's own code, which the puppet does not run, and `IsUseRayCast` casts
+# from the leg bones for the floor. Dark Link (Enemy_MiddleBoss_DarkLink), the game's own copy of
+# Link, takes the player's footstep param as its $parent and changes exactly these three:
+# ProcType None (murmur3 3069107721), no ray cast, no grass. The puppet gets its own file with the
+# same changes, $parent the player's variant file (issue 131, puppet-sound-2). `--player-footsteps`
+# keeps the player's file (the older pack).
+FOOTSTEP_PROC_NONE = 3069107721
+FOOTSTEP_OVERRIDES = {"IsEnableGrass": False, "IsUseRayCast": False, "ProcType": byml.UInt(FOOTSTEP_PROC_NONE)}
+FOOTSTEP_DIR = "Component/SoundFootStepParam/"
+# `--sound-user NAME` (test switch): the puppet's sounds go to another actor's SLink user, through
+# its own SLink param and its ActorInfo row, e.g. Enemy_MiddleBoss_DarkLink if the Player_* users
+# turn out to play only as the listener's own sounds. NAME must be some row's SLinkUserName.
+SLINK_DIR = "Component/SLink/"
+SLINK_SUFFIX = ".engine__component__SLinkParam.bgyml"
+FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
+
 # The puppet is no use without these: no AS, no model, nowhere to put a sword.
 REQUIRED_COMPONENTS = ("ASRef", "ModelInfoRef", "EquipmentUserRef")
 # Blackboard keys of the EquipmentUser: the instance parameters a create request can set.
@@ -96,7 +113,7 @@ PACK_SIZE_MARGIN = 0x1000
 # Stand-ins for other players' projectiles (issue 85). The copy of a slingshot seed, an arrow or a
 # hookshot tip used to be the game's own shootable, made without a shooter: it starts in its
 # `UsedExternally` state, and the seed's ShootableParam hides it until it is shot
-# (`IsPrepareVisibleOff`), so in the test4 player logs every seed copy was made and none was seen.
+# (`IsPrepareVisibleOff`), so in the player logs every seed copy was made and none was seen.
 # A stand-in is the shootable's model only, with the shared default components the puppet uses:
 # no physics, sensor, attack, AI, effects or sound. It is drawn wherever the hook puts it and can
 # hit nothing (the hook's CoopSpawn::StandIn has the same names). A romfs without the source pack
@@ -106,6 +123,9 @@ STAND_INS = (
     ("NormalArrow", "CoopShot_Arrow"),
     ("Shootable_Hook", "CoopShot_Hook"),
     ("Shootable_HookLong", "CoopShot_HookLong"),
+    # Issue 151: another player's cast lure, seen but never bitten by a fish here.
+    ("Weapon_Lure", "CoopShot_Lure"),
+    ("Weapon_SinkingLure", "CoopShot_SinkingLure"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
 # ActorInfo fields of the shootable that a model-only actor must not take over.
@@ -246,12 +266,51 @@ def equipment_keys(files, actor_param):
     return sorted(keys)
 
 
-def build_pack(members, variant, sound=True):
+def footstep_path(actor):
+    return f"{FOOTSTEP_DIR}{actor}{FOOTSTEP_SUFFIX}"
+
+
+def puppet_footstep(doc, actor):
+    """The puppet's own footstep param, Dark Link's changes over the player's file (see
+    FOOTSTEP_OVERRIDES): (member path, bytes, the player's member path it replaces), or None when
+    the ActorParam has no footstep component."""
+    src = ref_to_member(doc["Components"].get("SoundFootStepRef"))
+    if not src:
+        return None
+    if not src.startswith(FOOTSTEP_DIR) or not src.endswith(FOOTSTEP_SUFFIX):
+        raise BuildError(f"unexpected footstep param {src}")
+    own = {"$parent": "Work/" + src[:-len(".bgyml")] + ".gyml"}
+    own.update(FOOTSTEP_OVERRIDES)
+    return footstep_path(actor), byml.dumps(own), src
+
+
+def slink_path(actor):
+    return f"{SLINK_DIR}{actor}{SLINK_SUFFIX}"
+
+
+def puppet_slink(doc, actor, user):
+    """The puppet's own SLink param naming `user`: (member path, bytes, the player's member path)."""
+    src = ref_to_member(doc["Components"].get("SLinkRef"))
+    if not src:
+        raise BuildError("the player's ActorParam has no SLinkRef")
+    return slink_path(actor), byml.dumps({"UserName": user}), src
+
+
+def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant."""
     player = f"Player_{variant}"
     doc = make_actor_param(flatten_actor_param(members, player), sound)
     files = collect_members(members, doc)
     keys = equipment_keys(files, doc)
+    fs = puppet_footstep(doc, puppet_name(variant)) if sound and not player_footsteps else None
+    if fs:
+        path, data, _ = fs
+        files[path] = data  # its $parent, the player's file and that one's parent, stay in the pack
+        doc["Components"]["SoundFootStepRef"] = "?" + path
+    if sound and sound_user:
+        path, data, _ = puppet_slink(doc, puppet_name(variant), sound_user)
+        files[path] = data
+        doc["Components"]["SLinkRef"] = "?" + path
     ap = byml.dumps(doc)
     files[actor_param_path(puppet_name(variant))] = ap
     return sarc.write(files), ap, sorted(files), keys
@@ -288,12 +347,14 @@ def _num(v):
     return v.v if isinstance(v, byml._Num) else v
 
 
-def info_row(player_row, actor, heap=None, sound=True):
+def info_row(player_row, actor, heap=None, sound=True, sound_user=None):
     """The puppet's ActorInfo row: the player's, less its player-only fields. `heap`, when given,
     sets InstanceHeapSize (a test switch, `--heap`), keeping the field's BYML type."""
     drop = DROP_INFO_FIELDS + (() if sound else SOUND_INFO_FIELDS)
     row = {k: v for k, v in player_row.items() if k not in drop}
     row.update(INFO_OVERRIDES)
+    if sound and sound_user:
+        row["SLinkUserName"] = sound_user
     if heap is not None:
         old = row.get("InstanceHeapSize")
         row["InstanceHeapSize"] = type(old)(int(heap)) if isinstance(old, byml._Num) else int(heap)
@@ -359,9 +420,11 @@ def recompress(dicts, original_raw, data):
     return dicts.compress(data, name)
 
 
-def build(romfs, mod_dir, log=print, heaps=None, sound=True):
+def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None):
     """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111).
-    `sound`: False builds the puppets without Link's sounds (issue 131)."""
+    `sound`: False builds the puppets without Link's sounds (issue 131). `player_footsteps`: keep
+    the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
+    SLink user for the puppets' sounds (SLINK_DIR)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -380,6 +443,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True):
     gai = byml.loads(gai_old)
     table = rstb.Rstb.loads(dicts.decompress(rs_raw))
     ai_rows = {r["__RowId"]: r for r in ai}
+    if sound and sound_user and not any(r.get("SLinkUserName") == sound_user for r in ai):
+        raise BuildError(f"no actor has the SLink user {sound_user}")
     made = []
     new_ai, new_gai = [], []
     for v in VARIANTS:
@@ -389,12 +454,12 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True):
         if not os.path.isfile(src):
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names, keys = build_pack(members, v, sound)
+        pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
             raise BuildError(f"ActorInfo has no row {player}")
-        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor), sound))
+        new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor), sound, sound_user))
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
@@ -407,9 +472,26 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True):
             chain_ap += size
         ap_size = max(chain_ap, len(ap) + PACK_SIZE_MARGIN)
         table.add_new(actor_param_path(actor), ap_size)
+        footstep = None
+        if footstep_path(actor) in names:
+            path, data, src = puppet_footstep(make_actor_param(flatten_actor_param(members, player)), actor)
+            if src not in members:
+                raise BuildError(f"the player's footstep param {src} is not in the pack")
+            # Sized as the player's file it stands in for (the game's entries run about 5.3 KB over
+            # the file), plus any bytes it is longer.
+            src_size = table.get(src)
+            fs_size = max((src_size or 0) + max(0, len(data) - len(members[src])), len(data) + PACK_SIZE_MARGIN)
+            table.add_new(path, fs_size)
+            footstep = {"param": path, "size": fs_size}
+        if slink_path(actor) in names:
+            path, data, src = puppet_slink(make_actor_param(flatten_actor_param(members, player)), actor, sound_user)
+            if src not in members:
+                raise BuildError(f"the player's SLink param {src} is not in the pack")
+            table.add_new(path, max((table.get(src) or 0) + max(0, len(data) - len(members[src])),
+                                    len(data) + PACK_SIZE_MARGIN))
         made.append({"actor": actor, "from": player, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
-                     "members": names, "equipment_keys": keys})
+                     "members": names, "equipment_keys": keys, "footstep": footstep})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
     shots = []
@@ -451,6 +533,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True):
         "actors": made,
         "shots": shots,
         "sound": sound,
+        "footsteps": "player" if player_footsteps or not sound else "puppet",
+        "sound_user": sound_user if sound and sound_user else None,
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
@@ -497,6 +581,10 @@ def main(argv=None):
                     help="test switch: set a puppet's InstanceHeapSize, e.g. CoopPuppet_Adult=20000000")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
+    ap.add_argument("--player-footsteps", action="store_true",
+                    help="test switch: the puppets keep the player's footstep param (the older pack)")
+    ap.add_argument("--sound-user", metavar="NAME",
+                    help="test switch: another actor's SLink user for the puppets' sounds, e.g. Enemy_MiddleBoss_DarkLink")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -541,7 +629,8 @@ def _main_build(a, romfs):
             return 2
         heaps[name] = int(size)
     try:
-        build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound)
+        build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
+              sound_user=a.sound_user)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

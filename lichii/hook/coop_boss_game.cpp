@@ -175,14 +175,21 @@ struct Glue {
 
     // The game's scene change, as tools/autotest's warp asks it.
     bool AskScene(Core::System& system, std::uint64_t main, const Room& room) {
-        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
-        const bool start = coop::host::GameFlags::set_string64_now(
-            memory, coop::host::flag_hash("Sequence_ReservedNextStartPosName"), room.start);
-        const bool banc = start && coop::host::GameFlags::set_string64_now(
-                                       memory, coop::host::flag_hash("Sequence_ReservedNextBanc"), room.scene);
+        const bool banc = SetScene(system, main, room.scene, room.start);
         LOG_INFO(Core, "coop: boss: asked the scene change to {} at {}: {}", room.scene, room.start,
                  banc ? "set" : "NOT set");
         return banc;
+    }
+
+    static bool SetScene(Core::System& system, std::uint64_t main, std::string_view scene,
+                         std::string_view start) {
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
+        // No start: left alone, as tools/autotest's warp does.
+        const bool start_ok = start.empty() || coop::host::GameFlags::set_string64_now(
+                                                   memory, coop::host::flag_hash("Sequence_ReservedNextStartPosName"),
+                                                   start);
+        return start_ok && coop::host::GameFlags::set_string64_now(
+                               memory, coop::host::flag_hash("Sequence_ReservedNextBanc"), scene);
     }
 
     bool AskMove(Core::System& system, std::uint64_t main, const Vec& to) {
@@ -279,6 +286,20 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<st
            const std::optional<coop::protocol::Vec3>& position, bool event_running,
            coop::host::Session* session, std::uint64_t server_now_us) {
     TheGlue().Frame(system, main_base, scene, position, event_running, session, server_now_us);
+}
+
+bool Fighting() {
+    const auto phase = TheGlue().sync.phase();
+    return phase == Sync::Phase::intro || phase == Sync::Phase::fight || phase == Sync::Phase::outro;
+}
+
+bool AskSceneChange(Core::System& system, std::uint64_t main_base, std::string_view scene,
+                    std::string_view start) {
+    return main_base != 0 && Glue::SetScene(system, main_base, scene, start);
+}
+
+bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to) {
+    return main_base != 0 && TheGlue().on && TheGlue().AskMove(system, main_base, to);
 }
 
 void OnEvent(const coop::net::Event& event) {

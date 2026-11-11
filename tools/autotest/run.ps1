@@ -31,7 +31,7 @@ param(
     [double]$Every = 3,
     # LICHII_COOP_... switches for both games, as NAME=value (replaces the default list).
     # As NAME=value: an array, or one comma list ("A=1,B=1"), which is how powershell -File passes it.
-    [string[]]$Switches = @("LICHII_COOP_PUPPET=1", "LICHII_COOP_OBJECTS=1", "LICHII_COOP_DEBUG_OBJECTS=1"),
+    [string[]]$Switches = @("LICHII_COOP_PUPPET=1", "LICHII_COOP_OBJECTS=1", "LICHII_COOP_SPAWN=1", "LICHII_COOP_DEBUG_OBJECTS=1"),
     # Seconds to wait for each phase (boot and join, load, scenario).
     [int]$Timeout = 180,
     # Steps files: how long an `expect` line waits for the counts (seconds).
@@ -57,7 +57,16 @@ param(
     # the object walk (LICHII_COOP_DEBUG_OBJECTS) and the objects cheat still run. Default
     # switches then: LICHII_COOP_DEBUG_OBJECTS=1 only. For telling a game behaviour from one of
     # ours (issue 125).
-    [switch]$NoCoop
+    [switch]$NoCoop,
+    # Emulator add-ons to turn off for this run, by the name the emulator's Add-Ons list shows:
+    # its built-in patches ("Dynamic FPS by Dark (built-in)", "Water ripples at any frame rate
+    # (built-in)", "Max Resolution (built-in)") or a mod folder ("coop-puppet"). Written into each
+    # kit's qt-config.ini [DisabledAddOns] before the boot; the old file is put back at the end. The
+    # log then has no "Applying built-in patch" line for it. For telling the emulator's patches
+    # or our puppet pack from the game (issue 125).
+    [string[]]$AddOnsOff = @(),
+    # The emulator's "30 FPS mode" (oot_30fps) for this run: the game steps twice per frame.
+    [switch]$Fps30
 )
 $ErrorActionPreference = 'Stop'
 
@@ -397,6 +406,44 @@ function Set-NoCloseQuestion([string]$ini) {
     $new = $text -replace '(?m)^confirmStop\\default=.*$', 'confirmStop\default=false' -replace '(?m)^confirmStop=.*$', 'confirmStop=2'
     if ($new -ne $text) { [IO.File]::WriteAllText($ini, $new) }
 }
+# -AddOnsOff and -Fps30: this run's [DisabledAddOns] entry for the game and its 30 FPS mode. The
+# kit's own file is kept in $iniKept (once per kit) and put back in the finally block.
+$iniKept = @{}
+function Set-RunSettings([string]$x, [string]$ini) {
+    if (-not $AddOnsOff.Count -and -not $Fps30) { return }
+    if (-not (Test-Path $ini)) { throw "no $ini for -AddOnsOff/-Fps30" }
+    $text = [IO.File]::ReadAllText($ini)
+    if (-not $iniKept.ContainsKey($x)) { $iniKept[$x] = @{ Path = $ini; Text = $text } }
+    $nl = if ($text -match "`r`n") { "`r`n" } else { "`n" }
+    if ($AddOnsOff.Count) {
+        $title = [Convert]::ToUInt64($TitleId, 16)
+        # Qt's ini array layout, as the emulator writes it (frontend_common/config.cpp,
+        # SaveDisabledAddOnValues). Names are quoted so a comma stays part of the name.
+        $lines = @('[DisabledAddOns]', 'size=1', '1\title_id\default=false', "1\title_id=$title", "1\disabled\size=$($AddOnsOff.Count)")
+        for ($i = 0; $i -lt $AddOnsOff.Count; $i++) {
+            if ($AddOnsOff[$i] -match '["\\]') { throw "-AddOnsOff '$($AddOnsOff[$i])': no quotes or backslashes" }
+            $lines += "1\disabled\$($i + 1)\d\default=false"
+            $lines += "1\disabled\$($i + 1)\d=`"$($AddOnsOff[$i])`""
+        }
+        $section = ($lines -join $nl) + $nl
+        $rx = [regex]'(?ms)^\[DisabledAddOns\]\r?\n.*?(?=^\[|\z)'
+        $text = if ($rx.IsMatch($text)) { $rx.Replace($text, ($section + $nl).Replace('$', '$$'), 1) } else { $section + $nl + $text }
+    }
+    if ($Fps30) {
+        if ($text -notmatch '(?m)^oot_30fps=') { throw "$ini has no oot_30fps key (an older emulator?)" }
+        $text = $text -replace '(?m)^oot_30fps\\default=.*$', 'oot_30fps\default=false' -replace '(?m)^oot_30fps=.*$', 'oot_30fps=true'
+    }
+    [IO.File]::WriteAllText($ini, $text)
+    Write-Host "game ${x}: add-ons off: $(if ($AddOnsOff.Count) { $AddOnsOff -join ' | ' } else { 'none' }); 30 FPS mode: $([bool]$Fps30)"
+}
+function Restore-RunSettings {
+    foreach ($k in @($iniKept.Keys)) {
+        for ($t = 0; ; $t++) {
+            try { [IO.File]::WriteAllText($iniKept[$k].Path, $iniKept[$k].Text); break }
+            catch { if ($t -ge 20) { Write-Host "could not put back $($iniKept[$k].Path): $_"; break }; Start-Sleep -Milliseconds 500 }
+        }
+    }
+}
 # Starts one game. A log left by an earlier run of it in this test is kept as eden_log-<x>-<n>.txt.
 function Start-Game([string]$x) {
     $s = $st[$x]
@@ -415,6 +462,7 @@ function Start-Game([string]$x) {
     $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $Port`r`nname = $x" }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') $ini
     Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
+    Set-RunSettings $x (Join-Path $s.Emu 'user\config\qt-config.ini')
     Set-Content -Encoding ascii $s.Script ''
     if (Test-Path $s.Log) {
         if ($s.Runs -gt 0) { Copy-Item $s.Log "$out\eden_log-$x-$($s.Runs).txt" }
@@ -644,6 +692,12 @@ try {
         Stop-Server
     }
     foreach ($x in $kits.Keys) { if (Test-Path $st[$x].Log) { Copy-Item $st[$x].Log "$out\eden_log-$x.txt" } }
+    if (-not $KeepOpen) {
+        foreach ($x in $kits.Keys) { $p = $st[$x].Proc; if ($p) { [void]$p.WaitForExit(15000) } }
+        Restore-RunSettings
+    } elseif ($iniKept.Count) {
+        Write-Host "-KeepOpen: the kits keep this run's add-ons/30 FPS settings; their own qt-config.ini is not put back"
+    }
 }
 if (-not $failed -and $stepFails) { $failed = "$stepFails expect step(s) failed: see counts.txt" }
 if ($failed) { Set-Content "$out\FAILED.txt" $failed }

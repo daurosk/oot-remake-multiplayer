@@ -49,6 +49,11 @@ constexpr std::uint32_t kNameTakenRetryFloorMs = 100;
 // The longest packet a message can fill: the 4-byte header and a body of
 // at most 65535 bytes. ENet refuses anything longer before assembling it.
 constexpr std::size_t kMaxPacketBytes = 4 + 0xffff;
+// Most bytes ENet may hold for us between services (fragments of messages not
+// yet whole, and whole ones not yet taken). ENet's default is 32 MB; a server
+// cannot make us hold more than this. 8 MB is twice a whole flag snapshot at
+// the server's max_flags.
+constexpr std::size_t kMaxWaitingBytes = 8u << 20;
 
 // PONGs answer at most this many PINGs at once, then one per interval.
 constexpr std::uint64_t kPongBurst = 4;
@@ -171,6 +176,7 @@ bool Client::start() {
   host_ = enet_host_create(nullptr, 1, proto::kChannelCount, 0, 0);
   if (host_ == nullptr) return false;
   host_->maximumPacketSize = kMaxPacketBytes;
+  host_->maximumWaitingData = kMaxWaitingBytes;
   host_->mtu = std::clamp<std::uint32_t>(config_.mtu, ENET_PROTOCOL_MINIMUM_MTU,
                                          ENET_PROTOCOL_MAXIMUM_MTU);  // issue 143
   begin_attempt();

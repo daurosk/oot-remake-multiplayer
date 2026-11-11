@@ -40,7 +40,7 @@ constexpr std::uint32_t kForestKeys = 0x90237092;      // DungeonInfo.ForestTemp
 constexpr std::uint32_t kGoldTokens = 0x04735978;      // PouchData.Item_Token_Gold.StockNum, count
 constexpr std::uint32_t kHeartPieces = 0x51ec97b3;     // PouchData.Obj_Heart_Piece.StockNum, count
 constexpr std::uint32_t kMaxLife = 0xfbe01da1;         // PlayerStatus.MaxLife, max
-constexpr std::uint32_t kDekuShield = 0x7ca64f23;      // PouchData.Weapon_Shield_Deku.StockNum, max
+constexpr std::uint32_t kDekuShield = 0x7ca64f23;      // PouchData.Weapon_Shield_Deku.StockNum, per player
 constexpr std::uint32_t kWorldBool = 0x11, kWorldInt = 0x22;  // not items
 
 // The GameDataMgr layout of docs/flags.md, as in game_flags_test.cpp, with
@@ -155,7 +155,7 @@ std::uint32_t bits(std::int32_t v) { return static_cast<std::uint32_t>(v); }
 
 TEST_CASE("game items: every name hashes to its hash, sorted, each once") {
   const auto items = item_flags();
-  CHECK(items.size() == 300);
+  CHECK(items.size() == 302);
   std::uint32_t last = 0;
   for (const auto& item : items) {
     CAPTURE(item.name);
@@ -167,7 +167,8 @@ TEST_CASE("game items: every name hashes to its hash, sorted, each once") {
     if (item.name.starts_with("PouchData.")) CHECK(item.kind == K::int32);
     const bool dungeon_bool =
         item.name.starts_with("DungeonInfo.") && !item.name.ends_with(".SmallKeyNum");
-    if (item.name.starts_with("IsGet.") || dungeon_bool)
+    // IsGet.Weapon_Shield_Deku is each player's own (issue 130).
+    if ((item.name.starts_with("IsGet.") && item.name != "IsGet.Weapon_Shield_Deku") || dungeon_bool)
       CHECK((item.kind == K::boolean && item.rule == ItemRule::any));
     CHECK(item.on);  // every rule is on, counts included
   }
@@ -215,12 +216,12 @@ TEST_CASE("game items: the shared list") {
   CHECK_FALSE(shared.contains(FlagKey{kBottleAItem, 0}));
   CHECK(shared.contains(FlagKey{kForestKeys, 0}));  // counts travel as deltas
   CHECK(shared.contains(FlagKey{kMaxLife, 0}));
-  CHECK(shared.size() == 300 - 18);
+  CHECK(shared.size() == 302 - 20);  // 20 per player, the Deku Shield's two included (issue 130)
   const auto all = item_shared_flags(true);
   CHECK(all.contains(FlagKey{kForestKeys, 0}));
   CHECK(all.contains(FlagKey{kMaxLife, 0}));
   CHECK_FALSE(all.contains(FlagKey{kRupees, 0}));
-  CHECK(all.size() == 300 - 18);
+  CHECK(all.size() == 302 - 20);
 }
 
 TEST_CASE("game items: merge rules") {
@@ -777,9 +778,9 @@ TEST_CASE("item grants: a game that owns the item gets nothing extra") {
   CHECK(store.stats().kept == 1);
 }
 
-TEST_CASE("item grants: an item held with room for 0 gets its capacity, not ammo (test5 saves)") {
+TEST_CASE("item grants: an item held with room for 0 gets its capacity, not ammo (older saves)") {
   MapStore game = game_with_grant_flags();
-  game.hold(kSlingshot, K::int32, 1);  // shared on test5: Slingshot with 0/0 seeds
+  game.hold(kSlingshot, K::int32, 1);  // shared by an older build: Slingshot with 0/0 seeds
   ItemFlagStore store(game);
   CHECK(store.write(owned(kSlingshot)));  // the snapshot on join, or any later echo
   CHECK(game.value(kSeedCap) == 30);
@@ -820,87 +821,51 @@ TEST_CASE("item grants: a flag the game cannot write is skipped, the item still 
   CHECK(store.stats().granted == 0);
 }
 
-// Issue 130 (found by Lixyas): the Kokiri Shop sells a Deku Shield only to a
-// player who has none ("You already have a Deku Shield. We have a
-// one-shield-per-person policy here", message Shop_31), and reads that from
-// the player's own PouchData.Weapon_Shield_Deku.StockNum. The shop's own
-// stock and sold-out state are not shared. So a shield bought by one player
-// is owned by all (max), and the shop is right to refuse the others. These
-// pin down the shield lost afterwards (burnt, or taken by a Like Like).
-TEST_CASE("game items: a Deku Shield lost in a player's game comes back from the host") {
+// Issue 130 (found by Lixyas; Caleb's rule: each player buys their
+// own). The Kokiri Shop sells a Deku Shield only to a player who has none
+// ("You already have a Deku Shield. We have a one-shield-per-person policy
+// here", message Shop_31) and reads that from the player's own
+// PouchData.Weapon_Shield_Deku.StockNum. So the shield and its IsGet are each
+// player's own: a shield one player buys is not given to the others, and the
+// shop sells each their own. A burnt shield is bought again, as in the game.
+TEST_CASE("game items: a Deku Shield is each player's own, so each buys one") {
+  constexpr std::uint32_t kDekuShieldGet = 0x5217da1e;
+  for (const std::uint32_t h : {kDekuShield, kDekuShieldGet}) {
+    const auto* item = find_item(h);
+    REQUIRE(item != nullptr);
+    CHECK(item->rule == ItemRule::per_player);
+    CHECK_FALSE(item_shared_flags(true).contains(FlagKey{h, 0}));
+  }
+  // The other shields stay shared (the Mirror Shield is one chest).
+  CHECK(item_shared_flags().contains(FlagKey{0x08befd3a, 0}));  // Hylian
+  CHECK(item_shared_flags().contains(FlagKey{0xf58e0e2f, 0}));  // Mirror
+
   auto hw = game();
   GameFlagStore host_game(hw);
   ItemFlagStore host_store(host_game);
   auto pw = game();
   GameFlagStore player_game(pw);
   ItemFlagStore player_store(player_game);
-  hold_int(hw, kDekuShield, 1);  // the host bought it
-  hold_int(pw, kDekuShield, 1);  // and the player got it
   FlagWatcher host(item_shared_flags(), FlagRole::host);
   FlagWatcher player(item_shared_flags(), FlagRole::player);
   host.frame(host_store);
   player.frame(player_store);
 
-  apply_ints(pw);
-  hold_int(pw, kDekuShield, 0);  // the player's shield burns
-  const auto lost = player.frame(player_store);
-  REQUIRE_FALSE(lost.empty());
-  deliver(host, lost);
-  const auto answer = host.frame(host_store);
-  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);  // the host keeps its own
-  REQUIRE_FALSE(answer.empty());
-  deliver(player, answer);
-  player.frame(player_store);
-  // Back in the player's pouch: it equips it from the menu, and the shop
-  // still sells it no second one (it has one).
-  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
-}
-
-TEST_CASE("game items: a Deku Shield the host loses comes back, lost by all, it is bought again") {
-  auto hw = game();
-  GameFlagStore host_game(hw);
-  ItemFlagStore host_store(host_game);
-  auto pw = game();
-  GameFlagStore player_game(pw);
-  ItemFlagStore player_store(player_game);
+  // The host buys one: nothing goes out, the player's pouch stays empty.
   hold_int(hw, kDekuShield, 1);
-  hold_int(pw, kDekuShield, 1);
-  FlagWatcher host(item_shared_flags(), FlagRole::host);
-  FlagWatcher player(item_shared_flags(), FlagRole::player);
-  host.frame(host_store);
-  player.frame(player_store);
-
-  // The host's shield burns: the player keeps its own and answers with it,
-  // so the host's comes back too.
-  apply_ints(hw);
-  hold_int(hw, kDekuShield, 0);
-  deliver(player, host.frame(host_store));
-  deliver(host, player.frame(player_store));
-  host.frame(host_store);
-  CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
-  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
-
-  // Both lose it (no one has one left): both pouches stay empty, so the shop
-  // sells one again; one player buying it gives it to the other and takes
-  // nothing from anyone.
-  apply_ints(hw);
-  apply_ints(pw);
-  hold_int(hw, kDekuShield, 0);
-  hold_int(pw, kDekuShield, 0);
-  deliver(player, host.frame(host_store));
-  deliver(host, player.frame(player_store));
-  deliver(player, host.frame(host_store));
-  player.frame(player_store);
-  CHECK(*GameFlags(hw).get_int(kDekuShield) == 0);
+  CHECK(host.frame(host_store).empty());
   CHECK(*GameFlags(pw).get_int(kDekuShield) == 0);
-  apply_ints(hw);
-  apply_ints(pw);
-  hold_int(pw, kDekuShield, 1);  // the player buys one
-  deliver(host, player.frame(player_store));
-  deliver(player, host.frame(host_store));
-  player.frame(player_store);
-  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
+  // The player buys its own: nothing goes out either.
+  hold_int(pw, kDekuShield, 1);
+  CHECK(player.frame(player_store).empty());
+  // A value sent anyway (an older build) is refused, never written.
+  CHECK_FALSE(player_store.write(i(kDekuShield, 0)));
   CHECK(*GameFlags(pw).get_int(kDekuShield) == 1);
+  // The player's shield burns: it stays gone (bought again), the host keeps its own.
+  apply_ints(pw);
+  hold_int(pw, kDekuShield, 0);
+  CHECK(player.frame(player_store).empty());
+  CHECK(*GameFlags(hw).get_int(kDekuShield) == 1);
 }
 
 TEST_CASE("item grants: nothing is granted on the title screen, a loaded save is mended (issue 138)") {
@@ -1022,4 +987,52 @@ TEST_CASE("item grants: a mend leaves a bigger bag and items not held alone") {
   CHECK(game.value(kSeedCap) == 50);
   CHECK(game.value(kArrowCap) == 0);  // no Bow
   CHECK(game.value(kBombCap) == 0);   // no bomb bag
+}
+
+TEST_CASE("item grants: the mend lasts 1.5 s at 165 presents a second (issue 106)") {
+  coop::host::LoadMend load;
+  std::uint64_t now = 5'000'000;
+  load.set_clock([&] { return now; });
+  CHECK_FALSE(load.frame(false));
+  now += 6'061;
+  const std::uint64_t in = now;
+  std::uint64_t last_mend = 0;
+  for (int i = 0; i < 165 * 3; ++i) {
+    if (load.frame(true)) last_mend = now;
+    now += 6'061;
+  }
+  CHECK(last_mend - in >= 1'450'000);
+  CHECK(last_mend - in <= 1'550'000);
+}
+
+TEST_CASE("game items: a held strength item raises the lift grade (issue 125)") {
+  namespace lift = coop::host::lift;
+  using coop::host::lift_grade_raise;
+  // The hashes are the names' (GameDataList: PlayerStatus.LiftGrade, enum
+  // None/Low/Middle/High; real bomb saves hold the bracelet and Low).
+  CHECK(protocol::flag_hash("PlayerStatus.LiftGrade") == lift::kGrade);
+  CHECK(protocol::flag_hash("None") == lift::kNone);
+  CHECK(protocol::flag_hash("Low") == lift::kLow);
+  CHECK(protocol::flag_hash("Middle") == lift::kMiddle);
+  CHECK(protocol::flag_hash("High") == lift::kHigh);
+  CHECK(protocol::flag_hash("PouchData.Armor_Child_Gauntlet_Goron.StockNum") == lift::kGoron);
+  CHECK(protocol::flag_hash("PouchData.Armor_Adult_Gauntlet_Silver.StockNum") == lift::kSilver);
+  CHECK(protocol::flag_hash("PouchData.Armor_Adult_Gauntlet_Gold.StockNum") == lift::kGold);
+  // The three are shared items, so a shared bracelet reaches this check.
+  for (const std::uint32_t h : {lift::kGoron, lift::kSilver, lift::kGold}) {
+    REQUIRE(find_item(h) != nullptr);
+    CHECK(find_item(h)->rule == ItemRule::max);
+  }
+
+  // A bracelet from another player: None -> Low (the test saves' case).
+  CHECK(lift_grade_raise(1, 0, 0, lift::kNone) == lift::kLow);
+  CHECK(lift_grade_raise(1, 1, 0, lift::kLow) == lift::kMiddle);
+  CHECK(lift_grade_raise(1, 1, 1, lift::kNone) == lift::kHigh);
+  CHECK(lift_grade_raise(0, 0, 1, lift::kMiddle) == lift::kHigh);
+  // Nothing held, or the grade already there or above: nothing written.
+  CHECK_FALSE(lift_grade_raise(0, 0, 0, lift::kNone));
+  CHECK_FALSE(lift_grade_raise(1, 0, 0, lift::kLow));
+  CHECK_FALSE(lift_grade_raise(1, 0, 0, lift::kHigh));  // never lowered
+  // A value that is not a grade (memory not what we think): left alone.
+  CHECK_FALSE(lift_grade_raise(1, 0, 0, 0));
 }

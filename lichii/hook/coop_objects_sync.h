@@ -105,11 +105,17 @@ struct LifeWrite {
 // objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
 bool IsShared(std::string_view name);
 
-// An order puzzle each game runs on its own (issue 149): the Scrub Brothers
-// (hit 2, 3, 1) and the Lost Woods stage scrubs. Their order is counted in
-// the game's own code from its own hits; only the solve is shared (a dungeon
-// flag, docs/dungeon.md).
+// A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
+// (hit 2, 3, 1), the Lost Woods stage scrubs, and the fishing pond's owner.
+// Their state is kept in the game's own code from its own player; only the
+// solve or the prize is shared (docs/dungeon.md, docs/items.md). The pond's
+// fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
+
+// Issue 151 (fishing-2): a fish (Animal_Fish_*). Shared like any animal, with
+// one owner game; the lure rules in Sync (SetLures) move a fish to the game
+// whose lure it goes for, and a fish its owner catches is gone for everyone.
+bool IsFish(std::string_view name);
 
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver
@@ -156,6 +162,12 @@ bool IsAnnounced(std::string_view name);
 // owned enemy that leaves the walk while playing one died, even when its life
 // could not be read (the big Skulltula has none we can read; issue 133).
 bool IsDeathAnimation(std::string_view name);
+
+// Issue 150: a boss animation that plays while it is stunned or knocked down
+// ("Stun_Lp", "Down_Start", "Fall_St" when Gohma drops from the ceiling): the
+// first word, LOD suffix off, is Stun, Down, Fall or Faint. A seed in Gohma's
+// eye stuns it and takes no life, so a stun is the only sign of that hit.
+bool IsStunAnimation(std::string_view name);
 
 // An animation name without its level-of-detail suffix ("Wait_ModelOnlyLOD"
 // is "Wait"), so a far copy's LOD variant is not another animation.
@@ -250,6 +262,9 @@ public:
     // After our own hit on a copy its game plays the hit reaction itself: the
     // owner's animation from before the hit is not played over it this long.
     static constexpr std::uint64_t kReactHoldUs = 700'000;
+    // Issue 150: a boss copy that went into a stun of its own sends a DAMAGE
+    // of 0 (the server hands the boss to the stunner) at most this often.
+    static constexpr std::uint64_t kStunEveryUs = 2'000'000;
     static constexpr std::uint64_t kPlaceStaleUs = 2'000'000;   // another player's place
     static constexpr std::uint64_t kFightUs = 12'000'000;
     static constexpr std::uint64_t kBehindUs = 100'000;       // copies show the owner this late
@@ -296,6 +311,25 @@ public:
     // with their life never read at 0. One that leaves further away was
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
+
+    // Issue 151 (fishing-2). Present thread, before Tick: where our own cast
+    // lures are (CoopProjectiles::TheLures). A fish copy we do not own whose
+    // own AI swims it towards one of them (kLureStepM or more a frame, within
+    // kLureReachM, or held within kLureHookM: it bites) for kChaseHoldUs is
+    // flagged targeting, so the server hands it to us and our game runs the
+    // bite and the fight. A fish we own within kLureHookM of our lure, or
+    // coming at it at kLureSpeed or more within kLureReachM, is flagged the
+    // same way (ChaseStep's targeting flag, as for enemies; not in_fight), so
+    // it stays ours while it is hooked
+    // and reeled in. A fish we own that leaves the walk within kCatchNearM of
+    // our Link was caught here (landed, in Link's hands): OBJECT_REMOVE dead,
+    // and every other game deletes its copy at once.
+    void SetLures(std::vector<coop::protocol::Vec3> lures) { lures_ = std::move(lures); }
+    static constexpr float kLureReachM = 6.0f;
+    static constexpr float kLureStepM = 0.005f;
+    static constexpr float kLureHookM = 1.0f;
+    static constexpr float kLureSpeed = 0.2f;  // metres a second
+    static constexpr float kCatchNearM = 3.0f;
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
     static constexpr int kMissedWalks = 2;
@@ -333,6 +367,13 @@ public:
     // Link woke it. Off with SetWake(false) (LICHII_COOP_OBJECTS_WAKE=0).
     void SetWake(bool on) { wake_ = on; }
     static constexpr float kWakeM = 10.0f;
+    // Issue 157: the Mover puts the owner's animation back on the very next
+    // game frame, so a copy whose AI asks for its wake animation once (a
+    // Peahat rising out of the ground) is rarely seen in it by the walk.
+    // The Mover tells each such put-back (NoteTakeover, present thread); the
+    // copy then counts as playing its own animation for kWakeLatchUs.
+    void NoteTakeover(std::uint64_t address, std::uint64_t now_us);
+    static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
@@ -363,6 +404,10 @@ public:
     // right now, so exactly the enemies Poses moves. One that becomes ours
     // (or whose owner fell silent) is not in the next list.
     std::vector<std::uint64_t> Holds(std::uint64_t now_us) const;
+
+    // Present thread: the enemy copies that became ours since the last ask
+    // (OBJECT_OWNER moved them to us from another player), by address.
+    std::vector<std::uint64_t> TakeOursNow() { return std::exchange(ours_now_, {}); }
 
     // The loaded actors to delete: pickups another game took, and rolled
     // enemies this game made while another one decides the scene's rolls.
@@ -476,6 +521,7 @@ private:
         std::uint64_t debit_until = 0;
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
+        bool fish = false;                      // IsFish: the lure rules
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         // Chasing our Link (NoteDrift): the run of steps towards it.
@@ -485,6 +531,7 @@ private:
         // Issue 132: the animation it was first seen in (an owned enemy at rest).
         std::string rest_animation;
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
+        std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
         // Our own hit took its life to 0 here (the DAMAGE resend's mark).
         std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when
@@ -492,6 +539,10 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool dead_now = false;  // a kill from before we came: deleted at once
+        // Issue 150: a boss copy whose own game stunned it (a DAMAGE of 0 is
+        // due), and when that last went out.
+        bool stun_due = false;
+        std::uint64_t stun_at = 0;
     };
 
     // One step of `o` towards our Link at `now_us` (NoteDrift).
@@ -523,8 +574,12 @@ private:
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
+    std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
+    // The nearest of our lures to `at` (metres), or nothing with none.
+    std::optional<float> LureDistance(const coop::protocol::Vec3& at) const;
     std::vector<std::string> notes_;
     std::map<std::uint64_t, Object> objects_;  // by actor address
+    std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
     std::map<std::uint64_t, Decided> decided_;  // by director key
     std::map<std::uint64_t, std::uint64_t> bound_;  // actor to director key
     std::uint64_t next_key_ = 1;

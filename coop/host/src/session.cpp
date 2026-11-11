@@ -16,6 +16,7 @@ Session::Session(net::Client& client, SessionSettings settings)
   if (settings.shared) {
     watcher_.emplace(std::move(*settings.shared), FlagRole::player);
     watcher_->set_learn_pickups(settings.learn_pickups);
+    if (settings.clock) watcher_->set_clock(settings.clock);
   }
 }
 
@@ -78,6 +79,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     report.hosting = watcher_->role() == FlagRole::host;
     report.holding = watcher_->holding();
     report.host_reset = watcher_->take_reset();
+    report.received = watcher_->take_received();
     if (const auto seen = watcher_->take_save_load()) {
       report.save_load_flags = seen->flags;
       report.save_load_frames = seen->frames;
@@ -173,6 +175,13 @@ void Session::handle(const net::Event& event) {
       // client also gives for its own answers as host.
       if (sharing && std::holds_alternative<protocol::FlagSnapshot>(event.message)) {
         inbox_.emplace_back(event.message);
+      }
+      // Who made a shared change (the chat notices): the server's FLAG_ORIGIN,
+      // or, as host, the asker of a FLAG_SET our client answers next.
+      if (sharing && std::holds_alternative<protocol::FlagOrigin>(event.message)) {
+        inbox_.emplace_back(event.message);
+      } else if (const auto* set = std::get_if<protocol::FlagSet>(&event.message); sharing && set) {
+        inbox_.emplace_back(protocol::Message{protocol::FlagOrigin{set->player_number, set->flags}});
       }
       break;
     }

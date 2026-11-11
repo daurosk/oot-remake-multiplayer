@@ -1,0 +1,27 @@
+# deku-ladder, B: loads with A, is put by the slingshot room's door and watches the ladder and
+# the trap floor (see deku-ladder.A.txt). Never touches the eye or the chest.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -33.2 110.3 10.4
+wait 240
+mark placed
+toward -45.0 11.0 10     # face into the room: ladder, pillar, trap floor, the ledge beyond
+press ZL 10              # the camera behind Link
+wait 1200
+toward -45.0 11.0 6
+press ZL 10
+mark b-view
+wait 2400
+mark b-end

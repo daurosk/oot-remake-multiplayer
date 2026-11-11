@@ -51,6 +51,17 @@ REQUIRED = (
     "System/Resource/ResourceSizeTable.Product.*.rsizetable.zs",
 )
 VERSIONED = REQUIRED[3]
+# Read when there, not needed: the shots' sources, for the stand-ins (build.py STAND_INS). A
+# .nup build extracts only what nup_files names, so without these the pack had no stand-ins
+# ("shots": []) and other players' seeds, arrows, hookshot tips and lures had no copy to show.
+OPTIONAL = (
+    "Pack/Actor/Shootable_DekuSeed.pack.zs",
+    "Pack/Actor/NormalArrow.pack.zs",
+    "Pack/Actor/Shootable_Hook.pack.zs",
+    "Pack/Actor/Shootable_HookLong.pack.zs",
+    "Pack/Actor/Weapon_Lure.pack.zs",
+    "Pack/Actor/Weapon_SinkingLure.pack.zs",
+)
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "
           "Dump RomFS, Full. Keep the progress window open until it says it is done.")
@@ -168,9 +179,10 @@ def _version_of(rel):
 
 def nup_files(n):
     """{pattern: RomFS path} of the files the pack tool reads, from an open Nup.
-    Where a pattern matches more than one version, the expected one wins."""
+    Where a pattern matches more than one version, the expected one wins. The OPTIONAL files
+    are in it when the .nup has them."""
     out = {}
-    for pattern in REQUIRED:
+    for pattern in REQUIRED + OPTIONAL:
         hits = n.glob(pattern)
         if len(hits) > 1:
             hits = [h for h in hits if _version_of(h) == EXPECTED_VERSION] or hits[-1:]

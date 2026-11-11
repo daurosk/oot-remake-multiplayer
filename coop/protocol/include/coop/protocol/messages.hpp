@@ -15,9 +15,9 @@
 
 namespace coop::protocol {
 
-// 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
+// 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
 // (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 7;
+inline constexpr std::uint16_t kProtocolVersion = 8;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -97,6 +97,7 @@ enum class MessageType : std::uint16_t {
   boss_room = 50,  // 50 to 54: boss rooms (docs/dungeons-boss.md)
   sign_cut = 80,   // 80 to 84: signs (docs/world.md, "Signs")
   flag_reset = 135,  // 135 to 139: the host's save load (docs/protocol.md, "Saves")
+  flag_origin = 150,  // 150 to 154: who made a shared change (docs/protocol.md, "Who did it")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -415,6 +416,16 @@ struct FlagState {
 // group's state follows the host's save (docs/flags.md, "Saves"). Same
 // entries as FLAG_STATE (1 to kMaxFlagEntries, no count deltas); a longer
 // reset is several messages in a row.
+// FLAG_ORIGIN (server only): the player whose FLAG_SET the server just
+// passed to the host. Sent to every other player but the host, before the
+// host's FLAG_STATE answer, so a game can say who made the change it gets
+// (the chat notices, docs/setup.md). The flags are the FLAG_SET's.
+struct FlagOrigin {
+  std::uint8_t player_number = kPlayerSelf;  // 1 to 4: who asked
+  std::vector<FlagEntry> flags;
+  bool operator==(const FlagOrigin&) const = default;
+};
+
 struct FlagReset {
   std::uint8_t player_number = kPlayerSelf;  // 0 from the host, 1 to 4 relayed
   std::vector<FlagEntry> flags;
@@ -689,6 +700,8 @@ struct Damage {
 // and scale (both scaled by kPoseUnit, so +-4). flags is the game's own bone
 // flag byte, passed on unread. skeleton names the skeleton (bone count and a
 // check of its layout); a puppet with another skeleton ignores the message.
+// A piece in Link's hands (the slingshot, the bow) goes as a pose of its own
+// skeleton, every bone, and is written onto the piece of that skeleton.
 inline constexpr std::size_t kMaxPoseBones = 512;
 inline constexpr float kPoseUnit = 8192.0f;
 
@@ -952,7 +965,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
-                             DropAsk, BossRoom, SignCut, FlagReset>;
+                             DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin>;
 
 MessageType type_of(const Message& message);
 

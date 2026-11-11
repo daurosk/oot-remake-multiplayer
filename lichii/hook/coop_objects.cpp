@@ -58,6 +58,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <tuple>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -82,6 +83,7 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
+#include "coop_ocarina.h"
 #include "coop_spawn.h"
 #include "coop_pickups.h"
 #include "coop_projectiles.h"
@@ -117,6 +119,12 @@ constexpr u32 kStateAlive = 4;
 // plain write of +0x31c is undone by the game within a frame.
 constexpr u64 kActorVtable = 0x4b25e18;
 constexpr u64 kSetMatrix = 0x4c6580;
+// Issues 150, 157, 101 (on unless LICHII_COOP_OBJECTS_RELEASE=0): the actor flags word the
+// setter above marks (bit 23, docs/world.md). An enemy that becomes ours gets
+// the bit cleared once, in case the game leaves it set after the Mover's
+// last move and the body stays frozen or floats. Not proven.
+constexpr u64 kActorFlags = 0x4a8;
+constexpr u32 kWarpBit = u32{1} << 23;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 // Rolled enemies' copies in the spawn director: their keys have the top bit.
 constexpr u64 kEnemyKey = u64{1} << 63;
@@ -374,6 +382,31 @@ public:
         holding_ = true;
     }
 
+    // Present thread: copies that just became ours, to clear the setter's
+    // bit of at the next game frame (issues 150, 157; on unless
+    // LICHII_COOP_OBJECTS_RELEASE=0).
+    void Release(const std::vector<u64>& actors) {
+        std::lock_guard lock(mutex_);
+        for (const u64 a : actors) {
+            if (releases_.size() < 64) {
+                releases_.push_back(a);
+            } else {
+                ++release_dropped_;
+            }
+            // A pose wished before it became ours would set the bit again
+            // in the same frame: it is no copy any more.
+            std::erase_if(poses_, [a](const Pose& p) { return p.actor == a; });
+        }
+    }
+
+    // Releases made since the last ask: bit found set and cleared, and not.
+    // Also the ones dropped because the frame's list was full.
+    std::tuple<std::size_t, std::size_t, std::size_t> TakeReleases() {
+        std::lock_guard lock(mutex_);
+        return {std::exchange(released_, 0), std::exchange(release_clear_, 0),
+                std::exchange(release_dropped_, 0)};
+    }
+
     void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes,
               std::vector<PlayWish> plays) {
         std::lock_guard lock(mutex_);
@@ -412,6 +445,19 @@ public:
             }
         }
         if (!after_call) {
+            for (const u64 actor : std::exchange(releases_, {})) {
+                u32 flags = 0;
+                if (!Alive(guest, actor) || !guest.Read(actor + kActorFlags, &flags, 4)) {
+                    continue;
+                }
+                if ((flags & kWarpBit) != 0) {
+                    flags &= ~kWarpBit;
+                    guest.Write(actor + kActorFlags, &flags, 4);
+                    ++released_;
+                } else {
+                    ++release_clear_;
+                }
+            }
             if (block_ == 0 && main_ != 0 && !allocating_ && !plays_.empty() && !alloc_tried_) {
                 allocating_ = true;
                 alloc_tried_ = true;
@@ -467,7 +513,8 @@ public:
             const u64 since = now_ms >= want_ms_ ? std::min<u64>(now_ms - want_ms_, 100) : 0;
             const float frame =
                 FrameAfter(p.frame, rate, static_cast<std::int64_t>(since) * 1000);
-            if (SlotName(guest, controller) == p.name) {
+            const std::string slot_name = SlotName(guest, controller);
+            if (slot_name == p.name) {
                 auto& checked = checked_sample_[p.address];
                 if (checked == p.sample) {
                     continue;
@@ -480,6 +527,20 @@ public:
                 }
                 ++framed_;
                 return SetFrame(controller, frame);
+            }
+            // Issue 157: the name we played last is gone from slot 0, so the
+            // copy's own AI chose another one (a Peahat rising for our Link).
+            // It is put back below at once, so the walk would rarely see it:
+            // told to Sync as a wake (TakeTakeovers). A LOD variant of ours
+            // is not the AI's.
+            std::string took_over;
+            if (const auto last = played_at_.find(p.address);
+                last != played_at_.end() && last->second.first == p.name && !slot_name.empty() &&
+                AnimationBase(slot_name) != AnimationBase(p.name)) {
+                took_over = slot_name;
+                if (took_over_.size() < 256) {
+                    took_over_.push_back(p.address);
+                }
             }
             const u64 text = Cell(guest, p.name);
             if (text == 0) {
@@ -500,8 +561,9 @@ public:
             ++played_;
             auto& last = played_at_[p.address];
             if (last.first != p.name || now_ms - last.second >= kPlayLogMs) {
-                LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}' at frame {:.1f}", p.address,
-                         p.name, frame);
+                LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}' at frame {:.1f}{}{}{}",
+                         p.address, p.name, frame, took_over.empty() ? "" : " (its own AI: '",
+                         took_over, took_over.empty() ? "" : "')");
                 last = {p.name, now_ms};
             }
             checked_sample_[p.address] = p.sample;
@@ -551,6 +613,13 @@ public:
             return c;
         }
         return std::nullopt;
+    }
+
+    // Present thread: the copies whose own AI put another animation in slot 0
+    // over the owner's since the last ask (issue 157).
+    std::vector<u64> TakeTakeovers() {
+        std::lock_guard lock(mutex_);
+        return std::exchange(took_over_, {});
     }
 
     // Since the last ask: copy-frames held, and in how many of them the
@@ -734,6 +803,7 @@ private:
     std::optional<std::pair<u64, float>> frame_after_;  // actor, frame: set after the play
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
+    std::vector<u64> took_over_;  // copies whose own AI changed slot 0 (TakeTakeovers)
     std::unordered_map<std::string, u64> cells_;
     u64 block_ = 0;
     bool allocating_ = false;
@@ -749,6 +819,10 @@ private:
     std::vector<u64> holds_;
     CoopHold::Masks masks_;
     bool holding_ = false;
+    std::vector<u64> releases_;
+    std::size_t released_ = 0;       // bit 23 was set: cleared
+    std::size_t release_clear_ = 0;  // bit 23 was already clear
+    std::size_t release_dropped_ = 0;  // over 64 in one frame: not looked at
     std::unordered_set<u64> held_before_;  // BSA components in last frame's table
     std::size_t hold_set_ = 0;
     std::size_t hold_kept_ = 0;
@@ -1043,11 +1117,18 @@ public:
             }
             block_fixes_.clear();
         }
-        // Test7 (docs/dungeon.md "Live dungeon actions"): which words of a
+        // Probe (docs/dungeon.md "Live dungeon actions"): which words of a
         // switch, water plane or lift step when it changes. Reads only.
         if (gimmick_probe_on_) {
             for (const auto& line : gimmick_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
                                                         gimmicks_, player_, server_now_us)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
+        // Issue 152 (docs/puppet.md "Ocarina"): where our note is kept. Reads only.
+        if (ocarina_probe_on_) {
+            for (const auto& line : ocarina_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
+                                                        our_link_, server_now_us)) {
                 LOG_INFO(Core, "coop: {}", line);
             }
         }
@@ -1206,9 +1287,12 @@ public:
     bool debug_ = false;
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
-    CoopWorld::GimmickProbe gimmick_probe_;  // test7: LICHII_COOP_GIMMICK_PROBE=1 turns it on
+    CoopWorld::GimmickProbe gimmick_probe_;  // LICHII_COOP_GIMMICK_PROBE=1 turns it on
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
+    bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
+    CoopOcarina::OcarinaProbe ocarina_probe_;
+    u64 our_link_ = 0;                        // our Link's actor, from the last walk
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
@@ -1252,6 +1336,7 @@ public:
     bool hurt_ = true;
     bool replay_ = false;
     bool wake_ = true;
+    bool release_ = true;  // LICHII_COOP_OBJECTS_RELEASE=0 turns it off (issues 150, 157)
     bool drive_ = false;
     int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
@@ -1285,7 +1370,7 @@ private:
     // The shared actors of one whole walk, with life and place. False when
     // the list changed under us (try the next frame).
     bool Collect(Reader& r, std::vector<Seen>& out) {
-        gimmicks_.clear();  // test7: dungeon gimmicks for the probe
+        gimmicks_.clear();  // dungeon gimmicks for the probe
         std::vector<u64> actors;
         if (!List(r, actors)) {
             return false;
@@ -1312,6 +1397,9 @@ private:
                 }
             }
             if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
+                if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                    our_link_ = a;  // the ocarina probe (issue 152)
+                }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {
                     at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
@@ -1382,6 +1470,7 @@ private:
         }
         names_ = std::move(names);
         sync_.SetPlayer(player);
+        sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
         if (debug_) {  // research: the field grass that is no actor (world.md)
             for (const std::string& line : foliage_.Look(
@@ -1568,6 +1657,10 @@ private:
         if (drive_pose_) {
             wish.push_back(*drive_pose_);
         }
+        // Copies whose own AI wanted another animation (issue 157).
+        for (const u64 a : TheMover().TakeTakeovers()) {
+            sync_.NoteTakeover(a, now_us);
+        }
         for (const PoseWrite& w : poses) {
             if (r.Get<u32>(w.address + kActorState).value_or(0) != kStateAlive) {
                 continue;
@@ -1584,7 +1677,10 @@ private:
                 // A copy whose own AI pulls it at our Link (issue 101).
                 sync_.NoteDrift(w.address, before->second, now, now_us);
                 drift_sum_ += d;
-                drift_max_ = std::max(drift_max_, d);
+                if (d > drift_max_) {
+                    drift_max_ = d;
+                    drift_worst_ = w.address;
+                }
                 ++drift_count_;
             }
             Mover::Pose p;
@@ -1602,6 +1698,9 @@ private:
         sync_.Plays(now_us, plays);
         if (ai_hold_ != 0) {
             TheMover().Hold(sync_.Holds(now_us), CoopHold::MasksFor(ai_hold_));
+        }
+        if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
+            TheMover().Release(ours);
         }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : world_.Removes()) {
@@ -1629,6 +1728,22 @@ private:
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
             }
+            // Issue 101: which copy was furthest from where we put it, so
+            // one run tells a copy the setter does not hold (a flying or
+            // sleeping enemy) from the AI's own small pull.
+            if (debug_ && drift_worst_ != 0 && drift_max_ >= kDriftWorstM) {
+                LOG_INFO(Core, "coop: objects: share worst copy {:#x} '{}' off {:.2f} m", drift_worst_,
+                         r.Name(drift_worst_), drift_max_);
+            }
+            if (release_) {
+                const auto [cleared, clear, dropped] = TheMover().TakeReleases();
+                if (cleared + clear + dropped > 0) {
+                    LOG_INFO(Core,
+                             "coop: objects: release: {} that became ours had bit 23 set "
+                             "(cleared), {} had it clear, {} skipped (over 64 in a frame)",
+                             cleared, clear, dropped);
+                }
+            }
             if (ai_hold_ != 0) {
                 const auto [frames, kept] = TheMover().TakeHolds();
                 LOG_INFO(Core,
@@ -1640,6 +1755,7 @@ private:
             drift_at_ = now_us;
             drift_sum_ = 0.0f;
             drift_max_ = 0.0f;
+            drift_worst_ = 0;
             drift_count_ = 0;
         }
     }
@@ -1789,6 +1905,8 @@ private:
     u64 drive_hurt_at_ = 0;
     float drift_sum_ = 0.0f;
     float drift_max_ = 0.0f;
+    u64 drift_worst_ = 0;  // the copy at drift_max_
+    static constexpr float kDriftWorstM = 1.0f;
     std::size_t drift_count_ = 0;
     u64 drift_at_ = 0;
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
@@ -1819,6 +1937,7 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a
         // Stalchild loses its head on every screen. An amount alone at
@@ -1831,6 +1950,7 @@ Objects& Instance() {
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
         objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
+        objects.release_ = EnvOn("LICHII_COOP_OBJECTS_RELEASE");
         return true;
     }();
     (void)once;

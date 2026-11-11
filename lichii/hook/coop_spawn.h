@@ -107,11 +107,60 @@ public:
     void SetSetter(bool on) { setter_ = on; }
 
     std::size_t Mine() const { return mine_.size(); }
+    // Issue 151: where our own cast lures are (CoopProjectiles::IsLure), as
+    // of the last walk.
+    std::vector<Vec3> OwnLures() const;
     std::size_t Copies() const { return copies_.size(); }
     // Our bombs' fuse as learnt so far (coop_projectiles.h).
     const CoopProjectiles::FuseClock& Fuse() const { return fuse_; }
     // Bomb copies blown up on the owner's fuse before its remove came.
     std::size_t BlownOnTime() const { return blown_on_time_; }
+
+    // A shot's flight when the game's place does not show it (issue 158).
+    // The seed and the arrow are made when they are nocked and sit in the
+    // sling or on the string until let go. Whether their place (+0x31c)
+    // moves in flight is not known (every shot seed so far went as "gone",
+    // slow at its end). So the moment of the shot comes from the ammo count
+    // (CoopProjectiles::AmmoWatch), and when the nocked one has not moved
+    // fast kShotGraceUs later, its flight is sent for the copies: straight
+    // along its turn's axis (`axis`: 0 to 2 +x +y +z, 3 to 5 -x -y -z) at
+    // its kind's speed, for at most kShotFlightUs, as ordinary samples.
+    static constexpr std::uint64_t kShotGraceUs = 100'000;
+    static constexpr std::uint64_t kShotFlightUs = 400'000;
+    static constexpr float kFlySpeed = 8.0f;  // faster: its place shows the flight
+    struct ShotSettings {
+        int axis = 2;
+        std::optional<float> speed;  // m/s for every kind; unset: ShotSpeed(kind)
+    };
+    void SetShots(ShotSettings settings) { shot_settings_ = settings; }
+    // Present thread, before Tick: our `actor` (Shootable_DekuSeed,
+    // NormalArrow) was let go now. The newest nocked one of that name is it.
+    // False when none of ours is on the list.
+    bool Shot(std::string_view actor, std::uint64_t now_us);
+    // Shots whose flight Tick made up since the last Tick (for the log).
+    struct MadeUp {
+        coop::protocol::ObjectId id;
+        std::string name;
+        Vec3 from{};
+        Vec3 velocity{};
+    };
+    const std::vector<MadeUp>& MadeUpFlights() const { return made_up_; }
+
+    // One of ours that left the list, and how it moved (issue 158: whether
+    // a slingshot seed's place moves in flight, or the game keeps it at the
+    // sling). For the log.
+    struct Flight {
+        coop::protocol::ObjectId id;
+        std::string name;
+        std::uint64_t lived_us = 0;
+        float far = 0.0f;        // the farthest from where it was first seen, metres
+        float top_speed = 0.0f;  // between two walks, metres a second
+        coop::protocol::RemoveReason reason = coop::protocol::RemoveReason::gone;
+        bool shot = false;       // let go (its ammo count went down)
+        bool made_up = false;    // its flight was sent from the shot, not its place
+    };
+    // The ones that left in the last Tick.
+    const std::vector<Flight>& Flights() const { return flights_; }
 
 private:
     struct Own {
@@ -126,6 +175,15 @@ private:
         std::uint32_t sequence = 0;
         unsigned missed = 0;
         std::uint64_t made_at = 0;
+        Vec3 made_position{};
+        float far = 0.0f;
+        float top_speed = 0.0f;
+        // The shot (issue 158).
+        std::optional<std::uint64_t> shot_at;
+        float shot_top_speed = 0.0f;  // since the shot
+        bool made_up = false;
+        Vec3 shot_from{};
+        Vec3 shot_velocity{};
     };
     struct Remote {
         std::uint64_t key = 0;
@@ -144,6 +202,9 @@ private:
     };
 
     void Apply(std::uint64_t now_us);
+    // Issue 158: the made-up flight, once the grace is over (Shot).
+    void MakeUpFlight(Own& m, std::uint64_t now_us);
+    Vec3 ShotPlace(const Own& m, std::uint64_t now_us) const;
 
     std::string scene_;
     bool first_walk_ = true;
@@ -155,6 +216,9 @@ private:
     std::uint64_t next_key_ = 1;
     CoopProjectiles::FuseClock fuse_;  // kept across scenes: the game's fuse
     std::size_t blown_on_time_ = 0;
+    std::vector<Flight> flights_;
+    std::vector<MadeUp> made_up_;
+    ShotSettings shot_settings_;
     bool setter_ = true;
 
     std::mutex inbox_mutex_;
@@ -166,10 +230,18 @@ private:
 // not from the game's own shootable. A shootable made without a shooter
 // starts in its `UsedExternally` state, and the seed's pack hides it while it
 // is not shot (`IsPrepareVisibleOff`): the copies were made in the other game
-// (test4 player logs) but never seen. The stand-in is the actor's model only
+// (player logs) but never seen. The stand-in is the actor's model only
 // (no physics, sensor, attack or AI), so it is drawn wherever it is put, and
 // it can hit nothing. Empty when the actor has none.
 std::string_view StandIn(std::string_view actor);
+// Issue 151: shared actors whose copy is only ever the stand-in. A lure made
+// as the game's own Weapon_Lure would be a lure the fish here can bite, so
+// with no stand-in in the pack (or after it failed) no copy is made at all.
+bool StandInOnly(std::string_view actor);
+
+// Axis `axis` of a turn (0 to 2: +x +y +z columns of its matrix, 3 to 5 the
+// same reversed), as a made-up shot flies along it (Sync::SetShots).
+Vec3 ShotAxis(const coop::protocol::Quat& rotation, int axis);
 
 // The stand-ins a puppet pack has: the CoopShot_* names its coop_puppet.json
 // lists (build.py writes them under "shots"). A pack built before the

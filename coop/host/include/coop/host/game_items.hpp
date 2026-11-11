@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "coop/host/flags.hpp"
+#include "coop/host/ticks.hpp"
 #include "coop/protocol/messages.hpp"
 
 namespace coop::host {
@@ -62,6 +63,16 @@ SharedFlags item_shared_flags(bool with_off = false);
 std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t local,
                          std::uint32_t incoming, std::optional<std::uint32_t> base = {});
 
+// Gold Skulltula tokens (issue 89): PouchData.Item_Token_Gold.StockNum, a
+// count raised only by a Skulltula's token. Taking the token sets the 64-bit
+// key of that Skulltula's placement (Enemy_Skulltula_Gold) in the same scan.
+inline constexpr std::uint32_t kGoldTokenCount = 0x04735978;
+// The placement keys of all 100 Gold Skulltulas (the Enemy_Skulltula_Gold
+// placements of every map, Child and Adult the same key; each key is in the
+// game's key list), sorted. The hook shares them all from the start and
+// guards the token count with them (FlagWatcher::guard_count).
+std::span<const std::uint64_t> gold_skulltula_keys();
+
 // What the game gives with an item, besides the item itself: the ammo
 // capacity (Int struct 0xf80f8077, one member per ammo) and the ammo it
 // starts with. The game writes these in its own get scene; an item that
@@ -84,6 +95,27 @@ std::span<const ItemGrant> item_grants(std::uint32_t item);
 // Every grant, sorted by item.
 std::span<const ItemGrant> all_item_grants();
 
+// Strength (issue 125). What Link can lift is PlayerStatus.LiftGrade, an
+// Enum (None, Low, Middle, High), not the bracelet or gauntlet flags. A
+// bomb is lifted out of the bag, so with None every pulled bomb is deleted
+// at once. The game sets the grade when Link gets the item itself; a
+// strength item shared by another player (or written into a save) leaves
+// it at None. Hashes are flag_hash of the names.
+namespace lift {
+constexpr std::uint32_t kGrade = 0x59979321;  // PlayerStatus.LiftGrade
+constexpr std::uint32_t kNone = 0xb6eede09, kLow = 0xd9e40095, kMiddle = 0xb6a1ccdf,
+                        kHigh = 0x165af889;
+constexpr std::uint32_t kGoron = 0xd1317941;   // PouchData.Armor_Child_Gauntlet_Goron.StockNum
+constexpr std::uint32_t kSilver = 0x0012b8c0;  // PouchData.Armor_Adult_Gauntlet_Silver.StockNum
+constexpr std::uint32_t kGold = 0x40ae1183;    // PouchData.Armor_Adult_Gauntlet_Gold.StockNum
+}  // namespace lift
+
+// The grade the held strength items give (Goron's Bracelet Low, Silver
+// Gauntlets Middle, Golden Gauntlets High), when it is above `current`.
+// Nothing to write otherwise, or when `current` is not one of the four.
+std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t silver,
+                                              std::int32_t gold, std::uint32_t current);
+
 // When to mend (ItemFlagStore::mend), kept by the hook across frames: for
 // the first frames after Link comes into the game (a save or a scene
 // loaded: no Link, then Link), once a frame. The load may still be writing
@@ -93,11 +125,17 @@ std::span<const ItemGrant> all_item_grants();
 // mend frames (issues 128, 138).
 class LoadMend {
  public:
-  static constexpr unsigned kFrames = 90;  // about 1.5 s at 60 frames a second
+  static constexpr unsigned kFrames = 90;  // 1.5 s: 1/60 s frames of set_clock's clock
+
+  // Issue 106: frame() is called once per presented frame (up to 165 a
+  // second with high refresh); with a clock kFrames counts real 1/60 s.
+  // Without one each call is one frame.
+  void set_clock(GameTicks::Clock clock) { ticks_.set_clock(std::move(clock)); }
 
   // Once per emulated frame, with whether Link is in the game. True: mend
   // this frame.
   bool frame(bool link) {
+    const unsigned step = ticks_.step();
     if (link && !link_) left_ = kFrames;
     link_ = link;
     if (!link_) return false;
@@ -105,7 +143,7 @@ class LoadMend {
       pending_.clear();  // their mend frames are over
       return false;
     }
-    --left_;
+    left_ -= (std::min)(left_, step);
     return true;
   }
   // Link is in the game (as of the last frame()).
@@ -121,6 +159,7 @@ class LoadMend {
  private:
   bool link_ = false;
   unsigned left_ = 0;
+  GameTicks ticks_;
   std::vector<std::uint32_t> pending_;
 };
 

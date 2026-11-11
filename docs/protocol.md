@@ -1,4 +1,4 @@
-# Wire protocol, version 7
+# Wire protocol, version 8
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -92,6 +92,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries |
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
+| 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
@@ -111,7 +112,7 @@ Type numbers are never reused or renumbered; new types are added at the end.
 
 The `time` component is required in every sample; the others are sent only when the sender has them.
 
-A player sends `PLAYER_SAMPLE` every frame it moves (up to 60 a second) and at least 4 a second while still. Receivers keep the last 16 samples per player, show them about 100 ms behind (tuned by measuring), interpolate between samples and extrapolate up to 150 ms from the last one; beyond that the puppet holds and fades.
+A player sends `PLAYER_SAMPLE` every frame it moves (up to 60 a second: samples are at least 14 ms apart, so high refresh (Ctrl+U, up to 165 presents a second) sends no more; a scene or age change goes at once) and at least 4 a second while still. Receivers keep the last 16 samples per player, show them about 100 ms behind (tuned by measuring), interpolate between samples and extrapolate up to 150 ms from the last one; beyond that the puppet holds and fades.
 
 The player field of `JOIN_PARTNER`, `FLAG_SET` and `FLAG_STATE` works as in `CHAT`: 0 from a client, the sender's number from the server.
 
@@ -219,7 +220,7 @@ How it moves:
 
 ### Pose (`PLAYER_POSE`)
 
-The local Link's skeleton after its animation, so the puppet can copy it bone by bone ([puppet.md](puppet.md), "Pose"). On channel 3 with `PLAYER_SAMPLE`, unreliable: a lost pose is replaced by the next one.
+The local Link's skeleton after its animation, so the puppet can copy it bone by bone ([puppet.md](puppet.md), "Pose"). On channel 3 with `PLAYER_SAMPLE`, unreliable: a lost pose is replaced by the next one. Since protocol 8 a player also sends a `PLAYER_POSE` for each piece out in Link's hands (the slingshot, the bow), with that piece's own skeleton id and every bone ([puppet.md](puppet.md), "Held pieces"); the receiver keeps one track per skeleton id and writes each onto the piece of that skeleton. The layout is unchanged.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
@@ -278,6 +279,8 @@ The server's rules today (`server/session.cpp`):
 - At a player's first `OBJECT_PRESENT` in a scene the server sends it every `OBJECT_SPAWN` still alive there (player field: the owner; the last relayed state), each followed by `OBJECT_OWNER` when the owner is not the maker or the epoch is not 0.
 - `OBJECT_SAMPLE` and `OBJECT_REMOVE` are relayed only from the owner, with the object's current epoch, to the others in its scene; `OBJECT_SPAWN` of a made id only from the maker named in the id, once; of a placed id only from its current owner, in its scene (relayed, nothing registered). Anything else is dropped.
 - `DAMAGE` goes to the owner alone, whatever its epoch; one on a boss or a part of its group from a non-owner also asks the boss over to the hitter, at most every 8 s (issue 150, [dungeons-boss.md](dungeons-boss.md)); dropped when there is no owner or it comes from the owner. It starts the object's fight (12 s, 60 s for a boss).
+- A `DAMAGE` of amount 0 is a stun with no life lost: a boss copy whose own game went into a stun the owner's boss is not in (a seed in Gohma's eye) sends one, at most every 2 s, so the server hands the boss to that player. The owner's game takes it as no hit (issue 150).
+- A boss in its fight also moves to a fit player within 15 m of it and 4 m nearer than its owner for 4 s in a row (not while the owner hits it, not within 8 s of the last change; `boss_near_hold_us` 0 turns it off), since the boss's AI chases only its owner's Link (issue 150).
 - The server moves an object by the rules in [objects.md](objects.md) ("Enemies": the player near it out of a fight, a hit from the player near it, an owner that is loading, paused 6 s or dead 10 s, a group member after its root). It sends the owner `HANDOVER_ASK`; the owner answers `HANDOVER_STATE` with the ask's epoch (anything else is dropped); the server then sends the new owner `HANDOVER_STATE` with epoch + 1 (player field: the old owner) and everyone in the scene `OBJECT_OWNER`. No answer in 500 ms: the same with the last relayed sample. Until then the old owner's samples are still relayed.
 - `OBJECT_REMOVE` with reason dead from the owner before the last change, with the epoch before, is taken for 2 s after it and passed on with the current epoch.
 - An owner also sends `OBJECT_REMOVE` reason dead for a placed enemy that died in its game (issue 133, [objects.md](objects.md) "Kills and woken enemies"); the server keeps the id, owned by nobody, until no game lists it. Receivers end their copy. No new message: the server took this from protocol 4 on. The server also remembers it per scene, and a game that lists it later without having seen it die (a late entrant or a rejoin) gets the same `OBJECT_REMOVE` dead from the server, with no owner, until a game that saw it die lists it again (respawned) or the scene is empty ([objects.md](objects.md) "Kills for late entrants").
@@ -303,6 +306,8 @@ An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for pl
 Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length, unknown ids skipped, each known id at most once, `time` required): 1 `time` (12), 2 `position` (12), 3 `velocity` (12), 4 `rotation` (16), 7 `animation` (as in `PLAYER_SAMPLE`), 16 `life` (`s32` life, `s32` max, 8), 17 `fuse` (f32 seconds left, 4), 18 `state` (`u8`: bit 0 in a fight, bit 1 held, bit 2 asleep, 1). Floats must be finite.
 
 The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
+
+Fish and lures (issue 151, fishing-2, protocol 8) use no new message: a fish moves to the game whose lure it goes for through `OBJECT_PRESENT`'s targeting flag, a landed fish is `OBJECT_REMOVE` reason dead, and lures are `OBJECT_SPAWN`/`OBJECT_SAMPLE`/`OBJECT_REMOVE` made objects ([objects.md](objects.md), "Fish and lures"). Types 186 to 190 stay free for it.
 
 ### Drops
 
@@ -343,9 +348,13 @@ Types 51 to 54 are kept for boss rooms and not used.
 - `PLAYER_EQUIP` component 10, `held`, was added this way (2026-11-09) and the version stayed 3: a build without it skips it, and its puppets show no held item. The server reads and writes the message again when it relays, so a server without it drops the component: the held item needs a server that has it.
 - Version 1 (2026-11-09, the first test release): no layout changed, but the version went up so that the release and older development builds, which lack those messages, refuse each other at `HELLO` instead of playing a half-working session.
 - Version 2 (2026-11-09): `OBJECT_SPAWN` may carry a placed id, sent by that object's owner to name its actor for games that lack it. Version 1 readers refuse such a spawn, so the version went up.
-- Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the 0.1.0-test1 release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
-- Version 4 (2026-11-09, for 0.1.0-test4): one bump for all the messages of types 28 to 38: `GRASS_CUT` (28), `OBJECT_GROUP` (29), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35), `DROP_SPAWN`, `DROP_TAKE`, `DROP_ASK` (36 to 38); 30, 31 and 39 are kept free. No earlier layout changed. The version went up because the server now sends `HANDOVER_ASK` and moves objects between players, which a version 3 game does not answer, and so that a version 3 server, which would not relay the new types, is refused at `HELLO`: every game in a session shares grass, breaks and drops, or none does.
+- Version 3 (2026-11-09): `TIME_OF_DAY` (type 27). No layout changed; the version went up so that the first release, which never sends the host's clock, and this build refuse each other at `HELLO` instead of showing different skies.
+- Version 4 (2026-11-09): one bump for all the messages of types 28 to 38: `GRASS_CUT` (28), `OBJECT_GROUP` (29), `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` (32 to 35), `DROP_SPAWN`, `DROP_TAKE`, `DROP_ASK` (36 to 38); 30, 31 and 39 are kept free. No earlier layout changed. The version went up because the server now sends `HANDOVER_ASK` and moves objects between players, which a version 3 game does not answer, and so that a version 3 server, which would not relay the new types, is refused at `HELLO`: every game in a session shares grass, breaks and drops, or none does.
 - Version 5 (chunk 2): `BOSS_ROOM` (50). No earlier layout changed. The version went up so that a version 4 game, which would never move into the boss room or leave the intro with the others, is refused at `HELLO`.
 - Version 6 (chunk 4): `SIGN_CUT` (80; 80 to 84 kept for signs). No earlier layout changed. The version went up so that a version 5 server, which would not relay it, is refused at `HELLO`.
-- Version 7 (chunk 5, test7): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
+- Version 7 (chunk 5): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
 - Version 7 also brings `FLAG_RESET` (135; 135 to 139 kept for saves, branch `host-save`): the host's save load sets every game's shared flags to the save's values. A version 6 server would not relay it.
+- Version 8: `FLAG_ORIGIN` (150; 150 to 154 kept), from the server only. A version 7 game would refuse it as unknown, so every game and the server must be 8.
+- Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
+- Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
+- Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).

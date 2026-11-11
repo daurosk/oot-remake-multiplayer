@@ -24,6 +24,7 @@
 //   toward -7.5 71.1 8     push the stick toward that point for 8 ticks
 //                          (Link turns to face it)
 //   warp KakarikoVillage_Child Kakariko_WellSide
+//   chat /teleport Saria   (the rest of the line, sent as the chat box sends it)
 //                          test only: changes scene the way the game's own
 //                          sequence does (Sequence_ReservedNextBanc), to the
 //                          start position given (StartPos names in the
@@ -32,6 +33,11 @@
 //                          save loads: put the warp before the presses that
 //                          load the save (the hook asks again every 0.5 s
 //                          for up to 90 s, until Link is in that scene)
+//   place -37.2 109.8 13.5 test only: puts Link at world x, y (height), z
+//                          in this scene (the boss pull's free-play move,
+//                          CoopBoss::MoveLink; needs LICHII_COOP_BOSS on, the
+//                          default), so a scenario reaches a room no walk
+//                          can; logs "coop: test place ...: done" or "failed"
 //   give bombs             test only: gives an item through coop_cheats
 //                          (needs LICHII_COOP_CHEATS=1): bombs, bow, hookshot,
 //                          or any item flag name coop_cheats knows
@@ -102,6 +108,8 @@ enum class Kind {
     give,    // test only: an item
     wear,    // test only: a PlayerStatus.Equip* flag (what the puppets in other games wear)
     assign,  // test only: the item on ZR (PlayerStatus.AssignableItem.Child and .Adult)
+    chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
+    place,   // test only: Link put at x, y, z in this scene
 };
 
 struct Step {
@@ -113,7 +121,8 @@ struct Step {
     std::string mark;  // mark: its name; warp: the scene; give: the item; wear: the piece;
                        // assign: the item's name in the button enum (Bow, Hookshot, Hammer)
     std::string start; // warp: the start position name (empty: the scene's own); wear: the slot
-    float x = 0.0f;  // goto and toward: the world point (x, z)
+    float x = 0.0f;  // goto and toward: the world point (x, z); place: (x, y, z)
+    float y = 0.0f;
     float z = 0.0f;
     float radius = 1.0f;
     int line = 0;  // the script line it came from
@@ -172,6 +181,7 @@ public:
         Kind kind = Kind::warp;
         std::string name;
         std::string start;
+        std::array<float, 3> at{};  // place
     };
     std::vector<Request> TakeRequests() { return std::exchange(requests_, {}); }
     bool Done() const { return index_ >= script_.steps.size(); }

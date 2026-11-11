@@ -84,6 +84,7 @@ struct Game {
     FakeGuest guest;
     std::uint64_t create_result = 1;  // what the game's create returns
     bool queue_anyway = false;        // a request in the handle even so
+    std::uint64_t unequip_result = 1; // what the game's armor take-off returns
     Game() {
         guest.Map(kBase + addr::kActorManagerPtr, 8);
         guest.Map(kBase + addr::kGotCreateDefault, 8);
@@ -142,6 +143,8 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
             }
         } else if (call->function == kBase + addr::kRequestDelete) {
             result = 1;
+        } else if (call->function == kBase + addr::kUnequipArmor) {
+            result = g.unequip_result;
         } else if (call->function == kBase + addr::kTakeCreated) {
             REQUIRE(g.guest.Read(call->x[0] + addr::kRequestActor, &result, 8));
         }
@@ -231,7 +234,7 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     CHECK_FALSE(CoopSites::ChangedSite(std::vector<std::uint8_t>(16, 0xff)).has_value());
 }
 
-TEST_CASE("puppet cave: co-op that already runs stops once when a code mod is found later (#136, test7)") {
+TEST_CASE("puppet cave: co-op that already runs stops once when a code mod is found later (#136)") {
     // The emulator started directly: co-op connected before the game's main was patched.
     CHECK_FALSE(CoopSites::MustStopForMod(true, false, ""));             // main as shipped
     CHECK(CoopSites::MustStopForMod(true, false, "main+0x3c46280"));     // the patcher refused
@@ -703,7 +706,7 @@ TEST_CASE("puppet gear: each known piece worn once, on its own name cell") {
     CHECK(calls[0].x[1] == 6u);
 }
 
-TEST_CASE("puppet gear: a mask taken off makes the puppet again without it, a held item is only put away") {
+TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a held item is only put away") {
     Game g;
     Director d;
     MakeLive(d, g);
@@ -736,15 +739,97 @@ TEST_CASE("puppet gear: a mask taken off makes the puppet again without it, a he
     d.SetInput(Wants({t}));
     CHECK(Frame(d, g, 3300).empty());
     CHECK(Frame(d, g, 3300 + Director::kTakeOffMs - 10).empty());
-    // ...gone this long, the puppet is deleted and made again without the mask.
-    CHECK(Frame(d, g, 3300 + Director::kTakeOffMs).empty());
-    calls = Frame(d, g, 3300 + Director::kTakeOffMs + 10);
+    // ...gone this long, the game's own call takes it off (head: index 0).
+    calls = Frame(d, g, 3300 + Director::kTakeOffMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kUnequipArmor);
+    CHECK(calls[0].x[0] == kEu);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == 0u);
+    // Taken off: no remake, nothing more.
+    CHECK(Frame(d, g, 3300 + Director::kTakeOffMs + 10).empty());
+    CHECK(Frame(d, g, 3300 + Director::kTakeOffMs + 5000).empty());
+    // Put on again later: worn with the equip call.
+    t.gear[2] = "Armor_Child_Mask_Bunny";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 9000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[1] == 7u);
+}
+
+TEST_CASE("puppet gear: tunic, boots and gauntlets come off by their armor index") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[3] = "Armor_Adult_Goron";
+    t.gear[4] = "Armor_Adult_HoverBoot";
+    t.gear[CoopPuppet::kGearHand] = "Armor_Adult_Gauntlet_Silver";
+    d.SetInput(Wants({t}));
+    REQUIRE(Frame(d, g, 20).size() == 3);
+    t.gear[3] = "";
+    t.gear[4] = "";
+    t.gear[CoopPuppet::kGearHand] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 100).empty());
+    auto calls = Frame(d, g, 100 + Director::kTakeOffMs);
+    REQUIRE(calls.size() == 3);
+    CHECK(calls[0].function == kBase + addr::kUnequipArmor);
+    CHECK(calls[0].x[1] == 1u);  // upper
+    CHECK(calls[1].x[1] == 2u);  // lower
+    CHECK(calls[2].x[1] == 3u);  // hand
+    CHECK(Frame(d, g, 200 + Director::kTakeOffMs).empty());
+}
+
+TEST_CASE("puppet gear: a refused take-off and a sword taken off make the puppet again") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.unequip_result = 0;
+    Target t = At(1, 4, 5, 6);
+    t.gear[2] = "Armor_Child_Mask_Skull";
+    d.SetInput(Wants({t}));
+    REQUIRE(Frame(d, g, 20).size() == 1);
+    t.gear[2] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 100).empty());
+    auto calls = Frame(d, g, 100 + Director::kTakeOffMs);
+    // Asked and refused; the next frame deletes it, to make it again.
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kUnequipArmor);
+    calls = Frame(d, g, 110 + Director::kTakeOffMs);
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kRequestDelete);
-    g.guest.Set(kActor + addr::kActorState, std::uint32_t{9});
-    calls = Frame(d, g, 3300 + Director::kTakeOffMs + 20);
+
+    // A sword has no take-off call: made again without it.
+    Game g2;
+    Director d2;
+    MakeLive(d2, g2);
+    g2.guest.Map(kParts, 0x1000);
+    g2.guest.Set(kActor + addr::kActorParts, kParts);
+    g2.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t2 = At(1, 4, 5, 6);
+    t2.gear[0] = "Weapon_Sword_Kokiri";
+    d2.SetInput(Wants({t2}));
+    REQUIRE(Frame(d2, g2, 20).size() == 1);
+    t2.gear[0] = "";
+    d2.SetInput(Wants({t2}));
+    CHECK(Frame(d2, g2, 100).empty());
+    CHECK(Frame(d2, g2, 100 + Director::kTakeOffMs).empty());
+    calls = Frame(d2, g2, 110 + Director::kTakeOffMs);
     REQUIRE(calls.size() == 1);
-    CHECK(calls[0].function == kBase + addr::kCreate);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
 }
 
 TEST_CASE("puppet gear: a worn piece goes into the hand and back as its player's does") {
@@ -1407,8 +1492,10 @@ TEST_CASE("puppet: refused creates slow down, one with a request is waited for")
 TEST_CASE("puppet gear: every hand slot and the gauntlets have a piece, kind and name cell") {
     using namespace CoopPuppet;
     // The game's slot kinds: weapon 0, shield 6, head 7, armor 8, boots 9,
-    // bow 5, gauntlets 10, sub weapon 1, third weapon 2, tool 11, sub tool 12.
-    CHECK(kGearKinds == std::array<std::uint32_t, kGearCount>{0, 6, 7, 8, 9, 5, 10, 1, 2, 11, 12});
+    // bow 5, gauntlets 10, sub weapon 1, third weapon 2, tool 11, sub tool 12,
+    // and the Ocarina's holder and Ocarina as Accessory1 and Accessory4 (13, 16).
+    CHECK(kGearKinds ==
+          std::array<std::uint32_t, kGearCount>{0, 6, 7, 8, 9, 5, 10, 1, 2, 11, 12, 13, 16});
     // Each kind once, each hand slot at most once, none past the drawn bits.
     for (std::size_t i = 0; i < kGearCount; ++i) {
         for (std::size_t j = i + 1; j < kGearCount; ++j) {
@@ -1422,11 +1509,14 @@ TEST_CASE("puppet gear: every hand slot and the gauntlets have a piece, kind and
     CHECK(kGearSlots[kGearTool] == 5);
     CHECK(kGearSlots[kGearSubTool] == 6);
     CHECK(kGearSlots[kGearHand] == -1);
+    CHECK(kGearSlots[kGearOcarinaHolder] == -1);  // accessories: no hand slot
+    CHECK(kGearSlots[kGearOcarina] == -1);
     // Carried pieces are looked at for "left behind" only while in hand.
     CHECK(GearIsCarried(kGearHeld));
     CHECK(GearIsCarried(kGearTool));
     CHECK_FALSE(GearIsCarried(0));
     CHECK_FALSE(GearIsCarried(kGearHand));
+    CHECK_FALSE(GearIsCarried(kGearOcarina));  // worn on the belt, like the sword
     // The block holds a name cell and a pointer for each.
     CHECK(block::kGearText + block::kGearCapacity * kGearCount <= block::kGearPtr);
     CHECK(block::kGearPtr + 8 * kGearCount <= block::kSize);
@@ -1453,6 +1543,54 @@ TEST_CASE("puppet gear: a PLAYER_EQUIP becomes the pieces, the sword hand's own 
     CHECK(GearOf(e)[0] == "Weapon_Sword_Kokiri");
     e.weapon_slot = "Weapon_Sword_DekuStick";  // a stick in the sword hand
     CHECK(GearOf(e)[0] == "Weapon_Sword_DekuStick");
+}
+
+TEST_CASE("puppet gear: the Ocarina and its belt holder come from PLAYER_EQUIP's ocarina (issue 152)") {
+    using namespace CoopPuppet;
+    coop::protocol::Equipment e;
+    CHECK_FALSE(GearOf(e)[kGearOcarina]);  // not sent: not known
+    CHECK_FALSE(GearOf(e)[kGearOcarinaHolder]);
+    e.ocarina = "";  // no Ocarina: nothing to wear
+    CHECK_FALSE(GearOf(e)[kGearOcarina]);
+    e.ocarina = "Item_Ocarina_Fairy";
+    Gear g = GearOf(e);
+    CHECK(g[kGearOcarina] == "Item_Ocarina_Fairy");
+    CHECK(g[kGearOcarinaHolder] == "Item_Ocarina_Fairy_Holder");
+    e.ocarina = "Item_Ocarina_Time";
+    g = GearOf(e);
+    CHECK(g[kGearOcarina] == "Item_Ocarina_Time");
+    CHECK(g[kGearOcarinaHolder] == "Item_Ocarina_Time_Holder");
+    e.ocarina = "Weapon_Sword_Kokiri";  // not an Ocarina: not worn as one
+    CHECK_FALSE(GearOf(e)[kGearOcarina]);
+}
+
+TEST_CASE("puppet gear: the Ocarina pieces are equipped as Accessory1 and Accessory4 (issue 152)") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearOcarinaHolder] = "Item_Ocarina_Fairy_Holder";
+    t.gear[CoopPuppet::kGearOcarina] = "Item_Ocarina_Fairy";
+    d.SetInput(Wants({t}));
+    const auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 2);
+    const std::size_t index[] = {CoopPuppet::kGearOcarinaHolder, CoopPuppet::kGearOcarina};
+    for (std::size_t k = 0; k < 2; ++k) {
+        CHECK(calls[k].function == kBase + addr::kEquip);
+        CHECK(calls[k].x[0] == kEu);
+        CHECK(calls[k].x[1] == (k == 0 ? 13u : 16u));
+        CHECK(calls[k].x[2] == kHeap + block::kGearPtr + 8 * index[k]);
+        const auto text = g.guest.Get<std::uint64_t>(calls[k].x[2]);
+        std::array<char, block::kGearCapacity> name{};
+        g.guest.Read(text, name.data(), name.size());
+        CHECK(std::string(name.data()) == *t.gear[index[k]]);
+    }
+    CHECK(Frame(d, g, 40).empty());  // worn: not again
 }
 
 TEST_CASE("puppet gear: a tool is equipped with the tool kind and drawn on its own slot") {

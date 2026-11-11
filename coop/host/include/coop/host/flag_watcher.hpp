@@ -35,6 +35,7 @@
 
 #include "coop/host/flags.hpp"
 #include "coop/host/outgoing.hpp"
+#include "coop/host/ticks.hpp"
 #include "coop/protocol/messages.hpp"
 
 namespace coop::host {
@@ -61,6 +62,7 @@ struct FlagStats {
   std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
   std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
   std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
+  std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
 };
 
 class FlagWatcher {
@@ -133,6 +135,29 @@ class FlagWatcher {
   std::vector<FlagKey> take_own_count_drops() { return std::exchange(own_count_drops_, {}); }
   static constexpr std::size_t kMaxOwnCountDrops = 64;
 
+  // A count that only one-time pickups raise (issue 89: the Gold Skulltula
+  // tokens, raised only by a Skulltula's token, whose taking sets that
+  // Skulltula's 64-bit key in the same scan). `sources` are shared as pickups
+  // (share_pickup). Then a gain of `count` in our own game is sent only
+  // against one of `sources` going 0 to 1 in our own game within
+  // kGuardHoldFrames before or after it. A gain with none, while one of
+  // `sources` was written 0 to 1 here for another player within the last
+  // kGuardRecentFrames, is our game counting again what another player took
+  // (the token stayed here): it is put back and not sent. A gain with none and
+  // no such take (a cheat, or a source we do not know) is sent as before, once
+  // the hold is over. A drop of our own while a gain is held, or just after
+  // one was put back, cancels against it: the world sync gave that same token
+  // back (docs/world.md, "both at once"). docs/items.md, "Gold Skulltulas".
+  void guard_count(FlagKey count, std::span<const FlagKey> sources);
+  static constexpr std::uint64_t kGuardHoldFrames = 90;
+  static constexpr std::uint64_t kGuardRecentFrames = 5 * 60 * 60;
+  struct CountGuarded {
+    FlagKey count;
+    std::int32_t amount = 0;  // the gain put back
+  };
+  // The gains guard_count put back since the last call, for the log.
+  std::vector<CountGuarded> take_counts_guarded() { return std::exchange(counts_guarded_, {}); }
+
   // The host left and this player takes over, or the other way round. Keeps
   // what is known of the game; drops a snapshot being held.
   void set_role(FlagRole role);
@@ -161,6 +186,24 @@ class FlagWatcher {
   // rule) is not sent: the group's value is written back. A Bool going to 1,
   // or an Int to any other value, is the game's own change and is sent.
   void set_loading(bool loading);
+
+  // A shared value another game's change wrote into ours (the chat notices,
+  // coop/host/notify.hpp): the flag, its value before and after, who made
+  // the change (the asker named by FLAG_ORIGIN, else the host that sent it;
+  // 0 when not known) and how it came.
+  enum class ReceivedKind { live, join, reset };
+  struct Received {
+    FlagKey key;
+    protocol::FlagEntry before;
+    protocol::FlagEntry after;
+    std::uint8_t from = 0;
+    ReceivedKind kind = ReceivedKind::live;
+  };
+  // What was received since the last call (at most kMaxReceived kept).
+  std::vector<Received> take_received() { return std::exchange(received_, {}); }
+  static constexpr std::size_t kMaxReceived = 4096;
+  // A FLAG_ORIGIN names its asker for this many frames.
+  static constexpr std::uint64_t kOriginFrames = 600;
   // Whether a scene (Banc) is loaded this frame. None for kTitleFrames in a
   // load window means the title screen or file select: the only way to a
   // save load (docs/flags.md, "Saves"). Default: loaded.
@@ -169,6 +212,10 @@ class FlagWatcher {
   static constexpr int kSaveLoadMin = 2;
   static constexpr int kSettleFrames = 120;
   bool settling() const { return loading_ || settle_left_ > 0; }
+  // The frames above (and kOriginFrames) are 1/60 s of this clock, not
+  // calls to frame() (issue 106: high refresh calls it up to 165 a second).
+  // Without a clock each call is one frame.
+  void set_clock(GameTicks::Clock clock) { ticks_.set_clock(std::move(clock)); }
 
   // After a reconnect: drops anything queued or held, and the group values
   // of set_loading (the next snapshot brings them again). Local changes still
@@ -203,8 +250,8 @@ class FlagWatcher {
   const SharedFlags& shared() const { return shared_; }
 
  private:
-  using Incoming =
-      std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot, protocol::FlagReset>;
+  using Incoming = std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot,
+                                protocol::FlagReset, protocol::FlagOrigin>;
   using Table = std::map<FlagKey, protocol::FlagEntry>;
 
   void handle(FlagStore& store, Incoming& message, Table& answers);
@@ -239,11 +286,37 @@ class FlagWatcher {
   std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
   std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
+  struct Guard {
+    std::int32_t held = 0;          // own gain not sent yet
+    std::uint64_t held_since = 0;   // frame the oldest held gain was seen
+    std::int32_t credit = 0;        // own source 0 to 1 not matched yet
+    std::uint64_t credit_since = 0;
+    std::uint64_t others_at = 0;    // frame a source was last written 0 to 1 for another player
+    std::int32_t put_back = 0;      // gain just put back: an own drop cancels against it
+    std::uint64_t put_back_at = 0;
+    std::int32_t own = 0;           // that change, ours only
+  };
+  std::map<FlagKey, Guard> guards_;          // guard_count, by count
+  std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
+  Table added_;                              // count deltas add() put in this frame
+  std::vector<CountGuarded> counts_guarded_;  // take_counts_guarded
+  void settle_guards(FlagStore& store, Table& changes);
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);
   std::size_t learned_ = 0;
   bool learn_ = false;
   std::vector<Incoming> queue_;
+  // The chat notices (take_received).
+  void note_received(const FlagKey& key, const protocol::FlagEntry& before, const protocol::FlagEntry& after);
+  std::uint8_t from_ = 0;  // who sent the message being applied
+  ReceivedKind received_kind_ = ReceivedKind::live;
+  bool recording_ = false;  // applying another game's message
+  std::vector<Received> received_;
+  std::map<FlagKey, std::pair<std::uint8_t, std::uint64_t>> origin_;  // asker, frame
+  // from_ becomes the asker FLAG_ORIGIN named for key (if fresh); used once.
+  void take_origin(const FlagKey& key);
+  std::uint64_t frames_ = 0;
+  GameTicks ticks_;   // set_clock
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer
   Table unwritten_;   // incoming values whose write failed; tried again

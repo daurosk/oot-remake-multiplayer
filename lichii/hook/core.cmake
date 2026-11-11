@@ -5,6 +5,8 @@ set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
     "${_coop_hook}/coop_boss.cpp"
     "${_coop_hook}/coop_boss_game.cpp"
+    "${_coop_hook}/coop_teleport.cpp"
+    "${_coop_hook}/coop_teleport_game.cpp"
     "${_coop_hook}/coop_camera.cpp"
     "${_coop_hook}/coop_cheat_items.cpp"
     "${_coop_hook}/coop_cheats.cpp"
@@ -25,6 +27,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_spawn.cpp"
     "${_coop_hook}/coop_svc.cpp"
     "${_coop_hook}/coop_world.cpp"
+    "${_coop_hook}/coop_ocarina.cpp"
     "${_coop_hook}/coop_testinput.cpp"
     "${_coop_hook}/coop_time.cpp"
     "${_coop_hook}/coop_time_sync.cpp"

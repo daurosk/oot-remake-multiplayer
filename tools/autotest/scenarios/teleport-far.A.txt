@@ -1,0 +1,26 @@
+# teleport2's A (#156): from the save point, the cutscene scenario's route to the Kakariko
+# sign (same timings, so A ends east of the post facing it), with /teleport B typed on
+# arrival in Kakariko. Reading the sign is an event, during which the scene change is taken.
+mark start
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard
+wait 420                # Kakariko loads
+mark kakariko
+wait 300               # let the load settle: a busy game drops the request
+chat /teleport B
+wait 60
+stick 0 1 60
+goto -5.9 70.5 0.6      # just east of the post
+toward -7.46 71.12 8
+mark at-post
+wait 20
+press A 12              # read it: the scene change is taken
+wait 900
+mark arrived
+wait 240
+mark settled
+press A 12              # talk / check: must not load the Graveyard again
+wait 120
+press A 12
+wait 360
+mark end

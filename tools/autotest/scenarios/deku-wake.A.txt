@@ -1,0 +1,50 @@
+# deku-wake (enemy-sync: #132 every Deku Baba rises for every player, #133 a kill by either game
+# is a kill in both). Both games load into the Deku Tree entrance room. Floor Babas (x z, from the
+# objects log; y about 80): -22.81 -1.82, -28.01 6.76, -13.82 8.94 and -71.33 3.50.
+# A goes to the Baba at -22.81 -1.82 and stops 3 m short; B goes to the one at -71.33 3.50 (about
+# 49 m away from A's), so each Baba is woken by a different player. Each then fights its own.
+# Expect, in both games' shots at "risen": both Babas up (not just the one near that game's Link).
+# Logs, each game: for the Baba near the OTHER player either "(its own AI: ...)" lines and an
+# owner move to the other player, or the other player owning it from the distance rule; never a
+# Baba that stays in 'Wait' on one screen while it plays 'GetUp'/'Wait_Battle' on the other for
+# more than 2 s. Kills: "dead in its owner's game" or "share got damage" in the other game, and the
+# Baba gone on both screens at "after-kill". Worst copy lines ("share worst copy") under 1 m.
+#! noload
+#! start coop: test warp done
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+goto -19.8 -1.8 1.0 900     # 3 m east of the Baba at -22.81 -1.82
+toward -22.81 -1.82 6
+wait 300                    # it rises for A; B is at its own Baba by now
+mark risen
+toward -22.81 -1.82 6
+hold ZL 20
+hold ZL+Y 8
+hold ZL 16
+hold ZL+Y 8
+hold ZL 16
+hold ZL+Y 8
+hold ZL 30
+toward -22.81 -1.82 6
+hold ZL+Y 8
+hold ZL 16
+hold ZL+Y 8
+hold ZL 30
+mark fight
+wait 300
+mark after-kill
+toward -71.33 3.50 10       # look over at B's Baba
+wait 600
+mark end

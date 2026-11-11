@@ -32,7 +32,7 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 
 ## Seeds, arrows and hookshot tips: stand-ins (issue 85)
 
-Players on test6 saw the other player aim the slingshot, but never the seed. The test4 player logs show why it was not the network: every seed was sent (`spawn: sent Shootable_DekuSeed`), and the other game made each copy and deleted it at the remove (`create copy`, `copy N is actor`, `copy N deleted`). The copy was there and was not drawn.
+Players saw the other player aim the slingshot, but never the seed. The player logs (2026-11-10) show why it was not the network: every seed was sent (`spawn: sent Shootable_DekuSeed`), and the other game made each copy and deleted it at the remove (`create copy`, `copy N is actor`, `copy N deleted`). The copy was there and was not drawn.
 
 - **Why** (read from the romfs and `main`, no run): the copy was the game's own `Shootable_DekuSeed`, made by the create request with no shooter.
   - A shootable made that way starts in the state its `ShootableParam` names as `NoShooterCreateStartState`. That is `UsedExternally` (hash 2207839275; the states are `Sleep`, `Prepare`, `Shoot`, `Stationary`, `Reflected`, `UsedExternally`).
@@ -46,7 +46,20 @@ Players on test6 saw the other player aim the slingshot, but never the seed. The
   - A pack built before this change lists none, so its copies are the game's own actors, as before. The kit's pack hint already asks for a rebuild when the tool changes.
   - A stand-in that never becomes an actor (create failed, timed out or dropped, or the take gave none) is made again. After 3 failures in a row the director logs `<actor>: CoopShot_... could not be made 3 times in a row; the game's own actor is used` and uses the game's own actor for the rest of the session.
   - The stand-ins' ActorInfo rows take the puppet's overrides (CalcRadius 100000, CoreUsedLevel 0), so a far shot is still calculated.
+- **Lures (issue 151, fishing-2):** a cast lure (`Weapon_Lure`, `Weapon_SinkingLure`) is shared the same way, as `CoopShot_Lure` and `CoopShot_SinkingLure` (their model `Item_Lure` / `Weapon_SinkingLure` and LOD). A lure copy is only ever the stand-in (`CoopSpawn::StandInOnly`): the game's own lure in another game would be a lure that game's fish go for. With no stand-in in the pack, or after 3 failed tries, no lure copy is made. Our own lures' places also go to the objects sync for the fish rules ([objects.md](objects.md), "Fish and lures").
 - Bombs, bombchus, nuts and the boomerang are unchanged: they have their own AI and are drawn as copies (the nut's flash was seen by players).
+
+## Does the seed's place move in flight? (issue 158)
+
+Players never saw a seed fly. The test logs (spawn-seed 2026-11-10 18:01, slingshot 2026-11-09) show the seed's life on A: made when the slingshot is drawn, sitting in the sling while A aims (its copy in B's game is the seed B sees in the puppet's sling); shot when ZR is let go; gone 0.1 to 0.35 s later; and a new one made in the sling at once for the next shot. Every shot seed was removed as `gone`, not `hit`: at its last two walks it moved under 3 m/s. So either the game keeps a flying shootable's +0x31c at the sling (and the copy never moves), or the seed stops before it goes. Which one is not known.
+
+Each of our projectiles that leaves the list now logs how it moved: `coop: shots: our Shootable_DekuSeed #... gone (reason N) after T ms: went D m from where it was made, top speed S m/s` (`Sync::Flights`). A shot seed with D under a metre means its place does not move in flight, and the copy needs its path from elsewhere (the shooter's aim and the seed's speed).
+
+**The shot's moment from the ammo, and a made-up flight.** So the copy flies whichever way it is, the maker reads its seed and arrow counts every walk (`PouchData.Item_DekuSeed.StockNum` 0x5fadf7fc, `Item_Arrow_Normal` 0x518ec74b; `CoopProjectiles::AmmoWatch`). When one goes down, the newest nocked `Shootable_DekuSeed` or `NormalArrow` of ours was let go then (`Sync::Shot`; log `coop: shots: our Shootable_DekuSeed let go (N left)`).
+- If its place moved faster than 8 m/s in the next 100 ms, nothing changes: its samples carry the flight.
+- If not, its flight is made up and sent in place of its place, as ordinary `OBJECT_SAMPLE`s. It goes straight from where it sat, along the +z axis of its turn (+0x328), at 40 m/s for a seed and 56 m/s for an arrow, for at most 0.4 s, then holds. Its remove carries the end of that flight. Log: `... did not move in its place after the shot: its flight is sent from the shot, from X Y Z at VX VY VZ m/s`. No new message, and the receiving games need no change.
+- Switches, for the in-game check: `LICHII_COOP_SHOT_AXIS` (0 to 5: +x +y +z -x -y -z of the turn, default 2) if the copies fly the wrong way, and `LICHII_COOP_SHOT_SPEED` (m/s).
+- Not covered: the hookshot tip (no ammo count) and a shot of the last seed or arrow if the count is not read in time. Bombs, bombchus, nuts and the boomerang are thrown actors with their own physics and keep their samples.
 
 ## Not done
 

@@ -1,0 +1,21 @@
+mark start
+goto -35.7 8.5 1.5 600  # the start spot (after part 1 A stands up the path by B)
+stick 0 -1 150          # down out of the Graveyard
+wait 480
+mark kakariko
+chat /teleport B
+wait 120
+stick 0 1 60
+goto -5.9 70.5 0.6      # the sign post (cutscene scenario)
+toward -7.46 71.12 8
+wait 20
+press A 12              # read it: an event, the scene change is taken
+wait 900
+mark arrived
+wait 240
+mark settled
+press A 12              # talk / check: must not load the Graveyard again
+wait 120
+press A 12
+wait 360
+mark end

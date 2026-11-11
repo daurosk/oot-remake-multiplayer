@@ -387,6 +387,21 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         Say(who + " wears " + kGearNames[slot.equip_index] + " '" + slot.equip_name +
             "' (returned " + Hex(result & 0xff) + ")");
         break;
+    case Pending::unequip: {
+        const std::size_t i = slot.equip_index;
+        if ((result & 0xff) != 0) {
+            Say(who + " takes off " + kGearNames[i] + " '" + slot.worn[i] + "' (returned " +
+                Hex(result & 0xff) + ")");
+            slot.worn[i].clear();
+            slot.off_since_ms[i] = 0;
+        } else {
+            // Refused: the next Equip makes the puppet again without it.
+            Say(who + " takes off " + kGearNames[i] + " '" + slot.worn[i] +
+                "': the game's call returned 0");
+            slot.unequip_refused[i] = true;
+        }
+        break;
+    }
     case Pending::hold: {
         // Taken when the slot's byte shows the state asked for.
         std::uint64_t parts = 0;
@@ -606,6 +621,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.rewear_tries = {};
     slot.remake = false;
     slot.off_since_ms = {};
+    slot.unequip_refused = {};
     pending_ = Pending::create;
     return c;
 }
@@ -662,6 +678,32 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
             text += std::string(" want ") + (((*wanted >> s) & 1u) != 0 ? "hand" : "away");
         }
     }
+    // The armor links (mask, tunic, boots, gauntlets and the belt pieces):
+    // index, id, actor, its state and place.
+    for (std::uint32_t a = 0; a < addr::kArmorLinkCount; ++a) {
+        const std::uint64_t link = eu + addr::kArmorLinks + addr::kEquipSlotStride * a;
+        std::uint32_t id = 0xFFFFFFFFu;
+        std::uint64_t holder = 0;
+        std::uint64_t piece = 0;
+        std::uint32_t state = 0;
+        Vec3 at{};
+        if (!ReadValue(guest, link + addr::kEquipSlotId, id) || id == 0xFFFFFFFFu) {
+            continue;
+        }
+        ReadValue(guest, link + addr::kEquipSlotHolder, holder);
+        if (holder != 0) {
+            ReadValue(guest, holder + addr::kHolderActor, piece);
+        }
+        if (piece != 0) {
+            ReadValue(guest, piece + addr::kActorState, state);
+            ReadValue(guest, piece + addr::kActorPosition, at);
+        }
+        char place[64];
+        std::snprintf(place, sizeof(place), "up %.2f off %.2f", static_cast<double>(at[1] - own[1]),
+                      static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
+        text += "; armor " + std::to_string(a) + ": id " + Hex(id) + " actor " + Hex(piece) +
+                " state " + std::to_string(state) + " " + place;
+    }
     return text;
 }
 }  // namespace
@@ -669,9 +711,10 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
 // One equip call for a live puppet whose player's gear differs from what it
 // wears, or none. An empty name (nothing in that slot): a carried piece (the
 // held item, the tool slots) is only put away, as its player's is; a worn one
-// (sword, shield, mask, tunic, boots, gauntlets) cannot be taken off by a
-// known call (0x2e01a90 with "" is a guess), so the puppet is made again
-// without it (slot.remake; issue 91: a mask taken off stayed on).
+// that stays empty for kTakeOffMs is taken off: armor (mask, tunic, boots,
+// gauntlets) with the game's own call (addr::kUnequipArmor); a sword or a
+// shield, which has no known call, or armor the call refused, by making the
+// puppet again without it (slot.remake; issue 91: a mask taken off stayed on).
 std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest,
                                     std::uint64_t now_ms) {
     if (anim_ && now_ms - slot.gear_log_ms >= 2000) {
@@ -714,6 +757,22 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
             }
             if (now_ms - slot.off_since_ms[i] < kTakeOffMs) {
                 continue;
+            }
+            if (GearIsArmor(i) && !slot.unequip_refused[i]) {
+                std::uint64_t parts = 0;
+                std::uint64_t eu = 0;
+                if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+                    !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+                    continue;  // not set up (yet): try again next frame, other pieces go on
+                }
+                slot.equip_index = i;
+                Call c;
+                c.function = input_.main_base + addr::kUnequipArmor;
+                c.x[0] = eu;
+                c.x[1] = kGearKinds[i] - addr::kArmorKindFirst;
+                c.x[2] = 0;
+                pending_ = Pending::unequip;
+                return c;
             }
             Say("P" + std::to_string(slot.number) + " takes off " + kGearNames[i] + " '" +
                 slot.worn[i] + "': puppet made again without it");
@@ -1158,6 +1217,12 @@ void Director::Status(Guest& guest, std::uint64_t now_ms) {
 Gear GearOf(const coop::protocol::Equipment& e) {
     Gear gear{e.weapon, e.shield,     e.head,         e.armor, e.boots,   e.held,
               e.hand,   e.sub_weapon, e.third_weapon, e.tool,  e.sub_tool};
+    // The Ocarina and its belt holder (issue 152): "Item_Ocarina_Fairy" and
+    // "Item_Ocarina_Fairy_Holder" (or _Time); none while the player has none.
+    if (e.ocarina && e.ocarina->starts_with("Item_Ocarina_")) {
+        gear[kGearOcarinaHolder] = *e.ocarina + "_Holder";
+        gear[kGearOcarina] = e.ocarina;
+    }
     // What is really in the sword hand (a Deku stick) goes before the
     // equipped sword's name; an empty slot leaves the flag's name.
     if (e.weapon_slot && !e.weapon_slot->empty()) {

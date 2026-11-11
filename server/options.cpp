@@ -1,6 +1,8 @@
 #include "options.hpp"
 
+#include <algorithm>
 #include <charconv>
+#include <string_view>
 #include <limits>
 #include <system_error>
 
@@ -49,6 +51,31 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         error = "--max-half-open needs a number (0 for no limit)";
         return std::nullopt;
       }
+    } else if (arg == "--bind") {
+      const auto r = has_value ? parse_address_range(args[i + 1]) : std::nullopt;
+      if (!r || r->prefix != 32) {
+        error = "--bind needs one IPv4 address of this PC, for example 25.1.2.3";
+        return std::nullopt;
+      }
+      line.bind = r->first;
+      ++i;
+    } else if (arg == "--allow") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--allow needs IPv4 addresses or ranges, for example 25.1.2.3,26.0.0.0/8";
+        return std::nullopt;
+      }
+      const std::string& list = args[++i];
+      std::size_t start = 0;
+      while (start <= list.size()) {
+        const std::size_t comma = std::min(list.find(',', start), list.size());
+        const auto r = parse_address_range(std::string_view(list).substr(start, comma - start));
+        if (!r) {
+          error = "--allow: not an IPv4 address or range: " + list.substr(start, comma - start);
+          return std::nullopt;
+        }
+        line.allowed.push_back(*r);
+        start = comma + 1;
+      }
     } else {
       error = "unknown argument: " + arg;
       return std::nullopt;
@@ -58,9 +85,13 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
 }
 
 const char* usage() {
-  return "usage: coop_server [--port N] [--game-build ID] [--max-half-open N]\n"
-         "                   [--run-for-ms N]\n"
+  return "usage: coop_server [--port N] [--bind ADDRESS] [--allow LIST]\n"
+         "                   [--game-build ID] [--max-half-open N] [--run-for-ms N]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
+         "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
+         "                   example its Hamachi or Radmin address (default: all)\n"
+         "  --allow LIST     only these players' IPv4 addresses may connect,\n"
+         "                   comma-separated, ranges as 26.0.0.0/8 (default: any)\n"
          "  --game-build ID  game build every player must run (default: the\n"
          "                   first player to join decides)\n"
          "  --max-half-open N  most connections one address may hold before\n"

@@ -315,6 +315,28 @@ TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku"));
 }
 
+TEST_CASE("objects: the pond's owner is each game's own, its fish are shared (issue 151)") {
+    for (const char* own : {"Npc_Hylia_Fishman_001_Child", "Npc_Hylia_Fishman_001_Adult"}) {
+        CHECK_MESSAGE(CoopObjects::IsOwnPuzzle(own), own);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(own), own);
+    }
+    for (const char* fish : {"Animal_Fish_Bass", "Animal_Fish_Loach", "Animal_Fish_Blue",
+                             "Animal_Fish_Blue_TargetAttention"}) {
+        CHECK_MESSAGE(CoopObjects::IsShared(fish), fish);
+        CHECK_MESSAGE(CoopObjects::IsFish(fish), fish);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsOwnPuzzle(fish), fish);
+    }
+    CHECK_FALSE(CoopObjects::IsFish("Animal_Cucco"));
+    CHECK_FALSE(CoopObjects::IsFish("Item_Bottle_Fish"));
+    // Other animals and townspeople stay shared.
+    CHECK(CoopObjects::IsShared("Animal_Cucco"));
+    CHECK(CoopObjects::IsShared("Npc_Hylia_051"));
+    // The rod, lure, hat and sinking lures were never shared.
+    for (const char* never : {"Weapon_FishingRod", "Weapon_Lure", "Obj_SinkingLure", "Obj_Hat_FishingPondOwner"}) {
+        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(never), never);
+    }
+}
+
 TEST_CASE("objects: a rotation matrix goes to a quaternion and back") {
     // A turn of 90 degrees about y, then an arbitrary one.
     const CoopObjects::Mat3 turn{0, 0, 1, 0, 1, 0, -1, 0, 0};
@@ -1861,6 +1883,52 @@ TEST_CASE("objects: a copy whose own AI acts near our Link is flagged targeting 
     CHECK_FALSE(flags.has_value());
 }
 
+TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeting (issue 157)") {
+    // A buried Peahat's AI asks for its rise once; the Mover plays the
+    // owner's ground animation over it on the next game frame, so every walk
+    // sees the owner's name. The one put-back is enough.
+    auto run = [](float x, std::uint64_t put_back_at, bool wake = true) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait_Ground")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            if (put_back_at != 0 && t <= put_back_at && put_back_at < t + 66) {
+                sync.NoteTakeover(0x100, t * kMs);
+            }
+            sync.Receive(OwnerSample(id, 2, t * kMs, x, 2, "Wait_Ground"));
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, "Wait_Ground")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, 100));
+    CHECK_FALSE(run(5.0f, 0));             // never put back: the owner's rest is ours too
+    CHECK_FALSE(run(15.0f, 100));          // over 10 m from our Link
+    CHECK_FALSE(run(5.0f, 100, false));    // LICHII_COOP_OBJECTS_WAKE=0
+    CHECK_FALSE(run(5.0f, 1400));          // under 1 s since: not yet
+
+    // An enemy we own is not a copy: a put-back note (stale) does nothing.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait_Ground")});
+    Own(sync, *sync.IdOf(0x100), 1);
+    std::optional<std::uint8_t> flags;
+    for (std::uint64_t t = 10; t < 1500; t += 66) {
+        sync.NoteTakeover(0x100, t * kMs);
+        for (const auto& p : All<proto::ObjectPresent>(
+                 Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, 5.0f, "Wait_Ground")}))) {
+            flags = p.objects[0].flags;
+        }
+    }
+    CHECK_FALSE((flags && (*flags & kTargeting) != 0));
+}
+
 TEST_CASE("objects: an enemy of ours woken near our Link is flagged too, so it stays ours") {
     auto run = [](float x, const std::string& now, std::uint64_t until = 1500) {
         Sync sync;
@@ -2010,7 +2078,7 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
 }
 
 TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is deleted only if it stands") {
-    // breakables-2 (test6 players): the Deku Tree web burnt in A just vanished
+    // breakables-2 (player test): the Deku Tree web burnt in A just vanished
     // in B. One with a life (a bomb web, a cracked wall) gets life 0 first, so
     // the game breaks it; the delete is the fallback.
     Sync sync;
@@ -2139,4 +2207,252 @@ TEST_CASE("objects: a released write the game ignores is written as life, and ou
     Tick(sync, 2700 * kMs, {Enemy(0x100, 0x11, 3)});
     Tick(sync, 4000 * kMs, {Enemy(0x100, 0x11, 2)});
     CHECK(All<proto::Damage>(Tick(sync, 4300 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
+}
+
+TEST_CASE("objects: stun animations (issue 150)") {
+    using CoopObjects::IsStunAnimation;
+    CHECK(IsStunAnimation("Stun_Lp"));
+    CHECK(IsStunAnimation("Stun_St_Attack_Chance"));
+    CHECK(IsStunAnimation("Down_Start"));
+    CHECK(IsStunAnimation("Fall_St"));
+    CHECK(IsStunAnimation("Stun"));
+    CHECK(IsStunAnimation("Down_Loop_ModelOnlyLOD"));
+    CHECK_FALSE(IsStunAnimation("Walk"));
+    CHECK_FALSE(IsStunAnimation("Damage"));
+    CHECK_FALSE(IsStunAnimation("Attack_Chance"));
+    CHECK_FALSE(IsStunAnimation("Mat_Stun"));
+    CHECK_FALSE(IsStunAnimation("Downward"));
+    CHECK_FALSE(IsStunAnimation(""));
+}
+
+TEST_CASE("objects: a boss copy stunned here sends a DAMAGE of 0 and keeps its stun (issue 150)") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Walk", 10.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 10.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    CHECK(All<proto::Damage>(Tick(copy, 1010 * kMs, {c}, 2)).empty());
+
+    // A seed in its eye here: our copy's own game stuns it, no life lost.
+    c.animation = proto::Animation{"Stun_St_Attack_Chance", 0.0f, 1.0f};
+    auto damage = All<proto::Damage>(Tick(copy, 1100 * kMs, {c}, 2));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].id == id);
+    CHECK(damage[0].epoch == 4);
+    CHECK(damage[0].amount == 0);
+    // The owner's 'Walk' is not played over our stun.
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(1110 * kMs, plays);
+    CHECK(plays.empty());
+    // Still stunned: said once.
+    c.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1200 * kMs, {c}, 2)).empty());
+    // Stunned again soon after: not said again within 2 s.
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 1300 * kMs, {c}, 2);
+    c.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1400 * kMs, {c}, 2)).empty());
+    // Later it is.
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 3200 * kMs, {c}, 2);
+    c.animation = proto::Animation{"Down_Start", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 3300 * kMs, {c}, 2)).size() == 1);
+
+    // The owner takes a DAMAGE of 0 as no hit at all.
+    proto::Damage zero = damage[0];
+    zero.player_number = 2;
+    owner.Receive(zero);
+    auto step = Tick(owner, 1200 * kMs, {e});
+    CHECK(step.writes.empty());
+}
+
+TEST_CASE("objects: no stun DAMAGE from a plain enemy, our own boss, or when the owner is stunned too") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Seen plain = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");
+    plain.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Seen boss = Enemy(0x400, 0x44, 12, 0.0f, gohma);
+    boss.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Sync sync;
+    Tick(sync, 0, {plain, boss}, 2);
+    Own(sync, *sync.IdOf(0x300), 1);
+    Own(sync, *sync.IdOf(0x400), 2);  // ours
+    plain.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    boss.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(sync, 100 * kMs, {plain, boss}, 2)).empty());
+
+    // A copy whose owner's boss is stunned already: its stun is the owner's.
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    c.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1100 * kMs, {c}, 2)).empty());
+}
+
+TEST_CASE("objects: a copy that becomes ours is listed once for the release (issue 150)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6, 0.0f, "Enemy_DungeonBoss_Gohma"), Enemy(0x200, 0x22, 2)});
+    const proto::ObjectId boss = *sync.IdOf(0x100);
+    const proto::ObjectId other = *sync.IdOf(0x200);
+    Own(sync, boss, 2, 1);
+    Own(sync, other, 1, 1);  // ours from the start: never a copy
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, "Enemy_DungeonBoss_Gohma"), Enemy(0x200, 0x22, 2)});
+    CHECK(sync.TakeOursNow().empty());
+    Own(sync, boss, 1, 2);  // handed to us
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, "Enemy_DungeonBoss_Gohma"), Enemy(0x200, 0x22, 2)});
+    CHECK(sync.TakeOursNow() == std::vector<std::uint64_t>{0x100});
+    CHECK(sync.TakeOursNow().empty());
+}
+
+// Issue 151 (fishing-2): every fish shared, any player's lure works on it.
+namespace {
+
+Seen Fish(std::uint64_t address, std::uint64_t hash, float x) {
+    Seen s;
+    s.address = address;
+    s.name = "Animal_Fish_Bass";
+    s.hash = hash;
+    s.position = {x, 0.0f, 0.0f};
+    return s;
+}
+
+// A fish copy at x, owned by player 2; each 33 ms our game's own frame swims
+// it `step` metres towards x = 0 (our lure) from where the Mover put it, each
+// 66 ms a walk. The flags of the last OBJECT_PRESENT sent, if any.
+std::optional<std::uint8_t> Swim(Sync& sync, std::uint64_t from, std::uint64_t to, float x,
+                                 float step) {
+    std::optional<std::uint8_t> flags;
+    for (std::uint64_t t = from; t < to; t += 33) {
+        sync.NoteDrift(0x100, {x, 0.0f, 0.0f}, {x - step, 0.0f, 0.0f}, t * kMs);
+        if ((t - from) % 66 == 0) {
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}))) {
+                REQUIRE(p.objects.size() == 1);
+                flags = p.objects[0].flags;
+            }
+        }
+    }
+    return flags;
+}
+
+bool Targets(const std::optional<std::uint8_t>& flags) {
+    return flags && (*flags & proto::object_presence::targeting) != 0;
+}
+
+} // namespace
+
+TEST_CASE("objects: a fish copy that swims at our lure for 1 s is asked for (issue 151)") {
+    auto run = [](float x, float step, std::uint8_t owner, bool lure, std::uint64_t to = 1500) {
+        Sync sync;
+        // Our Link on the dock, far from the fish: the lure is what counts.
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 30.0f});
+        if (lure) {
+            sync.SetLures({proto::Vec3{0.0f, 0.0f, 0.0f}});
+        }
+        Tick(sync, 0, {Fish(0x100, 0x11, x)});
+        Own(sync, *sync.IdOf(0x100), owner);
+        return Targets(Swim(sync, 10, to, x, step));
+    };
+    CHECK(run(4.0f, 0.02f, 2, true));         // swims at our lure
+    CHECK_FALSE(run(4.0f, 0.02f, 2, true, 900));  // under 1 s: not yet
+    CHECK(run(0.5f, 0.0f, 2, true));          // holds on it: a bite
+    CHECK_FALSE(run(4.0f, -0.02f, 2, true));  // swims away
+    CHECK_FALSE(run(8.0f, 0.02f, 2, true));   // over 6 m from it
+    CHECK_FALSE(run(4.0f, 0.002f, 2, true));  // the Mover's noise
+    CHECK_FALSE(run(4.0f, 0.02f, 2, false));  // no lure of ours cast
+    CHECK_FALSE(run(4.0f, 0.02f, 1, true));   // ours: the Mover does not place it
+}
+
+TEST_CASE("objects: a fish of ours at our lure stays ours, one away from it does not (issue 151)") {
+    auto run = [](float x, float dx, bool lure) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 30.0f});
+        if (lure) {
+            sync.SetLures({proto::Vec3{0.0f, 0.0f, 0.0f}});
+        }
+        Tick(sync, 0, {Fish(0x100, 0x11, x)});
+        Own(sync, *sync.IdOf(0x100), 1);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 66; t <= 1500; t += 66) {
+            x += dx;
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return Targets(flags);
+    };
+    CHECK(run(0.3f, 0.0f, true));     // hooked: held at the lure
+    CHECK(run(5.5f, -0.05f, true));   // comes at it, 0.75 m/s
+    CHECK_FALSE(run(3.0f, 0.0f, true));    // resting 3 m off
+    CHECK_FALSE(run(3.0f, 0.05f, true));   // swims off
+    CHECK_FALSE(run(0.3f, 0.0f, false));   // no lure of ours
+}
+
+TEST_CASE("objects: a fish its owner landed is gone for everyone (issue 151)") {
+    // The owner: the fish leaves the walk in Link's hands.
+    auto gone = [](float link_x) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{link_x, 0.0f, 0.0f});
+        Tick(sync, 0, {Fish(0x100, 0x11, 1.0f)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 1, 3);
+        Tick(sync, 10 * kMs, {Fish(0x100, 0x11, 1.0f)});
+        // Gone after kMissedWalks empty walks: the remove may come at any of them.
+        std::vector<proto::ObjectRemove> out;
+        for (const std::uint64_t t : {100, 200, 300}) {
+            for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
+                out.push_back(r);
+            }
+        }
+        return out;
+    };
+    const auto landed = gone(0.0f);
+    REQUIRE(landed.size() == 1);
+    CHECK(landed[0].reason == proto::RemoveReason::dead);
+    CHECK(landed[0].epoch == 3);
+    CHECK(gone(40.0f).empty());  // unloaded far from our Link: not caught
+
+    // Another game: its copy is deleted at once, with no life to lower.
+    Sync other;
+    Tick(other, 0, {Fish(0x200, 0x11, 1.0f)}, 2);
+    const proto::ObjectId id = *other.IdOf(0x200);
+    Own(other, id, 1, 3);
+    Tick(other, 10 * kMs, {Fish(0x200, 0x11, 1.0f)}, 2);
+    CHECK(other.Removes().empty());
+    proto::ObjectRemove r;
+    r.player_number = 1;
+    r.id = id;
+    r.epoch = 3;
+    r.reason = proto::RemoveReason::dead;
+    other.Receive(r);
+    const auto step = Tick(other, 20 * kMs, {Fish(0x200, 0x11, 1.0f)}, 2);
+    CHECK(step.writes.empty());
+    CHECK(other.Removes() == std::vector<std::uint64_t>{0x200});
 }

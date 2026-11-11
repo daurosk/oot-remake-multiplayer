@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <string_view>
 #include <thread>
 
@@ -39,6 +40,7 @@
 
 #include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
+#include "coop/host/notify.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
@@ -47,6 +49,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_teleport_game.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
@@ -214,6 +217,7 @@ public:
     explicit Coop(Settings settings)
         : settings_(std::move(settings)), debug_camera_(EnvFlag("LICHII_COOP_DEBUG_CAMERA")),
           flip_y_(EnvFlag("LICHII_COOP_CAMERA_FLIP_Y")) {
+        load_mend_.set_clock([] { return CoopEvery::NowUs(); });  // issue 106: 1/60 s, not presents
         if (debug_camera_ || flip_y_) {
             LOG_INFO(Core, "coop: camera debug {}, flip y {}", debug_camera_ ? "on" : "off",
                      flip_y_ ? "on" : "off");
@@ -249,6 +253,9 @@ public:
         pickups_ = sharing_ && !(std::getenv("LICHII_COOP_PICKUPS") != nullptr &&
                                  std::string_view(std::getenv("LICHII_COOP_PICKUPS")) == "0");
         session.learn_pickups = pickups_;
+        // Issue 106: the flag watcher's frames are 1/60 s of real time, not
+        // presents (high refresh presents up to 165 a second).
+        session.clock = [] { return CoopEvery::NowUs(); };
         pickups_given_ = 0;
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
@@ -261,6 +268,7 @@ public:
             CoopDrops::OnEvent(event);
             CoopTime::OnEvent(event);
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
+            CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -309,6 +317,14 @@ public:
             for (const auto& o : CoopChests::OpenedFlags()) {
                 session_->share_pickup_named(coop::protocol::FlagKey(o.flag, std::uint16_t{0}));
             }
+        }
+        if (pickups_) {  // issue 89: every Gold Skulltula's key, and the token count guarded by them
+            std::vector<coop::protocol::FlagKey> skulltulas;
+            for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
+                skulltulas.push_back(coop::protocol::FlagKey::key64_flag(key));
+            }
+            session_->guard_count(coop::protocol::FlagKey(coop::host::kGoldTokenCount, std::uint16_t{0}),
+                                  skulltulas);
         }
         thread_ = std::thread([this] { Run(); });
         return true;
@@ -367,6 +383,11 @@ public:
                         LOG_INFO(Core, "coop: items: {} capacities mended after a load", raised);
                     }
                 }
+                // Issue 125: a shared bracelet or gauntlets give the lift
+                // grade too, or every pulled bomb is deleted at once.
+                if (load_mend_.ready()) {
+                    MendLiftGrade(*memory);
+                }
             }
         }
         if (pickups_) {
@@ -382,13 +403,19 @@ public:
         // our Link is in that dungeon; written when we are out or loading.
         std::optional<coop::host::HoldFlagStore> hold;
         if (store) {
-            // Released only after a real load (about 0.5 s without Link), not
-            // on one frame the reader missed; the scene as last read.
-            no_link_frames_ = reading ? 0 : no_link_frames_ + 1;
+            // Released only after a real load (0.5 s without Link), not on one
+            // frame the reader missed; the scene as last read. Timed, not
+            // counted in presents: high refresh (Ctrl+U) presents up to 2.75
+            // times as many frames (issue 106).
+            if (reading) {
+                no_link_since_.reset();
+            } else if (!no_link_since_) {
+                no_link_since_ = view.at;
+            }
             if (view.scene) {
                 hold_scene_ = *view.scene;
             }
-            const bool link = no_link_frames_ < kHoldReleaseFrames;
+            const bool link = !no_link_since_ || view.at - *no_link_since_ < kHoldRelease;
             const std::optional<std::string> scene =
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
             hold.emplace(*store, [link, scene](coop::protocol::FlagKey key) {
@@ -403,6 +430,24 @@ public:
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        // Issue 106, LICHII_COOP_DEBUG_SAMPLES=1: samples sent a second (at most
+        // about 60, with high refresh too) and presents a second.
+        if (debug_samples_) {
+            ++presents_;
+            const std::uint64_t now_us = CoopEvery::NowUs();
+            if (samples_log_.Due(now_us)) {
+                const std::uint32_t seq = session_->sampler().next_sequence();
+                if (samples_log_at_ != 0 && now_us > samples_log_at_) {
+                    const double seconds = static_cast<double>(now_us - samples_log_at_) / 1e6;
+                    LOG_INFO(Core, "coop: samples: {:.1f} sent/s, {:.1f} presents/s",
+                             static_cast<double>(seq - samples_seq_) / seconds,
+                             static_cast<double>(presents_) / seconds);
+                }
+                samples_seq_ = seq;
+                samples_log_at_ = now_us;
+                presents_ = 0;
+            }
+        }
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
@@ -429,6 +474,23 @@ public:
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");
         }
+        // Chat notices (docs/setup.md): what another player's change gave us.
+        if (notify_ && !report.received.empty()) {
+            std::uint8_t self = 0;
+            std::vector<std::pair<std::uint8_t, std::string>> names;
+            session_->with_client([&](coop::net::Client& c) {
+                self = c.player_number();
+                for (const auto& p : c.players()) {
+                    names.emplace_back(p.number, p.nickname);
+                }
+                return 0;
+            });
+            notifier_.SetNames(std::move(names));
+            for (auto& line : notifier_.Take(report.received, self, SteadyMs())) {
+                LOG_INFO(Core, "coop: notice: {}", line);
+                chat_.Add(std::move(line), true);
+            }
+        }
         if (report.host_reset) {
             // docs/flags.md, "Saves": the host loaded a save. Session-wide state
             // kept outside the flags is dropped here (each owner adds its clear:
@@ -446,6 +508,12 @@ public:
                      "({} put back this session)",
                      k.hash, session_->one_way_restores());
         }
+        for (const auto& g : session_->take_counts_guarded()) {  // issue 89 (docs/items.md)
+            LOG_INFO(Core,
+                     "coop: flags: count {:#010x} +{} here was a pickup another player had taken: "
+                     "put back, not sent",
+                     g.count.hash, g.amount);
+        }
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
             std::vector<std::uint64_t> keys;
             for (const auto& k : taken) {
@@ -457,7 +525,7 @@ public:
             }
             CoopObjects::TakenForOthers(keys);
         }
-        // Issue 148: a boss door left shut in this save by test6 (a "shut in" flag that was
+        // Issue 148: a boss door left shut in this save by an older build (a "shut in" flag that was
         // shared then) is opened once per scene load while Link is in no boss room.
         if (game_store) {
             std::optional<CoopBoss::Vec> at;
@@ -550,6 +618,12 @@ public:
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
                         reading && reading->event_running.value_or(false),
                         report.connected ? session_.get() : nullptr, report.server_now_us);
+        // /teleport <player> (docs/setup.md "Chat commands"), after the boss
+        // rooms: it reads whether our boss fight runs.
+        CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
+        for (auto& line : CoopTeleport::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         Place(view);
 
         std::lock_guard lock(view_mutex_);
@@ -577,6 +651,9 @@ public:
 
     // Chat and the player list (coop_hook.h). Any thread.
     bool SendChat(const std::string& text) {
+        if (CoopTeleport::OnChat(text, *session_)) {
+            return true;  // a command: done here, its answer shows as a notice
+        }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
         if (sent) {
@@ -879,6 +956,19 @@ private:
                 last_state = room.state;
                 LOG_INFO(Core, "coop: {}", coop::net::to_string(last_state));
             }
+            // Issue 108: each REFUSED name taken asked again, so a log shows
+            // the retries (every name_taken_retry_ms, at least 100 ms apart)
+            // and when the window ends.
+            // Counted from the start of each window (the client's count is a total).
+            const auto [name_retries, name_retrying] = session_->with_client([](coop::net::Client& c) {
+                return std::pair{c.name_taken_retries(), c.retrying_name_taken()};
+            });
+            if (name_retries != name_retries_logged_) {
+                name_retries_logged_ = name_retries;
+                LOG_INFO(Core, "coop: name {} is in use on the server; asking again (retry {})",
+                         settings_.name, name_retries - name_retries_base_);
+            }
+            if (!name_retrying) name_retries_base_ = name_retries;
             // Issue 143: the server PINGs every 250 ms. Seconds without a
             // packet while connected means its packets do not reach us.
             if (room.state == coop::net::State::connected) {
@@ -1079,13 +1169,72 @@ private:
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
-    static constexpr int kHoldReleaseFrames = 30;
-    int no_link_frames_ = 0;       // frames in a row without our Link (the hold's debounce)
+    // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
+    bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
+    struct Names {
+        std::vector<std::pair<std::uint8_t, std::string>> list;
+        std::string operator()(std::uint8_t n) const {
+            for (const auto& [number, nickname] : list) {
+                if (number == n && !nickname.empty()) return nickname;
+            }
+            return "P" + std::to_string(n);
+        }
+    };
+    class Notices {
+    public:
+        Notices()
+            : names_(std::make_shared<Names>()),
+              notifier_([names = names_](std::uint8_t n) { return (*names)(n); },
+                        [](coop::protocol::FlagKey key, const coop::protocol::FlagEntry&)
+                            -> std::optional<std::string> {
+                            if (key.kind == coop::protocol::FlagKeyKind::named &&
+                                CoopChests::KeyOfOpened(key.hash)) {
+                                return std::string("opened a chest");
+                            }
+                            return std::nullopt;
+                        }) {}
+        void SetNames(std::vector<std::pair<std::uint8_t, std::string>> list) { names_->list = std::move(list); }
+        std::vector<std::string> Take(const std::vector<coop::host::FlagWatcher::Received>& r, std::uint8_t self,
+                                      std::uint64_t now_ms) {
+            return notifier_.Take(r, self, now_ms);
+        }
+
+    private:
+        std::shared_ptr<Names> names_;
+        coop::host::Notifier notifier_;
+    };
+    Notices notifier_;
+    static constexpr std::chrono::milliseconds kHoldRelease{500};
+    std::optional<Clock::time_point> no_link_since_;  // the first frame without our Link (the hold's debounce)
     std::string hold_scene_;       // the last scene read, for the hold
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
+    const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106
+    CoopEvery::Every samples_log_{5 * CoopEvery::kSecondUs};
+    std::uint64_t samples_log_at_ = 0;
+    std::uint32_t samples_seq_ = 0;
+    std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
+
+    // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to
+    // what the held bracelet or gauntlets give. Only ever raised; an unknown
+    // value or a flag that cannot be read is left alone.
+    void MendLiftGrade(EmulatorMemory& memory) {
+        namespace lift = coop::host::lift;
+        coop::host::GameFlags flags(memory);
+        const auto grade = flags.get_enum(lift::kGrade);
+        if (!grade) {
+            return;
+        }
+        const auto stock = [&](std::uint32_t hash) { return flags.get_int(hash).value_or(0); };
+        const auto raise = coop::host::lift_grade_raise(stock(lift::kGoron), stock(lift::kSilver),
+                                                        stock(lift::kGold), *grade);
+        if (raise && coop::host::GameFlags::set_enum(memory, lift::kGrade, *raise)) {
+            LOG_INFO(Core, "coop: items: lift grade {:#x} -> {:#x} for the held strength item",
+                     *grade, *raise);
+        }
+    }
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.
@@ -1101,6 +1250,8 @@ private:
     // Network thread (Run): the "no packets from the server" warning is out (issue 143).
     bool quiet_warned_ = false;
     static constexpr std::uint32_t kQuietWarnMs = 3000;
+    std::uint32_t name_retries_logged_ = 0;  // network thread (Run), issue 108
+    std::uint32_t name_retries_base_ = 0;    // the total when this window began
     std::thread thread_;
 
     // Guarded by view_mutex_.
@@ -1191,7 +1342,7 @@ void OnFrame(Core::System& system) {
     // emulation has stopped), so it stays valid for this frame.
     auto* coop = Get();
     // The game's main may be patched (or refused for a code mod) after co-op
-    // started: then co-op disconnects and stays off (issue 136, test7). The
+    // started: then co-op disconnects and stays off (issue 136). The
     // Coop object stays until Shutdown: the overlay may hold it.
     if (CoopSites::MustStopForMod(coop != nullptr, g_mod_refused, coop ? CoopSvc::Refusal() : std::string{})) {
         g_mod_refused = true;

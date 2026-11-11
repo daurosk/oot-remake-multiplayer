@@ -47,6 +47,7 @@ struct MainOffsets {
     std::uint64_t sync_as_slot;        // kSyncAsSlot
     std::uint64_t equip;               // kEquip
     std::uint64_t equip_change_state;  // kEquipChangeState
+    std::uint64_t unequip_armor;       // kUnequipArmor
     std::uint64_t set_matrix;          // kSetMatrix
     std::uint64_t set_time;            // coop_time.cpp kSetTime
     std::uint64_t cut_foliage;         // CoopWorld::kCutFoliage
@@ -93,6 +94,7 @@ inline constexpr std::array<Build, 1> kBuilds{{
          .sync_as_slot = 0x3abec10,
          .equip = 0x2df7b20,
          .equip_change_state = 0xe34c40,
+         .unequip_armor = 0x10aceb0,
          .set_matrix = 0x4c6580,
          .set_time = 0x34522d0,
          .cut_foliage = 0xb80800,

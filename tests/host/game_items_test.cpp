@@ -778,9 +778,9 @@ TEST_CASE("item grants: a game that owns the item gets nothing extra") {
   CHECK(store.stats().kept == 1);
 }
 
-TEST_CASE("item grants: an item held with room for 0 gets its capacity, not ammo (test5 saves)") {
+TEST_CASE("item grants: an item held with room for 0 gets its capacity, not ammo (older saves)") {
   MapStore game = game_with_grant_flags();
-  game.hold(kSlingshot, K::int32, 1);  // shared on test5: Slingshot with 0/0 seeds
+  game.hold(kSlingshot, K::int32, 1);  // shared by an older build: Slingshot with 0/0 seeds
   ItemFlagStore store(game);
   CHECK(store.write(owned(kSlingshot)));  // the snapshot on join, or any later echo
   CHECK(game.value(kSeedCap) == 30);
@@ -821,7 +821,7 @@ TEST_CASE("item grants: a flag the game cannot write is skipped, the item still 
   CHECK(store.stats().granted == 0);
 }
 
-// Issue 130 (found by Lixyas; Caleb's rule for test8: each player buys their
+// Issue 130 (found by Lixyas; Caleb's rule: each player buys their
 // own). The Kokiri Shop sells a Deku Shield only to a player who has none
 // ("You already have a Deku Shield. We have a one-shield-per-person policy
 // here", message Shop_31) and reads that from the player's own

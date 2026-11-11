@@ -252,12 +252,12 @@ bool SignWordWritable(std::uint64_t current, std::uint64_t value);
 bool SignCutKeyAllowed(std::uint64_t key);
 
 // A dungeon gimmick: a switch, a water plane, a shutter, a torch, a lift or
-// a moving floor (test7, docs/dungeon.md "Live dungeon actions"); for the
+// a moving floor (docs/dungeon.md "Live dungeon actions"); for the
 // probe also the push blocks and their base anchor (issue 147), the falling
 // ladder, its pillar and the falling floors (issue 129).
 bool IsGimmick(std::string_view name);
 
-// Test7 probe for dungeon gimmicks (docs/dungeon.md "Live dungeon actions").
+// Probe for dungeon gimmicks (docs/dungeon.md "Live dungeon actions").
 // A held floor switch, a timed switch or a water plane keeps its state in
 // the actor, not in a flag, so it can only be shared live once the words
 // that hold it are known. This finds them in a run, the way the sign probe

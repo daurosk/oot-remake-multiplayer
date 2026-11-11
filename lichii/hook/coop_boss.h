@@ -212,7 +212,7 @@ private:
 
 const char* PhaseName(Sync::Phase phase);
 
-// Issue 148: test6 shared the boss fight's "shut in" flags, so saves made then can hold a
+// Issue 148: an older build shared the boss fight's "shut in" flags, so saves made then can hold a
 // shut boss door for good. Once per scene load, at the first frame where Link's place is
 // known and Link is in no boss room, the names of CoopDungeon::NotShared() flags that are
 // still set are given back to be cleared (0) in this game. Inside a boss room they are left

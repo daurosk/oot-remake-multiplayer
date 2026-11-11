@@ -32,7 +32,7 @@ namespace {
 // Left out on purpose (issue 148): flags that say where ONE player is in a
 // boss fight, not what the group has done. Shared, they shut the boss door on
 // a player who is still outside it, and the join snapshot gives them back
-// after every reload (test6, Deku Tree: both players locked out).
+// after every reload (player test, Deku Tree: both players locked out).
 //   InsideTheDekuTree_BossArea_ShutIn, InsideTheDekuTree_BossArea_ChangeENVForBoss,
 //   ShadowTemple_Level_StartBossBattle, InsideGanonCastle_IsEnterBossRoom,
 //   DodongoCavern_BossGroundChange, FireTemple_BossGroundChange (the arena's
@@ -1014,7 +1014,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x2a8640b7, false, "WaterTemple_WaterLevelChange02"},
     {0xa4456820, false, "WaterTemple_WaterLevelChange03"},
     {0xd6ed78c9, false, "WaterTemple_Waterlevelrise_Room06"},
-    // Softlock audit (test7): saved room state the prefix scan missed, because the
+    // Softlock audit: saved room state the prefix scan missed, because the
     // game spells the dungeon another way (Insidejabujabu_, Firetemple_,
     // Foresttemple_) or puts it after Gimmick_ (the enemies-beaten shutters).
     // Left out: the Room7 area sensors (_InsideArea, _NearTheSwitch*: set true and
@@ -1631,7 +1631,7 @@ constexpr std::string_view kCorridor[] = {
     "ForestTemple_SageOfForest_TwistedCorridor_A_02", "ForestTemple_SageOfForest_TwistedCorridor_A_03",
     "ForestTemple_SageOfForest_TwistedCorridor_A_04"};
 
-// Gimmick events whose result already came live in the other game on test6
+// Gimmick events whose result already came live in the other game in a player test
 // (players, Deku Tree): the basement water dropping and its button pressed,
 // the torch room's torches. Their room flags carry the result; the played
 // event is left live too, so nothing changes for them.

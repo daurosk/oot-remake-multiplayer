@@ -640,7 +640,7 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   }
   // What the game gives with the item (issues 128, 138): all of it for an
   // item new to this game; for one it holds already, the capacity only, so
-  // a game that got the item before without it (test5 saves: sticks and
+  // a game that got the item before without it (older saves: sticks and
   // seeds owned with room for 0) is mended on the next write or snapshot.
   if (held(merged.value)) grant(key.hash, !held(now->value));
   return true;

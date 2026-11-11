@@ -24,7 +24,7 @@ struct Options {
   // Print a report every this many seconds as well as at the end. 0: only at
   // the end.
   std::uint32_t report_every = 10;
-  // Nicknames are this and the client's index, 1 to 4 ("test1"). Two
+  // Nicknames are this and the client's index, 1 to 4 ("test" then the index). Two
   // processes on one server need different ones.
   std::string name = "test";
   bool help = false;

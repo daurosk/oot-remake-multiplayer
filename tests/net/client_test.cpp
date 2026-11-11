@@ -1976,7 +1976,7 @@ TEST_CASE("client: the same path with ENet's default datagrams loses the snapsho
   server.also_service = [&] { path_link.service(); };
   ClientConfig config = config_for(server);
   config.port = path_link.port();
-  config.mtu = ENET_HOST_DEFAULT_MTU;  // test6 and before: 1392
+  config.mtu = ENET_HOST_DEFAULT_MTU;  // older builds: 1392
   Client client(config);
   Events events;
   REQUIRE(client.start());

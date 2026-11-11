@@ -64,7 +64,7 @@ inline std::optional<std::uint64_t> ChangedSite(const std::vector<std::uint8_t>&
 // sits where co-op patches, `refusal` names where) and co-op has not been
 // stopped for it yet. The patcher runs when the game's main loads, which can
 // be after co-op started and connected (the emulator started directly, not
-// through the kit's launcher: test7). Once only.
+// through the kit's launcher). Once only.
 inline bool MustStopForMod(bool running, bool stopped_already, std::string_view refusal) {
     return running && !stopped_already && !refusal.empty();
 }

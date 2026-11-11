@@ -189,7 +189,7 @@ TEST_CASE("chests: every chest's opened flag, the Deku Tree's and the Graveyard'
     CHECK(deku == 6);
     // The live check of docs/flags.md: the flower-grave chest set Bool 0x39e4b7ec.
     CHECK(CoopChests::KeyOfOpened(0x39e4b7ecu) == std::optional<std::uint64_t>{0xeab569abb9d4d59aull});
-    // The Deku Tree's compass chest (the test6 report) has one.
+    // The Deku Tree's compass chest (the player report) has one.
     bool compass = false;
     for (const auto& o : CoopChests::OpenedFlags()) compass |= o.key == 0x80d8145de418987bull;
     CHECK(compass);

@@ -2078,7 +2078,7 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
 }
 
 TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is deleted only if it stands") {
-    // breakables-2 (test6 players): the Deku Tree web burnt in A just vanished
+    // breakables-2 (player test): the Deku Tree web burnt in A just vanished
     // in B. One with a life (a bomb web, a cracked wall) gets life 0 first, so
     // the game breaks it; the delete is the fallback.
     Sync sync;

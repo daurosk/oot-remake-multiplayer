@@ -32,7 +32,7 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 
 ## Seeds, arrows and hookshot tips: stand-ins (issue 85)
 
-Players on test6 saw the other player aim the slingshot, but never the seed. The test4 player logs show why it was not the network: every seed was sent (`spawn: sent Shootable_DekuSeed`), and the other game made each copy and deleted it at the remove (`create copy`, `copy N is actor`, `copy N deleted`). The copy was there and was not drawn.
+Players saw the other player aim the slingshot, but never the seed. The player logs (2026-11-10) show why it was not the network: every seed was sent (`spawn: sent Shootable_DekuSeed`), and the other game made each copy and deleted it at the remove (`create copy`, `copy N is actor`, `copy N deleted`). The copy was there and was not drawn.
 
 - **Why** (read from the romfs and `main`, no run): the copy was the game's own `Shootable_DekuSeed`, made by the create request with no shooter.
   - A shootable made that way starts in the state its `ShootableParam` names as `NoShooterCreateStartState`. That is `UsedExternally` (hash 2207839275; the states are `Sleep`, `Prepare`, `Shoot`, `Stationary`, `Reflected`, `UsedExternally`).
@@ -51,7 +51,7 @@ Players on test6 saw the other player aim the slingshot, but never the seed. The
 
 ## Does the seed's place move in flight? (issue 158)
 
-Test7 players never saw a seed fly. The test logs (spawn-seed 2026-11-10 18:01, slingshot 2026-11-09) show the seed's life on A: made when the slingshot is drawn, sitting in the sling while A aims (its copy in B's game is the seed B sees in the puppet's sling); shot when ZR is let go; gone 0.1 to 0.35 s later; and a new one made in the sling at once for the next shot. Every shot seed was removed as `gone`, not `hit`: at its last two walks it moved under 3 m/s. So either the game keeps a flying shootable's +0x31c at the sling (and the copy never moves), or the seed stops before it goes. Which one is not known.
+Players never saw a seed fly. The test logs (spawn-seed 2026-11-10 18:01, slingshot 2026-11-09) show the seed's life on A: made when the slingshot is drawn, sitting in the sling while A aims (its copy in B's game is the seed B sees in the puppet's sling); shot when ZR is let go; gone 0.1 to 0.35 s later; and a new one made in the sling at once for the next shot. Every shot seed was removed as `gone`, not `hit`: at its last two walks it moved under 3 m/s. So either the game keeps a flying shootable's +0x31c at the sling (and the copy never moves), or the seed stops before it goes. Which one is not known.
 
 Each of our projectiles that leaves the list now logs how it moved: `coop: shots: our Shootable_DekuSeed #... gone (reason N) after T ms: went D m from where it was made, top speed S m/s` (`Sync::Flights`). A shot seed with D under a metre means its place does not move in flight, and the copy needs its path from elsewhere (the shooter's aim and the seed's speed).
 

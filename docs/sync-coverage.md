@@ -1,8 +1,8 @@
 # Sync coverage: what is shared between games, and what is not
 
-The test7 goal (Caleb, 2026-11-11): everything one player does to the world is the same in every game, **live** (not only after a room reload), and nothing one player does can leave another unable to continue. This page is the map for that work. The fix branches (`dungeon-live`, `breakables`, `softlock-audit`) update their own rows when they change something.
+The goal (Caleb, 2026-11-11): everything one player does to the world is the same in every game, **live** (not only after a room reload), and nothing one player does can leave another unable to continue. This page is the map for that work. The fix branches (`dungeon-live`, `breakables`, `softlock-audit`) update their own rows when they change something.
 
-State on `main` at 99332d9 (test6: chunk 4 merged, protocol 6). Sources are the docs named in each row and the reports of the chunk 3 and 4 test turns (integrate-p6, integrate-p7). The actor classes are read from the romfs (`Pack/Actor`, 8,373 packs, grouped by name).
+State on `main` at 99332d9 (chunk 4 merged, protocol 6). Sources are the docs named in each row and the reports of the chunk 3 and 4 test turns (integrate-p6, integrate-p7). The actor classes are read from the romfs (`Pack/Actor`, 8,373 packs, grouped by name).
 
 **Columns**
 - **Path** is the code that shares it:
@@ -54,16 +54,16 @@ State on `main` at 99332d9 (test6: chunk 4 merged, protocol 6). Sources are the 
 
 | Pickup | Actors | Path | Live | Proven | Risk | P |
 |---|---|---|---|---|---|---|
-| Drops (rupees, hearts, ammo, magic from enemies, pots, grass, rocks) | `Obj_Rupee_*`, `Obj_Heart`, `Obj_DekuSeed`, `Obj_DekuNut`, `Obj_DekuStick`, `Obj_ArrowBundle_*`, `Obj_Bomb`, `Obj_MagicJar_*`, `Obj_Fairy` (breakables) | drops `DROP_SPAWN`/`DROP_TAKE` | ? | unit; issue 102 open (a bush drop taken twice in test4.2) | Taken twice, or different drops | P2 |
+| Drops (rupees, hearts, ammo, magic from enemies, pots, grass, rocks) | `Obj_Rupee_*`, `Obj_Heart`, `Obj_DekuSeed`, `Obj_DekuNut`, `Obj_DekuStick`, `Obj_ArrowBundle_*`, `Obj_Bomb`, `Obj_MagicJar_*`, `Obj_Fairy` (breakables) | drops `DROP_SPAWN`/`DROP_TAKE` | ? | unit; issue 102 open (a bush drop taken twice in a player test) | Taken twice, or different drops | P2 |
 | Placed rupees and recovery hearts | `Obj_Rupee_*`, `Obj_Heart`, `Obj_Heart_InWater` placed (170 keys, reset type 88) | key64 shared (breakables: IsPickup) + *take* | live via *take*; back on a load as in one-player | unit | - | P3 |
 | Gold Skulltulas and tokens | `Obj_RupeeToken` (85), `Item_Token_Gold` | *keys* (dungeons; overworld through the flags file) + *take*; count delta | live via *take* | logs (chunk 2); issue 89 open | Counted twice, or left in B | P2 |
 | Heart pieces | `Obj_Heart_Piece*` | key + count delta | ? | unit | Taken twice | P2 |
 | Heart containers | `Obj_Heart_Container` | key + `MaxLife` max | live | game (hearts 094002: B 16 -> 20) | - | P3 |
 | Small keys | `Obj_Dungeon_SmallKey*`, chest contents | `DungeonInfo.<d>.SmallKeyNum`, one shared count (delta) | live | unit; double key with the near rule (deku-softlock check 5) | A spends the last key: the count drops in B too, and B's door must open (*Locked doors* row), or B is stuck at a locked door with 0 keys | **P1** |
-| Gold Skulltula token | `Obj_Token_Gold` (no placement; made at the Skulltula's death) | world `WORLD_BREAK` under its Skulltula's id + the Skulltula's key64 set in B (breakables-2); both at once: one token back | live; reload: the server's break and the key | unit | Before (test6, #89): taken in A, still in B, also after B reloaded the room: a second token for the group | **P1** |
+| Gold Skulltula token | `Obj_Token_Gold` (no placement; made at the Skulltula's death) | world `WORLD_BREAK` under its Skulltula's id + the Skulltula's key64 set in B (breakables-2); both at once: one token back | live; reload: the server's break and the key | unit | Before (#89): taken in A, still in B, also after B reloaded the room: a second token for the group | **P1** |
 | Small keys lying | `Obj_Dungeon_SmallKey*` (10 placements: Well, Shadow, Gerudo Fortress; not `Obj_MiniGame_SmallKey`) | world `WORLD_BREAK` (breakables-2; they have no 64-bit key, so the key path never worked for them); both at once: the second taker gives one back | live, no 3 m rule; late joiner by the server's break | unit | Before: taken in A, still lying in B: a second +1 in the shared count | P2 |
 | Map, compass, boss key | `Item_Dungeon_*` | items OR | live | unit | - | P3 |
-| Items from chests and events (Slingshot, Bow, bags...) | `Item_*` | items (any/max, capacity and ammo grants, load mend) | live | game (sling-give, sling-stick, 2026-11-10) | Fixed in test6 (issue 138) | P3 |
+| Items from chests and events (Slingshot, Bow, bags...) | `Item_*` | items (any/max, capacity and ammo grants, load mend) | live | game (sling-give, sling-stick, 2026-11-10) | Fixed (issue 138) | P3 |
 | Silver rupees | `Obj_Rupee_Silver`, `Obj_RupeeToken_Silver`, `Obj_silverRupeeCounter_*` (6 names, 17 placements) | rupee: *keys* + *take* + drops; counter: key, kept; `…_SilverToken_Appear/_Unlock`, `…_SilverRupee*` flags | ? | unit | Shared besides the keys: `…_SilverToken_Appear/_Unlock` (events and flags), `InsideGanonCastle_Dungeon_Room03/10/14/16_SilverRupee`, `GerudoTrainingGround_Dungeon_Room02/06/09_SilverRupee`, `IceCavern_Room06_SilverRupeeGet`, `BottomOfTheWell_…_SilverRupee_GetAll` (Bool or Int, and whether the counter reads them, not known). If the counter counts only its own pickups: A takes 3, B takes 2: each game's counter may count only its own, and the rupees B took are removed from A's game uncounted. Then neither counter reaches 5 and the door never opens for anyone | **P1** |
 | Magic beans, bean spots | `Obj_Plant_MagicBean*` | none | - | - | Bean planted by A not there in B | P2 |
 | Fairies | `Obj_Fairy*`, `Npc_Fairy` | none | - | - | - | P3 |
@@ -108,13 +108,13 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 | Story events, cutscenes, medals and stones | items (medals and stones are items) + `Dm_`/`Demo_` flags NOT shared | - | - | A saw a story scene that unlocks an area; B's game never set its flag. Each player has to see it, or B is locked out | **P1** to check |
 | Time of day | `TIME_OF_DAY` (host's clock) | live | game | - | P3 |
 | Song events (Zelda's Lullaby doors, Sun's Song, Song of Storms well) | none, unless the result is a flag | ? | - | The door a song opened in A stays in B | P2 |
-| Shops (stock sold out) | none; the Deku Shield is per player since test8 (issue 130), so each buys their own | - | - | - | P2 |
+| Shops (stock sold out) | none; the Deku Shield is per player (issue 130), so each buys their own | - | - | - | P2 |
 
 ## Per-player state (not shared on purpose)
 
 Position, life (except the max), magic, rupee count, what is in the hands and on the buttons, bottles' contents, equipped gear, the camera, Navi's hints, "in battle", the Lens of Truth, which room a player is in, one-way rides. Minigames played alone: the Scrub Brothers' order (issue 149) and the fishing pond (issue 151: the owner, the rod, the catch record `MiniGame_Fishing_RecordFishSize_Child`/`_Adult` and the tutorial flags); only their prizes are shared (the pond's fish and the cast lures are shared since fishing-2, items.md). These rows must stay per player; a fix must not share them.
 
-## P1 list (test7)
+## P1 list
 
 The P1 rows above, grouped by the fix branch that should take them:
 
@@ -168,7 +168,7 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 | I2 | Fish, Blue Fire, bugs and other bottle contents needed to go on (Jabu-Jabu, Zora's Domain ice, the Ice Cavern) | **OK** | Per player, and every source can be used again. |
 | I3 | Trade sequence items (mirror rule): one player hands an item over and it is gone for everyone | **P2** | Optional quests (Biggoron's Sword, masks). A player halfway through loses their step. Later: share the trade step too, or make the trade items per player. |
 | I4 | Zelda's Letter, Ocarina of Time, songs, stones and medallions | **OK** | Shared items let the other player do the per-game event themselves (Kakariko gate, Temple of Time door) or skip it. |
-| I5 | Deku Shield bought once for everyone (#130) | **P2** | Per player since test8 (branch items-progress): each player buys their own; not checked in game. |
+| I5 | Deku Shield bought once for everyone (#130) | **P2** | Per player (branch items-progress): each player buys their own; not checked in game. |
 | I6 | Keys and dungeon items with a join at another save point | **P2** | A late joiner takes the host's totals. A key the joiner's save had in hand but the host's did not is lost to the joiner; the chest it came from stays open in the joiner's game but closed in the host's, so the host player can take it again for both. Advice: join with saves from the same point. |
 
 ### Story, time travel, saves

@@ -23,7 +23,7 @@
 #               packages) and zstandard are copied into the kit's python\ folder, so
 #               make-puppet-pack.cmd runs on a PC without Python (about 60 MB more).
 #               Without it, each PC needs Python 3 and zstandard of its own.
-# -Release      a release name such as v0.1.0-test1: the kit is named oot-coop-<Release>
+# -Release      a release name such as v0.1.0-beta1: the kit is named oot-coop-<Release>
 #               instead of oot-coop-<date>, and VERSION.txt and SOURCE.txt name it.
 param(
     [string]$EmulatorBin = '',

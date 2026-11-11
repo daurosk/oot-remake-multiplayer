@@ -2,7 +2,7 @@
 
 This is an early test release. Everything under "Works" was seen in our two-game tests: two copies of the game on one PC talking through the server, driven by the [autotest](../tools/autotest) scripts, with the logs and screenshots of both games read afterwards. Testers have played earlier releases on separate PCs, over a LAN and the internet. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)).
 
-**Every player needs the same release.** test6 speaks **protocol 6**: a test6 game and a test5 (or older) game or server refuse each other when they connect, so every player updates (`Update.bat` in the kit folder, or answer **Y** when `Host.bat` / `Join.bat` offer it). Then run `make-puppet-pack.cmd` once more: the puppet pack now carries Link's sounds.
+**Every player needs the same release.** A game and a server (or another game) of different protocol versions refuse each other when they connect, so every player updates (`Update.bat` in the kit folder, or answer **Y** when `Host.bat` / `Join.bat` offer it). Then run `make-puppet-pack.cmd` once more: the puppet pack now carries Link's sounds.
 
 **The emulator is Fritchii v5.7.** The first start after the update prepares the shaders again, which takes a while. (Our tests start with Ctrl+U, high refresh, off; turn it on in the game as usual.)
 
@@ -10,7 +10,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 - **Joining and leaving**: joining, leaving, rejoining after a crash, a name still held by a crashed game, and reconnecting when the server restarts.
 - **The co-op panel** (top left) with each player's name, area, distance and ping; the chat box (Enter), the player list (hold Tab) and name tags.
-- **Other players as Link**, child and adult, following them live and copying their whole pose, with Navi beside them. The adult Link puppet is new in test6 ([issue 111](https://github.com/daurosk/oot-remake-multiplayer/issues/111)): seen walking and running in Kakariko by day. A player who joins later gets a Link for everyone already there.
+- **Other players as Link**, child and adult, following them live and copying their whole pose, with Navi beside them. The adult Link puppet ([issue 111](https://github.com/daurosk/oot-remake-multiplayer/issues/111)): seen walking and running in Kakariko by day. A player who joins later gets a Link for everyone already there.
 - **Items**: key items, bottles, songs and one-time pickups are shared; small keys, Gold Skulltula tokens and heart pieces add up across players. Rupees, ammo and health stay per player. A player who joins late gets the items found before.
 - **Ammo comes with a shared item** ([issue 128](https://github.com/daurosk/oot-remake-multiplayer/issues/128)): when one player gets the Slingshot, the others get it with 30/30 seeds, not 0/0. The same for the bomb bag (20 bombs) and the other ammo items.
 - **No more stuck ammo after joining** ([issue 138](https://github.com/daurosk/oot-remake-multiplayer/issues/138)): a player who joins from the title screen, or is loading while an item arrives, gets the item's capacity and ammo once the save has loaded ("capacities mended" in the log). Seen for Deku Sticks (10/10) and the Slingshot (30/30).
@@ -30,8 +30,8 @@ This is an early test release. Everything under "Works" was seen in our two-game
 - **Held items** ([issue 92](https://github.com/daurosk/oot-remake-multiplayer/issues/92)): a Deku Stick and a bottle show in the other Links' hands; the Deku Nut and the Slingshot were not seen.
 - **Boss rooms**: a player who walks out of a boss room after the fight has started is not pulled back in.
 - **A code mod with the emulator started directly**: `Host.bat` and `Join.bat` refuse to start with a code mod (below). If the emulator is started some other way with a mod that patches where co-op does, co-op disconnects as soon as the game loads and the panel says **"Co-op is off: a code mod is installed"**. After such a stop co-op stays off until the emulator restarts: remove the mod, then start again.
-- **Not yet checked in a game**: the Kokiri Shop selling each player their own Deku Shield ([issue 130](https://github.com/daurosk/oot-remake-multiplayer/issues/130); the Deku Shield is each player's own since test8), the Deku Tree's Skulltula and other kills seen from both games ([issues 132](https://github.com/daurosk/oot-remake-multiplayer/issues/132) and [133](https://github.com/daurosk/oot-remake-multiplayer/issues/133)), an enemy chasing a player into another player's game ([issue 101](https://github.com/daurosk/oot-remake-multiplayer/issues/101)), pots ([issue 102](https://github.com/daurosk/oot-remake-multiplayer/issues/102)), the host's time of day in every game ([time.md](time.md)), arrows, the boomerang and the hookshot.
-- **Gold Skulltulas**: the token count is shared. A Skulltula or token another player takes while you are in the same area should disappear in your game too (not checked yet). If it does not and you take it, test8 puts your count back instead of counting the token twice ([issue 89](https://github.com/daurosk/oot-remake-multiplayer/issues/89)).
+- **Not yet checked in a game**: the Kokiri Shop selling each player their own Deku Shield ([issue 130](https://github.com/daurosk/oot-remake-multiplayer/issues/130); the Deku Shield is each player's own), the Deku Tree's Skulltula and other kills seen from both games ([issues 132](https://github.com/daurosk/oot-remake-multiplayer/issues/132) and [133](https://github.com/daurosk/oot-remake-multiplayer/issues/133)), an enemy chasing a player into another player's game ([issue 101](https://github.com/daurosk/oot-remake-multiplayer/issues/101)), pots ([issue 102](https://github.com/daurosk/oot-remake-multiplayer/issues/102)), the host's time of day in every game ([time.md](time.md)), arrows, the boomerang and the hookshot.
+- **Gold Skulltulas**: the token count is shared. A Skulltula or token another player takes while you are in the same area should disappear in your game too (not checked yet). If it does not and you take it, your count is put back instead of counting the token twice ([issue 89](https://github.com/daurosk/oot-remake-multiplayer/issues/89)).
 - **Tunic, boots and masks** are not shown on the other players' Link. The field's ordinary grass is not shared.
 - **Game version**: only version 1.1.1 of the game (build `e0f3ccfaf50065ae`) is supported; every player needs that one.
 
@@ -44,7 +44,7 @@ Co-op does not allow mods that change the game's code, or cheats ([issue 136](ht
 
 ## AMD graphics cards
 
-- AMD's driver crashed with the emulator's shader libraries in test4 (`amdvlk64.dll`; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)). Since test4.2 the kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details.
+- AMD's driver crashed with the emulator's shader libraries (`amdvlk64.dll`; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)). The kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details.
 
 ## Other notes
 

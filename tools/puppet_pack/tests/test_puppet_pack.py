@@ -795,7 +795,7 @@ class NupTest(unittest.TestCase):
                 n.read("Pack/Nope.zs")
 
     def test_nup_files_has_the_stand_in_sources(self):
-        # The test8 pack built from a .nup had "shots": []: only REQUIRED was extracted, so
+        # The pack built from a .nup (before this fix) had "shots": []: only REQUIRED was extracted, so
         # every STAND_INS source was "left out". They are read from the .nup when it has them.
         self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS},
                          set(dumpcheck.OPTIONAL))

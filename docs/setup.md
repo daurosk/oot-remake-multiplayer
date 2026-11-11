@@ -102,6 +102,27 @@ What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, 
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
 
+## Linux and Steam Deck
+
+There is a Linux kit too: `oot-coop-<version>-linux-x86_64.tar.gz` on the same release page. A Linux player and a Windows player can play together on the same release. Everything above applies; only the file names and a few commands differ.
+
+**What you need on top:** a 64-bit x86 Linux (or a Steam Deck in Desktop Mode), and for the puppet pack, Python 3 with the `zstandard` package (`sudo apt install python3 python3-zstandard` on Debian or Ubuntu, `sudo pacman -S python python-zstandard` on Arch). The emulator is an AppImage. If it does not start and says FUSE is missing, install `libfuse2` (Debian, Ubuntu) or `fuse2` (Arch).
+
+| Windows kit | Linux kit |
+|---|---|
+| unzip the `.zip` | `tar -xzf oot-coop-<version>-linux-x86_64.tar.gz` (keep the folder somewhere your user can write, for example `~/oot-coop`) |
+| `emulator\user\keys\` | `emulator/user/keys/` (the same folders under `emulator/user/` for keys, firmware, saves and settings) |
+| `make-puppet-pack.cmd` | `./make-puppet-pack.sh` |
+| `Host.bat`, `Join.bat`, `play.cmd` | `./Host.sh`, `./Join.sh`, `./play.sh` (in a terminal, in the kit folder) |
+| `start-server.cmd` | `./start-server.sh` (`Host.sh` starts it in the background; `./start-server.sh --stop` stops it) |
+| `Update.bat` | `./update.sh` (also offered on every start, as `auto_update` in `coop-options.ini` says) |
+| `collect-logs.cmd` | `./collect-logs.sh` (writes `coop-logs-<pc>-<time>.tar.gz`) |
+
+- **Portable folder.** On Linux the emulator uses the `user` folder of the folder it is started in, so start it through the scripts, not by double-clicking `emulator/lichii.AppImage`. Started anywhere else, it uses your normal emulator folders (`~/.local/share/eden`) and co-op settings from there.
+- **Hosting.** Open the server's UDP port if a firewall runs, for example `sudo ufw allow 27510/udp`. `start-server.sh` lists this PC's addresses.
+- **Mods.** As on Windows: code and cheat mods stop `Host.sh` and `Join.sh` and are named; texture and model mods are fine.
+- **Steam Deck.** Use Desktop Mode: open Konsole, `cd` to the kit folder and run `./Join.sh` (or `./Host.sh`). Play with the Deck's own controls once the game runs. To start it from Game Mode, add `play.sh` as a non-Steam game with its "Start in" set to the kit folder; the first start must still happen in Desktop Mode, because it asks for your name and server.
+
 ## Troubleshooting
 
 - **"These mods for Ocarina of Time change the game's code or are cheats"** when you start `Host.bat`, `Join.bat` or `play.cmd`: the folders or files it names are code or cheat mods (in `emulator\user\load\0400486024DEC000\`, or the SD card's `atmosphere\contents\0400486024DEC000\`). Code and cheat mods are not supported in co-op; texture and model mods are fine. Remove the named ones, or turn them off in the game's Add-Ons (right-click the game, Properties, Add-Ons), then start again.

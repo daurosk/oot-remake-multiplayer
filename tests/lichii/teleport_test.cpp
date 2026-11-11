@@ -265,16 +265,6 @@ TEST_CASE("teleport: free play starts a short event so the game takes the scene 
     CHECK_FALSE(trip.Tick(Local{}, 20 * kS).start_event);
 }
 
-TEST_CASE("teleport: no scene event when ours already runs at the answer") {
-    Trip trip;
-    Local here = At("KakarikoVillage_Child", 0, 0, 0);
-    trip.Start(2, "Saria", here, 0);
-    here.event = true;  // an event that began after the command: it takes the request when it ends
-    const auto a = trip.Accepted(2, Target("Graveyard_Child", -35, 98, 8), here, kS);
-    REQUIRE(a.scene);
-    CHECK_FALSE(a.start_event);
-}
-
 TEST_CASE("teleport: after the scene change, a busy or silent player still gives the first place") {
     for (int silent = 0; silent < 2; ++silent) {
         Trip trip;

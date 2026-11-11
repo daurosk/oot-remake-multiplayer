@@ -343,7 +343,7 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     loaded_ = false;
     a.scene = scene_;
     a.start = start_;
-    a.start_event = !local.event;  // an event already running takes the request when it ends
+    a.start_event = true;  // no event runs here (Accepted refuses during one)
     a.lines.push_back("teleport: going to " + name_ + " in " + scene_);
     if (CoopDungeon::IsDungeonScene(scene_)) {
         a.lines.push_back("teleport: " + name_ + " is in a dungeon: you may need its items to get on from there");

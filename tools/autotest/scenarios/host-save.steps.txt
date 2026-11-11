@@ -1,0 +1,27 @@
+# host-save (test8 HS1-HS3, "the host's save decides"). Run:
+#   tools\autotest\run.ps1 -Scenario host-save -Timeout 900
+# A (player 1, the host) waits on the title screen while B (guest) plays and makes progress:
+# B sets the Deku map chest's opened flag (bool 0xe4fb555d, 0 in the test saves) about 120 s
+# after its game is up. Then A loads its save, the host's first load after the title: the
+# group must follow A's save.
+# HS1/HS3 PASS: B logs `coop: flags: the host loaded a save: the group follows it`, B's flag
+#   e4fb555d goes back 1 -> 0 (DEBUG_FLAGS line), the server counts host_resets 1.
+# Then A sets the same flag about 300 s after its game is up (A's progress, live to B).
+# HS2: B quits, joins again and loads its own save (flag 0 there): B logs `save load seen`
+#   and its flag ends at 1 (the group's, from A); host_resets stays 1.
+#! switches LICHII_COOP_DEBUG_FLAGS=1,B:LICHII_COOP_SET_BOOL=e4fb555d,B:LICHII_COOP_SET_AFTER=120,A:LICHII_COOP_SET_BOOL=e4fb555d,A:LICHII_COOP_SET_AFTER=300
+start A
+start B
+load B
+sleep 90
+shot b-progress
+load A
+sleep 30
+shot a-loaded
+sleep 90
+shot a-progress
+close B
+start B
+load B
+sleep 30
+shot b-rejoined

@@ -79,8 +79,27 @@ int main(int argc, char** argv) {
       std::signal(SIGTERM, on_signal);
 
       auto started = std::chrono::steady_clock::now();
+      std::uint64_t shown_resets = 0;
+      std::uint64_t shown_limited = 0;
       while (!g_stop) {
         server.service(5);
+        // Counts a window or a test can read while the server runs (it is
+        // often closed, not stopped): each host save load, and messages over
+        // a player's rate (the first, then every 100th).
+        const Stats& now = server.session().stats();
+        if (now.host_resets != shown_resets) {
+          shown_resets = now.host_resets;
+          std::printf("coop_server: the host loaded a save: the group follows it (host_resets %llu)\n",
+                      static_cast<unsigned long long>(shown_resets));
+          std::fflush(stdout);
+        }
+        if (now.rate_limited != shown_limited &&
+            (shown_limited == 0 || now.rate_limited / 100 != shown_limited / 100)) {
+          std::printf("coop_server: messages over a player's rate dropped so far: %llu\n",
+                      static_cast<unsigned long long>(now.rate_limited));
+          std::fflush(stdout);
+        }
+        shown_limited = now.rate_limited;
         if (line->run_for_ms &&
             std::chrono::steady_clock::now() - started >=
                 std::chrono::milliseconds(*line->run_for_ms)) {
@@ -94,6 +113,9 @@ int main(int argc, char** argv) {
                   static_cast<unsigned long long>(stats.dropped()),
                   static_cast<unsigned long long>(stats.half_open_limited),
                   static_cast<unsigned long long>(stats.not_allowed));
+      std::printf("coop_server: host save loads %llu, over the rate %llu\n",
+                  static_cast<unsigned long long>(stats.host_resets),
+                  static_cast<unsigned long long>(stats.rate_limited));
       std::printf("coop_server: flags relayed %llu, refused %llu, clashes %llu; "
                   "join relayed %llu, not there %llu, dropped %llu\n",
                   static_cast<unsigned long long>(stats.flag_relayed),

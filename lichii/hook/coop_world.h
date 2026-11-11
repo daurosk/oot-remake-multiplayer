@@ -45,7 +45,8 @@ bool IsSign(std::string_view name);
 bool IsGrassActor(std::string_view name);
 
 // Things a hit makes fall and that then stay, as ground or a bridge: the Fire
-// Temple's hammer pillars (Obj_FireTemple_HammerSlipPillar_*, life
+// Temple's and the Gerudo Training Ground's hammer pillars (the same actors,
+// Obj_FireTemple_HammerSlipPillar_*, life
 // Obj_HammerSlipPillar, destruction FallingRock). Shared by WorldSync like a
 // breakable, but never moved and never deleted: another game's break writes
 // life 0 so the game drops it here too (breakables, sync-coverage P1). Not
@@ -237,6 +238,7 @@ public:
     static constexpr float kTokenNearM = 3.0f;    // a new token this near a Gold Skulltula is its
     static constexpr float kTokenSpotM = 1.5f;    // a token this near a known token spot is that one
     static constexpr float kShiftTurnRad = 0.05f;  // a shifter turned this far from its rest: moved
+    static constexpr int kFallerTries = 10;  // then one "did not fall" line, and no more writes
     static constexpr std::uint64_t kGoneHoldUs = 700'000;     // a gone-near-Link break waits this long
     static constexpr std::uint64_t kRespawnUs = 3'000'000;    // back this long after it went: put back by the game
     static constexpr std::uint64_t kEchoUs = 2'000'000;       // our break this soon before theirs was theirs
@@ -375,6 +377,7 @@ private:
         bool sent_break = false;
         // A break from elsewhere being made here.
         std::uint64_t life_written_us = 0;
+        int faller_tries = 0;  // life 0 writes to a faller (kFallerTries)
         bool remove = false;
         // Moves.
         coop::protocol::Vec3 rest{};       // where it last rested for everyone

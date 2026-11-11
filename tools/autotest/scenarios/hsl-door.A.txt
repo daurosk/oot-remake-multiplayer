@@ -1,0 +1,7 @@
+# host-save-load: the host walks from the Graveyard (the test saves' place) down into Kakariko,
+# a scene change, so the game saves and the host has a save to send.
+mark start
+goto -35.7 8.5 1.5 600
+stick 0 -1 150          # down out of the Graveyard
+wait 600
+mark kakariko

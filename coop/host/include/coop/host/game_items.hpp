@@ -148,6 +148,8 @@ class ItemFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override;
   // A named count item (ItemRule::count).
   bool is_count(FlagKey key) override;
+  // DungeonInfo.<dungeon>.IsGetMap and .IsGetCompass (issue 146).
+  bool is_one_way(FlagKey key) override;
   // An item merged from 0 (or less, or false) to 1 or more (true) in the
   // game also raises its grants (item_grants) to their floor, per-player
   // flags included. An item the game holds already gets its capacity grants

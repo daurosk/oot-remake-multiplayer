@@ -682,3 +682,77 @@ TEST_CASE("flag watcher: a reconnect forgets the group's values") {
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kDoor, 0)});
   CHECK(w.stats().load_reverts == 0);
 }
+
+namespace {
+constexpr FlagKey kDekuMap{0x89787395u, 0};      // DungeonInfo.InsideTheDekuTree.IsGetMap
+constexpr FlagKey kDekuCompass{0x06c51ff2u, 0};  // DungeonInfo.InsideTheDekuTree.IsGetCompass
+constexpr FlagKey kGotBomb{0x2bb00768u, 0};      // IsGet.Item_Bomb: OR too, not one-way
+FakeStore dungeon_game() {
+  FakeStore store;
+  for (FlagKey k : {kDekuMap, kDekuCompass, kGotBomb}) store.set(k, 0);
+  return store;
+}
+}  // namespace
+
+TEST_CASE("flag watcher: a dungeon map or compass the game drops to 0 is put back (issue 146)") {
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  CHECK(store.is_one_way(kDekuMap));
+  CHECK(store.is_one_way(kDekuCompass));
+  CHECK_FALSE(store.is_one_way(kGotBomb));
+  CHECK_FALSE(store.is_one_way(kChest));  // not an item
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuCompass, kGotBomb}), FlagRole::player);
+  w.frame(store);
+  game_store.set(kDekuMap, 1);
+  game_store.set(kGotBomb, 1);
+  w.frame(store);  // both go out
+  // The game takes them back, with no load: the map is written back and
+  // nothing is sent for it; any other OR item still goes out as it is.
+  game_store.set(kDekuMap, 0);
+  game_store.set(kGotBomb, 0);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kGotBomb, 0)});
+  CHECK(game_store.get(kDekuMap) == 1);
+  CHECK(w.stats().one_way_restores == 1);
+  CHECK(w.take_one_way_restores() == std::vector<FlagKey>{kDekuMap});
+  CHECK(w.take_one_way_restores().empty());
+  CHECK(w.frame(store).empty());  // and it stays
+  CHECK(game_store.get(kDekuMap) == 1);
+}
+
+TEST_CASE("flag watcher: both players open the map chest at the same time and both keep the map (issue 146)") {
+  FakeStore host_game = dungeon_game();
+  FakeStore player_game = dungeon_game();
+  ItemFlagStore host_store(host_game);
+  ItemFlagStore player_store(player_game);
+  const SharedFlags flags({kDekuMap, kDekuCompass, kGotBomb});
+  FlagWatcher host(flags, FlagRole::host);
+  FlagWatcher player(flags, FlagRole::player);
+  host.frame(host_store);
+  player.frame(player_store);
+
+  // The same frame: each game's own chest sets the map.
+  host_game.set(kDekuMap, 1);
+  player_game.set(kDekuMap, 1);
+  const auto from_host = host.frame(host_store);
+  const auto from_player = player.frame(player_store);
+  for (const auto& m : decode(from_player)) CHECK(host.receive(m));
+  const auto answer = host.frame(host_store);
+  for (const auto& m : decode(from_host)) CHECK(player.receive(m));
+  for (const auto& m : decode(answer)) CHECK(player.receive(m));
+  for (int i = 0; i < 5; ++i) {
+    for (const auto& m : decode(player.frame(player_store))) CHECK(host.receive(m));
+    for (const auto& m : decode(host.frame(host_store))) CHECK(player.receive(m));
+    CHECK(host_game.get(kDekuMap) == 1);
+    CHECK(player_game.get(kDekuMap) == 1);
+  }
+
+  // One game's own chest flow then drops it (the second chest's get): it
+  // comes back there, and the other game is not touched.
+  player_game.set(kDekuMap, 0);
+  CHECK(player.frame(player_store).empty());
+  CHECK(player_game.get(kDekuMap) == 1);
+  CHECK(host_game.get(kDekuMap) == 1);
+  host_game.set(kDekuMap, 0);
+  CHECK(host.frame(host_store).empty());
+  CHECK(host_game.get(kDekuMap) == 1);
+}

@@ -556,6 +556,14 @@ std::size_t ItemFlagStore::mend() {
   return static_cast<std::size_t>(stats_.granted - before);
 }
 
+bool ItemFlagStore::is_one_way(FlagKey key) {
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  return item != nullptr && item->on && item->kind == protocol::FlagKind::boolean &&
+         item->name.starts_with("DungeonInfo.") &&
+         (item->name.ends_with(".IsGetMap") || item->name.ends_with(".IsGetCompass"));
+}
+
 bool ItemFlagStore::is_count(FlagKey key) {
   if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
   const ItemFlag* item = find_item(key.hash);

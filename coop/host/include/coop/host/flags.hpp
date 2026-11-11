@@ -51,6 +51,11 @@ class FlagStore {
   // its change of one as a count delta, and write() then takes a
   // FlagKind::count_delta entry and adds it. Default: no counts.
   virtual bool is_count(FlagKey) { return false; }
+
+  // True for a Bool the game never takes back once set (a dungeon's map and
+  // compass, issue 146): FlagWatcher writes it back to 1 when the game's
+  // value drops to 0, at any time, not only after a load. Default: none.
+  virtual bool is_one_way(FlagKey) { return false; }
 };
 
 // The flags this session shares, sorted, each once. Loaded from plain text,

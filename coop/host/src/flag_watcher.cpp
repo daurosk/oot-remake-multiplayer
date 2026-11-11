@@ -411,6 +411,20 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (it->second == *now && !restate_.contains(key)) continue;
     const FlagEntry before = it->second;
     it->second = *now;
+    if (before.kind == protocol::FlagKind::boolean && before.value != 0 && now->value == 0 &&
+        store.is_one_way(key)) {
+      // A map or compass the game took back (issue 146: both players opened
+      // the Deku Tree's map chest and neither kept the map). Never right for
+      // a one-way Bool: put it back, send nothing.
+      if (store.write(before)) {
+        ++stats_.one_way_restores;
+        ++stats_.applied;
+        it->second = before;
+        if (one_way_restored_.size() < 64) one_way_restored_.push_back(key);
+        continue;
+      }
+      ++stats_.write_failures;
+    }
     if (settling() && !store.is_count(key) && !restate_.contains(key)) {
       // A load putting back an older value than the group's: not sent, and
       // the group's value goes back in (set_loading).

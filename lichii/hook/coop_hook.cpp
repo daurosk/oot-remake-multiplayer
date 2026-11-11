@@ -420,6 +420,14 @@ public:
         }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").
+        // Issue 146: a map or compass the game took back, put back.
+        // Each key logged the first time; the count says how often in all.
+        for (const auto& k : session_->take_one_way_restores()) {
+            LOG_INFO(Core,
+                     "coop: flags: {:#010x} (dungeon map or compass) went back to 0 here: put back to 1 "
+                     "({} put back this session)",
+                     k.hash, session_->one_way_restores());
+        }
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
             std::vector<std::uint64_t> keys;
             for (const auto& k : taken) {

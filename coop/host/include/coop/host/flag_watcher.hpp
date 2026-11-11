@@ -57,6 +57,7 @@ struct FlagStats {
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
+  std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
 };
 
 class FlagWatcher {
@@ -108,6 +109,10 @@ class FlagWatcher {
   // already had at 1 (opened here, the host's echo of it) is not in it. The
   // hook removes what is loaded of these (docs/items.md, "Chests").
   std::vector<FlagKey> take_written_for_others() { return std::exchange(written_for_others_, {}); }
+  // One-way Bools (FlagStore::is_one_way) the game dropped to 0 and diff()
+  // wrote back to 1 since the last call, for the log (issue 146). Each key
+  // only the first time it is put back; stats().one_way_restores counts all.
+  std::vector<FlagKey> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
   // The host left and this player takes over, or the other way round. Keeps
@@ -167,6 +172,8 @@ class FlagWatcher {
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
   std::set<FlagKey> one_way_;  // one-way named flags, no load write-back (share_one_way)
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
+  std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
+  std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);
   std::size_t learned_ = 0;

@@ -57,6 +57,11 @@ class FlagStore {
   // write of it is refused, and the watcher keeps the value and tries again
   // each frame; the host answers with the value asked. Default: never.
   virtual bool holds(FlagKey) { return false; }
+
+  // True for a Bool the game never takes back once set (a dungeon's map and
+  // compass, issue 146): FlagWatcher writes it back to 1 when the game's
+  // value drops to 0, at any time, not only after a load. Default: none.
+  virtual bool is_one_way(FlagKey) { return false; }
 };
 
 // A FlagStore that refuses the flags `hold` names for now and passes all
@@ -78,6 +83,7 @@ class HoldFlagStore final : public FlagStore {
     return inner_.write(entry);
   }
   bool is_count(FlagKey key) override { return inner_.is_count(key); }
+  bool is_one_way(FlagKey key) override { return inner_.is_one_way(key); }
   bool holds(FlagKey key) override { return hold_ && hold_(key); }
 
   // Writes refused so far, and their flags (at most 64).

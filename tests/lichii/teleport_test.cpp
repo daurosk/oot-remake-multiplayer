@@ -368,7 +368,7 @@ TEST_CASE("teleport: a taken scene change is not asked again while it loads") {
     CHECK(trip.Tick(arrived, 13 * kS + Trip::kSettleUs).ask);
 }
 
-TEST_CASE("teleport: the game emptying the request counts as taken; a load elsewhere asks again") {
+TEST_CASE("teleport: the game emptying the request counts as taken, a load elsewhere asks again") {
     Trip trip;
     Local here = At("Kokiri", 0, 0, 0);
     trip.Start(2, "Saria", here, 0);

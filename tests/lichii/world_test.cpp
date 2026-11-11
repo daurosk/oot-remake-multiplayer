@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -1350,4 +1351,270 @@ TEST_CASE("world: hammer pillars fall for everyone and are never moved or delete
         Walk(c, t * kMs, {Fallen(0x100, 0x11, 0), Fallen(0x200, 0x22, 0)});
     }
     CHECK(c.Removes().empty());
+}
+
+// ------------------------------------------------- breakables-2
+
+namespace {
+const char* const kKey = "Obj_Dungeon_SmallKey";
+const std::string kWell = "BottomOfTheWell";
+
+WorldSync::Out WellWalk(WorldSync& w, std::uint64_t now, const std::vector<Seen>& seen) {
+    return Walk(w, now, seen, kLink, 2, kWell);
+}
+proto::WorldBreak KeyBreak(std::uint64_t hash) { return BreakOf(hash, 0, kWell); }
+
+bool Removed(const WorldSync& w, std::uint64_t address) {
+    const auto r = w.Removes();
+    return std::find(r.begin(), r.end(), address) != r.end();
+}
+
+// A store of Int flags by name hash.
+class CountStore final : public coop::host::FlagStore {
+public:
+    std::map<std::uint32_t, std::int32_t> values;
+    std::optional<proto::FlagEntry> read(coop::host::FlagKey key) override {
+        const auto it = values.find(key.hash);
+        if (it == values.end()) {
+            return std::nullopt;
+        }
+        return proto::FlagEntry(key, proto::FlagKind::int32, static_cast<std::uint32_t>(it->second));
+    }
+    bool write(const proto::FlagEntry& e) override {
+        values[e.key.hash] = static_cast<std::int32_t>(e.value);
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("world: lying small keys, shifters and hammer switches by name (breakables-2)") {
+    CHECK(CoopWorld::IsLyingKey(kKey));
+    CHECK(CoopWorld::IsLyingKey("Obj_Dungeon_SmallKey_GerudoFortress_04"));
+    CHECK_FALSE(CoopWorld::IsLyingKey("Obj_MiniGame_SmallKey"));
+    CHECK_FALSE(CoopWorld::IsBreakable(kKey));  // not the enemy-style sharing
+    for (const char* name : {"Obj_FireTemple_HammerDropFloor_A_01", "Obj_FireTemple_HammerDropPillar_A_01",
+                             "Obj_FireTemple_HammerStair_A_01", "Obj_InsideTheDekuTree_FallingLadder_A_01",
+                             "Obj_InsideTheDekuTree_FallingFloor_A_03", "Obj_ShadowTemple_FallingFloor_A_03"}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsShifter(name));
+        CHECK(CoopWorld::IsWorldObject(name));
+    }
+    // Keyed ones go by their key (removed, or kept as ground).
+    CHECK_FALSE(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_01"));
+    CHECK_FALSE(CoopWorld::IsShifter("Obj_ShadowTemple_FallingFloor_A_01"));
+    CHECK(CoopWorld::IsFaller("Obj_HammerSwitch_A_01"));
+    // The walk hands all of them to WorldSync (the pillars were missing there).
+    for (const char* name : {kKey, kPillar, "Obj_HammerSwitch_A_01", "Obj_Pot_A_01", kBox}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsWorldObject(name));
+    }
+    CHECK_FALSE(CoopWorld::IsWorldObject("Obj_TBox_A_01"));
+    CHECK_FALSE(CoopWorld::IsWorldObject("Obj_LakeHrl_Ice_A_01"));  // scenery: no life, no destruction
+
+    CHECK(CoopWorld::KeyCountOf("BottomOfTheWell") == "DungeonInfo.BottomOfTheWell.SmallKeyNum");
+    CHECK(CoopWorld::KeyCountOf("ShadowTemple") == "DungeonInfo.ShadowTemple.SmallKeyNum");
+    CHECK(CoopWorld::KeyCountOf("GerudoFortress_Adult") == "DungeonInfo.GerudoFortress.SmallKeyNum");
+    CHECK_FALSE(CoopWorld::KeyCountOf("HyruleField_Child"));
+}
+
+TEST_CASE("world: a small key taken here goes out as a break, one taken elsewhere goes here at once") {
+    // Taken here: gone next to our Link, sent after the hold, nothing given back.
+    WorldSync a;
+    WellWalk(a, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    std::vector<proto::WorldBreak> sent;
+    WorldSync::Out out;
+    for (std::uint64_t t = 1100; t <= 2500; t += 100) {
+        out = WellWalk(a, t * kMs, {});
+        for (const auto& b : Sent<proto::WorldBreak>(out)) {
+            sent.push_back(b);
+        }
+        CHECK(out.give_back.empty());
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == 0x77);
+    CHECK(sent[0].scene == kWell);
+
+    // Taken elsewhere while ours lies there: deleted on the next walk, no wait.
+    WorldSync b;
+    WellWalk(b, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    b.Receive(KeyBreak(0x77));
+    out = WellWalk(b, 1100 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    CHECK(Removed(b, 0x100));
+    CHECK(out.give_back.empty());
+    CHECK(out.lives.empty());
+    // Our delete makes it leave next to our Link: that is not our take.
+    for (std::uint64_t t = 1200; t <= 3000; t += 100) {
+        out = WellWalk(b, t * kMs, {});
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+        CHECK(out.give_back.empty());
+    }
+
+    // A game that loads the room after the take: its key goes too.
+    WorldSync c;
+    c.Receive(KeyBreak(0x77));
+    WellWalk(c, 5000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    CHECK(Removed(c, 0x100));
+}
+
+TEST_CASE("world: both players take the same small key at once: one key goes back, once") {
+    // (1) Ours went out first, theirs came after: the server keeps the first
+    // break only and relayed theirs, so theirs was first. One key back.
+    WorldSync a;
+    WellWalk(a, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    bool sent = false;
+    for (std::uint64_t t = 1100; t <= 2500; t += 100) {
+        sent = sent || !Sent<proto::WorldBreak>(WellWalk(a, t * kMs, {})).empty();
+    }
+    REQUIRE(sent);
+    a.Receive(KeyBreak(0x77));
+    auto out = WellWalk(a, 2600 * kMs, {});
+    REQUIRE(out.give_back.size() == 1);
+    CHECK(out.give_back[0] == kWell);
+    a.Receive(KeyBreak(0x77));  // a repeat changes nothing
+    CHECK(WellWalk(a, 2700 * kMs, {}).give_back.empty());
+
+    // (2) Theirs comes while ours waits out the hold: ours is never sent, one key back.
+    WorldSync b;
+    WellWalk(b, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    WellWalk(b, 1100 * kMs, {});
+    WellWalk(b, 1200 * kMs, {});  // gone two walks: held as a take
+    b.Receive(KeyBreak(0x77));
+    out = WellWalk(b, 1300 * kMs, {});
+    REQUIRE(out.give_back.size() == 1);
+    for (std::uint64_t t = 1400; t <= 3000; t += 100) {
+        out = WellWalk(b, t * kMs, {});
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+        CHECK(out.give_back.empty());
+    }
+
+    // (3) Theirs comes when our key has just left the walk (one walk missed).
+    WorldSync c;
+    WellWalk(c, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    WellWalk(c, 1100 * kMs, {});
+    c.Receive(KeyBreak(0x77));
+    out = WellWalk(c, 1200 * kMs, {});
+    CHECK(out.give_back.size() == 1);
+
+    // (4) A key far from our Link that leaves the walk was not ours to take.
+    WorldSync d;
+    const proto::Vec3 far{1.0f, 2.0f, 40.0f};
+    WellWalk(d, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, far)});
+    WellWalk(d, 1100 * kMs, {});
+    d.Receive(KeyBreak(0x77));
+    CHECK(WellWalk(d, 1200 * kMs, {}).give_back.empty());
+}
+
+TEST_CASE("world: a key given back lowers the dungeon's count by one, never below 0") {
+    const std::uint32_t hash = proto::flag_hash("DungeonInfo.BottomOfTheWell.SmallKeyNum");
+    CountStore game;
+    game.values[hash] = 2;
+    const std::string line = CoopWorld::GiveBackKey(game, kWell);
+    CHECK(game.values[hash] == 1);
+    CHECK(line.find("2 -> 1") != std::string::npos);
+    game.values[hash] = 0;
+    CoopWorld::GiveBackKey(game, kWell);
+    CHECK(game.values[hash] == 0);
+    CHECK(CoopWorld::GiveBackKey(game, "HyruleField_Child").find("nothing given back") !=
+          std::string::npos);
+
+    // The queue between the threads.
+    CoopWorld::QueueGiveBack("ShadowTemple");
+    CoopWorld::QueueGiveBack("BottomOfTheWell");
+    CHECK(CoopWorld::TakeGiveBacks() == std::vector<std::string>{"ShadowTemple", "BottomOfTheWell"});
+    CHECK(CoopWorld::TakeGiveBacks().empty());
+}
+
+namespace {
+const char* const kLadder = "Obj_InsideTheDekuTree_FallingLadder_A_01";
+// Turned `angle` radians about x.
+Seen Tipped(std::uint64_t address, std::uint64_t hash, const char* name, float angle,
+            proto::Vec3 at = {1.0f, 2.0f, 3.0f}) {
+    Seen s = Thing(address, hash, std::nullopt, name, at);
+    const float c = std::cos(angle), n = std::sin(angle);
+    s.rotation = CoopObjects::Mat3{1, 0, 0, 0, c, -n, 0, n, c};
+    return s;
+}
+} // namespace
+
+TEST_CASE("world: a shifter that only turns is sent where it rests, and held there in the others") {
+    // Ours: the ladder tips over on its foot (no move), 10 m off (a slingshot shot).
+    WorldSync a;
+    const proto::Vec3 link{1.0f, 2.0f, 13.0f};
+    Walk(a, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)}, link);
+    std::vector<proto::WorldPlace> places;
+    for (int i = 1; i <= 15; ++i) {
+        const float angle = std::min(1.5f, 0.3f * static_cast<float>(i));
+        const auto out = Walk(a, static_cast<std::uint64_t>(1000 + 100 * i) * kMs,
+                              {Tipped(0x100, 0x31, kLadder, angle)}, link);
+        for (const auto& p : Sent<proto::WorldPlace>(out)) {
+            places.push_back(p);
+        }
+        for (const auto& v : Sent<proto::WorldMove>(out)) {
+            CHECK(v.flags == 0);  // never "carried"
+        }
+    }
+    REQUIRE(places.size() == 1);
+    CHECK(places[0].hash == 0x31);
+    // Its place's turn is the tipped one (about x by 1.5).
+    CHECK(std::abs(places[0].rotation[0]) == doctest::Approx(std::sin(0.75f)).epsilon(0.01));
+
+    // A box that only turns is no move (shifters only).
+    WorldSync box;
+    Walk(box, 1000 * kMs, {Tipped(0x100, 0x50, kBox, 0.0f)});
+    CHECK(Walk(box, 1100 * kMs, {Tipped(0x100, 0x50, kBox, 0.5f)}).send.empty());
+
+    // Theirs: put where it rests and held there long after (the game would put it back).
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    b.Receive(places[0]);
+    Walk(b, 2000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    for (std::uint64_t t = 2100; t <= 20000; t += 1000) {
+        CHECK(Walk(b, t * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)}).send.empty());
+        std::vector<CoopObjects::PoseWrite> poses;
+        b.Poses(t * kMs, poses);
+        REQUIRE(poses.size() == 1);
+        CHECK(poses[0].address == 0x100);
+        REQUIRE(poses[0].rotation);
+        CHECK((*poses[0].rotation)[4] == doctest::Approx(std::cos(1.5f)).epsilon(0.01));
+    }
+
+    // A game that loads the room later gets the server's place: held as well.
+    WorldSync c;
+    c.Receive(places[0]);
+    Walk(c, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    Walk(c, 9000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    c.Poses(9000 * kMs, poses);
+    CHECK(poses.size() == 1);
+}
+
+TEST_CASE("world: a hammer drop floor that sinks is sent and held, a hammer switch is pressed by life 0") {
+    const char* floor = "Obj_FireTemple_HammerDropFloor_A_01";
+    WorldSync a;
+    Walk(a, 1000 * kMs, {Thing(0x100, 0x41, std::nullopt, floor)});
+    std::vector<proto::WorldPlace> places;
+    for (int i = 1; i <= 12; ++i) {
+        const float y = std::max(0.0f, 2.0f - 0.5f * static_cast<float>(i));
+        const auto out = Walk(a, static_cast<std::uint64_t>(1000 + 100 * i) * kMs,
+                              {Thing(0x100, 0x41, std::nullopt, floor, {1.0f, y, 3.0f})});
+        for (const auto& p : Sent<proto::WorldPlace>(out)) {
+            places.push_back(p);
+        }
+    }
+    REQUIRE(places.size() == 1);
+    CHECK(places[0].position[1] == doctest::Approx(0.0f));
+
+    // The switch: another player's press writes life 0, it is never deleted.
+    const char* sw = "Obj_HammerSwitch_A_01";
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x200, 0x42, 1, sw)});
+    Walk(b, 5000 * kMs, {Thing(0x200, 0x42, 1, sw)});
+    b.Receive(BreakOf(0x42));
+    const auto out = Walk(b, 5100 * kMs, {Thing(0x200, 0x42, 1, sw)});
+    REQUIRE(out.lives.size() == 1);
+    CHECK(out.lives[0].life == 0);
+    for (std::uint64_t t = 5200; t < 9000; t += 100) {
+        Walk(b, t * kMs, {Thing(0x200, 0x42, 0, sw)});
+    }
+    CHECK(b.Removes().empty());
 }

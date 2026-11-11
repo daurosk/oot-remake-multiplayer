@@ -66,6 +66,7 @@
 #include "coop_svc.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
+#include "coop_world.h"
 
 namespace CoopHook {
 namespace {
@@ -290,6 +291,13 @@ public:
             }
             if (cheats_) {
                 CoopCheats::Frame(*game_store);
+            }
+            if (sharing_) {
+                // A small key we and another player took at once: ours goes
+                // back (docs/world.md, small keys).
+                for (const std::string& scene : CoopWorld::TakeGiveBacks()) {
+                    LOG_INFO(Core, "coop: {}", CoopWorld::GiveBackKey(*game_store, scene));
+                }
             }
             if (sharing_) {
                 // Issue 138: grants wait for a loaded save, and the capacities

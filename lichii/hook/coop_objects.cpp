@@ -878,6 +878,9 @@ public:
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
             sign_words_ = std::move(world.words);  // written after the probe's look
+            for (std::string& scene : world.give_back) {
+                CoopWorld::QueueGiveBack(std::move(scene));  // a small key both took
+            }
             if (!world.hits.empty()) {
                 // A sign another player's sword passed: the same hit on ours.
                 u64 link = 0;
@@ -1174,7 +1177,7 @@ private:
                     }
                 }
             }
-            if (IsShared(known.first) || CoopWorld::IsMovable(known.first) ||
+            if (IsShared(known.first) || CoopWorld::IsWorldObject(known.first) ||
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
                 Seen s;
                 s.address = a;

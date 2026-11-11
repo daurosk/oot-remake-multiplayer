@@ -11,12 +11,12 @@ TEST_CASE("pickups: the one-time pickups by name") {
                              "Obj_Heart_Piece", "Obj_Heart_Piece_Digging_Hole",
                              "Obj_Heart_Piece_MiniGame", "Obj_GerudoValley_Heart_Piece",
                              "Obj_RupeeToken_Silver", "Obj_Rupee_Green", "Obj_Rupee_Red",
-                             "Obj_Heart", "Obj_Heart_InWater", "Obj_Dungeon_SmallKey",
-                             "Obj_Dungeon_SmallKey_GerudoFortress_01"}) {
+                             "Obj_Heart", "Obj_Heart_InWater"}) {
         CAPTURE(name);
         CHECK(CoopPickups::IsPickup(name));
     }
     for (const char* name : {"Enemy_Skulltula", "Obj_Heart_Shootable", "Obj_MiniGame_SmallKey",
+                             "Obj_Dungeon_SmallKey", "Obj_Dungeon_SmallKey_GerudoFortress_01",
                              "Obj_OrnamentalRupee_Green", "Obj_silverRupeeCounter",
                              "Pouch_Heart_Piece", "HeartPieceAnchor", "Obj_Pot_A_01", "Item_Token_Gold"}) {
         CAPTURE(name);

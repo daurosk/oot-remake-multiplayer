@@ -74,8 +74,14 @@ Memory ActorWithModel() {
 }  // namespace
 
 TEST_CASE("colours: names and #RRGGBB") {
-    CHECK(CoopColors::Parse("blue") == 0x3070FFu);
-    CHECK(CoopColors::Parse("  Red ") == 0xFF3030u);
+    CHECK(CoopColors::Parse("blue") == 0x2050FFu);
+    CHECK(CoopColors::Parse("  Red ") == 0xE02020u);
+    // The first four names are the player number colours.
+    CHECK(CoopColors::Parse("green") == coop::protocol::slot_color(1));
+    CHECK(CoopColors::Parse("red") == coop::protocol::slot_color(2));
+    CHECK(CoopColors::Parse("blue") == coop::protocol::slot_color(3));
+    CHECK(CoopColors::Parse("purple") == coop::protocol::slot_color(4));
+    CHECK(CoopColors::Parse("#000001") == 0x000001u);  // any colour
     CHECK(CoopColors::Parse("GREY") == CoopColors::Parse("gray"));
     CHECK(CoopColors::Parse("#12ab7F") == 0x12AB7Fu);
     CHECK(CoopColors::Parse("12AB7F") == 0x12AB7Fu);
@@ -159,4 +165,89 @@ TEST_CASE("colours: each remote gets its chosen colour, or its slot's") {
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[0].color == coop::protocol::slot_color(2));
     CHECK(in.targets[1].color == 0x123456u);
+}
+
+TEST_CASE("colours: ForPlayer gives the choice, else the number's colour") {
+    CoopColors::ForgetAll();
+    CoopColors::SetOwn(std::nullopt);
+    CHECK(CoopColors::ForPlayer(1) == 0x20C040u);
+    CHECK(CoopColors::ForPlayer(4) == 0x9030E0u);
+    CoopColors::SetChosen(2, 0x123456u);
+    CHECK(CoopColors::ForPlayer(2) == 0x123456u);
+    CHECK(CoopColors::Chosen(2) == 0x123456u);
+    // Our own number: our own choice, not a remote one.
+    CoopColors::SetOwn(0xABCDEFu);
+    CHECK(CoopColors::ForPlayer(2, 2) == 0xABCDEFu);
+    CHECK(CoopColors::ForPlayer(3, 3) == 0xABCDEFu);
+    CHECK(CoopColors::ForPlayer(3, 2) == 0x2050FFu);
+    // Two players may share a colour.
+    CoopColors::SetChosen(3, 0x123456u);
+    CHECK(CoopColors::ForPlayer(3) == CoopColors::ForPlayer(2));
+    CoopColors::ForgetAll();
+    CoopColors::SetOwn(std::nullopt);
+    CHECK(CoopColors::ForPlayer(2) == 0xE02020u);
+}
+
+namespace {
+constexpr std::uint64_t kEu = 0x80004000;
+constexpr std::uint64_t kHolder = 0x80005000;
+constexpr std::uint64_t kTunic = 0x80006000;
+constexpr std::uint64_t kTunicParts = 0x80007000;
+constexpr std::uint64_t kTunicModel = 0x80008000;
+
+// ActorWithModel, wearing a tunic piece with its own model (an adult).
+void WearTunic(Memory& m) {
+    m.Put<std::uint64_t>(kParts + addr::kPartsEquipmentUser, kEu);
+    const std::uint64_t link = kEu + addr::kArmorLinks + addr::kLinkStride * addr::kTunicLink;
+    m.Put<std::uint32_t>(link + addr::kLinkId, 7);
+    m.Put<std::uint64_t>(link + addr::kLinkHolder, kHolder);
+    m.Put<std::uint64_t>(kHolder + addr::kHolderActor, kTunic);
+    m.Put<std::uint64_t>(kTunic + addr::kActorParts, kTunicParts);
+    m.Put<std::uint64_t>(kTunicParts + addr::kPartsModel, kTunicModel);
+    m.Put<CoopColors::Rgba>(kTunicModel + addr::kModelColor, {0, 0, 0, 0});
+    m.Put<std::uint32_t>(kTunicModel + addr::kModelDirty, 0);
+}
+}  // namespace
+
+TEST_CASE("colours: an adult's tunic takes the colour, not the body") {
+    Memory m = ActorWithModel();
+    m.Put<std::uint64_t>(kParts + addr::kPartsEquipmentUser, kEu);
+    const std::uint64_t link = kEu + addr::kArmorLinks + addr::kLinkStride * addr::kTunicLink;
+    m.Put<std::uint32_t>(link + addr::kLinkId, 0xFFFFFFFFu);  // no tunic piece (a child)
+    m.Put<std::uint64_t>(link + addr::kLinkHolder, 0);
+    CHECK(CoopColors::TunicOf(m, kActor) == 0);
+
+    CoopColors::Painted painted;
+    const auto tint = CoopColors::TintOf(0xE02020, 0.6f);
+    // A child: the whole body.
+    std::string line = CoopColors::Paint(m, kActor, 0xE02020, 0.6f, painted);
+    CHECK(line.find("on body") != std::string::npos);
+    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == tint);
+    CHECK(CoopColors::Paint(m, kActor, 0xE02020, 0.6f, painted).empty());  // said once
+
+    // The tunic appears: it takes the colour, and the body is given back its own.
+    WearTunic(m);
+    CHECK(CoopColors::TunicOf(m, kActor) == kTunic);
+    line = CoopColors::Paint(m, kActor, 0xE02020, 0.6f, painted);
+    CHECK(line.find("on tunic") != std::string::npos);
+    CHECK(m.Get<CoopColors::Rgba>(kTunicModel + addr::kModelColor) == tint);
+    CHECK(m.Get<std::uint32_t>(kTunicModel + addr::kModelDirty) == addr::kDirtyColor);
+    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == CoopColors::Rgba{0, 0, 0, 0});
+
+    // A new colour goes on the tunic; the body is left alone (a hit flash there stays).
+    m.Put<CoopColors::Rgba>(kModel + addr::kModelColor, {1, 0, 0, 1});
+    line = CoopColors::Paint(m, kActor, 0x2050FF, 0.6f, painted);
+    CHECK(line.find("#2050FF") != std::string::npos);
+    CHECK(m.Get<CoopColors::Rgba>(kTunicModel + addr::kModelColor) == CoopColors::TintOf(0x2050FF, 0.6f));
+    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == CoopColors::Rgba{1, 0, 0, 1});
+}
+
+TEST_CASE("colours: a tunic piece whose model is not made yet: the body for now") {
+    Memory m = ActorWithModel();
+    WearTunic(m);
+    m.Put<std::uint64_t>(kTunicParts + addr::kPartsModel, 0);
+    CoopColors::Painted painted;
+    const std::string line = CoopColors::Paint(m, kActor, 0x20C040, 0.6f, painted);
+    CHECK(line.find("on body") != std::string::npos);
+    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == CoopColors::TintOf(0x20C040, 0.6f));
 }

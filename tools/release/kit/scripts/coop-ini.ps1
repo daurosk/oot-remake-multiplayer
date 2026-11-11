@@ -27,9 +27,9 @@ function Test-CoopPassword([string]$Value) {
 }
 
 # A player colour (coop-options.ini's color, the emulator's LICHII_COOP_COLOR): one of the
-# names below (case does not matter) or #RRGGBB / RRGGBB. The names are the emulator's
+# names below (case does not matter) or any #RRGGBB / RRGGBB. The names are the emulator's
 # (lichii/hook/coop_colors.cpp); keep the two lists the same.
-$CoopColorNames = @('red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink', 'white', 'black', 'brown', 'gray', 'grey')
+$CoopColorNames = @('green', 'red', 'blue', 'purple', 'yellow', 'orange', 'cyan', 'pink', 'white', 'black', 'brown', 'gray', 'grey')
 function Test-CoopColor([string]$Value) {
     $v = $Value.Trim()
     if ($CoopColorNames -contains $v.ToLowerInvariant()) { return $true }

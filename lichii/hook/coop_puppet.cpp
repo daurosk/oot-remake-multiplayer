@@ -1112,18 +1112,9 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
 // debug anim log, once a second, what the game left there since the last
 // write, so a writer that undoes ours shows up.
 void Director::Tint(Slot& slot, Guest& guest, std::uint32_t color) {
-    const auto result = CoopColors::Apply(guest, slot.actor, CoopColors::TintOf(color, tint_));
-    if (result == CoopColors::Applied::no_model) {
-        return;  // not made yet; asked again next frame
-    }
-    if (slot.tint_actor != slot.actor || slot.tint_color != color) {
-        slot.tint_actor = slot.actor;
-        slot.tint_color = color;
-        char strength[16];
-        std::snprintf(strength, sizeof(strength), "%.2f", tint_);
-        Say("P" + std::to_string(slot.number) + " colour " + CoopColors::Text(color) +
-            " (strength " + strength + ") on model " +
-            Hex(CoopColors::ModelOf(guest, slot.actor)) + " of " + Hex(slot.actor));
+    const std::string line = CoopColors::Paint(guest, slot.actor, color, tint_, slot.painted);
+    if (!line.empty()) {
+        Say("P" + std::to_string(slot.number) + " " + line + ", puppet " + Hex(slot.actor));
     }
 }
 
@@ -1361,7 +1352,6 @@ std::mutex g_anim_mutex;
 std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
 std::array<Gear, 5> g_gear;  // the same; guarded
 std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
-std::array<std::optional<std::uint32_t>, 5> g_color;               // the same; guarded
 
 } // namespace
 
@@ -1375,13 +1365,13 @@ void OnEvent(const coop::net::Event& event) {
         g_anims = {};
         g_gear = {};
         g_drawn = {};
-        g_color = {};
+        CoopColors::ForgetAll();
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
         g_gear[event.player] = {};
         g_drawn[event.player].reset();
-        g_color[event.player].reset();
+        CoopColors::SetChosen(event.player, std::nullopt);
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -1394,7 +1384,7 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;
-        g_color[event.player] = e.color;
+        CoopColors::SetChosen(event.player, e.color);
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -1415,7 +1405,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
         // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
-        g_director->SetTint(CoopColors::StrengthFrom(std::getenv("LICHII_COOP_PUPPET_TINT")));
+        g_director->SetTint(CoopColors::StrengthFromEnvironment());
         g_planner = std::make_unique<Planner>(std::move(settings));
         g_configured = true;
     });
@@ -1462,7 +1452,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
-                r.color = g_color[r.number];
+                r.color = CoopColors::Chosen(r.number);
             }
         }
     }

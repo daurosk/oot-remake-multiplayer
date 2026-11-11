@@ -1013,8 +1013,13 @@ TEST_CASE("slot_color gives each player number its own colour") {
   CHECK(slot_color(2) != slot_color(3));
   CHECK(slot_color(3) != slot_color(4));
   CHECK(slot_color(1) != slot_color(4));
+  CHECK(slot_color(1) == 0x20C040u);  // green, red, blue, purple (Four Swords)
+  CHECK(slot_color(2) == 0xE02020u);
+  CHECK(slot_color(3) == 0x2050FFu);
+  CHECK(slot_color(4) == 0x9030E0u);
   CHECK(slot_color(0) == 0xFFFFFFu);
-  CHECK(slot_color(5) == 0xFFFFFFu);
+  CHECK(slot_color(5) == 0xFFD020u);  // then yellow, orange, cyan, pink, and round again
+  CHECK(slot_color(9) == slot_color(1));
   for (std::uint8_t n = 1; n <= kMaxPlayers; ++n) CHECK(slot_color(n) <= 0xFFFFFFu);
 }
 

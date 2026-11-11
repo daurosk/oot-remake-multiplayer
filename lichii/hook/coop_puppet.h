@@ -23,6 +23,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop_colors.h"
+
 namespace coop::protocol {
 struct Equipment;
 }
@@ -405,8 +407,7 @@ private:
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
-        std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
-        std::uint32_t tint_color = 0;       // and its colour
+        CoopColors::Painted painted;        // the colour on it (coop_colors.h)
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
@@ -439,8 +440,8 @@ private:
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
-    // The colour into the live puppet's model (coop_colors.h), every frame
-    // it is not there yet (a new actor, or the game wrote its own).
+    // The colour onto the live puppet's tunic, or its body (CoopColors::Paint),
+    // every frame it is not there yet (a new actor, or the game wrote its own).
     void Tint(Slot& slot, Guest& guest, std::uint32_t color);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
               std::uint64_t now_ms);

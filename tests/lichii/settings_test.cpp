@@ -261,7 +261,7 @@ TEST_CASE("settings: color, a name or #RRGGBB") {
   CHECK(s.color == 0x12AB7Fu);
   ApplyIni("color = Purple  # mine\n", s, errors);
   CHECK(errors.empty());
-  CHECK(s.color == 0xA040FFu);
+  CHECK(s.color == 0x9030E0u);
   // Empty: none chosen.
   ApplyIni("color =\n", s, errors);
   CHECK(errors.empty());
@@ -269,9 +269,9 @@ TEST_CASE("settings: color, a name or #RRGGBB") {
   // The environment wins; a bad one is an error naming the variable.
   apply_env({{"LICHII_COOP_COLOR", "green"}}, s, errors);
   CHECK(errors.empty());
-  CHECK(s.color == 0x30D040u);
+  CHECK(s.color == 0x20C040u);
   apply_env({{"LICHII_COOP_COLOR", "blurple"}}, s, errors);
   REQUIRE(errors.size() == 1);
   CHECK(errors[0].find("LICHII_COOP_COLOR") != std::string::npos);
-  CHECK(s.color == 0x30D040u);  // kept
+  CHECK(s.color == 0x20C040u);  // kept
 }

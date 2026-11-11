@@ -246,6 +246,7 @@ public:
         coop::host::SessionSettings session;
         // The player's colour goes out in PLAYER_EQUIP (docs/puppet.md, "Colour").
         session.sampler.color = settings_.color;
+        CoopColors::SetOwn(settings_.color);  // CoopColors::ForPlayer for the HUD
         LOG_INFO(Core, "coop: colour {}", settings_.color ? CoopColors::Text(*settings_.color)
                                                           : std::string("none chosen (slot colour)"));
         std::string flag_error;

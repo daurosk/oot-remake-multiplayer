@@ -577,16 +577,21 @@ inline Equipment merge_equipment(const Equipment& before, const Equipment& now) 
   return e;
 }
 
-// The colour of a player who chose none: one per player number (1 to 4),
-// far apart on the colour wheel. 0 (and anything above 4) gets white.
+// The colour of a player who chose none, as Zelda multiplayer has had it
+// since Four Swords: 1 green, 2 red, 3 blue, 4 purple; then yellow, orange,
+// cyan, pink, and round again. 0 (no player) gets white.
+inline constexpr std::uint32_t kSlotColors[8] = {
+    0x20C040,  // green
+    0xE02020,  // red
+    0x2050FF,  // blue
+    0x9030E0,  // purple
+    0xFFD020,  // yellow
+    0xFF8000,  // orange
+    0x00C8E0,  // cyan
+    0xFF50B0,  // pink
+};
 inline constexpr std::uint32_t slot_color(std::uint8_t player_number) {
-  switch (player_number) {
-    case 1: return 0x3070FF;  // blue
-    case 2: return 0xFF3030;  // red
-    case 3: return 0x30D040;  // green
-    case 4: return 0xFFC020;  // yellow
-    default: return 0xFFFFFF;
-  }
+  return player_number == 0 ? 0xFFFFFFu : kSlotColors[(player_number - 1) % 8];
 }
 
 // PLAYER_EQUIP: a player's equipment, sent reliably on every change and again

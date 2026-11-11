@@ -94,7 +94,7 @@ try {
     foreach ($k in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL', 'color', 'LICHII_COOP_PUPPET_TINT') {
         Check ((Get-KitOptionNames $kitOptions).ContainsKey($k)) "the kit's coop-options.ini names $k"
     }
-    Check ($m -contains '# color = blue') 'an older kit gets the color line, behind #, so its colour stays its player number''s'
+    Check ($m -contains '# color = green') 'an older kit gets the color line, behind #, so its colour stays its player number''s'
     Check (@($m | Where-Object { $_ -match '^# Each player''s Link is tinted' }).Count -eq 1) 'with its comment'
     $again = Merge-KitOptions $m $kitOptions 'v0.1.0-beta4'
     Check ($again.Count -eq $m.Count) 'merging twice adds nothing the second time'

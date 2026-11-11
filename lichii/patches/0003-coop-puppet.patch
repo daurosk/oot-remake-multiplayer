@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 8 Nov 2026 19:30:00 -0900
-Subject: [PATCH] coop: hand svc 0xf4 and Ocarina's main to the co-op hook
+Subject: [PATCH 3/5] coop: hand svc 0xf4 and Ocarina's main to the co-op hook
 
 With LICHII_COOP on, two calls into the co-op hook (lichii/hook/coop_svc.cpp
 in oot-remake-multiplayer):
@@ -19,7 +19,7 @@ in oot-remake-multiplayer):
  2 files changed, 14 insertions(+)
 
 diff --git a/src/core/file_sys/patch_manager.cpp b/src/core/file_sys/patch_manager.cpp
-index c7b765d7dd..5ebd14cb68 100644
+index 6a034aaa5c..7bbb4ca1db 100644
 --- a/src/core/file_sys/patch_manager.cpp
 +++ b/src/core/file_sys/patch_manager.cpp
 @@ -42,6 +42,9 @@
@@ -32,7 +32,7 @@ index c7b765d7dd..5ebd14cb68 100644
  
  namespace FileSys {
  namespace {
-@@ -877,6 +880,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
+@@ -905,6 +908,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
              replaced.push_back(patch.replaces);
          }
      }
@@ -68,3 +68,6 @@ index 2648f77fbb..c374ef5d4f 100644
      if (CallNx2OotPollBackoff(system, imm)) {
          // Ocarina of Time resource poll backoff (svc 0xF3, svc_nx2_oot_poll.cpp); the arguments
          // go back unchanged.
+-- 
+2.56.0.windows.4
+

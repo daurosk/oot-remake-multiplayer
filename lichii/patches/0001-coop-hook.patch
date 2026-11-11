@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 8 Nov 2026 15:53:31 -0900
-Subject: [PATCH] coop: optional hooks for OoT co-op
+Subject: [PATCH 1/5] coop: optional hooks for OoT co-op
 
 Adds LICHII_COOP (off by default). When on, the build adds the co-op
 libraries from LICHII_COOP_DIR (an oot-remake-multiplayer checkout) and
@@ -108,7 +108,7 @@ index 9584ca3806..6a43fc7155 100644
  
      // EDEN_NX2_FRAME_CAPTURE=<dir>: every 120th present, save what the renderer shows as
 diff --git a/src/yuzu/CMakeLists.txt b/src/yuzu/CMakeLists.txt
-index f96bd5be8e..d3104c7085 100644
+index 3528b26c41..c40afc867e 100644
 --- a/src/yuzu/CMakeLists.txt
 +++ b/src/yuzu/CMakeLists.txt
 @@ -516,4 +516,9 @@ if (TARGET nxformat::static_nozstd)
@@ -122,7 +122,7 @@ index f96bd5be8e..d3104c7085 100644
 +
  create_target_directory_groups(yuzu)
 diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
-index f71ba48628..34b1cacec9 100644
+index a5e2d11f38..c7ec67b08b 100644
 --- a/src/yuzu/main_window.cpp
 +++ b/src/yuzu/main_window.cpp
 @@ -16,6 +16,10 @@
@@ -136,7 +136,7 @@ index f71ba48628..34b1cacec9 100644
  #ifdef HAS_RESHADE
  #include "configuration/configure_post_processing.h"
  #include "video_core/post_processing/fx_preset.h"
-@@ -1094,6 +1098,9 @@ void MainWindow::WebBrowserRequestExit() {
+@@ -1076,6 +1080,9 @@ void MainWindow::WebBrowserRequestExit() {
  void MainWindow::InitializeWidgets() {
      render_window = new GRenderWindow(this, input_subsystem);
      render_window->hide();
@@ -146,7 +146,7 @@ index f71ba48628..34b1cacec9 100644
  
      game_list = new GameList(QtCommon::vfs, QtCommon::provider.get(), *play_time_manager,
                               *QtCommon::system, this);
-@@ -5793,6 +5800,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
+@@ -5800,6 +5807,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
          return;
      }
      LOG_INFO(Frontend, "Closing frontend after emulation cleanup");
@@ -156,3 +156,6 @@ index f71ba48628..34b1cacec9 100644
  
      UpdateUISettings();
      game_list->SaveInterfaceLayout();
+-- 
+2.56.0.windows.4
+

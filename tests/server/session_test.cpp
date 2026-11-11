@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <ostream>
@@ -2825,4 +2826,140 @@ TEST_CASE("a witness that leaves the scene and comes back with the enemy listed 
   CHECK(messages_to<ObjectRemove>(h, 2).empty());
   CHECK(h.session.object_owner(placed(7)) == owned(2, 0));
   CHECK(h.session.stats().dead_respawned == 1);
+}
+
+// ---- Security (net-security) ----
+
+namespace {
+
+// ENet's form of an IPv4 address: the four bytes in memory order.
+std::uint32_t enet_address(unsigned char a, unsigned char b, unsigned char c, unsigned char d) {
+  const unsigned char bytes[4] = {a, b, c, d};
+  std::uint32_t out = 0;
+  std::memcpy(&out, bytes, 4);
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("security: a player relaying big messages is held to the byte rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // TEST_PAYLOAD is relayed as it came; 60 KB each, 100 at once, used to
+  // reach every other player whole (6 MB in one go, 15 MB/s sustained).
+  TestPayload big{1, std::vector<std::uint8_t>(60'000, 0)};
+  const std::size_t size = bytes_of(big).size();
+  for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
+  const std::size_t burst = 2 * (1u << 20) / size;  // 34
+  CHECK(h.to(2).size() == burst);
+  CHECK(h.session.stats().rate_limited == 100 - burst);
+  // A second later one second's worth more goes through.
+  h.clear();
+  h.now += 1'000'000;
+  for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
+  const std::size_t left = 2 * (1u << 20) - burst * size;  // what the burst did not use
+  CHECK(h.to(2).size() == (left + (1u << 20)) / size);
+  // The other player is not affected, and small messages flow again once
+  // the budget has refilled.
+  h.clear();
+  h.receive(2, Chat{0, "hi"}, kChannelSession);
+  CHECK(h.to(1).size() == 1);
+  h.now += 100'000;
+  h.clear();
+  h.receive(1, Chat{0, "hi"}, kChannelSession);
+  CHECK(h.to(2).size() == 1);
+}
+
+TEST_CASE("security: the protocol's own traffic stays under the byte rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  PlayerSample sample;
+  sample.time = {1, 1};
+  sample.position = Vec3{1, 2, 3};
+  sample.scene = std::string(kMaxSceneChars, 'x');
+  sample.animation = Animation{std::string(kMaxAnimationChars, 'a'), 1.0f, 0.0f};
+  // 60 full samples and 10 chats of 200 characters a second for 10 seconds.
+  int sent = 0;
+  for (int i = 0; i < 600; ++i) {
+    h.now += 16'667;
+    h.receive(1, sample, kChannelPlayerSamples);
+    ++sent;
+    if (i % 6 == 0) {
+      h.receive(1, Chat{0, std::string(kMaxChatChars, 'c')}, kChannelSession);
+      ++sent;
+    }
+  }
+  CHECK(h.to(2).size() == static_cast<std::size_t>(sent));
+  CHECK(h.session.stats().rate_limited == 0);
+}
+
+TEST_CASE("security: --allow lets only the listed addresses connect") {
+  SessionConfig config;
+  config.allowed = {*parse_address_range("25.0.0.0/8"), *parse_address_range("192.168.1.20")};
+  Session s(config);
+  CHECK(s.connected(1, 0, enet_address(25, 1, 2, 3)));
+  CHECK(s.connected(2, 0, enet_address(192, 168, 1, 20)));
+  CHECK(!s.connected(3, 0, enet_address(192, 168, 1, 21)));
+  CHECK(!s.connected(4, 0, enet_address(26, 1, 2, 3)));
+  CHECK(!s.connected(5, 0, std::nullopt));  // no address: not allowed either
+  CHECK(s.stats().not_allowed == 3);
+  CHECK(s.stats().dropped() == 0);  // connections, not packets
+  // Without --allow, anyone.
+  Session open{SessionConfig{}};
+  CHECK(open.connected(1, 0, enet_address(8, 8, 8, 8)));
+  CHECK(open.stats().not_allowed == 0);
+}
+
+TEST_CASE("security: address ranges parse strictly") {
+  const auto one = parse_address_range("25.1.2.3");
+  REQUIRE(one.has_value());
+  CHECK(one->first == 0x19010203u);
+  CHECK(one->prefix == 32);
+  CHECK(one->contains(0x19010203u));
+  CHECK(!one->contains(0x19010204u));
+  const auto net = parse_address_range("100.64.0.0/10");
+  REQUIRE(net.has_value());
+  CHECK(net->contains(ipv4_of(enet_address(100, 100, 1, 1))));
+  CHECK(!net->contains(ipv4_of(enet_address(100, 128, 0, 1))));
+  CHECK(parse_address_range("0.0.0.0/0")->contains(0xFFFFFFFFu));
+  for (const char* bad : {"", "25", "25.1.2", "25.1.2.3.4", "256.1.1.1", "25.1.2.3/33", "25.1.2.3/",
+                          "25.1.2.3/8x", "a.b.c.d", "25.1.2.3 ", " 25.1.2.3", "::1", "localhost",
+                          "1234.1.1.1", "25..2.3"}) {
+    CAPTURE(bad);
+    CHECK(!parse_address_range(bad).has_value());
+  }
+  CHECK(ipv4_of(enet_address(1, 2, 3, 4)) == 0x01020304u);
+}
+
+TEST_CASE("security: names with invisible or bidi characters are refused") {
+  Harness h;
+  h.join(1, "Link");
+  h.clear();
+  const char* cases[] = {
+      "Li" "\xE2\x80\x8B" "nk",       // zero-width space: looks like Link
+      "" "\xE2\x80\xAE" "kniL",       // right-to-left override
+      "Link" "\xE2\x81\xA0" "",       // word joiner
+      "" "\xEF\xBB\xBF" "Link",       // byte order mark
+      "Li" "\xC2\xAD" "nk",       // soft hyphen
+      "Link\U000E0041",   // tag character
+  };
+  ConnectionId id = 10;
+  for (const char* name : cases) {
+    CAPTURE(name);
+    ++id;
+    h.connect(id);
+    h.receive(id, hello_from(name), kChannelSession);
+    const auto refused = only_message_to<Refused>(h, id);
+    REQUIRE(refused.has_value());
+    CHECK(refused->reason == RefuseReason::bad_name);
+    h.clear();
+  }
+  // Ordinary letters from other scripts are fine.
+  h.join(30, "Zelda" "\xC3\xA9" "");
+  h.join(31, "" "\xE3\x83\xAA" "" "\xE3\x83\xB3" "" "\xE3\x82\xAF" "");
+  CHECK(h.session.player_count() == 3);
 }

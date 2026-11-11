@@ -31,15 +31,26 @@ In the server window you see `player 2 joined: <name>`, and in each game the pan
 
 Only the host needs this, and only UDP port 27510 (or the port in `emulator\user\config\coop.ini`). Joining players connect out and need nothing.
 
-If the others cannot connect, allow the port by hand: open **Command Prompt as administrator** on the host and run
+If the others cannot connect, allow the server by hand: open **Command Prompt as administrator** on the host, go to your kit folder (the one with `Host.bat`; put in your own path) and add the rule:
 
 ```
-netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow protocol=UDP localport=27510 profile=private
+cd /d "C:\Games\oot-coop"
+netsh advfirewall firewall add rule name="OoT co-op server UDP 27510" dir=in action=allow program="%CD%\server\coop_server.exe" protocol=UDP localport=27510 profile=private remoteip=localsubnet
 ```
 
-Windows must also see your network as **Private** (Settings > Network & internet > your connection > Network profile type). On a **Public** network the rule above does not apply; use `profile=any` instead of `profile=private`, or switch the network to Private.
+The rule lets in only what it must:
 
-To remove the rule later:
+- `program=...`: only the co-op server, not any other program that might listen on that port later.
+- `profile=private`: only on networks Windows calls Private (your home), never on a café or hotel Wi-Fi.
+- `remoteip=localsubnet`: only PCs on your own network, not the whole internet.
+
+Windows must also see your home network as **Private** (Settings > Network & internet > your connection > Network profile type). On a **Public** network the rule does not apply: switch your home network to Private rather than widening the rule. Never allow the port on Public networks for every address.
+
+If you move the kit to another folder, delete the rule and add it again from the new folder.
+
+### When you are done
+
+The server opens nothing by itself: when its window is closed, nothing listens. The rule stays until you delete it, so remove it when you stop playing for a while (Command Prompt as administrator):
 
 ```
 netsh advfirewall firewall delete rule name="OoT co-op server UDP 27510"

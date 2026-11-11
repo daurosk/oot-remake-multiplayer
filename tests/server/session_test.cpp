@@ -2940,11 +2940,11 @@ TEST_CASE("security: names with invisible or bidi characters are refused") {
   h.join(1, "Link");
   h.clear();
   const char* cases[] = {
-      "Li​nk",       // zero-width space: looks like Link
-      "‮kniL",       // right-to-left override
-      "Link⁠",       // word joiner
-      "﻿Link",       // byte order mark
-      "Li­nk",       // soft hyphen
+      "Li" "\xE2\x80\x8B" "nk",       // zero-width space: looks like Link
+      "" "\xE2\x80\xAE" "kniL",       // right-to-left override
+      "Link" "\xE2\x81\xA0" "",       // word joiner
+      "" "\xEF\xBB\xBF" "Link",       // byte order mark
+      "Li" "\xC2\xAD" "nk",       // soft hyphen
       "Link\U000E0041",   // tag character
   };
   ConnectionId id = 10;
@@ -2959,7 +2959,7 @@ TEST_CASE("security: names with invisible or bidi characters are refused") {
     h.clear();
   }
   // Ordinary letters from other scripts are fine.
-  h.join(30, "Zeldaé");
-  h.join(31, "リンク");
+  h.join(30, "Zelda" "\xC3\xA9" "");
+  h.join(31, "" "\xE3\x83\xAA" "" "\xE3\x83\xB3" "" "\xE3\x82\xAF" "");
   CHECK(h.session.player_count() == 3);
 }

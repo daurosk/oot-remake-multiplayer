@@ -371,6 +371,19 @@ What the server does:
 
 The server's per-player limits (60 a second on channels 0 to 2, 240 on 3 and 4) are enough for a room of enemies at 30 a second plus projectiles; a busy fight is measured before they change.
 
+## Waiting for our event (issue 144)
+
+Testers on v0.1.0-test6, in the Deku Tree: B beat a Deku Scrub and was in its talk. A beat the same scrub in A's game, and B was stuck until A had finished A's own talk. A's kill reached B's scrub during B's talk, and B's event waited on an actor that had changed.
+
+The rule, for every shared change made in this game to an actor (`lichii/hook/coop_guard.h`):
+- **What waits.** While our own Link is in an event (`PlayerReading::event_running`: a talk, a cutscene), nothing within 8 m of Link (`CoopGuard::kEventNearM`) is changed by another game. An actor whose place is unknown waits too. Which actor the event is with is not read, so the distance stands in for it.
+- **Kills and hurts** (life writes) are kept, one per actor (the newest), and made right after the event ends, in the order they came. A scene change drops them, because those actors are gone.
+- **Removes, places and played animations** are only left out while the event runs. The sync makes them again every frame, so they happen right after it.
+- The chest rule (a chest within 3 m of our Link is never removed, `CoopGuard::kChestNearM`) uses the same distance test.
+- The log has `coop: objects: our Link is in an event: changes to N actors near it wait until it ends`, then `the event ended: N waiting changes made now`.
+
+Not covered here: the dungeon flags held while in a dungeon (dungeon-live). That is the same idea for flags, applied by the flag store, not by actor.
+
 ## Next steps
 
 In order, each its own branch:

@@ -327,6 +327,9 @@ public:
                                         ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
                                         : std::nullopt);
         }
+        // Issue 144: changes from the others to actors near our Link wait while
+        // our Link is in an event (a talk, a cutscene).
+        CoopObjects::SetLocalEvent(reading && reading->event_running.value_or(false));
         // Our own event hides the others (puppet, Navi, marker); playing the
         // Ocarina does not (coop/host/scene.hpp, local_event_hides).
         const bool event =

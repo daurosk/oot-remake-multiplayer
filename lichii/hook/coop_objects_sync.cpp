@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_guard.h"
 #include "coop_world.h"
 
 #include <algorithm>
@@ -602,7 +603,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (s.hash != 0 && s.hash != kNoHash) {
             if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
                 const bool near = player_ && Finite(*player_) && Finite(s.position) &&
-                                  Distance(*player_, s.position) < kTakeNearM;
+                                  CoopGuard::Near(player_, s.position, kTakeNearM);
                 if (near && t->second.ticks < kTakeBindTicks && !t->second.near_said) {
                     t->second.near_said = true;
                     notes_.emplace_back(s.name + ": taken or opened in another game, left here: our Link is beside it");

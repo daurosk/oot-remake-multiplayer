@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_guard.h"
 
 namespace CoopObjects {
 
@@ -528,7 +529,7 @@ private:
     static constexpr std::uint64_t kTakeGapUs = 1'500'000;
     // An actor this close to our Link is not removed: we may be opening that
     // chest ourselves (both players at once), or standing on it.
-    static constexpr float kTakeNearM = 3.0f;
+    static constexpr float kTakeNearM = CoopGuard::kChestNearM;
     struct Taking {
         unsigned ticks = 0;
         std::set<std::uint64_t> addresses;

@@ -39,6 +39,11 @@ void Share(Core::System& system, coop::host::Session* session,
 // that off).
 void SetMaxLife(std::optional<std::int32_t> quarters);
 
+// Emulator thread, each frame: whether our own Link is in an event (a talk, a
+// cutscene). While it is, shared changes to actors near it wait (coop_guard.h,
+// issue 144).
+void SetLocalEvent(bool in_event);
+
 // Network thread, from the session's on_event: takes the object messages.
 void OnEvent(const coop::net::Event& event);
 

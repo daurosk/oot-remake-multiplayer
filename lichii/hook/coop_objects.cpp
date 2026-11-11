@@ -84,7 +84,9 @@
 #include "coop_spawn.h"
 #include "coop_pickups.h"
 #include "coop_projectiles.h"
+#include "coop_guard.h"
 #include <atomic>
+#include <unordered_map>
 #include "coop_world.h"
 
 namespace CoopObjects {
@@ -733,6 +735,13 @@ Mover& TheMover() {
     return mover;
 }
 
+// Whether our own Link is in an event (a talk, a cutscene), from the hook's
+// reading each frame (SetLocalEvent; issue 144).
+std::atomic<bool>& TheLocalEvent() {
+    static std::atomic<bool> in_event{false};
+    return in_event;
+}
+
 // The MaxLife flag as the session left it (SetMaxLife); -1: not known.
 std::atomic<s32>& TheMaxLife() {
     static std::atomic<s32> quarters{-1};
@@ -972,6 +981,30 @@ public:
                 last = s.animation->name;
             }
         }
+        // Issue 144: a kill or hurt from another game waits while our Link is in
+        // an event with that actor (near it), and is made when the event ends.
+        {
+            if (*scene != guard_scene_) {
+                guard_scene_ = *scene;
+                held_writes_.Forget();  // those actors are gone with the scene
+            }
+            where_.clear();
+            for (const Seen& s : seen) {
+                where_.emplace(s.address, s.position);
+            }
+            const CoopGuard::Local local = GuardLocal();
+            const std::size_t before = held_writes_.Size();
+            writes = held_writes_.Pass(std::move(writes), local,
+                                       [this](std::uint64_t a) { return Where(a); });
+            if (held_writes_.Size() != 0 && !guard_said_) {
+                guard_said_ = true;
+                LOG_INFO(Core, "coop: objects: our Link is in an event: changes to {} actors near it wait until it ends",
+                         held_writes_.Size());
+            } else if (held_writes_.Size() == 0 && guard_said_ && !local.in_event) {
+                guard_said_ = false;
+                LOG_INFO(Core, "coop: objects: the event ended: {} waiting changes made now", before);
+            }
+        }
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
@@ -1065,6 +1098,21 @@ public:
     CoopWorld::WorldSync world_;
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
+    // Issue 144: shared changes to actors near our Link wait while it is in an
+    // event (coop_guard.h). Where each actor of the last walk was, kills and
+    // hurts held back, and what was said about it.
+    std::unordered_map<u64, coop::protocol::Vec3> where_;
+    CoopGuard::Held<LifeWrite> held_writes_;
+    std::string guard_scene_;
+    bool guard_said_ = false;
+    CoopGuard::Local GuardLocal() const { return {TheLocalEvent().load(), player_}; }
+    std::optional<coop::protocol::Vec3> Where(u64 address) const {
+        const auto it = where_.find(address);
+        if (it == where_.end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    }
     int world_lines_ = 0;
     CoopWorld::FoliageProbe foliage_;
     // Issue 88 (docs/items.md, "Heart containers").
@@ -1425,6 +1473,15 @@ private:
         for (const u64 a : world_.Removes()) {
             removes.push_back(a);
         }
+        // Issue 144: nothing near our Link is removed, moved or made to play while
+        // it is in an event; they come again each frame and are made after it.
+        {
+            const CoopGuard::Local local = GuardLocal();
+            const auto where = [this](std::uint64_t a) { return Where(a); };
+            CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
+            CoopGuard::Skip(wish, local, where, [](const Mover::Pose& p) { return p.actor; });
+            CoopGuard::Skip(plays, local, where, [](const PlayWish& p) { return p.address; });
+        }
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
@@ -1646,6 +1703,10 @@ Objects& Instance() {
 }
 
 } // namespace
+
+void SetLocalEvent(bool in_event) {
+    TheLocalEvent().store(in_event);
+}
 
 void SetMaxLife(std::optional<std::int32_t> quarters) {
     TheMaxLife().store(quarters.value_or(-1));

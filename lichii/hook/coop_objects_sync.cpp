@@ -788,6 +788,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                             continue;  // not yet: it may still open itself
                         }
                     }
+                    // A falling floor or a web's parts (dungeon-switches, the
+                    // issue 177: the bridge and webs vanished): the fall
+                    // comes here as the shifter's moves, the web's own break
+                    // on life 0; removed only after they had time to play.
+                    if (CoopWorld::IsFallTaken(s.name) && now_us - t->second.since_us < kTakeFallUs) {
+                        continue;
+                    }
                     // Its own break where the game has one: life 0, then the
                     // delete only if it still stands (the review of breakables:
                     // a web just vanished in the other game).

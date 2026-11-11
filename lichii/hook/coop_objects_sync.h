@@ -619,6 +619,9 @@ private:
     // plays its own break (a web, a cracked wall); deleted only if it still
     // stands this long after (a break with no life to write is deleted at once).
     static constexpr std::uint64_t kTakeBreakUs = 1'500'000;
+    // A taken falling floor or web part (CoopWorld::IsFallTaken) stays this
+    // long, so the fall (as the others' moves) or the break shows first.
+    static constexpr std::uint64_t kTakeFallUs = 4'000'000;
     // A chest (Obj_TBox_*) taken here, away from our Link, is given this long
     // to show itself open (its own AI reads the shared opened flag, issue 87:
     // its animation changes, after the take, to one with "Open" in it, seen

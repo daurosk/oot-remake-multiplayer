@@ -1546,6 +1546,9 @@ TEST_CASE("gimmick probe: names of switches, water planes, shutters, torches and
         CAPTURE(n);
         CHECK(CoopWorld::IsGimmick(n));
     }
+    CHECK(CoopWorld::IsGimmick("Enemy_Scrub_Deku_Brothers"));    // dungeon-switches: the 2-3-1 probe
+    CHECK(CoopWorld::IsGimmick("Scrub_Deku_Brothers_Manager"));
+    CHECK_FALSE(CoopWorld::IsGimmick("Enemy_Scrub_Deku"));
     for (const char* n : {"Obj_Pot_A_01", "Enemy_Stalchild", "Land_Kokiri_WaterPlane_A_01", "Obj_TBox_A_01"}) {
         CAPTURE(n);
         CHECK_FALSE(CoopWorld::IsGimmick(n));
@@ -1711,9 +1714,23 @@ TEST_CASE("world: lying small keys, shifters and hammer switches by name (breaka
         CHECK(CoopWorld::IsShifter(name));
         CHECK(CoopWorld::IsWorldObject(name));
     }
-    // Keyed ones go by their key (removed, or kept as ground).
-    CHECK_FALSE(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_01"));
+    // The Deku Tree's keyed floors (the slingshot room's bridge) are shifters
+    // too: the others see the fall, then the key takes them (dungeon-switches).
+    // The Shadow Temple's keyed one goes by its key (kept as ground).
+    CHECK(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_01"));
+    CHECK(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_02"));
     CHECK_FALSE(CoopWorld::IsShifter("Obj_ShadowTemple_FallingFloor_A_01"));
+    for (const char* name : {"Obj_InsideTheDekuTree_FallingFloor_A_01", "Obj_InsideTheDekuTree_FallingFloor_A_02",
+                             "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_01",
+                             "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_02"}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsFallTaken(name));
+    }
+    for (const char* name : {"Obj_ShadowTemple_FallingFloor_A_01", "Obj_InsideTheDekuTree_SpiderWeb_A_01",
+                             "Obj_TBox_A_02", "Obj_InsideTheDekuTree_FallingLadder_A_01"}) {
+        CAPTURE(name);
+        CHECK_FALSE(CoopWorld::IsFallTaken(name));
+    }
     CHECK(CoopWorld::IsFaller("Obj_HammerSwitch_A_01"));
     // The walk hands all of them to WorldSync (the pillars were missing there).
     for (const char* name : {kKey, kPillar, "Obj_HammerSwitch_A_01", "Obj_Pot_A_01", kBox}) {
@@ -1898,6 +1915,37 @@ TEST_CASE("world: a shifter that only turns is sent where it rests, and held the
     std::vector<CoopObjects::PoseWrite> poses;
     c.Poses(9000 * kMs, poses);
     CHECK(poses.size() == 1);
+}
+
+TEST_CASE("world: a shifter hit from across the room is sent; a box that far is not ours (issue 176)") {
+    // Issue 176: the slingshot room's eye is shot from the chest ledge, 17 m from
+    // the ladder; the ladder only fell for the shooter.
+    const proto::Vec3 ledge{1.0f, 2.0f, 20.0f};  // 17 m from {1, 2, 3}
+    WorldSync a;
+    Walk(a, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)}, ledge);
+    bool sent = false;
+    for (int i = 1; i <= 15; ++i) {
+        const float angle = std::min(1.5f, 0.3f * static_cast<float>(i));
+        const auto out = Walk(a, static_cast<std::uint64_t>(1000 + 100 * i) * kMs,
+                              {Tipped(0x100, 0x31, kLadder, angle)}, ledge);
+        sent = sent || !out.send.empty();
+    }
+    CHECK(sent);
+    // The bridge's keyed floor sinks 17 m off: sent too.
+    const char* bridge = "Obj_InsideTheDekuTree_FallingFloor_A_01";
+    WorldSync f;
+    Walk(f, 1000 * kMs, {Thing(0x200, 0x51, std::nullopt, bridge)}, ledge);
+    const auto fell = Walk(f, 1100 * kMs, {Thing(0x200, 0x51, std::nullopt, bridge, {1.0f, 1.0f, 3.0f})}, ledge);
+    CHECK_FALSE(Sent<proto::WorldMove>(fell).empty());
+    // Beyond 40 m: not ours.
+    WorldSync far;
+    const proto::Vec3 away{1.0f, 2.0f, 50.0f};
+    Walk(far, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)}, away);
+    CHECK(Walk(far, 1100 * kMs, {Tipped(0x100, 0x31, kLadder, 0.6f)}, away).send.empty());
+    // A box moved 17 m from our Link is not ours to send (another game moves it).
+    WorldSync box;
+    Walk(box, 1000 * kMs, {Thing(0x300, 0x61, std::nullopt, kBox)}, ledge);
+    CHECK(Walk(box, 1100 * kMs, {Thing(0x300, 0x61, std::nullopt, kBox, {1.5f, 2.0f, 3.0f})}, ledge).send.empty());
 }
 
 TEST_CASE("world: a hammer drop floor that sinks is sent and held, a hammer switch is pressed by life 0") {

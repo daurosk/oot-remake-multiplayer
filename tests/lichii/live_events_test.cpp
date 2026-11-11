@@ -1,12 +1,15 @@
 // Tests for starting another player's gimmick event here (lichii/hook/coop_live_events.cpp).
 #include <doctest/doctest.h>
 
+#include <array>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "coop_dungeon.h"
 #include "coop_live_events.h"
 
 namespace {
@@ -65,16 +68,64 @@ std::uint64_t Run(Mem& m, const CoopPuppet::Call& c) {
 
 } // namespace
 
-TEST_CASE("live events: the decider starts an allowed held event once per visit, never during an event") {
-    CoopLiveEvents::Decider d;
+namespace {
+// The Deku Tree slingshot room (romfs): the ladder's asker at -37.5 117.8 12.5,
+// the door at about -30.5 110 10, the chest ledge at -54.4 112 12.2; the
+// compass room's asker (PlatformUp) at -22.6 122.6 -3.8.
+constexpr std::array<float, 3> kSlingDoor{-30.5f, 110.0f, 10.0f};
+constexpr std::array<float, 3> kChestLedge{-54.4f, 112.0f, 12.2f};
+constexpr std::array<float, 3> kCompassRoom{-22.0f, 120.0f, -3.0f};
+constexpr std::array<float, 3> kFarAway{-60.0f, 82.0f, 40.0f};
+} // namespace
+
+TEST_CASE("live events: the decider starts a held event once per visit, near its place, never during an event") {
+    CoopLiveEvents::Decider d;  // default: every held event with a place
     const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree_Other"};
-    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", true).has_value());  // an event runs: wait
-    CHECK(d.Next(held, "InsideTheDekuTree", false) == std::optional<std::string>("InsideTheDekuTree_Gimmick_FallingLadder"));
-    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false).has_value());  // once; the other is not allowed
-    CHECK_FALSE(d.Next({"InsideTheDekuTree_Other"}, "KokiriForest", false).has_value());  // only the ladder by default
-    CHECK(d.Next(held, "InsideTheDekuTree", false).has_value());  // back in the Deku Tree: a new visit
-    CoopLiveEvents::Decider all({});
-    CHECK(all.Next({"WaterTemple_X"}, "WaterTemple", false) == std::optional<std::string>("WaterTemple_X"));
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", true, kSlingDoor).has_value());  // an event runs: wait
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, kFarAway).has_value());   // not near: wait
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false).has_value());             // no position: wait
+    CHECK(d.Next(held, "InsideTheDekuTree", false, kSlingDoor) ==
+          std::optional<std::string>("InsideTheDekuTree_Gimmick_FallingLadder"));
+    // Once; the other has no place, so it is never started unless named.
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, kSlingDoor).has_value());
+    CHECK_FALSE(d.Next(held, "KokiriForest", false, kSlingDoor).has_value());  // no place in that scene
+    CHECK(d.Next(held, "InsideTheDekuTree", false, kChestLedge).has_value());  // back: a new visit; the ledge is near
+    CoopLiveEvents::Decider named({"WaterTemple_X"});
+    CHECK(named.Next({"WaterTemple_X"}, "WaterTemple", false) == std::optional<std::string>("WaterTemple_X"));
+}
+
+TEST_CASE("live events: the tester's Deku Tree switches each start in their own room only") {
+    // Issue 176: the slingshot room eye (ladder), the 2nd eye, the compass
+    // room's plate and the plate + torch that burns a web.
+    const std::vector<std::string> held{
+        "InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree_Gimmick_RoomF_EyeSwitch",
+        "InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree_Gimmick_CandleAndSpiderWeb"};
+    CoopLiveEvents::Decider d;
+    CHECK(d.Next(held, "InsideTheDekuTree", false, kSlingDoor) ==
+          std::optional<std::string>("InsideTheDekuTree_Gimmick_FallingLadder"));
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, kSlingDoor).has_value());  // the compass room is 20 m off
+    CHECK(d.Next(held, "InsideTheDekuTree", false, kCompassRoom) ==
+          std::optional<std::string>("InsideTheDekuTree_Gimmick_RoomD_PlatformUp"));
+    CHECK(d.Next(held, "InsideTheDekuTree", false, std::array<float, 3>{-15.0f, 81.0f, 27.0f}) ==
+          std::optional<std::string>("InsideTheDekuTree_Gimmick_RoomF_EyeSwitch"));
+    CHECK(d.Next(held, "InsideTheDekuTree", false, std::array<float, 3>{-11.0f, 79.5f, -8.0f}) ==
+          std::optional<std::string>("InsideTheDekuTree_Gimmick_CandleAndSpiderWeb"));
+}
+
+TEST_CASE("live events: every place is a shared gimmick event of a dungeon, in the scene its name says") {
+    std::size_t deku = 0;
+    for (const auto& p : CoopLiveEvents::Places()) {
+        CHECK_FALSE(p.event.empty());
+        CHECK(CoopDungeon::IsDungeonScene(p.scene));
+        CHECK(std::isfinite(p.x));
+        CHECK(std::isfinite(p.y));
+        CHECK(std::isfinite(p.z));
+        if (p.scene == "InsideTheDekuTree") {
+            ++deku;
+        }
+    }
+    CHECK(CoopLiveEvents::Places().size() == 204);
+    CHECK(deku == 6);
 }
 
 TEST_CASE("live events: the requester makes the node's calls in order, with the name in the arg") {
@@ -189,9 +240,9 @@ TEST_CASE("live events: a queued event waits while an event runs in the game") {
 TEST_CASE("live events: no scene read is the same visit, and an empty name is logged plainly") {
     CoopLiveEvents::Decider d;
     const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder"};
-    CHECK(d.Next(held, "InsideTheDekuTree", false).has_value());
-    CHECK_FALSE(d.Next(held, "", false).has_value());
-    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false).has_value());  // no second ask
+    CHECK(d.Next(held, "InsideTheDekuTree", false, kSlingDoor).has_value());
+    CHECK_FALSE(d.Next(held, "", false, kSlingDoor).has_value());
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, kSlingDoor).has_value());  // no second ask
     CoopLiveEvents::Requester r;
     r.Want("");
     const auto notes = r.TakeNotes();

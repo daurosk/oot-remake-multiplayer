@@ -278,10 +278,12 @@ public:
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
         }
-        live_events_ = EnvFlag("LICHII_COOP_LIVE_EVENTS");
+        // On unless LICHII_COOP_LIVE_EVENTS=0 (dungeon-switches): another
+        // player's gimmick event plays here too when our Link comes near it.
+        live_events_ = EnvString("LICHII_COOP_LIVE_EVENTS") != "0";
         if (live_events_) {
-            // LICHII_COOP_LIVE_EVENT_NAMES=a,b,...: the events to start (default:
-            // the Deku Tree ladder); "all" for every held gimmick event.
+            // LICHII_COOP_LIVE_EVENT_NAMES=a,b,...: only these events (default
+            // and "all": every held gimmick event with a known place).
             const std::string names = EnvString("LICHII_COOP_LIVE_EVENT_NAMES");
             if (!names.empty()) {
                 if (auto parsed = CoopLiveEvents::ParseNames(names)) {
@@ -302,7 +304,7 @@ public:
                 }
                 return call;
             });
-            LOG_INFO(Core, "coop: dungeon: live events on (LICHII_COOP_LIVE_EVENTS=1)");
+            LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
         }
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
@@ -452,8 +454,9 @@ public:
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
         }
-        // Issue 129, LICHII_COOP_LIVE_EVENTS=1: a held gimmick event is
-        // started here too, so its result happens live (coop_live_events.h).
+        // Issue 129: a held gimmick event is started here too when our Link is
+        // near the place that asks for it, so its result happens live
+        // (coop_live_events.h; off with LICHII_COOP_LIVE_EVENTS=0).
         if (hold && live_events_) {
             std::vector<std::string> held_events;
             for (const auto& k : hold->held_keys()) {
@@ -462,7 +465,11 @@ public:
                 }
             }
             const bool running = reading && reading->event_running.value_or(false);
-            if (const auto name = live_decider_.Next(held_events, hold_scene_, running)) {
+            std::optional<std::array<float, 3>> link;
+            if (view.position) {
+                link = std::array<float, 3>{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
+            }
+            if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
                 live_requester_.Want(*name);

@@ -151,8 +151,20 @@ bool IsShifter(std::string_view name) {
            name.starts_with("Obj_FireTemple_HammerDropPillar_") ||
            name.starts_with("Obj_FireTemple_HammerStair_") ||
            name.starts_with("Obj_InsideTheDekuTree_FallingLadder_") ||
-           name == "Obj_InsideTheDekuTree_FallingFloor_A_03" ||
+           // The Deku Tree's falling floors (dungeon-switches): the keyed ones
+           // (_A_01, _A_02, with _A_03 the slingshot room's bridge) are shifters
+           // too, so the other games see them fall before their key takes them
+           // (IsFallTaken). The Shadow Temple's keyed one stays as ground.
+           name.starts_with("Obj_InsideTheDekuTree_FallingFloor_") ||
            name == "Obj_ShadowTemple_FallingFloor_A_03";
+}
+
+bool IsFallTaken(std::string_view name) {
+    // A taken (keyed) piece whose fall or break plays in the game that did it:
+    // the falling floors, and the visible parts of a web (the web itself is a
+    // breakable and plays its own break on life 0).
+    return (IsShifter(name) && name.find("FallingFloor_") != std::string_view::npos) ||
+           (name.starts_with("Obj_") && name.find("SpiderWebParts_") != std::string_view::npos);
 }
 
 bool IsWorldObject(std::string_view name) {
@@ -859,7 +871,11 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         return;
     }
     if (!o.ours) {
-        const bool near = player && Distance(*player, o.position) <= kMoverReachM;
+        // A shifter moves only by its own AI, hit here: the game that shows it
+        // moved sends it, from across the room too (the slingshot room's eye
+        // is shot from the chest ledge, 17 m from the ladder).
+        const bool near =
+            player && Distance(*player, o.position) <= (o.shifter ? kShifterReachM : kMoverReachM);
         const bool shifted = Distance(o.position, o.rest) > (o.breakable ? kLooseStartM : kBlockStartM);
         // A shifter may only turn (the Deku Tree's ladder tips over on its foot).
         const bool turned = o.shifter && Turn(o.rest_rotation, o.rotation) > kShiftTurnRad;
@@ -2025,6 +2041,12 @@ void WorldSync::ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us
 }
 
 bool IsGimmick(std::string_view name) {
+    // dungeon-switches (the Scrub Brothers 2-3-1, docs/dungeon.md "Order
+    // puzzles"): the brothers and their manager, so a run logs which words a
+    // hit and the manager's count step.
+    if (name == "Enemy_Scrub_Deku_Brothers" || name == "Scrub_Deku_Brothers_Manager") {
+        return true;
+    }
     if (!name.starts_with("Obj_")) {
         return false;
     }

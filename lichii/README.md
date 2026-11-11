@@ -77,7 +77,7 @@ Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same
 2. Run `fetch.ps1`. If a patch no longer applies, apply it by hand on the new commit, commit, and replace that file with `git format-patch -1 --zero-commit --no-signature --stdout` of its commit.
 3. Build with `LICHII_COOP=ON` and check the log for `coop: loaded`.
 
-The patches stay at 10 files and about 90 lines; everything else is in `hook/`.
+The patches stay at 11 files and about 110 lines; everything else is in `hook/`.
 
 Moves so far: `fritchii-v5` to `fritchii-v5.5` (2026-11-09, 37 commits, mostly the Vulkan renderer, shaders and settings; all three patches applied as they were), then `fritchii-v5.6` (2026-11-10, 108 commits after v5.5), then `fritchii-v5.7` (2026-11-10, below).
 

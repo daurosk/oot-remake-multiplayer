@@ -49,5 +49,6 @@ Co-op does not allow mods that change the game's code, or cheats ([issue 136](ht
 ## Other notes
 
 - Windows may warn about the kit's programs the first time (unsigned): **More info**, then **Run anyway**. Windows Firewall may ask to allow `coop_server.exe` (on the host) and `lichii.exe`: allow them on Private networks (and Public for Hamachi or Radmin VPN, [play-online.md](play-online.md)).
+- Hosting: the host's server window lists the address to give for each case (VPN, internet with port forwarding, same house) and copies the best one. It asks api.ipify.org (HTTPS) for the internet address; `public_address_lookup = no` in `coop-options.ini` turns that off. If friends cannot connect, `check-hosting.cmd` checks the server and the firewall and prints the fix; it changes nothing itself. Join.bat says when it is connected, and after 30 seconds without an answer the three likely reasons. The kit never opens a port by itself (no UPnP).
 - If an emulator is killed (not closed) and started again at once, joining takes a moment: the game asks again by itself for up to 12 seconds while the server lets the old one go.
 - The kit's emulator is portable and never reads or writes `%APPDATA%\eden`.

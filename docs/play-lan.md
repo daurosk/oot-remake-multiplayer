@@ -7,22 +7,23 @@ One player is the **host**: their PC runs the server, and they play on it too. T
 ## Host
 
 1. Double-click `Host.bat`. The first time it asks for your player name.
-2. A server window opens. It says `listening on port 27510` and lists this PC's addresses, for example:
+2. A server window opens with a box that starts **Give your friends ONE of these**, for example:
 
    ```
-   Co-op server on UDP port 27510. Players on other PCs use one of these addresses:
-     192.168.1.20     (Ethernet)
+   Give your friends ONE of these (they type it in Join.bat):
+
+     192.168.1.20          Same house (friends on your home network or Wi-Fi)
    ```
 
    Keep that window open while you play; closing it ends the session for everyone.
-3. Tell the others your address: the one that starts with `192.168.` or `10.` (or `172.16.` to `172.31.`). If you are not sure, open a Command Prompt, type `ipconfig` and use the **IPv4 Address** of the adapter you use (Ethernet or Wi-Fi).
+3. Tell the others the **Same house** address. Without a VPN program it is already copied: paste it into a chat with Ctrl+V.
 4. The first time, Windows Firewall asks about `coop_server.exe`: tick **Private networks** and click **Allow access**. If you missed it, see [Firewall](#firewall).
 5. Start the game in the emulator and load your save.
 
 ## Join
 
 1. Double-click `Join.bat`.
-2. Type the host's address (for example `192.168.1.20`) and press Enter. Next time Enter keeps the last address. The first time it also asks for your player name; use a different one from the others.
+2. Paste or type the host's address (for example `192.168.1.20`) and press Enter (Join.bat says when you are connected, or what is most likely wrong). Next time Enter keeps the last address. The first time it also asks for your player name; use a different one from the others.
 3. Start the game and load your save.
 
 In the server window you see `player 2 joined: <name>`, and in each game the panel in the top-left corner lists the other players with their distance. In the same area, each player sees the others as Link.
@@ -31,7 +32,7 @@ In the server window you see `player 2 joined: <name>`, and in each game the pan
 
 Only the host needs this, and only UDP port 27510 (or the port in `emulator\user\config\coop.ini`). Joining players connect out and need nothing.
 
-If the others cannot connect, allow the server by hand: open **Command Prompt as administrator** on the host, go to your kit folder (the one with `Host.bat`; put in your own path) and add the rule:
+If the others cannot connect, run `check-hosting.cmd` in the kit folder while the server window is open: it checks the server and the firewall and prints the exact command to fix what is wrong (it changes nothing itself). Or allow the server by hand: open **Command Prompt as administrator** on the host, go to your kit folder (the one with `Host.bat`; put in your own path) and add the rule:
 
 ```
 cd /d "C:\Games\oot-coop"

@@ -3076,4 +3076,12 @@ TEST_CASE("the host's save: SAVE_ASK goes to the host, SAVE_PART from the host t
   h.receive(1, part, kChannelSession);
   CHECK(h.sent.empty());
   CHECK(h.session.stats().save_refused == 3);
+  h.clear();
+
+  // The host's parts are outside its message budget (60 a second, burst 120):
+  // a part dropped would leave the guest's transfer unfinished.
+  part.to_player = 2;
+  for (int i = 0; i < 200; ++i) h.receive(1, part, kChannelSession);
+  CHECK(messages_to<SavePart>(h, 2).size() == 200);
+  CHECK(h.session.stats().rate_limited == 0);
 }

@@ -98,6 +98,10 @@ class Assembler {
   std::vector<std::uint8_t> done_;
 };
 
+// At most this many parts wait in the host's outbox (four whole slots); a send
+// that would go past it is dropped (the hook logs it).
+inline constexpr std::size_t kMaxOutboxParts = 4 * protocol::kMaxSaveParts;
+
 // What the host sends, and when (on the network thread under the hook's lock).
 // A guest's ask is answered with the newest slot. After the host's own save
 // load (on_host_load) the newest slot on disk is not yet the loaded one (an
@@ -112,13 +116,24 @@ class Planner {
     protocol::SaveReason reason = protocol::SaveReason::join;
     bool operator==(const Send&) const = default;
   };
-  void on_ask(std::uint8_t player) { asks_.insert(player); }
+  // A player's ask is answered once while it stays: a repeated ask (an honest
+  // game asks once a run) is ignored, so a guest cannot make the host send
+  // its save over and over. Returns whether the ask was taken.
+  bool on_ask(std::uint8_t player) {
+    if (answered_.count(player) != 0) return false;
+    answered_.insert(player);
+    asks_.insert(player);
+    return true;
+  }
   void on_host_load(Time now) {
     reload_ = true;
     loaded_at_ = now;
   }
-  // A player left: its ask goes.
-  void forget(std::uint8_t player) { asks_.erase(player); }
+  // A player left: its ask goes, and a player with its number may ask again.
+  void forget(std::uint8_t player) {
+    asks_.erase(player);
+    answered_.erase(player);
+  }
   // Nothing owed: no ask and no reload.
   bool idle() const { return !reload_ && asks_.empty(); }
   // Whether a send waits for the game's next save after the host's load.
@@ -129,6 +144,7 @@ class Planner {
 
  private:
   std::set<std::uint8_t> asks_;
+  std::set<std::uint8_t> answered_;  // asks taken, until the player leaves
   bool reload_ = false;
   std::optional<Time> loaded_at_;  // the host's last load, until a save after it
 };

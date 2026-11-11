@@ -171,9 +171,25 @@ TEST_CASE("save transfer: the host answers asks with its newest save and waits a
   CHECK(p.due(later + std::chrono::seconds(2)).empty());  // the ask got the reload
 
   // A player who left is not answered.
-  p.on_ask(4);
+  CHECK(p.on_ask(4));
   p.forget(4);
   CHECK(p.due(later + std::chrono::seconds(3)).empty());
+}
+
+TEST_CASE("save transfer: a guest that asks again and again gets the save once") {
+  using Send = save::Planner::Send;
+  const auto t0 = fs::file_time_type::clock::now();
+  save::Planner p;
+  CHECK(p.on_ask(2));
+  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2));
+  CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
+  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2));
+  CHECK(p.idle());
+  CHECK(p.due(t0).empty());
+  // It left and a player with its number joined: that one may ask.
+  p.forget(2);
+  CHECK(p.on_ask(2));
+  CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
 }
 
 TEST_CASE("save transfer: the newest slot is found and read") {

@@ -45,6 +45,8 @@ std::uint32_t g_next_id = 0;
 bool g_asked = false;  // this run's ask went out (once a run: later saves come as host_load)
 bool g_said_own = false;
 unsigned g_frames = 0;
+unsigned g_last_part_frame = 0;  // a guest's last SAVE_PART
+bool g_said_stuck = false;
 std::string g_notice;
 
 // Unset, or "1"/"0": the environment's LICHII_COOP_HOST_SAVE.
@@ -170,8 +172,12 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     }
     if (const auto* ask = std::get_if<proto::SaveAsk>(&event.message)) {
         if (client.is_host()) {
-            LOG_INFO(Core, "coop: save: player {} asked for our save", ask->player_number);
-            g_planner.on_ask(ask->player_number);
+            if (g_planner.on_ask(ask->player_number)) {
+                LOG_INFO(Core, "coop: save: player {} asked for our save", ask->player_number);
+            } else {
+                LOG_WARNING(Core, "coop: save: player {} asked for our save again: ignored (once a "
+                                  "player)", ask->player_number);
+            }
         }
         return;
     }
@@ -179,6 +185,8 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     if (part == nullptr) {
         return;
     }
+    g_last_part_frame = g_frames;
+    g_said_stuck = false;
     switch (g_assembler.add(*part, client.host_number())) {
     case save::Assembler::Result::partial:
         return;
@@ -219,6 +227,15 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
     }
     if (!client.is_host()) {
         g_outbox.clear();
+        // A transfer that stopped part way (a part lost): said once; the next
+        // save the host sends starts again.
+        if (!g_said_stuck && g_assembler.received() != 0 &&
+            g_assembler.received() < g_assembler.count() && g_frames - g_last_part_frame > 600) {
+            g_said_stuck = true;
+            LOG_WARNING(Core, "coop: save: the host's save (transfer {}) stopped at part {} of {} "
+                              "for 10 s; waiting for the next one",
+                        g_assembler.transfer_id(), g_assembler.received(), g_assembler.count());
+        }
         if (!g_asked && UseCoopFolder()) {
             g_asked = client.send(proto::Message{proto::SaveAsk{}});
             if (g_asked) {
@@ -247,6 +264,11 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
                     std::chrono::steady_clock::now().time_since_epoch().count()) | 1u;
             }
             auto parts = save::split(packed, g_next_id++, send.reason, send.to_player);
+            if (g_outbox.size() + parts.size() > save::kMaxOutboxParts) {
+                LOG_WARNING(Core, "coop: save: {} parts already waiting: this send dropped",
+                            g_outbox.size());
+                continue;
+            }
             LOG_INFO(Core, "coop: save: sending {} ({} bytes, {} parts) to {}",
                      slot_dir->filename().string(), packed.size(), parts.size(),
                      send.to_player == 0 ? std::string("every guest")

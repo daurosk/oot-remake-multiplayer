@@ -231,9 +231,11 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   if (std::holds_alternative<Pong>(message)) return;  // our PING answered
   if (std::holds_alternative<FlagSnapshot>(message)) bytes = 0;  // see bytes_per_second
   // The host's save: a few hundred KB at once, paced by the host's game (one
-  // part a frame) and taken from the host only (on_save).
-  if (std::holds_alternative<SavePart>(message) && id == host_) bytes = 0;
-  if (!within_rate(c, channel, bytes, now_us)) {
+  // part a frame, its outbox capped, each guest answered once) and taken from
+  // the host only (on_save). Outside the host's byte and message budgets: a
+  // part dropped here would leave the guest's transfer unfinished.
+  const bool host_save = std::holds_alternative<SavePart>(message) && id == host_;
+  if (!host_save && !within_rate(c, channel, bytes, now_us)) {
     ++stats_.rate_limited;
     return;
   }

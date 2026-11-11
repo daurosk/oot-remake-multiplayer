@@ -361,3 +361,20 @@ TEST_CASE("boss: the boss dead when the event starts, or no reading, is the deat
     CHECK(Has(a, proto::BossState::defeated));
     CHECK(u.phase() == Sync::Phase::done);
 }
+
+TEST_CASE("boss: the boss's bodies are the boss actor, and Koume and Kotake for Twinrova") {
+    for (const auto& room : CoopBoss::Rooms()) {
+        const auto bodies = CoopBoss::Bodies(room);
+        REQUIRE_FALSE(bodies.empty());
+        CHECK(bodies[0] == room.boss);
+        for (const auto name : bodies) {
+            CHECK(name.find("_Egg") == std::string_view::npos);
+            CHECK(name.find("Baby") == std::string_view::npos);
+            CHECK(name.find("Bullet") == std::string_view::npos);
+        }
+    }
+    const auto* twinrova = CoopBoss::RoomOfScene("SpiritTemple");
+    REQUIRE(twinrova != nullptr);
+    CHECK(CoopBoss::Bodies(*twinrova).size() == 3);
+    CHECK(CoopBoss::Bodies(Forest()).size() == 1);
+}

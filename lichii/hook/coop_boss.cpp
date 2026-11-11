@@ -81,6 +81,13 @@ const Room* RoomByIndex(std::uint8_t index) {
     return index < kRooms.size() ? &kRooms[index] : nullptr;
 }
 
+std::span<const std::string_view> Bodies(const Room& room) {
+    static constexpr std::array<std::string_view, 3> kTwinrovaBodies{
+        "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake"};
+    if (room.boss == kTwinrovaBodies[0]) return kTwinrovaBodies;
+    return {&room.boss, 1};
+}
+
 const Room* RoomOfScene(std::string_view scene) {
     for (const Room& r : kRooms) {
         if (r.scene == scene) {

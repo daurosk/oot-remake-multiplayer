@@ -111,10 +111,17 @@ bool RemovedWhenTaken(std::string_view name) {
     return false;
 }
 
-bool BossAlive(const std::vector<Seen>& seen, std::string_view boss) {
+std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
+    bool unknown = false;
     for (const Seen& s : seen) {
-        if (s.name == boss && (!s.life || s.life->life > 0)) return true;
+        if (std::find(bodies.begin(), bodies.end(), s.name) == bodies.end()) continue;
+        if (!s.life) {
+            unknown = true;
+        } else if (s.life->life > 0) {
+            return true;
+        }
     }
+    if (unknown) return std::nullopt;
     return false;
 }
 

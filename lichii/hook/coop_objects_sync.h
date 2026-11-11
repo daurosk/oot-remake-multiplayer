@@ -29,6 +29,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <set>
 #include <string>
 #include <string_view>
@@ -115,10 +116,12 @@ bool IsShared(std::string_view name);
 // (issue 138).
 bool RemovedWhenTaken(std::string_view name);
 
-// Issue 109: whether boss actor `boss` is alive in one walk: true when an
-// actor of that name is there with life left (or no life read), false when
-// none is there or every one is at 0 life.
-bool BossAlive(const std::vector<Seen>& seen, std::string_view boss);
+// Issue 109: whether a boss is alive in one walk, from its body actors
+// `bodies` (Twinrova: Koume, Kotake and Twinrova; never its eggs, minions or
+// shots). True when one of them is there with life left; false when none is
+// there, or every one there is at 0 life; nothing when one is there whose
+// life was not read (unknown: the boss logic then keeps its old rule).
+std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
 
 // The id of an enemy the scene made without a placement hash: the scene, the
 // actor name and its place in the order such enemies of that name appeared

@@ -82,6 +82,11 @@ struct Room {
     std::span<const std::string_view> parts;  // actor names of the boss and its parts
 };
 
+// The actors that are the boss itself, for "is it alive" (issue 109): the
+// boss actor, and for Twinrova also Koume and Kotake (its first phase). Not
+// its eggs, minions, hands, tentacles or shots.
+std::span<const std::string_view> Bodies(const Room& room);
+
 // The eight boss rooms, by index: 0 to 2 child, 3 to 7 adult.
 std::span<const Room> Rooms();
 const Room* RoomByIndex(std::uint8_t index);

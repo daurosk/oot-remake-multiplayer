@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cstring>
+#include <array>
 #include <optional>
 #include <string>
 #include <variant>
@@ -1745,15 +1746,31 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     CHECK(sync.Removes().empty());
 }
 
-TEST_CASE("objects: a boss is alive while its actor is there with life left (issue 109)") {
+TEST_CASE("objects: a boss is alive while a body actor has life left, unknown without life (issue 109)") {
+    constexpr std::array<std::string_view, 1> kMorpha{"Enemy_DungeonBoss_Morpha"};
     Seen boss = Chest(0x900, 0);
     boss.name = "Enemy_DungeonBoss_Morpha";
     Seen part = Chest(0x910, 0);
     part.name = "Enemy_DungeonBoss_Morpha_Tentacle";
-    CHECK_FALSE(CoopObjects::BossAlive({part}, "Enemy_DungeonBoss_Morpha"));  // gone
-    CHECK(CoopObjects::BossAlive({part, boss}, "Enemy_DungeonBoss_Morpha"));   // no life read
+    part.life = coop::protocol::ObjectLife{5, 5};
+    CHECK(CoopObjects::BossAlive({part}, kMorpha) == std::optional<bool>(false));  // gone; a part is not the body
+    CHECK_FALSE(CoopObjects::BossAlive({part, boss}, kMorpha).has_value());       // no life read: unknown
     boss.life = coop::protocol::ObjectLife{12, 20};
-    CHECK(CoopObjects::BossAlive({boss}, "Enemy_DungeonBoss_Morpha"));
+    CHECK(CoopObjects::BossAlive({boss}, kMorpha) == std::optional<bool>(true));
     boss.life = coop::protocol::ObjectLife{0, 20};
-    CHECK_FALSE(CoopObjects::BossAlive({boss}, "Enemy_DungeonBoss_Morpha"));
+    CHECK(CoopObjects::BossAlive({boss}, kMorpha) == std::optional<bool>(false));
+
+    // Twinrova's first phase is Koume and Kotake: alive while either is.
+    constexpr std::array<std::string_view, 3> kTwinrova{
+        "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Kotake"};
+    Seen koume = Chest(0x920, 0);
+    koume.name = "Enemy_DungeonBoss_Koume";
+    koume.life = coop::protocol::ObjectLife{8, 8};
+    Seen kotake = koume;
+    kotake.address = 0x930;
+    kotake.name = "Enemy_DungeonBoss_Kotake";
+    kotake.life = coop::protocol::ObjectLife{0, 8};
+    CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(true));
+    koume.life = coop::protocol::ObjectLife{0, 8};
+    CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
 }

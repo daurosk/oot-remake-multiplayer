@@ -1724,13 +1724,13 @@ void NoteBosses(const std::vector<Seen>& seen) {
     g_bosses_at = CoopEvery::NowUs();
 }
 
-std::optional<bool> LastBossAlive(std::string_view boss) {
+std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     std::lock_guard lock(g_bosses_mutex);
     const std::uint64_t now = CoopEvery::NowUs();
     if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
         return std::nullopt;
     }
-    return BossAlive(g_bosses, boss);
+    return BossAlive(g_bosses, bodies);
 }
 
 } // namespace CoopObjects

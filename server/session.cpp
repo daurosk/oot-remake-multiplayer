@@ -310,7 +310,12 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
                                 Message& message, std::size_t bytes, std::uint64_t now_us) {
   if (std::holds_alternative<Pong>(message)) return;  // our PING answered
   if (std::holds_alternative<FlagSnapshot>(message)) bytes = 0;  // see bytes_per_second
-  if (!within_rate(c, channel, bytes, now_us)) {
+  // The host's save: a few hundred KB at once, paced by the host's game (one
+  // part a frame, its outbox capped, each guest answered once) and taken from
+  // the host only (on_save). Outside the host's byte and message budgets: a
+  // part dropped here would leave the guest's transfer unfinished.
+  const bool host_save = std::holds_alternative<SavePart>(message) && id == host_;
+  if (!host_save && !within_rate(c, channel, bytes, now_us)) {
     ++stats_.rate_limited;
     return;
   }
@@ -336,6 +341,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (std::holds_alternative<FlagState>(message) || std::holds_alternative<FlagReset>(message)) {
     on_flag_state(id, c, message);
+    return;
+  }
+  if (std::holds_alternative<SaveAsk>(message) || std::holds_alternative<SavePart>(message)) {
+    on_save(id, c, message);
     return;
   }
   if (const auto* part = std::get_if<FlagSnapshot>(&message)) {
@@ -451,6 +460,41 @@ void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
   set_sender(message, c.number);
   send_to_others(id, kChannelProgress, message);
   ++stats_.flag_relayed;
+  ++stats_.relayed;
+}
+
+// The host's save (docs/protocol.md, "Save transfer"). SAVE_ASK goes to the
+// host only; SAVE_PART comes from the host only and goes to the player it
+// names, or to every other player.
+void Session::on_save(ConnectionId id, Connection& c, Message& message) {
+  if (std::holds_alternative<SaveAsk>(message)) {
+    if (!host_ || id == *host_) {
+      ++stats_.save_refused;
+      return;
+    }
+    set_sender(message, c.number);
+    send(*host_, kChannelSession, message);
+    ++stats_.save_asks;
+    ++stats_.relayed;
+    return;
+  }
+  if (id != host_) {
+    ++stats_.save_refused;
+    return;
+  }
+  const std::uint8_t to = std::get<SavePart>(message).to_player;
+  set_sender(message, c.number);
+  if (to == 0) {
+    send_to_others(id, kChannelSession, message);
+  } else {
+    const auto target = connection_of(to);
+    if (!target || *target == id) {
+      ++stats_.save_refused;
+      return;
+    }
+    send(*target, kChannelSession, message);
+  }
+  ++stats_.save_parts;
   ++stats_.relayed;
 }
 

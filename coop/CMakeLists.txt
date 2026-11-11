@@ -41,6 +41,7 @@ add_library(coop_host STATIC
   host/src/game_memory.cpp
   host/src/player_reader.cpp
   host/src/sampler.cpp
+  host/src/save_transfer.cpp
   host/src/session.cpp
 )
 target_include_directories(coop_host PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/host/include")

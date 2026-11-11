@@ -56,6 +56,7 @@
 #include "coop_cheats.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
+#include "coop_save.h"
 #include "coop_game_build.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
@@ -273,6 +274,7 @@ public:
             CoopTime::OnEvent(event);
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
+            CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -508,6 +510,17 @@ public:
             // locked doors' kept breaks, the kills-late dead list, ...).
             LOG_INFO(Core, "coop: flags: the host loaded a save: the group follows it");
             CoopObjects::ForgetKeptBreaks();  // locked doors' kept breaks (docs/dungeon.md)
+        }
+        // Issue 167: the host's save for the guests (coop_save.h): a guest asks
+        // once, the host sends its newest save a part a frame, and again to
+        // everyone after its own save load.
+        session_->with_client([&](coop::net::Client& c) {
+            CoopSave::OnFrame(c, report.host_reset);
+            return 0;
+        });
+        if (auto line = CoopSave::TakeNotice(); !line.empty()) {
+            LOG_INFO(Core, "coop: notice: {}", line);
+            chat_.Add(std::move(line), true);
         }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").

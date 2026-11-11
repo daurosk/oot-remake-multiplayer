@@ -118,7 +118,7 @@ constexpr u32 kStateAlive = 4;
 // plain write of +0x31c is undone by the game within a frame.
 constexpr u64 kActorVtable = 0x4b25e18;
 constexpr u64 kSetMatrix = 0x4c6580;
-// Issue 150 (opt-in, LICHII_COOP_OBJECTS_RELEASE): the actor flags word the
+// Issues 150, 157, 101 (on unless LICHII_COOP_OBJECTS_RELEASE=0): the actor flags word the
 // setter above marks (bit 23, docs/world.md). An enemy that becomes ours gets
 // the bit cleared once, in case the game leaves it set after the Mover's
 // last move and the body stays frozen or floats. Not proven.
@@ -1329,7 +1329,7 @@ public:
     bool hurt_ = true;
     bool replay_ = false;
     bool wake_ = true;
-    bool release_ = false;  // LICHII_COOP_OBJECTS_RELEASE (issue 150, opt-in)
+    bool release_ = true;  // LICHII_COOP_OBJECTS_RELEASE=0 turns it off (issues 150, 157)
     bool drive_ = false;
     int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
@@ -1669,7 +1669,10 @@ private:
                 // A copy whose own AI pulls it at our Link (issue 101).
                 sync_.NoteDrift(w.address, before->second, now, now_us);
                 drift_sum_ += d;
-                drift_max_ = std::max(drift_max_, d);
+                if (d > drift_max_) {
+                    drift_max_ = d;
+                    drift_worst_ = w.address;
+                }
                 ++drift_count_;
             }
             Mover::Pose p;
@@ -1717,6 +1720,13 @@ private:
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
             }
+            // Issue 101: which copy was furthest from where we put it, so
+            // one run tells a copy the setter does not hold (a flying or
+            // sleeping enemy) from the AI's own small pull.
+            if (debug_ && drift_worst_ != 0 && drift_max_ >= kDriftWorstM) {
+                LOG_INFO(Core, "coop: objects: share worst copy {:#x} '{}' off {:.2f} m", drift_worst_,
+                         r.Name(drift_worst_), drift_max_);
+            }
             if (release_) {
                 const auto [cleared, clear] = TheMover().TakeReleases();
                 if (cleared + clear > 0) {
@@ -1737,6 +1747,7 @@ private:
             drift_at_ = now_us;
             drift_sum_ = 0.0f;
             drift_max_ = 0.0f;
+            drift_worst_ = 0;
             drift_count_ = 0;
         }
     }
@@ -1886,6 +1897,8 @@ private:
     u64 drive_hurt_at_ = 0;
     float drift_sum_ = 0.0f;
     float drift_max_ = 0.0f;
+    u64 drift_worst_ = 0;  // the copy at drift_max_
+    static constexpr float kDriftWorstM = 1.0f;
     std::size_t drift_count_ = 0;
     u64 drift_at_ = 0;
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
@@ -1929,7 +1942,7 @@ Objects& Instance() {
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
         objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
-        objects.release_ = EnvFlag("LICHII_COOP_OBJECTS_RELEASE");
+        objects.release_ = EnvOn("LICHII_COOP_OBJECTS_RELEASE");
         return true;
     }();
     (void)once;

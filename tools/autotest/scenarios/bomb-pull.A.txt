@@ -1,0 +1,18 @@
+# bomb-pull (#125): A puts bombs on ZR and pulls one out; nothing else. Run with and without
+# co-op to tell whether co-op makes the pulled bomb vanish:
+#   tools\autotest\run.ps1 -Scenario bomb-pull -NoCoop    (and again without -NoCoop)
+# The save needs bombs (save_flags.py bombs on the baseline). Look at the shots pulled,
+# pulled-1s, pulled-3s: the bomb in Link's hands, and the objects log's Item_Bomb lines
+# (`+` made, `-` gone).
+mark start
+wait 120
+assign Bomb
+wait 60
+mark assigned
+press ZR
+wait 30
+mark pulled
+wait 30
+mark pulled-1s
+wait 120
+mark pulled-3s

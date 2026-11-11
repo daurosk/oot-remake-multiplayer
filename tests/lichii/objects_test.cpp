@@ -2140,3 +2140,126 @@ TEST_CASE("objects: a released write the game ignores is written as life, and ou
     Tick(sync, 4000 * kMs, {Enemy(0x100, 0x11, 2)});
     CHECK(All<proto::Damage>(Tick(sync, 4300 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
 }
+
+TEST_CASE("objects: stun animations (issue 150)") {
+    using CoopObjects::IsStunAnimation;
+    CHECK(IsStunAnimation("Stun_Lp"));
+    CHECK(IsStunAnimation("Stun_St_Attack_Chance"));
+    CHECK(IsStunAnimation("Down_Start"));
+    CHECK(IsStunAnimation("Fall_St"));
+    CHECK(IsStunAnimation("Stun"));
+    CHECK(IsStunAnimation("Down_Loop_ModelOnlyLOD"));
+    CHECK_FALSE(IsStunAnimation("Walk"));
+    CHECK_FALSE(IsStunAnimation("Damage"));
+    CHECK_FALSE(IsStunAnimation("Attack_Chance"));
+    CHECK_FALSE(IsStunAnimation("Mat_Stun"));
+    CHECK_FALSE(IsStunAnimation("Downward"));
+    CHECK_FALSE(IsStunAnimation(""));
+}
+
+TEST_CASE("objects: a boss copy stunned here sends a DAMAGE of 0 and keeps its stun (issue 150)") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Walk", 10.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 10.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    CHECK(All<proto::Damage>(Tick(copy, 1010 * kMs, {c}, 2)).empty());
+
+    // A seed in its eye here: our copy's own game stuns it, no life lost.
+    c.animation = proto::Animation{"Stun_St_Attack_Chance", 0.0f, 1.0f};
+    auto damage = All<proto::Damage>(Tick(copy, 1100 * kMs, {c}, 2));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].id == id);
+    CHECK(damage[0].epoch == 4);
+    CHECK(damage[0].amount == 0);
+    // The owner's 'Walk' is not played over our stun.
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(1110 * kMs, plays);
+    CHECK(plays.empty());
+    // Still stunned: said once.
+    c.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1200 * kMs, {c}, 2)).empty());
+    // Stunned again soon after: not said again within 2 s.
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 1300 * kMs, {c}, 2);
+    c.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1400 * kMs, {c}, 2)).empty());
+    // Later it is.
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 3200 * kMs, {c}, 2);
+    c.animation = proto::Animation{"Down_Start", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 3300 * kMs, {c}, 2)).size() == 1);
+
+    // The owner takes a DAMAGE of 0 as no hit at all.
+    proto::Damage zero = damage[0];
+    zero.player_number = 2;
+    owner.Receive(zero);
+    auto step = Tick(owner, 1200 * kMs, {e});
+    CHECK(step.writes.empty());
+}
+
+TEST_CASE("objects: no stun DAMAGE from a plain enemy, our own boss, or when the owner is stunned too") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Seen plain = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");
+    plain.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Seen boss = Enemy(0x400, 0x44, 12, 0.0f, gohma);
+    boss.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Sync sync;
+    Tick(sync, 0, {plain, boss}, 2);
+    Own(sync, *sync.IdOf(0x300), 1);
+    Own(sync, *sync.IdOf(0x400), 2);  // ours
+    plain.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    boss.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(sync, 100 * kMs, {plain, boss}, 2)).empty());
+
+    // A copy whose owner's boss is stunned already: its stun is the owner's.
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    c.animation = proto::Animation{"Stun_Lp", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1100 * kMs, {c}, 2)).empty());
+}
+
+TEST_CASE("objects: a copy that becomes ours is listed once for the release (issue 150)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6, 0.0f, "Enemy_DungeonBoss_Gohma"), Enemy(0x200, 0x22, 2)});
+    const proto::ObjectId boss = *sync.IdOf(0x100);
+    const proto::ObjectId other = *sync.IdOf(0x200);
+    Own(sync, boss, 2, 1);
+    Own(sync, other, 1, 1);  // ours from the start: never a copy
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, "Enemy_DungeonBoss_Gohma"), Enemy(0x200, 0x22, 2)});
+    CHECK(sync.TakeOursNow().empty());
+    Own(sync, boss, 1, 2);  // handed to us
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, "Enemy_DungeonBoss_Gohma"), Enemy(0x200, 0x22, 2)});
+    CHECK(sync.TakeOursNow() == std::vector<std::uint64_t>{0x100});
+    CHECK(sync.TakeOursNow().empty());
+}

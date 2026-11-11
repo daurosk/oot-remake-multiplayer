@@ -1181,6 +1181,46 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
+    // A boss in a fight: the player clearly nearer it than its owner (issue
+    // 150). Its AI chases only its owner's Link, so the near one gets it.
+    if (o.boss && config_.boss_near_hold_us != 0 && in_fight(o, now_us)) {
+      std::optional<ConnectionId> want;
+      const bool may = (o.changed_at == 0 ||
+                        now_us - o.changed_at >= config_.boss_hitter_cooldown_us) &&
+                       !owner_hit_lately(o, now_us);
+      const auto theirs = may ? distance_to(oc, o, now_us) : std::nullopt;
+      if (theirs) {
+        double best = 0;
+        for (ConnectionId other : o.present) {
+          if (other == owner || !has_loaded(other, o)) continue;
+          const Connection& pc = connections_.at(other);
+          if (pc.status & kBusy) continue;
+          const auto mine = distance_to(pc, o, now_us);
+          if (!mine || *mine > config_.boss_near_m ||
+              *mine + config_.boss_near_margin_m > *theirs) {
+            continue;
+          }
+          if (!want || *mine < best) {
+            want = other;
+            best = *mine;
+          }
+        }
+      }
+      if (!want) {
+        o.candidate.reset();
+      } else {
+        if (o.candidate != want) {
+          o.candidate = want;
+          o.candidate_since = now_us;
+        }
+        if (now_us - o.candidate_since >= config_.boss_near_hold_us) {
+          ++stats_.boss_to_near;
+          ask_handover(oid, o, *want, now_us);
+        }
+      }
+      continue;
+    }
+
     const bool settled =
         o.changed_at == 0 || now_us - o.changed_at >= config_.handover_cooldown_us;
     if (!settled || in_fight(o, now_us)) {

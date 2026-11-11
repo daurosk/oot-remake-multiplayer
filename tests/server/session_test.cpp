@@ -2101,7 +2101,9 @@ TEST_CASE("another player's fight flags do not start a fight") {
 }
 
 TEST_CASE("a boss stays in its fight for 60 s") {
-  OwnerHarness h;
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;  // the near-player rule below is its own case
+  OwnerHarness h(config);
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
   CHECK(h.session.object_group(placed(7)) == 0u);  // alone: no group
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
@@ -2198,6 +2200,83 @@ TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies ke
   h0.clear();
   h0.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
   CHECK(h0.asks() == 0);
+}
+
+TEST_CASE("issue 150: a boss in its fight goes to the player clearly nearer it, held 4 s") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  REQUIRE(h.session.object_in_fight(placed(7), h.now));
+  h.stand(1, 12);  // the owner by the wall
+  h.stand(2, 3);   // player 2 at the boss
+  h.clear();
+  // That life drop was the owner's own hit: 6 s of hold first.
+  h.run(6 * kSecond);
+  CHECK(h.asks() == 0);
+  h.run(3 * kSecond + 500'000);
+  CHECK(h.asks() == 0);
+  h.run(kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_near == 1);
+}
+
+TEST_CASE("issue 150: no near-player move when both stand close, one is too far, or the owner hits it") {
+  {  // 2 is nearer, but not by 4 m
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 6);
+    h.stand(2, 3);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+  {  // 2 is over 15 m from it
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 40);
+    h.stand(2, 20);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+  {  // the owner keeps hitting it (its life falls in its samples)
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    std::int32_t life = 40;
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
+    for (int i = 0; i < 5; ++i) {
+      h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, --life)}, kChannelObjectSamples);
+      h.run(2 * kSecond);
+    }
+    CHECK(h.asks() == 0);
+  }
+  {  // the switch
+    SessionConfig off = quiet_config();
+    off.boss_near_hold_us = 0;
+    OwnerHarness h(off);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("issue 150: a DAMAGE of 0 (a stun in the hitter's game) asks for the boss, harmless to the owner") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  CHECK(messages_to<HandoverState>(h, 2) ==
+        std::vector<HandoverState>{{1, placed(7), 1, state_at(0, 12)}});
 }
 
 TEST_CASE("a hit by the player near it, its owner well away, takes it at once, the hit is kept") {

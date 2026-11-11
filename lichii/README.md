@@ -109,6 +109,8 @@ What in v5.8 matters to co-op:
 - **"Preparing shaders" only when a release changes how shaders are translated.** The kit's `Update.bat` still moves the old shader cache aside whenever `lichii.exe` changes (issue 117: a cache from another build crashed it), so the first start after an update prepares them anyway. Kept as it is: Fritchii's check is about its own translation, not about the co-op build.
 - DLSS quality modes, faster texture uploads, the settings-during-load freeze fixed; Fritchii's tuned settings are applied once more on the first start.
 
+Then `fritchii-v5.8.4` (2026-11-11, for test7). 0001-0005 applied as they were. Its 12 commits (settings revision 12, Saves backups, a reverted read-back experiment) do not touch the hook, the patch sites (Dynamic FPS main+0x3C46200, high refresh and water ripples main+0x3C46E00 and 0x475F8, all as in v5.8) or portable mode.
+
 ### The emulator's own updater
 
 Frizti's release builds check for a new Fritchii when they start and can replace themselves (`frontend_common/update_checker.cpp`, `update_installer.h`, `yuzu/updater/`, the Help menu's "Check for Updates"). All of it is compiled only with `ENABLE_UPDATE_CHECKER`, which is off by default and which Frizti's release CI turns on. A co-op build must not have it: it would replace our patched `lichii.exe` with a plain Fritchii. So 0001 stops the configure with "LICHII_COOP needs ENABLE_UPDATE_CHECKER=OFF" when both are on, and `tools/release/make_kit.ps1` refuses an emulator that has the updater's text in it ("Check for Updates", "update-old"). Players update a kit with its own `Update.bat`.

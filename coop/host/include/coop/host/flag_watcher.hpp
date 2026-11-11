@@ -57,6 +57,8 @@ struct FlagStats {
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
+  std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
+  std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
 };
 
 class FlagWatcher {
@@ -114,7 +116,13 @@ class FlagWatcher {
   // flags, also over ones the group set just before (issue 129: a switch
   // shared by the snapshot was reset by the joiner's save load, sent back as
   // 0, and the group's later 1 was written while the load ran and lost).
-  // While loading and kSettleFrames after, a shared flag that the game moves
+  // Saves (Caleb, 2026-11-11, docs/flags.md "Saves"): the host's save is the
+  // truth. While loading and kSettleFrames after, nothing is sent. When the
+  // window ends and a named flag moved in it (a save was loaded; a door
+  // moves none), the host sends what its load changed as FLAG_RESET, which
+  // replaces the group's values; a player's game takes the group's values
+  // back for what its load changed (the group is not changed).
+  // Also, for a player, while loading and kSettleFrames after, a shared flag that the game moves
   // away from the group's value backwards (a Bool from 1 to 0; while
   // loading only, not in the settle time, an Int back to exactly the value
   // it had before the group's value came; counts are left to their delta
@@ -138,12 +146,19 @@ class FlagWatcher {
   const SharedFlags& shared() const { return shared_; }
 
  private:
-  using Incoming = std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot>;
+  using Incoming =
+      std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot, protocol::FlagReset>;
   using Table = std::map<FlagKey, protocol::FlagEntry>;
 
   void handle(FlagStore& store, Incoming& message, Table& answers);
   void apply_state(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
   void apply_snapshot(FlagStore& store);
+  // The host's save load (FLAG_RESET): every value written exactly.
+  void apply_reset(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
+  // A load window (settling()) ends. Host: when its save load moved named
+  // flags, the flags that moved go out as FLAG_RESET. Player: when its own
+  // save load moved them, they go back to what the group had before.
+  void end_window(FlagStore& store, std::vector<Outgoing>& out);
   void answer_set(FlagStore& store, const protocol::FlagSet& set, Table& answers);
   bool write(FlagStore& store, const protocol::FlagEntry& entry);
   void add(FlagStore& store, const protocol::FlagEntry& delta);
@@ -173,6 +188,10 @@ class FlagWatcher {
   Table group_before_;  // an Int's value in our game just before group_ took it
   bool loading_ = false;
   int settle_left_ = 0;
+  // A load window (docs/flags.md, "Saves"): from the first loading frame to
+  // the end of the settle frames. Nothing is sent from inside it.
+  bool window_ = false;
+  bool moved_ = false;  // a named flag moved in it: a save was loaded, not a door
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;

@@ -85,6 +85,7 @@ enum class MessageType : std::uint16_t {
   drop_ask = 38,
   boss_room = 50,  // 50 to 54: boss rooms (docs/dungeons-boss.md)
   sign_cut = 80,   // 80 to 84: signs (docs/world.md, "Signs")
+  flag_reset = 135,  // 135 to 139: the host's save load (docs/protocol.md, "Saves")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -394,6 +395,19 @@ struct FlagState {
   std::uint8_t player_number = kPlayerSelf;  // 0 from the host, 1 to 4 relayed
   std::vector<FlagEntry> flags;
   bool operator==(const FlagState&) const = default;
+};
+
+// FLAG_RESET: the host loaded a save. The flags its load changed, as its
+// game has them now, 0s included. Sent by the host only; the server keeps
+// the values (replacing what it had) and relays it to everyone else, who
+// write them exactly: no merging (max, OR) and no one-way rule, so the
+// group's state follows the host's save (docs/flags.md, "Saves"). Same
+// entries as FLAG_STATE (1 to kMaxFlagEntries, no count deltas); a longer
+// reset is several messages in a row.
+struct FlagReset {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the host, 1 to 4 relayed
+  std::vector<FlagEntry> flags;
+  bool operator==(const FlagReset&) const = default;
 };
 
 // FLAG_SNAPSHOT: every shared flag, in parts 0 to part_count - 1, sent in
@@ -921,7 +935,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
-                             DropAsk, BossRoom, SignCut>;
+                             DropAsk, BossRoom, SignCut, FlagReset>;
 
 MessageType type_of(const Message& message);
 

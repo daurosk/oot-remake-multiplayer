@@ -148,6 +148,9 @@ class ItemFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override;
   // A named count item (ItemRule::count).
   bool is_count(FlagKey key) override;
+  // The value as it is (no max, OR or mirror merging; per-player flags still
+  // refused): the host's save decides (docs/flags.md, "Saves").
+  bool write_exact(const protocol::FlagEntry& entry) override;
   // An item merged from 0 (or less, or false) to 1 or more (true) in the
   // game also raises its grants (item_grants) to their floor, per-player
   // flags included. An item the game holds already gets its capacity grants
@@ -173,6 +176,7 @@ class ItemFlagStore final : public FlagStore {
  private:
   void grant(std::uint32_t item, bool new_item);
 
+  bool exact_ = false;  // write_exact: take the value as it is
   FlagStore& inner_;
   LoadMend* load_ = nullptr;
   bool ready_ = true;

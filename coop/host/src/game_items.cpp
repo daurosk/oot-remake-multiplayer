@@ -520,7 +520,7 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const auto now = inner_.read(key);
   if (!now || now->kind != entry.kind) return inner_.write(entry);
   protocol::FlagEntry merged = entry;
-  merged.value = merge_item(item->rule, item->kind, now->value, entry.value);
+  merged.value = exact_ ? entry.value : merge_item(item->rule, item->kind, now->value, entry.value);
   const bool int_item = item->kind == protocol::FlagKind::int32;
   const auto held = [&](std::uint32_t v) { return int_item ? as_int(v) >= 1 : v != 0; };
   if (merged.value == now->value) {
@@ -554,6 +554,14 @@ std::size_t ItemFlagStore::mend() {
     if (held) grant(g.item, load_ != nullptr && load_->pending(g.item));
   }
   return static_cast<std::size_t>(stats_.granted - before);
+}
+
+bool ItemFlagStore::write_exact(const protocol::FlagEntry& entry) {
+  if (entry.kind == protocol::FlagKind::count_delta) return write(entry);  // a change, never exact
+  exact_ = true;
+  const bool ok = write(entry);
+  exact_ = false;
+  return ok;
 }
 
 bool ItemFlagStore::is_count(FlagKey key) {

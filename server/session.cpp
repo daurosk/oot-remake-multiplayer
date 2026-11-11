@@ -216,7 +216,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_flag_set(c, message);
     return;
   }
-  if (std::holds_alternative<FlagState>(message)) {
+  if (std::holds_alternative<FlagState>(message) || std::holds_alternative<FlagReset>(message)) {
     on_flag_state(id, c, message);
     return;
   }
@@ -314,7 +314,11 @@ void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
     ++stats_.flag_refused;
     return;
   }
-  for (const FlagEntry& e : std::get<FlagState>(message).flags) keep_flag(e);
+  // FLAG_RESET (the host's save load) is kept the same way: each value
+  // replaces the table's, 0s included.
+  const auto& flags = std::holds_alternative<FlagReset>(message) ? std::get<FlagReset>(message).flags
+                                                                  : std::get<FlagState>(message).flags;
+  for (const FlagEntry& e : flags) keep_flag(e);
   set_sender(message, c.number);
   send_to_others(id, kChannelProgress, message);
   ++stats_.flag_relayed;

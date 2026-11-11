@@ -181,6 +181,7 @@ enum class EventKind : std::uint8_t {
   // our own number); `flags` holds the values to apply, flags() is updated.
   flag_state,      // `player`, `flags`
   flag_snapshot,   // the last FLAG_SNAPSHOT part is in: `flags` = the table
+  flag_reset,      // the host loaded a save: `player` = the host, `flags` to write exactly
   // Join partner. The first three follow the `message` event of their
   // JOIN_PARTNER; join_timed_out has none.
   join_request,    // `player` asks to join us: `request_id`
@@ -298,6 +299,10 @@ class Client {
   // starts a session or takes over. flags() is not changed. False when not
   // connected, not the host, or the table cannot be split or sent.
   bool send_flag_snapshot(std::span<const protocol::FlagEntry> flags);
+  // The host loaded a save: the flags its load changed, as FLAG_RESET
+  // messages (kMaxFlagEntries each). flags() takes them. False when not
+  // connected, not the host, or a part cannot be sent.
+  bool send_flag_reset(std::span<const protocol::FlagEntry> flags);
   // How the host answers a FLAG_SET; empty means accept every value.
   void set_flag_answer(FlagAnswer answer) { flag_answer_ = std::move(answer); }
 

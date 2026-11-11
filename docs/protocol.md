@@ -90,6 +90,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 13 | `FLAG_SET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries (below) |
 | 14 | `FLAG_STATE` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries |
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
+| 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
@@ -134,6 +135,10 @@ Any other kind is refused, since the rest of the body cannot be read. The other 
 ### Who hosts
 
 The first player in hosts. When the host leaves, the remaining player with the lowest number takes over; a player who joins later never takes over by joining, even with a lower number. The server tells a joining player who hosts with `HOST` (after `WELCOME`, before its `FLAG_SNAPSHOT`), and tells everyone with `HOST` when the host changes. `HOST` is on channel 1, so a new host learns that it hosts before any `FLAG_SET` relayed to it. Channels are not ordered against each other, so a build may get `HOST` and its snapshot before `WELCOME`; it keeps them until `WELCOME` comes.
+
+### Saves: the host's save decides (protocol 7, `FLAG_RESET`)
+
+Caleb (2026-11-11): "Let's make it follow the hosts save." A host's build sends `FLAG_RESET` after its own save load, with every shared flag its load changed, as its game has them now, 0s included. The server takes it from the host only, keeps each value (replacing what it had, as with `FLAG_STATE`) and relays it to everyone else with the host's number. Every player writes each value exactly: no merging (max, OR) and no one-way rule, so items, keys, chests and switches go back to the host's save. A player's own save load sends nothing and changes nothing for the group: that game takes the group's values back. Progress made while playing still merges as before. When the host leaves, the new host's state is the truth from then on, with no reset. How a build tells a save load from a door, and when it sends, is in [flags.md](flags.md), "Saves". A build without protocol 7 does not know type 135; all players need the same release.
 
 ### Shared flags (stage 1 step 4)
 

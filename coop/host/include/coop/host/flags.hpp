@@ -51,6 +51,10 @@ class FlagStore {
   // its change of one as a count delta, and write() then takes a
   // FlagKind::count_delta entry and adds it. Default: no counts.
   virtual bool is_count(FlagKey) { return false; }
+
+  // Writes the value as it is, with no merging (the host's save load,
+  // docs/flags.md "Saves"). Default: write().
+  virtual bool write_exact(const protocol::FlagEntry& entry) { return write(entry); }
 };
 
 // The flags this session shares, sorted, each once. Loaded from plain text,

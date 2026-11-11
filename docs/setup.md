@@ -102,6 +102,10 @@ What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, 
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
 
+## Saves
+
+The host's save decides. Everyone's progress is shared while you play, but when the host loads a save, every game in the session goes back to that save's progress: items, keys, chests, doors and switches. A guest who loads a save gets the host's progress, and nothing changes for the others. To undo something (a door that locked you out, a key used in the wrong place), the host loads an older save. Rupees, ammo, hearts and where you stand stay your own.
+
 ## Troubleshooting
 
 - **"These mods for Ocarina of Time change the game's code or are cheats"** when you start `Host.bat`, `Join.bat` or `play.cmd`: the folders or files it names are code or cheat mods (in `emulator\user\load\0400486024DEC000\`, or the SD card's `atmosphere\contents\0400486024DEC000\`). Code and cheat mods are not supported in co-op; texture and model mods are fine. Remove the named ones, or turn them off in the game's Add-Ons (right-click the game, Properties, Add-Ons), then start again.

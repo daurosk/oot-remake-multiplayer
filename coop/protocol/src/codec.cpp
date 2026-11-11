@@ -300,6 +300,20 @@ Error encode_body(const PlayerStatus& m, Writer& w) {
   return Error::none;
 }
 
+Error check_player_life(const PlayerLife& m) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if (m.max_life > kMaxLifeQuarters || m.life > kMaxLifeQuarters) return Error::bad_value;
+  return Error::none;
+}
+
+Error encode_body(const PlayerLife& m, Writer& w) {
+  COOP_TRY(check_player_life(m));
+  w.u8(m.player_number);
+  w.u16(m.life);
+  w.u16(m.max_life);
+  return Error::none;
+}
+
 Error encode_body(const Chat& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_TRY(check_string(m.text, kMaxChatChars));
@@ -876,6 +890,13 @@ Error decode_body(Reader& r, PlayerStatus& m) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_READ(r.u8(m.flags));
   return Error::none;
+}
+
+Error decode_body(Reader& r, PlayerLife& m) {
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u16(m.life));
+  COOP_READ(r.u16(m.max_life));
+  return check_player_life(m);
 }
 
 Error decode_body(Reader& r, Chat& m) {
@@ -1776,7 +1797,7 @@ MessageType type_of(const Message& message) {
       MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
       MessageType::boss_room, MessageType::sign_cut, MessageType::flag_reset,
       MessageType::flag_origin, MessageType::join_challenge, MessageType::join_proof,
-      MessageType::save_ask,    MessageType::save_part,
+      MessageType::save_ask,    MessageType::save_part,   MessageType::player_life,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1829,6 +1850,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::ping:
     case MessageType::pong:
     case MessageType::player_status:
+    case MessageType::player_life:
     case MessageType::chat:
     case MessageType::join_partner:
     case MessageType::player_equip:
@@ -1892,6 +1914,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::ping:
     case MessageType::pong:
     case MessageType::player_status:
+    case MessageType::player_life:
     case MessageType::chat:
     case MessageType::player_sample:
     case MessageType::player_pose:
@@ -1951,7 +1974,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, DropSpawn> || std::is_same_v<T, DropTake> ||
                       std::is_same_v<T, DropAsk> || std::is_same_v<T, BossRoom> ||
                       std::is_same_v<T, SignCut> || std::is_same_v<T, SaveAsk> ||
-                      std::is_same_v<T, SavePart>) {
+                      std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife>) {
           field = &m.player_number;
         }
       },
@@ -2061,6 +2084,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);
     case MessageType::boss_room: return decode_as<BossRoom>(body, out);
     case MessageType::player_equip: return decode_as<PlayerEquip>(body, out);
+    case MessageType::player_life: return decode_as<PlayerLife>(body, out);
   }
   return Error::unknown_type;
 }

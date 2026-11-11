@@ -105,6 +105,7 @@ enum class MessageType : std::uint16_t {
   join_proof = 192,
   save_ask = 206,   // 206 to 215: the host's save sent to guests (docs/protocol.md, "Save transfer")
   save_part = 207,
+  player_life = 251,  // 251 to 255: the co-op HUD (docs/protocol.md, "Hearts")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -249,6 +250,22 @@ struct PlayerStatus {
   std::uint8_t flags = 0;
   bool operator==(const PlayerStatus&) const = default;
 };
+
+// PLAYER_LIFE (protocol 10): a player's hearts, in quarter hearts as the game
+// keeps them (4 = one heart): life now and the most it can be. Sent reliably
+// on every change and again when another player joins; the others draw it
+// under their own hearts (docs/overlay.md). Same player field rules as
+// PLAYER_STATUS. max_life 0: not known (the game's Link is not loaded).
+struct PlayerLife {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::uint16_t life = 0;
+  std::uint16_t max_life = 0;
+  bool operator==(const PlayerLife&) const = default;
+};
+
+// The most quarter hearts PLAYER_LIFE carries: 20 hearts, with room for a
+// game that allows more.
+inline constexpr std::uint16_t kMaxLifeQuarters = 4 * 40;
 
 struct Chat {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
@@ -1025,7 +1042,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
-                             JoinChallenge, JoinProof, SaveAsk, SavePart>;
+                             JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife>;
 
 MessageType type_of(const Message& message);
 

@@ -41,6 +41,17 @@ void Share(Core::System& system, coop::host::Session* session,
 // that off).
 void SetMaxLife(std::optional<std::int32_t> quarters);
 
+// Our own Link's hearts as the object walk last read them from his Life
+// component, in quarter hearts (4 = one heart): now and the most. Nothing
+// when no walk read them in the last 2 s (not connected, no Link loaded,
+// LICHII_COOP_OBJECTS off). The one source for the co-op HUD (PLAYER_LIFE,
+// coop_hud) and PvP. Any thread.
+struct OurLinkLife {
+    std::int32_t life = 0;
+    std::int32_t max = 0;
+};
+std::optional<OurLinkLife> OurLife();
+
 // Emulator thread, each frame: whether our own Link is in an event (a talk, a
 // cutscene). While it is, shared changes to actors near it wait (coop_guard.h,
 // issue 144).

@@ -53,6 +53,7 @@
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
+#include "coop_hud.h"  // the HUD's hearts (PLAYER_LIFE), docs/overlay.md
 #include "coop_cheats.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
@@ -275,6 +276,7 @@ public:
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
+            CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -634,6 +636,7 @@ public:
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
+        CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)
         CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,

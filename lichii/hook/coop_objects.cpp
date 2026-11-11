@@ -846,6 +846,18 @@ std::atomic<s32>& TheMaxLife() {
     return quarters;
 }
 
+// Our Link's Life component as the walk last read it (OurLife): quarter
+// hearts, and when (CoopEvery::NowUs; 0: never).
+struct LifeSeen {
+    std::atomic<s32> life{-1};
+    std::atomic<s32> max{-1};
+    std::atomic<u64> at_us{0};
+};
+LifeSeen& TheLife() {
+    static LifeSeen seen;
+    return seen;
+}
+
 class Objects {
 public:
     void Frame(Core::System& system) {
@@ -1412,6 +1424,11 @@ private:
                     const s32 life = r.Get<s32>(value->first + 8).value_or(-1);
                     const s32 max = r.Get<s32>(value->second + 8).value_or(-1);
                     const s32 flag = TheMaxLife().load();
+                    if (life >= 0 && max > 0) {  // OurLife (the HUD, PvP)
+                        TheLife().life.store(life);
+                        TheLife().max.store(max);
+                        TheLife().at_us.store(CoopEvery::NowUs());
+                    }
                     if (max != link_max_logged_ || flag != flag_max_logged_ ||
                         (debug_ && life != link_life_logged_)) {
                         link_max_logged_ = max;
@@ -1961,6 +1978,14 @@ Objects& Instance() {
 
 void SetLocalEvent(bool in_event) {
     TheLocalEvent().store(in_event);
+}
+
+std::optional<OurLinkLife> OurLife() {
+    const u64 at = TheLife().at_us.load();
+    if (at == 0 || CoopEvery::NowUs() - at > 2'000'000) {
+        return std::nullopt;
+    }
+    return OurLinkLife{TheLife().life.load(), TheLife().max.load()};
 }
 
 void SetMaxLife(std::optional<std::int32_t> quarters) {

@@ -134,6 +134,8 @@ inline std::vector<Message> every_message() {
   all.push_back(Host{2});
   all.push_back(equip_message());
   all.push_back(PlayerEquip{3, {}});
+  all.push_back(PlayerLife{0, 11, 12});
+  all.push_back(PlayerLife{4, 0, 0});
   for (Message& m : object_messages()) all.push_back(std::move(m));
   return all;
 }

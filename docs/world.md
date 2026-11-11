@@ -106,7 +106,7 @@ When the last player leaves a scene the server forgets its breaks, as the game r
 | Red ice | `Obj_RedIce_*` | blue fire (no life: it goes) | gone-near-Link, `WORLD_BREAK`, deleted | unit tests only |
 | Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | `WORLD_HIT`: the swing is replayed on the others' sign (below) | unit tests only; the replayed hit may not cut (the sign probe, below, shows it in the next run) |
 | Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE` | unit tests only |
-| Hammer pillars (Fire Temple) | `Obj_FireTemple_HammerSlipPillar_*` | hammer: falls and stays as a bridge | life, `WORLD_BREAK` as a faller (`IsFaller`): life 0 written in the others, again each second while it stands; never moved, never deleted (the key makes it fallen on a reload) | unit tests only |
+| Hammer pillars (Fire Temple and Gerudo Training Ground) | `Obj_FireTemple_HammerSlipPillar_*` (the same actors in both) | hammer: falls and stays as a bridge | life, `WORLD_BREAK` as a faller (`IsFaller`): life 0 written in the others, again each second while it stands, at most 10 times (then one `did not fall on life 0` line); never moved, never deleted (the key makes it fallen on a reload) | unit tests only |
 | Rolling rocks | `*RollingRock_*` | roll by themselves | each game's own (not shared) | - |
 | Bomb flowers | `Obj_BombFlower_*` | picked, thrown, explode | not shared here (the fruit is made by the game, no placement) | - |
 | Moving floors, lifts, shutters, water level | `*MoveFloor_*`, `*ElevatorLift_*`, `*SwitchShutter_*`, `*WaterPlane_*` | driven by switches | the switch flags ([flags.md](flags.md)); not positions | - |

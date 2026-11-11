@@ -1351,3 +1351,22 @@ TEST_CASE("world: hammer pillars fall for everyone and are never moved or delete
     }
     CHECK(c.Removes().empty());
 }
+
+TEST_CASE("world: a pillar that does not fall on life 0 is written 10 times, then one line, then left (breakables)") {
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    b.Receive(BreakOf(0x11));
+    int writes = 0;
+    int gave_up = 0;
+    for (std::uint64_t t = 5000; t < 40000; t += 100) {
+        const auto out = Walk(b, t * kMs, {Thing(0x100, 0x11, 1, kPillar)});  // never falls
+        writes += static_cast<int>(out.lives.size());
+        for (const auto& line : out.notes) {
+            if (line.find("did not fall on life 0") != std::string::npos) ++gave_up;
+        }
+        CHECK(out.send.empty());
+    }
+    CHECK(writes == WorldSync::kFallerTries);
+    CHECK(gave_up == 1);
+    CHECK(b.Removes().empty());
+}

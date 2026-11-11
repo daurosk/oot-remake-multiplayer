@@ -44,7 +44,8 @@ bool IsSign(std::string_view name);
 bool IsGrassActor(std::string_view name);
 
 // Things a hit makes fall and that then stay, as ground or a bridge: the Fire
-// Temple's hammer pillars (Obj_FireTemple_HammerSlipPillar_*, life
+// Temple's and the Gerudo Training Ground's hammer pillars (the same actors,
+// Obj_FireTemple_HammerSlipPillar_*, life
 // Obj_HammerSlipPillar, destruction FallingRock). Shared by WorldSync like a
 // breakable, but never moved and never deleted: another game's break writes
 // life 0 so the game drops it here too (breakables, sync-coverage P1). Not
@@ -184,6 +185,7 @@ public:
     static constexpr std::uint64_t kDeleteGrassUs = 400'000;  // life 0 written, still there: delete
     static constexpr std::uint64_t kDeleteUs = 6'000'000;     // (a crate takes 4.6 s to go)
     static constexpr std::uint64_t kFallerRetryUs = 1'000'000;  // a faller's life 0, again
+    static constexpr int kFallerTries = 10;  // then one "did not fall" line, and no more writes
     static constexpr std::uint64_t kGoneHoldUs = 700'000;     // a gone-near-Link break waits this long
     static constexpr std::uint64_t kRespawnUs = 3'000'000;    // back this long after it went: put back by the game
     static constexpr std::uint64_t kEchoUs = 2'000'000;       // our break this soon before theirs was theirs
@@ -309,6 +311,7 @@ private:
         bool sent_break = false;
         // A break from elsewhere being made here.
         std::uint64_t life_written_us = 0;
+        int faller_tries = 0;  // life 0 writes to a faller (kFallerTries)
         bool remove = false;
         // Moves.
         coop::protocol::Vec3 rest{};       // where it last rested for everyone

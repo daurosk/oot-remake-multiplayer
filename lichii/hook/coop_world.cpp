@@ -317,9 +317,17 @@ void WorldSync::MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& 
     if (o.faller) {
         // It falls and stays (a bridge): never deleted. Life 0 makes the
         // game drop it; written again each second until the life reads 0
-        // (a pillar that loaded fallen reads 0 already, nothing to write).
-        if (o.life && *o.life > 0 &&
+        // (a pillar that loaded fallen reads 0 already, nothing to write),
+        // at most kFallerTries times: then one line, and it is left standing.
+        if (o.life && *o.life > 0 && o.faller_tries <= kFallerTries &&
             (o.life_written_us == 0 || now_us - o.life_written_us >= kFallerRetryUs)) {
+            if (o.faller_tries == kFallerTries) {
+                ++o.faller_tries;
+                out.notes.push_back(Line("world: %016llx %s did not fall on life 0 (%d tries): left standing",
+                                         o.hash, o.name, kFallerTries));
+                return;
+            }
+            ++o.faller_tries;
             out.lives.push_back({o.address, 0, 0, {}});
             out.notes.push_back(Line("world: %016llx %s %s", o.hash, o.name,
                                      o.life_written_us == 0 ? "felled by another player"

@@ -64,13 +64,22 @@ jobs:
           # The version in a tag: fritchii-v5.8.4 -> 5.8.4.
           ver() { printf '%s\n' "$1" | sed -n 's/^[^0-9]*\([0-9][0-9.]*[0-9]\|[0-9]\).*$/\1/p'; }
           out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+          # Tag names and commits come from another repo and go on into later steps (and the job
+          # that may push): only plain names and full hashes pass, anything else stops here.
+          tag_ok() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'; }
+          commit_ok() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{40}$'; }
+          tag_ok "$pin" && commit_ok "$pin_commit" || { echo "lichii/PIN has a tag or commit of an unexpected form."; exit 1; }
+          if [ -n "${INPUT_TAG:-}" ] && ! tag_ok "$INPUT_TAG"; then echo "Not a plain tag name: refused."; exit 1; fi
           out dry_run "$dry"
           if [ -n "${INPUT_TAG:-}" ]; then
             target="$INPUT_TAG"
           else
             # The one release query of the run. Pre-releases count, drafts never.
             target=$(gh api "repos/$repo/releases?per_page=50" --jq '.[] | select(.draft | not) | .tag_name' |
-              while read -r tag; do v=$(ver "$tag"); if [ -n "$v" ]; then printf '%s %s\n' "$v" "$tag"; fi; done |
+              while read -r tag; do
+                if ! tag_ok "$tag"; then echo "Skipped a release tag of an unexpected form." >&2; continue; fi
+                v=$(ver "$tag"); if [ -n "$v" ]; then printf '%s %s\n' "$v" "$tag"; fi
+              done |
               sort -V | tail -n 1 | cut -d' ' -f2)
           fi
           echo "Pinned: $pin ($(ver "$pin")). Target: ${target:-none} ($(ver "${target:-}"))."
@@ -92,7 +101,7 @@ jobs:
           refs=$(git ls-remote "https://github.com/$repo" "refs/tags/$target" "refs/tags/$target^{}")
           commit=$(printf '%s\n' "$refs" | awk '/\^\{\}$/ {print $1}')
           [ -n "$commit" ] || commit=$(printf '%s\n' "$refs" | awk 'NR==1 {print $1}')
-          if [ -z "$commit" ]; then echo "Tag $target not found in $repo."; exit 1; fi
+          if ! commit_ok "$commit"; then echo "Tag $target not found in $repo."; exit 1; fi
           v=$(ver "$target")
           echo "Building $target ($commit)."
           if [ "$dry" = false ]; then
@@ -118,13 +127,17 @@ jobs:
         shell: pwsh
     env:
       SRC: ${{ github.workspace }}/fritchii-src
+      TAG: ${{ needs.check.outputs.tag }}
+      COMMIT: ${{ needs.check.outputs.commit }}
     steps:
+      # The fetched source runs its own scripts (Vulkan SDK, CMake): no token is left behind for them.
       - uses: actions/checkout@v4
         with:
           path: coop
+          persist-credentials: false
 
       - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1
 
       - name: Unit tests
         run: |
@@ -137,9 +150,6 @@ jobs:
 
       # fetch.ps1 reads the PIN beside it, so the workspace copy gets the tag being built.
       - name: Fetch and apply patches
-        env:
-          TAG: ${{ needs.check.outputs.tag }}
-          COMMIT: ${{ needs.check.outputs.commit }}
         run: |
           $pin = "coop/lichii/PIN"
           $text = (Get-Content $pin) -replace '^tag=.*$', "tag=$env:TAG" -replace '^commit=.*$', "commit=$env:COMMIT"
@@ -149,7 +159,7 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06  # v4
         with:
           version: "6.8.3"
           host: windows
@@ -165,13 +175,13 @@ jobs:
       - name: Check glslangValidator
         run: glslangValidator --version
 
+      # Keyed by the exact commit and never shared with another one, so one release's
+      # downloads are never handed to the build of another.
       - name: Restore CPM downloads
         uses: actions/cache@v4
         with:
           path: fritchii-src/.cache/cpm
-          key: coop-cpm-windows-${{ needs.check.outputs.tag }}
-          restore-keys: |
-            coop-cpm-windows-
+          key: coop-cpm-windows-${{ needs.check.outputs.commit }}
 
       - name: Configure
         working-directory: fritchii-src
@@ -197,9 +207,9 @@ jobs:
           windeployqt --release --no-translations lichii.exe
           if ($LASTEXITCODE) { exit 1 }
           Set-Content -Encoding ascii BUILD.txt @(
-            "fritchii=${{ needs.check.outputs.tag }} (${{ needs.check.outputs.commit }})",
-            "coop=${{ github.sha }}",
-            "run=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+            "fritchii=$env:TAG ($env:COMMIT)",
+            "coop=$env:GITHUB_SHA",
+            "run=$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID")
 
       - name: Upload the emulator
         uses: actions/upload-artifact@v4
@@ -230,7 +240,8 @@ jobs:
           set -euo pipefail
           branch="fritchii-bump-$VER"
           old=$(sed -n 's/^tag=//p' lichii/PIN)
-          sed -i -e "s/^tag=.*/tag=$TAG/" -e "s/^commit=.*/commit=$COMMIT/" lichii/PIN
+          # The values never become part of a program: awk gets them as variables.
+          awk -v t="$TAG" -v c="$COMMIT" '/^tag=/ {print "tag=" t; next} /^commit=/ {print "commit=" c; next} {print}'             lichii/PIN > "$RUNNER_TEMP/PIN" && mv "$RUNNER_TEMP/PIN" lichii/PIN
           git config user.name daurosk
           git config user.email 354202035+daurosk@users.noreply.github.com
           git commit -q -am "Move lichii/PIN to Fritchii $TAG" -m "Built with lichii/patches applied unchanged and the unit tests passed: $RUN_URL"

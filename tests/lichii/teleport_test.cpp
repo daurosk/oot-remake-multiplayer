@@ -204,14 +204,20 @@ TEST_CASE("teleport: another scene changes scene, then asks again and moves") {
     REQUIRE(a.scene);
     CHECK(*a.scene == "KakarikoVillage_Child");
     CHECK_FALSE(a.move);
-    CHECK(Has(a.lines, "talk to someone or read a sign"));
+    CHECK(Has(a.lines, "going to Saria in KakarikoVillage_Child"));
+    CHECK_FALSE(Has(a.lines, "talk to someone"));  // free play takes it: no event needed
     CHECK(trip.phase() == Trip::Phase::travelling);
-    // Asked again every 0.5 s until Link is in that scene.
+    // Asked again every 0.5 s until the game takes it.
     CHECK_FALSE(trip.Tick(here, kS + kS / 4).scene);
     CHECK(trip.Tick(here, kS + kS / 2).scene);
-    // The load: no scene, then the new scene with its arrival event.
+    // The load: no scene (taken: the switch is dropped once), then the new
+    // scene with its arrival event.
     Local loading;
-    CHECK_FALSE(trip.Tick(loading, 2 * kS).scene);
+    a = trip.Tick(loading, 2 * kS);
+    CHECK_FALSE(a.scene);
+    CHECK(a.release);
+    CHECK_FALSE(a.cancel_scene);
+    CHECK_FALSE(trip.Tick(loading, 2 * kS + kS / 2).release);
     Local arrived = At("KakarikoVillage_Child", 0, 0, 0);
     arrived.event = true;
     CHECK(trip.Tick(arrived, 3 * kS).cancel_scene);  // the request is cleared on arrival
@@ -329,4 +335,52 @@ TEST_CASE("teleport: leaving the scene while settling stops") {
     const auto a = trip.Tick(At("LonLonRanch", 0, 0, 0), 3 * kS);
     CHECK(Has(a.lines, "you left Hyrule"));
     CHECK(trip.phase() == Trip::Phase::idle);
+}
+
+TEST_CASE("teleport: a taken scene change is not asked again while it loads") {
+    Trip trip;
+    Local here = At("Kokiri", 0, 0, 0);
+    here.reserved_banc = "";
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Hyrule", 1, 1, 1), here, kS).scene);
+    // Our request is in the game's flag: not taken yet, asked again.
+    here.reserved_banc = "Hyrule";
+    auto a = trip.Tick(here, kS + kS / 2);
+    CHECK(a.scene);
+    CHECK_FALSE(a.release);
+    // The game started loading (Sequence_IsLoadingBanc), the old scene still
+    // read: taken, the switch dropped, no new ask.
+    here.loading_banc = true;
+    a = trip.Tick(here, 2 * kS);
+    CHECK(a.release);
+    CHECK_FALSE(a.scene);
+    CHECK_FALSE(trip.Tick(here, 9 * kS).scene);  // still loading: never asked again
+    // Arrived: the request and the switch are cleared, even while the load
+    // flag is still up; the settle waits for it.
+    Local arrived = At("Hyrule", 0, 0, 0);
+    arrived.loading_banc = true;
+    a = trip.Tick(arrived, 10 * kS);
+    CHECK(a.cancel_scene);
+    CHECK(trip.phase() == Trip::Phase::settling);
+    CHECK_FALSE(trip.Tick(arrived, 10 * kS + 2 * Trip::kSettleUs).ask);
+    arrived.loading_banc = false;
+    CHECK_FALSE(trip.Tick(arrived, 13 * kS).ask);
+    CHECK(trip.Tick(arrived, 13 * kS + Trip::kSettleUs).ask);
+}
+
+TEST_CASE("teleport: the game emptying the request counts as taken; a load elsewhere asks again") {
+    Trip trip;
+    Local here = At("Kokiri", 0, 0, 0);
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Hyrule", 1, 1, 1), here, kS).scene);
+    here.reserved_banc = "";  // ChangeBancOnMain took it and emptied it
+    auto a = trip.Tick(here, kS + kS / 10);
+    CHECK(a.release);
+    CHECK_FALSE(trip.Tick(here, kS + kS / 2).scene);
+    CHECK_FALSE(trip.Tick(here, kS + Trip::kRearmUs - 1).scene);
+    // Still not there after kRearmUs with no load running: asked again.
+    a = trip.Tick(here, kS + kS / 10 + Trip::kRearmUs);
+    CHECK(a.scene);
+    CHECK(*a.scene == "Hyrule");
+    CHECK(trip.phase() == Trip::Phase::travelling);
 }

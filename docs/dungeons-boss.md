@@ -56,6 +56,16 @@ The boss and its parts must be one object group with one owner (OBJECT_GROUP, [o
 
 The death, heart container and blue warp then follow from the shared boss (its death replayed in every game) and from the dungeon's shared flags ([dungeon.md](dungeon.md)).
 
+## The boss goes to the player who hurts it (issue 150)
+
+Testers on test6 (Gohma): the boss only ever followed and attacked player 1, its owner; and after player 2 stunned it, player 2's copy was turned the wrong way and could not be hit until player 1 hit it.
+
+**Why.** Only the owner's game runs the boss; every other game's copy is held to the owner's pose and animation. A boss is in its fight for 60 s after every hit (`boss_fight_lock_us`), and an object in a fight never changes owner, so the boss stayed with player 1 for the whole fight. Its AI in player 1's game only knows player 1's Link (the game has one player; the puppets are not targets), so it went for player 1 alone. Player 2's seed in the eye stunned player 2's copy in player 2's game (the weak point hit and chance time are in Gohma's own AI: `DungeonBossGohma.action.interruptweakpointhit`, `.interruptchancetime`), but not player 1's boss; the copy then kept being turned to player 1's boss while its own AI lay stunned, until player 1's own hit changed the owner's state.
+
+**What changed (server, `Session::on_damage`).** A `DAMAGE` on a boss or any part of its group from a player who does not own it hands the boss root (and so the group) to that player, at most once every 8 s (`boss_hitter_cooldown_us`; 0 turns it off). The hit's effect, a stun included, is then in the owner's game, the other copies follow it, and the boss turns on the player who hurt it last: in a long fight it goes back and forth with the hits, which gives both players their turns. The distance rule for plain enemies is unchanged. Tested in `tests/server/session_test.cpp` (issue 150 cases).
+
+**Not covered.** A stun that takes no life sends no `DAMAGE` (a hit is only seen as a life drop): if the seed in Gohma's eye costs no life, player 2's stun still does not move the boss, and player 2's sword hits on it afterwards do. Making the owner's AI target the other player's puppet was looked at and left alone: the game's target choice reads its one player actor, and offering the puppet as a target would need code in the game's AI that we cannot test here.
+
 ## Not known yet (for the in-game check)
 
 1. Whether the force-set-matrix move into a room of the same scene loads that room's walls and floor, or Link falls through (the dungeon may stream rooms by `DungeonRoomIndex`). If he falls, the fallback is the scene change, which needs an event running.

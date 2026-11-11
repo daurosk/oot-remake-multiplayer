@@ -689,6 +689,26 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   o.hit_sum += d.amount;
   o.hit_at = stamp(now_us);
 
+  // A boss goes to the player who hurt it (issue 150), the whole group with
+  // its root: the hit's effect is in that game, the others follow its pose.
+  ObjectId root_id = d.id;
+  Object* root = &o;
+  if (o.root) {
+    if (auto r = objects_.find(*o.root); r != objects_.end()) {
+      root_id = r->first;
+      root = &r->second;
+    }
+  }
+  if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
+    if (root->owner && *root->owner != id && !root->ask && !(c.status & kBusy) &&
+        has_loaded(id, *root) &&
+        (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us)) {
+      ask_handover(root_id, *root, id, now_us);
+      ++stats_.boss_to_hitter;
+    }
+    return;  // a boss is not moved by the distance rule below
+  }
+
   if (o.ask || o.root || o.projectile || (c.status & kBusy) || !has_loaded(id, o)) return;
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
   auto owner = connections_.find(*o.owner);

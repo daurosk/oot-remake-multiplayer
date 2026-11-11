@@ -94,6 +94,12 @@ struct SessionConfig {
   // said it is fighting or targeting, or a DAMAGE for it was passed on.
   std::uint64_t fight_lock_us = 12'000'000;
   std::uint64_t boss_fight_lock_us = 60'000'000;
+  // Issue 150: a DAMAGE on a boss (or a part of one) from a player who does
+  // not own it hands the boss to that player, at most this often. The hit's
+  // effect (Gohma's stun when the eye is hit) happens in the hitter's game,
+  // and only the owner's game runs the boss right (the other copies follow
+  // its pose), and the boss then turns on that player. 0: off.
+  std::uint64_t boss_hitter_cooldown_us = 8'000'000;
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
@@ -172,6 +178,7 @@ struct Stats {
   std::uint64_t object_refused = 0;
   std::uint64_t owner_changes = 0;      // owner set or moved (not first owner)
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
+  std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
   // Field grass (docs/world.md). Relayed ones count in relayed too.
   std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene

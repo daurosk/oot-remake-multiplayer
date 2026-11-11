@@ -2039,6 +2039,64 @@ TEST_CASE("a boss stays in its fight for 60 s") {
   CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));
 }
 
+TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);  // both in the boss room, a few metres apart
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  const auto to1 = h.to(1);
+  REQUIRE(to1.size() == 2);  // the hit first, then the ask
+  CHECK(std::get<Damage>(to1[0].message).amount == 1);
+  CHECK(std::get<HandoverAsk>(to1[1].message) == HandoverAsk{placed(7), 0, 2});
+  CHECK(h.session.stats().boss_to_hitter == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  // Player 1 hits back at once: the hit goes to player 2, the boss stays there.
+  h.clear();
+  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}}, kChannelOwnership);
+  CHECK(messages_to<Damage>(h, 2).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+  // 8 s after the change, player 1's hit takes it back.
+  h.run(8 * kSecond);
+  h.clear();
+  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
+  CHECK(h.session.stats().boss_to_hitter == 2);
+}
+
+TEST_CASE("issue 150: a hit on a boss's part asks for the boss; plain enemies keep the distance rule") {
+  OwnerHarness h;
+  h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}, {placed(8), placed(7), 0}}},
+            kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(8), 0, 1, 1, {}}, kChannelOwnership);  // the part (an egg)
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+
+  OwnerHarness plain;  // no boss: two players near it, no move on a hit
+  plain.stand(1, 4);
+  plain.stand(2, 6);
+  plain.clear();
+  plain.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  CHECK(plain.asks() == 0);
+  CHECK(plain.session.stats().boss_to_hitter == 0);
+
+  SessionConfig off = quiet_config();  // the switch
+  off.boss_hitter_cooldown_us = 0;
+  OwnerHarness h0(off);
+  h0.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h0.stand(1, 4);
+  h0.stand(2, 6);
+  h0.clear();
+  h0.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  CHECK(h0.asks() == 0);
+}
+
 TEST_CASE("a hit by the player near it, its owner well away, takes it at once, the hit is kept") {
   OwnerHarness h;
   h.stand(1, 50);

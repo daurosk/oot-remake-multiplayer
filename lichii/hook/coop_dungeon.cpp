@@ -1548,6 +1548,57 @@ std::span<const Flag> LiveFlags() {
     return kLiveFlags;
 }
 
+namespace {
+
+constexpr std::string_view kDungeonScenes[] = {
+    "BottomOfTheWell", "DodongoCavern", "FireTemple", "ForestTemple", "GanonCastle",
+    "GerudoTrainingGround", "IceCavern", "InsideGanonCastle", "InsideJabuJabuBelly",
+    "InsideTheDekuTree", "ShadowTemple", "SpiritTemple", "WaterTemple"};
+
+// The Forest Temple's twisted corridor (docs/sync-coverage.md).
+constexpr std::string_view kCorridor[] = {
+    "ForestTemple_TwistCorridor_IsReverse", "ForestTemple_TwistCorridor01_IsConstraint",
+    "ForestTemple_TwistCorridor02_IsConstraint", "ForestTemple_SageOfForest_TwistedCorridor_A_01",
+    "ForestTemple_SageOfForest_TwistedCorridor_A_02", "ForestTemple_SageOfForest_TwistedCorridor_A_03",
+    "ForestTemple_SageOfForest_TwistedCorridor_A_04"};
+
+std::string_view SceneOfEvent(std::string_view event) {
+    // The game's own spellings, and the scene names that are not prefixes.
+    if (event.starts_with("SpritTemple_")) return "SpiritTemple";
+    if (event.starts_with("ForesetTemple_")) return "ForestTemple";
+    if (event.starts_with("InsideJabu")) return "InsideJabuJabuBelly";
+    if (event.starts_with("InsideGanonCastle_")) return "InsideGanonCastle";
+    for (const std::string_view scene : kDungeonScenes) {
+        if (event.starts_with(scene) && event.size() > scene.size() && event[scene.size()] == '_') {
+            return scene;
+        }
+    }
+    return "";
+}
+
+} // namespace
+
+bool IsDungeonScene(std::string_view scene) {
+    for (const std::string_view s : kDungeonScenes) {
+        if (s == scene) return true;
+    }
+    return false;
+}
+
+std::optional<std::string_view> HeldIn(std::uint32_t hash) {
+    for (const Flag& f : kFlags) {
+        if (f.hash != hash) continue;
+        const std::string_view name = f.name;
+        constexpr std::string_view kPlayed = "HavePlayedEvent.";
+        if (name.starts_with(kPlayed)) return SceneOfEvent(name.substr(kPlayed.size()));
+        for (const std::string_view c : kCorridor) {
+            if (name == c) return std::string_view("ForestTemple");
+        }
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 std::span<const Key> Keys() {
     return kKeys;
 }

@@ -316,6 +316,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     if (!takes(entry)) continue;
     note_for_others(store, entry);
     const bool written = store.write(entry);
+    const bool held = !written && store.holds(key);
     if (written) {
       ++stats_.applied;
     } else {
@@ -323,9 +324,11 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       if (!written_for_others_.empty() && written_for_others_.back() == key) {
         written_for_others_.pop_back();
       }
+      if (held) unwritten_[key] = entry;  // our game takes it later (HoldFlagStore)
     }
-    // Answer with what the game holds now, which may not be what was asked.
-    std::optional<FlagEntry> now = store.read(key);
+    // Answer with what the game holds now, which may not be what was asked;
+    // a held value is the group's already, only not in our game yet.
+    std::optional<FlagEntry> now = held ? std::optional<FlagEntry>(entry) : store.read(key);
     if (now) {
       now->key = key;
     } else {
@@ -337,7 +340,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       const auto known = last_.find(key);
       note_group(*now, known != last_.end() ? &known->second : nullptr);
     }
-    last_[key] = *now;
+    if (!held) last_[key] = *now;  // held: the game still has its own value
     answers[key] = *now;
     ++stats_.answers_sent;
   }

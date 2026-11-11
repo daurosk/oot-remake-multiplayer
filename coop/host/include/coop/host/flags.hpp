@@ -7,6 +7,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <functional>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -51,6 +52,40 @@ class FlagStore {
   // its change of one as a count delta, and write() then takes a
   // FlagKind::count_delta entry and adds it. Default: no counts.
   virtual bool is_count(FlagKey) { return false; }
+
+  // True while the game must not take this flag yet (HoldFlagStore): a
+  // write of it is refused, and the watcher keeps the value and tries again
+  // each frame; the host answers with the value asked. Default: never.
+  virtual bool holds(FlagKey) { return false; }
+};
+
+// A FlagStore that refuses the flags `hold` names for now and passes all
+// else to `inner` (issue 129, docs/dungeon.md "Held until the room loads").
+// The watcher keeps a refused value and writes it once `hold` lets it, or
+// drops it when the game sets the flag itself first.
+class HoldFlagStore final : public FlagStore {
+ public:
+  using Hold = std::function<bool(FlagKey)>;
+  HoldFlagStore(FlagStore& inner, Hold hold) : inner_(inner), hold_(std::move(hold)) {}
+
+  std::optional<protocol::FlagEntry> read(FlagKey key) override { return inner_.read(key); }
+  bool write(const protocol::FlagEntry& entry) override {
+    if (holds(key_of(entry))) {
+      ++held_;
+      return false;
+    }
+    return inner_.write(entry);
+  }
+  bool is_count(FlagKey key) override { return inner_.is_count(key); }
+  bool holds(FlagKey key) override { return hold_ && hold_(key); }
+
+  // Writes refused so far.
+  std::uint64_t held() const { return held_; }
+
+ private:
+  FlagStore& inner_;
+  Hold hold_;
+  std::uint64_t held_ = 0;
 };
 
 // The flags this session shares, sorted, each once. Loaded from plain text,

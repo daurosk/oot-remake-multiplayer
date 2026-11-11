@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 #include <optional>
 #include <span>
 
@@ -37,6 +38,21 @@ std::span<const Flag> Flags();
 // all reset types; the rest of the 31 non-saved hits are one player's own
 // (where they stand, Navi) or a one-way ride, and stay out.
 std::span<const Flag> LiveFlags();
+
+// Issue 129: a shared flag that marks a room gimmick done (its played
+// event: the Deku Tree ladder fell, a shutter opened) arrives in a game whose
+// room is already loaded; the room does not play the result, and its own
+// switch no longer starts it (the event counts as played): a softlock. Such
+// flags are held while our Link is in that dungeon and written when we are
+// out of it or loading (the room then loads with them). Meanwhile our own
+// switch still plays the event. Also the Forest Temple corridor's state
+// flags (its twist must never turn under a player). Returns the dungeon
+// scene the flag belongs to ("" for a gimmick event of no one dungeon: held
+// in any dungeon), or nothing for a flag that is not held.
+std::optional<std::string_view> HeldIn(std::uint32_t hash);
+
+// A dungeon's scene (the Banc names of Keys()).
+bool IsDungeonScene(std::string_view scene);
 
 // One placed thing whose "done" is a 64-bit-key flag keyed by its placement
 // hash (a chest opened, a silver rupee taken, a room's enemies beaten, a wall

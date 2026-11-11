@@ -311,7 +311,28 @@ public:
             }
             pickups_given_ += keys.size();
         }
-        const auto report = session_->frame(reading, store ? &*store : nullptr);
+        // Issue 129 (docs/dungeon.md "Held until the room loads"): a room
+        // gimmick's played event, or the Forest Temple corridor, waits while
+        // our Link is in that dungeon; written when we are out or loading.
+        std::optional<coop::host::HoldFlagStore> hold;
+        if (store) {
+            const bool link = reading.has_value();
+            const std::optional<std::string> scene = view.scene;
+            hold.emplace(*store, [link, scene](coop::protocol::FlagKey key) {
+                if (!link || !scene || key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
+                    return false;
+                }
+                const auto in = CoopDungeon::HeldIn(key.hash);
+                return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);
+            });
+        }
+        const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (hold && (hold->held() != 0) != holding_logged_) {
+            holding_logged_ = hold->held() != 0;
+            LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
+                         ? "room gimmick flags from another player held until we leave this dungeon or load"
+                         : "no room gimmick flags held");
+        }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
@@ -872,6 +893,7 @@ private:
     bool sharing_ = false;  // a flag list is shared; set by Begin
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
+    bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
 
     // Set by Begin before the network thread starts; the session borrows the

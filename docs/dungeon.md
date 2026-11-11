@@ -80,6 +80,17 @@ Caleb (2026-11-11): "if a player stands on a button that opens something, it sho
 | Push and pull blocks | Actor positions | Yes (`WORLD_MOVE`, `WORLD_PLACE`, [world.md](world.md)) | - |
 | Lifts, moving floors | Driven by switch flags; their positions in the actor | By flag | One-way rides stay each player's own (above); the probe shows the others |
 
+### Held until the room loads (issue 129, test6 report)
+
+Players on test6: in the Deku Tree slingshot room A shot the eye switch and A's ladder fell. B's ladder did not fall, B's eye stayed open, and shooting B's own eye then did nothing: a softlock. B's ladder was down after B reloaded the save. So the shared flags were right, but B's loaded room did not play the result, and the played-event flag stopped B's own switch from playing it. The game has no known way, from the hook, to start that event in B, and the scene change that would reload the room is taken only while an event runs. So the rule is the other half: **never mark a gimmick done in a game without its result**.
+
+- Every `HavePlayedEvent.<gimmick>` flag of the list (194) and the Forest Temple corridor's state flags (`ForestTemple_TwistCorridor_IsReverse`, `…01/02_IsConstraint`, `ForestTemple_SageOfForest_TwistedCorridor_A_01` to `_04`) are held while our Link is in that flag's dungeon (`CoopDungeon::HeldIn`; a gimmick event of no one dungeon is held in any dungeon).
+- Held means our game does not take it yet (`coop::host::HoldFlagStore`). The watcher keeps the value and writes it as soon as our Link is out of that dungeon, or the game is loading (no Link: a save load, a scene change), so the room loads with it. A host answers a held write with the value asked, so the group keeps it.
+- Meanwhile our own switch still works: shooting B's eye plays B's own ladder event. Its flag then goes out as B's change, and the held value is dropped (the game set it itself).
+- The room's own flags (`…_RoomC_Cleared`, switches, doors, the water level Int, small keys) stay live. The pillar in the slingshot room followed them live in test4.2.
+- The log says `coop: dungeon: room gimmick flags from another player held until we leave this dungeon or load` and `no room gimmick flags held`.
+- The corridor (docs/sync-coverage.md): its state is shared, but never applied under a player who is in the Forest Temple; it is applied on their next load or entry.
+
 **The gimmick probe** (`CoopWorld::GimmickProbe`, `lichii/hook/coop_world.{h,cpp}`; on unless `LICHII_COOP_GIMMICK_PROBE=0`; reads only). Every 0.5 s it copies the 4 nearest gimmicks within 15 m of our Link: `*StepSwitch_*`, `*EyeSwitch_*`, `*SwitchHit_*`, `*SolarSwitch_*`, `*SwitchCandleStick_*`, `*WaterPlane*`, `*SwitchShutter_*`, `*CandleStick_*`, `*ElevatorLift*`, `*MoveFloor_*`. Each copy is the actor, its component table and 0x200 bytes of each component, as the sign probe reads a sign. It logs each word that stepped (equal in the two copies before, different now): `coop: gimmick probe: <hash> <name> <d> m from our Link: N words stepped: actor+0x..:<before>><after> c+0x..+0x..:...`. A word that steps more than 6 times (a timer, a counter, a moving part) is muted. `gimmick probe: watching <hash> <name>` marks each one it starts to copy. In the run, pressing a switch in A shows its words in A's log; B's log shows whether B's copy of that switch changed with it.
 
 ## Not done

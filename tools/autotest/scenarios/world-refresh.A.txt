@@ -1,0 +1,35 @@
+# world-refresh (issue 159), A (host): both games load into Hyrule Field (child, outdoors, so the
+# clock runs) in front of Kakariko with the test-only warp (run with -NoLoad). A stands by the
+# tufts at about 164 26 and watches while B cuts three of them and some field grass, then both
+# stand still for 60 s. Pass: B's log has at most one `coop: time: set to` line after the
+# warp (joining), and B's screenshots keep the cut tufts and grass cut from tufts-cut to end
+# (no reset every few seconds). LICHII_COOP_DEBUG_TIME=1 logs both clocks every 2 s.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_TIME=1
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark arrived
+goto 171 28 1.0 1200
+toward 164 27 15
+mark watching
+wait 1800               # B walks over and cuts
+mark tufts-cut
+wait 1200
+mark still-20s
+wait 1200
+mark still-40s
+wait 1200
+mark still-60s
+wait 300
+mark end

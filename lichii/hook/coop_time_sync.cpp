@@ -38,6 +38,10 @@ void Sync::Reset() {
     sent_once_ = false;
     set_at_ = 0;
     set_once_ = false;
+    running_since_.reset();
+    host_last_.reset();
+    host_running_ = false;
+    joined_ = false;
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -52,6 +56,7 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
     }
     if (!now) {
         last_.reset();  // a load: the next read is no jump
+        running_since_.reset();
         return std::nullopt;
     }
     const bool quiet = set_once_ && now_us - set_at_ < kQuietAfterSetUs;
@@ -66,6 +71,14 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
         sent_at_ = now_us;
         sent_once_ = true;
     }
+    // Our clock runs: it moved forward since the last tick. A time change
+    // (ours or the game's) and indoor scenes stop it.
+    if (last_ && Ahead(*last_, *now) > 0) {
+        if (!running_since_) running_since_ = now_us;
+    } else {
+        running_since_.reset();
+    }
+    const bool running = running_since_ && now_us - *running_since_ >= kRunningForUs;
     last_ = now;
     last_at_ = now_us;
 
@@ -77,8 +90,21 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
             if (off > kDriftSeconds) {
                 target = t.seconds;
             }
-        } else if (!host && off > kDriftSeconds &&
-                   (!set_once_ || now_us - set_at_ >= kSetEveryUs)) {
+            continue;
+        }
+        if (host) continue;
+        // The host's clock runs: its plain messages move forward. One that
+        // stands (indoors, a dungeon) is no reason to move ours.
+        host_running_ = host_last_ && Ahead(*host_last_, t.seconds) > 0;
+        host_last_ = t.seconds;
+        if (!joined_ && !set_once_) {
+            // Joining: take the host's clock once (only its first word).
+            joined_ = true;
+            if (off > kDriftSeconds) target = t.seconds;
+        } else if (off > kResyncSeconds && running && host_running_ &&
+                   now_us - set_at_ >= kSetEveryUs) {
+            // Playing: only a large drift, never while our clock stands
+            // (the last set's time change still runs, or we are indoors).
             target = t.seconds;
         }
     }

@@ -5,9 +5,15 @@
 // and when to set. Tested in tests/lichii/time_test.cpp.
 //
 // - The host sends TIME_OF_DAY about once a second.
-// - Another game moves its clock to the host's when it is more than
-//   kDriftSeconds off (either way round midnight), at most once every
-//   kSetEveryUs.
+// - Another game moves its clock to the host's once when it joins, when it
+//   is more than kDriftSeconds off (either way round midnight). After that
+//   only when it is more than kResyncSeconds off, its own clock has run for
+//   kRunningForUs, the host's clock runs too (its last two TIME_OF_DAY moved
+//   forward), and kSetEveryUs has passed since the last set (issue 159:
+//   every set runs the game's time change, which makes the area's grass and
+//   objects again and stops the clock for some seconds; with a two-minute
+//   limit that stop put the guest past the limit again, so it set its clock,
+//   and remade its world, every two or three seconds).
 // - A game whose clock jumped by itself (the Sun's Song, a night's sleep, an
 //   event) sends TIME_OF_DAY with the jump bit at once; every other game, the
 //   host's too, takes it. A jump we caused by setting the clock is not sent.
@@ -28,9 +34,11 @@ std::int32_t Ahead(std::uint32_t a, std::uint32_t b);
 class Sync {
 public:
     static constexpr std::uint64_t kSendEveryUs = 1'000'000;
-    static constexpr std::uint32_t kDriftSeconds = 120;  // two in-game minutes
+    static constexpr std::uint32_t kDriftSeconds = 120;  // two in-game minutes: on joining, a jump
+    static constexpr std::uint32_t kResyncSeconds = 3'600;  // one in-game hour: while playing
     static constexpr std::uint32_t kJumpSeconds = 1'800;  // half an hour in one read
-    static constexpr std::uint64_t kSetEveryUs = 2'000'000;
+    static constexpr std::uint64_t kSetEveryUs = 60'000'000;
+    static constexpr std::uint64_t kRunningForUs = 2'000'000;  // our clock runs: no change, not indoors
     static constexpr std::uint64_t kQuietAfterSetUs = 3'000'000;  // our own set is no jump
 
     // Network thread: TIME_OF_DAY from the others. Applied on the next Tick.
@@ -52,6 +60,10 @@ private:
     bool sent_once_ = false;
     std::uint64_t set_at_ = 0;
     bool set_once_ = false;
+    std::optional<std::uint64_t> running_since_;  // our clock moved forward on every tick since
+    std::optional<std::uint32_t> host_last_;  // the host's last plain TIME_OF_DAY
+    bool host_running_ = false;
+    bool joined_ = false;  // the host's first plain TIME_OF_DAY was taken (or kept)  // its last two moved forward (not indoors, no time change)
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::TimeOfDay> inbox_;

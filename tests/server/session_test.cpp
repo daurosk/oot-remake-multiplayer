@@ -3251,6 +3251,7 @@ TEST_CASE("join password: 4 wrong guesses, then a minute without, start the coun
   for (int i = 0; i < 4; ++i) guess_wrong();
   CHECK(h.session.connected(next++, h.now, address));
   CHECK(h.session.stats().password_blocked == 0);
+}
 
 TEST_CASE("the host's save: SAVE_ASK goes to the host, SAVE_PART from the host to the asker or everyone") {
   Harness h;

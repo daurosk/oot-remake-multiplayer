@@ -151,6 +151,16 @@ std::uint64_t SceneSpawnId(std::string_view scene, std::string_view name, unsign
 // The others delete their own rolls and create the decided ones.
 bool IsRolled(std::string_view name);
 
+// Multi-stage enemies (gohma-larva): an enemy whose next stage is another
+// actor. A Gohma egg (Enemy_Gohma_Egg, Enemy_DungeonBoss_Gohma_Egg) hatches:
+// the egg actor goes, alive, and an Enemy_Gohma_Larva is made where it lay,
+// only in the game that runs the egg (its owner; a copy is held in the
+// owner's animation). That game shares the larva with OBJECT_SPAWN of a made
+// id, like a rolled enemy, and ends the egg with OBJECT_REMOVE reason gone,
+// so the other games delete their egg copy and make the larva.
+bool IsHatchingEgg(std::string_view name);
+bool IsHatchling(std::string_view name);
+
 // A placed actor that may come into being in one game only, after the scene
 // loaded: the Gold Skulltula a player shakes out of a tree. Its owner names
 // it with OBJECT_SPAWN of its placed id; a game without that placement makes
@@ -277,6 +287,11 @@ public:
     static constexpr std::uint64_t kCreateWaitUs = 3'000'000;  // then a roll near it is ours to delete
     static constexpr std::uint8_t kRemakes = 3;  // EnemyCopy::remakes for a live one
     static constexpr std::uint64_t kLateUs = 3'000'000;  // after the scene's first walk: came later
+    // A hatchling first seen this near an egg we own (still on the walk, or
+    // gone alive at most kHatchWindowUs before) came out of it.
+    static constexpr float kHatchReachM = 3.0f;
+    static constexpr std::uint64_t kHatchWindowUs = 2'000'000;
+    std::uint64_t Hatched() const { return hatched_count_; }
 
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
     void SetHurt(bool on) { hurt_ = on; }
@@ -539,6 +554,9 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool dead_now = false;  // a kill from before we came: deleted at once
+        // An egg we own that a hatchling came out of: when it leaves the
+        // walk, OBJECT_REMOVE reason gone goes out for it.
+        bool hatched = false;
         // Issue 150: a boss copy whose own game stunned it (a DAMAGE of 0 is
         // due), and when that last went out.
         bool stun_due = false;
@@ -557,6 +575,11 @@ private:
     void Apply(std::uint8_t self, std::uint64_t now_us, std::vector<coop::protocol::Message>& send,
                std::vector<LifeWrite>& writes);
     coop::protocol::ObjectState StateOf(Object& o, std::uint64_t now_us);
+    // gohma-larva: a fresh hatchling next to an egg we own (eggs_, or one
+    // still on the walk, then marked hatched). Sends the egg's OBJECT_REMOVE
+    // when it already left. True: the hatchling is ours to share.
+    bool Hatch(std::uint8_t self, const Seen& s,
+               std::vector<coop::protocol::Message>& send);
 
     // A rolled enemy another game decided, from its OBJECT_SPAWN.
     struct Decided {
@@ -571,6 +594,16 @@ private:
         bool dead = false;
     };
     std::uint8_t DeciderOf(std::uint8_t self, std::uint64_t now_us) const;
+    // Eggs we owned that left the walk alive, waiting kHatchWindowUs for the
+    // hatchling that came out of them.
+    struct Egg {
+        coop::protocol::ObjectId id;
+        std::uint16_t epoch = 0;
+        coop::protocol::Vec3 position{};
+        std::uint64_t at = 0;
+    };
+    std::vector<Egg> eggs_;
+    std::uint64_t hatched_count_ = 0;
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;

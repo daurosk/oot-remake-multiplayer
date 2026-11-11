@@ -658,6 +658,29 @@ TEST_CASE("flag watcher, host: a door is no save load: no reset") {
   CHECK(w.stats().host_resets == 0);
 }
 
+TEST_CASE("flag watcher, host: a one-way room switch reset as its room is left is no save load") {
+  // dungeon-live's room switches go back to 0 whenever the room is left (no
+  // Link, a named flag moves): that must not look like the host's save load.
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  CHECK(w.share_one_way(kDoor));
+  w.frame(store);
+  store.set(kDoor, 1);
+  CHECK(only<proto::FlagState>(w.frame(store)) == std::vector{entry(kDoor, 1)});
+  w.set_loading(true);
+  store.set(kDoor, 0);  // the room left: the game resets its switch
+  CHECK(w.frame(store).empty());
+  w.set_loading(false);
+  std::vector<proto::Message> all;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (auto& m : decode(w.frame(store))) all.push_back(std::move(m));
+  }
+  for (const auto& m : all) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  CHECK(all.empty());  // and a one-way 0 is never sent
+  CHECK(w.stats().host_resets == 0);
+  CHECK_FALSE(w.take_reset());
+}
+
 TEST_CASE("flag watcher: a guest's save with more progress than the group's is not sent, the group's comes back") {
   FakeStore store = game();
   store.values[kKey1] = entry(kKey1, 2, proto::FlagKind::int32);

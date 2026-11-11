@@ -505,7 +505,9 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (window_ && (loading_ || moved_)) {
       // No Link: a named flag moving is a save load (a door moves none). In
       // the settle frames after a door, the game's own changes go as before.
-      if (loading_ && key.kind == FlagKeyKind::named) moved_ = true;
+      // A one-way room switch (dungeon-live) goes to 0 whenever its room is left:
+      // that is no save load.
+      if (loading_ && key.kind == FlagKeyKind::named && !one_way_.contains(key)) moved_ = true;
       // dungeon-live's room switches (one_way_) reset with their room: never put back.
       if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
         // The group's value back at once, so a room loading now has it.

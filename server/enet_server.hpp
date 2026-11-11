@@ -24,6 +24,12 @@ struct ServerOptions {
   SessionConfig session;
 };
 
+// ENet flags for a packet on `channel`: 0 to 2 reliable, 3 and 4 unreliable
+// and sequenced. One longer than a datagram on 3 or 4 goes as unreliable
+// fragments, not reliably (ENet's default), so a lost fragment on a lossy
+// VPN cannot hold the channel until the timeout (issue 143).
+std::uint32_t packet_flags(std::uint8_t channel);
+
 class EnetServer {
  public:
   explicit EnetServer(ServerOptions options);

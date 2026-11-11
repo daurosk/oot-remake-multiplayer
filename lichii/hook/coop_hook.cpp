@@ -701,6 +701,24 @@ private:
                 last_state = room.state;
                 LOG_INFO(Core, "coop: {}", coop::net::to_string(last_state));
             }
+            // Issue 143: the server PINGs every 250 ms. Seconds without a
+            // packet while connected means its packets do not reach us.
+            if (room.state == coop::net::State::connected) {
+                const auto link = session_->with_client([](coop::net::Client& c) { return c.link(); });
+                if (!quiet_warned_ && link.quiet_ms >= kQuietWarnMs) {
+                    quiet_warned_ = true;
+                    LOG_WARNING(Core,
+                                "coop: no packets from the server for {} ms (round trip {} ms, "
+                                "loss {}%, datagram {} bytes): a firewall or VPN may be "
+                                "dropping them (docs/setup.md, Troubleshooting)",
+                                link.quiet_ms, link.round_trip_ms, link.loss_percent, link.mtu);
+                } else if (quiet_warned_ && link.quiet_ms < kQuietWarnMs / 3) {
+                    quiet_warned_ = false;
+                    LOG_INFO(Core, "coop: packets from the server again");
+                }
+            } else {
+                quiet_warned_ = false;
+            }
             {
                 std::lock_guard view(view_mutex_);
                 room_ = std::move(room);
@@ -733,7 +751,14 @@ private:
             LOG_WARNING(Core, "coop: server {}", note_);
             break;
         case EventKind::disconnected:
-            LOG_WARNING(Core, "coop: connection lost; reconnecting");
+            // Issue 143: what the link looked like, so a report tells a
+            // firewall or VPN (nothing heard for seconds) from a slow line.
+            LOG_WARNING(Core,
+                        "coop: connection lost; reconnecting (nothing from the server for {} ms, "
+                        "round trip {} ms, loss {}%, datagram {} bytes, largest message sent {} "
+                        "bytes)",
+                        event.link.quiet_ms, event.link.round_trip_ms, event.link.loss_percent,
+                        event.link.mtu, event.link.largest_sent);
             break;
         case EventKind::player_joined:
             LOG_INFO(Core, "coop: player {} '{}' joined", event.player, event.nickname);
@@ -886,6 +911,9 @@ private:
     std::string note_;  // network thread only
     CoopChat::Log chat_;  // locks itself
     std::atomic<bool> welcomed_once_ = false;
+    // Network thread (Run): the "no packets from the server" warning is out (issue 143).
+    bool quiet_warned_ = false;
+    static constexpr std::uint32_t kQuietWarnMs = 3000;
     std::thread thread_;
 
     // Guarded by view_mutex_.

@@ -1802,3 +1802,114 @@ TEST_CASE("client: equipment is kept per player and ours goes to each newcomer")
   CHECK(to_string(EventKind::player_equip) == "player equip");
   client.stop();
 }
+
+TEST_CASE("client: datagrams are VPN-safe and a large snapshot still arrives whole") {
+  // Issue 143: over Hamachi (about 1404 bytes a packet) ENet's default 1392-byte
+  // datagrams make 1420-byte packets; the game was cut every 15-18 s.
+  FakeServer server;  // ENet's default size: the smaller side wins
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK(client.link().mtu == proto::kDatagramBytes);
+  REQUIRE(server.last_peer != nullptr);
+  CHECK(server.last_peer->mtu == proto::kDatagramBytes);
+  CHECK(proto::kDatagramBytes + 28 <= 1280);  // IP and UDP headers: fits Tailscale and Hamachi
+
+  // A snapshot many datagrams long comes through in full.
+  proto::FlagSnapshot big{0, 1, {}};
+  for (std::uint32_t i = 0; i < 600; ++i) {
+    big.flags.push_back(s32_flag(i + 1, static_cast<std::int32_t>(i)));
+  }
+  const auto bytes = proto::encode(big);
+  REQUIRE(bytes.has_value());
+  CHECK(bytes->size() > 4 * proto::kDatagramBytes);
+  server.send(big, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
+  CHECK(events.all[*events.find(EventKind::flag_snapshot)].flags == big.flags);
+  CHECK(client.link().largest_sent > 0);  // HELLO at least
+}
+
+TEST_CASE("client: link() counts the time since the server's last packet") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK(client.link().quiet_ms < 200);
+
+  // The server says nothing (its PINGs are lost): the quiet grows.
+  pump(client, server, [] { return false; }, 600);
+  CHECK(client.link().quiet_ms >= 500);
+
+  // A packet comes: back near 0.
+  server.send(proto::Ping{1}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.link().quiet_ms < 100; }));
+}
+
+TEST_CASE("client: a lost connection reports how the link looked") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  pump(client, server, [] { return false; }, 300);
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+  const Event& lost = events.all[*events.find(EventKind::disconnected)];
+  CHECK(lost.link.mtu == proto::kDatagramBytes);
+  CHECK(lost.link.largest_sent > 0);
+  CHECK(lost.link.quiet_ms < 2000);
+}
+
+namespace {
+// Commands ENet has queued for `peer`, of one kind (ENET_PROTOCOL_COMMAND_*).
+int queued(ENetPeer* peer, enet_uint8 command) {
+  int n = 0;
+  for (ENetList* list : {&peer->outgoingCommands, &peer->outgoingSendReliableCommands}) {
+    for (ENetListIterator it = enet_list_begin(list); it != enet_list_end(list);
+         it = enet_list_next(it)) {
+      const auto* c = reinterpret_cast<const ENetOutgoingCommand*>(it);
+      if ((c->command.header.command & ENET_PROTOCOL_COMMAND_MASK) == command) ++n;
+    }
+  }
+  return n;
+}
+}  // namespace
+
+TEST_CASE("client: a sample longer than a datagram stays unreliable, in unreliable fragments") {
+  // Issue 143 review: ENet sends a packet on an unreliable channel that does
+  // not fit one datagram as RELIABLE fragments unless asked otherwise; with
+  // 1200-byte datagrams a big pose could stall its channel as before.
+  CHECK(coop::net::packet_flags(proto::kChannelSession) == ENET_PACKET_FLAG_RELIABLE);
+  CHECK(coop::net::packet_flags(proto::kChannelOwnership) == ENET_PACKET_FLAG_RELIABLE);
+  CHECK(coop::net::packet_flags(proto::kChannelPlayerSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+  CHECK(coop::net::packet_flags(proto::kChannelObjectSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  ENetPeer* peer = server.last_peer;
+  REQUIRE(peer != nullptr);
+  REQUIRE(peer->mtu == proto::kDatagramBytes);
+  server.service();  // nothing else left queued
+
+  std::vector<std::uint8_t> big(3000, 0x55);
+  REQUIRE(enet_peer_send(peer, proto::kChannelPlayerSamples,
+                         enet_packet_create(big.data(), big.size(),
+                                            coop::net::packet_flags(proto::kChannelPlayerSamples))) == 0);
+  CHECK(queued(peer, ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE_FRAGMENT) == 3);  // 1172 bytes each
+  CHECK(queued(peer, ENET_PROTOCOL_COMMAND_SEND_FRAGMENT) == 0);
+
+  // Without the flag (before the fix) the same packet went reliable.
+  REQUIRE(enet_peer_send(peer, proto::kChannelPlayerSamples,
+                         enet_packet_create(big.data(), big.size(), 0)) == 0);
+  CHECK(queued(peer, ENET_PROTOCOL_COMMAND_SEND_FRAGMENT) == 3);
+
+  // The unreliable fragments arrive and are put back together (the bytes are
+  // no message, so the client counts one rejected packet per whole one).
+  const std::size_t rejected = client.rejected_count();
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() >= rejected + 2; }));
+}

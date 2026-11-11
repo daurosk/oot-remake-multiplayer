@@ -498,3 +498,28 @@ TEST_CASE("loopback: a killed client restarted on the same PC is back in within 
   CHECK(server.session().player_count() == 2);
   CHECK(server.session().stats().rejoined == 1);
 }
+
+TEST_CASE("loopback: an older game with ENet's default datagrams gets VPN-safe ones from the server") {
+  // Issue 143: the server alone sets the datagram size, so a game built before
+  // the fix still gets packets that fit a VPN (Hamachi about 1404 bytes).
+  EnetLife enet;
+  ServerOptions options;
+  options.port = 0;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client c;  // ENet's default 1392
+  c.connect(server.port());
+  REQUIRE(pump_until(server, {&c}, [&] { return c.connected; }));
+  CHECK(c.peer->mtu == kDatagramBytes);
+}
+
+TEST_CASE("loopback: the server sends long samples as unreliable fragments") {
+  // Issue 143 review: without ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT, ENet sends
+  // a packet on channel 3 or 4 longer than one datagram reliably.
+  CHECK(packet_flags(kChannelSession) == ENET_PACKET_FLAG_RELIABLE);
+  CHECK(packet_flags(kChannelProgress) == ENET_PACKET_FLAG_RELIABLE);
+  CHECK(packet_flags(kChannelOwnership) == ENET_PACKET_FLAG_RELIABLE);
+  CHECK(packet_flags(kChannelPlayerSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+  CHECK(packet_flags(kChannelObjectSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+}

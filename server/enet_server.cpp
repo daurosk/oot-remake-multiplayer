@@ -109,15 +109,19 @@ void EnetServer::handle(const ENetEvent& event) {
   }
 }
 
+std::uint32_t packet_flags(std::uint8_t channel) {
+  return channel <= protocol::kChannelOwnership
+             ? static_cast<std::uint32_t>(ENET_PACKET_FLAG_RELIABLE)
+             : static_cast<std::uint32_t>(ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+}
+
 void EnetServer::apply_actions() {
   for (Action& action : session_.take_actions()) {
     if (auto* send = std::get_if<SendAction>(&action)) {
       auto it = peers_.find(send->to);
       if (it == peers_.end()) continue;
-      // Channels 0 to 2 are reliable; 3 and 4 unreliable, sequenced.
-      enet_uint32 flags =
-          send->channel <= protocol::kChannelOwnership ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
-      ENetPacket* packet = enet_packet_create(send->bytes.data(), send->bytes.size(), flags);
+      ENetPacket* packet =
+          enet_packet_create(send->bytes.data(), send->bytes.size(), packet_flags(send->channel));
       if (packet != nullptr && enet_peer_send(it->second, send->channel, packet) != 0) {
         enet_packet_destroy(packet);
       }

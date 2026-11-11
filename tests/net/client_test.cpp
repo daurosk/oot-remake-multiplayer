@@ -1861,3 +1861,55 @@ TEST_CASE("client: a lost connection reports how the link looked") {
   CHECK(lost.link.largest_sent > 0);
   CHECK(lost.link.quiet_ms < 2000);
 }
+
+namespace {
+// Commands ENet has queued for `peer`, of one kind (ENET_PROTOCOL_COMMAND_*).
+int queued(ENetPeer* peer, enet_uint8 command) {
+  int n = 0;
+  for (ENetList* list : {&peer->outgoingCommands, &peer->outgoingSendReliableCommands}) {
+    for (ENetListIterator it = enet_list_begin(list); it != enet_list_end(list);
+         it = enet_list_next(it)) {
+      const auto* c = reinterpret_cast<const ENetOutgoingCommand*>(it);
+      if ((c->command.header.command & ENET_PROTOCOL_COMMAND_MASK) == command) ++n;
+    }
+  }
+  return n;
+}
+}  // namespace
+
+TEST_CASE("client: a sample longer than a datagram stays unreliable, in unreliable fragments") {
+  // Issue 143 review: ENet sends a packet on an unreliable channel that does
+  // not fit one datagram as RELIABLE fragments unless asked otherwise; with
+  // 1200-byte datagrams a big pose could stall its channel as before.
+  CHECK(coop::net::packet_flags(proto::kChannelSession) == ENET_PACKET_FLAG_RELIABLE);
+  CHECK(coop::net::packet_flags(proto::kChannelOwnership) == ENET_PACKET_FLAG_RELIABLE);
+  CHECK(coop::net::packet_flags(proto::kChannelPlayerSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+  CHECK(coop::net::packet_flags(proto::kChannelObjectSamples) == ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  ENetPeer* peer = server.last_peer;
+  REQUIRE(peer != nullptr);
+  REQUIRE(peer->mtu == proto::kDatagramBytes);
+  server.service();  // nothing else left queued
+
+  std::vector<std::uint8_t> big(3000, 0x55);
+  REQUIRE(enet_peer_send(peer, proto::kChannelPlayerSamples,
+                         enet_packet_create(big.data(), big.size(),
+                                            coop::net::packet_flags(proto::kChannelPlayerSamples))) == 0);
+  CHECK(queued(peer, ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE_FRAGMENT) == 3);  // 1172 bytes each
+  CHECK(queued(peer, ENET_PROTOCOL_COMMAND_SEND_FRAGMENT) == 0);
+
+  // Without the flag (before the fix) the same packet went reliable.
+  REQUIRE(enet_peer_send(peer, proto::kChannelPlayerSamples,
+                         enet_packet_create(big.data(), big.size(), 0)) == 0);
+  CHECK(queued(peer, ENET_PROTOCOL_COMMAND_SEND_FRAGMENT) == 3);
+
+  // The unreliable fragments arrive and are put back together (the bytes are
+  // no message, so the client counts one rejected packet per whole one).
+  const std::size_t rejected = client.rejected_count();
+  REQUIRE(pump(client, server, [&] { return client.rejected_count() >= rejected + 2; }));
+}

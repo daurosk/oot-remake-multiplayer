@@ -76,17 +76,17 @@ std::size_t utf8_chars(std::string_view text) {
   return n;
 }
 
-// Channels 0 to 2 are reliable and ordered, 3 and 4 unreliable and sequenced
-// (ENet's default for a packet without flags).
-enet_uint32 packet_flags(std::uint8_t channel) {
-  return channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
-}
-
 using proto::valid_flag;
 
 FlagKey key_of(const proto::FlagEntry& flag) { return flag.key; }
 
 }  // namespace
+
+std::uint32_t packet_flags(std::uint8_t channel) {
+  return channel < proto::kChannelPlayerSamples
+             ? static_cast<std::uint32_t>(ENET_PACKET_FLAG_RELIABLE)
+             : static_cast<std::uint32_t>(ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+}
 
 std::string_view to_string(State state) {
   switch (state) {

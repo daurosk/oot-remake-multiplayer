@@ -152,6 +152,13 @@ struct ClientConfig {
   std::function<std::uint64_t()> now_us;
 };
 
+// ENet flags for a packet on `channel`: 0 to 2 reliable and ordered, 3 and 4
+// unreliable and sequenced. A packet on 3 or 4 longer than one datagram
+// (protocol::kDatagramBytes) is sent as unreliable fragments: without the
+// flag ENet sends it reliably, and on a lossy VPN one lost fragment held
+// the channel until the timeout (issue 143).
+std::uint32_t packet_flags(std::uint8_t channel);
+
 enum class State : std::uint8_t {
   idle,           // start() not called yet
   connecting,     // ENet connecting

@@ -150,7 +150,7 @@ if ($Mode -eq 'host') {
     $Password = (Read-KitServerAccess $optionsFile).Password
     if ($null -eq $Password) {
         Write-Host 'A join password keeps out anyone who finds your server: players type it in Join.bat.'
-        Write-Host 'Pick one without spaces and send it to your friends with the address. Enter: no password.'
+        Write-Host 'Pick a long one without spaces (12 characters or more; three random words work) and send it to your friends with the address. Enter: no password.'
         do {
             $answer = Read-Host 'Join password for your server'
             $Password = if ($answer) { $answer.Trim() } else { '' }

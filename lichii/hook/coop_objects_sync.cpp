@@ -859,7 +859,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // Copies their owner saw die that are still here after the grace.
     dead_.clear();
     for (const auto& [address, o] : objects_) {
-        if (o.dead_at != 0 && now_us - o.dead_at >= kDeadGraceUs) {
+        if (o.dead_at != 0 && (o.dead_now || now_us - o.dead_at >= kDeadGraceUs)) {
             dead_.insert(address);
         }
     }
@@ -1194,12 +1194,21 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 remove->id.kind == proto::ObjectKind::placed &&
                 (had == owners_.end() || remove->epoch >= had->second.epoch)) {
                 if (Object* o = find(remove->id); o != nullptr && o->reacts && o->dead_at == 0) {
-                    if (o->life && *o->life > 0) {
-                        Lower(*o, 0, now_us, writes, remove->player_number);
+                    if (had == owners_.end()) {
+                        // No owner was ever named to us: the server tells a
+                        // kill from before we came (issue 133, a late
+                        // entrant or a rejoin). It goes at once, no death.
+                        o->dead_at = now_us;
+                        o->dead_now = true;
+                        notes_.emplace_back("killed before we came: " + o->name);
+                    } else {
+                        if (o->life && *o->life > 0) {
+                            Lower(*o, 0, now_us, writes, remove->player_number);
+                        }
+                        o->dead_at = now_us;
+                        notes_.emplace_back("dead in its owner's game: " + o->name);
                     }
-                    o->dead_at = now_us;
                     o->hit_sum = 0;
-                    notes_.emplace_back("dead in its owner's game: " + o->name);
                 }
                 // Nobody's now: no samples, poses or plays for it.
                 if (had != owners_.end()) {

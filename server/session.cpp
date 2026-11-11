@@ -443,6 +443,7 @@ bool Session::set_scene(ConnectionId id, Connection& c, const std::string& scene
   drop_all_objects(id, c.number, present, now_us);
   forget_empty_grass(left);
   forget_empty_world(left);
+  forget_empty_dead(left);
   // What was broken and moved here before this player came (docs/world.md).
   for (const Message& m : world_.replay(scene)) {
     send(id, kChannelSession, m);
@@ -500,6 +501,13 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
   for (const ObjectId& oid : before) {
     if (listed.count(oid)) continue;
     c.present.erase(oid);
+    if (auto ds = dead_.find(p.scene); ds != dead_.end()) {
+      if (auto d = ds->second.find(oid); d != ds->second.end()) {
+        if (auto w = d->second.witnesses.find(id); w != d->second.witnesses.end()) {
+          w->second = false;  // its dying (or told) copy is gone from this game
+        }
+      }
+    }
     auto it = objects_.find(oid);
     if (it != objects_.end() && it->second.made && it->second.owner == id) {
       // Its OBJECT_REMOVE is probably right behind: run_ownership lets go
@@ -513,6 +521,10 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
 
   for (const ObjectPresence& e : p.objects) {
     const ObjectId& oid = e.id;
+    if (oid.kind == ObjectKind::placed && dead_for(id, c, p.scene, oid)) {
+      c.present.insert(oid);  // so its leaving the list is seen
+      continue;
+    }
     auto it = objects_.find(oid);
     if (it == objects_.end()) {
       if (oid.kind != ObjectKind::placed) continue;  // made ones come by OBJECT_SPAWN
@@ -644,6 +656,15 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     if (o.made) {
       forget(it);
     } else {
+      if (remove.reason == RemoveReason::dead) {
+        // Kept for the games that come later (dead_for).
+        Dead& d = dead_[scene][oid];
+        d.witnesses.clear();
+        for (const ConnectionId w : o.present) d.witnesses[w] = true;
+        d.witnesses[id] = false;  // its game dropped it from its walk
+        d.position = remove.position;
+        d.by = c.number;
+      }
       // Kept, owned by nobody, until no game has it loaded, so a copy still
       // listed cannot bring it back under a new owner.
       o.removed = true;
@@ -801,6 +822,35 @@ void Session::forget_empty_world(const std::string& scene) {
 
 void Session::forget_empty_grass(const std::string& scene) {
   if (!scene_has_player(scene)) grass_.erase(scene);
+}
+
+void Session::forget_empty_dead(const std::string& scene) {
+  if (!scene_has_player(scene)) dead_.erase(scene);  // the games load it anew
+}
+
+// Issue 133: a kill that a game entering later must get. A game that did not
+// see the enemy die is told now, once; one whose dying copy is still listed
+// is left alone; a witness that lists it again after it left its walk has
+// respawned it (its room loaded again), so it is alive again for everyone.
+bool Session::dead_for(ConnectionId id, Connection& c, const std::string& scene,
+                       const ObjectId& oid) {
+  auto ds = dead_.find(scene);
+  if (ds == dead_.end()) return false;
+  auto d = ds->second.find(oid);
+  if (d == ds->second.end()) return false;
+  auto w = d->second.witnesses.find(id);
+  if (w == d->second.witnesses.end()) {
+    d->second.witnesses.emplace(id, true);
+    send(id, kChannelOwnership,
+         ObjectRemove{d->second.by, oid, 0, RemoveReason::dead, d->second.position});
+    ++stats_.dead_told;
+    log("told player " + std::to_string(c.number) + " a kill from before it came");
+    return true;
+  }
+  if (w->second) return true;
+  ds->second.erase(d);
+  ++stats_.dead_respawned;
+  return false;
 }
 
 // Not relayed. A member follows its root's owner (run_ownership), shares its
@@ -1274,6 +1324,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   drop_all_objects(id, c.number, c.present, now_us);
   forget_empty_grass(c.scene);
   forget_empty_world(c.scene);
+  forget_empty_dead(c.scene);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
       (reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
@@ -1283,6 +1334,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     objects_.clear();
     grass_.clear();
     world_.clear();
+    dead_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before

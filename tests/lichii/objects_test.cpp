@@ -1744,3 +1744,15 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
+
+TEST_CASE("objects: a kill from before we came is deleted at once, with no death played (issue 133)") {
+    // The server tells a late entrant: no owner was ever named to us.
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)}, 2);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    sync.Receive(Dead(id, 1));
+    auto step = Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    CHECK(step.writes.empty());
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
+    CHECK(All<proto::Damage>(step).empty());
+}

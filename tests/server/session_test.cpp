@@ -2461,3 +2461,68 @@ TEST_CASE("owners are said again every 10 s, for a game that forgot them") {
   h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
   CHECK(messages_to<ObjectOwner>(h, 2).empty());
 }
+
+// Issue 133 (test6, Discord testers): A killed a Deku Tree room, B came in
+// later and found the enemies still standing. The server had forgotten them
+// once no game had them loaded.
+TEST_CASE("a kill is told to a game that loads the enemy later, until a witness respawns it") {
+  ObjectHarness h;
+  h.receive(1, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(1, 0));
+  h.receive(1, ObjectRemove{0, placed(7), 0, RemoveReason::dead, {1, 2, 3}}, kChannelOwnership);
+  h.receive(1, present_in("DekuTree", {placed(8)}), kChannelOwnership);
+  CHECK_FALSE(h.session.object_owner(placed(7)).has_value());  // nobody has it: forgotten
+  h.clear();
+
+  // B comes in later: told it is dead, no owner, once.
+  h.receive(2, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2) ==
+        std::vector<ObjectRemove>{{1, placed(7), 0, RemoveReason::dead, {1, 2, 3}}});
+  for (const ObjectOwner& o : messages_to<ObjectOwner>(h, 2)) CHECK(o.id != placed(7));
+  CHECK_FALSE(h.session.object_owner(placed(7)).has_value());
+  CHECK(h.session.stats().dead_told == 1);
+  h.clear();
+  h.receive(2, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+  // Its copy deleted, B lists it no more; a third player coming in is told too.
+  h.receive(2, present_in("DekuTree", {placed(8)}), kChannelOwnership);
+  h.clear();
+  h.receive(3, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 3).size() == 1);
+  h.receive(3, present_in("DekuTree", {}), kChannelOwnership);
+
+  // A's game loads the room again and lists it: respawned, alive for all.
+  h.clear();
+  h.receive(1, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 1).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  CHECK(h.session.stats().dead_respawned == 1);
+  h.receive(2, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+}
+
+TEST_CASE("a copy still dying in a witness's game is no respawn, and an empty scene forgets kills") {
+  ObjectHarness h;
+  h.receive(1, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectRemove{0, placed(7), 0, RemoveReason::dead, {}}, kChannelOwnership);
+  h.receive(1, present_in("DekuTree", {}), kChannelOwnership);
+  h.clear();
+  // B's copy is still on its list for a moment: nothing told, nothing respawned.
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+  CHECK(h.session.stats().dead_respawned == 0);
+  h.receive(2, present_in("DekuTree", {}), kChannelOwnership);
+  // A newcomer while A and B are still in the scene is told.
+  h.receive(3, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 3).size() == 1);
+  h.receive(3, present_in("Field", {}), kChannelOwnership);
+
+  // Everyone leaves the Deku Tree: its games load the room anew next time.
+  h.receive(1, present_in("Field", {}), kChannelOwnership);
+  h.receive(2, present_in("Field", {}), kChannelOwnership);
+  h.clear();
+  h.receive(3, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 3).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(3, 0));
+}

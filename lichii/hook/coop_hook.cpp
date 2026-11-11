@@ -63,6 +63,7 @@
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_sites.h"
 #include "coop_svc.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
@@ -973,7 +974,19 @@ void OnFrame(Core::System& system) {
     Start();
     // g_coop only changes in Start (before this) and Shutdown (after
     // emulation has stopped), so it stays valid for this frame.
-    if (auto* coop = Get()) {
+    auto* coop = Get();
+    // The game's main may be patched (or refused for a code mod) after co-op
+    // started: then co-op disconnects and stays off (issue 136, test7). The
+    // Coop object stays until Shutdown: the overlay may hold it.
+    if (CoopSites::MustStopForMod(coop != nullptr, g_mod_refused, coop ? CoopSvc::Refusal() : std::string{})) {
+        g_mod_refused = true;
+        LOG_WARNING(Core, "coop: off: a code mod is installed ({} is not the game's own). Co-op "
+                          "does not work with code or cheat mods: remove them or turn them off "
+                          "in the game's Add-Ons. Disconnecting.",
+                    CoopSvc::Refusal());
+        coop->End(false);
+    }
+    if (coop && !g_mod_refused) {
         coop->Frame(system);
     }
 }
@@ -983,16 +996,19 @@ void Shutdown() {
 }
 
 std::vector<OverlayLine> OverlayLines() {
-    if (auto* coop = Get()) {
-        return coop->Lines();
-    }
     if (g_mod_refused) {
         return {{"Co-op is off: a code mod is installed"}};
+    }
+    if (auto* coop = Get()) {
+        return coop->Lines();
     }
     return {};
 }
 
 std::optional<Markers> CurrentMarkers() {
+    if (g_mod_refused) {
+        return std::nullopt;
+    }
     if (auto* coop = Get()) {
         return coop->CurrentMarkers();
     }
@@ -1000,11 +1016,17 @@ std::optional<Markers> CurrentMarkers() {
 }
 
 bool SendChat(const std::string& text) {
+    if (g_mod_refused) {
+        return false;
+    }
     auto* coop = Get();
     return coop && coop->SendChat(text);
 }
 
 std::vector<ChatLine> ChatLines() {
+    if (g_mod_refused) {
+        return {};
+    }
     if (auto* coop = Get()) {
         return coop->ChatLines();
     }
@@ -1012,6 +1034,9 @@ std::vector<ChatLine> ChatLines() {
 }
 
 std::vector<PlayerRow> PlayerList() {
+    if (g_mod_refused) {
+        return {};
+    }
     if (auto* coop = Get()) {
         return coop->PlayerList();
     }

@@ -2378,9 +2378,14 @@ TEST_CASE("objects: a fish its owner landed is gone for everyone (issue 151)") {
         const proto::ObjectId id = *sync.IdOf(0x100);
         Own(sync, id, 1, 3);
         Tick(sync, 10 * kMs, {Fish(0x100, 0x11, 1.0f)});
-        Tick(sync, 100 * kMs, {});
-        Tick(sync, 200 * kMs, {});
-        return All<proto::ObjectRemove>(Tick(sync, 300 * kMs, {}));
+        // Gone after kMissedWalks empty walks: the remove may come at any of them.
+        std::vector<proto::ObjectRemove> out;
+        for (const std::uint64_t t : {100, 200, 300}) {
+            for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
+                out.push_back(r);
+            }
+        }
+        return out;
     };
     const auto landed = gone(0.0f);
     REQUIRE(landed.size() == 1);

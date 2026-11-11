@@ -1443,3 +1443,35 @@ TEST_CASE("world: RestWords puts the new rest place where the block's memory kee
     CHECK(lots.too_many);
     CHECK(lots.writes.empty());
 }
+
+TEST_CASE("world: only push blocks get a rest fix, not an Armos statue (issue 147 review)") {
+    CHECK(CoopWorld::IsPushBlock(kBox));
+    CHECK(CoopWorld::IsPushBlock("Obj_MovableBox_A_01"));
+    CHECK(CoopWorld::IsPushBlock("Obj_SliderBox_A_01"));
+    CHECK_FALSE(CoopWorld::IsPushBlock("Obj_AmosStatue_A_01"));
+    CHECK_FALSE(CoopWorld::IsPushBlock("Obj_MovableBox_BasePosAnchor"));
+    for (const char* name : {"Obj_AmosStatue_A_01", "Obj_SliderBox_A_01"}) {
+        CAPTURE(name);
+        WorldSync w;
+        Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, name)});
+        w.Receive(PlaceOf(0x50, 4.0f));
+        Walk(w, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, name, {4.0f, 2.0f, 3.0f})});
+        const auto out = Walk(w, 1700 * kMs, {Thing(0x100, 0x50, std::nullopt, name, {4.0f, 2.0f, 3.0f})});
+        CHECK(out.blocks.size() == (std::string_view(name).starts_with("Obj_SliderBox_") ? 1u : 0u));
+    }
+}
+
+TEST_CASE("world: RestWords skips exact zeros and finds a place ending on a region's last float") {
+    FakeGame g;
+    BlockMemory(g);
+    // The old place has a 0.0 axis: zeros everywhere would match, so no match is taken.
+    PutFloats(g, kBlockActor + 0x100, {10.0f, 0.0f, 30.0f});
+    CHECK(CoopWorld::RestWords(g.Reader(), kBlockActor, {10.0f, 0.0f, 30.0f}, {12.0f, 0.0f, 30.0f})
+              .where.empty());
+    // A place whose last float is the component's last (0x1fc of 0x200) is found.
+    PutFloats(g, kBlockComp + 0x1f4, {10.0f, 20.0f, 30.0f});
+    const auto scan =
+        CoopWorld::RestWords(g.Reader(), kBlockActor, {10.0f, 20.0f, 30.0f}, {12.0f, 20.0f, 30.0f});
+    REQUIRE(scan.where.size() == 1);
+    CHECK(scan.where[0] == "c+0x10+0x1f4");
+}

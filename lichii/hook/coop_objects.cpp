@@ -969,13 +969,21 @@ public:
                              scan.where.size(), where);
                     continue;
                 }
-                for (const auto& w : scan.writes) {
-                    memory_->Write32(w.address, w.value);
+                // The searched sizes are not known object sizes (review):
+                // written only with LICHII_COOP_BLOCK_REST=1; otherwise only
+                // where they would go is logged, for a run to name the word.
+                static const bool write_rest = EnvFlag("LICHII_COOP_BLOCK_REST");
+                if (write_rest) {
+                    for (const auto& w : scan.writes) {
+                        memory_->Write32(w.address, w.value);
+                    }
                 }
                 LOG_INFO(Core, "coop: world: {:016x} {} old rest {:.2f} {:.2f} {:.2f} -> {:.2f} {:.2f} {:.2f}: "
-                               "{} places rewritten{}{}",
+                               "{} places {}{}{}",
                          fix.hash, fix.name, fix.from[0], fix.from[1], fix.from[2], fix.to[0],
-                         fix.to[1], fix.to[2], scan.where.size(), where.empty() ? "" : ":", where);
+                         fix.to[1], fix.to[2], scan.where.size(),
+                         write_rest ? "rewritten" : "found, not written (LICHII_COOP_BLOCK_REST off)",
+                         where.empty() ? "" : ":", where);
             }
             block_fixes_.clear();
         }

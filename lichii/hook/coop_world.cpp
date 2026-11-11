@@ -82,6 +82,11 @@ bool IsBlockAnchor(std::string_view name) {
     return name == "Obj_MovableBox_BasePosAnchor";
 }
 
+bool IsPushBlock(std::string_view name) {
+    return IsMovable(name) && (name.find("MovableBox_") != std::string_view::npos ||
+                               name.starts_with("Obj_SliderBox_"));
+}
+
 bool IsSign(std::string_view name) {
     return name.starts_with("Obj_") &&
            (name.find("SignBoard_") != std::string_view::npos ||
@@ -438,7 +443,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
     }
     const bool settling = !o.ours && o.settle_us != 0 && now_us - o.settle_us < kSettleUs;
     if (!o.ours && (remote || settling)) {
-        if (!o.following && !o.follow_from && !o.breakable) {
+        if (!o.following && !o.follow_from && !o.breakable && IsPushBlock(o.name)) {
             o.follow_from = o.rest;  // where our copy rested before (issue 147)
         }
         if (!o.following && remote) {
@@ -1616,7 +1621,7 @@ RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_
         }
     }
     const auto matches = [&](const std::optional<float>& v, int axis) {
-        return v && std::isfinite(*v) && std::fabs(*v - from[axis]) <= kRestMatchM;
+        return v && std::isfinite(*v) && *v != 0.0f && std::fabs(*v - from[axis]) <= kRestMatchM;
     };
     const auto bits = [](float f) {
         std::uint32_t b = 0;

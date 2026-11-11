@@ -44,6 +44,10 @@ bool IsSign(std::string_view name);
 // block). Not a movable itself; moved with its block (issue 147).
 bool IsBlockAnchor(std::string_view name);
 
+// The push blocks whose own rest place a followed push fixes (issue 147):
+// the MovableBox family and the slider box, not the Armos statue.
+bool IsPushBlock(std::string_view name);
+
 // Grass that is an actor: a tuft that is cut is deleted at once in the other
 // games (writing life 0 did not remove it, run of 2026-11-09).
 bool IsGrassActor(std::string_view name);
@@ -171,8 +175,11 @@ bool SignCutKeyAllowed(std::uint64_t key);
 // - the first 0x200 bytes of each component its table (+0x270) points to,
 // - the physics root ([[table + 0x50] + 0x20], first 0x400 bytes; docs/world.md).
 // Only for a real move (5 cm or more) from a place that is not near the
-// origin (zeros would match), each axis within 2 cm, and at most
-// kMaxTriplets places: more is taken as a wrong match and nothing is written.
+// origin (zeros would match), each axis within 2 cm, never a match that is
+// exactly 0.0 on an axis, and at most kMaxRestTriplets places: more is taken
+// as a wrong match and nothing is written. The sizes searched are not known
+// object sizes, so the glue writes them only with LICHII_COOP_BLOCK_REST=1
+// (the integrator's test); by default it logs where they would go.
 struct RestWrite {
     std::uint64_t address = 0;
     std::uint32_t value = 0;  // f32 bits

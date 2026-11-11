@@ -1,0 +1,29 @@
+# held-bomb (#169): A pulls a bomb, holds it 3 s, walks with it, lets it blow in its hands;
+# then pulls a second and throws it. B (no script) stands where the save starts and watches.
+# Run with -Every 0.5. The save needs bombs (save_flags.py bombs). Read: A "bombs held: 1 of
+# ours", B "bombs held: 0 of ours, 1 copies", "CoopShot_Bomb: create copy", on the throw
+# "CoopShot_Bomb: copy N deleted" then "Item_Bomb: create copy". Shots: the bomb in the
+# puppet's hands (never on the floor), the blink, both explosions at the same time.
+mark start
+wait 120
+assign Bomb
+wait 60
+press ZR
+wait 30
+mark pulled
+wait 90
+mark held-3s
+stick 0 1 60
+mark walked
+wait 240
+mark blown
+wait 180
+press ZR
+wait 30
+mark pulled2
+wait 30
+press A
+wait 15
+mark thrown
+wait 300
+mark after-throw

@@ -599,6 +599,24 @@ Left out on purpose: `ELinkRef` (footstep dust, sword trails: effects, not asked
 
 **What the game run must show** (none of it run): footsteps, sword swings and voice from the puppet; louder near it, fading with distance, silent far away; the local player's own sounds unchanged; no crash or `Unmapped` lines when a puppet is made (the size table entries are the pack's new size, the ActorParam's entry is unchanged since the file is still a part of the player's chain). Risks: a sound the user marks as the player's (played without position, or with the listener) could sound as if it were ours; the footstep component may need the physics the puppet does not have (then it is silent, or the create fails: try `--no-sound` to tell).
 
+## Ocarina
+
+Issue 152 (testers, 2026-11-11): the puppet plays the ocarina animation, but the others hear no notes and no song. Read from the romfs and `main` (build e0f3ccfaf50065ae), not run.
+
+| Item | Where | Status |
+|---|---|---|
+| Note sounds | SLink assets `Ocarina_LowB`, `LowC`, `LowCsharp`, `C`, `Csharp`, `D`, `Dsharp`, `E`, `F`, `Fsharp`, `G`, `Gsharp`, `A`, `Asharp`, `B`, `HighD`, `HighDsharp`, `HighE`, `HighF`, and `System_Ocarina_<note>` (the 2D copies for the score window), in `SLink2/slink2.Product.111.bslnk` | Checked as names |
+| Song sounds | SLink assets `Ocarina_ZeldaLullaby`, `EponaSong`, `SariaSong`, `SunSong`, `TimeSong`, `StormSong`, `ForestMinuet`, `FireBolero`, `WaterSerenade`, `ShadowNocturne`, `SpiritRequiem`, `LightPrelude` (the song played back when a melody is right), `Ocarina_Correct` | Checked as names |
+| Not AS events | The SLink resource names only the ocarina's start and end AS nodes (`Ocarina_Child_StartWait`, `_End`, the adult ones), not the per-note nodes; the AS node events (`AnimationEvent/AsNode/Player_Child.root.baev`) have `Ocarina`, `HoldOcarina`, `OcarinaFingerRest`, no note. So the puppet's own AS (which plays Link's sounds since branch `puppet-sound`) cannot play the notes | Checked |
+| How the fingers follow the note | `AS/Player_Child.root.asb` holds per-note nodes (`Ocarina_Child_A_lp`, `…_Close_1st_lp`, `…_Rest`, the adult ones) chosen by AS variables `OcarinaLastSingleNote`, `OcarinaLastMelodyType`, `OcarinaFrameCount`, `OcarinaPerformanceRate`, `IsOcarinaRestNow` | Checked as names; how the AS reads them is inferred |
+| The code | `game::OcarinaSound` (label 0x3cced00, used at 0x2e30cb8), `OcarinaMgr`, `OcarinaCreationMgr`, the AI/logic names `ExexutePlayerPlayOcarina`, `QueryIsPlayedOcarinaNote`, `QueryGetPlayedOcarinaInfo`, `QueryOcarinaHitMelody` | Labels |
+| Not found | No code or data pointer reaches the strings `Ocarina_A` … (0x3cce7ff …) or `OcarinaLastSingleNote` (0x3ca647d, 0x3ee5596): the note sounds are most likely looked up by a hash or built from a table, so the call that plays a named SLink asset on an actor was not found by reading. None of these names is a GameData flag | Checked (an ADRP/ADD and pointer scan of `main`) |
+
+**Plan** (types 140 to 144 for this, protocol 8 for test8):
+1. **Where our note is** (this branch): `CoopOcarina::OcarinaProbe` (`lichii/hook/coop_ocarina.{h,cpp}`, `LICHII_COOP_OCARINA_PROBE=1`, reads only). While one of our Link's AS slots plays an ocarina node, it logs each slot's command when it changes (`coop: ocarina probe: slots 0=… 1=…`), and every word of the AS controller (0x400 bytes) and its slots (0x200 bytes each) that steps between two small values (below 64), every 33 ms; a word that steps more than 40 times is muted. If a slot's command names the note (`Ocarina_Child_A_lp`), that is the note; else the word that steps once per note, with the same value for the same button, is `OcarinaLastSingleNote`.
+2. **Send it** (next round): `OCARINA_NOTE` (140): player, server time, note (an index into the 19 notes, 0 for none) and the melody played (0 none, else the song); to the players in the sender's scene, like `PLAYER_POSE`. Only notes our Link plays itself: an ocarina the game plays for us (a cutscene, a song taught) is not sent.
+3. **Play it at the puppet** (next round): write the note into the puppet's AS variable, so its fingers follow and, if the ocarina code reads the AS state, the note sounds from the puppet; or call the SLink play on the puppet with `Ocarina_<note>` once its address is known (the same probe run, with a breakpoint on the SLink user's lookup, finds it). **A song is sound only**: nothing of the game's melody check (`QueryOcarinaHitMelody`, the warp, the sun, the storm, the doors) runs for a remote player, since only the local `OcarinaMgr` checks melodies and the puppet has no ocarina logic; the song's `Ocarina_<song>` sound plays at the puppet.
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.

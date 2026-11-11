@@ -82,6 +82,7 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
+#include "coop_ocarina.h"
 #include "coop_spawn.h"
 #include "coop_pickups.h"
 #include "coop_projectiles.h"
@@ -1051,6 +1052,13 @@ public:
                 LOG_INFO(Core, "coop: {}", line);
             }
         }
+        // Issue 152 (docs/puppet.md "Ocarina"): where our note is kept. Reads only.
+        if (ocarina_probe_on_) {
+            for (const auto& line : ocarina_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
+                                                        our_link_, server_now_us)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
         if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
             grass_made_logged_ = made;
             LOG_INFO(Core, "coop: grass: {} cuts of the others made here", made);
@@ -1209,6 +1217,9 @@ public:
     CoopWorld::GimmickProbe gimmick_probe_;  // test7: LICHII_COOP_GIMMICK_PROBE=1 turns it on
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
+    bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
+    CoopOcarina::OcarinaProbe ocarina_probe_;
+    u64 our_link_ = 0;                        // our Link's actor, from the last walk
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
@@ -1312,6 +1323,9 @@ private:
                 }
             }
             if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
+                if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                    our_link_ = a;  // the ocarina probe (issue 152)
+                }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {
                     at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
@@ -1819,6 +1833,7 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a
         // Stalchild loses its head on every screen. An amount alone at

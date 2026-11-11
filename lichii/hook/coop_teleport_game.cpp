@@ -3,8 +3,10 @@
 // /teleport <player>, the emulator side (coop_teleport.h, docs/setup.md
 // "Chat commands"). The asking and answering go through JOIN_PARTNER
 // (coop/net Client: request_join, accept_join, refuse_join); our Link is
-// moved and the scene changed the ways the boss rooms do it (CoopBoss::
-// MoveLink, CoopBoss::AskSceneChange; docs/dungeons-boss.md).
+// moved the way the boss rooms do it (CoopBoss::MoveLink;
+// docs/dungeons-boss.md). Another scene is asked the way the game's Main
+// sequence takes a scene change in free play (docs/scenes.md "Free-play
+// scene change"): Sequence_ReservedNextBanc plus the Bool kFreePlayBancChange.
 // LICHII_COOP_TELEPORT=0 turns it off: the command says so and requests from
 // the others are refused (declined).
 
@@ -19,9 +21,13 @@
 
 #include "common/logging.h"
 #include "core/core.h"
+#include "core/memory.h"
+#include "coop/host/flags.hpp"
+#include "coop/host/game_flags.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_boss.h"
+#include "coop_flags.h"
 
 namespace CoopTeleport {
 namespace {
@@ -35,6 +41,65 @@ std::uint64_t SteadyUs() {
 bool OnByEnv() {
     const char* v = std::getenv("LICHII_COOP_TELEPORT");
     return v == nullptr || std::string_view(v) != "0";
+}
+
+// Main.module's native selector (_LocalModule_cf31571495c4, 0x3303ca0) picks
+// its BancChange case (ChangeBancOnMain.module) when this Bool is 1 (read at
+// 0x3304154). Its name is in no file of the game; nothing in the game writes
+// it (docs/scenes.md "Free-play scene change"). Not saved, no reset type.
+constexpr std::uint32_t kFreePlayBancChange = 0x3fc35576;
+
+// The game's request flags: our scene change is these.
+struct Request {
+    std::uint32_t banc = coop::host::flag_hash("Sequence_ReservedNextBanc");
+    std::uint32_t start = coop::host::flag_hash("Sequence_ReservedNextStartPosName");
+    std::uint32_t loading = coop::host::flag_hash("Sequence_IsLoadingBanc");
+};
+const Request& RequestFlags() {
+    static const Request r;
+    return r;
+}
+
+// Ask: the start point of that scene (docs/scenes.md "The start point"),
+// the scene, then the switch, so Main reads both once it picks BancChange.
+// `saved`: the start name the game had before the trip's first ask, read
+// once, so a trip that never arrives can put it back.
+bool AskScene(Core::System& system, std::uint64_t main, std::string_view scene, std::string_view start,
+              std::optional<std::string>& saved, bool& saved_read) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
+    if (!saved_read) {
+        saved_read = true;
+        saved = coop::host::GameFlags(memory).get_string64(RequestFlags().start);
+    }
+    const bool start_ok = coop::host::GameFlags::set_string64_now(memory, RequestFlags().start, start);
+    const bool banc = start_ok && coop::host::GameFlags::set_string64_now(memory, RequestFlags().banc, scene);
+    const bool on = banc && coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, true);
+    LOG_INFO(Core, "coop: teleport: asked the scene change to {} at {}: scene {}, switch {}", scene, start,
+             banc ? "set" : "NOT set", on ? "on" : "NOT on");
+    return banc && on;
+}
+
+// The switch off (the game took the request) and, for `all`, the request
+// itself (arrived or given up), so no later event or frame takes it again.
+// `restore`: not arrived, the start name from before the trip is put back
+// (arrived: the start name is that scene's own, as after a normal load).
+void ClearScene(Core::System& system, std::uint64_t main, bool all, bool restore,
+                const std::optional<std::string>& saved) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
+    const bool off = coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, false);
+    if (!all) {
+        LOG_INFO(Core, "coop: teleport: scene change taken: switch {}", off ? "off" : "NOT off");
+        return;
+    }
+    const bool banc = coop::host::GameFlags::set_string64_now(memory, RequestFlags().banc, "");
+    std::string start = "kept";
+    if (restore && saved) {
+        start = coop::host::GameFlags::set_string64_now(memory, RequestFlags().start, *saved)
+                    ? "put back to \"" + *saved + "\""
+                    : "NOT put back";
+    }
+    LOG_INFO(Core, "coop: teleport: scene change cleared: switch {}, request {}, start {}", off ? "off" : "NOT off",
+             banc ? "emptied" : "NOT emptied", start);
 }
 
 // What the network and chat threads hand to the present thread.
@@ -58,6 +123,9 @@ struct Glue {
     std::vector<std::string> lines;
     // Present thread only.
     Trip trip;
+    // The start name before the trip's first ask (AskScene, ClearScene).
+    std::optional<std::string> saved_start;
+    bool saved_read = false;
     Grounded grounded;
 
     Glue() {
@@ -188,6 +256,10 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         local.age = reading->age;
         local.event = reading->event_running.value_or(false);
         local.fighting = CoopBoss::Fighting();
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_base);
+        coop::host::GameFlags flags(memory);
+        local.reserved_banc = flags.get_string64(RequestFlags().banc);
+        local.loading_banc = flags.get_bool(RequestFlags().loading).value_or(false);
     }
     g.grounded.Add(local, now);
 
@@ -223,14 +295,20 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     all.push_back(g.trip.Tick(local, now));
 
     for (auto& act : all) {
-        if (act.cancel_scene) {
-            const bool ok = CoopBoss::AskSceneChange(system, main_base, "", "");
-            LOG_INFO(Core, "coop: teleport: scene change request cleared: {}", ok ? "done" : "NOT done");
+        if ((act.cancel_scene || act.release) && main_base != 0) {
+            ClearScene(system, main_base, act.cancel_scene, act.restore_start, g.saved_start);
+            if (act.cancel_scene) {
+                g.saved_start.reset();  // the next trip reads it afresh
+                g.saved_read = false;
+            }
         }
         if (act.scene) {
-            const bool ok = CoopBoss::AskSceneChange(system, main_base, *act.scene, "");
-            if (!ok) {
-                LOG_WARNING(Core, "coop: teleport: the scene change to {} could not be asked", *act.scene);
+            // Always with a start point of that scene: without one the game
+            // keeps the old scene's start name and the picture stays black.
+            if (main_base == 0 || act.start.empty() ||
+                !AskScene(system, main_base, *act.scene, act.start, g.saved_start, g.saved_read)) {
+                LOG_WARNING(Core, "coop: teleport: the scene change to {} at {} could not be asked", *act.scene,
+                            act.start.empty() ? "-" : act.start);
             }
         }
         if (act.move) {

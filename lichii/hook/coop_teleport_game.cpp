@@ -6,7 +6,9 @@
 // moved the way the boss rooms do it (CoopBoss::MoveLink;
 // docs/dungeons-boss.md). Another scene is asked the way the game's Main
 // sequence takes a scene change in free play (docs/scenes.md "Free-play
-// scene change"): Sequence_ReservedNextBanc plus the Bool kFreePlayBancChange.
+// scene change"): Sequence_ReservedNextBanc and its start name, then a short
+// game event (Trip::kSceneEvent through CoopLiveEvents::Requester), since the
+// game takes the request when an event ends, as after a loading zone's event.
 // LICHII_COOP_TELEPORT=0 turns it off: the command says so and requests from
 // the others are refused (declined).
 
@@ -28,6 +30,8 @@
 #include "coop/net/client.hpp"
 #include "coop_boss.h"
 #include "coop_flags.h"
+#include "coop_live_events.h"
+#include "coop_svc.h"
 
 namespace CoopTeleport {
 namespace {
@@ -47,6 +51,8 @@ bool OnByEnv() {
 // its BancChange case (ChangeBancOnMain.module) when this Bool is 1 (read at
 // 0x3304154). Its name is in no file of the game; nothing in the game writes
 // it (docs/scenes.md "Free-play scene change"). Not saved, no reset type.
+// No longer set (a loading zone leaves it 0, and setting it loaded nothing in
+// free play, #156); only cleared, for kits that set it before.
 constexpr std::uint32_t kFreePlayBancChange = 0x3fc35576;
 
 // The game's request flags: our scene change is these.
@@ -61,7 +67,7 @@ const Request& RequestFlags() {
 }
 
 // Ask: the start point of that scene (docs/scenes.md "The start point"),
-// the scene, then the switch, so Main reads both once it picks BancChange.
+// then the scene: what a loading zone's event reserves before it ends.
 // `saved`: the start name the game had before the trip's first ask, read
 // once, so a trip that never arrives can put it back.
 bool AskScene(Core::System& system, std::uint64_t main, std::string_view scene, std::string_view start,
@@ -73,10 +79,9 @@ bool AskScene(Core::System& system, std::uint64_t main, std::string_view scene, 
     }
     const bool start_ok = coop::host::GameFlags::set_string64_now(memory, RequestFlags().start, start);
     const bool banc = start_ok && coop::host::GameFlags::set_string64_now(memory, RequestFlags().banc, scene);
-    const bool on = banc && coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, true);
-    LOG_INFO(Core, "coop: teleport: asked the scene change to {} at {}: scene {}, switch {}", scene, start,
-             banc ? "set" : "NOT set", on ? "on" : "NOT on");
-    return banc && on;
+    LOG_INFO(Core, "coop: teleport: asked the scene change to {} at {}: scene {}", scene, start,
+             banc ? "set" : "NOT set");
+    return banc;
 }
 
 // The switch off (the game took the request) and, for `all`, the request
@@ -128,9 +133,28 @@ struct Glue {
     bool saved_read = false;
     Grounded grounded;
 
+    // The scene event (Trip::kSceneEvent): asked on the present thread,
+    // started from the svc cave on the game's calc thread.
+    std::mutex event_mutex;
+    CoopLiveEvents::Requester events;
+
     Glue() {
+        if (on) {
+            CoopSvc::AddCaller(kEventCallerOrder, [this](CoopPuppet::Guest& guest, bool after_call,
+                                                         std::uint64_t result, std::uint64_t) {
+                std::lock_guard lock(event_mutex);
+                auto call = events.Step(guest, after_call, result, main);
+                for (const auto& note : events.TakeNotes()) {
+                    LOG_INFO(Core, "coop: teleport: {}", note);
+                }
+                return call;
+            });
+        }
         LOG_INFO(Core, "coop: teleport {}", on ? "on (/teleport <player> in chat)" : "off (LICHII_COOP_TELEPORT=0)");
     }
+
+    static constexpr int kEventCallerOrder = 61;  // after the live events (60)
+    std::uint64_t main = 0;  // set by Frame under event_mutex
 
     void Line(std::string text) {  // with the mutex held
         LOG_INFO(Core, "coop: {}", text);
@@ -294,6 +318,10 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     }
     all.push_back(g.trip.Tick(local, now));
 
+    {
+        std::lock_guard lock(g.event_mutex);
+        g.main = main_base;
+    }
     for (auto& act : all) {
         if ((act.cancel_scene || act.release) && main_base != 0) {
             ClearScene(system, main_base, act.cancel_scene, act.restore_start, g.saved_start);
@@ -310,6 +338,12 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                 LOG_WARNING(Core, "coop: teleport: the scene change to {} at {} could not be asked", *act.scene,
                             act.start.empty() ? "-" : act.start);
             }
+        }
+        if (act.start_event && main_base != 0) {
+            LOG_INFO(Core, "coop: teleport: starting the event {} so the game takes the scene change",
+                     Trip::kSceneEvent);
+            std::lock_guard lock(g.event_mutex);
+            g.events.Want(Trip::kSceneEvent);
         }
         if (act.move) {
             const bool ok = CoopBoss::MoveLink(system, main_base, CoopBoss::Vec{act.move->x, act.move->y, act.move->z});

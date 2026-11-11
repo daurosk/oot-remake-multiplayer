@@ -239,6 +239,42 @@ TEST_CASE("teleport: another scene changes scene, then asks again and moves") {
     CHECK(trip.phase() == Trip::Phase::idle);
 }
 
+TEST_CASE("teleport: free play starts a short event so the game takes the scene change (#156)") {
+    Trip trip;
+    const Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    trip.Start(2, "Saria", here, 0);
+    auto a = trip.Accepted(2, Target("Graveyard_Child", -35, 98, 8), here, kS);
+    REQUIRE(a.scene);
+    CHECK(a.start_event);  // with the first ask
+    CHECK(std::string(Trip::kSceneEvent) == "DefaultParentEvent");
+    // Not again until kEventAgainUs, though the request is asked every 0.5 s.
+    a = trip.Tick(here, kS + kS / 2);
+    CHECK(a.scene);
+    CHECK_FALSE(a.start_event);
+    CHECK_FALSE(trip.Tick(here, kS + Trip::kEventAgainUs - 1).start_event);
+    // The event runs: none started on top of it.
+    Local talking = here;
+    talking.event = true;
+    CHECK_FALSE(trip.Tick(talking, kS + Trip::kEventAgainUs).start_event);
+    // It ended and the game did not take the request: another one.
+    CHECK(trip.Tick(here, kS + Trip::kEventAgainUs + kS / 10).start_event);
+    // Taken (the load starts): no event while it loads.
+    Local loading = here;
+    loading.loading_banc = true;
+    CHECK_FALSE(trip.Tick(loading, 10 * kS).start_event);
+    CHECK_FALSE(trip.Tick(Local{}, 20 * kS).start_event);
+}
+
+TEST_CASE("teleport: no scene event when ours already runs at the answer") {
+    Trip trip;
+    Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    trip.Start(2, "Saria", here, 0);
+    here.event = true;  // an event that began after the command: it takes the request when it ends
+    const auto a = trip.Accepted(2, Target("Graveyard_Child", -35, 98, 8), here, kS);
+    REQUIRE(a.scene);
+    CHECK_FALSE(a.start_event);
+}
+
 TEST_CASE("teleport: after the scene change, a busy or silent player still gives the first place") {
     for (int silent = 0; silent < 2; ++silent) {
         Trip trip;

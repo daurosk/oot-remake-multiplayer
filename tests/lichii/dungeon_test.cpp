@@ -37,6 +37,23 @@ TEST_CASE("dungeon: the Water Temple's water level and switches are in the list"
     CHECK(shutter);
 }
 
+TEST_CASE("dungeon: room state under another spelling or after Gimmick_ is shared (softlock audit)") {
+    std::set<std::string> names;
+    for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+    for (const char* n : {"Insidejabujabu_Room7_Cleared", "Insidejabujabu_Room12_Cleared",
+                          "Insidejabujabu_Room7_NearTheSwitch_Tentacle_Gate", "Firetemple_SongOfTimeBlock_A_01_Disappearance",
+                          "Foresttemple_SongOfTimeBlock_A_01_Disappearance", "Gimmick_DefeatEnemy_Open_DodongoCave_01",
+                          "Gimmick_DefeatEnemy_Open_ForestTemple_05", "Gimmick_Ignition_Open_WaterTemple_02",
+                          "Gimmick_Insidejabujabu_Updown_MoveWater", "Gimmick_DeleteFire_FireTemple"}) {
+        CHECK_MESSAGE(names.contains(n), n);
+    }
+    // Where one player stands, and Ruto, stay each player's own.
+    CHECK_FALSE(names.contains("Insidejabujabu_Room7_Switch1_InsideArea"));
+    CHECK_FALSE(names.contains("Insidejabujabu_Room7_Switch2_OnlyLinkOrLuto"));
+    // Story scenes outside the rooms stay out.
+    CHECK_FALSE(names.contains("EscapeFromCrumblingGanonCastle_OpenLastGate"));
+}
+
 TEST_CASE("dungeon: a room gimmick's played event is shared, story scenes and bosses are not") {
     std::set<std::string> names;
     std::size_t played = 0;

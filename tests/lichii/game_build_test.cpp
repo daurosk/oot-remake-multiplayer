@@ -88,6 +88,7 @@ TEST_CASE("game build: the table agrees with the readers' constants") {
     CHECK(m.sync_as_slot == p::kSyncAsSlot);
     CHECK(m.equip == p::kEquip);
     CHECK(m.equip_change_state == p::kEquipChangeState);
+    CHECK(m.unequip_armor == p::kUnequipArmor);
     CHECK(m.set_matrix == p::kSetMatrix);
     CHECK(m.cut_foliage == CoopWorld::kCutFoliage);
     // The loader patches.

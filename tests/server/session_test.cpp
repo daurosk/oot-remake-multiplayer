@@ -871,6 +871,7 @@ TEST_CASE("a host's FLAG_RESET replaces the kept values, 0s included, and goes t
   auto r = only_message_to<FlagReset>(h, 2);
   REQUIRE(r.has_value());
   CHECK(*r == FlagReset{1, {flag(5, 0)}});
+  CHECK(h.session.stats().host_resets == 1);  // on_host_reset ran once
   h.clear();
   h.join(3, "Saria");
   auto snap = messages_of<FlagSnapshot>(h, 3);

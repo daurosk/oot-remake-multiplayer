@@ -253,6 +253,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       return;
     }
     apply_reset(store, reset->flags);
+    reset_seen_ = true;
     return;
   }
   if (auto* state = std::get_if<protocol::FlagState>(&message)) {
@@ -358,6 +359,7 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
   }
   if (role_ == FlagRole::host && !changed.empty()) {
     ++stats_.host_resets;
+    reset_seen_ = true;
     push_list<protocol::FlagReset>(out, changed);
   }
 }

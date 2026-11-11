@@ -637,6 +637,8 @@ TEST_CASE("flag watcher, host: the host's save load resets the group to its save
   }
   CHECK(reset == std::vector{entry(kDoor, 0)});
   CHECK(w.stats().host_resets == 1);
+  CHECK(w.take_reset());        // the game's hook clears its session-wide state once
+  CHECK_FALSE(w.take_reset());
 }
 
 TEST_CASE("flag watcher, host: a door is no save load: no reset") {
@@ -745,6 +747,8 @@ TEST_CASE("flag watcher: a FLAG_RESET is written exactly, 0s and one-way keys in
   CHECK(store.get(kDoor) == 0);
   CHECK(store.get(kPickup) == 0);
   CHECK(w.stats().reset_applied == 2);
+  CHECK(w.take_reset());
+  CHECK_FALSE(w.take_reset());
   CHECK(w.frame(store).empty());
 }
 
@@ -776,6 +780,7 @@ TEST_CASE("flag watcher: a host ignores a FLAG_RESET, and a new host does not re
     for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
   }
   CHECK(w.stats().host_resets == 0);
+  CHECK_FALSE(w.take_reset());
   CHECK_FALSE(w.receive(proto::Message{proto::FlagReset{2, {entry(kDoor, 0)}}}));
   CHECK(store.get(kDoor) == 1);
 }

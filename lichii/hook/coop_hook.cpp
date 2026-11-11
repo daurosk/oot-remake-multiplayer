@@ -312,6 +312,12 @@ public:
             pickups_given_ += keys.size();
         }
         const auto report = session_->frame(reading, store ? &*store : nullptr);
+        if (report.host_reset) {
+            // docs/flags.md, "Saves": the host loaded a save. Session-wide state
+            // kept outside the flags is dropped here (each owner adds its clear:
+            // locked doors' kept breaks, the kills-late dead list, ...).
+            LOG_INFO(Core, "coop: flags: the host loaded a save: the group follows it");
+        }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {

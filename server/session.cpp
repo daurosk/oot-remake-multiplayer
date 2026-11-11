@@ -319,10 +319,16 @@ void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
   const auto& flags = std::holds_alternative<FlagReset>(message) ? std::get<FlagReset>(message).flags
                                                                   : std::get<FlagState>(message).flags;
   for (const FlagEntry& e : flags) keep_flag(e);
+  if (std::holds_alternative<FlagReset>(message)) on_host_reset();
   set_sender(message, c.number);
   send_to_others(id, kChannelProgress, message);
   ++stats_.flag_relayed;
   ++stats_.relayed;
+}
+
+void Session::on_host_reset() {
+  ++stats_.host_resets;
+  // Owners of session-wide kept state add their clear here (docs/flags.md, "Saves").
 }
 
 // A host's table, merged in part by part. A flag the server lacks is kept and

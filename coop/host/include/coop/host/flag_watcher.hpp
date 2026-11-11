@@ -138,6 +138,11 @@ class FlagWatcher {
   // may have been lost with the connection.
   void reset();
 
+  // True once after the host's save load reached this game: as host, its
+  // FLAG_RESET went out; as player, one was applied. The game then drops its
+  // own session-wide state the save undoes (docs/flags.md, "Saves").
+  bool take_reset() { return std::exchange(reset_seen_, false); }
+
   // A FLAG_SNAPSHOT has started and its last part has not come yet.
   bool holding() const { return holding_; }
   // Local changes sent and not answered yet.
@@ -192,6 +197,7 @@ class FlagWatcher {
   // the end of the settle frames. Nothing is sent from inside it.
   bool window_ = false;
   bool moved_ = false;  // a named flag moved in it: a save was loaded, not a door
+  bool reset_seen_ = false;  // take_reset
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;

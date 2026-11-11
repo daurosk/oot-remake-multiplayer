@@ -216,6 +216,7 @@ public:
     explicit Coop(Settings settings)
         : settings_(std::move(settings)), debug_camera_(EnvFlag("LICHII_COOP_DEBUG_CAMERA")),
           flip_y_(EnvFlag("LICHII_COOP_CAMERA_FLIP_Y")) {
+        load_mend_.set_clock([] { return CoopEvery::NowUs(); });  // issue 106: 1/60 s, not presents
         if (debug_camera_ || flip_y_) {
             LOG_INFO(Core, "coop: camera debug {}, flip y {}", debug_camera_ ? "on" : "off",
                      flip_y_ ? "on" : "off");
@@ -251,6 +252,9 @@ public:
         pickups_ = sharing_ && !(std::getenv("LICHII_COOP_PICKUPS") != nullptr &&
                                  std::string_view(std::getenv("LICHII_COOP_PICKUPS")) == "0");
         session.learn_pickups = pickups_;
+        // Issue 106: the flag watcher's frames are 1/60 s of real time, not
+        // presents (high refresh presents up to 165 a second).
+        session.clock = [] { return CoopEvery::NowUs(); };
         pickups_given_ = 0;
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {

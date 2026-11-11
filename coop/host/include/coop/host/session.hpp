@@ -62,6 +62,9 @@ struct SessionSettings {
   // FlagWatcher::set_learn_pickups: take another game's 64-bit key set to 1
   // as a one-time pickup even when this game has not seen its actor.
   bool learn_pickups = false;
+  // The steady clock the flag watcher counts its frames on (issue 106,
+  // GameTicks). Empty: one frame() is one frame (tests).
+  GameTicks::Clock clock;
   // Called on the network thread, under the network lock, for every client
   // event after the session has handled it (for logging). It may use the
   // client it is given but must not call into the Session.

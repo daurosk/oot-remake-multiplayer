@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "coop/host/flags.hpp"
+#include "coop/host/ticks.hpp"
 #include "coop/protocol/messages.hpp"
 
 namespace coop::host {
@@ -93,11 +94,17 @@ std::span<const ItemGrant> all_item_grants();
 // mend frames (issues 128, 138).
 class LoadMend {
  public:
-  static constexpr unsigned kFrames = 90;  // about 1.5 s at 60 frames a second
+  static constexpr unsigned kFrames = 90;  // 1.5 s: 1/60 s frames of set_clock's clock
+
+  // Issue 106: frame() is called once per presented frame (up to 165 a
+  // second with high refresh); with a clock kFrames counts real 1/60 s.
+  // Without one each call is one frame.
+  void set_clock(GameTicks::Clock clock) { ticks_.set_clock(std::move(clock)); }
 
   // Once per emulated frame, with whether Link is in the game. True: mend
   // this frame.
   bool frame(bool link) {
+    const unsigned step = ticks_.step();
     if (link && !link_) left_ = kFrames;
     link_ = link;
     if (!link_) return false;
@@ -105,7 +112,7 @@ class LoadMend {
       pending_.clear();  // their mend frames are over
       return false;
     }
-    --left_;
+    left_ -= std::min(left_, step);
     return true;
   }
   // Link is in the game (as of the last frame()).
@@ -121,6 +128,7 @@ class LoadMend {
  private:
   bool link_ = false;
   unsigned left_ = 0;
+  GameTicks ticks_;
   std::vector<std::uint32_t> pending_;
 };
 

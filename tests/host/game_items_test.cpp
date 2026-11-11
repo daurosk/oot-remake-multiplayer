@@ -1023,3 +1023,19 @@ TEST_CASE("item grants: a mend leaves a bigger bag and items not held alone") {
   CHECK(game.value(kArrowCap) == 0);  // no Bow
   CHECK(game.value(kBombCap) == 0);   // no bomb bag
 }
+
+TEST_CASE("item grants: the mend lasts 1.5 s at 165 presents a second (issue 106)") {
+  coop::host::LoadMend load;
+  std::uint64_t now = 5'000'000;
+  load.set_clock([&] { return now; });
+  CHECK_FALSE(load.frame(false));
+  now += 6'061;
+  const std::uint64_t in = now;
+  std::uint64_t last_mend = 0;
+  for (int i = 0; i < 165 * 3; ++i) {
+    if (load.frame(true)) last_mend = now;
+    now += 6'061;
+  }
+  CHECK(last_mend - in >= 1'450'000);
+  CHECK(last_mend - in <= 1'550'000);
+}

@@ -334,7 +334,9 @@ TEST_CASE("shots: the ammo watch tells a drop once") {
     CHECK_FALSE(w.Dropped(Kind::seed, 29));
     CHECK_FALSE(w.Dropped(Kind::arrow, 10));  // kinds apart
     CHECK_FALSE(w.Dropped(Kind::seed, 30));   // picked up
-    CHECK(w.Dropped(Kind::seed, 28));
+    CHECK(w.Dropped(Kind::seed, 29));
+    CHECK_FALSE(w.Dropped(Kind::seed, 20));  // a save load, not a shot
+    CHECK(w.Dropped(Kind::seed, 19));
     w.Reset();
     CHECK_FALSE(w.Dropped(Kind::seed, 5));
     CHECK(CoopProjectiles::AmmoFlag(Kind::seed) == 0x5fadf7fcu);

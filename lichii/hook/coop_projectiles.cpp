@@ -197,7 +197,9 @@ bool AmmoWatch::Dropped(Kind kind, std::optional<std::int32_t> count) {
         return false;
     }
     std::int32_t& last = last_[static_cast<std::size_t>(kind)];
-    const bool dropped = last >= 0 && *count < last;
+    // One shot takes one: a bigger drop (the host's save load lowering the
+    // count, a load) is no shot, so no nocked seed is marked shot by it.
+    const bool dropped = last >= 0 && *count == last - 1;
     last = *count;
     return dropped;
 }

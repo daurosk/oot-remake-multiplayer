@@ -115,7 +115,8 @@ private:
 // read now (nothing when the flags cannot be read: the last count is kept).
 class AmmoWatch {
 public:
-    // True once for each read lower than the one before.
+    // True once for each read exactly one lower than the one before (a
+    // bigger drop is a save load or the like, not a shot).
     bool Dropped(Kind kind, std::optional<std::int32_t> count);
     void Reset() { last_.fill(-1); }
 

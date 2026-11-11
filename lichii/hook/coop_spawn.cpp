@@ -225,6 +225,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 const Vec3& v = m.velocity;
                 const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
                 m.top_speed = std::max(m.top_speed, speed);
+                // Only steps that start at or after the shot: Shots() runs
+                // before this walk with the same now_us, so the step that
+                // holds the let-go (seen_at before shot_at) is left out.
                 if (m.shot_at && m.seen_at >= *m.shot_at) {
                     m.shot_top_speed = std::max(m.shot_top_speed, speed);
                 }

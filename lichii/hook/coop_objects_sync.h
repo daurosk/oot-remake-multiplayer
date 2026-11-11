@@ -157,6 +157,12 @@ bool IsAnnounced(std::string_view name);
 // could not be read (the big Skulltula has none we can read; issue 133).
 bool IsDeathAnimation(std::string_view name);
 
+// Issue 150: a boss animation that plays while it is stunned or knocked down
+// ("Stun_Lp", "Down_Start", "Fall_St" when Gohma drops from the ceiling): the
+// first word, LOD suffix off, is Stun, Down, Fall or Faint. A seed in Gohma's
+// eye stuns it and takes no life, so a stun is the only sign of that hit.
+bool IsStunAnimation(std::string_view name);
+
 // An animation name without its level-of-detail suffix ("Wait_ModelOnlyLOD"
 // is "Wait"), so a far copy's LOD variant is not another animation.
 std::string_view AnimationBase(std::string_view name);
@@ -250,6 +256,9 @@ public:
     // After our own hit on a copy its game plays the hit reaction itself: the
     // owner's animation from before the hit is not played over it this long.
     static constexpr std::uint64_t kReactHoldUs = 700'000;
+    // Issue 150: a boss copy that went into a stun of its own sends a DAMAGE
+    // of 0 (the server hands the boss to the stunner) at most this often.
+    static constexpr std::uint64_t kStunEveryUs = 2'000'000;
     static constexpr std::uint64_t kPlaceStaleUs = 2'000'000;   // another player's place
     static constexpr std::uint64_t kFightUs = 12'000'000;
     static constexpr std::uint64_t kBehindUs = 100'000;       // copies show the owner this late
@@ -363,6 +372,10 @@ public:
     // right now, so exactly the enemies Poses moves. One that becomes ours
     // (or whose owner fell silent) is not in the next list.
     std::vector<std::uint64_t> Holds(std::uint64_t now_us) const;
+
+    // Present thread: the enemy copies that became ours since the last ask
+    // (OBJECT_OWNER moved them to us from another player), by address.
+    std::vector<std::uint64_t> TakeOursNow() { return std::exchange(ours_now_, {}); }
 
     // The loaded actors to delete: pickups another game took, and rolled
     // enemies this game made while another one decides the scene's rolls.
@@ -492,6 +505,10 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool dead_now = false;  // a kill from before we came: deleted at once
+        // Issue 150: a boss copy whose own game stunned it (a DAMAGE of 0 is
+        // due), and when that last went out.
+        bool stun_due = false;
+        std::uint64_t stun_at = 0;
     };
 
     // One step of `o` towards our Link at `now_us` (NoteDrift).
@@ -525,6 +542,7 @@ private:
     std::optional<coop::protocol::Vec3> player_;
     std::vector<std::string> notes_;
     std::map<std::uint64_t, Object> objects_;  // by actor address
+    std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
     std::map<std::uint64_t, Decided> decided_;  // by director key
     std::map<std::uint64_t, std::uint64_t> bound_;  // actor to director key
     std::uint64_t next_key_ = 1;

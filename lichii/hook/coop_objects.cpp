@@ -118,6 +118,12 @@ constexpr u32 kStateAlive = 4;
 // plain write of +0x31c is undone by the game within a frame.
 constexpr u64 kActorVtable = 0x4b25e18;
 constexpr u64 kSetMatrix = 0x4c6580;
+// Issue 150 (opt-in, LICHII_COOP_OBJECTS_RELEASE): the actor flags word the
+// setter above marks (bit 23, docs/world.md). An enemy that becomes ours gets
+// the bit cleared once, in case the game leaves it set after the Mover's
+// last move and the body stays frozen or floats. Not proven.
+constexpr u64 kActorFlags = 0x4a8;
+constexpr u32 kWarpBit = u32{1} << 23;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 // Rolled enemies' copies in the spawn director: their keys have the top bit.
 constexpr u64 kEnemyKey = u64{1} << 63;
@@ -375,6 +381,26 @@ public:
         holding_ = true;
     }
 
+    // Present thread: copies that just became ours, to clear the setter's
+    // bit of at the next game frame (issue 150, opt-in).
+    void Release(const std::vector<u64>& actors) {
+        std::lock_guard lock(mutex_);
+        for (const u64 a : actors) {
+            if (releases_.size() < 32) {
+                releases_.push_back(a);
+            }
+            // A pose wished before it became ours would set the bit again
+            // in the same frame: it is no copy any more.
+            std::erase_if(poses_, [a](const Pose& p) { return p.actor == a; });
+        }
+    }
+
+    // Releases made since the last ask: bit found set and cleared, and not.
+    std::pair<std::size_t, std::size_t> TakeReleases() {
+        std::lock_guard lock(mutex_);
+        return {std::exchange(released_, 0), std::exchange(release_clear_, 0)};
+    }
+
     void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes,
               std::vector<PlayWish> plays) {
         std::lock_guard lock(mutex_);
@@ -413,6 +439,19 @@ public:
             }
         }
         if (!after_call) {
+            for (const u64 actor : std::exchange(releases_, {})) {
+                u32 flags = 0;
+                if (!Alive(guest, actor) || !guest.Read(actor + kActorFlags, &flags, 4)) {
+                    continue;
+                }
+                if ((flags & kWarpBit) != 0) {
+                    flags &= ~kWarpBit;
+                    guest.Write(actor + kActorFlags, &flags, 4);
+                    ++released_;
+                } else {
+                    ++release_clear_;
+                }
+            }
             if (block_ == 0 && main_ != 0 && !allocating_ && !plays_.empty() && !alloc_tried_) {
                 allocating_ = true;
                 alloc_tried_ = true;
@@ -750,6 +789,9 @@ private:
     std::vector<u64> holds_;
     CoopHold::Masks masks_;
     bool holding_ = false;
+    std::vector<u64> releases_;
+    std::size_t released_ = 0;       // bit 23 was set: cleared
+    std::size_t release_clear_ = 0;  // bit 23 was already clear
     std::unordered_set<u64> held_before_;  // BSA components in last frame's table
     std::size_t hold_set_ = 0;
     std::size_t hold_kept_ = 0;
@@ -1263,6 +1305,7 @@ public:
     bool hurt_ = true;
     bool replay_ = false;
     bool wake_ = true;
+    bool release_ = false;  // LICHII_COOP_OBJECTS_RELEASE (issue 150, opt-in)
     bool drive_ = false;
     int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
@@ -1617,6 +1660,9 @@ private:
         if (ai_hold_ != 0) {
             TheMover().Hold(sync_.Holds(now_us), CoopHold::MasksFor(ai_hold_));
         }
+        if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
+            TheMover().Release(ours);
+        }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : world_.Removes()) {
             removes.push_back(a);
@@ -1642,6 +1688,15 @@ private:
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
+            }
+            if (release_) {
+                const auto [cleared, clear] = TheMover().TakeReleases();
+                if (cleared + clear > 0) {
+                    LOG_INFO(Core,
+                             "coop: objects: release: {} that became ours had bit 23 set "
+                             "(cleared), {} had it clear",
+                             cleared, clear);
+                }
             }
             if (ai_hold_ != 0) {
                 const auto [frames, kept] = TheMover().TakeHolds();
@@ -1846,6 +1901,7 @@ Objects& Instance() {
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
         objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
+        objects.release_ = EnvFlag("LICHII_COOP_OBJECTS_RELEASE");
         return true;
     }();
     (void)once;

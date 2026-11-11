@@ -117,6 +117,14 @@ bool FlagWatcher::share_pickup(FlagKey key) {
   return true;
 }
 
+void FlagWatcher::guard_count(FlagKey count, std::span<const FlagKey> sources) {
+  guards_.try_emplace(count);
+  for (const FlagKey source : sources) {
+    share_pickup(source);
+    guard_source_[source] = count;
+  }
+}
+
 bool FlagWatcher::share_pickup_named(FlagKey key) {
   if (key.kind != FlagKeyKind::named || !pickups_.insert(key).second) return false;
   shared_.add(key);
@@ -126,13 +134,17 @@ bool FlagWatcher::share_pickup_named(FlagKey key) {
 void FlagWatcher::note_for_others(FlagStore& store, const FlagEntry& entry) {
   const FlagKey key = key_of(entry);
   const bool noted = key.kind == FlagKeyKind::key64 || pickups_.contains(key);
-  if (!noted || entry.kind != protocol::FlagKind::boolean ||
-      entry.value == 0 || written_for_others_.size() >= kMaxWrittenForOthers) {
-    return;
-  }
+  if (!noted || entry.kind != protocol::FlagKind::boolean || entry.value == 0) return;
+  const auto source = guard_source_.find(key);
+  if (source == guard_source_.end() && written_for_others_.size() >= kMaxWrittenForOthers) return;
   const std::optional<FlagEntry> before = store.read(key);
   if (before && before->value != 0) return;  // the game has it already (set here)
-  written_for_others_.push_back(key);
+  // Another player took it, live (a join snapshot is no take now): our game
+  // counting its pickup again soon after is a second count (guard_count).
+  if (source != guard_source_.end() && received_kind_ == ReceivedKind::live) {
+    guards_[source->second].others_at = frames_ + 1;  // never 0
+  }
+  if (written_for_others_.size() < kMaxWrittenForOthers) written_for_others_.push_back(key);
 }
 
 bool FlagWatcher::takes(const FlagEntry& entry) {
@@ -255,6 +267,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   }
   if (!loading_ && settle_left_ > 0) --settle_left_;
   restate_.clear();
+  added_.clear();
 
   if (role_ == FlagRole::player) {
     push_list<protocol::FlagSet>(out, changes);
@@ -495,6 +508,21 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       if (written && !is_delta(entry)) now = entry;
     }
     if (!now) continue;  // no answer: neither written nor readable
+    if (const auto g = guards_.find(key); g != guards_.end() && g->second.held != 0 &&
+                                          now->kind == protocol::FlagKind::int32) {
+      // Our own gain still held (guard_count): not the group's yet. last_
+      // keeps the game's value, so diff() does not see it again.
+      const FlagEntry game = *now;
+      now->value = as_bits(as_int(now->value) - g->second.held);
+      if (!held) {
+        const auto seen = last_.find(key);
+        if (seen != last_.end()) note_received(key, seen->second, *now);
+        last_[key] = game;
+      }
+      answers[key] = *now;
+      ++stats_.answers_sent;
+      continue;
+    }
     if (!is_delta(*now) && !store.is_count(key)) {
       const auto known = last_.find(key);
       note_group(*now, known != last_.end() ? &known->second : nullptr);
@@ -527,6 +555,12 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
                                as_int(known->second.value));
     }
   }
+  // A gain guard_count holds is in the game but not in the total yet.
+  const auto guard = guards_.find(key);
+  const std::int32_t held = guard != guards_.end() && entry.kind == protocol::FlagKind::int32
+                                ? guard->second.held
+                                : 0;
+  to_write.value = as_bits(as_int(to_write.value) + held);
   note_for_others(store, to_write);
   if (!store.write(to_write)) {
     ++stats_.write_failures;
@@ -543,6 +577,7 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
     note_group(entry, known != last_.end() ? &known->second : nullptr);
   }
   last_[key] = entry;  // so the next diff does not send it back
+  if (held != 0) last_[key].value = as_bits(as_int(entry.value) + held);
   if (before) note_received(key, *before, entry);
   return true;
 }
@@ -570,6 +605,10 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   }
   ++stats_.applied;
   ++stats_.deltas_added;
+  if (guards_.contains(key)) {
+    auto [a, fresh] = added_.try_emplace(key, delta);
+    if (!fresh) a->second.value = as_bits(as_int(a->second.value) + as_int(delta.value));
+  }
   if (was && was->kind == protocol::FlagKind::int32) {
     was->key = key;
     FlagEntry now = *was;
@@ -698,6 +737,21 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
     }
+    if (const auto g = guards_.find(key); g != guards_.end() &&
+                                          before.kind == protocol::FlagKind::int32 &&
+                                          now->kind == protocol::FlagKind::int32) {
+      // settle_guards() decides what is sent, after every source was seen.
+      std::int64_t own = std::int64_t{as_int(now->value)} - as_int(before.value);
+      if (const auto a = added_.find(key); a != added_.end()) own -= as_int(a->second.value);
+      g->second.own += static_cast<std::int32_t>(own);
+      continue;
+    }
+    if (const auto s = guard_source_.find(key);
+        s != guard_source_.end() && before.value == 0 && now->value != 0) {
+      Guard& guard = guards_[s->second];
+      if (guard.credit == 0) guard.credit_since = frames_;
+      ++guard.credit;  // taken in our own game: a gain of its count is real
+    }
     ++stats_.changes_sent;
     if (store.is_count(key) && before.kind == protocol::FlagKind::int32 &&
         now->kind == protocol::FlagKind::int32 && as_int(now->value) < as_int(before.value) &&
@@ -717,6 +771,78 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (!store.is_count(key)) note_group(*now, &before);  // sent: the group's value now
     unwritten_.erase(key);  // the game's own change is newer
     if (role_ == FlagRole::player) pending_[key] = *now;
+  }
+  settle_guards(store, changes);
+}
+
+void FlagWatcher::settle_guards(FlagStore& store, Table& changes) {
+  for (auto& [key, g] : guards_) {
+    const std::int32_t own = std::exchange(g.own, 0);
+    std::int64_t send = 0;  // our own change that goes out
+    const auto shift = [&](std::int32_t by) {  // our game's count, not sent
+      std::optional<FlagEntry> now = store.read(key);
+      if (!now || now->kind != protocol::FlagKind::int32) return false;
+      now->key = key;
+      now->value = as_bits(std::max<std::int64_t>(std::int64_t{as_int(now->value)} + by, 0));
+      if (!store.write(*now)) {
+        ++stats_.write_failures;
+        return false;
+      }
+      last_[key] = *now;
+      return true;
+    };
+    if (own > 0) {
+      if (g.held == 0) g.held_since = frames_;
+      g.held += own;
+    } else if (own < 0) {
+      std::int32_t drop = -own;
+      const std::int32_t back = std::min(drop, g.held);  // a held gain given back
+      g.held -= back;
+      drop -= back;
+      if (drop > 0 && g.put_back > 0 && frames_ - g.put_back_at <= kGuardHoldFrames) {
+        // Given back after we had put it back already: up again, once.
+        const std::int32_t up = std::min(drop, g.put_back);
+        if (shift(up)) {
+          g.put_back -= up;
+          drop -= up;
+        }
+      }
+      send -= drop;  // a drop of our own
+    }
+    if (g.credit > 0 && g.held == 0 && frames_ - g.credit_since > kGuardHoldFrames) g.credit = 0;
+    const std::int32_t matched = std::min(g.held, g.credit);
+    g.held -= matched;
+    g.credit -= matched;
+    send += matched;
+    if (g.held > 0 && frames_ - g.held_since >= kGuardHoldFrames) {
+      const bool taken_elsewhere = g.others_at != 0 && frames_ + 1 - g.others_at <= kGuardRecentFrames;
+      const std::int32_t gain = g.held;
+      g.held = 0;  // before shift(): the write is ours, not a held gain
+      if (taken_elsewhere && shift(-gain)) {
+        ++stats_.counts_guarded;
+        counts_guarded_.push_back(CountGuarded{key, gain});
+        g.put_back = gain;
+        g.put_back_at = frames_;
+      } else {
+        send += gain;  // no take we know of: as any count
+      }
+    }
+    if (role_ == FlagRole::player) {
+      if (send != 0) {
+        changes[key] = FlagEntry{key, protocol::FlagKind::count_delta, as_bits(send)};
+        ++stats_.changes_sent;
+      }
+      continue;
+    }
+    // The host sends its total, without a gain still held, when the group's
+    // changed: our own change sent, or a player's delta added (restate_).
+    if (send == 0 && !restate_.contains(key)) continue;
+    std::optional<FlagEntry> now = store.read(key);
+    if (!now || now->kind != protocol::FlagKind::int32) continue;
+    now->key = key;
+    now->value = as_bits(as_int(now->value) - g.held);
+    changes[key] = *now;
+    ++stats_.changes_sent;
   }
 }
 

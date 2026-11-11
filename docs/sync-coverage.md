@@ -108,7 +108,7 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 | Story events, cutscenes, medals and stones | items (medals and stones are items) + `Dm_`/`Demo_` flags NOT shared | - | - | A saw a story scene that unlocks an area; B's game never set its flag. Each player has to see it, or B is locked out | **P1** to check |
 | Time of day | `TIME_OF_DAY` (host's clock) | live | game | - | P3 |
 | Song events (Zelda's Lullaby doors, Sun's Song, Song of Storms well) | none, unless the result is a flag | ? | - | The door a song opened in A stays in B | P2 |
-| Shops (stock sold out) | none; issue 130 (Deku Shield once for all) | - | - | - | P2 |
+| Shops (stock sold out) | none; the Deku Shield is per player since test9 (issue 130), so each buys their own | - | - | - | P2 |
 
 ## Per-player state (not shared on purpose)
 
@@ -168,7 +168,7 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 | I2 | Fish, Blue Fire, bugs and other bottle contents needed to go on (Jabu-Jabu, Zora's Domain ice, the Ice Cavern) | **OK** | Per player, and every source can be used again. |
 | I3 | Trade sequence items (mirror rule): one player hands an item over and it is gone for everyone | **P2** | Optional quests (Biggoron's Sword, masks). A player halfway through loses their step. Later: share the trade step too, or make the trade items per player. |
 | I4 | Zelda's Letter, Ocarina of Time, songs, stones and medallions | **OK** | Shared items let the other player do the per-game event themselves (Kakariko gate, Temple of Time door) or skip it. |
-| I5 | Deku Shield bought once for everyone (#130) | **P2** | Shared as owned. A shield that burns can be bought again only if the shop sells it again in that game (open issue #130). |
+| I5 | Deku Shield bought once for everyone (#130) | **P2** | Per player since test9 (branch items-progress): each player buys their own; not checked in game. |
 | I6 | Keys and dungeon items with a join at another save point | **P2** | A late joiner takes the host's totals. A key the joiner's save had in hand but the host's did not is lost to the joiner; the chest it came from stays open in the joiner's game but closed in the host's, so the host player can take it again for both. Advice: join with saves from the same point. |
 
 ### Story, time travel, saves

@@ -12,6 +12,7 @@
 #include <string_view>
 #include <optional>
 #include <span>
+#include <string_view>
 
 #include "coop/host/flags.hpp"
 
@@ -60,6 +61,9 @@ std::string_view EventOf(std::uint32_t hash);
 
 // A dungeon's scene (the Banc names of Keys()).
 bool IsDungeonScene(std::string_view scene);
+// Named flags of the dungeons that are never shared: where one player is in a
+// boss fight (the boss door shut behind them), not what the group did (issue 148).
+std::span<const std::string_view> NotShared();
 
 // One placed thing whose "done" is a 64-bit-key flag keyed by its placement
 // hash (a chest opened, a silver rupee taken, a room's enemies beaten, a wall

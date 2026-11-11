@@ -29,6 +29,21 @@ namespace {
 // one room's state (FocusOnGimmick_Basic, the Ganon's Castle barrier looks),
 // and one-way rides that would leave a player on the wrong side (the Shadow
 // Temple boat, the Forest Temple elevator and room spins).
+// Left out on purpose (issue 148): flags that say where ONE player is in a
+// boss fight, not what the group has done. Shared, they shut the boss door on
+// a player who is still outside it, and the join snapshot gives them back
+// after every reload (test6, Deku Tree: both players locked out).
+//   InsideTheDekuTree_BossArea_ShutIn, InsideTheDekuTree_BossArea_ChangeENVForBoss,
+//   ShadowTemple_Level_StartBossBattle, InsideGanonCastle_IsEnterBossRoom,
+//   DodongoCavern_BossGroundChange, FireTemple_BossGroundChange (the arena's
+//   floor as the fight starts: the same kind as ChangeENVForBoss).
+// The boss beaten (..._Boss_Defeat and the heart container) and a boss door's
+// lock opened with the boss key (ForestTemple_BossRoom_LockOpne) stay shared.
+constexpr std::array<std::string_view, 6> kNotShared{
+    "InsideTheDekuTree_BossArea_ShutIn", "InsideTheDekuTree_BossArea_ChangeENVForBoss",
+    "ShadowTemple_Level_StartBossBattle", "InsideGanonCastle_IsEnterBossRoom",
+    "DodongoCavern_BossGroundChange", "FireTemple_BossGroundChange"};
+
 constexpr std::array kFlags = std::to_array<Flag>({
     {0xfff1ad87, false, "BottomOfTheWell_BubbleAppear"},
     {0x0b5b3b0c, false, "BottomOfTheWell_CoffinRoomCheck"},
@@ -69,7 +84,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xaf24307b, false, "DodongoCavern_AppearLizalfos_2F"},
     {0x92b110e6, false, "DodongoCavern_BlastedLeftEye"},
     {0x4088069a, false, "DodongoCavern_BlastedRightEye"},
-    {0x8046b089, false, "DodongoCavern_BossGroundChange"},
     {0x67b834a5, false, "DodongoCavern_CandleStick"},
     {0x8d6783cd, false, "DodongoCavern_Lizalfos_C_Dead"},
     {0x317d56a8, false, "DodongoCavern_Lizalfos_D_Dead"},
@@ -99,7 +113,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x97544956, false, "FireTemple_ArrivePlayer_01"},
     {0xf04678a7, false, "FireTemple_ArrivePlayer_02"},
     {0xdde4e2a0, false, "FireTemple_BootStepSwitch_03"},
-    {0x0d94327f, false, "FireTemple_BossGroundChange"},
     {0x28aa6045, false, "FireTemple_BreakSlipPillar_02"},
     {0x7252b434, false, "FireTemple_ClearFlameWllGimmick_01"},
     {0x5886444c, false, "FireTemple_ClearFlameWllGimmick_02"},
@@ -592,7 +605,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xd782ef35, false, "InsideGanonCastle_ExtendingPlatform_ON"},
     {0x36aadc2d, false, "InsideGanonCastle_IsAllBarrierClear"},
     {0xccf3e7a4, false, "InsideGanonCastle_IsBossAppearDemo"},
-    {0x3822d87a, false, "InsideGanonCastle_IsEnterBossRoom"},
     {0x8aa0ccd0, false, "InsideGanonCastle_Room08_Candle_ON"},
     {0x64370f66, false, "InsideJabuJabuBelly_DeleteObstacleTentacle_Blue"},
     {0x45ed38bb, false, "InsideJabuJabuBelly_DeleteObstacleTentacle_Green"},
@@ -699,8 +711,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x2a020a15, false, "InsideJabuJabuBelly_WarpPortal"},
     {0xe8f0bdc1, false, "InsideJabuJabuBelly_gimic_Liftposition"},
     {0xe588f9dc, false, "InsideJabuJabuBelly_gimic_midboss_doorlock"},
-    {0x88b1b922, false, "InsideTheDekuTree_BossArea_ChangeENVForBoss"},
-    {0xe44433dc, false, "InsideTheDekuTree_BossArea_ShutIn"},
     {0x1c594551, false, "InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_001"},
     {0x1d493033, false, "InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_002"},
     {0x60c22ed7, false, "InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003"},
@@ -780,7 +790,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x995cc64e, false, "ShadowTemple_Level_Room_30_HasRead_Sign_01"},
     {0xdcb291f6, false, "ShadowTemple_Level_Room_B1F_D_Defeat_DeadHand"},
     {0x87e91260, false, "ShadowTemple_Level_Room_B3FB4F_EnemyClear"},
-    {0xf0adbc2e, false, "ShadowTemple_Level_StartBossBattle"},
     {0x022fae3d, false, "ShadowTemple_RoomB1FC_Cleared"},
     {0xeec3e80d, false, "ShadowTemple_RoomB1FC_ShutterOpen"},
     {0x900ea997, false, "ShadowTemple_RoomB1FD_Cleared"},
@@ -1677,6 +1686,10 @@ std::optional<std::string_view> HeldIn(std::uint32_t hash) {
         return std::nullopt;
     }
     return std::nullopt;
+}
+
+std::span<const std::string_view> NotShared() {
+    return kNotShared;
 }
 
 std::span<const Key> Keys() {

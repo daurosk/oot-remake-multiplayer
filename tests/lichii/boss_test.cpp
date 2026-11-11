@@ -139,18 +139,54 @@ TEST_CASE("boss: intro, fight and the boss's death") {
     CHECK(s.Tick(At("ForestTemple", Forest().arrive), 90 * kS).send.empty());
 }
 
-TEST_CASE("boss: no intro within 10 s means the fight has begun") {
+TEST_CASE("boss: no intro within 10 s means the fight has begun here, but moves no one in") {
     Sync s;
     s.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
     auto a = s.Tick(At("ForestTemple", Forest().arrive), 11 * kS);
-    CHECK(Has(a, proto::BossState::intro_end));
+    CHECK_FALSE(Has(a, proto::BossState::intro_end));  // no event said we are past the door
+    CHECK(States(a) == std::vector{proto::BossState::in_room});  // the heartbeat
     CHECK(s.phase() == Sync::Phase::fight);
+}
+
+TEST_CASE("boss: a player only near the room pulls no one, one whose intro started does (issue 148)") {
+    // Deku Tree, test6: A came near the boss room; B was moved in and the door shut in B's game
+    // while A, still on the way to it, was locked out.
+    Sync b;
+    b.Tick(At("ForestTemple", kForestEntrance, false, 2), 1 * kS);
+    for (std::uint64_t t = 2; t <= 20; t += 2) {
+        b.Receive(From(1, Forest(), proto::BossState::in_room));  // A on the way, heartbeat
+        CHECK_FALSE(b.Tick(At("ForestTemple", kForestEntrance, false, 2), t * kS).pull);
+    }
+    // A's intro starts: A is inside and the door has shut behind A. Now B is moved in.
+    b.Receive(From(1, Forest(), proto::BossState::intro_start));
+    CHECK(b.Tick(At("ForestTemple", kForestEntrance, false, 2), 21 * kS).pull);
+}
+
+TEST_CASE("boss: the heartbeat says how far we are, so a late joiner moves in only for a real fight") {
+    Sync a;
+    auto out = a.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    CHECK(States(out) == std::vector{proto::BossState::in_room});
+    out = a.Tick(At("ForestTemple", Forest().arrive), 3 * kS);
+    CHECK(States(out) == std::vector{proto::BossState::in_room});  // only near: in_room
+    a.Tick(At("ForestTemple", Forest().arrive, true), 4 * kS);      // the intro starts
+    out = a.Tick(At("ForestTemple", Forest().arrive, true), 6 * kS);
+    CHECK(States(out) == std::vector{proto::BossState::intro_start});
+    a.Tick(At("ForestTemple", Forest().arrive, false), 7 * kS);     // the fight
+    out = a.Tick(At("ForestTemple", Forest().arrive, false), 9 * kS);
+    CHECK(States(out) == std::vector{proto::BossState::intro_end});
+    // A game that joins now hears only the heartbeat: it is moved in.
+    Sync late;
+    late.Receive(out.send[0].player_number == 0 ? From(1, Forest(), out.send[0].state) : out.send[0]);
+    CHECK(late.Tick(At("ForestTemple", kForestEntrance, false, 2), 10 * kS).pull);
+    // Leaving the room: the next heartbeat in another room starts from in_room again.
+    out = a.Tick(At("ForestTemple", kForestEntrance), 11 * kS);
+    CHECK(States(out) == std::vector{proto::BossState::left});
 }
 
 TEST_CASE("boss: another player in the boss room pulls us in, five tries at most") {
     Sync s;
     s.Tick(At("ForestTemple", kForestEntrance, false, 2), 1 * kS);
-    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
     auto a = s.Tick(At("ForestTemple", kForestEntrance, false, 2), 2 * kS);
     REQUIRE(a.pull);
     CHECK(a.pull->room == &Forest());
@@ -162,7 +198,7 @@ TEST_CASE("boss: another player in the boss room pulls us in, five tries at most
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance, false, 2), 3 * kS).pull);
     unsigned pulls = 1;
     for (std::uint64_t t = 5; t <= 30; ++t) {
-        s.Receive(From(1, Forest(), proto::BossState::in_room));  // the fight goes on
+        s.Receive(From(1, Forest(), proto::BossState::intro_end));  // the fight goes on
         if (s.Tick(At("ForestTemple", kForestEntrance, false, 2), t * kS).pull) {
             ++pulls;
         }
@@ -180,24 +216,24 @@ TEST_CASE("boss: an event of our own lets the scene change take the move") {
 
 TEST_CASE("boss: no pull from another dungeon, after the fight, or once the room is left") {
     Sync s;
-    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
     CHECK_FALSE(s.Tick(At("WaterTemple", Vec{-4.5f, 118.6f, 43.6f}), 1 * kS).pull);
     // Heard 6 s ago and nothing since: over.
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance), 8 * kS).pull);
-    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
     s.Receive(From(1, Forest(), proto::BossState::left));
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance), 9 * kS).pull);
-    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
     s.Receive(From(1, Forest(), proto::BossState::defeated));
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance), 10 * kS).pull);
     // Still beaten for this visit, even if someone says in_room again.
-    s.Receive(From(3, Forest(), proto::BossState::in_room));
+    s.Receive(From(3, Forest(), proto::BossState::intro_end));
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance), 11 * kS).pull);
 }
 
 TEST_CASE("boss: a player who comes back to the dungeon during the fight is pulled again") {
     Sync s;
-    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
     CHECK(s.Tick(At("ForestTemple", kForestEntrance), 1 * kS).pull);
     // We die: a load (nothing readable), then the dungeon's entrance.
     s.Tick(Local{}, 2 * kS);
@@ -239,8 +275,8 @@ TEST_CASE("boss: a pulled player who arrives in an event treats it as the intro"
 
 TEST_CASE("boss: messages for rooms this build does not know are dropped") {
     Sync s;
-    s.Receive(proto::BossRoom{1, "ForestTemple", 5, proto::BossState::in_room});  // room 5 is the Water Temple
-    s.Receive(proto::BossRoom{1, "NoSuchDungeon", 9, proto::BossState::in_room});
+    s.Receive(proto::BossRoom{1, "ForestTemple", 5, proto::BossState::intro_end});  // room 5 is the Water Temple
+    s.Receive(proto::BossRoom{1, "NoSuchDungeon", 9, proto::BossState::intro_end});
     s.Receive(proto::TimeOfDay{1, 10, 0});
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance), 1 * kS).pull);
 }
@@ -248,7 +284,7 @@ TEST_CASE("boss: messages for rooms this build does not know are dropped") {
 TEST_CASE("boss: Reset forgets everything") {
     Sync s;
     s.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
-    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
     s.Reset();
     CHECK(s.phase() == Sync::Phase::none);
     CHECK_FALSE(s.Tick(At("ForestTemple", kForestEntrance), 2 * kS).pull);
@@ -265,7 +301,8 @@ TEST_CASE("boss: a clock that steps back does not end the wait for the intro") {
     a = s.Tick(At("ForestTemple", Forest().arrive), 29 * kS);
     CHECK(s.phase() == Sync::Phase::waiting);
     a = s.Tick(At("ForestTemple", Forest().arrive), 30 * kS);
-    CHECK(Has(a, proto::BossState::intro_end));
+    CHECK(s.phase() == Sync::Phase::fight);  // no intro for 10 s (it moves no one in: issue 148)
+    CHECK_FALSE(Has(a, proto::BossState::intro_end));
 }
 
 TEST_CASE("boss: a player who walks out during the fight is pulled back") {
@@ -302,9 +339,9 @@ TEST_CASE("boss: an event in the fight with the boss alive is not its death (iss
     auto a = s.Tick(Alive(Forest().arrive, true, true), 30 * kS);
     CHECK_FALSE(Has(a, proto::BossState::defeated));
     CHECK(s.phase() == Sync::Phase::outro);
-    // The heartbeat goes on while it is decided.
+    // The heartbeat goes on while it is decided (the fight: intro_end).
     a = s.Tick(Alive(Forest().arrive, true, true), 33 * kS);
-    CHECK(Has(a, proto::BossState::in_room));
+    CHECK(Has(a, proto::BossState::intro_end));
     // It ends with the boss alive: back to the fight, nothing beaten.
     a = s.Tick(Alive(Forest().arrive, false, true), 36 * kS);
     CHECK_FALSE(Has(a, proto::BossState::defeated));
@@ -327,7 +364,7 @@ TEST_CASE("boss: the boss gone during the event is its death") {
     s.Tick(Alive(Forest().arrive, false, false), 50 * kS);
     CHECK(s.phase() == Sync::Phase::done);
     // Walking out of a beaten room: not pulled back (allowed).
-    s.Receive(From(1, Forest(), proto::BossState::in_room));
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
     a = s.Tick(Alive(kForestEntrance, false, false), 51 * kS);
     CHECK_FALSE(a.pull);
 }
@@ -360,6 +397,61 @@ TEST_CASE("boss: the boss dead when the event starts, or no reading, is the deat
     a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS);
     CHECK(Has(a, proto::BossState::defeated));
     CHECK(u.phase() == Sync::Phase::done);
+}
+
+TEST_CASE("boss: an event right after a skipped intro is not the boss's death (integrate-p8)") {
+    // B in its intro; A's intro is over: B skips. B's event ends, and 0.1 s later the next one
+    // starts (the skipped intro's next shot), with no reading of the boss.
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive, false, 2), 1 * kS);
+    s.Tick(At("ForestTemple", Forest().arrive, true, 2), 2 * kS);
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
+    CHECK(s.Tick(At("ForestTemple", Forest().arrive, true, 2), 3 * kS).skip_intro);
+    auto a = s.Tick(At("ForestTemple", Forest().arrive, false, 2), 4 * kS);
+    CHECK(Has(a, proto::BossState::intro_end));
+    REQUIRE(s.phase() == Sync::Phase::fight);
+    a = s.Tick(At("ForestTemple", Forest().arrive, true, 2), 4 * kS + 100'000);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::fight);
+    bool said = false;
+    for (const auto& line : a.log) said |= line.find("not the boss's death") != std::string::npos;
+    CHECK(said);
+    s.Tick(At("ForestTemple", Forest().arrive, false, 2), 8 * kS);
+    CHECK(s.phase() == Sync::Phase::fight);
+    // So the fight goes on: B walks out and is pulled back by A's fight.
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
+    a = s.Tick(At("ForestTemple", kForestEntrance, false, 2), 9 * kS);
+    CHECK(Has(a, proto::BossState::left));
+    CHECK(a.pull);
+    // Later in a fight (past kMinFightUs), an event with no reading is the death as before.
+    Sync t;
+    t.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    t.Tick(At("ForestTemple", Forest().arrive, true), 2 * kS);
+    t.Tick(At("ForestTemple", Forest().arrive, false), 3 * kS);
+    a = t.Tick(At("ForestTemple", Forest().arrive, true), 3 * kS + Sync::kMinFightUs);
+    CHECK(Has(a, proto::BossState::defeated));
+}
+
+TEST_CASE("boss: a shut boss door left in a save by an older build is opened once per load (issue 148)") {
+    CoopBoss::StaleBossFlags stale;
+    std::set<std::string> set{"InsideTheDekuTree_BossArea_ShutIn", "FireTemple_BossGroundChange"};
+    const auto is_set = [&](std::string_view n) { return set.contains(std::string(n)); };
+    // Loading: nothing yet. Then the dungeon, Link at its entrance: both set flags, once.
+    CHECK(stale.Check(std::nullopt, std::nullopt, is_set).empty());
+    CHECK(stale.Check(std::string("InsideTheDekuTree"), std::nullopt, is_set).empty());  // place not read yet
+    auto out = stale.Check(std::string("InsideTheDekuTree"), Vec{0.0f, 0.0f, 0.0f}, is_set);
+    CHECK(out.size() == 2);
+    CHECK(stale.Check(std::string("InsideTheDekuTree"), Vec{0.0f, 0.0f, 0.0f}, is_set).empty());  // once
+    // A reload into the same scene checks again.
+    stale.Check(std::nullopt, std::nullopt, is_set);
+    CHECK(stale.Check(std::string("InsideTheDekuTree"), Vec{0.0f, 0.0f, 0.0f}, is_set).size() == 2);
+    // Loaded straight into a boss room (a real fight, a respawn there): left alone.
+    stale.Check(std::nullopt, std::nullopt, is_set);
+    CHECK(stale.Check(std::string("ForestTemple"), Forest().arrive, is_set).empty());
+    // Nothing set: nothing to do.
+    set.clear();
+    stale.Check(std::nullopt, std::nullopt, is_set);
+    CHECK(stale.Check(std::string("Graveyard_Child"), Vec{}, is_set).empty());
 }
 
 TEST_CASE("boss: the boss's bodies are the boss actor, and Koume and Kotake for Twinrova") {

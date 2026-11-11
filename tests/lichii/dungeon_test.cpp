@@ -589,3 +589,60 @@ TEST_CASE("dungeon: a held flag that a load puts back to 0 is kept for later, ne
     CHECK_FALSE(zero_sent(wb.frame(store)));
     CHECK(b.values[ladder].value == 1);
 }
+
+TEST_CASE("dungeon: a player's place in a boss fight is never shared, the group's progress is (issue 148)") {
+    // Test6, Deku Tree: the boss door shut for a player still outside, and every reload got
+    // it back from the group (the join snapshot). Those flags are left out.
+    std::set<std::uint32_t> listed;
+    for (const auto& f : CoopDungeon::Flags()) listed.insert(f.hash);
+    REQUIRE(CoopDungeon::NotShared().size() == 6);  // with Dodongo's and the Fire Temple's arena floors
+    for (const auto name : CoopDungeon::NotShared()) {
+        CHECK_FALSE(listed.contains(host::flag_hash(std::string(name))));
+    }
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    CHECK_FALSE(list->contains(host::FlagKey(host::flag_hash("InsideTheDekuTree_BossArea_ShutIn"), 0)));
+    // What the group did stays shared: the boss beaten, a boss lock opened with the key.
+    CHECK(list->contains(host::FlagKey(host::flag_hash("InsideTheDekuTree_Heart_Container_Obtained"), 0)));
+    CHECK(list->contains(host::FlagKey(host::flag_hash("ForestTemple_BossRoom_LockOpne"), 0)));
+}
+
+TEST_CASE("dungeon: a player still behind the boss door does not shut it for one who reloads (issue 148)") {
+    // The testers' sequence: A stays in the newer game, with the boss door shut behind A; B
+    // loads an older save, where it is open. A's game keeps its ShutIn at 1; B's must stay 0.
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    const auto shut = host::FlagKey(host::flag_hash("InsideTheDekuTree_BossArea_ShutIn"), 0);
+    const auto beaten = host::FlagKey(host::flag_hash("InsideTheDekuTree_Heart_Container_Obtained"), 0);
+    Game a;
+    Game b;
+    for (Game* g : {&a, &b}) {
+        g->set(shut, 0);
+        g->set(beaten, 0);
+    }
+    host::FlagWatcher wa(*list, host::FlagRole::host);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wa.frame(a);
+    wb.frame(b);
+    // A walks in: the door shuts behind A. Nothing goes out for it.
+    a.set(shut, 1);
+    CHECK(wa.frame(a).empty());
+    // B reloads its older save and joins again: the snapshot and any state A sends (an old
+    // build, or a host table from before) never write the shut door into B's game.
+    proto::FlagSnapshot snap;
+    snap.flags = {{shut, proto::FlagKind::boolean, 1}};
+    wb.receive(proto::Message{snap});
+    wb.receive(proto::Message{proto::FlagState{1, {{shut, proto::FlagKind::boolean, 1}}}});
+    wb.frame(b);
+    CHECK(b.values[shut].value == 0);
+    // What the group did still reaches B: A beats the boss.
+    a.set(beaten, 1);
+    const auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    wb.receive(m);
+    wb.frame(b);
+    CHECK(b.values[beaten].value == 1);
+}

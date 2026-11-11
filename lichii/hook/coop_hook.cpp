@@ -443,6 +443,26 @@ public:
             }
             CoopObjects::TakenForOthers(keys);
         }
+        // Issue 148: a boss door left shut in this save by test6 (a "shut in" flag that was
+        // shared then) is opened once per scene load while Link is in no boss room.
+        if (game_store) {
+            std::optional<CoopBoss::Vec> at;
+            if (view.position) {
+                at = CoopBoss::Vec{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
+            }
+            const auto key = [](std::string_view name) {
+                return coop::protocol::FlagKey{coop::host::flag_hash(std::string(name)), 0};
+            };
+            for (const std::string_view name : stale_boss_.Check(view.scene, at, [&](std::string_view n) {
+                     const auto v = game_store->read(key(n));
+                     return v && v->value != 0;
+                 })) {
+                const bool ok = game_store->write(
+                    coop::protocol::FlagEntry{key(name), coop::protocol::FlagKind::boolean, 0});
+                LOG_INFO(Core, "coop: boss: {} was left set in this save (an older co-op build shared it): {}",
+                         name, ok ? "cleared" : "could not clear");
+            }
+        }
         if (game_store) {  // issue 88: what the session left in MaxLife (docs/items.md)
             const auto max_life = game_store->read(coop::protocol::FlagKey{0xfbe01da1u, 0});
             CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32
@@ -1020,6 +1040,7 @@ private:
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
+    CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame

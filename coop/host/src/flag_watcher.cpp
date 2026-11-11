@@ -18,6 +18,16 @@ void push(std::vector<Outgoing>& out, const protocol::Message& message) {
 
 bool is_delta(const FlagEntry& e) { return e.kind == protocol::FlagKind::count_delta; }
 
+// Saved progress going back: a Bool from set to 0, an Int lower.
+bool went_back(const FlagEntry& before, const FlagEntry& now) {
+  if (before.kind != now.kind) return false;
+  if (now.kind == protocol::FlagKind::boolean) return before.value != 0 && now.value == 0;
+  if (now.kind == protocol::FlagKind::int32) {
+    return static_cast<std::int32_t>(now.value) < static_cast<std::int32_t>(before.value);
+  }
+  return false;
+}
+
 // The game's value `now` is older than the group's (FlagWatcher::set_loading):
 // a Bool back from 1 to 0, or, while there is no Link at all (`loading`),
 // an Int (not a count) back to exactly the value it held before the group's
@@ -92,6 +102,12 @@ bool FlagWatcher::receive(std::span<const std::uint8_t> bytes) {
   return receive(message);
 }
 
+bool FlagWatcher::share_one_way(FlagKey key) {
+  if (key.kind != FlagKeyKind::named || !one_way_.insert(key).second) return false;
+  shared_.add(key);
+  return true;
+}
+
 bool FlagWatcher::share_pickup(FlagKey key) {
   if (key.kind != FlagKeyKind::key64 || !pickups_.insert(key).second) return false;
   shared_.add(key);
@@ -122,7 +138,7 @@ bool FlagWatcher::takes(const FlagEntry& entry) {
     share_pickup(key);
     return true;
   }
-  if (!one && pickups_.contains(key)) {
+  if (!one && (pickups_.contains(key) || one_way_.contains(key))) {
     ++stats_.pickup_resets;
     return false;
   }
@@ -207,6 +223,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   if (settling() && !window_) {
     window_ = true;
     moved_ = false;
+    backward_ = 0;
   } else if (!settling() && window_) {
     window_ = false;
     end_window(store, resets);
@@ -348,6 +365,9 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
     now->key = key;
     const auto it = last_.find(key);
     if (it == last_.end() || it->second == *now) continue;
+    // A room's own switch state the game resets itself (one way) is the
+    // room's: never reset for the group, never put back.
+    if (one_way_.contains(key)) continue;
     if (role_ == FlagRole::host) {
       changed[key] = *now;  // the save's value goes to everyone
       last_[key] = *now;
@@ -387,6 +407,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     if (!takes(entry)) continue;
     note_for_others(store, entry);
     const bool written = store.write(entry);
+    const bool held = !written && store.holds(key);
     if (written) {
       ++stats_.applied;
     } else {
@@ -394,9 +415,11 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       if (!written_for_others_.empty() && written_for_others_.back() == key) {
         written_for_others_.pop_back();
       }
+      if (held) unwritten_[key] = entry;  // our game takes it later (HoldFlagStore)
     }
-    // Answer with what the game holds now, which may not be what was asked.
-    std::optional<FlagEntry> now = store.read(key);
+    // Answer with what the game holds now, which may not be what was asked;
+    // a held value is the group's already, only not in our game yet.
+    std::optional<FlagEntry> now = held ? std::optional<FlagEntry>(entry) : store.read(key);
     if (now) {
       now->key = key;
     } else {
@@ -408,7 +431,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       const auto known = last_.find(key);
       note_group(*now, known != last_.end() ? &known->second : nullptr);
     }
-    last_[key] = *now;
+    if (!held) last_[key] = *now;  // held: the game still has its own value
     answers[key] = *now;
     ++stats_.answers_sent;
   }
@@ -480,25 +503,60 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
-    if (window_ && (loading_ || moved_)) {
-      // No Link: a named flag moving is a save load (a door moves none). In
-      // the settle frames after a door, the game's own changes go as before.
-      if (loading_ && key.kind == FlagKeyKind::named) moved_ = true;
-      if (role_ == FlagRole::player && !store.is_count(key)) {
+    if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
+        went_back(it->second, *now) && ++backward_ >= kSaveLoadMin) {
+      // No Link and saved progress going back: a save was loaded. A cutscene,
+      // a warp, time travel or a death sets flags forward or not at all.
+      moved_ = true;
+    }
+    if (window_ && moved_) {
+      if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
         // The group's value back at once, so a room loading now has it.
         const auto group = group_.find(key);
-        if (group != group_.end() && group->second != *now && store.write_exact(group->second)) {
-          ++stats_.load_reverts;
-          ++stats_.applied;
-          it->second = group->second;
-          continue;
+        if (group != group_.end() && group->second != *now) {
+          if (store.holds(key)) {
+            unwritten_[key] = group->second;
+            it->second = *now;
+            continue;
+          }
+          if (store.write_exact(group->second)) {
+            ++stats_.load_reverts;
+            ++stats_.applied;
+            it->second = group->second;
+            continue;
+          }
         }
       }
-      continue;  // nothing is sent from a load; end_window decides
+      continue;  // a save load sends nothing; end_window decides
+    }
+    if (window_ && loading_) {
+      // No Link, no sign of a save load yet: a guest puts the group's value
+      // back at once as before (backwards(), issue 129); nothing goes out
+      // until Link is back, when the rules below take what is left.
+      if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
+        const auto group = group_.find(key);
+        const auto older = group_before_.find(key);
+        if (group != group_.end() &&
+            backwards(group->second, older != group_before_.end() ? &older->second : nullptr, *now, true)) {
+          if (store.holds(key)) {
+            ++stats_.load_reverts;
+            unwritten_[key] = group->second;
+            continue;
+          }
+          if (store.write(group->second)) {
+            ++stats_.load_reverts;
+            ++stats_.applied;
+            it->second = group->second;
+            unwritten_.erase(key);
+            continue;
+          }
+        }
+      }
+      continue;
     }
     const FlagEntry before = it->second;
     it->second = *now;
-    if (settling() && !store.is_count(key) && !restate_.contains(key)) {
+    if (settling() && !store.is_count(key) && !restate_.contains(key) && !one_way_.contains(key)) {
       // A load putting back an older value than the group's: not sent, and
       // the group's value goes back in (set_loading).
       const auto group = group_.find(key);
@@ -506,6 +564,13 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (group != group_.end() &&
           backwards(group->second, older != group_before_.end() ? &older->second : nullptr,
                     *now, loading_)) {
+        if (store.holds(key)) {
+          // Our game takes the group's value later (HoldFlagStore): kept to
+          // write then; the load's older value is ours alone, never sent.
+          ++stats_.load_reverts;
+          unwritten_[key] = group->second;
+          continue;
+        }
         if (store.write(group->second)) {
           ++stats_.load_reverts;
           ++stats_.applied;
@@ -520,7 +585,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         group_before_.erase(key);
       }
     }
-    if (now->value == 0 && pickups_.contains(key) && !restate_.contains(key)) {
+    if (now->value == 0 && (pickups_.contains(key) || one_way_.contains(key)) && !restate_.contains(key)) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
     }

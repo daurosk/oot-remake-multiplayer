@@ -111,8 +111,12 @@ public:
     std::optional<Part> PartOf(std::uint64_t address, std::uint64_t hash, std::uint64_t entry) const;
     bool Copied(std::uint64_t address, std::uint64_t hash) const;  // the probe has a copy
 
-private:
     using Snapshot = std::map<std::uint64_t, std::uint64_t>;  // key (Where) -> word
+    // The actor's words, its component table and the first 0x200 bytes of
+    // each component (keys as Where). Empty when the actor is not there.
+    static Snapshot Read(const ReadWord& read, std::uint64_t address);
+
+private:
     struct Base {
         std::uint64_t time_us = 0;
         Snapshot words;
@@ -132,7 +136,6 @@ private:
         std::uint64_t quiet_from_us = 0;  // a base taken from here on may add noise
     };
 
-    static Snapshot Read(const ReadWord& read, std::uint64_t address);
     const Snapshot* CopyOf(std::uint64_t address, std::uint64_t hash) const;
     // What of a cut can be written into another game's sign: component
     // words (not the Life hit record, not counters seen before the hit),
@@ -154,6 +157,51 @@ bool SignWordWritable(std::uint64_t current, std::uint64_t value);
 // from the run of 2026-11-10), as SIGN_CUT keys: only these are sent and
 // written, into components the probe has read 0x200 bytes of.
 bool SignCutKeyAllowed(std::uint64_t key);
+
+// A dungeon gimmick: a switch, a water plane, a shutter, a torch, a lift or
+// a moving floor (test7, docs/dungeon.md "Live dungeon actions").
+bool IsGimmick(std::string_view name);
+
+// Test7 probe for dungeon gimmicks (docs/dungeon.md "Live dungeon actions").
+// A held floor switch, a timed switch or a water plane keeps its state in
+// the actor, not in a flag, so it can only be shared live once the words
+// that hold it are known. This finds them in a run, the way the sign probe
+// found a sign's cut: every kEveryUs it copies the nearest gimmicks (as
+// SignProbe::Read) and logs each word that stepped: equal in the two copies
+// before, different now. A word that steps often (a timer, a counter, a
+// moving part's transform) is muted after kNoisySteps steps. It only reads.
+class GimmickProbe {
+public:
+    static constexpr std::uint64_t kEveryUs = 500'000;
+    static constexpr float kNearM = 15.0f;
+    static constexpr std::size_t kMaxGimmicks = 4;   // the nearest, per look
+    static constexpr std::size_t kMaxShown = 16;     // steps per line
+    static constexpr int kNoisySteps = 6;            // steps of one word before it is muted
+    static constexpr int kMaxLines = 400;            // per session
+
+    struct Gimmick {
+        std::uint64_t address = 0;
+        std::uint64_t hash = 0;
+        std::string name;
+        coop::protocol::Vec3 position{};
+    };
+
+    // Once per objects walk. Returns log lines.
+    std::vector<std::string> Look(const SignProbe::ReadWord& read, const std::vector<Gimmick>& gimmicks,
+                                  const std::optional<coop::protocol::Vec3>& player, std::uint64_t now_us);
+    void Reset();
+
+private:
+    struct State {
+        std::uint64_t hash = 0;
+        std::string name;
+        std::deque<SignProbe::Snapshot> copies;  // newest last, at most 2 kept before the new one
+        std::map<std::uint64_t, int> steps;      // per word
+    };
+    std::map<std::uint64_t, State> states_;  // by actor address
+    std::uint64_t last_us_ = 0;
+    int lines_ = 0;
+};
 
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the

@@ -1,0 +1,135 @@
+# Sync coverage: what is shared between games, and what is not
+
+The test7 goal (Caleb, 2026-11-11): everything one player does to the world is the same in every game, **live** (not only after a room reload), and nothing one player does can leave another unable to continue. This page is the map for that work. The fix branches (`dungeon-live`, `breakables`, `softlock-audit`) update their own rows when they change something.
+
+State on `main` at 99332d9 (test6: chunk 4 merged, protocol 6). Sources are the docs named in each row and the reports of the chunk 3 and 4 test turns (integrate-p6, integrate-p7). The actor classes are read from the romfs (`Pack/Actor`, 8,373 packs, grouped by name).
+
+**Columns**
+- **Path** is the code that shares it:
+  - *flags*: named Bool/Int flags, by the flag watcher ([flags.md](flags.md)).
+  - *keys*: 64-bit placement keys ([dungeon.md](dungeon.md), "The placement keys").
+  - *take*: chest-sync's remove step for a taken key, `CoopObjects::RemovedWhenTaken`.
+  - *objects*: the enemy sharing: owner, life samples, `DAMAGE` ([objects.md](objects.md)).
+  - *world*: `WorldSync` with `WORLD_BREAK`, `WORLD_MOVE`, `WORLD_PLACE`, `WORLD_HIT` and `SIGN_CUT` ([world.md](world.md)).
+  - *grass*: `GRASS_CUT`.
+  - *drops*: `CoopDrops`, one roll per drop and `DROP_TAKE`.
+  - *items*: the item rules in [items.md](items.md).
+  - *spawns*: things a player makes ([spawns.md](spawns.md)).
+  - *boss*: `BOSS_ROOM` ([dungeons-boss.md](dungeons-boss.md)).
+  - *none*: not shared.
+- **Live** says when the other game shows it:
+  - *live*: the loaded copy changes at once.
+  - *reload*: the value is shared, but the other game shows it only when the room loads again.
+  - *?*: the value is shared, but whether a loaded copy reacts was never seen.
+  - *-*: not shared.
+- **Proven**:
+  - *game*: seen in an autotest run, with the run named.
+  - *logs*: the right log lines, but nothing seen on screen.
+  - *unit*: unit tests only.
+  - *-*: none.
+- **P** (priority): P1 can softlock or block progress; P2 is a visible desync; P3 is cosmetic.
+
+## Breakables
+
+| Object | Actors (romfs) | Path | Live | Proven | Risk if not shared live | P |
+|---|---|---|---|---|---|---|
+| Pots | `Obj_Pot_*` (15), `Obj_ShadowTemple_SkullPot_*`, `Obj_Gerudo_HorsebackArcheryPot_*` | objects (life) + world `WORLD_BREAK` | ? | unit | Two drops, or a pot whole on one screen. A Shadow Temple skull pot holding a key is a *keys* row, kept, not removed | P2 |
+| Crates | `Obj_BrokenBox_*` (5) | objects + world | live (4.6 s late) | game (`pots`, 2026-11-09, 3 runs) | - | P3 |
+| Liftable rocks | `Obj_LiftRock_*` (7) | objects (gone near Link) + world | live | game (`rock`, thrown; chunk 3 lift) | Carried rock not seen moving | P2 |
+| Bomb and hammer rocks | `Obj_BrokenRock_*`, `Obj_*_BrokenRock_*`, `Obj_Common_Fragment_Broken*Rock` | objects + world; dungeon ones also *keys* + *take* | ? | unit | A rock that blocks a path (Dodongo, Death Mountain): open in A, closed in B. B can bomb its own | **P1** where it blocks a path B cannot open itself (no bombs yet) |
+| Cracked walls and floors | `Obj_*_CrackWall_*` (Dodongo, Shadow, Spirit, Water), `Obj_*_CrackFloor_*`, `WallCrack` | dungeon *keys* + *take* (removed); overworld: world | live via *take* | logs (chest take path, 2026-11-10) | B cannot pass a wall A opened if B has no bombs | **P1** until a take of a wall is seen live |
+| Spider webs | `Obj_InsideTheDekuTree_SpiderWeb_*`, `*InteractiveSpiderWebParts*`, `Obj_InsideGanonCastle_SpiderWeb` | *keys* + *take* | live via *take* | unit | Deku Tree floor web: B cannot drop down | **P1** (Deku Tree basement route) |
+| Red ice, ice over switches | `Obj_RedIce_*` (8), `Obj_Ice_A_01`, `Obj_LakeHrl_Ice_*` | *keys* + *take*; world gone-near-Link | ? | unit | Zora's Domain / Ice Cavern path blocked for B without blue fire | **P1** |
+| Ice pillars | `Obj_BrokenIcePillar_*` (4) | objects + world | ? | unit | - | P2 |
+| Grass tufts and bushes | `Obj_Plant_Grass_*`, `Land_kokiri_Plant_*`, `Obj_Plant_DestructibleGrass_Base` | objects + world (deleted 0.4 s after) | ? | unit (life 0 alone failed in a game) | - | P3 |
+| Field grass | foliage, no actor | grass `GRASS_CUT` | ? | unit | - | P3 |
+| Signs and signposts | `Obj_SignBoard_*`, `Obj_*_Signboard_*`, `Obj_GuidePost_*`, `Obj_*_GuidePost_*` | world `WORLD_HIT` + `SIGN_CUT` | ? | logs (sign 20261110-122750: 11 of 11 words written in B; pieces not in view) | - | P3 |
+| Beehives | `Obj_Kokiri_Beehive_*` | objects + world | ? | unit | - | P3 |
+| Bomb flowers | `Obj_BombFlower_*` (4), its fruit | none (the fruit has no placement) | - | - | Each player picks their own; the rock it breaks is a *Bomb rock* row | P2 |
+| Falling floors (Deku Tree) | `Obj_InsideTheDekuTree_FallingFloor_*` | *keys* + *take* | live via *take* | unit | B cannot fall to the next floor | **P1** to check |
+| Falling floor (Shadow Temple) | `Obj_ShadowTemple_FallingFloor_*` | *keys*, kept (stays as ground) | reload | unit | Shown fallen only after a reload | P2 |
+
+## Pickups
+
+| Pickup | Actors | Path | Live | Proven | Risk | P |
+|---|---|---|---|---|---|---|
+| Drops (rupees, hearts, ammo, magic from enemies, pots, grass, rocks) | `Obj_Rupee_*`, `Obj_Heart`, `Obj_DekuSeed`, `Obj_DekuNut`, `Obj_DekuStick`, `Obj_ArrowBundle_*`, `Obj_Bomb`, `Obj_MagicJar_*` | drops `DROP_SPAWN`/`DROP_TAKE` | ? | unit; issue 102 open (a bush drop taken twice in test4.2) | Taken twice, or different drops | P2 |
+| Placed rupees | `Obj_Rupee_*` placed (170 keys) | none: reset type 88, back on a load as in one-player | - | - | - | P3 |
+| Gold Skulltulas and tokens | `Obj_RupeeToken` (85), `Item_Token_Gold` | *keys* (dungeons; overworld through the flags file) + *take*; count delta | live via *take* | logs (chunk 2); issue 89 open | Counted twice, or left in B | P2 |
+| Heart pieces | `Obj_Heart_Piece*` | key + count delta | ? | unit | Taken twice | P2 |
+| Heart containers | `Obj_Heart_Container` | key + `MaxLife` max | live | game (hearts 094002: B 16 -> 20) | - | P3 |
+| Small keys | `Obj_Dungeon_SmallKey*`, chest contents | `DungeonInfo.<d>.SmallKeyNum`, one shared count (delta) | live | unit; double key with the near rule (deku-softlock check 5) | A spends the last key: the count drops in B too, and B's door must open (*Locked doors* row), or B is stuck at a locked door with 0 keys | **P1** |
+| Map, compass, boss key | `Item_Dungeon_*` | items OR | live | unit | - | P3 |
+| Items from chests and events (Slingshot, Bow, bags...) | `Item_*` | items (any/max, capacity and ammo grants, load mend) | live | game (sling-give, sling-stick, 2026-11-10) | Fixed in test6 (issue 138) | P3 |
+| Silver rupees | `Obj_Rupee_Silver`, `Obj_RupeeToken_Silver`, `Obj_silverRupeeCounter_*` (6 names, 17 placements) | rupee: *keys* + *take* + drops; counter: key, kept; `…_SilverToken_Appear/_Unlock`, `…_SilverRupee*` flags | ? | unit | Shared besides the keys: `…_SilverToken_Appear/_Unlock` (events and flags), `InsideGanonCastle_Dungeon_Room03/10/14/16_SilverRupee`, `GerudoTrainingGround_Dungeon_Room02/06/09_SilverRupee`, `IceCavern_Room06_SilverRupeeGet`, `BottomOfTheWell_…_SilverRupee_GetAll` (Bool or Int, and whether the counter reads them, not known). If the counter counts only its own pickups: A takes 3, B takes 2: each game's counter may count only its own, and the rupees B took are removed from A's game uncounted. Then neither counter reaches 5 and the door never opens for anyone | **P1** |
+| Magic beans, bean spots | `Obj_Plant_MagicBean*` | none | - | - | Bean planted by A not there in B | P2 |
+| Fairies | `Obj_Fairy*`, `Npc_Fairy` | none | - | - | - | P3 |
+
+## Dungeon mechanics
+
+Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.md)). All 971 named flags and 500 keys are shared. The open question for almost every row is **live**: a door, shutter or water plane already loaded in B must react to the flag, not just store it. Only two things are seen working: the Deku Tree switch flag, which is kept through B's load (deku-late, 2026-11-10), and the slingshot room's ladder and pillar flags, which reach B. Nothing has been seen moving on B's screen.
+
+| Mechanic | Actors | Path | Live | Proven | Risk if not live | P |
+|---|---|---|---|---|---|---|
+| Floor switches that stay down | `Obj_StepSwitch`, `Obj_Stepswitch`, `Obj_*_StepSwitch`, `Obj_InsideJabu_Jabu_Stepswitch` | flags (the room's `…_Switch_…`, `…_StepSwitch`) | ? | logs (deku-late: the flag crosses) | Door open in A, shut in B | **P1** |
+| Floor switches held down (a player or block on them) | same actors; the held state is in the actor | none | - | - | Caleb's case: "stands on a button that opens something". A holds, B's door stays shut. B cannot hold its own while A stands on A's | **P1** |
+| Timed switches, timed torches | `Obj_CandleStick_TimeExtinguish`, reset type 280 | none (room-local) | - | - | Each player solves their own; two players cannot share one timer | P2 |
+| Eye switches | `Obj_EyeSwitch_*` (5) | flags | ? | logs (Deku Tree slingshot room, chunk 4) | B's door or ladder stays: the Deku Tree ladder softlock (#129) | **P1** |
+| Crystal switches (hit) | `Obj_SwitchHit_*`, `Obj_InsideJabu_Jabu_SwitchHit_*`, `Obj_LakeHrl_SwitchHit_*`, `Obj_LightSwitchHitBase` | flags | ? | unit | As above | **P1** |
+| Rusted and hammer switches | `Obj_FireTemple_HammerSlipPillar_*` (*keys*, kept), hammer floor switches | *keys* (pillar falls on reload); flags | reload | unit | B's pillar stands until a reload: a missing bridge in the Fire Temple | **P1** |
+| Sun switches, mirrors, light beams | `Obj_SolarSwitch_*`, `Obj_SpiritTemple_Mirror`, `Obj_SpiritTemple_CapstanMirror`, `Obj_SpiritTemple_RayShaft_*` | outcome flags; mirror angle none | ? / - | - | Each player turns their own mirror; the door's flag is shared | P2 |
+| Torches lit for good | `Obj_CandleStick_*`, `Obj_*_CandleStick_*`, `Obj_ForestTemple_SwitchCandleStick_*`, `Obj_Well_CandleStick_*` (key) | flags; Well torch key, kept | ? | unit | The door the torches open | **P1** |
+| Shutters and barred doors | `Obj_*_SwitchShutter_*` (574 placements), `Obj_DoorChainLock*`, `Obj_Base_RestrictedDoor` | flags (`…_ShutterOpen`, `…_OpenDoor…`) + played events | ? | unit | A walks through, B's stays shut | **P1** |
+| Locked doors (small key) | `Obj_DoorChainLock*`, `Obj_*_DoorChainLock_*` | flags (`…_UnLock`) + the shared key count | ? | unit | The key is spent for everyone; if B's door does not open live, B is stuck (see Small keys) | **P1** |
+| Boss doors | boss key doors | items OR + flags | ? | - | B needs the boss key: shared, so OK if the flag is live | P2 |
+| Enemy-clear rooms | `Obj_EnemyCounter_*` (5 names, 51 keys, kept), `…_Clear`/`_Cleared` flags | flags + keys; enemies by objects (kills: issue 133 open) | ? | logs (Deku Babas placed in B, chunk 3) | B enters, the shutters close and B's own copies still live. Kills not shared means B must kill them again. A's `_Cleared` flag may open B's shutters while B's enemies are alive, or not at all. Either way B can be locked in | **P1** |
+| Water level (Water Temple) | `Obj_WaterTemple_WaterPlane*` (8+2), `WaterTemple_Room00_WaterLevel` (Int), `HavePlayedEvent.WaterTemple_WaterLevelChange01` | flags (Int) + played event | ? | - | A changes the level, B's water does not move: B swims in water that is not there in A, or the reverse, and doors that need the level stay shut. The level change also plays an event, which B never plays | **P1** |
+| Other water planes (Deku Tree, Jabu, Forest, Well, Lake Hylia, Zora) | `Obj_*_WaterPlane*`, `Obj_InsideTheDekuTree_WaterGate` | flags where the room has one | ? | - | Lake Hylia's refill after the Water Temple is story state | **P1** to check |
+| Push and pull blocks | `Obj_MovableBox_*`, `Obj_ForestTemple_MovableBox_*` (5), `Obj_FireTemple_MovableBox_*`, `Obj_SpiritTemple_MovableBox_*`, `Obj_LonLonRanch_MovableBox`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | world `WORLD_MOVE`/`WORLD_PLACE` | ? | unit | Blocks out of place: a block pushed into a hole or onto a switch in A sits elsewhere in B, and B cannot push it back | **P1** |
+| Elevators and lifts | `Obj_InsideTheDekuTree_ElevatorLift*`, `Obj_InsideJabu_Jabu_ElevatorLift_*`, `*ElevatorLift*` | none (each game's own); start events left out on purpose | - | - | Each rides their own; OK as long as each lift works alone | P2 |
+| Moving and rising floors | `Obj_*_MoveFloor_*`, `Obj_FireTemple_RiseFloor_*`, `Obj_FireTemple_SinkFloor_*`, `Obj_ShadowTemple_GimmickFloor`, `Obj_WaterTemple_FloatFloor*` | flags where switch-driven; positions none | ? | - | Driven by a shared switch flag; if live, fine | P2 |
+| Spinning rooms, Forest Temple corridor | `Obj_ForestTemple_TwistedCorridor_*`, `Obj_ShadowTemple_RotateFloor` | the start events are left out (one-way, review of 41d5b76), BUT the corridor's own state flags **are shared** (in the scan list): `ForestTemple_TwistCorridor_IsReverse`, `ForestTemple_TwistCorridor01_IsConstraint`, `…02_IsConstraint`, and `ForestTemple_SageOfForest_TwistedCorridor_A_01` to `_04` | ? | - | If B's loaded corridor follows `IsReverse` live, it turns under B while B is in it or on the far side. If it follows only on a reload, B's corridor is in the other state from what B's room logic expects. Decided (dungeon-live): shared, but held while the player is in the Forest Temple and written on their next load or scene entry (docs/dungeon.md, "Held until the room loads"), so the corridor never turns under anyone | done (unit tests) |
+| Shadow Temple boat | `Obj_ShadowTemple_PaddleShip_*` | event left out | - | - | Each player rides their own boat | P2 |
+| Chests | `Obj_TBox_*` | *keys* + *take* (removed in B unless B's Link is within 3 m) | live | game (deku-map, 2026-11-10: removed in B 37 ms after the key) | Near rule: B can open it again (double small key) | P2 |
+| Chests that appear (switch, enemies) | `Obj_TBox_*` with `…_TBoxAppear`, `…TreasureBoxAppear` events | flags + played events | ? | unit | Chest missing in B: if it holds a needed item, the item is shared anyway | P2 |
+| Song of Time blocks | `Obj_SongOfTimeBlock` | none known | - | - | A plays, B's block stays (Spirit Temple, Temple of Time) | **P1** to check |
+| Hookshot targets, crumbling platforms, spikes, blades, guillotines, fire walls | `Obj_*HookShotTarget*`, `Obj_CrumblingGanonCastle_*`, `Obj_MoveSpike_*`, `Obj_ShadowTemple_*Blade*`, `Obj_FireWall*` | none (each game runs its own) | - | - | - | P3 |
+| Lens of Truth objects | `Obj_*_GlassTruth_*` | none (per player: each player's own lens) | - | - | - | P3 |
+| Mini-boss and boss rooms | boss actors | boss `BOSS_ROOM` (all in, intro together) + named `…_Boss_Defeat` | live | game (boss 20261110-124007: B moved in, intro) | Walk-out after the fight (boss-walkout, chunk 5); the blue warp and medal per player | **P1** (warp out) |
+
+## World and story
+
+| State | Path | Live | Proven | Risk | P |
+|---|---|---|---|---|---|
+| Overworld doors, gates (Kakariko, Lon Lon, Gerudo, castle gate) | named flags where story, else none | ? | - | A gate opened by story in A, shut in B | **P1** to check |
+| Story events, cutscenes, medals and stones | items (medals and stones are items) + `Dm_`/`Demo_` flags NOT shared | - | - | A saw a story scene that unlocks an area; B's game never set its flag. Each player has to see it, or B is locked out | **P1** to check |
+| Time of day | `TIME_OF_DAY` (host's clock) | live | game | - | P3 |
+| Song events (Zelda's Lullaby doors, Sun's Song, Song of Storms well) | none, unless the result is a flag | ? | - | The door a song opened in A stays in B | P2 |
+| Shops (stock sold out) | none; issue 130 (Deku Shield once for all) | - | - | - | P2 |
+
+## Per-player state (not shared on purpose)
+
+Position, life (except the max), magic, rupee count, what is in the hands and on the buttons, bottles' contents, equipped gear, the camera, Navi's hints, "in battle", the Lens of Truth, which room a player is in, one-way rides. These rows must stay per player; a fix must not share them.
+
+## P1 list (test7)
+
+The P1 rows above, grouped by the fix branch that should take them:
+
+1. **dungeon-live** (types 110 to 119):
+   - Make a loaded door, shutter, ladder, water plane or platform react to a shared flag at once. Covers the switches, eye and crystal switches, torches, shutters, locked doors, water level, and the room-twist check.
+   - Held floor switches (Caleb's button case): share the held state, or make "pressed by anyone" hold the door in every game.
+   - Enemy-clear rooms: the clear and the shutters must agree with B's live enemies.
+   - Silver rupee counters: one count for the group.
+   - The Water Temple level and its event.
+   - Song of Time blocks.
+2. **breakables** (types 120 to 129):
+   - Path blockers: bomb and hammer rocks, cracked walls and floors, webs, red ice and ice, and the Deku Tree falling floors. Proven removed live in B, also for a B that loaded the room earlier.
+   - Hammer pillars falling live in B.
+   - Push blocks in the same place in every game, including blocks dropped in holes and on switches.
+3. **softlock-audit** (no message):
+   - The cases above where B ends up with 0 keys at a locked door, shut in a cleared room, behind a block, or before a story gate. Check the story flags left out (`Dm_`/`Demo_`) for any that open an area.
+   - The boss walk-out and the blue warp per player.
+
+## How to keep this page
+
+A fix branch changes its rows: Path, Live, Proven (with the run, once integrate-p8 has run it) and P. It adds a row for any actor class it finds that is missing here. Keep the P1 list in step.

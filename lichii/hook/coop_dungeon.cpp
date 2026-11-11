@@ -1534,6 +1534,94 @@ std::span<const Flag> Flags() {
     return kFlags;
 }
 
+namespace {
+constexpr std::array kLiveFlags = std::to_array<Flag>({
+    {0x32eeccea, false, "ForestTemple_Room17_Switch_On_02"},
+    {0xe419453a, false, "GerudoTrainingGround_Gate"},
+    {0xfa42fe59, false, "SpiritTemple_Room31_LightHit"},
+    {0x8f7d6ea5, false, "WaterTemple_Room22_Cleared_Provisional"},
+});
+} // namespace
+
+std::span<const Flag> LiveFlags() {
+    return kLiveFlags;
+}
+
+namespace {
+
+constexpr std::string_view kDungeonScenes[] = {
+    "BottomOfTheWell", "DodongoCavern", "FireTemple", "ForestTemple", "GanonCastle",
+    "GerudoTrainingGround", "IceCavern", "InsideGanonCastle", "InsideJabuJabuBelly",
+    "InsideTheDekuTree", "ShadowTemple", "SpiritTemple", "WaterTemple"};
+
+// The Forest Temple's twisted corridor (docs/sync-coverage.md).
+constexpr std::string_view kCorridor[] = {
+    "ForestTemple_TwistCorridor_IsReverse", "ForestTemple_TwistCorridor01_IsConstraint",
+    "ForestTemple_TwistCorridor02_IsConstraint", "ForestTemple_SageOfForest_TwistedCorridor_A_01",
+    "ForestTemple_SageOfForest_TwistedCorridor_A_02", "ForestTemple_SageOfForest_TwistedCorridor_A_03",
+    "ForestTemple_SageOfForest_TwistedCorridor_A_04"};
+
+// Gimmick events whose result already came live in the other game on test6
+// (players, Deku Tree): the basement water dropping and its button pressed,
+// the torch room's torches. Their room flags carry the result; the played
+// event is left live too, so nothing changes for them.
+constexpr std::string_view kLiveOnTest6[] = {
+    "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop", "InsideTheDekuTree_Gimmick_RoomH_CandleStick"};
+
+std::string_view SceneOfEvent(std::string_view event) {
+    // The game's own spellings, and the scene names that are not prefixes.
+    if (event.starts_with("SpritTemple_")) return "SpiritTemple";
+    if (event.starts_with("ForesetTemple_")) return "ForestTemple";
+    if (event.starts_with("InsideJabu")) return "InsideJabuJabuBelly";
+    if (event.starts_with("InsideGanonCastle_")) return "InsideGanonCastle";
+    for (const std::string_view scene : kDungeonScenes) {
+        if (event.starts_with(scene) && event.size() > scene.size() && event[scene.size()] == '_') {
+            return scene;
+        }
+    }
+    return "";
+}
+
+} // namespace
+
+std::string_view EventOf(std::uint32_t hash) {
+    constexpr std::string_view kPlayed = "HavePlayedEvent.";
+    for (const Flag& f : kFlags) {
+        if (f.hash == hash) {
+            const std::string_view name = f.name;
+            return name.starts_with(kPlayed) ? name.substr(kPlayed.size()) : std::string_view();
+        }
+    }
+    return {};
+}
+
+bool IsDungeonScene(std::string_view scene) {
+    for (const std::string_view s : kDungeonScenes) {
+        if (s == scene) return true;
+    }
+    return false;
+}
+
+std::optional<std::string_view> HeldIn(std::uint32_t hash) {
+    for (const Flag& f : kFlags) {
+        if (f.hash != hash) continue;
+        const std::string_view name = f.name;
+        constexpr std::string_view kPlayed = "HavePlayedEvent.";
+        if (name.starts_with(kPlayed)) {
+            const std::string_view event = name.substr(kPlayed.size());
+            for (const std::string_view live : kLiveOnTest6) {
+                if (event == live) return std::nullopt;
+            }
+            return SceneOfEvent(event);
+        }
+        for (const std::string_view c : kCorridor) {
+            if (name == c) return std::string_view("ForestTemple");
+        }
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 std::span<const Key> Keys() {
     return kKeys;
 }
@@ -1548,6 +1636,9 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     }
     const std::size_t before = shared ? shared->size() : 0;
     for (const Flag& f : kFlags) {
+        keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
+    }
+    for (const Flag& f : kLiveFlags) {
         keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
     }
     for (const Key& k : kKeys) {

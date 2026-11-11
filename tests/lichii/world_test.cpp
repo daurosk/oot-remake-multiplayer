@@ -1291,3 +1291,71 @@ TEST_CASE("sign cut: what another player's word may be written over") {
     b.Receive(cut);
     CHECK(Walk(b, 2000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, "Obj_GuidePost_A_02")}).words.empty());
 }
+
+TEST_CASE("gimmick probe: names of switches, water planes, shutters, torches and lifts") {
+    for (const char* n : {"Obj_StepSwitch_A_01", "Obj_InsideJabu_Jabu_StepSwitch_A_01", "Obj_EyeSwitch_A_02",
+                          "Obj_SwitchHit_A_01", "Obj_WaterTemple_WaterPlane_A_03", "Obj_Well_WaterPlane_A_01",
+                          "Obj_WaterTemple_SwitchShutter_A_01", "Obj_ForestTemple_SwitchCandleStick_A_01",
+                          "Obj_CandleStick_A_01", "Obj_InsideTheDekuTree_ElevatorLift_A_01",
+                          "Obj_FireTemple_MoveFloor_A_01", "Obj_SolarSwitch_A_01"}) {
+        CAPTURE(n);
+        CHECK(CoopWorld::IsGimmick(n));
+    }
+    for (const char* n : {"Obj_Pot_A_01", "Enemy_Stalchild", "Land_Kokiri_WaterPlane_A_01", "Obj_TBox_A_01"}) {
+        CAPTURE(n);
+        CHECK_FALSE(CoopWorld::IsGimmick(n));
+    }
+}
+
+TEST_CASE("gimmick probe: a word that steps once is logged, one that keeps moving is muted") {
+    std::map<std::uint64_t, std::uint64_t> mem;
+    constexpr std::uint64_t kAt = 0x10000;
+    for (std::uint64_t i = 0; i < 0x600; i += 8) mem[kAt + i] = 0;  // the actor, no component table
+    const CoopWorld::SignProbe::ReadWord read = [&](std::uint64_t a) -> std::optional<std::uint64_t> {
+        const auto it = mem.find(a);
+        if (it == mem.end()) return std::nullopt;
+        return it->second;
+    };
+    CoopWorld::GimmickProbe probe;
+    std::vector<CoopWorld::GimmickProbe::Gimmick> g(1);
+    g[0].address = kAt;
+    g[0].hash = 0x1234;
+    g[0].name = "Obj_StepSwitch_A_01";
+    g[0].position = {2.0f, 0.0f, 0.0f};
+    const std::optional<coop::protocol::Vec3> link = coop::protocol::Vec3{0.0f, 0.0f, 0.0f};
+    std::uint64_t t = 1'000'000;
+    const auto look = [&] {
+        t += CoopWorld::GimmickProbe::kEveryUs;
+        return probe.Look(read, g, link, t);
+    };
+    auto lines = look();
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("watching") != std::string::npos);
+    CHECK(look().empty());
+    CHECK(look().empty());  // two equal copies now
+    mem[kAt + 0x100] = 1;  // pressed
+    lines = look();
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("Obj_StepSwitch_A_01") != std::string::npos);
+    CHECK(lines[0].find("actor+0x100:0>1") != std::string::npos);
+    CHECK(look().empty());  // stays pressed: no step
+    CHECK(look().empty());
+    mem[kAt + 0x100] = 0;  // released
+    lines = look();
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("actor+0x100:1>0") != std::string::npos);
+
+    // A timer: steps every time it is stable for two copies... it never is,
+    // so it is never logged; one that steps every third look is muted after 6.
+    int logged = 0;
+    for (int i = 0; i < 40; ++i) {
+        if (i % 3 == 0) mem[kAt + 0x180] += 1;
+        for (const auto& l : look()) logged += l.find("actor+0x180") != std::string::npos ? 1 : 0;
+    }
+    CHECK(logged == CoopWorld::GimmickProbe::kNoisySteps);
+
+    // Out of reach: forgotten, and nothing read.
+    g[0].position = {40.0f, 0.0f, 0.0f};
+    mem[kAt + 0x100] = 7;
+    CHECK(look().empty());
+}

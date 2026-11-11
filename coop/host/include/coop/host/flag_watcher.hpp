@@ -89,6 +89,12 @@ class FlagWatcher {
   // to 0 through the session (a key that the game resets on a scene change
   // must not put the pickup back for the others). False: already a pickup.
   bool share_pickup(FlagKey key);
+  // A named Bool that the game itself sets back to 0 (a room's own switch
+  // state, reset when the room is left: docs/dungeon.md "Live dungeon
+  // actions"): shared one way like a pickup (a 1 is sent and written, a 0 is
+  // never sent and never written over a 1), and never written back after a
+  // load (the room must be able to reset). False: already one way.
+  bool share_one_way(FlagKey key);
   // With learning on, an incoming 64-bit key set to 1 that this game does not
   // share yet is taken as a pickup too (the player who took it was in a scene
   // this game has not loaded). At most kMaxLearned keys. Off by default here;
@@ -117,11 +123,15 @@ class FlagWatcher {
   // shared by the snapshot was reset by the joiner's save load, sent back as
   // 0, and the group's later 1 was written while the load ran and lost).
   // Saves (Caleb, 2026-11-11, docs/flags.md "Saves"): the host's save is the
-  // truth. While loading and kSettleFrames after, nothing is sent. When the
-  // window ends and a named flag moved in it (a save was loaded; a door
-  // moves none), the host sends what its load changed as FLAG_RESET, which
-  // replaces the group's values; a player's game takes the group's values
-  // back for what its load changed (the group is not changed).
+  // truth. While there is no Link nothing is sent. When kSaveLoadMin named
+  // flags go back (a Bool to 0, an Int lower) with no Link, a save was
+  // loaded: a cutscene, warp, time travel or death sets flags forward or not
+  // at all, a door none. Then nothing is sent until the window ends, when
+  // the host sends what its load changed as FLAG_RESET, which replaces the
+  // group's values, and a player's game takes the group's values back for
+  // what its load changed (the group is not changed). One-way room flags
+  // the game resets itself are never part of it. Without that sign, the
+  // rules below hold as before.
   // Also, for a player, while loading and kSettleFrames after, a shared flag that the game moves
   // away from the group's value backwards (a Bool from 1 to 0; while
   // loading only, not in the settle time, an Int back to exactly the value
@@ -179,6 +189,7 @@ class FlagWatcher {
   SharedFlags shared_;
   FlagRole role_;
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
+  std::set<FlagKey> one_way_;  // one-way named flags, no load write-back (share_one_way)
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);
@@ -196,7 +207,9 @@ class FlagWatcher {
   // A load window (docs/flags.md, "Saves"): from the first loading frame to
   // the end of the settle frames. Nothing is sent from inside it.
   bool window_ = false;
-  bool moved_ = false;  // a named flag moved in it: a save was loaded, not a door
+  bool moved_ = false;  // a save was loaded in it (kSaveLoadMin flags went back with no Link)
+  int backward_ = 0;    // named flags that went back with no Link in this window
+  static constexpr int kSaveLoadMin = 2;
   bool reset_seen_ = false;  // take_reset
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;

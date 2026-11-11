@@ -41,17 +41,32 @@ TEST_CASE("dungeon: room state under another spelling or after Gimmick_ is share
     std::set<std::string> names;
     for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
     for (const char* n : {"Insidejabujabu_Room7_Cleared", "Insidejabujabu_Room12_Cleared",
-                          "Insidejabujabu_Room7_NearTheSwitch_Tentacle_Gate", "Firetemple_SongOfTimeBlock_A_01_Disappearance",
+                          "Firetemple_SongOfTimeBlock_A_01_Disappearance",
                           "Foresttemple_SongOfTimeBlock_A_01_Disappearance", "Gimmick_DefeatEnemy_Open_DodongoCave_01",
-                          "Gimmick_DefeatEnemy_Open_ForestTemple_05", "Gimmick_Ignition_Open_WaterTemple_02",
-                          "Gimmick_Insidejabujabu_Updown_MoveWater", "Gimmick_DeleteFire_FireTemple"}) {
+                          "Gimmick_DefeatEnemy_Open_ForestTemple_05", "Gimmick_DeleteFire_FireTemple"}) {
         CHECK_MESSAGE(names.contains(n), n);
     }
-    // Where one player stands, and Ruto, stay each player's own.
-    CHECK_FALSE(names.contains("Insidejabujabu_Room7_Switch1_InsideArea"));
-    CHECK_FALSE(names.contains("Insidejabujabu_Room7_Switch2_OnlyLinkOrLuto"));
+    // Where one player (or Ruto) stands, state set both ways, and what Link reads stay
+    // each player's own (review of da6a300).
+    for (const char* n : {"Insidejabujabu_Room7_Switch1_InsideArea", "Insidejabujabu_Room7_Switch2_OnlyLinkOrLuto",
+                          "Insidejabujabu_Room7_NearTheSwitch", "Insidejabujabu_Room7_NearTheSwitch_Tentacle_Gate",
+                          "Gimmick_Insidejabujabu_Updown_MoveWater", "Gimmick_Insidejabujabu_down_MoveWater",
+                          "Gimmick_Ignition_Open_WaterTemple_01", "Gimmick_Ignition_Open_WaterTemple_02",
+                          "HavePlayedEvent.Obj_SpiritTemple_StoneTablet_A_01"}) {
+        CHECK_FALSE_MESSAGE(names.contains(n), n);
+    }
     // Story scenes outside the rooms stay out.
     CHECK_FALSE(names.contains("EscapeFromCrumblingGanonCastle_OpenLastGate"));
+    // Second pass: the Goron cells, Jabu's Room 17 stone switch, the room gimmick scenes;
+    // not the Forest Temple corridor (one-way), a boss intro or a boss alone.
+    CHECK(names.contains("Npc_Goron_001_ShutterisOpen"));
+    CHECK(names.contains("InsidejaubjabuBelly_gimic_switchOn_Stone"));
+    CHECK(names.contains("HavePlayedEvent.Dm_DodongoCave_0010"));
+    CHECK(names.contains("HavePlayedEvent.Dm_InsideGanonCastle_0090"));
+    CHECK_FALSE(names.contains("HavePlayedEvent.Dm_ForestTemple_0007"));
+    CHECK_FALSE(names.contains("HavePlayedEvent.Dm_Deku_BossIn"));
+    CHECK_FALSE(names.contains("Gohma_DefeatBoss"));
+    CHECK_FALSE(names.contains("InsidejaubjabuBelly_gimic_Liftposition_On"));
 }
 
 TEST_CASE("dungeon: a room gimmick's played event is shared, story scenes and bosses are not") {
@@ -60,7 +75,14 @@ TEST_CASE("dungeon: a room gimmick's played event is shared, story scenes and bo
     for (const auto& f : CoopDungeon::Flags()) {
         names.insert(f.name);
         const std::string name = f.name;
-        if (name.rfind("HavePlayedEvent.", 0) == 0) {
+        // The dungeon gimmick scenes a room's own logic reads for its end state (softlock
+        // audit): Dm_ by name, but no story.
+        static const std::set<std::string> kRoomScenes = {
+            "HavePlayedEvent.Dm_DodongoCave_0010", "HavePlayedEvent.Dm_FireTemple_0029",
+            "HavePlayedEvent.Dm_ForestTemple_0010", "HavePlayedEvent.Dm_ForestTemple_0014",
+            "HavePlayedEvent.Dm_InsideGanonCastle_0035", "HavePlayedEvent.Dm_InsideGanonCastle_0090",
+            "HavePlayedEvent.Dm_WaterTemple_0010", "HavePlayedEvent.Dm_WaterTemple_0015"};
+        if (name.rfind("HavePlayedEvent.", 0) == 0 && !kRoomScenes.contains(name)) {
             ++played;
             CHECK_FALSE(f.is_int);
             for (const char* left_out : {"Boss", "Navi", "Talk", "Meet", "Ruto", "SageOf",

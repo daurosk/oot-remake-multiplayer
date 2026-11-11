@@ -656,7 +656,7 @@ TEST_CASE("flag watcher, host: a door is no save load: no reset") {
   CHECK(w.stats().host_resets == 0);
 }
 
-TEST_CASE("flag watcher: a guest's save with more progress than the group's is not sent; the group's comes back") {
+TEST_CASE("flag watcher: a guest's save with more progress than the group's is not sent, the group's comes back") {
   FakeStore store = game();
   store.values[kKey1] = entry(kKey1, 2, proto::FlagKind::int32);
   FlagWatcher w(shared(), FlagRole::player);

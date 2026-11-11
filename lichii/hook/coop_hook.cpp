@@ -313,6 +313,14 @@ public:
                 session_->share_pickup_named(coop::protocol::FlagKey(o.flag, std::uint16_t{0}));
             }
         }
+        if (pickups_) {  // issue 89: every Gold Skulltula's key, and the token count guarded by them
+            std::vector<coop::protocol::FlagKey> skulltulas;
+            for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
+                skulltulas.push_back(coop::protocol::FlagKey::key64_flag(key));
+            }
+            session_->guard_count(coop::protocol::FlagKey(coop::host::kGoldTokenCount, std::uint16_t{0}),
+                                  skulltulas);
+        }
         thread_ = std::thread([this] { Run(); });
         return true;
     }
@@ -465,6 +473,12 @@ public:
                      "coop: flags: {:#010x} (dungeon map or compass) went back to 0 here: put back to 1 "
                      "({} put back this session)",
                      k.hash, session_->one_way_restores());
+        }
+        for (const auto& g : session_->take_counts_guarded()) {  // issue 89 (docs/items.md)
+            LOG_INFO(Core,
+                     "coop: flags: count {:#010x} +{} here was a pickup another player had taken: "
+                     "put back, not sent",
+                     g.count.hash, g.amount);
         }
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
             std::vector<std::uint64_t> keys;

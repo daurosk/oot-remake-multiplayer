@@ -62,6 +62,16 @@ SharedFlags item_shared_flags(bool with_off = false);
 std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t local,
                          std::uint32_t incoming, std::optional<std::uint32_t> base = {});
 
+// Gold Skulltula tokens (issue 89): PouchData.Item_Token_Gold.StockNum, a
+// count raised only by a Skulltula's token. Taking the token sets the 64-bit
+// key of that Skulltula's placement (Enemy_Skulltula_Gold) in the same scan.
+inline constexpr std::uint32_t kGoldTokenCount = 0x04735978;
+// The placement keys of all 100 Gold Skulltulas (the Enemy_Skulltula_Gold
+// placements of every map, Child and Adult the same key; each key is in the
+// game's key list), sorted. The hook shares them all from the start and
+// guards the token count with them (FlagWatcher::guard_count).
+std::span<const std::uint64_t> gold_skulltula_keys();
+
 // What the game gives with an item, besides the item itself: the ammo
 // capacity (Int struct 0xf80f8077, one member per ammo) and the ammo it
 // starts with. The game writes these in its own get scene; an item that

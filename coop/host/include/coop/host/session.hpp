@@ -162,6 +162,17 @@ class Session {
   std::vector<FlagKey> take_own_count_drops() {
     return watcher_ ? watcher_->take_own_count_drops() : std::vector<FlagKey>{};
   }
+  // Emulator thread only: FlagWatcher::guard_count (issue 89, the Gold
+  // Skulltula tokens). False when flags are not shared.
+  bool guard_count(FlagKey count, std::span<const FlagKey> sources) {
+    if (!watcher_) return false;
+    watcher_->guard_count(count, sources);
+    return true;
+  }
+  // Emulator thread only: FlagWatcher::take_counts_guarded.
+  std::vector<FlagWatcher::CountGuarded> take_counts_guarded() {
+    return watcher_ ? watcher_->take_counts_guarded() : std::vector<FlagWatcher::CountGuarded>{};
+  }
 
   // Emulator thread only (the parts frame() uses), for tests and the overlay.
   const Sampler& sampler() const { return sampler_; }

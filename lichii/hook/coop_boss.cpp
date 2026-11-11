@@ -322,18 +322,22 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 // No event said we are past the door (we may stand on the way
                 // to it): a fight here, but nobody is moved in for it (issue 148).
                 phase_ = Phase::fight;
+                fight_at_ = now_us;
                 out.log.push_back("no intro: the fight has begun here (the others are not moved in)");
             }
             break;
         case Phase::intro:
             if (fell) {
                 phase_ = Phase::fight;
+                fight_at_ = now_us;
                 Say(out, *here_, proto::BossState::intro_end);
                 out.log.push_back(skip_asked_ ? "intro ended (skipped to follow the others)" : "intro ended");
             }
             break;
         case Phase::fight:
-            if (rose) {
+            if (rose && now_us - fight_at_ < kMinFightUs) {
+                out.log.push_back("an event right after the intro: the rest of it, not the boss's death");
+            } else if (rose) {
                 phase_ = Phase::outro;
                 outro_at_ = now_us;
                 if (local.boss_alive.has_value() && *local.boss_alive) {

@@ -148,6 +148,11 @@ public:
     // An event in the fight this long is the boss's death even when the walk
     // still sees the boss (a dead boss actor may stay with its life unread).
     static constexpr std::uint64_t kLongEventUs = 15'000'000;
+    // An event this soon after the fight began is never the boss's death: the
+    // rest of an intro (a skipped one plays its next shot), not an outro
+    // (integrate-p8: B skipped its intro and 0.1 s later took the next event
+    // for Dm_..._BossOut, so the fight counted as won with nobody fighting).
+    static constexpr std::uint64_t kMinFightUs = 10'000'000;
 
     // Network thread: BOSS_ROOM from the others. Taken on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -180,6 +185,7 @@ private:
     const Room* here_ = nullptr;
     bool provisional_ = false;   // outro from an event while the boss may be alive
     std::uint64_t outro_at_ = 0;
+    std::uint64_t fight_at_ = 0;  // when our fight phase began (kMinFightUs)
     Phase phase_ = Phase::none;
     std::uint64_t entered_at_ = 0;
     std::uint64_t sent_at_ = 0;

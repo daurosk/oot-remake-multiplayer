@@ -249,3 +249,20 @@ TEST_CASE("dungeon: the slingshot room's ladder event played in A is set in B (i
     CHECK(b.values[ladder].value == 1);
     CHECK(b.values[cleared].value == 1);
 }
+
+TEST_CASE("dungeon: a player's place in a boss fight is never shared, the group's progress is (issue 148)") {
+    // Test6, Deku Tree: the boss door shut for a player still outside, and every reload got
+    // it back from the group (the join snapshot). Those flags are left out.
+    std::set<std::uint32_t> listed;
+    for (const auto& f : CoopDungeon::Flags()) listed.insert(f.hash);
+    REQUIRE(CoopDungeon::NotShared().size() == 4);
+    for (const auto name : CoopDungeon::NotShared()) {
+        CHECK_FALSE(listed.contains(host::flag_hash(std::string(name))));
+    }
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    CHECK_FALSE(list->contains(host::FlagKey(host::flag_hash("InsideTheDekuTree_BossArea_ShutIn"), 0)));
+    // What the group did stays shared: the boss beaten, a boss lock opened with the key.
+    CHECK(list->contains(host::FlagKey(host::flag_hash("InsideTheDekuTree_Heart_Container_Obtained"), 0)));
+    CHECK(list->contains(host::FlagKey(host::flag_hash("ForestTemple_BossRoom_LockOpne"), 0)));
+}

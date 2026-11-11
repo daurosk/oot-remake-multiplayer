@@ -398,6 +398,39 @@ TEST_CASE("boss: the boss dead when the event starts, or no reading, is the deat
     CHECK(u.phase() == Sync::Phase::done);
 }
 
+TEST_CASE("boss: an event right after a skipped intro is not the boss's death (integrate-p8)") {
+    // B in its intro; A's intro is over: B skips. B's event ends, and 0.1 s later the next one
+    // starts (the skipped intro's next shot), with no reading of the boss.
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive, false, 2), 1 * kS);
+    s.Tick(At("ForestTemple", Forest().arrive, true, 2), 2 * kS);
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
+    CHECK(s.Tick(At("ForestTemple", Forest().arrive, true, 2), 3 * kS).skip_intro);
+    auto a = s.Tick(At("ForestTemple", Forest().arrive, false, 2), 4 * kS);
+    CHECK(Has(a, proto::BossState::intro_end));
+    REQUIRE(s.phase() == Sync::Phase::fight);
+    a = s.Tick(At("ForestTemple", Forest().arrive, true, 2), 4 * kS + 100'000);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::fight);
+    bool said = false;
+    for (const auto& line : a.log) said |= line.find("not the boss's death") != std::string::npos;
+    CHECK(said);
+    s.Tick(At("ForestTemple", Forest().arrive, false, 2), 8 * kS);
+    CHECK(s.phase() == Sync::Phase::fight);
+    // So the fight goes on: B walks out and is pulled back by A's fight.
+    s.Receive(From(1, Forest(), proto::BossState::intro_end));
+    a = s.Tick(At("ForestTemple", kForestEntrance, false, 2), 9 * kS);
+    CHECK(Has(a, proto::BossState::left));
+    CHECK(a.pull);
+    // Later in a fight (past kMinFightUs), an event with no reading is the death as before.
+    Sync t;
+    t.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    t.Tick(At("ForestTemple", Forest().arrive, true), 2 * kS);
+    t.Tick(At("ForestTemple", Forest().arrive, false), 3 * kS);
+    a = t.Tick(At("ForestTemple", Forest().arrive, true), 3 * kS + Sync::kMinFightUs);
+    CHECK(Has(a, proto::BossState::defeated));
+}
+
 TEST_CASE("boss: the boss's bodies are the boss actor, and Koume and Kotake for Twinrova") {
     for (const auto& room : CoopBoss::Rooms()) {
         const auto bodies = CoopBoss::Bodies(room);

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 
 #include "coop/host/flags.hpp"
 
@@ -28,6 +29,10 @@ struct Flag {
 // dungeon's name, as the logic graphs and event flows use them; flags about
 // one player alone (where they stand, Navi's hints, the camera) are left out.
 std::span<const Flag> Flags();
+
+// Named flags of the dungeons that are never shared: where one player is in a
+// boss fight (the boss door shut behind them), not what the group did (issue 148).
+std::span<const std::string_view> NotShared();
 
 // One placed thing whose "done" is a 64-bit-key flag keyed by its placement
 // hash (a chest opened, a silver rupee taken, a room's enemies beaten, a wall

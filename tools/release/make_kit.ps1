@@ -143,6 +143,12 @@ $skip = @('/XD', (Join-Path $EmulatorBin 'user'))
 if (-not $IncludePdb) { $skip += @('/XF', '*.pdb') }
 & robocopy $EmulatorBin $emu /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP @skip | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "Copying the emulator failed (robocopy $LASTEXITCODE)." }
+# Fritchii's "Preparing shaders" step (video_core/nx2_precompile.cpp) only runs with a recipe in
+# recipes\ beside the exe. Without it every new place stutters while shaders build, worst on AMD,
+# where Fritchii turns shader libraries off and relies on this step (docs/setup.md, "Low frame rate").
+if (-not (Get-ChildItem -LiteralPath (Join-Path $emu 'recipes') -File -ErrorAction SilentlyContinue)) {
+    Write-Warning "No recipes folder beside lichii.exe: players get no 'Preparing shaders' step, so more stutter (most on AMD). Put Fritchii's recipes\ folder in $EmulatorBin."
+}
 foreach ($sub in 'config', 'keys', 'log') { New-Item -ItemType Directory -Force -Path (Join-Path $emu "user\$sub") | Out-Null }
 Write-CoopIni (Join-Path $here 'kit\coop.ini.template') (Join-Path $emu 'user\config\coop.ini') '' "$Port" ''
 

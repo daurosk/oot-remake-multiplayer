@@ -126,8 +126,17 @@ STAND_INS = (
     # Issue 151: another player's cast lure, seen but never bitten by a fish here.
     ("Weapon_Lure", "CoopShot_Lure"),
     ("Weapon_SinkingLure", "CoopShot_SinkingLure"),
+    # Issue 169: another player's bomb while it is in their hands. The game's own bomb copy kept
+    # its physics body's fall between the hook's places and dropped out of the puppet's hands; the
+    # stand-in has no body. It keeps the bomb's animations, so its fuse can blink.
+    ("Item_Bomb", "CoopShot_Bomb"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
+# Components some stand-ins keep beyond the model (by stand-in name): the animation set, so the
+# hook can play the owner's animation on it (the bomb's Bomb_Blink).
+STAND_IN_EXTRA_COMPONENTS = {
+    "CoopShot_Bomb": ("ASRef", "ASInfoRef", "AnimationRef"),
+}
 # ActorInfo fields of the shootable that a model-only actor must not take over.
 STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")
 
@@ -316,18 +325,20 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
     return sarc.write(files), ap, sorted(files), keys
 
 
-def make_stand_in_param(components):
-    """A stand-in's ActorParam: the shootable's model (and LOD) with the shared defaults."""
+def make_stand_in_param(components, extra=()):
+    """A stand-in's ActorParam: the shootable's model (and LOD, and the `extra` components it
+    has) with the shared defaults."""
     if "ModelInfoRef" not in components:
         raise BuildError("the shootable's ActorParam has no ModelInfoRef")
-    comps = {k: components[k] for k in STAND_IN_COMPONENTS if k in components}
+    comps = {k: components[k] for k in STAND_IN_COMPONENTS + tuple(extra) if k in components}
     comps.update(FIXED_COMPONENTS)
     return {"Components": comps}
 
 
 def build_stand_in(members, source, name):
     """Returns (pack bytes, actor param bytes, member list) for one stand-in."""
-    doc = make_stand_in_param(flatten_actor_param(members, source))
+    doc = make_stand_in_param(flatten_actor_param(members, source),
+                              STAND_IN_EXTRA_COMPONENTS.get(name, ()))
     files = collect_members(members, doc)
     ap = byml.dumps(doc)
     files[actor_param_path(name)] = ap

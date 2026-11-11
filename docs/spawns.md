@@ -8,7 +8,7 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 
 | Actor | When gone, the copy | Seen live |
 |---|---|---|
-| `Item_Bomb`, `Item_Bombchu` | explodes (life set to 0) | not yet |
+| `Item_Bomb`, `Item_Bombchu` | explodes (life set to 0); a held bomb is the stand-in `CoopShot_Bomb` until thrown (issue 169) | yes (two-game tests, 2026-11-11) |
 | `Shootable_DekuSeed`, `Item_DekuNut` | is deleted | names seen ([objects.md](objects.md)) |
 | `NormalArrow`, `Weapon_Boomerang`, `Shootable_Hook`, `Shootable_HookLong` | is deleted | names from the data files |
 
@@ -29,6 +29,18 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 - A remove with reason exploded sets the copy bomb's life to 0 (`[[[actor + 0x270] + 0x2b8] + 0x1c10] + 8`), which runs the game's own explosion where the owner's bomb went off. Any other remove deletes the copy (`0xa6490(actor, 0)`).
 - A copy shows up on our own actor list too. It is never sent back: the director tells the sync each copy's actor, and a new actor of a copy's name within 1.5 units of a copy not yet placed is taken as that copy.
 - A new scene, a lost connection or a new game forgets everything. A copy with no sample or remove for 20 s is dropped.
+
+## Held bombs and the fuse (issue 169)
+
+- **Seen (two-game test, 2026-11-11).** While a player held a bomb, the other games showed it fall to the floor, snap back to the hands, and fall again, over and over. The explosion was shared, but the fuse's blinking was not shown.
+- **Cause (read from the code, not measured).** The copy was the game's own `Item_Bomb`, a physics body with gravity. The director puts it at the owner's place every frame through the setter (vtable slot 0x218, 0x4c6580). That path (0x4c6630) stores the new transform on the body as a teleport and does not clear its speed (read with a disassembler from the game's code; no speed write was found there). So the fall's speed grows frame after frame, the body is drawn lower each frame, until it hits the floor and stops, and the next place puts it back in the hands. The fuse is in the bomb's AI (`ExecuteBarrelBombAI`, AS `Bomb_Blink`), which starts it when Link lifts the bomb; a copy is never lifted, so its own fuse never runs.
+- **The owner.** A bomb is held while it is over our Link (at most 0.9 m to the side, 0.3 to 2.8 m above his feet) and moves with him (at most 2 m/s apart), or while its own animation says `Lifted` (`CoopProjectiles::InHands`, `HeldByAnimation`). It is let go at once when its animation says `Thrown`, or after 2 walks out of that box. Our Link's place comes from `PlayerReader::read_position`. The spawn and every sample carry the `held` bit (`object_state`, protocol 4: no new message) and the bomb's AS slot 0 (command, frame, rate; the AS `LiftableExplodeObject_BallBomb` has `Lifted`, `Thrown`, `Wait`, `Bomb_Wait`, `Bomb_Blink`, `Explode`). A held or animated bomb is sampled 30 times a second even when it does not move. A change of hands is sent at once.
+- **The other games.** A held copy is made as `CoopShot_Bomb`, a stand-in in the puppet pack with the bomb's model and its animations (`ASRef`, `ASInfoRef`, `AnimationRef`) and no physics, life, liftable or AI. It is placed as the puppet is, with no setter, so it cannot fall. It is shown 100 ms late, between the owner's two samples around that moment, as the puppet holding it is (`HeldPath`), so it stays in the puppet's hands.
+- When the owner lets go, the copy gets a new key: the director deletes the stand-in and makes the game's own `Item_Bomb` where the owner's bomb is, which then follows the owner's flight and explodes as before. A bomb that goes off in the owner's hands is made as `Item_Bomb` in the hands first, then blown up once it is live.
+- **The fuse on the copy.** The director plays the owner's AS slot 0 command on the copy (stand-in or bomb) with the game's play call (0x2022a0), as the objects' mover does for enemies, and sets its frame when it is more than 3 frames off (0x37b5d70). Names go in fixed cells after the director's slots (one per name, never rewritten).
+- With a pack built before this (no `CoopShot_Bomb`), or after 3 failed tries, the held copy is the game's own bomb, as before.
+- Log: `coop: shots: bombs held: N of ours, M copies in other players' hands` when either count changes; `spawn: CoopShot_Bomb: create copy ...`.
+- **Not proven in a game.** The box and the `Lifted`/`Thrown` names on the owner, the stand-in drawing the bomb with its animation, and the blink frames.
 
 ## Seeds, arrows and hookshot tips: stand-ins (issue 85)
 

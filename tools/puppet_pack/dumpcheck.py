@@ -61,6 +61,7 @@ OPTIONAL = (
     "Pack/Actor/Shootable_HookLong.pack.zs",
     "Pack/Actor/Weapon_Lure.pack.zs",
     "Pack/Actor/Weapon_SinkingLure.pack.zs",
+    "Pack/Actor/Item_Bomb.pack.zs",
 )
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "

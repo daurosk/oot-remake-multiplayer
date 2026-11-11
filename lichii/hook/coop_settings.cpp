@@ -108,6 +108,19 @@ void Set(std::string_view key, std::string_view value, const std::string& where,
             return;
         }
         settings.name = std::string(value);
+    } else if (key == "password") {
+        // The join password (empty: none). Its HMAC answers the server's
+        // challenge; the server, not this, says whether it is right.
+        bool control = false;
+        for (const char ch : value) {
+            const auto b = static_cast<unsigned char>(ch);
+            control = control || b < 0x20 || b == 0x7f;
+        }
+        if (value.size() > 128 || control) {
+            errors.push_back(where + ": password must be at most 128 characters, no control characters");
+            return;
+        }
+        settings.password = std::string(value);
     } else {
         errors.push_back(where + ": unknown key '" + std::string(key) + "'");
     }
@@ -147,6 +160,7 @@ void ApplyEnvironment(const std::function<std::optional<std::string>(const char*
         {"LICHII_COOP_SERVER", "server"},
         {"LICHII_COOP_PORT", "port"},
         {"LICHII_COOP_NAME", "name"},
+        {"LICHII_COOP_PASSWORD", "password"},
     };
     // Server first, so LICHII_COOP_PORT wins over a port inside it.
     for (const auto& v : kVariables) {

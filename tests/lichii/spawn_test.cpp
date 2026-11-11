@@ -286,6 +286,8 @@ TEST_CASE("spawn: a shot seed whose place stays in the sling gets a made-up flig
     const auto removes = Of<proto::ObjectRemove>(send);
     REQUIRE(removes.size() == 1);
     CHECK(removes[0].position[2] == doctest::Approx(end));
+    // A guessed end: the copies are not held there (issue 166).
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
     REQUIRE(sync.Flights().size() == 1);
     CHECK(sync.Flights()[0].shot);
     CHECK(sync.Flights()[0].made_up);
@@ -935,4 +937,281 @@ TEST_CASE("spawn: our cast lure's place is known for the fish rules") {
     // Reeled in: gone from the walk, so no longer ours to count.
     sync.Tick(kScene, 1, 99 * kMs, {}, {}, send, copies);
     CHECK(sync.OwnLures().empty());
+}
+
+// ---------------------------------------------------------------- issue 169
+
+namespace {
+
+Seen Bomb(std::uint64_t address, proto::Vec3 at, const char* animation = nullptr) {
+    Seen s;
+    s.address = address;
+    s.name = "Item_Bomb";
+    s.position = at;
+    if (animation != nullptr) {
+        s.animation = proto::Animation{animation, 4.0f, 1.0f};
+    }
+    return s;
+}
+
+bool HeldBit(const proto::ObjectState& s) {
+    return s.state && (*s.state & proto::object_state::held) != 0;
+}
+
+} // namespace
+
+TEST_CASE("spawn: our bomb over our Link is sent held, then let go when thrown (issue 169)") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.SetLink(proto::Vec3{0.0f, 0.0f, 0.0f});
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+
+    // Pulled out of the bag: over Link's head, playing Lifted.
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Bomb(0x6000, {0.2f, 1.3f, 0.0f}, "Lifted")}, none, send, copies);
+    auto spawns = Of<proto::ObjectSpawn>(send);
+    REQUIRE(spawns.size() == 1);
+    CHECK(HeldBit(spawns[0].state));
+    REQUIRE(spawns[0].state.animation);
+    CHECK(spawns[0].state.animation->name == "Lifted");
+    CHECK(proto::encode(send[0]));
+    CHECK(sync.HeldMine() == 1);
+
+    // Held still: sampled anyway (the fuse's frames), held.
+    send.clear();
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Bomb(0x6000, {0.2f, 1.3f, 0.0f}, "Bomb_Blink")}, none, send, copies);
+    auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE(samples.size() == 1);
+    CHECK(HeldBit(samples[0].state));
+    REQUIRE(samples[0].state.animation);
+    CHECK(samples[0].state.animation->name == "Bomb_Blink");
+
+    // Thrown: its own animation says so, and it goes at once.
+    send.clear();
+    now += 10 * kMs;
+    sync.Tick(kScene, 1, now, {Bomb(0x6000, {0.5f, 1.4f, 0.0f}, "Thrown")}, none, send, copies);
+    samples = Of<proto::ObjectSample>(send);
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.state);
+    CHECK_FALSE(HeldBit(samples[0].state));
+    CHECK(sync.HeldMine() == 0);
+}
+
+TEST_CASE("spawn: a bomb out of our Link's hands for two walks is let go, and none is held without Link") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.SetLink(proto::Vec3{0.0f, 0.0f, 0.0f});
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Bomb(0x6000, {0.0f, 1.3f, 0.0f})}, none, send, copies);
+    CHECK(sync.HeldMine() == 1);
+    // Out of the box (no animation read): still held for one walk.
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Bomb(0x6000, {0.5f, 1.3f, 2.0f})}, none, send, copies);
+    CHECK(sync.HeldMine() == 1);
+    send.clear();
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Bomb(0x6000, {0.5f, 1.3f, 3.0f})}, none, send, copies);
+    CHECK(sync.HeldMine() == 0);
+    auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE(samples.size() == 1);
+    CHECK_FALSE(HeldBit(samples[0].state));
+
+    // Our Link not known: nothing is held.
+    CoopSpawn::Sync other;
+    other.SetLink(std::nullopt);
+    other.Tick(kScene, 1, now, {}, none, send, copies);
+    other.Tick(kScene, 1, now + 33 * kMs, {Bomb(0x7000, {0.0f, 1.3f, 0.0f})}, none, send, copies);
+    CHECK(other.HeldMine() == 0);
+}
+
+TEST_CASE("spawn: another player's held bomb is the held stand-in in the puppet's hands, then the bomb") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    std::map<std::uint64_t, std::uint64_t> live;
+    sync.Tick(kScene, 2, 4'900'000, {}, live, send, copies);
+
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 77};
+    spawn.actor = "Item_Bomb";
+    spawn.state.time = {5'000'000, 0};
+    spawn.state.position = proto::Vec3{10.0f, 1.0f, 2.0f};
+    spawn.state.velocity = proto::Vec3{0.0f, 0.0f, 0.0f};
+    spawn.state.state = proto::object_state::held;
+    spawn.state.animation = proto::Animation{"Bomb_Blink", 10.0f, 1.0f};
+    sync.Receive(Wire(spawn, 1));
+    proto::ObjectSample sample;
+    sample.id = spawn.id;
+    sample.state.time = {5'100'000, 1};
+    sample.state.position = proto::Vec3{12.0f, 1.0f, 2.0f};
+    sample.state.velocity = proto::Vec3{20.0f, 0.0f, 0.0f};
+    sample.state.state = proto::object_state::held;
+    sync.Receive(Wire(sample, 1));
+
+    // Shown as late as the puppet, between the two samples, not carried on.
+    sync.Tick(kScene, 2, 5'150'000, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].held);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(11.0f));
+    REQUIRE(copies[0].animation);
+    CHECK(copies[0].animation->name == "Bomb_Blink");
+    CHECK(copies[0].animation->frame == doctest::Approx(10.0f + 30.0f * 0.05f));
+    CHECK(sync.HeldCopies() == 1);
+    const std::uint64_t held_key = copies[0].key;
+    live[held_key] = 0x9000;
+
+    // Thrown: a new key (the stand-in goes, the game's bomb is made), placed
+    // along the owner's flight as before.
+    sample.state.time = {5'200'000, 2};
+    sample.state.position = proto::Vec3{13.0f, 2.0f, 2.0f};
+    sample.state.velocity = proto::Vec3{10.0f, 0.0f, 0.0f};
+    sample.state.state = std::uint8_t{0};
+    sync.Receive(Wire(sample, 1));
+    copies.clear();
+    sync.Tick(kScene, 2, 5'200'000, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK_FALSE(copies[0].held);
+    CHECK(copies[0].key != held_key);
+    CHECK(copies[0].position[0] == doctest::Approx(13.0f));
+    CHECK(sync.HeldCopies() == 0);
+    CHECK(send.empty());
+}
+
+TEST_CASE("spawn: a bomb that goes off in its owner's hands is made as the bomb, then blown up") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    std::map<std::uint64_t, std::uint64_t> live;
+    sync.Tick(kScene, 2, 4'900'000, {}, live, send, copies);
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 78};
+    spawn.actor = "Item_Bomb";
+    spawn.state.time = {5'000'000, 0};
+    spawn.state.position = proto::Vec3{10.0f, 1.0f, 2.0f};
+    spawn.state.state = proto::object_state::held;
+    sync.Receive(Wire(spawn, 1));
+    sync.Tick(kScene, 2, 5'050'000, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].held);
+    const std::uint64_t held_key = copies[0].key;
+    live[held_key] = 0x9000;  // the stand-in is live
+
+    proto::ObjectRemove remove;
+    remove.id = spawn.id;
+    remove.reason = proto::RemoveReason::exploded;
+    remove.position = {10.0f, 1.0f, 2.0f};
+    sync.Receive(Wire(remove, 1));
+    copies.clear();
+    sync.Tick(kScene, 2, 5'100'000, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].key != held_key);
+    CHECK_FALSE(copies[0].held);
+    CHECK(copies[0].act == Act::show);  // made first
+    CHECK(copies[0].position[0] == doctest::Approx(10.0f));
+    const std::uint64_t bomb_key = copies[0].key;
+
+    live.erase(held_key);
+    live[bomb_key] = 0xa000;
+    copies.clear();
+    sync.Tick(kScene, 2, 5'133'000, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].key == bomb_key);
+    CHECK(copies[0].act == Act::explode);
+}
+
+TEST_CASE("spawn: a held copy is the bomb stand-in, and the owner's animation is played on it") {
+    namespace addr = CoopPuppet::addr;
+    using R = StandInRig;
+    CHECK(std::string(CoopSpawn::HeldStandIn("Item_Bomb")) == "CoopShot_Bomb");
+    CHECK(CoopSpawn::HeldStandIn("Item_Bombchu").empty());
+    CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Bomb\"}]}") ==
+          std::set<std::string>{"CoopShot_Bomb"});
+
+    StandInRig rig;
+    CoopSpawn::Director d;
+    d.SetStandIns({"CoopShot_Bomb"});
+    Copy copy;
+    copy.key = 9;
+    copy.actor = "Item_Bomb";
+    copy.position = {1.0f, 2.0f, 3.0f};
+    copy.setter = true;
+    copy.held = true;
+    copy.animation = proto::Animation{"Bomb_Blink", 10.0f, 1.0f};
+    d.SetInput(R::base, {copy});
+    REQUIRE(d.Step(rig.guest, false, 0, 0));  // malloc
+    auto c = d.Step(rig.guest, true, R::block, 0);
+    REQUIRE(c);
+    REQUIRE(c->function == R::base + addr::kCreate);
+    CHECK(rig.Name(*c) == "CoopShot_Bomb");
+    const std::uint64_t handle = c->x[3];
+    d.Step(rig.guest, true, 0, 0);
+    rig.guest.Set(handle, R::request);
+    rig.guest.Set(R::request, std::uint32_t{addr::kRequestReady});
+    REQUIRE(d.Step(rig.guest, false, 0, 16));  // take
+    d.Step(rig.guest, true, R::actor, 16);
+
+    // Its animations: [[[actor + 0x270] + 0x40] + 0x18] + 0x18, slot 0 Bomb_Wait.
+    constexpr std::uint64_t table = 0x60000000, as = 0x61000000, inner = 0x62000000,
+                            controller = 0x63000000, array = 0x64000000, slot0 = 0x65000000,
+                            names = 0x66000000;
+    for (const std::uint64_t a : {table, as, inner, controller, array, slot0, names}) {
+        rig.guest.Map(a, 0x200);
+    }
+    rig.guest.Set(R::actor + 0x270, table);
+    rig.guest.Set(table + 0x40, as);
+    rig.guest.Set(as + 0x18, inner);
+    rig.guest.Set(inner + 0x18, controller);
+    rig.guest.Set(controller + addr::kSlotCount, std::int32_t{1});
+    rig.guest.Set(controller + addr::kSlots, array);
+    rig.guest.Set(array, slot0);
+    REQUIRE(rig.guest.Write(names, "Bomb_Wait", 10));
+    REQUIRE(rig.guest.Write(names + 0x20, "Bomb_Blink", 11));
+    rig.guest.Set(slot0 + addr::kSlotName, names);
+    rig.guest.Set(slot0 + addr::kSlotFrame, 0.0f);
+
+    // Another command in slot 0: the owner's is played (no setter: a stand-in).
+    c = d.Step(rig.guest, false, 0, 33);
+    REQUIRE(c);
+    CHECK(c->function == R::base + addr::kPlayAs);
+    CHECK(rig.guest.Get<std::uint64_t>(c->x[0]) == R::actor);
+    char played[16]{};
+    REQUIRE(rig.guest.Read(rig.guest.Get<std::uint64_t>(c->x[0] + 8), played, 15));
+    CHECK(std::string(played) == "Bomb_Blink");
+    CHECK(rig.guest.Get<float>(c->x[0] + 0x14) == doctest::Approx(1.0f));
+    CHECK_FALSE(d.Step(rig.guest, true, 0, 33));
+    CHECK(rig.guest.Get<float>(R::actor + addr::kActorPositionRequest) == doctest::Approx(1.0f));
+
+    // Playing it, frames off: the frame is set.
+    rig.guest.Set(slot0 + addr::kSlotName, names + 0x20);
+    c = d.Step(rig.guest, false, 0, 66);
+    REQUIRE(c);
+    CHECK(c->function == R::base + addr::kSetAsFrame);
+    CHECK(c->x[0] == controller);
+    CHECK(c->s0 == doctest::Approx(10.0f));
+    CHECK_FALSE(d.Step(rig.guest, true, 0, 66));
+
+    // On the owner's frame: nothing to do.
+    rig.guest.Set(slot0 + addr::kSlotFrame, 11.0f);
+    CHECK_FALSE(d.Step(rig.guest, false, 0, 100));
+
+    // Not held: the game's own bomb.
+    CoopSpawn::Director plain;
+    plain.SetStandIns({"CoopShot_Bomb"});
+    StandInRig rig2;
+    copy.key = 10;
+    copy.held = false;
+    plain.SetInput(R::base, {copy});
+    REQUIRE(plain.Step(rig2.guest, false, 0, 0));
+    c = plain.Step(rig2.guest, true, R::block, 0);
+    REQUIRE(c);
+    CHECK(rig2.Name(*c) == "Item_Bomb");
 }

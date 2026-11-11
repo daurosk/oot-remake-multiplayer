@@ -105,7 +105,7 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 | State | Path | Live | Proven | Risk | P |
 |---|---|---|---|---|---|
 | Overworld doors, gates (Kakariko, Lon Lon, Gerudo, castle gate) | named flags where story, else none | ? | - | A gate opened by story in A, shut in B | **P1** to check |
-| Story events, cutscenes, medals and stones | items (medals and stones are items) + `Dm_`/`Demo_` flags NOT shared | - | - | A saw a story scene that unlocks an area; B's game never set its flag. Each player has to see it, or B is locked out | **P1** to check |
+| Story events, cutscenes, medals and stones | items (medals and stones are items) + the overworld's story scenes and story gates (`CoopStory::Flags()`, [flags.md](flags.md#story-and-cutscenes-issue-173)); dungeon scenes, time travel and bosses not shared | live; late joiner by the host's table | unit | Before (issue 173): each player watched Saria and the owl; a guest behind the host kept the forest-exit wall | **P1** to check in game |
 | Time of day | `TIME_OF_DAY` (host's clock) | live | game | - | P3 |
 | Song events (Zelda's Lullaby doors, Sun's Song, Song of Storms well) | none, unless the result is a flag | ? | - | The door a song opened in A stays in B | P2 |
 | Shops (stock sold out) | none; the Deku Shield is per player (issue 130), so each buys their own | - | - | - | P2 |
@@ -137,7 +137,7 @@ The P1 rows above, grouped by the fix branch that should take them:
 
 Branch `softlock-audit`: every way co-op could leave a player unable to go on, and whether the code on main handles it. Read from the code, the docs and the romfs (`Product.111` dump: `Logic/*.ainb`, `AI/*.ainb`, `Event/EventFlow`, `Banc/*`, `GameData/GameDataList`); nothing here was run.
 
-How the game keeps progress, in short: items are shared by rule ([items.md](items.md)); a dungeon's rooms are named saved flags (reset type 8) and placement keys (reset type 24), shared by [dungeon.md](dungeon.md)'s lists; chests and one-time pickups everywhere are keys ([items.md](items.md), "Chests"). **Overworld story flags are not shared**: each game plays its own story scenes, and the shared items let a player who is behind skip what the items stand for.
+How the game keeps progress, in short: items are shared by rule ([items.md](items.md)); a dungeon's rooms are named saved flags (reset type 8) and placement keys (reset type 24), shared by [dungeon.md](dungeon.md)'s lists; chests and one-time pickups everywhere are keys ([items.md](items.md), "Chests"). **Overworld story flags are shared** (issue 173): the story scenes seen and the gates they open follow the host's save ([flags.md](flags.md#story-and-cutscenes-issue-173)); scenes inside dungeons, time travel and bosses stay each game's own.
 
 Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover it; the reason is given), **P1** (can block a player; to do), **P2** (can annoy or cost time, no hard block), **Check** (needs a run to know).
 
@@ -175,11 +175,11 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 
 | # | Case | Status | Why / what to do |
 |---|---|---|---|
-| S1 | Story scenes (Deku Tree, Zelda, Darunia, King Zora, Gerudo carpenters, sages) | **OK** | Not shared on purpose (`Dm_`, `Demo_`, `SageOf`, talks). Each game plays its own when its player gets there; the shared items carry what they give. |
+| S1 | Story scenes (Deku Tree, Zelda, Darunia, King Zora, Gerudo carpenters, sages) | **Shared (issue 173)** | The overworld's story scenes are shared from the host's save (`lichii/hook/coop_story.cpp`, [flags.md](flags.md#story-and-cutscenes-issue-173)): one player seeing a scene counts for everyone. Still each game's own: the opening of a new game, time travel, the Chamber of Sages (the first sword pull, the sages' awakenings), scenes inside dungeons, bosses (D9), talks. |
 | S2 | One player adult, one child | **OK** | Shared flags belong to scenes; a child cannot be in an adult-only room. Small keys and dungeon flags are the same for both ages, as in one save. The Master Sword and time travel are per game. |
 | S3 | Ganon's Castle escape and the last fights | **Check** | The escape flags (`EscapeFromCrumblingGanonCastle_*`) are per game; Ganondorf is one boss for all ([dungeons-boss.md](dungeons-boss.md)). Check what a second player inside the castle sees when the first beats Ganondorf. |
 | S4 | Saves loaded at different points | **P2** | The joiner gets the host's table (`FLAG_SNAPSHOT`); its own 1s that the host has at 0 stay in its game and do not cross until they change. See I6. |
-| S6 | Story gates: a `Dm_`/`Demo_` scene that field logic reads (42 such flags found: Death Mountain Trail, Zora's River, Kakariko, Gerudo Valley, Hyrule Castle, Market, Lake Hylia, Kokiri Forest, Desert Colossus) | **OK** | Each is the scene of an event the other player's game can still play: the NPC is there and the shared items or songs it needs are there (Zelda's Letter, the songs, the stones). The second player sees it when they get there. The sage count (`AllSage_AwakeSageCount`) is read only by a story escape event, not by a gate; the rainbow bridge's field logic reads no flag (it is the medallions, which are shared). |
+| S6 | Story gates: a scene or flag that the overworld's placements or field logic read (the forest-exit wall, Mido, Jabu-Jabu's mouth, Kakariko's well, Lake Hylia's ice, the Death Mountain gate) | **Shared (issue 173)** | Before, each was the scene of an event the other player could still play, but a guest behind the host kept the forest-exit wall (issue 173). The gates' flags (`Presence` in the Banc files) and the scenes are now shared, so the host's save opens them in every game. |
 | S5 | Overworld entrances that need a per-game action (Kakariko well drained, the graveyard's Shadow Temple entrance `GraveYard_Field_ShadowTemple_ShutterOpen`, the Gerudo Valley bridge) | **OK** | Each player can do them: the songs, Din's Fire and the card are shared. |
 
 ### In-game checks (integrator)

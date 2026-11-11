@@ -48,10 +48,25 @@ function Read-YesNo([string]$Question, [int]$Seconds) {
     return $true
 }
 
-# A newer co-op release? One short question to GitHub (update.ps1 -Status), given 6 s at
+# Waits for a key, $Seconds at most, so a message is read before the game starts.
+function Wait-AnyKey([int]$Seconds) {
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected) { return }
+    Write-Host -NoNewline "Press a key to go on (goes on in $Seconds s) "
+    $end = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $end) {
+        if ([Console]::KeyAvailable) { [Console]::ReadKey($true) | Out-Null; break }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host ''
+}
+
+# A newer co-op release? One short question to GitHub (update.ps1 -Status), given 15 s at
 # most: a slow name lookup or proxy search is not bounded by the request's own timeout, so it
-# is stopped when it takes longer. No network, or GitHub down: nothing is said and this kit
-# starts as it is.
+# is stopped when it takes longer. No answer, or an update that fails, is said in one line
+# with what to do, and this kit starts as it is; a failed update waits for a key first, so
+# its message is read before the game window covers it.
 $updater = Join-Path $PSScriptRoot 'update.ps1'
 if (-not $NoUpdate -and (Test-Path $updater)) {
     $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -60,9 +75,16 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
     try {
         $check = Start-Process -FilePath $ps -NoNewWindow -PassThru -RedirectStandardOutput $out -ArgumentList @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$updater`"", '-Status', '-Kit', "`"$kit`"")
-        if ($check.WaitForExit(6000)) { $status = ([System.IO.File]::ReadAllText($out)).Trim() } else { $check.Kill() }
-    } catch { }
+        if ($check.WaitForExit(15000)) { $status = ([System.IO.File]::ReadAllText($out)).Trim() } else {
+            $check.Kill()
+            $status = 'failed GitHub did not answer in 15 s'
+        }
+    } catch { $status = "failed $($_.Exception.Message)" }
     Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+    if ($status -match '^failed (.*)') {
+        Write-Host "Could not check for a new co-op version: $($Matches[1])."
+        Write-Host 'Every player needs the same version. To check again, run Update.bat; releases: https://github.com/daurosk/oot-remake-multiplayer/releases'
+    }
     if ($status -match '^(newer (\S+)|unfinished)$') {
         $what = if ($Matches[2]) { "Co-op $($Matches[2]) is out." } else { 'An update of this kit did not finish.' }
         $when = 'ask'
@@ -90,7 +112,10 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
                 & $ps @next -NoUpdate
                 exit $LASTEXITCODE
             }
-            if ($code -ne 0) { Write-Host 'The update did not happen; this version starts as it is.' }
+            if ($code -ne 0) {
+                Write-Host 'The update did not happen (above: why, and how to update by hand); this version starts as it is.'
+                Wait-AnyKey 60
+            }
         }
     }
 }
@@ -141,8 +166,44 @@ if (-not (Test-CoopServer $Server)) { Write-Host "Bad server address: $Server"; 
 if (-not (Test-CoopName $Name)) { Write-Host "Bad name: $Name"; exit 1 }
 if ($Port -notmatch '^\d{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) { Write-Host "Bad port: $Port"; exit 1 }
 
-Write-CoopIni $template $ini $Server $Port $Name
-Write-Host "Co-op: server $Server, port $Port, name $Name   (play.cmd change to change the name)"
+# The join password (protocol 9). Host.bat: asked once and saved as server_password in
+# coop-options.ini (an empty line there means none); this game uses the same one. Join.bat
+# and play.cmd change: asked each time, Enter keeps the saved one, '-' clears it.
+$optionsFile = Join-Path $kit 'coop-options.ini'
+$Password = $current.password
+if ($Mode -eq 'host') {
+    $Password = (Read-KitServerAccess $optionsFile).Password
+    if ($null -eq $Password) {
+        Write-Host 'A join password keeps out anyone who finds your server: players type it in Join.bat.'
+        Write-Host 'Pick a long one without spaces (12 characters or more; three random words work) and send it to your friends with the address. Enter: no password.'
+        do {
+            $answer = Read-Host 'Join password for your server'
+            $Password = if ($answer) { $answer.Trim() } else { '' }
+            $ok = -not $Password -or (Test-CoopPassword $Password)
+            if (-not $ok) { Write-Host 'No spaces, at most 128 characters.' }
+        } until ($ok)
+        Set-KitServerPassword $optionsFile $Password
+        Write-Host "Saved in coop-options.ini (server_password). Delete that line to be asked again."
+    }
+    elseif ($Password -and -not (Test-CoopPassword $Password)) {
+        Write-Host 'coop-options.ini: server_password has a space or is longer than 128 characters; the server was not started.'
+        exit 1
+    }
+}
+elseif ($Mode -eq 'join' -or $ask) {
+    Write-Host 'Join password: only if the host gave you one. Enter keeps the one in [ ], - for none.'
+    do {
+        $answer = Read-Host "Join password$(if ($Password) { ' [saved]' })"
+        if ($answer -and $answer.Trim() -eq '-') { $Password = '' }
+        elseif ($answer -and $answer.Trim()) { $Password = $answer.Trim() }
+        $ok = -not $Password -or (Test-CoopPassword $Password)
+        if (-not $ok) { Write-Host 'A join password has no spaces and at most 128 characters. Ask the host for it again.'; $Password = '' }
+    } until ($ok)
+}
+if ($Password -and -not (Test-CoopPassword $Password)) { Write-Host 'coop.ini: the join password has a space or is too long.'; exit 1 }
+
+Write-CoopIni $template $ini $Server $Port $Name $Password
+Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'none' })   (play.cmd change to change the name)"
 
 $user = Join-Path $emu 'user'
 if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
@@ -235,6 +296,7 @@ if ($Mode -eq 'join' -and $game) {
         if ($state -like 'refused:*') {
             Write-Host "The host's server said no: $($state.Substring(9))."
             Write-Host 'name taken: pick another name with play.cmd change. wrong protocol version: everyone runs Update.bat.'
+            Write-Host 'wrong join password: start Join.bat again and type the password the host sent you (- for none).'
             exit 1
         }
         if ($state -eq 'trying') {

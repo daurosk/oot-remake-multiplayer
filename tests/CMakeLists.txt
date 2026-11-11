@@ -15,6 +15,7 @@ add_executable(coop_tests
   smoke_test.cpp
   protocol/codec_test.cpp
   protocol/fuzz_test.cpp
+  protocol/join_password_test.cpp
   net/clock_test.cpp
   net/client_test.cpp
   presence/presence_test.cpp
@@ -25,6 +26,7 @@ add_executable(coop_tests
   host/game_flags_test.cpp
   host/game_items_test.cpp
   host/notify_test.cpp
+  host/save_transfer_test.cpp
   host/session_test.cpp
   host/scene_test.cpp
   overlay/overlay_test.cpp
@@ -39,6 +41,7 @@ add_executable(coop_tests
   lichii/guard_test.cpp
   lichii/chests_test.cpp
   lichii/dungeon_test.cpp
+  lichii/story_test.cpp
   lichii/pose_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
@@ -57,7 +60,9 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_drops.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_chests.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dungeon.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_story.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_events.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_places.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pose.cpp

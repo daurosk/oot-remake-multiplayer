@@ -1,0 +1,22 @@
+# host-save-load (#167): a guest plays on the host's save. Run:
+#   tools\autotest\run.ps1 -Scenario host-save-load -Timeout 900
+# A (host) boots and stays on the title. B boots with LICHII_COOP_HOST_SAVE=1 (both games are on
+# 127.0.0.1, so only B gets it) and asks for the host's save; the host answers with its newest
+# slot. A's log: "player 2 asked for our save", "sending slot_NN ... to player 2". B's log: "the
+# host's save is in", "written to ...-coop". B continues from the co-op folder and plays there.
+# Then A loads its save and walks (the host-load resend waits for the game's next save on disk;
+# the test saves start in Kakariko and this walk changes no scene, so expect no resend).
+# Note: the test kits' baselines are the same save in A and B, so where B stands proves only
+# that the co-op slot loads, not whose save it is (the log lines and the -coop folder do).
+#! switches LICHII_COOP_DEBUG_FLAGS=1,B:LICHII_COOP_HOST_SAVE=1
+start A
+start B
+sleep 40
+shot b-asked
+load B
+sleep 20
+shot b-on-host-save
+load A
+play A hsl-door.A.txt
+sleep 30
+shot end

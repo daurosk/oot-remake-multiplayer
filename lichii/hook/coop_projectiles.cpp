@@ -121,7 +121,9 @@ bool Track::Add(const Point& p) {
     if (!Finite(p.position) || !Finite(p.velocity) || (last_ && p.time_us <= last_->time_us)) {
         return false;
     }
-    if (last_ && p.time_us - last_->time_us >= kGravityMinGapUs) {
+    // A bounce turns the velocity: that is no fall (issue 166).
+    if (last_ && p.time_us - last_->time_us >= kGravityMinGapUs &&
+        !Bounced(last_->velocity, p.velocity)) {
         // Only a fall counts: something thrown up slows the same way.
         const float dt = float(p.time_us - last_->time_us) / 1e6f;
         const float g = (last_->velocity[1] - p.velocity[1]) / dt;
@@ -160,6 +162,61 @@ void Track::Stop(const Vec3& at) {
     last_->position = at;
     last_->velocity = {};
     stopped_ = true;
+}
+
+// ---------------------------------------------------------------- held bombs
+
+bool InHands(const Vec3& item, const Vec3& link, float speed_apart) {
+    if (!Finite(item) || !Finite(link) || !std::isfinite(speed_apart)) {
+        return false;
+    }
+    const float dx = item[0] - link[0];
+    const float dz = item[2] - link[2];
+    const float up = item[1] - link[1];
+    return std::sqrt(dx * dx + dz * dz) <= kHeldReach && up >= kHeldLow && up <= kHeldHigh &&
+           speed_apart <= kHeldSlip;
+}
+
+std::optional<bool> HeldByAnimation(std::string_view name) {
+    if (name == "Lifted") {
+        return true;
+    }
+    if (name == "Thrown") {
+        return false;
+    }
+    return std::nullopt;
+}
+
+void HeldPath::Add(const Point& p) {
+    if (!Finite(p.position) || (!points_.empty() && p.time_us <= points_.back().time_us)) {
+        return;
+    }
+    points_.push_back(p);
+    while (points_.size() > kKeep) {
+        points_.pop_front();
+    }
+}
+
+Vec3 HeldPath::At(std::uint64_t time_us) const {
+    if (points_.empty()) {
+        return {};
+    }
+    if (time_us <= points_.front().time_us) {
+        return points_.front().position;
+    }
+    for (std::size_t i = 1; i < points_.size(); ++i) {
+        const Point& b = points_[i];
+        if (time_us <= b.time_us) {
+            const Point& a = points_[i - 1];
+            const float t = float(time_us - a.time_us) / float(b.time_us - a.time_us);
+            Vec3 at{};
+            for (int k = 0; k < 3; ++k) {
+                at[k] = a.position[k] + (b.position[k] - a.position[k]) * t;
+            }
+            return at;
+        }
+    }
+    return points_.back().position;
 }
 
 // ---------------------------------------------------------------- FuseClock
@@ -227,6 +284,27 @@ float ShotSpeed(Kind kind) {
         return 40.0f;
     default:
         return 30.0f;
+    }
+}
+
+bool Bounced(const Vec3& before, const Vec3& after) {
+    const float a = std::sqrt(before[0] * before[0] + before[1] * before[1] + before[2] * before[2]);
+    const float b = std::sqrt(after[0] * after[0] + after[1] * after[1] + after[2] * after[2]);
+    if (!(a >= kHitSpeed) || !(b >= kHitSpeed)) {
+        return false;
+    }
+    const float dot = before[0] * after[0] + before[1] * after[1] + before[2] * after[2];
+    return dot < kBounceCos * a * b;
+}
+
+std::uint64_t LandHoldUs(Kind kind) {
+    switch (kind) {
+    case Kind::arrow:
+        return 1'500'000;  // sticks where it struck
+    case Kind::seed:
+        return 200'000;    // seen landing, then gone as on the owner's screen
+    default:
+        return 0;          // a nut flashes by its own AI; the rest go at once
     }
 }
 

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,21 @@ namespace {
 std::atomic<bool> g_stop{false};
 
 void on_signal(int) { g_stop = true; }
+
+// An environment variable's value; empty when it is not set.
+std::string environment(const std::string& name) {
+#ifdef _WIN32
+  char* value = nullptr;
+  std::size_t size = 0;
+  if (_dupenv_s(&value, &size, name.c_str()) != 0 || value == nullptr) return {};
+  std::string out(value);
+  std::free(value);
+  return out;
+#else
+  const char* value = std::getenv(name.c_str());
+  return value == nullptr ? std::string() : std::string(value);
+#endif
+}
 
 }  // namespace
 
@@ -35,6 +51,14 @@ int main(int argc, char** argv) {
     std::printf("%s", usage());
     return 0;
   }
+  if (!line->password_env.empty()) {
+    line->password = environment(line->password_env);
+    if (const char* why = password_problem(line->password)) {
+      std::fprintf(stderr, "coop_server: the join password in %s is %s\n",
+                   line->password_env.c_str(), why);
+      return 2;
+    }
+  }
 
   if (enet_initialize() != 0) {
     std::fprintf(stderr, "coop_server: ENet failed to start\n");
@@ -48,6 +72,7 @@ int main(int argc, char** argv) {
     options.session.game_build_id = line->game_build_id;
     options.session.max_half_open_per_address = line->max_half_open;
     options.session.allowed = line->allowed;
+    options.session.join_password = line->password;
     options.bind = line->bind;
     options.session.log = [](const std::string& text) {
       std::printf("coop_server: %s\n", text.c_str());
@@ -70,6 +95,9 @@ int main(int argc, char** argv) {
       std::printf("coop_server: listening on port %u (%s, datagrams of %u bytes)\n",
                   static_cast<unsigned>(server.port()), where.c_str(),
                   static_cast<unsigned>(coop::protocol::kDatagramBytes));
+      if (!line->password.empty()) {
+        std::printf("coop_server: players must give the join password to join\n");
+      }
       if (!line->allowed.empty()) {
         std::printf("coop_server: only the %u address range(s) given with --allow may connect\n",
                     static_cast<unsigned>(line->allowed.size()));

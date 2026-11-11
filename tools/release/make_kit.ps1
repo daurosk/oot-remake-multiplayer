@@ -157,7 +157,7 @@ if ($crt) {
 }
 
 foreach ($f in 'Host.bat', 'Join.bat', 'start-server.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'check-hosting.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
-foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1', 'update.ps1', 'hosting.ps1', 'check-hosting.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1', 'update.ps1', 'hosting.ps1', 'check-hosting.ps1', 'log-mask.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
 # Update.bat: the updater in one file (the same file is attached to each release for old kits).
 & (Join-Path $here 'make_update_bat.ps1') -Out (Join-Path $kit 'Update.bat')
 
@@ -192,6 +192,9 @@ if ($Python) {
     $pythonNote = "Python $pyVersion, zstandard $zstdVersion"
 }
 Copy-Text (Join-Path $here 'kit\coop.ini.template') (Join-Path $kit 'scripts\coop.ini.template')
+# A fresh kit's options, for update.ps1: it adds the keys a player's coop-options.ini lacks
+# (one an older updater left short) on the kit's next start.
+Copy-Text (Join-Path $here 'kit\coop-options.ini') (Join-Path $kit 'scripts\coop-options.default.ini')
 New-Item -ItemType Directory -Force -Path (Join-Path $kit 'logs') | Out-Null
 # TESTING.md: the part for players. How the kit is made and the automatic tests are about
 # this repo and its build PC, so they stop at the marker line.

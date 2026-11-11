@@ -51,6 +51,16 @@ struct SessionConfig {
   std::string game_build_id;
   std::uint16_t tick_rate = 60;
   std::uint64_t hello_timeout_us = 10'000'000;    // connect to HELLO
+  // The join password (coop_server --password): a player must answer the
+  // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce.
+  // Empty: no password, HELLO is answered at once as before.
+  std::string join_password;
+  // Guessing the join password: an address that sends max_wrong_passwords
+  // wrong proofs within wrong_password_window_us is closed at connect for
+  // wrong_password_block_us (counted in password_blocked). 0: no limit.
+  std::uint32_t max_wrong_passwords = 5;
+  std::uint64_t wrong_password_window_us = 60'000'000;
+  std::uint64_t wrong_password_block_us = 60'000'000;
   std::uint64_t silence_timeout_us = 10'000'000;  // nothing heard from a player
   std::uint64_t ping_interval_us = 250'000;
   // A refused connection the transport has not closed this long after the
@@ -203,6 +213,14 @@ struct Stats {
   // HELLOs that took over a stale player of the same name (see
   // rejoin_stale_us).
   std::uint64_t rejoined = 0;
+  // JOIN_PROOFs that did not match the join password (each one refused).
+  std::uint64_t bad_password = 0;
+  // JOIN_PROOFs nobody asked for: no challenge open on that connection.
+  std::uint64_t stray_proof = 0;
+  // Connections closed at connect: their address made too many wrong
+  // guesses at the join password lately (max_wrong_passwords). Not packets,
+  // so not in dropped().
+  std::uint64_t password_blocked = 0;
 
   // JOIN_PARTNER (stage 1 step 3). Relayed ones count in relayed too.
   std::uint64_t join_relayed = 0;
@@ -214,6 +232,13 @@ struct Stats {
   // FLAG_SET and FLAG_STATE relayed (stage 1 step 4); in relayed too.
   std::uint64_t flag_relayed = 0;
   std::uint64_t host_resets = 0;   // FLAG_RESETs from the host (its save load)
+  // The host's save (docs/protocol.md, "Save transfer"): SAVE_ASKs passed to
+  // the host, SAVE_PARTs passed on (both in relayed too), and either refused
+  // (an ask from the host or with no host, a part not from the host or for a
+  // player not here).
+  std::uint64_t save_asks = 0;
+  std::uint64_t save_parts = 0;
+  std::uint64_t save_refused = 0;
   std::uint64_t origins_sent = 0;  // FLAG_ORIGIN: who asked, to the others (chat notices)
   std::uint64_t flag_refused = 0;     // FLAG_STATE or FLAG_SNAPSHOT not from the host
   std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
@@ -279,7 +304,8 @@ class Session {
   // The transport lost the connection. A player who was in is reported to
   // the others as left, or as timed out when nothing was heard from them for
   // half the silence timeout or more (ENet does not say which it was).
-  void disconnected(ConnectionId id, std::uint64_t now_us);
+  // `link` (the transport's view: round trip, loss) goes into the log line.
+  void disconnected(ConnectionId id, std::uint64_t now_us, const std::string& link = {});
 
   // Timeouts and the server's own PINGs. Call often (every few ms).
   void tick(std::uint64_t now_us);
@@ -288,6 +314,8 @@ class Session {
   std::vector<Action> take_actions();
 
   const Stats& stats() const { return stats_; }
+  // Addresses with recent wrong join passwords (max_wrong_passwords).
+  std::size_t wrong_guess_addresses() const { return wrong_guesses_.size(); }
   std::size_t player_count() const;
   // The host's player number; none while the session is empty.
   std::optional<std::uint8_t> host() const;
@@ -308,7 +336,8 @@ class Session {
   bool object_in_fight(const protocol::ObjectId& id, std::uint64_t now_us) const;
 
  private:
-  enum class State : std::uint8_t { awaiting_hello, joined, closing };
+  // awaiting_proof: HELLO came, JOIN_CHALLENGE sent, JOIN_PROOF not yet.
+  enum class State : std::uint8_t { awaiting_hello, awaiting_proof, joined, closing };
 
   struct Connection {
     State state = State::awaiting_hello;
@@ -322,6 +351,9 @@ class Session {
     double byte_budget = 0;
     std::uint64_t budget_time = 0;
     std::optional<std::uint32_t> address;
+    // While awaiting_proof: the HELLO to admit and the nonce it was sent.
+    std::optional<protocol::Hello> pending_hello;
+    protocol::JoinNonce nonce{};
     std::uint8_t number = 0;  // 1 to 4 once joined
     std::string nickname;
     // The scene the player is in, from its latest OBJECT_PRESENT or
@@ -392,6 +424,11 @@ class Session {
 
   void on_hello(ConnectionId id, Connection& c, const protocol::Hello& hello,
                 std::uint64_t now_us);
+  void on_join_proof(ConnectionId id, Connection& c, const protocol::JoinProof& proof,
+                     std::uint64_t now_us);
+  // The checks after the password, then WELCOME.
+  void admit(ConnectionId id, Connection& c, const protocol::Hello& hello,
+             std::uint64_t now_us);
   void on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
                          protocol::Message& message, std::size_t bytes, std::uint64_t now_us);
   void on_join_partner(ConnectionId id, Connection& c, protocol::JoinPartner& j);
@@ -403,6 +440,7 @@ class Session {
   // undoes is dropped here: add each owner's clear (locked doors' kept
   // breaks, the kills-late dead list, ...). Called once per FLAG_RESET.
   void on_host_reset();
+  void on_save(ConnectionId id, Connection& c, protocol::Message& message);
   // Keeps an entry in the table; false when it is new and the table is full.
   bool keep_flag(const protocol::FlagEntry& e);
   void send_snapshot(ConnectionId to);
@@ -493,7 +531,9 @@ class Session {
   // why: more for the server's log (which version is older), or empty.
   void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
               std::uint64_t now_us, const std::string& why = {});
-  void remove_player(ConnectionId id, protocol::LeaveReason reason, std::uint64_t now_us);
+  // `why` goes into the log line: every drop says its reason.
+  void remove_player(ConnectionId id, protocol::LeaveReason reason, std::uint64_t now_us,
+                     const std::string& why = {});
   std::optional<ConnectionId> holder_of(const std::string& nickname) const;
   std::uint8_t free_number(std::uint8_t preferred = 0) const;
 
@@ -534,6 +574,18 @@ class Session {
   WorldStore world_;
   std::vector<Action> actions_;
   Stats stats_;
+  // Wrong join passwords by address (max_wrong_passwords). An entry goes
+  // when its window and its block are both over (tick sweeps them), so the
+  // map holds only addresses that guessed wrong in the last minute or two.
+  struct WrongGuesses {
+    std::uint32_t count = 0;
+    std::uint64_t first_at = 0;       // the first wrong guess of this window
+    std::uint64_t blocked_until = 0;  // 0: not blocked
+  };
+  std::map<std::uint32_t, WrongGuesses> wrong_guesses_;
+  static constexpr std::size_t kMaxWrongGuessAddresses = 4096;
+  // Counts a wrong proof from `address`; blocks it at the limit.
+  void note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us);
 };
 
 }  // namespace coop::server

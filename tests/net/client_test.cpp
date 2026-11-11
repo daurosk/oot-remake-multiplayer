@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <ostream>  // doctest prints string_view through it
 #include <span>
@@ -23,6 +24,7 @@
 #include <vector>
 
 #include "coop/net/client.hpp"
+#include "coop/net/enet_waiting.hpp"
 #include "coop/protocol/codec.hpp"
 
 using namespace coop::net;
@@ -113,6 +115,18 @@ class FakeServer {
         bytes.data(), bytes.size(),
         channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u);
     REQUIRE(enet_peer_send(last_peer, channel, packet) == 0);
+    enet_host_flush(host_);
+  }
+
+  // As the real server sends poses and samples: unreliable, in fragments
+  // when longer than a datagram (server/enet_server.cpp packet_flags).
+  void send_fast(const proto::Message& message) {
+    REQUIRE(last_peer != nullptr);
+    const auto bytes = proto::encode(message);
+    REQUIRE(bytes.has_value());
+    ENetPacket* packet = enet_packet_create(bytes->data(), bytes->size(),
+                                            static_cast<enet_uint32>(ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT));
+    REQUIRE(enet_peer_send(last_peer, proto::channel_of(message), packet) == 0);
     enet_host_flush(host_);
   }
 
@@ -488,6 +502,54 @@ TEST_CASE("client: an attempt that ends another way closes the name taken window
   CHECK(client.state() == State::waiting_retry);
 }
 
+TEST_CASE("client: a JOIN_CHALLENGE is answered once with the proof of the join password") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  proto::JoinNonce nonce{};
+  for (std::size_t i = 0; i < nonce.size(); ++i) nonce[i] = static_cast<std::uint8_t>(i * 7);
+  server.send(proto::JoinChallenge{nonce}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return server.find<proto::JoinProof>().has_value(); }));
+  const auto& proof = std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message);
+  CHECK(proof.proof == proto::join_proof("hunter2", nonce));
+  CHECK(proof.proof != proto::join_proof("hunter3", nonce));
+
+  // A second challenge on the same connection gets no second proof: a fake
+  // server cannot collect proofs for nonces of its choosing on one connection.
+  proto::JoinNonce other = nonce;
+  other[0] ^= 1;
+  server.send(proto::JoinChallenge{other}, proto::kChannelSession);
+  pump(client, server, [] { return false; }, 200);
+  CHECK(std::count_if(server.received.begin(), server.received.end(), [](const Received& r) {
+          return std::holds_alternative<proto::JoinProof>(r.message);
+        }) == 1);
+
+  server.send(proto::Refused{proto::RefuseReason::bad_password}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::refused));
+  const Event& refused = events.all[*events.find(EventKind::refused)];
+  CHECK(refused.refuse_reason == proto::RefuseReason::bad_password);
+  CHECK(refuse_reason_text(refused.refuse_reason).starts_with("wrong join password"));
+  CHECK(client.state() == State::refused);
+}
+
+TEST_CASE("client: with no join password a challenge is answered with the empty password's proof") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  proto::JoinNonce nonce{};
+  nonce[5] = 42;
+  server.send(proto::JoinChallenge{nonce}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return server.find<proto::JoinProof>().has_value(); }));
+  CHECK(std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message).proof ==
+        proto::join_proof("", nonce));
+}
+
 TEST_CASE("client: an unknown refusal reason is kept") {
   FakeServer server;
   Client client(config_for(server));
@@ -695,7 +757,8 @@ TEST_CASE("client: every refusal reason the protocol has is named") {
   CHECK(refuse_reason_text(proto::RefuseReason::server_full) == "server full");
   CHECK(refuse_reason_text(proto::RefuseReason::name_taken) == "name taken");
   CHECK(refuse_reason_text(proto::RefuseReason::bad_name) == "bad name");
-  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(6)) == "unknown reason");
+  CHECK(refuse_reason_text(proto::RefuseReason::bad_password).starts_with("wrong join password"));
+  CHECK(refuse_reason_text(static_cast<proto::RefuseReason>(7)) == "unknown reason");
 }
 
 TEST_CASE("client: send_chat sends CHAT and refuses empty, long or bad text") {
@@ -1877,10 +1940,19 @@ class SmallPath {
       buffer.dataLength = sizeof data;
       const int n = enet_socket_receive(inner_, &from, &buffer, 1);
       if (n <= 0) break;
-      if (have_client_) pass(outer_, client_, data, static_cast<std::size_t>(n));
+      if (!have_client_) continue;
+      if (lose_to_client && lose_to_client(static_cast<std::size_t>(n))) {
+        ++lost;
+        continue;
+      }
+      pass(outer_, client_, data, static_cast<std::size_t>(n));
     }
   }
 
+  // A line that loses packets: datagrams to the client for which this says
+  // true are lost on the way.
+  std::function<bool(std::size_t)> lose_to_client;
+  int lost = 0;
   int dropped = 0;
   std::size_t largest = 0;
 
@@ -2001,6 +2073,133 @@ TEST_CASE("client: link() counts the time since the server's last packet") {
   // A packet comes: back near 0.
   server.send(proto::Ping{1}, proto::kChannelSession);
   REQUIRE(pump(client, server, [&] { return client.link().quiet_ms < 100; }));
+}
+
+// A pose from player 1 the size of Link's (about 3.4 KB, four datagrams).
+proto::PlayerPose remote_pose(std::uint32_t sequence) {
+  proto::PlayerPose pose = big_pose();
+  pose.player_number = 1;
+  pose.time.sequence = sequence;
+  return pose;
+}
+
+// Every ninth full datagram to the client is lost: a pose is three full ones,
+// so every third pose misses a fragment and the whole ones between let ENet
+// throw the broken ones away.
+std::function<bool(std::size_t)> lose_some_fragments() {
+  auto count = std::make_shared<int>(0);
+  return [count](std::size_t n) { return n > 1000 && ++*count % 9 == 0; };
+}
+
+TEST_CASE("ENet alone: lost fragments fill its waiting count until it refuses the server's reliable packets (issue 175)") {
+  FakeServer server;
+  SmallPath path_link(server.port(), 1500);
+  server.also_service = [&] { path_link.service(); };
+
+  ENetHost* host = enet_host_create(nullptr, 1, proto::kChannelCount, 0, 0);
+  REQUIRE(host != nullptr);
+  host->mtu = proto::kDatagramBytes;
+  host->maximumWaitingData = 64 * 1024;
+  ENetAddress to{};
+  REQUIRE(enet_address_set_host_ip(&to, "127.0.0.1") == 0);
+  to.port = path_link.port();
+  ENetPeer* peer = enet_host_connect(host, &to, proto::kChannelCount, 0);
+  REQUIRE(peer != nullptr);
+  std::vector<proto::Message> got;
+  auto step = [&] {
+    ENetEvent event;
+    while (enet_host_service(host, &event, 0) > 0) {
+      if (event.type == ENET_EVENT_TYPE_RECEIVE) {
+        proto::Message m;
+        if (proto::decode(std::span<const std::uint8_t>(event.packet->data, event.packet->dataLength), m) ==
+            proto::Error::none) {
+          got.push_back(std::move(m));
+        }
+        enet_packet_destroy(event.packet);
+      }
+    }
+    enet_host_flush(host);
+    server.service();
+  };
+  auto run = [&](const std::function<bool()>& done, int ms) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+      step();
+      if (done()) return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+  };
+  REQUIRE(run([&] { return server.last_peer != nullptr && peer->state == ENET_PEER_STATE_CONNECTED; }, 3000));
+
+  path_link.lose_to_client = lose_some_fragments();
+  for (std::uint32_t i = 0; i < 120; ++i) {
+    server.send_fast(remote_pose(i));
+    run([] { return false; }, 2);
+  }
+  run([] { return false; }, 100);
+  CHECK(path_link.lost > 0);
+  // ENet counts far more than really waits: the thrown-away poses.
+  CHECK(coop::net::waiting_bytes(*peer) < 32 * 1024);
+  CHECK(peer->totalWaitingData >= host->maximumWaitingData);
+
+  // A reliable message from the server now never gets in.
+  path_link.lose_to_client = nullptr;
+  server.send(proto::Ping{4242}, proto::kChannelSession);
+  auto has_ping = [&] {
+    return std::any_of(got.begin(), got.end(), [](const proto::Message& m) {
+      const auto* p = std::get_if<proto::Ping>(&m);
+      return p != nullptr && p->sender_time_us == 4242;
+    });
+  };
+  CHECK_FALSE(run(has_ping, 1000));
+
+  // With the count set to what really waits, ENet takes the server's resend.
+  CHECK(coop::net::mend_waiting_data(*peer) > 0);
+  CHECK(peer->totalWaitingData == coop::net::waiting_bytes(*peer));
+  CHECK(run([&] {
+    coop::net::mend_waiting_data(*peer);
+    return has_ping();
+  }, 3000));
+  enet_host_destroy(host);
+}
+
+TEST_CASE("client: lost fragments of poses do not stop the server's reliable packets (issue 175)") {
+  FakeServer server;
+  SmallPath path_link(server.port(), 1500);
+  server.also_service = [&] { path_link.service(); };
+  ClientConfig config = config_for(server);
+  config.port = path_link.port();
+  config.max_waiting_bytes = 64 * 1024;  // the real 8 MB, reached 128 times sooner
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+
+  path_link.lose_to_client = lose_some_fragments();
+  for (std::uint32_t i = 0; i < 120; ++i) {
+    server.send_fast(remote_pose(i));
+    pump(client, server, [] { return false; }, 2);
+  }
+  pump(client, server, [] { return false; }, 100);
+  CHECK(path_link.lost > 0);
+  // Far more than the cap was thrown away unassembled and taken off again.
+  CHECK(client.link().mended_bytes > config.max_waiting_bytes);
+  CHECK(client.link().waiting_bytes < 32 * 1024);
+
+  // A reliable message after it still arrives at once: the client answers.
+  path_link.lose_to_client = nullptr;
+  const std::size_t from = server.received.size();
+  server.send(proto::Ping{4242}, proto::kChannelSession);
+  CHECK(pump(client, server, [&] {
+    for (std::size_t i = from; i < server.received.size(); ++i) {
+      const auto* pong = std::get_if<proto::Pong>(&server.received[i].message);
+      if (pong != nullptr && pong->ping_sender_time_us == 4242) return true;
+    }
+    return false;
+  }, 1000));
+  CHECK(client.state() == State::connected);
+  CHECK(events.count(EventKind::disconnected) == 0);
 }
 
 TEST_CASE("client: a lost connection reports how the link looked") {

@@ -11,9 +11,12 @@
 #  - A "coop: test place -51.80 112.60 12.20: done", B "... -33.20 110.30 10.40: done".
 #  - chest: B "key64 0x0b66198d17d6584e ... 0 -> 1" and the trap keys above 0 -> 1 within ~1 s.
 #    Shot "trap": the floor fallen in B as in A (PASS live; only after a reload = partial).
+#    dungeon-switches: A "...FallingFloor_A_01 moved here: sending" (and _A_02/_A_03); B "... moved by
+#    another player"; B's floor seen falling, not vanishing ("taken ... removed here" only ~4 s later).
 #  - eye: A "bool 0xb3a4fe84 ... 0 -> 1" (HavePlayedEvent ..._Gimmick_FallingLadder) and
 #    "bool 0x77279a83 ... 0 -> 1" (RoomC_Cleared). B: "room gimmick flags from another player
-#    held until we leave this dungeon or load", then (LIVE_EVENTS) "coop: dungeon: starting the event InsideTheDekuTree_Gimmick_FallingLadder here (another player played it)", the
+#    held until we leave this dungeon or load", then (live events, on by default since dungeon-switches; B
+#    is 9 m from the ladder's asker, within 18 m) "coop: dungeon: starting the event InsideTheDekuTree_Gimmick_FallingLadder here (another player played it)", the
 #    flag 0 -> 1 in B, the hold ends. World: A "1d19b26c66591963 Obj_InsideTheDekuTree_
 #    FallingLadder_A_01 moved here: sending", "... at rest: place sent"; B "... moved by another
 #    player" / "put where another player left it". Shots "ladder" and "late": the ladder down in

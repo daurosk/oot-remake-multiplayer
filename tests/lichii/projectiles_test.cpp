@@ -169,7 +169,7 @@ TEST_CASE("shots: a track is carried on along the velocity, with the fall the sa
     up.Add({0, {}, {0, -5, 0}});
     up.Add({50'000, {}, {0, 5, 0}});
     CHECK(up.Gravity() == doctest::Approx(0.0f));
-    up.Add({100'000, {}, {0, -50, 0}});
+    up.Add({100'000, {}, {0, 1, 0}});  // 80 m/s^2
     CHECK(up.Gravity() == doctest::Approx(shots::Track::kGravityMax));
     // Two samples too close in time leave the gravity as it was.
     up.Add({110'000, {}, {0, 0, 0}});
@@ -410,7 +410,8 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CHECK(copies[0].position[1] == doctest::Approx(5.0f - 2.0f * 0.06f - 0.5f * 20.0f * 0.06f * 0.06f));
     CHECK_FALSE(copies[0].rotation);  // none sent: the create's default
 
-    // It hit something: the copy stops there and goes.
+    // It hit something: the copy stops there, sticks a moment (issue 166)
+    // and goes.
     proto::ObjectRemove remove;
     remove.id = spawn.id;
     remove.reason = proto::RemoveReason::hit;
@@ -419,8 +420,120 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     copies.clear();
     sync.Tick(kScene, 2, now + 33 * kMs, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(5.0f));
+    CHECK(sync.Landed() == 1);
+    copies.clear();
+    sync.Tick(kScene, 2, now + 33 * kMs + shots::LandHoldUs(shots::Kind::arrow), {}, live, send,
+              copies);
+    REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
+    CHECK(sync.Landed() == 1);  // counted once
+}
+
+TEST_CASE("shots: a bounce is a turn of over 45 degrees at speed") {
+    CHECK(shots::Bounced({20, 0, 0}, {-15, 2, 0}));   // off a wall
+    CHECK(shots::Bounced({10, -10, 0}, {10, 8, 0}));  // off the floor
+    CHECK_FALSE(shots::Bounced({20, 0, 0}, {19, -3, 0}));  // its arc
+    CHECK_FALSE(shots::Bounced({20, 0, 0}, {0, 0, 0}));    // stopped: no bounce
+    CHECK_FALSE(shots::Bounced({1, 0, 0}, {-1, 0, 0}));    // too slow to tell
+    CHECK_FALSE(shots::Bounced({0, 0, 0}, {30, 0, 0}));    // the shot itself
+    CHECK(shots::LandHoldUs(shots::Kind::seed) > 0);
+    CHECK(shots::LandHoldUs(shots::Kind::arrow) > shots::LandHoldUs(shots::Kind::seed));
+    CHECK(shots::LandHoldUs(shots::Kind::nut) == 0);
+    CHECK(shots::LandHoldUs(shots::Kind::bomb) == 0);
+
+    // A copy's track keeps its fall across a bounce: the turn is no gravity.
+    shots::Track t;
+    t.Add({0, {0, 5, 0}, {20, 0, 0}});
+    t.Add({100'000, {2, 5, 0}, {20, -1, 0}});
+    CHECK(t.Gravity() == doctest::Approx(10.0f));
+    t.Add({150'000, {3, 5, 0}, {-15, -1.5f, 0}});  // off a wall
+    CHECK(t.Gravity() == doctest::Approx(10.0f));
+}
+
+TEST_CASE("shots: our seed's bounce is sent at once, and the log counts it") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now, {Made(0x7000, 0.0f, "Shootable_DekuSeed")}, none, send, copies);
+    REQUIRE(Of<proto::ObjectSpawn>(send).size() == 1);
+    // Flying at 30 m/s along x, one sample each 33 ms.
+    float x = 0.0f;
+    for (int i = 0; i < 2; ++i) {
+        send.clear();
+        now += 33 * kMs;
+        x += 1.0f;
+        sync.Tick(kScene, 1, now, {Made(0x7000, x, "Shootable_DekuSeed")}, none, send, copies);
+        CHECK(Of<proto::ObjectSample>(send).size() == 1);
+    }
+    // Next frame (16 ms, under the 33 ms gap) it came back off a wall: sent
+    // now, not a sample later.
+    send.clear();
+    now += 16 * kMs;
+    x -= 0.4f;
+    sync.Tick(kScene, 1, now, {Made(0x7000, x, "Shootable_DekuSeed")}, none, send, copies);
+    auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE(samples.size() == 1);
+    CHECK((*samples[0].state.velocity)[0] < 0.0f);
+    // Straight on again 16 ms later: the usual gap holds.
+    send.clear();
+    now += 16 * kMs;
+    x -= 0.4f;
+    sync.Tick(kScene, 1, now, {Made(0x7000, x, "Shootable_DekuSeed")}, none, send, copies);
+    CHECK(Of<proto::ObjectSample>(send).empty());
+
+    send.clear();
+    sync.Tick(kScene, 1, now + 33 * kMs, {}, none, send, copies);
+    sync.Tick(kScene, 1, now + 66 * kMs, {}, none, send, copies);
+    REQUIRE(sync.Flights().size() == 1);
+    CHECK(sync.Flights()[0].bounces == 1);
+    CHECK(Of<proto::ObjectRemove>(send).size() == 1);
+}
+
+TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one goes at once") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    std::uint64_t now = 10'000'000;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    auto shoot = [&](std::uint64_t value, proto::RemoveReason reason) {
+        proto::ObjectSpawn spawn;
+        spawn.id = {proto::ObjectKind::made, 1, value};
+        spawn.actor = "Shootable_DekuSeed";
+        spawn.state.time = {now, 0};
+        spawn.state.position = proto::Vec3{0.0f, 5.0f, 0.0f};
+        spawn.state.velocity = proto::Vec3{40.0f, 0.0f, 0.0f};
+        sync.Receive(Wire(spawn, 1));
+        proto::ObjectRemove remove;
+        remove.id = spawn.id;
+        remove.reason = reason;
+        remove.position = {4.0f, 5.0f, 0.0f};
+        sync.Receive(Wire(remove, 1));
+    };
+    shoot(1, proto::RemoveReason::hit);
+    shoot(2, proto::RemoveReason::gone);
+    copies.clear();
+    now += 100 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 2);
+    // Keyed in the order made: the hit one first.
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(4.0f));  // not carried on past it
+    CHECK(copies[1].act == Act::remove);
+    CHECK(sync.Landed() == 1);
+
+    copies.clear();
+    sync.Tick(kScene, 2, now + shots::LandHoldUs(shots::Kind::seed), {}, live, send, copies);
+    REQUIRE(copies.size() == 2);
+    CHECK(copies[0].act == Act::remove);
+    CHECK(copies[0].position[0] == doctest::Approx(4.0f));
 }
 
 TEST_CASE("shots: a bomb copy that went off by itself is noted as a blast") {
@@ -691,4 +804,37 @@ TEST_CASE("shots: a bomb copy the owner removed as gone is no blast") {
     now += 33 * kMs;
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     CHECK(shots::TheBlasts().Size() == 0);
+}
+
+// Issue 169: a bomb in its owner's hands.
+TEST_CASE("shots: a bomb over Link, moving with him, is in his hands") {
+    const proto::Vec3 link{10.0f, 0.0f, 5.0f};
+    CHECK(shots::InHands({10.2f, 1.3f, 5.1f}, link, 0.0f));    // over a child's head
+    CHECK(shots::InHands({10.0f, 2.2f, 5.0f}, link, 1.0f));    // an adult's raised arms
+    CHECK_FALSE(shots::InHands({10.0f, 0.1f, 5.0f}, link, 0.0f));  // at his feet
+    CHECK_FALSE(shots::InHands({11.5f, 1.3f, 5.0f}, link, 0.0f));  // beside him
+    CHECK_FALSE(shots::InHands({10.0f, 3.5f, 5.0f}, link, 0.0f));  // thrown up high
+    CHECK_FALSE(shots::InHands({10.2f, 1.3f, 5.1f}, link, 8.0f));  // flying past
+    CHECK_FALSE(shots::InHands({NAN, 1.3f, 5.1f}, link, 0.0f));
+    CHECK(shots::HeldByAnimation("Lifted") == true);
+    CHECK(shots::HeldByAnimation("Thrown") == false);
+    CHECK_FALSE(shots::HeldByAnimation("Bomb_Blink").has_value());
+}
+
+TEST_CASE("shots: a held bomb's path is read between two samples, never carried on") {
+    shots::HeldPath path;
+    CHECK(path.Empty());
+    path.Add({1'000'000, {0.0f, 1.0f, 0.0f}, {}});
+    path.Add({1'100'000, {1.0f, 1.0f, 0.0f}, {}});
+    path.Add({1'050'000, {9.0f, 9.0f, 9.0f}, {}});  // older: dropped
+    path.Add({1'200'000, {NAN, 1.0f, 0.0f}, {}});   // not finite: dropped
+    CHECK(path.At(900'000)[0] == doctest::Approx(0.0f));
+    CHECK(path.At(1'050'000)[0] == doctest::Approx(0.5f));
+    CHECK(path.At(1'500'000)[0] == doctest::Approx(1.0f));
+    for (std::uint64_t t = 2'000'000; t < 2'000'000 + 20 * 33'000; t += 33'000) {
+        path.Add({t, {float(t) / 1e6f, 1.0f, 0.0f}, {}});
+    }
+    CHECK(path.At(0)[0] > 2.0f);  // only the newest kKeep are kept
+    path.Clear();
+    CHECK(path.Empty());
 }

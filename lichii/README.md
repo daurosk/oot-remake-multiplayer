@@ -11,6 +11,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `patches/0003-coop-puppet.patch` | Two calls for the puppets: the code cave written into Ocarina's `main` when it is loaded, and the cave's `svc 0xf4` handed to the hook. |
 | `patches/0004-coop-null-write-log.patch` | A debug log line: who writes to guest address 0 (issue 111). |
 | `patches/0005-coop-portable-switches.patch` | A portable kit reads only its own `nx2_switches.txt`, never the one in `%APPDATA%\fritchii` or `eden` (v5.8). |
+| `patches/0006-coop-save-folder.patch` | A guest's game reads and writes the co-op save folder `<title>-coop` beside its own (issue 167); the hook (`hook/coop_save.cpp`) decides and is told the folder. |
 | `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
 ## Fetch and patch

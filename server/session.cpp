@@ -93,6 +93,13 @@ bool Session::connected(ConnectionId id, std::uint64_t now_us,
       return false;
     }
   }
+  if (address) {
+    if (auto it = wrong_guesses_.find(*address);
+        it != wrong_guesses_.end() && now_us < it->second.blocked_until) {
+      ++stats_.password_blocked;
+      return false;
+    }
+  }
   if (address && config_.max_half_open_per_address != 0 &&
       half_open_count(*address) >= config_.max_half_open_per_address) {
     ++stats_.half_open_limited;
@@ -109,7 +116,9 @@ bool Session::connected(ConnectionId id, std::uint64_t now_us,
 std::size_t Session::half_open_count(std::uint32_t address) const {
   return static_cast<std::size_t>(
       std::count_if(connections_.begin(), connections_.end(), [&](const auto& entry) {
-        return entry.second.state == State::awaiting_hello && entry.second.address == address;
+        return (entry.second.state == State::awaiting_hello ||
+                entry.second.state == State::awaiting_proof) &&
+               entry.second.address == address;
       }));
 }
 
@@ -151,11 +160,81 @@ void Session::received(ConnectionId id, std::uint8_t channel,
     }
     return;
   }
+  if (c.state == State::awaiting_proof) {
+    if (const auto* proof = std::get_if<JoinProof>(&message)) {
+      on_join_proof(id, c, *proof, now_us);
+    } else if (std::holds_alternative<Hello>(message)) {
+      ++stats_.repeated_hello;  // one HELLO, one nonce: no fresh nonce on asking again
+    } else {
+      ++stats_.before_welcome;
+    }
+    return;
+  }
+  if (std::holds_alternative<JoinProof>(message)) {
+    ++stats_.stray_proof;  // a joined player's: never relayed
+    return;
+  }
   on_player_message(id, c, channel, message, bytes.size(), now_us);
 }
 
 void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
                        std::uint64_t now_us) {
+  if (hello.protocol_version != kProtocolVersion) {
+    refuse(id, c, RefuseReason::wrong_protocol_version, now_us,
+           version_note(hello.protocol_version));
+    return;
+  }
+  // The password comes before every other check, so someone without it
+  // learns nothing about the session (its game build, names, how full).
+  if (!config_.join_password.empty()) {
+    c.state = State::awaiting_proof;
+    c.pending_hello = hello;
+    c.nonce = random_nonce();
+    send(id, kChannelSession, JoinChallenge{c.nonce});
+    return;
+  }
+  admit(id, c, hello, now_us);
+}
+
+void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& proof,
+                            std::uint64_t now_us) {
+  const Hello hello = *c.pending_hello;
+  c.pending_hello.reset();
+  const bool right = same_proof(proof.proof, join_proof(config_.join_password, c.nonce));
+  c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
+  if (!right) {
+    ++stats_.bad_password;
+    note_wrong_password(c.address, now_us);
+    refuse(id, c, RefuseReason::bad_password, now_us, "wrong join password");
+    return;
+  }
+  c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
+  admit(id, c, hello, now_us);
+}
+
+void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us) {
+  if (!address || config_.max_wrong_passwords == 0) return;
+  // A hard cap besides the sweep in tick: ENet's connect handshake means
+  // each entry is a real address that answered, but keep memory bounded.
+  if (wrong_guesses_.size() >= kMaxWrongGuessAddresses && !wrong_guesses_.contains(*address)) {
+    return;
+  }
+  WrongGuesses& g = wrong_guesses_[*address];
+  if (g.count == 0 || now_us - g.first_at >= config_.wrong_password_window_us) {
+    g.count = 0;
+    g.first_at = now_us;
+  }
+  if (++g.count >= config_.max_wrong_passwords) {
+    g.blocked_until = now_us + config_.wrong_password_block_us;
+    g.count = 0;
+    // No address in the log: the log may be sent to others (collect-logs).
+    log("too many wrong join passwords from one address: it is turned away for " +
+        std::to_string(config_.wrong_password_block_us / 1'000'000) + " s");
+  }
+}
+
+void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
+                    std::uint64_t now_us) {
   std::string expected = config_.game_build_id;
   if (expected.empty()) {
     expected = player_count() == 0 ? hello.game_build_id : session_game_build_;
@@ -187,7 +266,8 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
     ++stats_.rejoined;
     log("player " + std::to_string(old.number) + " rejoins: " + old.nickname);
     actions_.push_back(DisconnectAction{*holder});
-    remove_player(*holder, LeaveReason::timed_out, now_us);
+    remove_player(*holder, LeaveReason::timed_out, now_us,
+                  "replaced: the same name came back from the same address");
   }
   if (player_count() >= kMaxPlayers) {
     refuse(id, c, RefuseReason::server_full, now_us);
@@ -230,7 +310,12 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
                                 Message& message, std::size_t bytes, std::uint64_t now_us) {
   if (std::holds_alternative<Pong>(message)) return;  // our PING answered
   if (std::holds_alternative<FlagSnapshot>(message)) bytes = 0;  // see bytes_per_second
-  if (!within_rate(c, channel, bytes, now_us)) {
+  // The host's save: a few hundred KB at once, paced by the host's game (one
+  // part a frame, its outbox capped, each guest answered once) and taken from
+  // the host only (on_save). Outside the host's byte and message budgets: a
+  // part dropped here would leave the guest's transfer unfinished.
+  const bool host_save = std::holds_alternative<SavePart>(message) && id == host_;
+  if (!host_save && !within_rate(c, channel, bytes, now_us)) {
     ++stats_.rate_limited;
     return;
   }
@@ -256,6 +341,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (std::holds_alternative<FlagState>(message) || std::holds_alternative<FlagReset>(message)) {
     on_flag_state(id, c, message);
+    return;
+  }
+  if (std::holds_alternative<SaveAsk>(message) || std::holds_alternative<SavePart>(message)) {
+    on_save(id, c, message);
     return;
   }
   if (const auto* part = std::get_if<FlagSnapshot>(&message)) {
@@ -371,6 +460,41 @@ void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
   set_sender(message, c.number);
   send_to_others(id, kChannelProgress, message);
   ++stats_.flag_relayed;
+  ++stats_.relayed;
+}
+
+// The host's save (docs/protocol.md, "Save transfer"). SAVE_ASK goes to the
+// host only; SAVE_PART comes from the host only and goes to the player it
+// names, or to every other player.
+void Session::on_save(ConnectionId id, Connection& c, Message& message) {
+  if (std::holds_alternative<SaveAsk>(message)) {
+    if (!host_ || id == *host_) {
+      ++stats_.save_refused;
+      return;
+    }
+    set_sender(message, c.number);
+    send(*host_, kChannelSession, message);
+    ++stats_.save_asks;
+    ++stats_.relayed;
+    return;
+  }
+  if (id != host_) {
+    ++stats_.save_refused;
+    return;
+  }
+  const std::uint8_t to = std::get<SavePart>(message).to_player;
+  set_sender(message, c.number);
+  if (to == 0) {
+    send_to_others(id, kChannelSession, message);
+  } else {
+    const auto target = connection_of(to);
+    if (!target || *target == id) {
+      ++stats_.save_refused;
+      return;
+    }
+    send(*target, kChannelSession, message);
+  }
+  ++stats_.save_parts;
   ++stats_.relayed;
 }
 
@@ -1509,14 +1633,20 @@ void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason,
       (why.empty() ? std::string() : ": " + why));
 }
 
-void Session::disconnected(ConnectionId id, std::uint64_t now_us) {
+void Session::disconnected(ConnectionId id, std::uint64_t now_us, const std::string& link) {
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
+  const std::uint64_t quiet_ms = (now_us - it->second.last_heard) / 1000;
   bool silent = now_us - it->second.last_heard >= config_.silence_timeout_us / 2;
-  remove_player(id, silent ? LeaveReason::timed_out : LeaveReason::left, now_us);
+  std::string why = silent ? "timed out: the connection was lost, nothing from it for "
+                           : "the connection closed, last packet ";
+  why += std::to_string(quiet_ms) + " ms" + (silent ? "" : " ago");
+  if (!link.empty()) why += "; " + link;
+  remove_player(id, silent ? LeaveReason::timed_out : LeaveReason::left, now_us, why);
 }
 
-void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t now_us) {
+void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t now_us,
+                            const std::string& why) {
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
   Connection c = std::move(it->second);
@@ -1530,7 +1660,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   forget_empty_world(c.scene);
   forget_empty_dead(c.scene);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
-      (reason == LeaveReason::timed_out ? " (timed out)" : ""));
+      (!why.empty() ? " (" + why + ")" : reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
     session_game_build_.clear();
     host_.reset();
@@ -1557,10 +1687,20 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
 }
 
 void Session::tick(std::uint64_t now_us) {
+  // Wrong-password counts whose window and block are both over.
+  for (auto it = wrong_guesses_.begin(); it != wrong_guesses_.end();) {
+    const WrongGuesses& g = it->second;
+    const bool window_over = now_us - g.first_at >= config_.wrong_password_window_us;
+    if (window_over && now_us >= g.blocked_until) {
+      it = wrong_guesses_.erase(it);
+    } else {
+      ++it;
+    }
+  }
   std::vector<ConnectionId> late_hello;  // not a player: dropped without PLAYER_LEFT
   std::vector<ConnectionId> silent;
   for (auto& [id, c] : connections_) {
-    if (c.state == State::awaiting_hello &&
+    if ((c.state == State::awaiting_hello || c.state == State::awaiting_proof) &&
         now_us - c.connected_at >= config_.hello_timeout_us) {
       late_hello.push_back(id);
     } else if (c.state == State::closing &&
@@ -1581,7 +1721,9 @@ void Session::tick(std::uint64_t now_us) {
   }
   for (ConnectionId id : silent) {
     actions_.push_back(DisconnectAction{id});
-    remove_player(id, LeaveReason::timed_out, now_us);
+    const std::uint64_t quiet_ms = (now_us - connections_.at(id).last_heard) / 1000;
+    remove_player(id, LeaveReason::timed_out, now_us,
+                  "timed out: nothing heard for " + std::to_string(quiet_ms) + " ms");
   }
   if (now_us - ownership_checked_at_ >= config_.ownership_check_us) {
     ownership_checked_at_ = now_us;

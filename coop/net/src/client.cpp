@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop/net/enet_waiting.hpp"
 #include "coop/protocol/codec.hpp"
 
 namespace coop::net {
@@ -49,11 +50,6 @@ constexpr std::uint32_t kNameTakenRetryFloorMs = 100;
 // The longest packet a message can fill: the 4-byte header and a body of
 // at most 65535 bytes. ENet refuses anything longer before assembling it.
 constexpr std::size_t kMaxPacketBytes = 4 + 0xffff;
-// Most bytes ENet may hold for us between services (fragments of messages not
-// yet whole, and whole ones not yet taken). ENet's default is 32 MB; a server
-// cannot make us hold more than this. 8 MB is twice a whole flag snapshot at
-// the server's max_flags.
-constexpr std::size_t kMaxWaitingBytes = 8u << 20;
 
 // PONGs answer at most this many PINGs at once, then one per interval.
 constexpr std::uint64_t kPongBurst = 4;
@@ -140,6 +136,8 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::server_full: return "server full";
     case proto::RefuseReason::name_taken: return "name taken";
     case proto::RefuseReason::bad_name: return "bad name";
+    case proto::RefuseReason::bad_password:
+      return "wrong join password: ask the host for it, then start Join.bat again and type it";
   }
   return "unknown reason";
 }
@@ -176,7 +174,7 @@ bool Client::start() {
   host_ = enet_host_create(nullptr, 1, proto::kChannelCount, 0, 0);
   if (host_ == nullptr) return false;
   host_->maximumPacketSize = kMaxPacketBytes;
-  host_->maximumWaitingData = kMaxWaitingBytes;
+  host_->maximumWaitingData = config_.max_waiting_bytes;
   host_->mtu = std::clamp<std::uint32_t>(config_.mtu, ENET_PROTOCOL_MINIMUM_MTU,
                                          ENET_PROTOCOL_MAXIMUM_MTU);  // issue 143
   begin_attempt();
@@ -275,6 +273,7 @@ void Client::service(std::uint32_t wait_ms) {
           last_receive_us_ = now_us();  // the server answered the connect
           if (send_raw(hello, proto::channel_of(hello))) {
             hello_sent_us_ = now_us();
+            challenge_answered_ = false;
             state_ = State::handshaking;
           } else {
             end_attempt(DropReason::connection_lost);
@@ -328,6 +327,11 @@ void Client::service(std::uint32_t wait_ms) {
       break;
   }
   if (peer_ != nullptr) {
+    // ENet forgets to take thrown-away fragments off its count; past the cap
+    // it would refuse (and never acknowledge) the server's packets.
+    link_.mended_bytes += mend_waiting_data(*peer_);
+    link_.waiting_bytes = static_cast<std::uint32_t>(
+        std::min<std::size_t>(peer_->totalWaitingData, 0xffffffffu));
     link_.round_trip_ms = peer_->roundTripTime;
     link_.loss_percent = static_cast<std::uint32_t>(
         static_cast<std::uint64_t>(peer_->packetLoss) * 100 / ENET_PEER_PACKET_LOSS_SCALE);
@@ -376,6 +380,15 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
   if (state_ == State::handshaking) {
     if (const auto* welcome = std::get_if<proto::Welcome>(&message)) {
       on_welcome(*welcome);
+    } else if (const auto* challenge = std::get_if<proto::JoinChallenge>(&message)) {
+      // One answer per connection: the proof is for this nonce only.
+      if (challenge_answered_) {
+        ++rejected_;
+        return;
+      }
+      challenge_answered_ = true;
+      send_raw(proto::JoinProof{proto::join_proof(config_.join_password, challenge->nonce)},
+               proto::kChannelSession);
     } else if (const auto* refused = std::get_if<proto::Refused>(&message)) {
       if (peer_ != nullptr) {
         enet_peer_disconnect_now(peer_, 0);
@@ -437,7 +450,8 @@ void Client::on_connected_message(proto::Message message, std::uint8_t channel) 
   }
 
   if (std::holds_alternative<proto::Welcome>(message) ||
-      std::holds_alternative<proto::Refused>(message)) {
+      std::holds_alternative<proto::Refused>(message) ||
+      std::holds_alternative<proto::JoinChallenge>(message)) {
     ++rejected_;  // the handshake is over
     return;
   }

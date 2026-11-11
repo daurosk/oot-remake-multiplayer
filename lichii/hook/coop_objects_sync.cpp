@@ -340,6 +340,14 @@ std::vector<proto::ObjectGroupEntry> GroupsOf(
     return out;
 }
 
+bool IsHatchingEgg(std::string_view name) {
+    return name == "Enemy_Gohma_Egg" || name == "Enemy_DungeonBoss_Gohma_Egg";
+}
+
+bool IsHatchling(std::string_view name) {
+    return name == "Enemy_Gohma_Larva";
+}
+
 bool IsAnnounced(std::string_view name) {
     return name == "Enemy_Skulltula_Gold";
 }
@@ -480,6 +488,49 @@ void Sync::Take(std::uint64_t hash) {
     }
 }
 
+bool Sync::Hatch(std::uint8_t self, const Seen& s,
+                 std::vector<proto::Message>& send) {
+    // An egg that already left our walk alive: it hatched into this one.
+    for (auto it = eggs_.begin(); it != eggs_.end(); ++it) {
+        if (Distance(it->position, s.position) <= kHatchReachM) {
+            proto::ObjectRemove r;
+            r.id = it->id;
+            r.epoch = it->epoch;
+            r.reason = proto::RemoveReason::gone;
+            r.position = it->position;
+            send.emplace_back(r);
+            eggs_.erase(it);
+            ++hatched_count_;
+            notes_.emplace_back("hatched here: " + s.name);
+            return true;
+        }
+    }
+    // An egg of ours still on the walk (it goes a walk or two later).
+    Object* best = nullptr;
+    float best_d = kHatchReachM;
+    for (auto& [address, e] : objects_) {
+        if (!IsHatchingEgg(e.name) || e.hatched || e.id.kind != proto::ObjectKind::placed) {
+            continue;
+        }
+        const auto owner = owners_.find(e.id);
+        if (owner == owners_.end() || owner->second.player != self) {
+            continue;
+        }
+        const float d = Distance(e.position, s.position);
+        if (d <= best_d) {
+            best = &e;
+            best_d = d;
+        }
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    best->hatched = true;
+    ++hatched_count_;
+    notes_.emplace_back("hatched here: " + s.name);
+    return true;
+}
+
 void Sync::Reset() {
     scene_.clear();
     objects_.clear();
@@ -495,6 +546,7 @@ void Sync::Reset() {
     groups_sent_.clear();
     group_links_.clear();
     decided_.clear();
+    eggs_.clear();
     bound_.clear();
     refused_.clear();
     decider_ = 0;
@@ -788,6 +840,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                             continue;  // not yet: it may still open itself
                         }
                     }
+                    // A falling floor or a web's parts (dungeon-switches, the
+                    // issue 177: the bridge and webs vanished): the fall
+                    // comes here as the shifter's moves, the web's own break
+                    // on life 0; removed only after they had time to play.
+                    if (CoopWorld::IsFallTaken(s.name) && now_us - t->second.since_us < kTakeFallUs) {
+                        continue;
+                    }
                     // Its own break where the game has one: life 0, then the
                     // delete only if it still stands (the review of breakables:
                     // a web just vanished in the other game).
@@ -965,6 +1024,23 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             send.emplace_back(r);
             owners_.erase(owner);
         } else {
+            // gohma-larva: an egg we own left alive. Hatched (a hatchling
+            // already came out of it): the others end their copy now. Else
+            // its hatchling may still come (eggs_).
+            if (IsHatchingEgg(o.name) && o.id.kind == proto::ObjectKind::placed && owner != owners_.end() &&
+                owner->second.player == self && !(o.life && *o.life <= 0) &&
+                !(o.animation && IsDeathAnimation(o.animation->name))) {
+                if (o.hatched) {
+                    proto::ObjectRemove r;
+                    r.id = o.id;
+                    r.epoch = owner->second.epoch;
+                    r.reason = proto::RemoveReason::gone;
+                    r.position = o.position;
+                    send.emplace_back(r);
+                } else {
+                    eggs_.push_back({o.id, owner->second.epoch, o.position, now_us});
+                }
+            }
             // A decided copy the director made left our walk. Dead: not made
             // again. Otherwise it went by itself (issue 124: a Stalchild copy
             // sank into the ground while the decider's one still fights); the
@@ -997,6 +1073,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         it = it->second.removed && left ? decided_.erase(it) : std::next(it);
     }
     decider_ = DeciderOf(self, now_us);
+    std::erase_if(eggs_, [now_us](const Egg& e) { return now_us - e.at > kHatchWindowUs; });
     std::set<std::uint64_t> refused;
     std::sort(fresh.begin(), fresh.end(), [](const Seen* a, const Seen* b) {
         return std::tie(a->name, a->position[0], a->position[2]) <
@@ -1068,6 +1145,23 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
                 continue;
             }
+        } else if (IsHatchling(s->name) && Hatch(self, *s, send)) {
+            // Out of an egg we own: shared as a made enemy.
+            o.id = {proto::ObjectKind::made, self, ++made_counter_};
+            owners_[o.id] = {self, 0};
+            proto::ObjectSpawn spawn;
+            spawn.id = o.id;
+            spawn.actor = o.name;
+            spawn.state = StateOf(o, now_us);
+            send.emplace_back(std::move(spawn));
+        } else if (IsHatchling(s->name) &&
+                   std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                       const Decided& d = e.second;
+                       return d.address == 0 && !d.removed && d.name == s->name &&
+                              now_us - d.got_us < kCreateWaitUs &&
+                              Distance(d.position, s->position) < kClaimDistance;
+                   })) {
+            continue;  // the copy of another game's hatchling, not yet bound
         } else {
             o.id = {proto::ObjectKind::placed, 0, SceneSpawnId(scene_, s->name, order_[s->name]++)};
         }
@@ -1268,6 +1362,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         present.push_back({o.id, flags});
     }
+    // gohma-larva: an egg of ours that just left the walk alive stays on the
+    // list while its hatchling may still come, so the server keeps it ours
+    // and takes its OBJECT_REMOVE (it hands an unlisted object over at once).
+    for (const Egg& e : eggs_) {
+        if (std::none_of(present.begin(), present.end(), [&e](const auto& p) { return p.id == e.id; })) {
+            present.push_back({e.id, proto::object_presence::awake});  // unchanged from its last listing
+        }
+    }
     std::sort(present.begin(), present.end(),
               [](const auto& a, const auto& b) { return a.id < b.id; });
     if (present.size() > proto::kMaxPresentObjects) {
@@ -1432,7 +1534,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (!spawn->state.position || !Finite(*spawn->state.position)) {
                 continue;
             }
-            if (made && (spawn->id.maker == self || spawn->id.maker == 0 || !IsRolled(spawn->actor))) {
+            if (made && (spawn->id.maker == self || spawn->id.maker == 0 ||
+                         !(IsRolled(spawn->actor) || IsHatchling(spawn->actor)))) {
                 continue;
             }
             if (!made && (!IsAnnounced(spawn->actor) || find(spawn->id) != nullptr ||
@@ -1465,6 +1568,23 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             // Its life goes to 0 through the game (it plays its own death);
             // still here kDeadGraceUs later, it is deleted.
             const auto had = owners_.find(remove->id);
+            // gohma-larva: an egg that hatched in its owner's game. Ours is
+            // held there and cannot hatch: it goes, and the hatchling comes
+            // as the owner's OBJECT_SPAWN.
+            if (remove->reason == proto::RemoveReason::gone && remove->id.kind == proto::ObjectKind::placed &&
+                (had == owners_.end() || remove->epoch >= had->second.epoch)) {
+                Object* o = find(remove->id);
+                if (o != nullptr && IsHatchingEgg(o->name) && o->dead_at == 0 &&
+                    !(had != owners_.end() && had->second.player == self)) {
+                    o->dead_now = true;
+                    o->dead_at = now_us;
+                    o->hit_sum = 0;
+                    notes_.emplace_back("hatched in its owner's game: " + o->name);
+                    if (had != owners_.end()) {
+                        owners_.erase(had);
+                    }
+                }
+            }
             if (remove->reason == proto::RemoveReason::dead &&
                 remove->id.kind == proto::ObjectKind::placed &&
                 (had == owners_.end() || remove->epoch >= had->second.epoch)) {

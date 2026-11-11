@@ -50,17 +50,20 @@
 #include "coop/version.hpp"
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
+#include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
+#include "coop_save.h"
 #include "coop_game_build.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_dungeon.h"
+#include "coop_story.h"
 #include "coop_live_events.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
@@ -232,6 +235,7 @@ public:
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
+        config.join_password = settings_.password;
         client_ = std::make_unique<coop::net::Client>(std::move(config));
         if (!client_->start()) {
             LOG_ERROR(Core, "coop: ENet did not start; co-op is off");
@@ -242,6 +246,7 @@ public:
         std::string flag_error;
         session.shared = LoadShared(flag_error);
         if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
+        if (flag_error.empty()) CoopStory::AddShared(session.shared);  // docs/flags.md, "Story and cutscenes"
         if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
@@ -269,6 +274,7 @@ public:
             CoopTime::OnEvent(event);
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
+            CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -278,10 +284,12 @@ public:
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
         }
-        live_events_ = EnvFlag("LICHII_COOP_LIVE_EVENTS");
+        // On unless LICHII_COOP_LIVE_EVENTS=0 (dungeon-switches): another
+        // player's gimmick event plays here too when our Link comes near it.
+        live_events_ = EnvString("LICHII_COOP_LIVE_EVENTS") != "0";
         if (live_events_) {
-            // LICHII_COOP_LIVE_EVENT_NAMES=a,b,...: the events to start (default:
-            // the Deku Tree ladder); "all" for every held gimmick event.
+            // LICHII_COOP_LIVE_EVENT_NAMES=a,b,...: only these events (default
+            // and "all": every held gimmick event with a known place).
             const std::string names = EnvString("LICHII_COOP_LIVE_EVENT_NAMES");
             if (!names.empty()) {
                 if (auto parsed = CoopLiveEvents::ParseNames(names)) {
@@ -302,7 +310,7 @@ public:
                 }
                 return call;
             });
-            LOG_INFO(Core, "coop: dungeon: live events on (LICHII_COOP_LIVE_EVENTS=1)");
+            LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
         }
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
@@ -452,8 +460,9 @@ public:
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
         }
-        // Issue 129, LICHII_COOP_LIVE_EVENTS=1: a held gimmick event is
-        // started here too, so its result happens live (coop_live_events.h).
+        // Issue 129: a held gimmick event is started here too when our Link is
+        // near the place that asks for it, so its result happens live
+        // (coop_live_events.h; off with LICHII_COOP_LIVE_EVENTS=0).
         if (hold && live_events_) {
             std::vector<std::string> held_events;
             for (const auto& k : hold->held_keys()) {
@@ -462,7 +471,11 @@ public:
                 }
             }
             const bool running = reading && reading->event_running.value_or(false);
-            if (const auto name = live_decider_.Next(held_events, hold_scene_, running)) {
+            std::optional<std::array<float, 3>> link;
+            if (view.position) {
+                link = std::array<float, 3>{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
+            }
+            if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
                 live_requester_.Want(*name);
@@ -497,6 +510,17 @@ public:
             // locked doors' kept breaks, the kills-late dead list, ...).
             LOG_INFO(Core, "coop: flags: the host loaded a save: the group follows it");
             CoopObjects::ForgetKeptBreaks();  // locked doors' kept breaks (docs/dungeon.md)
+        }
+        // Issue 167: the host's save for the guests (coop_save.h): a guest asks
+        // once, the host sends its newest save a part a frame, and again to
+        // everyone after its own save load.
+        session_->with_client([&](coop::net::Client& c) {
+            CoopSave::OnFrame(c, report.host_reset);
+            return 0;
+        });
+        if (auto line = CoopSave::TakeNotice(); !line.empty()) {
+            LOG_INFO(Core, "coop: notice: {}", line);
+            chat_.Add(std::move(line), true);
         }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").
@@ -621,6 +645,8 @@ public:
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
         CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
+        // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
+        CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
@@ -1024,9 +1050,10 @@ private:
             LOG_WARNING(Core,
                         "coop: connection lost; reconnecting (nothing from the server for {} ms, "
                         "round trip {} ms, loss {}%, datagram {} bytes, largest message sent {} "
-                        "bytes)",
+                        "bytes, ENet waiting {} bytes, lost fragment bytes taken off its count {})",
                         event.link.quiet_ms, event.link.round_trip_ms, event.link.loss_percent,
-                        event.link.mtu, event.link.largest_sent);
+                        event.link.mtu, event.link.largest_sent, event.link.waiting_bytes,
+                        event.link.mended_bytes);
             break;
         case EventKind::player_joined:
             LOG_INFO(Core, "coop: player {} '{}' joined", event.player, event.nickname);
@@ -1326,8 +1353,8 @@ void Start() {
         LOG_INFO(Core, "coop: off (no server in {} or LICHII_COOP_SERVER)", ini.string());
         return;
     }
-    LOG_INFO(Core, "coop: on, server {}:{}, name '{}'", settings.server, settings.port,
-             settings.name);
+    LOG_INFO(Core, "coop: on, server {}:{}, name '{}', join password {}", settings.server,
+             settings.port, settings.name, settings.password.empty() ? "none" : "set");
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (coop->Begin()) {
         g_coop = std::move(coop);

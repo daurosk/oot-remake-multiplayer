@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:00:00 -0900
+Subject: [PATCH 6/6] coop: a guest's game uses a co-op save folder
+
+OoT co-op (issue 167): a guest's game reads and writes <title>-coop beside
+its own save folder, so the host's save sent to it never goes over the
+player's own saves. The co-op hook decides (lichii/hook/coop_save.h): on
+when coop.ini names another PC's server, or LICHII_COOP_HOST_SAVE=1. The
+folder the game opened is passed to the hook, which writes the host's
+save there.
+---
+ src/core/file_sys/savedata_factory.cpp | 43 +++++++++++++++++++++++---
+ 1 file changed, 38 insertions(+), 5 deletions(-)
+
+diff --git a/src/core/file_sys/savedata_factory.cpp b/src/core/file_sys/savedata_factory.cpp
+index c756734..631e1bc 100644
+--- a/src/core/file_sys/savedata_factory.cpp
++++ b/src/core/file_sys/savedata_factory.cpp
+@@ -12,10 +12,36 @@
+ #include "core/file_sys/savedata_factory.h"
+ #include "core/file_sys/vfs/vfs.h"
+ 
++#ifdef LICHII_COOP
++#include "coop_save.h"
++#endif
++
+ namespace FileSys {
+ 
+ namespace {
+ 
++// OoT co-op (issue 167): a guest's game reads and writes a co-op save folder,
++// <title>-coop beside its own, so the host's save never goes over the player's
++// own saves (lichii/hook/coop_save.h).
++std::string CoopSaveDirectory(std::string path, SaveDataSpaceId space, SaveDataType type) {
++#ifdef LICHII_COOP
++    const bool account = type == SaveDataType::Account &&
++                         (space == SaveDataSpaceId::User || space == SaveDataSpaceId::SdUser);
++    return CoopSave::SaveDirectory(path, account);
++#else
++    return path;
++#endif
++}
++
++void CoopNoteSaveDir(const VirtualDir& out, SaveDataSpaceId space, SaveDataType type) {
++#ifdef LICHII_COOP
++    if (out != nullptr && type == SaveDataType::Account &&
++        (space == SaveDataSpaceId::User || space == SaveDataSpaceId::SdUser)) {
++        CoopSave::NoteSaveDir(out->GetFullPath());
++    }
++#endif
++}
++
+ bool ShouldSaveDataBeAutomaticallyCreated(SaveDataSpaceId space, const SaveDataAttribute& attr) {
+     return attr.type == SaveDataType::Cache || attr.type == SaveDataType::Temporary ||
+            (space == SaveDataSpaceId::User && ///< Normal Save Data -- Current Title & User
+@@ -62,16 +88,22 @@ SaveDataFactory::SaveDataFactory(Core::System& system_, ProgramId program_id_,
+ SaveDataFactory::~SaveDataFactory() = default;
+ 
+ VirtualDir SaveDataFactory::Create(SaveDataSpaceId space, const SaveDataAttribute& meta) const {
+-    const auto save_directory = GetFullPath(program_id, dir, space, meta.type, meta.program_id,
+-                                            meta.user_id, meta.system_save_data_id);
++    const auto save_directory = CoopSaveDirectory(
++        GetFullPath(program_id, dir, space, meta.type, meta.program_id, meta.user_id,
++                    meta.system_save_data_id),
++        space, meta.type);
+ 
+-    return dir->CreateDirectoryRelative(save_directory);
++    auto out = dir->CreateDirectoryRelative(save_directory);
++    CoopNoteSaveDir(out, space, meta.type);
++    return out;
+ }
+ 
+ VirtualDir SaveDataFactory::Open(SaveDataSpaceId space, const SaveDataAttribute& meta) const {
+ 
+-    const auto save_directory = GetFullPath(program_id, dir, space, meta.type, meta.program_id,
+-                                            meta.user_id, meta.system_save_data_id);
++    const auto save_directory = CoopSaveDirectory(
++        GetFullPath(program_id, dir, space, meta.type, meta.program_id, meta.user_id,
++                    meta.system_save_data_id),
++        space, meta.type);
+ 
+     auto out = dir->GetDirectoryRelative(save_directory);
+ 
+@@ -79,6 +111,7 @@ VirtualDir SaveDataFactory::Open(SaveDataSpaceId space, const SaveDataAttribute&
+         return Create(space, meta);
+     }
+ 
++    CoopNoteSaveDir(out, space, meta.type);
+     return out;
+ }
+ 
+-- 
+2.56.0.windows.4
+

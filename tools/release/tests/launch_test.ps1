@@ -90,6 +90,22 @@ try {
     [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`n")
     $a = Read-KitServerAccess $opt
     Check ($a.Allow -eq '' -and $a.Bind -eq '') 'server_allow behind # is off'
+    # server_password (join-password): $null when no line sets it (Host.bat asks), '' for none.
+    Check ($null -eq $a.Password) 'no server_password line: Password is $null (Host.bat asks once)'
+    [System.IO.File]::WriteAllText($opt, "# --- Who may join ---`r`n# server_password = `r`nLICHII_COOP_PUPPET=1`r`n")
+    Check ($null -eq (Read-KitServerAccess $opt).Password) 'server_password behind # is not set'
+    Set-KitServerPassword $opt 'hunter2'
+    $text = [System.IO.File]::ReadAllText($opt)
+    Check ($text -match '(?m)^server_password = hunter2\r?$' -and $text -notmatch '# server_password' -and $text -match 'LICHII_COOP_PUPPET=1') "Set-KitServerPassword takes the place of the # line [$text]"
+    Check ((Read-KitServerAccess $opt).Password -eq 'hunter2') 'server_password is read back'
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    Check (-not $said -and -not (Read-KitOptions $opt 6>$null).Contains('server_password')) 'server_password is not an emulator switch and is not warned about'
+    Set-KitServerPassword $opt ''
+    $p = (Read-KitServerAccess $opt).Password
+    Check ($null -ne $p -and $p -eq '' -and ([regex]::Matches([System.IO.File]::ReadAllText($opt), 'server_password')).Count -eq 1) "no password chosen: one empty server_password line, not asked again [$p]"
+    [System.IO.File]::WriteAllText($opt, "auto_update = ask`r`n")
+    Set-KitServerPassword $opt 'x'
+    Check ([System.IO.File]::ReadAllText($opt) -eq "auto_update = ask`r`nserver_password = x`r`n") 'no server_password line at all: added at the end'
 } finally {
     Remove-Item -LiteralPath $opt -Force -ErrorAction SilentlyContinue
 }
@@ -278,14 +294,24 @@ try {
     $kit = Join-Path $tmp 'kit join'; New-Kit $kit 'v0.1.0-beta4' 'join'
     $env:OOT_COOP_UPDATE_API = (Join-Path $tmp 'no-such-releases.json')
     $in = Join-Path $tmp 'join.txt'
-    [System.IO.File]::WriteAllText($in, "26.1.2`r`n  26.1.2.3:27511. `r`nSaria`r`n")
+    [System.IO.File]::WriteAllText($in, "26.1.2`r`n  26.1.2.3:27511. `r`nSaria`r`nhunter 2`r`n hunter2 `r`n")
     $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
     Check (($out -join ' ') -match "'26\.1\.2' is not an address") 'Join.bat: a typo is asked again'
     Check ($ini -match '(?m)^server = 26\.1\.2\.3\s*$' -and $ini -match '(?m)^port = 27511\s*$') "Join.bat: ' 26.1.2.3:27511. ' is saved as server 26.1.2.3, port 27511"
-    [System.IO.File]::WriteAllText($in, "`r`n")
+    Check (($out -join ' ') -match 'A join password has no spaces' -and $ini -match '(?m)^password = hunter2\s*$') "Join.bat: a password with a space is asked again, then saved in coop.ini [$(($ini -split "`n") -match 'password' -join '|')]"
+    $summary = @($out | Where-Object { "$_" -match '^Co-op: server' }) -join ' '
+    Check ($summary -match 'join password set' -and $summary -notmatch 'hunter2') "Join.bat: the summary says 'join password set', not the password [$summary]"
+    [System.IO.File]::WriteAllText($in, "`r`n`r`n")
     $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
     Check (($out -join ' ') -match 'server 26\.1\.2\.3, port 27511' -and ($out -join ' ') -match 'Emulator started') 'Join.bat: Enter keeps the last address'
+    Check ((Read-File "$kit\emulator\user\config\coop.ini") -match '(?m)^password = hunter2\s*$') 'Join.bat: Enter keeps the saved password'
+    Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
+    [System.IO.File]::WriteAllText($in, "`r`n-`r`n")
+    $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
+    $ini = Read-File "$kit\emulator\user\config\coop.ini"
+    Check ($ini -notmatch '(?m)^password' -and ($out -join ' ') -match 'join password none') "Join.bat: '-' clears the password [$(($ini -split "`n") -match 'password' -join '|')]"
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

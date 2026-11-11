@@ -53,6 +53,8 @@ struct Seen {
     Vec3 position{};
     // The actor's 3x3 at +0x328 (rows), when the walk read one.
     std::optional<CoopPuppet::Mat3> rotation;
+    // Issue 169: a bomb's AS slot 0 (the fuse's Bomb_Blink), when read.
+    std::optional<coop::protocol::Animation> animation;
 };
 
 // What the director should do with one copy.
@@ -78,6 +80,15 @@ struct Copy {
     // a Stalchild copy can sink into the ground by its own AI while the
     // decider's one still fights.
     std::uint8_t remakes = 0;
+    // Issue 169: held in its owner's hands. Made as the held stand-in
+    // (HeldStandIn: the model, no physics, placed as the puppet is), so it
+    // cannot fall out of the hands between two places. A copy that stops or
+    // starts being held comes with a new key: the director deletes the old
+    // actor and makes the other kind.
+    bool held = false;
+    // The owner's animation where the copy is shown (the bomb's fuse): played
+    // on the copy when its slot 0 shows another, its frame set when off.
+    std::optional<coop::protocol::Animation> animation;
 };
 
 class Sync {
@@ -105,6 +116,17 @@ public:
     // Projectile copies get the game's setter after each place write
     // (Copy::setter). LICHII_COOP_SHOTS_SETTER=0 turns it off.
     void SetSetter(bool on) { setter_ = on; }
+    // Issue 169: our Link's place, before each Tick (nothing: not known, so
+    // none of our bombs is held).
+    void SetLink(std::optional<Vec3> link) { link_ = link; }
+    // How many of our bombs are held now, and how many copies are shown held.
+    std::size_t HeldMine() const;
+    std::size_t HeldCopies() const;
+    // A held bomb out of the hands (CoopProjectiles::InHands) for this many
+    // walks in a row is let go (thrown, dropped or put down). A held or
+    // animated bomb is sampled at kSampleEveryUs whether it moved or not: the
+    // fuse's frames and the hands' small moves are what its copy shows.
+    static constexpr unsigned kLeaveHandsWalks = 2;
 
     std::size_t Mine() const { return mine_.size(); }
     // Issue 151: where our own cast lures are (CoopProjectiles::IsLure), as
@@ -115,6 +137,9 @@ public:
     const CoopProjectiles::FuseClock& Fuse() const { return fuse_; }
     // Bomb copies blown up on the owner's fuse before its remove came.
     std::size_t BlownOnTime() const { return blown_on_time_; }
+    // Issue 166: copies held where the owner's shot hit (remove reason hit,
+    // CoopProjectiles::LandHoldUs) before they go.
+    std::size_t Landed() const { return landed_; }
 
     // A shot's flight when the game's place does not show it (issue 158).
     // The seed and the arrow are made when they are nocked and sit in the
@@ -158,6 +183,7 @@ public:
         coop::protocol::RemoveReason reason = coop::protocol::RemoveReason::gone;
         bool shot = false;       // let go (its ammo count went down)
         bool made_up = false;    // its flight was sent from the shot, not its place
+        unsigned bounces = 0;    // turned like a bounce (issue 166)
     };
     // The ones that left in the last Tick.
     const std::vector<Flight>& Flights() const { return flights_; }
@@ -181,9 +207,15 @@ private:
         // The shot (issue 158).
         std::optional<std::uint64_t> shot_at;
         float shot_top_speed = 0.0f;  // since the shot
+        unsigned bounces = 0;         // issue 166: CoopProjectiles::Bounced steps
         bool made_up = false;
         Vec3 shot_from{};
         Vec3 shot_velocity{};
+        // Issue 169.
+        bool held = false;
+        unsigned out_of_hands = 0;
+        bool sent_held = false;
+        std::optional<coop::protocol::Animation> animation;
     };
     struct Remote {
         std::uint64_t key = 0;
@@ -197,11 +229,25 @@ private:
         // even if the owner's remove has not come yet.
         std::optional<std::uint64_t> blow_at;
         bool blasted = false;         // added to TheBlasts once
+        bool landed = false;          // counted in landed_ once (issue 166)
         bool live = false;            // the director had it on the list
+        // Issue 169: in the owner's hands (shown as the held stand-in, along
+        // `held_path` kHeldBehindUs late), and the owner's animation.
+        bool held = false;
+        CoopProjectiles::HeldPath held_path;
+        std::optional<coop::protocol::Animation> animation;
+        std::uint64_t animation_at = 0;  // server clock of its sample
+        // Went off while held: the bomb is made first, then blown up.
+        bool explode_once_made = false;
         Vec3 Position() const { return track.Empty() ? Vec3{} : track.Last().position; }
     };
 
     void Apply(std::uint64_t now_us);
+    // Issue 169: a copy that starts or stops being held gets a new key.
+    void Rekey(Remote& r, bool held);
+    // Our bomb `m` this walk: in our Link's hands or not. `first`: just
+    // made, so no speed of its own yet.
+    void Hands(Own& m, bool first);
     // Issue 158: the made-up flight, once the grace is over (Shot).
     void MakeUpFlight(Own& m, std::uint64_t now_us);
     Vec3 ShotPlace(const Own& m, std::uint64_t now_us) const;
@@ -216,10 +262,15 @@ private:
     std::uint64_t next_key_ = 1;
     CoopProjectiles::FuseClock fuse_;  // kept across scenes: the game's fuse
     std::size_t blown_on_time_ = 0;
+    std::size_t landed_ = 0;
     std::vector<Flight> flights_;
     std::vector<MadeUp> made_up_;
     ShotSettings shot_settings_;
     bool setter_ = true;
+    std::optional<Vec3> link_;
+    std::optional<Vec3> link_before_;
+    std::uint64_t link_before_at_ = 0;
+    Vec3 link_velocity_{};
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;
@@ -238,6 +289,9 @@ std::string_view StandIn(std::string_view actor);
 // as the game's own Weapon_Lure would be a lure the fish here can bite, so
 // with no stand-in in the pack (or after it failed) no copy is made at all.
 bool StandInOnly(std::string_view actor);
+// Issue 169: the stand-in a held copy is made as (Item_Bomb: CoopShot_Bomb,
+// its model and animations). Empty when the actor has none.
+std::string_view HeldStandIn(std::string_view actor);
 
 // Axis `axis` of a turn (0 to 2: +x +y +z columns of its matrix, 3 to 5 the
 // same reversed), as a made-up shot flies along it (Sync::SetShots).
@@ -258,6 +312,12 @@ public:
     static constexpr int kMaxCallsPerFrame = 4;
     static constexpr std::size_t kSlots = 16;
     static constexpr std::uint64_t kSlotSize = 0x180;  // arg 0x100, name 0x10, handle 8, text 0x40
+    // Issue 169: after the slots, one fixed cell per animation name played
+    // on a copy (a played slot may keep the name's pointer, so a cell is
+    // never written again with another name).
+    static constexpr std::uint64_t kNameCell = 0x40;
+    static constexpr std::size_t kNameCells = 32;
+    static constexpr std::uint64_t kBlockSize = kSlots * kSlotSize + kNameCells * kNameCell;
     static constexpr std::uint64_t kCreateTimeoutMs = 3000;
     static constexpr std::uint64_t kRemakeDelayMs = 1000;  // see Copy::remakes
 
@@ -305,6 +365,9 @@ private:
     // The game's setter (the actor's vtable slot 0x218) for a copy whose
     // place was written this frame. Not counted in kMaxCallsPerFrame.
     std::optional<CoopPuppet::Call> NextSetter(CoopPuppet::Guest& guest);
+    // Issue 169: the copy's animation (Copy::animation). Not counted in
+    // kMaxCallsPerFrame either: one play or one frame set per copy a frame.
+    std::optional<CoopPuppet::Call> NextPlay(CoopPuppet::Guest& guest);
     std::uint64_t SlotBase(std::size_t i) const { return block_ + i * kSlotSize; }
     const Copy* Wanted(std::uint64_t key) const;
     void Say(const std::string& text) const;
@@ -337,6 +400,8 @@ private:
     std::size_t pending_slot_ = 0;
     int calls_ = 0;
     std::vector<std::size_t> setters_;  // slots placed this frame
+    std::vector<std::size_t> plays_;    // slots with an animation this frame
+    std::map<std::string, std::size_t> name_cells_;  // animation name to its cell
     std::set<std::string> stand_ins_;            // guarded: what the pack has
     // Shared actors whose stand-in failed kStandInTries times in a row:
     // copied as the game's own actor from then on.

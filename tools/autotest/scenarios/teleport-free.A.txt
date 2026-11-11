@@ -1,0 +1,16 @@
+# teleport-free's A (#156, teleport-anywhere-2 check 1-2): from the save point, down the path
+# into Kakariko, then /teleport B with no talk or sign: the scene change must be taken in free
+# play. Then 30 s more: no second load.
+mark start
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard
+wait 420                # Kakariko loads
+mark kakariko
+wait 300
+chat /teleport B
+wait 120
+mark asked
+wait 600
+mark arrived
+wait 1800
+mark later

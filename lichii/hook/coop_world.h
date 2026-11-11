@@ -102,12 +102,16 @@ inline constexpr const char* kTokenCount = "PouchData.Item_Token_Gold.StockNum";
 
 // A path piece that moves or tilts when hit and stays so, with no life to
 // write: the Fire Temple's hammer drop floors, drop pillars and stair, the
-// Deku Tree's falling ladder and its unkeyed falling floor, the Shadow
+// Deku Tree's falling ladder and its falling floors (the keyed ones too:
+// IsFallTaken), the Shadow
 // Temple's unkeyed falling floor. Its new pose goes to the others as
 // WORLD_PLACE (a move by a turn too, and from any game within reach), and
 // the others hold it there, also a game that loads the room later (the
 // server keeps the place).
 bool IsShifter(std::string_view name);
+// A keyed piece taken by another game's key whose fall or break should
+// show here before it is removed: falling floors and web parts.
+bool IsFallTaken(std::string_view name);
 // A shifter held for good at a place another game gave (its AI would put it
 // back); the rest settle as blocks do.
 bool HoldsPlace(std::string_view name);
@@ -364,6 +368,7 @@ public:
     static constexpr float kBreakReachM = 3.0f;
     static constexpr int kUnloadCount = 4;       // this many gone together, one of them far: unloaded
     static constexpr float kMoverReachM = 15.0f; // only an object this near our Link is ours to move
+    static constexpr float kShifterReachM = 40.0f; // a shifter (moved by its AI when hit): a room across
     static constexpr float kBlockStartM = 0.05f; // moved this far from where it rested: being moved
     static constexpr float kLooseStartM = 0.15f; // the same for pots and rocks (they settle a little)
     static constexpr std::uint64_t kMoveEveryUs = 50'000;

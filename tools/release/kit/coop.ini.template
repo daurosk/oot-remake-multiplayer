@@ -8,3 +8,6 @@
 server = @SERVER@
 port = @PORT@
 name = @NAME@
+# password: the join password, when the host set one (Join.bat asks for it). The
+#         password itself never goes over the network, only a proof of it.
+password = @PASSWORD@

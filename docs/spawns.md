@@ -8,7 +8,7 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 
 | Actor | When gone, the copy | Seen live |
 |---|---|---|
-| `Item_Bomb`, `Item_Bombchu` | explodes (life set to 0) | not yet |
+| `Item_Bomb`, `Item_Bombchu` | explodes (life set to 0); a held bomb is the stand-in `CoopShot_Bomb` until thrown (issue 169) | yes (two-game tests, 2026-11-11) |
 | `Shootable_DekuSeed`, `Item_DekuNut` | is deleted | names seen ([objects.md](objects.md)) |
 | `NormalArrow`, `Weapon_Boomerang`, `Shootable_Hook`, `Shootable_HookLong` | is deleted | names from the data files |
 
@@ -29,6 +29,18 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 - A remove with reason exploded sets the copy bomb's life to 0 (`[[[actor + 0x270] + 0x2b8] + 0x1c10] + 8`), which runs the game's own explosion where the owner's bomb went off. Any other remove deletes the copy (`0xa6490(actor, 0)`).
 - A copy shows up on our own actor list too. It is never sent back: the director tells the sync each copy's actor, and a new actor of a copy's name within 1.5 units of a copy not yet placed is taken as that copy.
 - A new scene, a lost connection or a new game forgets everything. A copy with no sample or remove for 20 s is dropped.
+
+## Held bombs and the fuse (issue 169)
+
+- **Seen (two-game test, 2026-11-11).** While a player held a bomb, the other games showed it fall to the floor, snap back to the hands, and fall again, over and over. The explosion was shared, but the fuse's blinking was not shown.
+- **Cause (read from the code, not measured).** The copy was the game's own `Item_Bomb`, a physics body with gravity. The director puts it at the owner's place every frame through the setter (vtable slot 0x218, 0x4c6580). That path (0x4c6630) stores the new transform on the body as a teleport and does not clear its speed (read with a disassembler from the game's code; no speed write was found there). So the fall's speed grows frame after frame, the body is drawn lower each frame, until it hits the floor and stops, and the next place puts it back in the hands. The fuse is in the bomb's AI (`ExecuteBarrelBombAI`, AS `Bomb_Blink`), which starts it when Link lifts the bomb; a copy is never lifted, so its own fuse never runs.
+- **The owner.** A bomb is held while it is over our Link (at most 0.9 m to the side, 0.3 to 2.8 m above his feet) and moves with him (at most 2 m/s apart), or while its own animation says `Lifted` (`CoopProjectiles::InHands`, `HeldByAnimation`). It is let go at once when its animation says `Thrown`, or after 2 walks out of that box. Our Link's place comes from `PlayerReader::read_position`. The spawn and every sample carry the `held` bit (`object_state`, protocol 4: no new message) and the bomb's AS slot 0 (command, frame, rate; the AS `LiftableExplodeObject_BallBomb` has `Lifted`, `Thrown`, `Wait`, `Bomb_Wait`, `Bomb_Blink`, `Explode`). A held or animated bomb is sampled 30 times a second even when it does not move. A change of hands is sent at once.
+- **The other games.** A held copy is made as `CoopShot_Bomb`, a stand-in in the puppet pack with the bomb's model and its animations (`ASRef`, `ASInfoRef`, `AnimationRef`) and no physics, life, liftable or AI. It is placed as the puppet is, with no setter, so it cannot fall. It is shown 100 ms late, between the owner's two samples around that moment, as the puppet holding it is (`HeldPath`), so it stays in the puppet's hands.
+- When the owner lets go, the copy gets a new key: the director deletes the stand-in and makes the game's own `Item_Bomb` where the owner's bomb is, which then follows the owner's flight and explodes as before. A bomb that goes off in the owner's hands is made as `Item_Bomb` in the hands first, then blown up once it is live.
+- **The fuse on the copy.** The director plays the owner's AS slot 0 command on the copy (stand-in or bomb) with the game's play call (0x2022a0), as the objects' mover does for enemies, and sets its frame when it is more than 3 frames off (0x37b5d70). Names go in fixed cells after the director's slots (one per name, never rewritten).
+- With a pack built before this (no `CoopShot_Bomb`), or after 3 failed tries, the held copy is the game's own bomb, as before.
+- Log: `coop: shots: bombs held: N of ours, M copies in other players' hands` when either count changes; `spawn: CoopShot_Bomb: create copy ...`.
+- **Not proven in a game.** The box and the `Lifted`/`Thrown` names on the owner, the stand-in drawing the bomb with its animation, and the blink frames.
 
 ## Seeds, arrows and hookshot tips: stand-ins (issue 85)
 
@@ -60,6 +72,19 @@ Each of our projectiles that leaves the list now logs how it moved: `coop: shots
 - If not, its flight is made up and sent in place of its place, as ordinary `OBJECT_SAMPLE`s. It goes straight from where it sat, along the +z axis of its turn (+0x328), at 40 m/s for a seed and 56 m/s for an arrow, for at most 0.4 s, then holds. Its remove carries the end of that flight. Log: `... did not move in its place after the shot: its flight is sent from the shot, from X Y Z at VX VY VZ m/s`. No new message, and the receiving games need no change.
 - Switches, for the in-game check: `LICHII_COOP_SHOT_AXIS` (0 to 5: +x +y +z -x -y -z of the turn, default 2) if the copies fly the wrong way, and `LICHII_COOP_SHOT_SPEED` (m/s).
 - Not covered: the hookshot tip (no ammo count) and a shot of the last seed or arrow if the count is not read in time. Bombs, bombchus, nuts and the boomerang are thrown actors with their own physics and keep their samples.
+
+## Where a shot lands (issue 166)
+
+With the stand-ins in the pack and the spawn sync on, the spawn-seed run of 2026-11-11 00:44 shows the seed's place does move in flight: A's seeds went 11 to 15 m at 70 to 80 m/s and were removed as `hit` (reason 3). B made each `CoopShot_Seed` copy and deleted it at the remove. So the seed now flies on every screen. What was missing is its end.
+
+- **Landing.** A copy removed as `hit` used to be deleted at once, wherever its carry-ahead had taken it (up to 250 ms past the last sample, so several metres beyond the wall). Now the remove stops its track at the owner's last place and the copy stays there for `CoopProjectiles::LandHoldUs`: 0.2 s for a seed, 1.5 s for an arrow (it sticks), then it goes. Nuts, bombs and the rest go as before. A made-up flight (above) ends as `gone`: its end is a guess, so its copies are not held there. Log on the receiver: `coop: shots: copy held where the owner's shot hit (N so far)`.
+- **Bounces.** The maker checks each step of its seeds, arrows and nuts: a turn of over 45 degrees with both steps at 3 m/s or more is a bounce (`CoopProjectiles::Bounced`). That step's sample is sent at once, without waiting for the 33 ms gap, so the copies turn where the owner's did. A copy's track keeps its fall across a bounce (the turn is not counted as gravity). The maker's `gone` line now ends `bounced N times`.
+- No new message: the landing and the bounce ride on `OBJECT_SAMPLE` and `OBJECT_REMOVE`.
+
+**The spark and the sound are not done.** Read from the romfs (no run):
+- The seed's hit is played by the game's shootable code, not by data a copy can carry: `ShootableParam/Shootable_DekuSeed` names `HitEffectType` (hash 2054188199), and its `ELinkParam` and `SLinkParam` only name the user `Shootable_DekuSeed`. The stand-ins leave effects and sounds out on purpose, and have no shootable component.
+- A way that needs no code calls: a small actor of ours made at the landing place, with the seed's ELink and SLink user and an AI root that plays one xlink key on enter. The game has that node: `OneShotXLinkSearchAndEmit` (inputs `XLinkKeyName`, `ELinkCall`, `SLinkCall`) is in 454 actor AI files. The smallest such roots are `Shootable_ScrubBusinessSees_PostUpdateMatrix.root.ainb` (1,806 bytes: on a shootable state, emit `ScrubBusinessSeed_HitGround`) and `EftLoc_DodongoCave_21_Floor_A_01_Smoke_00.root.ainb` (1,880 bytes). The key names of the seed's hit, and an AINB writer for the pack tool, are still to find and build. The SLink strings include `SE_Shootable_DekuSeed_Shoot00` and `SE_Obj_DekuSeed_Land`.
+- Until then a landing shows as the seed stopping where it struck, with no spark or sound in the other games.
 
 ## Not done
 

@@ -2117,6 +2117,29 @@ TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is dele
     CHECK(other.Removes() == std::vector<std::uint64_t>{0x700});
 }
 
+TEST_CASE("objects: a taken falling floor or web part stays 4 s so its fall shows, then goes (issue 176)") {
+    // Issue 177: the slingshot room's bridge and the webs vanished in the other game.
+    for (const char* name : {"Obj_InsideTheDekuTree_FallingFloor_A_01",
+                             "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_02"}) {
+        CAPTURE(name);
+        Sync sync;
+        Seen part;
+        part.address = 0x710;
+        part.name = name;
+        part.hash = 0xe9f286aa47fef9b1;
+        part.position = {5.0f, 2.0f, 1.0f};
+        Tick(sync, 0, {part});
+        sync.Take(part.hash);
+        auto step = Tick(sync, 10 * kMs, {part});
+        CHECK(step.writes.empty());  // no life to write
+        CHECK(sync.Removes().empty());
+        Tick(sync, 3000 * kMs, {part});
+        CHECK(sync.Removes().empty());
+        Tick(sync, 4100 * kMs, {part});
+        CHECK(sync.Removes() == std::vector<std::uint64_t>{0x710});
+    }
+}
+
 TEST_CASE("objects: a kill from before we came dies through our game, deleted only as a fallback (issue 133)") {
     // The server tells a late entrant: no owner was ever named to us. Our
     // game must kill it itself, so its room counter and kill key count.
@@ -2455,4 +2478,152 @@ TEST_CASE("objects: a fish its owner landed is gone for everyone (issue 151)") {
     const auto step = Tick(other, 20 * kMs, {Fish(0x200, 0x11, 1.0f)}, 2);
     CHECK(step.writes.empty());
     CHECK(other.Removes() == std::vector<std::uint64_t>{0x200});
+}
+
+// gohma-larva: a Gohma egg hatches into a larva, another actor, only in the
+// game that runs the egg (its owner); the others hold their egg copy.
+namespace {
+
+const char* const kEgg = "Enemy_DungeonBoss_Gohma_Egg";
+const char* const kLarva = "Enemy_Gohma_Larva";
+const std::string kDeku = "InsideTheDekuTree";
+
+bool Lists(const Step& step, const proto::ObjectId& id) {
+    for (const auto& p : All<proto::ObjectPresent>(step)) {
+        for (const auto& e : p.objects) {
+            if (e.id == id) return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("objects: an egg that hatches here shares its larva and ends the egg (gohma-larva)") {
+    CHECK(CoopObjects::IsHatchingEgg("Enemy_Gohma_Egg"));
+    CHECK(CoopObjects::IsHatchingEgg(kEgg));
+    CHECK_FALSE(CoopObjects::IsHatchingEgg(kLarva));
+    CHECK(CoopObjects::IsHatchling(kLarva));
+    CHECK_FALSE(CoopObjects::IsHatchling("Enemy_Dekubaba"));
+
+    Sync a;
+    Tick(a, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 1, kDeku);
+    const proto::ObjectId egg = *a.IdOf(0x100);
+    CHECK(egg.kind == proto::ObjectKind::placed);
+    Own(a, egg, 1, 3);
+    Tick(a, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 1, kDeku);
+
+    // The larva comes while the egg is still on the walk: a made enemy.
+    const auto born = Tick(a, 200 * kMs, {Enemy(0x200, 0, 1, 1.0f, kLarva)}, 1, kDeku);
+    const auto spawns = All<proto::ObjectSpawn>(born);
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].actor == kLarva);
+    CHECK(spawns[0].id.kind == proto::ObjectKind::made);
+    CHECK(spawns[0].id.maker == 1);
+    CHECK(*a.IdOf(0x200) == spawns[0].id);
+    CHECK(a.OwnerOf(spawns[0].id) == 1);
+    CHECK(All<proto::ObjectRemove>(born).empty());
+
+    // The egg leaves the walk: OBJECT_REMOVE gone with its epoch, once.
+    const auto removes = All<proto::ObjectRemove>(Tick(a, 300 * kMs, {Enemy(0x200, 0, 1, 1.0f, kLarva)}, 1, kDeku));
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == egg);
+    CHECK(removes[0].epoch == 3);
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
+    CHECK(All<proto::ObjectRemove>(Tick(a, 400 * kMs, {Enemy(0x200, 0, 1, 1.0f, kLarva)}, 1, kDeku)).empty());
+    CHECK(a.Hatched() == 1);
+}
+
+TEST_CASE("objects: a larva that comes after its egg left still ends the egg (gohma-larva)") {
+    Sync a;
+    Tick(a, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 1, kDeku);
+    const proto::ObjectId egg = *a.IdOf(0x100);
+    Own(a, egg, 1, 2);
+    Tick(a, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 1, kDeku);
+    Tick(a, 200 * kMs, {}, 1, kDeku);
+    const auto left = Tick(a, 300 * kMs, {}, 1, kDeku);
+    CHECK(All<proto::ObjectRemove>(left).empty());
+    // Still listed, so the server keeps it ours meanwhile.
+    CHECK(Lists(Tick(a, 2100 * kMs, {}, 1, kDeku), egg));
+
+    const auto born = Tick(a, 2200 * kMs, {Enemy(0x200, 0, 1, 2.0f, kLarva)}, 1, kDeku);
+    const auto removes = All<proto::ObjectRemove>(born);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == egg);
+    CHECK(removes[0].epoch == 2);
+    REQUIRE(All<proto::ObjectSpawn>(born).size() == 1);
+}
+
+TEST_CASE("objects: no larva, a dead egg, or another game's egg: nothing hatched here (gohma-larva)") {
+    // Gone and no larva within 2 s: no remove, and it leaves the list.
+    Sync a;
+    Tick(a, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 1, kDeku);
+    const proto::ObjectId egg = *a.IdOf(0x100);
+    Own(a, egg, 1);
+    Tick(a, 100 * kMs, {}, 1, kDeku);
+    Tick(a, 200 * kMs, {}, 1, kDeku);
+    CHECK_FALSE(Lists(Tick(a, 4500 * kMs, {}, 1, kDeku), egg));
+    const auto late = Tick(a, 4600 * kMs, {Enemy(0x200, 0, 1, 0.5f, kLarva)}, 1, kDeku);
+    CHECK(All<proto::ObjectRemove>(late).empty());
+    CHECK(All<proto::ObjectSpawn>(late).empty());
+    CHECK(a.IdOf(0x200)->kind == proto::ObjectKind::placed);
+
+    // A killed egg is no hatch.
+    Sync k;
+    Tick(k, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 1, kDeku);
+    Own(k, *k.IdOf(0x100), 1);
+    Tick(k, 100 * kMs, {Enemy(0x100, 0, 0, 0.0f, kEgg)}, 1, kDeku);
+    Tick(k, 200 * kMs, {}, 1, kDeku);
+    Tick(k, 300 * kMs, {}, 1, kDeku);
+    const auto after = Tick(k, 400 * kMs, {Enemy(0x200, 0, 1, 0.0f, kLarva)}, 1, kDeku);
+    CHECK(All<proto::ObjectSpawn>(after).empty());
+    CHECK(k.Hatched() == 0);
+
+    // Another game owns the egg: our larva (its AI got loose) is no share.
+    Sync b;
+    Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+    Own(b, *b.IdOf(0x100), 1);
+    const auto own = Tick(b, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x200, 0, 1, 0.5f, kLarva)}, 2, kDeku);
+    CHECK(All<proto::ObjectSpawn>(own).empty());
+    CHECK(b.Hatched() == 0);
+}
+
+TEST_CASE("objects: a copy's egg goes and the owner's larva is made here (gohma-larva)") {
+    Sync b;
+    Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x110, 0, 1, 8.0f, "Enemy_Dekubaba")}, 2, kDeku);
+    const proto::ObjectId egg = *b.IdOf(0x100);
+    const proto::ObjectId baba = *b.IdOf(0x110);
+    Own(b, egg, 1, 1);
+    Own(b, baba, 1);
+    const std::vector<Seen> both = {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x110, 0, 1, 8.0f, "Enemy_Dekubaba")};
+
+    // An older epoch and a gone for a plain enemy change nothing.
+    b.Receive(proto::ObjectRemove{1, egg, 0, proto::RemoveReason::gone, {}});
+    b.Receive(proto::ObjectRemove{1, baba, 0, proto::RemoveReason::gone, {}});
+    Tick(b, 100 * kMs, both, 2, kDeku);
+    CHECK(b.Removes().empty());
+
+    b.Receive(proto::ObjectRemove{1, egg, 1, proto::RemoveReason::gone, {}});
+    Tick(b, 200 * kMs, both, 2, kDeku);
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x100});
+
+    proto::ObjectSpawn spawn;
+    spawn.player_number = 1;
+    spawn.id = {proto::ObjectKind::made, 1, 7};
+    spawn.actor = kLarva;
+    spawn.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+    b.Receive(spawn);
+    Tick(b, 300 * kMs, {Enemy(0x110, 0, 1, 8.0f, "Enemy_Dekubaba")}, 2, kDeku);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == kLarva);
+    CHECK(b.OwnerOf(spawn.id) == 1);
+
+    // The director's larva, seen before it is bound, is not taken for ours.
+    Tick(b, 400 * kMs, {Enemy(0x110, 0, 1, 8.0f, "Enemy_Dekubaba"), Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku);
+    CHECK_FALSE(b.IdOf(0x300));
+    b.Bind({{creates[0].key, 0x300}});
+    Tick(b, 500 * kMs, {Enemy(0x110, 0, 1, 8.0f, "Enemy_Dekubaba"), Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku);
+    REQUIRE(b.IdOf(0x300));
+    CHECK(*b.IdOf(0x300) == spawn.id);
 }

@@ -13,11 +13,14 @@
 #include <variant>
 #include <vector>
 
+#include "coop/protocol/join_password.hpp"
+
 namespace coop::protocol {
 
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
-// (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 8;
+// (types 28 to 39) and the server sending HANDOVER_ASK; 9: the join password
+// (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
+inline constexpr std::uint16_t kProtocolVersion = 9;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -98,6 +101,10 @@ enum class MessageType : std::uint16_t {
   sign_cut = 80,   // 80 to 84: signs (docs/world.md, "Signs")
   flag_reset = 135,  // 135 to 139: the host's save load (docs/protocol.md, "Saves")
   flag_origin = 150,  // 150 to 154: who made a shared change (docs/protocol.md, "Who did it")
+  join_challenge = 191,  // 191 to 195: the join password (docs/protocol.md, "Join password")
+  join_proof = 192,
+  save_ask = 206,   // 206 to 215: the host's save sent to guests (docs/protocol.md, "Save transfer")
+  save_part = 207,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -176,11 +183,27 @@ enum class RefuseReason : std::uint8_t {
   server_full = 3,
   name_taken = 4,
   bad_name = 5,  // empty or nothing but spaces
+  bad_password = 6,  // the server has a join password and the JOIN_PROOF did not match
 };
 
 struct Refused {
   RefuseReason reason = RefuseReason::wrong_protocol_version;
   bool operator==(const Refused&) const = default;
+};
+
+// JOIN_CHALLENGE, server to client, in answer to a HELLO when the server has
+// a join password: a fresh random nonce for this connection only. The client
+// answers with JOIN_PROOF; WELCOME or REFUSED follows.
+struct JoinChallenge {
+  JoinNonce nonce{};
+  bool operator==(const JoinChallenge&) const = default;
+};
+
+// JOIN_PROOF, client to server: join_proof(password, nonce) for the nonce of
+// this connection's JOIN_CHALLENGE (an empty password when it has none).
+struct JoinProof {
+  JoinProofBytes proof{};
+  bool operator==(const JoinProof&) const = default;
 };
 
 struct PlayerJoined {
@@ -431,6 +454,42 @@ struct FlagReset {
   std::vector<FlagEntry> flags;
   bool operator==(const FlagReset&) const = default;
 };
+
+// SAVE_ASK: a guest asks the host for its save (docs/protocol.md, "Save
+// transfer"). The server passes it to the host only, with the asker's number.
+struct SaveAsk {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a guest, 1 to 4 relayed
+  bool operator==(const SaveAsk&) const = default;
+};
+
+// SAVE_PART: one part of the host's save (a packed save slot, see
+// coop/host/save_transfer.hpp). Every part carries the whole transfer's
+// header, so a receiver can check each one alone. Only the host sends it; the
+// server passes it to `to_player`, or to every other player for 0.
+inline constexpr std::uint32_t kMaxSaveBytes = 1u << 20;  // a slot is about 170 KB
+inline constexpr std::size_t kMaxSavePart = 16384;
+inline constexpr std::uint16_t kMaxSaveParts =
+    static_cast<std::uint16_t>((kMaxSaveBytes + kMaxSavePart - 1) / kMaxSavePart);
+enum class SaveReason : std::uint8_t {
+  join = 1,       // a guest asked (it joined)
+  host_load = 2,  // the host loaded a save: every guest reloads
+};
+struct SavePart {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the host, 1 to 4 relayed
+  std::uint8_t to_player = 0;                // 0: every guest; 1 to 4: that one
+  std::uint32_t transfer_id = 0;
+  SaveReason reason = SaveReason::join;
+  std::uint32_t total_size = 0;  // 1 to kMaxSaveBytes
+  std::uint32_t crc32 = 0;       // of all total_size bytes
+  std::uint16_t index = 0;       // 0 to count - 1
+  std::uint16_t count = 1;       // ceil(total_size / kMaxSavePart)
+  std::vector<std::uint8_t> data;  // kMaxSavePart bytes, the last part the rest
+  bool operator==(const SavePart&) const = default;
+};
+// The parts a save of `total_size` bytes has, and part `index`'s size; 0 for
+// a size out of range.
+std::uint16_t save_part_count(std::uint32_t total_size);
+std::size_t save_part_size(std::uint32_t total_size, std::uint16_t index);
 
 // FLAG_SNAPSHOT: every shared flag, in parts 0 to part_count - 1, sent in
 // order on the progress channel. The server sends it to a player who joins;
@@ -965,7 +1024,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ObjectSample, ObjectRemove, Damage, PlayerPose,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
-                             DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin>;
+                             DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
+                             JoinChallenge, JoinProof, SaveAsk, SavePart>;
 
 MessageType type_of(const Message& message);
 

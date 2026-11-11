@@ -264,7 +264,7 @@ function Format-AddRuleCommand([string]$ServerExe, [int]$Port, [string]$Kind, [s
 #            (none = not running)
 #   $Local: Get-LocalAddresses; $Profiles: objects with Alias and Category (Public, Private,
 #            DomainAuthenticated)
-#   $Access: Read-KitServerAccess (Allow, Bind)
+#   $Access: Read-KitServerAccess (Allow, Bind, Password)
 # Returns objects with Level ('ok', 'problem', 'note') and Lines (text; commands indented).
 function Get-HostingFindings([string]$ServerExe, [int]$Port, $Rules, $Listen, $Local, $Profiles, $Access) {
     $found = [System.Collections.ArrayList]::new()
@@ -299,6 +299,12 @@ function Get-HostingFindings([string]$ServerExe, [int]$Port, $Rules, $Listen, $L
         Add-Finding 'note' @('Anyone who can reach the port may join (server_allow is not set).',
             '  To let in only your friends: in coop-options.ini remove the # in front of server_allow, put in',
             '  their addresses (their VPN addresses, or their public ones with port forwarding), restart Host.bat.')
+    }
+    if ($Access.Password) { Add-Finding 'ok' @('A join password is set (server_password): players need it to join.') }
+    else {
+        Add-Finding 'note' @('No join password (server_password is not set).',
+            '  To make players give one: in coop-options.ini set server_password = <one without spaces>',
+            '  (or delete that line and Host.bat asks), restart Host.bat and send it to your friends.')
     }
 
     # 3. The firewall.

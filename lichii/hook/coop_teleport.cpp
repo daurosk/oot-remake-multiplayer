@@ -15,6 +15,18 @@ namespace {
 using coop::protocol::Age;
 using coop::protocol::JoinRefuseReason;
 
+struct StartPoint {
+    std::string_view scene;
+    std::string_view name;
+    float x;
+    float y;
+    float z;
+};
+
+constexpr StartPoint kStartPoints[] = {
+#include "coop_start_points.inc"
+};
+
 std::string Lower(std::string_view s) {
     std::string out(s);
     for (char& c : out) {
@@ -226,10 +238,33 @@ std::string RefusedLine(std::string_view name, JoinRefuseReason reason) {
     return "teleport: " + n + " refused (reason " + std::to_string(static_cast<int>(reason)) + ")";
 }
 
+std::optional<std::string> NearestStart(std::string_view scene, const Vec& to) {
+    const StartPoint* best = nullptr;
+    float best_d = 0.0f;
+    for (const auto& p : kStartPoints) {
+        if (p.scene != scene) {
+            continue;
+        }
+        const float dx = p.x - to.x;
+        const float dy = p.y - to.y;
+        const float dz = p.z - to.z;
+        const float d = dx * dx + dy * dy + dz * dz;
+        if (best == nullptr || d < best_d) {
+            best = &p;
+            best_d = d;
+        }
+    }
+    if (best == nullptr) {
+        return std::nullopt;
+    }
+    return std::string(best->name);
+}
+
 Trip::Actions Trip::Start(std::uint8_t number, std::string name, const Local& local, std::uint64_t now_us) {
     Actions a;
     if (phase_ == Phase::travelling) {
         a.cancel_scene = true;  // the old one's scene change is no longer wanted
+        a.restore_start = !loaded_;
     }
     phase_ = Phase::idle;
     if (!local.scene || !local.position) {
@@ -289,15 +324,25 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
         a.lines.push_back("teleport: next to " + name_);
         return a;
     }
+    const auto start = NearestStart(target.scene, to);
+    if (!start) {
+        a.lines.push_back("teleport: " + name_ + " is in " + target.scene +
+                          ", a place /teleport cannot load (no start point known there)");
+        return a;
+    }
     phase_ = Phase::travelling;
     scene_ = target.scene;
+    start_ = *start;
     at_ = to;
     since_us_ = now_us;
     asked_us_ = now_us;
     settle_us_ = 0;
+    taken_ = false;
+    seen_request_ = false;
+    loaded_ = false;
     a.scene = scene_;
-    a.lines.push_back("teleport: going to " + name_ + " in " + scene_ +
-                      ". The game changes scene during an event: if nothing happens, talk to someone or read a sign");
+    a.start = start_;
+    a.lines.push_back("teleport: going to " + name_ + " in " + scene_);
     if (CoopDungeon::IsDungeonScene(scene_)) {
         a.lines.push_back("teleport: " + name_ + " is in a dungeon: you may need its items to get on from there");
     }
@@ -340,6 +385,7 @@ Trip::Actions Trip::Left(std::uint8_t number) {
         return a;
     }
     a.cancel_scene = phase_ == Phase::travelling;
+    a.restore_start = a.cancel_scene && !loaded_;
     a.lines.push_back(number == 0 ? "teleport: stopped: the connection was lost"
                                   : "teleport: stopped: " + name_ + " left");
     phase_ = Phase::idle;
@@ -355,22 +401,47 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
             // Arrived (by the request, or on foot): the request is cleared, so
             // the next talk or sign here does not load the scene again.
             a.cancel_scene = true;
-        } else if (now_us - since_us_ > kGiveUpUs) {
+        } else if (now_us - since_us_ > kGiveUpUs && !local.loading_banc && local.scene) {
+            // Never in the middle of a load: that load reads the request.
             phase_ = Phase::idle;
             a.cancel_scene = true;
-            a.lines.push_back("teleport: the game did not change scene in time; stopped. Talk to someone or "
-                              "read a sign while it waits");
+            a.restore_start = !loaded_;
+            a.lines.push_back("teleport: the game did not change scene in time; stopped");
             return a;
         } else {
-            if (local.scene && now_us - asked_us_ >= kAskAgainUs) {  // not while loading
+            // Taken: the load started (or the scene is gone), or the game
+            // emptied the request. "Emptied" counts only once the game has
+            // shown our request: in the frame that asks, the flag still holds
+            // what was there before (often "", left by the last load).
+            if (local.reserved_banc && *local.reserved_banc == scene_) {
+                seen_request_ = true;
+            }
+            const bool took = local.loading_banc || !local.scene ||
+                              (seen_request_ && local.reserved_banc && local.reserved_banc->empty());
+            if (!taken_ && took) {
+                taken_ = true;
+                loaded_ = true;
+                taken_us_ = now_us;
+                a.release = true;
+                return a;
+            }
+            if (taken_) {
+                if (local.loading_banc || !local.scene || now_us - taken_us_ < kRearmUs) {
+                    return a;
+                }
+                taken_ = false;  // it ended somewhere else: ask again
+                seen_request_ = false;
+            }
+            if (now_us - asked_us_ >= kAskAgainUs) {
                 asked_us_ = now_us;
                 a.scene = scene_;
+                a.start = start_;
             }
             return a;
         }
     }
     if (phase_ == Phase::settling) {
-        if (!local.scene || !local.position || local.event) {
+        if (!local.scene || !local.position || local.event || local.loading_banc) {
             settle_us_ = 0;  // still loading, or the arrival's own event
         } else if (*local.scene != scene_) {
             phase_ = Phase::idle;

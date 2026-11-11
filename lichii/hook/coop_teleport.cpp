@@ -15,6 +15,18 @@ namespace {
 using coop::protocol::Age;
 using coop::protocol::JoinRefuseReason;
 
+struct StartPoint {
+    std::string_view scene;
+    std::string_view name;
+    float x;
+    float y;
+    float z;
+};
+
+constexpr StartPoint kStartPoints[] = {
+#include "coop_start_points.inc"
+};
+
 std::string Lower(std::string_view s) {
     std::string out(s);
     for (char& c : out) {
@@ -226,6 +238,28 @@ std::string RefusedLine(std::string_view name, JoinRefuseReason reason) {
     return "teleport: " + n + " refused (reason " + std::to_string(static_cast<int>(reason)) + ")";
 }
 
+std::optional<std::string> NearestStart(std::string_view scene, const Vec& to) {
+    const StartPoint* best = nullptr;
+    float best_d = 0.0f;
+    for (const auto& p : kStartPoints) {
+        if (p.scene != scene) {
+            continue;
+        }
+        const float dx = p.x - to.x;
+        const float dy = p.y - to.y;
+        const float dz = p.z - to.z;
+        const float d = dx * dx + dy * dy + dz * dz;
+        if (best == nullptr || d < best_d) {
+            best = &p;
+            best_d = d;
+        }
+    }
+    if (best == nullptr) {
+        return std::nullopt;
+    }
+    return std::string(best->name);
+}
+
 Trip::Actions Trip::Start(std::uint8_t number, std::string name, const Local& local, std::uint64_t now_us) {
     Actions a;
     if (phase_ == Phase::travelling) {
@@ -289,13 +323,21 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
         a.lines.push_back("teleport: next to " + name_);
         return a;
     }
+    const auto start = NearestStart(target.scene, to);
+    if (!start) {
+        a.lines.push_back("teleport: " + name_ + " is in " + target.scene +
+                          ", a place /teleport cannot load (no start point known there)");
+        return a;
+    }
     phase_ = Phase::travelling;
     scene_ = target.scene;
+    start_ = *start;
     at_ = to;
     since_us_ = now_us;
     asked_us_ = now_us;
     settle_us_ = 0;
     a.scene = scene_;
+    a.start = start_;
     a.lines.push_back("teleport: going to " + name_ + " in " + scene_ +
                       ". The game changes scene during an event: if nothing happens, talk to someone or read a sign");
     if (CoopDungeon::IsDungeonScene(scene_)) {
@@ -365,6 +407,7 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
             if (local.scene && now_us - asked_us_ >= kAskAgainUs) {  // not while loading
                 asked_us_ = now_us;
                 a.scene = scene_;
+                a.start = start_;
             }
             return a;
         }

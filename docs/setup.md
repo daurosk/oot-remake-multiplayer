@@ -94,7 +94,7 @@ Press Enter in the game to open the chat box. A line that starts with `/teleport
 - `/teleport <player>` takes you to that player. The whole name works in any case, and so does the start of a name if only one player's name starts that way, or the player's number (`/teleport 2`).
   - The other player's game answers with where they last stood on their feet, so you never land in a wall or in mid-air.
   - In the same scene you are moved there at once.
-  - In another scene the game changes scene first. It does that only during an event, so if nothing happens, talk to someone or read a sign. After the load you are moved next to them. A scene change not taken in 60 seconds is given up.
+  - In another scene the game changes scene first, arriving at that place's entrance nearest the other player. It does that only during an event, so if nothing happens, talk to someone or read a sign. After the load you are moved next to them. A scene change not taken in 60 seconds is given up.
   - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link. A dungeon gives a warning: you may need its items to get on from there.
   - A player with a build from before test8 does not answer: "no answer from" after 5 seconds.
 

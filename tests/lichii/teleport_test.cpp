@@ -153,7 +153,7 @@ TEST_CASE("teleport: the answer is refused when busy, in a boss fight or not gro
     fight.fighting = true;
     CHECK(CoopTeleport::AnswerFor(fight, g).reason == proto::JoinRefuseReason::cannot_warp);
     // Another scene than where it stood: just loaded, not grounded there yet.
-    CHECK_FALSE(CoopTeleport::AnswerFor(At("Hyrule", 0, 0, 0), g).accept);
+    CHECK_FALSE(CoopTeleport::AnswerFor(At("HyruleField_Child", 0, 0, 0), g).accept);
 }
 
 TEST_CASE("teleport: our own game refuses before anything is sent") {
@@ -203,12 +203,15 @@ TEST_CASE("teleport: another scene changes scene, then asks again and moves") {
     auto a = trip.Accepted(2, Target("KakarikoVillage_Child", 10, 2, 20), here, kS);
     REQUIRE(a.scene);
     CHECK(*a.scene == "KakarikoVillage_Child");
+    CHECK(a.start == "Kakariko_WellSide");  // the entrance nearest Saria (-5.8 85.2 44.2)
     CHECK_FALSE(a.move);
     CHECK(Has(a.lines, "talk to someone or read a sign"));
     CHECK(trip.phase() == Trip::Phase::travelling);
     // Asked again every 0.5 s until Link is in that scene.
     CHECK_FALSE(trip.Tick(here, kS + kS / 4).scene);
-    CHECK(trip.Tick(here, kS + kS / 2).scene);
+    const auto again = trip.Tick(here, kS + kS / 2);
+    REQUIRE(again.scene);
+    CHECK(again.start == "Kakariko_WellSide");  // every ask names the start point
     // The load: no scene, then the new scene with its arrival event.
     Local loading;
     CHECK_FALSE(trip.Tick(loading, 2 * kS).scene);
@@ -235,8 +238,8 @@ TEST_CASE("teleport: after the scene change, a busy or silent player still gives
         Trip trip;
         const Local here = At("Kokiri", 0, 0, 0);
         trip.Start(2, "Saria", here, 0);
-        trip.Accepted(2, Target("Hyrule", 10, 2, 20), here, kS);
-        const Local arrived = At("Hyrule", 0, 0, 0);
+        trip.Accepted(2, Target("HyruleField_Child", 10, 2, 20), here, kS);
+        const Local arrived = At("HyruleField_Child", 0, 0, 0);
         trip.Tick(arrived, 2 * kS);
         trip.Tick(arrived, 3 * kS);
         REQUIRE(trip.Tick(arrived, 3 * kS + Trip::kSettleUs).ask);
@@ -249,8 +252,8 @@ TEST_CASE("teleport: after the scene change, a busy or silent player still gives
     Trip trip;
     const Local here = At("Kokiri", 0, 0, 0);
     trip.Start(2, "Saria", here, 0);
-    trip.Accepted(2, Target("Hyrule", 10, 2, 20), here, kS);
-    const Local arrived = At("Hyrule", 0, 0, 0);
+    trip.Accepted(2, Target("HyruleField_Child", 10, 2, 20), here, kS);
+    const Local arrived = At("HyruleField_Child", 0, 0, 0);
     trip.Tick(arrived, 2 * kS);
     trip.Tick(arrived, 3 * kS);
     trip.Tick(arrived, 3 * kS + Trip::kSettleUs);
@@ -298,7 +301,7 @@ TEST_CASE("teleport: a scene change not taken is given up and cleared") {
     const Local here = At("Kokiri", 0, 0, 0);
     Trip trip;
     trip.Start(2, "Saria", here, 0);
-    trip.Accepted(2, Target("Hyrule", 1, 1, 1), here, kS);
+    trip.Accepted(2, Target("HyruleField_Child", 1, 1, 1), here, kS);
     CHECK_FALSE(trip.Tick(here, kS + Trip::kGiveUpUs).cancel_scene);
     const auto a = trip.Tick(here, 2 * kS + Trip::kGiveUpUs);
     CHECK(a.cancel_scene);
@@ -306,13 +309,13 @@ TEST_CASE("teleport: a scene change not taken is given up and cleared") {
     CHECK(trip.phase() == Trip::Phase::idle);
     // The player leaving, or a new /teleport, also clears it.
     trip.Start(2, "Saria", here, 0);
-    trip.Accepted(2, Target("Hyrule", 1, 1, 1), here, kS);
+    trip.Accepted(2, Target("HyruleField_Child", 1, 1, 1), here, kS);
     CHECK(trip.Left(3).lines.empty());
     const auto left = trip.Left(2);
     CHECK(left.cancel_scene);
     CHECK(Has(left.lines, "Saria left"));
     trip.Start(2, "Saria", here, 0);
-    trip.Accepted(2, Target("Hyrule", 1, 1, 1), here, kS);
+    trip.Accepted(2, Target("HyruleField_Child", 1, 1, 1), here, kS);
     const auto again = trip.Start(3, "Sam", here, 2 * kS);
     CHECK(again.cancel_scene);
     CHECK(again.ask);
@@ -323,10 +326,38 @@ TEST_CASE("teleport: leaving the scene while settling stops") {
     const Local here = At("Kokiri", 0, 0, 0);
     Trip trip;
     trip.Start(2, "Saria", here, 0);
-    trip.Accepted(2, Target("Hyrule", 1, 1, 1), here, kS);
-    trip.Tick(At("Hyrule", 0, 0, 0), 2 * kS);
+    trip.Accepted(2, Target("HyruleField_Child", 1, 1, 1), here, kS);
+    trip.Tick(At("HyruleField_Child", 0, 0, 0), 2 * kS);
     CHECK(trip.phase() == Trip::Phase::settling);
     const auto a = trip.Tick(At("LonLonRanch", 0, 0, 0), 3 * kS);
     CHECK(Has(a.lines, "you left Hyrule"));
+    CHECK(trip.phase() == Trip::Phase::idle);
+}
+
+TEST_CASE("teleport: another scene always names a start point of that scene") {
+    // The test8 black picture: Graveyard_Child loaded with Kakariko's start
+    // name. The start is the entrance nearest the player there.
+    CHECK(CoopTeleport::NearestStart("Graveyard_Child", Vec{-35.7f, 98.0f, 8.5f}) == "GraveYard_KakarikoSide");
+    CHECK(CoopTeleport::NearestStart("Graveyard_Child", Vec{60.0f, 108.0f, 2.0f}) == "GraveYard_ShadowTempleSide");
+    CHECK(CoopTeleport::NearestStart("KokiriForest_Child", Vec{80.0f, 115.0f, -20.0f}) == "FrontDekuTree");
+    CHECK(CoopTeleport::NearestStart("InsideTheDekuTree", Vec{0, 0, 0}) == "Entrance");
+    // Warp-song and cutscene starts are never picked: they may start an event.
+    CHECK(CoopTeleport::NearestStart("Graveyard_Child", Vec{64.65f, 108.97f, 2.48f}) != "ShadowNocturne");
+    CHECK(CoopTeleport::NearestStart("KokiriForest_Child", Vec{39.6f, 113.3f, 0.0f}) != "After_DekuWither");
+    CHECK_FALSE(CoopTeleport::NearestStart("NoSuchScene", Vec{0, 0, 0}));
+    CHECK_FALSE(CoopTeleport::NearestStart("", Vec{0, 0, 0}));
+
+    Trip trip;
+    const Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    trip.Start(2, "Saria", here, 0);
+    auto a = trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS);
+    REQUIRE(a.scene);
+    CHECK(a.start == "GraveYard_KakarikoSide");
+    // A scene with no start point known: refused, no scene change asked.
+    trip.Start(2, "Saria", here, 0);
+    a = trip.Accepted(2, Target("NoSuchScene_Child", 1, 1, 1), here, kS);
+    CHECK_FALSE(a.scene);
+    CHECK_FALSE(a.move);
+    CHECK(Has(a.lines, "no start point known"));
     CHECK(trip.phase() == Trip::Phase::idle);
 }

@@ -1071,9 +1071,9 @@ public:
     bool debug_ = false;
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
-    CoopWorld::GimmickProbe gimmick_probe_;  // test7: on unless LICHII_COOP_GIMMICK_PROBE=0
+    CoopWorld::GimmickProbe gimmick_probe_;  // test7: LICHII_COOP_GIMMICK_PROBE=1 turns it on
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
-    bool gimmick_probe_on_ = true;
+    bool gimmick_probe_on_ = false;
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     int world_lines_ = 0;
@@ -1649,7 +1649,7 @@ Objects& Instance() {
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
-        objects.gimmick_probe_on_ = EnvOn("LICHII_COOP_GIMMICK_PROBE");
+        objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a
         // Stalchild loses its head on every screen. An amount alone at

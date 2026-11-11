@@ -87,6 +87,12 @@ class FlagWatcher {
   // to 0 through the session (a key that the game resets on a scene change
   // must not put the pickup back for the others). False: already a pickup.
   bool share_pickup(FlagKey key);
+  // A named Bool that the game itself sets back to 0 (a room's own switch
+  // state, reset when the room is left: docs/dungeon.md "Live dungeon
+  // actions"): shared one way like a pickup (a 1 is sent and written, a 0 is
+  // never sent and never written over a 1), and never written back after a
+  // load (the room must be able to reset). False: already one way.
+  bool share_one_way(FlagKey key);
   // With learning on, an incoming 64-bit key set to 1 that this game does not
   // share yet is taken as a pickup too (the player who took it was in a scene
   // this game has not loaded). At most kMaxLearned keys. Off by default here;
@@ -159,6 +165,7 @@ class FlagWatcher {
   SharedFlags shared_;
   FlagRole role_;
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
+  std::set<FlagKey> one_way_;  // one-way named flags, no load write-back (share_one_way)
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);

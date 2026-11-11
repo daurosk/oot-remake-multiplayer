@@ -87,6 +87,12 @@ bool FlagWatcher::receive(std::span<const std::uint8_t> bytes) {
   return receive(message);
 }
 
+bool FlagWatcher::share_one_way(FlagKey key) {
+  if (key.kind != FlagKeyKind::named || !one_way_.insert(key).second) return false;
+  shared_.add(key);
+  return true;
+}
+
 bool FlagWatcher::share_pickup(FlagKey key) {
   if (key.kind != FlagKeyKind::key64 || !pickups_.insert(key).second) return false;
   shared_.add(key);
@@ -117,7 +123,7 @@ bool FlagWatcher::takes(const FlagEntry& entry) {
     share_pickup(key);
     return true;
   }
-  if (!one && pickups_.contains(key)) {
+  if (!one && (pickups_.contains(key) || one_way_.contains(key))) {
     ++stats_.pickup_resets;
     return false;
   }
@@ -414,7 +420,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (it->second == *now && !restate_.contains(key)) continue;
     const FlagEntry before = it->second;
     it->second = *now;
-    if (settling() && !store.is_count(key) && !restate_.contains(key)) {
+    if (settling() && !store.is_count(key) && !restate_.contains(key) && !one_way_.contains(key)) {
       // A load putting back an older value than the group's: not sent, and
       // the group's value goes back in (set_loading).
       const auto group = group_.find(key);
@@ -436,7 +442,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         group_before_.erase(key);
       }
     }
-    if (now->value == 0 && pickups_.contains(key) && !restate_.contains(key)) {
+    if (now->value == 0 && (pickups_.contains(key) || one_way_.contains(key)) && !restate_.contains(key)) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
     }

@@ -33,7 +33,10 @@ std::span<const Flag> Flags();
 // Room switch flags that are NOT saved (reset types 9 and 40: the room's own
 // state, back on a reload) but open or start something for everyone in the
 // room: a switch on, a light switch hit, a gate, a room's provisional clear.
-// Shared live like the others (test7, "temple actions", docs/dungeon.md).
+// Shared one way (FlagWatcher::share_one_way: a 1 crosses, the game's own
+// reset to 0 does not, no write-back after a load). The hook calls it for
+// each (test7, "temple actions", docs/dungeon.md). Left out:
+// ForestTemple_Room00_AppearWolfosSwitch, a sensor of where one player is.
 // Found by hashing the dungeon logic graphs' strings against GameDataList,
 // all reset types; the rest of the 31 non-saved hits are one player's own
 // (where they stand, Navi) or a one-way ride, and stay out.

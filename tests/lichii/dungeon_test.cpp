@@ -415,3 +415,50 @@ TEST_CASE("dungeon: which flags are held: gimmick events and the corridor, not s
     CHECK(CoopDungeon::IsDungeonScene("InsideJabuJabuBelly"));
     CHECK_FALSE(CoopDungeon::IsDungeonScene("KokiriForest"));
 }
+
+TEST_CASE("dungeon: a room switch flag crosses one way, the game's own reset stays its own") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    const auto gate = host::FlagKey(host::flag_hash("GerudoTrainingGround_Gate"), 0);
+    for (const auto& f : CoopDungeon::LiveFlags()) {
+        CHECK(std::string(f.name).find("AppearWolfos") == std::string::npos);  // a player sensor
+    }
+    Game a;
+    Game b;
+    a.set(gate, 0);
+    b.set(gate, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    for (auto* w : {&wa, &wb}) CHECK(w->share_one_way(gate));
+    CHECK_FALSE(wa.share_one_way(gate));  // once
+    wa.frame(a);
+    wb.frame(b);
+
+    // A opens the gate: a 1 goes out and is written in B.
+    a.set(gate, 1);
+    auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    wb.receive(proto::Message{proto::FlagState{1, std::get<proto::FlagSet>(m).flags}});
+    wb.frame(b);
+    CHECK(b.values[gate].value == 1);
+
+    // A leaves the room: its game resets the flag. Nothing goes out.
+    a.set(gate, 0);
+    CHECK(wa.frame(a).empty());
+    // A 0 from elsewhere is never written over B's 1.
+    wb.receive(proto::Message{proto::FlagState{1, {{gate, proto::FlagKind::boolean, 0}}}});
+    wb.frame(b);
+    CHECK(b.values[gate].value == 1);
+
+    // B loads (settling): its game resets the flag and it is not written back.
+    wb.set_loading(true);
+    b.set(gate, 0);
+    CHECK(wb.frame(b).empty());
+    wb.set_loading(false);
+    wb.frame(b);
+    CHECK(b.values[gate].value == 0);
+    CHECK(wb.stats().load_reverts == 0);
+}

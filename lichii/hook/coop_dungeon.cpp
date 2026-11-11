@@ -1536,7 +1536,6 @@ std::span<const Flag> Flags() {
 
 namespace {
 constexpr std::array kLiveFlags = std::to_array<Flag>({
-    {0x5dab0bf9, false, "ForestTemple_Room00_AppearWolfosSwitch"},
     {0x32eeccea, false, "ForestTemple_Room17_Switch_On_02"},
     {0xe419453a, false, "GerudoTrainingGround_Gate"},
     {0xfa42fe59, false, "SpiritTemple_Room31_LightHit"},

@@ -250,6 +250,11 @@ public:
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
         }
+        if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
+            for (const auto& f : CoopDungeon::LiveFlags()) {
+                session_->share_one_way(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
+            }
+        }
         if (pickups_ && CoopChests::On()) {  // one way: an opened chest never closes again
             for (const auto& k : CoopChests::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));

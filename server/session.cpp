@@ -93,6 +93,13 @@ bool Session::connected(ConnectionId id, std::uint64_t now_us,
       return false;
     }
   }
+  if (address) {
+    if (auto it = wrong_guesses_.find(*address);
+        it != wrong_guesses_.end() && now_us < it->second.blocked_until) {
+      ++stats_.password_blocked;
+      return false;
+    }
+  }
   if (address && config_.max_half_open_per_address != 0 &&
       half_open_count(*address) >= config_.max_half_open_per_address) {
     ++stats_.half_open_limited;
@@ -197,11 +204,33 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
   if (!right) {
     ++stats_.bad_password;
+    note_wrong_password(c.address, now_us);
     refuse(id, c, RefuseReason::bad_password, now_us, "wrong join password");
     return;
   }
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
   admit(id, c, hello, now_us);
+}
+
+void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us) {
+  if (!address || config_.max_wrong_passwords == 0) return;
+  // A hard cap besides the sweep in tick: ENet's connect handshake means
+  // each entry is a real address that answered, but keep memory bounded.
+  if (wrong_guesses_.size() >= kMaxWrongGuessAddresses && !wrong_guesses_.contains(*address)) {
+    return;
+  }
+  WrongGuesses& g = wrong_guesses_[*address];
+  if (g.count == 0 || now_us - g.first_at >= config_.wrong_password_window_us) {
+    g.count = 0;
+    g.first_at = now_us;
+  }
+  if (++g.count >= config_.max_wrong_passwords) {
+    g.blocked_until = now_us + config_.wrong_password_block_us;
+    g.count = 0;
+    // No address in the log: the log may be sent to others (collect-logs).
+    log("too many wrong join passwords from one address: it is turned away for " +
+        std::to_string(config_.wrong_password_block_us / 1'000'000) + " s");
+  }
 }
 
 void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
@@ -1607,6 +1636,16 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
 }
 
 void Session::tick(std::uint64_t now_us) {
+  // Wrong-password counts whose window and block are both over.
+  for (auto it = wrong_guesses_.begin(); it != wrong_guesses_.end();) {
+    const WrongGuesses& g = it->second;
+    const bool window_over = now_us - g.first_at >= config_.wrong_password_window_us;
+    if (window_over && now_us >= g.blocked_until) {
+      it = wrong_guesses_.erase(it);
+    } else {
+      ++it;
+    }
+  }
   std::vector<ConnectionId> late_hello;  // not a player: dropped without PLAYER_LEFT
   std::vector<ConnectionId> silent;
   for (auto& [id, c] : connections_) {

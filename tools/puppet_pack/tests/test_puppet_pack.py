@@ -314,6 +314,21 @@ class BuildPackTest(unittest.TestCase):
                          "?Component/SoundFootStepParam/Player_Adult.game__component__SoundFootStepParam.bgyml")
         self.assertFalse([n for n in names if "CoopPuppet_Adult.game__" in n])
 
+    def test_pack_sound_user(self):
+        members = fake_player_pack("Child")
+        pack, _, names, _ = build.build_pack(members, "Child", sound_user="Enemy_X")
+        out = sarc.read(pack)
+        comps = byml.loads(out["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
+        own = "Component/SLink/CoopPuppet_Child.engine__component__SLinkParam.bgyml"
+        self.assertEqual(comps["SLinkRef"], "?" + own)
+        self.assertEqual(byml.loads(out[own]), {"UserName": "Enemy_X"})
+        row = build.info_row({"__RowId": "Player_Child", "SLinkUserName": "Player_Child"}, "C", sound_user="Enemy_X")
+        self.assertEqual(row["SLinkUserName"], "Enemy_X")
+        # Without sound the switch does nothing.
+        _, _, names, _ = build.build_pack(members, "Child", sound=False, sound_user="Enemy_X")
+        self.assertFalse([n for n in names if "SLink" in n])
+        self.assertNotIn("SLinkUserName", build.info_row({"SLinkUserName": "P"}, "C", sound=False, sound_user="E"))
+
     def test_pack_without_sound(self):
         members = fake_player_pack("Child")
         pack, _, names, _ = build.build_pack(members, "Child", sound=False)
@@ -541,6 +556,7 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
         self.assertIs(man["sound"], True)
         self.assertEqual(man["footsteps"], "puppet")
+        self.assertIsNone(man["sound_user"])
         # The puppet's footstep param has its own entry; the made-up table has none for the
         # player's file, so it is the file plus the margin.
         for a in man["actors"]:
@@ -617,6 +633,25 @@ class FullBuildTest(unittest.TestCase):
         files = sarc.read(d.decompress(build.read(os.path.join(mod, "romfs", "Pack/Actor/CoopPuppet_Child.pack.zs"))))
         self.assertIn("Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.bgyml", files)
         self.assertNotIn("Component/SoundFootStepParam/CoopPuppet_Child.game__component__SoundFootStepParam.bgyml", files)
+
+    def test_main_sound_user(self):
+        from puppet_pack import zs
+        mod = os.path.join(self.dir, "mod7")
+        # Only an SLink user some actor has.
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--sound-user", "Nobody"]), 1)
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--sound-user", "Player_Adult"]), 0)
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertEqual(man["sound_user"], "Player_Adult")
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(rows["CoopPuppet_Child"]["SLinkUserName"], "Player_Adult")
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertGreater(t.get("Component/SLink/CoopPuppet_Child.engine__component__SLinkParam.bgyml"), 0)
 
     def test_main_no_sound(self):
         from puppet_pack import zs

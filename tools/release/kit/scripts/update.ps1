@@ -52,13 +52,13 @@ $InProgress = 'update-in-progress.txt'
 
 # --- Versions ---------------------------------------------------------------------------
 
-# 'v0.1.0-test2' -> @{ Core = 0,1,0; Pre = 'test2' }; $null when it is not a version.
+# 'v0.1.0-beta2' -> @{ Core = 0,1,0; Pre = 'beta2' }; $null when it is not a version.
 function ConvertTo-KitVersion([string]$Text) {
     if ($Text -notmatch '^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$') { return $null }
     return @{ Core = @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3]); Pre = [string]$Matches[4] }
 }
 
-# One part of a test-build name, compared as text and number runs: test2 < test10 < testb.
+# One part of a test-build name, compared as text and number runs: beta2 < beta10 < betab.
 function Compare-KitPreRun([string]$A, [string]$B) {
     $ra = @([regex]::Matches($A, '\d+|\D+') | ForEach-Object { $_.Value })
     $rb = @([regex]::Matches($B, '\d+|\D+') | ForEach-Object { $_.Value })
@@ -78,7 +78,7 @@ function Compare-KitPreRun([string]$A, [string]$B) {
 }
 
 # -1, 0 or 1. A version with no test-build part is newer than its test builds
-# (v0.1.0 > v0.1.0-test2). Something that is not a version counts as the oldest.
+# (v0.1.0 > v0.1.0-beta2). Something that is not a version counts as the oldest.
 function Compare-KitVersion([string]$A, [string]$B) {
     $va = ConvertTo-KitVersion $A
     $vb = ConvertTo-KitVersion $B
@@ -100,7 +100,7 @@ function Compare-KitVersion([string]$A, [string]$B) {
 }
 
 # The release this kit was made from, from the first line of VERSION.txt
-# ("kit: oot-coop-v0.1.0-test2 (release v0.1.0-test2)"); '' for a kit that is no release.
+# ("kit: oot-coop-v0.1.0-beta2 (release v0.1.0-beta2)"); '' for a kit that is no release.
 function Get-KitVersion([string]$KitDir) {
     $file = Join-Path $KitDir 'VERSION.txt'
     if (-not (Test-Path -LiteralPath $file)) { return '' }
@@ -117,7 +117,7 @@ function Test-KitUnfinished([string]$KitDir) {
 }
 
 # The version a stopped update started from, from update-in-progress.txt ("... this kit from
-# v0.1.0-test4.1 to ..."); '' when there is no marker or it does not say (older updaters).
+# v0.1.0-beta4.1 to ..."); '' when there is no marker or it does not say (older updaters).
 # VERSION.txt may already be the new one then, so the backup is named after this one.
 function Get-KitUnfinishedFrom([string]$KitDir) {
     $file = Join-Path $KitDir $InProgress

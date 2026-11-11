@@ -520,7 +520,7 @@ public:
             }
             CoopObjects::TakenForOthers(keys);
         }
-        // Issue 148: a boss door left shut in this save by test6 (a "shut in" flag that was
+        // Issue 148: a boss door left shut in this save by an older build (a "shut in" flag that was
         // shared then) is opened once per scene load while Link is in no boss room.
         if (game_store) {
             std::optional<CoopBoss::Vec> at;
@@ -1318,7 +1318,7 @@ void OnFrame(Core::System& system) {
     // emulation has stopped), so it stays valid for this frame.
     auto* coop = Get();
     // The game's main may be patched (or refused for a code mod) after co-op
-    // started: then co-op disconnects and stays off (issue 136, test7). The
+    // started: then co-op disconnects and stays off (issue 136). The
     // Coop object stays until Shutdown: the overlay may hold it.
     if (CoopSites::MustStopForMod(coop != nullptr, g_mod_refused, coop ? CoopSvc::Refusal() : std::string{})) {
         g_mod_refused = true;

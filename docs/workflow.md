@@ -61,7 +61,7 @@ If the old coordinator is gone before step 2 (crashed, stopped, out of usage), t
 - One task, one branch, one worktree (`.worktrees/<branch>`). One build at a time on a shared PC (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 - Nothing from the game in git, and nothing from other projects' repositories with their history or identity.
 - Plain-English reports: what changed, how it was tested, what is not yet proven.
-- Every release updates README.md in the same pass: the newest release's link and name in "Play the test release", what works and the known issues, and the status rows. A release is not done until the README on main names it.
+- Every release updates README.md in the same pass: "Play the test release" (it links the releases page, latest, by no name), what works and the known issues, and the status rows. A release is not done until the README on main says what it brings. No file in the repo names a release (old or new): `tools/check_content.py` fails on one; the name goes only into the GitHub release and its notes.
 
 ## Files outside the repository
 

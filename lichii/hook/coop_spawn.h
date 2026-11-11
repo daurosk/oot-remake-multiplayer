@@ -230,7 +230,7 @@ private:
 // not from the game's own shootable. A shootable made without a shooter
 // starts in its `UsedExternally` state, and the seed's pack hides it while it
 // is not shot (`IsPrepareVisibleOff`): the copies were made in the other game
-// (test4 player logs) but never seen. The stand-in is the actor's model only
+// (player logs) but never seen. The stand-in is the actor's model only
 // (no physics, sensor, attack or AI), so it is drawn wherever it is put, and
 // it can hit nothing. Empty when the actor has none.
 std::string_view StandIn(std::string_view actor);

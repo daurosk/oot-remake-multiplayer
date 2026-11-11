@@ -131,19 +131,19 @@ $oldApi = $env:OOT_COOP_UPDATE_API
 try {
     # The fake newer release: a kit zip, its checksum, and the release list.
     $src = Join-Path $tmp 'src'
-    New-Kit (Join-Path $src 'oot-coop-v0.1.0-test4') 'v0.1.0-test4' 'new'
+    New-Kit (Join-Path $src 'oot-coop-v0.1.0-beta4') 'v0.1.0-beta4' 'new'
     $assets = Join-Path $tmp 'assets'
     New-Item -ItemType Directory -Force -Path $assets | Out-Null
-    $zip = Join-Path $assets 'oot-coop-v0.1.0-test4.zip'
-    & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $src 'oot-coop-v0.1.0-test4'
+    $zip = Join-Path $assets 'oot-coop-v0.1.0-beta4.zip'
+    & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $src 'oot-coop-v0.1.0-beta4'
     if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
     $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  oot-coop-v0.1.0-test4.zip`n")
+    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  oot-coop-v0.1.0-beta4.zip`n")
     [System.IO.File]::WriteAllText("$assets\bad.sha256", ('0' * 64) + "`n")
     function Write-List([string]$Path, [string]$Sum) {
-        $json = ConvertTo-Json -Depth 5 @(@{ tag_name = 'v0.1.0-test4'; draft = $false; html_url = 'local'; assets = @(
-            @{ name = 'oot-coop-v0.1.0-test4.zip'; browser_download_url = $zip; size = (Get-Item $zip).Length },
-            @{ name = 'oot-coop-v0.1.0-test4.zip.sha256'; browser_download_url = $Sum; size = 80 }) })
+        $json = ConvertTo-Json -Depth 5 @(@{ tag_name = 'v0.1.0-beta4'; draft = $false; html_url = 'local'; assets = @(
+            @{ name = 'oot-coop-v0.1.0-beta4.zip'; browser_download_url = $zip; size = (Get-Item $zip).Length },
+            @{ name = 'oot-coop-v0.1.0-beta4.zip.sha256'; browser_download_url = $Sum; size = 80 }) })
         [System.IO.File]::WriteAllText($Path, $json)
     }
     $good = Join-Path $tmp 'releases.json'; Write-List $good "$zip.sha256"
@@ -167,31 +167,31 @@ try {
     }
 
     # A newer release, the player says yes: the kit updates and the NEW play.ps1 starts the game.
-    $kit = Join-Path $tmp 'kit yes (1)'; New-Kit $kit 'v0.1.0-test3' 'old'
+    $kit = Join-Path $tmp 'kit yes (1)'; New-Kit $kit 'v0.1.0-beta3' 'old'
     Write-File "$kit\emulator\user\keys\prod.keys" 'my keys'
     Start-Play $kit 'y' $good
     Check ($code -eq 0) "asked, yes: play ran ($(($out | Select-Object -Last 1) -join ''))"
-    Check (($out -join ' ') -match 'Co-op v0\.1\.0-test4 is out\. Update now\?') 'the question names the new version'
+    Check (($out -join ' ') -match 'Co-op v0\.1\.0-beta4 is out\. Update now\?') 'the question names the new version'
     Check (((Get-Played $kit) -join '|') -eq 'new NoUpdate') 'the old play.ps1 hands over to the new one (and does not start the game itself)'
-    Check ((Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'v0\.1\.0-test4') 'the kit is the new version'
-    Check ((Read-File "$kit\emulator\lichii.exe") -match 'coop: loaded v0\.1\.0-test4') 'the emulator is the new one'
+    Check ((Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'v0\.1\.0-beta4') 'the kit is the new version'
+    Check ((Read-File "$kit\emulator\lichii.exe") -match 'coop: loaded v0\.1\.0-beta4') 'the emulator is the new one'
     Check ((Read-File "$kit\emulator\user\keys\prod.keys") -eq 'my keys') 'the keys are kept'
     Test-Started $kit 'asked, yes'
 
     # No key at all (an unattended start): yes.
-    $kit = Join-Path $tmp 'kit default'; New-Kit $kit 'v0.1.0-test3' 'old'
+    $kit = Join-Path $tmp 'kit default'; New-Kit $kit 'v0.1.0-beta3' 'old'
     Start-Play $kit '' $good
     Check (((Get-Played $kit) -join '|') -eq 'new NoUpdate') 'no answer: updated and the new kit started'
 
     # Declined: the old kit starts as it is.
-    $kit = Join-Path $tmp 'kit no'; New-Kit $kit 'v0.1.0-test3' 'old'
+    $kit = Join-Path $tmp 'kit no'; New-Kit $kit 'v0.1.0-beta3' 'old'
     Start-Play $kit 'n' $good
     Check (((Get-Played $kit) -join '|') -eq 'old') "declined: only the old play.ps1 ran [$((Get-Played $kit) -join '|')]"
-    Check ((Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'v0\.1\.0-test3') 'declined: the kit is unchanged'
+    Check ((Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'v0\.1\.0-beta3') 'declined: the kit is unchanged'
     Test-Started $kit 'declined'
 
     # auto_update = yes: no question.
-    $kit = Join-Path $tmp 'kit auto yes'; New-Kit $kit 'v0.1.0-test3' 'old'
+    $kit = Join-Path $tmp 'kit auto yes'; New-Kit $kit 'v0.1.0-beta3' 'old'
     $o = "$kit\coop-options.ini"; [System.IO.File]::WriteAllText($o, ([System.IO.File]::ReadAllText($o) -replace 'auto_update = ask', 'auto_update = yes'))
     Start-Play $kit 'n' $good
     Check (($out -join ' ') -notmatch 'Update now\?' -and ($out -join ' ') -match 'auto_update = yes') 'auto_update = yes: no question'
@@ -199,55 +199,55 @@ try {
     Check ([System.IO.File]::ReadAllText($o) -match '(?m)^auto_update = yes') 'auto_update = yes: the player''s choice is kept'
 
     # auto_update = no: only says so.
-    $kit = Join-Path $tmp 'kit auto no'; New-Kit $kit 'v0.1.0-test3' 'old'
+    $kit = Join-Path $tmp 'kit auto no'; New-Kit $kit 'v0.1.0-beta3' 'old'
     $o = "$kit\coop-options.ini"; [System.IO.File]::WriteAllText($o, ([System.IO.File]::ReadAllText($o) -replace 'auto_update = ask', 'auto_update = no'))
     Start-Play $kit 'y' $good
     Check (($out -join ' ') -match 'run Update\.bat' -and ($out -join ' ') -notmatch 'Update now\?') 'auto_update = no: says one is out, no question'
-    Check (((Get-Played $kit) -join '|') -eq 'old' -and (Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'test3') 'auto_update = no: the old kit starts unchanged'
+    Check (((Get-Played $kit) -join '|') -eq 'old' -and (Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'beta3') 'auto_update = no: the old kit starts unchanged'
 
     # Nothing newer.
-    $kit = Join-Path $tmp 'kit newest'; New-Kit $kit 'v0.1.0-test4' 'old'
+    $kit = Join-Path $tmp 'kit newest'; New-Kit $kit 'v0.1.0-beta4' 'old'
     Start-Play $kit 'y' $good
     Check (($out -join ' ') -notmatch 'is out' -and ((Get-Played $kit) -join '|') -eq 'old') 'nothing newer: no question, the kit starts'
     Test-Started $kit 'nothing newer'
 
     # No network (the list cannot be read): starts as now, quickly.
-    $kit = Join-Path $tmp 'kit offline'; New-Kit $kit 'v0.1.0-test3' 'old'
+    $kit = Join-Path $tmp 'kit offline'; New-Kit $kit 'v0.1.0-beta3' 'old'
     Start-Play $kit 'y' (Join-Path $tmp 'no-such-list.json')
     Check (($out -join ' ') -notmatch 'is out' -and ((Get-Played $kit) -join '|') -eq 'old') 'no network: no question, the kit starts'
     Check ($seconds -lt 15) ("no network: started in {0:N1} s" -f $seconds)
     Test-Started $kit 'no network'
 
     # A damaged download: the update fails, nothing changes, the old kit starts.
-    $kit = Join-Path $tmp 'kit damaged'; New-Kit $kit 'v0.1.0-test3' 'old'
+    $kit = Join-Path $tmp 'kit damaged'; New-Kit $kit 'v0.1.0-beta3' 'old'
     Start-Play $kit 'y' $damaged
     Check (($out -join ' ') -match 'damaged' -and ($out -join ' ') -match 'this version starts as it is') 'a failed update says so'
-    Check (((Get-Played $kit) -join '|') -eq 'old' -and (Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'test3') 'a failed update: the old kit starts unchanged'
+    Check (((Get-Played $kit) -join '|') -eq 'old' -and (Get-Content "$kit\VERSION.txt" -TotalCount 1) -match 'beta3') 'a failed update: the old kit starts unchanged'
     Test-Started $kit 'failed update'
 
     # An update that did not finish (update-in-progress.txt): asked again, and done.
-    $kit = Join-Path $tmp 'kit unfinished'; New-Kit $kit 'v0.1.0-test4' 'old'
+    $kit = Join-Path $tmp 'kit unfinished'; New-Kit $kit 'v0.1.0-beta4' 'old'
     Write-File "$kit\update-in-progress.txt" 'Update.bat was updating this kit'
     Start-Play $kit 'y' $good
     Check (($out -join ' ') -match 'did not finish') 'an unfinished update is named'
     Check (((Get-Played $kit) -join '|') -eq 'new NoUpdate' -and -not (Test-Path "$kit\update-in-progress.txt")) 'an unfinished update is done, then the new kit starts'
 
     # EDEN_NX2_GPL from coop-options.ini reaches the emulator and the AMD rule leaves it.
-    $kit = Join-Path $tmp 'kit gpl'; New-Kit $kit 'v0.1.0-test4' 'old'
+    $kit = Join-Path $tmp 'kit gpl'; New-Kit $kit 'v0.1.0-beta4' 'old'
     Add-Content -LiteralPath "$kit\coop-options.ini" -Value 'EDEN_NX2_GPL=1'
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -match 'Option: EDEN_NX2_GPL=1' -and ($out -join ' ') -notmatch 'AMD GPU found') 'EDEN_NX2_GPL in coop-options.ini is passed and wins over the AMD rule'
     Test-Started $kit 'EDEN_NX2_GPL option'
 
     # A puppet pack made before sound: one line asks for make-puppet-pack, and the game starts.
-    $kit = Join-Path $tmp 'kit pack'; New-Kit $kit 'v0.1.0-test4' 'old'
+    $kit = Join-Path $tmp 'kit pack'; New-Kit $kit 'v0.1.0-beta4' 'old'
     Write-File "$kit\emulator\user\load\0400486024DEC000\coop-puppet\coop_puppet.json" '{"actors": []}'
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -match 'Puppet pack: found\. Puppet pack: made without the other players'' sounds\. Run make-puppet-pack\.cmd again') "an old puppet pack: the sound line [$(($out | Select-String 'Puppet pack') -join ' / ')]"
     Test-Started $kit 'old puppet pack'
     # A game mod installed (issue 136): play stops before the server or the game starts, and
     # names the folder; turned off in the game's Add-Ons, the game starts.
-    $kit = Join-Path $tmp 'kit mod'; New-Kit $kit 'v0.1.0-test4' 'old'
+    $kit = Join-Path $tmp 'kit mod'; New-Kit $kit 'v0.1.0-beta4' 'old'
     Write-File "$kit\emulator\user\load\0400486024DEC000\coop-puppet\coop_puppet.json" '{"actors": [], "sound": true}'
     Write-File "$kit\emulator\user\load\0400486024DEC000\Hyrule-Cheat-Menu\exefs\subsdk8" 'x'
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
@@ -259,15 +259,15 @@ try {
     Test-Started $kit 'a mod turned off in Add-Ons'
     # A copied kit whose qt-config.ini still names the first kit's folders: the check reads this
     # kit's own (after Repair-KitPaths), not the other's.
-    $first = Join-Path $tmp 'kit first'; New-Kit $first 'v0.1.0-test4' 'old'
+    $first = Join-Path $tmp 'kit first'; New-Kit $first 'v0.1.0-beta4' 'old'
     Write-File "$first\emulator\user\load\0400486024DEC000\Hyrule-Cheat-Menu\exefs\subsdk8" 'x'
     $firstUser = "$first\emulator\user".Replace('\', '/')
-    $kit = Join-Path $tmp 'kit copy clean'; New-Kit $kit 'v0.1.0-test4' 'old'
+    $kit = Join-Path $tmp 'kit copy clean'; New-Kit $kit 'v0.1.0-beta4' 'old'
     Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$firstUser/load/`r`nsdmc_directory=$firstUser/sdmc/`r`n"
     Start-Play $kit '' (Join-Path $tmp 'no-such-releases.json')
     Check (($out -join ' ') -notmatch 'Code and cheat mods are not supported') 'a clean copy of a kit with a mod: not stopped by the other kit''s mod'
     Test-Started $kit 'a clean copied kit'
-    $kit = Join-Path $tmp 'kit copy mod'; New-Kit $kit 'v0.1.0-test4' 'old'
+    $kit = Join-Path $tmp 'kit copy mod'; New-Kit $kit 'v0.1.0-beta4' 'old'
     Write-File "$kit\emulator\user\load\0400486024DEC000\Own-Mod\exefs\main.ips" 'PATCH'
     $cleanUser = "$tmp\kit copy clean\emulator\user".Replace('\', '/')
     Write-File "$kit\emulator\user\config\qt-config.ini" "[Data%20Storage]`r`nload_directory=$cleanUser/load/`r`n"
@@ -275,7 +275,7 @@ try {
     Check (($out -join ' ') -match 'Own-Mod' -and ($out -join ' ') -notmatch 'Emulator started') 'a copied kit with its own mod: stopped, naming it'
     # Join.bat: what the host pasted is made plain (spaces, :port, a trailing dot), a typo is
     # asked again, and the address is kept for next time.
-    $kit = Join-Path $tmp 'kit join'; New-Kit $kit 'v0.1.0-test4' 'join'
+    $kit = Join-Path $tmp 'kit join'; New-Kit $kit 'v0.1.0-beta4' 'join'
     $env:OOT_COOP_UPDATE_API = (Join-Path $tmp 'no-such-releases.json')
     $in = Join-Path $tmp 'join.txt'
     [System.IO.File]::WriteAllText($in, "26.1.2`r`n  26.1.2.3:27511. `r`nSaria`r`n")

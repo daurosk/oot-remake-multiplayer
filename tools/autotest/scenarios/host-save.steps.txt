@@ -1,4 +1,4 @@
-# host-save (test8 HS1-HS3, "the host's save decides"). Run:
+# host-save (HS1-HS3, "the host's save decides"). Run:
 #   tools\autotest\run.ps1 -Scenario host-save -Timeout 900
 # A (player 1, the host) waits on the title screen while B (guest) plays and makes progress:
 # B sets the Deku map chest's opened flag (bool 0xe4fb555d, 0 in the test saves) about 120 s

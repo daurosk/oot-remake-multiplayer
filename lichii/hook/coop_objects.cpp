@@ -1117,7 +1117,7 @@ public:
             }
             block_fixes_.clear();
         }
-        // Test7 (docs/dungeon.md "Live dungeon actions"): which words of a
+        // Probe (docs/dungeon.md "Live dungeon actions"): which words of a
         // switch, water plane or lift step when it changes. Reads only.
         if (gimmick_probe_on_) {
             for (const auto& line : gimmick_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
@@ -1287,7 +1287,7 @@ public:
     bool debug_ = false;
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
-    CoopWorld::GimmickProbe gimmick_probe_;  // test7: LICHII_COOP_GIMMICK_PROBE=1 turns it on
+    CoopWorld::GimmickProbe gimmick_probe_;  // LICHII_COOP_GIMMICK_PROBE=1 turns it on
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
     bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
@@ -1370,7 +1370,7 @@ private:
     // The shared actors of one whole walk, with life and place. False when
     // the list changed under us (try the next frame).
     bool Collect(Reader& r, std::vector<Seen>& out) {
-        gimmicks_.clear();  // test7: dungeon gimmicks for the probe
+        gimmicks_.clear();  // dungeon gimmicks for the probe
         std::vector<u64> actors;
         if (!List(r, actors)) {
             return false;

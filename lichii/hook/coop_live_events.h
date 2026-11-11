@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Issue 129, test7 (docs/dungeon.md "Live events"): a room gimmick's event
+// Issue 129 (docs/dungeon.md "Live events"): a room gimmick's event
 // that another player's game played is started in ours while we are in that
 // room, so its result (the Deku Tree ladder falling) happens live here too.
 // Behind LICHII_COOP_LIVE_EVENTS=1 (off by default: not run in a game yet).

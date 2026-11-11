@@ -2746,7 +2746,7 @@ TEST_CASE("owners are said again every 10 s, for a game that forgot them") {
   CHECK(messages_to<ObjectOwner>(h, 2).empty());
 }
 
-// Issue 133 (test6, Discord testers): A killed a Deku Tree room, B came in
+// Issue 133 (Discord testers): A killed a Deku Tree room, B came in
 // later and found the enemies still standing. The server had forgotten them
 // once no game had them loaded.
 TEST_CASE("a kill is told to a game that loads the enemy later, until a witness respawns it") {

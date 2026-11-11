@@ -22,7 +22,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $tmp 'kit\emulator') | Out-
 try {
     $kit = Join-Path $tmp 'kit'
     $utf8 = [System.Text.UTF8Encoding]::new($false)
-    [System.IO.File]::WriteAllText((Join-Path $kit 'clean.txt'), "kit: oot-coop-v0.1.0-test4`r`nbuilt: 2026-11-10`r`n", $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $kit 'clean.txt'), "kit: oot-coop-v0.1.0-beta4`r`nbuilt: 2026-11-10`r`n", $utf8)
     [System.IO.File]::WriteAllText((Join-Path $kit 'VERSION.txt'), "co-op hook from C:\Users\Navi\Desktop\repo`r`n", $utf8)
     [System.IO.File]::WriteAllText((Join-Path $kit 'unix.txt'), "/c/users/navi/build/x.cpp`n", $utf8)
     # A program: the path as UTF-16 among other bytes, and one as one-byte text.

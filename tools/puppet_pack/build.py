@@ -67,7 +67,7 @@ SOUND_COMPONENTS = ("SLinkRef", "SoundFootStepRef")
 # Link, takes the player's footstep param as its $parent and changes exactly these three:
 # ProcType None (murmur3 3069107721), no ray cast, no grass. The puppet gets its own file with the
 # same changes, $parent the player's variant file (issue 131, puppet-sound-2). `--player-footsteps`
-# keeps the player's file (the pack of test7 and test8).
+# keeps the player's file (the older pack).
 FOOTSTEP_PROC_NONE = 3069107721
 FOOTSTEP_OVERRIDES = {"IsEnableGrass": False, "IsUseRayCast": False, "ProcType": byml.UInt(FOOTSTEP_PROC_NONE)}
 FOOTSTEP_DIR = "Component/SoundFootStepParam/"
@@ -113,7 +113,7 @@ PACK_SIZE_MARGIN = 0x1000
 # Stand-ins for other players' projectiles (issue 85). The copy of a slingshot seed, an arrow or a
 # hookshot tip used to be the game's own shootable, made without a shooter: it starts in its
 # `UsedExternally` state, and the seed's ShootableParam hides it until it is shot
-# (`IsPrepareVisibleOff`), so in the test4 player logs every seed copy was made and none was seen.
+# (`IsPrepareVisibleOff`), so in the player logs every seed copy was made and none was seen.
 # A stand-in is the shootable's model only, with the shared default components the puppet uses:
 # no physics, sensor, attack, AI, effects or sound. It is drawn wherever the hook puts it and can
 # hit nothing (the hook's CoopSpawn::StandIn has the same names). A romfs without the source pack
@@ -582,7 +582,7 @@ def main(argv=None):
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--player-footsteps", action="store_true",
-                    help="test switch: the puppets keep the player's footstep param (the pack of test7 and test8)")
+                    help="test switch: the puppets keep the player's footstep param (the older pack)")
     ap.add_argument("--sound-user", metavar="NAME",
                     help="test switch: another actor's SLink user for the puppets' sounds, e.g. Enemy_MiddleBoss_DarkLink")
     a = ap.parse_args(argv)

@@ -28,7 +28,12 @@
 #
 # Never touched: emulator\user\ (keys, firmware, saves, settings, coop.ini with your name and
 # server, the puppet pack), logs\, backup-*\ and every file that is not part of the kit.
-# coop-options.ini keeps your values; a switch the new kit adds is appended as a '#' line.
+# coop-options.ini keeps your values; every key the new kit's coop-options.ini has and yours
+# does not is appended with its comment, as the new kit has it (on or behind '#'). The merge
+# is the NEW kit's own code (its scripts\update.ps1), so a key this updater does not know
+# still arrives. The kit also carries scripts\coop-options.default.ini, and every run
+# (-Status too, which play.ps1 runs on every start) adds missing keys from it: a kit an
+# older updater left short gets them on its next start.
 # No data about you is sent: one request for the release list and the two downloads.
 #
 # For tests: -Api (or the environment variable OOT_COOP_UPDATE_API, which play.ps1 passes on)
@@ -224,9 +229,10 @@ function Get-KitInstallOrder([string[]]$Files) {
     return [string[]](@($first) + @($end))
 }
 
-# The switch names a coop-options.ini mentions, set or behind a '#': the emulator's
-# LICHII_COOP_... switches and the kit's own auto_update, server_allow and server_bind.
-$OptionName = '(LICHII_COOP_[A-Z0-9_]+|auto_update|server_allow|server_bind)'
+# The key names a coop-options.ini mentions, set or behind a '#' ('name =' or 'name='):
+# every key, not a list of known ones, so a key a later kit adds is never missed (an older
+# updater knew only some names and so never added server_allow).
+$OptionName = '([A-Za-z_][A-Za-z0-9_]*)'
 function Get-KitOptionNames([string[]]$Lines) {
     $names = @{}
     foreach ($l in $Lines) {
@@ -247,9 +253,9 @@ function Get-KitAutoUpdate([string]$KitDir) {
     return 'ask'
 }
 
-# The player's coop-options.ini lines with every switch the new template names and the
-# player's file does not, appended behind '#' with the template's comment above it.
-# The player's own lines stay as they are.
+# The player's coop-options.ini lines with every key the new template names and the
+# player's file does not, appended as the template has it (on, or behind '#') with the
+# template's comment above it. The player's own lines stay as they are; nothing is dropped.
 function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
     $have = Get-KitOptionNames $Mine
     $out = New-Object System.Collections.Generic.List[string]
@@ -262,7 +268,7 @@ function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
             $name = $Matches[1]
             if (-not $have.ContainsKey($name)) {
                 foreach ($c in $comment) { $added.Add($c) }
-                $added.Add('# ' + $t.TrimStart('#', ';').Trim())
+                $added.Add($t)
                 $have[$name] = $true
             }
         } elseif ($t.StartsWith('#') -and -not $t.StartsWith('# ---')) {
@@ -274,10 +280,51 @@ function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
     if ($added.Count) {
         while ($out.Count -and -not $out[$out.Count - 1].Trim()) { $out.RemoveAt($out.Count - 1) }
         $out.Add('')
-        $out.Add("# --- Added by Update.bat ($Version): switches new in this version, off. Remove the '#' to use one. ---")
+        $out.Add("# --- Added by Update.bat ($Version): keys new in this version, as a new kit has them. A line with '#' in front is off. ---")
         foreach ($a in $added) { $out.Add($a) }
     }
     return ,([string[]]$out.ToArray())
+}
+
+# The merge as the new kit does it: its own scripts\update.ps1 is loaded (only its functions)
+# and its Merge-KitOptions used, so keys and rules this older updater does not know still
+# reach the player's file. When it has none or fails: this one's.
+function Merge-KitOptionsWith([string]$NewKit, [string[]]$Mine, [string[]]$New, [string]$Version) {
+    $newer = Join-Path $NewKit 'scripts\update.ps1'
+    if ($NewKit -and (Test-Path -LiteralPath $newer)) {
+        try {
+            $r = & {
+                param($f, $a, $b, $v)
+                . $f -NoRun
+                Merge-KitOptions $a $b $v
+            } $newer $Mine $New $Version
+            $r = [string[]]@($r)
+            # Never fewer lines than the player had: a merge that drops one is not used.
+            if ($r.Count -ge $Mine.Count) { return ,$r }
+        } catch { }
+    }
+    return ,(Merge-KitOptions $Mine $New $Version)
+}
+
+# The kit's own copy of the options a fresh kit has (make_kit.ps1).
+$OptionsDefault = 'scripts\coop-options.default.ini'
+
+# Adds to the kit's coop-options.ini every key scripts\coop-options.default.ini has and it
+# does not (a kit an older updater left short); writes a coop-options.ini when there is none.
+# True when it changed the file. Never throws.
+function Update-KitOptions([string]$KitDir) {
+    try {
+        $tmpl = Join-Path $KitDir $OptionsDefault
+        $mine = Join-Path $KitDir 'coop-options.ini'
+        if (-not (Test-Path -LiteralPath $tmpl)) { return $false }
+        if (-not (Test-Path -LiteralPath $mine)) { Copy-Item -LiteralPath $tmpl -Destination $mine; return $true }
+        $lines = [System.IO.File]::ReadAllLines($mine)
+        $v = Get-KitVersion $KitDir
+        $merged = Merge-KitOptions $lines ([System.IO.File]::ReadAllLines($tmpl)) $(if ($v) { $v } else { 'this kit' })
+        if ($merged.Count -eq $lines.Count) { return $false }
+        [System.IO.File]::WriteAllLines($mine, $merged)
+        return $true
+    } catch { return $false }
 }
 
 # --- Installing -------------------------------------------------------------------------
@@ -383,7 +430,7 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
         $tmpl = Join-Path $NewKit 'coop-options.ini'
         if ((Test-Path -LiteralPath $mine) -and (Test-Path -LiteralPath $tmpl)) {
             $lines = [System.IO.File]::ReadAllLines($mine)
-            $merged = Merge-KitOptions $lines ([System.IO.File]::ReadAllLines($tmpl)) $Version
+            $merged = Merge-KitOptionsWith $NewKit $lines ([System.IO.File]::ReadAllLines($tmpl)) $Version
             if ($merged.Count -ne $lines.Count) {
                 Copy-Item -LiteralPath $mine -Destination (Join-Path $Backup 'coop-options.ini') -Force
                 $saved.Add('coop-options.ini')
@@ -452,6 +499,8 @@ function Invoke-KitUpdate {
     $unfinished = Test-KitUnfinished $dir
     $have = if ($mine) { $mine } else { 'a test build' }
     $list = if ($Api) { $Api } else { "https://api.github.com/repos/$Repo/releases?per_page=30" }
+    # Keys an older updater did not add (not while an update is half done).
+    if (-not $unfinished) { Update-KitOptions $dir | Out-Null }
 
     if ($Status) {
         # Straight to stdout: a function's own output would become its return value.

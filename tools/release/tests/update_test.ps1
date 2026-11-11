@@ -71,12 +71,56 @@ try {
     Check (@($m | Where-Object { $_ -match 'LICHII_COOP_PUPPET' }).Count -eq 1) 'a switch the player has is not added again'
     Check (@($m | Where-Object { $_ -match 'LICHII_COOP_FAIRY' }).Count -eq 1) 'a switch the player has behind # is not added again'
     Check ($m -contains '# LICHII_COOP_TIME=0') 'a new switch is added behind #'
-    Check ($m -contains '# LICHII_COOP_NEW=1') 'a new switch that is on in the template is added off'
+    Check ($m -contains 'LICHII_COOP_NEW=1') 'a new switch that is on in the template is added on, as the template has it'
     Check ($m -contains '# Time of day follows the host. To turn it off:') 'with its comment'
     Check (-not ($m -contains '# The puppet')) 'without the comment of a switch the player has'
     Check (-not ($m -contains '# No Navi:')) 'without the comment of a switch the player has behind #'
     $same = Merge-KitOptions $mine ([string[]]@('LICHII_COOP_PUPPET=1')) 'v0.1.0-beta3'
     Check ($same.Count -eq $mine.Count) 'nothing new, nothing added'
+    # Any key, not only known names (an older updater knew a list and never added server_allow).
+    $m = Merge-KitOptions ([string[]]@('auto_update = no', 'LICHII_COOP_PUPPET=1')) ([string[]]@('auto_update = ask', '# Who may join:',
+        '# server_allow = 25.1.2.3', '# Shader libraries:', '# EDEN_NX2_GPL=0', 'some_new_key = 7')) 'v0.1.0-beta3'
+    Check ($m -contains '# server_allow = 25.1.2.3' -and $m -contains '# Who may join:') 'server_allow is added with its comment'
+    Check ($m -contains '# EDEN_NX2_GPL=0') 'an EDEN_NX2_ key is added'
+    Check ($m -contains 'some_new_key = 7') 'a key of a name no updater knew is added'
+    Check ($m[0] -eq 'auto_update = no' -and @($m | Where-Object { $_ -match 'auto_update' }).Count -eq 1) 'the player''s auto_update is kept, not added again'
+    # The real template: an old file that has only some of its keys gets every one, loses none.
+    $kitOptions = [System.IO.File]::ReadAllLines((Join-Path $release 'kit\coop-options.ini'))
+    $old = [string[]]@('# my own note', 'auto_update = yes', 'LICHII_COOP_PUPPET=0', 'LICHII_COOP_OBJECTS=1')
+    $m = Merge-KitOptions $old $kitOptions 'v0.1.0-beta3'
+    $missing = @((Get-KitOptionNames $kitOptions).Keys | Where-Object { -not (Get-KitOptionNames $m).ContainsKey($_) })
+    Check ($missing.Count -eq 0) "every key of the kit's coop-options.ini is in the merged file [$($missing -join ',')]"
+    Check ((@($m)[0..3] -join '|') -eq ($old -join '|')) 'the player''s lines stay first and unchanged'
+    foreach ($k in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL') {
+        Check ((Get-KitOptionNames $kitOptions).ContainsKey($k)) "the kit's coop-options.ini names $k"
+    }
+    $again = Merge-KitOptions $m $kitOptions 'v0.1.0-beta4'
+    Check ($again.Count -eq $m.Count) 'merging twice adds nothing the second time'
+    # The new kit's own merge is used when it has one.
+    $nk = Join-Path $tmp 'newmerge'
+    New-Item -ItemType Directory -Force -Path "$nk\scripts" | Out-Null
+    [System.IO.File]::WriteAllText("$nk\scripts\update.ps1", "param([switch]`$NoRun)`r`nfunction Merge-KitOptions([string[]]`$Mine, [string[]]`$New, [string]`$Version) { return ,([string[]](@(`$Mine) + @('from the new kit'))) }`r`n")
+    $m = Merge-KitOptionsWith $nk ([string[]]@('a=1', 'b=2')) ([string[]]@('c=3')) 'v0.1.0-beta3'
+    Check (($m -join '|') -eq 'a=1|b=2|from the new kit') "the new kit's own Merge-KitOptions is used [$($m -join '|')]"
+    Check ((Get-Command Merge-KitOptions).ScriptBlock.File -eq $updater) 'and it does not replace this updater''s own'
+    [System.IO.File]::WriteAllText("$nk\scripts\update.ps1", "param([switch]`$NoRun)`r`nfunction Merge-KitOptions([string[]]`$Mine, [string[]]`$New, [string]`$Version) { return ,([string[]]@()) }`r`n")
+    $m = Merge-KitOptionsWith $nk ([string[]]@('a=1')) ([string[]]@('c=3')) 'v0.1.0-beta3'
+    Check (($m -join '|') -match '^a=1\|.*c=3$') "a new kit's merge that drops lines is not used [$($m -join '|')]"
+    $m = Merge-KitOptionsWith (Join-Path $tmp 'none') ([string[]]@('a=1')) ([string[]]@('c=3')) 'v0.1.0-beta3'
+    Check (($m -join '|') -match 'c=3$') 'no new kit script: this updater''s merge'
+    # On start (-Status): keys from scripts\coop-options.default.ini an older update did not add.
+    $sk = Join-Path $tmp 'startkit'
+    New-Item -ItemType Directory -Force -Path "$sk\scripts" | Out-Null
+    [System.IO.File]::WriteAllLines("$sk\scripts\coop-options.default.ini", $kitOptions)
+    [System.IO.File]::WriteAllLines("$sk\coop-options.ini", $old)
+    Check (Update-KitOptions $sk) 'a kit left short by an older updater is filled in'
+    $now = [System.IO.File]::ReadAllLines("$sk\coop-options.ini")
+    Check (@($now -match '^# server_allow = ').Count -eq 1 -and $now[1] -eq 'auto_update = yes') 'with server_allow, the player''s values kept'
+    Check (-not (Update-KitOptions $sk)) 'and only once'
+    Remove-Item -LiteralPath "$sk\coop-options.ini"
+    Check ((Update-KitOptions $sk) -and (Test-Path -LiteralPath "$sk\coop-options.ini")) 'no coop-options.ini: the default one is written'
+    Remove-Item -LiteralPath "$sk\scripts\coop-options.default.ini"
+    Check (-not (Update-KitOptions $sk)) 'a kit without the default file is left alone'
 
     # --- Order, paths and addresses
     $order = Get-KitInstallOrder @('VERSION.txt', 'Host.bat', 'MANIFEST.txt', 'emulator\lichii.exe', 'scripts\play.ps1')

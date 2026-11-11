@@ -45,7 +45,7 @@ $addresses = Get-JoinAddresses (Get-LocalAddresses) $public $Bind.Trim()
 $best = Get-BestJoinAddress $addresses $Port
 $copied = ''
 if ($best) { try { Set-Clipboard -Value $best -ErrorAction Stop; $copied = $best } catch { } }
-foreach ($line in (Format-JoinBlock $addresses $Port ($lookup -and -not $Bind.Trim() -and -not $public) $Allow.Trim() $copied)) { Write-Host $line }
+foreach ($line in (Format-JoinBlock $addresses $Port ($lookup -and -not $Bind.Trim() -and -not $public) $Allow.Trim() $copied $Bind.Trim())) { Write-Host $line }
 
 # This kit's co-op release (VERSION.txt), named when the server refuses a game of another
 # version, so the players know which one to update to.

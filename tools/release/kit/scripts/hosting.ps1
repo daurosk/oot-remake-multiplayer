@@ -50,11 +50,13 @@ function Get-PublicAddress([int]$TimeoutMs = 4000) {
         Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         $client = [System.Net.Http.HttpClient]::new()
+        try {
         $client.Timeout = [TimeSpan]::FromMilliseconds($TimeoutMs)
         $task = $client.GetStringAsync($script:PublicAddressService)
         if (-not $task.Wait($TimeoutMs)) { return '' }
         $text = $task.Result.Trim()
         if ((Get-AddressKind $text) -eq 'public') { return $text }
+        } finally { $client.Dispose() }
     } catch { }
     return ''
 }
@@ -100,7 +102,7 @@ function Get-BestJoinAddress($Addresses, [int]$Port) {
 # The block the server window prints when it starts: who gets which address, and which one
 # was copied. $Addresses: Get-JoinAddresses. $PublicFailed: the public lookup was tried and
 # failed. $Allow: server_allow ('' = anyone may join). $Copied: the address on the clipboard.
-function Format-JoinBlock($Addresses, [int]$Port, [bool]$PublicFailed, [string]$Allow, [string]$Copied) {
+function Format-JoinBlock($Addresses, [int]$Port, [bool]$PublicFailed, [string]$Allow, [string]$Copied, [string]$Bind = '') {
     $list = @($Addresses | Where-Object { $_ })
     $lines = @('', '=====================================================================')
     $lines += 'Give your friends ONE of these (they type it in Join.bat):'
@@ -111,7 +113,9 @@ function Format-JoinBlock($Addresses, [int]$Port, [bool]$PublicFailed, [string]$
         $lines += '  (internet address: not found. Open https://api.ipify.org in a browser to see it;'
         $lines += '   it only works if you forwarded the port on your router)'
     }
-    $lines += ('  {0,-21} {1}' -f (Format-JoinAddress '127.0.0.1' $Port), 'A second game on this same PC')
+    # A server with server_bind hears only that address, not 127.0.0.1.
+    $self = if ($Bind) { $Bind } else { '127.0.0.1' }
+    $lines += ('  {0,-21} {1}' -f (Format-JoinAddress $self $Port), 'A second game on this same PC')
     $lines += ''
     if ($Copied) { $lines += "Copied to the clipboard: $Copied   (paste it to your friends with Ctrl+V)" }
     if (-not @($list | Where-Object { $_.Kind -in @('hamachi', 'radmin', 'tailscale') }).Count) {
@@ -240,7 +244,13 @@ function Format-AddRuleCommand([string]$ServerExe, [int]$Port, [string]$Kind, [s
         'hamachi' { @{ Remote = '25.0.0.0/8'; Profile = 'any' } }
         'radmin' { @{ Remote = '26.0.0.0/8'; Profile = 'any' } }
         'tailscale' { @{ Remote = '100.64.0.0/10'; Profile = 'any' } }
-        'public' { @{ Remote = ($Allow -replace '\s', ''); Profile = 'private' } }
+        'public' {
+            # Only from server_allow, checked as play.ps1 does; no line opens the port to every address.
+            if (-not $Allow -or $Allow -notmatch '^[0-9./, ]+$') {
+                return $(if ($Allow) { "server_allow '$Allow' in coop-options.ini is not a list of addresses (25.1.2.3, 26.0.0.0/8): fix it first" } else { 'Set server_allow in coop-options.ini to your friends'' addresses first; then this check prints the line to run.' })
+            }
+            @{ Remote = ($Allow -replace '\s', ''); Profile = 'private' }
+        }
         default { @{ Remote = 'localsubnet'; Profile = 'private' } }
     }
     $cmd = "netsh advfirewall firewall add rule name=`"OoT co-op server UDP $Port`" dir=in action=allow program=`"$ServerExe`" protocol=UDP localport=$Port profile=$($scope.Profile)"
@@ -324,7 +334,6 @@ function Get-HostingFindings([string]$ServerExe, [int]$Port, $Rules, $Listen, $L
             }
             $cmds += '    Over the internet with port forwarding (no VPN):'
             $cmds += '      ' + (Format-AddRuleCommand $ServerExe $Port 'public' $Access.Allow)
-            if (-not $Access.Allow) { $cmds += '      (safer: set server_allow first; this line then lets in only those addresses)' }
             Add-Finding 'problem' $cmds
         }
         else {

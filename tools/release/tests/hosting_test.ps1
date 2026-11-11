@@ -111,6 +111,12 @@ $f = Findings @((Rule 'r')) -Listen @([pscustomobject]@{ LocalAddress = '25.4.5.
 Check ((Text $f 'ok') -match 'only on 25\.4\.5\.6') 'check: server_bind: names the one address'
 $f = Findings $null
 Check ((Text $f 'note') -match 'Could not read the Windows Firewall') 'check: unreadable rules are a note, not a crash'
+$block = (Format-JoinBlock (Get-JoinAddresses $local '') 27510 $false '' '' '26.12.34.56') -join "`n"
+Check ($block -match '26\.12\.34\.56\s+A second game on this same PC' -and $block -notmatch '127\.0\.0\.1') 'block: server_bind: the same-PC line gives the bound address'
+$f = Findings @()
+Check ((Text $f 'problem') -match 'Set server_allow' -and (Text $f 'problem') -notmatch 'profile=private remoteip=\s*$' -and (Text $f 'problem') -notmatch 'profile=private(?! remoteip)') 'check: no server_allow: no port forwarding rule open to everyone'
+$f = Findings @() -Access @{ Allow = '81.9.9.9; rm'; Bind = '' }
+Check ((Text $f 'problem') -match 'is not a list of addresses' -and (Text $f 'problem') -notmatch 'remoteip=81\.9\.9\.9;') 'check: a bad server_allow is named, not printed into a command'
 
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

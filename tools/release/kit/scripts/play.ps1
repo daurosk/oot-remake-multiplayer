@@ -117,6 +117,7 @@ if ($askServer -or -not $Server) {
         if ($ok) {
             $Server = $parsed.Server
             if ($parsed.Port) { $Port = $parsed.Port }
+            elseif ($answer -and $answer.Trim()) { $Port = '@PORT@' }  # a new address without :port: the usual port
         }
         else {
             Write-Host "'$typed' is not an address. It looks like 26.12.34.56 or 192.168.1.20 (four numbers"

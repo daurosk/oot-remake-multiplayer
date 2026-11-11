@@ -363,7 +363,11 @@ class BuildPackTest(unittest.TestCase):
         row = build.stand_in_row({"__RowId": "Shootable_DekuSeed", "ActorName": "Item_DekuSeed",
                                   "ELinkUserName": "Shootable_DekuSeed", "SLinkUserName": "Shootable_DekuSeed",
                                   "FmdbName": "Item_Shootable_DekuSeed"}, "CoopShot_Seed")
-        self.assertEqual(row, {"__RowId": "CoopShot_Seed", "FmdbName": "Item_Shootable_DekuSeed"})
+        self.assertEqual(row["FmdbName"], "Item_Shootable_DekuSeed")
+        for k in ("ActorName", "ELinkUserName", "SLinkUserName"):
+            self.assertNotIn(k, row)
+        self.assertEqual(row["CalcRadius"], 100000.0)  # calculated wherever it is, as the puppet
+        self.assertEqual(row["__RowId"], "CoopShot_Seed")
         with self.assertRaises(build.BuildError):
             build.make_stand_in_param({"PhysicsRef": "x"})
         # The hook's CoopSpawn::StandIn makes these same four.

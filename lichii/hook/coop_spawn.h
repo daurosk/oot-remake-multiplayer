@@ -165,6 +165,12 @@ private:
 // it can hit nothing. Empty when the actor has none.
 std::string_view StandIn(std::string_view actor);
 
+// The stand-ins a puppet pack has: the CoopShot_* names its coop_puppet.json
+// lists (build.py writes them under "shots"). A pack built before the
+// stand-ins lists none, and a name the pack lacks is never asked for: a create
+// request for an actor ActorInfo does not know has never been run.
+std::set<std::string> StandInsIn(std::string_view manifest);
+
 // The calc thread's side. Same cave contract as CoopPuppet::Director.
 class Director {
 public:
@@ -186,6 +192,12 @@ public:
     // 62 set.
     void SetDrops(std::uint64_t main_base, std::vector<Copy> copies);
     std::map<std::uint64_t, std::uint64_t> Live() const;  // key to actor
+    // Present thread: the stand-ins the installed puppet pack has
+    // (StandInsIn). None (the default): every copy is the game's own actor.
+    void SetStandIns(std::set<std::string> names);
+    // A stand-in that failed this many times in a row (create failed, timed
+    // out or dropped, or no actor taken) is not asked for again this session.
+    static constexpr int kStandInTries = 3;
 
     // The calc thread, at each `svc #0xf4` the puppets did not take.
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call,
@@ -239,9 +251,11 @@ private:
     std::size_t pending_slot_ = 0;
     int calls_ = 0;
     std::vector<std::size_t> setters_;  // slots placed this frame
-    // Shared actors whose stand-in could not be made (a puppet pack built
-    // before the stand-ins): copied as the game's own actor from then on.
+    std::set<std::string> stand_ins_;            // guarded: what the pack has
+    // Shared actors whose stand-in failed kStandInTries times in a row:
+    // copied as the game's own actor from then on.
     std::set<std::string> no_stand_in_;
+    std::map<std::string, int> stand_in_fails_;  // in a row, by shared actor
 };
 
 Director& TheDirector();

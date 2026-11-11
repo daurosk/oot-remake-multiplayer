@@ -276,8 +276,10 @@ def build_stand_in(members, source, name):
 
 
 def stand_in_row(source_row, name):
-    """The stand-in's ActorInfo row: the shootable's, less its effect, sound and name fields."""
+    """The stand-in's ActorInfo row: the shootable's, less its effect, sound and name fields, with
+    the puppet's INFO_OVERRIDES."""
     row = {k: v for k, v in source_row.items() if k not in STAND_IN_DROP_INFO}
+    row.update(INFO_OVERRIDES)  # calculated wherever it is, as the puppet (a far shot)
     row["__RowId"] = name
     return row
 

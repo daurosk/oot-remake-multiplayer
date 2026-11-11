@@ -41,7 +41,11 @@ Players on test6 saw the other player aim the slingshot, but never the seed. The
 - **Fix:** the copy is a stand-in of ours: `CoopShot_Seed`, `CoopShot_Arrow`, `CoopShot_Hook`, `CoopShot_HookLong`.
   - The puppet pack tool builds them with the puppets (`tools/puppet_pack/build.py`, `STAND_INS`): the shootable's model and LOD and the shared default components, with no physics, sensor, attack, AI, effect or sound. So the copy is drawn and can hit nothing.
   - The director (`CoopSpawn::StandIn`) creates the stand-in and places it as the puppet is placed: the place and turn at +0x31c, and the pending transform at +0x358/+0x364. There is no setter call, since the stand-in has no physics.
-- **Fallback:** when the stand-in cannot be made (a puppet pack built before this change), the director logs `<actor>: no CoopShot_... (rebuild the puppet pack); the game's own actor is used` once, and copies that kind as the game's own actor, as before. The kit's pack hint already asks for a rebuild when the tool changes.
+- **Fallback:**
+  - The hook asks only for stand-ins the installed pack lists. It reads every `coop_puppet.json` under `load/0400486024DEC000/` once, where build.py lists them under `shots`, and logs `coop: spawn: stand-ins in the puppet pack: ...`. A create for a name ActorInfo does not know has never been run, so it is never made.
+  - A pack built before this change lists none, so its copies are the game's own actors, as before. The kit's pack hint already asks for a rebuild when the tool changes.
+  - A stand-in that never becomes an actor (create failed, timed out or dropped, or the take gave none) is made again. After 3 failures in a row the director logs `<actor>: CoopShot_... could not be made 3 times in a row; the game's own actor is used` and uses the game's own actor for the rest of the session.
+  - The stand-ins' ActorInfo rows take the puppet's overrides (CalcRadius 100000, CoreUsedLevel 0), so a far shot is still calculated.
 - Bombs, bombchus, nuts and the boomerang are unchanged: they have their own AI and are drawn as copies (the nut's flash was seen by players).
 
 ## Not done

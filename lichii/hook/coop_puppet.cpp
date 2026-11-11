@@ -763,7 +763,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
                 std::uint64_t eu = 0;
                 if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
                     !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
-                    return std::nullopt;  // not set up (yet)
+                    continue;  // not set up (yet): try again next frame, other pieces go on
                 }
                 slot.equip_index = i;
                 Call c;

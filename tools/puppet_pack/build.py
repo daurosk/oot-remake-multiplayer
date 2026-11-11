@@ -472,6 +472,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         footstep = None
         if footstep_path(actor) in names:
             path, data, src = puppet_footstep(make_actor_param(flatten_actor_param(members, player)), actor)
+            if src not in members:
+                raise BuildError(f"the player's footstep param {src} is not in the pack")
             # Sized as the player's file it stands in for (the game's entries run about 5.3 KB over
             # the file), plus any bytes it is longer.
             src_size = table.get(src)
@@ -480,6 +482,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             footstep = {"param": path, "size": fs_size}
         if slink_path(actor) in names:
             path, data, src = puppet_slink(make_actor_param(flatten_actor_param(members, player)), actor, sound_user)
+            if src not in members:
+                raise BuildError(f"the player's SLink param {src} is not in the pack")
             table.add_new(path, max((table.get(src) or 0) + max(0, len(data) - len(members[src])),
                                     len(data) + PACK_SIZE_MARGIN))
         made.append({"actor": actor, "from": player, "pack": dst_rel, "pack_bytes": len(pack),

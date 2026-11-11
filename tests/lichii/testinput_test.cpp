@@ -331,6 +331,26 @@ TEST_CASE("testinput: a hold's mark is said halfway, with the keys still down") 
     CHECK(log2 == std::vector<std::string>{"mark aim", "mark after"});
 }
 
+TEST_CASE("testinput: assign puts an item on ZR by the button enum's name (held-gear-2)") {
+    std::string error;
+    CHECK_FALSE(Parse("assign\n", error));
+    CHECK_FALSE(Parse("assign bow\n", error));  // the game's spelling only
+    CHECK_FALSE(Parse("assign Weapon_Range_Bow\n", error));
+    CHECK(AssignableItem("Bow"));
+    CHECK(AssignableItem("Hookshot"));
+    CHECK(AssignableItem("Hammer"));
+    CHECK(AssignableItem("SlingShot"));
+    CHECK_FALSE(AssignableItem("Slingshot"));
+    Runner r(Must("assign Hookshot\nmark after\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::assign);
+    CHECK(requests[0].name == "Hookshot");
+    CHECK(log == std::vector<std::string>{"mark after"});
+}
+
 TEST_CASE("testinput: wear SLOT none takes a piece off") {
     Runner r(Must("wear head none\n"));
     std::vector<std::string> log;

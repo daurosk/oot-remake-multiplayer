@@ -1577,6 +1577,17 @@ std::string_view SceneOfEvent(std::string_view event) {
 
 } // namespace
 
+std::string_view EventOf(std::uint32_t hash) {
+    constexpr std::string_view kPlayed = "HavePlayedEvent.";
+    for (const Flag& f : kFlags) {
+        if (f.hash == hash) {
+            const std::string_view name = f.name;
+            return name.starts_with(kPlayed) ? name.substr(kPlayed.size()) : std::string_view();
+        }
+    }
+    return {};
+}
+
 bool IsDungeonScene(std::string_view scene) {
     for (const std::string_view s : kDungeonScenes) {
         if (s == scene) return true;

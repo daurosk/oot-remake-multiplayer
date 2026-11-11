@@ -72,6 +72,7 @@ class HoldFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override {
     if (holds(key_of(entry))) {
       ++held_;
+      if (held_keys_.size() < 64) held_keys_.push_back(key_of(entry));
       return false;
     }
     return inner_.write(entry);
@@ -79,13 +80,15 @@ class HoldFlagStore final : public FlagStore {
   bool is_count(FlagKey key) override { return inner_.is_count(key); }
   bool holds(FlagKey key) override { return hold_ && hold_(key); }
 
-  // Writes refused so far.
+  // Writes refused so far, and their flags (at most 64).
   std::uint64_t held() const { return held_; }
+  const std::vector<FlagKey>& held_keys() const { return held_keys_; }
 
  private:
   FlagStore& inner_;
   Hold hold_;
   std::uint64_t held_ = 0;
+  std::vector<FlagKey> held_keys_;
 };
 
 // The flags this session shares, sorted, each once. Loaded from plain text,

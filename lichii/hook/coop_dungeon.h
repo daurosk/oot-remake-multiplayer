@@ -54,6 +54,10 @@ std::span<const Flag> LiveFlags();
 // in any dungeon), or nothing for a flag that is not held.
 std::optional<std::string_view> HeldIn(std::uint32_t hash);
 
+// The played event a held flag stands for ("HavePlayedEvent.<event>" ->
+// "<event>"), or "" when the flag is not one (issue 129, live events).
+std::string_view EventOf(std::uint32_t hash);
+
 // A dungeon's scene (the Banc names of Keys()).
 bool IsDungeonScene(std::string_view scene);
 

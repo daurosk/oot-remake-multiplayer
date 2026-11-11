@@ -58,6 +58,7 @@
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_dungeon.h"
+#include "coop_live_events.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
@@ -250,6 +251,19 @@ public:
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
         }
+        live_events_ = EnvFlag("LICHII_COOP_LIVE_EVENTS");
+        if (live_events_) {  // issue 129: start another player's gimmick event here (coop_live_events.h)
+            CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                          std::uint64_t) {
+                std::lock_guard lock(live_mutex_);
+                auto call = live_requester_.Step(guest, after_call, result, base_);
+                for (const auto& line : live_requester_.TakeNotes()) {
+                    LOG_INFO(Core, "coop: dungeon: {}", line);
+                }
+                return call;
+            });
+            LOG_INFO(Core, "coop: dungeon: live events on (LICHII_COOP_LIVE_EVENTS=1)");
+        }
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
                 session_->share_one_way(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
@@ -332,6 +346,22 @@ public:
             });
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        // Issue 129, LICHII_COOP_LIVE_EVENTS=1: a held gimmick event is
+        // started here too, so its result happens live (coop_live_events.h).
+        if (hold && live_events_) {
+            std::vector<std::string> held_events;
+            for (const auto& k : hold->held_keys()) {
+                if (const auto e = CoopDungeon::EventOf(k.hash); !e.empty()) {
+                    held_events.emplace_back(e);
+                }
+            }
+            const bool running = reading && reading->event_running.value_or(false);
+            if (const auto name = live_decider_.Next(held_events, view.scene.value_or(""), running)) {
+                LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
+                std::lock_guard lock(live_mutex_);
+                live_requester_.Want(*name);
+            }
+        }
         if (hold && (hold->held() != 0) != holding_logged_) {
             holding_logged_ = hold->held() != 0;
             LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
@@ -899,6 +929,10 @@ private:
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+    bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
+    CoopLiveEvents::Decider live_decider_;
+    std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
+    CoopLiveEvents::Requester live_requester_;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
 
     // Set by Begin before the network thread starts; the session borrows the

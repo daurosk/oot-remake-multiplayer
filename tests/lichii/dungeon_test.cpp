@@ -462,3 +462,18 @@ TEST_CASE("dungeon: a room switch flag crosses one way, the game's own reset sta
     CHECK(b.values[gate].value == 0);
     CHECK(wb.stats().load_reverts == 0);
 }
+
+TEST_CASE("dungeon: a held flag names its event, for the live start") {
+    CHECK(CoopDungeon::EventOf(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder")) ==
+          "InsideTheDekuTree_Gimmick_FallingLadder");
+    CHECK(CoopDungeon::EventOf(host::flag_hash("ForestTemple_TwistCorridor_IsReverse")).empty());
+    CHECK(CoopDungeon::EventOf(0).empty());
+    Game g;
+    const auto ladder =
+        host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder"), 0);
+    g.set(ladder, 0);
+    host::HoldFlagStore store(g, [](host::FlagKey) { return true; });
+    CHECK_FALSE(store.write({ladder, coop::protocol::FlagKind::boolean, 1}));
+    REQUIRE(store.held_keys().size() == 1);
+    CHECK(store.held_keys()[0] == ladder);
+}

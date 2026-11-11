@@ -316,6 +316,7 @@ public:
     static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
     static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
     static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
+    static constexpr std::uint64_t kTakeOffMs = 1500;  // a slot empty this long: the piece is taken off
     // A create waits until the game has drawn this long without a break,
     // begun after the last scene change or puppet loss (a load drops the
     // camera)...
@@ -371,6 +372,11 @@ private:
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
+        // A worn piece its player took off (a mask, boots, a lost shield): the
+        // game's call to take one off is not known, so the puppet is made
+        // again without it (Equip, issue 91).
+        bool remake = false;
+        std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {

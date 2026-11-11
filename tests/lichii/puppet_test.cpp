@@ -703,6 +703,50 @@ TEST_CASE("puppet gear: each known piece worn once, on its own name cell") {
     CHECK(calls[0].x[1] == 6u);
 }
 
+TEST_CASE("puppet gear: a mask taken off makes the puppet again without it, a held item is only put away") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+    t.gear[2] = "Armor_Child_Mask_Skull";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 2);  // the mask and the slingshot
+
+    // The slingshot's slot empties: put away as its player's, nothing made again.
+    t.gear[CoopPuppet::kGearHeld] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 100).empty());
+    CHECK(Frame(d, g, 3000).empty());
+
+    // The mask comes off: a moment of "" (a load) is nothing...
+    t.gear[2] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 3100).empty());
+    t.gear[2] = "Armor_Child_Mask_Skull";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 3200).empty());  // still worn: no call
+    t.gear[2] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 3300).empty());
+    CHECK(Frame(d, g, 3300 + Director::kTakeOffMs - 10).empty());
+    // ...gone this long, the puppet is deleted and made again without the mask.
+    CHECK(Frame(d, g, 3300 + Director::kTakeOffMs).empty());
+    calls = Frame(d, g, 3300 + Director::kTakeOffMs + 10);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{9});
+    calls = Frame(d, g, 3300 + Director::kTakeOffMs + 20);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
 TEST_CASE("puppet gear: a worn piece goes into the hand and back as its player's does") {
     Game g;
     Director d;

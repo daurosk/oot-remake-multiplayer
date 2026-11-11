@@ -250,6 +250,16 @@ Read from the dump (static; nothing of this was run):
 - **Tests.** `tools/autotest/scenarios/held-tools.A.txt` (child: boomerang, sticks, ocarina, bottle), `held-adult.A.txt` (bow, hookshot, hammer, bombs; `-NoLoad`), `wear-adult.A.txt` (tunics, boots, gauntlets; `-NoLoad`), `wear-masks.A.txt`. The test `wear` command takes `hand` for the gauntlets.
 - **Not known until a run:** whether kinds 1, 2, 11, 12 put those tools in the puppet's hand (the slingshot's kind 5 is not proven either), whether a tool needs more than its slot (an ocarina is played with its own animation), and whether a bottle is an actor in a slot at all.
 
+### Taking a piece off (issue 91, branch `held-gear`)
+
+Seen in test6 (held-tools, 2026-11-10): the Deku stick and the bottle go into the puppet's hand on slot 1 (SubWeapon), and the slingshot on slot 3. A Deku nut or a bomb is no slot piece: it is a thrown object, which the objects sync shows.
+
+An empty name means nothing in that slot, and how to take a piece off a puppet is not known (no unequip call is proven). Two cases:
+- **Carried pieces** (the held item, slots 1, 2, 5, 6): put away, as the player's own are.
+- **Worn pieces** (sword, shield, mask, tunic, boots, gauntlets): the old code left them on, so a mask taken off stayed on the other Links. Now a worn piece whose name stays empty for 1.5 s (`Director::kTakeOffMs`, so a moment of nothing during a load does not count) gets the puppet deleted and made again without it. The log says `P<n> takes off <kind> '<name>': puppet made again without it`. The puppet is gone for a moment then. The test command `wear <slot> none` empties a flag. `wear-masks` ends with the mask off, and `wear-adult` ends with the green tunic, no boots and no gauntlets.
+
+The adult scenarios (`held-adult`, `wear-adult`) now play in Kakariko by day with both players adult (as `adult-day`). In the dark adult Graveyard the shots showed nothing. `hold ZR 90 item1` takes its mark halfway through the hold, while the aimed item is still in the hand.
+
 ### Not done (equipment)
 
 0. Which hand slot each tool uses is still not seen in a game (see "The other hand slots"): the scenarios `held-tools` and `held-adult` show it.

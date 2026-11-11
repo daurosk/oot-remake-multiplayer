@@ -21,5 +21,8 @@ mark bunny
 wear head Armor_Child_Mask_Gerudo
 wait 240
 mark gerudo
+wear head none           # the mask comes off: B's puppet is made again without it
+wait 300
+mark none
 wait 300
 mark end

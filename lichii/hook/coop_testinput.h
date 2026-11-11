@@ -191,6 +191,7 @@ private:
 
     Script script_;
     std::size_t index_ = 0;
+    std::size_t marked_index_ = static_cast<std::size_t>(-1);  // a hold whose mark was said
     double step_start_ = 0.0;  // the script starts at time 0
     Output out_;
     // The camera model: stick up moves Link along world angle `heading_`

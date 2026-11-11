@@ -180,9 +180,7 @@ press A 10
 wait 45
 press PLUS 12
 wait 90
-hold ZR 60
-mark item5
-hold ZR 20
+hold ZR 90 item5         # aim: the mark is taken halfway, the slingshot still in hand
 wait 30
 press B 10
 wait 150

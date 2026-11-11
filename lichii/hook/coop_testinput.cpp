@@ -208,8 +208,14 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
                 return fail("want: wait TICKS");
             }
         } else if (cmd == "HOLD") {
-            if (w.size() != 3 || !Ticks(w[2], step.ticks)) {
-                return fail("want: hold KEYS TICKS");
+            // An optional mark is said halfway through the hold, while the
+            // keys are still down (an item aimed with ZR is put away when it
+            // lets go, so a mark after the hold sees nothing in the hand).
+            if (w.size() < 3 || w.size() > 4 || !Ticks(w[2], step.ticks)) {
+                return fail("want: hold KEYS TICKS [MARK]");
+            }
+            if (w.size() == 4) {
+                step.mark = std::string(w[3]);
             }
             if (!Keys(w[1], step, bad)) {
                 return fail("unknown key " + bad);
@@ -391,6 +397,11 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             }
             Steer(s, now_s, player);
             return;
+        }
+        if (s.kind == Kind::timed && !s.mark.empty() && marked_index_ != index_ &&
+            now_s - step_start_ >= length / 2) {
+            log.push_back("mark " + s.mark);  // hold KEYS TICKS MARK: halfway
+            marked_index_ = index_;
         }
         if (now_s - step_start_ >= length) {
             ++index_;
@@ -678,8 +689,10 @@ void Wear(Core::System& system, const std::string& slot, const std::string& name
         return;
     }
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    // "none" empties the flag: the piece is taken off (a mask, boots).
     const bool ok = coop::host::GameFlags::set_string64_now(
-        memory, coop::host::flag_hash(std::string("PlayerStatus.") + *flag), name);
+        memory, coop::host::flag_hash(std::string("PlayerStatus.") + *flag),
+        name == "none" ? std::string{} : name);
     LOG_INFO(Core, "coop: test wear {} {}: {}", slot, name, ok ? "set" : "NOT set");
 }
 

@@ -221,7 +221,8 @@ void FlagWatcher::reset() {
 
 std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   std::vector<Outgoing> out;
-  ++frames_;
+  const unsigned step = ticks_.step();  // 1/60 s that passed (issue 106)
+  frames_ += step;
 
   // Writes that failed before go first, so newer incoming values win. One
   // whose flag the game has changed by itself since is dropped instead: the
@@ -261,7 +262,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     window_ = false;
     end_window(store, resets);
   }
-  if (window_ && loading_ && !scene_readable_) ++no_scene_frames_;
+  if (window_ && loading_ && !scene_readable_) no_scene_frames_ += static_cast<int>(step);
   see_save_load();
 
   Table changes;
@@ -272,7 +273,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     }
     diff(store, changes);
   }
-  if (!loading_ && settle_left_ > 0) --settle_left_;
+  if (!loading_ && settle_left_ > 0) settle_left_ -= (std::min)(settle_left_, static_cast<int>(step));
   restate_.clear();
   added_.clear();
 

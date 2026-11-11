@@ -76,12 +76,15 @@ bool Sampler::should_send(const PlayerReading& reading, std::uint64_t now) const
   if (!last_sent_) return true;
   const std::uint64_t last = last_sent_->time.server_time_us;
   if (now < last || now - last >= settings_.keepalive_us) return true;  // keep-alive
+  if (reading.scene != last_sent_->scene) return true;
+  if (reading.age != last_sent_->age) return true;
+  // Anything else waits for the gap: the change is still there next frame,
+  // as it is compared with the last sample sent, not the last frame.
+  if (now - last < settings_.min_gap_us) return false;
   if (distance(reading.position, *last_sent_->position) > settings_.still_distance) return true;
   // The first still frame after moving, so receivers stop extrapolating.
   if (nonzero(last_sent_->velocity)) return true;
   if (turned(reading.rotation, last_sent_->rotation, settings_.still_rotation)) return true;
-  if (reading.scene != last_sent_->scene) return true;
-  if (reading.age != last_sent_->age) return true;
   // A new AS command or rate, not a new frame: receivers run the frame on
   // from the rate, and the keep-alive corrects it.
   if (animation_changed(reading.animation, last_sent_->animation)) return true;

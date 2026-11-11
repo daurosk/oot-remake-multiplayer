@@ -35,6 +35,7 @@
 
 #include "coop/host/flags.hpp"
 #include "coop/host/outgoing.hpp"
+#include "coop/host/ticks.hpp"
 #include "coop/protocol/messages.hpp"
 
 namespace coop::host {
@@ -211,6 +212,10 @@ class FlagWatcher {
   static constexpr int kSaveLoadMin = 2;
   static constexpr int kSettleFrames = 120;
   bool settling() const { return loading_ || settle_left_ > 0; }
+  // The frames above (and kOriginFrames) are 1/60 s of this clock, not
+  // calls to frame() (issue 106: high refresh calls it up to 165 a second).
+  // Without a clock each call is one frame.
+  void set_clock(GameTicks::Clock clock) { ticks_.set_clock(std::move(clock)); }
 
   // After a reconnect: drops anything queued or held, and the group values
   // of set_loading (the next snapshot brings them again). Local changes still
@@ -311,6 +316,7 @@ class FlagWatcher {
   // from_ becomes the asker FLAG_ORIGIN named for key (if fresh); used once.
   void take_origin(const FlagKey& key);
   std::uint64_t frames_ = 0;
+  GameTicks ticks_;   // set_clock
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer
   Table unwritten_;   // incoming values whose write failed; tried again

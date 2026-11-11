@@ -16,6 +16,7 @@ Session::Session(net::Client& client, SessionSettings settings)
   if (settings.shared) {
     watcher_.emplace(std::move(*settings.shared), FlagRole::player);
     watcher_->set_learn_pickups(settings.learn_pickups);
+    if (settings.clock) watcher_->set_clock(settings.clock);
   }
 }
 

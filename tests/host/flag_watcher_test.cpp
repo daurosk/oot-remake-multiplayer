@@ -1325,3 +1325,56 @@ TEST_CASE("token guard, host: a player's take, counted again by the host, is put
   CHECK(store.tokens() == 7);
   CHECK(h.stats().counts_guarded == 1);
 }
+
+TEST_CASE("game ticks: calls become 1/60 s of the clock (issue 106)") {
+  coop::host::GameTicks none;
+  CHECK(none.step() == 1);  // no clock: one call is one frame
+  CHECK(none.step() == 1);
+
+  std::uint64_t now = 1'000'000;
+  // `calls` intervals: calls + 1 calls span one second; the first is 1 tick.
+  auto run = [&](std::uint64_t every_us, int calls) {
+    coop::host::GameTicks t;
+    t.set_clock([&] { return now; });
+    unsigned sum = 0;
+    for (int i = 0; i <= calls; ++i) {
+      sum += t.step();
+      now += every_us;
+    }
+    return sum;
+  };
+  const unsigned at165 = run(6'061, 165);  // one second of high refresh
+  CHECK(at165 >= 59);
+  CHECK(at165 <= 62);
+  const unsigned at60 = run(16'667, 60);
+  CHECK(at60 >= 59);
+  CHECK(at60 <= 62);
+  const unsigned at30 = run(33'333, 30);
+  CHECK(at30 >= 59);
+  CHECK(at30 <= 62);
+
+  coop::host::GameTicks t;
+  t.set_clock([&] { return now; });
+  t.step();
+  now += 3'000'000;  // a 3 s stall counts as a few frames, as one call did
+  CHECK(t.step() == coop::host::GameTicks::kMaxStep);
+}
+
+TEST_CASE("flag watcher: the settle lasts 2 s at 165 presents a second, not 0.73 s (issue 106)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  std::uint64_t now = 5'000'000;
+  w.set_clock([&] { return now; });
+  w.set_loading(true);
+  w.frame(store);
+  now += 6'061;
+  w.set_loading(false);
+  const std::uint64_t loaded = now;
+  while (w.settling() && now - loaded < 5'000'000) {
+    w.frame(store);
+    now += 6'061;
+  }
+  const std::uint64_t settle = now - loaded;
+  CHECK(settle >= 1'950'000);
+  CHECK(settle <= 2'100'000);
+}

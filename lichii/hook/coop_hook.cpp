@@ -293,10 +293,14 @@ public:
                 CoopCheats::Frame(*game_store);
             }
             if (sharing_) {
-                // A small key we and another player took at once: ours goes
-                // back (docs/world.md, small keys).
-                for (const std::string& scene : CoopWorld::TakeGiveBacks()) {
-                    LOG_INFO(Core, "coop: {}", CoopWorld::GiveBackKey(*game_store, scene));
+                // A small key or token we and another player took at once: ours
+                // goes back. A token taken elsewhere: its Skulltula's key here
+                // (docs/world.md, small keys and tokens).
+                for (const std::string& count : CoopWorld::TakeGiveBacks()) {
+                    LOG_INFO(Core, "coop: {}", CoopWorld::GiveBack(*game_store, count));
+                }
+                for (const std::uint64_t key : CoopWorld::TakeTakenKeys()) {
+                    LOG_INFO(Core, "coop: {}", CoopWorld::SetTakenKey(*game_store, key));
                 }
             }
             if (sharing_) {

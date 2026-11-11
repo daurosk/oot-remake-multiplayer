@@ -1469,7 +1469,7 @@ TEST_CASE("world: both players take the same small key at once: one key goes bac
     a.Receive(KeyBreak(0x77));
     auto out = WellWalk(a, 2600 * kMs, {});
     REQUIRE(out.give_back.size() == 1);
-    CHECK(out.give_back[0] == kWell);
+    CHECK(out.give_back[0] == "DungeonInfo.BottomOfTheWell.SmallKeyNum");
     a.Receive(KeyBreak(0x77));  // a repeat changes nothing
     CHECK(WellWalk(a, 2700 * kMs, {}).give_back.empty());
 
@@ -1508,14 +1508,14 @@ TEST_CASE("world: a key given back lowers the dungeon's count by one, never belo
     const std::uint32_t hash = proto::flag_hash("DungeonInfo.BottomOfTheWell.SmallKeyNum");
     CountStore game;
     game.values[hash] = 2;
-    const std::string line = CoopWorld::GiveBackKey(game, kWell);
+    const std::string count = *CoopWorld::KeyCountOf(kWell);
+    const std::string line = CoopWorld::GiveBack(game, count);
     CHECK(game.values[hash] == 1);
     CHECK(line.find("2 -> 1") != std::string::npos);
     game.values[hash] = 0;
-    CoopWorld::GiveBackKey(game, kWell);
+    CoopWorld::GiveBack(game, count);
     CHECK(game.values[hash] == 0);
-    CHECK(CoopWorld::GiveBackKey(game, "HyruleField_Child").find("nothing given back") !=
-          std::string::npos);
+    CHECK(CoopWorld::GiveBack(game, "").find("no count") != std::string::npos);
 
     // The queue between the threads.
     CoopWorld::QueueGiveBack("ShadowTemple");
@@ -1617,4 +1617,121 @@ TEST_CASE("world: a hammer drop floor that sinks is sent and held, a hammer swit
         Walk(b, t * kMs, {Thing(0x200, 0x42, 0, sw)});
     }
     CHECK(b.Removes().empty());
+}
+
+// ------------------------------------------------- Gold Skulltula tokens (#89)
+
+namespace {
+const char* const kGold = "Enemy_Skulltula_Gold";
+const char* const kToken = "Obj_Token_Gold";
+const std::string kGrave = "Spot_GraveYard";
+constexpr std::uint64_t kGoldHash = 0xf2e27d6a27026acfULL;
+const proto::Vec3 kGoldAt{1.0f, 3.0f, 3.0f};  // on a wall one metre up
+
+WorldSync::Out GraveWalk(WorldSync& w, std::uint64_t now, const std::vector<Seen>& seen,
+                         const std::string& scene = kGrave) {
+    return Walk(w, now, seen, kLink, 2, scene);
+}
+Seen Token(std::uint64_t address, proto::Vec3 at = {1.0f, 2.5f, 3.0f}) {
+    return Thing(address, 0, std::nullopt, kToken, at);  // made by the game: no placement
+}
+} // namespace
+
+TEST_CASE("world: a Gold Skulltula's token is known by its Skulltula, taken here it goes out once") {
+    CHECK(CoopWorld::IsGoldToken(kToken));
+    CHECK(CoopWorld::IsWorldObject(kToken));
+    CHECK_FALSE(CoopWorld::IsGoldToken(kGold));
+    CHECK(CoopWorld::TokenId(kGoldHash) != kGoldHash);
+    CHECK(CoopWorld::TokenId(kGoldHash) != 0);
+
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    // It dies; the game makes the token where it was.
+    GraveWalk(a, 1100 * kMs, {Token(0x200)});
+    std::vector<proto::WorldBreak> sent;
+    for (std::uint64_t t = 1200; t <= 2700; t += 100) {
+        const auto out = GraveWalk(a, t * kMs, {});
+        for (const auto& b : Sent<proto::WorldBreak>(out)) {
+            sent.push_back(b);
+        }
+        CHECK(out.give_back.empty());
+        CHECK(out.taken_keys.empty());  // our own game set its key itself
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == CoopWorld::TokenId(kGoldHash));
+}
+
+TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key is set, and a reload does not bring it back") {
+    WorldSync b;
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(b, 1100 * kMs, {Token(0x200)});  // the kill was shared: our copy left a token too
+    proto::WorldBreak taken = BreakOf(CoopWorld::TokenId(kGoldHash), 0, kGrave);
+    taken.position = {1.0f, 2.5f, 3.0f};
+    b.Receive(taken);
+    auto out = GraveWalk(b, 1200 * kMs, {Token(0x200)});
+    CHECK(Removed(b, 0x200));
+    REQUIRE(out.taken_keys.size() == 1);
+    CHECK(out.taken_keys[0] == kGoldHash);  // the persistent "taken" state
+    CHECK(out.give_back.empty());
+    for (std::uint64_t t = 1300; t <= 3000; t += 100) {
+        out = GraveWalk(b, t * kMs, {});
+        CHECK(Sent<proto::WorldBreak>(out).empty());  // our delete is not our take
+        CHECK(out.give_back.empty());
+    }
+
+    // B leaves and comes back: no Skulltula now, the game makes the token again
+    // at the same spot; the server's replay of the scene's breaks deletes it.
+    GraveWalk(b, 4000 * kMs, {}, "KakarikoVillage_Child");
+    b.Receive(taken);  // the server replays the scene's breaks on entering
+    GraveWalk(b, 5000 * kMs, {Token(0x300, {1.2f, 2.5f, 3.0f})});
+    CHECK(Removed(b, 0x300));
+
+    // A token that turns up far from any known Skulltula or token spot is left alone.
+    WorldSync c;
+    GraveWalk(c, 1000 * kMs, {Token(0x400, {40.0f, 2.0f, 3.0f})});
+    for (std::uint64_t t = 1100; t <= 2500; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(c, t * kMs, {})).empty());
+    }
+}
+
+TEST_CASE("world: both players take the same token at once: one token goes back") {
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(a, 1100 * kMs, {Token(0x200)});
+    GraveWalk(a, 1200 * kMs, {});
+    GraveWalk(a, 1300 * kMs, {});  // taken: held
+    a.Receive(BreakOf(CoopWorld::TokenId(kGoldHash), 0, kGrave));
+    const auto out = GraveWalk(a, 1400 * kMs, {});
+    REQUIRE(out.give_back.size() == 1);
+    CHECK(out.give_back[0] == CoopWorld::kTokenCount);
+    for (std::uint64_t t = 1500; t <= 3000; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(a, t * kMs, {})).empty());
+    }
+}
+
+TEST_CASE("world: a token taken elsewhere sets its Skulltula's key, once") {
+    const std::uint32_t tokens = proto::flag_hash(CoopWorld::kTokenCount);
+    CountStore game;
+    game.values[tokens] = 5;
+    CHECK(CoopWorld::GiveBack(game, CoopWorld::kTokenCount).find("5 -> 4") != std::string::npos);
+    CHECK(game.values[tokens] == 4);
+    // SetTakenKey writes a 64-bit key: the store sees it under its key.
+    struct KeyStore final : public coop::host::FlagStore {
+        std::map<std::uint64_t, std::uint32_t> keys;
+        std::optional<proto::FlagEntry> read(coop::host::FlagKey k) override {
+            const auto it = keys.find(k.key);
+            if (it == keys.end()) return proto::FlagEntry(k, proto::FlagKind::boolean, 0);
+            return proto::FlagEntry(k, proto::FlagKind::boolean, it->second);
+        }
+        bool write(const proto::FlagEntry& e) override {
+            keys[e.key.key] = e.value;
+            return true;
+        }
+    } store;
+    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("set to 1") != std::string::npos);
+    CHECK(store.keys[kGoldHash] == 1);
+    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("1 already") != std::string::npos);
+    CoopWorld::QueueTakenKey(kGoldHash);
+    CHECK(CoopWorld::TakeTakenKeys() == std::vector<std::uint64_t>{kGoldHash});
+    CHECK(CoopWorld::TakeTakenKeys().empty());
 }

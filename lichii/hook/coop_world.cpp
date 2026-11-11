@@ -97,6 +97,15 @@ bool IsLyingKey(std::string_view name) {
     return name.starts_with("Obj_Dungeon_SmallKey");
 }
 
+bool IsGoldToken(std::string_view name) {
+    return name == "Obj_Token_Gold";
+}
+
+std::uint64_t TokenId(std::uint64_t skulltula_hash) {
+    const std::uint64_t id = skulltula_hash ^ 0x746f6b656e5f6f6bULL;  // "token_ok"
+    return id == 0 || id == ~std::uint64_t{0} ? id ^ 1u : id;  // never 0 or ~0 on the wire
+}
+
 bool IsShifter(std::string_view name) {
     // From the romfs (breakables-2): no LifeRef, moved or turned by their AI
     // when hit, and no 64-bit key, so before this nothing of them was shared.
@@ -110,7 +119,7 @@ bool IsShifter(std::string_view name) {
 
 bool IsWorldObject(std::string_view name) {
     return IsBreakable(name) || IsMovable(name) || IsFaller(name) || IsLyingKey(name) ||
-           IsShifter(name);
+           IsGoldToken(name) || IsShifter(name);
 }
 
 std::optional<std::string> KeyCountOf(std::string_view scene) {
@@ -129,13 +138,26 @@ std::optional<std::string> KeyCountOf(std::string_view scene) {
 namespace {
 std::mutex give_back_mutex;
 std::vector<std::string> give_backs;
+std::vector<std::uint64_t> taken_keys;
 } // namespace
 
-void QueueGiveBack(std::string scene) {
+void QueueGiveBack(std::string count) {
     std::lock_guard lock(give_back_mutex);
     if (give_backs.size() < 64) {
-        give_backs.push_back(std::move(scene));
+        give_backs.push_back(std::move(count));
     }
+}
+
+void QueueTakenKey(std::uint64_t key) {
+    std::lock_guard lock(give_back_mutex);
+    if (taken_keys.size() < 256) {
+        taken_keys.push_back(key);
+    }
+}
+
+std::vector<std::uint64_t> TakeTakenKeys() {
+    std::lock_guard lock(give_back_mutex);
+    return std::exchange(taken_keys, {});
 }
 
 std::vector<std::string> TakeGiveBacks() {
@@ -143,10 +165,24 @@ std::vector<std::string> TakeGiveBacks() {
     return std::exchange(give_backs, {});
 }
 
-std::string GiveBackKey(coop::host::FlagStore& game, std::string_view scene) {
-    const auto name = KeyCountOf(scene);
+std::string SetTakenKey(coop::host::FlagStore& game, std::uint64_t key) {
+    char hex[24];
+    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
+    const auto flag = coop::protocol::FlagKey::key64_flag(key);
+    if (const auto now = game.read(flag); now && now->value != 0) {
+        return std::string("world: key64 ") + hex + " is 1 already";
+    }
+    if (!game.write(coop::protocol::FlagEntry(flag, coop::protocol::FlagKind::boolean, 1))) {
+        return std::string("world: key64 ") + hex + ": write failed";
+    }
+    return std::string("world: key64 ") + hex + " set to 1 (a token taken elsewhere)";
+}
+
+std::string GiveBack(coop::host::FlagStore& game, std::string_view count) {
+    const std::optional<std::string> name = count.empty() ? std::nullopt
+                                                           : std::optional<std::string>(count);
     if (!name) {
-        return "world: no small key count for " + std::string(scene) + ": nothing given back";
+        return "world: no count to give one back to";
     }
     for (const auto& item : coop::host::item_flags()) {
         if (item.name != *name) {
@@ -164,7 +200,7 @@ std::string GiveBackKey(coop::host::FlagStore& game, std::string_view scene) {
         if (!game.write(coop::protocol::FlagEntry(key, item.kind, static_cast<std::uint32_t>(was - 1)))) {
             return "world: " + *name + ": write failed";
         }
-        return "world: one small key given back: " + *name + " " + std::to_string(was) + " -> " +
+        return "world: one given back: " + *name + " " + std::to_string(was) + " -> " +
                std::to_string(was - 1);
     }
     return "world: " + *name + " is no item flag";
@@ -287,6 +323,8 @@ void WorldSync::Reset() {
     went_.clear();
     hits_.clear();
     cuts_.clear();
+    skulltulas_.clear();
+    token_spots_.clear();
     early_.clear();
     player_.reset();
     probe_.Reset();
@@ -314,19 +352,60 @@ std::vector<std::uint64_t> WorldSync::Removes() const {
     return out;
 }
 
-bool WorldSync::TookKey(std::uint64_t hash) const {
+std::optional<std::string> WorldSync::TookKey(std::uint64_t hash) const {
     for (const Gone& g : gone_) {
         if (g.object.key && g.object.hash == hash) {
-            return true;
+            return g.object.count;
         }
     }
     for (const auto& [address, o] : objects_) {
         if (o.key && o.hash == hash && o.missed > 0 && player_ && Finite(o.position) &&
             Distance(*player_, o.position) <= kBreakReachM) {
-            return true;
+            return o.count;
         }
     }
-    return false;
+    return std::nullopt;
+}
+
+std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at) {
+    if (!Finite(at)) {
+        return 0;
+    }
+    auto& spots = token_spots_[scene_];
+    std::uint64_t best = 0;
+    float best_m = kTokenNearM;
+    for (const auto& [hash, where] : skulltulas_) {
+        if (const float m = Distance(where, at); m <= best_m) {
+            best = TokenId(hash);
+            best_m = m;
+        }
+    }
+    if (best == 0) {
+        best_m = kTokenSpotM;
+        for (const auto& [id, where] : spots) {
+            if (const float m = Distance(where, at); m <= best_m) {
+                best = id;
+                best_m = m;
+            }
+        }
+    }
+    if (best != 0 && spots.size() < 512) {
+        spots[best] = at;
+    }
+    return best;
+}
+
+void WorldSync::Token(const proto::WorldBreak& b) {
+    auto& spots = token_spots_[scene_];
+    for (const auto& [hash, where] : skulltulas_) {
+        if (TokenId(hash) == b.hash) {
+            if (spots.size() < 512 && Finite(b.position)) {
+                spots.emplace(b.hash, b.position);
+            }
+            taken_keys_.push_back(hash);
+            return;
+        }
+    }
 }
 
 void WorldSync::Drain(std::uint64_t now_us) {
@@ -360,15 +439,17 @@ void WorldSync::Drain(std::uint64_t now_us) {
                 // Our own take of the same small key that has not gone out
                 // yet: the key is already off our walk next to our Link (or
                 // waiting out kGoneHoldUs). Theirs was first: ours goes back.
-                if (TookKey(b->hash)) {
-                    give_back_.push_back(b->scene);
+                if (const auto count = TookKey(b->hash)) {
+                    give_back_.push_back(*count);
                 }
+                Token(*b);
             } else if (known->second.local && known->second.key) {
                 // We took this small key too, and the server, which keeps the
                 // first break only, relayed theirs: they were first. Ours goes
                 // back, so the shared count rose once (issue 102).
                 known->second.key = false;
-                give_back_.push_back(b->scene);
+                give_back_.push_back(known->second.count);
+                Token(*b);
             } else if (known->second.local && now_us - known->second.got_us < kEchoUs) {
                 // The life 0 we read a moment ago was this player's break
                 // (it reached our copy through the enemy sharing first).
@@ -423,6 +504,7 @@ void WorldSync::LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out
     k.got_us = now_us;
     k.local = true;
     k.key = o.key;
+    k.count = o.count;
     broken_.emplace(o.hash, k);
     proto::WorldBreak b;
     b.scene = scene_;
@@ -706,6 +788,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         went_.clear();
         hits_.clear();
         cuts_.clear();
+        skulltulas_.clear();  // token_spots_ stay: a room loaded again
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
             if (*SceneOfMessage(m) == scene_) {
@@ -714,22 +797,44 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         }
         early_.clear();
     }
+    for (const CoopObjects::Seen& s : seen) {
+        if (s.name == "Enemy_Skulltula_Gold" && s.hash != 0 && s.hash != kNoHash &&
+            Finite(s.position)) {
+            skulltulas_[s.hash] = s.position;
+        }
+    }
     Drain(now_us);
-    for (std::string& scene : give_back_) {
-        out.notes.push_back("world: a small key in " + scene +
-                            " was taken here and by another player at once: theirs came first, "
-                            "ours goes back");
-        out.give_back.push_back(std::move(scene));
+    for (std::string& count : give_back_) {
+        out.notes.push_back("world: taken here and by another player at once (" + count +
+                            "): theirs came first, ours goes back");
+        out.give_back.push_back(std::move(count));
     }
     give_back_.clear();
+    out.taken_keys.insert(out.taken_keys.end(), taken_keys_.begin(), taken_keys_.end());
+    taken_keys_.clear();
+
+    // A token has no placement: it gets its Skulltula's id (TokenId).
+    std::vector<CoopObjects::Seen> with_tokens;
+    const std::vector<CoopObjects::Seen>* walk = &seen;
+    if (std::any_of(seen.begin(), seen.end(),
+                    [](const CoopObjects::Seen& s) { return IsGoldToken(s.name); })) {
+        with_tokens = seen;
+        for (CoopObjects::Seen& s : with_tokens) {
+            if (IsGoldToken(s.name) && (s.hash == 0 || s.hash == kNoHash)) {
+                s.hash = IdentifyToken(s.position);
+            }
+        }
+        walk = &with_tokens;
+    }
 
     std::set<std::uint64_t> now_seen;
-    for (const CoopObjects::Seen& s : seen) {
+    for (const CoopObjects::Seen& s : *walk) {
         if (s.hash == 0 || s.hash == kNoHash) {
             continue;
         }
         const bool faller = IsFaller(s.name);
-        const bool key = IsLyingKey(s.name);
+        const bool token = IsGoldToken(s.name);
+        const bool key = IsLyingKey(s.name) || token;
         const bool shifter = IsShifter(s.name);
         const bool breakable = IsBreakable(s.name) || faller || key;
         if (!breakable && !shifter && !IsMovable(s.name)) {
@@ -755,6 +860,11 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             o.sign = IsSign(s.name);
             o.faller = faller;
             o.key = key;
+            if (token) {
+                o.count = kTokenCount;
+            } else if (key) {
+                o.count = KeyCountOf(scene_).value_or("");
+            }
             o.shifter = shifter;
             o.life = life;
             o.position = s.position;

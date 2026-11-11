@@ -878,8 +878,11 @@ public:
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
             sign_words_ = std::move(world.words);  // written after the probe's look
-            for (std::string& scene : world.give_back) {
-                CoopWorld::QueueGiveBack(std::move(scene));  // a small key both took
+            for (std::string& count : world.give_back) {
+                CoopWorld::QueueGiveBack(std::move(count));  // a small key or token both took
+            }
+            for (const std::uint64_t key : world.taken_keys) {
+                CoopWorld::QueueTakenKey(key);  // a token taken elsewhere: its Skulltula's key
             }
             if (!world.hits.empty()) {
                 // A sign another player's sword passed: the same hit on ours.

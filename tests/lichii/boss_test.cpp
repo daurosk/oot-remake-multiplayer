@@ -301,7 +301,8 @@ TEST_CASE("boss: a clock that steps back does not end the wait for the intro") {
     a = s.Tick(At("ForestTemple", Forest().arrive), 29 * kS);
     CHECK(s.phase() == Sync::Phase::waiting);
     a = s.Tick(At("ForestTemple", Forest().arrive), 30 * kS);
-    CHECK(Has(a, proto::BossState::intro_end));
+    CHECK(s.phase() == Sync::Phase::fight);  // no intro for 10 s (it moves no one in: issue 148)
+    CHECK_FALSE(Has(a, proto::BossState::intro_end));
 }
 
 TEST_CASE("boss: a player who walks out during the fight is pulled back") {

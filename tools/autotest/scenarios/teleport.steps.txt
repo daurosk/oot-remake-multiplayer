@@ -1,0 +1,13 @@
+# teleport (#156): /teleport typed through the test `chat` command. Both load in the Graveyard.
+# 1. A lists the others, B walks away, A teleports next to B (same scene), A tries two refusals.
+# 2. A walks to Kakariko, asks /teleport B and reads the sign (an event, which lets the game
+#    change scene): A should load into the Graveyard and be moved next to B. Then A presses A a
+#    few times: no second scene load (the request is cleared on arrival).
+# Read in A's log: "coop: teleport:" and "coop: test chat"; B's log: "is coming to you".
+start A B
+load A B
+expect loaded A=1 B=1
+play A teleport-same.A.txt B teleport-same.B.txt
+expect same-scene A=1 B=1
+play A teleport-other.A.txt
+expect together A=1 B=1

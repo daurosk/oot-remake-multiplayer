@@ -1,0 +1,32 @@
+# gohma (#150, branch gohma): both load straight into Gohma's room (warp InsideTheDekuTree
+# StartPos_Get_StoneOfForest, the room centre 7.5 67.2). A (P1) walks to the room's edge and
+# stands there, never hitting; B (P2) stays near Gohma and, after 30 s, aims the slingshot
+# (ZL lock-on + ZR) at it three times. Run with LICHII_COOP_OBJECTS_RELEASE=1 for the freeze check.
+# Expect (gohma report): the boss's owner goes to P2 after 4+ s (server/owner lines), Gohma
+# attacks P2 in both games; a seed in the eye: P2 "stunned here ..." + "share damage 0"; on a
+# hand-over the new owner's Gohma does not freeze or walk in the air ("release:" lines).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OBJECTS_RELEASE=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree StartPos_Get_StoneOfForest
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+goto 7.5 95 1.5 900     # the edge, about 28 m from the centre
+mark a-at-edge
+wait 1800
+mark handover
+wait 3600
+mark stun
+wait 2400
+mark end

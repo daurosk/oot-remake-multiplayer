@@ -1,0 +1,5 @@
+mark start
+wait 120
+stick 0 1 150           # up the path, away from A
+wait 660
+mark end

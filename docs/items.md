@@ -302,6 +302,14 @@ The struct `PouchData.Item_Bomb` has no member but `StockNum`. The capacity stru
 
 **Next: bombs in the save itself.** `tools/autotest/save_flags.py bombs` writes the same flags into the kits' baseline saves ([testing.md](testing.md)), so the game loads them as it loads a player's own bombs. If the bombs then stay, the cheat is the problem, not the flags. A shared bomb bag then needs a scene change before its bombs work, which is the same for every item a player gets from another player (a follow-up for #128). If they still go after 0.1 s with the bombs in the save, the cause is elsewhere, and the next try is the real bomb save (the kits' second user profile, slot 0).
 
+**Later runs (2026-11-10 and 11, branch bomb-vanish-4).** With the bombs in the save it still happened, with co-op off too (`-NoCoop`, spawn-bomb 20261110-131336), and by hand on two co-op games at the Graveyard (20261111-005330): one ZR made a new `Item_Bomb` every 0.1 to 0.2 s while it was held, each gone 0.09 to 0.14 s later, 0.02 m from where it was made, the count still 20. The game keeps trying to take a bomb out and the bomb dies before Link holds it. What is ruled out:
+
+- Our code: no co-op write in that window (no delete, drop, remover, director or spawn-copy line; the spawn sync only reports the bomb and its end), and co-op off does the same. The puppet patch is not applied with co-op off.
+- The puppet pack (`coop-puppet`, loaded with co-op off too): its three tables, read back with `tools/puppet_pack`, hold every row of the game's own `ActorInfo` and `GameActorInfo` unchanged (8363 of 8363, `Item_Bomb` included), and the size table changes only its two own entries and adds 18 for the pack's files.
+- The bomb flags: every flag with `Bomb` in its name (named from `GameDataList` by murmur3 of `IsGet.<actor>`, `PouchData.<actor>.StockNum` and the struct members) are the same in the tool's saves and the kits' second profile, whose bombs were taken out and used by a player.
+
+Left, each one test away: where it is tried (every vanish was at the Graveyard or in Kakariko as a child; the player's bombs were used in Dodongo's Cavern), and the emulator's patches (Dynamic FPS changes the game's frame step; the item's AI, `Item_Bomb.root.ainb`, is run by the native `ExecuteBarrelBombAI` with child checks, `QueryIsPlayerChild`, and a sand check, `QueryPhysicsIsHitSand`). `run.ps1 -AddOnsOff` and `-Fps30` ([testing.md](testing.md)) turn the patches and the pack off for one run.
+
 ## Not done
 
 1. Gold Skulltula placement keys: one known (above); the rest (`Obj_RupeeToken`, 85 placements, and any others) to read from the Banc placements; a loaded Skulltula or token removed when its key is set by another player; heart piece placement keys.

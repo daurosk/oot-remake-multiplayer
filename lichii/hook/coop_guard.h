@@ -20,6 +20,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -65,6 +66,26 @@ inline bool Waits(const Local& local, const std::optional<Vec3>& at) {
         return true;
     }
     return !local.link || Near(local.link, at, kEventNearM);
+}
+
+// Who an actor at an address is, for Held: its placement hash, its name and the object id the
+// sync gave it. Actors the game makes share one "no hash" and many have the same name (two
+// Keese); the id tells two such copies apart when one takes the other's address.
+inline std::uint64_t Who(std::uint64_t hash, std::string_view name, std::optional<std::uint64_t> object) {
+    std::uint64_t h = 0xcbf29ce484222325ULL;  // FNV-1a over the three
+    const auto mix = [&h](std::uint64_t v) {
+        for (int i = 0; i < 8; ++i) {
+            h ^= (v >> (8 * i)) & 0xff;
+            h *= 0x100000001b3ULL;
+        }
+    };
+    mix(hash);
+    for (const char c : name) {
+        h ^= static_cast<unsigned char>(c);
+        h *= 0x100000001b3ULL;
+    }
+    mix(object ? *object + 1 : 0);
+    return h;
 }
 
 // Two held life writes for one actor become one (Held's merge for LifeWrite-like changes, with

@@ -1765,7 +1765,7 @@ TEST_CASE("objects: a life write held through our event lands later and is no hi
         }
         CHECK(asked >= 1);
         if (told) {
-            sync.Written(0x100, 3);
+            sync.Written(0x100, 3, 2000 * kMs);
         }
         std::size_t damage = 0;
         for (std::uint64_t t = 2000; t < 3000; t += 50) {
@@ -1779,12 +1779,34 @@ TEST_CASE("objects: a life write held through our event lands later and is no hi
 
 TEST_CASE("objects: Written for an actor the Sync does not know, or a life not lower, does nothing") {
     Sync sync;
-    sync.Written(0x999, 0);
+    sync.Written(0x999, 0, 0);
     Tick(sync, 0, {Enemy(0x100, 0x11, 3)});
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 2);
-    sync.Written(0x100, 5);  // not a drop
+    sync.Written(0x100, 5, 0);  // not a drop
     // Our own hit afterwards still goes to the owner.
     Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 2)});
     CHECK(All<proto::Damage>(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
+}
+
+TEST_CASE("objects: a released write the game ignores is written as life, and our next hit still goes") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    // A held write to 3 lands at 2000 ms, but the game never takes it (life stays 4).
+    sync.Written(0x100, 3, 2000 * kMs);
+    std::size_t rewritten = 0;
+    for (std::uint64_t t = 2000; t < 2600; t += 50) {
+        // Until the Sync writes the life itself the game keeps 4; that write lands at once.
+        for (const auto& w : Tick(sync, t * kMs, {Enemy(0x100, 0x11, rewritten ? 3 : 4)}).writes) {
+            rewritten += w.life == 3 ? 1 : 0;
+        }
+    }
+    CHECK(rewritten == 1);  // after kHurtWaitUs the life is written as the owner has it
+    // Our Link's real hit afterwards (3 -> 2) goes to the owner: nothing left over swallows it.
+    Tick(sync, 2700 * kMs, {Enemy(0x100, 0x11, 3)});
+    Tick(sync, 4000 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(All<proto::Damage>(Tick(sync, 4300 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
 }

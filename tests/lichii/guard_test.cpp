@@ -157,3 +157,22 @@ TEST_CASE("guard: removes, places and plays near our Link are left out while the
     CoopGuard::Skip(plays, Local{true, Vec3{0, 0, 0}}, where, [](const Change& c) { return c.address; });
     CHECK(plays.empty());
 }
+
+TEST_CASE("guard: who is at an address tells apart same-named game-made copies by object id") {
+    constexpr std::uint64_t kNoHash = ~std::uint64_t{0};
+    const auto keese1 = CoopGuard::Who(kNoHash, "Enemy_Keese", 7);
+    const auto keese2 = CoopGuard::Who(kNoHash, "Enemy_Keese", 8);
+    CHECK(keese1 != keese2);
+    CHECK(keese1 == CoopGuard::Who(kNoHash, "Enemy_Keese", 7));
+    CHECK(CoopGuard::Who(kNoHash, "Enemy_Keese", std::nullopt) != keese1);
+    CHECK(CoopGuard::Who(0x11, "Enemy_Keese", 7) != keese1);
+    CHECK(CoopGuard::Who(kNoHash, "Enemy_Keese_B", 7) != keese1);
+    // In Held: a held kill of Keese 7 is dropped when Keese 8 has its address at the end.
+    who = {{0x100, keese1}};
+    CoopGuard::Held<Change> held;
+    held.Pass({{0x100, 0}}, Local{true, Vec3{0, 0, 0}}, Where, Who);
+    who = {{0x100, keese2}};
+    const auto r = held.Pass({}, Local{false, Vec3{0, 0, 0}}, Where, Who);
+    CHECK(r.apply.empty());
+    CHECK(r.dropped == 1);
+}

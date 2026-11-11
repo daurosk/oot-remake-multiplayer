@@ -994,9 +994,15 @@ public:
             }
             where_.clear();
             for (const Seen& s : seen) {
-                // Who is at the address: the placement hash and the name (actors the
-                // game makes share one "no hash"), so a reused address is told apart.
-                const u64 who = s.hash * 0x100000001b3ULL ^ std::hash<std::string>{}(s.name);
+                // Who is at the address: placement hash, name and the sync's object id
+                // (actors the game makes share one "no hash"), so a reused address is
+                // told apart (CoopGuard::Who).
+                std::optional<std::uint64_t> object;
+                if (const auto id = sync_.IdOf(s.address)) {
+                    object = id->value ^ (std::uint64_t{id->maker} << 56) ^
+                             (std::uint64_t(static_cast<unsigned>(id->kind)) << 48);
+                }
+                const u64 who = CoopGuard::Who(s.hash, s.name, object);
                 where_.emplace(s.address, std::make_pair(s.position, who));
             }
             const CoopGuard::Local local = GuardLocal();
@@ -1007,7 +1013,7 @@ public:
             // The held ones land now: the Sync asked for them long ago, and their drop
             // is no hit of our Link's (else it went to the owner as DAMAGE again).
             for (std::size_t i = 0; i < passed.released; ++i) {
-                sync_.Written(writes[i].address, writes[i].life);
+                sync_.Written(writes[i].address, writes[i].life, server_now_us);
             }
             if (held_writes_.Size() != 0 && !guard_said_) {
                 guard_said_ = true;

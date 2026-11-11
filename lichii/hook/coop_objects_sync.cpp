@@ -504,7 +504,7 @@ std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
     return out;
 }
 
-void Sync::Written(std::uint64_t address, std::int32_t life) {
+void Sync::Written(std::uint64_t address, std::int32_t life, std::uint64_t now_us) {
     const auto it = objects_.find(address);
     if (it == objects_.end()) {
         return;
@@ -516,6 +516,9 @@ void Sync::Written(std::uint64_t address, std::int32_t life) {
     if (o.life && *o.life > life) {
         o.hurt_left += *o.life - life;
         o.hurt_target = life;
+        // If the game does not take it, the life is written after kHurtWaitUs and hurt_left
+        // is cleared, so it cannot swallow a later hit of our Link's.
+        o.hurt_until = now_us + kHurtWaitUs;
     }
 }
 

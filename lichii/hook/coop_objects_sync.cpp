@@ -118,8 +118,25 @@ bool IsShared(std::string_view name) {
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
+    if (IsOwnPuzzle(name)) return false;
     return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
            CoopWorld::IsBreakable(name);
+}
+
+bool IsOwnPuzzle(std::string_view name) {
+    // Issue 149. The Deku Tree's (and Kokiri Forest's) Scrub Brothers are an
+    // order puzzle (hit 2, 3, 1): Scrub_Deku_Brothers_Manager counts the hits
+    // in its own code, from the hits made in its own game; a stun changes no
+    // life, so no DAMAGE ever carries another player's hit. Shared as enemy
+    // copies, the owner's animation was played over a non-owner's own hit
+    // reaction, which could spoil that player's solo try. So each game runs
+    // its own brothers; the solve (InsideTheDekuTree_RoomK_Cleared,
+    // ..._EnemyScrubDekuDestroy_003, set by the last scrub's talk) is a shared
+    // dungeon flag and opens the room for everyone. The Lost Woods stage scrubs
+    // (Enemy_Scrub_ForestStage, ScrubForestStage_ProcessOrderIndex) are an
+    // ordered show of the same kind.
+    return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
+           name.starts_with("Enemy_Scrub_ForestStage");
 }
 
 bool IsRolled(std::string_view name) {

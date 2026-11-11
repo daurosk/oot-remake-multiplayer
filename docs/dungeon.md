@@ -15,7 +15,9 @@ Game: main of build e0f3ccfaf50065ae (1.1.1), romfs of the same version. **Check
   - **One-way rides**: `ShadowTemple_Gimmick_Departure` (the boat), `ForestTemple_Room11_ElevatorStart`, `ForestTemple_Room11_RoomSpin`, `ForestTemple_Room22_RoomSpin`. Their end state is a boat, lift or room turned to the far side; shared, it could leave a player who was not on it stranded on the wrong side. Each player rides their own until a run shows otherwise.
   - **Camera shots that are no one room's state**: `FocusOnGimmick_Basic`, `FocusOnGimmick_NoSE`, `TrapTreasureBoxOpen`, `TreasureBoxAppear_Room04` (one name for many rooms), `InsideGanonCastle_LookBarrierFromDoor_*` (5) and `GanonCastle_Dungeon_SeeTowerBarrier`, `…_FromDoor`. Shared, they would only make the other player skip their own first look.
 
-  The list now has **971 flags**.
+  Also taken off (issue 149): five records of one player's failed or reset try (below, "Order puzzles").
+
+  The list now has **966 flags**.
 - Flags with other reset types (1, 9, 32, 40) are things like `InsideTheDekuTree_OnThe3rdFloor`, `WaterTemple_Room04_IsAfterSceneCreate` or `WaterTemple_Room06_TektiteBlue00_Alive`: where one player is, or a room's own short-lived state. They are not shared.
 
 ## What is shared, kind by kind
@@ -27,6 +29,7 @@ Every kind of dungeon state, where the game keeps it and whether co-op shares it
 | Switches pressed (floor, eye, crystal), shutters and barred doors opened | Named, written by the room logic (`…_Switch_…`, `…_OpenDoor…`, `…_ShutterOpen`) | Yes | Live, last write wins (host's answer) |
 | Torches lit for good (puzzles that stay solved) | Named (`DodongoCavern_CandleStick`, …); the Well's `Obj_Well_CandleStick_A_03` is a key | Yes | Named live; key as one-time |
 | Torches that burn out, timed switches | In the actor, or flags of reset type 280 | No | Room-local, back on a reload; each player solves their own |
+| Order puzzles (the Scrub Brothers 2-3-1) | The order in the manager actor's own code; the solve in named flags | The solve only | Each player's game counts its own hits; one player's solve opens the room for all (below) |
 | Room cleared (its enemies beaten, the shutters open) | Named `…_Clear`/`…_Cleared`, and the rooms' `Obj_EnemyCounter_*` keys (51) | Yes | Named live; keys one-time |
 | Enemies, pots, grass, ice pillars | Keys of reset type 88 or 280: back on a scene load | No | [objects.md](objects.md) syncs the ones on screen |
 | Mini-bosses and bosses beaten | Named (`…_Boss_Defeat`, `…_BossBattleEnd`…) and the heart container's key | Yes | Named live; key one-time |
@@ -58,13 +61,39 @@ A player test (2026-11-10, v0.1.0-test4.2): in the slingshot room the trap was n
 - **The pillar and the ladder** have no flag of their own. Both are on/off animation actors (`OnOffAnimController`, the ladder `OffToOnOnly`) driven by a bool of the room graph (`QueryLogicGetBool`). In test4.2 `InsideTheDekuTree_RoomC_Cleared` was already shared, `HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder` was not. That fits what was seen: the pillar follows the room's flag, the ladder follows the event, which only A's game played.
 - **The fix here:** the played gimmick events above are shared, so B's game has the same record that the ladder event played. What is not known without a run: whether B's room, already loaded, puts the ladder down at once or only when it loads again (item 1 below). If only on a reload, the next step is to play the event in B (the game's event request by name), which needs a new message.
 
+## Order puzzles (issue 149)
+
+A player test (v0.1.0-test6, 2026-11-11), Deku Tree, the three Scrub Brothers to hit in the order 2, 3, 1: B hit 2, A hit 3, B hit 1 and the puzzle did not solve; A alone doing the whole order solved it. Read from the romfs (no run):
+
+- **Where the order is kept.** The brothers are three `Enemy_Scrub_Deku_Brothers` (Banc `InsideTheDekuTree_Static`, room index 9, names `Two` `ShootOrder 2`, `Three` `ShootOrder 3 DefeatedOrder 2`, `One` `DefeatedOrder 3`) linked to a `Scrub_Deku_Brothers_Manager`. A hit (`AI/Scrub_Deku_Brothers.action.interruptsmallhit.module`) sends the scrub's `DefeatedOrder` to the manager (`OneShotSendScrubDekuBrothersDefeatedOrderMessage`); the manager's AI is one native node (`ExecuteScrubDekuManagerAI`) with no flag for the count. So the progress is in each game's manager actor, fed only by hits in that game. A stun changes no life, so no `DAMAGE` ([objects.md](objects.md)) ever carries one player's hit into another game.
+- **The solve.** The last scrub's `DamageEventName` `Talk_Deku_03_Attacked` is an entry of `Event/EventFlow/Get_StoneOfForest`, the one place besides the room graphs that names `InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003` and `InsideTheDekuTree_RoomK_Cleared`. The room graph (`Logic/InsideTheDekuTree_Level_Room_K_Prefab_6708`) only reads those two (`HoldGameDataGetBoolSimple`), and the boss-door shutter's graph (`…_Room_K_Prefab_52bd`, `DungeonSwitchShutterWithLockSet`) reads `RoomK_Cleared`. Both flags were already shared, so one player's solve opens the room in every game.
+- **A failed try.** The room graph sets `InsideTheDekuTree_RoomK_Failure` (`TriggerGameDataSetBoolTrue`); nothing in the romfs reads it. It was shared; now it is not, so one player's wrong order can never reach another game in the middle of that player's own try.
+- **The brothers are each game's own** (`CoopObjects::IsOwnPuzzle`). They were shared as enemy copies: the owner's animation was played over a non-owner's own hit reaction (`Sleep`, `GetUpBrothers`), which could spoil a solo try by the player who did not own them. Now each game runs its own three.
+
+So: **the order counts per player.** Each player solving alone always works, and the first solve opens the room for everyone. A split order (B 2, A 3, B 1) still does not count. Sharing the count would need the manager's native state read and written, or the stun replayed in the other games (a no-life hit, not found yet, [objects.md](objects.md) "Damage"); neither can be done without a game run.
+
+Other order and reset puzzles (romfs scan of every Banc `Dynamic` key with Order, Sequence, Step or Index in its name, every `*Manager` placement, and every `GameDataNameBool` input of the `Logic` graphs):
+
+| Puzzle | Kept in | Now |
+|---|---|---|
+| Kokiri Forest Scrub Brothers (`Scrub_Deku_Brothers_Manager`, 2 placements) | The same manager | Each game's own, as above |
+| Lost Woods stage scrubs (`Enemy_Scrub_ForestStage`, `ScrubForestStage_ProcessOrderIndex`) | `Scrub_ForestStage_Manager` | Each game's own (an ordered show; the order is the manager's) |
+| Fire Temple timed switches: `FireTemple_Room08/13_SwitchWasReset` set when the time ran out; `Room10`'s only read | Named flags | Not shared any more: one player's reset no longer reaches another's try |
+| Ganon's Castle torch room: `InsideGanonCastle_Dungeon_Room08_CandleWasReset` set on a reset | Named flag | Not shared any more |
+| Dodongo's Cavern `…_NaviHelp_…_SwichWasReset` | Named flags | Never shared (Navi's hints are one player's) |
+| Silver rupees, Gold Skulltulas, chests | One-time keys | Shared: taken by anyone counts for everyone, so a split collection works |
+| Forest Temple block puzzle (`ForestTemple_MovableBox_Puzzle_Manager`), ghost paintings (`MultipleGhostPicturesManager`) | Manager actors; paintings done are keys | Not changed; check in a run |
+| Dead Hand's hands (`DeadHandHand_AppearOrderNum`) | Spawn order of an enemy | Not a puzzle |
+
+In a game (integrator): Deku Tree room with the three scrubs, both players in it. (1) B alone hits 2, 3, 1: B's log `coop: flags:` setting `InsideTheDekuTree_RoomK_Cleared` and `…EnemyScrubDekuDestroy_003`; A's game gets both and its shutter to the boss door opens with no reload. (2) Fresh save: A hits 2 wrong (1 first) while B does 2, 3, 1: B solves, and no `RoomK_Failure` line goes out in A's log. (3) No `objects: share` line names `Enemy_Scrub_Deku_Brothers` in either log.
+
 ## The placement keys
 
 `CoopDungeon::Keys()` (`lichii/hook/coop_dungeon.cpp`) lists the 500 placements in the 13 dungeons' Banc files (`Banc/<Dungeon>/*_Static.bcett.byml`, `*_Dynamic.bcett.byml`) whose `Hash` is in `GameDataList`'s `Bool64bitKey` table with `ResetTypeValue` 24 (checked; 522 had type 24 or 25, the 22 of type 25 are left out). Every chest in a dungeon has such a key (checked: no `Obj_TBox_*` in a dungeon lacks one). They join the shared list in `Merge`, so they are shared even with `LICHII_COOP_PICKUPS=0`; with pickups on (the default) the hook also hands each to `Session::share_pickup`, which makes them one-time: a 1 goes to everyone, and a 0 (the game's own table being reloaded, or a 0 from another game) is never sent and never written over a 1.
 
 ## How it is shared
 
-`CoopDungeon::AddShared` adds the 971 flags (781 from the scan, 190 played gimmick events) and the 500 placement keys to the session's shared list (`docs/flags.md`), next to the items and the user's flags file, unless `LICHII_COOP_DUNGEON=0`. The flag watcher then carries every change live: the player who pressed the switch writes the flag in their game, the host's answer sets it in every game, and the other games' room logic reads it like its own.
+`CoopDungeon::AddShared` adds the 966 flags (776 from the scan, 190 played gimmick events) and the 500 placement keys to the session's shared list (`docs/flags.md`), next to the items and the user's flags file, unless `LICHII_COOP_DUNGEON=0`. The flag watcher then carries every change live: the player who pressed the switch writes the flag in their game, the host's answer sets it in every game, and the other games' room logic reads it like its own.
 
 ## Not done
 

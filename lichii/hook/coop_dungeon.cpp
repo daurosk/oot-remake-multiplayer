@@ -29,6 +29,12 @@ namespace {
 // one room's state (FocusOnGimmick_Basic, the Ganon's Castle barrier looks),
 // and one-way rides that would leave a player on the wrong side (the Shadow
 // Temple boat, the Forest Temple elevator and room spins).
+// Also left out (issue 149): records of one player's failed or reset try that
+// a room graph sets (InsideTheDekuTree_RoomK_Failure, the Scrub Brothers' wrong
+// order; FireTemple_Room08/10/13_SwitchWasReset;
+// InsideGanonCastle_Dungeon_Room08_CandleWasReset). Shared, one player's
+// failure would reach another in the middle of their own try. The solve itself
+// (InsideTheDekuTree_RoomK_Cleared, ..._EnemyScrubDekuDestroy_003) is shared.
 constexpr std::array kFlags = std::to_array<Flag>({
     {0xfff1ad87, false, "BottomOfTheWell_BubbleAppear"},
     {0x0b5b3b0c, false, "BottomOfTheWell_CoffinRoomCheck"},
@@ -145,13 +151,11 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x8eea0cd9, false, "FireTemple_Room06_ShutterOpen"},
     {0x9941be6e, false, "FireTemple_Room08_BubbleRedSwitching"},
     {0xa4dd105e, false, "FireTemple_Room08_SwitchPushed"},
-    {0x55e67eba, false, "FireTemple_Room08_SwitchWasReset"},
     {0xf51711a7, false, "FireTemple_Room08_TBox_isOpen"},
     {0x2f7b8a92, false, "FireTemple_Room10_KeeseDead_01"},
     {0x892a4a5b, false, "FireTemple_Room10_KeeseDead_02"},
     {0xce689a86, false, "FireTemple_Room10_StepSwitchOnLink"},
     {0xace2d059, false, "FireTemple_Room10_SwitchWasOn"},
-    {0x92ac81e8, false, "FireTemple_Room10_SwitchWasReset"},
     {0xd701bad4, false, "FireTemple_Room11_EnteredFromUpperStair"},
     {0xf4381f3f, false, "FireTemple_Room12_CloserFireOn"},
     {0xa6cd88e5, false, "FireTemple_Room12_DeleteAirWall"},
@@ -160,7 +164,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xbfe66553, false, "FireTemple_Room12_IsAtCorrectArea"},
     {0xc25ca6e0, false, "FireTemple_Room12_SwitchHit"},
     {0x403407e5, false, "FireTemple_Room13_FireOn"},
-    {0x0e86f3db, false, "FireTemple_Room13_SwitchWasReset"},
     {0xb3dcce20, false, "FireTemple_Room14_AirWallEnemyMove00"},
     {0x6a0df9b3, false, "FireTemple_Room14_AirWallEnemyMove01"},
     {0x19b1cd6a, false, "FireTemple_Room14_AirWallEnemyMove02"},
@@ -558,7 +561,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x87af57b7, false, "InsideGanonCastle_Dungeon_Room03_StepSwitch"},
     {0x79c94a4f, false, "InsideGanonCastle_Dungeon_Room06_HmmerSwitch"},
     {0xb7494789, false, "InsideGanonCastle_Dungeon_Room06_IceBlock"},
-    {0xe5ba1fc5, false, "InsideGanonCastle_Dungeon_Room08_CandleWasReset"},
     {0x2bd3636f, false, "InsideGanonCastle_Dungeon_Room08_HummerSwitch"},
     {0x7126a506, false, "InsideGanonCastle_Dungeon_Room08_StepSwitch"},
     {0xae14b064, false, "InsideGanonCastle_Dungeon_Room10_LiftRock"},
@@ -723,7 +725,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xf85ceb3f, false, "InsideTheDekuTree_RoomH_Cleared"},
     {0xa32a1bd0, false, "InsideTheDekuTree_RoomI_Cleared"},
     {0xd2f46f66, false, "InsideTheDekuTree_RoomK_Cleared"},
-    {0xf0368aad, false, "InsideTheDekuTree_RoomK_Failure"},
     {0x345532bf, false, "InsideTheDekuTree_Room_KokiriCover"},
     {0x8a06dc6b, false, "InsideTheDekuTree_Room_KokiriCover_Irregular"},
     {0x89f4bbd4, false, "ShadowTemple_Gimmick_LooK_DepartureDemo"},

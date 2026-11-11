@@ -68,6 +68,7 @@
 #include "coop_svc.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
+#include "coop_world.h"
 
 namespace CoopHook {
 namespace {
@@ -340,6 +341,17 @@ public:
             }
             if (cheats_) {
                 CoopCheats::Frame(*game_store);
+            }
+            if (sharing_) {
+                // A small key or token we and another player took at once: ours
+                // goes back. A token taken elsewhere: its Skulltula's key here
+                // (docs/world.md, small keys and tokens).
+                for (const std::string& count : CoopWorld::TakeGiveBacks()) {
+                    LOG_INFO(Core, "coop: {}", CoopWorld::GiveBack(*game_store, count));
+                }
+                for (const std::uint64_t key : CoopWorld::TakeTakenKeys()) {
+                    LOG_INFO(Core, "coop: {}", CoopWorld::SetTakenKey(*game_store, key));
+                }
             }
             if (sharing_) {
                 // Issue 138: grants wait for a loaded save, and the capacities

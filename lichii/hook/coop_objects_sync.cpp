@@ -627,6 +627,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     notes_.emplace_back(s.name + " " + key + ": taken or opened in another game, removed here");
                 }
                 if (t->second.addresses.contains(s.address)) {
+                    // Its own break where the game has one: life 0, then the
+                    // delete only if it still stands (the review of breakables:
+                    // a web just vanished in the other game).
+                    const bool lives = s.life && s.life->life > 0 && CoopWorld::IsBreakable(s.name);
+                    auto broke = t->second.broke_at.find(s.address);
+                    if (lives && broke == t->second.broke_at.end()) {
+                        writes.push_back({s.address, 0, 0, {}});
+                        t->second.broke_at.emplace(s.address, now_us);
+                        notes_.emplace_back(s.name + ": broken by its own break (life 0)");
+                        continue;  // not shared, not sent, not deleted yet
+                    }
+                    if (broke != t->second.broke_at.end() && now_us - broke->second < kTakeBreakUs) {
+                        continue;  // its break is playing
+                    }
                     hidden.insert(s.address);
                     continue;  // gone for everyone: not shared, not sent
                 }

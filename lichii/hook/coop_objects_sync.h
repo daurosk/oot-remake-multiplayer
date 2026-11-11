@@ -545,10 +545,15 @@ private:
     // An actor this close to our Link is not removed: we may be opening that
     // chest ourselves (both players at once), or standing on it.
     static constexpr float kTakeNearM = 3.0f;
+    // A taken breakable that still has life gets life 0 first, so the game
+    // plays its own break (a web, a cracked wall); deleted only if it still
+    // stands this long after (a break with no life to write is deleted at once).
+    static constexpr std::uint64_t kTakeBreakUs = 1'500'000;
     struct Taking {
         unsigned ticks = 0;
         std::set<std::uint64_t> addresses;
         bool near_said = false;
+        std::map<std::uint64_t, std::uint64_t> broke_at;  // address: when life 0 was written
     };
     std::uint64_t last_tick_us_ = 0;
     bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)

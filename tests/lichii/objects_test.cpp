@@ -1788,7 +1788,10 @@ TEST_CASE("objects: only chests, pickups and things that go away are removed whe
                              "Land_Well_Waterfall_A_01", "Obj_ForestTemple_GhostPicture_A_01",
                              "Enemy_Anubis", "Obj_ShadowTemple_SkullPot_A_01",
                              "Obj_ShadowTemple_SpikeBoard_A_01", "Obj_ShadowTemple_FallingFloor_A_01",
-                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild"}) {
+                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild",
+                             "Obj_MiniGame_SmallKey",
+                             // no 64-bit key: taking one is a WORLD_BREAK (breakables-2)
+                             "Obj_Dungeon_SmallKey", "Obj_Dungeon_SmallKey_GerudoFortress_03"}) {
         CAPTURE(name);
         CHECK_FALSE(CoopObjects::RemovedWhenTaken(name));
     }
@@ -1839,4 +1842,44 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
     CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(true));
     koume.life = coop::protocol::ObjectLife{0, 8};
     CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
+}
+
+TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is deleted only if it stands") {
+    // breakables-2 (test6 players): the Deku Tree web burnt in A just vanished
+    // in B. One with a life (a bomb web, a cracked wall) gets life 0 first, so
+    // the game breaks it; the delete is the fallback.
+    Sync sync;
+    Seen web;
+    web.address = 0x700;
+    web.name = "Obj_InsideTheDekuTree_SpiderWeb_A_02";
+    web.hash = 0x2016a1ad3261af2a;
+    web.position = {5.0f, 2.0f, 1.0f};
+    web.life = proto::ObjectLife{1, 1};
+    Tick(sync, 0, {web});
+    sync.Take(web.hash);
+    auto step = Tick(sync, 10 * kMs, {web});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].address == 0x700);
+    CHECK(step.writes[0].life == 0);
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(sync.Removes().empty());
+    // Its break plays: not deleted, not written again.
+    step = Tick(sync, 800 * kMs, {web});
+    CHECK(step.writes.empty());
+    CHECK(sync.Removes().empty());
+    // Still standing 1.5 s on: deleted after all.
+    Tick(sync, 1600 * kMs, {web});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
+
+    // One with no life (the floor web you fall through) goes at once, as before.
+    Sync other;
+    Seen floor = web;
+    floor.name = "Obj_InsideTheDekuTree_SpiderWeb_A_01";
+    floor.hash = 0x3de66423437a955;
+    floor.life.reset();
+    Tick(other, 0, {floor});
+    other.Take(floor.hash);
+    step = Tick(other, 10 * kMs, {floor});
+    CHECK(step.writes.empty());
+    CHECK(other.Removes() == std::vector<std::uint64_t>{0x700});
 }

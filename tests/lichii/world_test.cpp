@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -1358,4 +1359,512 @@ TEST_CASE("gimmick probe: a word that steps once is logged, one that keeps movin
     g[0].position = {40.0f, 0.0f, 0.0f};
     mem[kAt + 0x100] = 7;
     CHECK(look().empty());
+}
+
+namespace {
+const char* const kPillar = "Obj_FireTemple_HammerSlipPillar_A_01";
+Seen Fallen(std::uint64_t address, std::uint64_t hash, std::optional<std::int32_t> life) {
+    // Fallen over: a metre and a half lower and further on (a bridge now).
+    return Thing(address, hash, life, kPillar, proto::Vec3{3.5f, 0.5f, 3.0f});
+}
+} // namespace
+
+TEST_CASE("world: hammer pillars fall for everyone and are never moved or deleted (breakables)") {
+    CHECK(CoopWorld::IsFaller(kPillar));
+    CHECK(CoopWorld::IsFaller("Obj_FireTemple_HammerSlipPillar_A_02"));
+    CHECK_FALSE(CoopWorld::IsFaller("Obj_Pot_A_01"));
+    CHECK_FALSE(CoopWorld::IsBreakable(kPillar));  // the object sharing leaves it alone
+
+    // Ours: the hammer takes its life, it falls; the break is sent once, the fall is no move.
+    WorldSync a;
+    Walk(a, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    const auto hit = Walk(a, 1100 * kMs, {Thing(0x100, 0x11, 0, kPillar)});
+    REQUIRE(Sent<proto::WorldBreak>(hit).size() == 1);
+    for (std::uint64_t t = 1200; t < 4000; t += 100) {
+        const auto out = Walk(a, t * kMs, {Fallen(0x100, 0x11, 0)});
+        CHECK(Sent<proto::WorldMove>(out).empty());
+        CHECK(Sent<proto::WorldPlace>(out).empty());
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+    }
+    CHECK(a.Removes().empty());
+
+    // Another player's: life 0 is written, again each second while it stands, never deleted.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    Walk(b, 5000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    b.Receive(BreakOf(0x11));
+    auto out = Walk(b, 5100 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    REQUIRE(out.lives.size() == 1);
+    CHECK(out.lives[0].address == 0x100);
+    CHECK(out.lives[0].life == 0);
+    CHECK(out.send.empty());
+    CHECK(Walk(b, 5600 * kMs, {Thing(0x100, 0x11, 1, kPillar)}).lives.empty());
+    CHECK(Walk(b, 6200 * kMs, {Thing(0x100, 0x11, 1, kPillar)}).lives.size() == 1);  // again
+    for (std::uint64_t t = 6300; t < 20000; t += 100) {
+        out = Walk(b, t * kMs, {Fallen(0x100, 0x11, 0)});  // it fell
+        CHECK(out.lives.empty());
+        CHECK(Sent<proto::WorldMove>(out).empty());
+    }
+    CHECK(b.Removes().empty());
+
+    // A game that loads the room after the break: no delete; a pillar that loaded
+    // standing is felled, one that loaded fallen (life 0) is left as it is.
+    WorldSync c;
+    c.Receive(BreakOf(0x11));
+    c.Receive(BreakOf(0x22));
+    out = Walk(c, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar), Fallen(0x200, 0x22, 0)});
+    REQUIRE(out.lives.size() == 1);
+    CHECK(out.lives[0].address == 0x100);
+    for (std::uint64_t t = 1100; t < 10000; t += 100) {
+        Walk(c, t * kMs, {Fallen(0x100, 0x11, 0), Fallen(0x200, 0x22, 0)});
+    }
+    CHECK(c.Removes().empty());
+}
+
+// ------------------------------------------------- breakables-2
+
+namespace {
+const char* const kKey = "Obj_Dungeon_SmallKey";
+const std::string kWell = "BottomOfTheWell";
+
+WorldSync::Out WellWalk(WorldSync& w, std::uint64_t now, const std::vector<Seen>& seen) {
+    return Walk(w, now, seen, kLink, 2, kWell);
+}
+proto::WorldBreak KeyBreak(std::uint64_t hash) { return BreakOf(hash, 0, kWell); }
+
+bool Removed(const WorldSync& w, std::uint64_t address) {
+    const auto r = w.Removes();
+    return std::find(r.begin(), r.end(), address) != r.end();
+}
+
+// A store of Int flags by name hash.
+class CountStore final : public coop::host::FlagStore {
+public:
+    std::map<std::uint32_t, std::int32_t> values;
+    std::optional<proto::FlagEntry> read(coop::host::FlagKey key) override {
+        const auto it = values.find(key.hash);
+        if (it == values.end()) {
+            return std::nullopt;
+        }
+        return proto::FlagEntry(key, proto::FlagKind::int32, static_cast<std::uint32_t>(it->second));
+    }
+    bool write(const proto::FlagEntry& e) override {
+        values[e.key.hash] = static_cast<std::int32_t>(e.value);
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("world: lying small keys, shifters and hammer switches by name (breakables-2)") {
+    CHECK(CoopWorld::IsLyingKey(kKey));
+    CHECK(CoopWorld::IsLyingKey("Obj_Dungeon_SmallKey_GerudoFortress_04"));
+    CHECK_FALSE(CoopWorld::IsLyingKey("Obj_MiniGame_SmallKey"));
+    CHECK_FALSE(CoopWorld::IsBreakable(kKey));  // not the enemy-style sharing
+    for (const char* name : {"Obj_FireTemple_HammerDropFloor_A_01", "Obj_FireTemple_HammerDropPillar_A_01",
+                             "Obj_FireTemple_HammerStair_A_01", "Obj_InsideTheDekuTree_FallingLadder_A_01",
+                             "Obj_InsideTheDekuTree_FallingFloor_A_03", "Obj_ShadowTemple_FallingFloor_A_03"}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsShifter(name));
+        CHECK(CoopWorld::IsWorldObject(name));
+    }
+    // Keyed ones go by their key (removed, or kept as ground).
+    CHECK_FALSE(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_01"));
+    CHECK_FALSE(CoopWorld::IsShifter("Obj_ShadowTemple_FallingFloor_A_01"));
+    CHECK(CoopWorld::IsFaller("Obj_HammerSwitch_A_01"));
+    // The walk hands all of them to WorldSync (the pillars were missing there).
+    for (const char* name : {kKey, kPillar, "Obj_HammerSwitch_A_01", "Obj_Pot_A_01", kBox}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsWorldObject(name));
+    }
+    CHECK_FALSE(CoopWorld::IsWorldObject("Obj_TBox_A_01"));
+    CHECK_FALSE(CoopWorld::IsWorldObject("Obj_LakeHrl_Ice_A_01"));  // scenery: no life, no destruction
+
+    CHECK(CoopWorld::KeyCountOf("BottomOfTheWell") == "DungeonInfo.BottomOfTheWell.SmallKeyNum");
+    CHECK(CoopWorld::KeyCountOf("ShadowTemple") == "DungeonInfo.ShadowTemple.SmallKeyNum");
+    CHECK(CoopWorld::KeyCountOf("GerudoFortress_Adult") == "DungeonInfo.GerudoFortress.SmallKeyNum");
+    CHECK_FALSE(CoopWorld::KeyCountOf("HyruleField_Child"));
+}
+
+TEST_CASE("world: a small key taken here goes out as a break, one taken elsewhere goes here at once") {
+    // Taken here: gone next to our Link, sent after the hold, nothing given back.
+    WorldSync a;
+    WellWalk(a, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    std::vector<proto::WorldBreak> sent;
+    WorldSync::Out out;
+    for (std::uint64_t t = 1100; t <= 2500; t += 100) {
+        out = WellWalk(a, t * kMs, {});
+        for (const auto& b : Sent<proto::WorldBreak>(out)) {
+            sent.push_back(b);
+        }
+        CHECK(out.give_back.empty());
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == 0x77);
+    CHECK(sent[0].scene == kWell);
+
+    // Taken elsewhere while ours lies there: deleted on the next walk, no wait.
+    WorldSync b;
+    WellWalk(b, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    b.Receive(KeyBreak(0x77));
+    out = WellWalk(b, 1100 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    CHECK(Removed(b, 0x100));
+    CHECK(out.give_back.empty());
+    CHECK(out.lives.empty());
+    // Our delete makes it leave next to our Link: that is not our take.
+    for (std::uint64_t t = 1200; t <= 3000; t += 100) {
+        out = WellWalk(b, t * kMs, {});
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+        CHECK(out.give_back.empty());
+    }
+
+    // A game that loads the room after the take: its key goes too.
+    WorldSync c;
+    c.Receive(KeyBreak(0x77));
+    WellWalk(c, 5000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    CHECK(Removed(c, 0x100));
+}
+
+TEST_CASE("world: both players take the same small key at once: one key goes back, once") {
+    // (1) Ours went out first, theirs came after: the server keeps the first
+    // break only and relayed theirs, so theirs was first. One key back.
+    WorldSync a;
+    WellWalk(a, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    bool sent = false;
+    for (std::uint64_t t = 1100; t <= 2500; t += 100) {
+        sent = sent || !Sent<proto::WorldBreak>(WellWalk(a, t * kMs, {})).empty();
+    }
+    REQUIRE(sent);
+    a.Receive(KeyBreak(0x77));
+    auto out = WellWalk(a, 2600 * kMs, {});
+    REQUIRE(out.give_back.size() == 1);
+    CHECK(out.give_back[0] == "DungeonInfo.BottomOfTheWell.SmallKeyNum");
+    a.Receive(KeyBreak(0x77));  // a repeat changes nothing
+    CHECK(WellWalk(a, 2700 * kMs, {}).give_back.empty());
+
+    // (2) Theirs comes while ours waits out the hold: ours is never sent, one key back.
+    WorldSync b;
+    WellWalk(b, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    WellWalk(b, 1100 * kMs, {});
+    WellWalk(b, 1200 * kMs, {});  // gone two walks: held as a take
+    b.Receive(KeyBreak(0x77));
+    out = WellWalk(b, 1300 * kMs, {});
+    REQUIRE(out.give_back.size() == 1);
+    for (std::uint64_t t = 1400; t <= 3000; t += 100) {
+        out = WellWalk(b, t * kMs, {});
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+        CHECK(out.give_back.empty());
+    }
+
+    // (3) Theirs comes when our key has just left the walk (one walk missed).
+    WorldSync c;
+    WellWalk(c, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    WellWalk(c, 1100 * kMs, {});
+    c.Receive(KeyBreak(0x77));
+    out = WellWalk(c, 1200 * kMs, {});
+    CHECK(out.give_back.size() == 1);
+
+    // (4) A key far from our Link that leaves the walk was not ours to take.
+    WorldSync d;
+    const proto::Vec3 far{1.0f, 2.0f, 40.0f};
+    WellWalk(d, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, far)});
+    WellWalk(d, 1100 * kMs, {});
+    d.Receive(KeyBreak(0x77));
+    CHECK(WellWalk(d, 1200 * kMs, {}).give_back.empty());
+}
+
+TEST_CASE("world: a key given back lowers the dungeon's count by one, never below 0") {
+    const std::uint32_t hash = proto::flag_hash("DungeonInfo.BottomOfTheWell.SmallKeyNum");
+    CountStore game;
+    game.values[hash] = 2;
+    const std::string count = *CoopWorld::KeyCountOf(kWell);
+    const std::string line = CoopWorld::GiveBack(game, count);
+    CHECK(game.values[hash] == 1);
+    CHECK(line.find("2 -> 1") != std::string::npos);
+    game.values[hash] = 0;
+    CoopWorld::GiveBack(game, count);
+    CHECK(game.values[hash] == 0);
+    CHECK(CoopWorld::GiveBack(game, "").find("no count") != std::string::npos);
+
+    // The queue between the threads.
+    CoopWorld::QueueGiveBack("ShadowTemple");
+    CoopWorld::QueueGiveBack("BottomOfTheWell");
+    CHECK(CoopWorld::TakeGiveBacks() == std::vector<std::string>{"ShadowTemple", "BottomOfTheWell"});
+    CHECK(CoopWorld::TakeGiveBacks().empty());
+}
+
+namespace {
+const char* const kLadder = "Obj_InsideTheDekuTree_FallingLadder_A_01";
+// Turned `angle` radians about x.
+Seen Tipped(std::uint64_t address, std::uint64_t hash, const char* name, float angle,
+            proto::Vec3 at = {1.0f, 2.0f, 3.0f}) {
+    Seen s = Thing(address, hash, std::nullopt, name, at);
+    const float c = std::cos(angle), n = std::sin(angle);
+    s.rotation = CoopObjects::Mat3{1, 0, 0, 0, c, -n, 0, n, c};
+    return s;
+}
+} // namespace
+
+TEST_CASE("world: a shifter that only turns is sent where it rests, and held there in the others") {
+    // Ours: the ladder tips over on its foot (no move), 10 m off (a slingshot shot).
+    WorldSync a;
+    const proto::Vec3 link{1.0f, 2.0f, 13.0f};
+    Walk(a, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)}, link);
+    std::vector<proto::WorldPlace> places;
+    for (int i = 1; i <= 15; ++i) {
+        const float angle = std::min(1.5f, 0.3f * static_cast<float>(i));
+        const auto out = Walk(a, static_cast<std::uint64_t>(1000 + 100 * i) * kMs,
+                              {Tipped(0x100, 0x31, kLadder, angle)}, link);
+        for (const auto& p : Sent<proto::WorldPlace>(out)) {
+            places.push_back(p);
+        }
+        for (const auto& v : Sent<proto::WorldMove>(out)) {
+            CHECK(v.flags == 0);  // never "carried"
+        }
+    }
+    REQUIRE(places.size() == 1);
+    CHECK(places[0].hash == 0x31);
+    // Its place's turn is the tipped one (about x by 1.5).
+    CHECK(std::abs(places[0].rotation[0]) == doctest::Approx(std::sin(0.75f)).epsilon(0.01));
+
+    // A box that only turns is no move (shifters only).
+    WorldSync box;
+    Walk(box, 1000 * kMs, {Tipped(0x100, 0x50, kBox, 0.0f)});
+    CHECK(Walk(box, 1100 * kMs, {Tipped(0x100, 0x50, kBox, 0.5f)}).send.empty());
+
+    // Theirs: put where it rests and held there long after (the game would put it back).
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    b.Receive(places[0]);
+    Walk(b, 2000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    for (std::uint64_t t = 2100; t <= 20000; t += 1000) {
+        CHECK(Walk(b, t * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)}).send.empty());
+        std::vector<CoopObjects::PoseWrite> poses;
+        b.Poses(t * kMs, poses);
+        REQUIRE(poses.size() == 1);
+        CHECK(poses[0].address == 0x100);
+        REQUIRE(poses[0].rotation);
+        CHECK((*poses[0].rotation)[4] == doctest::Approx(std::cos(1.5f)).epsilon(0.01));
+    }
+
+    // A game that loads the room later gets the server's place: held as well.
+    WorldSync c;
+    c.Receive(places[0]);
+    Walk(c, 1000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    Walk(c, 9000 * kMs, {Tipped(0x100, 0x31, kLadder, 0.0f)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    c.Poses(9000 * kMs, poses);
+    CHECK(poses.size() == 1);
+}
+
+TEST_CASE("world: a hammer drop floor that sinks is sent and held, a hammer switch is pressed by life 0") {
+    const char* floor = "Obj_FireTemple_HammerDropFloor_A_01";
+    WorldSync a;
+    Walk(a, 1000 * kMs, {Thing(0x100, 0x41, std::nullopt, floor)});
+    std::vector<proto::WorldPlace> places;
+    for (int i = 1; i <= 12; ++i) {
+        const float y = std::max(0.0f, 2.0f - 0.5f * static_cast<float>(i));
+        const auto out = Walk(a, static_cast<std::uint64_t>(1000 + 100 * i) * kMs,
+                              {Thing(0x100, 0x41, std::nullopt, floor, {1.0f, y, 3.0f})});
+        for (const auto& p : Sent<proto::WorldPlace>(out)) {
+            places.push_back(p);
+        }
+    }
+    REQUIRE(places.size() == 1);
+    CHECK(places[0].position[1] == doctest::Approx(0.0f));
+
+    // The switch: another player's press writes life 0, it is never deleted.
+    const char* sw = "Obj_HammerSwitch_A_01";
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x200, 0x42, 1, sw)});
+    Walk(b, 5000 * kMs, {Thing(0x200, 0x42, 1, sw)});
+    b.Receive(BreakOf(0x42));
+    const auto out = Walk(b, 5100 * kMs, {Thing(0x200, 0x42, 1, sw)});
+    REQUIRE(out.lives.size() == 1);
+    CHECK(out.lives[0].life == 0);
+    for (std::uint64_t t = 5200; t < 9000; t += 100) {
+        Walk(b, t * kMs, {Thing(0x200, 0x42, 0, sw)});
+    }
+    CHECK(b.Removes().empty());
+}
+
+// ------------------------------------------------- Gold Skulltula tokens (#89)
+
+namespace {
+const char* const kGold = "Enemy_Skulltula_Gold";
+const char* const kToken = "Obj_Token_Gold";
+const std::string kGrave = "Spot_GraveYard";
+constexpr std::uint64_t kGoldHash = 0xf2e27d6a27026acfULL;
+const proto::Vec3 kGoldAt{1.0f, 3.0f, 3.0f};  // on a wall one metre up
+
+WorldSync::Out GraveWalk(WorldSync& w, std::uint64_t now, const std::vector<Seen>& seen,
+                         const std::string& scene = kGrave) {
+    return Walk(w, now, seen, kLink, 2, scene);
+}
+Seen Token(std::uint64_t address, proto::Vec3 at = {1.0f, 2.5f, 3.0f}) {
+    return Thing(address, 0, std::nullopt, kToken, at);  // made by the game: no placement
+}
+} // namespace
+
+TEST_CASE("world: a Gold Skulltula's token is known by its Skulltula, taken here it goes out once") {
+    CHECK(CoopWorld::IsGoldToken(kToken));
+    CHECK(CoopWorld::IsWorldObject(kToken));
+    CHECK_FALSE(CoopWorld::IsGoldToken(kGold));
+    CHECK(CoopWorld::TokenId(kGoldHash) != kGoldHash);
+    CHECK(CoopWorld::TokenId(kGoldHash) != 0);
+
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    // It dies; the game makes the token where it was.
+    GraveWalk(a, 1100 * kMs, {Token(0x200)});
+    std::vector<proto::WorldBreak> sent;
+    for (std::uint64_t t = 1200; t <= 2700; t += 100) {
+        const auto out = GraveWalk(a, t * kMs, {});
+        for (const auto& b : Sent<proto::WorldBreak>(out)) {
+            sent.push_back(b);
+        }
+        CHECK(out.give_back.empty());
+        CHECK(out.taken_keys.empty());  // our own game set its key itself
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == CoopWorld::TokenId(kGoldHash));
+}
+
+TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key is set, and a reload does not bring it back") {
+    WorldSync b;
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(b, 1100 * kMs, {Token(0x200)});  // the kill was shared: our copy left a token too
+    proto::WorldBreak taken = BreakOf(CoopWorld::TokenId(kGoldHash), 0, kGrave);
+    taken.position = {1.0f, 2.5f, 3.0f};
+    b.Receive(taken);
+    auto out = GraveWalk(b, 1200 * kMs, {Token(0x200)});
+    CHECK(Removed(b, 0x200));
+    REQUIRE(out.taken_keys.size() == 1);
+    CHECK(out.taken_keys[0] == kGoldHash);  // the persistent "taken" state
+    CHECK(out.give_back.empty());
+    for (std::uint64_t t = 1300; t <= 3000; t += 100) {
+        out = GraveWalk(b, t * kMs, {});
+        CHECK(Sent<proto::WorldBreak>(out).empty());  // our delete is not our take
+        CHECK(out.give_back.empty());
+    }
+
+    // B leaves and comes back: no Skulltula now, the game makes the token again
+    // at the same spot; the server's replay of the scene's breaks deletes it.
+    GraveWalk(b, 4000 * kMs, {}, "KakarikoVillage_Child");
+    b.Receive(taken);  // the server replays the scene's breaks on entering
+    GraveWalk(b, 5000 * kMs, {Token(0x300, {1.2f, 2.5f, 3.0f})});
+    CHECK(Removed(b, 0x300));
+
+    // A token that turns up far from any known Skulltula or token spot is left alone.
+    WorldSync c;
+    GraveWalk(c, 1000 * kMs, {Token(0x400, {40.0f, 2.0f, 3.0f})});
+    for (std::uint64_t t = 1100; t <= 2500; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(c, t * kMs, {})).empty());
+    }
+}
+
+TEST_CASE("world: both players take the same token at once: one token goes back") {
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(a, 1100 * kMs, {Token(0x200)});
+    GraveWalk(a, 1200 * kMs, {});
+    GraveWalk(a, 1300 * kMs, {});  // taken: held
+    a.Receive(BreakOf(CoopWorld::TokenId(kGoldHash), 0, kGrave));
+    const auto out = GraveWalk(a, 1400 * kMs, {});
+    REQUIRE(out.give_back.size() == 1);
+    CHECK(out.give_back[0] == CoopWorld::kTokenCount);
+    for (std::uint64_t t = 1500; t <= 3000; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(a, t * kMs, {})).empty());
+    }
+}
+
+TEST_CASE("world: a token taken elsewhere sets its Skulltula's key, once") {
+    const std::uint32_t tokens = proto::flag_hash(CoopWorld::kTokenCount);
+    CountStore game;
+    game.values[tokens] = 5;
+    CHECK(CoopWorld::GiveBack(game, CoopWorld::kTokenCount).find("5 -> 4") != std::string::npos);
+    CHECK(game.values[tokens] == 4);
+    // SetTakenKey writes a 64-bit key: the store sees it under its key.
+    struct KeyStore final : public coop::host::FlagStore {
+        std::map<std::uint64_t, std::uint32_t> keys;
+        std::optional<proto::FlagEntry> read(coop::host::FlagKey k) override {
+            const auto it = keys.find(k.key);
+            if (it == keys.end()) return proto::FlagEntry(k, proto::FlagKind::boolean, 0);
+            return proto::FlagEntry(k, proto::FlagKind::boolean, it->second);
+        }
+        bool write(const proto::FlagEntry& e) override {
+            keys[e.key.key] = e.value;
+            return true;
+        }
+    } store;
+    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("set to 1") != std::string::npos);
+    CHECK(store.keys[kGoldHash] == 1);
+    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("1 already") != std::string::npos);
+    CoopWorld::QueueTakenKey(kGoldHash);
+    CHECK(CoopWorld::TakeTakenKeys() == std::vector<std::uint64_t>{kGoldHash});
+    CHECK(CoopWorld::TakeTakenKeys().empty());
+}
+
+TEST_CASE("world: a pillar that does not fall on life 0 is written 10 times, then one line, then left (breakables)") {
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    b.Receive(BreakOf(0x11));
+    int writes = 0;
+    int gave_up = 0;
+    for (std::uint64_t t = 5000; t < 40000; t += 100) {
+        const auto out = Walk(b, t * kMs, {Thing(0x100, 0x11, 1, kPillar)});  // never falls
+        writes += static_cast<int>(out.lives.size());
+        for (const auto& line : out.notes) {
+            if (line.find("did not fall on life 0") != std::string::npos) ++gave_up;
+        }
+        CHECK(out.send.empty());
+    }
+    CHECK(writes == WorldSync::kFallerTries);
+    CHECK(gave_up == 1);
+    CHECK(b.Removes().empty());
+}
+
+TEST_CASE("world: a small key still on the walk but lifted next to our Link when theirs comes: one back") {
+    // Review of breakables-2: B is picking the key up (the game lifts it to
+    // Link's hands) when A's break arrives; B's count rises too.
+    WorldSync b;
+    WellWalk(b, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    WellWalk(b, 1100 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, {1.0f, 2.6f, 3.0f})});  // lifted 0.6 m
+    b.Receive(KeyBreak(0x77));
+    auto out = WellWalk(b, 1200 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, {1.0f, 2.7f, 3.0f})});
+    REQUIRE(out.give_back.size() == 1);
+    CHECK(out.give_back[0] == "DungeonInfo.BottomOfTheWell.SmallKeyNum");
+    for (std::uint64_t t = 1300; t <= 3000; t += 100) {
+        out = WellWalk(b, t * kMs, {});
+        CHECK(out.give_back.empty());
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+    }
+
+    // Lying where it was, next to our Link: not being taken, nothing back.
+    WorldSync c;
+    WellWalk(c, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    c.Receive(KeyBreak(0x77));
+    out = WellWalk(c, 1100 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, {1.0f, 2.1f, 3.0f})});
+    CHECK(out.give_back.empty());
+    CHECK(Removed(c, 0x100));
+}
+
+TEST_CASE("world: a falling floor with no AI settles at another game's place, it is not held for good") {
+    const char* floor = "Obj_InsideTheDekuTree_FallingFloor_A_03";
+    CHECK(CoopWorld::IsShifter(floor));
+    CHECK_FALSE(CoopWorld::HoldsPlace(floor));
+    CHECK_FALSE(CoopWorld::HoldsPlace("Obj_ShadowTemple_FallingFloor_A_03"));
+    CHECK(CoopWorld::HoldsPlace(kLadder));
+    CHECK(CoopWorld::HoldsPlace("Obj_FireTemple_HammerDropPillar_A_01"));
+
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x100, 0x61, std::nullopt, floor)});
+    b.Receive(PlaceOf(0x61, 1.0f));
+    Walk(b, 2000 * kMs, {Thing(0x100, 0x61, std::nullopt, floor)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    b.Poses(2100 * kMs, poses);
+    CHECK(poses.size() == 1);  // put there
+    Walk(b, 3000 * kMs, {Thing(0x100, 0x61, std::nullopt, floor)});
+    poses.clear();
+    b.Poses(3000 * kMs, poses);
+    CHECK(poses.empty());  // then left to the game
 }

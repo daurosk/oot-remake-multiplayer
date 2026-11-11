@@ -26,6 +26,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <span>
 #include <variant>
@@ -180,6 +181,20 @@ class FlagWatcher {
   // own session-wide state the save undoes (docs/flags.md, "Saves").
   bool take_reset() { return std::exchange(reset_seen_, false); }
 
+  // Once, when a save load was seen in a load window: how many distinct
+  // flags went back, and how many frames had no scene (for the log line).
+  struct SaveLoadSeen {
+    int flags = 0;
+    int frames = 0;
+  };
+  std::optional<SaveLoadSeen> take_save_load() {
+    if (seen_flags_ == 0) return std::nullopt;
+    SaveLoadSeen s{seen_flags_, seen_frames_};
+    seen_flags_ = 0;
+    seen_frames_ = 0;
+    return s;
+  }
+
   // A FLAG_SNAPSHOT has started and its last part has not come yet.
   bool holding() const { return holding_; }
   // Local changes sent and not answered yet.
@@ -201,6 +216,9 @@ class FlagWatcher {
   // flags, the flags that moved go out as FLAG_RESET. Player: when its own
   // save load moved them, they go back to what the group had before.
   void end_window(FlagStore& store, std::vector<Outgoing>& out);
+  // Takes the save-load sign when both parts are in (kSaveLoadMin distinct
+  // flags back, kTitleFrames with no scene); from frame() and from diff().
+  void see_save_load();
   void answer_set(FlagStore& store, const protocol::FlagSet& set, Table& answers);
   bool write(FlagStore& store, const protocol::FlagEntry& entry);
   void add(FlagStore& store, const protocol::FlagEntry& delta);
@@ -238,7 +256,9 @@ class FlagWatcher {
   // the end of the settle frames. Nothing is sent from inside it.
   bool window_ = false;
   bool moved_ = false;  // a save was loaded in it (the title seen, kSaveLoadMin flags back)
-  int backward_ = 0;    // named flags that went back with no Link in this window
+  std::set<FlagKey> back_keys_;  // distinct named flags gone back with no Link in this window
+  int seen_flags_ = 0;           // take_save_load: the sign was taken with these
+  int seen_frames_ = 0;
   int no_scene_frames_ = 0;  // frames in this window with no scene loaded
   bool scene_readable_ = true;  // set_scene
   bool reset_seen_ = false;  // take_reset

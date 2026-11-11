@@ -78,6 +78,10 @@ struct FrameReport {
   // The host's save load reached this game this frame (FlagWatcher::
   // take_reset): drop session-wide state the save undoes (docs/flags.md, "Saves").
   bool host_reset = false;
+  // A save load was seen this frame (FlagWatcher::take_save_load): distinct
+  // flags gone back, frames with no scene. 0 when not.
+  int save_load_flags = 0;
+  int save_load_frames = 0;
 };
 
 class Session {

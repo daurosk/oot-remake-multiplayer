@@ -403,6 +403,10 @@ public:
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (report.save_load_flags != 0) {
+            LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
+                     report.save_load_flags, report.save_load_frames);
+        }
         // Issue 129, LICHII_COOP_LIVE_EVENTS=1: a held gimmick event is
         // started here too, so its result happens live (coop_live_events.h).
         if (hold && live_events_) {

@@ -68,7 +68,7 @@ TEST_CASE("save transfer: CRC-32 is zlib's") {
   CHECK(save::crc32(Bytes{}) == 0u);
 }
 
-TEST_CASE("save transfer: a slot packs and unpacks; anything else is refused") {
+TEST_CASE("save transfer: a slot packs and unpacks, anything else is refused") {
   const auto slot = Slot(1);
   const Bytes packed = save::pack(slot);
   REQUIRE_FALSE(packed.empty());

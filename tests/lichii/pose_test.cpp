@@ -282,8 +282,9 @@ void Hold(FakeGuest& g, std::uint64_t actor, std::uint32_t slot, std::uint64_t p
     namespace pa = CoopPuppet::addr;
     const std::uint64_t parts = actor + 0x1000;  // as MakeActor maps it
     const std::uint64_t eu = actor + 0x8000, holder = actor + 0x9000;
-    g.Map(eu, 0x400);
-    g.Map(holder, 0x400);
+    std::uint8_t probe = 0;
+    if (!g.Read(eu, &probe, 1)) g.Map(eu, 0x400);  // once: Map clears it
+    if (!g.Read(holder, &probe, 1)) g.Map(holder, 0x400);
     g.Put(parts + pa::kPartsEquipmentUser, eu);
     for (std::uint32_t s = 0; s < 8; ++s) {
         if (g.Get<std::uint32_t>(eu + pa::kEquipSlots + pa::kEquipSlotStride * s + pa::kEquipSlotId) == 0) {

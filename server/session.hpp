@@ -107,8 +107,9 @@ struct SessionConfig {
   std::uint64_t boss_owner_hit_hold_us = 6'000'000;
   // Issue 150: the boss's AI fights only its owner's Link. A fit player
   // within boss_near_m of a boss (its root) and boss_near_margin_m nearer it
-  // than its owner, for boss_near_hold_us in a row, takes it, fight or not:
-  // then the boss turns on the near one. Not while its owner hits it
+  // than its owner, for boss_near_hold_us in a row, takes it while it is in
+  // its fight (out of one the plain distance rule applies): then the boss
+  // turns on the near one. Not while its owner hits it
   // (boss_owner_hit_hold_us) and not within boss_hitter_cooldown_us of the
   // last change. boss_near_hold_us 0: off.
   float boss_near_m = 15.0f;

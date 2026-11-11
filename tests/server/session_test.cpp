@@ -2220,6 +2220,42 @@ TEST_CASE("issue 150: a boss in its fight goes to the player clearly nearer it, 
   CHECK(h.session.stats().boss_to_near == 1);
 }
 
+TEST_CASE("issue 150: after a near-player move the boss stays 8 s, then needs the 4 m margin again") {
+  // Handed to player 2 by the near rule.
+  auto handed = [](OwnerHarness& h) {
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    h.run(10 * kSecond + 500'000);
+    REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 11)}, kChannelOwnership);
+    REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+    h.clear();
+  };
+  {  // the players swap places: not back before 8 s + 4 s held
+    OwnerHarness h;
+    handed(h);
+    h.stand(1, 1);
+    h.stand(2, 12);
+    h.run(7 * kSecond + 500'000);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    h.run(4 * kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    h.run(kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
+  }
+  {  // player 1 comes back, but only 3 m nearer than the new owner: it stays
+    OwnerHarness h;
+    handed(h);
+    h.stand(1, 1);
+    h.stand(2, 4);
+    h.run(20 * kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  }
+}
+
 TEST_CASE("issue 150: no near-player move when both stand close, one is too far, or the owner hits it") {
   {  // 2 is nearer, but not by 4 m
     OwnerHarness h;

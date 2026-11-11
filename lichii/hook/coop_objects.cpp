@@ -388,6 +388,9 @@ public:
             if (releases_.size() < 32) {
                 releases_.push_back(a);
             }
+            // A pose wished before it became ours would set the bit again
+            // in the same frame: it is no copy any more.
+            std::erase_if(poses_, [a](const Pose& p) { return p.actor == a; });
         }
     }
 

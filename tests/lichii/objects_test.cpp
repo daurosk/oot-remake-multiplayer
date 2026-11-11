@@ -315,6 +315,21 @@ TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku"));
 }
 
+TEST_CASE("objects: the fishing pond is each game's own (issue 151)") {
+    for (const char* own : {"Animal_Fish_Bass", "Animal_Fish_Loach", "Animal_Fish_Blue",
+                            "Npc_Hylia_Fishman_001_Child", "Npc_Hylia_Fishman_001_Adult"}) {
+        CHECK_MESSAGE(CoopObjects::IsOwnPuzzle(own), own);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(own), own);
+    }
+    // Other animals and townspeople stay shared.
+    CHECK(CoopObjects::IsShared("Animal_Cucco"));
+    CHECK(CoopObjects::IsShared("Npc_Hylia_051"));
+    // The rod, lure, hat and sinking lures were never shared.
+    for (const char* never : {"Weapon_FishingRod", "Weapon_Lure", "Obj_SinkingLure", "Obj_Hat_FishingPondOwner"}) {
+        CHECK_FALSE_MESSAGE(CoopObjects::IsShared(never), never);
+    }
+}
+
 TEST_CASE("objects: a rotation matrix goes to a quaternion and back") {
     // A turn of 90 degrees about y, then an arbitrary one.
     const CoopObjects::Mat3 turn{0, 0, 1, 0, 1, 0, -1, 0, 0};

@@ -105,10 +105,10 @@ struct LifeWrite {
 // objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
 bool IsShared(std::string_view name);
 
-// An order puzzle each game runs on its own (issue 149): the Scrub Brothers
-// (hit 2, 3, 1) and the Lost Woods stage scrubs. Their order is counted in
-// the game's own code from its own hits; only the solve is shared (a dungeon
-// flag, docs/dungeon.md).
+// A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
+// (hit 2, 3, 1), the Lost Woods stage scrubs, and the fishing pond's fish and
+// owner. Their state is kept in the game's own code from its own player;
+// only the solve or the prize is shared (docs/dungeon.md, docs/items.md).
 bool IsOwnPuzzle(std::string_view name);
 
 // True for an actor that is gone, or shows done, once its placement key is

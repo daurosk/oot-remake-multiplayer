@@ -150,8 +150,20 @@ bool IsOwnPuzzle(std::string_view name) {
     // dungeon flag and opens the room for everyone. The Lost Woods stage scrubs
     // (Enemy_Scrub_ForestStage, ScrubForestStage_ProcessOrderIndex) are an
     // ordered show of the same kind.
+    // Issue 151. The fishing pond (Lake Hylia, in the Hyrule Field Banc) is a
+    // minigame each game plays alone: its fish (Animal_Fish_Bass x18,
+    // Animal_Fish_Loach, and the Animal_Fish_Blue that swim there and in the
+    // rivers) bite, fight and are weighed by that game's own lure and rod
+    // (Weapon_Lure, not shared), and the owner (Npc_Hylia_Fishman_001_Child,
+    // _Adult) hands over the rod and judges the catch in that game's events.
+    // Shared as copies, a fish in the game that did not own it was moved and
+    // animated by the owner's samples, so it could not follow or bite that
+    // player's lure, and the owner's talk animations came from the other game.
+    // Only the prizes are shared (MiniGame_Fishing_GetHeartPiece and
+    // _GetGoldScale, coop/host game_items).
     return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
-           name.starts_with("Enemy_Scrub_ForestStage");
+           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Animal_Fish_") ||
+           name.starts_with("Npc_Hylia_Fishman");
 }
 
 bool IsRolled(std::string_view name) {

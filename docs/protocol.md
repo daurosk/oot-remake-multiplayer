@@ -359,6 +359,20 @@ Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md
 
 Types 51 to 54 are kept for boss rooms and not used.
 
+### PvP (protocol 10, `PVP_MODE`, `PVP_HIT`, `PVP_HURT`)
+
+Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hook/coop_pvp.h`). Off unless the host turns it on. Types 241 to 250 are kept for it.
+
+| Type | Name | Channel | Sent by | Body |
+|---|---|---|---|---|
+| 241 | `PVP_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 4 the player who changed it), `u8` mode (0 off, 1 on; others refused). No player field |
+| 242 | `PVP_HIT` | 2 | both | `u8` player field (the attacker), `u8` victim (1 to 4, not the attacker), `u8` cause (as in `DAMAGE`; others kept), `s32` amount (quarter hearts, 1 to 80), 3 x `f32` where the blow landed, 3 x `f32` where the attacker stood (all finite) |
+| 243 | `PVP_HURT` | 2 | both | `u8` player field (the victim), `u8` attacker (1 to 4, not the victim), `s32` amount taken (0 to 80), `s32` life left (0 to 80), `u8` flags: bit 0 the hit took the last life, bit 1 kept off (amount 0); other bits refused |
+
+- **The session's value is the server's.** `coop_server --pvp on|off` (the host's `pvp` line in coop-options.ini; off by default) sets it. A game starts every connection with PvP off; while it is on, the server sends `PVP_MODE` to each player at join, after `HOST`. The host may change it with its own `PVP_MODE` (the `/pvp` chat command): the server sends the new value, with the host's number, to everyone. A `PVP_MODE` from anyone else is not taken; the server answers that player alone with the value as it is. When the session empties, the value goes back to the server's start value.
+- **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
+- **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.
@@ -387,4 +401,5 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
+- Version 10 also brings PvP: `PVP_MODE` (241), `PVP_HIT` (242), `PVP_HURT` (243); 241 to 250 kept (branch `pvp`). A version 9 server would not keep the host's value or keep hits from a game with PvP off. The bump itself comes with the player colours (branch `puppet-colors`).
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -40,6 +41,17 @@ void Share(Core::System& system, coop::host::Session* session,
 // component's max to it (on by default; LICHII_COOP_HEARTS_TO_LINK=0 turns
 // that off).
 void SetMaxLife(std::optional<std::int32_t> quarters);
+
+// PvP (coop_pvp_game.cpp; needs LICHII_COOP_OBJECTS=1, on by default): our
+// Link's life in quarter hearts as the object walk last read it; nothing
+// when no walk saw our Link in the last 1.5 s. Any thread.
+std::optional<std::int32_t> OurLinkLife();
+// Any thread: take `quarters` off our Link at the next walk, as the game's
+// own hit at `at` from `from` (Link flinches), or by writing the life when
+// the game does not take that hit within 0.4 s (LICHII_COOP_PVP_REPLAY=0:
+// the write only).
+void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
+                 const std::array<float, 3>& from);
 
 // Emulator thread, each frame: whether our own Link is in an event (a talk, a
 // cutscene). While it is, shared changes to actors near it wait (coop_guard.h,

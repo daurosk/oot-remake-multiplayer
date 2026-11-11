@@ -50,6 +50,7 @@
 #include "coop/version.hpp"
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
+#include "coop_pvp_game.h"
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
@@ -274,6 +275,7 @@ public:
             CoopTime::OnEvent(event);
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
+            CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
@@ -650,6 +652,13 @@ public:
         for (auto& line : CoopTeleport::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // PvP (docs/play-online.md "PvP"), after the objects and spawn syncs:
+        // their swings and shots of this frame, and our Link's life.
+        CoopPvp::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                       report.server_now_us);
+        for (auto& line : CoopPvp::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
         Place(view);
 
         std::lock_guard lock(view_mutex_);
@@ -679,6 +688,9 @@ public:
     bool SendChat(const std::string& text) {
         if (CoopTeleport::OnChat(text, *session_)) {
             return true;  // a command: done here, its answer shows as a notice
+        }
+        if (CoopPvp::OnChat(text, *session_)) {
+            return true;  // /pvp: the same
         }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
@@ -1120,6 +1132,9 @@ private:
                 std::snprintf(buf, sizeof(buf), ", ping %llu ms",
                               static_cast<unsigned long long>(*room.round_trip_us / 1000));
                 head += buf;
+            }
+            if (CoopPvp::On()) {
+                head += ", PvP on";
             }
             lines.push_back({head});
         } else {

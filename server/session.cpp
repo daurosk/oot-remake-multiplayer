@@ -634,6 +634,12 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     const bool says_fight =
         sample->state.state && (*sample->state.state & object_state::in_fight) != 0;
     if (life_changed || says_fight) mark_fight(o, now_us);
+    // The owner's own hit: its life fell with no DAMAGE from another player
+    // just before (issue 150, boss_owner_hit_hold_us).
+    if (life_changed && sample->state.life->life < o.last_state->life->life &&
+        (o.hit_at == 0 || now_us - o.hit_at > config_.hit_window_us)) {
+      o.owner_hit_at = stamp(now_us);
+    }
     o.last_state = sample->state;
   } else {
     auto& remove = std::get<ObjectRemove>(message);
@@ -721,6 +727,27 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   }
   o.hit_sum += d.amount;
   o.hit_at = stamp(now_us);
+
+  // A boss goes to the player who hurt it (issue 150), the whole group with
+  // its root: the hit's effect is in that game, the others follow its pose.
+  ObjectId root_id = d.id;
+  Object* root = &o;
+  if (o.root) {
+    if (auto r = objects_.find(*o.root); r != objects_.end()) {
+      root_id = r->first;
+      root = &r->second;
+    }
+  }
+  if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
+    if (root->owner && *root->owner != id && !root->ask && !(c.status & kBusy) &&
+        has_loaded(id, *root) &&
+        (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
+        !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {
+      ask_handover(root_id, *root, id, now_us);
+      ++stats_.boss_to_hitter;
+    }
+    return;  // a boss is not moved by the distance rule below
+  }
 
   if (o.ask || o.root || o.projectile || (c.status & kBusy) || !has_loaded(id, o)) return;
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
@@ -1004,6 +1031,10 @@ std::optional<ConnectionId> Session::best_other(const Object& o,
   return best;
 }
 
+bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
+  return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
+}
+
 void Session::mark_fight(Object& o, std::uint64_t now_us) {
   Object* target = &o;
   if (o.root) {
@@ -1077,6 +1108,7 @@ void Session::change_owner(const ObjectId& oid, Object& o, std::optional<Connect
   o.last_owner = old_owner;
   ++o.epoch;
   o.changed_at = stamp(now_us);
+  o.owner_hit_at = 0;  // the new owner has not hit it yet
   o.candidate.reset();
   o.ask.reset();
   o.orphan_since = 0;

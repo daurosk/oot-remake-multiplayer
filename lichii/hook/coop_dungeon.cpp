@@ -1036,8 +1036,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xfb335d8a, false, "Insidejabujabu_Room8_Cleared"},
     {0xed5247fb, false, "Insidejabujabu_Room9_Cleared"},
     // Also (softlock audit, second pass): the Fire Temple's Goron cell shutters (named
-    // after the Goron, in the scene's PlgGdTable), Jabu-Jabu's Room 17 stone switch
-    // (spelt Insidejaubjabu), and the dungeon gimmick scenes a room's own logic reads
+    // after the Goron, in the scene's PlgGdTable) and the dungeon gimmick scenes a room's own logic reads
     // for its end state (Dodongo's broken stair, the Fire Temple hammer stair, Forest
     // Room 16, Water Room 17's pond, Ganon's Castle lift rock and tower barrier).
     // Story scenes stay out, and so do the Forest Temple corridor (Dm_ForestTemple_0007,
@@ -1050,7 +1049,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xa77c636f, false, "HavePlayedEvent.Dm_InsideGanonCastle_0090"},
     {0x95228e5a, false, "HavePlayedEvent.Dm_WaterTemple_0010"},
     {0x4a022de3, false, "HavePlayedEvent.Dm_WaterTemple_0015"},
-    {0x6fd2e588, false, "InsidejaubjabuBelly_gimic_switchOn_Stone"},
     {0x023e190f, false, "Npc_Goron_001_ShutterisOpen"},
     {0x7b118b57, false, "Npc_Goron_002_ShutterisOpen"},
     {0x92cb9a2f, false, "Npc_Goron_003_ShutterisOpen"},

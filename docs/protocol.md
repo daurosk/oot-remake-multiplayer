@@ -112,7 +112,7 @@ Type numbers are never reused or renumbered; new types are added at the end.
 
 The `time` component is required in every sample; the others are sent only when the sender has them.
 
-A player sends `PLAYER_SAMPLE` every frame it moves (up to 60 a second) and at least 4 a second while still. Receivers keep the last 16 samples per player, show them about 100 ms behind (tuned by measuring), interpolate between samples and extrapolate up to 150 ms from the last one; beyond that the puppet holds and fades.
+A player sends `PLAYER_SAMPLE` every frame it moves (up to 60 a second: samples are at least 14 ms apart, so high refresh (Ctrl+U, up to 165 presents a second) sends no more; a scene or age change goes at once) and at least 4 a second while still. Receivers keep the last 16 samples per player, show them about 100 ms behind (tuned by measuring), interpolate between samples and extrapolate up to 150 ms from the last one; beyond that the puppet holds and fades.
 
 The player field of `JOIN_PARTNER`, `FLAG_SET` and `FLAG_STATE` works as in `CHAT`: 0 from a client, the sender's number from the server.
 

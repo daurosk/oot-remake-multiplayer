@@ -385,13 +385,19 @@ public:
         // our Link is in that dungeon; written when we are out or loading.
         std::optional<coop::host::HoldFlagStore> hold;
         if (store) {
-            // Released only after a real load (about 0.5 s without Link), not
-            // on one frame the reader missed; the scene as last read.
-            no_link_frames_ = reading ? 0 : no_link_frames_ + 1;
+            // Released only after a real load (0.5 s without Link), not on one
+            // frame the reader missed; the scene as last read. Timed, not
+            // counted in presents: high refresh (Ctrl+U) presents up to 2.75
+            // times as many frames (issue 106).
+            if (reading) {
+                no_link_since_.reset();
+            } else if (!no_link_since_) {
+                no_link_since_ = view.at;
+            }
             if (view.scene) {
                 hold_scene_ = *view.scene;
             }
-            const bool link = no_link_frames_ < kHoldReleaseFrames;
+            const bool link = !no_link_since_ || view.at - *no_link_since_ < kHoldRelease;
             const std::optional<std::string> scene =
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
             hold.emplace(*store, [link, scene](coop::protocol::FlagKey key) {
@@ -908,6 +914,16 @@ private:
                 last_state = room.state;
                 LOG_INFO(Core, "coop: {}", coop::net::to_string(last_state));
             }
+            // Issue 108: each REFUSED name taken asked again, so a log shows
+            // the retries (every name_taken_retry_ms, at least 100 ms apart)
+            // and when the window ends.
+            const std::uint32_t name_retries =
+                session_->with_client([](coop::net::Client& c) { return c.name_taken_retries(); });
+            if (name_retries != name_retries_logged_) {
+                name_retries_logged_ = name_retries;
+                LOG_INFO(Core, "coop: name {} is in use on the server; asking again (retry {})",
+                         settings_.name, name_retries);
+            }
             // Issue 143: the server PINGs every 250 ms. Seconds without a
             // packet while connected means its packets do not reach us.
             if (room.state == coop::net::State::connected) {
@@ -1143,8 +1159,8 @@ private:
         coop::host::Notifier notifier_;
     };
     Notices notifier_;
-    static constexpr int kHoldReleaseFrames = 30;
-    int no_link_frames_ = 0;       // frames in a row without our Link (the hold's debounce)
+    static constexpr std::chrono::milliseconds kHoldRelease{500};
+    std::optional<Clock::time_point> no_link_since_;  // the first frame without our Link (the hold's debounce)
     std::string hold_scene_;       // the last scene read, for the hold
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
@@ -1165,6 +1181,7 @@ private:
     // Network thread (Run): the "no packets from the server" warning is out (issue 143).
     bool quiet_warned_ = false;
     static constexpr std::uint32_t kQuietWarnMs = 3000;
+    std::uint32_t name_retries_logged_ = 0;  // network thread (Run), issue 108
     std::thread thread_;
 
     // Guarded by view_mutex_.

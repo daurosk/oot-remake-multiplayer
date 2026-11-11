@@ -10,6 +10,8 @@
 #endif
 #include <enet/enet.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -63,6 +65,7 @@ class FakeServer {
   std::uint16_t port() const { return port_; }
 
   void service() {
+    if (also_service) also_service();
     ENetEvent event;
     while (enet_host_service(host_, &event, 0) > 0) {
       switch (event.type) {
@@ -139,6 +142,7 @@ class FakeServer {
   int connects = 0;
   int disconnects = 0;
   ENetPeer* last_peer = nullptr;
+  std::function<void()> also_service;  // run first on every service()
   std::vector<Received> received;
 
  private:
@@ -1829,6 +1833,157 @@ TEST_CASE("client: datagrams are VPN-safe and a large snapshot still arrives who
   REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
   CHECK(events.all[*events.find(EventKind::flag_snapshot)].flags == big.flags);
   CHECK(client.link().largest_sent > 0);  // HELLO at least
+}
+
+// A network path between a client and FakeServer that forwards UDP both ways
+// and drops every datagram an IP path of `path_mtu` bytes cannot carry (28
+// bytes of IPv4 and UDP header), as a VPN or tunnel does (issue 143: Hamachi
+// about 1404, Tailscale 1280, the reporter's DS-Lite router 1200).
+class SmallPath {
+ public:
+  SmallPath(std::uint16_t server_port, std::size_t path_mtu) : max_payload_(path_mtu - 28) {
+    outer_ = open();
+    inner_ = open();
+    ENetAddress got{};
+    REQUIRE(enet_socket_get_address(outer_, &got) == 0);
+    port_ = got.port;
+    REQUIRE(enet_address_set_host_ip(&server_, "127.0.0.1") == 0);
+    server_.port = server_port;
+  }
+  ~SmallPath() {
+    enet_socket_destroy(outer_);
+    enet_socket_destroy(inner_);
+  }
+  SmallPath(const SmallPath&) = delete;
+  SmallPath& operator=(const SmallPath&) = delete;
+
+  std::uint16_t port() const { return port_; }
+  void service() {
+    std::uint8_t data[65536];
+    ENetBuffer buffer{};
+    for (;;) {  // client to server
+      ENetAddress from{};
+      buffer.data = data;
+      buffer.dataLength = sizeof data;
+      const int n = enet_socket_receive(outer_, &from, &buffer, 1);
+      if (n <= 0) break;
+      client_ = from;
+      have_client_ = true;
+      pass(inner_, server_, data, static_cast<std::size_t>(n));
+    }
+    for (;;) {  // server to client
+      ENetAddress from{};
+      buffer.data = data;
+      buffer.dataLength = sizeof data;
+      const int n = enet_socket_receive(inner_, &from, &buffer, 1);
+      if (n <= 0) break;
+      if (have_client_) pass(outer_, client_, data, static_cast<std::size_t>(n));
+    }
+  }
+
+  int dropped = 0;
+  std::size_t largest = 0;
+
+ private:
+  static ENetSocket open() {
+    const ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    REQUIRE(s != ENET_SOCKET_NULL);
+    ENetAddress any{};
+    REQUIRE(enet_address_set_host_ip(&any, "127.0.0.1") == 0);
+    any.port = 0;
+    REQUIRE(enet_socket_bind(s, &any) == 0);
+    REQUIRE(enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1) == 0);
+    return s;
+  }
+  void pass(ENetSocket out, const ENetAddress& to, std::uint8_t* data, std::size_t n) {
+    largest = std::max(largest, n);
+    if (n > max_payload_) {
+      ++dropped;
+      return;
+    }
+    ENetBuffer b{};
+    b.data = data;
+    b.dataLength = n;
+    enet_socket_send(out, &to, &b, 1);
+  }
+
+  std::size_t max_payload_;
+  ENetSocket outer_ = ENET_SOCKET_NULL;
+  ENetSocket inner_ = ENET_SOCKET_NULL;
+  ENetAddress server_{};
+  ENetAddress client_{};
+  bool have_client_ = false;
+  std::uint16_t port_ = 0;
+};
+
+proto::FlagSnapshot big_snapshot() {
+  proto::FlagSnapshot big{0, 1, {}};
+  for (std::uint32_t i = 0; i < 600; ++i) {
+    big.flags.push_back(s32_flag(i + 1, static_cast<std::int32_t>(i)));
+  }
+  return big;
+}
+
+proto::PlayerPose big_pose() {
+  proto::PlayerPose pose;
+  pose.skeleton = 7;
+  for (std::uint16_t b = 0; b < 200; ++b) {
+    proto::PoseBone bone;
+    bone.bone = b;
+    bone.rotation = std::array<std::int16_t, 4>{1, 2, 3, static_cast<std::int16_t>(b)};
+    bone.translation = std::array<std::int16_t, 3>{4, 5, 6};
+    pose.bones.push_back(bone);
+  }
+  return pose;
+}
+
+TEST_CASE("client: over a 1200-byte path (DS-Lite, VPN) nothing is dropped and big messages arrive (issue 143)") {
+  for (const std::size_t path : {std::size_t{1200}, std::size_t{1280}, std::size_t{1404}}) {
+    CAPTURE(path);
+    FakeServer server;  // ENet's default size: our client's smaller one wins
+    SmallPath small(server.port(), path);
+    server.also_service = [&] { small.service(); };
+    ClientConfig config = config_for(server);
+    config.port = small.port();
+    Client client(config);
+    Events events;
+    REQUIRE(client.start());
+    welcome_as(client, server, events, 2, {{1, "Saria"}});
+
+    const proto::FlagSnapshot big = big_snapshot();
+    server.send(big, proto::kChannelProgress);
+    REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
+    CHECK(events.all[*events.find(EventKind::flag_snapshot)].flags == big.flags);
+
+    const std::size_t from = server.received.size();
+    const proto::PlayerPose pose = big_pose();
+    REQUIRE(proto::encode(pose)->size() > 2 * proto::kDatagramBytes);
+    REQUIRE(client.send(pose));
+    REQUIRE(pump(client, server, [&] { return server.find<proto::PlayerPose>(from).has_value(); }));
+    CHECK(std::get<proto::PlayerPose>(server.received[*server.find<proto::PlayerPose>(from)].message).bones ==
+          pose.bones);
+
+    CHECK(small.dropped == 0);
+    CHECK(small.largest <= proto::kDatagramBytes);
+    CHECK(client.state() == State::connected);
+    CHECK(events.count(EventKind::disconnected) == 0);
+  }
+}
+
+TEST_CASE("client: the same path with ENet's default datagrams loses the snapshot (why issue 143 cut players)") {
+  FakeServer server;
+  SmallPath small(server.port(), 1200);
+  server.also_service = [&] { small.service(); };
+  ClientConfig config = config_for(server);
+  config.port = small.port();
+  config.mtu = ENET_HOST_DEFAULT_MTU;  // test6 and before: 1392
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});  // small packets pass
+  server.send(big_snapshot(), proto::kChannelProgress);
+  CHECK_FALSE(wait_event(client, server, events, EventKind::flag_snapshot, 1500));
+  CHECK(small.dropped > 0);  // every full datagram, sent again and again until ENet's timeout
 }
 
 TEST_CASE("client: link() counts the time since the server's last packet") {

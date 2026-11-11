@@ -214,6 +214,13 @@ struct Stats {
   // FLAG_SET and FLAG_STATE relayed (stage 1 step 4); in relayed too.
   std::uint64_t flag_relayed = 0;
   std::uint64_t host_resets = 0;   // FLAG_RESETs from the host (its save load)
+  // The host's save (docs/protocol.md, "Save transfer"): SAVE_ASKs passed to
+  // the host, SAVE_PARTs passed on (both in relayed too), and either refused
+  // (an ask from the host or with no host, a part not from the host or for a
+  // player not here).
+  std::uint64_t save_asks = 0;
+  std::uint64_t save_parts = 0;
+  std::uint64_t save_refused = 0;
   std::uint64_t origins_sent = 0;  // FLAG_ORIGIN: who asked, to the others (chat notices)
   std::uint64_t flag_refused = 0;     // FLAG_STATE or FLAG_SNAPSHOT not from the host
   std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
@@ -403,6 +410,7 @@ class Session {
   // undoes is dropped here: add each owner's clear (locked doors' kept
   // breaks, the kills-late dead list, ...). Called once per FLAG_RESET.
   void on_host_reset();
+  void on_save(ConnectionId id, Connection& c, protocol::Message& message);
   // Keeps an entry in the table; false when it is new and the table is full.
   bool keep_flag(const protocol::FlagEntry& e);
   void send_snapshot(ConnectionId to);

@@ -3025,3 +3025,55 @@ TEST_CASE("security: names with invisible or bidi characters are refused") {
   h.join(32, "Link " "\xE2\x9D\xA4" "\xEF\xB8\x8F");
   CHECK(h.session.player_count() == 4);
 }
+
+TEST_CASE("the host's save: SAVE_ASK goes to the host, SAVE_PART from the host to the asker or everyone") {
+  Harness h;
+  h.join(1, "Link");  // the first player hosts
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+
+  h.receive(2, SaveAsk{0}, kChannelSession);
+  auto ask = only_message_to<SaveAsk>(h, 1);
+  REQUIRE(ask.has_value());
+  CHECK(ask->player_number == 2);
+  CHECK(h.to(3).empty());
+  CHECK(h.session.stats().save_asks == 1);
+  h.clear();
+
+  h.receive(1, SaveAsk{0}, kChannelSession);  // the host asks itself: refused
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().save_refused == 1);
+
+  SavePart part;
+  part.to_player = 2;
+  part.transfer_id = 7;
+  part.reason = SaveReason::join;
+  part.total_size = 3;
+  part.crc32 = 0x1234;
+  part.data = {1, 2, 3};
+  h.receive(1, part, kChannelSession);
+  auto got = only_message_to<SavePart>(h, 2);
+  REQUIRE(got.has_value());
+  CHECK(got->player_number == 1);
+  CHECK(got->data == part.data);
+  CHECK(h.to(3).empty());
+  h.clear();
+
+  part.to_player = 0;
+  part.reason = SaveReason::host_load;
+  h.receive(1, part, kChannelSession);  // the host loaded a save: every guest
+  CHECK(only_message_to<SavePart>(h, 2).has_value());
+  CHECK(only_message_to<SavePart>(h, 3).has_value());
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().save_parts == 2);
+  h.clear();
+
+  h.receive(2, part, kChannelSession);  // a guest cannot send a save
+  CHECK(h.sent.empty());
+  part.to_player = 4;  // nobody
+  part.reason = SaveReason::join;
+  h.receive(1, part, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().save_refused == 3);
+}

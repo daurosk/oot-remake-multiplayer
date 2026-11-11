@@ -1487,3 +1487,62 @@ TEST_CASE("flag reset: type 135, progress channel, both ways, the same entries a
   const FlagEntry delta{FlagKey(0x1234u, std::uint16_t{0}), FlagKind::count_delta, 1};
   CHECK(encode(FlagReset{0, {delta}}, out) == Error::bad_value);  // totals only
 }
+
+TEST_CASE("save ask and save part: types 206 and 207, session channel, both ways, parts checked") {
+  CHECK(static_cast<int>(MessageType::save_ask) == 206);
+  CHECK(static_cast<int>(MessageType::save_part) == 207);
+  CHECK(channel_of(MessageType::save_part) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::save_ask, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::save_part, kChannelProgress));
+  CHECK(may_send(Sender::client, MessageType::save_part));
+  CHECK(may_send(Sender::server, MessageType::save_ask));
+
+  CHECK(save_part_count(0) == 0);
+  CHECK(save_part_count(1) == 1);
+  CHECK(save_part_count(kMaxSavePart) == 1);
+  CHECK(save_part_count(kMaxSavePart + 1) == 2);
+  CHECK(save_part_count(kMaxSaveBytes) == kMaxSaveParts);
+  CHECK(save_part_count(kMaxSaveBytes + 1) == 0);
+  CHECK(save_part_size(kMaxSavePart + 5, 0) == kMaxSavePart);
+  CHECK(save_part_size(kMaxSavePart + 5, 1) == 5);
+  CHECK(save_part_size(kMaxSavePart + 5, 2) == 0);
+
+  Message back;
+  Message ask = SaveAsk{3};
+  REQUIRE(decode(must_encode(ask), back) == Error::none);
+  CHECK(back == ask);
+
+  SavePart p;
+  p.player_number = 1;
+  p.to_player = 2;
+  p.transfer_id = 0xABCDEF01u;
+  p.reason = SaveReason::join;
+  p.total_size = kMaxSavePart + 5;
+  p.crc32 = 0xDEADBEEFu;
+  p.index = 1;
+  p.count = 2;
+  p.data = {1, 2, 3, 4, 5};
+  Message m = p;
+  REQUIRE(decode(must_encode(m), back) == Error::none);
+  CHECK(back == m);
+  CHECK(type_of(back) == MessageType::save_part);
+
+  Bytes out;
+  SavePart bad = p;
+  bad.data.push_back(6);  // the last part is 5 bytes
+  CHECK(encode(bad, out) == Error::bad_value);
+  bad = p;
+  bad.count = 3;  // the size has 2 parts
+  CHECK(encode(bad, out) == Error::bad_value);
+  bad = p;
+  bad.to_player = 0;  // a join answer goes to the one who asked
+  CHECK(encode(bad, out) == Error::bad_value);
+  bad.reason = SaveReason::host_load;  // a reload goes to everyone
+  CHECK(encode(bad, out) == Error::none);
+  bad = p;
+  bad.total_size = kMaxSaveBytes + 1;
+  CHECK(encode(bad, out) == Error::bad_value);
+  Bytes b = must_encode(m);
+  b.pop_back();  // one byte short
+  CHECK(decode(b, back) != Error::none);
+}

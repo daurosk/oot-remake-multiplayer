@@ -400,7 +400,9 @@ TEST_CASE("dungeon: which flags are held: gimmick events and the corridor, not s
     for (const auto& f : CoopDungeon::Flags()) {
         const auto in = CoopDungeon::HeldIn(f.hash);
         const std::string name = f.name;
-        if (name.starts_with("HavePlayedEvent.")) {
+        const bool live_on_test6 = name == "HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop" ||
+                                   name == "HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomH_CandleStick";
+        if (name.starts_with("HavePlayedEvent.") && !live_on_test6) {
             CHECK_MESSAGE(in.has_value(), name);
             if (in && !in->empty()) CHECK(CoopDungeon::IsDungeonScene(*in));
         }
@@ -476,4 +478,74 @@ TEST_CASE("dungeon: a held flag names its event, for the live start") {
     CHECK_FALSE(store.write({ladder, coop::protocol::FlagKind::boolean, 1}));
     REQUIRE(store.held_keys().size() == 1);
     CHECK(store.held_keys()[0] == ladder);
+}
+
+TEST_CASE("dungeon: what played live on test6 stays live (basement water, torch room)") {
+    namespace proto = coop::protocol;
+    const auto water = host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop"), 0);
+    const auto torches = host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomH_CandleStick"), 0);
+    const auto level = host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomG_WaterLevel"), 0);
+    CHECK_FALSE(CoopDungeon::HeldIn(water.hash).has_value());
+    CHECK_FALSE(CoopDungeon::HeldIn(torches.hash).has_value());
+    CHECK_FALSE(CoopDungeon::HeldIn(level.hash).has_value());
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    Game b;
+    for (const auto& k : {water, torches, level}) b.set(k, 0);
+    bool link = true;
+    std::string scene = "InsideTheDekuTree";
+    host::HoldFlagStore store(b, HoldIn(link, scene));
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wb.frame(store);
+    wb.receive(proto::Message{proto::FlagState{1, {{water, proto::FlagKind::boolean, 1},
+                                                   {torches, proto::FlagKind::boolean, 1},
+                                                   {level, proto::FlagKind::boolean, 1}}}});
+    wb.frame(store);
+    CHECK(b.values[water].value == 1);  // written at once, B in the Deku Tree: as on test6
+    CHECK(b.values[torches].value == 1);
+    CHECK(b.values[level].value == 1);
+    CHECK(store.held() == 0);
+}
+
+TEST_CASE("dungeon: a held flag that a load puts back to 0 is kept for later, never sent as 0") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    const auto ladder =
+        host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder"), 0);
+    Game b;
+    b.set(ladder, 0);
+    bool link = false;  // the title screen or a load: nothing held
+    std::string scene = "InsideTheDekuTree";
+    host::HoldFlagStore store(b, HoldIn(link, scene));
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wb.frame(store);
+    wb.set_loading(true);
+    wb.receive(proto::Message{proto::FlagState{1, {{ladder, proto::FlagKind::boolean, 1}}}});
+    wb.frame(store);
+    CHECK(b.values[ladder].value == 1);
+
+    // The save loads over it with 0, and our Link appears in the Deku Tree.
+    wb.set_loading(false);
+    link = true;
+    b.set(ladder, 0);
+    const auto zero_sent = [&](const std::vector<host::Outgoing>& out) {
+        for (const auto& o : out) {
+            proto::Message m;
+            if (proto::decode(o.bytes, m) != proto::Error::none) continue;
+            if (const auto* set = std::get_if<proto::FlagSet>(&m)) {
+                for (const auto& e : set->flags) {
+                    if (e.key == ladder && e.value == 0) return true;
+                }
+            }
+        }
+        return false;
+    };
+    CHECK_FALSE(zero_sent(wb.frame(store)));
+    CHECK_FALSE(zero_sent(wb.frame(store)));
+    CHECK(b.values[ladder].value == 0);  // held in our game while in the Deku Tree
+
+    scene = "KokiriForest";  // out of the dungeon: the group's 1 is written
+    CHECK_FALSE(zero_sent(wb.frame(store)));
+    CHECK(b.values[ladder].value == 1);
 }

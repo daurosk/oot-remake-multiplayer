@@ -26,6 +26,30 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
     return std::nullopt;
 }
 
+std::set<std::string> ParseNames(std::string_view text) {
+    std::set<std::string> out;
+    const auto trim = [](std::string_view s) {
+        while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.remove_suffix(1);
+        return s;
+    };
+    if (trim(text) == "all") {
+        return out;
+    }
+    while (!text.empty()) {
+        const auto comma = text.find(',');
+        const std::string_view part = trim(text.substr(0, comma));
+        if (!part.empty()) {
+            out.emplace(part);
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        text.remove_prefix(comma + 1);
+    }
+    return out;
+}
+
 void Requester::Want(std::string name) {
     if (name.empty() || name.size() >= 0x80 || wanted_.size() >= 8) {
         notes_.push_back("live event " + name + " not asked (name too long or too many waiting)");

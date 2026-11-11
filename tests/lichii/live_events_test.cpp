@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -132,4 +133,11 @@ TEST_CASE("live events: no manager or no malloc asks nothing and frees what was 
     q.Want("F");
     CHECK_FALSE(q.Step(m, false, 0, kMain).has_value());  // off for the run
     CHECK_FALSE(q.Step(m, false, 0, 0).has_value());
+}
+
+TEST_CASE("live events: the names list from the environment") {
+    CHECK(CoopLiveEvents::ParseNames("a, b ,,c") == std::set<std::string>{"a", "b", "c"});
+    CHECK(CoopLiveEvents::ParseNames(" all ").empty());  // every held gimmick event
+    CHECK(CoopLiveEvents::ParseNames("InsideTheDekuTree_Gimmick_FallingLadder") ==
+          std::set<std::string>{"InsideTheDekuTree_Gimmick_FallingLadder"});
 }

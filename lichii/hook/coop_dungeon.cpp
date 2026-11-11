@@ -1561,6 +1561,13 @@ constexpr std::string_view kCorridor[] = {
     "ForestTemple_SageOfForest_TwistedCorridor_A_02", "ForestTemple_SageOfForest_TwistedCorridor_A_03",
     "ForestTemple_SageOfForest_TwistedCorridor_A_04"};
 
+// Gimmick events whose result already came live in the other game on test6
+// (players, Deku Tree): the basement water dropping and its button pressed,
+// the torch room's torches. Their room flags carry the result; the played
+// event is left live too, so nothing changes for them.
+constexpr std::string_view kLiveOnTest6[] = {
+    "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop", "InsideTheDekuTree_Gimmick_RoomH_CandleStick"};
+
 std::string_view SceneOfEvent(std::string_view event) {
     // The game's own spellings, and the scene names that are not prefixes.
     if (event.starts_with("SpritTemple_")) return "SpiritTemple";
@@ -1600,7 +1607,13 @@ std::optional<std::string_view> HeldIn(std::uint32_t hash) {
         if (f.hash != hash) continue;
         const std::string_view name = f.name;
         constexpr std::string_view kPlayed = "HavePlayedEvent.";
-        if (name.starts_with(kPlayed)) return SceneOfEvent(name.substr(kPlayed.size()));
+        if (name.starts_with(kPlayed)) {
+            const std::string_view event = name.substr(kPlayed.size());
+            for (const std::string_view live : kLiveOnTest6) {
+                if (event == live) return std::nullopt;
+            }
+            return SceneOfEvent(event);
+        }
         for (const std::string_view c : kCorridor) {
             if (name == c) return std::string_view("ForestTemple");
         }

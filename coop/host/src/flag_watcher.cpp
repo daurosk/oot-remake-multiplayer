@@ -428,6 +428,13 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (group != group_.end() &&
           backwards(group->second, older != group_before_.end() ? &older->second : nullptr,
                     *now, loading_)) {
+        if (store.holds(key)) {
+          // Our game takes the group's value later (HoldFlagStore): kept to
+          // write then; the load's older value is ours alone, never sent.
+          ++stats_.load_reverts;
+          unwritten_[key] = group->second;
+          continue;
+        }
         if (store.write(group->second)) {
           ++stats_.load_reverts;
           ++stats_.applied;

@@ -127,6 +127,23 @@ bool EnvFlag(const char* name) {
 #endif
 }
 
+// An environment variable's text, or "" when it is not set.
+std::string EnvString(const char* name) {
+#ifdef _MSC_VER
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return {};
+    }
+    std::string out(value);
+    std::free(value);
+    return out;
+#else
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::string(value) : std::string();
+#endif
+}
+
 const char* WhyText(coop::overlay::Why why) {
     using coop::overlay::Why;
     switch (why) {
@@ -252,7 +269,13 @@ public:
             }
         }
         live_events_ = EnvFlag("LICHII_COOP_LIVE_EVENTS");
-        if (live_events_) {  // issue 129: start another player's gimmick event here (coop_live_events.h)
+        if (live_events_) {
+            // LICHII_COOP_LIVE_EVENT_NAMES=a,b,...: the events to start (default:
+            // the Deku Tree ladder); "all" for every held gimmick event.
+            const std::string names = EnvString("LICHII_COOP_LIVE_EVENT_NAMES");
+            if (!names.empty()) {
+                live_decider_ = CoopLiveEvents::Decider(CoopLiveEvents::ParseNames(names));
+            }  // issue 129: start another player's gimmick event here (coop_live_events.h)
             CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 std::lock_guard lock(live_mutex_);
@@ -335,8 +358,15 @@ public:
         // our Link is in that dungeon; written when we are out or loading.
         std::optional<coop::host::HoldFlagStore> hold;
         if (store) {
-            const bool link = reading.has_value();
-            const std::optional<std::string> scene = view.scene;
+            // Released only after a real load (about 0.5 s without Link), not
+            // on one frame the reader missed; the scene as last read.
+            no_link_frames_ = reading ? 0 : no_link_frames_ + 1;
+            if (view.scene) {
+                hold_scene_ = *view.scene;
+            }
+            const bool link = no_link_frames_ < kHoldReleaseFrames;
+            const std::optional<std::string> scene =
+                hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
             hold.emplace(*store, [link, scene](coop::protocol::FlagKey key) {
                 if (!link || !scene || key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
@@ -356,7 +386,7 @@ public:
                 }
             }
             const bool running = reading && reading->event_running.value_or(false);
-            if (const auto name = live_decider_.Next(held_events, view.scene.value_or(""), running)) {
+            if (const auto name = live_decider_.Next(held_events, hold_scene_, running)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
                 live_requester_.Want(*name);
@@ -930,6 +960,9 @@ private:
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
+    static constexpr int kHoldReleaseFrames = 30;
+    int no_link_frames_ = 0;       // frames in a row without our Link (the hold's debounce)
+    std::string hold_scene_;       // the last scene read, for the hold
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;

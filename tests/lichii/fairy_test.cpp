@@ -322,30 +322,3 @@ TEST_CASE("fairy: parked while her puppet is not live, placed from the puppet (i
     out = f.Follow(in, 1133, 1u << 1);
     CHECK(out.targets[0].show == CoopPuppet::Show::hold);
 }
-
-TEST_CASE("fairy: parked while her puppet is far from our Link, with some slack (issue 145)") {
-    Settings s = Still();
-    Follower f(s);
-    const std::uint32_t live = 1u << 1;
-    const CoopPuppet::Vec3 us{0, 0, 0};
-    auto show_at = [&](float x, std::uint64_t now) {
-        return f.Follow(Puppets(1, {x, 0, 0}), now, live, us).targets.at(0).show;
-    };
-    CHECK(show_at(10, 0) == CoopPuppet::Show::show);
-    CHECK(show_at(s.far - 1, 33) == CoopPuppet::Show::show);
-    CHECK(show_at(40, 66) == CoopPuppet::Show::hide);  // the compass room, two floors off
-    CHECK(std::string(f.Follow(Puppets(1, {40, 0, 0}), 99, live, us).targets[0].why) ==
-          "her puppet is far away");
-    // Coming back: still parked between near and far, shown once nearer.
-    CHECK(show_at(s.far - 1, 133) == CoopPuppet::Show::hide);
-    CHECK(show_at(s.near - 1, 166) == CoopPuppet::Show::show);
-    // Vertical distance counts (another floor right above).
-    CHECK(show_at(0, 200) == CoopPuppet::Show::show);
-    CHECK(f.Follow(Puppets(1, {0, 35, 0}), 233, live, us).targets[0].show ==
-          CoopPuppet::Show::hide);
-    // Without our position, or with the rule off: no distance rule.
-    CHECK(f.Follow(Puppets(1, {90, 0, 0}), 266, live).targets[0].show == CoopPuppet::Show::show);
-    s.far = 0.0f;
-    Follower off(s);
-    CHECK(off.Follow(Puppets(1, {90, 0, 0}), 0, live, us).targets[0].show == CoopPuppet::Show::show);
-}

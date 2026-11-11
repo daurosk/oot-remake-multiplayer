@@ -45,7 +45,7 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
 }
 
 CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
-                                   std::uint32_t live, const std::optional<Vec3>& local) {
+                                   std::uint32_t live) {
     CoopPuppet::Input out;
     out.main_base = puppets.main_base;
     out.scene = puppets.scene;
@@ -57,11 +57,9 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
     if (puppets.scene != scene_) {
         scene_ = puppets.scene;
         tracks_.clear();
-        far_.clear();
     }
     const float t = static_cast<float>(now_ms % 3600000ULL) / 1000.0f;
     std::map<std::uint8_t, Track> kept;
-    std::map<std::uint8_t, bool> far_kept;
     for (const auto& p : puppets.targets) {
         const Vec3 goal = Goal(p, t, p.number);
         Track track{goal, now_ms};
@@ -87,28 +85,13 @@ CoopPuppet::Input Follower::Follow(const CoopPuppet::Input& puppets, std::uint64
         // Issue 145: never without her puppet. Placed from the puppet's
         // current spot either way (parked under it), so she shows there
         // when she may.
-        bool far = false;
-        if (local && settings_.far > 0.0f) {
-            const auto it = far_.find(p.number);
-            const bool was_far = it != far_.end() && it->second;
-            const float d = Distance(*local, p.position);
-            far = was_far ? d > settings_.near : d > settings_.far;
-        }
-        far_kept[p.number] = far;
-        if (p.show != CoopPuppet::Show::hide) {
-            const bool puppet_live = p.number < 32 && (live >> p.number & 1u) != 0;
-            if (!puppet_live) {
-                f.show = CoopPuppet::Show::hide;
-                f.why = "her puppet is not shown";
-            } else if (far) {
-                f.show = CoopPuppet::Show::hide;
-                f.why = "her puppet is far away";
-            }
+        if (p.show != CoopPuppet::Show::hide && !(p.number < 32 && (live >> p.number & 1u) != 0)) {
+            f.show = CoopPuppet::Show::hide;
+            f.why = "her puppet is not shown";
         }
         out.targets.push_back(std::move(f));
     }
     tracks_ = std::move(kept);
-    far_ = std::move(far_kept);
     return out;
 }
 
@@ -330,7 +313,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     auto puppets = glue.planner->Plan(main_base, scene, position, local_event, remotes, now_ms);
     CoopPuppet::StampDrawing(puppets, now_ms);
     glue.director->SetInput(
-        glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets(), position));
+        glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets()));
 }
 
 } // namespace CoopFairy

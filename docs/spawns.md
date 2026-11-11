@@ -61,6 +61,19 @@ Each of our projectiles that leaves the list now logs how it moved: `coop: shots
 - Switches, for the in-game check: `LICHII_COOP_SHOT_AXIS` (0 to 5: +x +y +z -x -y -z of the turn, default 2) if the copies fly the wrong way, and `LICHII_COOP_SHOT_SPEED` (m/s).
 - Not covered: the hookshot tip (no ammo count) and a shot of the last seed or arrow if the count is not read in time. Bombs, bombchus, nuts and the boomerang are thrown actors with their own physics and keep their samples.
 
+## Where a shot lands (issue 166)
+
+With the stand-ins in the pack and the spawn sync on, the spawn-seed run of 2026-11-11 00:44 shows the seed's place does move in flight: A's seeds went 11 to 15 m at 70 to 80 m/s and were removed as `hit` (reason 3). B made each `CoopShot_Seed` copy and deleted it at the remove. So the seed now flies on every screen. What was missing is its end.
+
+- **Landing.** A copy removed as `hit` used to be deleted at once, wherever its carry-ahead had taken it (up to 250 ms past the last sample, so several metres beyond the wall). Now the remove stops its track at the owner's last place and the copy stays there for `CoopProjectiles::LandHoldUs`: 0.2 s for a seed, 1.5 s for an arrow (it sticks), then it goes. Nuts, bombs and the rest go as before. Log on the receiver: `coop: shots: copy held where the owner's shot hit (N so far)`.
+- **Bounces.** The maker checks each step of its seeds, arrows and nuts: a turn of over 45 degrees with both steps at 3 m/s or more is a bounce (`CoopProjectiles::Bounced`). That step's sample is sent at once, without waiting for the 33 ms gap, so the copies turn where the owner's did. A copy's track keeps its fall across a bounce (the turn is not counted as gravity). The maker's `gone` line now ends `bounced N times`.
+- No new message: the landing and the bounce ride on `OBJECT_SAMPLE` and `OBJECT_REMOVE`.
+
+**The spark and the sound are not done.** Read from the romfs (no run):
+- The seed's hit is played by the game's shootable code, not by data a copy can carry: `ShootableParam/Shootable_DekuSeed` names `HitEffectType` (hash 2054188199), and its `ELinkParam` and `SLinkParam` only name the user `Shootable_DekuSeed`. The stand-ins leave effects and sounds out on purpose, and have no shootable component.
+- A way that needs no code calls: a small actor of ours made at the landing place, with the seed's ELink and SLink user and an AI root that plays one xlink key on enter. The game has that node: `OneShotXLinkSearchAndEmit` (inputs `XLinkKeyName`, `ELinkCall`, `SLinkCall`) is in 454 actor AI files. The smallest such roots are `Shootable_ScrubBusinessSees_PostUpdateMatrix.root.ainb` (1,806 bytes: on a shootable state, emit `ScrubBusinessSeed_HitGround`) and `EftLoc_DodongoCave_21_Floor_A_01_Smoke_00.root.ainb` (1,880 bytes). The key names of the seed's hit, and an AINB writer for the pack tool, are still to find and build. The SLink strings include `SE_Shootable_DekuSeed_Shoot00` and `SE_Obj_DekuSeed_Land`.
+- Until then a landing shows as the seed stopping where it struck, with no spark or sound in the other games.
+
 ## Not done
 
 - Compiled into the emulator and run with two games (2026-11-09, `tools/autotest` scenarios `spawn-seed` and `spawn-bomb`, `LICHII_COOP_SPAWN=1`, Graveyard save of the auto kits). In the logs, two slingshot seeds and a Deku Nut from A reach B. B creates each copy 50 to 70 ms after it arrives and deletes it when A's remove comes (seeds about 0.5 s later, the nut 0.3 s). The copies were not seen in screenshots: they are small, live under half a second, and the save's cow stands in front of both Links. The server must be a build with object owners (`server: object owners`, 2026-11-08); the older kit servers drop every object message.

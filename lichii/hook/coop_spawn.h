@@ -115,6 +115,9 @@ public:
     const CoopProjectiles::FuseClock& Fuse() const { return fuse_; }
     // Bomb copies blown up on the owner's fuse before its remove came.
     std::size_t BlownOnTime() const { return blown_on_time_; }
+    // Issue 166: copies held where the owner's shot hit (remove reason hit,
+    // CoopProjectiles::LandHoldUs) before they go.
+    std::size_t Landed() const { return landed_; }
 
     // A shot's flight when the game's place does not show it (issue 158).
     // The seed and the arrow are made when they are nocked and sit in the
@@ -158,6 +161,7 @@ public:
         coop::protocol::RemoveReason reason = coop::protocol::RemoveReason::gone;
         bool shot = false;       // let go (its ammo count went down)
         bool made_up = false;    // its flight was sent from the shot, not its place
+        unsigned bounces = 0;    // turned like a bounce (issue 166)
     };
     // The ones that left in the last Tick.
     const std::vector<Flight>& Flights() const { return flights_; }
@@ -181,6 +185,7 @@ private:
         // The shot (issue 158).
         std::optional<std::uint64_t> shot_at;
         float shot_top_speed = 0.0f;  // since the shot
+        unsigned bounces = 0;         // issue 166: CoopProjectiles::Bounced steps
         bool made_up = false;
         Vec3 shot_from{};
         Vec3 shot_velocity{};
@@ -197,6 +202,7 @@ private:
         // even if the owner's remove has not come yet.
         std::optional<std::uint64_t> blow_at;
         bool blasted = false;         // added to TheBlasts once
+        bool landed = false;          // counted in landed_ once (issue 166)
         bool live = false;            // the director had it on the list
         Vec3 Position() const { return track.Empty() ? Vec3{} : track.Last().position; }
     };
@@ -216,6 +222,7 @@ private:
     std::uint64_t next_key_ = 1;
     CoopProjectiles::FuseClock fuse_;  // kept across scenes: the game's fuse
     std::size_t blown_on_time_ = 0;
+    std::size_t landed_ = 0;
     std::vector<Flight> flights_;
     std::vector<MadeUp> made_up_;
     ShotSettings shot_settings_;

@@ -209,6 +209,13 @@ void FlagWatcher::reset() {
   held_states_.clear();
   origin_.clear();
   received_.clear();
+  // Guards: what others took and our unmatched sources belong to the old
+  // session. A held gain stays held, so it is still sent or put back.
+  for (auto& [key, g] : guards_) {
+    g.credit = 0;
+    g.others_at = 0;
+    g.put_back = 0;
+  }
   resend_pending_ = role_ == FlagRole::player && !pending_.empty();
 }
 
@@ -856,6 +863,12 @@ void FlagWatcher::send_snapshot(FlagStore& store, std::vector<Outgoing>& out) {
       continue;
     }
     now->key = key;
+    // A gain still held (guard_count) is not the group's yet, as in
+    // answer_set: a joiner must not get a count the host may put back.
+    if (const auto g = guards_.find(key); g != guards_.end() && g->second.held != 0 &&
+        now->kind == protocol::FlagKind::int32) {
+      now->value = as_bits(as_int(now->value) - g->second.held);
+    }
     table.push_back(*now);
   }
   if (auto parts = protocol::split_snapshot(table)) {

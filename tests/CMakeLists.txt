@@ -40,6 +40,7 @@ add_executable(coop_tests
   lichii/drops_test.cpp
   lichii/guard_test.cpp
   lichii/chests_test.cpp
+  lichii/colors_test.cpp
   lichii/dungeon_test.cpp
   lichii/story_test.cpp
   lichii/pose_test.cpp
@@ -59,6 +60,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_drops.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_chests.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_colors.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dungeon.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_story.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_events.cpp

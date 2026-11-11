@@ -259,6 +259,9 @@ struct Target {
     // PLAYER_EQUIP's drawn bits: bit i set when the player's equipment slot i
     // is in hand (sword out, shield on the arm). Unset: not known.
     std::optional<std::uint8_t> drawn;
+    // The player's colour, 0xRRGGBB (coop_colors.h): the puppet is tinted
+    // with it while live. Unset: no tint.
+    std::optional<std::uint32_t> color;
 };
 
 struct Input {
@@ -296,6 +299,10 @@ public:
     // Move each puppet with the game's own setter as well (addr::kSetMatrix),
     // once a frame: for an actor with a physics body, such as the fairy.
     void SetMatrixCall(bool on) { matrix_call_ = on; }
+    // Tint each live puppet in its target's colour with this strength (the
+    // alpha of the game's hit-flash colour, coop_colors.h); 0, the default,
+    // writes no colour (the fairies' director).
+    void SetTint(float strength) { tint_ = strength; }
 
     // Any thread. The next frame of the cave uses it.
     void SetInput(Input input);
@@ -398,6 +405,8 @@ private:
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
+        std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
+        std::uint32_t tint_color = 0;       // and its colour
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
@@ -430,6 +439,9 @@ private:
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
+    // The colour into the live puppet's model (coop_colors.h), every frame
+    // it is not there yet (a new actor, or the game wrote its own).
+    void Tint(Slot& slot, Guest& guest, std::uint32_t color);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
               std::uint64_t now_ms);
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
@@ -444,6 +456,7 @@ private:
     bool anim_;
     bool pose_copy_ = false;
     bool matrix_call_ = false;
+    float tint_ = 0.0f;
 
     mutable std::mutex input_mutex_;
     Input next_input_;  // guarded
@@ -478,6 +491,9 @@ struct Remote {
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear
     std::optional<std::uint8_t> drawn;               // as Target::drawn
+    // PLAYER_EQUIP's colour; unset: the player chose none, and Plan gives the
+    // player's slot colour (coop::protocol::slot_color).
+    std::optional<std::uint32_t> color;
 };
 
 struct PlannerSettings {
@@ -501,7 +517,8 @@ public:
                const std::optional<Vec3>& position, bool local_event,
                const std::vector<Remote>& remotes, std::uint64_t now_ms,
                const Gear& own_gear = {},
-               std::optional<std::uint8_t> own_drawn = {});
+               std::optional<std::uint8_t> own_drawn = {},
+               std::optional<std::uint32_t> own_color = {});
     std::string ActorFor(bool adult) const;
     const PlannerSettings& settings() const { return settings_; }
 

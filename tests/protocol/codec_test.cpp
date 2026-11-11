@@ -951,9 +951,18 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   CHECK(std::get<PlayerEquip>(back).equipment.sub_tool == "");
   CHECK_FALSE(std::get<PlayerEquip>(back).equipment.held);
   CHECK_FALSE(std::get<PlayerEquip>(back).equipment.weapon);
+  // The colour (16): red, green, blue.
+  CHECK(decode(Bytes{17, 0, 8, 0, 0, 16, 0, 3, 0, 0xFF, 0x80, 0x01}, back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back).equipment.color == 0xFF8001u);
+  CHECK_FALSE(std::get<PlayerEquip>(back).equipment.drawn);
   // The same component twice.
   CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 9, 0, 1, 0, 1}) ==
         Error::duplicate_component);
+  CHECK(decode_bytes(Bytes{17, 0, 15, 0, 0, 16, 0, 3, 0, 1, 2, 3, 16, 0, 3, 0, 1, 2, 3}) ==
+        Error::duplicate_component);
+  // A colour of two or four bytes.
+  CHECK(decode_bytes(Bytes{17, 0, 7, 0, 0, 16, 0, 2, 0, 1, 2}) == Error::bad_length);
+  CHECK(decode_bytes(Bytes{17, 0, 9, 0, 0, 16, 0, 4, 0, 1, 2, 3, 4}) == Error::bad_length);
   // Drawn of two bytes, and a name whose string runs past its component.
   CHECK(decode_bytes(Bytes{17, 0, 7, 0, 0, 9, 0, 2, 0, 1, 1}) == Error::bad_length);
   CHECK(decode_bytes(Bytes{17, 0, 8, 0, 0, 1, 0, 3, 0, 5, 0, 'a'}) == Error::bad_length);
@@ -969,6 +978,11 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   big.equipment.ocarina = std::string(kMaxEquipNameChars, 'o');
   CHECK(encode(big, out) == Error::none);
   CHECK(encode(PlayerEquip{5, {}}, out) == Error::bad_value);
+  PlayerEquip colored;
+  colored.equipment.color = 0x1000000u;  // more than 24 bits
+  CHECK(encode(colored, out) == Error::bad_value);
+  colored.equipment.color = 0x0000FFu;
+  CHECK(must_encode(colored) == Bytes{17, 0, 8, 0, 0, 16, 0, 3, 0, 0, 0, 0xFF});
   // A stage 0 reader skips it like the other new types.
   Message old;
   CHECK(stage0_decode(must_encode(test::equip_message()), old) == Error::unknown_type);
@@ -987,6 +1001,21 @@ TEST_CASE("merge_equipment keeps what a message leaves out") {
   CHECK(e.shield == "");
   CHECK(e.drawn == 0);
   CHECK_FALSE(e.boots);
+  // The colour is kept like a name.
+  before.color = 0x3070FFu;
+  CHECK(merge_equipment(before, now).color == 0x3070FFu);
+  now.color = 0xFF0000u;
+  CHECK(merge_equipment(before, now).color == 0xFF0000u);
+}
+
+TEST_CASE("slot_color gives each player number its own colour") {
+  CHECK(slot_color(1) != slot_color(2));
+  CHECK(slot_color(2) != slot_color(3));
+  CHECK(slot_color(3) != slot_color(4));
+  CHECK(slot_color(1) != slot_color(4));
+  CHECK(slot_color(0) == 0xFFFFFFu);
+  CHECK(slot_color(5) == 0xFFFFFFu);
+  for (std::uint8_t n = 1; n <= kMaxPlayers; ++n) CHECK(slot_color(n) <= 0xFFFFFFu);
 }
 
 TEST_CASE("object messages have their numbers, channels and senders") {

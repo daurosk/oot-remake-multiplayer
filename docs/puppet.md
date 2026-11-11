@@ -640,6 +640,28 @@ Issue 152 (testers, 2026-11-11): the puppet plays the ocarina animation, but the
 2. **Send it** (next round): `OCARINA_NOTE` (140): player, server time, note (an index into the 19 notes, 0 for none) and the melody played (0 none, else the song); to the players in the sender's scene, like `PLAYER_POSE`. Only notes our Link plays itself: an ocarina the game plays for us (a cutscene, a song taught) is not sent.
 3. **Play it at the puppet** (next round): write the note into the puppet's AS variable, so its fingers follow and, if the ocarina code reads the AS state, the note sounds from the puppet; or call the SLink play on the puppet with `Ocarina_<note>` once its address is known (the same probe run, with a breakpoint on the SLink user's lookup, finds it). **A song is sound only**: nothing of the game's melody check (`QueryOcarinaHitMelody`, the warp, the sun, the storm, the doors) runs for a remote player, since only the local `OcarinaMgr` checks melodies and the puppet has no ocarina logic; the song's `Ocarina_<song>` sound plays at the puppet.
 
+## Colour
+
+Each player's puppet is tinted in that player's colour, so players tell each other apart (`lichii/hook/coop_colors.*`, branch `puppet-colors`). The idea came from another modder: the game's hit flash colours a whole model, so the same call can give any actor any colour.
+
+**The game's colour call.** Found from the AI node names in `main` (`ExecuteSetAndCountModelDamageColor`, `ExecuteSetOneTimeEnemyDamageColor`, `ExecuteSetEnemyDamageColorAndLight`). Read from the binary (Checked), not yet run in the game:
+
+| Address | What | Status |
+|---|---|---|
+| 0x49d4a30 | `ExecuteSetAndCountModelDamageColor`'s vtable; its name getter 0x283f800, its enter 0x283f5b0, run 0x283f690, leave 0x283f730 | Checked |
+| 0x974b10 | node -> actor: `[[[node + 8] + 8] + 0x1f0]` | Checked |
+| 0xc71c20 | actor -> model: `[[actor + 0x270] + 0x260]`, 0 when +0x270 is empty | Checked |
+| **0x2e1d200** | `(model, float rgba[4])`: if the four floats differ from model + 0x20..0x2f, copies them there and ors 4 into the u32 at model + 0x120 (the model's dirty bits). Nothing else | Checked |
+| Values | enter writes (1, 0, 0, 1), a red flash; with the node's soft option (1, 0, 0, 0.25); leave writes (0, 0, 0, 0). So r, g, b is the colour and the fourth float its strength | Checked |
+
+Since 0x2e1d200 is a plain store, the puppet director does the same from the SVC handler, with no call into the game: `CoopColors::Apply` reads the model through +0x270 and +0x260, and writes the tint and the dirty bit only when the model holds something else. It runs every game frame for each live puppet (`Director::Tint`, before the pose), so a tint that the game resets (a hit flash ending, a new actor after a load) comes back the next frame. The log says `P<n> colour #RRGGBB (strength 0.45) on model 0x... of 0x...` once per actor and colour.
+
+**Which colour.** A player picks one in `coop-options.ini` (`color = blue`, or `#RRGGBB`; see [play-online.md](play-online.md#your-colour)); the kit passes it to the emulator as `LICHII_COOP_COLOR`, and `color` in `coop.ini` works too. It goes to the others in `PLAYER_EQUIP` component 16, `color` (protocol 10), with the equipment, so a newcomer gets it when the equipment is sent again on `PLAYER_JOINED`. A player who chose none gets the colour of their player number (`coop::protocol::slot_color`: 1 blue, 2 red, 3 green, 4 yellow). The names: red, orange, yellow, green, cyan, blue, purple, pink, white, black, brown, gray (the list is in `coop_colors.cpp` and `coop-ini.ps1`).
+
+**Strength.** The fourth float, 0.45 by default: enough to tell players apart while the tunic stays readable. `LICHII_COOP_PUPPET_TINT=<0 to 1>` changes it; `0` or `off` writes no colour at all. The fairies are not tinted (their director's strength is 0), and nor is the local player's own Link. The test puppet (`LICHII_COOP_TEST_PUPPET`) wears your own colour when you chose one.
+
+**Not yet seen in a game.** That the model at +0x260 is the puppet's whole body (the gear pieces are actors of their own and keep their colours), that the shader shows a strength below 1 as a tint and not a flash, and that the game does not reset the colour every frame (the director writes it back if so). `tools\autotest\run.ps1 -Scenario color` is the check: B's screenshots should show A's puppet orange.
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.

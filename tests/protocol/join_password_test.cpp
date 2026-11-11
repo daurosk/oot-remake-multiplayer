@@ -110,5 +110,5 @@ TEST_CASE("join password: JOIN_CHALLENGE and JOIN_PROOF on the wire") {
   CHECK_FALSE(may_send(Sender::server, MessageType::join_proof));
   CHECK(allowed_on_channel(MessageType::join_challenge, kChannelSession));
   CHECK_FALSE(allowed_on_channel(MessageType::join_proof, kChannelProgress));
-  CHECK(kProtocolVersion == 9);
+  CHECK(kProtocolVersion >= 9);  // 9 brought it; later versions keep it
 }

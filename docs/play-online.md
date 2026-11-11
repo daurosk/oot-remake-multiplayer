@@ -90,6 +90,14 @@ By default anyone who can reach the server's port may join. Three lines in the h
 
 For `server_allow` and `server_bind`: remove the `#` in front of the line, put in the addresses and start `Host.bat` again. The server window then says `listening on port 27510 (only 25.1.2.3, ...)` and `only the N address range(s) given with --allow may connect`. A player who is turned away is counted as `not allowed` when the server stops. More in [SECURITY.md](../SECURITY.md).
 
+## Your colour
+
+Every player's Link shows in that player's colour in the other games, so you can tell each other apart (protocol 10). Without a choice you get your player number's colour: 1 blue, 2 red, 3 green, 4 yellow.
+
+To pick your own: open `coop-options.ini` beside `Host.bat` and `Join.bat`, remove the `#` in front of `# color = blue` and put in one of red, orange, yellow, green, cyan, blue, purple, pink, white, black, brown, gray, or any colour as `#RRGGBB` (for example `color = #FF8020`). Close the game and start `Host.bat` or `Join.bat` again. A word the kit does not know is said in the window and you keep your number's colour. Two players may pick the same colour; nothing stops it, so agree on yours.
+
+How strongly the colours show is up to each player for what they see: `LICHII_COOP_PUPPET_TINT=0.45` in `coop-options.ini` (remove the `#`), from `0.1` (faint) to `1` (solid); `0` shows everyone without colour.
+
 ## When you are done
 
 Our programs open nothing by themselves: no UPnP, no firewall or router changes, and when the server window is closed nothing listens. What you opened by hand stays open until you close it:

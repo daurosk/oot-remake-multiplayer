@@ -1,4 +1,4 @@
-# Wire protocol, version 9
+# Wire protocol, version 10
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -236,8 +236,9 @@ Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a know
 | 13 | `third_weapon` | string: the actor in slot 2 (ThirdWeapon); bit 2 | the same |
 | 14 | `tool` | string: the actor in slot 5 (Tool); bit 5 | the same |
 | 15 | `sub_tool` | string: the actor in slot 6 (SubTool); bit 6 | the same |
+| 16 | `color` | 3 bytes: red, green, blue. The player's colour; others tint that player's puppet with it ([puppet.md](puppet.md#colour)). Left out: the player chose none, and a receiver uses the player number's colour | `coop-options.ini` `color` (`LICHII_COOP_COLOR`) |
 
-Each string is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
+Each string (all but `drawn` and `color`) is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
 
 How it moves:
 
@@ -387,4 +388,5 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
+- Version 10 (branch `puppet-colors`): `PLAYER_EQUIP` component 16, `color`. A version 9 reader would skip it, but a version 9 server drops it when it relays (it reads and writes the message again), so every game would see the others in their player number's colour only. The version went up so that every game and the server carry the colours.
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.

@@ -122,6 +122,19 @@ try {
     Set-KitServerPassword $opt ''
     $p = (Read-KitServerAccess $opt).Password
     Check ($null -ne $p -and $p -eq '' -and ([regex]::Matches([System.IO.File]::ReadAllText($opt), 'server_password')).Count -eq 1) "no password chosen: one empty server_password line, not asked again [$p]"
+    # color (puppet-colors): passed as LICHII_COOP_COLOR when it is a colour, with a comment after it too.
+    . (Join-Path $kitSrc 'scripts\coop-ini.ps1')
+    foreach ($good in 'blue', 'Purple', '#FF8020', 'ff8020') { Check (Test-CoopColor $good) "a colour: $good" }
+    foreach ($bad in 'blurple', '#FF802', '#GG8020', '') { Check (-not (Test-CoopColor $bad)) "not a colour: '$bad'" }
+    [System.IO.File]::WriteAllText($opt, "# color = red`r`ncolor = #FF8020  # mine`r`nLICHII_COOP_PUPPET=1`r`n")
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    $o = Read-KitOptions $opt 6>$null
+    Check ($o['LICHII_COOP_COLOR'] -eq '#FF8020' -and $o['LICHII_COOP_PUPPET'] -eq '1' -and -not $said) "color is passed as LICHII_COOP_COLOR [$($o['LICHII_COOP_COLOR'])]"
+    [System.IO.File]::WriteAllText($opt, "color = blurple`r`n")
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    Check ($said -and -not (Read-KitOptions $opt 6>$null).Contains('LICHII_COOP_COLOR')) 'a bad color is said and not passed'
+    [System.IO.File]::WriteAllText($opt, "color =`r`n# color = blue`r`n")
+    Check (-not (Read-KitOptions $opt 6>$null).Contains('LICHII_COOP_COLOR')) 'an empty or commented color passes nothing'
     [System.IO.File]::WriteAllText($opt, "auto_update = ask`r`n")
     Set-KitServerPassword $opt 'x'
     Check ([System.IO.File]::ReadAllText($opt) -eq "auto_update = ask`r`nserver_password = x`r`n") 'no server_password line at all: added at the end'

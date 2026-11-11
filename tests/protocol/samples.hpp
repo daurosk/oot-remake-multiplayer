@@ -54,6 +54,7 @@ inline PlayerEquip equip_message() {
   m.equipment.weapon_slot = "Weapon_Sword_Kokiri";
   m.equipment.sub_weapon = "";
   m.equipment.tool = "Weapon_Boomerang";
+  m.equipment.color = 0x12AB7F;
   return m;
 }
 

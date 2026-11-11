@@ -264,7 +264,7 @@ Trip::Actions Trip::Start(std::uint8_t number, std::string name, const Local& lo
     Actions a;
     if (phase_ == Phase::travelling) {
         a.cancel_scene = true;  // the old one's scene change is no longer wanted
-        a.restore_start = true;
+        a.restore_start = !loaded_;
     }
     phase_ = Phase::idle;
     if (!local.scene || !local.position) {
@@ -338,6 +338,8 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     asked_us_ = now_us;
     settle_us_ = 0;
     taken_ = false;
+    seen_request_ = false;
+    loaded_ = false;
     a.scene = scene_;
     a.start = start_;
     a.lines.push_back("teleport: going to " + name_ + " in " + scene_);
@@ -383,7 +385,7 @@ Trip::Actions Trip::Left(std::uint8_t number) {
         return a;
     }
     a.cancel_scene = phase_ == Phase::travelling;
-    a.restore_start = a.cancel_scene;
+    a.restore_start = a.cancel_scene && !loaded_;
     a.lines.push_back(number == 0 ? "teleport: stopped: the connection was lost"
                                   : "teleport: stopped: " + name_ + " left");
     phase_ = Phase::idle;
@@ -399,19 +401,26 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
             // Arrived (by the request, or on foot): the request is cleared, so
             // the next talk or sign here does not load the scene again.
             a.cancel_scene = true;
-        } else if (now_us - since_us_ > kGiveUpUs) {
+        } else if (now_us - since_us_ > kGiveUpUs && !local.loading_banc && local.scene) {
+            // Never in the middle of a load: that load reads the request.
             phase_ = Phase::idle;
             a.cancel_scene = true;
-            a.restore_start = true;
+            a.restore_start = !loaded_;
             a.lines.push_back("teleport: the game did not change scene in time; stopped");
             return a;
         } else {
             // Taken: the load started (or the scene is gone), or the game
-            // emptied the request. Not asked again while it loads.
+            // emptied the request. "Emptied" counts only once the game has
+            // shown our request: in the frame that asks, the flag still holds
+            // what was there before (often "", left by the last load).
+            if (local.reserved_banc && *local.reserved_banc == scene_) {
+                seen_request_ = true;
+            }
             const bool took = local.loading_banc || !local.scene ||
-                              (local.reserved_banc && local.reserved_banc->empty());
+                              (seen_request_ && local.reserved_banc && local.reserved_banc->empty());
             if (!taken_ && took) {
                 taken_ = true;
+                loaded_ = true;
                 taken_us_ = now_us;
                 a.release = true;
                 return a;
@@ -421,6 +430,7 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
                     return a;
                 }
                 taken_ = false;  // it ended somewhere else: ask again
+                seen_request_ = false;
             }
             if (now_us - asked_us_ >= kAskAgainUs) {
                 asked_us_ = now_us;

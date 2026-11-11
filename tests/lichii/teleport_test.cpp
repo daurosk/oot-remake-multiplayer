@@ -404,6 +404,8 @@ TEST_CASE("teleport: the game emptying the request counts as taken, a load elsew
     Local here = At("Kokiri", 0, 0, 0);
     trip.Start(2, "Saria", here, 0);
     REQUIRE(trip.Accepted(2, Target("HyruleField_Child", 1, 1, 1), here, kS).scene);
+    here.reserved_banc = "HyruleField_Child";  // our request, as the game shows it
+    CHECK_FALSE(trip.Tick(here, kS + kS / 20).release);
     here.reserved_banc = "";  // ChangeBancOnMain took it and emptied it
     auto a = trip.Tick(here, kS + kS / 10);
     CHECK(a.release);
@@ -457,4 +459,54 @@ TEST_CASE("teleport: scenes with only special starts have no start point") {
     CHECK_FALSE(CoopTeleport::NearestStart("SageRoom", Vec{0, 0, 0}));
     // Lake Hylia is part of Hyrule Field: an entrance of that scene is named.
     CHECK(CoopTeleport::NearestStart("HyruleField_Child", Vec{-300.0f, 100.0f, 300.0f}));
+}
+
+TEST_CASE("teleport: the frame that asks does not count the old empty request as taken") {
+    // Frame reads the game's flags, then Accepted asks and Tick runs, all in
+    // one frame: the flag still holds what was there before our ask ("").
+    Trip trip;
+    Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    here.reserved_banc = "";
+    trip.Start(2, "Saria", here, 0);
+    auto a = trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS);
+    REQUIRE(a.scene);
+    a = trip.Tick(here, kS);
+    CHECK_FALSE(a.release);
+    CHECK_FALSE(a.cancel_scene);
+    // Next frames, still "" (the write not seen yet): not taken, asked again.
+    CHECK_FALSE(trip.Tick(here, kS + kS / 4).release);
+    CHECK(trip.Tick(here, kS + kS / 2).scene);
+    // The game shows our request, then empties it: taken.
+    here.reserved_banc = "Graveyard_Child";
+    CHECK_FALSE(trip.Tick(here, kS + kS * 6 / 10).release);
+    here.reserved_banc = "";
+    CHECK(trip.Tick(here, kS + kS * 7 / 10).release);
+}
+
+TEST_CASE("teleport: no give-up in the middle of a load, and no old start put back after a load") {
+    Trip trip;
+    Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
+    // Taken: a load runs past the give-up time.
+    here.loading_banc = true;
+    CHECK(trip.Tick(here, 2 * kS).release);
+    auto a = trip.Tick(here, 2 * kS + Trip::kGiveUpUs);
+    CHECK_FALSE(a.cancel_scene);
+    CHECK(trip.phase() == Trip::Phase::travelling);
+    // It ended in a third scene; given up there: the start name (that
+    // scene's own) is kept, not the one from before the trip.
+    Local elsewhere = At("HyruleField_Child", 0, 0, 0);
+    a = trip.Tick(elsewhere, 3 * kS + Trip::kGiveUpUs);
+    CHECK(a.cancel_scene);
+    CHECK_FALSE(a.restore_start);
+    // Same for a player leaving or a new /teleport after a load.
+    trip.Start(2, "Saria", here, 0);
+    here.loading_banc = false;
+    REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
+    here.loading_banc = true;
+    CHECK(trip.Tick(here, 2 * kS).release);
+    a = trip.Left(2);
+    CHECK(a.cancel_scene);
+    CHECK_FALSE(a.restore_start);
 }

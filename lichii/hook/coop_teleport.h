@@ -154,8 +154,10 @@ public:
         bool cancel_scene = false;           // clear our scene change request and its switch (arrived, given up)
         bool release = false;                // the game took it: drop only the free-play switch
         // With cancel_scene, not arrived (given up, the player left, a new
-        // /teleport): put back the start name the game had before our first
-        // ask, so it does not keep a start of a scene we never went to.
+        // /teleport) and no load ran in this trip: put back the start name the
+        // game had before our first ask, so it does not keep a start of a
+        // scene we never went to. After a load elsewhere the current one is
+        // that scene's own and is kept.
         bool restore_start = false;
     };
 
@@ -186,6 +188,8 @@ private:
     std::uint64_t asked_us_ = 0;  // travelling: the last ask
     std::uint64_t settle_us_ = 0; // settling: since the scene was in
     bool taken_ = false;          // travelling: the game took the request
+    bool seen_request_ = false;   // travelling: the game's flag showed our request
+    bool loaded_ = false;         // this trip: a load ran (then the old start name is stale)
     std::uint64_t taken_us_ = 0;
 };
 

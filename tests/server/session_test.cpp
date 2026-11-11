@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -3024,4 +3025,148 @@ TEST_CASE("security: names with invisible or bidi characters are refused") {
   // An emoji with its presentation selector (U+2764 U+FE0F, a red heart).
   h.join(32, "Link " "\xE2\x9D\xA4" "\xEF\xB8\x8F");
   CHECK(h.session.player_count() == 4);
+}
+
+// --- The join password (protocol 9, docs/protocol.md "Join password") ---
+
+namespace {
+
+SessionConfig with_password(const std::string& password) {
+  SessionConfig config;
+  config.join_password = password;
+  return config;
+}
+
+// Sends HELLO and returns the JOIN_CHALLENGE's nonce.
+JoinNonce challenge_for(Harness& h, ConnectionId id, const std::string& nickname) {
+  h.connect(id);
+  h.clear();
+  h.receive(id, hello_from(nickname), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, id);
+  REQUIRE(challenge);
+  CHECK(h.dropped.empty());
+  return challenge->nonce;
+}
+
+}  // namespace
+
+TEST_CASE("join password: the right proof is welcomed") {
+  Harness h(with_password("hunter2"));
+  const JoinNonce nonce = challenge_for(h, 1, "Link");
+  CHECK(h.session.player_count() == 0);  // not in before the proof
+  h.clear();
+  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  bool welcomed = false;
+  for (const Sent& s : h.to(1)) welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
+  CHECK(welcomed);
+  CHECK(h.dropped.empty());
+  CHECK(h.session.player_count() == 1);
+  CHECK(h.session.stats().bad_password == 0);
+}
+
+TEST_CASE("join password: a wrong proof is refused with bad_password and closed") {
+  Harness h(with_password("hunter2"));
+  const JoinNonce nonce = challenge_for(h, 1, "Link");
+  h.clear();
+  h.receive(1, JoinProof{join_proof("hunter3", nonce)}, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+  CHECK(h.dropped == std::vector<ConnectionId>{1});
+  CHECK(h.session.player_count() == 0);
+  CHECK(h.session.stats().bad_password == 1);
+  // A second try on the same connection goes nowhere: it is closing.
+  h.clear();
+  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.player_count() == 0);
+}
+
+TEST_CASE("join password: a game with no password (the empty one's proof) is refused") {
+  Harness h(with_password("hunter2"));
+  const JoinNonce nonce = challenge_for(h, 1, "Link");
+  h.clear();
+  h.receive(1, JoinProof{join_proof("", nonce)}, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+}
+
+TEST_CASE("join password: no proof at all times out like a missing HELLO") {
+  SessionConfig config = with_password("hunter2");
+  config.hello_timeout_us = 1'000'000;
+  Harness h(config);
+  challenge_for(h, 1, "Link");
+  h.receive(1, Chat{0, "let me in"}, kChannelSession);  // anything but a proof
+  CHECK(h.session.stats().before_welcome == 1);
+  h.now += 1'000'000;
+  h.session.tick(h.now);
+  h.collect();
+  CHECK(std::find(h.dropped.begin(), h.dropped.end(), ConnectionId{1}) != h.dropped.end());
+  CHECK(h.session.player_count() == 0);
+}
+
+TEST_CASE("join password: a recorded proof does not work on another connection") {
+  Harness h(with_password("hunter2"));
+  const JoinNonce first = challenge_for(h, 1, "Link");
+  const JoinProofBytes recorded = join_proof("hunter2", first);
+  h.receive(1, JoinProof{recorded}, kChannelSession);
+  REQUIRE(h.session.player_count() == 1);
+
+  // Someone who saw that proof on the wire sends it again on a connection of
+  // their own: their nonce is a new one, so it does not match.
+  const JoinNonce second = challenge_for(h, 2, "Ganon");
+  CHECK(second != first);
+  h.clear();
+  h.receive(2, JoinProof{recorded}, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 2);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+  CHECK(h.session.player_count() == 1);
+}
+
+TEST_CASE("join password: one HELLO, one nonce; a second HELLO gets no new challenge") {
+  Harness h(with_password("hunter2"));
+  const JoinNonce nonce = challenge_for(h, 1, "Link");
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().repeated_hello == 1);
+  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  CHECK(h.session.player_count() == 1);
+}
+
+TEST_CASE("join password: off, HELLO is welcomed at once and a proof is never relayed") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  for (const Sent& s : h.sent) CHECK_FALSE(std::holds_alternative<JoinChallenge>(s.message));
+  h.clear();
+  h.receive(1, JoinProof{}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().stray_proof == 1);
+}
+
+TEST_CASE("join password: a wrong protocol version is refused before any challenge") {
+  Harness h(with_password("hunter2"));
+  h.connect(1);
+  Hello old = hello_from("Link");
+  old.protocol_version = kProtocolVersion - 1;
+  h.receive(1, old, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::wrong_protocol_version);
+}
+
+TEST_CASE("join password: the checks after it still run (a name taken is refused)") {
+  Harness h(with_password("hunter2"));
+  JoinNonce nonce = challenge_for(h, 1, "Link");
+  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  REQUIRE(h.session.player_count() == 1);
+  nonce = challenge_for(h, 2, "Link");
+  h.clear();
+  h.receive(2, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 2);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::name_taken);
 }

@@ -111,6 +111,10 @@ inline std::vector<Message> every_message() {
   all.push_back(Hello{kProtocolVersion, "lichii 0.1.0", "e0f3ccfaf50065ae", "1.1.1", "Navi"});
   all.push_back(Welcome{3, 987'654'321ull, 60, {{1, "Saria"}, {2, "Mido \xE2\x98\x85"}}});
   all.push_back(Refused{RefuseReason::server_full});
+  JoinNonce nonce{};
+  for (std::size_t i = 0; i < nonce.size(); ++i) nonce[i] = static_cast<std::uint8_t>(255 - i);
+  all.push_back(JoinChallenge{nonce});
+  all.push_back(JoinProof{join_proof("hunter2", nonce)});
   all.push_back(PlayerJoined{4, "Darunia"});
   all.push_back(PlayerLeft{1, LeaveReason::timed_out});
   all.push_back(Ping{0xFFFF'FFFF'FFFF'FFFEull});

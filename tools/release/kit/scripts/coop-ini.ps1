@@ -19,22 +19,29 @@ function Test-CoopName([string]$Value) {
     return ($chars -ge 1 -and $points -le 16)
 }
 
-# Returns @{ server; port; name } from an existing coop.ini (missing keys are empty).
+# A join password: 1 to 128 characters with no spaces or control characters (spaces would
+# meet coop.ini's "  # comment" rule; the emulator and the server allow at most 128 bytes).
+function Test-CoopPassword([string]$Value) {
+    if (-not $Value -or $Value -match '[\s\x00-\x1f\x7f]') { return $false }
+    return ([System.Text.Encoding]::UTF8.GetByteCount($Value) -le 128)
+}
+
+# Returns @{ server; port; name; password } from an existing coop.ini (missing keys are empty).
 function Read-CoopIni([string]$Path) {
-    $values = @{ server = ''; port = ''; name = '' }
+    $values = @{ server = ''; port = ''; name = ''; password = '' }
     if (Test-Path $Path) {
         foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
-            if ($line -match '^\s*(server|port|name)\s*=\s*(.*?)\s*$') { $values[$Matches[1]] = $Matches[2] }
+            if ($line -match '^\s*(server|port|name|password)\s*=\s*(.*?)\s*$') { $values[$Matches[1]] = $Matches[2] }
         }
     }
     return $values
 }
 
-# Writes coop.ini from the template. An empty server or name leaves that line
+# Writes coop.ini from the template. An empty server, name or password leaves that line
 # commented out, so co-op is off without an error in the log.
-function Write-CoopIni([string]$Template, [string]$Path, [string]$Server, [string]$Port, [string]$Name) {
+function Write-CoopIni([string]$Template, [string]$Path, [string]$Server, [string]$Port, [string]$Name, [string]$Password = '') {
     $out = foreach ($line in [System.IO.File]::ReadAllLines($Template)) {
-        foreach ($pair in @(@('@SERVER@', $Server), @('@PORT@', $Port), @('@NAME@', $Name))) {
+        foreach ($pair in @(@('@SERVER@', $Server), @('@PORT@', $Port), @('@NAME@', $Name), @('@PASSWORD@', $Password))) {
             if ($line.Contains($pair[0])) {
                 $line = if ($pair[1]) { $line.Replace($pair[0], $pair[1]) } else { '# ' + $line.Replace($pair[0], '').TrimEnd() }
             }

@@ -20,6 +20,15 @@ bool parse_number(const std::string& text, T& out) {
 
 }  // namespace
 
+const char* password_problem(std::string_view password) {
+  if (password.size() > protocol::kMaxJoinPasswordBytes) return "longer than 128 bytes";
+  for (const char ch : password) {
+    const auto b = static_cast<unsigned char>(ch);
+    if (b < 0x20 || b == 0x7f) return "has a control character";
+  }
+  return nullptr;
+}
+
 std::optional<CommandLine> parse_command_line(const std::vector<std::string>& args,
                                               std::string& error) {
   CommandLine line;
@@ -75,6 +84,21 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         }
         line.allowed.push_back(*r);
         start = comma + 1;
+      }
+    } else if (arg == "--password" || arg == "--password-env") {
+      if (!has_value || args[i + 1].empty()) {
+        error = arg + " needs a value";
+        return std::nullopt;
+      }
+      const std::string& value = args[++i];
+      if (arg == "--password") {
+        if (const char* why = password_problem(value)) {
+          error = std::string("--password: ") + why;
+          return std::nullopt;
+        }
+        line.password = value;
+      } else {
+        line.password_env = value;
       }
     } else {
       error = "unknown argument: " + arg;

@@ -140,6 +140,8 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::server_full: return "server full";
     case proto::RefuseReason::name_taken: return "name taken";
     case proto::RefuseReason::bad_name: return "bad name";
+    case proto::RefuseReason::bad_password:
+      return "wrong join password: ask the host for it, then start Join.bat again and type it";
   }
   return "unknown reason";
 }
@@ -275,6 +277,7 @@ void Client::service(std::uint32_t wait_ms) {
           last_receive_us_ = now_us();  // the server answered the connect
           if (send_raw(hello, proto::channel_of(hello))) {
             hello_sent_us_ = now_us();
+            challenge_answered_ = false;
             state_ = State::handshaking;
           } else {
             end_attempt(DropReason::connection_lost);
@@ -376,6 +379,15 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
   if (state_ == State::handshaking) {
     if (const auto* welcome = std::get_if<proto::Welcome>(&message)) {
       on_welcome(*welcome);
+    } else if (const auto* challenge = std::get_if<proto::JoinChallenge>(&message)) {
+      // One answer per connection: the proof is for this nonce only.
+      if (challenge_answered_) {
+        ++rejected_;
+        return;
+      }
+      challenge_answered_ = true;
+      send_raw(proto::JoinProof{proto::join_proof(config_.join_password, challenge->nonce)},
+               proto::kChannelSession);
     } else if (const auto* refused = std::get_if<proto::Refused>(&message)) {
       if (peer_ != nullptr) {
         enet_peer_disconnect_now(peer_, 0);
@@ -437,7 +449,8 @@ void Client::on_connected_message(proto::Message message, std::uint8_t channel) 
   }
 
   if (std::holds_alternative<proto::Welcome>(message) ||
-      std::holds_alternative<proto::Refused>(message)) {
+      std::holds_alternative<proto::Refused>(message) ||
+      std::holds_alternative<proto::JoinChallenge>(message)) {
     ++rejected_;  // the handshake is over
     return;
   }

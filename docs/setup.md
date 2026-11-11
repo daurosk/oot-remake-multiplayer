@@ -84,7 +84,7 @@ Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 
 ## Settings
 
-`coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again.
+`coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again. The **join password** is optional: the host sets it once when `Host.bat` asks (saved as `server_password` in `coop-options.ini`, Enter for none), and every other player types it when `Join.bat` asks (Enter keeps the last one, `-` for none; kept in `coop.ini` as `password`). A wrong one shows `wrong join password` in the `Join.bat` window and in the game's co-op panel ([play-online.md](play-online.md), "Who can join").
 
 ## Chat commands
 

@@ -256,6 +256,16 @@ Error encode_body(const Refused& m, Writer& w) {
   return Error::none;
 }
 
+Error encode_body(const JoinChallenge& m, Writer& w) {
+  w.bytes(m.nonce.data(), m.nonce.size());
+  return Error::none;
+}
+
+Error encode_body(const JoinProof& m, Writer& w) {
+  w.bytes(m.proof.data(), m.proof.size());
+  return Error::none;
+}
+
 Error encode_body(const PlayerJoined& m, Writer& w) {
   if (!valid_player(m.player_number)) return Error::bad_value;
   COOP_TRY(check_string(m.nickname, kMaxNicknameChars));
@@ -791,6 +801,18 @@ Error decode_body(Reader& r, Refused& m) {
   m.reason = static_cast<RefuseReason>(v);
   return Error::none;
 }
+
+template <std::size_t N>
+Error read_array(Reader& r, std::array<std::uint8_t, N>& out) {
+  std::span<const std::uint8_t> part;
+  if (!r.take(N, part)) return Error::truncated;
+  std::copy(part.begin(), part.end(), out.begin());
+  return Error::none;
+}
+
+Error decode_body(Reader& r, JoinChallenge& m) { return read_array(r, m.nonce); }
+
+Error decode_body(Reader& r, JoinProof& m) { return read_array(r, m.proof); }
 
 Error decode_body(Reader& r, PlayerJoined& m) {
   COOP_READ(r.u8(m.player_number));
@@ -1689,7 +1711,7 @@ MessageType type_of(const Message& message) {
       MessageType::world_move, MessageType::world_place, MessageType::world_hit,
       MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
       MessageType::boss_room, MessageType::sign_cut, MessageType::flag_reset,
-      MessageType::flag_origin,
+      MessageType::flag_origin, MessageType::join_challenge, MessageType::join_proof,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1733,6 +1755,8 @@ std::uint8_t channel_of(MessageType type) {
 bool allowed_on_channel(MessageType type, std::uint8_t channel) {
   switch (type) {
     case MessageType::hello:
+    case MessageType::join_challenge:
+    case MessageType::join_proof:
     case MessageType::welcome:
     case MessageType::refused:
     case MessageType::player_joined:
@@ -1785,10 +1809,12 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
 bool may_send(Sender from, MessageType type) {
   switch (type) {
     case MessageType::hello:
+    case MessageType::join_proof:
     case MessageType::object_group:
       return from == Sender::client;
     case MessageType::welcome:
     case MessageType::refused:
+    case MessageType::join_challenge:
     case MessageType::player_joined:
     case MessageType::player_left:
     case MessageType::host:
@@ -1924,6 +1950,8 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::hello: return decode_as<Hello>(body, out);
     case MessageType::welcome: return decode_as<Welcome>(body, out);
     case MessageType::refused: return decode_as<Refused>(body, out);
+    case MessageType::join_challenge: return decode_as<JoinChallenge>(body, out);
+    case MessageType::join_proof: return decode_as<JoinProof>(body, out);
     case MessageType::player_joined: return decode_as<PlayerJoined>(body, out);
     case MessageType::player_left: return decode_as<PlayerLeft>(body, out);
     case MessageType::ping: return decode_as<Ping>(body, out);

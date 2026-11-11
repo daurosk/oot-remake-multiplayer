@@ -616,22 +616,57 @@ TEST_CASE("objects: a chest beside our Link shows open or goes, it is never left
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chests
-    // Closed after the wait: removed, so it cannot be opened (and give) twice.
+    // Closed beside our Link: removed at once, before our Link can open it
+    // and get its content a second time.
     sync.Take(0x3c5bb811b4cf54dd);
     Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
     Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes().empty());
-    Tick(sync, 1600 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
-    // Both players opening at once: ours plays its opening, it stays.
+    sync.TakeNotes();
+    // Ours was opening already when the other's flag came (both at once): it
+    // stays, and the log says its content may count twice.
     Seen opening = Chest(0x600, 0x2222);
     opening.animation = proto::Animation{};
     opening.animation->name = "Open";
     sync.Take(0x2222);
-    Tick(sync, 1610 * kMs, {Enemy(0x100, 0x11, 2)});
-    Tick(sync, 1620 * kMs, {opening, Enemy(0x100, 0x11, 2)});
-    Tick(sync, 3500 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 40 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 2000 * kMs, {opening, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) said |= n.find("at once") != std::string::npos;
+    CHECK(said);
+}
+
+TEST_CASE("objects: a chest waiting to show itself open goes when our Link comes beside it (issue 87)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});  // far
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());  // waiting
+    // A second take of the same key (its opened flag a frame later) does
+    // not start the wait again.
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 30 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    // Our Link walks up to it, still closed: it goes at once.
+    sync.SetPlayer(proto::Vec3{2.0f, 0.0f, 1.0f});
+    Tick(sync, 500 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+}
+
+TEST_CASE("objects: a second take of a key does not start the chest's wait again") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    sync.Take(0x3c5bb811b4cf54dd);  // the same chest's other flag, later
+    Tick(sync, 1000 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    Tick(sync, 1520 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});  // 1.5 s from the first
 }
 
 TEST_CASE("objects: a take for a chest not loaded removes nothing that loads later") {

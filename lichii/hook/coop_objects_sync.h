@@ -527,13 +527,15 @@ private:
     // join snapshot) is for actors the game makes knowing the key.
     static constexpr std::uint64_t kTakeGapUs = 1'500'000;
     // An actor this close to our Link is not removed (a pickup we may be
-    // taking ourselves). Not for chests (issue 87): a chest beside us shows
-    // itself open (our own opening at the same time, or the shared flag) or
-    // goes after kChestOpenWaitUs, so it is never opened twice.
+    // taking ourselves). Not for chests (issue 87): a chest still closed
+    // this close to our Link goes at once, so our Link cannot open it a
+    // second time; one ours was already opening when the flag came (both at
+    // once) stays, logged, as its content may count twice.
     static constexpr float kTakeNearM = 3.0f;
-    // A chest (Obj_TBox_*) taken here is given this long to show itself open
-    // (its own AI reads the shared opened flag, issue 87: an animation with
-    // "Open" in it); only a chest still closed after that is removed.
+    // A chest (Obj_TBox_*) taken here, away from our Link, is given this long
+    // to show itself open (its own AI reads the shared opened flag, issue 87:
+    // an animation with "Open" in it, seen while our Link is not beside it);
+    // one still closed after that is removed. Counted from the first take.
     static constexpr std::uint64_t kChestOpenWaitUs = 1'500'000;
     struct Taking {
         unsigned ticks = 0;

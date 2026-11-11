@@ -175,7 +175,7 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 
 | # | Case | Status | Why / what to do |
 |---|---|---|---|
-| S1 | Story scenes (Deku Tree, Zelda, Darunia, King Zora, Gerudo carpenters, sages) | **Shared (issue 173)** | The overworld's story scenes are shared from the host's save (`lichii/hook/coop_story.cpp`, [flags.md](flags.md#story-and-cutscenes-issue-173)): one player seeing a scene counts for everyone. Still each game's own: the opening of a new game, time travel, scenes inside dungeons, bosses (D9), talks. |
+| S1 | Story scenes (Deku Tree, Zelda, Darunia, King Zora, Gerudo carpenters, sages) | **Shared (issue 173)** | The overworld's story scenes are shared from the host's save (`lichii/hook/coop_story.cpp`, [flags.md](flags.md#story-and-cutscenes-issue-173)): one player seeing a scene counts for everyone. Still each game's own: the opening of a new game, time travel, the Chamber of Sages (the first sword pull, the sages' awakenings), scenes inside dungeons, bosses (D9), talks. |
 | S2 | One player adult, one child | **OK** | Shared flags belong to scenes; a child cannot be in an adult-only room. Small keys and dungeon flags are the same for both ages, as in one save. The Master Sword and time travel are per game. |
 | S3 | Ganon's Castle escape and the last fights | **Check** | The escape flags (`EscapeFromCrumblingGanonCastle_*`) are per game; Ganondorf is one boss for all ([dungeons-boss.md](dungeons-boss.md)). Check what a second player inside the castle sees when the first beats Ganondorf. |
 | S4 | Saves loaded at different points | **P2** | The joiner gets the host's table (`FLAG_SNAPSHOT`); its own 1s that the host has at 0 stay in its game and do not cross until they change. See I6. |

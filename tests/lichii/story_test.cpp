@@ -88,8 +88,17 @@ TEST_CASE("story: what must stay each game's own is left out") {
         for (const char* out : {"Dm_TimeTemple", "Dm_SY_", "DmF_", "Dm_Title", "Dm_StaffCredit", "Dm_Ending",
                                 "Dm_FinalBattle", "Dm_InsideGanonCastle", "Dm_ForestTemple", "Dm_FireTemple",
                                 "Dm_WaterTemple", "Dm_ShadowTemple", "Dm_SpiritTemple", "Dm_DodongoCave",
-                                "Dm_InsideJabu", "Demo_", "Boss", "Navi", "Hint", "MiniGame", "Sequence_IsChildhood"}) {
+                                "Dm_InsideJabu", "Demo_", "Boss", "Navi", "Hint", "MiniGame", "Sequence_IsChildhood",
+                                "SageRoom", "Dm_Awake_"}) {
             CHECK_MESSAGE(name.find(out) == std::string::npos, name);
+        }
+        // The Chamber of Sages is left out (the first sword pull, the awakenings after a
+        // temple's blue warp); "SageOf" names are only the overworld's own gates.
+        if (name.find("SageOf") != std::string::npos) {
+            static const std::set<std::string> kOverworld = {
+                "HavePlayedEvent.SageOfFire_CityIn", "HavePlayedEvent.SageOfFire_CityIn_CrackWall",
+                "HavePlayedEvent.SageOfWater_KingZora_IsMelted_Ice", "SageOfWater_Icedelete"};
+            CHECK_MESSAGE(kOverworld.contains(name), name);
         }
         if (name.rfind("HaveTalked", 0) == 0) {  // a talk is one player's, the owl's is story
             CHECK_MESSAGE(name.rfind("HaveTalked_Special.Npc_Kaepora_", 0) == 0, name);
@@ -100,6 +109,12 @@ TEST_CASE("story: what must stay each game's own is left out") {
                                 "HavePlayedEvent.Dm_Kokiri_0030", "HavePlayedEvent.Dm_Kokiri_0045",
                                 "HavePlayedEvent.Dm_Kokiri_0050"}) {
         CHECK_MESSAGE(CoopStory::Find(host::flag_hash(opening)) == nullptr, opening);
+    }
+    // The Chamber of Sages: each game plays its own (time travel, the blue warps' scenes).
+    for (const char* sage : {"HavePlayedEvent.SageRoom_MeetRauru", "HavePlayedEvent.Dm_SageRoom_0000",
+                             "HavePlayedEvent.Dm_Awake_Forest", "HavePlayedEvent.Dm_Awake_Forest_Get",
+                             "HavePlayedEvent.SageOfWater_SageRoom"}) {
+        CHECK_MESSAGE(CoopStory::Find(host::flag_hash(sage)) == nullptr, sage);
     }
     // A boss beaten stays each game's own (docs/sync-coverage.md, D9).
     CHECK(CoopStory::Find(host::flag_hash("Gohma_DefeatBoss")) == nullptr);

@@ -169,8 +169,8 @@ TEST_CASE("a fifth player is refused as server full and dropped") {
 TEST_CASE("a wrong protocol version is refused, even when the rest cannot be read") {
   Harness h;
   h.connect(1);
-  // A HELLO of version 8 (not ours) whose body is just the version: unreadable as v0.
-  Bytes b = {1, 0, 2, 0, 8, 0};
+  // A HELLO of version 99 (not ours) whose body is just the version: unreadable as v0.
+  Bytes b = {1, 0, 2, 0, 99, 0};
   h.receive_raw(1, b, kChannelSession);
   const auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused.has_value());
@@ -810,19 +810,26 @@ TEST_CASE("flag set goes to the host only, the host's own back to itself") {
   h.clear();
 
   h.receive(2, FlagSet{0, {flag(5, 1)}}, kChannelProgress);
-  REQUIRE(h.sent.size() == 1);
+  // The set to the host; who asked (FLAG_ORIGIN) to the others but the host.
+  REQUIRE(h.sent.size() == 2);
   CHECK(h.sent[0].to == 1);
   CHECK(h.sent[0].channel == kChannelProgress);
   CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{2, {flag(5, 1)}});
+  CHECK(h.sent[1].to == 3);
+  CHECK(h.sent[1].channel == kChannelProgress);
+  CHECK(std::get<FlagOrigin>(h.sent[1].message) == FlagOrigin{2, {flag(5, 1)}});
   // A FLAG_SET changes nothing on the server: only the host's answer does.
   CHECK(h.session.flag_count() == 0);
 
   h.clear();
   h.receive(1, FlagSet{0, {flag(6, 2)}}, kChannelProgress);
-  REQUIRE(h.sent.size() == 1);
+  REQUIRE(h.sent.size() == 3);
   CHECK(h.sent[0].to == 1);
   CHECK(std::get<FlagSet>(h.sent[0].message) == FlagSet{1, {flag(6, 2)}});
+  CHECK(std::get<FlagOrigin>(h.sent[1].message) == FlagOrigin{1, {flag(6, 2)}});
+  CHECK(std::get<FlagOrigin>(h.sent[2].message) == FlagOrigin{1, {flag(6, 2)}});
   CHECK(h.session.stats().flag_relayed == 2);
+  CHECK(h.session.stats().origins_sent == 3);
 }
 
 TEST_CASE("flag state is taken from the host only, kept, and relayed to everyone else") {
@@ -2101,7 +2108,9 @@ TEST_CASE("another player's fight flags do not start a fight") {
 }
 
 TEST_CASE("a boss stays in its fight for 60 s") {
-  OwnerHarness h;
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;  // the near-player rule below is its own case
+  OwnerHarness h(config);
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
   CHECK(h.session.object_group(placed(7)) == 0u);  // alone: no group
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
@@ -2198,6 +2207,119 @@ TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies ke
   h0.clear();
   h0.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
   CHECK(h0.asks() == 0);
+}
+
+TEST_CASE("issue 150: a boss in its fight goes to the player clearly nearer it, held 4 s") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  REQUIRE(h.session.object_in_fight(placed(7), h.now));
+  h.stand(1, 12);  // the owner by the wall
+  h.stand(2, 3);   // player 2 at the boss
+  h.clear();
+  // That life drop was the owner's own hit: 6 s of hold first.
+  h.run(6 * kSecond);
+  CHECK(h.asks() == 0);
+  h.run(3 * kSecond + 500'000);
+  CHECK(h.asks() == 0);
+  h.run(kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_near == 1);
+}
+
+TEST_CASE("issue 150: after a near-player move the boss stays 8 s, then needs the 4 m margin again") {
+  // Handed to player 2 by the near rule.
+  auto handed = [](OwnerHarness& h) {
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    h.run(10 * kSecond + 500'000);
+    REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 11)}, kChannelOwnership);
+    REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+    h.clear();
+  };
+  {  // the players swap places: not back before 8 s + 4 s held
+    OwnerHarness h;
+    handed(h);
+    h.stand(1, 1);
+    h.stand(2, 12);
+    h.run(7 * kSecond + 500'000);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    h.run(4 * kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    h.run(kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
+  }
+  {  // player 1 comes back, but only 3 m nearer than the new owner: it stays
+    OwnerHarness h;
+    handed(h);
+    h.stand(1, 1);
+    h.stand(2, 4);
+    h.run(20 * kSecond);
+    CHECK(messages_to<HandoverAsk>(h, 2).empty());
+    CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  }
+}
+
+TEST_CASE("issue 150: no near-player move when both stand close, one is too far, or the owner hits it") {
+  {  // 2 is nearer, but not by 4 m
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 6);
+    h.stand(2, 3);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+  {  // 2 is over 15 m from it
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 40);
+    h.stand(2, 20);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+  {  // the owner keeps hitting it (its life falls in its samples)
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    std::int32_t life = 40;
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
+    for (int i = 0; i < 5; ++i) {
+      h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, --life)}, kChannelObjectSamples);
+      h.run(2 * kSecond);
+    }
+    CHECK(h.asks() == 0);
+  }
+  {  // the switch
+    SessionConfig off = quiet_config();
+    off.boss_near_hold_us = 0;
+    OwnerHarness h(off);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+    h.stand(1, 12);
+    h.stand(2, 3);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("issue 150: a DAMAGE of 0 (a stun in the hitter's game) asks for the boss, harmless to the owner") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  CHECK(messages_to<HandoverState>(h, 2) ==
+        std::vector<HandoverState>{{1, placed(7), 1, state_at(0, 12)}});
 }
 
 TEST_CASE("a hit by the player near it, its owner well away, takes it at once, the hit is kept") {

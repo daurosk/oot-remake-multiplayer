@@ -88,6 +88,9 @@ bool FlagWatcher::receive(const protocol::Message& message) {
       queue_.emplace_back(*reset);
       return true;
     }
+  } else if (const auto* origin = std::get_if<protocol::FlagOrigin>(&message)) {
+    queue_.emplace_back(*origin);  // both roles: who asked for the next answer
+    return true;
   }
   ++stats_.ignored_messages;
   return false;
@@ -192,11 +195,14 @@ void FlagWatcher::reset() {
   holding_ = false;
   snapshot_.clear();
   held_states_.clear();
+  origin_.clear();
+  received_.clear();
   resend_pending_ = role_ == FlagRole::player && !pending_.empty();
 }
 
 std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   std::vector<Outgoing> out;
+  ++frames_;
 
   // Writes that failed before go first, so newer incoming values win. One
   // whose flag the game has changed by itself since is dropped instead: the
@@ -266,12 +272,24 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
 }
 
 void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
+  if (auto* origin = std::get_if<protocol::FlagOrigin>(&message)) {
+    // An asker whose answer never came (a send failed) is not kept past its
+    // frames, so it never names a later change to the same flag.
+    std::erase_if(origin_, [&](const auto& o) { return frames_ - o.second.second > kOriginFrames; });
+    if (origin_.size() > 4 * kMaxReceived) origin_.clear();
+    for (const auto& entry : origin->flags) origin_[key_of(entry)] = {origin->player_number, frames_};
+    return;
+  }
   if (auto* set = std::get_if<protocol::FlagSet>(&message)) {
     if (role_ != FlagRole::host) {
       ++stats_.ignored_messages;
       return;
     }
+    from_ = set->player_number;
+    received_kind_ = ReceivedKind::live;
+    recording_ = true;
     answer_set(store, *set, answers);
+    recording_ = false;
     return;
   }
   if (auto* reset = std::get_if<protocol::FlagReset>(&message)) {
@@ -279,7 +297,11 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       ++stats_.ignored_messages;
       return;
     }
+    from_ = reset->player_number;
+    received_kind_ = ReceivedKind::reset;
+    recording_ = true;
     apply_reset(store, reset->flags);
+    recording_ = false;
     reset_seen_ = true;
     return;
   }
@@ -287,7 +309,11 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
     if (holding_) {
       held_states_.push_back(std::move(*state));
     } else {
+      from_ = state->player_number;
+      received_kind_ = ReceivedKind::live;
+      recording_ = true;
       apply_state(store, state->flags);
+      recording_ = false;
     }
     return;
   }
@@ -321,7 +347,13 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
   }
   for (const auto& entry : part.flags) snapshot_[key_of(entry)] = entry;
   ++snapshot_next_part_;
-  if (snapshot_next_part_ == snapshot_part_count_) apply_snapshot(store);
+  if (snapshot_next_part_ == snapshot_part_count_) {
+    from_ = 0;
+    received_kind_ = ReceivedKind::join;
+    recording_ = true;
+    apply_snapshot(store);
+    recording_ = false;
+  }
 }
 
 void FlagWatcher::apply_state(FlagStore& store, const std::vector<FlagEntry>& flags) {
@@ -332,7 +364,10 @@ void FlagWatcher::apply_state(FlagStore& store, const std::vector<FlagEntry>& fl
       // A player's count change, handed over by the host's client: the host
       // adds it, and diff() sends the total. A player takes totals only.
       if (role_ == FlagRole::host) {
+        const std::uint8_t sender = from_;
+        take_origin(key);
         add(store, entry);
+        from_ = sender;
       } else {
         ++stats_.ignored_messages;
       }
@@ -340,8 +375,19 @@ void FlagWatcher::apply_state(FlagStore& store, const std::vector<FlagEntry>& fl
     }
     // This is the host's answer: it wins over the local change.
     pending_.erase(key);
+    // Who made it: the asker FLAG_ORIGIN named, else the sender.
+    const std::uint8_t sender = from_;
+    take_origin(key);
     write(store, entry);
+    from_ = sender;
   }
+}
+
+void FlagWatcher::take_origin(const FlagKey& key) {
+  const auto o = origin_.find(key);
+  if (o == origin_.end()) return;
+  if (frames_ - o->second.second <= kOriginFrames) from_ = o->second.first;
+  origin_.erase(o);
 }
 
 void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& flags) {
@@ -350,6 +396,9 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     if (!shared_.contains(key) || is_delta(entry)) continue;  // no one-way rule here
     pending_.erase(key);  // the host's save wins over a change of ours
     note_for_others(store, entry);
+    const auto seen = last_.find(key);
+    const std::optional<FlagEntry> before =
+        seen != last_.end() ? std::optional<FlagEntry>(seen->second) : std::nullopt;
     if (!store.write_exact(entry)) {
       ++stats_.write_failures;
       unwritten_[key] = entry;
@@ -363,6 +412,7 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     unwritten_.erase(key);
     if (!store.is_count(key)) note_group(entry, nullptr);
     last_[key] = entry;
+    if (before) note_received(key, *before, entry);
   }
 }
 
@@ -449,7 +499,11 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       const auto known = last_.find(key);
       note_group(*now, known != last_.end() ? &known->second : nullptr);
     }
-    if (!held) last_[key] = *now;  // held: the game still has its own value
+    if (!held) {
+      const auto seen = last_.find(key);
+      if (seen != last_.end() && !is_delta(*now)) note_received(key, seen->second, *now);
+      last_[key] = *now;  // held: the game still has its own value
+    }
     answers[key] = *now;
     ++stats_.answers_sent;
   }
@@ -457,6 +511,9 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
 
 bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   const FlagKey key = key_of(entry);
+  const auto seen = last_.find(key);
+  const std::optional<FlagEntry> before =
+      seen != last_.end() ? std::optional<FlagEntry>(seen->second) : std::nullopt;
   FlagEntry to_write = entry;
   if (entry.kind == protocol::FlagKind::int32 && store.is_count(key)) {
     // A count total from the host. A change the game made since last frame
@@ -486,7 +543,14 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
     note_group(entry, known != last_.end() ? &known->second : nullptr);
   }
   last_[key] = entry;  // so the next diff does not send it back
+  if (before) note_received(key, *before, entry);
   return true;
+}
+
+void FlagWatcher::note_received(const FlagKey& key, const FlagEntry& before, const FlagEntry& after) {
+  if (!recording_ || received_.size() >= kMaxReceived) return;
+  if (before.kind == after.kind && before.value == after.value) return;
+  received_.push_back(Received{key, before, after, from_, received_kind_});
 }
 
 void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
@@ -495,6 +559,8 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
     ++stats_.not_shared;
     return;
   }
+  // The count before, for the chat notices ("the group has N").
+  std::optional<FlagEntry> was = store.read(key);
   if (!store.write(delta)) {
     ++stats_.write_failures;
     // Tried again next frame, with any other change to the same count.
@@ -504,6 +570,12 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   }
   ++stats_.applied;
   ++stats_.deltas_added;
+  if (was && was->kind == protocol::FlagKind::int32) {
+    was->key = key;
+    FlagEntry now = *was;
+    now.value = as_bits(as_int(was->value) + as_int(delta.value));
+    note_received(key, *was, now);
+  }
   // last_ is left as it was, so diff() sees the new total and sends it; and
   // sends it even when it did not change (the host spent what the player
   // got), as the player waits for it.

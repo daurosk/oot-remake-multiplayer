@@ -1,0 +1,30 @@
+# gohma: B (P2) loads into the same room and stays near Gohma; after about 30 s it shoots the
+# slingshot at the boss three times (ZL lock-on, ZR held to aim, let go to shoot).
+mark start
+warp InsideTheDekuTree StartPos_Get_StoneOfForest
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 1800
+mark b-near
+hold ZL+ZR 90 aim1
+wait 20
+press ZL 6
+wait 240
+hold ZL+ZR 90 aim2
+wait 20
+press ZL 6
+wait 240
+hold ZL+ZR 90 aim3
+wait 600
+mark b-after
+wait 2400
+mark end

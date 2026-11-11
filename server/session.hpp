@@ -105,6 +105,16 @@ struct SessionConfig {
   // two players hitting in turn do not bounce it (each hand-over can jump a
   // phase: the state carries only place, turn, animation and life).
   std::uint64_t boss_owner_hit_hold_us = 6'000'000;
+  // Issue 150: the boss's AI fights only its owner's Link. A fit player
+  // within boss_near_m of a boss (its root) and boss_near_margin_m nearer it
+  // than its owner, for boss_near_hold_us in a row, takes it while it is in
+  // its fight (out of one the plain distance rule applies): then the boss
+  // turns on the near one. Not while its owner hits it
+  // (boss_owner_hit_hold_us) and not within boss_hitter_cooldown_us of the
+  // last change. boss_near_hold_us 0: off.
+  float boss_near_m = 15.0f;
+  float boss_near_margin_m = 4.0f;
+  std::uint64_t boss_near_hold_us = 4'000'000;
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
@@ -172,7 +182,8 @@ struct Stats {
   std::uint64_t join_dropped = 0;
   // FLAG_SET and FLAG_STATE relayed (stage 1 step 4); in relayed too.
   std::uint64_t flag_relayed = 0;
-  std::uint64_t host_resets = 0;  // FLAG_RESETs from the host (its save load)
+  std::uint64_t host_resets = 0;   // FLAG_RESETs from the host (its save load)
+  std::uint64_t origins_sent = 0;  // FLAG_ORIGIN: who asked, to the others (chat notices)
   std::uint64_t flag_refused = 0;     // FLAG_STATE or FLAG_SNAPSHOT not from the host
   std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
   std::uint64_t flag_clashes = 0;     // host snapshot entries that differed (server kept)
@@ -185,6 +196,7 @@ struct Stats {
   std::uint64_t owner_changes = 0;      // owner set or moved (not first owner)
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
+  std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
   // Field grass (docs/world.md). Relayed ones count in relayed too.
   std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene

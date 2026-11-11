@@ -86,6 +86,20 @@ Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 
 `coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again.
 
+## Chat commands
+
+Press Enter in the game to open the chat box. A line that starts with `/teleport` (or `/tp`) is a command, not chat:
+
+- `/teleport` alone lists the other players.
+- `/teleport <player>` takes you to that player. The whole name works in any case, and so does the start of a name if only one player's name starts that way, or the player's number (`/teleport 2`).
+  - The other player's game answers with where they last stood on their feet, so you never land in a wall or in mid-air.
+  - In the same scene you are moved there at once.
+  - In another scene the game changes scene first. It does that only during an event, so if nothing happens, talk to someone or read a sign. After the load you are moved next to them. A scene change not taken in 60 seconds is given up.
+  - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link. A dungeon gives a warning: you may need its items to get on from there.
+  - A player with a build from before test8 does not answer: "no answer from" after 5 seconds.
+
+`LICHII_COOP_TELEPORT=0` turns it off in your game: the command says so, and the others' requests to come to you are refused.
+
 ## Updating
 
 Every player needs the same version: a game of one version cannot join a server of another.
@@ -101,6 +115,10 @@ The emulator is updated only this way, with the co-op build from our release. Fr
 What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, your name and server, the puppet pack), `logs\`, any file of yours that is not part of the kit, and `coop-options.ini`: your switches stay as they are, and a switch the new version adds is written at the end behind a `#` (off). When the new release brings a different emulator, the old shader cache (`emulator\user\cache\shader\`) is moved to the backup too, because a cache made by another emulator build can crash it; the first minutes of play may stutter while a new one is built. With the same emulator it is kept. Every file it replaces goes first to `backup-<old version>\` in the kit folder; if something fails half way, those are put back. If the update is stopped (window closed, power cut), run `Update.bat` again: it finishes it (Host.bat and Join.bat remind you). Delete the backup folder once the new version works.
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
+
+## Chat notices
+
+When another player's progress reaches your game, a line in the chat says so (only in your game, nothing is sent): "Tobi got the Fairy Slingshot - you got one too!", "Tobi found a Small Key (Deku Tree) - the group has 2", "Tobi got a Heart Container - your max health went up", "Tobi got the map (Deku Tree)", "Tobi learned Zelda's Lullaby", "Tobi got a Gold Skulltula token (12)", "Tobi opened a chest". Joining a session says one line ("Synced with the group: 14 items, 3 songs"), and so does the host loading a save. At most 4 lines in 3 seconds; the rest is one "...and N more" line. To turn them off, set `LICHII_COOP_NOTIFY=0`.
 
 ## Saves
 

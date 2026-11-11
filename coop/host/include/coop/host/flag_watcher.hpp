@@ -161,6 +161,24 @@ class FlagWatcher {
   // rule) is not sent: the group's value is written back. A Bool going to 1,
   // or an Int to any other value, is the game's own change and is sent.
   void set_loading(bool loading);
+
+  // A shared value another game's change wrote into ours (the chat notices,
+  // coop/host/notify.hpp): the flag, its value before and after, who made
+  // the change (the asker named by FLAG_ORIGIN, else the host that sent it;
+  // 0 when not known) and how it came.
+  enum class ReceivedKind { live, join, reset };
+  struct Received {
+    FlagKey key;
+    protocol::FlagEntry before;
+    protocol::FlagEntry after;
+    std::uint8_t from = 0;
+    ReceivedKind kind = ReceivedKind::live;
+  };
+  // What was received since the last call (at most kMaxReceived kept).
+  std::vector<Received> take_received() { return std::exchange(received_, {}); }
+  static constexpr std::size_t kMaxReceived = 4096;
+  // A FLAG_ORIGIN names its asker for this many frames.
+  static constexpr std::uint64_t kOriginFrames = 600;
   // Whether a scene (Banc) is loaded this frame. None for kTitleFrames in a
   // load window means the title screen or file select: the only way to a
   // save load (docs/flags.md, "Saves"). Default: loaded.
@@ -203,8 +221,8 @@ class FlagWatcher {
   const SharedFlags& shared() const { return shared_; }
 
  private:
-  using Incoming =
-      std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot, protocol::FlagReset>;
+  using Incoming = std::variant<protocol::FlagSet, protocol::FlagState, protocol::FlagSnapshot,
+                                protocol::FlagReset, protocol::FlagOrigin>;
   using Table = std::map<FlagKey, protocol::FlagEntry>;
 
   void handle(FlagStore& store, Incoming& message, Table& answers);
@@ -244,6 +262,16 @@ class FlagWatcher {
   std::size_t learned_ = 0;
   bool learn_ = false;
   std::vector<Incoming> queue_;
+  // The chat notices (take_received).
+  void note_received(const FlagKey& key, const protocol::FlagEntry& before, const protocol::FlagEntry& after);
+  std::uint8_t from_ = 0;  // who sent the message being applied
+  ReceivedKind received_kind_ = ReceivedKind::live;
+  bool recording_ = false;  // applying another game's message
+  std::vector<Received> received_;
+  std::map<FlagKey, std::pair<std::uint8_t, std::uint64_t>> origin_;  // asker, frame
+  // from_ becomes the asker FLAG_ORIGIN named for key (if fresh); used once.
+  void take_origin(const FlagKey& key);
+  std::uint64_t frames_ = 0;
   Table last_;        // each shared flag as the game last had it
   Table pending_;     // player: own changes waiting for the host's answer
   Table unwritten_;   // incoming values whose write failed; tried again

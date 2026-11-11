@@ -82,6 +82,7 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
+#include "coop_ocarina.h"
 #include "coop_spawn.h"
 #include "coop_pickups.h"
 #include "coop_projectiles.h"
@@ -117,6 +118,12 @@ constexpr u32 kStateAlive = 4;
 // plain write of +0x31c is undone by the game within a frame.
 constexpr u64 kActorVtable = 0x4b25e18;
 constexpr u64 kSetMatrix = 0x4c6580;
+// Issue 150 (opt-in, LICHII_COOP_OBJECTS_RELEASE): the actor flags word the
+// setter above marks (bit 23, docs/world.md). An enemy that becomes ours gets
+// the bit cleared once, in case the game leaves it set after the Mover's
+// last move and the body stays frozen or floats. Not proven.
+constexpr u64 kActorFlags = 0x4a8;
+constexpr u32 kWarpBit = u32{1} << 23;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 // Rolled enemies' copies in the spawn director: their keys have the top bit.
 constexpr u64 kEnemyKey = u64{1} << 63;
@@ -374,6 +381,26 @@ public:
         holding_ = true;
     }
 
+    // Present thread: copies that just became ours, to clear the setter's
+    // bit of at the next game frame (issue 150, opt-in).
+    void Release(const std::vector<u64>& actors) {
+        std::lock_guard lock(mutex_);
+        for (const u64 a : actors) {
+            if (releases_.size() < 32) {
+                releases_.push_back(a);
+            }
+            // A pose wished before it became ours would set the bit again
+            // in the same frame: it is no copy any more.
+            std::erase_if(poses_, [a](const Pose& p) { return p.actor == a; });
+        }
+    }
+
+    // Releases made since the last ask: bit found set and cleared, and not.
+    std::pair<std::size_t, std::size_t> TakeReleases() {
+        std::lock_guard lock(mutex_);
+        return {std::exchange(released_, 0), std::exchange(release_clear_, 0)};
+    }
+
     void Want(u64 main, std::vector<Pose> poses, std::vector<u64> removes,
               std::vector<PlayWish> plays) {
         std::lock_guard lock(mutex_);
@@ -412,6 +439,19 @@ public:
             }
         }
         if (!after_call) {
+            for (const u64 actor : std::exchange(releases_, {})) {
+                u32 flags = 0;
+                if (!Alive(guest, actor) || !guest.Read(actor + kActorFlags, &flags, 4)) {
+                    continue;
+                }
+                if ((flags & kWarpBit) != 0) {
+                    flags &= ~kWarpBit;
+                    guest.Write(actor + kActorFlags, &flags, 4);
+                    ++released_;
+                } else {
+                    ++release_clear_;
+                }
+            }
             if (block_ == 0 && main_ != 0 && !allocating_ && !plays_.empty() && !alloc_tried_) {
                 allocating_ = true;
                 alloc_tried_ = true;
@@ -749,6 +789,9 @@ private:
     std::vector<u64> holds_;
     CoopHold::Masks masks_;
     bool holding_ = false;
+    std::vector<u64> releases_;
+    std::size_t released_ = 0;       // bit 23 was set: cleared
+    std::size_t release_clear_ = 0;  // bit 23 was already clear
     std::unordered_set<u64> held_before_;  // BSA components in last frame's table
     std::size_t hold_set_ = 0;
     std::size_t hold_kept_ = 0;
@@ -1051,6 +1094,13 @@ public:
                 LOG_INFO(Core, "coop: {}", line);
             }
         }
+        // Issue 152 (docs/puppet.md "Ocarina"): where our note is kept. Reads only.
+        if (ocarina_probe_on_) {
+            for (const auto& line : ocarina_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
+                                                        our_link_, server_now_us)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
         if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
             grass_made_logged_ = made;
             LOG_INFO(Core, "coop: grass: {} cuts of the others made here", made);
@@ -1209,6 +1259,9 @@ public:
     CoopWorld::GimmickProbe gimmick_probe_;  // test7: LICHII_COOP_GIMMICK_PROBE=1 turns it on
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
+    bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
+    CoopOcarina::OcarinaProbe ocarina_probe_;
+    u64 our_link_ = 0;                        // our Link's actor, from the last walk
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
@@ -1252,6 +1305,7 @@ public:
     bool hurt_ = true;
     bool replay_ = false;
     bool wake_ = true;
+    bool release_ = false;  // LICHII_COOP_OBJECTS_RELEASE (issue 150, opt-in)
     bool drive_ = false;
     int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
@@ -1312,6 +1366,9 @@ private:
                 }
             }
             if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
+                if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                    our_link_ = a;  // the ocarina probe (issue 152)
+                }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {
                     at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
@@ -1603,6 +1660,9 @@ private:
         if (ai_hold_ != 0) {
             TheMover().Hold(sync_.Holds(now_us), CoopHold::MasksFor(ai_hold_));
         }
+        if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
+            TheMover().Release(ours);
+        }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : world_.Removes()) {
             removes.push_back(a);
@@ -1628,6 +1688,15 @@ private:
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed());
+            }
+            if (release_) {
+                const auto [cleared, clear] = TheMover().TakeReleases();
+                if (cleared + clear > 0) {
+                    LOG_INFO(Core,
+                             "coop: objects: release: {} that became ours had bit 23 set "
+                             "(cleared), {} had it clear",
+                             cleared, clear);
+                }
             }
             if (ai_hold_ != 0) {
                 const auto [frames, kept] = TheMover().TakeHolds();
@@ -1819,6 +1888,7 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a
         // Stalchild loses its head on every screen. An amount alone at
@@ -1831,6 +1901,7 @@ Objects& Instance() {
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
         objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
         objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
+        objects.release_ = EnvFlag("LICHII_COOP_OBJECTS_RELEASE");
         return true;
     }();
     (void)once;

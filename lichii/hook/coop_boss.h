@@ -241,4 +241,15 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<st
 // Network thread, from the session's on_event.
 void OnEvent(const coop::net::Event& event);
 
+// For /teleport (coop_teleport.h), present thread:
+// - our boss fight runs (its intro, fight or outro phase);
+bool Fighting();
+// - the game's scene change, as the pull into a boss room asks it (taken
+//   only while an event runs); an empty `start` is the scene's own start, an
+//   empty `scene` clears an earlier request;
+bool AskSceneChange(Core::System& system, std::uint64_t main_base, std::string_view scene,
+                    std::string_view start);
+// - our Link moved to `to` in this scene, the boss pull's free-play move.
+bool MoveLink(Core::System& system, std::uint64_t main_base, const Vec& to);
+
 } // namespace CoopBoss

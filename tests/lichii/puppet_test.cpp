@@ -1407,8 +1407,10 @@ TEST_CASE("puppet: refused creates slow down, one with a request is waited for")
 TEST_CASE("puppet gear: every hand slot and the gauntlets have a piece, kind and name cell") {
     using namespace CoopPuppet;
     // The game's slot kinds: weapon 0, shield 6, head 7, armor 8, boots 9,
-    // bow 5, gauntlets 10, sub weapon 1, third weapon 2, tool 11, sub tool 12.
-    CHECK(kGearKinds == std::array<std::uint32_t, kGearCount>{0, 6, 7, 8, 9, 5, 10, 1, 2, 11, 12});
+    // bow 5, gauntlets 10, sub weapon 1, third weapon 2, tool 11, sub tool 12,
+    // and the Ocarina's holder and Ocarina as Accessory1 and Accessory4 (13, 16).
+    CHECK(kGearKinds ==
+          std::array<std::uint32_t, kGearCount>{0, 6, 7, 8, 9, 5, 10, 1, 2, 11, 12, 13, 16});
     // Each kind once, each hand slot at most once, none past the drawn bits.
     for (std::size_t i = 0; i < kGearCount; ++i) {
         for (std::size_t j = i + 1; j < kGearCount; ++j) {
@@ -1422,11 +1424,14 @@ TEST_CASE("puppet gear: every hand slot and the gauntlets have a piece, kind and
     CHECK(kGearSlots[kGearTool] == 5);
     CHECK(kGearSlots[kGearSubTool] == 6);
     CHECK(kGearSlots[kGearHand] == -1);
+    CHECK(kGearSlots[kGearOcarinaHolder] == -1);  // accessories: no hand slot
+    CHECK(kGearSlots[kGearOcarina] == -1);
     // Carried pieces are looked at for "left behind" only while in hand.
     CHECK(GearIsCarried(kGearHeld));
     CHECK(GearIsCarried(kGearTool));
     CHECK_FALSE(GearIsCarried(0));
     CHECK_FALSE(GearIsCarried(kGearHand));
+    CHECK_FALSE(GearIsCarried(kGearOcarina));  // worn on the belt, like the sword
     // The block holds a name cell and a pointer for each.
     CHECK(block::kGearText + block::kGearCapacity * kGearCount <= block::kGearPtr);
     CHECK(block::kGearPtr + 8 * kGearCount <= block::kSize);
@@ -1453,6 +1458,54 @@ TEST_CASE("puppet gear: a PLAYER_EQUIP becomes the pieces, the sword hand's own 
     CHECK(GearOf(e)[0] == "Weapon_Sword_Kokiri");
     e.weapon_slot = "Weapon_Sword_DekuStick";  // a stick in the sword hand
     CHECK(GearOf(e)[0] == "Weapon_Sword_DekuStick");
+}
+
+TEST_CASE("puppet gear: the Ocarina and its belt holder come from PLAYER_EQUIP's ocarina (issue 152)") {
+    using namespace CoopPuppet;
+    coop::protocol::Equipment e;
+    CHECK_FALSE(GearOf(e)[kGearOcarina]);  // not sent: not known
+    CHECK_FALSE(GearOf(e)[kGearOcarinaHolder]);
+    e.ocarina = "";  // no Ocarina: nothing to wear
+    CHECK_FALSE(GearOf(e)[kGearOcarina]);
+    e.ocarina = "Item_Ocarina_Fairy";
+    Gear g = GearOf(e);
+    CHECK(g[kGearOcarina] == "Item_Ocarina_Fairy");
+    CHECK(g[kGearOcarinaHolder] == "Item_Ocarina_Fairy_Holder");
+    e.ocarina = "Item_Ocarina_Time";
+    g = GearOf(e);
+    CHECK(g[kGearOcarina] == "Item_Ocarina_Time");
+    CHECK(g[kGearOcarinaHolder] == "Item_Ocarina_Time_Holder");
+    e.ocarina = "Weapon_Sword_Kokiri";  // not an Ocarina: not worn as one
+    CHECK_FALSE(GearOf(e)[kGearOcarina]);
+}
+
+TEST_CASE("puppet gear: the Ocarina pieces are equipped as Accessory1 and Accessory4 (issue 152)") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearOcarinaHolder] = "Item_Ocarina_Fairy_Holder";
+    t.gear[CoopPuppet::kGearOcarina] = "Item_Ocarina_Fairy";
+    d.SetInput(Wants({t}));
+    const auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 2);
+    const std::size_t index[] = {CoopPuppet::kGearOcarinaHolder, CoopPuppet::kGearOcarina};
+    for (std::size_t k = 0; k < 2; ++k) {
+        CHECK(calls[k].function == kBase + addr::kEquip);
+        CHECK(calls[k].x[0] == kEu);
+        CHECK(calls[k].x[1] == (k == 0 ? 13u : 16u));
+        CHECK(calls[k].x[2] == kHeap + block::kGearPtr + 8 * index[k]);
+        const auto text = g.guest.Get<std::uint64_t>(calls[k].x[2]);
+        std::array<char, block::kGearCapacity> name{};
+        g.guest.Read(text, name.data(), name.size());
+        CHECK(std::string(name.data()) == *t.gear[index[k]]);
+    }
+    CHECK(Frame(d, g, 40).empty());  // worn: not again
 }
 
 TEST_CASE("puppet gear: a tool is equipped with the tool kind and drawn on its own slot") {

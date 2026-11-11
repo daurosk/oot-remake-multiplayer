@@ -24,6 +24,7 @@
 //   toward -7.5 71.1 8     push the stick toward that point for 8 ticks
 //                          (Link turns to face it)
 //   warp KakarikoVillage_Child Kakariko_WellSide
+//   chat /teleport Saria   (the rest of the line, sent as the chat box sends it)
 //                          test only: changes scene the way the game's own
 //                          sequence does (Sequence_ReservedNextBanc), to the
 //                          start position given (StartPos names in the
@@ -102,6 +103,7 @@ enum class Kind {
     give,    // test only: an item
     wear,    // test only: a PlayerStatus.Equip* flag (what the puppets in other games wear)
     assign,  // test only: the item on ZR (PlayerStatus.AssignableItem.Child and .Adult)
+    chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
 };
 
 struct Step {

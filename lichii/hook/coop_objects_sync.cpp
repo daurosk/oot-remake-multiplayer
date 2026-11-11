@@ -127,13 +127,13 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
 }
 
 bool IsShared(std::string_view name) {
+    if (IsOwnPuzzle(name)) return false;  // before the Npc_ rule: the pond owner is one
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment
         // a player or NPC holds, and invisible helpers.
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
-    if (IsOwnPuzzle(name)) return false;
     return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
            CoopWorld::IsBreakable(name);
 }
@@ -150,8 +150,20 @@ bool IsOwnPuzzle(std::string_view name) {
     // dungeon flag and opens the room for everyone. The Lost Woods stage scrubs
     // (Enemy_Scrub_ForestStage, ScrubForestStage_ProcessOrderIndex) are an
     // ordered show of the same kind.
+    // Issue 151. The fishing pond (Lake Hylia, in the Hyrule Field Banc) is a
+    // minigame each game plays alone: its fish (Animal_Fish_Bass x18,
+    // Animal_Fish_Loach, and the Animal_Fish_Blue that swim there and in the
+    // rivers) bite, fight and are weighed by that game's own lure and rod
+    // (Weapon_Lure, not shared), and the owner (Npc_Hylia_Fishman_001_Child,
+    // _Adult) hands over the rod and judges the catch in that game's events.
+    // Shared as copies, a fish in the game that did not own it was moved and
+    // animated by the owner's samples, so it could not follow or bite that
+    // player's lure, and the owner's talk animations came from the other game.
+    // Only the prizes are shared (MiniGame_Fishing_GetHeartPiece and
+    // _GetGoldScale, coop/host game_items).
     return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
-           name.starts_with("Enemy_Scrub_ForestStage");
+           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Animal_Fish_") ||
+           name.starts_with("Npc_Hylia_Fishman");
 }
 
 bool IsRolled(std::string_view name) {
@@ -355,6 +367,12 @@ bool IsDeathAnimation(std::string_view name) {
         }
     }
     return false;
+}
+
+bool IsStunAnimation(std::string_view name) {
+    const std::string_view base = AnimationBase(name);
+    const std::string_view first = base.substr(0, base.find('_'));
+    return first == "Stun" || first == "Down" || first == "Fall" || first == "Faint";
 }
 
 proto::Quat QuatOf(const Mat3& m) {
@@ -775,6 +793,25 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.seen_at = now_us;
         o.position = s.position;
         o.rotation = s.rotation;
+        // Issue 150: a boss copy whose own game went into a stun the owner's
+        // boss is not in (a seed in Gohma's eye takes no life). Its stun is
+        // kept on screen like a hit reaction, and a DAMAGE of 0 asks the
+        // server to hand the boss to us, whose boss is the stunned one.
+        if (s.animation && IsStunAnimation(s.animation->name) && IsBoss(s.name) &&
+            !(o.animation && IsStunAnimation(o.animation->name))) {
+            const auto owner = owners_.find(o.id);
+            const std::string owners = !o.received.empty() && o.received.back().animation
+                                           ? o.received.back().animation->name
+                                           : std::string{};
+            if (owner != owners_.end() && owner->second.player != 0 &&
+                owner->second.player != self && !IsStunAnimation(owners)) {
+                o.react_at = now_us;
+                o.react_over = owners;
+                if (o.stun_at == 0 || now_us - o.stun_at >= kStunEveryUs) {
+                    o.stun_due = true;
+                }
+            }
+        }
         o.animation = s.animation;
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
@@ -1044,6 +1081,22 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.hit_at = now_us;
             }
             o.hit_sum = 0;
+        }
+        // Issue 150: our boss copy's own stun, as a DAMAGE of 0.
+        if (o.stun_due) {
+            o.stun_due = false;
+            if (known && owner->second.player != self) {
+                proto::Damage d;
+                d.id = o.id;
+                d.epoch = owner->second.epoch;
+                d.amount = 0;
+                d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
+                d.position = o.position;
+                send.emplace_back(d);
+                o.stun_at = now_us;
+                o.fight_until = now_us + kFightUs;
+                notes_.emplace_back("stunned here, said to the owner: " + o.name);
+            }
         }
         // A Gold Skulltula that came out of a tree here: name it for the
         // games that do not have it.
@@ -1395,6 +1448,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_at = 0;
                 o->react_at = 0;
                 o->sent_once = false;
+                if (before != 0 && o->reacts && ours_now_.size() < 64) {
+                    ours_now_.push_back(o->address);  // was a copy: its hold ends
+                }
             } else if (before == self) {
                 // No longer ours: a hurt we were giving it as the owner is
                 // the new owner's to give.

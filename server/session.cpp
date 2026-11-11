@@ -307,6 +307,16 @@ void Session::on_flag_set(Connection& c, Message& message) {
   send(*host_, kChannelProgress, message);
   ++stats_.flag_relayed;
   ++stats_.relayed;
+  // Who asked, for everyone else (docs/protocol.md, "Who did it"): sent
+  // before the host's answer, on the same channel, so it comes first.
+  std::vector<std::uint8_t> bytes;
+  if (encode(Message{FlagOrigin{c.number, std::get<FlagSet>(message).flags}}, bytes) != Error::none) return;
+  for (const auto& [id, other] : connections_) {
+    if (other.number != c.number && id != *host_ && other.state == State::joined) {
+      actions_.push_back(SendAction{id, kChannelProgress, bytes});
+      ++stats_.origins_sent;
+    }
+  }
 }
 
 void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
@@ -1178,6 +1188,46 @@ void Session::run_ownership(std::uint64_t now_us) {
     // An owner whose game stands still gives it up, fight or not.
     if (unfit_owner(oc, now_us)) {
       if (auto next = best_other(o, owner, true, now_us)) ask_handover(oid, o, *next, now_us);
+      continue;
+    }
+
+    // A boss in a fight: the player clearly nearer it than its owner (issue
+    // 150). Its AI chases only its owner's Link, so the near one gets it.
+    if (o.boss && config_.boss_near_hold_us != 0 && in_fight(o, now_us)) {
+      std::optional<ConnectionId> want;
+      const bool may = (o.changed_at == 0 ||
+                        now_us - o.changed_at >= config_.boss_hitter_cooldown_us) &&
+                       !owner_hit_lately(o, now_us);
+      const auto theirs = may ? distance_to(oc, o, now_us) : std::nullopt;
+      if (theirs) {
+        double best = 0;
+        for (ConnectionId other : o.present) {
+          if (other == owner || !has_loaded(other, o)) continue;
+          const Connection& pc = connections_.at(other);
+          if (pc.status & kBusy) continue;
+          const auto mine = distance_to(pc, o, now_us);
+          if (!mine || *mine > config_.boss_near_m ||
+              *mine + config_.boss_near_margin_m > *theirs) {
+            continue;
+          }
+          if (!want || *mine < best) {
+            want = other;
+            best = *mine;
+          }
+        }
+      }
+      if (!want) {
+        o.candidate.reset();
+      } else {
+        if (o.candidate != want) {
+          o.candidate = want;
+          o.candidate_since = now_us;
+        }
+        if (now_us - o.candidate_since >= config_.boss_near_hold_us) {
+          ++stats_.boss_to_near;
+          ask_handover(oid, o, *want, now_us);
+        }
+      }
       continue;
     }
 

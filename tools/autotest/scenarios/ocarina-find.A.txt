@@ -1,0 +1,40 @@
+# ocarina-find (issue 152): which button takes out the Ocarina. The HUD shows the Ocarina beside
+# the four direction-button icon. A presses each D-pad direction in turn, then B twice to put
+# away whatever came out. With LICHII_COOP_OCARINA_PROBE=1 the log says
+# "coop: ocarina probe: our Link plays the ocarina" after the press that takes it out.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1
+mark start
+wait 120
+mark try-up
+press DUP 12
+wait 120
+mark after-up
+press B 12
+wait 90
+press B 12
+wait 90
+mark try-down
+press DDOWN 12
+wait 120
+mark after-down
+press B 12
+wait 90
+press B 12
+wait 90
+mark try-left
+press DLEFT 12
+wait 120
+mark after-left
+press B 12
+wait 90
+press B 12
+wait 90
+mark try-right
+press DRIGHT 12
+wait 120
+mark after-right
+press B 12
+wait 90
+press B 12
+wait 90
+mark end

@@ -25,6 +25,10 @@
 #               Without it, each PC needs Python 3 and zstandard of its own.
 # -Release      a release name such as v0.1.0-beta1: the kit is named oot-coop-<Release>
 #               instead of oot-coop-<date>, and VERSION.txt and SOURCE.txt name it.
+# -Recipes      Fritchii's release zip (Fritchii-<version>-Windows-x64.zip) or a folder: every
+#               .nx2recipe in it (in the zip, under recipes/) goes to emulator\recipes\, so
+#               the first start shows Fritchii's "Preparing shaders" step. A recipe holds no
+#               game code (Fritchii's tools/nx2-precompile/README.md); SOURCE.txt names it.
 param(
     [string]$EmulatorBin = '',
     [string]$BuildDir = '',
@@ -33,7 +37,8 @@ param(
     [switch]$IncludePdb,
     [switch]$NoZip,
     [string]$Python = '',
-    [ValidatePattern('^[A-Za-z0-9._-]*$')][string]$Release = ''
+    [ValidatePattern('^[A-Za-z0-9._-]*$')][string]$Release = '',
+    [string]$Recipes = ''
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -139,6 +144,32 @@ New-Item -ItemType Directory -Force -Path $kit | Out-Null
 Write-Host "Kit: $kit"
 
 $emu = Join-Path $kit 'emulator'
+# Fritchii's shader recipes go in first; the emulator copy below adds to the folder.
+$recipeLines = @()
+if ($Recipes) {
+    if (-not (Test-Path -LiteralPath $Recipes)) { throw "-Recipes: $Recipes not found." }
+    $recipeDir = Join-Path $emu 'recipes'
+    New-Item -ItemType Directory -Force -Path $recipeDir | Out-Null
+    if ((Get-Item -LiteralPath $Recipes).PSIsContainer) {
+        Get-ChildItem -LiteralPath $Recipes -Filter '*.nx2recipe' -File -Recurse |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName (Join-Path $recipeDir $_.Name) }
+    } else {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $Recipes).Path)
+        try {
+            foreach ($entry in $zip.Entries) {
+                if ($entry.FullName -match '(^|/)recipes/[^/]+\.nx2recipe$') {
+                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $recipeDir $entry.Name), $true)
+                }
+            }
+        } finally { $zip.Dispose() }
+    }
+    foreach ($r in Get-ChildItem -LiteralPath $recipeDir -File) {
+        $recipeLines += "  emulator\recipes\$($r.Name)  SHA-256 $((Get-FileHash -LiteralPath $r.FullName -Algorithm SHA256).Hash.ToLower())"
+    }
+    if (-not $recipeLines) { throw "-Recipes: no .nx2recipe in $Recipes." }
+    Write-Host "Shader recipes: $($recipeLines.Count) from $(Split-Path -Leaf $Recipes)"
+}
 $skip = @('/XD', (Join-Path $EmulatorBin 'user'))
 if (-not $IncludePdb) { $skip += @('/XF', '*.pdb') }
 & robocopy $EmulatorBin $emu /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP @skip | Out-Null
@@ -240,7 +271,17 @@ $source = @(
     '  Patches: lichii/patches in the co-op repo; lichii/fetch.ps1 fetches that tag and',
     '  applies them, and lichii/README.md says how to build it with the co-op hook.',
     "  This kit's emulator was built from $emuCommit (that tag plus the patches).",
-    '',
+    ''
+)
+if ($recipeLines) {
+    $source += @(
+        "Shader recipes, from Frizti's Fritchii release ($(Split-Path -Leaf $Recipes)), unchanged:"
+    ) + $recipeLines + @(
+        '  A recipe holds no game code: each player builds the shaders from their own game.',
+        ''
+    )
+}
+$source += @(
     'Qt 6.8.3 (LGPL-3.0): https://download.qt.io/archive/qt/6.8/6.8.3/',
     'The other libraries are fetched at pinned versions by the Fritchii build (CPM).',
     '',

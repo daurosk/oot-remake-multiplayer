@@ -1754,3 +1754,49 @@ TEST_CASE("world: a pillar that does not fall on life 0 is written 10 times, the
     CHECK(gave_up == 1);
     CHECK(b.Removes().empty());
 }
+
+TEST_CASE("world: a small key still on the walk but lifted next to our Link when theirs comes: one back") {
+    // Review of breakables-2: B is picking the key up (the game lifts it to
+    // Link's hands) when A's break arrives; B's count rises too.
+    WorldSync b;
+    WellWalk(b, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    WellWalk(b, 1100 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, {1.0f, 2.6f, 3.0f})});  // lifted 0.6 m
+    b.Receive(KeyBreak(0x77));
+    auto out = WellWalk(b, 1200 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, {1.0f, 2.7f, 3.0f})});
+    REQUIRE(out.give_back.size() == 1);
+    CHECK(out.give_back[0] == "DungeonInfo.BottomOfTheWell.SmallKeyNum");
+    for (std::uint64_t t = 1300; t <= 3000; t += 100) {
+        out = WellWalk(b, t * kMs, {});
+        CHECK(out.give_back.empty());
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+    }
+
+    // Lying where it was, next to our Link: not being taken, nothing back.
+    WorldSync c;
+    WellWalk(c, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    c.Receive(KeyBreak(0x77));
+    out = WellWalk(c, 1100 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey, {1.0f, 2.1f, 3.0f})});
+    CHECK(out.give_back.empty());
+    CHECK(Removed(c, 0x100));
+}
+
+TEST_CASE("world: a falling floor with no AI settles at another game's place, it is not held for good") {
+    const char* floor = "Obj_InsideTheDekuTree_FallingFloor_A_03";
+    CHECK(CoopWorld::IsShifter(floor));
+    CHECK_FALSE(CoopWorld::HoldsPlace(floor));
+    CHECK_FALSE(CoopWorld::HoldsPlace("Obj_ShadowTemple_FallingFloor_A_03"));
+    CHECK(CoopWorld::HoldsPlace(kLadder));
+    CHECK(CoopWorld::HoldsPlace("Obj_FireTemple_HammerDropPillar_A_01"));
+
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x100, 0x61, std::nullopt, floor)});
+    b.Receive(PlaceOf(0x61, 1.0f));
+    Walk(b, 2000 * kMs, {Thing(0x100, 0x61, std::nullopt, floor)});
+    std::vector<CoopObjects::PoseWrite> poses;
+    b.Poses(2100 * kMs, poses);
+    CHECK(poses.size() == 1);  // put there
+    Walk(b, 3000 * kMs, {Thing(0x100, 0x61, std::nullopt, floor)});
+    poses.clear();
+    b.Poses(3000 * kMs, poses);
+    CHECK(poses.empty());  // then left to the game
+}

@@ -122,6 +122,13 @@ bool IsWorldObject(std::string_view name) {
            IsGoldToken(name) || IsShifter(name);
 }
 
+// A shifter whose AI would put it back up (hammer drop floors, pillars and
+// stair, the Deku Tree ladder): held at the place it was given. The
+// falling floors `_A_03` have no AI in their packs: the normal settle.
+bool HoldsPlace(std::string_view name) {
+    return IsShifter(name) && name.find("FallingFloor_A_03") == std::string_view::npos;
+}
+
 std::optional<std::string> KeyCountOf(std::string_view scene) {
     // The scene, then the part before its first '_' (GerudoFortress_Adult).
     for (const std::string_view base : {scene, scene.substr(0, scene.find('_'))}) {
@@ -359,8 +366,14 @@ std::optional<std::string> WorldSync::TookKey(std::uint64_t hash) const {
         }
     }
     for (const auto& [address, o] : objects_) {
-        if (o.key && o.hash == hash && o.missed > 0 && player_ && Finite(o.position) &&
-            Distance(*player_, o.position) <= kBreakReachM) {
+        if (!o.key || o.hash != hash || !player_ || !Finite(o.position) ||
+            Distance(*player_, o.position) > kBreakReachM) {
+            continue;
+        }
+        // Off the walk next to our Link: taken. Still on it but lifted from
+        // where it lay: Link is picking it up (the game raises it to his
+        // hands before it goes), so the count rises here too.
+        if (o.missed > 0 || Distance(o.position, o.first_position) >= kLiftedM) {
             return o.count;
         }
     }
@@ -663,10 +676,10 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
                 Line("world: %016llx %s put where another player left it%s", o.hash, o.name, ""));
         }
     }
-    // A shifter is held where it was put for good: the game's own AI would
+    // A shifter with an AI is held where it was put for good: its AI would
     // put it back up (it was not hit here).
     const bool settling =
-        !o.ours && o.settle_us != 0 && (o.shifter || now_us - o.settle_us < kSettleUs);
+        !o.ours && o.settle_us != 0 && (o.hold || now_us - o.settle_us < kSettleUs);
     if (!o.ours && (remote || settling)) {
         if (!o.following && remote) {
             out.notes.push_back(
@@ -874,6 +887,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                 o.count = KeyCountOf(scene_).value_or("");
             }
             o.shifter = shifter;
+            o.hold = shifter && HoldsPlace(s.name);
             o.life = life;
             o.position = s.position;
             o.rotation = s.rotation;

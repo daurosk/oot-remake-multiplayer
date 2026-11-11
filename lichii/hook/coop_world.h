@@ -77,6 +77,9 @@ inline constexpr const char* kTokenCount = "PouchData.Item_Token_Gold.StockNum";
 // the others hold it there, also a game that loads the room later (the
 // server keeps the place).
 bool IsShifter(std::string_view name);
+// A shifter held for good at a place another game gave (its AI would put it
+// back); the rest settle as blocks do.
+bool HoldsPlace(std::string_view name);
 
 // Everything WorldSync tracks: breakables, movables, fallers, lying keys and
 // shifters. The objects walk hands these to it (coop_objects.cpp).
@@ -235,6 +238,7 @@ public:
     static constexpr std::uint64_t kDeleteGrassUs = 400'000;  // life 0 written, still there: delete
     static constexpr std::uint64_t kDeleteUs = 6'000'000;     // (a crate takes 4.6 s to go)
     static constexpr std::uint64_t kFallerRetryUs = 1'000'000;  // a faller's life 0, again
+    static constexpr float kLiftedM = 0.3f;      // a key this far from where it lay is being picked up
     static constexpr float kTokenNearM = 3.0f;    // a new token this near a Gold Skulltula is its
     static constexpr float kTokenSpotM = 1.5f;    // a token this near a known token spot is that one
     static constexpr float kShiftTurnRad = 0.05f;  // a shifter turned this far from its rest: moved
@@ -365,6 +369,7 @@ private:
         bool key = false;     // IsLyingKey or IsGoldToken: its taking is a break
         std::string count;    // the count it adds to (KeyCountOf, kTokenCount)
         bool shifter = false; // IsShifter
+        bool hold = false;    // HoldsPlace: a given place is held for good
         std::optional<CoopObjects::Mat3> rest_rotation;  // with `rest`
         std::uint64_t hit_sent_us = 0;
         std::uint64_t hit_given_us = 0;

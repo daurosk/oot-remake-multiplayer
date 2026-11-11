@@ -37,7 +37,7 @@ The connection is made when the emulator starts, before any game, and lasts unti
 
 Guest memory: `main` is found by name in the loader's own module list (`AppLoader::ReadNSOModules`, as Fritchii's own Ocarina code does), else in the modules found in memory (`Core::FindModules`), else as the emulator's `FindMainModuleEntrypoint`. On Fritchii v5 only the loader's list works: the memory search finds nothing and the last fallback gives the code region start (0x8000000), not `main`, which is loaded at a different address each run (0x80702000, 0x80993000). Each read checks the range first (`IsValidVirtualAddressRange`) and uses `ReadBlockUnsafe`, so an unmapped address fails quietly and the present thread never waits on the GPU.
 
-## The game look (test10)
+## The game look
 
 With the files `make-puppet-pack.cmd` makes from your own game (the puppet pack's `coop_hud` folder, [overlay.md](overlay.md#the-look)), everything co-op draws looks like the game's own HUD: no box or panel anywhere, the game's font, the game's soft dark shadow, the game's heart pictures.
 
@@ -47,7 +47,7 @@ With the files `make-puppet-pack.cmd` makes from your own game (the puppet pack'
 - **The player list** (Tab) is the same table without its box, with place names instead of scene names.
 - **The debug panel** below is hidden; **F7** (on the game, no modifier; no emulator hotkey uses it) shows or hides it, and `LICHII_COOP_DEBUG_PANEL=1` shows it from the start.
 
-Without those files (a pack made before test10, or `LICHII_COOP_HUD=0`), everything stays as described below, and the log says why: `coop: hud: plain look (...)`. `LICHII_COOP_HUD_DIR=<folder>` uses another folder (tests).
+Without those files (a pack made by an older kit, or `LICHII_COOP_HUD=0`), everything stays as described below, and the log says why: `coop: hud: plain look (...)`. `LICHII_COOP_HUD_DIR=<folder>` uses another folder (tests).
 
 ## The panel
 

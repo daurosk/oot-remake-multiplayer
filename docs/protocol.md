@@ -216,7 +216,7 @@ Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.
 
 ### Hearts (`PLAYER_LIFE`)
 
-Protocol 10, type 251 (251 to 255 are the co-op HUD's). Each player's hearts, for the HUD's player blocks ([lichii.md](lichii.md#the-game-look-test10)) and PvP. On channel 0, reliable; the server relays it to the others like `PLAYER_STATUS` and keeps nothing.
+Protocol 10, type 251 (251 to 255 are the co-op HUD's). Each player's hearts, for the HUD's player blocks ([lichii.md](lichii.md#the-game-look)) and PvP. On channel 0, reliable; the server relays it to the others like `PLAYER_STATUS` and keeps nothing.
 
 | Bytes | Field |
 |---|---|

@@ -57,7 +57,7 @@ The distances are in the game's world units, which are not yet measured (see [ho
 
 ## The look
 
-The Lichii window draws the overlay like the game's own HUD (what it looks like: [lichii.md](lichii.md#the-game-look-test10)). The font, the heart pictures and the place names are the game's, so they cannot be in git or in the kit: `make-puppet-pack.cmd` makes them on each PC from the player's own game files, right after the puppets (`tools/puppet_pack/hud.py`, run by `build.py`; `--no-hud` skips it, `--hud-lang EUfr` picks another language), into the puppet mod's folder `load/0400486024DEC000/coop-puppet/coop_hud/` (outside `romfs/`, so the game never sees it):
+The Lichii window draws the overlay like the game's own HUD (what it looks like: [lichii.md](lichii.md#the-game-look)). The font, the heart pictures and the place names are the game's, so they cannot be in git or in the kit: `make-puppet-pack.cmd` makes them on each PC from the player's own game files, right after the puppets (`tools/puppet_pack/hud.py`, run by `build.py`; `--no-hud` skips it, `--hud-lang EUfr` picks another language), into the puppet mod's folder `load/0400486024DEC000/coop-puppet/coop_hud/` (outside `romfs/`, so the game never sees it):
 
 | File | Made from |
 |---|---|

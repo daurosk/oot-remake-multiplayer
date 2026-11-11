@@ -8,6 +8,9 @@ namespace CoopLiveEvents {
 
 std::optional<std::string> Decider::Next(const std::vector<std::string>& held, const std::string& scene,
                                          bool event_running) {
+    if (scene.empty()) {
+        return std::nullopt;  // no scene read (a load): the same visit, nothing asked
+    }
     if (scene != scene_) {
         scene_ = scene;
         asked_.clear();
@@ -51,7 +54,11 @@ std::set<std::string> ParseNames(std::string_view text) {
 }
 
 void Requester::Want(std::string name) {
-    if (name.empty() || name.size() >= 0x80 || wanted_.size() >= 8) {
+    if (name.empty()) {
+        notes_.push_back("live event with no name not asked");
+        return;
+    }
+    if (name.size() >= 0x80 || wanted_.size() >= 8) {
         notes_.push_back("live event " + name + " not asked (name too long or too many waiting)");
         return;
     }
@@ -64,6 +71,26 @@ std::vector<std::string> Requester::TakeNotes() {
     std::vector<std::string> out;
     out.swap(notes_);
     return out;
+}
+
+std::optional<CoopPuppet::Call> Requester::FreeFirst(CoopPuppet::Guest& guest, std::uint64_t main) {
+    const std::uint64_t vtable = main + addr::kStringVtable;
+    guest.Write(block_ + addr::kArgMember1, &vtable, 8);
+    CoopPuppet::Call c;
+    c.function = main + addr::kStringFree;
+    c.x[0] = block_ + addr::kArgMember1;
+    next_ = Next::free1;
+    return c;
+}
+
+bool Requester::EventRunning(CoopPuppet::Guest& guest, std::uint64_t main) {
+    std::uint64_t manager = 0;
+    std::uint64_t session = 0;
+    // docs/dungeons-boss.md: an event runs while [[main + 0x4e94840] + 0x68] is set.
+    if (!guest.Read(main + addr::kEventStatePtr, &manager, 8) || manager == 0) {
+        return false;
+    }
+    return guest.Read(manager + addr::kEventSession, &session, 8) && session != 0;
 }
 
 std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
@@ -88,28 +115,21 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
             if (!guest.Read(block_ + addr::kArgName, &buffer, 8) || !guest.Read(block_ + addr::kArgNameCap, &cap, 4) ||
                 buffer == 0 || cap == 0) {
                 notes_.push_back("live event " + current_ + ": the request has no name buffer; not asked");
-                current_.clear();
-                return std::nullopt;  // nothing to free: built without a name
+                return FreeFirst(guest, main);  // the build made its members: free them
             }
             const std::size_t n = std::min<std::size_t>(current_.size(), cap - 1);
             std::string text = current_.substr(0, n);
             text.push_back('\0');
             if (!guest.Write(buffer, text.data(), text.size())) {
                 notes_.push_back("live event " + current_ + ": name not written; not asked");
-                current_.clear();
-                return std::nullopt;
+                return FreeFirst(guest, main);
             }
             std::uint64_t holder = 0;
             std::uint64_t manager = 0;
             if (!guest.Read(main + addr::kManagerPtr, &holder, 8) || holder == 0 || !guest.Read(holder, &manager, 8) ||
                 manager == 0) {
                 notes_.push_back("live event " + current_ + ": no event manager; not asked");
-                next_ = Next::free1;  // still free what the build made
-                const std::uint64_t vtable = main + addr::kStringVtable;
-                guest.Write(block_ + addr::kArgMember1, &vtable, 8);
-                c.function = main + addr::kStringFree;
-                c.x[0] = block_ + addr::kArgMember1;
-                return c;
+                return FreeFirst(guest, main);  // still free what the build made
             }
             c.function = main + addr::kRequest;
             c.x[0] = manager;
@@ -120,12 +140,7 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         case Next::request: {
             notes_.push_back("live event " + current_ + " asked of the game (result " + std::to_string(result & 0xff) +
                              ")");
-            const std::uint64_t vtable = main + addr::kStringVtable;
-            guest.Write(block_ + addr::kArgMember1, &vtable, 8);
-            c.function = main + addr::kStringFree;
-            c.x[0] = block_ + addr::kArgMember1;
-            next_ = Next::free1;
-            return c;
+            return FreeFirst(guest, main);
         }
         case Next::free1: {
             const std::uint64_t vtable = main + addr::kStringVtable;
@@ -154,10 +169,13 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         next_ = Next::malloc;
         return c;
     }
+    if (current_.empty() && wanted_.empty()) {
+        return std::nullopt;
+    }
+    if (EventRunning(guest, main)) {
+        return std::nullopt;  // an event began since it was asked: wait, it stays queued
+    }
     if (current_.empty()) {
-        if (wanted_.empty()) {
-            return std::nullopt;
-        }
         current_ = std::move(wanted_.front());
         wanted_.pop_front();
     }

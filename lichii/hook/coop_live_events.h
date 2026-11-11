@@ -42,6 +42,8 @@ inline constexpr std::uint64_t kArgName = 0x1a90;          // char* (inline buff
 inline constexpr std::uint64_t kArgNameCap = 0x1a98;       // u32
 inline constexpr std::uint64_t kArgMember1 = 0x1968;       // freed first, as the node does
 inline constexpr std::uint64_t kArgMember2 = 0x1950;
+inline constexpr std::uint64_t kEventStatePtr = 0x4e94840;  // as coop_boss_game.cpp
+inline constexpr std::uint64_t kEventSession = 0x68;        // set while an event runs
 } // namespace addr
 
 // Which held gimmick events to start here, and when. Pure.
@@ -83,6 +85,11 @@ public:
 
 private:
     enum class Next { none, malloc, build, request, free1, free2 };
+    // The two string members' frees, as the node does them; every path after
+    // a build goes through them, so the reused block is never built over
+    // live members.
+    std::optional<CoopPuppet::Call> FreeFirst(CoopPuppet::Guest& guest, std::uint64_t main);
+    static bool EventRunning(CoopPuppet::Guest& guest, std::uint64_t main);
     std::deque<std::string> wanted_;
     std::string current_;
     std::uint64_t block_ = 0;

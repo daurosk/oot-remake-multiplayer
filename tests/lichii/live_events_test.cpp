@@ -141,3 +141,53 @@ TEST_CASE("live events: the names list from the environment") {
     CHECK(CoopLiveEvents::ParseNames("InsideTheDekuTree_Gimmick_FallingLadder") ==
           std::set<std::string>{"InsideTheDekuTree_Gimmick_FallingLadder"});
 }
+
+TEST_CASE("live events: a build without a name buffer still frees its members before the block is reused") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    r.Want("E");
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        // The build leaves no name buffer this time.
+        const std::uint64_t ret = call->function == kMain + addr::kArgBuild ? 0 : Run(m, *call);
+        call = r.Step(m, true, ret, kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kStringFree, addr::kStringFree});
+}
+
+TEST_CASE("live events: a queued event waits while an event runs in the game") {
+    Mem m;
+    constexpr std::uint64_t kState = 0x9300000000;
+    m.Put64(kMain + addr::kEventStatePtr, kState);
+    m.Put64(kState + addr::kEventSession, 0x1234);  // an event runs
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    r.Want("E");
+    auto call = r.Step(m, false, 0, kMain);
+    REQUIRE(call);  // the malloc may go first
+    CHECK(call->function == kMain + addr::kMalloc);
+    CHECK_FALSE(r.Step(m, true, Run(m, *call), kMain).has_value());  // no build while the event runs
+    CHECK_FALSE(r.Step(m, false, 0, kMain).has_value());
+    m.Put64(kState + addr::kEventSession, 0);  // it ended
+    call = r.Step(m, false, 0, kMain);
+    REQUIRE(call);
+    CHECK(call->function == kMain + addr::kArgBuild);
+}
+
+TEST_CASE("live events: no scene read is the same visit, and an empty name is logged plainly") {
+    CoopLiveEvents::Decider d;
+    const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder"};
+    CHECK(d.Next(held, "InsideTheDekuTree", false).has_value());
+    CHECK_FALSE(d.Next(held, "", false).has_value());
+    CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false).has_value());  // no second ask
+    CoopLiveEvents::Requester r;
+    r.Want("");
+    const auto notes = r.TakeNotes();
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0] == "live event with no name not asked");
+}

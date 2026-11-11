@@ -664,13 +664,18 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
       forget(it);
     } else {
       if (remove.reason == RemoveReason::dead) {
-        // Kept for the games that come later (dead_for).
-        Dead& d = dead_[scene][oid];
-        d.witnesses.clear();
-        for (const ConnectionId w : o.present) d.witnesses[w] = true;
-        d.witnesses[id] = false;  // its game dropped it from its walk
-        d.position = remove.position;
-        d.by = c.number;
+        // Kept for the games that come later (dead_for), up to a cap a scene.
+        auto& kills = dead_[scene];
+        if (kills.size() >= kMaxDeadPerScene && !kills.count(oid)) {
+          ++stats_.dead_unkept;
+        } else {
+          Dead& d = kills[oid];
+          d.witnesses.clear();
+          for (const ConnectionId w : o.present) d.witnesses[w] = true;
+          d.witnesses[id] = false;  // its game dropped it from its walk
+          d.position = remove.position;
+          d.by = c.number;
+        }
       }
       // Kept, owned by nobody, until no game has it loaded, so a copy still
       // listed cannot bring it back under a new owner.

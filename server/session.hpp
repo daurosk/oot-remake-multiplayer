@@ -194,6 +194,7 @@ struct Stats {
   std::uint64_t late_removes = 0;         // a kill from the owner before, taken
   std::uint64_t dead_told = 0;            // a placed enemy's kill told to a game that came later
   std::uint64_t dead_respawned = 0;       // a witness's game listed a killed enemy again
+  std::uint64_t dead_unkept = 0;          // a kill not kept: the scene's list was full
 
   std::uint64_t errors(protocol::Error e) const {
     return by_error[static_cast<std::size_t>(e)];
@@ -464,6 +465,7 @@ class Session {
     std::uint8_t by = 1;  // the player whose game said it died (the sender field)
   };
   std::map<std::string, std::map<protocol::ObjectId, Dead>> dead_;
+  static constexpr std::size_t kMaxDeadPerScene = 1024;
   WorldStore world_;
   std::vector<Action> actions_;
   Stats stats_;

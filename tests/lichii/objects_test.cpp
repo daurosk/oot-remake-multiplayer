@@ -1745,14 +1745,28 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     CHECK(sync.Removes().empty());
 }
 
-TEST_CASE("objects: a kill from before we came is deleted at once, with no death played (issue 133)") {
-    // The server tells a late entrant: no owner was ever named to us.
+TEST_CASE("objects: a kill from before we came dies through our game, deleted only as a fallback (issue 133)") {
+    // The server tells a late entrant: no owner was ever named to us. Our
+    // game must kill it itself, so its room counter and kill key count.
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)}, 2);
     const proto::ObjectId id = *sync.IdOf(0x100);
     sync.Receive(Dead(id, 1));
     auto step = Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
-    CHECK(step.writes.empty());
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    CHECK(sync.Removes().empty());
     CHECK(All<proto::Damage>(step).empty());
+    // Still standing after the grace: deleted.
+    Tick(sync, 3100 * kMs, {Enemy(0x100, 0x11, 0)}, 2);
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
+
+    // One whose life we cannot read goes at once.
+    Sync blind;
+    Seen e = Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Skulltula");
+    e.life.reset();
+    Tick(blind, 0, {e}, 2);
+    blind.Receive(Dead(*blind.IdOf(0x100), 1));
+    CHECK(Tick(blind, 50 * kMs, {e}, 2).writes.empty());
+    CHECK(blind.Removes() == std::vector<std::uint64_t>{0x100});
 }

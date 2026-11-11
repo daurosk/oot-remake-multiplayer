@@ -37,9 +37,21 @@ The connection is made when the emulator starts, before any game, and lasts unti
 
 Guest memory: `main` is found by name in the loader's own module list (`AppLoader::ReadNSOModules`, as Fritchii's own Ocarina code does), else in the modules found in memory (`Core::FindModules`), else as the emulator's `FindMainModuleEntrypoint`. On Fritchii v5 only the loader's list works: the memory search finds nothing and the last fallback gives the code region start (0x8000000), not `main`, which is loaded at a different address each run (0x80702000, 0x80993000). Each read checks the range first (`IsValidVirtualAddressRange`) and uses `ReadBlockUnsafe`, so an unmapped address fails quietly and the present thread never waits on the GPU.
 
+## The game look (test10)
+
+With the files `make-puppet-pack.cmd` makes from your own game (the puppet pack's `coop_hud` folder, [overlay.md](overlay.md#the-look)), everything co-op draws looks like the game's own HUD: no box or panel anywhere, the game's font, the game's soft dark shadow, the game's heart pictures.
+
+- **The other players** sit under your hearts at the top left, one block each, stacked: the name in the game's font, a row of that player's hearts (full, three quarters, half, a quarter, empty, ten to a row, smaller than yours), and the game's name of the place they are in (`Hyrule Field`, not `HyruleField_Child`). A player whose samples stopped is drawn faded. The hearts come from `PLAYER_LIFE` ([protocol.md](protocol.md#hearts-player_life)); before the first one arrives there is no heart row.
+- **Name tags** over heads use the game's font and shadow, in the player's colour (puppet-colors' `CoopColors::ForPlayer`; white until that is built in).
+- **Chat** lines: the name in the player's colour, the text in white, room notices in the game's warm highlight colour; the chat box is the typed text alone with the same shadow (red text when it was not sent).
+- **The player list** (Tab) is the same table without its box, with place names instead of scene names.
+- **The debug panel** below is hidden; **F7** (on the game, no modifier; no emulator hotkey uses it) shows or hides it, and `LICHII_COOP_DEBUG_PANEL=1` shows it from the start.
+
+Without those files (a pack made before test10, or `LICHII_COOP_HUD=0`), everything stays as described below, and the log says why: `coop: hud: plain look (...)`. `LICHII_COOP_HUD_DIR=<folder>` uses another folder (tests).
+
 ## The panel
 
-Always shown while co-op is on, with or without markers:
+The plain look: shown while co-op is on, with or without markers. In the game look only after F7 (above).
 
 ```
 Co-op: player 1, ping 3 ms

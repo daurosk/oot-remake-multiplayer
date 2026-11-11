@@ -155,6 +155,16 @@ private:
     std::vector<coop::protocol::Message> inbox_;
 };
 
+// Issue 85: the copy of another player's slingshot seed, arrow or hookshot
+// tip is made from a stand-in pack of ours (tools/puppet_pack, "stand-ins"),
+// not from the game's own shootable. A shootable made without a shooter
+// starts in its `UsedExternally` state, and the seed's pack hides it while it
+// is not shot (`IsPrepareVisibleOff`): the copies were made in the other game
+// (test4 player logs) but never seen. The stand-in is the actor's model only
+// (no physics, sensor, attack or AI), so it is drawn wherever it is put, and
+// it can hit nothing. Empty when the actor has none.
+std::string_view StandIn(std::string_view actor);
+
 // The calc thread's side. Same cave contract as CoopPuppet::Director.
 class Director {
 public:
@@ -192,6 +202,10 @@ private:
         std::uint64_t vtable = 0;
         std::uint64_t since_ms = 0;
         bool exploded = false;
+        // Made from the stand-in pack (StandIn): placed as the puppet is
+        // (place and the pending transform), with no setter call.
+        bool stand_in = false;
+        std::string copy_of;  // the shared actor's name (Copy::actor)
     };
     enum class Pending { none, malloc, create, take, drop, remove };
 
@@ -225,6 +239,9 @@ private:
     std::size_t pending_slot_ = 0;
     int calls_ = 0;
     std::vector<std::size_t> setters_;  // slots placed this frame
+    // Shared actors whose stand-in could not be made (a puppet pack built
+    // before the stand-ins): copied as the game's own actor from then on.
+    std::set<std::string> no_stand_in_;
 };
 
 Director& TheDirector();

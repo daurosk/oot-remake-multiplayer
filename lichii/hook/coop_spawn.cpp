@@ -435,6 +435,21 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
     return NextSetter(guest);
 }
 
+std::string_view StandIn(std::string_view actor) {
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 4> kStandIns{{
+        {"Shootable_DekuSeed", "CoopShot_Seed"},
+        {"NormalArrow", "CoopShot_Arrow"},
+        {"Shootable_Hook", "CoopShot_Hook"},
+        {"Shootable_HookLong", "CoopShot_HookLong"},
+    }};
+    for (const auto& [shared, stand_in] : kStandIns) {
+        if (shared == actor) {
+            return stand_in;
+        }
+    }
+    return {};
+}
+
 std::optional<CoopPuppet::Call> Director::NextSetter(CoopPuppet::Guest& guest) {
     // The vtable slot ExecuteActorForceSetMtx calls after it writes the
     // place (docs/objects.md): 0x4c6580 for every actor seen so far.
@@ -511,6 +526,14 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 Say(slot.actor + ": create timed out");
                 slot.phase = Phase::done;
             }
+            if (slot.phase == Phase::done && slot.stand_in) {
+                // No stand-in pack (a puppet pack built before them): this
+                // copy and the next ones of its kind are the game's own actor.
+                no_stand_in_.insert(slot.copy_of);
+                started_.erase(slot.key);
+                Say(slot.copy_of + ": no " + slot.actor +
+                    " (rebuild the puppet pack); the game's own actor is used");
+            }
         } else if (slot.phase == Phase::live) {
             std::uint64_t vtable = 0;
             std::uint32_t state = 0;
@@ -527,7 +550,15 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 } else {
                     WriteValue(guest, slot.taken + addr::kActorPosition, c->position);
                 }
-                if (c->setter && c->act == Act::show) {
+                if (slot.stand_in) {
+                    // No physics to hand the place to: the engine's pending
+                    // transform too, as the puppet is placed (CoopPuppet::Director::Pose).
+                    WriteValue(guest, slot.taken + addr::kActorPositionRequest, c->position);
+                    if (c->rotation) {
+                        WriteValue(guest, slot.taken + addr::kActorRotationRequest, *c->rotation);
+                    }
+                }
+                if (c->setter && c->act == Act::show && !slot.stand_in) {
                     setters_.push_back(i);
                 }
                 if (c->act == Act::explode && !slot.exploded) {
@@ -651,8 +682,11 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         std::memcpy(arg.data() + 0x30, scale.data(), 12);
         std::memcpy(arg.data() + 0x40, &create_default, 8);
         arg[0x98] = 1;
+        const std::string_view stand_in =
+            no_stand_in_.count(copy.actor) != 0 ? std::string_view{} : StandIn(copy.actor);
+        const std::string name = stand_in.empty() ? copy.actor : std::string(stand_in);
         std::array<char, 0x40> text{};
-        std::memcpy(text.data(), copy.actor.data(), std::min<std::size_t>(copy.actor.size(), 0x3f));
+        std::memcpy(text.data(), name.data(), std::min<std::size_t>(name.size(), 0x3f));
         if (!guest.Write(b, arg.data(), arg.size()) ||
             !guest.Write(b + 0x118, text.data(), text.size()) ||
             !WriteValue(guest, b + 0x100, b + 0x118) ||
@@ -663,7 +697,9 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         started_.insert(copy.key);
         *free = Slot{};
         free->key = copy.key;
-        free->actor = copy.actor;
+        free->actor = name;
+        free->copy_of = copy.actor;
+        free->stand_in = !stand_in.empty();
         free->phase = Phase::creating;
         free->since_ms = now_ms;
         CoopPuppet::Call c;
@@ -675,7 +711,7 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         c.x[4] = 1;
         pending_ = Pending::create;
         pending_slot_ = i;
-        Say(copy.actor + ": create copy " + std::to_string(copy.key));
+        Say(name + ": create copy " + std::to_string(copy.key));
         return c;
     }
     return std::nullopt;

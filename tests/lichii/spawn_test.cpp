@@ -2,6 +2,7 @@
 // messages and copies, and the director's calls at the cave.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <map>
@@ -369,4 +370,93 @@ TEST_CASE("spawn: a seed copy the owner removed is deleted") {
     CHECK(c->x[0] == actor);
     CHECK_FALSE(d.Step(guest, true, 0, 33));
     CHECK(d.Live().empty());
+}
+
+// Issue 85: a seed, arrow or hookshot copy is made from our stand-in pack (the
+// game's own shootable made without a shooter is never drawn), placed as the
+// puppet is (place and the pending transform, no setter call), and made as the
+// game's own actor once the stand-in cannot be made (an old puppet pack).
+TEST_CASE("spawn: a seed copy is the stand-in, and the game's own seed without the pack") {
+    namespace addr = CoopPuppet::addr;
+    constexpr std::uint64_t base = 0x8000000;
+    constexpr std::uint64_t block = 0x30000000;
+    constexpr std::uint64_t actor = 0x40000000;
+    constexpr std::uint64_t request = 0x50000000;
+    CHECK(std::string(CoopSpawn::StandIn("Shootable_DekuSeed")) == "CoopShot_Seed");
+    CHECK(std::string(CoopSpawn::StandIn("NormalArrow")) == "CoopShot_Arrow");
+    CHECK(std::string(CoopSpawn::StandIn("Shootable_Hook")) == "CoopShot_Hook");
+    CHECK(std::string(CoopSpawn::StandIn("Shootable_HookLong")) == "CoopShot_HookLong");
+    CHECK(CoopSpawn::StandIn("Item_Bomb").empty());
+    CHECK(CoopSpawn::StandIn("Item_DekuNut").empty());
+    CHECK(CoopSpawn::StandIn("Weapon_Boomerang").empty());
+
+    FakeGuest guest;
+    guest.Map(base + addr::kActorManagerPtr, 8);
+    guest.Map(base + addr::kGotCreateDefault, 8);
+    guest.Set(base + addr::kActorManagerPtr, std::uint64_t{0x20000000});
+    guest.Map(block, CoopSpawn::Director::kSlots * CoopSpawn::Director::kSlotSize);
+    guest.Map(actor, 0x600);
+    guest.Map(request, 0x10);
+    guest.Set(actor, std::uint64_t{0xabc});
+    guest.Set(actor + addr::kActorState, std::uint32_t{addr::kStatePresent});
+
+    std::vector<std::string> said;
+    CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
+    Copy copy;
+    copy.key = 7;
+    copy.actor = "Shootable_DekuSeed";
+    copy.position = {1.0f, 2.0f, 3.0f};
+    copy.rotation = std::array<float, 9>{0, 0, 1, 0, 1, 0, -1, 0, 0};
+    copy.setter = true;
+    d.SetInput(base, {copy});
+    REQUIRE(d.Step(guest, false, 0, 0));  // malloc
+    auto c = d.Step(guest, true, block, 0);
+    REQUIRE(c);
+    CHECK(c->function == base + addr::kCreate);
+    char name[16]{};
+    REQUIRE(guest.Read(guest.Get<std::uint64_t>(c->x[1]), name, 13));
+    CHECK(std::string(name) == "CoopShot_Seed");
+    const std::uint64_t handle = c->x[3];
+    d.Step(guest, true, 0, 0);
+    guest.Set(handle, request);
+    guest.Set(request, std::uint32_t{addr::kRequestReady});
+    REQUIRE(d.Step(guest, false, 0, 16));  // take
+    d.Step(guest, true, actor, 16);
+
+    // Live: the place and the pending transform are written, the setter is not called.
+    copy.position = {5.0f, 6.0f, 7.0f};
+    d.SetInput(base, {copy});
+    CHECK_FALSE(d.Step(guest, false, 0, 33));
+    CHECK(guest.Get<float>(actor + addr::kActorPosition) == doctest::Approx(5.0f));
+    CHECK(guest.Get<float>(actor + addr::kActorPositionRequest + 8) == doctest::Approx(7.0f));
+    CHECK(guest.Get<float>(actor + addr::kActorRotationRequest + 8) == doctest::Approx(1.0f));
+    CHECK(d.Live().at(7) == actor);
+
+    // A second seed whose stand-in cannot be made (no pack): failed, then made
+    // as the game's own seed; the next seed goes straight to the game's own.
+    Copy other;
+    other.key = 8;
+    other.actor = "Shootable_DekuSeed";
+    d.SetInput(base, {copy, other});
+    c = d.Step(guest, false, 0, 50);
+    REQUIRE(c);
+    REQUIRE(c->function == base + addr::kCreate);
+    std::memset(name, 0, sizeof name);
+    REQUIRE(guest.Read(guest.Get<std::uint64_t>(c->x[1]), name, 13));
+    CHECK(std::string(name) == "CoopShot_Seed");
+    const std::uint64_t handle2 = c->x[3];
+    d.Step(guest, true, 0, 50);
+    constexpr std::uint64_t failed = 0x51000000;
+    guest.Map(failed, 0x10);
+    guest.Set(failed, std::uint32_t{5});
+    guest.Set(handle2, failed);
+    c = d.Step(guest, false, 0, 66);  // the failure is seen; the copy is made again
+    REQUIRE(c);
+    REQUIRE(c->function == base + addr::kCreate);
+    std::memset(name, 0, sizeof name);
+    REQUIRE(guest.Read(guest.Get<std::uint64_t>(c->x[1]), name, 15));
+    CHECK(std::string(name).rfind("Shootable_Deku", 0) == 0);
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("no CoopShot_Seed") != std::string::npos;
+    }));
 }

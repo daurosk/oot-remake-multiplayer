@@ -30,6 +30,20 @@ Turn it on with `LICHII_COOP_SPAWN=1`. That also patches the svc cave; the spawn
 - A copy shows up on our own actor list too. It is never sent back: the director tells the sync each copy's actor, and a new actor of a copy's name within 1.5 units of a copy not yet placed is taken as that copy.
 - A new scene, a lost connection or a new game forgets everything. A copy with no sample or remove for 20 s is dropped.
 
+## Seeds, arrows and hookshot tips: stand-ins (issue 85)
+
+Players on test6 saw the other player aim the slingshot, but never the seed. The test4 player logs show why it was not the network: every seed was sent (`spawn: sent Shootable_DekuSeed`), and the other game made each copy and deleted it at the remove (`create copy`, `copy N is actor`, `copy N deleted`). The copy was there and was not drawn.
+
+- **Why** (read from the romfs and `main`, no run): the copy was the game's own `Shootable_DekuSeed`, made by the create request with no shooter.
+  - A shootable made that way starts in the state its `ShootableParam` names as `NoShooterCreateStartState`. That is `UsedExternally` (hash 2207839275; the states are `Sleep`, `Prepare`, `Shoot`, `Stationary`, `Reflected`, `UsedExternally`).
+  - The seed's `ShootableParam` also has `IsPrepareVisibleOff: true`, and nothing ever shoots the copy.
+  - Arrows (`NormalArrow`) and hookshot tips (`Shootable_Hook`, `Shootable_HookLong`) are shootables made the same way, so they are given the same fix.
+- **Fix:** the copy is a stand-in of ours: `CoopShot_Seed`, `CoopShot_Arrow`, `CoopShot_Hook`, `CoopShot_HookLong`.
+  - The puppet pack tool builds them with the puppets (`tools/puppet_pack/build.py`, `STAND_INS`): the shootable's model and LOD and the shared default components, with no physics, sensor, attack, AI, effect or sound. So the copy is drawn and can hit nothing.
+  - The director (`CoopSpawn::StandIn`) creates the stand-in and places it as the puppet is placed: the place and turn at +0x31c, and the pending transform at +0x358/+0x364. There is no setter call, since the stand-in has no physics.
+- **Fallback:** when the stand-in cannot be made (a puppet pack built before this change), the director logs `<actor>: no CoopShot_... (rebuild the puppet pack); the game's own actor is used` once, and copies that kind as the game's own actor, as before. The kit's pack hint already asks for a rebuild when the tool changes.
+- Bombs, bombchus, nuts and the boomerang are unchanged: they have their own AI and are drawn as copies (the nut's flash was seen by players).
+
 ## Not done
 
 - Compiled into the emulator and run with two games (2026-11-09, `tools/autotest` scenarios `spawn-seed` and `spawn-bomb`, `LICHII_COOP_SPAWN=1`, Graveyard save of the auto kits). In the logs, two slingshot seeds and a Deku Nut from A reach B. B creates each copy 50 to 70 ms after it arrives and deletes it when A's remove comes (seeds about 0.5 s later, the nut 0.3 s). The copies were not seen in screenshots: they are small, live under half a second, and the save's cow stands in front of both Links. The server must be a build with object owners (`server: object owners`, 2026-11-08); the older kit servers drop every object message.

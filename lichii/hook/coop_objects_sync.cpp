@@ -602,6 +602,13 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
     }
 }
 
+void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end() && it->second.reacts) {
+        it->second.took_over_at = now_us;
+    }
+}
+
 void Sync::NoteDrift(std::uint64_t address, const proto::Vec3& put, const proto::Vec3& now,
                      std::uint64_t now_us) {
     if (!player_ || !Finite(put) || !Finite(now)) {
@@ -1188,9 +1195,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // A copy near our Link whose own AI plays something else than
                 // the owner's enemy (issue 132): it wants to act on our Link.
                 const auto& wanted = o.received.back().animation;
-                if (o.animation && !o.animation->name.empty() && wanted &&
-                    !wanted->name.empty() &&
-                    AnimationBase(o.animation->name) != AnimationBase(wanted->name)) {
+                const bool differs = o.animation && !o.animation->name.empty() && wanted &&
+                                     !wanted->name.empty() &&
+                                     AnimationBase(o.animation->name) != AnimationBase(wanted->name);
+                // Or the Mover had to put the owner's one back lately (issue 157).
+                const bool put_back = o.took_over_at != 0 && now_us >= o.took_over_at &&
+                                      now_us - o.took_over_at <= kWakeLatchUs;
+                if (differs || put_back) {
                     ChaseStep(o, now_us);
                 }
             }

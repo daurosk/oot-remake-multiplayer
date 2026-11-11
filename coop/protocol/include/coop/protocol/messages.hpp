@@ -17,7 +17,7 @@ namespace coop::protocol {
 
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
 // (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 9;
+inline constexpr std::uint16_t kProtocolVersion = 8;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 

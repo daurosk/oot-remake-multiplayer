@@ -39,6 +39,9 @@ void Sync::Reset() {
     set_at_ = 0;
     set_once_ = false;
     running_since_.reset();
+    host_last_.reset();
+    host_running_ = false;
+    joined_ = false;
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -87,12 +90,19 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
             if (off > kDriftSeconds) {
                 target = t.seconds;
             }
-        } else if (host) {
             continue;
-        } else if (!set_once_) {
-            // Joining: take the host's clock once.
+        }
+        if (host) continue;
+        // The host's clock runs: its plain messages move forward. One that
+        // stands (indoors, a dungeon) is no reason to move ours.
+        host_running_ = host_last_ && Ahead(*host_last_, t.seconds) > 0;
+        host_last_ = t.seconds;
+        if (!joined_ && !set_once_) {
+            // Joining: take the host's clock once (only its first word).
+            joined_ = true;
             if (off > kDriftSeconds) target = t.seconds;
-        } else if (off > kResyncSeconds && running && now_us - set_at_ >= kSetEveryUs) {
+        } else if (off > kResyncSeconds && running && host_running_ &&
+                   now_us - set_at_ >= kSetEveryUs) {
             // Playing: only a large drift, never while our clock stands
             // (the last set's time change still runs, or we are indoors).
             target = t.seconds;

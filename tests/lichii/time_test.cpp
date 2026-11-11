@@ -135,6 +135,24 @@ TEST_CASE("time: a set that stops the clock does not set it again and again (iss
     CHECK(sets == 1);  // joining only, in ten minutes
 }
 
+TEST_CASE("time: host clock stands, guest runs: no set") {
+    // The host is indoors or in a dungeon (its clock stands) while the guest
+    // runs outdoors: the drift grows past an hour, but the guest keeps its own.
+    Sync guest;
+    std::vector<proto::Message> send;
+    guest.Tick(36'000, false, 0, send);
+    guest.Receive(From(1, 36'000));
+    CHECK_FALSE(guest.Tick(36'000, false, 250 * kMs, send));
+    std::uint32_t ours = 36'000;
+    int sets = 0;
+    for (std::uint64_t t = 500 * kMs; t <= 600'000 * kMs; t += 250 * kMs) {
+        ours = (ours + 25) % proto::kSecondsPerDay;
+        guest.Receive(From(1, 36'000));  // the host's clock stands
+        if (guest.Tick(ours, false, t, send)) ++sets;
+    }
+    CHECK(sets == 0);
+}
+
 TEST_CASE("time: a clock that jumps by itself is sent as a jump, and everyone takes a jump") {
     Sync a;
     std::vector<proto::Message> send;

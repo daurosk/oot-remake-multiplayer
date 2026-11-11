@@ -8,7 +8,8 @@
 // - Another game moves its clock to the host's once when it joins, when it
 //   is more than kDriftSeconds off (either way round midnight). After that
 //   only when it is more than kResyncSeconds off, its own clock has run for
-//   kRunningForUs, and kSetEveryUs has passed since the last set (issue 159:
+//   kRunningForUs, the host's clock runs too (its last two TIME_OF_DAY moved
+//   forward), and kSetEveryUs has passed since the last set (issue 159:
 //   every set runs the game's time change, which makes the area's grass and
 //   objects again and stops the clock for some seconds; with a two-minute
 //   limit that stop put the guest past the limit again, so it set its clock,
@@ -60,6 +61,9 @@ private:
     std::uint64_t set_at_ = 0;
     bool set_once_ = false;
     std::optional<std::uint64_t> running_since_;  // our clock moved forward on every tick since
+    std::optional<std::uint32_t> host_last_;  // the host's last plain TIME_OF_DAY
+    bool host_running_ = false;
+    bool joined_ = false;  // the host's first plain TIME_OF_DAY was taken (or kept)  // its last two moved forward (not indoors, no time change)
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::TimeOfDay> inbox_;

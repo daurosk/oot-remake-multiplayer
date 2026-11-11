@@ -101,6 +101,20 @@ Run in the patched emulator (`lichii/hook/coop_flags.cpp`, settings in [lichii.m
 
 Not checked live: an Int or 64-bit key crossing, B to A, a late joiner getting the host's table.
 
+## Saves: the host's save decides (branch `host-save`)
+
+Caleb (2026-11-11): "Let's make it follow the hosts save." Before, the group's state was the union of everyone's progress, and it survived any one player's load. So a newer state kept coming back into an older save: in #148 a later state's shut boss door locked a player out.
+
+- **A load window** (`FlagWatcher`): from the first frame without our Link (the title screen, a save load, a door) to the end of the 120 settle frames after it. While there is no Link, a *named* shared flag that moves means a save was loaded: a door moves none, only one-time 64-bit keys. In a save load's window nothing is sent.
+- **The host's save load**: nothing is put back. When the window ends, every shared flag whose value differs from before the load goes out as `FLAG_RESET` ([protocol.md](protocol.md), "Saves"). The server replaces its values with them; every player writes them exactly (`FlagStore::write_exact`, with no max, OR, mirror or one-way rule). A host's first save load after the title screen does the same: the group starts from the host's save.
+- **A guest's save load**: nothing is sent. Each flag the load moves that the group has a value for is written back at once (so a room loading now has it). When the window ends, any other flag the load changed goes back to what this game had before it. The group never changes from a guest's load.
+- **While playing**, changes merge as before (OR, max, counts). Only a host's save load resets.
+- **Per player** stays per player: rupees, ammo counts, life, position (not shared at all).
+- **A new host** (the old one left) sends its table as before (merged); no reset.
+- **One-way rules** (map and compass, chests, pickups) hold for `FLAG_STATE`. A `FLAG_RESET` sets them back to 0 when the host's save has 0.
+- Limits: a guest's own change in the 2 s after its save load is put back with the load's. The window rule is for both roles; after a door (no named flag moved) the settle frames work as before.
+- Tests: `tests/host/flag_watcher_test.cpp` ("the host's save load resets the group to its save", "a door is no save load", "a guest's save load takes the group's values", "a FLAG_RESET is written exactly ... #148", "lowers an item", "a new host does not reset"), `tests/server/session_test.cpp`, `tests/protocol/codec_test.cpp`.
+
 ## Not done
 
 1. Float, Enum and the other types (UInt is read, above): their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.

@@ -422,6 +422,13 @@ public:
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");
         }
+        if (report.host_reset) {
+            // docs/flags.md, "Saves": the host loaded a save. Session-wide state
+            // kept outside the flags is dropped here (each owner adds its clear:
+            // locked doors' kept breaks, the kills-late dead list, ...).
+            LOG_INFO(Core, "coop: flags: the host loaded a save: the group follows it");
+            CoopObjects::ForgetKeptBreaks();  // locked doors' kept breaks (docs/dungeon.md)
+        }
         // Chests opened and pickups taken in another game: what is loaded of
         // them goes here too (docs/items.md, "Chests").
         // Issue 146: a map or compass the game took back, put back.

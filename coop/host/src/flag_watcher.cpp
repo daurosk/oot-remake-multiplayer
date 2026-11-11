@@ -73,6 +73,11 @@ bool FlagWatcher::receive(const protocol::Message& message) {
       queue_.emplace_back(*snapshot);
       return true;
     }
+  } else if (const auto* reset = std::get_if<protocol::FlagReset>(&message)) {
+    if (role_ == FlagRole::player) {  // a host sent its own
+      queue_.emplace_back(*reset);
+      return true;
+    }
   }
   ++stats_.ignored_messages;
   return false;
@@ -211,6 +216,15 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   queue_.clear();
   for (auto& message : queue) handle(store, message, answers);
 
+  std::vector<Outgoing> resets;
+  if (settling() && !window_) {
+    window_ = true;
+    moved_ = false;
+  } else if (!settling() && window_) {
+    window_ = false;
+    end_window(store, resets);
+  }
+
   Table changes;
   if (!holding_) {
     if (resend_pending_) {
@@ -228,6 +242,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     // Answers already updated last_, so the two never hold the same flag.
     answers.merge(changes);
     push_list<protocol::FlagState>(out, answers);
+    out.insert(out.end(), resets.begin(), resets.end());
     if (snapshot_requested_) {
       send_snapshot(store, out);
       snapshot_requested_ = false;
@@ -243,6 +258,15 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       return;
     }
     answer_set(store, *set, answers);
+    return;
+  }
+  if (auto* reset = std::get_if<protocol::FlagReset>(&message)) {
+    if (role_ != FlagRole::player) {
+      ++stats_.ignored_messages;
+      return;
+    }
+    apply_reset(store, reset->flags);
+    reset_seen_ = true;
     return;
   }
   if (auto* state = std::get_if<protocol::FlagState>(&message)) {
@@ -303,6 +327,59 @@ void FlagWatcher::apply_state(FlagStore& store, const std::vector<FlagEntry>& fl
     // This is the host's answer: it wins over the local change.
     pending_.erase(key);
     write(store, entry);
+  }
+}
+
+void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& flags) {
+  for (const auto& entry : flags) {
+    const FlagKey key = key_of(entry);
+    if (!shared_.contains(key) || is_delta(entry)) continue;  // no one-way rule here
+    pending_.erase(key);  // the host's save wins over a change of ours
+    note_for_others(store, entry);
+    if (!store.write_exact(entry)) {
+      ++stats_.write_failures;
+      unwritten_[key] = entry;
+      if (!written_for_others_.empty() && written_for_others_.back() == key) {
+        written_for_others_.pop_back();
+      }
+      continue;
+    }
+    ++stats_.applied;
+    ++stats_.reset_applied;
+    unwritten_.erase(key);
+    if (!store.is_count(key)) note_group(entry, nullptr);
+    last_[key] = entry;
+  }
+}
+
+void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
+  if (!moved_) return;  // a door: the next diff sends what changed, as always
+  Table changed;
+  for (const FlagKey key : shared_.keys()) {
+    std::optional<FlagEntry> now = store.read(key);
+    if (!now) continue;
+    now->key = key;
+    const auto it = last_.find(key);
+    if (it == last_.end() || it->second == *now) continue;
+    // dungeon-live's room switches (one_way_) reset with their room: a load's
+    // change of one is neither put back nor sent in a reset (its 0 never goes out).
+    if (one_way_.contains(key)) {
+      it->second = *now;
+      continue;
+    }
+    if (role_ == FlagRole::host) {
+      changed[key] = *now;  // the save's value goes to everyone
+      last_[key] = *now;
+      if (!store.is_count(key)) note_group(*now, nullptr);
+    } else if (store.write_exact(it->second)) {
+      ++stats_.load_reverts;  // back to the group's value from before the load
+      ++stats_.applied;
+    }
+  }
+  if (role_ == FlagRole::host && !changed.empty()) {
+    ++stats_.host_resets;
+    reset_seen_ = true;
+    push_list<protocol::FlagReset>(out, changed);
   }
 }
 
@@ -425,6 +502,23 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
+    if (window_ && (loading_ || moved_)) {
+      // No Link: a named flag moving is a save load (a door moves none). In
+      // the settle frames after a door, the game's own changes go as before.
+      if (loading_ && key.kind == FlagKeyKind::named) moved_ = true;
+      // dungeon-live's room switches (one_way_) reset with their room: never put back.
+      if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
+        // The group's value back at once, so a room loading now has it.
+        const auto group = group_.find(key);
+        if (group != group_.end() && group->second != *now && store.write_exact(group->second)) {
+          ++stats_.load_reverts;
+          ++stats_.applied;
+          it->second = group->second;
+          continue;
+        }
+      }
+      continue;  // nothing is sent from a load; end_window decides
+    }
     const FlagEntry before = it->second;
     it->second = *now;
     // Not while loading: a load putting the save's 0 back is the load

@@ -115,6 +115,7 @@ std::string_view to_string(EventKind kind) {
     case EventKind::player_status: return "player status";
     case EventKind::flag_state: return "flag state";
     case EventKind::flag_snapshot: return "flag snapshot";
+    case EventKind::flag_reset: return "flag reset";
     case EventKind::join_request: return "join request";
     case EventKind::join_accepted: return "join accepted";
     case EventKind::join_refused: return "join refused";
@@ -763,6 +764,25 @@ bool Client::set_flags(std::span<const proto::FlagEntry> flags) {
   return true;
 }
 
+bool Client::send_flag_reset(std::span<const proto::FlagEntry> flags) {
+  if (state_ != State::connected || !is_host()) return false;
+  std::vector<proto::Message> messages;
+  for (std::size_t at = 0; at < flags.size(); at += proto::kMaxFlagEntries) {
+    const auto part = flags.subspan(at, std::min(proto::kMaxFlagEntries, flags.size() - at));
+    proto::Message message = proto::FlagReset{proto::kPlayerSelf, {part.begin(), part.end()}};
+    if (proto::check_received(message, proto::Sender::client, proto::kChannelProgress) !=
+        proto::Error::none) {
+      return false;
+    }
+    messages.push_back(std::move(message));
+  }
+  for (const proto::Message& message : messages) {
+    if (!send_raw(message, proto::kChannelProgress)) return false;
+  }
+  store_flags(flags);
+  return true;
+}
+
 bool Client::send_flag_snapshot(std::span<const proto::FlagEntry> flags) {
   if (!is_host()) return false;
   const auto parts = proto::split_snapshot(flags);
@@ -851,7 +871,15 @@ bool Client::apply_shared(const proto::Message& message, std::uint8_t channel,
                           std::optional<Event>& out) {
   Event event;
   event.channel = channel;
-  if (const auto* state = std::get_if<proto::FlagState>(&message)) {
+  if (const auto* reset = std::get_if<proto::FlagReset>(&message)) {
+    // The host's save load: its values replace ours, 0s included.
+    if (host_number_ == 0 || reset->player_number != host_number_) return false;
+    store_flags(reset->flags);
+    settle_pending(reset->flags);
+    event.kind = EventKind::flag_reset;
+    event.player = reset->player_number;
+    event.flags = reset->flags;
+  } else if (const auto* state = std::get_if<proto::FlagState>(&message)) {
     // Only the host's, as HOST named it: that may be a host whose
     // PLAYER_LEFT (channel 0) is already in, or us (the server's value on a
     // clash with our snapshot).

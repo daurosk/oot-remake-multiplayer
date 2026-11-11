@@ -62,6 +62,10 @@ class FlagStore {
   // compass, issue 146): FlagWatcher writes it back to 1 when the game's
   // value drops to 0, at any time, not only after a load. Default: none.
   virtual bool is_one_way(FlagKey) { return false; }
+
+  // Writes the value as it is, with no merging (the host's save load,
+  // docs/flags.md "Saves"). Default: write().
+  virtual bool write_exact(const protocol::FlagEntry& entry) { return write(entry); }
 };
 
 // A FlagStore that refuses the flags `hold` names for now and passes all
@@ -81,6 +85,16 @@ class HoldFlagStore final : public FlagStore {
       return false;
     }
     return inner_.write(entry);
+  }
+  // The host's save load (docs/flags.md, "Saves"): a held 1 still waits;
+  // a 0 passes, so a reset can take a room's state back (host-save).
+  bool write_exact(const protocol::FlagEntry& entry) override {
+    if (entry.value != 0 && holds(key_of(entry))) {
+      ++held_;
+      if (held_keys_.size() < 64) held_keys_.push_back(key_of(entry));
+      return false;
+    }
+    return inner_.write_exact(entry);
   }
   bool is_count(FlagKey key) override { return inner_.is_count(key); }
   bool is_one_way(FlagKey key) override { return inner_.is_one_way(key); }

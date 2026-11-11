@@ -172,6 +172,7 @@ struct Stats {
   std::uint64_t join_dropped = 0;
   // FLAG_SET and FLAG_STATE relayed (stage 1 step 4); in relayed too.
   std::uint64_t flag_relayed = 0;
+  std::uint64_t host_resets = 0;  // FLAG_RESETs from the host (its save load)
   std::uint64_t flag_refused = 0;     // FLAG_STATE or FLAG_SNAPSHOT not from the host
   std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
   std::uint64_t flag_clashes = 0;     // host snapshot entries that differed (server kept)
@@ -353,6 +354,11 @@ class Session {
   void on_flag_set(Connection& c, protocol::Message& message);
   void on_flag_state(ConnectionId id, Connection& c, protocol::Message& message);
   void on_flag_snapshot(ConnectionId id, Connection& c, const protocol::FlagSnapshot& part);
+  // The host loaded a save (its FLAG_RESET; docs/flags.md, "Saves"). Every
+  // session-wide state kept outside the flag table that the host's save
+  // undoes is dropped here: add each owner's clear (locked doors' kept
+  // breaks, the kills-late dead list, ...). Called once per FLAG_RESET.
+  void on_host_reset();
   // Keeps an entry in the table; false when it is new and the table is full.
   bool keep_flag(const protocol::FlagEntry& e);
   void send_snapshot(ConnectionId to);

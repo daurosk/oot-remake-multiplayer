@@ -1467,3 +1467,23 @@ TEST_CASE("bad boss room messages are refused") {
   b[b.size() - 2] = kMaxBossRoom + 1;
   CHECK(decode(b, m) == Error::bad_value);
 }
+
+TEST_CASE("flag reset: type 135, progress channel, both ways, the same entries as flag state") {
+  CHECK(static_cast<int>(MessageType::flag_reset) == 135);
+  CHECK(channel_of(MessageType::flag_reset) == kChannelProgress);
+  CHECK(allowed_on_channel(MessageType::flag_reset, kChannelProgress));
+  CHECK_FALSE(allowed_on_channel(MessageType::flag_reset, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::flag_reset));
+  CHECK(may_send(Sender::server, MessageType::flag_reset));
+  const FlagEntry zero{FlagKey(0x1234u, std::uint16_t{0}), FlagKind::boolean, 0};
+  Message m = FlagReset{2, {zero}};
+  std::vector<std::uint8_t> out;
+  REQUIRE(encode(m, out) == Error::none);
+  Message back;
+  REQUIRE(decode(out, back) == Error::none);
+  CHECK(back == m);
+  CHECK(type_of(back) == MessageType::flag_reset);
+  CHECK(encode(FlagReset{0, {}}, out) == Error::bad_value);  // at least one entry
+  const FlagEntry delta{FlagKey(0x1234u, std::uint16_t{0}), FlagKind::count_delta, 1};
+  CHECK(encode(FlagReset{0, {delta}}, out) == Error::bad_value);  // totals only
+}

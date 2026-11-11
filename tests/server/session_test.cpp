@@ -857,6 +857,29 @@ TEST_CASE("flag state is taken from the host only, kept, and relayed to everyone
   CHECK(snap[0].flags == std::vector<FlagEntry>{flag(5, 0), flag(5, 3, 2)});
 }
 
+TEST_CASE("a host's FLAG_RESET replaces the kept values, 0s included, and goes to everyone else") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, FlagState{0, {flag(5, 1), flag(6, 1)}}, kChannelProgress);
+  h.clear();
+
+  h.receive(2, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // not the host
+  CHECK(h.sent.empty());
+
+  h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded an older save
+  CHECK(h.to(1).empty());
+  auto r = only_message_to<FlagReset>(h, 2);
+  REQUIRE(r.has_value());
+  CHECK(*r == FlagReset{1, {flag(5, 0)}});
+  CHECK(h.session.stats().host_resets == 1);  // on_host_reset ran once
+  h.clear();
+  h.join(3, "Saria");
+  auto snap = messages_of<FlagSnapshot>(h, 3);
+  REQUIRE(snap.size() == 1);
+  CHECK(snap[0].flags == std::vector<FlagEntry>{flag(5, 0), flag(6, 1)});
+}
+
 TEST_CASE("a joiner gets the table before any flag state sent after it joined") {
   Harness h;
   h.join(1, "Link");

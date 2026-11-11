@@ -75,6 +75,9 @@ struct FrameReport {
   bool hosting = false;                 // the watcher's role is host
   bool holding = false;                 // a snapshot is coming in parts: hold the game
   std::size_t queued = 0;               // messages and flag lists queued to send
+  // The host's save load reached this game this frame (FlagWatcher::
+  // take_reset): drop session-wide state the save undoes (docs/flags.md, "Saves").
+  bool host_reset = false;
 };
 
 class Session {

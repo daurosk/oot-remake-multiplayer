@@ -408,7 +408,7 @@ class Session {
   void on_object_present(ConnectionId id, Connection& c, const protocol::ObjectPresent& p,
                          std::uint64_t now_us);
   void on_object_message(ConnectionId id, Connection& c, std::uint8_t channel,
-                         protocol::Message& message, std::size_t bytes, std::uint64_t now_us);
+                         protocol::Message& message, std::uint64_t now_us);
   void on_damage(ConnectionId id, Connection& c, protocol::Damage& d, std::uint64_t now_us);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us);

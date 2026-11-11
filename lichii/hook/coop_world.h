@@ -252,7 +252,9 @@ bool SignWordWritable(std::uint64_t current, std::uint64_t value);
 bool SignCutKeyAllowed(std::uint64_t key);
 
 // A dungeon gimmick: a switch, a water plane, a shutter, a torch, a lift or
-// a moving floor (test7, docs/dungeon.md "Live dungeon actions").
+// a moving floor (test7, docs/dungeon.md "Live dungeon actions"); for the
+// probe also the push blocks and their base anchor (issue 147), the falling
+// ladder, its pillar and the falling floors (issue 129).
 bool IsGimmick(std::string_view name);
 
 // Test7 probe for dungeon gimmicks (docs/dungeon.md "Live dungeon actions").

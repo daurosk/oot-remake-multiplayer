@@ -1,0 +1,49 @@
+# pots-place (world-objects, #84): both warp into Kakariko (child) and are put by the four pots
+# Obj_Pot_A_08 up the hill (Banc KakarikoVillage_Child_Static: 2d244b2f4cfdaf71 at -47.65 108.67
+# 90.11, fae259a19182de39 at -52.5 108.67 92.9, 09b8f3de8fb3974d -46.74 89.55, c3fc9aa5508fc810
+# -53.41 93.47). The older pots/pot-drops routes never reached a pot. A lifts one pot and throws
+# it (it breaks), then cuts another with the sword. B stands 4 m off and watches.
+# Expect: A "world: 2d244b2f4cfdaf71 Obj_Pot_A_08 moved here: sending" (carried) and a break
+# line, B "... moved by another player" then "... broken by another player"; then the same
+# break for fae259a19182de39 (the cut). Shots "lifted", "thrown", "cut": B's pots match A's
+# (carried pot above A's puppet, then gone; the cut pot gone). Drops (#102): the same drop in both.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -50.0 109.2 91.0
+wait 240
+mark placed
+goto -48.2 90.4 0.4 300
+toward -47.65 90.11 20
+wait 20
+press A 12               # lift
+wait 50
+mark lifted
+toward -50.0 96.0 10     # turn toward open ground (and B)
+press ZR 12              # throw
+wait 90
+mark thrown
+goto -51.9 92.5 0.4 300
+toward -52.5 92.9 10
+press Y
+wait 30
+toward -52.5 92.9 6
+press Y
+wait 60
+mark cut
+wait 600
+mark end

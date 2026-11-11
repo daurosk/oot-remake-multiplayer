@@ -1540,7 +1540,9 @@ TEST_CASE("gimmick probe: names of switches, water planes, shutters, torches and
                           "Obj_SwitchHit_A_01", "Obj_WaterTemple_WaterPlane_A_03", "Obj_Well_WaterPlane_A_01",
                           "Obj_WaterTemple_SwitchShutter_A_01", "Obj_ForestTemple_SwitchCandleStick_A_01",
                           "Obj_CandleStick_A_01", "Obj_InsideTheDekuTree_ElevatorLift_A_01",
-                          "Obj_FireTemple_MoveFloor_A_01", "Obj_SolarSwitch_A_01"}) {
+                          "Obj_FireTemple_MoveFloor_A_01", "Obj_SolarSwitch_A_01", "Obj_MovableBox_A_01",
+                          "Obj_MovableBox_BasePosAnchor", "Obj_InsideTheDekuTree_FallingLadder_A_01",
+                          "Obj_InsideTheDekuTree_Stopper_A_01", "Obj_InsideTheDekuTree_FallingFloor_A_02"}) {
         CAPTURE(n);
         CHECK(CoopWorld::IsGimmick(n));
     }

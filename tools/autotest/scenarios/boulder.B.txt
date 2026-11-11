@@ -1,0 +1,26 @@
+# boulder, B: put at the crawlspace's south end, watches the boulder (see boulder.A.txt).
+mark start
+warp KokiriForest_Child
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 60
+place -78.94 119.3 17.04
+wait 180
+toward -79.94 26.99 10
+press ZL 10
+mark b-placed
+wait 1200
+mark b-mid
+toward -79.94 26.99 6
+press ZL 10
+wait 1200
+mark b-end

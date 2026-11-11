@@ -289,6 +289,11 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             if (w.size() == 3) {
                 step.start = std::string(w[2]);
             }
+        } else if (cmd == "PLACE") {
+            step.kind = Kind::place;
+            if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
+                return fail("want: place X Y Z");
+            }
         } else if (cmd == "CHAT") {
             if (w.size() < 2) {
                 return fail("want: chat TEXT");
@@ -414,6 +419,11 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
             s.kind == Kind::assign || s.kind == Kind::chat) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
+            ++index_;
+            continue;
+        }
+        if (s.kind == Kind::place) {
+            requests_.push_back(Request{s.kind, {}, {}, {s.x, s.y, s.z}});
             ++index_;
             continue;
         }
@@ -547,6 +557,7 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include "coop/host/player_reader.hpp"
 #include "coop_cheats.h"
 #include "coop_every.h"
+#include "coop_boss.h"
 #include "coop_camera.h"
 #include "coop_flags.h"
 #include "coop_hook.h"
@@ -887,6 +898,11 @@ void OnFrame(Core::System& system) {
             Wear(system, request.start, request.name);
         } else if (request.kind == Kind::assign) {
             Assign(system, request.name);
+        } else if (request.kind == Kind::place) {
+            const bool ok = CoopBoss::MoveLink(system, g_state.main,
+                                               CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});
+            LOG_INFO(Core, "coop: test place {:.2f} {:.2f} {:.2f}: {}", request.at[0], request.at[1],
+                     request.at[2], ok ? "done" : "failed");
         } else if (request.kind == Kind::chat) {
             const bool sent = CoopHook::SendChat(request.name);
             LOG_INFO(Core, "coop: test chat '{}': {}", request.name, sent ? "sent" : "NOT sent");

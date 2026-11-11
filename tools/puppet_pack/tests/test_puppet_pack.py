@@ -46,6 +46,32 @@ def sample_doc():
     }
 
 
+
+def murmur3(text, seed=0):
+    """MurmurHash3 x86 32-bit, the hash of the game's enum names in its parameter files."""
+    data = text.encode()
+    h, c1, c2, m = seed, 0xCC9E2D51, 0x1B873593, 0xFFFFFFFF
+    n = len(data) // 4
+    for i in range(n):
+        k = int.from_bytes(data[4 * i:4 * i + 4], "little")
+        k = (k * c1) & m
+        k = ((k << 15) | (k >> 17)) & m
+        h ^= (k * c2) & m
+        h = ((h << 13) | (h >> 19)) & m
+        h = (h * 5 + 0xE6546B64) & m
+    tail = data[4 * n:]
+    if tail:
+        k = int.from_bytes(tail, "little")
+        k = (k * c1) & m
+        k = ((k << 15) | (k >> 17)) & m
+        h ^= (k * c2) & m
+    h ^= len(data)
+    h ^= h >> 16
+    h = (h * 0x85EBCA6B) & m
+    h ^= h >> 13
+    h = (h * 0xC2B2AE35) & m
+    return h ^ (h >> 16)
+
 class BymlTest(unittest.TestCase):
     def test_round_trip_keeps_types(self):
         doc = sample_doc()
@@ -253,8 +279,17 @@ class BuildPackTest(unittest.TestCase):
         # Sound (issue 131): the variant's SLink and footstep components (and the footstep
         # $parent) come along; effects (ELink) and the player's XLink property table do not.
         self.assertEqual(comps["SLinkRef"], "?Component/SLink/Player_Child.engine__component__SLinkParam.bgyml")
-        self.assertEqual(comps["SoundFootStepRef"],
-                         "?Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.bgyml")
+        # The puppet's own footstep param: Dark Link's changes over the player's variant file.
+        own = "Component/SoundFootStepParam/CoopPuppet_Child.game__component__SoundFootStepParam.bgyml"
+        self.assertEqual(comps["SoundFootStepRef"], "?" + own)
+        fs = byml.loads(out[own])
+        self.assertEqual(fs["$parent"],
+                         "Work/Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.gyml")
+        self.assertIs(fs["IsUseRayCast"], False)
+        self.assertIs(fs["IsEnableGrass"], False)
+        self.assertIsInstance(fs["ProcType"], byml.UInt)
+        self.assertEqual(fs["ProcType"].v, 3069107721)
+        self.assertEqual(sorted(fs), ["$parent", "IsEnableGrass", "IsUseRayCast", "ProcType"])
         self.assertEqual(comps["XLinkRef"], build.FIXED_COMPONENTS["XLinkRef"])
         self.assertNotIn("ELinkRef", comps)
         for p in ("Component/SLink/Player_Child.engine__component__SLinkParam.bgyml",
@@ -265,6 +300,34 @@ class BuildPackTest(unittest.TestCase):
                   "Component/ELink/Player.engine__component__ELinkParam.bgyml",
                   "Component/XLink/Player.engine__component__XLinkParam.bgyml"):
             self.assertNotIn(p, out)
+
+    def test_footstep_proc_type_is_none(self):
+        # The hashes in the game's files are murmur3 of the enum names: Player and None.
+        self.assertEqual(murmur3("Player"), 145979025)
+        self.assertEqual(murmur3("None"), build.FOOTSTEP_PROC_NONE)
+
+    def test_pack_player_footsteps(self):
+        members = fake_player_pack("Adult")
+        pack, _, names, _ = build.build_pack(members, "Adult", player_footsteps=True)
+        comps = byml.loads(sarc.read(pack)["Actor/CoopPuppet_Adult.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertEqual(comps["SoundFootStepRef"],
+                         "?Component/SoundFootStepParam/Player_Adult.game__component__SoundFootStepParam.bgyml")
+        self.assertFalse([n for n in names if "CoopPuppet_Adult.game__" in n])
+
+    def test_pack_sound_user(self):
+        members = fake_player_pack("Child")
+        pack, _, names, _ = build.build_pack(members, "Child", sound_user="Enemy_X")
+        out = sarc.read(pack)
+        comps = byml.loads(out["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
+        own = "Component/SLink/CoopPuppet_Child.engine__component__SLinkParam.bgyml"
+        self.assertEqual(comps["SLinkRef"], "?" + own)
+        self.assertEqual(byml.loads(out[own]), {"UserName": "Enemy_X"})
+        row = build.info_row({"__RowId": "Player_Child", "SLinkUserName": "Player_Child"}, "C", sound_user="Enemy_X")
+        self.assertEqual(row["SLinkUserName"], "Enemy_X")
+        # Without sound the switch does nothing.
+        _, _, names, _ = build.build_pack(members, "Child", sound=False, sound_user="Enemy_X")
+        self.assertFalse([n for n in names if "SLink" in n])
+        self.assertNotIn("SLinkUserName", build.info_row({"SLinkUserName": "P"}, "C", sound=False, sound_user="E"))
 
     def test_pack_without_sound(self):
         members = fake_player_pack("Child")
@@ -492,6 +555,15 @@ class FullBuildTest(unittest.TestCase):
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
         self.assertIs(man["sound"], True)
+        self.assertEqual(man["footsteps"], "puppet")
+        self.assertIsNone(man["sound_user"])
+        # The puppet's footstep param has its own entry; the made-up table has none for the
+        # player's file, so it is the file plus the margin.
+        for a in man["actors"]:
+            fs = a["footstep"]
+            self.assertEqual(fs["param"], f"Component/SoundFootStepParam/{a['actor']}.game__component__SoundFootStepParam.bgyml")
+            self.assertEqual(t.get(fs["param"]), fs["size"])
+            self.assertGreater(fs["size"], build.PACK_SIZE_MARGIN)
         self.assertEqual(man["shots"], [])  # the made-up romfs has no shootables
         self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 10245064])
         self.assertEqual([a["param_size"] for a in man["actors"]], [21336, 21336])
@@ -536,11 +608,59 @@ class FullBuildTest(unittest.TestCase):
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual(man["actors"][1]["instance_heap"], 20000000)
 
+    def test_footstep_size_follows_player_entry(self):
+        from puppet_pack import zs
+        d = zs.Dicts.from_romfs(self.romfs)
+        rs = "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(self.romfs, rs))))
+        t.set("Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.bgyml", 5584)
+        self.write(rs, zstandard.ZstdCompressor().compress(t.dumps()))
+        m = build.build(self.romfs, os.path.join(self.dir, "mod6"), log=lambda *_: None)
+        child = m["actors"][0]["footstep"]
+        self.assertGreaterEqual(child["size"], 5584)
+        self.assertLess(child["size"], 5584 + 0x200)
+
+    def test_main_player_footsteps(self):
+        from puppet_pack import zs
+        mod = os.path.join(self.dir, "mod5")
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--player-footsteps"]), 0)
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertIs(man["sound"], True)
+        self.assertEqual(man["footsteps"], "player")
+        self.assertEqual([a["footstep"] for a in man["actors"]], [None, None])
+        d = zs.Dicts.from_romfs(self.romfs)
+        files = sarc.read(d.decompress(build.read(os.path.join(mod, "romfs", "Pack/Actor/CoopPuppet_Child.pack.zs"))))
+        self.assertIn("Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.bgyml", files)
+        self.assertNotIn("Component/SoundFootStepParam/CoopPuppet_Child.game__component__SoundFootStepParam.bgyml", files)
+
+    def test_main_sound_user(self):
+        from puppet_pack import zs
+        mod = os.path.join(self.dir, "mod7")
+        # Only an SLink user some actor has.
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--sound-user", "Nobody"]), 1)
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--sound-user", "Player_Adult"]), 0)
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertEqual(man["sound_user"], "Player_Adult")
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(rows["CoopPuppet_Child"]["SLinkUserName"], "Player_Adult")
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertGreater(t.get("Component/SLink/CoopPuppet_Child.engine__component__SLinkParam.bgyml"), 0)
+
     def test_main_no_sound(self):
         from puppet_pack import zs
         mod = os.path.join(self.dir, "mod4")
         self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version", "--no-sound"]), 0)
-        self.assertIs(json.loads(build.read(os.path.join(mod, "coop_puppet.json")))["sound"], False)
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertIs(man["sound"], False)
+        self.assertEqual(man["footsteps"], "player")
+        self.assertEqual([a["footstep"] for a in man["actors"]], [None, None])
         d = zs.Dicts.from_romfs(self.romfs)
         out = os.path.join(mod, "romfs")
         rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(

@@ -58,9 +58,13 @@ TEST_CASE("time: the host says its clock once a second, others do not") {
 TEST_CASE("time: a guest takes the host's clock on joining when two minutes off") {
     Sync guest;
     std::vector<proto::Message> send;
+    Sync near;
+    near.Tick(36'000, false, 0, send);
+    near.Receive(From(1, 36'100));  // under two minutes: kept
+    CHECK_FALSE(near.Tick(36'005, false, 100 * kMs, send));
+    near.Receive(From(1, 80'000));  // after the first word: no join set
+    CHECK_FALSE(near.Tick(36'010, false, 200 * kMs, send));
     guest.Tick(36'000, false, 0, send);
-    guest.Receive(From(1, 36'100));  // under two minutes: kept
-    CHECK_FALSE(guest.Tick(36'005, false, 100 * kMs, send));
     guest.Receive(From(1, 80'000));  // far: set
     const auto set = guest.Tick(36'010, false, 200 * kMs, send);
     REQUIRE(set);

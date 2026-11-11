@@ -187,7 +187,8 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
     ++stats_.rejoined;
     log("player " + std::to_string(old.number) + " rejoins: " + old.nickname);
     actions_.push_back(DisconnectAction{*holder});
-    remove_player(*holder, LeaveReason::timed_out, now_us);
+    remove_player(*holder, LeaveReason::timed_out, now_us,
+                  "replaced: the same name came back from the same address");
   }
   if (player_count() >= kMaxPlayers) {
     refuse(id, c, RefuseReason::server_full, now_us);
@@ -1509,14 +1510,20 @@ void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason,
       (why.empty() ? std::string() : ": " + why));
 }
 
-void Session::disconnected(ConnectionId id, std::uint64_t now_us) {
+void Session::disconnected(ConnectionId id, std::uint64_t now_us, const std::string& link) {
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
+  const std::uint64_t quiet_ms = (now_us - it->second.last_heard) / 1000;
   bool silent = now_us - it->second.last_heard >= config_.silence_timeout_us / 2;
-  remove_player(id, silent ? LeaveReason::timed_out : LeaveReason::left, now_us);
+  std::string why = silent ? "timed out: the connection was lost, nothing from it for "
+                           : "the connection closed, last packet ";
+  why += std::to_string(quiet_ms) + " ms" + (silent ? "" : " ago");
+  if (!link.empty()) why += "; " + link;
+  remove_player(id, silent ? LeaveReason::timed_out : LeaveReason::left, now_us, why);
 }
 
-void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t now_us) {
+void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t now_us,
+                            const std::string& why) {
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
   Connection c = std::move(it->second);
@@ -1530,7 +1537,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   forget_empty_world(c.scene);
   forget_empty_dead(c.scene);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
-      (reason == LeaveReason::timed_out ? " (timed out)" : ""));
+      (!why.empty() ? " (" + why + ")" : reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
     session_game_build_.clear();
     host_.reset();
@@ -1581,7 +1588,9 @@ void Session::tick(std::uint64_t now_us) {
   }
   for (ConnectionId id : silent) {
     actions_.push_back(DisconnectAction{id});
-    remove_player(id, LeaveReason::timed_out, now_us);
+    const std::uint64_t quiet_ms = (now_us - connections_.at(id).last_heard) / 1000;
+    remove_player(id, LeaveReason::timed_out, now_us,
+                  "timed out: nothing heard for " + std::to_string(quiet_ms) + " ms");
   }
   if (now_us - ownership_checked_at_ >= config_.ownership_check_us) {
     ownership_checked_at_ = now_us;

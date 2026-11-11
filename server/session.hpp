@@ -279,7 +279,8 @@ class Session {
   // The transport lost the connection. A player who was in is reported to
   // the others as left, or as timed out when nothing was heard from them for
   // half the silence timeout or more (ENet does not say which it was).
-  void disconnected(ConnectionId id, std::uint64_t now_us);
+  // `link` (the transport's view: round trip, loss) goes into the log line.
+  void disconnected(ConnectionId id, std::uint64_t now_us, const std::string& link = {});
 
   // Timeouts and the server's own PINGs. Call often (every few ms).
   void tick(std::uint64_t now_us);
@@ -493,7 +494,9 @@ class Session {
   // why: more for the server's log (which version is older), or empty.
   void refuse(ConnectionId id, Connection& c, protocol::RefuseReason reason,
               std::uint64_t now_us, const std::string& why = {});
-  void remove_player(ConnectionId id, protocol::LeaveReason reason, std::uint64_t now_us);
+  // `why` goes into the log line: every drop says its reason.
+  void remove_player(ConnectionId id, protocol::LeaveReason reason, std::uint64_t now_us,
+                     const std::string& why = {});
   std::optional<ConnectionId> holder_of(const std::string& nickname) const;
   std::uint8_t free_number(std::uint8_t preferred = 0) const;
 

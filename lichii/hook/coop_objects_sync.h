@@ -333,6 +333,13 @@ public:
     // Link woke it. Off with SetWake(false) (LICHII_COOP_OBJECTS_WAKE=0).
     void SetWake(bool on) { wake_ = on; }
     static constexpr float kWakeM = 10.0f;
+    // Issue 157: the Mover puts the owner's animation back on the very next
+    // game frame, so a copy whose AI asks for its wake animation once (a
+    // Peahat rising out of the ground) is rarely seen in it by the walk.
+    // The Mover tells each such put-back (NoteTakeover, present thread); the
+    // copy then counts as playing its own animation for kWakeLatchUs.
+    void NoteTakeover(std::uint64_t address, std::uint64_t now_us);
+    static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
@@ -485,6 +492,7 @@ private:
         // Issue 132: the animation it was first seen in (an owned enemy at rest).
         std::string rest_animation;
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
+        std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
         // Our own hit took its life to 0 here (the DAMAGE resend's mark).
         std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when

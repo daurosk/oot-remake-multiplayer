@@ -1861,6 +1861,52 @@ TEST_CASE("objects: a copy whose own AI acts near our Link is flagged targeting 
     CHECK_FALSE(flags.has_value());
 }
 
+TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeting (issue 157)") {
+    // A buried Peahat's AI asks for its rise once; the Mover plays the
+    // owner's ground animation over it on the next game frame, so every walk
+    // sees the owner's name. The one put-back is enough.
+    auto run = [](float x, std::uint64_t put_back_at, bool wake = true) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait_Ground")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            if (put_back_at != 0 && t <= put_back_at && put_back_at < t + 66) {
+                sync.NoteTakeover(0x100, t * kMs);
+            }
+            sync.Receive(OwnerSample(id, 2, t * kMs, x, 2, "Wait_Ground"));
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, "Wait_Ground")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, 100));
+    CHECK_FALSE(run(5.0f, 0));             // never put back: the owner's rest is ours too
+    CHECK_FALSE(run(15.0f, 100));          // over 10 m from our Link
+    CHECK_FALSE(run(5.0f, 100, false));    // LICHII_COOP_OBJECTS_WAKE=0
+    CHECK_FALSE(run(5.0f, 1400));          // under 1 s since: not yet
+
+    // An enemy we own is not a copy: a put-back note (stale) does nothing.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait_Ground")});
+    Own(sync, *sync.IdOf(0x100), 1);
+    std::optional<std::uint8_t> flags;
+    for (std::uint64_t t = 10; t < 1500; t += 66) {
+        sync.NoteTakeover(0x100, t * kMs);
+        for (const auto& p : All<proto::ObjectPresent>(
+                 Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, 5.0f, "Wait_Ground")}))) {
+            flags = p.objects[0].flags;
+        }
+    }
+    CHECK_FALSE((flags && (*flags & kTargeting) != 0));
+}
+
 TEST_CASE("objects: an enemy of ours woken near our Link is flagged too, so it stays ours") {
     auto run = [](float x, const std::string& now, std::uint64_t until = 1500) {
         Sync sync;

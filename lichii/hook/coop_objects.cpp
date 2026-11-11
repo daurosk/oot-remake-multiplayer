@@ -467,7 +467,8 @@ public:
             const u64 since = now_ms >= want_ms_ ? std::min<u64>(now_ms - want_ms_, 100) : 0;
             const float frame =
                 FrameAfter(p.frame, rate, static_cast<std::int64_t>(since) * 1000);
-            if (SlotName(guest, controller) == p.name) {
+            const std::string slot_name = SlotName(guest, controller);
+            if (slot_name == p.name) {
                 auto& checked = checked_sample_[p.address];
                 if (checked == p.sample) {
                     continue;
@@ -480,6 +481,20 @@ public:
                 }
                 ++framed_;
                 return SetFrame(controller, frame);
+            }
+            // Issue 157: the name we played last is gone from slot 0, so the
+            // copy's own AI chose another one (a Peahat rising for our Link).
+            // It is put back below at once, so the walk would rarely see it:
+            // told to Sync as a wake (TakeTakeovers). A LOD variant of ours
+            // is not the AI's.
+            std::string took_over;
+            if (const auto last = played_at_.find(p.address);
+                last != played_at_.end() && last->second.first == p.name && !slot_name.empty() &&
+                AnimationBase(slot_name) != AnimationBase(p.name)) {
+                took_over = slot_name;
+                if (took_over_.size() < 256) {
+                    took_over_.push_back(p.address);
+                }
             }
             const u64 text = Cell(guest, p.name);
             if (text == 0) {
@@ -500,8 +515,9 @@ public:
             ++played_;
             auto& last = played_at_[p.address];
             if (last.first != p.name || now_ms - last.second >= kPlayLogMs) {
-                LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}' at frame {:.1f}", p.address,
-                         p.name, frame);
+                LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}' at frame {:.1f}{}{}{}",
+                         p.address, p.name, frame, took_over.empty() ? "" : " (its own AI: '",
+                         took_over, took_over.empty() ? "" : "')");
                 last = {p.name, now_ms};
             }
             checked_sample_[p.address] = p.sample;
@@ -551,6 +567,13 @@ public:
             return c;
         }
         return std::nullopt;
+    }
+
+    // Present thread: the copies whose own AI put another animation in slot 0
+    // over the owner's since the last ask (issue 157).
+    std::vector<u64> TakeTakeovers() {
+        std::lock_guard lock(mutex_);
+        return std::exchange(took_over_, {});
     }
 
     // Since the last ask: copy-frames held, and in how many of them the
@@ -734,6 +757,7 @@ private:
     std::optional<std::pair<u64, float>> frame_after_;  // actor, frame: set after the play
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
+    std::vector<u64> took_over_;  // copies whose own AI changed slot 0 (TakeTakeovers)
     std::unordered_map<std::string, u64> cells_;
     u64 block_ = 0;
     bool allocating_ = false;
@@ -1567,6 +1591,10 @@ private:
         std::vector<Mover::Pose> wish;
         if (drive_pose_) {
             wish.push_back(*drive_pose_);
+        }
+        // Copies whose own AI wanted another animation (issue 157).
+        for (const u64 a : TheMover().TakeTakeovers()) {
+            sync_.NoteTakeover(a, now_us);
         }
         for (const PoseWrite& w : poses) {
             if (r.Get<u32>(w.address + kActorState).value_or(0) != kStateAlive) {

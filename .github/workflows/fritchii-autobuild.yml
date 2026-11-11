@@ -1,0 +1,296 @@
+# Every 6 hours: is Frizti's Fritchii (the emulator our kit is built on) newer than lichii/PIN?
+# If so: fetch that release's source (no fork, nothing committed), apply lichii/patches, build the
+# patched Windows emulator, run our unit tests, and open a pull request from fritchii-bump-<version>
+# that moves lichii/PIN, with the build as a workflow artifact. A patch that does not apply or a
+# build that breaks opens an issue naming the failed step instead. Nothing is merged or released:
+# the pull request is reviewed and integrated as usual. How it works: docs/fritchii-autobuild.md.
+#
+# Dry run (manual run with dry_run, or a push that changes this file): builds the newest release,
+# or the pinned one when nothing is newer, and uploads the artifact; no branch, PR or issue.
+name: Fritchii autobuild
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Build this Fritchii tag instead of the newest release (e.g. fritchii-v5.9)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Build only: no branch, pull request or issue"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - .github/workflows/fritchii-autobuild.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fritchii-autobuild
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      tag: ${{ steps.decide.outputs.tag }}
+      commit: ${{ steps.decide.outputs.commit }}
+      ver: ${{ steps.decide.outputs.ver }}
+      bump: ${{ steps.decide.outputs.bump }}
+      dry_run: ${{ steps.decide.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare Fritchii's newest release with lichii/PIN
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_DRY: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          repo=$(sed -n 's#^repo=https://github.com/##p' lichii/PIN)
+          pin=$(sed -n 's/^tag=//p' lichii/PIN)
+          pin_commit=$(sed -n 's/^commit=//p' lichii/PIN)
+          dry=false
+          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "${INPUT_DRY:-}" = "true" ]; then dry=true; fi
+          # The version in a tag: fritchii-v5.8.4 -> 5.8.4.
+          ver() { printf '%s\n' "$1" | sed -n 's/^[^0-9]*\([0-9][0-9.]*[0-9]\|[0-9]\).*$/\1/p'; }
+          out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+          out dry_run "$dry"
+          if [ -n "${INPUT_TAG:-}" ]; then
+            target="$INPUT_TAG"
+          else
+            # The one release query of the run. Pre-releases count, drafts never.
+            target=$(gh api "repos/$repo/releases?per_page=50" --jq '.[] | select(.draft | not) | .tag_name' |
+              while read -r tag; do v=$(ver "$tag"); if [ -n "$v" ]; then printf '%s %s\n' "$v" "$tag"; fi; done |
+              sort -V | tail -n 1 | cut -d' ' -f2)
+          fi
+          echo "Pinned: $pin ($(ver "$pin")). Target: ${target:-none} ($(ver "${target:-}"))."
+          newer=false
+          if [ -n "$target" ] && [ "$(ver "$target")" != "$(ver "$pin")" ]; then
+            higher=$(printf '%s\n%s\n' "$(ver "$pin")" "$(ver "$target")" | sort -V | tail -n 1)
+            if [ "$higher" = "$(ver "$target")" ] || [ -n "${INPUT_TAG:-}" ]; then newer=true; fi
+          fi
+          if [ "$newer" = false ]; then
+            if [ "$dry" = true ]; then
+              echo "Nothing newer; dry run builds the pin."
+              out build true; out bump false; out tag "$pin"; out commit "$pin_commit"; out ver "$(ver "$pin")"
+            else
+              echo "lichii/PIN is up to date."; out build false
+            fi
+            exit 0
+          fi
+          # The tag's commit, from git (an annotated tag's ^{} line wins), not the API.
+          refs=$(git ls-remote "https://github.com/$repo" "refs/tags/$target" "refs/tags/$target^{}")
+          commit=$(printf '%s\n' "$refs" | awk '/\^\{\}$/ {print $1}')
+          [ -n "$commit" ] || commit=$(printf '%s\n' "$refs" | awk 'NR==1 {print $1}')
+          if [ -z "$commit" ]; then echo "Tag $target not found in $repo."; exit 1; fi
+          v=$(ver "$target")
+          echo "Building $target ($commit)."
+          if [ "$dry" = false ]; then
+            if [ -n "$(git ls-remote origin "refs/heads/fritchii-bump-$v")" ]; then
+              echo "Branch fritchii-bump-$v already exists; its pull request is waiting."; out build false; exit 0
+            fi
+            # A broken release is not rebuilt every 6 hours: once its failure issue is open, wait.
+            failed=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "Fritchii $v: auto-build failed in:title" \
+              --limit 20 --json title --jq ".[] | select(.title | startswith(\"Fritchii $v: auto-build failed\")) | .title")
+            if [ -n "$failed" ]; then
+              echo "Open issue \"$failed\"; close it to try again."; out build false; exit 0
+            fi
+          fi
+          out build true; out bump true; out tag "$target"; out commit "$commit"; out ver "$v"
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SRC: ${{ github.workspace }}/fritchii-src
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: coop
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Unit tests
+        run: |
+          cmake -S coop -B coop-build -DCOOP_BUILD_TESTS=ON
+          if ($LASTEXITCODE) { exit 1 }
+          cmake --build coop-build --config Release --parallel
+          if ($LASTEXITCODE) { exit 1 }
+          ctest --test-dir coop-build -C Release --output-on-failure
+          if ($LASTEXITCODE) { exit 1 }
+
+      # fetch.ps1 reads the PIN beside it, so the workspace copy gets the tag being built.
+      - name: Fetch and apply patches
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+          COMMIT: ${{ needs.check.outputs.commit }}
+        run: |
+          $pin = "coop/lichii/PIN"
+          $text = (Get-Content $pin) -replace '^tag=.*$', "tag=$env:TAG" -replace '^commit=.*$', "commit=$env:COMMIT"
+          Set-Content -Encoding ascii $pin $text
+          Get-Content $pin
+          powershell -NoProfile -ExecutionPolicy Bypass -File coop/lichii/fetch.ps1 -Dest $env:SRC
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install Vulkan SDK
+        working-directory: fritchii-src
+        run: ./tools/windows/install-vulkan-sdk.ps1
+
+      - name: Check glslangValidator
+        run: glslangValidator --version
+
+      - name: Restore CPM downloads
+        uses: actions/cache@v4
+        with:
+          path: fritchii-src/.cache/cpm
+          key: coop-cpm-windows-${{ needs.check.outputs.tag }}
+          restore-keys: |
+            coop-cpm-windows-
+
+      - name: Configure
+        working-directory: fritchii-src
+        run: |
+          $coop = "$env:GITHUB_WORKSPACE/coop" -replace '\\', '/'
+          $env:_CL_ = "/wd4456 /wd4457 /wd4458 /wd4459"
+          cmake -S . -B build/coop -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DYUZU_TESTS=OFF `
+            -DYUZU_ROOM=OFF -DYUZU_ROOM_STANDALONE=OFF -DENABLE_UPDATE_CHECKER=OFF -DUSE_DISCORD_PRESENCE=OFF `
+            -DYUZU_USE_BUNDLED_QT=OFF -DYUZU_USE_BUNDLED_SDL3=ON "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" `
+            -DLICHII_COOP=ON "-DLICHII_COOP_DIR=$coop" "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=$coop/cmake/trim_paths.cmake"
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Build
+        working-directory: fritchii-src
+        run: |
+          $env:_CL_ = "/wd4456 /wd4457 /wd4458 /wd4459"
+          cmake --build build/coop --target yuzu
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Package
+        working-directory: fritchii-src/build/coop/bin
+        run: |
+          windeployqt --release --no-translations lichii.exe
+          if ($LASTEXITCODE) { exit 1 }
+          Set-Content -Encoding ascii BUILD.txt @(
+            "fritchii=${{ needs.check.outputs.tag }} (${{ needs.check.outputs.commit }})",
+            "coop=${{ github.sha }}",
+            "run=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+
+      - name: Upload the emulator
+        uses: actions/upload-artifact@v4
+        with:
+          name: lichii-coop-${{ needs.check.outputs.tag }}-windows
+          path: fritchii-src/build/coop/bin
+          retention-days: 14
+          if-no-files-found: error
+
+  pr:
+    needs: [check, build]
+    if: needs.check.outputs.bump == 'true' && needs.check.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.check.outputs.tag }}
+      COMMIT: ${{ needs.check.outputs.commit }}
+      VER: ${{ needs.check.outputs.ver }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push fritchii-bump branch and open the pull request
+        run: |
+          set -euo pipefail
+          branch="fritchii-bump-$VER"
+          old=$(sed -n 's/^tag=//p' lichii/PIN)
+          sed -i -e "s/^tag=.*/tag=$TAG/" -e "s/^commit=.*/commit=$COMMIT/" lichii/PIN
+          git config user.name daurosk
+          git config user.email 354202035+daurosk@users.noreply.github.com
+          git commit -q -am "Move lichii/PIN to Fritchii $TAG" -m "Built with lichii/patches applied unchanged and the unit tests passed: $RUN_URL"
+          git push origin "HEAD:refs/heads/$branch"
+          body=$(printf '%s\n' \
+            "Fritchii [$TAG](https://github.com/Frizti/Fritchii/releases/tag/$TAG) is out; lichii/PIN was \`$old\`." \
+            "" \
+            "The autobuild fetched $TAG ($COMMIT), applied lichii/patches unchanged, built the patched Windows emulator and ran the unit tests: $RUN_URL. The emulator is the run's artifact \`lichii-coop-$TAG-windows\` (kept 14 days)." \
+            "" \
+            "Before merging:" \
+            "- Close and reopen this pull request once so the Build checks run (a branch pushed by the workflow token starts no checks)." \
+            "- Read Fritchii's release notes for anything that touches the patched files (lichii/README.md, \"What the patch touches\")." \
+            "- Update the version notes in lichii/README.md." \
+            "- Integrate as usual: autotest in game, then the kit (docs/testing.md, \"Making the kit\")." \
+            "" \
+            "Opened by the Fritchii autobuild workflow (.github/workflows/fritchii-autobuild.yml). Nothing is merged or released by it.")
+          if gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+              --title "Fritchii $TAG: move lichii/PIN" --body "$body"; then
+            exit 0
+          fi
+          # The repo may not let the workflow token open pull requests
+          # (Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests").
+          title="Fritchii $VER: bump branch ready, open its pull request"
+          seen=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --search "$title in:title" --limit 20 \
+            --json title --jq ".[] | select(.title == \"$title\") | .title")
+          if [ -n "$seen" ]; then exit 0; fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$(printf '%s\n' \
+            "The workflow could not open the pull request itself. Open it from [$branch](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...$branch) with this text:" \
+            "" "$body")"
+
+  failed:
+    needs: [check, build]
+    if: always() && needs.build.result == 'failure' && needs.check.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.check.outputs.tag }}
+      VER: ${{ needs.check.outputs.ver }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open an issue naming the failed step
+        run: |
+          set -euo pipefail
+          step=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+            --jq '[.jobs[] | select(.name == "build") | .steps[] | select(.conclusion == "failure") | .name][0] // "unknown step"')
+          title="Fritchii $VER: auto-build failed at $step"
+          seen=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "Fritchii $VER: auto-build failed in:title" \
+            --limit 20 --json title --jq ".[] | select(.title | startswith(\"Fritchii $VER: auto-build failed\")) | .title")
+          if [ -n "$seen" ]; then echo "Already open: $seen"; exit 0; fi
+          case "$step" in
+            "Fetch and apply patches") hint="A patch in lichii/patches does not apply to $TAG: rebase it on $TAG (lichii/README.md), then update lichii/PIN in the same pull request." ;;
+            "Unit tests") hint="Our own unit tests failed; this is not about $TAG. Fix main first." ;;
+            Configure|Build) hint="The patched $TAG does not configure or build. Check Fritchii's changes against the patched files and lichii/hook." ;;
+            *) hint="See the run log." ;;
+          esac
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$(printf '%s\n' \
+            "Fritchii [$TAG](https://github.com/Frizti/Fritchii/releases/tag/$TAG) is out, and the autobuild failed at **$step**: $RUN_URL" \
+            "" "$hint" "" \
+            "The workflow does not try $VER again while this issue is open; close it to retry (or run the workflow by hand with tag=$TAG)." \
+            "" "Opened by the Fritchii autobuild workflow (.github/workflows/fritchii-autobuild.yml).")"

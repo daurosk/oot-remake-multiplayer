@@ -110,7 +110,7 @@ class FlagWatcher {
   static constexpr std::size_t kMaxLearned = 4096;
   std::size_t pickups() const { return pickups_.size(); }
 
-  // The 64-bit keys, and the named Bools shared one way (share_one_way),
+  // The 64-bit keys, and the named Bools shared by the pickup rule (share_pickup_named),
   // this watcher wrote 0 to 1 into the game for another
   // player (a chest opened, a pickup taken elsewhere), oldest first, since
   // the last call; at most kMaxWrittenForOthers are kept. A key the game

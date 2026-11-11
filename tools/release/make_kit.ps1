@@ -192,6 +192,9 @@ if ($Python) {
     $pythonNote = "Python $pyVersion, zstandard $zstdVersion"
 }
 Copy-Text (Join-Path $here 'kit\coop.ini.template') (Join-Path $kit 'scripts\coop.ini.template')
+# A fresh kit's options, for update.ps1: it adds the keys a player's coop-options.ini lacks
+# (one an older updater left short) on the kit's next start.
+Copy-Text (Join-Path $here 'kit\coop-options.ini') (Join-Path $kit 'scripts\coop-options.default.ini')
 New-Item -ItemType Directory -Force -Path (Join-Path $kit 'logs') | Out-Null
 # TESTING.md: the part for players. How the kit is made and the automatic tests are about
 # this repo and its build PC, so they stop at the marker line.

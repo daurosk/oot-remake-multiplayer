@@ -71,12 +71,56 @@ try {
     Check (@($m | Where-Object { $_ -match 'LICHII_COOP_PUPPET' }).Count -eq 1) 'a switch the player has is not added again'
     Check (@($m | Where-Object { $_ -match 'LICHII_COOP_FAIRY' }).Count -eq 1) 'a switch the player has behind # is not added again'
     Check ($m -contains '# LICHII_COOP_TIME=0') 'a new switch is added behind #'
-    Check ($m -contains '# LICHII_COOP_NEW=1') 'a new switch that is on in the template is added off'
+    Check ($m -contains 'LICHII_COOP_NEW=1') 'a new switch that is on in the template is added on, as the template has it'
     Check ($m -contains '# Time of day follows the host. To turn it off:') 'with its comment'
     Check (-not ($m -contains '# The puppet')) 'without the comment of a switch the player has'
     Check (-not ($m -contains '# No Navi:')) 'without the comment of a switch the player has behind #'
     $same = Merge-KitOptions $mine ([string[]]@('LICHII_COOP_PUPPET=1')) 'v0.1.0-beta3'
     Check ($same.Count -eq $mine.Count) 'nothing new, nothing added'
+    # Any key, not only known names (an older updater knew a list and never added server_allow).
+    $m = Merge-KitOptions ([string[]]@('auto_update = no', 'LICHII_COOP_PUPPET=1')) ([string[]]@('auto_update = ask', '# Who may join:',
+        '# server_allow = 25.1.2.3', '# Shader libraries:', '# EDEN_NX2_GPL=0', 'some_new_key = 7')) 'v0.1.0-beta3'
+    Check ($m -contains '# server_allow = 25.1.2.3' -and $m -contains '# Who may join:') 'server_allow is added with its comment'
+    Check ($m -contains '# EDEN_NX2_GPL=0') 'an EDEN_NX2_ key is added'
+    Check ($m -contains 'some_new_key = 7') 'a key of a name no updater knew is added'
+    Check ($m[0] -eq 'auto_update = no' -and @($m | Where-Object { $_ -match 'auto_update' }).Count -eq 1) 'the player''s auto_update is kept, not added again'
+    # The real template: an old file that has only some of its keys gets every one, loses none.
+    $kitOptions = [System.IO.File]::ReadAllLines((Join-Path $release 'kit\coop-options.ini'))
+    $old = [string[]]@('# my own note', 'auto_update = yes', 'LICHII_COOP_PUPPET=0', 'LICHII_COOP_OBJECTS=1')
+    $m = Merge-KitOptions $old $kitOptions 'v0.1.0-beta3'
+    $missing = @((Get-KitOptionNames $kitOptions).Keys | Where-Object { -not (Get-KitOptionNames $m).ContainsKey($_) })
+    Check ($missing.Count -eq 0) "every key of the kit's coop-options.ini is in the merged file [$($missing -join ',')]"
+    Check ((@($m)[0..3] -join '|') -eq ($old -join '|')) 'the player''s lines stay first and unchanged'
+    foreach ($k in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL') {
+        Check ((Get-KitOptionNames $kitOptions).ContainsKey($k)) "the kit's coop-options.ini names $k"
+    }
+    $again = Merge-KitOptions $m $kitOptions 'v0.1.0-beta4'
+    Check ($again.Count -eq $m.Count) 'merging twice adds nothing the second time'
+    # The new kit's own merge is used when it has one.
+    $nk = Join-Path $tmp 'newmerge'
+    New-Item -ItemType Directory -Force -Path "$nk\scripts" | Out-Null
+    [System.IO.File]::WriteAllText("$nk\scripts\update.ps1", "param([switch]`$NoRun)`r`nfunction Merge-KitOptions([string[]]`$Mine, [string[]]`$New, [string]`$Version) { return ,([string[]](@(`$Mine) + @('from the new kit'))) }`r`n")
+    $m = Merge-KitOptionsWith $nk ([string[]]@('a=1', 'b=2')) ([string[]]@('c=3')) 'v0.1.0-beta3'
+    Check (($m -join '|') -eq 'a=1|b=2|from the new kit') "the new kit's own Merge-KitOptions is used [$($m -join '|')]"
+    Check ((Get-Command Merge-KitOptions).ScriptBlock.File -eq $updater) 'and it does not replace this updater''s own'
+    [System.IO.File]::WriteAllText("$nk\scripts\update.ps1", "param([switch]`$NoRun)`r`nfunction Merge-KitOptions([string[]]`$Mine, [string[]]`$New, [string]`$Version) { return ,([string[]]@()) }`r`n")
+    $m = Merge-KitOptionsWith $nk ([string[]]@('a=1')) ([string[]]@('c=3')) 'v0.1.0-beta3'
+    Check (($m -join '|') -match '^a=1\|.*c=3$') "a new kit's merge that drops lines is not used [$($m -join '|')]"
+    $m = Merge-KitOptionsWith (Join-Path $tmp 'none') ([string[]]@('a=1')) ([string[]]@('c=3')) 'v0.1.0-beta3'
+    Check (($m -join '|') -match 'c=3$') 'no new kit script: this updater''s merge'
+    # On start (-Status): keys from scripts\coop-options.default.ini an older update did not add.
+    $sk = Join-Path $tmp 'startkit'
+    New-Item -ItemType Directory -Force -Path "$sk\scripts" | Out-Null
+    [System.IO.File]::WriteAllLines("$sk\scripts\coop-options.default.ini", $kitOptions)
+    [System.IO.File]::WriteAllLines("$sk\coop-options.ini", $old)
+    Check (Update-KitOptions $sk) 'a kit left short by an older updater is filled in'
+    $now = [System.IO.File]::ReadAllLines("$sk\coop-options.ini")
+    Check (@($now -match '^# server_allow = ').Count -eq 1 -and $now[1] -eq 'auto_update = yes') 'with server_allow, the player''s values kept'
+    Check (-not (Update-KitOptions $sk)) 'and only once'
+    Remove-Item -LiteralPath "$sk\coop-options.ini"
+    Check ((Update-KitOptions $sk) -and (Test-Path -LiteralPath "$sk\coop-options.ini")) 'no coop-options.ini: the default one is written'
+    Remove-Item -LiteralPath "$sk\scripts\coop-options.default.ini"
+    Check (-not (Update-KitOptions $sk)) 'a kit without the default file is left alone'
 
     # --- Order, paths and addresses
     $order = Get-KitInstallOrder @('VERSION.txt', 'Host.bat', 'MANIFEST.txt', 'emulator\lichii.exe', 'scripts\play.ps1')
@@ -201,11 +245,11 @@ try {
     Check ((Read-File "$kit\Host.bat") -eq 'old host' -and (Read-File "$kit\emulator\lichii.exe") -eq 'old exe') 'and changes no file'
     Check (-not (Test-Path "$kit\backup-v0.1.0-beta2")) 'and leaves no backup'
 
-    # -Check says a new version is out, and is silent without a list.
+    # -Check says a new version is out, and says so when it cannot read the list.
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Check -Api $good 2>&1
     Check (($out -join ' ') -match 'new version is out: v0\.1\.0-beta3') '-Check names the new version'
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Check -Api (Join-Path $tmp 'missing.json') 2>&1
-    Check ($LASTEXITCODE -eq 0 -and -not ($out -join '')) '-Check is silent when the list cannot be read'
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'Could not check') '-Check says when the list cannot be read'
 
     # A file that cannot be replaced: everything is put back.
     $kit = Join-Path $tmp 'kit3'; New-OldKit $kit
@@ -341,6 +385,85 @@ try {
     Check ((Read-File "$kit\emulator\lichii.exe") -eq 'new exe coop: loaded') 'Update.bat updated the kit'
     Check ((Read-File "$kit\Update.bat") -eq 'new updater') 'and replaced itself'
     Test-PlayerKept $kit 'Update.bat'
+
+    # --- An update to a pre-release end to end, as testers met it: Host.bat's start check (-Status), then
+    # -Launch while the host's server window from the last game is still open. The release
+    # list is shaped like GitHub's: pre-releases, an Update.bat asset, '<hash>  name' sha256.
+    $e2e = Join-Path $tmp 'e2e'
+    $k7 = Join-Path $e2e 'oot-coop-v0.1.0-beta7'
+    Write-File "$k7\VERSION.txt" "kit: oot-coop-v0.1.0-beta7 (release v0.1.0-beta7)`r`nbuilt: x`r`n"
+    Write-File "$k7\Host.bat" 'beta7 host'
+    Write-File "$k7\emulator\lichii.exe" 'beta7 exe coop: loaded'
+    Write-File "$k7\emulator\user\config\coop.ini" 'name = Saria'
+    Write-File "$k7\emulator\user\nand\user\save\0000\save.bin" 'my save'
+    Write-File "$k7\coop-options.ini" "# beta7 options`r`nauto_update = ask`r`nLICHII_COOP_PUPPET=1`r`n"
+    Write-File "$k7\MANIFEST.txt" "Host.bat`r`nemulator\lichii.exe`r`nVERSION.txt`r`n"
+    Copy-Item -LiteralPath $updater -Destination (Join-Path (New-Item -ItemType Directory -Force -Path "$k7\scripts").FullName 'update.ps1')
+    $src8 = Join-Path $e2e 'src'
+    $k8 = Join-Path $src8 'oot-coop-v0.1.0-beta8'
+    Write-File "$k8\VERSION.txt" "kit: oot-coop-v0.1.0-beta8 (release v0.1.0-beta8)`r`nbuilt: x`r`n"
+    Write-File "$k8\Host.bat" 'beta8 host'
+    Write-File "$k8\emulator\lichii.exe" 'beta8 exe coop: loaded'
+    Write-File "$k8\MANIFEST.txt" "Host.bat`r`nemulator\lichii.exe`r`nscripts\update.ps1`r`nscripts\coop-options.default.ini`r`nVERSION.txt`r`n"
+    New-Item -ItemType Directory -Force -Path "$k8\scripts", "$k8\emulator\user", "$k8\logs" | Out-Null
+    Copy-Item -LiteralPath $updater -Destination "$k8\scripts\update.ps1"
+    Copy-Item -LiteralPath (Join-Path $release 'kit\coop-options.ini') -Destination "$k8\coop-options.ini"
+    Copy-Item -LiteralPath (Join-Path $release 'kit\coop-options.ini') -Destination "$k8\scripts\coop-options.default.ini"
+    $rel8 = Join-Path $e2e 'assets'
+    New-Item -ItemType Directory -Force -Path $rel8 | Out-Null
+    $zip8 = Join-Path $rel8 'oot-coop-v0.1.0-beta8.zip'
+    & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip8 -C $src8 'oot-coop-v0.1.0-beta8'
+    if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+    [System.IO.File]::WriteAllText("$zip8.sha256", (Get-FileHash -LiteralPath $zip8 -Algorithm SHA256).Hash.ToLowerInvariant() + "  oot-coop-v0.1.0-beta8.zip`n")
+    Write-File "$rel8\Update.bat" 'update bat'
+    function Asset($Name, $Path) { @{ name = $Name; browser_download_url = $Path; size = (Get-Item $Path).Length } }
+    $list8 = Join-Path $e2e 'releases.json'
+    [System.IO.File]::WriteAllText($list8, (ConvertTo-Json -Depth 5 @(
+        @{ tag_name = 'v0.1.0-beta8'; name = 'v0.1.0-beta8 (early test)'; draft = $false; prerelease = $true; html_url = 'local'; assets = @(
+            (Asset 'oot-coop-v0.1.0-beta8.zip' $zip8), (Asset 'oot-coop-v0.1.0-beta8.zip.sha256' "$zip8.sha256"), (Asset 'Update.bat' "$rel8\Update.bat")) },
+        @{ tag_name = 'v0.1.0-beta7'; name = 'v0.1.0-beta7 (early test)'; draft = $false; prerelease = $true; html_url = 'local'; assets = @(
+            (Asset 'Update.bat' "$rel8\Update.bat")) })))
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$k7\scripts\update.ps1" -Status -Kit $k7 -Api $list8 2>&1
+    Check ((($out | Where-Object { "$_".Trim() }) -join '|') -eq 'newer v0.1.0-beta8') "beta7 -> beta8: the start check finds the pre-release [$($out -join '|')]"
+    # The host's server window from the last game: a stand-in coop_server.exe of this kit.
+    Copy-Item -LiteralPath "$env:SystemRoot\System32\PING.EXE" -Destination (Join-Path (New-Item -ItemType Directory -Force -Path "$k7\server").FullName 'coop_server.exe')
+    $srv = Start-Process -FilePath "$k7\server\coop_server.exe" -ArgumentList '-n', '120', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$k7\scripts\update.ps1" -Launch -Kit $k7 -Api $list8 2>&1
+        Check ($LASTEXITCODE -eq 3) "beta7 -> beta8: -Launch updates and says start the new kit [$($LASTEXITCODE): $(($out | Select-Object -Last 2) -join ' / ')]"
+        Check (($out -join ' ') -match "Stopping this kit's co-op server") 'beta7 -> beta8: the old server left running is stopped, and the player is told'
+        Check ($srv.HasExited -or $srv.WaitForExit(5000)) 'beta7 -> beta8: and it is no longer running'
+    } finally { if (-not $srv.HasExited) { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue } }
+    Check ((Get-KitVersion $k7) -eq 'v0.1.0-beta8') 'beta7 -> beta8: VERSION.txt names beta8'
+    Check ((Read-File "$k7\Host.bat") -eq 'beta8 host' -and (Read-File "$k7\emulator\lichii.exe") -eq 'beta8 exe coop: loaded') 'beta7 -> beta8: the kit files are beta8''s'
+    Check ((Read-File "$k7\emulator\user\nand\user\save\0000\save.bin") -eq 'my save' -and (Read-File "$k7\emulator\user\config\coop.ini") -eq 'name = Saria') 'beta7 -> beta8: save and name kept'
+    $o8 = [System.IO.File]::ReadAllLines("$k7\coop-options.ini")
+    Check ($o8[0] -eq '# beta7 options' -and $o8[1] -eq 'auto_update = ask') 'beta7 -> beta8: the player''s options stay first'
+    foreach ($key in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL') {
+        Check (@($o8 -match "^\s*#?\s*$key\s*=").Count -eq 1) "beta7 -> beta8: coop-options.ini gains $key once"
+    }
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$k7\scripts\update.ps1" -Status -Kit $k7 -Api $list8 2>&1
+    Check (-not (($out | Where-Object { "$_".Trim() }) -join '')) 'beta7 -> beta8: after it, the start check is quiet'
+    # Failures say why and how to update by hand.
+    $none = Join-Path $e2e 'no-such-list.json'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$k7\scripts\update.ps1" -Status -Kit $k7 -Api $none 2>&1
+    Check ((($out -join ' ')) -match '^failed \S') "no answer: the start check says 'failed <why>' [$($out -join ' ')]"
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$k7\scripts\update.ps1" -Yes -Kit $k7 -Api $none 2>&1
+    Check ($LASTEXITCODE -eq 1 -and ($out -join ' ') -match 'Update failed: \S' -and ($out -join ' ') -match 'To update by hand') 'no answer: Update.bat says why and the steps by hand'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$k7\scripts\update.ps1" -Check -Kit $k7 -Api $none 2>&1
+    Check (($out -join ' ') -match 'Could not check') '-Check says it could not check'
+    Check ((Get-KitErrorText 'The remote server returned an error: (403) Forbidden.') -match 'try again later') 'a refusal from GitHub is explained'
+    # The emulator still running: not stopped, the update fails with what to do.
+    $k9 = Join-Path $e2e 'kit-emu-running'
+    New-OldKit $k9
+    Copy-Item -LiteralPath "$env:SystemRoot\System32\PING.EXE" -Destination "$k9\emulator\lichii.exe" -Force
+    $emuP = Start-Process -FilePath "$k9\emulator\lichii.exe" -ArgumentList '-n', '120', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Launch -Kit $k9 -Api $good 2>&1
+        Check ($LASTEXITCODE -eq 1 -and ($out -join ' ') -match 'still running' -and ($out -join ' ') -match 'To update by hand') "emulator running: the update stops and says what to do [$(($out | Select-Object -First 3) -join ' / ')]"
+        Check (-not $emuP.HasExited) 'emulator running: it is not stopped'
+        Check ((Get-KitVersion $k9) -eq 'v0.1.0-beta2') 'emulator running: nothing changed'
+    } finally { Stop-Process -Id $emuP.Id -Force -ErrorAction SilentlyContinue; $emuP.WaitForExit(5000) | Out-Null }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

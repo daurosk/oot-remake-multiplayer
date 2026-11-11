@@ -5,10 +5,13 @@
 #
 #   update.ps1 [-Kit <kit folder>] [-Yes]   update this kit (asks before it starts, unless -Yes)
 #   update.ps1 -Check                       only say whether a newer release is out
-#   update.ps1 -Status                      one line for play.ps1: "newer <version>", "unfinished"
-#                                           or nothing (none, or no network)
+#   update.ps1 -Status                      one line for play.ps1: "newer <version>", "unfinished",
+#                                           "failed <why>" (no answer from GitHub) or nothing
 #   update.ps1 -Launch                      update without asking, for play.ps1 when the player
-#                                           said yes (exit code 3: updated, start the new kit)
+#                                           said yes (exit code 3: updated, start the new kit);
+#                                           this kit's own co-op server is stopped first
+#
+# Every failure says why and how to update by hand (Get-KitManualSteps).
 #
 # play.ps1 (Host.bat, Join.bat, play.cmd) runs -Status on every start and, as coop-options.ini's
 # auto_update says (ask, yes or no), -Launch; then it starts the new kit's own play.ps1.
@@ -28,7 +31,12 @@
 #
 # Never touched: emulator\user\ (keys, firmware, saves, settings, coop.ini with your name and
 # server, the puppet pack), logs\, backup-*\ and every file that is not part of the kit.
-# coop-options.ini keeps your values; a switch the new kit adds is appended as a '#' line.
+# coop-options.ini keeps your values; every key the new kit's coop-options.ini has and yours
+# does not is appended with its comment, as the new kit has it (on or behind '#'). The merge
+# is the NEW kit's own code (its scripts\update.ps1), so a key this updater does not know
+# still arrives. The kit also carries scripts\coop-options.default.ini, and every run
+# (-Status too, which play.ps1 runs on every start) adds missing keys from it: a kit an
+# older updater left short gets them on its next start.
 # No data about you is sent: one request for the release list and the two downloads.
 #
 # For tests: -Api (or the environment variable OOT_COOP_UPDATE_API, which play.ps1 passes on)
@@ -49,6 +57,7 @@ if (-not $Api -and $env:OOT_COOP_UPDATE_API) { $Api = $env:OOT_COOP_UPDATE_API }
 if ($Launch) { $Yes = [switch]$true }
 $UserAgent = 'oot-coop-updater'
 $InProgress = 'update-in-progress.txt'
+$KitPage = ''
 
 # --- Versions ---------------------------------------------------------------------------
 
@@ -131,6 +140,33 @@ function Get-KitUnfinishedFrom([string]$KitDir) {
 function Get-KitBackedUpShaders([string]$KitDir) {
     return @(Get-ChildItem -LiteralPath $KitDir -Directory -Filter 'backup-*' -Force -ErrorAction SilentlyContinue |
         ForEach-Object { Join-Path $_.FullName $ShaderCache } | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+}
+
+# One line for a failure: the error's first line, and what a refusal from GitHub means.
+function Get-KitErrorText($Err) {
+    $text = [string]$Err
+    if ($Err -is [System.Management.Automation.ErrorRecord] -and $Err.Exception) { $text = $Err.Exception.Message }
+    $text = ($text -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+    if (-not $text) { $text = 'unknown error' }
+    $text = $text.Trim()
+    if ($text -match '\b403\b|rate limit') {
+        $text = "GitHub turned the request away ($text); it allows 60 checks an hour from one internet address: try again later"
+    }
+    if ($text.Length -gt 200) { $text = $text.Substring(0, 200) + '...' }
+    return $text
+}
+
+# How to update by hand, for every failure message.
+function Get-KitManualSteps([string]$Page) {
+    $where = if ($Page -and $Page -match '^https://') { $Page } else { "https://github.com/$Repo/releases" }
+    return [string[]]@(
+        'To update by hand:',
+        "  1. Close the games and the server window, and download the newest oot-coop-....zip from $where",
+        '  2. Unzip it to a new folder with a short path, such as C:\oot-coop-new.',
+        '  3. Copy the folder emulator\user (keys, firmware, saves, settings, your name, the puppet pack)',
+        '     and the file coop-options.ini from this kit into the new folder. Missing switches are added',
+        '     to coop-options.ini when you start the new kit.',
+        '  4. Play from the new folder (Host.bat or Join.bat).')
 }
 
 # --- Releases ---------------------------------------------------------------------------
@@ -224,9 +260,10 @@ function Get-KitInstallOrder([string[]]$Files) {
     return [string[]](@($first) + @($end))
 }
 
-# The switch names a coop-options.ini mentions, set or behind a '#': the emulator's
-# LICHII_COOP_... switches and the kit's own auto_update, server_allow and server_bind.
-$OptionName = '(LICHII_COOP_[A-Z0-9_]+|auto_update|server_allow|server_bind)'
+# The key names a coop-options.ini mentions, set or behind a '#' ('name =' or 'name='):
+# every key, not a list of known ones, so a key a later kit adds is never missed (an older
+# updater knew only some names and so never added server_allow).
+$OptionName = '([A-Za-z_][A-Za-z0-9_]*)'
 function Get-KitOptionNames([string[]]$Lines) {
     $names = @{}
     foreach ($l in $Lines) {
@@ -247,9 +284,9 @@ function Get-KitAutoUpdate([string]$KitDir) {
     return 'ask'
 }
 
-# The player's coop-options.ini lines with every switch the new template names and the
-# player's file does not, appended behind '#' with the template's comment above it.
-# The player's own lines stay as they are.
+# The player's coop-options.ini lines with every key the new template names and the
+# player's file does not, appended as the template has it (on, or behind '#') with the
+# template's comment above it. The player's own lines stay as they are; nothing is dropped.
 function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
     $have = Get-KitOptionNames $Mine
     $out = New-Object System.Collections.Generic.List[string]
@@ -262,7 +299,7 @@ function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
             $name = $Matches[1]
             if (-not $have.ContainsKey($name)) {
                 foreach ($c in $comment) { $added.Add($c) }
-                $added.Add('# ' + $t.TrimStart('#', ';').Trim())
+                $added.Add($t)
                 $have[$name] = $true
             }
         } elseif ($t.StartsWith('#') -and -not $t.StartsWith('# ---')) {
@@ -274,10 +311,51 @@ function Merge-KitOptions([string[]]$Mine, [string[]]$New, [string]$Version) {
     if ($added.Count) {
         while ($out.Count -and -not $out[$out.Count - 1].Trim()) { $out.RemoveAt($out.Count - 1) }
         $out.Add('')
-        $out.Add("# --- Added by Update.bat ($Version): switches new in this version, off. Remove the '#' to use one. ---")
+        $out.Add("# --- Added by Update.bat ($Version): keys new in this version, as a new kit has them. A line with '#' in front is off. ---")
         foreach ($a in $added) { $out.Add($a) }
     }
     return ,([string[]]$out.ToArray())
+}
+
+# The merge as the new kit does it: its own scripts\update.ps1 is loaded (only its functions)
+# and its Merge-KitOptions used, so keys and rules this older updater does not know still
+# reach the player's file. When it has none or fails: this one's.
+function Merge-KitOptionsWith([string]$NewKit, [string[]]$Mine, [string[]]$New, [string]$Version) {
+    $newer = Join-Path $NewKit 'scripts\update.ps1'
+    if ($NewKit -and (Test-Path -LiteralPath $newer)) {
+        try {
+            $r = & {
+                param($f, $a, $b, $v)
+                . $f -NoRun
+                Merge-KitOptions $a $b $v
+            } $newer $Mine $New $Version
+            $r = [string[]]@($r)
+            # Never fewer lines than the player had: a merge that drops one is not used.
+            if ($r.Count -ge $Mine.Count) { return ,$r }
+        } catch { }
+    }
+    return ,(Merge-KitOptions $Mine $New $Version)
+}
+
+# The kit's own copy of the options a fresh kit has (make_kit.ps1).
+$OptionsDefault = 'scripts\coop-options.default.ini'
+
+# Adds to the kit's coop-options.ini every key scripts\coop-options.default.ini has and it
+# does not (a kit an older updater left short); writes a coop-options.ini when there is none.
+# True when it changed the file. Never throws.
+function Update-KitOptions([string]$KitDir) {
+    try {
+        $tmpl = Join-Path $KitDir $OptionsDefault
+        $mine = Join-Path $KitDir 'coop-options.ini'
+        if (-not (Test-Path -LiteralPath $tmpl)) { return $false }
+        if (-not (Test-Path -LiteralPath $mine)) { Copy-Item -LiteralPath $tmpl -Destination $mine; return $true }
+        $lines = [System.IO.File]::ReadAllLines($mine)
+        $v = Get-KitVersion $KitDir
+        $merged = Merge-KitOptions $lines ([System.IO.File]::ReadAllLines($tmpl)) $(if ($v) { $v } else { 'this kit' })
+        if ($merged.Count -eq $lines.Count) { return $false }
+        [System.IO.File]::WriteAllLines($mine, $merged)
+        return $true
+    } catch { return $false }
 }
 
 # --- Installing -------------------------------------------------------------------------
@@ -383,7 +461,7 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
         $tmpl = Join-Path $NewKit 'coop-options.ini'
         if ((Test-Path -LiteralPath $mine) -and (Test-Path -LiteralPath $tmpl)) {
             $lines = [System.IO.File]::ReadAllLines($mine)
-            $merged = Merge-KitOptions $lines ([System.IO.File]::ReadAllLines($tmpl)) $Version
+            $merged = Merge-KitOptionsWith $NewKit $lines ([System.IO.File]::ReadAllLines($tmpl)) $Version
             if ($merged.Count -ne $lines.Count) {
                 Copy-Item -LiteralPath $mine -Destination (Join-Path $Backup 'coop-options.ini') -Force
                 $saved.Add('coop-options.ini')
@@ -452,11 +530,16 @@ function Invoke-KitUpdate {
     $unfinished = Test-KitUnfinished $dir
     $have = if ($mine) { $mine } else { 'a test build' }
     $list = if ($Api) { $Api } else { "https://api.github.com/repos/$Repo/releases?per_page=30" }
+    # Keys an older updater did not add (not while an update is half done).
+    if (-not $unfinished) { Update-KitOptions $dir | Out-Null }
 
     if ($Status) {
         # Straight to stdout: a function's own output would become its return value.
         if ($unfinished) { [Console]::Out.WriteLine('unfinished'); return 0 }
-        try { $newest = Select-KitRelease (Read-KitReleaseList $list) } catch { return 0 }
+        try { $newest = Select-KitRelease (Read-KitReleaseList $list) } catch {
+            [Console]::Out.WriteLine('failed ' + (Get-KitErrorText $_))
+            return 0
+        }
         if ($newest -and (Compare-KitVersion $newest.Tag $mine) -gt 0) { [Console]::Out.WriteLine("newer $($newest.Tag)") }
         return 0
     }
@@ -465,7 +548,10 @@ function Invoke-KitUpdate {
             Write-Host 'An update of this kit did not finish: close the games and run Update.bat.'
             return 0
         }
-        try { $newest = Select-KitRelease (Read-KitReleaseList $list) } catch { return 0 }
+        try { $newest = Select-KitRelease (Read-KitReleaseList $list) } catch {
+            Write-Host "Could not check for a new version: $(Get-KitErrorText $_)"
+            return 0
+        }
         if ($newest -and (Compare-KitVersion $newest.Tag $mine) -gt 0) {
             Write-Host "A new version is out: $($newest.Tag) (you have $have). Close the games and run Update.bat."
         }
@@ -477,7 +563,8 @@ function Invoke-KitUpdate {
     if ($unfinished) { Write-Host 'An update of this kit did not finish: it is done again now.' }
     Write-Host 'Looking for the newest release...'
     $newest = Select-KitRelease (Read-KitReleaseList $list)
-    if (-not $newest) { Write-Host 'No release with a kit was found.'; return 1 }
+    if (-not $newest) { throw 'No release with a kit was found in the release list.' }
+    $script:KitPage = $newest.Page
     if (-not $Api) {
         foreach ($u in $newest.Zip, $newest.Sum) {
             if (-not (Test-KitDownloadUrl $u $Repo)) { throw "The release list names a download outside this project's releases: $u" }
@@ -492,8 +579,18 @@ function Invoke-KitUpdate {
     while ($true) {
         $running = Get-KitRunning $dir
         if (-not $running) { break }
+        # Started from Host.bat or Join.bat: this kit's server (a window left open since the last
+        # game) is stopped, as it is replaced now and is the old version; Host.bat starts the
+        # new one. The emulator is never stopped (the game may not be saved).
+        $servers = @($running | Where-Object { $_.Name -ieq 'coop_server' })
+        if ($Launch -and $servers.Count) {
+            Write-Host "Stopping this kit's co-op server (the old version); Host.bat starts the new one."
+            $servers | Stop-Process -Force -ErrorAction SilentlyContinue
+            $servers | ForEach-Object { try { $_.WaitForExit(5000) | Out-Null } catch { } }
+            continue
+        }
         Write-Host "Close these first (they run from this kit): $(($running | ForEach-Object { $_.Name + '.exe' } | Sort-Object -Unique) -join ', ')"
-        if ($Yes) { throw 'The emulator or server of this kit is still running.' }
+        if ($Yes) { throw "This kit's emulator or server is still running: close it, then start Host.bat or Join.bat (or Update.bat) again." }
         Read-Host 'Press Enter when they are closed' | Out-Null
     }
     if (-not $Yes) {
@@ -561,7 +658,8 @@ if (-not $NoRun) {
         exit (Invoke-KitUpdate)
     } catch {
         if ($Check -or $Status) { exit 0 }
-        Write-Host "Update failed: $($_.Exception.Message)"
+        Write-Host "Update failed: $(Get-KitErrorText $_)"
+        foreach ($l in Get-KitManualSteps $script:KitPage) { Write-Host $l }
         exit 1
     }
 }

@@ -1,6 +1,6 @@
 # Co-op in the emulator
 
-How presence (plan stage 1 step 1) runs inside the patched emulator. The code is in [`lichii/hook/`](../lichii/hook); how to fetch, patch and build is in [lichii/README.md](../lichii/README.md). The emulator is Fritchii at the tag in [`lichii/PIN`](../lichii/PIN) (`fritchii-v5.7` since 2026-11-10; the notes below that name v5 were found on v5 and hold on v5.5, v5.6 and v5.7, whose changes do not touch the parts the hook uses; what v5.6 and v5.7 changed that matters is in lichii/README.md). A co-op build has no Fritchii updater (lichii/README.md, "The emulator's own updater").
+How presence (plan stage 1 step 1) runs inside the patched emulator. The code is in [`lichii/hook/`](../lichii/hook); how to fetch, patch and build is in [lichii/README.md](../lichii/README.md). The emulator is Fritchii at the tag in [`lichii/PIN`](../lichii/PIN) (`fritchii-v5.8` since 2026-11-10; the notes below that name v5 were found on v5 and hold on v5.5 to v5.8, whose changes do not touch the parts the hook uses; what v5.6, v5.7 and v5.8 changed that matters is in lichii/README.md). A co-op build has no Fritchii updater (lichii/README.md, "The emulator's own updater").
 
 ## Settings
 

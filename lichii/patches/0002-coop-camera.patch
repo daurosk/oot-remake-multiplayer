@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 8 Nov 2026 17:46:31 -0900
-Subject: [PATCH] coop: hand the game's camera to the co-op hook
+Subject: [PATCH 2/5] coop: hand the game's camera to the co-op hook
 
 With LICHII_COOP on, each draw calls CoopCamera::Track from the hook's
 coop_camera_track.h after its pipeline is configured. It looks for the same
@@ -12,7 +12,7 @@ so co-op can draw player markers in the world.
  1 file changed, 7 insertions(+)
 
 diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
-index 127baeb55a..88c0fb65b1 100644
+index 7d973646f4..3d3168469e 100644
 --- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 +++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 @@ -81,6 +81,9 @@
@@ -36,3 +36,6 @@ index 127baeb55a..88c0fb65b1 100644
      TrackOcarinaCamera();
      TrackOcarinaActor(pipeline->ShaderHashes()[1], is_indexed, is_indirect);
      TracePendingCpuWrites(false, pipeline->ShaderHashes());
+-- 
+2.56.0.windows.4
+

@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 15:02:58 -0900
+Subject: [PATCH 5/5] coop: a portable kit reads only its own nx2_switches.txt
+
+Fritchii reads nx2_switches.txt beside the exe and then the one in
+%APPDATA%\fritchii (v5.8; eden before). An OoT co-op kit is portable
+(user\ beside lichii.exe) and must stay apart from the player's normal
+install, so with a user\ folder only the kit's own file is read.
+---
+ src/yuzu/main.cpp | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/src/yuzu/main.cpp b/src/yuzu/main.cpp
+index fc4306f66b..aed6f86d85 100644
+--- a/src/yuzu/main.cpp
++++ b/src/yuzu/main.cpp
+@@ -210,9 +210,26 @@ static void LoadNx2Switches(const char* argv0) {
+     for (const auto& [name, value] : BuiltinSwitches) {
+         entries.emplace(name, value);
+     }
+-    if (const auto exe_dir = GetSwitchExeDirectory(argv0); !exe_dir.empty()) {
++    const auto exe_dir = GetSwitchExeDirectory(argv0);
++    if (!exe_dir.empty()) {
+         ParseSwitchFile(exe_dir / "nx2_switches.txt", entries);
+     }
++    // OoT co-op: a portable kit (user\ beside the exe) reads only its own switches, never the
++    // player's normal install's (%APPDATA%\fritchii or eden): the kit stays apart from it.
++    std::error_code portable_ec;
++    if (!exe_dir.empty() && std::filesystem::is_directory(exe_dir / PORTABLE_DIR, portable_ec)) {
++        for (const auto& [name, value] : entries) {
++            if (std::getenv(name.c_str()) != nullptr) {
++                continue;
++            }
++#ifdef _WIN32
++            _putenv_s(name.c_str(), value.c_str());
++#else
++            setenv(name.c_str(), value.c_str(), 1);
++#endif
++        }
++        return;
++    }
+ #ifdef _WIN32
+     const auto app_data = Common::FS::GetAppDataRoamingDirectory();
+ #else
+-- 
+2.56.0.windows.4
+

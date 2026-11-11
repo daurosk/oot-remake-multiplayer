@@ -10,6 +10,7 @@ Co-op inside Frizti's emulator (Lichii, now [Fritchii](https://github.com/Frizti
 | `patches/0002-coop-camera.patch` | One call per draw in the Vulkan renderer that hands the game's camera to the hook, for markers. |
 | `patches/0003-coop-puppet.patch` | Two calls for the puppets: the code cave written into Ocarina's `main` when it is loaded, and the cave's `svc 0xf4` handed to the hook. |
 | `patches/0004-coop-null-write-log.patch` | A debug log line: who writes to guest address 0 (issue 111). |
+| `patches/0005-coop-portable-switches.patch` | A portable kit reads only its own `nx2_switches.txt`, never the one in `%APPDATA%\fritchii` or `eden` (v5.8). |
 | `hook/` | The co-op code the patch builds into the emulator (`core.cmake` and `qt.cmake` say what), so changing it needs no new patch. How it runs and its settings: [docs/lichii.md](../docs/lichii.md). |
 
 ## Fetch and patch
@@ -42,7 +43,7 @@ The program is `build\coop\bin\lichii.exe`. Leave out the two `LICHII_COOP` opti
 
 `CMAKE_PROJECT_TOP_LEVEL_INCLUDES` brings in this repo's `cmake/trim_paths.cmake` before the emulator's first `project()`: every source path compiled into the program (the log prints them with each line) is cut down to the part below the source root (`src\core\core.cpp`), and the `.pdb` is named without its folder. Without it the program carries the folders it was built in, and `tools/release/make_kit.ps1` refuses it for a kit. It needs CMake 3.24 and a fresh configure (or a full rebuild).
 
-`_CL_` is needed with MSVC (found at `fritchii-v4.1`; `fritchii-v5`, `fritchii-v5.5`, `fritchii-v5.6` and `fritchii-v5.7` keep the same flags in `src/CMakeLists.txt`, and was built with it): the emulator turns the four "declaration hides another" warnings (C4456 to C4459) into errors, and `src/common/frizti_settings.cpp`, `src/video_core/engines/kepler_compute.cpp`, `maxwell_3d.cpp` and `renderer_vulkan/vk_rasterizer.cpp` trip them. MSVC appends `_CL_` after every other flag, so this switches those four off without changing the emulator's source.
+`_CL_` is needed with MSVC (found at `fritchii-v4.1`; `fritchii-v5`, `fritchii-v5.5`, `fritchii-v5.6`, `fritchii-v5.7` and `fritchii-v5.8` keep the same flags in `src/CMakeLists.txt`, and was built with it): the emulator turns the four "declaration hides another" warnings (C4456 to C4459) into errors, and `src/common/frizti_settings.cpp`, `src/video_core/engines/kepler_compute.cpp`, `maxwell_3d.cpp` and `renderer_vulkan/vk_rasterizer.cpp` trip them. MSVC appends `_CL_` after every other flag, so this switches those four off without changing the emulator's source.
 
 ## What the patch touches
 
@@ -60,6 +61,7 @@ With `LICHII_COOP` off (the default) the patch changes nothing in the build.
 | `src/core/file_sys/patch_manager.cpp` | (0003) In `PatchNSO`, after the built-in patches, calls `CoopSvc::PatchMain`, which writes the puppet code cave into Ocarina's `main` (checked against the original words; only with `LICHII_COOP_PUPPET=1` or `LICHII_COOP_DEBUG_PUPPET=1`). |
 | `src/core/hle/kernel/svc.cpp` | (0003) `Kernel::Svc::Call` asks `CoopSvc::Call` first: it handles `svc 0xf4` from the cave and returns false for every other call, which goes on as before. |
 | `src/core/arm/dynarmic/arm_dynarmic_64.cpp` | (0004, only under `LICHII_COOP`) In `MemoryWrite`, a write to guest address 0 (an object built at a null pointer after a failed allocation) logs `Write to address 0 ... at pc ... lr ... sp ...; return addresses: ...` from the frame-pointer chain, the first 16 times in a run. The emulator's own `Unmapped Write64` line has no pc. The JIT syncs guest registers at block boundaries, so pc (and possibly lr and x29) can be the block's start or a little stale; the return addresses from the stack are the useful part. Only `MemoryWrite` is hooked: a 128-bit (q register) or exclusive store to address 0 is not logged. |
+| `src/yuzu/main.cpp` | (0005) `LoadNx2Switches`: with a `user\` folder beside the exe (a portable kit) only the exe folder's `nx2_switches.txt` is read, then the switches are set and it returns before the `%APPDATA%` file. |
 
 Our top-level `CMakeLists.txt` reuses the emulator's own `enet` target (the same ENet 1.3.18) when one exists, so there is one ENet in the program.
 
@@ -98,6 +100,14 @@ What in v5.7 matters to co-op:
 - **.nx games** (Convert to NX in the game list): another way to keep the game. The puppet pack tool still needs the romfs (`.nup` or a dump folder), not an `.nx`.
 - **"Preparing shaders" runs once after the update** (a few minutes; the driver keeps most of its cache). The kit's `Update.bat` moves the old shader cache aside whenever `lichii.exe` changes, so the first start of test6 prepares them anew.
 - Fritchii's tuned settings are applied once more on the first start of v5.7 (its own `qt-config.ini` change; a kit's player settings in `emulator\user\config` are kept by the update).
+
+Then `fritchii-v5.8` (2026-11-10, for test7). 0001-0004 applied as they were (refreshed at new line numbers). One new patch, **0005-coop-portable-switches**: Fritchii reads `nx2_switches.txt` beside the exe and then the one in `%APPDATA%\fritchii` (v5.8; `%APPDATA%\eden` before, and v5.7 did the same there). With a portable kit (`user\` beside `lichii.exe`) 0005 reads only the kit's own file, so a player's normal Fritchii install never changes a kit's switches.
+
+What in v5.8 matters to co-op:
+- **Its own data folder, `%APPDATA%\fritchii`, and a first-launch import** that copies settings, saves, keys and mods from `%APPDATA%\eden` or `%APPDATA%\lichii` (`src/frontend_common/profile_import.cpp`, `src/yuzu/user_data_migration.cpp`). A kit never runs it: `NeedsLegacyProfileImport()` returns false when `Common::FS::IsPortableMode()`, which is true when `user\` exists beside the exe (`src/common/fs/path_util.cpp`, the same check that makes the kit portable). In portable mode the data path is the kit's `user\`. Nothing else in the emulator reads `%APPDATA%`, apart from the switches file (0005) and a log line about the graphics driver's own cache folder (`%LOCALAPPDATA%` NVIDIA GLCache or AMD VkCache, sizes only). The import's state folder would sit beside the data folder (`user.migration`), but it is never made in portable mode.
+- **Water ripples at any frame rate**: with Dark's Dynamic FPS on (the default) v5.8 also writes the water hook (main+0x475F8) and its routine at main+0x3C46E00..0x3C46F10, the spots Ctrl+U used in v5.7. Ours are main+0x3C46280..0x3C46610 and the calls at main+0x6E6DD8, 0x6E70F8 and 0x369DF8 (`CoopSites`), so nothing collides, with Ctrl+U on or off, and `ChangedSite` (no-mods) does not count Fritchii's own built-ins.
+- **"Preparing shaders" only when a release changes how shaders are translated.** The kit's `Update.bat` still moves the old shader cache aside whenever `lichii.exe` changes (issue 117: a cache from another build crashed it), so the first start after an update prepares them anyway. Kept as it is: Fritchii's check is about its own translation, not about the co-op build.
+- DLSS quality modes, faster texture uploads, the settings-during-load freeze fixed; Fritchii's tuned settings are applied once more on the first start.
 
 ### The emulator's own updater
 

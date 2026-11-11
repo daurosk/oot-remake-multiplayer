@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Tue, 10 Nov 2026 00:48:47 -0900
-Subject: [PATCH] coop: log who writes to guest address 0
+Subject: [PATCH 4/5] coop: log who writes to guest address 0
 
 A write to address 0 is an object built at a null pointer: an allocation
 that failed, then the constructor's vtable store. With memory aborts
@@ -14,7 +14,7 @@ chain, the first 16 times in a run, so the caller can be found in main
  1 file changed, 19 insertions(+)
 
 diff --git a/src/core/arm/dynarmic/arm_dynarmic_64.cpp b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
-index 4699654ed3..597363a8f7 100644
+index 4a478d7cd9..d5504fba26 100644
 --- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
 +++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
 @@ -6,6 +6,7 @@
@@ -50,3 +50,6 @@ index 4699654ed3..597363a8f7 100644
      if (CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Write)) {
          switch (size) {
          case sizeof(u64): return m_memory.Write64(vaddr, u64(value));
+-- 
+2.56.0.windows.4
+

@@ -61,6 +61,7 @@
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_dungeon.h"
+#include "coop_story.h"
 #include "coop_live_events.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
@@ -242,6 +243,7 @@ public:
         std::string flag_error;
         session.shared = LoadShared(flag_error);
         if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
+        if (flag_error.empty()) CoopStory::AddShared(session.shared);  // docs/flags.md, "Story and cutscenes"
         if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);

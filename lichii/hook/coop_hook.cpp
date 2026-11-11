@@ -416,6 +416,24 @@ public:
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        // Issue 106, LICHII_COOP_DEBUG_SAMPLES=1: samples sent a second (at most
+        // about 60, with high refresh too) and presents a second.
+        if (debug_samples_) {
+            ++presents_;
+            const std::uint64_t now_us = CoopEvery::NowUs();
+            if (samples_log_.Due(now_us)) {
+                const std::uint32_t seq = session_->sampler().next_sequence();
+                if (samples_log_at_ != 0 && now_us > samples_log_at_) {
+                    const double seconds = static_cast<double>(now_us - samples_log_at_) / 1e6;
+                    LOG_INFO(Core, "coop: samples: {:.1f} sent/s, {:.1f} presents/s",
+                             static_cast<double>(seq - samples_seq_) / seconds,
+                             static_cast<double>(presents_) / seconds);
+                }
+                samples_seq_ = seq;
+                samples_log_at_ = now_us;
+                presents_ = 0;
+            }
+        }
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
@@ -1169,6 +1187,11 @@ private:
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
+    const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106
+    CoopEvery::Every samples_log_{5 * CoopEvery::kSecondUs};
+    std::uint64_t samples_log_at_ = 0;
+    std::uint32_t samples_seq_ = 0;
+    std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
 
     // Set by Begin before the network thread starts; the session borrows the

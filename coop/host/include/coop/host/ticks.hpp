@@ -40,8 +40,8 @@ class GameTicks {
       return 1;
     }
     const std::uint64_t passed = tick > last_ ? tick - last_ : 0;
-    last_ = std::max(last_, tick);
-    return static_cast<unsigned>(std::min<std::uint64_t>(passed, kMaxStep));
+    last_ = (std::max)(last_, tick);
+    return static_cast<unsigned>((std::min<std::uint64_t>)(passed, kMaxStep));
   }
 
  private:

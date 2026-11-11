@@ -112,7 +112,7 @@ class LoadMend {
       pending_.clear();  // their mend frames are over
       return false;
     }
-    left_ -= std::min(left_, step);
+    left_ -= (std::min)(left_, step);
     return true;
   }
   // Link is in the game (as of the last frame()).

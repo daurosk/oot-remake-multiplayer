@@ -254,7 +254,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     }
     diff(store, changes);
   }
-  if (!loading_ && settle_left_ > 0) settle_left_ -= std::min(settle_left_, static_cast<int>(step));
+  if (!loading_ && settle_left_ > 0) settle_left_ -= (std::min)(settle_left_, static_cast<int>(step));
   restate_.clear();
 
   if (role_ == FlagRole::player) {

@@ -2852,7 +2852,9 @@ TEST_CASE("security: a player relaying big messages is held to the byte rate") {
   TestPayload big{1, std::vector<std::uint8_t>(60'000, 0)};
   const std::size_t size = bytes_of(big).size();
   for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
-  const std::size_t burst = 2 * (1u << 20) / size;  // 34
+  // Unreliable: down to the quarter second kept for the reliable channels.
+  const std::size_t reserve = (1u << 20) / 4;
+  const std::size_t burst = (2 * (1u << 20) - reserve) / size;  // 30
   CHECK(h.to(2).size() == burst);
   CHECK(h.session.stats().rate_limited == 100 - burst);
   // A second later one second's worth more goes through.
@@ -2860,7 +2862,7 @@ TEST_CASE("security: a player relaying big messages is held to the byte rate") {
   h.now += 1'000'000;
   for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
   const std::size_t left = 2 * (1u << 20) - burst * size;  // what the burst did not use
-  CHECK(h.to(2).size() == (left + (1u << 20)) / size);
+  CHECK(h.to(2).size() == (left + (1u << 20) - reserve) / size);
   // The other player is not affected, and small messages flow again once
   // the budget has refilled.
   h.clear();
@@ -2895,6 +2897,64 @@ TEST_CASE("security: the protocol's own traffic stays under the byte rate") {
   }
   CHECK(h.to(2).size() == static_cast<std::size_t>(sent));
   CHECK(h.session.stats().rate_limited == 0);
+}
+
+TEST_CASE("security: full poses with held pieces stay under the byte rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // The heaviest real traffic (docs/puppet.md, "Pose"): Link's 300 bones with
+  // rotation, translation and scale, 30 a second, plus two held pieces of 64
+  // bones (sling-fire), and 60 samples a second, for 10 seconds.
+  auto pose = [](std::uint32_t skeleton, std::uint16_t bones) {
+    PlayerPose p;
+    p.time = {1, 1};
+    p.skeleton = skeleton;
+    for (std::uint16_t b = 0; b < bones; ++b) {
+      PoseBone bone;
+      bone.bone = b;
+      bone.rotation = std::array<std::int16_t, 4>{1, 2, 3, 4};
+      bone.translation = std::array<std::int16_t, 3>{1, 2, 3};
+      bone.scale = std::array<std::int16_t, 3>{1, 2, 3};
+      p.bones.push_back(bone);
+    }
+    return p;
+  };
+  const PlayerPose link = pose(1, 300);
+  const PlayerPose sling = pose(2, 64);
+  const PlayerPose shield = pose(3, 64);
+  PlayerSample sample;
+  sample.time = {1, 1};
+  sample.position = Vec3{1, 2, 3};
+  int sent = 0;
+  for (int i = 0; i < 600; ++i) {
+    h.now += 16'667;
+    h.receive(1, sample, kChannelPlayerSamples);
+    ++sent;
+    if (i % 2 == 0) {
+      h.receive(1, link, kChannelPlayerSamples);
+      h.receive(1, sling, kChannelPlayerSamples);
+      h.receive(1, shield, kChannelPlayerSamples);
+      sent += 3;
+    }
+  }
+  CHECK(h.to(2).size() == static_cast<std::size_t>(sent));
+  CHECK(h.session.stats().rate_limited == 0);
+}
+
+TEST_CASE("security: an unreliable flood leaves bytes for the reliable channels") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  TestPayload big{1, std::vector<std::uint8_t>(60'000, 0)};
+  for (int i = 0; i < 100; ++i) h.receive(1, big, kChannelPlayerSamples);
+  CHECK(h.session.stats().rate_limited > 0);
+  h.clear();
+  // Same moment, no refill: the player's chat still goes.
+  h.receive(1, Chat{0, std::string(kMaxChatChars, 'c')}, kChannelSession);
+  CHECK(h.to(2).size() == 1);
 }
 
 TEST_CASE("security: --allow lets only the listed addresses connect") {
@@ -2961,5 +3021,7 @@ TEST_CASE("security: names with invisible or bidi characters are refused") {
   // Ordinary letters from other scripts are fine.
   h.join(30, "Zelda" "\xC3\xA9" "");
   h.join(31, "" "\xE3\x83\xAA" "" "\xE3\x83\xB3" "" "\xE3\x82\xAF" "");
-  CHECK(h.session.player_count() == 3);
+  // An emoji with its presentation selector (U+2764 U+FE0F, a red heart).
+  h.join(32, "Link " "\xE2\x9D\xA4" "\xEF\xB8\x8F");
+  CHECK(h.session.player_count() == 4);
 }

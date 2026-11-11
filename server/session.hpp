@@ -67,7 +67,8 @@ struct SessionConfig {
   // bursts of up to twice that. The message counts alone let a player relay
   // 300 messages of up to 64 KB a second (19 MB/s) to every other player; the
   // protocol's own traffic is a few tens of KB a second. FLAG_SNAPSHOT is not
-  // counted: it goes to the server only and max_flags bounds it.
+  // counted: it goes to the server only and max_flags bounds it. The
+  // unreliable channels leave a quarter second of it for the reliable ones.
   std::uint32_t bytes_per_second = 1u << 20;
   // Only addresses in these ranges may connect (coop_server --allow); empty:
   // any address. A connection from elsewhere is closed at once and counted

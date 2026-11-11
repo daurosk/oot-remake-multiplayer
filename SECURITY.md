@@ -19,7 +19,7 @@ Say which release you used (its `VERSION.txt`), what you did, and what happened.
 
 - Every message is checked before it is used: lengths, counts and indexes against fixed limits, strings for valid UTF-8 without control characters, numbers for range. A message that fails is dropped. The readers are fuzz-tested (`tests/protocol/fuzz_test.cpp`).
 - A message never names a memory address, offset or size. The games write only to places they find themselves in their own memory, for things on fixed allow-lists (shared items and flags, objects that may be shared, the words of a sign that may be cut).
-- The server writes each message's sender itself and never trusts the one in the message. Each player may send at most 60 reliable and 240 fast messages a second and 1 MB a second (bursts of twice that); the rest is dropped, so one player cannot flood the others through the server. One address may hold at most 4 connections that have not said hello, and those are closed after 10 seconds. At most 4 players.
+- The server writes each message's sender itself and never trusts the one in the message. Each player may send at most 60 reliable and 240 fast messages a second and 1 MB a second (bursts of twice that; fast messages leave the last 256 KB for the reliable ones); the rest is dropped, so one player cannot flood the others through the server. One address may hold at most 4 connections that have not said hello, and those are closed after 10 seconds. At most 4 players.
 - Names that are already taken, blank, or that hold invisible or right-to-left characters are refused, so nobody can pass for another player.
 - Nothing from the network is used as a file name, a command, or a format string. Chat and names are shown as text only.
 

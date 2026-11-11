@@ -37,7 +37,7 @@ bool invisible(std::uint32_t cp) {
   return cp == 0x00AD || cp == 0x034F || cp == 0x061C || cp == 0x115F || cp == 0x1160 ||
          cp == 0x17B4 || cp == 0x17B5 || cp == 0x180E || (cp >= 0x200B && cp <= 0x200F) ||
          (cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2060 && cp <= 0x206F) || cp == 0x3164 ||
-         cp == 0xFEFF || cp == 0xFFA0 || (cp >= 0xFE00 && cp <= 0xFE0F) ||
+         cp == 0xFEFF || cp == 0xFFA0 || (cp >= 0xFE00 && cp <= 0xFE0E) ||
          (cp >= 0xFFF0 && cp <= 0xFFF8) || (cp >= 0xE0000 && cp <= 0xE0FFF);
 }
 
@@ -1439,7 +1439,12 @@ bool Session::within_rate(Connection& c, std::uint8_t channel, std::size_t bytes
   refill(c.byte_budget, config_.bytes_per_second);
   double& budget = channel <= kChannelOwnership ? c.reliable_budget : c.unreliable_budget;
   const double size = static_cast<double>(bytes);
-  if (budget < 1.0 || (bytes != 0 && c.byte_budget < size)) return false;
+  // The unreliable channels (poses, samples) may not use the last quarter
+  // second of bytes: it stays for the reliable ones (flags, items, chat), so
+  // a pose flood near the limit never drops a player's progress.
+  const bool reliable = channel <= kChannelOwnership;
+  const double reserve = reliable ? 0.0 : config_.bytes_per_second / 4.0;
+  if (budget < 1.0 || (bytes != 0 && c.byte_budget - size < reserve)) return false;
   budget -= 1.0;
   c.byte_budget -= size;
   return true;

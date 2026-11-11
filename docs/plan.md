@@ -88,7 +88,7 @@ Caleb's calls, taken 2026-11-09 (the suggested answers this plan assumed, plus t
 | Do players need to own the same save? | No. Each player keeps their own save; shared flags are added to it while in a session. |
 | Branch protection on `main`? | On: a pull request needs the checks `check`, `windows`, `linux (gcc)`, `linux (clang)`, `sanitize (clang, asan + ubsan)` and `sanitize (clang, tsan)` to pass. Admins are not held to it. |
 | Half-open connections from one address | At most 4 at a time. |
-| Bytes a player may send through the server | 1 MB a second, bursts of 2 MB, besides the 60 + 240 messages a second; `FLAG_SNAPSHOT` (server only, bounded by max_flags) is not counted. See [SECURITY.md](../SECURITY.md). |
+| Bytes a player may send through the server | 1 MB a second, bursts of 2 MB, besides the 60 + 240 messages a second; `FLAG_SNAPSHOT` (server only, bounded by max_flags) is not counted. The fast (unreliable) messages leave the last 256 KB for the reliable ones, so flags, items and chat still go when poses fill the rate. See [SECURITY.md](../SECURITY.md). |
 | Who may connect | Anyone who reaches the port, unless the host lists addresses (`coop_server --allow`, `server_allow` in coop-options.ini) or listens on one address (`--bind`, `server_bind`). |
 | Times in `PLAYER_SAMPLE` | Server time. ENet's throttle stays at its default. |
 | Player colours (tunic by slot) | Later release. |

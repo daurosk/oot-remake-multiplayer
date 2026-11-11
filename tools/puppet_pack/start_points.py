@@ -10,8 +10,14 @@ black after the load (docs/scenes.md, "The start point").
 A scene's start points are its `StartPos` placements (Banc/<area>/<scene>_*.bcett.byml.zs).
 Kept: the named ones a loading zone uses, found by the `EntrancePos*` placement the game
 puts at (or within 5 m of) each of them. A scene with none of those keeps its plain
-named ones; names of cutscene, warp-song, boss-rush or mini-game starts are left out
-when anything else is there.
+named ones. Cutscene, warp-song, boss-rush, ending or mini-game starts are never kept
+(they may start an event): a scene with only those (BossRushIntervalRoom, the ending's
+Demo_ShootingLocation_Tapestry_ED) gets no row, so /teleport there is refused.
+
+The game has 80 scenes (Banc/BancBasedResource/StartPos.byml lists them all). Lake Hylia,
+Lon Lon Ranch and the Temple of Time are areas of HyruleField_Child/_Adult (their start
+names, LakeHylia_*, StartPos_Get_Epona_Race, StartPos_DoorOfTime, are there), and
+interiors are parts of their village's scene: there are no separate scenes for them.
 """
 import argparse
 import glob
@@ -28,7 +34,7 @@ from . import byml, zs  # noqa: E402
 
 SPECIAL = re.compile(
     r"SubEvent|Defeat|Sage|Stone|Bolero|Prelude|Nocturne|Serenade|Minuet|Requiem|_Air|Return|Warp|"
-    r"After_|MiniGame|HitTarget|Ending|BeforeBoss|InBattle|Restart|UnderWater"
+    r"After_|MiniGame|HitTarget|Ending|BeforeBoss|InBattle|Restart|UnderWater|BossRush"
 )
 ENTRANCE_NEAR = 5.0
 
@@ -62,7 +68,7 @@ def choose(starts):
     marks = [t for name, t in starts if name.startswith("EntrancePos")]
     plain = [(n, t) for n, t in named if not SPECIAL.search(n)]
     entrances = [(n, t) for n, t in plain if any(math.dist(t, m) < ENTRANCE_NEAR for m in marks)]
-    return entrances or plain or named
+    return entrances or plain
 
 
 def main(argv=None):

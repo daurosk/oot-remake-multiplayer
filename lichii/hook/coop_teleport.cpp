@@ -264,6 +264,7 @@ Trip::Actions Trip::Start(std::uint8_t number, std::string name, const Local& lo
     Actions a;
     if (phase_ == Phase::travelling) {
         a.cancel_scene = true;  // the old one's scene change is no longer wanted
+        a.restore_start = true;
     }
     phase_ = Phase::idle;
     if (!local.scene || !local.position) {
@@ -336,10 +337,10 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     since_us_ = now_us;
     asked_us_ = now_us;
     settle_us_ = 0;
+    taken_ = false;
     a.scene = scene_;
     a.start = start_;
-    a.lines.push_back("teleport: going to " + name_ + " in " + scene_ +
-                      ". The game changes scene during an event: if nothing happens, talk to someone or read a sign");
+    a.lines.push_back("teleport: going to " + name_ + " in " + scene_);
     if (CoopDungeon::IsDungeonScene(scene_)) {
         a.lines.push_back("teleport: " + name_ + " is in a dungeon: you may need its items to get on from there");
     }
@@ -382,6 +383,7 @@ Trip::Actions Trip::Left(std::uint8_t number) {
         return a;
     }
     a.cancel_scene = phase_ == Phase::travelling;
+    a.restore_start = a.cancel_scene;
     a.lines.push_back(number == 0 ? "teleport: stopped: the connection was lost"
                                   : "teleport: stopped: " + name_ + " left");
     phase_ = Phase::idle;
@@ -400,11 +402,27 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         } else if (now_us - since_us_ > kGiveUpUs) {
             phase_ = Phase::idle;
             a.cancel_scene = true;
-            a.lines.push_back("teleport: the game did not change scene in time; stopped. Talk to someone or "
-                              "read a sign while it waits");
+            a.restore_start = true;
+            a.lines.push_back("teleport: the game did not change scene in time; stopped");
             return a;
         } else {
-            if (local.scene && now_us - asked_us_ >= kAskAgainUs) {  // not while loading
+            // Taken: the load started (or the scene is gone), or the game
+            // emptied the request. Not asked again while it loads.
+            const bool took = local.loading_banc || !local.scene ||
+                              (local.reserved_banc && local.reserved_banc->empty());
+            if (!taken_ && took) {
+                taken_ = true;
+                taken_us_ = now_us;
+                a.release = true;
+                return a;
+            }
+            if (taken_) {
+                if (local.loading_banc || !local.scene || now_us - taken_us_ < kRearmUs) {
+                    return a;
+                }
+                taken_ = false;  // it ended somewhere else: ask again
+            }
+            if (now_us - asked_us_ >= kAskAgainUs) {
                 asked_us_ = now_us;
                 a.scene = scene_;
                 a.start = start_;
@@ -413,7 +431,7 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         }
     }
     if (phase_ == Phase::settling) {
-        if (!local.scene || !local.position || local.event) {
+        if (!local.scene || !local.position || local.event || local.loading_banc) {
             settle_us_ = 0;  // still loading, or the arrival's own event
         } else if (*local.scene != scene_) {
             phase_ = Phase::idle;

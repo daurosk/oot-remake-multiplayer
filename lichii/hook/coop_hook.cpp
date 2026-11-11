@@ -50,6 +50,7 @@
 #include "coop/version.hpp"
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
+#include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_chat.h"
 #include "coop_cheats.h"
@@ -621,6 +622,8 @@ public:
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
         CoopTeleport::Frame(system, view.game ? base_ : 0, reading, report.connected ? session_.get() : nullptr);
+        // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
+        CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
             chat_.Add(std::move(line), true);
         }

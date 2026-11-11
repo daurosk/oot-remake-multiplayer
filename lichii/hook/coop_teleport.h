@@ -14,11 +14,16 @@
 //    never land in a wall or in mid-air) and its rotation; or refuse (busy:
 //    loading, an event, no Link; cannot warp: its boss fight).
 // 3. On accept (Trip::Accepted): the same scene moves our Link there at once;
-//    another scene asks the game's scene change (at that scene's entrance
-//    start point nearest the player: NearestStart) and asks it again every
-//    0.5 s until our Link is in that scene (the game takes it only while an
-//    event runs: a talk, a sign; docs/scenes.md), then waits for the scene to
-//    settle, asks the player again for where it stands now, and moves there.
+//    another scene asks the game's scene change, at that scene's entrance
+//    start point nearest the player (NearestStart), the way its Main sequence
+//    takes one in free play (docs/scenes.md "Free-play scene change": the
+//    String64 Sequence_ReservedNextBanc plus the Bool 0x3fc35576 that makes
+//    Main's selector pick its BancChange case), asks it again every 0.5 s
+//    until the game takes it (it starts loading, or empties the request),
+//    drops the Bool once taken (so Main does not take an empty request
+//    again), then waits for the scene to settle, asks the player again for
+//    where it stands now, and moves there. During an event the event's own
+//    scene change takes the same request.
 // Another scene with no start point known is refused: without one the game
 // keeps the old scene's start name, which the new scene does not have, and
 // the picture stays black after the load (docs/scenes.md "The start point").
@@ -85,6 +90,10 @@ struct Local {
     std::optional<coop::protocol::Age> age;
     bool event = false;     // an event (cutscene, talk) has control
     bool fighting = false;  // our boss fight runs (CoopBoss)
+    // The game's Sequence_ReservedNextBanc this frame (nothing: not read) and
+    // Sequence_IsLoadingBanc (BeforeChangeBanc sets it while a scene loads).
+    std::optional<std::string> reserved_banc;
+    bool loading_banc = false;
 };
 
 // The age a scene is for, from its name (X_Child, X_Adult); nothing for a
@@ -133,14 +142,21 @@ public:
     static constexpr std::uint64_t kAskAgainUs = 500'000;
     // After the new scene is in with our Link standing, before asking again.
     static constexpr std::uint64_t kSettleUs = 1'500'000;
+    // A taken scene change that ended somewhere else is asked again after this.
+    static constexpr std::uint64_t kRearmUs = 5'000'000;
 
     struct Actions {
         std::vector<std::string> lines;      // chat notices
-        std::optional<std::string> scene;    // ask the game's scene change to it
+        std::optional<std::string> scene;    // ask the game's scene change to it (free play or event)
         std::string start;                   // with scene: the start point there (never empty)
         std::optional<Vec> move;             // move our Link here (same scene)
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
-        bool cancel_scene = false;           // clear our scene change request (given up)
+        bool cancel_scene = false;           // clear our scene change request and its switch (arrived, given up)
+        bool release = false;                // the game took it: drop only the free-play switch
+        // With cancel_scene, not arrived (given up, the player left, a new
+        // /teleport): put back the start name the game had before our first
+        // ask, so it does not keep a start of a scene we never went to.
+        bool restore_start = false;
     };
 
     // The command: refused (a line, nothing to send) or asked (`ask` set).
@@ -169,6 +185,8 @@ private:
     std::uint64_t since_us_ = 0;  // travelling: since the first ask
     std::uint64_t asked_us_ = 0;  // travelling: the last ask
     std::uint64_t settle_us_ = 0; // settling: since the scene was in
+    bool taken_ = false;          // travelling: the game took the request
+    std::uint64_t taken_us_ = 0;
 };
 
 } // namespace CoopTeleport

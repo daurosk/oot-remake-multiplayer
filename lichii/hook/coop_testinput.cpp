@@ -168,6 +168,25 @@ std::optional<std::string> WearFlag(std::string_view slot) {
     return std::nullopt;
 }
 
+// assign: the values of PlayerStatus.AssignableItem.Child / .Adult (Enum,
+// GameDataList of build e0f3ccfaf50065ae).
+bool AssignableItem(std::string_view name) {
+    static constexpr std::string_view kValues[] = {
+        "Empty", "DekuStick", "DekuNut", "Bomb", "Boomerang", "SlingShot", "Hookshot",
+        "Longshot", "Hammer", "GlassTruth", "Bombchu", "DinFire", "FaroreWind", "NayruLove",
+        "MagicBean", "BottleA", "BottleB", "BottleC", "BottleD", "FishingRod", "Lure",
+        "KeatonMask", "SkullMask", "SpookyMask", "BunnyMask", "TruthMask", "GoronMask",
+        "ZoraMask", "GerudoMask", "HeavyBoot", "HoverBoot", "Bow", "WeirdEgg", "AlarmCucco",
+        "ZeldaLetter", "PocketEgg", "PocketCucco", "CojiroCucco", "OddMushroom", "OddPowder",
+        "PoacherSaw", "BrokenSword", "Prescription", "EyeballFrog", "EyeDrop", "ClaimCheck",
+        "SheikahWarp", "FireArrow", "IceArrow", "LightArrow", "ScrubBusinessSeed", "BottleE",
+        "Amiibo", "SinkLure", "NormalLure"};
+    for (const std::string_view v : kValues) {
+        if (v == name) return true;
+    }
+    return false;
+}
+
 namespace {
 
 constexpr std::uint32_t kGotoTicks = 600;  // 10 s
@@ -208,8 +227,14 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
                 return fail("want: wait TICKS");
             }
         } else if (cmd == "HOLD") {
-            if (w.size() != 3 || !Ticks(w[2], step.ticks)) {
-                return fail("want: hold KEYS TICKS");
+            // An optional mark is said halfway through the hold, while the
+            // keys are still down (an item aimed with ZR is put away when it
+            // lets go, so a mark after the hold sees nothing in the hand).
+            if (w.size() < 3 || w.size() > 4 || !Ticks(w[2], step.ticks)) {
+                return fail("want: hold KEYS TICKS [MARK]");
+            }
+            if (w.size() == 4) {
+                step.mark = std::string(w[3]);
             }
             if (!Keys(w[1], step, bad)) {
                 return fail("unknown key " + bad);
@@ -277,6 +302,13 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.kind = Kind::wear;
             step.start = std::string(w[1]);
             step.mark = std::string(w[2]);
+        } else if (cmd == "ASSIGN") {
+            if (w.size() != 2 || !AssignableItem(w[1])) {
+                return fail("want: assign ITEM (Bow, Hookshot, Hammer, SlingShot, Bomb, ...: "
+                            "the item button enum's names)");
+            }
+            step.kind = Kind::assign;
+            step.mark = std::string(w[1]);
         } else if (cmd == "MARK") {
             if (w.size() != 2) {
                 return fail("want: mark NAME (one word)");
@@ -371,7 +403,8 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             ++index_;  // the next step starts when this one did
             continue;
         }
-        if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear) {
+        if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
+            s.kind == Kind::assign) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
             continue;
@@ -391,6 +424,11 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             }
             Steer(s, now_s, player);
             return;
+        }
+        if (s.kind == Kind::timed && !s.mark.empty() && marked_index_ != index_ &&
+            now_s - step_start_ >= length / 2) {
+            log.push_back("mark " + s.mark);  // hold KEYS TICKS MARK: halfway
+            marked_index_ = index_;
         }
         if (now_s - step_start_ >= length) {
             ++index_;
@@ -678,9 +716,24 @@ void Wear(Core::System& system, const std::string& slot, const std::string& name
         return;
     }
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    // "none" empties the flag: the piece is taken off (a mask, boots).
     const bool ok = coop::host::GameFlags::set_string64_now(
-        memory, coop::host::flag_hash(std::string("PlayerStatus.") + *flag), name);
+        memory, coop::host::flag_hash(std::string("PlayerStatus.") + *flag),
+        name == "none" ? std::string{} : name);
     LOG_INFO(Core, "coop: test wear {} {}: {}", slot, name, ok ? "set" : "NOT set");
+}
+
+// assign: puts ITEM on ZR through the game's own Enum queue, for both ages
+// (only the one in play counts). Test only: the item must be owned to be
+// used. The menu does the same when the player picks it.
+void Assign(Core::System& system, const std::string& item) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    const std::uint32_t value = coop::host::flag_hash(item);
+    bool all = true;
+    for (const char* flag : {"PlayerStatus.AssignableItem.Child", "PlayerStatus.AssignableItem.Adult"}) {
+        all = coop::host::GameFlags::set_enum(memory, coop::host::flag_hash(flag), value) && all;
+    }
+    LOG_INFO(Core, "coop: test assign {}: {}", item, all ? "set" : "NOT set");
 }
 
 // give: bombs, bow and hookshot are the item flags of each; any other name is
@@ -823,6 +876,8 @@ void OnFrame(Core::System& system) {
             g_state.warp = State::PendingWarp{request.name, request.start, now, now, player};
         } else if (request.kind == Kind::wear) {
             Wear(system, request.start, request.name);
+        } else if (request.kind == Kind::assign) {
+            Assign(system, request.name);
         } else {
             Give(request.name);
         }

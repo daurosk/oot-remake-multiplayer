@@ -216,7 +216,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_flag_set(c, message);
     return;
   }
-  if (std::holds_alternative<FlagState>(message)) {
+  if (std::holds_alternative<FlagState>(message) || std::holds_alternative<FlagReset>(message)) {
     on_flag_state(id, c, message);
     return;
   }
@@ -314,11 +314,23 @@ void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {
     ++stats_.flag_refused;
     return;
   }
-  for (const FlagEntry& e : std::get<FlagState>(message).flags) keep_flag(e);
+  // FLAG_RESET (the host's save load) is kept the same way: each value
+  // replaces the table's, 0s included.
+  const auto& flags = std::holds_alternative<FlagReset>(message) ? std::get<FlagReset>(message).flags
+                                                                  : std::get<FlagState>(message).flags;
+  for (const FlagEntry& e : flags) keep_flag(e);
+  if (std::holds_alternative<FlagReset>(message)) on_host_reset();
   set_sender(message, c.number);
   send_to_others(id, kChannelProgress, message);
   ++stats_.flag_relayed;
   ++stats_.relayed;
+}
+
+void Session::on_host_reset() {
+  ++stats_.host_resets;
+  // Owners of session-wide kept state add their clear here (docs/flags.md, "Saves").
+  world_.forget_kept();  // locked doors' kept breaks (docs/dungeon.md, "Locked doors")
+  dead_.clear();         // kills-late: the save's enemies are alive again
 }
 
 // A host's table, merged in part by part. A flag the server lacks is kept and
@@ -441,8 +453,16 @@ bool Session::set_scene(ConnectionId id, Connection& c, const std::string& scene
   c.replay_due = true;
   c.owners_told_at = now_us;
   drop_all_objects(id, c.number, present, now_us);
+  // Its game unloads the scene: none of its dying copies is listed there
+  // any more, so coming back with the enemy on its list is a respawn.
+  if (auto ds = dead_.find(left); ds != dead_.end()) {
+    for (auto& [oid, d] : ds->second) {
+      if (auto w = d.witnesses.find(id); w != d.witnesses.end()) w->second = false;
+    }
+  }
   forget_empty_grass(left);
   forget_empty_world(left);
+  forget_empty_dead(left);
   // What was broken and moved here before this player came (docs/world.md).
   for (const Message& m : world_.replay(scene)) {
     send(id, kChannelSession, m);
@@ -500,6 +520,13 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
   for (const ObjectId& oid : before) {
     if (listed.count(oid)) continue;
     c.present.erase(oid);
+    if (auto ds = dead_.find(p.scene); ds != dead_.end()) {
+      if (auto d = ds->second.find(oid); d != ds->second.end()) {
+        if (auto w = d->second.witnesses.find(id); w != d->second.witnesses.end()) {
+          w->second = false;  // its dying (or told) copy is gone from this game
+        }
+      }
+    }
     auto it = objects_.find(oid);
     if (it != objects_.end() && it->second.made && it->second.owner == id) {
       // Its OBJECT_REMOVE is probably right behind: run_ownership lets go
@@ -513,6 +540,10 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
 
   for (const ObjectPresence& e : p.objects) {
     const ObjectId& oid = e.id;
+    if (oid.kind == ObjectKind::placed && dead_for(id, c, p.scene, oid)) {
+      c.present.insert(oid);  // so its leaving the list is seen
+      continue;
+    }
     auto it = objects_.find(oid);
     if (it == objects_.end()) {
       if (oid.kind != ObjectKind::placed) continue;  // made ones come by OBJECT_SPAWN
@@ -615,6 +646,12 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     const bool says_fight =
         sample->state.state && (*sample->state.state & object_state::in_fight) != 0;
     if (life_changed || says_fight) mark_fight(o, now_us);
+    // The owner's own hit: its life fell with no DAMAGE from another player
+    // just before (issue 150, boss_owner_hit_hold_us).
+    if (life_changed && sample->state.life->life < o.last_state->life->life &&
+        (o.hit_at == 0 || now_us - o.hit_at > config_.hit_window_us)) {
+      o.owner_hit_at = stamp(now_us);
+    }
     o.last_state = sample->state;
   } else {
     auto& remove = std::get<ObjectRemove>(message);
@@ -644,6 +681,20 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     if (o.made) {
       forget(it);
     } else {
+      if (remove.reason == RemoveReason::dead) {
+        // Kept for the games that come later (dead_for), up to a cap a scene.
+        auto& kills = dead_[scene];
+        if (kills.size() >= kMaxDeadPerScene && !kills.count(oid)) {
+          ++stats_.dead_unkept;
+        } else {
+          Dead& d = kills[oid];
+          d.witnesses.clear();
+          for (const ConnectionId w : o.present) d.witnesses[w] = true;
+          d.witnesses[id] = false;  // its game dropped it from its walk
+          d.position = remove.position;
+          d.by = c.number;
+        }
+      }
       // Kept, owned by nobody, until no game has it loaded, so a copy still
       // listed cannot bring it back under a new owner.
       o.removed = true;
@@ -688,6 +739,27 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   }
   o.hit_sum += d.amount;
   o.hit_at = stamp(now_us);
+
+  // A boss goes to the player who hurt it (issue 150), the whole group with
+  // its root: the hit's effect is in that game, the others follow its pose.
+  ObjectId root_id = d.id;
+  Object* root = &o;
+  if (o.root) {
+    if (auto r = objects_.find(*o.root); r != objects_.end()) {
+      root_id = r->first;
+      root = &r->second;
+    }
+  }
+  if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
+    if (root->owner && *root->owner != id && !root->ask && !(c.status & kBusy) &&
+        has_loaded(id, *root) &&
+        (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
+        !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {
+      ask_handover(root_id, *root, id, now_us);
+      ++stats_.boss_to_hitter;
+    }
+    return;  // a boss is not moved by the distance rule below
+  }
 
   if (o.ask || o.root || o.projectile || (c.status & kBusy) || !has_loaded(id, o)) return;
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
@@ -755,7 +827,9 @@ void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Mes
     }
     if (!world_.on_break(*b)) {
       ++stats_.world_repeated;
-      return;
+      // A lock a second player opened too: the others must hear of it, so
+      // the one who spent the second key gives it back (docs/dungeon.md).
+      if ((b->flags & world_break::kept) == 0) return;
     }
     send_to_scene(b->scene, id, channel, message);
   } else if (auto* p = std::get_if<WorldPlace>(&message)) {
@@ -801,6 +875,35 @@ void Session::forget_empty_world(const std::string& scene) {
 
 void Session::forget_empty_grass(const std::string& scene) {
   if (!scene_has_player(scene)) grass_.erase(scene);
+}
+
+void Session::forget_empty_dead(const std::string& scene) {
+  if (!scene_has_player(scene)) dead_.erase(scene);  // the games load it anew
+}
+
+// Issue 133: a kill that a game entering later must get. A game that did not
+// see the enemy die is told now, once; one whose dying copy is still listed
+// is left alone; a witness that lists it again after it left its walk has
+// respawned it (its room loaded again), so it is alive again for everyone.
+bool Session::dead_for(ConnectionId id, Connection& c, const std::string& scene,
+                       const ObjectId& oid) {
+  auto ds = dead_.find(scene);
+  if (ds == dead_.end()) return false;
+  auto d = ds->second.find(oid);
+  if (d == ds->second.end()) return false;
+  auto w = d->second.witnesses.find(id);
+  if (w == d->second.witnesses.end()) {
+    d->second.witnesses.emplace(id, true);
+    send(id, kChannelOwnership,
+         ObjectRemove{d->second.by, oid, 0, RemoveReason::dead, d->second.position});
+    ++stats_.dead_told;
+    log("told player " + std::to_string(c.number) + " a kill from before it came");
+    return true;
+  }
+  if (w->second) return true;
+  ds->second.erase(d);
+  ++stats_.dead_respawned;
+  return false;
 }
 
 // Not relayed. A member follows its root's owner (run_ownership), shares its
@@ -942,6 +1045,10 @@ std::optional<ConnectionId> Session::best_other(const Object& o,
   return best;
 }
 
+bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
+  return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
+}
+
 void Session::mark_fight(Object& o, std::uint64_t now_us) {
   Object* target = &o;
   if (o.root) {
@@ -1015,6 +1122,7 @@ void Session::change_owner(const ObjectId& oid, Object& o, std::optional<Connect
   o.last_owner = old_owner;
   ++o.epoch;
   o.changed_at = stamp(now_us);
+  o.owner_hit_at = 0;  // the new owner has not hit it yet
   o.candidate.reset();
   o.ask.reset();
   o.orphan_since = 0;
@@ -1274,6 +1382,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   drop_all_objects(id, c.number, c.present, now_us);
   forget_empty_grass(c.scene);
   forget_empty_world(c.scene);
+  forget_empty_dead(c.scene);
   log("player " + std::to_string(c.number) + " left: " + c.nickname +
       (reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
@@ -1283,6 +1392,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     objects_.clear();
     grass_.clear();
     world_.clear();
+    dead_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before

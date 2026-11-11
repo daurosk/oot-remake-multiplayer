@@ -70,12 +70,18 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     if (watcher_ && flags != nullptr) {
       // No Link to read: the game is loading (FlagWatcher::set_loading).
       watcher_->set_loading(!reading.has_value());
+      watcher_->set_scene(scene_readable_);
       queue_flags(watcher_->frame(*flags), out);
     }
   }
   if (watcher_) {
     report.hosting = watcher_->role() == FlagRole::host;
     report.holding = watcher_->holding();
+    report.host_reset = watcher_->take_reset();
+    if (const auto seen = watcher_->take_save_load()) {
+      report.save_load_flags = seen->flags;
+      report.save_load_frames = seen->frames;
+    }
   }
   report.queued = out.size();
 
@@ -100,6 +106,9 @@ void Session::queue_flags(const std::vector<Outgoing>& out, std::vector<Outbound
       changes.flags.insert(changes.flags.end(), set->flags.begin(), set->flags.end());
     } else if (auto* state = std::get_if<protocol::FlagState>(&message)) {
       changes.flags.insert(changes.flags.end(), state->flags.begin(), state->flags.end());
+    } else if (auto* reset = std::get_if<protocol::FlagReset>(&message)) {
+      // The host's save load: sent as FLAG_RESET, in its own message.
+      to.emplace_back(protocol::Message{std::move(*reset)});
     } else if (auto* part = std::get_if<protocol::FlagSnapshot>(&message)) {
       // The client splits the table again; it wants it whole.
       table.flags.insert(table.flags.end(), part->flags.begin(), part->flags.end());
@@ -123,7 +132,11 @@ void Session::service() {
 
 void Session::send(Outbound& out) {
   if (auto* message = std::get_if<protocol::Message>(&out)) {
-    client_.send(*message);
+    if (const auto* reset = std::get_if<protocol::FlagReset>(message)) {
+      client_.send_flag_reset(reset->flags);  // false when we no longer host
+    } else {
+      client_.send(*message);
+    }
   } else if (auto* changes = std::get_if<FlagChanges>(&out)) {
     // FLAG_SET, or FLAG_STATE when we host. When it cannot go (a drop), a
     // player's watcher still holds the changes as unanswered and sends them
@@ -165,6 +178,9 @@ void Session::handle(const net::Event& event) {
     }
     case EventKind::flag_state:
       if (sharing) inbox_.emplace_back(protocol::Message{protocol::FlagState{event.player, event.flags}});
+      break;
+    case EventKind::flag_reset:
+      if (sharing) inbox_.emplace_back(protocol::Message{protocol::FlagReset{event.player, event.flags}});
       break;
     case EventKind::host_changed:
       inbox_.emplace_back(client_.is_host() ? Control::become_host : Control::become_player);

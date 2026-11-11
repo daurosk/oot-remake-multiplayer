@@ -1,0 +1,23 @@
+# held-adult: B is adult in Kakariko by day too (as adult-day.B: the same scene as A, so A's adult puppet
+# is live), backs off, faces A and watches. B's log and shots are the check (held-adult.A.txt).
+mark start
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400                # the save loads, then the warp lands (about 30 s)
+mark after
+wait 200
+stick 0 -0.6 30         # walk back toward the camera
+stick 0 0.3 8           # turn to face up the path
+press ZL                # camera behind B
+wait 60
+mark ready
+wait 3600               # watches A's puppet while A goes through its items
+mark end

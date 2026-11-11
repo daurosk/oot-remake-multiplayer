@@ -12,6 +12,7 @@
 
 #include "coop/protocol/codec.hpp"
 #include "session.hpp"
+#include "world.hpp"
 
 using namespace coop::protocol;
 using namespace coop::server;
@@ -168,8 +169,8 @@ TEST_CASE("a fifth player is refused as server full and dropped") {
 TEST_CASE("a wrong protocol version is refused, even when the rest cannot be read") {
   Harness h;
   h.connect(1);
-  // A HELLO of version 7 whose body is just the version: unreadable as v0.
-  Bytes b = {1, 0, 2, 0, 7, 0};
+  // A HELLO of version 8 (not ours) whose body is just the version: unreadable as v0.
+  Bytes b = {1, 0, 2, 0, 8, 0};
   h.receive_raw(1, b, kChannelSession);
   const auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused.has_value());
@@ -854,6 +855,29 @@ TEST_CASE("flag state is taken from the host only, kept, and relayed to everyone
   auto snap = messages_of<FlagSnapshot>(h, 4);
   REQUIRE(snap.size() == 1);
   CHECK(snap[0].flags == std::vector<FlagEntry>{flag(5, 0), flag(5, 3, 2)});
+}
+
+TEST_CASE("a host's FLAG_RESET replaces the kept values, 0s included, and goes to everyone else") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, FlagState{0, {flag(5, 1), flag(6, 1)}}, kChannelProgress);
+  h.clear();
+
+  h.receive(2, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // not the host
+  CHECK(h.sent.empty());
+
+  h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded an older save
+  CHECK(h.to(1).empty());
+  auto r = only_message_to<FlagReset>(h, 2);
+  REQUIRE(r.has_value());
+  CHECK(*r == FlagReset{1, {flag(5, 0)}});
+  CHECK(h.session.stats().host_resets == 1);  // on_host_reset ran once
+  h.clear();
+  h.join(3, "Saria");
+  auto snap = messages_of<FlagSnapshot>(h, 3);
+  REQUIRE(snap.size() == 1);
+  CHECK(snap[0].flags == std::vector<FlagEntry>{flag(5, 0), flag(6, 1)});
 }
 
 TEST_CASE("a joiner gets the table before any flag state sent after it joined") {
@@ -1729,6 +1753,57 @@ TEST_CASE("a break that the game put back is forgotten") {
   CHECK(messages_to<WorldBreak>(h, 3).empty());
 }
 
+TEST_CASE("a lock's break is kept when the scene empties, and a second player's is passed on") {
+  ObjectHarness h;
+  h.receive(1, sample_in("WaterTemple"), kChannelPlayerSamples);
+  h.receive(2, sample_in("WaterTemple"), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, broke("WaterTemple", 0x11, world_break::kept), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 2) ==
+        std::vector<WorldBreak>{by(1, broke("WaterTemple", 0x11, world_break::kept))});
+  // Player 2 opened the same lock at once: the others hear it (one key goes back).
+  h.clear();
+  h.receive(2, broke("WaterTemple", 0x11, world_break::kept), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 1) ==
+        std::vector<WorldBreak>{by(2, broke("WaterTemple", 0x11, world_break::kept))});
+  CHECK(h.session.stats().world_repeated == 1);
+  // A pot broken there too. Both leave: the pot is forgotten, the lock is not.
+  h.receive(1, broke("WaterTemple", 0x22), kChannelSession);
+  h.receive(1, sample_in("LakeHylia"), kChannelPlayerSamples);
+  h.receive(2, sample_in("LakeHylia"), kChannelPlayerSamples);
+  h.clear();
+  h.receive(3, sample_in("WaterTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 3) ==
+        std::vector<WorldBreak>{by(1, broke("WaterTemple", 0x11, world_break::kept))});
+  // A late joiner who comes in gets it too.
+  h.join(4, "Ruto");
+  h.clear();
+  h.receive(4, sample_in("WaterTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 4).size() == 1);
+}
+
+TEST_CASE("kept breaks are forgotten on a host save load and are capped in all") {
+  coop::server::WorldStore store;
+  CHECK(store.on_break(broke("WaterTemple", 0x11, world_break::kept)));
+  CHECK(store.on_break(broke("WaterTemple", 0x22)));
+  store.forget("WaterTemple");
+  CHECK(store.breaks("WaterTemple") == 1);  // the lock stays when the scene empties
+  store.forget_kept();                      // host-save's FLAG_RESET: as the save has it
+  CHECK(store.breaks("WaterTemple") == 0);
+  CHECK(store.replay("WaterTemple").empty());
+  // At most kMaxWorldKept a scene and kMaxWorldKeptTotal in all, whatever the scene names.
+  std::size_t taken = 0;
+  for (std::uint64_t s = 0; s < 20; ++s) {
+    for (std::uint64_t h = 1; h <= 300; ++h) {
+      taken += store.on_break(broke("Scene" + std::to_string(s), h, world_break::kept)) ? 1 : 0;
+    }
+  }
+  CHECK(taken == kMaxWorldKeptTotal);
+  CHECK(store.breaks("Scene0") == kMaxWorldKept);
+  store.forget_kept();
+  CHECK(store.on_break(broke("Scene19", 1, world_break::kept)));
+}
+
 TEST_CASE("moves are passed on, the last rest place is kept for those who come later") {
   ObjectHarness h;
   h.receive(1, sample_in("ForestTemple"), kChannelPlayerSamples);
@@ -2037,6 +2112,92 @@ TEST_CASE("a boss stays in its fight for 60 s") {
   CHECK(h.asks() == 0);
   h.run(2 * kSecond);
   CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));
+}
+
+TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);  // both in the boss room, a few metres apart
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  const auto to1 = h.to(1);
+  REQUIRE(to1.size() == 2);  // the hit first, then the ask
+  CHECK(std::get<Damage>(to1[0].message).amount == 1);
+  CHECK(std::get<HandoverAsk>(to1[1].message) == HandoverAsk{placed(7), 0, 2});
+  CHECK(h.session.stats().boss_to_hitter == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  // Player 1 hits back at once: the hit goes to player 2, the boss stays there.
+  h.clear();
+  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}}, kChannelOwnership);
+  CHECK(messages_to<Damage>(h, 2).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+  // 8 s after the change, player 1's hit takes it back.
+  h.run(8 * kSecond);
+  h.clear();
+  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
+  CHECK(h.session.stats().boss_to_hitter == 2);
+}
+
+TEST_CASE("issue 150: two players hitting in turn do not bounce the boss") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  // 45 s of turns: the owner hits (its life falls in its samples), 1 s later
+  // player 2 hits, 2 s after that the owner again; the boss stays.
+  std::int32_t life = 100;  // enough for every round's two hits
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
+  for (int round = 0; round < 15; ++round) {
+    --life;
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
+    h.run(kSecond);
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+    h.run(250'000);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, --life)}, kChannelObjectSamples);  // 2's hit taken
+    h.run(1'750'000);  // the owner's next own hit is well past the hit window
+  }
+  CHECK(h.session.stats().boss_to_hitter == 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  // The owner stops hitting: 6 s later player 2's hit takes it.
+  h.run(6 * kSecond);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_hitter == 1);
+}
+
+TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies keep the distance rule") {
+  OwnerHarness h;
+  h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}, {placed(8), placed(7), 0}}},
+            kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(8), 0, 1, 1, {}}, kChannelOwnership);  // the part (an egg)
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+
+  OwnerHarness plain;  // no boss: two players near it, no move on a hit
+  plain.stand(1, 4);
+  plain.stand(2, 6);
+  plain.clear();
+  plain.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  CHECK(plain.asks() == 0);
+  CHECK(plain.session.stats().boss_to_hitter == 0);
+
+  SessionConfig off = quiet_config();  // the switch
+  off.boss_hitter_cooldown_us = 0;
+  OwnerHarness h0(off);
+  h0.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h0.stand(1, 4);
+  h0.stand(2, 6);
+  h0.clear();
+  h0.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  CHECK(h0.asks() == 0);
 }
 
 TEST_CASE("a hit by the player near it, its owner well away, takes it at once, the hit is kept") {
@@ -2460,4 +2621,86 @@ TEST_CASE("owners are said again every 10 s, for a game that forgot them") {
   h.clear();
   h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
   CHECK(messages_to<ObjectOwner>(h, 2).empty());
+}
+
+// Issue 133 (test6, Discord testers): A killed a Deku Tree room, B came in
+// later and found the enemies still standing. The server had forgotten them
+// once no game had them loaded.
+TEST_CASE("a kill is told to a game that loads the enemy later, until a witness respawns it") {
+  ObjectHarness h;
+  h.receive(1, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(1, 0));
+  h.receive(1, ObjectRemove{0, placed(7), 0, RemoveReason::dead, {1, 2, 3}}, kChannelOwnership);
+  h.receive(1, present_in("DekuTree", {placed(8)}), kChannelOwnership);
+  CHECK_FALSE(h.session.object_owner(placed(7)).has_value());  // nobody has it: forgotten
+  h.clear();
+
+  // B comes in later: told it is dead, no owner, once.
+  h.receive(2, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2) ==
+        std::vector<ObjectRemove>{{1, placed(7), 0, RemoveReason::dead, {1, 2, 3}}});
+  for (const ObjectOwner& o : messages_to<ObjectOwner>(h, 2)) CHECK(o.id != placed(7));
+  CHECK_FALSE(h.session.object_owner(placed(7)).has_value());
+  CHECK(h.session.stats().dead_told == 1);
+  h.clear();
+  h.receive(2, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+  // Its copy deleted, B lists it no more; a third player coming in is told too.
+  h.receive(2, present_in("DekuTree", {placed(8)}), kChannelOwnership);
+  h.clear();
+  h.receive(3, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 3).size() == 1);
+  h.receive(3, present_in("DekuTree", {}), kChannelOwnership);
+
+  // A's game loads the room again and lists it: respawned, alive for all.
+  h.clear();
+  h.receive(1, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 1).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  CHECK(h.session.stats().dead_respawned == 1);
+  h.receive(2, present_in("DekuTree", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+}
+
+TEST_CASE("a copy still dying in a witness's game is no respawn, and an empty scene forgets kills") {
+  ObjectHarness h;
+  h.receive(1, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectRemove{0, placed(7), 0, RemoveReason::dead, {}}, kChannelOwnership);
+  h.receive(1, present_in("DekuTree", {}), kChannelOwnership);
+  h.clear();
+  // B's copy is still on its list for a moment: nothing told, nothing respawned.
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+  CHECK(h.session.stats().dead_respawned == 0);
+  h.receive(2, present_in("DekuTree", {}), kChannelOwnership);
+  // A newcomer while A and B are still in the scene is told.
+  h.receive(3, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 3).size() == 1);
+  h.receive(3, present_in("Field", {}), kChannelOwnership);
+
+  // Everyone leaves the Deku Tree: its games load the room anew next time.
+  h.receive(1, present_in("Field", {}), kChannelOwnership);
+  h.receive(2, present_in("Field", {}), kChannelOwnership);
+  h.clear();
+  h.receive(3, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 3).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(3, 0));
+}
+
+TEST_CASE("a witness that leaves the scene and comes back with the enemy listed has respawned it") {
+  ObjectHarness h;
+  h.receive(1, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectRemove{0, placed(7), 0, RemoveReason::dead, {}}, kChannelOwnership);
+  h.receive(1, present_in("DekuTree", {}), kChannelOwnership);
+  // B leaves while its dying copy was still listed, and comes back: its game
+  // loaded the room anew, so the enemy is alive and shared again (owned by
+  // B), not left with no owner. A stays in the scene.
+  h.receive(2, present_in("Field", {}), kChannelOwnership);
+  h.clear();
+  h.receive(2, present_in("DekuTree", {placed(7)}), kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 0));
+  CHECK(h.session.stats().dead_respawned == 1);
 }

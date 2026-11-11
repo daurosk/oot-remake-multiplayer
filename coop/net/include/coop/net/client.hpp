@@ -115,6 +115,8 @@ struct ClientConfig {
   std::uint32_t ping_interval_ms = 250;
   // ENet drops a peer after this long with nothing acknowledged.
   std::uint32_t timeout_ms = 10000;
+  // ENet's datagram size (its MTU), see protocol::kDatagramBytes.
+  std::uint32_t mtu = protocol::kDatagramBytes;
   // Give up on an attempt with no WELCOME or REFUSED by then.
   std::uint32_t handshake_timeout_ms = 10000;
   // Delay before the next attempt: doubles from the first to the most.
@@ -150,6 +152,13 @@ struct ClientConfig {
   std::function<std::uint64_t()> now_us;
 };
 
+// ENet flags for a packet on `channel`: 0 to 2 reliable and ordered, 3 and 4
+// unreliable and sequenced. A packet on 3 or 4 longer than one datagram
+// (protocol::kDatagramBytes) is sent as unreliable fragments: without the
+// flag ENet sends it reliably, and on a lossy VPN one lost fragment held
+// the channel until the timeout (issue 143).
+std::uint32_t packet_flags(std::uint8_t channel);
+
 enum class State : std::uint8_t {
   idle,           // start() not called yet
   connecting,     // ENet connecting
@@ -181,6 +190,7 @@ enum class EventKind : std::uint8_t {
   // our own number); `flags` holds the values to apply, flags() is updated.
   flag_state,      // `player`, `flags`
   flag_snapshot,   // the last FLAG_SNAPSHOT part is in: `flags` = the table
+  flag_reset,      // the host loaded a save: `player` = the host, `flags` to write exactly
   // Join partner. The first three follow the `message` event of their
   // JOIN_PARTNER; join_timed_out has none.
   join_request,    // `player` asks to join us: `request_id`
@@ -205,6 +215,16 @@ enum class DropReason : std::uint8_t {
   no_route,           // the address could not be resolved or used
 };
 
+// How the link to the server looked (issue 143), for the log. Read from
+// ENet while a connection is up; a lost connection reports the last values.
+struct LinkInfo {
+  std::uint32_t quiet_ms = 0;       // since the last packet from the server
+  std::uint32_t round_trip_ms = 0;  // ENet's own estimate
+  std::uint32_t loss_percent = 0;   // ENet's packet loss estimate
+  std::uint32_t mtu = 0;            // the datagram size both sides agreed
+  std::uint32_t largest_sent = 0;   // our largest message on this connection, bytes
+};
+
 struct Event {
   EventKind kind = EventKind::message;
   protocol::Welcome welcome;          // welcomed, reconnected
@@ -222,6 +242,7 @@ struct Event {
   protocol::JoinTarget join_target;          // join_accepted
   protocol::JoinRefuseReason join_reason{};  // join_refused; raw value kept
   protocol::Equipment equipment;             // player_equip
+  LinkInfo link;  // disconnected, connect_failed: the link just before
 };
 
 // A shared flag's place in the table: a name's hash and array index, or a
@@ -298,6 +319,10 @@ class Client {
   // starts a session or takes over. flags() is not changed. False when not
   // connected, not the host, or the table cannot be split or sent.
   bool send_flag_snapshot(std::span<const protocol::FlagEntry> flags);
+  // The host loaded a save: the flags its load changed, as FLAG_RESET
+  // messages (kMaxFlagEntries each). flags() takes them. False when not
+  // connected, not the host, or a part cannot be sent.
+  bool send_flag_reset(std::span<const protocol::FlagEntry> flags);
   // How the host answers a FLAG_SET; empty means accept every value.
   void set_flag_answer(FlagAnswer answer) { flag_answer_ = std::move(answer); }
 
@@ -370,6 +395,10 @@ class Client {
   // True while a REFUSED "name taken" is being asked again (state
   // waiting_retry, connecting or handshaking within name_taken_retry_for_ms).
   bool retrying_name_taken() const { return name_taken_since_us_ != 0; }
+  // The link now (issue 143). quiet_ms counts while connecting, handshaking
+  // or connected; the server PINGs every 250 ms, so a few seconds of quiet
+  // means its packets do not reach us.
+  LinkInfo link() const;
 
  private:
   void begin_attempt();
@@ -416,6 +445,8 @@ class Client {
   std::uint32_t retry_delay_ms_ = 0;
   std::uint32_t failed_attempts_ = 0;
   std::uint64_t name_taken_since_us_ = 0;  // the first "name taken" in a row, 0: none
+  std::uint64_t last_receive_us_ = 0;  // last packet from the server, 0: none this attempt
+  LinkInfo link_;  // ENet's values, read after each service() with a peer
   std::uint32_t name_taken_retries_ = 0;
 
   ClockEstimator clock_;

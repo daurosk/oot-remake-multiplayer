@@ -1,7 +1,8 @@
-# wear-adult (issue 91): tunic, boots and gauntlets on adult Link. A loads straight into the
-# Graveyard as adult (as adult.A.txt; run with -NoLoad), steps aside to face B and sets its
+# wear-adult (issue 91): tunic, boots and gauntlets on adult Link. A loads straight into
+# Kakariko by day as adult (as adult-day; run with -NoLoad; B is adult there too, wear-adult.B.txt), steps aside to face B and sets its
 # own gear flags with the test-only `wear` (only the flag changes, not A's own Link): Goron
-# tunic, Hover Boots, Silver Gauntlets, then the Zora tunic and Iron Boots.
+# tunic, Hover Boots, Silver Gauntlets, then the Zora tunic and Iron Boots, then the green tunic
+# with boots and gauntlets taken off (`none`).
 # Run with -Switches "LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1".
 # Expect in B's log: "P1 wears armor 'Armor_Adult_Goron'", "P1 wears boots
 # 'Armor_Adult_HoverBoot'", "P1 wears hand 'Armor_Adult_Gauntlet_Silver'", and so on; look at
@@ -10,7 +11,7 @@
 #! start coop: test warp done
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
-warp Graveyard_Adult
+warp KakarikoVillage_Adult Kakariko_WellSide
 wait 1200
 mark title
 press A
@@ -41,5 +42,10 @@ wear armor Armor_Adult_Zora
 wear boots Armor_Adult_HeavyBoot
 wait 240
 mark zora-iron
+wear armor Armor_Adult_Normal
+wear boots none          # off: B's puppet is made again without them
+wear hand none
+wait 300
+mark plain
 wait 300
 mark end

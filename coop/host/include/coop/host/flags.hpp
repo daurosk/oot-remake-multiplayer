@@ -7,6 +7,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <functional>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -51,6 +52,63 @@ class FlagStore {
   // its change of one as a count delta, and write() then takes a
   // FlagKind::count_delta entry and adds it. Default: no counts.
   virtual bool is_count(FlagKey) { return false; }
+
+  // True while the game must not take this flag yet (HoldFlagStore): a
+  // write of it is refused, and the watcher keeps the value and tries again
+  // each frame; the host answers with the value asked. Default: never.
+  virtual bool holds(FlagKey) { return false; }
+
+  // True for a Bool the game never takes back once set (a dungeon's map and
+  // compass, issue 146): FlagWatcher writes it back to 1 when the game's
+  // value drops to 0, at any time, not only after a load. Default: none.
+  virtual bool is_one_way(FlagKey) { return false; }
+
+  // Writes the value as it is, with no merging (the host's save load,
+  // docs/flags.md "Saves"). Default: write().
+  virtual bool write_exact(const protocol::FlagEntry& entry) { return write(entry); }
+};
+
+// A FlagStore that refuses the flags `hold` names for now and passes all
+// else to `inner` (issue 129, docs/dungeon.md "Held until the room loads").
+// The watcher keeps a refused value and writes it once `hold` lets it, or
+// drops it when the game sets the flag itself first.
+class HoldFlagStore final : public FlagStore {
+ public:
+  using Hold = std::function<bool(FlagKey)>;
+  HoldFlagStore(FlagStore& inner, Hold hold) : inner_(inner), hold_(std::move(hold)) {}
+
+  std::optional<protocol::FlagEntry> read(FlagKey key) override { return inner_.read(key); }
+  bool write(const protocol::FlagEntry& entry) override {
+    if (holds(key_of(entry))) {
+      ++held_;
+      if (held_keys_.size() < 64) held_keys_.push_back(key_of(entry));
+      return false;
+    }
+    return inner_.write(entry);
+  }
+  bool is_count(FlagKey key) override { return inner_.is_count(key); }
+  bool is_one_way(FlagKey key) override { return inner_.is_one_way(key); }
+  bool holds(FlagKey key) override { return hold_ && hold_(key); }
+  // The host's save load (docs/flags.md, "Saves"): a held 1 still waits, a
+  // 0 (the save has not played it) goes through.
+  bool write_exact(const protocol::FlagEntry& entry) override {
+    if (entry.value != 0 && holds(key_of(entry))) {
+      ++held_;
+      if (held_keys_.size() < 64) held_keys_.push_back(key_of(entry));
+      return false;
+    }
+    return inner_.write_exact(entry);
+  }
+
+  // Writes refused so far, and their flags (at most 64).
+  std::uint64_t held() const { return held_; }
+  const std::vector<FlagKey>& held_keys() const { return held_keys_; }
+
+ private:
+  FlagStore& inner_;
+  Hold hold_;
+  std::uint64_t held_ = 0;
+  std::vector<FlagKey> held_keys_;
 };
 
 // The flags this session shares, sorted, each once. Loaded from plain text,

@@ -199,7 +199,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         scene_ = input_.scene;
         scene_since_ms_ = now_ms;
     }
+    std::uint32_t live = 0;  // LiveMask(): rebuilt each frame
     if (input_.main_base == 0) {
+        live_mask_.store(0, std::memory_order_relaxed);
         return;
     }
     for (auto& slot : slots_) {
@@ -255,6 +257,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                         ShowText(t->show) + (*t->why ? std::string(" (") + t->why + ")" : std::string()));
                     slot.shown = t->show;
                 }
+                if (t->show != Show::hide && slot.number < 32) {
+                    live |= 1u << slot.number;
+                }
                 if (t->show == Show::show) {
                     Pose(slot, guest, t->position, &t->rotation, now_ms);
                 } else if (t->show == Show::hide) {
@@ -278,6 +283,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             break;
         }
     }
+    live_mask_.store(live, std::memory_order_relaxed);
     Status(guest, now_ms);
 }
 
@@ -486,7 +492,8 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 return std::nullopt;  // maybe a hiccup: keep it a moment
             }
         }
-        if (t == nullptr || t->actor != slot.actor_name || input_.scene != slot.scene) {
+        if (t == nullptr || t->actor != slot.actor_name || input_.scene != slot.scene ||
+            slot.remake) {
             slot.missing_ms = 0;
             Call c;
             c.function = input_.main_base + addr::kRequestDelete;
@@ -597,6 +604,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.hold_id = {};
     slot.far_since_ms = {};
     slot.rewear_tries = {};
+    slot.remake = false;
+    slot.off_since_ms = {};
     pending_ = Pending::create;
     return c;
 }
@@ -658,8 +667,11 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
 }  // namespace
 
 // One equip call for a live puppet whose player's gear differs from what it
-// wears, or none. An empty name (nothing in that slot) is not taken off yet:
-// how to clear a slot is not proven (0x2e01a90 with "" is a guess).
+// wears, or none. An empty name (nothing in that slot): a carried piece (the
+// held item, the tool slots) is only put away, as its player's is; a worn one
+// (sword, shield, mask, tunic, boots, gauntlets) cannot be taken off by a
+// known call (0x2e01a90 with "" is a guess), so the puppet is made again
+// without it (slot.remake; issue 91: a mask taken off stayed on).
 std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest,
                                     std::uint64_t now_ms) {
     if (anim_ && now_ms - slot.gear_log_ms >= 2000) {
@@ -694,6 +706,21 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
     }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];
+        if (want && want->empty() && !slot.worn[i].empty() && !GearIsCarried(i)) {
+            // Empty for a moment (a load) is not taken off: kTakeOffMs first.
+            if (slot.off_since_ms[i] == 0) {
+                slot.off_since_ms[i] = std::max<std::uint64_t>(now_ms, 1);
+                continue;
+            }
+            if (now_ms - slot.off_since_ms[i] < kTakeOffMs) {
+                continue;
+            }
+            Say("P" + std::to_string(slot.number) + " takes off " + kGearNames[i] + " '" +
+                slot.worn[i] + "': puppet made again without it");
+            slot.remake = true;
+            return std::nullopt;
+        }
+        slot.off_since_ms[i] = 0;
         if (!want || want->empty() || *want == slot.worn[i] ||
             want->size() >= block::kGearCapacity) {
             continue;
@@ -1302,6 +1329,10 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
 Director& TheDirector() {
     Configure({}, false, {});
     return *g_director;
+}
+
+std::uint32_t LivePuppets() {
+    return g_configured && g_director ? g_director->LiveMask() : 0;
 }
 
 std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us) {

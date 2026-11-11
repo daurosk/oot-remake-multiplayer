@@ -1229,7 +1229,7 @@ GrassCut Cut() {
 
 TEST_CASE("grass cuts have their number, channel and layout") {
   CHECK(static_cast<int>(MessageType::grass_cut) == 28);
-  CHECK(kProtocolVersion == 6);
+  CHECK(kProtocolVersion == 7);
   CHECK(channel_of(MessageType::grass_cut) == kChannelSession);
   CHECK_FALSE(allowed_on_channel(MessageType::grass_cut, kChannelPlayerSamples));
   CHECK(may_send(Sender::client, MessageType::grass_cut));
@@ -1331,7 +1331,14 @@ TEST_CASE("bad world messages are refused") {
   b.scene.clear();
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
-  b.flags = 2;
+  b.flags = 4;
+  CHECK(encode(b, out) == Error::bad_value);
+  // A lock's break is kept, never restored: both bits at once are refused.
+  b.flags = world_break::kept;
+  Message kept_back;
+  REQUIRE(decode(must_encode(Message{b}), kept_back) == Error::none);
+  CHECK(std::get<WorldBreak>(kept_back).flags == world_break::kept);
+  b.flags = world_break::kept | world_break::restored;
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
   b.position[2] = std::numeric_limits<float>::infinity();
@@ -1459,4 +1466,24 @@ TEST_CASE("bad boss room messages are refused") {
   b = must_encode(BossRoom{0, "s", 0, BossState::defeated});
   b[b.size() - 2] = kMaxBossRoom + 1;
   CHECK(decode(b, m) == Error::bad_value);
+}
+
+TEST_CASE("flag reset: type 135, progress channel, both ways, the same entries as flag state") {
+  CHECK(static_cast<int>(MessageType::flag_reset) == 135);
+  CHECK(channel_of(MessageType::flag_reset) == kChannelProgress);
+  CHECK(allowed_on_channel(MessageType::flag_reset, kChannelProgress));
+  CHECK_FALSE(allowed_on_channel(MessageType::flag_reset, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::flag_reset));
+  CHECK(may_send(Sender::server, MessageType::flag_reset));
+  const FlagEntry zero{FlagKey(0x1234u, std::uint16_t{0}), FlagKind::boolean, 0};
+  Message m = FlagReset{2, {zero}};
+  std::vector<std::uint8_t> out;
+  REQUIRE(encode(m, out) == Error::none);
+  Message back;
+  REQUIRE(decode(out, back) == Error::none);
+  CHECK(back == m);
+  CHECK(type_of(back) == MessageType::flag_reset);
+  CHECK(encode(FlagReset{0, {}}, out) == Error::bad_value);  // at least one entry
+  const FlagEntry delta{FlagKey(0x1234u, std::uint16_t{0}), FlagKind::count_delta, 1};
+  CHECK(encode(FlagReset{0, {delta}}, out) == Error::bad_value);  // totals only
 }

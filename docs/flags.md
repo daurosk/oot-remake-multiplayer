@@ -101,6 +101,27 @@ Run in the patched emulator (`lichii/hook/coop_flags.cpp`, settings in [lichii.m
 
 Not checked live: an Int or 64-bit key crossing, B to A, a late joiner getting the host's table.
 
+## Saves: the host's save decides (branch `host-save`)
+
+Caleb (2026-11-11): "Let's make it follow the hosts save." Before, the group's state was the union of everyone's progress, and it survived any one player's load. So a newer state kept coming back into an older save: in #148 a later state's shut boss door locked a player out.
+
+- **A load window** (`FlagWatcher`): from the first frame without our Link (the title screen, a save load, a door, a cutscene, a warp, a death) to the end of the 120 settle frames after it. Nothing is sent while there is no Link. **A save load is known by two signs in one window**: no scene (Banc) was loaded for at least 30 frames (the title screen and file select: the game has no title Banc, so `PlayerReader::read_scene` reads nothing there), and at least 2 named shared flags went back (a Bool from set to 0, an Int lower) while there was no Link. A door, a warp song, a blue warp, a cutscene, time travel or a Game Over continue keeps a scene loaded, so a room's "enter" flags going back on a door, or the story flags of a cutscene, never make a reset. The one-way room flags the game resets itself never count. Not seen in a run yet: that no scene is read on the title screen and file select, and is read through a door. The hook does not log the scene's absence yet, so check `host_resets` and the `coop: flags: the host loaded a save` line instead. Not done: a hook on the game's own save load (`gmd::SaveDataMgr`'s `read`, or the sequence node `SeqOneShotOnloadGameSaveDataWorldMgr` at 0x32d870c), which would be the surest sign. Without that sign the rules before host-save hold: a guest puts the group's value back at once by the old `backwards()` rule, and what is left goes out when Link is back. A save that differs from the group in only one flag that went back is therefore not seen as a save load; the next host load or progress merges it.
+- **The host's save load**: nothing is put back. When the window ends, every shared flag whose value differs from before the load goes out as `FLAG_RESET` ([protocol.md](protocol.md), "Saves"). The server replaces its values with them; every player writes them exactly (`FlagStore::write_exact`, with no max, OR, mirror or one-way rule). A host's first save load after the title screen does the same: the group starts from the host's save.
+- **A guest's save load**: nothing is sent. Each flag the load moves that the group has a value for is written back at once (so a room loading now has it). When the window ends, any other flag the load changed goes back to what this game had before it. The group never changes from a guest's load.
+- **While playing**, changes merge as before (OR, max, counts). Only a host's save load resets.
+- **Per player** stays per player: rupees, ammo counts, life, position (not shared at all).
+- **A new host** (the old one left) sends its table as before (merged); no reset.
+- **One-way rules** (map and compass, chests, pickups) hold for `FLAG_STATE`. A `FLAG_RESET` sets them back to 0 when the host's save has 0.
+- **One-way room flags** (dungeon-live's live room flags, which the game resets itself) are never in a `FLAG_RESET`, never put back by a guest's revert, and never count as a sign of a save load.
+- **Hearts**: a reset that lowers `PlayerStatus.MaxLife` holds the player's own `PlayerStatus.Life` to the new maximum.
+- **Hooks** for session-wide state the host's save undoes: the server's `Session::on_host_reset()` and the game's `FrameReport::host_reset` (logged `coop: flags: the host loaded a save: the group follows it`).
+- Limits:
+  - A guest's own change in the 2 s after its save load is put back with the load's.
+  - Not cleared by a reset yet (each owner adds its clear at the hooks): world breaks, places and hits kept by the server for late joiners, field grass cuts, sign cuts, boss room state, drop takes, the kills-late dead list, locked doors' kept breaks. Pots, grass and enemies come back on a room load anyway.
+  - An equipped item the host's save lacks is taken out of the pouch while still equipped (the Equip strings are per player and not touched). Not seen in a run.
+  - The dungeon-live hold keeps a reset's 1 for a gimmick event until the player leaves the dungeon (a 0 goes through).
+- Tests: `tests/host/flag_watcher_test.cpp` ("the host's save load resets the group to its save", "a door is no save load", "a guest's save load takes the group's values", "a FLAG_RESET is written exactly ... #148", "lowers an item", "a new host does not reset"), `tests/server/session_test.cpp`, `tests/protocol/codec_test.cpp`.
+
 ## Not done
 
 1. Float, Enum and the other types (UInt is read, above): their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.

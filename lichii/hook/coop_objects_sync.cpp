@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_guard.h"
 #include "coop_world.h"
 
 #include <algorithm>
@@ -111,6 +112,20 @@ bool RemovedWhenTaken(std::string_view name) {
     return false;
 }
 
+std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
+    bool unknown = false;
+    for (const Seen& s : seen) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) == bodies.end()) continue;
+        if (!s.life) {
+            unknown = true;
+        } else if (s.life->life > 0) {
+            return true;
+        }
+    }
+    if (unknown) return std::nullopt;
+    return false;
+}
+
 bool IsShared(std::string_view name) {
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment
@@ -118,8 +133,25 @@ bool IsShared(std::string_view name) {
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
+    if (IsOwnPuzzle(name)) return false;
     return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
            CoopWorld::IsBreakable(name);
+}
+
+bool IsOwnPuzzle(std::string_view name) {
+    // Issue 149. The Deku Tree's (and Kokiri Forest's) Scrub Brothers are an
+    // order puzzle (hit 2, 3, 1): Scrub_Deku_Brothers_Manager counts the hits
+    // in its own code, from the hits made in its own game; a stun changes no
+    // life, so no DAMAGE ever carries another player's hit. Shared as enemy
+    // copies, the owner's animation was played over a non-owner's own hit
+    // reaction, which could spoil that player's solo try. So each game runs
+    // its own brothers; the solve (InsideTheDekuTree_RoomK_Cleared,
+    // ..._EnemyScrubDekuDestroy_003, set by the last scrub's talk) is a shared
+    // dungeon flag and opens the room for everyone. The Lost Woods stage scrubs
+    // (Enemy_Scrub_ForestStage, ScrubForestStage_ProcessOrderIndex) are an
+    // ordered show of the same kind.
+    return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
+           name.starts_with("Enemy_Scrub_ForestStage");
 }
 
 bool IsRolled(std::string_view name) {
@@ -434,6 +466,7 @@ void Sync::Reset() {
     scene_.clear();
     objects_.clear();
     taken_.clear();  // a new scene's actors were made knowing every key
+    chest_animations_.clear();
     hidden_.clear();
     dead_.clear();
     order_.clear();
@@ -479,7 +512,7 @@ void Sync::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
 std::vector<EnemyCopy> Sync::Creates() const {
     std::vector<EnemyCopy> out;
     for (const auto& [key, d] : decided_) {
-        out.push_back({key, d.name, d.position, d.removed});
+        out.push_back({key, d.name, d.position, d.removed, d.dead ? std::uint8_t{0} : kRemakes});
     }
     return out;
 }
@@ -501,6 +534,24 @@ std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
         }
     }
     return out;
+}
+
+void Sync::Written(std::uint64_t address, std::int32_t life, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return;
+    }
+    Object& o = it->second;
+    // While it waited the walk read the old life; that is the start of the drop.
+    o.late_left = 0;  // nothing of it may be put back as a second fall
+    o.late_until = 0;
+    if (o.life && *o.life > life) {
+        o.hurt_left += *o.life - life;
+        o.hurt_target = life;
+        // If the game does not take it, the life is written after kHurtWaitUs and hurt_left
+        // is cleared, so it cannot swallow a later hit of our Link's.
+        o.hurt_until = now_us + kHurtWaitUs;
+    }
 }
 
 std::uint8_t Sync::OwnerOf(const proto::ObjectId& id) const {
@@ -589,7 +640,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                          now_us - last_tick_us_ > kTakeGapUs;
         if (!gap) {
             for (const std::uint64_t hash : takes) {
-                taken_.try_emplace(hash);
+                // The wait counts from the first take of a key: the chest's
+                // key and its opened flag may come in different frames.
+                if (const auto [t, added] = taken_.try_emplace(hash); added) {
+                    t->second.since_us = now_us;
+                }
             }
         } else if (!takes.empty()) {
             notes_.emplace_back(std::to_string(takes.size()) +
@@ -598,11 +653,38 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         last_tick_us_ = now_us;
         ticked_ = true;
     }
+    {  // every chest's animation, and when it changed (kChestOpeningUs)
+        std::map<std::uint64_t, ChestAnimation> chests;
+        for (const Seen& s : seen) {
+            if (!s.name.starts_with("Obj_TBox_")) {
+                continue;
+            }
+            ChestAnimation now{s.animation ? s.animation->name : std::string(), 0};
+            if (const auto was = chest_animations_.find(s.address); was != chest_animations_.end()) {
+                now.changed_us = was->second.name == now.name ? was->second.changed_us : now_us;
+            }
+            chests.emplace(s.address, std::move(now));
+        }
+        chest_animations_.swap(chests);
+    }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
             if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
-                const bool near = player_ && Finite(*player_) && Finite(s.position) &&
-                                  Distance(*player_, s.position) < kTakeNearM;
+                // A chest has no near rule (issue 87): it is bound beside our
+                // Link too, and then goes at once (below), before our Link can
+                // open it a second time.
+                const bool chest = s.name.starts_with("Obj_TBox_");
+                const bool beside = player_ && Finite(*player_) && Finite(s.position) &&
+                                    CoopGuard::Near(player_, s.position, kTakeNearM);
+                const bool near = !chest && beside;
+                const std::string animation = s.animation ? s.animation->name : std::string();
+                const bool open = animation.find("Open") != std::string::npos;
+                // Opening now: changed to an "Open" animation just before (never
+                // a name alone: a closed chest's idle may have "Open" in it).
+                bool opening = false;
+                if (const auto c = chest_animations_.find(s.address); chest && open && c != chest_animations_.end()) {
+                    opening = c->second.changed_us != 0 && now_us - c->second.changed_us <= kChestOpeningUs;
+                }
                 if (near && t->second.ticks < kTakeBindTicks && !t->second.near_said) {
                     t->second.near_said = true;
                     notes_.emplace_back(s.name + ": taken or opened in another game, left here: our Link is beside it");
@@ -610,9 +692,63 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (!near && t->second.ticks < kTakeBindTicks && t->second.addresses.insert(s.address).second) {
                     char key[24];
                     std::snprintf(key, sizeof key, "%#llx", static_cast<unsigned long long>(s.hash));
-                    notes_.emplace_back(s.name + " " + key + ": taken or opened in another game, removed here");
+                    if (chest) {
+                        t->second.bound_animation[s.address] = animation;
+                    }
+                    if (chest && opening && beside) {
+                        // Ours started opening just before the other's flag came,
+                        // our Link beside it: both opened it at once. It stays;
+                        // its content may count twice (a small key) and cannot be
+                        // taken back here.
+                        t->second.shown_open.insert(s.address);
+                        notes_.emplace_back(s.name + " " + key +
+                                            ": opened here and in another game at once (its content may count twice)");
+                    } else if (chest && opening) {
+                        // Away from our Link: its AI reacted to the shared flag.
+                        t->second.shown_open.insert(s.address);
+                        notes_.emplace_back(s.name + " " + key + ": opened in another game, shows open here");
+                    } else {
+                        notes_.emplace_back(s.name + " " + key +
+                                            (chest ? ": opened in another game, waiting to see it open here"
+                                                   : ": taken or opened in another game, removed here"));
+                    }
                 }
                 if (t->second.addresses.contains(s.address)) {
+                    // A chest may show itself open from the shared flag (issue
+                    // 87): left so; removed only if still closed after the wait.
+                    // Only while our Link is not beside it: an opening seen then
+                    // is its own AI's, not ours (a closed chest beside our Link
+                    // goes at once, so our Link cannot open it again).
+                    if (chest) {
+                        Taking& tk = t->second;
+                        if (tk.shown_open.contains(s.address)) {
+                            continue;
+                        }
+                        const auto b = tk.bound_animation.find(s.address);
+                        const bool changed = b != tk.bound_animation.end() && b->second != animation;
+                        if (open && changed && !beside) {
+                            tk.shown_open.insert(s.address);
+                            notes_.emplace_back(s.name + ": opened in another game, shows open here");
+                            continue;
+                        }
+                        if (!beside && now_us - tk.since_us < kChestOpenWaitUs) {
+                            continue;  // not yet: it may still open itself
+                        }
+                    }
+                    // Its own break where the game has one: life 0, then the
+                    // delete only if it still stands (the review of breakables:
+                    // a web just vanished in the other game).
+                    const bool lives = s.life && s.life->life > 0 && CoopWorld::IsBreakable(s.name);
+                    auto broke = t->second.broke_at.find(s.address);
+                    if (lives && broke == t->second.broke_at.end()) {
+                        writes.push_back({s.address, 0, 0, {}});
+                        t->second.broke_at.emplace(s.address, now_us);
+                        notes_.emplace_back(s.name + ": broken by its own break (life 0)");
+                        continue;  // not shared, not sent, not deleted yet
+                    }
+                    if (broke != t->second.broke_at.end() && now_us - broke->second < kTakeBreakUs) {
+                        continue;  // its break is playing
+                    }
                     hidden.insert(s.address);
                     continue;  // gone for everyone: not shared, not sent
                 }
@@ -757,6 +893,18 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             send.emplace_back(r);
             owners_.erase(owner);
         } else {
+            // A decided copy the director made left our walk. Dead: not made
+            // again. Otherwise it went by itself (issue 124: a Stalchild copy
+            // sank into the ground while the decider's one still fights); the
+            // director makes it again, and the new one gets the create wait.
+            for (auto& [key, d] : decided_) {
+                if (d.address == o.address && d.id == o.id && !d.removed) {
+                    d.dead = d.dead || (o.life && *o.life <= 0) ||
+                             (o.animation && IsDeathAnimation(o.animation->name));
+                    d.address = 0;
+                    d.got_us = now_us;
+                }
+            }
             gone.push_back(std::move(it->second));
         }
         it = objects_.erase(it);
@@ -859,7 +1007,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // Copies their owner saw die that are still here after the grace.
     dead_.clear();
     for (const auto& [address, o] : objects_) {
-        if (o.dead_at != 0 && now_us - o.dead_at >= kDeadGraceUs) {
+        if (o.dead_at != 0 && (o.dead_now || now_us - o.dead_at >= kDeadGraceUs)) {
             dead_.insert(address);
         }
     }
@@ -1194,12 +1342,22 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 remove->id.kind == proto::ObjectKind::placed &&
                 (had == owners_.end() || remove->epoch >= had->second.epoch)) {
                 if (Object* o = find(remove->id); o != nullptr && o->reacts && o->dead_at == 0) {
+                    // Our game kills it itself (life 0 through the game), so
+                    // its own kill counts: a room's enemy counter and shutter,
+                    // the kill it keeps for a room reload. The delete after
+                    // kDeadGraceUs is the fallback. A kill from before we
+                    // came (no owner was ever named to us: a late entrant or
+                    // a rejoin, issue 133) whose life we cannot read goes at
+                    // once.
                     if (o->life && *o->life > 0) {
                         Lower(*o, 0, now_us, writes, remove->player_number);
+                    } else if (had == owners_.end() && !o->life) {
+                        o->dead_now = true;
                     }
                     o->dead_at = now_us;
+                    notes_.emplace_back(had == owners_.end() ? "killed before we came: " + o->name
+                                                             : "dead in its owner's game: " + o->name);
                     o->hit_sum = 0;
-                    notes_.emplace_back("dead in its owner's game: " + o->name);
                 }
                 // Nobody's now: no samples, poses or plays for it.
                 if (had != owners_.end()) {

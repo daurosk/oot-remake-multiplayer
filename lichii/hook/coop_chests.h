@@ -27,7 +27,23 @@ struct Key {
 // The chest keys outside the dungeons, sorted by area, actor and key.
 std::span<const Key> Keys();
 
-// Adds the keys to `shared` (made when empty). Returns how many were new.
+// A chest's "opened" flag: the named Bool its game sets when it is opened
+// (issue 87; not the placement's 64-bit key), and the chest's placement key.
+struct Opened {
+    std::uint32_t flag;  // the Bool's name hash
+    std::uint64_t key;   // the placement hash (the actor's, in the objects walk)
+    const char* area;
+    const char* actor;
+};
+
+// Every chest's opened flag, in and outside the dungeons (194), sorted by
+// area, actor and key.
+std::span<const Opened> OpenedFlags();
+// The placement key of the chest whose opened flag is `flag`, or nothing.
+std::optional<std::uint64_t> KeyOfOpened(std::uint32_t flag);
+
+// Adds the keys and the opened flags to `shared` (made when empty). Returns
+// how many were new.
 std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on);
 
 // Merge with On(), logged.

@@ -342,6 +342,7 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 |---|---|
 | `wait 120` | nothing for 120 ticks (2 s) |
 | `hold A 30` | hold A for 30 ticks |
+| `hold ZR 90 aim` | hold ZR for 90 ticks and say `mark aim` halfway, with ZR still down (an aimed item is in the hand then) |
 | `hold LSTICK_UP+B 90` | left stick up and B together (run) |
 | `press A` / `press ZR+A 10` | hold, then let go, 6 ticks each (or the number given) |
 | `stick 0.5 1.0 60 [KEYS]` | left stick at x, y (each -1 to 1), with buttons if given |
@@ -350,7 +351,8 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 | `toward X Z 8 [KEYS]` | push the stick toward that point for 8 ticks, with buttons if given: Link turns to face it |
 | `warp KakarikoVillage_Child Kakariko_WellSide` | test only: changes scene the game's own way (the String64 flag `Sequence_ReservedNextBanc`, and `Sequence_ReservedNextStartPosName` for the start position, a `StartPos` name in the scene's Banc). The game takes it only during an event, such as the one right after a save loads, so a warp scenario loads the save itself (run with `-NoLoad`) and asks for the warp first; the hook asks again every 0.5 s until Link is in that scene (up to 90 s) and logs `coop: test warp done`. A scene ending in `_Adult` or `_Child` also sets the bool `Sequence_IsChildhood` (false or true) through the game's queue, to load Link at that age |
 | `give bombs` | test only: gives `bombs`, `bow`, `hookshot` or any item flag `coop_cheats` knows (needs `LICHII_COOP_CHEATS=1` in `-Switches`) |
-| `wear head Armor_Child_Mask_Keaton` | test only: sets this game's `PlayerStatus.Equip*` flag for `weapon`, `shield`, `head`, `armor`, `boots` or `hand` (gauntlets) ([items.md](items.md)). Only the flag changes, not this game's Link; the other games' puppets wear it (scenario `wear`) |
+| `wear head Armor_Child_Mask_Keaton` | test only: sets this game's `PlayerStatus.Equip*` flag for `weapon`, `shield`, `head`, `armor`, `boots` or `hand` (gauntlets) ([items.md](items.md)). Only the flag changes, not this game's Link; the other games' puppets wear it (scenario `wear`). `wear head none` empties the flag: the piece is taken off |
+| `assign Bow` | test only: puts an item on ZR, for both ages, through the game's Enum queue (`PlayerStatus.AssignableItem.Child` and `.Adult`); the name is the button enum's (`Bow`, `Hookshot`, `Hammer`, `SlingShot`, `Bomb`, `DekuStick`, ...; GameDataList spelling). The item must be owned (`give`). R is the quick-select carousel and assigns nothing |
 | `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
 
 `goto` and `toward` steer from Link's position and the game camera's ground directions (from its world-to-clip matrix), read each frame; a push that gets nowhere for a second steps aside. Positions are the ones the objects debug log prints (`at x y z`, y is height), or the `Translate` of a placement in the romfs Banc files.

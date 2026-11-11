@@ -22,6 +22,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/host/flags.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_objects_sync.h"
 #include "coop_puppet.h"
@@ -36,12 +37,94 @@ bool IsBreakable(std::string_view name);
 // one, the slider box).
 bool IsMovable(std::string_view name);
 
+// A door's lock (Obj_DoorChainLock_*, Obj_SpiritTemple_DoorChainLock_*; a door
+// set places one on each side): it goes when opened and the opener's game
+// saves that, so its break is kept (docs/dungeon.md, "Locked doors"). Not the
+// Market shops' night locks; the boss doors' (ChainLockLocator_BossDoor) are no
+// Obj_ actor. A lock that needs no small key gives none back: a key goes back
+// only against our own SmallKeyNum drop.
+bool IsLock(std::string_view name);
+
+// The flag of `scene`'s small key count, DungeonInfo.<scene>.SmallKeyNum, or 0
+// for a scene with no keys.
+std::uint32_t SmallKeyFlag(std::string_view scene);
+
 // Signs a sword cuts (their life never drops: WORLD_HIT shares the swing).
 bool IsSign(std::string_view name);
+
+// The anchor actor a push block keeps at its base (Obj_MovableBox_BasePosAnchor:
+// no model, a dummy physics body, never placed in a map, so made by the
+// block). Not a movable itself; moved with its block (issue 147).
+bool IsBlockAnchor(std::string_view name);
+
+// The push blocks whose own rest place a followed push fixes (issue 147):
+// the MovableBox family and the slider box, not the Armos statue.
+bool IsPushBlock(std::string_view name);
 
 // Grass that is an actor: a tuft that is cut is deleted at once in the other
 // games (writing life 0 did not remove it, run of 2026-11-09).
 bool IsGrassActor(std::string_view name);
+
+// Things a hit makes fall and that then stay, as ground or a bridge: the Fire
+// Temple's and the Gerudo Training Ground's hammer pillars (the same actors,
+// Obj_FireTemple_HammerSlipPillar_*, life
+// Obj_HammerSlipPillar, destruction FallingRock). Shared by WorldSync like a
+// breakable, but never moved and never deleted: another game's break writes
+// life 0 so the game drops it here too (breakables, sync-coverage P1). Not
+// IsBreakable: the enemy-style object sharing leaves them alone.
+bool IsFaller(std::string_view name);
+
+// A small key lying in a dungeon or the Gerudo Fortress (Obj_Dungeon_SmallKey*,
+// not the minigame's). The game keeps no 64-bit key for these, so taking
+// one is shared as a WORLD_BREAK: the others delete theirs at once, and a
+// game that loads the room later gets the server's break (issue 102).
+bool IsLyingKey(std::string_view name);
+
+// The Gold Skulltula's token (Obj_Token_Gold, issue 89): made by the game
+// where its Skulltula dies, with no placement. Its taking is shared like a
+// lying key's, under TokenId(the Skulltula's placement hash): the token
+// that appears within kTokenNearM of a Gold Skulltula we saw, or where a
+// token of this scene was before (a room loaded again: its Skulltula is
+// gone, the game makes the token again).
+bool IsGoldToken(std::string_view name);
+std::uint64_t TokenId(std::uint64_t skulltula_hash);
+inline constexpr const char* kTokenCount = "PouchData.Item_Token_Gold.StockNum";
+
+// A path piece that moves or tilts when hit and stays so, with no life to
+// write: the Fire Temple's hammer drop floors, drop pillars and stair, the
+// Deku Tree's falling ladder and its unkeyed falling floor, the Shadow
+// Temple's unkeyed falling floor. Its new pose goes to the others as
+// WORLD_PLACE (a move by a turn too, and from any game within reach), and
+// the others hold it there, also a game that loads the room later (the
+// server keeps the place).
+bool IsShifter(std::string_view name);
+// A shifter held for good at a place another game gave (its AI would put it
+// back); the rest settle as blocks do.
+bool HoldsPlace(std::string_view name);
+
+// Everything WorldSync tracks: breakables, movables, fallers, lying keys and
+// shifters. The objects walk hands these to it (coop_objects.cpp).
+bool IsWorldObject(std::string_view name);
+
+// The `DungeonInfo.<dungeon>.SmallKeyNum` count of the dungeon a scene is
+// in ("ShadowTemple", "GerudoFortress_Adult"), or nothing.
+std::optional<std::string> KeyCountOf(std::string_view scene);
+
+// Give-backs (WorldSync::Out::give_back, count names) and taken keys
+// (Out::taken_keys) from the objects' thread to the frame that writes the
+// game's flags (coop_hook.cpp). Thread safe.
+void QueueGiveBack(std::string count);
+std::vector<std::string> TakeGiveBacks();
+void QueueTakenKey(std::uint64_t key);
+std::vector<std::uint64_t> TakeTakenKeys();
+
+// One back in the count item `count` (KeyCountOf's, kTokenCount), never
+// below 0 (the frame that writes flags). The flag watcher sends the -1 like
+// any change, so the group's count rose once. Returns the log line.
+std::string GiveBack(coop::host::FlagStore& game, std::string_view count);
+// The 64-bit key `key` set to 1 in the game (a token's Skulltula). Returns
+// the log line.
+std::string SetTakenKey(coop::host::FlagStore& game, std::uint64_t key);
 
 // Research for signs (issue 90; docs/world.md, "Signs: the probe"). A sign's
 // cut is not in its life and its pack keeps no flag for it, and whether the
@@ -111,8 +194,12 @@ public:
     std::optional<Part> PartOf(std::uint64_t address, std::uint64_t hash, std::uint64_t entry) const;
     bool Copied(std::uint64_t address, std::uint64_t hash) const;  // the probe has a copy
 
-private:
     using Snapshot = std::map<std::uint64_t, std::uint64_t>;  // key (Where) -> word
+    // The actor's words, its component table and the first 0x200 bytes of
+    // each component (keys as Where). Empty when the actor is not there.
+    static Snapshot Read(const ReadWord& read, std::uint64_t address);
+
+private:
     struct Base {
         std::uint64_t time_us = 0;
         Snapshot words;
@@ -132,7 +219,6 @@ private:
         std::uint64_t quiet_from_us = 0;  // a base taken from here on may add noise
     };
 
-    static Snapshot Read(const ReadWord& read, std::uint64_t address);
     const Snapshot* CopyOf(std::uint64_t address, std::uint64_t hash) const;
     // What of a cut can be written into another game's sign: component
     // words (not the Life hit record, not counters seen before the hit),
@@ -155,6 +241,81 @@ bool SignWordWritable(std::uint64_t current, std::uint64_t value);
 // written, into components the probe has read 0x200 bytes of.
 bool SignCutKeyAllowed(std::uint64_t key);
 
+// A dungeon gimmick: a switch, a water plane, a shutter, a torch, a lift or
+// a moving floor (test7, docs/dungeon.md "Live dungeon actions").
+bool IsGimmick(std::string_view name);
+
+// Test7 probe for dungeon gimmicks (docs/dungeon.md "Live dungeon actions").
+// A held floor switch, a timed switch or a water plane keeps its state in
+// the actor, not in a flag, so it can only be shared live once the words
+// that hold it are known. This finds them in a run, the way the sign probe
+// found a sign's cut: every kEveryUs it copies the nearest gimmicks (as
+// SignProbe::Read) and logs each word that stepped: equal in the two copies
+// before, different now. A word that steps often (a timer, a counter, a
+// moving part's transform) is muted after kNoisySteps steps. It only reads.
+class GimmickProbe {
+public:
+    static constexpr std::uint64_t kEveryUs = 500'000;
+    static constexpr float kNearM = 15.0f;
+    static constexpr std::size_t kMaxGimmicks = 4;   // the nearest, per look
+    static constexpr std::size_t kMaxShown = 16;     // steps per line
+    static constexpr int kNoisySteps = 6;            // steps of one word before it is muted
+    static constexpr int kMaxLines = 400;            // per session
+
+    struct Gimmick {
+        std::uint64_t address = 0;
+        std::uint64_t hash = 0;
+        std::string name;
+        coop::protocol::Vec3 position{};
+    };
+
+    // Once per objects walk. Returns log lines.
+    std::vector<std::string> Look(const SignProbe::ReadWord& read, const std::vector<Gimmick>& gimmicks,
+                                  const std::optional<coop::protocol::Vec3>& player, std::uint64_t now_us);
+    void Reset();
+
+private:
+    struct State {
+        std::uint64_t hash = 0;
+        std::string name;
+        std::deque<SignProbe::Snapshot> copies;  // newest last, at most 2 kept before the new one
+        std::map<std::uint64_t, int> steps;      // per word
+    };
+    std::map<std::uint64_t, State> states_;  // by actor address
+    std::uint64_t last_us_ = 0;
+    int lines_ = 0;
+};
+// Issue 147: a block another game pushed is warped to its new rest place
+// here, but the block's own memory still holds where it rested before (its
+// base or target), so our player's next push snaps it back there. RestWords
+// looks through the block's memory for that old place, as three floats in a
+// row or as the translation of a 3x4 matrix (a float every 16 bytes), and
+// gives the writes that put the new place there instead:
+// - the actor (+0..+0x600, not its own place +0x31c..+0x34b, which the
+//   setter already wrote),
+// - the first 0x200 bytes of each component its table (+0x270) points to,
+// - the physics root ([[table + 0x50] + 0x20], first 0x400 bytes; docs/world.md).
+// Only for a real move (5 cm or more) from a place that is not near the
+// origin (zeros would match), each axis within 2 cm, never a match that is
+// exactly 0.0 on an axis, and at most kMaxRestTriplets places: more is taken
+// as a wrong match and nothing is written. The sizes searched are not known
+// object sizes, so the glue writes them only with LICHII_COOP_BLOCK_REST=1
+// (the integrator's test); by default it logs where they would go.
+struct RestWrite {
+    std::uint64_t address = 0;
+    std::uint32_t value = 0;  // f32 bits
+};
+struct RestScan {
+    std::vector<RestWrite> writes;
+    std::vector<std::string> where;  // per place found: actor+0x.., c+0x50+0x.., physics root+0x.. (matrix)
+    bool too_many = false;
+};
+inline constexpr std::size_t kMaxRestTriplets = 12;
+inline constexpr float kRestMatchM = 0.02f;
+RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                   std::uint64_t actor, const coop::protocol::Vec3& from,
+                   const coop::protocol::Vec3& to);
+
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the
 // enemy sharing, which still carries a breakable's life: this adds what that
@@ -175,10 +336,18 @@ public:
     static constexpr std::uint64_t kStaleUs = 1'500'000;      // a break this soon after we first saw the object is older than our sight of it
     static constexpr std::uint64_t kDeleteGrassUs = 400'000;  // life 0 written, still there: delete
     static constexpr std::uint64_t kDeleteUs = 6'000'000;     // (a crate takes 4.6 s to go)
+    static constexpr std::uint64_t kFallerRetryUs = 1'000'000;  // a faller's life 0, again
+    static constexpr float kLiftedM = 0.3f;      // a key this far from where it lay is being picked up
+    static constexpr float kTokenNearM = 3.0f;    // a new token this near a Gold Skulltula is its
+    static constexpr float kTokenSpotM = 1.5f;    // a token this near a known token spot is that one
+    static constexpr float kShiftTurnRad = 0.05f;  // a shifter turned this far from its rest: moved
+    static constexpr int kFallerTries = 10;  // then one "did not fall" line, and no more writes
     static constexpr std::uint64_t kGoneHoldUs = 700'000;     // a gone-near-Link break waits this long
     static constexpr std::uint64_t kRespawnUs = 3'000'000;    // back this long after it went: put back by the game
     static constexpr std::uint64_t kEchoUs = 2'000'000;       // our break this soon before theirs was theirs
     static constexpr int kMissedWalks = 2;
+    static constexpr float kLockHoldM = 2.5f;  // another's lock this near our Link: not deleted
+    static constexpr std::uint64_t kOwnDropUs = 8'000'000;  // a key spent this recently can go back
     static constexpr float kBreakNearM = 8.0f;   // as CoopObjects::Sync
     static constexpr float kBreakReachM = 3.0f;
     static constexpr int kUnloadCount = 4;       // this many gone together, one of them far: unloaded
@@ -197,9 +366,15 @@ public:
     static constexpr std::uint64_t kHitEveryUs = 300'000;  // per sign
     static constexpr std::uint64_t kHitWaitUs = 300'000;   // a sign just loaded is hit this late
     static constexpr std::uint64_t kCutAfterHitUs = 200'000;  // cut words this long after its hit
+    static constexpr float kAnchorNearM = 0.5f;          // a block's base anchor is this near its old rest
+    static constexpr std::uint64_t kAnchorHoldUs = 1'000'000;  // the anchor is put at the new rest this long
 
     struct Out {
         std::vector<coop::protocol::Message> send;
+        // Small keys to give back to our game: the flag of the dungeon's
+        // SmallKeyNum, once per lock this game opened after another already
+        // had (docs/dungeon.md, "Locked doors").
+        std::vector<std::uint32_t> key_refunds;
         std::vector<CoopObjects::LifeWrite> lives;
         // Another player's sword hits to give our copies (signs), through
         // the game's own damage call.
@@ -219,11 +394,38 @@ public:
             SignProbe::Part part;       // as the probe saw them
         };
         std::vector<Word> words;
+        // Counts where we and another player took the same lying key or
+        // token at once and theirs reached the server first: one goes back
+        // each (KeyCountOf's, kTokenCount), so the shared count rose once.
+        std::vector<std::string> give_back;
+        // 64-bit keys to set to 1 here: the Gold Skulltula of a token
+        // another player took, so a room loaded again has no token.
+        std::vector<std::uint64_t> taken_keys;
+        // Issue 147: a block another game moved has come to rest here. Its
+        // memory still holds `from` (RestWords puts `to` there); `anchor`,
+        // when not 0, is its base anchor actor found at `from`, which Poses
+        // now puts at `to`.
+        struct BlockFix {
+            std::uint64_t address = 0;
+            std::uint64_t hash = 0;
+            std::string name;
+            coop::protocol::Vec3 from{};
+            coop::protocol::Vec3 to{};
+            std::uint64_t anchor = 0;
+        };
+        std::vector<BlockFix> blocks;
         std::vector<std::string> notes;  // log lines
     };
 
     // Network thread: WORLD_BREAK, WORLD_MOVE, WORLD_PLACE. Others ignored.
     void Receive(const coop::protocol::Message& message);
+
+    // Present thread, before Tick: our own game lowered this count (the
+    // SmallKeyNum flag's hash; FlagWatcher::take_own_count_drops).
+    void OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us);
+    // Present thread: the host loaded a save (host-save's FLAG_RESET): kept
+    // breaks (locks) are forgotten, so our locks come back with their rooms.
+    void ForgetKept();
 
     // Present thread, once per walk, with every breakable and movable the
     // walk saw. `player` is our own Link, when the walk saw him.
@@ -266,8 +468,13 @@ private:
     struct Break {
         std::uint64_t got_us = 0;   // when we learned of it
         bool local = false;         // broken in this game
+        bool kept = false;          // a lock: lasts, never put back
+        bool refunded = false;      // our second key for it went back
+        bool paid = false;          // opened here: one of our key drops paid for it
         bool seen_go = false;       // our own copy went (or never came) after it
         std::uint64_t gone_us = 0;  // when our copy went
+        bool key = false;           // a lying key or token we took
+        std::string count;          // its count, to give one back (may be empty)
     };
     struct Sample {
         std::uint64_t time_us = 0;
@@ -288,6 +495,12 @@ private:
         bool breakable = false;
         bool grass = false;
         bool sign = false;
+        bool faller = false;  // IsFaller: falls and stays, never moved or deleted
+        bool key = false;     // IsLyingKey or IsGoldToken: its taking is a break
+        std::string count;    // the count it adds to (KeyCountOf, kTokenCount)
+        bool shifter = false; // IsShifter
+        bool hold = false;    // HoldsPlace: a given place is held for good
+        std::optional<CoopObjects::Mat3> rest_rotation;  // with `rest`
         std::uint64_t hit_sent_us = 0;
         std::uint64_t hit_given_us = 0;
         std::optional<std::int32_t> life;
@@ -297,8 +510,10 @@ private:
         std::uint64_t first_us = 0;
         int missed = 0;
         bool sent_break = false;
+        bool kept = false;  // a small-key door's lock (IsLock)
         // A break from elsewhere being made here.
         std::uint64_t life_written_us = 0;
+        int faller_tries = 0;  // life 0 writes to a faller (kFallerTries)
         bool remove = false;
         // Moves.
         coop::protocol::Vec3 rest{};       // where it last rested for everyone
@@ -309,17 +524,32 @@ private:
         bool following = false;            // another game's moves are placed
         bool stirred = false;              // moved since the walk before
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
+        std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it
         std::uint64_t quiet_until = 0;
     };
     struct Gone {  // left the walk near our Link: a break unless it was an unload
         Object object;
         std::uint64_t at_us = 0;
+        bool refund = false;  // another game's lock we held: our second key, if we spent one
     };
 
     void Drain(std::uint64_t now_us);
+    // A lying small key we took that has not gone out as our break yet.
+    std::optional<std::string> TookKey(std::uint64_t hash) const;  // its count
+    // A token's id (TokenId) from where it is, or 0: not known.
+    std::uint64_t IdentifyToken(const coop::protocol::Vec3& at);
+    // Another player's break of a token we know: its spot is kept, and its
+    // Skulltula's key is set here (Out::taken_keys).
+    void Token(const coop::protocol::WorldBreak& b);
     void LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out& out);
     void MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& out);
+    // One small key back to our game for a lock opened twice (marks `b`),
+    // only against a drop of our own key count in the last kOwnDropUs (that
+    // drop is then used up).
+    void Refund(Break& b, std::uint64_t hash, std::uint64_t now_us, const char* why);
+    // Takes one of our own key drops for this scene out (it paid for a lock).
+    bool TakeOwnDrop(std::uint64_t now_us);
     void Move(Object& o, std::uint8_t self, std::uint64_t now_us,
               const std::optional<coop::protocol::Vec3>& player, Out& out);
     std::optional<Sample> PoseAt(const Remote& r, std::uint64_t now_us) const;
@@ -328,8 +558,29 @@ private:
     std::uint64_t scene_since_ = 0;
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::map<std::uint64_t, Break> broken_;    // by placement hash, this scene
+    std::vector<std::uint32_t> refunds_;       // keys to give back, for the next Out
+    std::vector<std::string> refund_notes_;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> own_drops_;  // (key flag, when)
+    bool no_key_logged_ = false;
     std::map<std::uint64_t, Remote> remote_;   // by placement hash, this scene
     std::vector<Gone> gone_;
+    std::vector<std::string> give_back_;  // from Drain, for the next Tick's Out
+    std::vector<std::uint64_t> taken_keys_;  // the same
+    // Gold Skulltulas of this scene by placement hash: where we saw them last.
+    std::map<std::uint64_t, coop::protocol::Vec3> skulltulas_;
+    // Tokens by scene, then id: where they were. Kept across scene changes,
+    // so a token the game makes again on a reload is known.
+    std::map<std::string, std::map<std::uint64_t, coop::protocol::Vec3>> token_spots_;
+    struct Anchor {
+        std::uint64_t address = 0;
+        coop::protocol::Vec3 position{};
+    };
+    std::vector<Anchor> anchors_;  // block base anchors in the last walk
+    struct AnchorHold {
+        coop::protocol::Vec3 to{};
+        std::uint64_t until_us = 0;
+    };
+    std::map<std::uint64_t, AnchorHold> anchor_holds_;  // by actor address
     // Hits for signs, until our copy is there to take them (by hash).
     std::map<std::uint64_t, std::vector<std::pair<coop::protocol::Vec3, coop::protocol::Vec3>>> hits_;
     // Another player's cut words for signs (SIGN_CUT), until our copy is there (by hash).

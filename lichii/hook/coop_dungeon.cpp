@@ -29,6 +29,30 @@ namespace {
 // one room's state (FocusOnGimmick_Basic, the Ganon's Castle barrier looks),
 // and one-way rides that would leave a player on the wrong side (the Shadow
 // Temple boat, the Forest Temple elevator and room spins).
+// Left out on purpose (issue 148): flags that say where ONE player is in a
+// boss fight, not what the group has done. Shared, they shut the boss door on
+// a player who is still outside it, and the join snapshot gives them back
+// after every reload (test6, Deku Tree: both players locked out).
+//   InsideTheDekuTree_BossArea_ShutIn, InsideTheDekuTree_BossArea_ChangeENVForBoss,
+//   ShadowTemple_Level_StartBossBattle, InsideGanonCastle_IsEnterBossRoom,
+//   DodongoCavern_BossGroundChange, FireTemple_BossGroundChange (the arena's
+//   floor as the fight starts: the same kind as ChangeENVForBoss).
+// The boss beaten (..._Boss_Defeat and the heart container) and a boss door's
+// lock opened with the boss key (ForestTemple_BossRoom_LockOpne) stay shared.
+constexpr std::array<std::string_view, 6> kNotShared{
+    "InsideTheDekuTree_BossArea_ShutIn", "InsideTheDekuTree_BossArea_ChangeENVForBoss",
+    "ShadowTemple_Level_StartBossBattle", "InsideGanonCastle_IsEnterBossRoom",
+    "DodongoCavern_BossGroundChange", "FireTemple_BossGroundChange"};
+
+// Also left out (issue 149): records of one player's failed or reset try that
+// a room graph sets (InsideTheDekuTree_RoomK_Failure, the Scrub Brothers' wrong
+// order; FireTemple_Room08/10/13_SwitchWasReset;
+// InsideGanonCastle_Dungeon_Room08_CandleWasReset). Shared, one player's
+// failure would reach another in the middle of their own try. Nothing in the
+// romfs or main reads them (Room10's is read but never written), so leaving
+// them out cannot strand a switch. The solve itself
+// (InsideTheDekuTree_RoomK_Cleared, ..._EnemyScrubDekuDestroy_003) is shared,
+// and so are _001/_002 (each set once when a lone scrub is beaten).
 constexpr std::array kFlags = std::to_array<Flag>({
     {0xfff1ad87, false, "BottomOfTheWell_BubbleAppear"},
     {0x0b5b3b0c, false, "BottomOfTheWell_CoffinRoomCheck"},
@@ -69,7 +93,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xaf24307b, false, "DodongoCavern_AppearLizalfos_2F"},
     {0x92b110e6, false, "DodongoCavern_BlastedLeftEye"},
     {0x4088069a, false, "DodongoCavern_BlastedRightEye"},
-    {0x8046b089, false, "DodongoCavern_BossGroundChange"},
     {0x67b834a5, false, "DodongoCavern_CandleStick"},
     {0x8d6783cd, false, "DodongoCavern_Lizalfos_C_Dead"},
     {0x317d56a8, false, "DodongoCavern_Lizalfos_D_Dead"},
@@ -99,7 +122,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x97544956, false, "FireTemple_ArrivePlayer_01"},
     {0xf04678a7, false, "FireTemple_ArrivePlayer_02"},
     {0xdde4e2a0, false, "FireTemple_BootStepSwitch_03"},
-    {0x0d94327f, false, "FireTemple_BossGroundChange"},
     {0x28aa6045, false, "FireTemple_BreakSlipPillar_02"},
     {0x7252b434, false, "FireTemple_ClearFlameWllGimmick_01"},
     {0x5886444c, false, "FireTemple_ClearFlameWllGimmick_02"},
@@ -145,13 +167,11 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x8eea0cd9, false, "FireTemple_Room06_ShutterOpen"},
     {0x9941be6e, false, "FireTemple_Room08_BubbleRedSwitching"},
     {0xa4dd105e, false, "FireTemple_Room08_SwitchPushed"},
-    {0x55e67eba, false, "FireTemple_Room08_SwitchWasReset"},
     {0xf51711a7, false, "FireTemple_Room08_TBox_isOpen"},
     {0x2f7b8a92, false, "FireTemple_Room10_KeeseDead_01"},
     {0x892a4a5b, false, "FireTemple_Room10_KeeseDead_02"},
     {0xce689a86, false, "FireTemple_Room10_StepSwitchOnLink"},
     {0xace2d059, false, "FireTemple_Room10_SwitchWasOn"},
-    {0x92ac81e8, false, "FireTemple_Room10_SwitchWasReset"},
     {0xd701bad4, false, "FireTemple_Room11_EnteredFromUpperStair"},
     {0xf4381f3f, false, "FireTemple_Room12_CloserFireOn"},
     {0xa6cd88e5, false, "FireTemple_Room12_DeleteAirWall"},
@@ -160,7 +180,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xbfe66553, false, "FireTemple_Room12_IsAtCorrectArea"},
     {0xc25ca6e0, false, "FireTemple_Room12_SwitchHit"},
     {0x403407e5, false, "FireTemple_Room13_FireOn"},
-    {0x0e86f3db, false, "FireTemple_Room13_SwitchWasReset"},
     {0xb3dcce20, false, "FireTemple_Room14_AirWallEnemyMove00"},
     {0x6a0df9b3, false, "FireTemple_Room14_AirWallEnemyMove01"},
     {0x19b1cd6a, false, "FireTemple_Room14_AirWallEnemyMove02"},
@@ -558,7 +577,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x87af57b7, false, "InsideGanonCastle_Dungeon_Room03_StepSwitch"},
     {0x79c94a4f, false, "InsideGanonCastle_Dungeon_Room06_HmmerSwitch"},
     {0xb7494789, false, "InsideGanonCastle_Dungeon_Room06_IceBlock"},
-    {0xe5ba1fc5, false, "InsideGanonCastle_Dungeon_Room08_CandleWasReset"},
     {0x2bd3636f, false, "InsideGanonCastle_Dungeon_Room08_HummerSwitch"},
     {0x7126a506, false, "InsideGanonCastle_Dungeon_Room08_StepSwitch"},
     {0xae14b064, false, "InsideGanonCastle_Dungeon_Room10_LiftRock"},
@@ -592,7 +610,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xd782ef35, false, "InsideGanonCastle_ExtendingPlatform_ON"},
     {0x36aadc2d, false, "InsideGanonCastle_IsAllBarrierClear"},
     {0xccf3e7a4, false, "InsideGanonCastle_IsBossAppearDemo"},
-    {0x3822d87a, false, "InsideGanonCastle_IsEnterBossRoom"},
     {0x8aa0ccd0, false, "InsideGanonCastle_Room08_Candle_ON"},
     {0x64370f66, false, "InsideJabuJabuBelly_DeleteObstacleTentacle_Blue"},
     {0x45ed38bb, false, "InsideJabuJabuBelly_DeleteObstacleTentacle_Green"},
@@ -699,8 +716,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x2a020a15, false, "InsideJabuJabuBelly_WarpPortal"},
     {0xe8f0bdc1, false, "InsideJabuJabuBelly_gimic_Liftposition"},
     {0xe588f9dc, false, "InsideJabuJabuBelly_gimic_midboss_doorlock"},
-    {0x88b1b922, false, "InsideTheDekuTree_BossArea_ChangeENVForBoss"},
-    {0xe44433dc, false, "InsideTheDekuTree_BossArea_ShutIn"},
     {0x1c594551, false, "InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_001"},
     {0x1d493033, false, "InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_002"},
     {0x60c22ed7, false, "InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003"},
@@ -723,7 +738,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xf85ceb3f, false, "InsideTheDekuTree_RoomH_Cleared"},
     {0xa32a1bd0, false, "InsideTheDekuTree_RoomI_Cleared"},
     {0xd2f46f66, false, "InsideTheDekuTree_RoomK_Cleared"},
-    {0xf0368aad, false, "InsideTheDekuTree_RoomK_Failure"},
     {0x345532bf, false, "InsideTheDekuTree_Room_KokiriCover"},
     {0x8a06dc6b, false, "InsideTheDekuTree_Room_KokiriCover_Irregular"},
     {0x89f4bbd4, false, "ShadowTemple_Gimmick_LooK_DepartureDemo"},
@@ -780,7 +794,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x995cc64e, false, "ShadowTemple_Level_Room_30_HasRead_Sign_01"},
     {0xdcb291f6, false, "ShadowTemple_Level_Room_B1F_D_Defeat_DeadHand"},
     {0x87e91260, false, "ShadowTemple_Level_Room_B3FB4F_EnemyClear"},
-    {0xf0adbc2e, false, "ShadowTemple_Level_StartBossBattle"},
     {0x022fae3d, false, "ShadowTemple_RoomB1FC_Cleared"},
     {0xeec3e80d, false, "ShadowTemple_RoomB1FC_ShutterOpen"},
     {0x900ea997, false, "ShadowTemple_RoomB1FD_Cleared"},
@@ -1001,6 +1014,63 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x2a8640b7, false, "WaterTemple_WaterLevelChange02"},
     {0xa4456820, false, "WaterTemple_WaterLevelChange03"},
     {0xd6ed78c9, false, "WaterTemple_Waterlevelrise_Room06"},
+    // Softlock audit (test7): saved room state the prefix scan missed, because the
+    // game spells the dungeon another way (Insidejabujabu_, Firetemple_,
+    // Foresttemple_) or puts it after Gimmick_ (the enemies-beaten shutters).
+    // Left out: the Room7 area sensors (_InsideArea, _NearTheSwitch*: set true and
+    // false from where a player or Ruto is), Room7_Switch2_OnlyLinkOrLuto (Ruto),
+    // two-way state (Jabu-Jabu's Room 14 water, the Water Temple torch shutters
+    // Gimmick_Ignition_Open_*: step switches and torches set them both ways) and
+    // the Spirit Temple stone tablets (what Link reads, not room state).
+    {0xdd4e1676, false, "Firetemple_SongOfTimeBlock_A_01_Disappearance"},
+    {0x2312e749, false, "Foresttemple_SongOfTimeBlock_A_01_Disappearance"},
+    {0xdba3c3ef, false, "Gimmick_DefeatEnemy_Open_DodongoCave_01"},
+    {0xccf631b5, false, "Gimmick_DefeatEnemy_Open_DodongoCave_02"},
+    {0xf764d7da, false, "Gimmick_DefeatEnemy_Open_FireTemple_01"},
+    {0x950d163c, false, "Gimmick_DefeatEnemy_Open_FireTemple_02"},
+    {0x8689ff41, false, "Gimmick_DefeatEnemy_Open_FireTemple_02_CounterOff"},
+    {0x09efdbb8, false, "Gimmick_DefeatEnemy_Open_FireTemple_03"},
+    {0x7a0dfb05, false, "Gimmick_DefeatEnemy_Open_ForestTemple_01"},
+    {0x0ad068f9, false, "Gimmick_DefeatEnemy_Open_ForestTemple_02"},
+    {0x936fce7b, false, "Gimmick_DefeatEnemy_Open_ForestTemple_03"},
+    {0x54184cc6, false, "Gimmick_DefeatEnemy_Open_ForestTemple_05"},
+    {0x77e573a4, false, "Gimmick_DeleteFire_FireTemple"},
+    {0x482f8dd4, false, "Insidejabujabu_Gimmick_Room12_Treasure"},
+    {0x90629ec0, false, "Insidejabujabu_Gimmick_Room7Event"},
+    {0x2d748eb5, false, "Insidejabujabu_Room0_Cleared"},
+    {0x64513208, false, "Insidejabujabu_Room10_Cleared"},
+    {0x587e4130, false, "Insidejabujabu_Room11_Cleared"},
+    {0x76f26ef4, false, "Insidejabujabu_Room12_Cleared"},
+    {0xeddaa0bd, false, "Insidejabujabu_Room14_Cleared"},
+    {0x2ea0d05d, false, "Insidejabujabu_Room1_Cleared"},
+    {0x695a1137, false, "Insidejabujabu_Room5_Cleared"},
+    {0xf13c8337, false, "Insidejabujabu_Room7_01_Cleared"},
+    {0xd3cbed11, false, "Insidejabujabu_Room7_Cleared"},
+    {0xfb335d8a, false, "Insidejabujabu_Room8_Cleared"},
+    {0xed5247fb, false, "Insidejabujabu_Room9_Cleared"},
+    // Also (softlock audit, second pass): the Fire Temple's Goron cell shutters (named
+    // after the Goron, in the scene's PlgGdTable) and the dungeon gimmick scenes a room's own logic reads
+    // for its end state (Dodongo's broken stair, the Fire Temple hammer stair, Forest
+    // Room 16, Water Room 17's pond, Ganon's Castle lift rock and tower barrier).
+    // Story scenes stay out, and so do the Forest Temple corridor (Dm_ForestTemple_0007,
+    // one-way) and the boss intro (Dm_Deku_BossIn, dungeons-boss.md).
+    {0x6e021914, false, "HavePlayedEvent.Dm_DodongoCave_0010"},
+    {0xd55d4cba, false, "HavePlayedEvent.Dm_FireTemple_0029"},
+    {0x8d604980, false, "HavePlayedEvent.Dm_ForestTemple_0010"},
+    {0x40cc8f08, false, "HavePlayedEvent.Dm_ForestTemple_0014"},
+    {0xe7470f91, false, "HavePlayedEvent.Dm_InsideGanonCastle_0035"},
+    {0xa77c636f, false, "HavePlayedEvent.Dm_InsideGanonCastle_0090"},
+    {0x95228e5a, false, "HavePlayedEvent.Dm_WaterTemple_0010"},
+    {0x4a022de3, false, "HavePlayedEvent.Dm_WaterTemple_0015"},
+    {0x023e190f, false, "Npc_Goron_001_ShutterisOpen"},
+    {0x7b118b57, false, "Npc_Goron_002_ShutterisOpen"},
+    {0x92cb9a2f, false, "Npc_Goron_003_ShutterisOpen"},
+    {0x61b1a755, false, "Npc_Goron_004_ShutterisOpen"},
+    {0x72ff8447, false, "Npc_Goron_005_ShutterisOpen"},
+    {0x69aeba66, false, "Npc_Goron_007_ShutterisOpen"},
+    {0xd6a8c454, false, "Npc_Goron_008_ShutterisOpen"},
+    {0x1d5d75c3, false, "Npc_Goron_009_ShutterisOpen"},
+    {0x6948b592, false, "Npc_Goron_010_ShutterisOpen"},
 });
 
 // Every placement in a dungeon's Banc files (Banc/<Dungeon>/*.bcett.byml)
@@ -1534,6 +1604,98 @@ std::span<const Flag> Flags() {
     return kFlags;
 }
 
+namespace {
+constexpr std::array kLiveFlags = std::to_array<Flag>({
+    {0x32eeccea, false, "ForestTemple_Room17_Switch_On_02"},
+    {0xe419453a, false, "GerudoTrainingGround_Gate"},
+    {0xfa42fe59, false, "SpiritTemple_Room31_LightHit"},
+    {0x8f7d6ea5, false, "WaterTemple_Room22_Cleared_Provisional"},
+});
+} // namespace
+
+std::span<const Flag> LiveFlags() {
+    return kLiveFlags;
+}
+
+namespace {
+
+constexpr std::string_view kDungeonScenes[] = {
+    "BottomOfTheWell", "DodongoCavern", "FireTemple", "ForestTemple", "GanonCastle",
+    "GerudoTrainingGround", "IceCavern", "InsideGanonCastle", "InsideJabuJabuBelly",
+    "InsideTheDekuTree", "ShadowTemple", "SpiritTemple", "WaterTemple"};
+
+// The Forest Temple's twisted corridor (docs/sync-coverage.md).
+constexpr std::string_view kCorridor[] = {
+    "ForestTemple_TwistCorridor_IsReverse", "ForestTemple_TwistCorridor01_IsConstraint",
+    "ForestTemple_TwistCorridor02_IsConstraint", "ForestTemple_SageOfForest_TwistedCorridor_A_01",
+    "ForestTemple_SageOfForest_TwistedCorridor_A_02", "ForestTemple_SageOfForest_TwistedCorridor_A_03",
+    "ForestTemple_SageOfForest_TwistedCorridor_A_04"};
+
+// Gimmick events whose result already came live in the other game on test6
+// (players, Deku Tree): the basement water dropping and its button pressed,
+// the torch room's torches. Their room flags carry the result; the played
+// event is left live too, so nothing changes for them.
+constexpr std::string_view kLiveOnTest6[] = {
+    "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop", "InsideTheDekuTree_Gimmick_RoomH_CandleStick"};
+
+std::string_view SceneOfEvent(std::string_view event) {
+    // The game's own spellings, and the scene names that are not prefixes.
+    if (event.starts_with("SpritTemple_")) return "SpiritTemple";
+    if (event.starts_with("ForesetTemple_")) return "ForestTemple";
+    if (event.starts_with("InsideJabu")) return "InsideJabuJabuBelly";
+    if (event.starts_with("InsideGanonCastle_")) return "InsideGanonCastle";
+    for (const std::string_view scene : kDungeonScenes) {
+        if (event.starts_with(scene) && event.size() > scene.size() && event[scene.size()] == '_') {
+            return scene;
+        }
+    }
+    return "";
+}
+
+} // namespace
+
+std::string_view EventOf(std::uint32_t hash) {
+    constexpr std::string_view kPlayed = "HavePlayedEvent.";
+    for (const Flag& f : kFlags) {
+        if (f.hash == hash) {
+            const std::string_view name = f.name;
+            return name.starts_with(kPlayed) ? name.substr(kPlayed.size()) : std::string_view();
+        }
+    }
+    return {};
+}
+
+bool IsDungeonScene(std::string_view scene) {
+    for (const std::string_view s : kDungeonScenes) {
+        if (s == scene) return true;
+    }
+    return false;
+}
+
+std::optional<std::string_view> HeldIn(std::uint32_t hash) {
+    for (const Flag& f : kFlags) {
+        if (f.hash != hash) continue;
+        const std::string_view name = f.name;
+        constexpr std::string_view kPlayed = "HavePlayedEvent.";
+        if (name.starts_with(kPlayed)) {
+            const std::string_view event = name.substr(kPlayed.size());
+            for (const std::string_view live : kLiveOnTest6) {
+                if (event == live) return std::nullopt;
+            }
+            return SceneOfEvent(event);
+        }
+        for (const std::string_view c : kCorridor) {
+            if (name == c) return std::string_view("ForestTemple");
+        }
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+std::span<const std::string_view> NotShared() {
+    return kNotShared;
+}
+
 std::span<const Key> Keys() {
     return kKeys;
 }
@@ -1548,6 +1710,9 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     }
     const std::size_t before = shared ? shared->size() : 0;
     for (const Flag& f : kFlags) {
+        keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
+    }
+    for (const Flag& f : kLiveFlags) {
         keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
     }
     for (const Key& k : kKeys) {

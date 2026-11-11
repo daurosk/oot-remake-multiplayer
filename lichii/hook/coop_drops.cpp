@@ -23,7 +23,7 @@ namespace {
 // Every pick-up pack of build e0f3ccfaf50065ae that a kill or a break can
 // leave. Not here: fairies (they fly off and heal one player), heart pieces
 // and containers, tokens (one-time pickups: flags, docs/items.md).
-constexpr std::array<std::string_view, 20> kDrops{{
+constexpr std::array<std::string_view, 21> kDrops{{
     "Obj_Rupee_Green",
     "Obj_Rupee_Blue",
     "Obj_Rupee_Red",
@@ -44,6 +44,7 @@ constexpr std::array<std::string_view, 20> kDrops{{
     "Obj_DekuSeed",
     "Obj_DekuStick",
     "Obj_Arrow_Fire",
+    "Obj_Fairy",  // from a pot, grass, a stone or an enemy (placed ones are not drops)
 }};
 
 float Distance(const Vec3& a, const Vec3& b) {

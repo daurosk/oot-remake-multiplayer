@@ -446,6 +446,14 @@ Error encode_body(const FlagState& m, Writer& w) {
   return Error::none;
 }
 
+Error encode_body(const FlagReset& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_flags(m.flags, 1, Deltas::refused));
+  w.u8(m.player_number);
+  write_flags(m.flags, w);
+  return Error::none;
+}
+
 Error encode_body(const FlagSnapshot& m, Writer& w) {
   if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
   COOP_TRY(check_flags(m.flags, 0, Deltas::refused));
@@ -985,6 +993,12 @@ Error decode_body(Reader& r, FlagState& m) {
   return read_flags(r, m.flags, 1, Deltas::refused);
 }
 
+Error decode_body(Reader& r, FlagReset& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  return read_flags(r, m.flags, 1, Deltas::refused);
+}
+
 Error decode_body(Reader& r, FlagSnapshot& m) {
   COOP_READ(r.u16(m.part));
   COOP_READ(r.u16(m.part_count));
@@ -1321,7 +1335,8 @@ bool unit_quat(const Quat& q) {
 // head, 3 x f32 position (finite), u8 flags.
 Error encode_body(const WorldBreak& m, Writer& w) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
-  if (!all_finite(m.position) || (m.flags & ~world_break::restored) != 0) return Error::bad_value;
+  if (!all_finite(m.position) || (m.flags & ~(world_break::restored | world_break::kept)) != 0 ||
+      (m.flags & world_break::restored && m.flags & world_break::kept)) return Error::bad_value;
   w.u8(m.player_number);
   w.str(m.scene);
   w.u64(m.hash);
@@ -1338,7 +1353,8 @@ Error decode_body(Reader& r, WorldBreak& m) {
   for (float& f : m.position) COOP_READ(r.f32(f));
   COOP_READ(r.u8(m.flags));
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
-  if (!all_finite(m.position) || (m.flags & ~world_break::restored) != 0) return Error::bad_value;
+  if (!all_finite(m.position) || (m.flags & ~(world_break::restored | world_break::kept)) != 0 ||
+      (m.flags & world_break::restored && m.flags & world_break::kept)) return Error::bad_value;
   return Error::none;
 }
 
@@ -1658,7 +1674,7 @@ MessageType type_of(const Message& message) {
       MessageType::world_break,
       MessageType::world_move, MessageType::world_place, MessageType::world_hit,
       MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
-      MessageType::boss_room, MessageType::sign_cut,
+      MessageType::boss_room, MessageType::sign_cut, MessageType::flag_reset,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1674,6 +1690,7 @@ std::uint8_t channel_of(MessageType type) {
       return kChannelPlayerSamples;
     case MessageType::flag_set:
     case MessageType::flag_state:
+    case MessageType::flag_reset:
     case MessageType::flag_snapshot:
     case MessageType::host:
       return kChannelProgress;
@@ -1720,6 +1737,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
+    case MessageType::flag_reset:
     case MessageType::flag_snapshot:
     case MessageType::host:
       return channel == kChannelProgress;
@@ -1770,6 +1788,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::join_partner:
     case MessageType::flag_set:
     case MessageType::flag_state:
+    case MessageType::flag_reset:
     case MessageType::flag_snapshot:
     case MessageType::player_equip:
     case MessageType::object_present:
@@ -1807,6 +1826,7 @@ auto* player_field(M& message) {
         if constexpr (std::is_same_v<T, PlayerStatus> || std::is_same_v<T, Chat> ||
                       std::is_same_v<T, PlayerSample> || std::is_same_v<T, JoinPartner> ||
                       std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState> ||
+                      std::is_same_v<T, FlagReset> ||
                       std::is_same_v<T, PlayerEquip> || std::is_same_v<T, ObjectPresent> ||
                       std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
@@ -1897,6 +1917,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::join_partner: return decode_as<JoinPartner>(body, out);
     case MessageType::flag_set: return decode_as<FlagSet>(body, out);
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
+    case MessageType::flag_reset: return decode_as<FlagReset>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
     case MessageType::object_present: return decode_as<ObjectPresent>(body, out);

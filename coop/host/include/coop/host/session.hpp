@@ -78,6 +78,9 @@ struct FrameReport {
   // The host's save load reached this game this frame (FlagWatcher::
   // take_reset): drop session-wide state the save undoes (docs/flags.md, "Saves").
   bool host_reset = false;
+  // Values other players' changes wrote into our game this frame (the chat
+  // notices, coop/host/notify.hpp).
+  std::vector<FlagWatcher::Received> received;
   // A save load was seen this frame (FlagWatcher::take_save_load): distinct
   // flags gone back, frames with no scene. 0 when not.
   int save_load_flags = 0;

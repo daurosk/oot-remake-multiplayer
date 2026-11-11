@@ -39,6 +39,7 @@
 
 #include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
+#include "coop/host/notify.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
@@ -428,6 +429,23 @@ public:
             LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");
+        }
+        // Chat notices (docs/setup.md): what another player's change gave us.
+        if (notify_ && !report.received.empty()) {
+            std::uint8_t self = 0;
+            std::vector<std::pair<std::uint8_t, std::string>> names;
+            session_->with_client([&](coop::net::Client& c) {
+                self = c.player_number();
+                for (const auto& p : c.players()) {
+                    names.emplace_back(p.number, p.nickname);
+                }
+                return 0;
+            });
+            notifier_.SetNames(std::move(names));
+            for (auto& line : notifier_.Take(report.received, self, SteadyMs())) {
+                LOG_INFO(Core, "coop: notice: {}", line);
+                chat_.Add(std::move(line), true);
+            }
         }
         if (report.host_reset) {
             // docs/flags.md, "Saves": the host loaded a save. Session-wide state
@@ -1079,6 +1097,41 @@ private:
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
+    // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
+    bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
+    struct Names {
+        std::vector<std::pair<std::uint8_t, std::string>> list;
+        std::string operator()(std::uint8_t n) const {
+            for (const auto& [number, nickname] : list) {
+                if (number == n && !nickname.empty()) return nickname;
+            }
+            return "P" + std::to_string(n);
+        }
+    };
+    class Notices {
+    public:
+        Notices()
+            : names_(std::make_shared<Names>()),
+              notifier_([names = names_](std::uint8_t n) { return (*names)(n); },
+                        [](coop::protocol::FlagKey key, const coop::protocol::FlagEntry&)
+                            -> std::optional<std::string> {
+                            if (key.kind == coop::protocol::FlagKeyKind::named &&
+                                CoopChests::KeyOfOpened(key.hash)) {
+                                return std::string("opened a chest");
+                            }
+                            return std::nullopt;
+                        }) {}
+        void SetNames(std::vector<std::pair<std::uint8_t, std::string>> list) { names_->list = std::move(list); }
+        std::vector<std::string> Take(const std::vector<coop::host::FlagWatcher::Received>& r, std::uint8_t self,
+                                      std::uint64_t now_ms) {
+            return notifier_.Take(r, self, now_ms);
+        }
+
+    private:
+        std::shared_ptr<Names> names_;
+        coop::host::Notifier notifier_;
+    };
+    Notices notifier_;
     static constexpr int kHoldReleaseFrames = 30;
     int no_link_frames_ = 0;       // frames in a row without our Link (the hold's debounce)
     std::string hold_scene_;       // the last scene read, for the hold

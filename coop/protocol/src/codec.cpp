@@ -454,6 +454,14 @@ Error encode_body(const FlagReset& m, Writer& w) {
   return Error::none;
 }
 
+Error encode_body(const FlagOrigin& m, Writer& w) {
+  if (!valid_player(m.player_number)) return Error::bad_value;
+  COOP_TRY(check_flags(m.flags, 1, Deltas::allowed));
+  w.u8(m.player_number);
+  write_flags(m.flags, w);
+  return Error::none;
+}
+
 Error encode_body(const FlagSnapshot& m, Writer& w) {
   if (m.part_count == 0 || m.part >= m.part_count) return Error::bad_value;
   COOP_TRY(check_flags(m.flags, 0, Deltas::refused));
@@ -997,6 +1005,12 @@ Error decode_body(Reader& r, FlagReset& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   return read_flags(r, m.flags, 1, Deltas::refused);
+}
+
+Error decode_body(Reader& r, FlagOrigin& m) {
+  COOP_READ(r.u8(m.player_number));
+  if (!valid_player(m.player_number)) return Error::bad_value;
+  return read_flags(r, m.flags, 1, Deltas::allowed);
 }
 
 Error decode_body(Reader& r, FlagSnapshot& m) {
@@ -1675,6 +1689,7 @@ MessageType type_of(const Message& message) {
       MessageType::world_move, MessageType::world_place, MessageType::world_hit,
       MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
       MessageType::boss_room, MessageType::sign_cut, MessageType::flag_reset,
+      MessageType::flag_origin,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1691,6 +1706,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::flag_set:
     case MessageType::flag_state:
     case MessageType::flag_reset:
+    case MessageType::flag_origin:
     case MessageType::flag_snapshot:
     case MessageType::host:
       return kChannelProgress;
@@ -1738,6 +1754,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::flag_set:
     case MessageType::flag_state:
     case MessageType::flag_reset:
+    case MessageType::flag_origin:
     case MessageType::flag_snapshot:
     case MessageType::host:
       return channel == kChannelProgress;
@@ -1777,6 +1794,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::host:
     case MessageType::object_owner:
     case MessageType::handover_ask:
+    case MessageType::flag_origin:
       return from == Sender::server;
     case MessageType::ping:
     case MessageType::pong:
@@ -1826,7 +1844,7 @@ auto* player_field(M& message) {
         if constexpr (std::is_same_v<T, PlayerStatus> || std::is_same_v<T, Chat> ||
                       std::is_same_v<T, PlayerSample> || std::is_same_v<T, JoinPartner> ||
                       std::is_same_v<T, FlagSet> || std::is_same_v<T, FlagState> ||
-                      std::is_same_v<T, FlagReset> ||
+                      std::is_same_v<T, FlagReset> || std::is_same_v<T, FlagOrigin> ||
                       std::is_same_v<T, PlayerEquip> || std::is_same_v<T, ObjectPresent> ||
                       std::is_same_v<T, HandoverState> || std::is_same_v<T, ObjectSpawn> ||
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
@@ -1918,6 +1936,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_set: return decode_as<FlagSet>(body, out);
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
     case MessageType::flag_reset: return decode_as<FlagReset>(body, out);
+    case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
     case MessageType::object_present: return decode_as<ObjectPresent>(body, out);

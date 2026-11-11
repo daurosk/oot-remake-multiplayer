@@ -307,6 +307,16 @@ void Session::on_flag_set(Connection& c, Message& message) {
   send(*host_, kChannelProgress, message);
   ++stats_.flag_relayed;
   ++stats_.relayed;
+  // Who asked, for everyone else (docs/protocol.md, "Who did it"): sent
+  // before the host's answer, on the same channel, so it comes first.
+  std::vector<std::uint8_t> bytes;
+  if (encode(Message{FlagOrigin{c.number, std::get<FlagSet>(message).flags}}, bytes) != Error::none) return;
+  for (const auto& [id, other] : connections_) {
+    if (other.number != c.number && id != *host_ && other.state == State::joined) {
+      actions_.push_back(SendAction{id, kChannelProgress, bytes});
+      ++stats_.origins_sent;
+    }
+  }
 }
 
 void Session::on_flag_state(ConnectionId id, Connection& c, Message& message) {

@@ -172,7 +172,8 @@ struct Stats {
   std::uint64_t join_dropped = 0;
   // FLAG_SET and FLAG_STATE relayed (stage 1 step 4); in relayed too.
   std::uint64_t flag_relayed = 0;
-  std::uint64_t host_resets = 0;  // FLAG_RESETs from the host (its save load)
+  std::uint64_t host_resets = 0;
+  std::uint64_t origins_sent = 0;  // FLAG_ORIGIN: who asked, to the others (chat notices)  // FLAG_RESETs from the host (its save load)
   std::uint64_t flag_refused = 0;     // FLAG_STATE or FLAG_SNAPSHOT not from the host
   std::uint64_t snapshot_parts = 0;   // host snapshot parts merged in (not relayed)
   std::uint64_t flag_clashes = 0;     // host snapshot entries that differed (server kept)

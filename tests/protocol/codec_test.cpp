@@ -1229,7 +1229,7 @@ GrassCut Cut() {
 
 TEST_CASE("grass cuts have their number, channel and layout") {
   CHECK(static_cast<int>(MessageType::grass_cut) == 28);
-  CHECK(kProtocolVersion == 7);
+  CHECK(kProtocolVersion == 8);
   CHECK(channel_of(MessageType::grass_cut) == kChannelSession);
   CHECK_FALSE(allowed_on_channel(MessageType::grass_cut, kChannelPlayerSamples));
   CHECK(may_send(Sender::client, MessageType::grass_cut));

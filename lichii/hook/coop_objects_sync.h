@@ -578,7 +578,7 @@ private:
     // gohma-larva: a fresh hatchling next to an egg we own (eggs_, or one
     // still on the walk, then marked hatched). Sends the egg's OBJECT_REMOVE
     // when it already left. True: the hatchling is ours to share.
-    bool Hatch(std::uint8_t self, std::uint64_t now_us, const Seen& s,
+    bool Hatch(std::uint8_t self, const Seen& s,
                std::vector<coop::protocol::Message>& send);
 
     // A rolled enemy another game decided, from its OBJECT_SPAWN.

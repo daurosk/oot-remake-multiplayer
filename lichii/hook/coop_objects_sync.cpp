@@ -488,7 +488,7 @@ void Sync::Take(std::uint64_t hash) {
     }
 }
 
-bool Sync::Hatch(std::uint8_t self, std::uint64_t now_us, const Seen& s,
+bool Sync::Hatch(std::uint8_t self, const Seen& s,
                  std::vector<proto::Message>& send) {
     // An egg that already left our walk alive: it hatched into this one.
     for (auto it = eggs_.begin(); it != eggs_.end(); ++it) {
@@ -1138,7 +1138,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
                 continue;
             }
-        } else if (IsHatchling(s->name) && Hatch(self, now_us, *s, send)) {
+        } else if (IsHatchling(s->name) && Hatch(self, *s, send)) {
             // Out of an egg we own: shared as a made enemy.
             o.id = {proto::ObjectKind::made, self, ++made_counter_};
             owners_[o.id] = {self, 0};

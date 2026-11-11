@@ -1917,7 +1917,7 @@ TEST_CASE("world: a shifter that only turns is sent where it rests, and held the
     CHECK(poses.size() == 1);
 }
 
-TEST_CASE("world: a shifter hit from across the room is sent; a box that far is not ours (issue 176)") {
+TEST_CASE("world: a shifter hit from across the room is sent, a box that far is not ours (issue 176)") {
     // Issue 176: the slingshot room's eye is shot from the chest ledge, 17 m from
     // the ladder; the ladder only fell for the shooter.
     const proto::Vec3 ledge{1.0f, 2.0f, 20.0f};  // 17 m from {1, 2, 3}

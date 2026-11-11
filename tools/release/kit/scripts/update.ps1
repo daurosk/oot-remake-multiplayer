@@ -353,7 +353,11 @@ function Update-KitOptions([string]$KitDir) {
         $v = Get-KitVersion $KitDir
         $merged = Merge-KitOptions $lines ([System.IO.File]::ReadAllLines($tmpl)) $(if ($v) { $v } else { 'this kit' })
         if ($merged.Count -eq $lines.Count) { return $false }
-        [System.IO.File]::WriteAllLines($mine, $merged)
+        # Written aside and moved over: -Status can be stopped at any moment, and a
+        # cut coop-options.ini would lose the player's settings.
+        $part = "$mine.part"
+        [System.IO.File]::WriteAllLines($part, $merged)
+        Move-Item -LiteralPath $part -Destination $mine -Force
         return $true
     } catch { return $false }
 }

@@ -768,3 +768,32 @@ TEST_CASE("flag watcher: both players open the map chest at the same time and bo
   CHECK(host.frame(host_store).empty());
   CHECK(host_game.get(kDekuMap) == 1);
 }
+
+TEST_CASE("flag watcher: a named Bool shared one way (a chest's opened flag) is noted and never closed again") {
+  FakeStore store = game();
+  FlagWatcher w(SharedFlags({kKey0}), FlagRole::player);
+  CHECK(w.share_pickup_named(kChest));
+  CHECK_FALSE(w.share_pickup_named(kChest));                          // once
+  CHECK_FALSE(w.share_pickup_named(FlagKey::key64_flag(0x1234)));      // 64-bit keys: share_pickup
+  CHECK(w.shared().contains(kChest));
+  w.frame(store);
+
+  // Opened in another game: written here and noted for the hook.
+  CHECK(w.receive(state({entry(kChest, 1)})));
+  w.frame(store);
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.take_written_for_others() == std::vector<FlagKey>{kChest});
+  // A 0 coming in is not taken, and the game's own 0 is not sent.
+  CHECK(w.receive(state({entry(kChest, 0)})));
+  w.frame(store);
+  CHECK(store.get(kChest) == 1);
+  store.set(kChest, 0);
+  CHECK(w.frame(store).empty());
+  // A plain shared named flag is not noted.
+  FakeStore other = game();
+  FlagWatcher plain(SharedFlags({kDoor}), FlagRole::player);
+  plain.frame(other);
+  CHECK(plain.receive(state({entry(kDoor, 1)})));
+  plain.frame(other);
+  CHECK(plain.take_written_for_others().empty());
+}

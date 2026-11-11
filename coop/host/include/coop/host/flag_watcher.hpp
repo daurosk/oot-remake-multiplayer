@@ -94,6 +94,13 @@ class FlagWatcher {
   // never sent and never written over a 1), and never written back after a
   // load (the room must be able to reset). False: already one way.
   bool share_one_way(FlagKey key);
+  // The pickup rule for a named Bool (a chest's opened flag,
+  // issue 87: the game records a chest opened in a named Bool of its own,
+  // not in the placement's 64-bit key). It is also noted in
+  // take_written_for_others when written 0 to 1 for another player. False:
+  // already shared one way.
+  // (chest-live's; a load's 0 is still written back, unlike share_one_way.)
+  bool share_pickup_named(FlagKey key);
   // With learning on, an incoming 64-bit key set to 1 that this game does not
   // share yet is taken as a pickup too (the player who took it was in a scene
   // this game has not loaded). At most kMaxLearned keys. Off by default here;
@@ -103,7 +110,8 @@ class FlagWatcher {
   static constexpr std::size_t kMaxLearned = 4096;
   std::size_t pickups() const { return pickups_.size(); }
 
-  // The 64-bit keys this watcher wrote 0 to 1 into the game for another
+  // The 64-bit keys, and the named Bools shared one way (share_one_way),
+  // this watcher wrote 0 to 1 into the game for another
   // player (a chest opened, a pickup taken elsewhere), oldest first, since
   // the last call; at most kMaxWrittenForOthers are kept. A key the game
   // already had at 1 (opened here, the host's echo of it) is not in it. The

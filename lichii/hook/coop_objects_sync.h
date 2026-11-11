@@ -542,18 +542,28 @@ private:
     // that came while no walk ran (title screen, save load, scene load: the
     // join snapshot) is for actors the game makes knowing the key.
     static constexpr std::uint64_t kTakeGapUs = 1'500'000;
-    // An actor this close to our Link is not removed: we may be opening that
-    // chest ourselves (both players at once), or standing on it.
+    // An actor this close to our Link is not removed (a pickup we may be
+    // taking ourselves). Not for chests (issue 87): a chest still closed
+    // this close to our Link goes at once, so our Link cannot open it a
+    // second time; one ours was already opening when the flag came (both at
+    // once) stays, logged, as its content may count twice.
     static constexpr float kTakeNearM = 3.0f;
     // A taken breakable that still has life gets life 0 first, so the game
     // plays its own break (a web, a cracked wall); deleted only if it still
     // stands this long after (a break with no life to write is deleted at once).
     static constexpr std::uint64_t kTakeBreakUs = 1'500'000;
+    // A chest (Obj_TBox_*) taken here, away from our Link, is given this long
+    // to show itself open (its own AI reads the shared opened flag, issue 87:
+    // an animation with "Open" in it, seen while our Link is not beside it);
+    // one still closed after that is removed. Counted from the first take.
+    static constexpr std::uint64_t kChestOpenWaitUs = 1'500'000;
     struct Taking {
         unsigned ticks = 0;
         std::set<std::uint64_t> addresses;
         bool near_said = false;
         std::map<std::uint64_t, std::uint64_t> broke_at;  // address: when life 0 was written
+        std::uint64_t since_us = 0;          // when the take came
+        std::set<std::uint64_t> shown_open;  // chests that showed themselves open
     };
     std::uint64_t last_tick_us_ = 0;
     bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)

@@ -128,6 +128,8 @@ class Session {
   bool share_pickup(FlagKey key) { return watcher_ && watcher_->share_pickup(key); }
   // FlagWatcher::share_one_way. Emulator thread only, like share_pickup.
   bool share_one_way(FlagKey key) { return watcher_ && watcher_->share_one_way(key); }
+  // FlagWatcher::share_pickup_named (a named Bool, the pickup rule).
+  bool share_pickup_named(FlagKey key) { return watcher_ && watcher_->share_pickup_named(key); }
   // Emulator thread only: FlagWatcher::take_written_for_others (empty when
   // flags are not shared).
   std::vector<FlagKey> take_one_way_restores() {

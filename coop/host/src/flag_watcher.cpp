@@ -99,9 +99,16 @@ bool FlagWatcher::share_pickup(FlagKey key) {
   return true;
 }
 
+bool FlagWatcher::share_pickup_named(FlagKey key) {
+  if (key.kind != FlagKeyKind::named || !pickups_.insert(key).second) return false;
+  shared_.add(key);
+  return true;
+}
+
 void FlagWatcher::note_for_others(FlagStore& store, const FlagEntry& entry) {
   const FlagKey key = key_of(entry);
-  if (key.kind != FlagKeyKind::key64 || entry.kind != protocol::FlagKind::boolean ||
+  const bool noted = key.kind == FlagKeyKind::key64 || pickups_.contains(key);
+  if (!noted || entry.kind != protocol::FlagKind::boolean ||
       entry.value == 0 || written_for_others_.size() >= kMaxWrittenForOthers) {
     return;
   }

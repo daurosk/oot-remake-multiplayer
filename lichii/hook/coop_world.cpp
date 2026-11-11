@@ -1531,4 +1531,106 @@ void WorldSync::ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us
     }
 }
 
+bool IsGimmick(std::string_view name) {
+    if (!name.starts_with("Obj_")) {
+        return false;
+    }
+    constexpr std::string_view kParts[] = {
+        "StepSwitch_", "EyeSwitch_", "SwitchHit_", "SolarSwitch_", "SwitchCandleStick_",
+        "WaterPlane", "SwitchShutter_", "CandleStick_", "ElevatorLift", "MoveFloor_",
+    };
+    for (const std::string_view p : kParts) {
+        if (name.find(p) != std::string_view::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void GimmickProbe::Reset() {
+    states_.clear();
+    last_us_ = 0;
+}
+
+std::vector<std::string> GimmickProbe::Look(const SignProbe::ReadWord& read,
+                                            const std::vector<Gimmick>& gimmicks,
+                                            const std::optional<proto::Vec3>& player, std::uint64_t now_us) {
+    std::vector<std::string> lines;
+    if (!player || (last_us_ != 0 && now_us >= last_us_ && now_us - last_us_ < kEveryUs)) {
+        return lines;
+    }
+    last_us_ = now_us;
+    std::vector<const Gimmick*> near;
+    for (const Gimmick& g : gimmicks) {
+        if (Distance(*player, g.position) <= kNearM) {
+            near.push_back(&g);
+        }
+    }
+    std::sort(near.begin(), near.end(), [&](const Gimmick* a, const Gimmick* b) {
+        return Distance(*player, a->position) < Distance(*player, b->position);
+    });
+    if (near.size() > kMaxGimmicks) {
+        near.resize(kMaxGimmicks);
+    }
+    std::set<std::uint64_t> looked;
+    for (const Gimmick* g : near) {
+        looked.insert(g->address);
+        State& st = states_[g->address];
+        if (st.hash != g->hash || st.name != g->name) {
+            st = State{};
+            st.hash = g->hash;
+            st.name = g->name;
+            if (lines_ < kMaxLines) {
+                ++lines_;
+                lines.push_back(Line("gimmick probe: watching %016llx %s", g->hash, g->name, ""));
+            }
+        }
+        SignProbe::Snapshot now = SignProbe::Read(read, g->address);
+        if (now.empty()) {
+            continue;
+        }
+        if (st.copies.size() == 2) {
+            const SignProbe::Snapshot& a = st.copies[0];
+            const SignProbe::Snapshot& b = st.copies[1];
+            std::string shown;
+            std::size_t count = 0;
+            for (const auto& [key, value] : now) {
+                const auto ia = a.find(key);
+                const auto ib = b.find(key);
+                if (ia == a.end() || ib == b.end() || ia->second != ib->second || ib->second == value) {
+                    continue;  // not stable before, or no step
+                }
+                int& n = st.steps[key];
+                if (++n > kNoisySteps) {
+                    continue;  // muted: it steps too often
+                }
+                ++count;
+                if (count <= kMaxShown) {
+                    char word[96];
+                    std::snprintf(word, sizeof word, " %s:%llx>%llx", SignProbe::Where(key).c_str(),
+                                  static_cast<unsigned long long>(ib->second),
+                                  static_cast<unsigned long long>(value));
+                    shown += word;
+                }
+            }
+            if (count != 0 && lines_ < kMaxLines) {
+                ++lines_;
+                const float d = Distance(*player, g->position);
+                char more[80];
+                std::snprintf(more, sizeof more, "%.1f m from our Link: %zu words stepped:", d, count);
+                lines.push_back(Line("gimmick probe: %016llx %s %s", g->hash, g->name, more) + shown);
+            }
+        }
+        st.copies.push_back(std::move(now));
+        while (st.copies.size() > 2) {
+            st.copies.pop_front();
+        }
+    }
+    // Forget what is out of reach (unloaded, or far): a fresh start when back.
+    for (auto it = states_.begin(); it != states_.end();) {
+        it = looked.contains(it->first) ? std::next(it) : states_.erase(it);
+    }
+    return lines;
+}
+
 } // namespace CoopWorld

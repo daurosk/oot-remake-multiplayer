@@ -87,6 +87,12 @@ bool FlagWatcher::receive(std::span<const std::uint8_t> bytes) {
   return receive(message);
 }
 
+bool FlagWatcher::share_one_way(FlagKey key) {
+  if (key.kind != FlagKeyKind::named || !one_way_.insert(key).second) return false;
+  shared_.add(key);
+  return true;
+}
+
 bool FlagWatcher::share_pickup(FlagKey key) {
   if (key.kind != FlagKeyKind::key64 || !pickups_.insert(key).second) return false;
   shared_.add(key);
@@ -117,7 +123,7 @@ bool FlagWatcher::takes(const FlagEntry& entry) {
     share_pickup(key);
     return true;
   }
-  if (!one && pickups_.contains(key)) {
+  if (!one && (pickups_.contains(key) || one_way_.contains(key))) {
     ++stats_.pickup_resets;
     return false;
   }
@@ -316,6 +322,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     if (!takes(entry)) continue;
     note_for_others(store, entry);
     const bool written = store.write(entry);
+    const bool held = !written && store.holds(key);
     if (written) {
       ++stats_.applied;
     } else {
@@ -323,9 +330,11 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       if (!written_for_others_.empty() && written_for_others_.back() == key) {
         written_for_others_.pop_back();
       }
+      if (held) unwritten_[key] = entry;  // our game takes it later (HoldFlagStore)
     }
-    // Answer with what the game holds now, which may not be what was asked.
-    std::optional<FlagEntry> now = store.read(key);
+    // Answer with what the game holds now, which may not be what was asked;
+    // a held value is the group's already, only not in our game yet.
+    std::optional<FlagEntry> now = held ? std::optional<FlagEntry>(entry) : store.read(key);
     if (now) {
       now->key = key;
     } else {
@@ -337,7 +346,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       const auto known = last_.find(key);
       note_group(*now, known != last_.end() ? &known->second : nullptr);
     }
-    last_[key] = *now;
+    if (!held) last_[key] = *now;  // held: the game still has its own value
     answers[key] = *now;
     ++stats_.answers_sent;
   }
@@ -411,7 +420,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (it->second == *now && !restate_.contains(key)) continue;
     const FlagEntry before = it->second;
     it->second = *now;
-    if (settling() && !store.is_count(key) && !restate_.contains(key)) {
+    if (settling() && !store.is_count(key) && !restate_.contains(key) && !one_way_.contains(key)) {
       // A load putting back an older value than the group's: not sent, and
       // the group's value goes back in (set_loading).
       const auto group = group_.find(key);
@@ -419,6 +428,13 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (group != group_.end() &&
           backwards(group->second, older != group_before_.end() ? &older->second : nullptr,
                     *now, loading_)) {
+        if (store.holds(key)) {
+          // Our game takes the group's value later (HoldFlagStore): kept to
+          // write then; the load's older value is ours alone, never sent.
+          ++stats_.load_reverts;
+          unwritten_[key] = group->second;
+          continue;
+        }
         if (store.write(group->second)) {
           ++stats_.load_reverts;
           ++stats_.applied;
@@ -433,7 +449,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         group_before_.erase(key);
       }
     }
-    if (now->value == 0 && pickups_.contains(key) && !restate_.contains(key)) {
+    if (now->value == 0 && (pickups_.contains(key) || one_way_.contains(key)) && !restate_.contains(key)) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
     }

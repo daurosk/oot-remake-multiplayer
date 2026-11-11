@@ -54,8 +54,7 @@ int main(int argc, char** argv) {
   if (!line->password_env.empty()) {
     line->password = environment(line->password_env);
     if (const char* why = password_problem(line->password)) {
-      std::fprintf(stderr, "coop_server: the join password in %s is %s
-",
+      std::fprintf(stderr, "coop_server: the join password in %s is %s\n",
                    line->password_env.c_str(), why);
       return 2;
     }
@@ -97,8 +96,7 @@ int main(int argc, char** argv) {
                   static_cast<unsigned>(server.port()), where.c_str(),
                   static_cast<unsigned>(coop::protocol::kDatagramBytes));
       if (!line->password.empty()) {
-        std::printf("coop_server: players must give the join password to join
-");
+        std::printf("coop_server: players must give the join password to join\n");
       }
       if (!line->allowed.empty()) {
         std::printf("coop_server: only the %u address range(s) given with --allow may connect\n",

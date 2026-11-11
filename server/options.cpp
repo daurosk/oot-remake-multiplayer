@@ -111,6 +111,7 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
 const char* usage() {
   return "usage: coop_server [--port N] [--bind ADDRESS] [--allow LIST]\n"
          "                   [--game-build ID] [--max-half-open N] [--run-for-ms N]\n"
+         "                   [--password TEXT | --password-env NAME]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
          "                   example its Hamachi or Radmin address (default: all)\n"
@@ -120,7 +121,10 @@ const char* usage() {
          "                   first player to join decides)\n"
          "  --max-half-open N  most connections one address may hold before\n"
          "                   sending HELLO (default 4, 0 for no limit)\n"
-         "  --run-for-ms N   stop by itself after N milliseconds\n";
+         "  --run-for-ms N   stop by itself after N milliseconds\n"
+         "  --password TEXT  players must give this join password (default: none)\n"
+         "  --password-env NAME  the join password is in this environment\n"
+         "                   variable (keeps it off the command line)\n";
 }
 
 }  // namespace coop::server

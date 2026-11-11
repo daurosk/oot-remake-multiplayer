@@ -820,7 +820,7 @@ TEST_CASE("item grants: a flag the game cannot write is skipped, the item still 
   CHECK(store.stats().granted == 0);
 }
 
-// Issue 130 (found by Lixyas; Caleb's rule for test9: each player buys their
+// Issue 130 (found by Lixyas; Caleb's rule for test8: each player buys their
 // own). The Kokiri Shop sells a Deku Shield only to a player who has none
 // ("You already have a Deku Shield. We have a one-shield-per-person policy
 // here", message Shop_31) and reads that from the player's own

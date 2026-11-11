@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_guard.h"
 
 namespace CoopObjects {
 
@@ -302,6 +303,10 @@ public:
     // kChaseKeepUs, and the server gives it to us. An enemy we own that comes
     // towards our Link at kChaseSpeed or more is flagged the same way, which
     // the server takes as a fight, so it stays ours.
+    // A life write this Sync asked for earlier, made in the game only now (it waited
+    // while our Link was in an event, coop_guard.h, issue 144). The drop to `life` that the
+    // next walks see is that write landing, not a hit of our Link's: not sent as DAMAGE.
+    void Written(std::uint64_t address, std::int32_t life, std::uint64_t now_us);
     void NoteDrift(std::uint64_t address, const coop::protocol::Vec3& put,
                    const coop::protocol::Vec3& now, std::uint64_t now_us);
     static constexpr float kChaseReachM = 40.0f;
@@ -548,7 +553,7 @@ private:
     // this close to our Link goes at once, so our Link cannot open it a
     // second time; one ours was already opening when the flag came (both at
     // once) stays, logged, as its content may count twice.
-    static constexpr float kTakeNearM = 3.0f;
+    static constexpr float kTakeNearM = CoopGuard::kChestNearM;
     // A taken breakable that still has life gets life 0 first, so the game
     // plays its own break (a web, a cracked wall); deleted only if it still
     // stands this long after (a break with no life to write is deleted at once).

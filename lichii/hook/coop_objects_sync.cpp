@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_guard.h"
 #include "coop_world.h"
 
 #include <algorithm>
@@ -517,6 +518,24 @@ std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
     return out;
 }
 
+void Sync::Written(std::uint64_t address, std::int32_t life, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return;
+    }
+    Object& o = it->second;
+    // While it waited the walk read the old life; that is the start of the drop.
+    o.late_left = 0;  // nothing of it may be put back as a second fall
+    o.late_until = 0;
+    if (o.life && *o.life > life) {
+        o.hurt_left += *o.life - life;
+        o.hurt_target = life;
+        // If the game does not take it, the life is written after kHurtWaitUs and hurt_left
+        // is cleared, so it cannot swallow a later hit of our Link's.
+        o.hurt_until = now_us + kHurtWaitUs;
+    }
+}
+
 std::uint8_t Sync::OwnerOf(const proto::ObjectId& id) const {
     const auto it = owners_.find(id);
     return it == owners_.end() ? 0 : it->second.player;
@@ -624,7 +643,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // open it a second time.
                 const bool chest = s.name.starts_with("Obj_TBox_");
                 const bool beside = player_ && Finite(*player_) && Finite(s.position) &&
-                                    Distance(*player_, s.position) < kTakeNearM;
+                                    CoopGuard::Near(player_, s.position, kTakeNearM);
                 const bool near = !chest && beside;
                 const bool open = s.animation && s.animation->name.find("Open") != std::string::npos;
                 if (near && t->second.ticks < kTakeBindTicks && !t->second.near_said) {

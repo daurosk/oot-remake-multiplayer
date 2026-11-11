@@ -2117,6 +2117,29 @@ TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is dele
     CHECK(other.Removes() == std::vector<std::uint64_t>{0x700});
 }
 
+TEST_CASE("objects: a taken falling floor or web part stays 4 s so its fall shows, then goes (issue 176)") {
+    // Issue 177: the slingshot room's bridge and the webs vanished in the other game.
+    for (const char* name : {"Obj_InsideTheDekuTree_FallingFloor_A_01",
+                             "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_02"}) {
+        CAPTURE(name);
+        Sync sync;
+        Seen part;
+        part.address = 0x710;
+        part.name = name;
+        part.hash = 0xe9f286aa47fef9b1;
+        part.position = {5.0f, 2.0f, 1.0f};
+        Tick(sync, 0, {part});
+        sync.Take(part.hash);
+        auto step = Tick(sync, 10 * kMs, {part});
+        CHECK(step.writes.empty());  // no life to write
+        CHECK(sync.Removes().empty());
+        Tick(sync, 3000 * kMs, {part});
+        CHECK(sync.Removes().empty());
+        Tick(sync, 4100 * kMs, {part});
+        CHECK(sync.Removes() == std::vector<std::uint64_t>{0x710});
+    }
+}
+
 TEST_CASE("objects: a kill from before we came dies through our game, deleted only as a fallback (issue 133)") {
     // The server tells a late entrant: no owner was ever named to us. Our
     // game must kill it itself, so its room counter and kill key count.

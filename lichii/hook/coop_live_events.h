@@ -3,7 +3,9 @@
 // Issue 129 (docs/dungeon.md "Live events"): a room gimmick's event
 // that another player's game played is started in ours while we are in that
 // room, so its result (the Deku Tree ladder falling) happens live here too.
-// Behind LICHII_COOP_LIVE_EVENTS=1 (off by default: not run in a game yet).
+// On unless LICHII_COOP_LIVE_EVENTS=0 (dungeon-switches, issue 176, a player
+// test): started only while our Link is near the place that asks for the
+// event (Places()), so the room it moves is loaded.
 //
 // The game's own way, read from main (build e0f3ccfaf50065ae), as the AI
 // node SeqOneShotRequestEvent (execute at 0x32db1a0) does it:
@@ -18,10 +20,12 @@
 // No emulator code here: tested in tests/lichii/live_events_test.cpp.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,20 +50,37 @@ inline constexpr std::uint64_t kEventStatePtr = 0x4e94840;  // as coop_boss_game
 inline constexpr std::uint64_t kEventSession = 0x68;        // set while an event runs
 } // namespace addr
 
+// Where an event is asked for in its dungeon (coop_live_places.cpp, read
+// from the Banc files): x, height, z of the placement.
+struct Place {
+    std::string_view event;
+    std::string_view scene;
+    float x, y, z;
+};
+std::span<const Place> Places();
+
+// How near our Link must be to one of the event's places for it to start
+// here. The Deku Tree's slingshot room: its door and the chest ledge are
+// 11 and 17 m from the ladder's asker; the compass room's asker is 20 m
+// from that door, so that room's event waits until we are in it.
+inline constexpr float kNearM = 18.0f;
+
 // Which held gimmick events to start here, and when. Pure.
 class Decider {
 public:
-    // Events allowed: empty means every gimmick event; by default only the
-    // Deku Tree slingshot room's ladder (the first one to prove).
-    explicit Decider(std::set<std::string> allowed = {"InsideTheDekuTree_Gimmick_FallingLadder"})
-        : allowed_(std::move(allowed)) {}
+    // Events allowed: empty means every gimmick event that has a place (the
+    // default); a named event with no place starts anywhere in its scene.
+    explicit Decider(std::set<std::string> allowed = {}) : allowed_(std::move(allowed)) {}
 
     // Once a frame: the events (names without "HavePlayedEvent.") another
-    // player played that our game holds back now, our scene, and whether an
-    // event runs here. Returns the one to start now, if any: never while an
-    // event runs, each at most once per visit of the scene.
+    // player played that our game holds back now, our scene, whether an
+    // event runs here, and our Link's position (x, height, z) if read.
+    // Returns the one to start now, if any: never while an event runs, only
+    // near one of its places in our scene, each at most once per visit of
+    // the scene.
     std::optional<std::string> Next(const std::vector<std::string>& held, const std::string& scene,
-                                    bool event_running);
+                                    bool event_running,
+                                    std::optional<std::array<float, 3>> link = std::nullopt);
 
 private:
     std::set<std::string> allowed_;

@@ -6,8 +6,34 @@
 
 namespace CoopLiveEvents {
 
+namespace {
+
+// Near one of the event's places in this scene; nullopt when it has none here.
+std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
+                              const std::optional<std::array<float, 3>>& link) {
+    bool any = false;
+    for (const Place& p : Places()) {
+        if (p.event != event || p.scene != scene) {
+            continue;
+        }
+        any = true;
+        if (!link) {
+            continue;
+        }
+        const float dx = (*link)[0] - p.x;
+        const float dy = (*link)[1] - p.y;
+        const float dz = (*link)[2] - p.z;
+        if (dx * dx + dy * dy + dz * dz <= kNearM * kNearM) {
+            return true;
+        }
+    }
+    return any ? std::optional<bool>(false) : std::nullopt;
+}
+
+} // namespace
+
 std::optional<std::string> Decider::Next(const std::vector<std::string>& held, const std::string& scene,
-                                         bool event_running) {
+                                         bool event_running, std::optional<std::array<float, 3>> link) {
     if (scene.empty()) {
         return std::nullopt;  // no scene read (a load): the same visit, nothing asked
     }
@@ -19,12 +45,19 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
         return std::nullopt;
     }
     for (const std::string& name : held) {
-        if (!allowed_.empty() && !allowed_.contains(name)) {
+        const bool named = allowed_.contains(name);
+        if (!allowed_.empty() && !named) {
             continue;
         }
-        if (asked_.insert(name).second) {
-            return name;
+        if (asked_.contains(name)) {
+            continue;
         }
+        const auto near = NearPlace(name, scene, link);
+        if (near ? !*near : !named) {
+            continue;  // not near it yet (it waits), or no place known and not asked by name
+        }
+        asked_.insert(name);
+        return name;
     }
     return std::nullopt;
 }

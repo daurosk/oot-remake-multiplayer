@@ -54,8 +54,7 @@ TEST_CASE("notify: one line for what another player's change gave us") {
   CHECK(lines[0] == "Tobi found a Small Key (Deku Tree) - the group has 2");
   lines = n.Take({Int("PlayerStatus.MaxLife", 12, 16, 3)}, 1, 1200);
   REQUIRE(lines.size() == 1);
-  CHECK(lines[0] == "P3 got a Heart Container - your max health went up" ||
-        lines[0] == "Player 3 got a Heart Container - your max health went up");
+  CHECK(lines[0] == "Player 3 got a Heart Container - your max health went up");  // no name known
   lines = n.Take({Bool("DungeonInfo.InsideTheDekuTree.IsGetMap", 2), Bool("IsGet.Item_Melody_ZeldaLullaby", 2),
                   Int("PouchData.Item_Token_Gold.StockNum", 11, 12, 2)},
                  1, 1300);

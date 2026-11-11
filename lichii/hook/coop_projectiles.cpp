@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace CoopProjectiles {
@@ -288,6 +289,25 @@ void Blasts::Reset() {
 Blasts& TheBlasts() {
     static Blasts blasts;
     return blasts;
+}
+
+bool IsLure(std::string_view actor) {
+    return actor == "Weapon_Lure" || actor == "Weapon_SinkingLure";
+}
+
+void Lures::Set(std::vector<Vec3> at) {
+    std::lock_guard lock(mutex_);
+    at_ = std::move(at);
+}
+
+std::vector<Vec3> Lures::Get() const {
+    std::lock_guard lock(mutex_);
+    return at_;
+}
+
+Lures& TheLures() {
+    static Lures lures;
+    return lures;
 }
 
 } // namespace CoopProjectiles

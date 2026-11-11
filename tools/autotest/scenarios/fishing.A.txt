@@ -1,8 +1,9 @@
 # fishing (#151, branch fishing): both load straight into the fishing pond (warp HyruleField_Child
 # MiniGame_Fishing_PlayerStart) and stand there; A then walks a few steps and talks (A).
-# Expect (fishing report, check 1 in part): each game runs its own pond, so neither log has
-# `objects: share` lines naming Animal_Fish_ or Npc_Hylia_Fishman; the puppets see each other.
-# Paying, casting and landing a fish (checks 1-3 in full) are not scripted. B runs with
+# Expect (fishing-2): the fish are shared, so `objects: share` lines name Animal_Fish_ (owners
+# given out); none names Npc_Hylia_Fishman (each game's own); the puppets see each other.
+# Paying, casting and landing a fish (reports/fishing-2.md checks) are not scripted: the rod
+# comes only from the owner's talk, and the cheats do not know it. B runs with
 # LICHII_COOP_NOTIFY=0 (chat-notify check 6): B logs no "coop: notice:" line (a joiner normally logs its join summary).
 #! noload
 #! start coop: test warp done

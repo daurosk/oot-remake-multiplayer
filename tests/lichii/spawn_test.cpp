@@ -861,3 +861,78 @@ TEST_CASE("spawn: a failed stand-in is tried again, then the game's own actor is
         return s.find("could not be made 3 times in a row") != std::string::npos;
     }));
 }
+
+// Issue 151 (fishing-2): another player's cast lure is seen, as a model-only
+// stand-in no fish can bite; never as the game's own lure.
+TEST_CASE("spawn: a lure copy is only ever its stand-in") {
+    using R = StandInRig;
+    namespace addr = CoopPuppet::addr;
+    for (const char* lure : {"Weapon_Lure", "Weapon_SinkingLure"}) {
+        CHECK_MESSAGE(CoopSpawn::IsShared(lure), lure);
+        CHECK_MESSAGE(CoopSpawn::StandInOnly(lure), lure);
+        CHECK_FALSE(CoopSpawn::Explodes(lure));
+    }
+    CHECK(std::string(CoopSpawn::StandIn("Weapon_Lure")) == "CoopShot_Lure");
+    CHECK(std::string(CoopSpawn::StandIn("Weapon_SinkingLure")) == "CoopShot_SinkingLure");
+    CHECK_FALSE(CoopSpawn::StandInOnly("Shootable_DekuSeed"));
+    CHECK_FALSE(CoopSpawn::IsShared("Weapon_FishingRod"));
+    CHECK_FALSE(CoopSpawn::IsShared("Obj_SinkingLure"));  // the one lying in the pond
+    CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Lure\"}]}") ==
+          std::set<std::string>{"CoopShot_Lure"});
+
+    // In the pack: made as the stand-in.
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopShot_Lure"});
+        Copy copy;
+        copy.key = 1;
+        copy.actor = "Weapon_Lure";
+        d.SetInput(R::base, {copy});
+        REQUIRE(d.Step(rig.guest, false, 0, 0));
+        auto c = d.Step(rig.guest, true, R::block, 0);
+        REQUIRE(c);
+        REQUIRE(c->function == R::base + addr::kCreate);
+        CHECK(rig.Name(*c) == "CoopShot_Lure");
+    }
+    // Not in the pack: no copy at all (a real lure here would draw the fish).
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopShot_Seed"});
+        Copy copy;
+        copy.key = 1;
+        copy.actor = "Weapon_Lure";
+        d.SetInput(R::base, {copy});
+        auto c = d.Step(rig.guest, false, 0, 0);
+        if (c && c->function != R::base + addr::kCreate) {
+            c = d.Step(rig.guest, true, R::block, 0);  // the slots' malloc
+        }
+        CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        for (std::uint64_t ms = 16; ms < 200; ms += 16) {
+            c = d.Step(rig.guest, false, 0, ms);
+            CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        }
+        CHECK(d.Live().empty());
+    }
+}
+
+TEST_CASE("spawn: our cast lure's place is known for the fish rules") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    sync.Tick(kScene, 1, 0, {}, {}, send, copies);
+    CHECK(sync.OwnLures().empty());
+    sync.Tick(kScene, 1, 33 * kMs, {Made(0x100, 4.0f, "Weapon_Lure"), Made(0x200, 9.0f)}, {}, send,
+              copies);
+    auto lures = sync.OwnLures();
+    REQUIRE(lures.size() == 1);
+    CHECK(lures[0][0] == doctest::Approx(4.0f));
+    sync.Tick(kScene, 1, 66 * kMs, {Made(0x100, 5.0f, "Weapon_Lure")}, {}, send, copies);
+    lures = sync.OwnLures();
+    REQUIRE(lures.size() == 1);
+    CHECK(lures[0][0] == doctest::Approx(5.0f));
+    // Reeled in: gone from the walk, so no longer ours to count.
+    sync.Tick(kScene, 1, 99 * kMs, {}, {}, send, copies);
+    CHECK(sync.OwnLures().empty());
+}

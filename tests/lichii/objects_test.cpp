@@ -315,12 +315,19 @@ TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku"));
 }
 
-TEST_CASE("objects: the fishing pond is each game's own (issue 151)") {
-    for (const char* own : {"Animal_Fish_Bass", "Animal_Fish_Loach", "Animal_Fish_Blue",
-                            "Npc_Hylia_Fishman_001_Child", "Npc_Hylia_Fishman_001_Adult"}) {
+TEST_CASE("objects: the pond's owner is each game's own, its fish are shared (issue 151)") {
+    for (const char* own : {"Npc_Hylia_Fishman_001_Child", "Npc_Hylia_Fishman_001_Adult"}) {
         CHECK_MESSAGE(CoopObjects::IsOwnPuzzle(own), own);
         CHECK_FALSE_MESSAGE(CoopObjects::IsShared(own), own);
     }
+    for (const char* fish : {"Animal_Fish_Bass", "Animal_Fish_Loach", "Animal_Fish_Blue",
+                             "Animal_Fish_Blue_TargetAttention"}) {
+        CHECK_MESSAGE(CoopObjects::IsShared(fish), fish);
+        CHECK_MESSAGE(CoopObjects::IsFish(fish), fish);
+        CHECK_FALSE_MESSAGE(CoopObjects::IsOwnPuzzle(fish), fish);
+    }
+    CHECK_FALSE(CoopObjects::IsFish("Animal_Cucco"));
+    CHECK_FALSE(CoopObjects::IsFish("Item_Bottle_Fish"));
     // Other animals and townspeople stay shared.
     CHECK(CoopObjects::IsShared("Animal_Cucco"));
     CHECK(CoopObjects::IsShared("Npc_Hylia_051"));
@@ -2323,4 +2330,129 @@ TEST_CASE("objects: a copy that becomes ours is listed once for the release (iss
     Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, "Enemy_DungeonBoss_Gohma"), Enemy(0x200, 0x22, 2)});
     CHECK(sync.TakeOursNow() == std::vector<std::uint64_t>{0x100});
     CHECK(sync.TakeOursNow().empty());
+}
+
+// Issue 151 (fishing-2): every fish shared, any player's lure works on it.
+namespace {
+
+Seen Fish(std::uint64_t address, std::uint64_t hash, float x) {
+    Seen s;
+    s.address = address;
+    s.name = "Animal_Fish_Bass";
+    s.hash = hash;
+    s.position = {x, 0.0f, 0.0f};
+    return s;
+}
+
+// A fish copy at x, owned by player 2; each 33 ms our game's own frame swims
+// it `step` metres towards x = 0 (our lure) from where the Mover put it, each
+// 66 ms a walk. The flags of the last OBJECT_PRESENT sent, if any.
+std::optional<std::uint8_t> Swim(Sync& sync, std::uint64_t from, std::uint64_t to, float x,
+                                 float step) {
+    std::optional<std::uint8_t> flags;
+    for (std::uint64_t t = from; t < to; t += 33) {
+        sync.NoteDrift(0x100, {x, 0.0f, 0.0f}, {x - step, 0.0f, 0.0f}, t * kMs);
+        if ((t - from) % 66 == 0) {
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}))) {
+                REQUIRE(p.objects.size() == 1);
+                flags = p.objects[0].flags;
+            }
+        }
+    }
+    return flags;
+}
+
+bool Targets(const std::optional<std::uint8_t>& flags) {
+    return flags && (*flags & proto::object_presence::targeting) != 0;
+}
+
+} // namespace
+
+TEST_CASE("objects: a fish copy that swims at our lure for 1 s is asked for (issue 151)") {
+    auto run = [](float x, float step, std::uint8_t owner, bool lure, std::uint64_t to = 1500) {
+        Sync sync;
+        // Our Link on the dock, far from the fish: the lure is what counts.
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 30.0f});
+        if (lure) {
+            sync.SetLures({proto::Vec3{0.0f, 0.0f, 0.0f}});
+        }
+        Tick(sync, 0, {Fish(0x100, 0x11, x)});
+        Own(sync, *sync.IdOf(0x100), owner);
+        return Targets(Swim(sync, 10, to, x, step));
+    };
+    CHECK(run(4.0f, 0.02f, 2, true));         // swims at our lure
+    CHECK_FALSE(run(4.0f, 0.02f, 2, true, 900));  // under 1 s: not yet
+    CHECK(run(0.5f, 0.0f, 2, true));          // holds on it: a bite
+    CHECK_FALSE(run(4.0f, -0.02f, 2, true));  // swims away
+    CHECK_FALSE(run(8.0f, 0.02f, 2, true));   // over 6 m from it
+    CHECK_FALSE(run(4.0f, 0.002f, 2, true));  // the Mover's noise
+    CHECK_FALSE(run(4.0f, 0.02f, 2, false));  // no lure of ours cast
+    CHECK_FALSE(run(4.0f, 0.02f, 1, true));   // ours: the Mover does not place it
+}
+
+TEST_CASE("objects: a fish of ours at our lure stays ours, one away from it does not (issue 151)") {
+    auto run = [](float x, float dx, bool lure) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 30.0f});
+        if (lure) {
+            sync.SetLures({proto::Vec3{0.0f, 0.0f, 0.0f}});
+        }
+        Tick(sync, 0, {Fish(0x100, 0x11, x)});
+        Own(sync, *sync.IdOf(0x100), 1);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 66; t <= 1500; t += 66) {
+            x += dx;
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return Targets(flags);
+    };
+    CHECK(run(0.3f, 0.0f, true));     // hooked: held at the lure
+    CHECK(run(5.5f, -0.05f, true));   // comes at it, 0.75 m/s
+    CHECK_FALSE(run(3.0f, 0.0f, true));    // resting 3 m off
+    CHECK_FALSE(run(3.0f, 0.05f, true));   // swims off
+    CHECK_FALSE(run(0.3f, 0.0f, false));   // no lure of ours
+}
+
+TEST_CASE("objects: a fish its owner landed is gone for everyone (issue 151)") {
+    // The owner: the fish leaves the walk in Link's hands.
+    auto gone = [](float link_x) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{link_x, 0.0f, 0.0f});
+        Tick(sync, 0, {Fish(0x100, 0x11, 1.0f)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 1, 3);
+        Tick(sync, 10 * kMs, {Fish(0x100, 0x11, 1.0f)});
+        // Gone after kMissedWalks empty walks: the remove may come at any of them.
+        std::vector<proto::ObjectRemove> out;
+        for (const std::uint64_t t : {100, 200, 300}) {
+            for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
+                out.push_back(r);
+            }
+        }
+        return out;
+    };
+    const auto landed = gone(0.0f);
+    REQUIRE(landed.size() == 1);
+    CHECK(landed[0].reason == proto::RemoveReason::dead);
+    CHECK(landed[0].epoch == 3);
+    CHECK(gone(40.0f).empty());  // unloaded far from our Link: not caught
+
+    // Another game: its copy is deleted at once, with no life to lower.
+    Sync other;
+    Tick(other, 0, {Fish(0x200, 0x11, 1.0f)}, 2);
+    const proto::ObjectId id = *other.IdOf(0x200);
+    Own(other, id, 1, 3);
+    Tick(other, 10 * kMs, {Fish(0x200, 0x11, 1.0f)}, 2);
+    CHECK(other.Removes().empty());
+    proto::ObjectRemove r;
+    r.player_number = 1;
+    r.id = id;
+    r.epoch = 3;
+    r.reason = proto::RemoveReason::dead;
+    other.Receive(r);
+    const auto step = Tick(other, 20 * kMs, {Fish(0x200, 0x11, 1.0f)}, 2);
+    CHECK(step.writes.empty());
+    CHECK(other.Removes() == std::vector<std::uint64_t>{0x200});
 }

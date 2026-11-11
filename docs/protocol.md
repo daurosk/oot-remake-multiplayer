@@ -307,6 +307,8 @@ Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length
 
 The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
 
+Fish and lures (issue 151, fishing-2, protocol 8) use no new message: a fish moves to the game whose lure it goes for through `OBJECT_PRESENT`'s targeting flag, a landed fish is `OBJECT_REMOVE` reason dead, and lures are `OBJECT_SPAWN`/`OBJECT_SAMPLE`/`OBJECT_REMOVE` made objects ([objects.md](objects.md), "Fish and lures"). Types 186 to 190 stay free for it.
+
 ### Drops
 
 The rupees, hearts and ammo that an enemy, a pot, grass or a rock leaves ([objects.md](objects.md), "Drops"). All on channel 2. The server relays each to everyone else, with the sender's number in the player field, and keeps nothing.

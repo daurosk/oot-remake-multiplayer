@@ -27,7 +27,7 @@ struct Kind {
     bool explodes;
     bool flies;
 };
-constexpr std::array<Kind, 8> kKinds{{
+constexpr std::array<Kind, 10> kKinds{{
     {"Item_Bomb", true, true},
     {"Item_Bombchu", true, true},
     {"Item_DekuNut", false, true},
@@ -36,6 +36,9 @@ constexpr std::array<Kind, 8> kKinds{{
     {"Weapon_Boomerang", false, true},
     {"Shootable_Hook", false, true},
     {"Shootable_HookLong", false, true},
+    // Issue 151: a cast lure (always a stand-in, see StandInOnly).
+    {"Weapon_Lure", false, true},
+    {"Weapon_SinkingLure", false, true},
 }};
 
 const Kind* Find(std::string_view name) {
@@ -105,6 +108,16 @@ void Sync::Receive(const proto::Message& message) {
             inbox_.push_back(message);
         }
     }
+}
+
+std::vector<Vec3> Sync::OwnLures() const {
+    std::vector<Vec3> out;
+    for (const auto& [address, m] : mine_) {
+        if (CoopProjectiles::IsLure(m.name) && m.missed == 0) {
+            out.push_back(m.position);
+        }
+    }
+    return out;
 }
 
 void Sync::Reset() {
@@ -523,11 +536,13 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
 }
 
 std::string_view StandIn(std::string_view actor) {
-    constexpr std::array<std::pair<std::string_view, std::string_view>, 4> kStandIns{{
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 6> kStandIns{{
         {"Shootable_DekuSeed", "CoopShot_Seed"},
         {"NormalArrow", "CoopShot_Arrow"},
         {"Shootable_Hook", "CoopShot_Hook"},
         {"Shootable_HookLong", "CoopShot_HookLong"},
+        {"Weapon_Lure", "CoopShot_Lure"},
+        {"Weapon_SinkingLure", "CoopShot_SinkingLure"},
     }};
     for (const auto& [shared, stand_in] : kStandIns) {
         if (shared == actor) {
@@ -537,10 +552,15 @@ std::string_view StandIn(std::string_view actor) {
     return {};
 }
 
+bool StandInOnly(std::string_view actor) {
+    return CoopProjectiles::IsLure(actor);
+}
+
 std::set<std::string> StandInsIn(std::string_view manifest) {
     std::set<std::string> out;
     for (const std::string_view shared :
-         {"Shootable_DekuSeed", "NormalArrow", "Shootable_Hook", "Shootable_HookLong"}) {
+         {"Shootable_DekuSeed", "NormalArrow", "Shootable_Hook", "Shootable_HookLong", "Weapon_Lure",
+          "Weapon_SinkingLure"}) {
         const std::string quoted = "\"" + std::string(StandIn(shared)) + "\"";
         if (manifest.find(quoted) != std::string_view::npos) {
             out.insert(std::string(StandIn(shared)));
@@ -791,6 +811,22 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         if (!Due(copy, now_ms)) {
             continue;
         }
+        if (StandInOnly(copy.actor)) {
+            // Never the game's own lure: a fish here would go for it.
+            std::lock_guard lock(mutex_);
+            if (no_stand_in_.count(copy.actor) != 0) {
+                started_.insert(copy.key);
+                continue;
+            }
+            if (stand_ins_.count(std::string(StandIn(copy.actor))) == 0) {
+                // The pack's stand-in list may not be known yet: wait, and
+                // make it once it is (only when the list says none, drop it).
+                if (!stand_ins_.empty()) {
+                    started_.insert(copy.key);
+                }
+                continue;
+            }
+        }
         const auto free = std::find_if(slots_.begin(), slots_.end(),
                                        [](const Slot& s) { return s.key == 0; });
         if (free == slots_.end()) {
@@ -921,6 +957,7 @@ public:
         if (session == nullptr || !scene || scene->empty() || now_us == 0 || !Ready(system)) {
             if (active_) {
                 sync_.Reset();
+                CoopProjectiles::TheLures().Set({});
                 TheDirector().SetInput(0, {});
                 active_ = false;
             }
@@ -949,6 +986,7 @@ public:
                      f.name, f.id.value, f.from[0], f.from[1], f.from[2], f.velocity[0],
                      f.velocity[1], f.velocity[2]);
         }
+        CoopProjectiles::TheLures().Set(sync_.OwnLures());  // issue 151, for the objects sync
         TheDirector().SetInput(main_, std::move(copies));
         if (const auto fuse = sync_.Fuse().Fuse(); fuse && fuse != logged_fuse_) {
             LOG_INFO(Core, "coop: shots: our bombs' fuse is {:.2f} s", double(*fuse) / 1e6);

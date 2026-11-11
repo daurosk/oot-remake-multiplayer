@@ -57,10 +57,11 @@ TEST_CASE("dungeon: room state under another spelling or after Gimmick_ is share
     }
     // Story scenes outside the rooms stay out.
     CHECK_FALSE(names.contains("EscapeFromCrumblingGanonCastle_OpenLastGate"));
-    // Second pass: the Goron cells, Jabu's Room 17 stone switch, the room gimmick scenes;
+    // Second pass: the Goron cells, the room gimmick scenes;
     // not the Forest Temple corridor (one-way), a boss intro or a boss alone.
     CHECK(names.contains("Npc_Goron_001_ShutterisOpen"));
-    CHECK(names.contains("InsidejaubjabuBelly_gimic_switchOn_Stone"));
+    // Jabu's Room 17 stone switch: its step-switch graph sets it both ways (review r2).
+    CHECK_FALSE(names.contains("InsidejaubjabuBelly_gimic_switchOn_Stone"));
     CHECK(names.contains("HavePlayedEvent.Dm_DodongoCave_0010"));
     CHECK(names.contains("HavePlayedEvent.Dm_InsideGanonCastle_0090"));
     CHECK_FALSE(names.contains("HavePlayedEvent.Dm_ForestTemple_0007"));

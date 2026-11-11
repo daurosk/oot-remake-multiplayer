@@ -131,6 +131,10 @@ class Session {
   std::vector<FlagKey> take_one_way_restores() {
     return watcher_ ? watcher_->take_one_way_restores() : std::vector<FlagKey>{};
   }
+  // How many times a one-way Bool was put back this session (for the log).
+  std::uint64_t one_way_restores() const {
+    return watcher_ ? watcher_->stats().one_way_restores : 0;
+  }
   std::vector<FlagKey> take_written_for_others() {
     return watcher_ ? watcher_->take_written_for_others() : std::vector<FlagKey>{};
   }

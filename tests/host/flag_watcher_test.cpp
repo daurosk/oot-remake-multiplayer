@@ -717,6 +717,18 @@ TEST_CASE("flag watcher: a dungeon map or compass the game drops to 0 is put bac
   CHECK(w.take_one_way_restores().empty());
   CHECK(w.frame(store).empty());  // and it stays
   CHECK(game_store.get(kDekuMap) == 1);
+  // Again: put back again, counted, but given for the log only the first time.
+  game_store.set(kDekuMap, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kDekuMap) == 1);
+  CHECK(w.stats().one_way_restores == 2);
+  CHECK(w.take_one_way_restores().empty());
+  // While loading the one-way rule stays out (the load revert has that window).
+  w.set_loading(true);
+  game_store.set(kDekuMap, 0);
+  w.frame(store);
+  CHECK(w.stats().one_way_restores == 2);
+  CHECK(w.take_one_way_restores().empty());
 }
 
 TEST_CASE("flag watcher: both players open the map chest at the same time and both keep the map (issue 146)") {

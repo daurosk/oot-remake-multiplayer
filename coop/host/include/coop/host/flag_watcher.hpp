@@ -104,7 +104,8 @@ class FlagWatcher {
   // hook removes what is loaded of these (docs/items.md, "Chests").
   std::vector<FlagKey> take_written_for_others() { return std::exchange(written_for_others_, {}); }
   // One-way Bools (FlagStore::is_one_way) the game dropped to 0 and diff()
-  // wrote back to 1 since the last call, for the log (issue 146).
+  // wrote back to 1 since the last call, for the log (issue 146). Each key
+  // only the first time it is put back; stats().one_way_restores counts all.
   std::vector<FlagKey> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
@@ -165,6 +166,7 @@ class FlagWatcher {
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
   std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
+  std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);
   std::size_t learned_ = 0;

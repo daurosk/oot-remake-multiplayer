@@ -89,6 +89,7 @@ bool RemovedWhenTaken(std::string_view name) {
         "Obj_Token_Gold",     // a Gold Skulltula's token
         "Enemy_Skulltula_Gold",
         "Obj_Rupee_",         // a rupee placed once
+        "Obj_Dungeon_SmallKey",  // a small key lying in a dungeon or the Gerudo Fortress
         "Obj_Heart",          // hearts, heart containers, hearts in water
         "Obj_RedIce_",        // melted by blue fire
         "Obj_Ice_",

@@ -28,6 +28,15 @@ bool IsPickup(std::string_view name) {
         name == "Obj_Heart_Container" || name.starts_with("Obj_RupeeToken_")) {
         return true;
     }
+    // Placed rupees, recovery hearts and small keys (breakables, issue 102):
+    // only placed ones are noted (a drop has no placement hash), and a
+    // placement without a 64-bit key in the game is never shared (the
+    // watcher cannot read it), so respawning ones stay each game's own.
+    // The minigames' keys and rupees are each player's own game.
+    if (name.starts_with("Obj_Rupee_") || name == "Obj_Heart" || name == "Obj_Heart_InWater" ||
+        name.starts_with("Obj_Dungeon_SmallKey")) {
+        return true;
+    }
     // Obj_Heart_Piece, its digging-hole and minigame kinds, the Gerudo Valley one.
     return name.starts_with("Obj_") && name.find("Heart_Piece") != std::string_view::npos;
 }

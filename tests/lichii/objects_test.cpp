@@ -1708,6 +1708,7 @@ TEST_CASE("objects: only chests, pickups and things that go away are removed whe
                              "Obj_RupeeToken_Silver", "Obj_RupeeToken", "Enemy_Skulltula_Gold", "Obj_Token_Gold",
                              "Obj_Heart_Container", "Obj_Heart", "Obj_Heart_InWater",
                              "Obj_Kakariko_Heart_Piece", "Obj_Rupee_Green", "Obj_RedIce_A_01",
+                             "Obj_Dungeon_SmallKey", "Obj_Dungeon_SmallKey_GerudoFortress_03",
                              "Obj_Ice_A_01", "Obj_BrokenRock_A_01", "WallCrack",
                              "Obj_DodongoCave_CrackWall_A_01", "Obj_FireTemple_CrackFloor_A_01",
                              "Obj_InsideTheDekuTree_SpiderWeb_A_01",
@@ -1721,7 +1722,8 @@ TEST_CASE("objects: only chests, pickups and things that go away are removed whe
                              "Land_Well_Waterfall_A_01", "Obj_ForestTemple_GhostPicture_A_01",
                              "Enemy_Anubis", "Obj_ShadowTemple_SkullPot_A_01",
                              "Obj_ShadowTemple_SpikeBoard_A_01", "Obj_ShadowTemple_FallingFloor_A_01",
-                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild"}) {
+                             "Enemy_MiddleBoss_IronKnuckle_Nabooru", "Enemy_Stalchild",
+                             "Obj_MiniGame_SmallKey"}) {
         CAPTURE(name);
         CHECK_FALSE(CoopObjects::RemovedWhenTaken(name));
     }

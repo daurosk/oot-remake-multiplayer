@@ -131,7 +131,9 @@ TEST_CASE("drops: which actors are drops") {
     CHECK(CoopDrops::IsDrop("Obj_MagicJar_Large"));
     CHECK_FALSE(CoopDrops::IsDrop("Obj_Heart_Piece"));
     CHECK_FALSE(CoopDrops::IsDrop("Obj_RupeeToken"));
-    CHECK_FALSE(CoopDrops::IsDrop("Obj_Fairy"));
+    CHECK(CoopDrops::IsDrop("Obj_Fairy"));  // breakables, issue 102
+    CHECK_FALSE(CoopDrops::IsDrop("Obj_Fairy_HidingHole_FairyFountain"));
+    CHECK_FALSE(CoopDrops::IsDrop("Obj_FairySpirit"));
     CHECK_FALSE(CoopDrops::IsDrop("Enemy_ReDead"));
     CHECK_FALSE(CoopDrops::IsDrop("Item_Bomb"));
 }

@@ -999,7 +999,7 @@ TEST_CASE("spawn: our bomb over our Link is sent held, then let go when thrown (
     CHECK(sync.HeldMine() == 0);
 }
 
-TEST_CASE("spawn: a bomb out of our Link's hands for two walks is let go; none held without Link") {
+TEST_CASE("spawn: a bomb out of our Link's hands for two walks is let go, and none is held without Link") {
     CoopSpawn::Sync sync;
     std::vector<proto::Message> send;
     std::vector<Copy> copies;

@@ -434,6 +434,7 @@ void Sync::Reset() {
     scene_.clear();
     objects_.clear();
     taken_.clear();  // a new scene's actors were made knowing every key
+    chest_animations_.clear();
     hidden_.clear();
     dead_.clear();
     order_.clear();
@@ -602,6 +603,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         last_tick_us_ = now_us;
         ticked_ = true;
     }
+    {  // every chest's animation, and when it changed (kChestOpeningUs)
+        std::map<std::uint64_t, ChestAnimation> chests;
+        for (const Seen& s : seen) {
+            if (!s.name.starts_with("Obj_TBox_")) {
+                continue;
+            }
+            ChestAnimation now{s.animation ? s.animation->name : std::string(), 0};
+            if (const auto was = chest_animations_.find(s.address); was != chest_animations_.end()) {
+                now.changed_us = was->second.name == now.name ? was->second.changed_us : now_us;
+            }
+            chests.emplace(s.address, std::move(now));
+        }
+        chest_animations_.swap(chests);
+    }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
             if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
@@ -612,7 +627,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 const bool beside = player_ && Finite(*player_) && Finite(s.position) &&
                                     Distance(*player_, s.position) < kTakeNearM;
                 const bool near = !chest && beside;
-                const bool open = s.animation && s.animation->name.find("Open") != std::string::npos;
+                const std::string animation = s.animation ? s.animation->name : std::string();
+                const bool open = animation.find("Open") != std::string::npos;
+                // Opening now: changed to an "Open" animation just before (never
+                // a name alone: a closed chest's idle may have "Open" in it).
+                bool opening = false;
+                if (const auto c = chest_animations_.find(s.address); chest && open && c != chest_animations_.end()) {
+                    opening = c->second.changed_us != 0 && now_us - c->second.changed_us <= kChestOpeningUs;
+                }
                 if (near && t->second.ticks < kTakeBindTicks && !t->second.near_said) {
                     t->second.near_said = true;
                     notes_.emplace_back(s.name + ": taken or opened in another game, left here: our Link is beside it");
@@ -620,13 +642,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (!near && t->second.ticks < kTakeBindTicks && t->second.addresses.insert(s.address).second) {
                     char key[24];
                     std::snprintf(key, sizeof key, "%#llx", static_cast<unsigned long long>(s.hash));
-                    if (chest && open) {
-                        // Ours was opening already when the other's flag came:
-                        // both opened it at once. It stays; its content may
-                        // count twice (a small key) and cannot be taken back here.
+                    if (chest) {
+                        t->second.bound_animation[s.address] = animation;
+                    }
+                    if (chest && opening && beside) {
+                        // Ours started opening just before the other's flag came,
+                        // our Link beside it: both opened it at once. It stays;
+                        // its content may count twice (a small key) and cannot be
+                        // taken back here.
                         t->second.shown_open.insert(s.address);
                         notes_.emplace_back(s.name + " " + key +
                                             ": opened here and in another game at once (its content may count twice)");
+                    } else if (chest && opening) {
+                        // Away from our Link: its AI reacted to the shared flag.
+                        t->second.shown_open.insert(s.address);
+                        notes_.emplace_back(s.name + " " + key + ": opened in another game, shows open here");
                     } else {
                         notes_.emplace_back(s.name + " " + key +
                                             (chest ? ": opened in another game, waiting to see it open here"
@@ -644,7 +674,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         if (tk.shown_open.contains(s.address)) {
                             continue;
                         }
-                        if (open && !beside) {
+                        const auto b = tk.bound_animation.find(s.address);
+                        const bool changed = b != tk.bound_animation.end() && b->second != animation;
+                        if (open && changed && !beside) {
                             tk.shown_open.insert(s.address);
                             notes_.emplace_back(s.name + ": opened in another game, shows open here");
                             continue;

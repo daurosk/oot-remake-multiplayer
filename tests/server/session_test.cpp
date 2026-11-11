@@ -3125,7 +3125,7 @@ TEST_CASE("join password: a recorded proof does not work on another connection")
   CHECK(h.session.player_count() == 1);
 }
 
-TEST_CASE("join password: one HELLO, one nonce; a second HELLO gets no new challenge") {
+TEST_CASE("join password: one HELLO, one nonce: a second HELLO gets no new challenge") {
   Harness h(with_password("hunter2"));
   const JoinNonce nonce = challenge_for(h, 1, "Link");
   h.clear();

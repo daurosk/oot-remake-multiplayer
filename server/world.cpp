@@ -13,8 +13,9 @@ bool WorldStore::on_break(const WorldBreak& b) {
     for (const WorldBreak& k : kept) {
       if (k.hash == b.hash) return false;
     }
-    if (kept.size() >= kMaxWorldKept) return false;
+    if (kept.size() >= kMaxWorldKept || kept_total_ >= kMaxWorldKeptTotal) return false;
     kept.push_back(b);
+    ++kept_total_;
     return true;
   }
   if ((b.flags & world_break::restored) != 0) {

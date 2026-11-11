@@ -33,9 +33,15 @@ class WorldStore {
   std::vector<protocol::Message> replay(const std::string& scene) const;
   // Forgets what the game puts back on a reload; kept breaks stay.
   void forget(const std::string& scene);
+  // Forgets the kept breaks too: the host loaded a save (host-save's
+  // FLAG_RESET), so the locks are as that save has them again.
+  void forget_kept() {
+    kept_.clear();
+    kept_total_ = 0;
+  }
   void clear() {
     scenes_.clear();
-    kept_.clear();
+    forget_kept();
   }
 
   std::size_t breaks(const std::string& scene) const;
@@ -52,6 +58,7 @@ class WorldStore {
   std::map<std::string, Scene> scenes_;
   // Kept breaks (locks), per scene, oldest first: for the whole session.
   std::map<std::string, std::vector<protocol::WorldBreak>> kept_;
+  std::size_t kept_total_ = 0;  // at most kMaxWorldKeptTotal
 };
 
 }  // namespace coop::server

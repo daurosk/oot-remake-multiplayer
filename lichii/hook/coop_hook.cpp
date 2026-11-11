@@ -321,6 +321,13 @@ public:
             }
             CoopObjects::TakenForOthers(keys);
         }
+        {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
+            std::vector<std::uint32_t> drops;
+            for (const auto& k : session_->take_own_count_drops()) {
+                drops.push_back(k.hash);
+            }
+            CoopObjects::OwnCountDrops(drops);
+        }
         if (game_store) {  // a lock opened twice: our second key back (docs/dungeon.md)
             for (const std::uint32_t key : CoopObjects::TakeKeyRefunds()) {
                 const auto now = game_store->read(coop::protocol::FlagKey{key, 0});

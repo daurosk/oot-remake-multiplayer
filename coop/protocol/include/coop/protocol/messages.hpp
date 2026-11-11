@@ -764,7 +764,8 @@ namespace world_break {
 inline constexpr std::uint8_t restored = 1u << 0;
 inline constexpr std::uint8_t kept = 1u << 1;
 }  // namespace world_break
-inline constexpr std::size_t kMaxWorldKept = 256;  // kept breaks per scene
+inline constexpr std::size_t kMaxWorldKept = 256;        // kept breaks per scene
+inline constexpr std::size_t kMaxWorldKeptTotal = 2048;  // and in all (the game has 98 locks)
 inline constexpr std::size_t kMaxWorldBreaks = 1024;  // kept per scene
 
 struct WorldBreak {

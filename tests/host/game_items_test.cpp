@@ -379,6 +379,44 @@ TEST_CASE("game items: the store adds count deltas") {
   CHECK(keys(w) == 4);
 }
 
+TEST_CASE("game items: a key our own game spent is told apart from one written in for another") {
+  // Locked doors (docs/dungeon.md): a lock's second key goes back only against
+  // a drop of our own game's count, never a total the watcher wrote in.
+  auto hw = game(), aw = game(), bw = game();
+  GameFlagStore hg(hw), ag(aw), bg(bw);
+  ItemFlagStore hs(hg), as(ag), bs(bg);
+  for (auto* w : {&hw, &aw, &bw}) hold_int(*w, kForestKeys, 2);
+  FlagWatcher host(item_shared_flags(), FlagRole::host);
+  FlagWatcher a(item_shared_flags(), FlagRole::player);
+  FlagWatcher b(item_shared_flags(), FlagRole::player);
+  host.frame(hs);
+  a.frame(as);
+  b.frame(bs);
+  // A opens a door.
+  hold_int(aw, kForestKeys, 1);
+  const auto from_a = a.frame(as);
+  CHECK(a.take_own_count_drops() == std::vector{FlagKey{kForestKeys, 0}});
+  CHECK(a.take_own_count_drops().empty());  // taken once
+  deliver(host, from_a);
+  const auto answer = host.frame(hs);
+  CHECK(keys(hw) == 1);
+  deliver(b, answer);
+  b.frame(bs);
+  CHECK(keys(bw) == 1);
+  // The host and B only took A's spend in: no drop of their own.
+  host.frame(hs);
+  b.frame(bs);
+  CHECK(host.take_own_count_drops().empty());
+  CHECK(b.take_own_count_drops().empty());
+  // A key picked up is no drop; the host's own door is one.
+  hold_int(bw, kForestKeys, 2);
+  b.frame(bs);
+  CHECK(b.take_own_count_drops().empty());
+  hold_int(hw, kForestKeys, 0);
+  host.frame(hs);
+  CHECK(host.take_own_count_drops() == std::vector{FlagKey{kForestKeys, 0}});
+}
+
 TEST_CASE("game items: two players gaining keys at once lose no increment") {
   // Host H and players A and B, each with 2 Forest Temple keys.
   auto hw = game(), aw = game(), bw = game();

@@ -131,6 +131,10 @@ class Session {
   std::vector<FlagKey> take_written_for_others() {
     return watcher_ ? watcher_->take_written_for_others() : std::vector<FlagKey>{};
   }
+  // Emulator thread only: FlagWatcher::take_own_count_drops.
+  std::vector<FlagKey> take_own_count_drops() {
+    return watcher_ ? watcher_->take_own_count_drops() : std::vector<FlagKey>{};
+  }
 
   // Emulator thread only (the parts frame() uses), for tests and the overlay.
   const Sampler& sampler() const { return sampler_; }

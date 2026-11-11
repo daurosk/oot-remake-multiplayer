@@ -44,6 +44,7 @@ bool EnetServer::start() {
   if (host_ == nullptr) return false;
   host_->maximumPacketSize = kMaxPacketBytes;
   host_->maximumWaitingData = kMaxWaitingBytes;
+  host_->mtu = protocol::kDatagramBytes;  // VPN-safe datagrams (issue 143)
   return true;
 }
 

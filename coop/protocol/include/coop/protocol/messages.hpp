@@ -44,6 +44,14 @@ inline constexpr std::uint8_t kChannelOwnership = 2;
 inline constexpr std::uint8_t kChannelPlayerSamples = 3;
 inline constexpr std::uint8_t kChannelObjectSamples = 4;
 inline constexpr std::uint8_t kChannelCount = 5;
+// The largest UDP payload ENet puts in one datagram (its MTU), on the server
+// and in every game; ENet takes the smaller of the two sides, so either side
+// alone is enough. ENet's default of 1392 makes 1420-byte IP packets, more
+// than a VPN adapter carries (Hamachi about 1404, Tailscale 1280): those were
+// split or dropped, and a large reliable message (a snapshot) was sent again
+// until the connection timed out (issue 143). 1200 + 28 header bytes fits
+// them all. Not part of the protocol version: ENet agrees on it at connect.
+inline constexpr std::uint32_t kDatagramBytes = 1200;
 
 // Message type numbers on the wire. Never renumber; add new ones at the end.
 enum class MessageType : std::uint16_t {

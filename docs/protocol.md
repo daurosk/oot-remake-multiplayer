@@ -21,6 +21,7 @@ Each rule answers a way the TotK online sync was seen to break.
 ## Transport
 
 - ENet over UDP, default port **27510** (changeable in settings).
+- Datagrams of at most **1200 bytes** (ENet's MTU, `kDatagramBytes`), set on the server and in every game; ENet takes the smaller of the two sides at connect, so this is not part of the protocol version. ENet's default 1392 made 1420-byte IP packets, more than a VPN carries (Hamachi about 1404, Tailscale 1280; issue 143). Larger messages are split by ENet into several datagrams.
 - Channels:
 
 | Channel | Kind | Carries |

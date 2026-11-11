@@ -1802,3 +1802,62 @@ TEST_CASE("client: equipment is kept per player and ours goes to each newcomer")
   CHECK(to_string(EventKind::player_equip) == "player equip");
   client.stop();
 }
+
+TEST_CASE("client: datagrams are VPN-safe and a large snapshot still arrives whole") {
+  // Issue 143: over Hamachi (about 1404 bytes a packet) ENet's default 1392-byte
+  // datagrams make 1420-byte packets; the game was cut every 15-18 s.
+  FakeServer server;  // ENet's default size: the smaller side wins
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK(client.link().mtu == proto::kDatagramBytes);
+  REQUIRE(server.last_peer != nullptr);
+  CHECK(server.last_peer->mtu == proto::kDatagramBytes);
+  CHECK(proto::kDatagramBytes + 28 <= 1280);  // IP and UDP headers: fits Tailscale and Hamachi
+
+  // A snapshot many datagrams long comes through in full.
+  proto::FlagSnapshot big{0, 1, {}};
+  for (std::uint32_t i = 0; i < 600; ++i) {
+    big.flags.push_back(s32_flag(i + 1, static_cast<std::int32_t>(i)));
+  }
+  const auto bytes = proto::encode(big);
+  REQUIRE(bytes.has_value());
+  CHECK(bytes->size() > 4 * proto::kDatagramBytes);
+  server.send(big, proto::kChannelProgress);
+  REQUIRE(wait_event(client, server, events, EventKind::flag_snapshot));
+  CHECK(events.all[*events.find(EventKind::flag_snapshot)].flags == big.flags);
+  CHECK(client.link().largest_sent > 0);  // HELLO at least
+}
+
+TEST_CASE("client: link() counts the time since the server's last packet") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  CHECK(client.link().quiet_ms < 200);
+
+  // The server says nothing (its PINGs are lost): the quiet grows.
+  pump(client, server, [] { return false; }, 600);
+  CHECK(client.link().quiet_ms >= 500);
+
+  // A packet comes: back near 0.
+  server.send(proto::Ping{1}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.link().quiet_ms < 100; }));
+}
+
+TEST_CASE("client: a lost connection reports how the link looked") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  welcome_as(client, server, events, 2, {{1, "Saria"}});
+  pump(client, server, [] { return false; }, 300);
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+  const Event& lost = events.all[*events.find(EventKind::disconnected)];
+  CHECK(lost.link.mtu == proto::kDatagramBytes);
+  CHECK(lost.link.largest_sent > 0);
+  CHECK(lost.link.quiet_ms < 2000);
+}

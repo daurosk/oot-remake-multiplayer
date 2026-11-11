@@ -9,6 +9,7 @@
 
 #include <enet/enet.h>
 
+#include "coop/protocol/messages.hpp"
 #include "enet_server.hpp"
 #include "options.hpp"
 
@@ -56,8 +57,10 @@ int main(int argc, char** argv) {
                    static_cast<unsigned>(line->port));
       exit_code = 1;
     } else {
-      std::printf("coop_server: listening on port %u\n",
-                  static_cast<unsigned>(server.port()));
+      // On every network adapter (a VPN's too), with VPN-safe datagrams (issue 143).
+      std::printf("coop_server: listening on port %u (all network adapters, datagrams of %u bytes)\n",
+                  static_cast<unsigned>(server.port()),
+                  static_cast<unsigned>(coop::protocol::kDatagramBytes));
       std::fflush(stdout);
       std::signal(SIGINT, on_signal);
       std::signal(SIGTERM, on_signal);

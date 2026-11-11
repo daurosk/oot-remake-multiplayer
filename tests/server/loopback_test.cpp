@@ -498,3 +498,18 @@ TEST_CASE("loopback: a killed client restarted on the same PC is back in within 
   CHECK(server.session().player_count() == 2);
   CHECK(server.session().stats().rejoined == 1);
 }
+
+TEST_CASE("loopback: an older game with ENet's default datagrams gets VPN-safe ones from the server") {
+  // Issue 143: the server alone sets the datagram size, so a game built before
+  // the fix still gets packets that fit a VPN (Hamachi about 1404 bytes).
+  EnetLife enet;
+  ServerOptions options;
+  options.port = 0;
+  EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client c;  // ENet's default 1392
+  c.connect(server.port());
+  REQUIRE(pump_until(server, {&c}, [&] { return c.connected; }));
+  CHECK(c.peer->mtu == kDatagramBytes);
+}

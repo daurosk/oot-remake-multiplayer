@@ -115,6 +115,8 @@ struct ClientConfig {
   std::uint32_t ping_interval_ms = 250;
   // ENet drops a peer after this long with nothing acknowledged.
   std::uint32_t timeout_ms = 10000;
+  // ENet's datagram size (its MTU), see protocol::kDatagramBytes.
+  std::uint32_t mtu = protocol::kDatagramBytes;
   // Give up on an attempt with no WELCOME or REFUSED by then.
   std::uint32_t handshake_timeout_ms = 10000;
   // Delay before the next attempt: doubles from the first to the most.
@@ -205,6 +207,16 @@ enum class DropReason : std::uint8_t {
   no_route,           // the address could not be resolved or used
 };
 
+// How the link to the server looked (issue 143), for the log. Read from
+// ENet while a connection is up; a lost connection reports the last values.
+struct LinkInfo {
+  std::uint32_t quiet_ms = 0;       // since the last packet from the server
+  std::uint32_t round_trip_ms = 0;  // ENet's own estimate
+  std::uint32_t loss_percent = 0;   // ENet's packet loss estimate
+  std::uint32_t mtu = 0;            // the datagram size both sides agreed
+  std::uint32_t largest_sent = 0;   // our largest message on this connection, bytes
+};
+
 struct Event {
   EventKind kind = EventKind::message;
   protocol::Welcome welcome;          // welcomed, reconnected
@@ -222,6 +234,7 @@ struct Event {
   protocol::JoinTarget join_target;          // join_accepted
   protocol::JoinRefuseReason join_reason{};  // join_refused; raw value kept
   protocol::Equipment equipment;             // player_equip
+  LinkInfo link;  // disconnected, connect_failed: the link just before
 };
 
 // A shared flag's place in the table: a name's hash and array index, or a
@@ -370,6 +383,10 @@ class Client {
   // True while a REFUSED "name taken" is being asked again (state
   // waiting_retry, connecting or handshaking within name_taken_retry_for_ms).
   bool retrying_name_taken() const { return name_taken_since_us_ != 0; }
+  // The link now (issue 143). quiet_ms counts while connecting, handshaking
+  // or connected; the server PINGs every 250 ms, so a few seconds of quiet
+  // means its packets do not reach us.
+  LinkInfo link() const;
 
  private:
   void begin_attempt();
@@ -416,6 +433,8 @@ class Client {
   std::uint32_t retry_delay_ms_ = 0;
   std::uint32_t failed_attempts_ = 0;
   std::uint64_t name_taken_since_us_ = 0;  // the first "name taken" in a row, 0: none
+  std::uint64_t last_receive_us_ = 0;  // last packet from the server, 0: none this attempt
+  LinkInfo link_;  // ENet's values, read after each service() with a peer
   std::uint32_t name_taken_retries_ = 0;
 
   ClockEstimator clock_;

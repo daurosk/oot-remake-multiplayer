@@ -293,6 +293,7 @@ private:
         bool local = false;         // broken in this game
         bool kept = false;          // a lock: lasts, never put back
         bool refunded = false;      // our second key for it went back
+        bool paid = false;          // opened here: one of our key drops paid for it
         bool seen_go = false;       // our own copy went (or never came) after it
         std::uint64_t gone_us = 0;  // when our copy went
     };
@@ -353,6 +354,8 @@ private:
     // only against a drop of our own key count in the last kOwnDropUs (that
     // drop is then used up).
     void Refund(Break& b, std::uint64_t hash, std::uint64_t now_us, const char* why);
+    // Takes one of our own key drops for this scene out (it paid for a lock).
+    bool TakeOwnDrop(std::uint64_t now_us);
     void Move(Object& o, std::uint8_t self, std::uint64_t now_us,
               const std::optional<coop::protocol::Vec3>& player, Out& out);
     std::optional<Sample> PoseAt(const Remote& r, std::uint64_t now_us) const;

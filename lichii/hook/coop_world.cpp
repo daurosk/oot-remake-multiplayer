@@ -333,6 +333,9 @@ void WorldSync::LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out
     k.got_us = now_us;
     k.local = true;
     k.kept = o.kept;
+    // Our own lock: the key our game spent on it is used up here, so it can
+    // never also pay for another lock's give-back.
+    k.paid = o.kept && TakeOwnDrop(now_us);
     broken_.emplace(o.hash, k);
     proto::WorldBreak b;
     b.scene = scene_;
@@ -355,20 +358,31 @@ void WorldSync::Refund(Break& b, std::uint64_t hash, std::uint64_t now_us, const
     if (key == 0) {
         return;  // no key count here (logged once by LocalBreak)
     }
-    std::erase_if(own_drops_, [now_us](const auto& d) { return now_us - d.second > kOwnDropUs; });
-    const auto drop = std::find_if(own_drops_.begin(), own_drops_.end(),
-                                   [key](const auto& d) { return d.first == key; });
-    if (drop == own_drops_.end()) {
+    // Both at once: our own break already took the key we spent on it (paid).
+    // Else a drop of our count must be there, and is used up.
+    if (!b.paid && !TakeOwnDrop(now_us)) {
         // Our count did not drop: our player spent nothing on it (the room
         // unloaded beside us, or another's spend came in): nothing back.
         refund_notes_.push_back(Line("world: %016llx lock %s, but no key of ours went: none back%s",
                                      hash, why, ""));
         return;
     }
-    own_drops_.erase(drop);
+    b.paid = false;
     b.refunded = true;
     refunds_.push_back(key);
     refund_notes_.push_back(Line("world: %016llx lock %s: one key back%s", hash, why, ""));
+}
+
+bool WorldSync::TakeOwnDrop(std::uint64_t now_us) {
+    const std::uint32_t key = SmallKeyFlag(scene_);
+    std::erase_if(own_drops_, [now_us](const auto& d) { return now_us - d.second > kOwnDropUs; });
+    const auto drop = std::find_if(own_drops_.begin(), own_drops_.end(),
+                                   [key](const auto& d) { return d.first == key; });
+    if (key == 0 || drop == own_drops_.end()) {
+        return false;
+    }
+    own_drops_.erase(drop);
+    return true;
 }
 
 void WorldSync::OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us) {

@@ -734,6 +734,32 @@ TEST_CASE("doors: a held lock that goes with no key of ours spent, or with the a
     }
 }
 
+TEST_CASE("doors: our own lock's key cannot also pay for a held lock beside it") {
+    // B holds lock Y (another player opened it) and opens its own lock X next to it.
+    WorldSync w;
+    const auto x = Thing(0x100, 0x11, std::nullopt, kLock);
+    const auto y = Thing(0x200, 0x12, std::nullopt, kLock, {1.0f, 2.0f, 4.5f});
+    TempleWalk(w, 1000, {x, y});
+    TempleWalk(w, 5000, {x, y});
+    w.Receive(BreakOf(0x12, proto::world_break::kept, kTemple));
+    TempleWalk(w, 5100, {x, y});
+    w.OwnCountDrop(0x877bdceeu, 6000 * kMs);  // the key spent on X
+    std::size_t sent = 0;
+    std::vector<std::uint32_t> back;
+    for (std::uint64_t t = 6100; t < 8000; t += 100) {
+        auto out = TempleWalk(w, t, {y});
+        sent += Sent<proto::WorldBreak>(out).size();
+        back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
+    }
+    CHECK(sent == 1);  // X went out, kept
+    // Y now leaves next to our Link (B leaves by a door): no key of ours is left for it.
+    for (std::uint64_t t = 8000; t < 11000; t += 100) {
+        auto out = TempleWalk(w, t, {});
+        back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
+    }
+    CHECK(back.empty());
+}
+
 TEST_CASE("doors: a host save load forgets the kept locks, which come back with their rooms") {
     WorldSync w;
     TempleWalk(w, 1000, LockAt(), kFar);

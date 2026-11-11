@@ -21,6 +21,9 @@ struct ServerOptions {
   std::uint16_t port = protocol::kDefaultPort;  // 0: any free port
   // More than 4 so a fifth player can connect and be told the server is full.
   std::size_t max_connections = 16;
+  // Listen on this IPv4 address only (a number, first dotted part highest);
+  // none: on every adapter.
+  std::optional<std::uint32_t> bind;
   SessionConfig session;
 };
 

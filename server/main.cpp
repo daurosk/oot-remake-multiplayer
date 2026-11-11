@@ -47,6 +47,8 @@ int main(int argc, char** argv) {
     options.port = line->port;
     options.session.game_build_id = line->game_build_id;
     options.session.max_half_open_per_address = line->max_half_open;
+    options.session.allowed = line->allowed;
+    options.bind = line->bind;
     options.session.log = [](const std::string& text) {
       std::printf("coop_server: %s\n", text.c_str());
       std::fflush(stdout);
@@ -57,10 +59,21 @@ int main(int argc, char** argv) {
                    static_cast<unsigned>(line->port));
       exit_code = 1;
     } else {
-      // On every network adapter (a VPN's too), with VPN-safe datagrams (issue 143).
-      std::printf("coop_server: listening on port %u (all network adapters, datagrams of %u bytes)\n",
-                  static_cast<unsigned>(server.port()),
+      // On every network adapter (a VPN's too) unless --bind, with VPN-safe
+      // datagrams (issue 143).
+      std::string where = "all network adapters";
+      if (line->bind) {
+        const std::uint32_t v = *line->bind;
+        where = "only " + std::to_string(v >> 24) + "." + std::to_string((v >> 16) & 255u) + "." +
+                std::to_string((v >> 8) & 255u) + "." + std::to_string(v & 255u);
+      }
+      std::printf("coop_server: listening on port %u (%s, datagrams of %u bytes)\n",
+                  static_cast<unsigned>(server.port()), where.c_str(),
                   static_cast<unsigned>(coop::protocol::kDatagramBytes));
+      if (!line->allowed.empty()) {
+        std::printf("coop_server: only the %u address range(s) given with --allow may connect\n",
+                    static_cast<unsigned>(line->allowed.size()));
+      }
       std::fflush(stdout);
       std::signal(SIGINT, on_signal);
       std::signal(SIGTERM, on_signal);
@@ -76,10 +89,11 @@ int main(int argc, char** argv) {
       }
       const Stats& stats = server.session().stats();
       std::printf("coop_server: stopping; relayed %llu, dropped %llu, "
-                  "half-open refused %llu\n",
+                  "half-open refused %llu, not allowed %llu\n",
                   static_cast<unsigned long long>(stats.relayed),
                   static_cast<unsigned long long>(stats.dropped()),
-                  static_cast<unsigned long long>(stats.half_open_limited));
+                  static_cast<unsigned long long>(stats.half_open_limited),
+                  static_cast<unsigned long long>(stats.not_allowed));
       std::printf("coop_server: flags relayed %llu, refused %llu, clashes %llu; "
                   "join relayed %llu, not there %llu, dropped %llu\n",
                   static_cast<unsigned long long>(stats.flag_relayed),

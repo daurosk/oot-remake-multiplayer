@@ -265,6 +265,7 @@ It writes `..\coop-kit\oot-coop-<yyyymmdd-hhmm>\` and a zip of it beside the mai
 | Option | What |
 |---|---|
 | `-EmulatorBin <folder>` | The patched emulator's `bin` folder (default `..\fritchii-src\build\coop\bin`). Its hook folder (`LICHII_COOP_DIR`) should be a checkout of `main`; `VERSION.txt` records which. |
+| `-Recipes <zip or folder>` | Fritchii's release zip (`Fritchii-<version>-Windows-x64.zip`, from the release of the pinned tag) or a folder: its `.nx2recipe` files go to `emulator\recipes\`, so players get Fritchii's "Preparing shaders" step on the first start (less stutter, most of all on AMD). A recipe holds no game code; `SOURCE.txt` names each one with its SHA-256. Release kits use it. |
 | `-BuildDir <folder>` | This repo's CMake build folder with `coop_server` (default `build`). |
 | `-OutRoot <folder>` | Where the kit goes (default `..\coop-kit`); never inside the repo. |
 | `-Port <n>` | The default port written into the kit (27510). |

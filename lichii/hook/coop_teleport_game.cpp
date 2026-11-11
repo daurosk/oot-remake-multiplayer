@@ -228,9 +228,14 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
             LOG_INFO(Core, "coop: teleport: scene change request cleared: {}", ok ? "done" : "NOT done");
         }
         if (act.scene) {
-            const bool ok = CoopBoss::AskSceneChange(system, main_base, *act.scene, "");
-            if (!ok) {
-                LOG_WARNING(Core, "coop: teleport: the scene change to {} could not be asked", *act.scene);
+            // Always with a start point of that scene: without one the game
+            // keeps the old scene's start name and the picture stays black.
+            const bool ok = !act.start.empty() && CoopBoss::AskSceneChange(system, main_base, *act.scene, act.start);
+            if (ok) {
+                LOG_INFO(Core, "coop: teleport: asked the scene change to {} at {}", *act.scene, act.start);
+            } else {
+                LOG_WARNING(Core, "coop: teleport: the scene change to {} at {} could not be asked", *act.scene,
+                            act.start.empty() ? "-" : act.start);
             }
         }
         if (act.move) {

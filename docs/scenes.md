@@ -39,6 +39,12 @@ The String64 table, from its getter 0xcb0ea0 (called with 0xee27bf71 from 0x3299
 
 No code in `main` writes `Sequence_ReservedNextBanc` by its hash: the writers are graph nodes (`SeqOneShotSetNonStructGameDataString64` and the like) that hash the name at run time.
 
+### The start point
+
+A scene change must name a start point of the new scene: `Sequence_ReservedNextStartPosName` = a `StartPos` placement's name in that scene. Left alone, it keeps the start name of the scene the player came from (the name the game loaded the old scene with), which the new scene does not have. The scene then loads and runs (sounds, objects, 60 FPS) but the picture stays black. Seen in test8: the host typed `/teleport B` in Kakariko, loaded `Graveyard_Child` with Kakariko's start name and stayed black (autotest runs host-save 20261111-003545 and teleport2 20261110-222949). Every autotest `warp` names a start and never went black.
+
+So `/teleport` to another scene names the entrance start point of that scene nearest the other player (`CoopTeleport::NearestStart`), and refuses a scene it has no start point of. The table is `lichii/hook/coop_start_points.inc`, written from the game's scene files by `tools/puppet_pack/start_points.py` (`python -m puppet_pack.start_points --romfs <romfs> --out lichii/hook/coop_start_points.inc`, run from `tools`). It keeps the named start points a loading zone uses (the game puts an `EntrancePos*` placement at, or within 5 m of, each of them) and leaves out warp-song, cutscene, boss-rush and mini-game starts when a scene has anything else, since those may start an event.
+
 ### Ways to build it, best first
 
 1. **Same as a loading zone.** Find what a door or exit sets (the C++ request that makes step 1 pick BancChange, plus the reserved flags), and do the same from the emulator between frames. Next step: one run with a hook that logs, every frame, the String64 and Vector3 `Sequence_Reserved*` flags (table layout above) and the selector object's state, while Caleb walks through one loading zone. Then trace the writer of whatever changed (`QueryBancChangeEventRequestArg` 0x29bf380 and the strings `ChangeBancName`, `NextBancParamNameAdult/Child`, `game__MapChangeBancInfoParam` are the leads).

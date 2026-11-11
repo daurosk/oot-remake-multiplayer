@@ -14,10 +14,14 @@
 //    never land in a wall or in mid-air) and its rotation; or refuse (busy:
 //    loading, an event, no Link; cannot warp: its boss fight).
 // 3. On accept (Trip::Accepted): the same scene moves our Link there at once;
-//    another scene asks the game's scene change and asks it again every
+//    another scene asks the game's scene change (at that scene's entrance
+//    start point nearest the player: NearestStart) and asks it again every
 //    0.5 s until our Link is in that scene (the game takes it only while an
 //    event runs: a talk, a sign; docs/scenes.md), then waits for the scene to
 //    settle, asks the player again for where it stands now, and moves there.
+// Another scene with no start point known is refused: without one the game
+// keeps the old scene's start name, which the new scene does not have, and
+// the picture stays black after the load (docs/scenes.md "The start point").
 // Refused before anything is sent: our own event, loading, our boss fight,
 // a scene of the other age (X_Child / X_Adult) than our Link's.
 #pragma once
@@ -38,6 +42,11 @@ struct Vec {
     float y = 0.0f;  // height
     float z = 0.0f;
 };
+
+// The entrance start point of `scene` nearest `to` (coop_start_points.inc,
+// written from the game's scene files by tools/puppet_pack/start_points.py).
+// Nothing for a scene we have no start point of.
+std::optional<std::string> NearestStart(std::string_view scene, const Vec& to);
 
 // A chat line that is a command, not chat. "/teleport" alone lists players.
 struct Command {
@@ -128,6 +137,7 @@ public:
     struct Actions {
         std::vector<std::string> lines;      // chat notices
         std::optional<std::string> scene;    // ask the game's scene change to it
+        std::string start;                   // with scene: the start point there (never empty)
         std::optional<Vec> move;             // move our Link here (same scene)
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
         bool cancel_scene = false;           // clear our scene change request (given up)
@@ -154,6 +164,7 @@ private:
     std::uint8_t player_ = 0;
     std::string name_;
     std::string scene_;           // travelling: where to
+    std::string start_;           // travelling: the start point there
     Vec at_{};                    // travelling: the first answer's place, the fallback
     std::uint64_t since_us_ = 0;  // travelling: since the first ask
     std::uint64_t asked_us_ = 0;  // travelling: the last ask

@@ -1747,3 +1747,43 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
+
+TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is deleted only if it stands") {
+    // breakables-2 (test6 players): the Deku Tree web burnt in A just vanished
+    // in B. One with a life (a bomb web, a cracked wall) gets life 0 first, so
+    // the game breaks it; the delete is the fallback.
+    Sync sync;
+    Seen web;
+    web.address = 0x700;
+    web.name = "Obj_InsideTheDekuTree_SpiderWeb_A_02";
+    web.hash = 0x2016a1ad3261af2a;
+    web.position = {5.0f, 2.0f, 1.0f};
+    web.life = proto::ObjectLife{1, 1};
+    Tick(sync, 0, {web});
+    sync.Take(web.hash);
+    auto step = Tick(sync, 10 * kMs, {web});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].address == 0x700);
+    CHECK(step.writes[0].life == 0);
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(sync.Removes().empty());
+    // Its break plays: not deleted, not written again.
+    step = Tick(sync, 800 * kMs, {web});
+    CHECK(step.writes.empty());
+    CHECK(sync.Removes().empty());
+    // Still standing 1.5 s on: deleted after all.
+    Tick(sync, 1600 * kMs, {web});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
+
+    // One with no life (the floor web you fall through) goes at once, as before.
+    Sync other;
+    Seen floor = web;
+    floor.name = "Obj_InsideTheDekuTree_SpiderWeb_A_01";
+    floor.hash = 0x3de66423437a955;
+    floor.life.reset();
+    Tick(other, 0, {floor});
+    other.Take(floor.hash);
+    step = Tick(other, 10 * kMs, {floor});
+    CHECK(step.writes.empty());
+    CHECK(other.Removes() == std::vector<std::uint64_t>{0x700});
+}

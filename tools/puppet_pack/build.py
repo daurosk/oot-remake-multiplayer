@@ -116,7 +116,7 @@ PACK_SIZE_MARGIN = 0x1000
 # (`IsPrepareVisibleOff`), so in the player logs every seed copy was made and none was seen.
 # A stand-in is the shootable's model only, with the shared default components the puppet uses:
 # no physics, sensor, attack, AI, effects or sound. It is drawn wherever the hook puts it and can
-# hit nothing (the hook's CoopSpawn::StandIn has the same names). A romfs without the source pack
+# hit nothing (the hook's CoopSpawn::StandIn has the same names; CoopShot_Bomb is in HeldStandIn). A romfs without the source pack
 # (the tests' made-up one) gets no stand-in.
 STAND_INS = (
     ("Shootable_DekuSeed", "CoopShot_Seed"),

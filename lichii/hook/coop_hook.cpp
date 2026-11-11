@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <string_view>
 #include <thread>
 
@@ -939,13 +940,16 @@ private:
             // Issue 108: each REFUSED name taken asked again, so a log shows
             // the retries (every name_taken_retry_ms, at least 100 ms apart)
             // and when the window ends.
-            const std::uint32_t name_retries =
-                session_->with_client([](coop::net::Client& c) { return c.name_taken_retries(); });
+            // Counted from the start of each window (the client's count is a total).
+            const auto [name_retries, name_retrying] = session_->with_client([](coop::net::Client& c) {
+                return std::pair{c.name_taken_retries(), c.retrying_name_taken()};
+            });
             if (name_retries != name_retries_logged_) {
                 name_retries_logged_ = name_retries;
                 LOG_INFO(Core, "coop: name {} is in use on the server; asking again (retry {})",
-                         settings_.name, name_retries);
+                         settings_.name, name_retries - name_retries_base_);
             }
+            if (!name_retrying) name_retries_base_ = name_retries;
             // Issue 143: the server PINGs every 250 ms. Seconds without a
             // packet while connected means its packets do not reach us.
             if (room.state == coop::net::State::connected) {
@@ -1209,6 +1213,7 @@ private:
     bool quiet_warned_ = false;
     static constexpr std::uint32_t kQuietWarnMs = 3000;
     std::uint32_t name_retries_logged_ = 0;  // network thread (Run), issue 108
+    std::uint32_t name_retries_base_ = 0;    // the total when this window began
     std::thread thread_;
 
     // Guarded by view_mutex_.

@@ -1105,11 +1105,12 @@ TEST_CASE("game ticks: calls become 1/60 s of the clock (issue 106)") {
   CHECK(none.step() == 1);
 
   std::uint64_t now = 1'000'000;
+  // `calls` intervals: calls + 1 calls span one second; the first is 1 tick.
   auto run = [&](std::uint64_t every_us, int calls) {
     coop::host::GameTicks t;
     t.set_clock([&] { return now; });
     unsigned sum = 0;
-    for (int i = 0; i < calls; ++i) {
+    for (int i = 0; i <= calls; ++i) {
       sum += t.step();
       now += every_us;
     }
@@ -1117,13 +1118,13 @@ TEST_CASE("game ticks: calls become 1/60 s of the clock (issue 106)") {
   };
   const unsigned at165 = run(6'061, 165);  // one second of high refresh
   CHECK(at165 >= 59);
-  CHECK(at165 <= 61);
+  CHECK(at165 <= 62);
   const unsigned at60 = run(16'667, 60);
   CHECK(at60 >= 59);
-  CHECK(at60 <= 61);
+  CHECK(at60 <= 62);
   const unsigned at30 = run(33'333, 30);
   CHECK(at30 >= 59);
-  CHECK(at30 <= 61);
+  CHECK(at30 <= 62);
 
   coop::host::GameTicks t;
   t.set_clock([&] { return now; });

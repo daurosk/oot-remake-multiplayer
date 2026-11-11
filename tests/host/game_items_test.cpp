@@ -408,7 +408,14 @@ TEST_CASE("game items: a key our own game spent is told apart from one written i
   b.frame(bs);
   CHECK(host.take_own_count_drops().empty());
   CHECK(b.take_own_count_drops().empty());
-  // A key picked up is no drop; the host's own door is one.
+  // A key picked up is no drop; the host's own door is one. (The games apply
+  // the totals written in first, as each frame does.)
+  apply_ints(hw);
+  apply_ints(bw);
+  host.frame(hs);
+  b.frame(bs);
+  CHECK(host.take_own_count_drops().empty());
+  CHECK(b.take_own_count_drops().empty());
   hold_int(bw, kForestKeys, 2);
   b.frame(bs);
   CHECK(b.take_own_count_drops().empty());

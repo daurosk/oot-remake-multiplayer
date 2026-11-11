@@ -1,0 +1,15 @@
+mark start
+wait 120
+chat /teleport
+wait 120
+mark listed
+wait 360                # B walks away
+mark before
+chat /teleport B
+wait 300
+mark next-to-b
+chat /teleport nobody
+wait 90
+chat /teleport A
+wait 120
+mark end

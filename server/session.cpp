@@ -815,7 +815,9 @@ void Session::on_world(ConnectionId id, Connection& c, std::uint8_t channel, Mes
     }
     if (!world_.on_break(*b)) {
       ++stats_.world_repeated;
-      return;
+      // A lock a second player opened too: the others must hear of it, so
+      // the one who spent the second key gives it back (docs/dungeon.md).
+      if ((b->flags & world_break::kept) == 0) return;
     }
     send_to_scene(b->scene, id, channel, message);
   } else if (auto* p = std::get_if<WorldPlace>(&message)) {

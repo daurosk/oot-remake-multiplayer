@@ -123,6 +123,13 @@ class FlagWatcher {
   std::vector<FlagKey> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
+  // The counts (small keys, ...) our game itself lowered since the last call,
+  // one entry per drop, oldest first: what the game did, never a total this
+  // watcher wrote in (another player's spend). The hook gives a lock's second
+  // key back only against one of these (docs/dungeon.md, "Locked doors").
+  std::vector<FlagKey> take_own_count_drops() { return std::exchange(own_count_drops_, {}); }
+  static constexpr std::size_t kMaxOwnCountDrops = 64;
+
   // The host left and this player takes over, or the other way round. Keeps
   // what is known of the game; drops a snapshot being held.
   void set_role(FlagRole role);
@@ -182,6 +189,7 @@ class FlagWatcher {
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
   std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
+  std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);
   std::size_t learned_ = 0;

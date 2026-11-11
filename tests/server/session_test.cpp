@@ -12,6 +12,7 @@
 
 #include "coop/protocol/codec.hpp"
 #include "session.hpp"
+#include "world.hpp"
 
 using namespace coop::protocol;
 using namespace coop::server;
@@ -1727,6 +1728,57 @@ TEST_CASE("a break that the game put back is forgotten") {
   h.clear();
   h.receive(3, sample_in("Kakariko"), kChannelPlayerSamples);
   CHECK(messages_to<WorldBreak>(h, 3).empty());
+}
+
+TEST_CASE("a lock's break is kept when the scene empties, and a second player's is passed on") {
+  ObjectHarness h;
+  h.receive(1, sample_in("WaterTemple"), kChannelPlayerSamples);
+  h.receive(2, sample_in("WaterTemple"), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, broke("WaterTemple", 0x11, world_break::kept), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 2) ==
+        std::vector<WorldBreak>{by(1, broke("WaterTemple", 0x11, world_break::kept))});
+  // Player 2 opened the same lock at once: the others hear it (one key goes back).
+  h.clear();
+  h.receive(2, broke("WaterTemple", 0x11, world_break::kept), kChannelSession);
+  CHECK(messages_to<WorldBreak>(h, 1) ==
+        std::vector<WorldBreak>{by(2, broke("WaterTemple", 0x11, world_break::kept))});
+  CHECK(h.session.stats().world_repeated == 1);
+  // A pot broken there too. Both leave: the pot is forgotten, the lock is not.
+  h.receive(1, broke("WaterTemple", 0x22), kChannelSession);
+  h.receive(1, sample_in("LakeHylia"), kChannelPlayerSamples);
+  h.receive(2, sample_in("LakeHylia"), kChannelPlayerSamples);
+  h.clear();
+  h.receive(3, sample_in("WaterTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 3) ==
+        std::vector<WorldBreak>{by(1, broke("WaterTemple", 0x11, world_break::kept))});
+  // A late joiner who comes in gets it too.
+  h.join(4, "Ruto");
+  h.clear();
+  h.receive(4, sample_in("WaterTemple"), kChannelPlayerSamples);
+  CHECK(messages_to<WorldBreak>(h, 4).size() == 1);
+}
+
+TEST_CASE("kept breaks are forgotten on a host save load and are capped in all") {
+  coop::server::WorldStore store;
+  CHECK(store.on_break(broke("WaterTemple", 0x11, world_break::kept)));
+  CHECK(store.on_break(broke("WaterTemple", 0x22)));
+  store.forget("WaterTemple");
+  CHECK(store.breaks("WaterTemple") == 1);  // the lock stays when the scene empties
+  store.forget_kept();                      // host-save's FLAG_RESET: as the save has it
+  CHECK(store.breaks("WaterTemple") == 0);
+  CHECK(store.replay("WaterTemple").empty());
+  // At most kMaxWorldKept a scene and kMaxWorldKeptTotal in all, whatever the scene names.
+  std::size_t taken = 0;
+  for (std::uint64_t s = 0; s < 20; ++s) {
+    for (std::uint64_t h = 1; h <= 300; ++h) {
+      taken += store.on_break(broke("Scene" + std::to_string(s), h, world_break::kept)) ? 1 : 0;
+    }
+  }
+  CHECK(taken == kMaxWorldKeptTotal);
+  CHECK(store.breaks("Scene0") == kMaxWorldKept);
+  store.forget_kept();
+  CHECK(store.on_break(broke("Scene19", 1, world_break::kept)));
 }
 
 TEST_CASE("moves are passed on, the last rest place is kept for those who come later") {

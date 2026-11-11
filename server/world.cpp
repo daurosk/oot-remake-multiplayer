@@ -8,6 +8,16 @@ namespace coop::server {
 using namespace coop::protocol;
 
 bool WorldStore::on_break(const WorldBreak& b) {
+  if ((b.flags & world_break::kept) != 0) {
+    auto& kept = kept_[b.scene];
+    for (const WorldBreak& k : kept) {
+      if (k.hash == b.hash) return false;
+    }
+    if (kept.size() >= kMaxWorldKept || kept_total_ >= kMaxWorldKeptTotal) return false;
+    kept.push_back(b);
+    ++kept_total_;
+    return true;
+  }
   if ((b.flags & world_break::restored) != 0) {
     auto it = scenes_.find(b.scene);
     if (it == scenes_.end() || it->second.breaks.erase(b.hash) == 0) return false;
@@ -59,6 +69,9 @@ void WorldStore::on_sign_cut(const SignCut& c) {
 
 std::vector<Message> WorldStore::replay(const std::string& scene) const {
   std::vector<Message> out;
+  if (auto k = kept_.find(scene); k != kept_.end()) {
+    for (const WorldBreak& b : k->second) out.emplace_back(b);
+  }
   auto it = scenes_.find(scene);
   if (it == scenes_.end()) return out;
   for (std::uint64_t hash : it->second.order) out.emplace_back(it->second.breaks.at(hash));
@@ -74,7 +87,9 @@ void WorldStore::forget(const std::string& scene) { scenes_.erase(scene); }
 
 std::size_t WorldStore::breaks(const std::string& scene) const {
   auto it = scenes_.find(scene);
-  return it == scenes_.end() ? 0 : it->second.breaks.size();
+  auto k = kept_.find(scene);
+  return (it == scenes_.end() ? 0 : it->second.breaks.size()) +
+         (k == kept_.end() ? 0 : k->second.size());
 }
 
 std::size_t WorldStore::places(const std::string& scene) const {

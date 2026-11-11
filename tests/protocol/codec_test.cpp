@@ -1229,7 +1229,7 @@ GrassCut Cut() {
 
 TEST_CASE("grass cuts have their number, channel and layout") {
   CHECK(static_cast<int>(MessageType::grass_cut) == 28);
-  CHECK(kProtocolVersion == 6);
+  CHECK(kProtocolVersion == 7);
   CHECK(channel_of(MessageType::grass_cut) == kChannelSession);
   CHECK_FALSE(allowed_on_channel(MessageType::grass_cut, kChannelPlayerSamples));
   CHECK(may_send(Sender::client, MessageType::grass_cut));
@@ -1331,7 +1331,14 @@ TEST_CASE("bad world messages are refused") {
   b.scene.clear();
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
-  b.flags = 2;
+  b.flags = 4;
+  CHECK(encode(b, out) == Error::bad_value);
+  // A lock's break is kept, never restored: both bits at once are refused.
+  b.flags = world_break::kept;
+  Message kept_back;
+  REQUIRE(decode(must_encode(Message{b}), kept_back) == Error::none);
+  CHECK(std::get<WorldBreak>(kept_back).flags == world_break::kept);
+  b.flags = world_break::kept | world_break::restored;
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
   b.position[2] = std::numeric_limits<float>::infinity();

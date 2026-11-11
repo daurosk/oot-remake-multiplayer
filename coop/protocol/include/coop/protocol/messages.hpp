@@ -17,7 +17,7 @@ namespace coop::protocol {
 
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the 0.1.0-test4 messages
 // (types 28 to 39) and the server sending HANDOVER_ASK.
-inline constexpr std::uint16_t kProtocolVersion = 6;
+inline constexpr std::uint16_t kProtocolVersion = 7;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -767,10 +767,16 @@ struct GrassCut {
 // breaks while anyone is in it and sends them to a player who enters, so a
 // pot broken before a player came is gone for that player too. With
 // `restored` the game put the object back (a pot that respawns): the break
-// is forgotten.
+// is forgotten. `kept` a break that lasts (a small-key door's lock, which the
+// opener's game saves): the server keeps it for the session, also while
+// nobody is in the scene, and passes on a second player's break of it too
+// (both opened it: one key is given back, docs/dungeon.md "Locked doors").
 namespace world_break {
 inline constexpr std::uint8_t restored = 1u << 0;
+inline constexpr std::uint8_t kept = 1u << 1;
 }  // namespace world_break
+inline constexpr std::size_t kMaxWorldKept = 256;        // kept breaks per scene
+inline constexpr std::size_t kMaxWorldKeptTotal = 2048;  // and in all (the game has 98 locks)
 inline constexpr std::size_t kMaxWorldBreaks = 1024;  // kept per scene
 
 struct WorldBreak {

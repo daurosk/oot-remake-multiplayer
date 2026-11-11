@@ -1321,7 +1321,8 @@ bool unit_quat(const Quat& q) {
 // head, 3 x f32 position (finite), u8 flags.
 Error encode_body(const WorldBreak& m, Writer& w) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
-  if (!all_finite(m.position) || (m.flags & ~world_break::restored) != 0) return Error::bad_value;
+  if (!all_finite(m.position) || (m.flags & ~(world_break::restored | world_break::kept)) != 0 ||
+      (m.flags & world_break::restored && m.flags & world_break::kept)) return Error::bad_value;
   w.u8(m.player_number);
   w.str(m.scene);
   w.u64(m.hash);
@@ -1338,7 +1339,8 @@ Error decode_body(Reader& r, WorldBreak& m) {
   for (float& f : m.position) COOP_READ(r.f32(f));
   COOP_READ(r.u8(m.flags));
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
-  if (!all_finite(m.position) || (m.flags & ~world_break::restored) != 0) return Error::bad_value;
+  if (!all_finite(m.position) || (m.flags & ~(world_break::restored | world_break::kept)) != 0 ||
+      (m.flags & world_break::restored && m.flags & world_break::kept)) return Error::bad_value;
   return Error::none;
 }
 

@@ -57,6 +57,7 @@
 #include "coop_svc.h"
 
 #include <algorithm>
+#include <utility>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -202,6 +203,24 @@ constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
 
 // LICHII_COOP_OBJECTS_CHEAT: what it sets is in coop_cheat_items.h.
+
+// Keys to give back for locks opened twice (WorldSync::Out::key_refunds).
+std::mutex& KeyRefundMutex() {
+    static std::mutex m;
+    return m;
+}
+std::vector<std::uint32_t>& KeyRefundQueue() {
+    static std::vector<std::uint32_t> q;
+    return q;
+}
+std::vector<std::uint32_t>& OwnDropQueue() {  // our own key spends, for WorldSync
+    static std::vector<std::uint32_t> q;
+    return q;
+}
+bool& ForgetKeptFlag() {  // a host save load: WorldSync::ForgetKept before the next walk
+    static bool f = false;
+    return f;
+}
 
 bool EnvFlag(const char* name) {
 #ifdef _WIN32
@@ -888,11 +907,26 @@ public:
         // Breaks and moves of placed world objects (docs/world.md).
         {
             CoopWorld::WorldSync::Out world;
+            {
+                std::lock_guard lock(KeyRefundMutex());
+                for (const std::uint32_t key : OwnDropQueue()) {
+                    world_.OwnCountDrop(key, server_now_us);
+                }
+                OwnDropQueue().clear();
+                if (std::exchange(ForgetKeptFlag(), false)) {
+                    world_.ForgetKept();
+                }
+            }
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            if (!world.key_refunds.empty()) {
+                std::lock_guard lock(KeyRefundMutex());
+                auto& refunds = KeyRefundQueue();
+                refunds.insert(refunds.end(), world.key_refunds.begin(), world.key_refunds.end());
+            }
             sign_words_ = std::move(world.words);  // written after the probe's look
             for (std::string& count : world.give_back) {
                 CoopWorld::QueueGiveBack(std::move(count));  // a small key or token both took
@@ -1836,6 +1870,27 @@ std::vector<std::uint64_t> OwnedActors() {
             out.push_back(address);
         }
     }
+    return out;
+}
+
+void OwnCountDrops(const std::vector<std::uint32_t>& key_flags) {
+    if (key_flags.empty()) {
+        return;
+    }
+    std::lock_guard lock(KeyRefundMutex());
+    auto& drops = OwnDropQueue();
+    drops.insert(drops.end(), key_flags.begin(), key_flags.end());
+}
+
+void ForgetKeptBreaks() {
+    std::lock_guard lock(KeyRefundMutex());
+    ForgetKeptFlag() = true;
+}
+
+std::vector<std::uint32_t> TakeKeyRefunds() {
+    std::lock_guard lock(KeyRefundMutex());
+    std::vector<std::uint32_t> out;
+    out.swap(KeyRefundQueue());
     return out;
 }
 

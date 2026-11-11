@@ -58,6 +58,17 @@ void TakenForOthers(const std::vector<std::uint64_t>& keys);
 // alive in the last walk of LICHII_COOP_OBJECTS (BossAlive); nothing when
 // no walk ran in the last 1.5 s, or its life is not read. Any thread.
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies);
+// Small keys to give back to our game (the SmallKeyNum flag of the dungeon,
+// once each): a door's lock this game opened after another player already
+// had, or at the same moment with the higher player number (docs/dungeon.md,
+// "Locked doors"). Taken by the hook, which adds 1 to each in the game.
+std::vector<std::uint32_t> TakeKeyRefunds();
+// Our own game lowered these counts (Session::take_own_count_drops): a key
+// spent here. A lock's second key goes back only against one of these.
+void OwnCountDrops(const std::vector<std::uint32_t>& key_flags);
+// The host loaded a save (host-save's FLAG_RESET): forget the kept lock
+// breaks (WorldSync::ForgetKept). For the integrator to call on that event.
+void ForgetKeptBreaks();
 
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).

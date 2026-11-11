@@ -477,6 +477,11 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       continue;
     }
     ++stats_.changes_sent;
+    if (store.is_count(key) && before.kind == protocol::FlagKind::int32 &&
+        now->kind == protocol::FlagKind::int32 && as_int(now->value) < as_int(before.value) &&
+        own_count_drops_.size() < kMaxOwnCountDrops) {
+      own_count_drops_.push_back(key);  // our game spent one (a key on a door)
+    }
     if (role_ == FlagRole::player && store.is_count(key) &&
         before.kind == protocol::FlagKind::int32 && now->kind == protocol::FlagKind::int32) {
       // A count: the change, so a gain here and one elsewhere both count.

@@ -37,6 +37,18 @@ bool IsBreakable(std::string_view name);
 // one, the slider box).
 bool IsMovable(std::string_view name);
 
+// A door's lock (Obj_DoorChainLock_*, Obj_SpiritTemple_DoorChainLock_*; a door
+// set places one on each side): it goes when opened and the opener's game
+// saves that, so its break is kept (docs/dungeon.md, "Locked doors"). Not the
+// Market shops' night locks; the boss doors' (ChainLockLocator_BossDoor) are no
+// Obj_ actor. A lock that needs no small key gives none back: a key goes back
+// only against our own SmallKeyNum drop.
+bool IsLock(std::string_view name);
+
+// The flag of `scene`'s small key count, DungeonInfo.<scene>.SmallKeyNum, or 0
+// for a scene with no keys.
+std::uint32_t SmallKeyFlag(std::string_view scene);
+
 // Signs a sword cuts (their life never drops: WORLD_HIT shares the swing).
 bool IsSign(std::string_view name);
 
@@ -334,6 +346,8 @@ public:
     static constexpr std::uint64_t kRespawnUs = 3'000'000;    // back this long after it went: put back by the game
     static constexpr std::uint64_t kEchoUs = 2'000'000;       // our break this soon before theirs was theirs
     static constexpr int kMissedWalks = 2;
+    static constexpr float kLockHoldM = 2.5f;  // another's lock this near our Link: not deleted
+    static constexpr std::uint64_t kOwnDropUs = 8'000'000;  // a key spent this recently can go back
     static constexpr float kBreakNearM = 8.0f;   // as CoopObjects::Sync
     static constexpr float kBreakReachM = 3.0f;
     static constexpr int kUnloadCount = 4;       // this many gone together, one of them far: unloaded
@@ -357,6 +371,10 @@ public:
 
     struct Out {
         std::vector<coop::protocol::Message> send;
+        // Small keys to give back to our game: the flag of the dungeon's
+        // SmallKeyNum, once per lock this game opened after another already
+        // had (docs/dungeon.md, "Locked doors").
+        std::vector<std::uint32_t> key_refunds;
         std::vector<CoopObjects::LifeWrite> lives;
         // Another player's sword hits to give our copies (signs), through
         // the game's own damage call.
@@ -402,6 +420,13 @@ public:
     // Network thread: WORLD_BREAK, WORLD_MOVE, WORLD_PLACE. Others ignored.
     void Receive(const coop::protocol::Message& message);
 
+    // Present thread, before Tick: our own game lowered this count (the
+    // SmallKeyNum flag's hash; FlagWatcher::take_own_count_drops).
+    void OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us);
+    // Present thread: the host loaded a save (host-save's FLAG_RESET): kept
+    // breaks (locks) are forgotten, so our locks come back with their rooms.
+    void ForgetKept();
+
     // Present thread, once per walk, with every breakable and movable the
     // walk saw. `player` is our own Link, when the walk saw him.
     void Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_us,
@@ -443,6 +468,9 @@ private:
     struct Break {
         std::uint64_t got_us = 0;   // when we learned of it
         bool local = false;         // broken in this game
+        bool kept = false;          // a lock: lasts, never put back
+        bool refunded = false;      // our second key for it went back
+        bool paid = false;          // opened here: one of our key drops paid for it
         bool seen_go = false;       // our own copy went (or never came) after it
         std::uint64_t gone_us = 0;  // when our copy went
         bool key = false;           // a lying key or token we took
@@ -482,6 +510,7 @@ private:
         std::uint64_t first_us = 0;
         int missed = 0;
         bool sent_break = false;
+        bool kept = false;  // a small-key door's lock (IsLock)
         // A break from elsewhere being made here.
         std::uint64_t life_written_us = 0;
         int faller_tries = 0;  // life 0 writes to a faller (kFallerTries)
@@ -502,6 +531,7 @@ private:
     struct Gone {  // left the walk near our Link: a break unless it was an unload
         Object object;
         std::uint64_t at_us = 0;
+        bool refund = false;  // another game's lock we held: our second key, if we spent one
     };
 
     void Drain(std::uint64_t now_us);
@@ -514,6 +544,12 @@ private:
     void Token(const coop::protocol::WorldBreak& b);
     void LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out& out);
     void MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& out);
+    // One small key back to our game for a lock opened twice (marks `b`),
+    // only against a drop of our own key count in the last kOwnDropUs (that
+    // drop is then used up).
+    void Refund(Break& b, std::uint64_t hash, std::uint64_t now_us, const char* why);
+    // Takes one of our own key drops for this scene out (it paid for a lock).
+    bool TakeOwnDrop(std::uint64_t now_us);
     void Move(Object& o, std::uint8_t self, std::uint64_t now_us,
               const std::optional<coop::protocol::Vec3>& player, Out& out);
     std::optional<Sample> PoseAt(const Remote& r, std::uint64_t now_us) const;
@@ -522,6 +558,10 @@ private:
     std::uint64_t scene_since_ = 0;
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::map<std::uint64_t, Break> broken_;    // by placement hash, this scene
+    std::vector<std::uint32_t> refunds_;       // keys to give back, for the next Out
+    std::vector<std::string> refund_notes_;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> own_drops_;  // (key flag, when)
+    bool no_key_logged_ = false;
     std::map<std::uint64_t, Remote> remote_;   // by placement hash, this scene
     std::vector<Gone> gone_;
     std::vector<std::string> give_back_;  // from Drain, for the next Tick's Out

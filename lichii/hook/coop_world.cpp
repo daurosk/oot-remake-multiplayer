@@ -10,6 +10,7 @@
 
 #include "coop/host/game_items.hpp"
 #include "coop/protocol/codec.hpp"
+#include "coop/protocol/messages.hpp"
 
 namespace CoopWorld {
 
@@ -49,7 +50,30 @@ constexpr std::array<std::string_view, 4> kGrass{
 
 } // namespace
 
+bool IsLock(std::string_view name) {
+    return name.starts_with("Obj_") && name.find("DoorChainLock") != std::string_view::npos &&
+           name.find("HrlCity") == std::string_view::npos;
+}
+
+std::uint32_t SmallKeyFlag(std::string_view scene) {
+    // The dungeons with a DungeonInfo.<name>.SmallKeyNum (coop/host game_items).
+    static constexpr std::array<std::string_view, 14> kKeyScenes{
+        "InsideTheDekuTree", "DodongoCavern", "InsideJabuJabuBelly", "ForestTemple",
+        "FireTemple", "WaterTemple", "ShadowTemple", "SpiritTemple", "BottomOfTheWell",
+        "IceCavern", "GerudoTrainingGround", "InsideGanonCastle", "GerudoFortress",
+        "FinalBattleField"};
+    for (const auto s : kKeyScenes) {
+        if (s == scene) {
+            return coop::protocol::flag_hash("DungeonInfo." + std::string(scene) + ".SmallKeyNum");
+        }
+    }
+    return 0;
+}
+
 bool IsBreakable(std::string_view name) {
+    if (IsLock(name)) {
+        return true;
+    }
     for (const auto grass : kGrass) {
         if (name == grass) {
             return true;
@@ -344,6 +368,9 @@ void WorldSync::Reset() {
     early_.clear();
     anchors_.clear();
     anchor_holds_.clear();
+    refunds_.clear();
+    refund_notes_.clear();
+    own_drops_.clear();
     player_.reset();
     probe_.Reset();
     std::lock_guard lock(inbox_mutex_);
@@ -459,6 +486,7 @@ void WorldSync::Drain(std::uint64_t now_us) {
             } else if (const auto known = broken_.find(b->hash); known == broken_.end()) {
                 Break k;
                 k.got_us = now_us;
+                k.kept = (b->flags & proto::world_break::kept) != 0;
                 broken_.emplace(b->hash, k);
                 // Our own take of the same small key that has not gone out
                 // yet: the key is already off our walk next to our Link (or
@@ -467,6 +495,13 @@ void WorldSync::Drain(std::uint64_t now_us) {
                     give_back_.push_back(*count);
                 }
                 Token(*b);
+            } else if ((b->flags & proto::world_break::kept) != 0 && known->second.local) {
+                // Both games opened this lock at once: two keys went for one
+                // door. The higher player number gives its key back.
+                if (b->player_number != self_ && self_ > b->player_number &&
+                    !known->second.refunded) {
+                    Refund(known->second, b->hash, now_us, "opened by both at once");
+                }
             } else if (known->second.local && known->second.key) {
                 // We took this small key too, and the server, which keeps the
                 // first break only, relayed theirs: they were first. Ours goes
@@ -529,18 +564,83 @@ void WorldSync::LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out
     k.local = true;
     k.key = o.key;
     k.count = o.count;
+    k.kept = o.kept;
+    // Our own lock: the key our game spent on it is used up here, so it can
+    // never also pay for another lock's give-back.
+    k.paid = o.kept && TakeOwnDrop(now_us);
     broken_.emplace(o.hash, k);
     proto::WorldBreak b;
     b.scene = scene_;
     b.hash = o.hash;
     b.position = Finite(o.position) ? o.position : proto::Vec3{};
+    if (o.kept) {
+        b.flags = proto::world_break::kept;
+        if (SmallKeyFlag(scene_) == 0 && !no_key_logged_) {
+            no_key_logged_ = true;
+            out.notes.push_back(Line("world: %016llx %s opened in a scene with no small key count%s",
+                                     o.hash, o.name, " (a second key here cannot go back)"));
+        }
+    }
     out.send.emplace_back(std::move(b));
     out.notes.push_back(Line("world: %016llx %s broken here (%s): sent", o.hash, o.name, how));
+}
+
+void WorldSync::Refund(Break& b, std::uint64_t hash, std::uint64_t now_us, const char* why) {
+    const std::uint32_t key = SmallKeyFlag(scene_);
+    if (key == 0) {
+        return;  // no key count here (logged once by LocalBreak)
+    }
+    // Both at once: our own break already took the key we spent on it (paid).
+    // Else a drop of our count must be there, and is used up.
+    if (!b.paid && !TakeOwnDrop(now_us)) {
+        // Our count did not drop: our player spent nothing on it (the room
+        // unloaded beside us, or another's spend came in): nothing back.
+        refund_notes_.push_back(Line("world: %016llx lock %s, but no key of ours went: none back%s",
+                                     hash, why, ""));
+        return;
+    }
+    b.paid = false;
+    b.refunded = true;
+    refunds_.push_back(key);
+    refund_notes_.push_back(Line("world: %016llx lock %s: one key back%s", hash, why, ""));
+}
+
+bool WorldSync::TakeOwnDrop(std::uint64_t now_us) {
+    const std::uint32_t key = SmallKeyFlag(scene_);
+    std::erase_if(own_drops_, [now_us](const auto& d) { return now_us - d.second > kOwnDropUs; });
+    const auto drop = std::find_if(own_drops_.begin(), own_drops_.end(),
+                                   [key](const auto& d) { return d.first == key; });
+    if (key == 0 || drop == own_drops_.end()) {
+        return false;
+    }
+    own_drops_.erase(drop);
+    return true;
+}
+
+void WorldSync::OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us) {
+    if (own_drops_.size() < 16) {
+        own_drops_.emplace_back(key_flag, now_us);
+    }
+}
+
+void WorldSync::ForgetKept() {
+    std::erase_if(broken_, [](const auto& b) { return b.second.kept; });
+    for (auto& [address, o] : objects_) {
+        if (o.kept) {
+            o.remove = false;
+            o.life_written_us = 0;
+        }
+    }
 }
 
 void WorldSync::MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& out) {
     if (o.remove || b.local) {
         return;  // our own break: the game is doing it
+    }
+    if (o.kept && player_ && Finite(o.position) && Distance(*player_, o.position) <= kLockHoldM) {
+        // Our Link is at this door: never take the lock from under them (they
+        // may be opening it). Deleted once they step away.
+        return;
     }
     if (o.key) {
         // Taken in another game: ours goes at once (no life, no wait), also
@@ -955,8 +1055,9 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             o.rest = s.position;
             o.rest_rotation = s.rotation;
             o.sent_position = s.position;
+            o.kept = IsLock(s.name);
             if (const auto b = broken_.find(s.hash);
-                b != broken_.end() && b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
+                !o.kept && b != broken_.end() && b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
                 (!life || *life > 0)) {
                 // We saw it go and here it is again: the game put it back.
                 broken_.erase(b);
@@ -1006,6 +1107,13 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         if (const auto b = broken_.find(o.hash); b != broken_.end()) {
             b->second.seen_go = true;
             b->second.gone_us = now_us;
+            if (o.kept && !b->second.local && !b->second.refunded && !o.remove && player &&
+                from_link <= kLockHoldM + kBreakReachM) {
+                // Another game's lock that we did not delete went next to our
+                // Link: opened here too (a second key), or the room unloaded.
+                // Decided after the same wait and unload test as a break.
+                gone_.push_back({o, now_us, true});
+            }
         } else if (o.breakable && player && (!o.life || *o.life > 0)) {
             const bool moved = Distance(o.position, o.first_position) >= 0.5f;
             if (from_link <= (moved ? kBreakNearM : kBreakReachM)) {
@@ -1036,6 +1144,10 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         if (together >= kUnloadCount && any_far) {
             out.notes.push_back(Line("world: %016llx %s left with the area: no break%s",
                                      it->object.hash, it->object.name, ""));
+        } else if (it->refund) {
+            if (const auto b = broken_.find(it->object.hash); b != broken_.end() && !b->second.refunded) {
+                Refund(b->second, it->object.hash, now_us, "opened here after another player");
+            }
         } else {
             LocalBreak(it->object, now_us, "gone next to Link", out);
             if (const auto b = broken_.find(it->object.hash); b != broken_.end()) {
@@ -1046,6 +1158,13 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         it = gone_.erase(it);
     }
     std::erase_if(went_, [now_us](const auto& w) { return now_us - w.first > 4 * kGoneHoldUs; });
+    // Keys given back for locks opened twice (Drain and the walk above).
+    out.key_refunds.insert(out.key_refunds.end(), refunds_.begin(), refunds_.end());
+    refunds_.clear();
+    for (auto& note : refund_notes_) {
+        out.notes.push_back(std::move(note));
+    }
+    refund_notes_.clear();
 
     for (auto& [address, o] : objects_) {
         // Another player's swings at this sign, once our copy has settled in.

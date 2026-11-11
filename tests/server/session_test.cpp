@@ -2066,7 +2066,7 @@ TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s")
   CHECK(h.session.stats().boss_to_hitter == 2);
 }
 
-TEST_CASE("issue 150: a hit on a boss's part asks for the boss; plain enemies keep the distance rule") {
+TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies keep the distance rule") {
   OwnerHarness h;
   h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
   h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);

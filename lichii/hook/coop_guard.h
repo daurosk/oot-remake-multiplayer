@@ -67,46 +67,96 @@ inline bool Waits(const Local& local, const std::optional<Vec3>& at) {
     return !local.link || Near(local.link, at, kEventNearM);
 }
 
+// Two held life writes for one actor become one (Held's merge for LifeWrite-like changes, with
+// `life`, the life it should end at, and `hurt`, above 0 when the game is to take that much
+// itself). Two hurts: both hits land (the hurts add up; the newer target). A hurt behind a
+// written life: the target is written as life (the game has not taken the first one yet).
+// Otherwise the newer one wins.
+template <typename Change>
+void MergeLife(Change& kept, Change&& newer) {
+    if (newer.hurt > 0 && kept.hurt > 0) {
+        newer.hurt += kept.hurt;
+    } else if (newer.hurt > 0) {
+        newer.hurt = 0;
+    }
+    kept = std::move(newer);
+}
+
 // Changes made once (a life write: a kill, a hurt) that must not be lost while they wait.
-// Pass() gives back what to apply now and keeps the rest, one per actor (the newest wins);
-// when the event ends, everything kept comes back first, in order. Forget() drops them (a
-// scene change: those actors are gone).
+// Pass() gives back what to apply now and keeps the rest, one per actor (merged with Merge,
+// default: the newest wins), with the hash of the actor that was at that address. When the
+// event ends, everything kept comes back first, in order, but only where this walk still has
+// the same actor at that address: a long event deletes and makes actors, and an address may
+// hold another actor by then (that change is dropped). Forget() drops them all (a scene
+// change: those actors are gone).
 template <typename Change>
 class Held {
 public:
     using Where = std::function<std::optional<Vec3>(std::uint64_t address)>;
+    // The hash of the actor at this address in this walk; nullopt when none is there.
+    using HashOf = std::function<std::optional<std::uint64_t>(std::uint64_t address)>;
+    using Merge = std::function<void(Change& kept, Change&& newer)>;
 
-    std::vector<Change> Pass(std::vector<Change> now, const Local& local, const Where& where) {
-        std::vector<Change> out;
+    struct Result {
+        std::vector<Change> apply;  // the released ones first, then this frame's
+        std::size_t released = 0;   // how many at the front of `apply` were held
+        std::size_t dropped = 0;    // held, but another actor (or none) is at the address now
+    };
+
+    explicit Held(Merge merge = {}) : merge_(std::move(merge)) {}
+
+    Result Pass(std::vector<Change> now, const Local& local, const Where& where, const HashOf& hash_of) {
+        Result out;
         if (!local.in_event) {
             for (const std::uint64_t address : order_) {
-                out.push_back(std::move(held_.at(address)));
+                Entry& e = held_.at(address);
+                const auto hash = hash_of(address);
+                if (e.hash && hash && *hash == *e.hash) {
+                    out.apply.push_back(std::move(e.change));
+                    ++out.released;
+                } else {
+                    ++out.dropped;
+                }
             }
             held_.clear();
             order_.clear();
         }
         for (auto& c : now) {
             if (Waits(local, where(c.address))) {
-                if (!held_.contains(c.address)) {
-                    order_.push_back(c.address);
+                const std::uint64_t address = c.address;
+                const auto found = held_.find(address);
+                if (found == held_.end()) {
+                    order_.push_back(address);
+                    held_.emplace(address, Entry{std::move(c), hash_of(address)});
+                } else if (merge_) {
+                    merge_(found->second.change, std::move(c));
+                } else {
+                    found->second.change = std::move(c);
                 }
-                held_[c.address] = std::move(c);
                 ++held_count_;
             } else {
-                out.push_back(std::move(c));
+                out.apply.push_back(std::move(c));
             }
         }
         return out;
     }
-    void Forget() {
+    // Drops everything held; returns how many were dropped.
+    std::size_t Forget() {
+        const std::size_t n = held_.size();
         held_.clear();
         order_.clear();
+        return n;
     }
     std::size_t Size() const { return held_.size(); }
     std::uint64_t HeldCount() const { return held_count_; }  // every change that had to wait
 
 private:
-    std::map<std::uint64_t, Change> held_;
+    struct Entry {
+        Change change;
+        std::optional<std::uint64_t> hash;  // the actor at the address when it was held
+    };
+    Merge merge_;
+    std::map<std::uint64_t, Entry> held_;
     std::vector<std::uint64_t> order_;
     std::uint64_t held_count_ = 0;
 };

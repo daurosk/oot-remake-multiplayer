@@ -1744,3 +1744,47 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     Tick(sync, 30 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
+
+TEST_CASE("objects: a life write held through our event lands later and is no hit of ours (#144)") {
+    // The owner's hit asks for life 4 -> 3; the write waits 2 s (our Link in a talk with it),
+    // so the walk reads 4 all that time. Then it lands: with Written the drop is ours, no DAMAGE.
+    const auto run = [](bool told) {
+        Sync sync;
+        sync.SetHurt(true);
+        Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        proto::ObjectSample s;
+        s.player_number = 2;
+        s.id = id;
+        s.state.life = proto::ObjectLife{3, 4};
+        sync.Receive(s);
+        std::size_t asked = 0;
+        for (std::uint64_t t = 10; t < 2000; t += 50) {
+            asked += Tick(sync, t * kMs, {Enemy(0x100, 0x11, 4)}).writes.size();  // held: not made
+        }
+        CHECK(asked >= 1);
+        if (told) {
+            sync.Written(0x100, 3);
+        }
+        std::size_t damage = 0;
+        for (std::uint64_t t = 2000; t < 3000; t += 50) {
+            damage += All<proto::Damage>(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 3)})).size();
+        }
+        return damage;
+    };
+    CHECK(run(true) == 0);
+    CHECK(run(false) >= 1);  // the bug the review found: the late drop went back as our hit
+}
+
+TEST_CASE("objects: Written for an actor the Sync does not know, or a life not lower, does nothing") {
+    Sync sync;
+    sync.Written(0x999, 0);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 3)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    sync.Written(0x100, 5);  // not a drop
+    // Our own hit afterwards still goes to the owner.
+    Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(All<proto::Damage>(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
+}

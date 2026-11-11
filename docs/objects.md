@@ -377,10 +377,15 @@ Testers on v0.1.0-test6, in the Deku Tree: B beat a Deku Scrub and was in its ta
 
 The rule, for every shared change made in this game to an actor (`lichii/hook/coop_guard.h`):
 - **What waits.** While our own Link is in an event (`PlayerReading::event_running`: a talk, a cutscene), nothing within 8 m of Link (`CoopGuard::kEventNearM`) is changed by another game. An actor whose place is unknown waits too. Which actor the event is with is not read, so the distance stands in for it.
-- **Kills and hurts** (life writes) are kept, one per actor (the newest), and made right after the event ends, in the order they came. A scene change drops them, because those actors are gone.
+- **Kills and hurts** (life writes) are kept, one per actor, and made right after the event ends, in the order they came:
+  - Two held hurts add up (both hits land). A hurt behind a written life becomes its target, written as life (`CoopGuard::MergeLife`).
+  - Each is kept with who was at the address (placement hash and name). It is made only if this walk still has that actor there. A long event deletes and makes actors and the address may hold another one by then: that write is dropped, so it can never hit a pot or an NPC.
+  - When it lands, the Sync is told (`Sync::Written`): the drop is that write, not a hit of our Link's. Otherwise, after more than 1 s, it went back to the owner as DAMAGE and the enemy lost the life twice.
+  - A scene change drops them, because those actors are gone (enemies come back with the scene).
 - **Removes, places and played animations** are only left out while the event runs. The sync makes them again every frame, so they happen right after it.
 - The chest rule (a chest within 3 m of our Link is never removed, `CoopGuard::kChestNearM`) uses the same distance test.
-- The log has `coop: objects: our Link is in an event: changes to N actors near it wait until it ends`, then `the event ended: N waiting changes made now`.
+- The log has `coop: objects: our Link is in an event: changes to N actors near it wait until it ends`, then `the event ended: N waiting changes made now, M dropped (another actor there now)`, or `the scene changed: N waiting changes dropped`.
+- **Long events freeze what is near.** `event_running` is also true while our Link plays the Ocarina, and through a boss intro or any long cutscene. For all that time every shared actor within 8 m keeps its own place and animation (no poses, plays or removes from the others) and takes no kill or hurt. It catches up when the event ends. Not a block. The flag is read each frame, and no reading counts as no event, so it cannot stick on by itself.
 
 Not covered here: the dungeon flags held while in a dungeon (dungeon-live). That is the same idea for flags, applied by the flag store, not by actor.
 

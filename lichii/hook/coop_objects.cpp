@@ -986,23 +986,37 @@ public:
         {
             if (*scene != guard_scene_) {
                 guard_scene_ = *scene;
-                held_writes_.Forget();  // those actors are gone with the scene
+                // Those actors are gone with the scene (enemies come back with it).
+                if (const std::size_t dropped = held_writes_.Forget(); dropped != 0) {
+                    LOG_INFO(Core, "coop: objects: the scene changed: {} waiting changes dropped", dropped);
+                }
+                guard_said_ = false;
             }
             where_.clear();
             for (const Seen& s : seen) {
-                where_.emplace(s.address, s.position);
+                // Who is at the address: the placement hash and the name (actors the
+                // game makes share one "no hash"), so a reused address is told apart.
+                const u64 who = s.hash * 0x100000001b3ULL ^ std::hash<std::string>{}(s.name);
+                where_.emplace(s.address, std::make_pair(s.position, who));
             }
             const CoopGuard::Local local = GuardLocal();
-            const std::size_t before = held_writes_.Size();
-            writes = held_writes_.Pass(std::move(writes), local,
-                                       [this](std::uint64_t a) { return Where(a); });
+            auto passed = held_writes_.Pass(
+                std::move(writes), local, [this](std::uint64_t a) { return Where(a); },
+                [this](std::uint64_t a) { return HashAt(a); });
+            writes = std::move(passed.apply);
+            // The held ones land now: the Sync asked for them long ago, and their drop
+            // is no hit of our Link's (else it went to the owner as DAMAGE again).
+            for (std::size_t i = 0; i < passed.released; ++i) {
+                sync_.Written(writes[i].address, writes[i].life);
+            }
             if (held_writes_.Size() != 0 && !guard_said_) {
                 guard_said_ = true;
                 LOG_INFO(Core, "coop: objects: our Link is in an event: changes to {} actors near it wait until it ends",
                          held_writes_.Size());
             } else if (held_writes_.Size() == 0 && guard_said_ && !local.in_event) {
                 guard_said_ = false;
-                LOG_INFO(Core, "coop: objects: the event ended: {} waiting changes made now", before);
+                LOG_INFO(Core, "coop: objects: the event ended: {} waiting changes made now, {} dropped (another actor there now)",
+                         passed.released, passed.dropped);
             }
         }
         for (const LifeWrite& w : writes) {
@@ -1101,8 +1115,9 @@ public:
     // Issue 144: shared changes to actors near our Link wait while it is in an
     // event (coop_guard.h). Where each actor of the last walk was, kills and
     // hurts held back, and what was said about it.
-    std::unordered_map<u64, coop::protocol::Vec3> where_;
-    CoopGuard::Held<LifeWrite> held_writes_;
+    std::unordered_map<u64, std::pair<coop::protocol::Vec3, u64>> where_;  // place, who (hash and name)
+    CoopGuard::Held<LifeWrite> held_writes_{
+        [](LifeWrite& kept, LifeWrite&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
     std::string guard_scene_;
     bool guard_said_ = false;
     CoopGuard::Local GuardLocal() const { return {TheLocalEvent().load(), player_}; }
@@ -1111,7 +1126,14 @@ public:
         if (it == where_.end()) {
             return std::nullopt;
         }
-        return it->second;
+        return it->second.first;
+    }
+    std::optional<u64> HashAt(u64 address) const {
+        const auto it = where_.find(address);
+        if (it == where_.end()) {
+            return std::nullopt;
+        }
+        return it->second.second;
     }
     int world_lines_ = 0;
     CoopWorld::FoliageProbe foliage_;

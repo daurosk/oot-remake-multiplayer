@@ -504,6 +504,21 @@ std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
     return out;
 }
 
+void Sync::Written(std::uint64_t address, std::int32_t life) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return;
+    }
+    Object& o = it->second;
+    // While it waited the walk read the old life; that is the start of the drop.
+    o.late_left = 0;  // nothing of it may be put back as a second fall
+    o.late_until = 0;
+    if (o.life && *o.life > life) {
+        o.hurt_left += *o.life - life;
+        o.hurt_target = life;
+    }
+}
+
 std::uint8_t Sync::OwnerOf(const proto::ObjectId& id) const {
     const auto it = owners_.find(id);
     return it == owners_.end() ? 0 : it->second.player;

@@ -290,6 +290,10 @@ public:
     // kChaseKeepUs, and the server gives it to us. An enemy we own that comes
     // towards our Link at kChaseSpeed or more is flagged the same way, which
     // the server takes as a fight, so it stays ours.
+    // A life write this Sync asked for earlier, made in the game only now (it waited
+    // while our Link was in an event, coop_guard.h, issue 144). The drop to `life` that the
+    // next walks see is that write landing, not a hit of our Link's: not sent as DAMAGE.
+    void Written(std::uint64_t address, std::int32_t life);
     void NoteDrift(std::uint64_t address, const coop::protocol::Vec3& put,
                    const coop::protocol::Vec3& now, std::uint64_t now_us);
     static constexpr float kChaseReachM = 40.0f;

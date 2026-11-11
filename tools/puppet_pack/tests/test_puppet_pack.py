@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from puppet_pack import build, byml, dumpcheck, nup, rstb, sarc  # noqa: E402
 
+# The co-op HUD's tests run with these (CI runs this file).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_hud import *  # noqa: E402,F401,F403
+
 try:
     import zstandard
 except ImportError:  # pragma: no cover

@@ -45,7 +45,7 @@ Co-op does not allow mods that change the game's code, or cheats ([issue 136](ht
 ## AMD graphics cards
 
 - AMD's driver crashed with the emulator's shader libraries (`amdvlk64.dll`; [issue 118](https://github.com/daurosk/oot-remake-multiplayer/issues/118)). The kit turns them off on a PC with an AMD card and no NVIDIA card. [setup.md, Troubleshooting](setup.md#troubleshooting) has the details.
-- Without them, new places stutter longer the first time on AMD than on NVIDIA. Fritchii makes up for that with its "Preparing shaders" step, which needs Fritchii's `recipes` folder beside the emulator; the newest kit does not have that folder yet, so AMD players get neither (not yet measured). [setup.md, "Low frame rate"](setup.md#low-frame-rate), step 7, has what helps now.
+- Without them, new places stutter longer the first time on AMD than on NVIDIA. Fritchii makes up for that with its "Preparing shaders" step, which needs Fritchii's `recipes` folder beside the emulator; the newest kit does not have that folder yet, so AMD players get neither (not yet measured). [setup.md, "Low frame rate"](setup.md#low-frame-rate), step 8, has what helps now.
 
 ## Low frame rate
 

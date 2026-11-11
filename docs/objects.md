@@ -176,8 +176,8 @@ The copies are the game's own actors made by the spawn sync ([spawns.md](spawns.
 | Bomb | `Item_Bomb` | samples (held, thrown, rolling) | blown up at the owner's fuse; `exploded` if it lived 1 s |
 | Bombchu | `Item_Bombchu` | samples | blown up at the owner's remove |
 | Deku nut | `Item_DekuNut` | samples, carried on along its arc | deleted; `hit` if it went at 3 m/s or more |
-| Slingshot seed | `Shootable_DekuSeed` | the same | the same |
-| Arrow (all elements) | `NormalArrow` | the same | the same |
+| Slingshot seed | `Shootable_DekuSeed` | the same; a bounce is sent at once | the same; a `hit` copy stays 0.2 s where it struck ([spawns.md](spawns.md), issue 166) |
+| Arrow (all elements) | `NormalArrow` | the same | the same; a `hit` copy sticks 1.5 s where it struck |
 | Boomerang | `Weapon_Boomerang` | samples (it homes and turns back) | deleted |
 | Hookshot, longshot tip | `Shootable_Hook`, `Shootable_HookLong` | samples | deleted |
 

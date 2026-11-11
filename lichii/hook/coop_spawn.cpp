@@ -225,6 +225,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (auto it = mine_.find(s.address); it != mine_.end() && it->second.name == s.name) {
             Own& m = it->second;
             const double dt = double(now_us - m.seen_at) / 1e6;
+            const Vec3 before = m.velocity;
             if (dt > 0.0) {
                 for (int i = 0; i < 3; ++i) {
                     m.velocity[i] = float((s.position[i] - m.position[i]) / dt);
@@ -245,6 +246,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     m.shot_top_speed = std::max(m.shot_top_speed, speed);
                 }
             }
+            // Issue 166: a seed off a wall. Its turn is sent at once, so
+            // the copies bounce where the owner's did, not a sample later.
+            const auto* info = CoopProjectiles::Find(m.name);
+            const bool bounced = dt > 0.0 && info != nullptr && info->ballistic &&
+                                 CoopProjectiles::Bounced(before, m.velocity);
+            if (bounced) {
+                ++m.bounces;
+            }
             m.far = std::max(m.far, Distance(m.position, m.made_position));
             m.seen_at = now_us;
             m.missed = 0;
@@ -256,7 +265,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 m.made_up ? (now_us - *m.shot_at < kShotFlightUs ? m.shot_velocity : Vec3{})
                           : m.velocity;
             const bool moved = Distance(at, m.sent_position) > 0.01f;
-            if (now_us - m.sent_at >= kSampleEveryUs && (moved || now_us - m.sent_at >= kStillEveryUs)) {
+            if ((now_us - m.sent_at >= kSampleEveryUs || (bounced && !m.made_up)) &&
+                (moved || now_us - m.sent_at >= kStillEveryUs)) {
                 proto::ObjectSample out;
                 out.id = m.id;
                 out.state.time = {now_us, ++m.sequence};
@@ -336,7 +346,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         out.position = m.made_up ? ShotPlace(m, now_us) : m.position;
         send.emplace_back(out);
         flights_.push_back({m.id, m.name, lived, m.far, m.top_speed, out.reason,
-                            m.shot_at.has_value(), m.made_up});
+                            m.shot_at.has_value(), m.made_up, m.bounces});
         it = mine_.erase(it);
     }
     // Addresses the game may give to a new actor later.
@@ -366,7 +376,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         c.setter = setter_;
         const bool explode = due || (r.removed && *r.removed == proto::RemoveReason::exploded);
-        c.act = explode ? Act::explode : !r.removed ? Act::show : Act::remove;
+        // Issue 166: a shot that hit something is seen landing there (the
+        // track is stopped at the owner's last place) before it goes.
+        const bool landing = r.removed && *r.removed == proto::RemoveReason::hit &&
+                             info != nullptr && now_us - r.got_us < CoopProjectiles::LandHoldUs(info->kind);
+        if (landing && !r.landed) {
+            r.landed = true;
+            ++landed_;
+        }
+        c.act = explode ? Act::explode : (!r.removed || landing) ? Act::show : Act::remove;
         if (explode && !r.blasted) {
             CoopProjectiles::TheBlasts().Add(c.position, now_us);
             r.blasted = true;
@@ -992,6 +1010,11 @@ public:
             LOG_INFO(Core, "coop: shots: our bombs' fuse is {:.2f} s", double(*fuse) / 1e6);
             logged_fuse_ = fuse;
         }
+        if (sync_.Landed() != logged_landed_) {
+            logged_landed_ = sync_.Landed();
+            LOG_INFO(Core, "coop: shots: copy held where the owner's shot hit ({} so far)",
+                     logged_landed_);
+        }
         if (sync_.BlownOnTime() != logged_blown_) {
             logged_blown_ = sync_.BlownOnTime();
             LOG_INFO(Core, "coop: shots: bomb copy blown on the owner's fuse ({} so far)",
@@ -1000,10 +1023,10 @@ public:
         for (const auto& f : sync_.Flights()) {
             LOG_INFO(Core,
                      "coop: shots: our {} #{:#x} gone (reason {}) after {} ms: went {:.2f} m from "
-                     "where it was made, top speed {:.1f} m/s{}",
+                     "where it was made, top speed {:.1f} m/s{}, bounced {} times",
                      f.name, f.id.value, static_cast<int>(f.reason), f.lived_us / 1000, f.far,
                      f.top_speed,
-                     f.made_up ? ", shot (flight made up)" : f.shot ? ", shot" : "");
+                     f.made_up ? ", shot (flight made up)" : f.shot ? ", shot" : "", f.bounces);
         }
         if (send.empty()) {
             return;
@@ -1218,6 +1241,7 @@ private:
     CoopProjectiles::AmmoWatch ammo_;
     std::optional<std::uint64_t> logged_fuse_;
     std::size_t logged_blown_ = 0;
+    std::size_t logged_landed_ = 0;
     bool active_ = false;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;

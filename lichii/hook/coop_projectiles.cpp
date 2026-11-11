@@ -121,7 +121,9 @@ bool Track::Add(const Point& p) {
     if (!Finite(p.position) || !Finite(p.velocity) || (last_ && p.time_us <= last_->time_us)) {
         return false;
     }
-    if (last_ && p.time_us - last_->time_us >= kGravityMinGapUs) {
+    // A bounce turns the velocity: that is no fall (issue 166).
+    if (last_ && p.time_us - last_->time_us >= kGravityMinGapUs &&
+        !Bounced(last_->velocity, p.velocity)) {
         // Only a fall counts: something thrown up slows the same way.
         const float dt = float(p.time_us - last_->time_us) / 1e6f;
         const float g = (last_->velocity[1] - p.velocity[1]) / dt;
@@ -227,6 +229,27 @@ float ShotSpeed(Kind kind) {
         return 40.0f;
     default:
         return 30.0f;
+    }
+}
+
+bool Bounced(const Vec3& before, const Vec3& after) {
+    const float a = std::sqrt(before[0] * before[0] + before[1] * before[1] + before[2] * before[2]);
+    const float b = std::sqrt(after[0] * after[0] + after[1] * after[1] + after[2] * after[2]);
+    if (!(a >= kHitSpeed) || !(b >= kHitSpeed)) {
+        return false;
+    }
+    const float dot = before[0] * after[0] + before[1] * after[1] + before[2] * after[2];
+    return dot < kBounceCos * a * b;
+}
+
+std::uint64_t LandHoldUs(Kind kind) {
+    switch (kind) {
+    case Kind::arrow:
+        return 1'500'000;  // sticks where it struck
+    case Kind::seed:
+        return 200'000;    // seen landing, then gone as on the owner's screen
+    default:
+        return 0;          // a nut flashes by its own AI; the rest go at once
     }
 }
 

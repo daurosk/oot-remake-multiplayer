@@ -135,6 +135,15 @@ float ShotSpeed(Kind kind);
 coop::protocol::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, float speed);
 // A shot that leaves the list faster than this was stopped by what it hit.
 inline constexpr float kHitSpeed = 3.0f;
+// Issue 166: a flight that turned by more than 45 degrees between two steps,
+// both at kHitSpeed or more, bounced (a seed off a wall). Its sample is sent
+// at once, and a copy's track keeps its fall across it.
+inline constexpr float kBounceCos = 0.7071f;
+bool Bounced(const Vec3& before, const Vec3& after);
+// Issue 166: how long a copy that hit something (remove reason hit) stays
+// where the owner's shot struck before it goes: a seed lands, an arrow
+// sticks. 0: it goes at once.
+std::uint64_t LandHoldUs(Kind kind);
 // A bomb gone sooner than this did not explode: taking one out the first
 // time makes a bomb that lasts about 0.1 s while the game shows its help.
 inline constexpr std::uint64_t kExplodeMinUs = 1'000'000;

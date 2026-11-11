@@ -39,6 +39,11 @@ bool IsMovable(std::string_view name);
 // Signs a sword cuts (their life never drops: WORLD_HIT shares the swing).
 bool IsSign(std::string_view name);
 
+// The anchor actor a push block keeps at its base (Obj_MovableBox_BasePosAnchor:
+// no model, a dummy physics body, never placed in a map, so made by the
+// block). Not a movable itself; moved with its block (issue 147).
+bool IsBlockAnchor(std::string_view name);
+
 // Grass that is an actor: a tuft that is cut is deleted at once in the other
 // games (writing life 0 did not remove it, run of 2026-11-09).
 bool IsGrassActor(std::string_view name);
@@ -155,6 +160,34 @@ bool SignWordWritable(std::uint64_t current, std::uint64_t value);
 // written, into components the probe has read 0x200 bytes of.
 bool SignCutKeyAllowed(std::uint64_t key);
 
+// Issue 147: a block another game pushed is warped to its new rest place
+// here, but the block's own memory still holds where it rested before (its
+// base or target), so our player's next push snaps it back there. RestWords
+// looks through the block's memory for that old place, as three floats in a
+// row or as the translation of a 3x4 matrix (a float every 16 bytes), and
+// gives the writes that put the new place there instead:
+// - the actor (+0..+0x600, not its own place +0x31c..+0x34b, which the
+//   setter already wrote),
+// - the first 0x200 bytes of each component its table (+0x270) points to,
+// - the physics root ([[table + 0x50] + 0x20], first 0x400 bytes; docs/world.md).
+// Only for a real move (5 cm or more) from a place that is not near the
+// origin (zeros would match), each axis within 2 cm, and at most
+// kMaxTriplets places: more is taken as a wrong match and nothing is written.
+struct RestWrite {
+    std::uint64_t address = 0;
+    std::uint32_t value = 0;  // f32 bits
+};
+struct RestScan {
+    std::vector<RestWrite> writes;
+    std::vector<std::string> where;  // per place found: actor+0x.., c+0x50+0x.., physics root+0x.. (matrix)
+    bool too_many = false;
+};
+inline constexpr std::size_t kMaxRestTriplets = 12;
+inline constexpr float kRestMatchM = 0.02f;
+RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                   std::uint64_t actor, const coop::protocol::Vec3& from,
+                   const coop::protocol::Vec3& to);
+
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the
 // enemy sharing, which still carries a breakable's life: this adds what that
@@ -197,6 +230,8 @@ public:
     static constexpr std::uint64_t kHitEveryUs = 300'000;  // per sign
     static constexpr std::uint64_t kHitWaitUs = 300'000;   // a sign just loaded is hit this late
     static constexpr std::uint64_t kCutAfterHitUs = 200'000;  // cut words this long after its hit
+    static constexpr float kAnchorNearM = 0.5f;          // a block's base anchor is this near its old rest
+    static constexpr std::uint64_t kAnchorHoldUs = 1'000'000;  // the anchor is put at the new rest this long
 
     struct Out {
         std::vector<coop::protocol::Message> send;
@@ -219,6 +254,19 @@ public:
             SignProbe::Part part;       // as the probe saw them
         };
         std::vector<Word> words;
+        // Issue 147: a block another game moved has come to rest here. Its
+        // memory still holds `from` (RestWords puts `to` there); `anchor`,
+        // when not 0, is its base anchor actor found at `from`, which Poses
+        // now puts at `to`.
+        struct BlockFix {
+            std::uint64_t address = 0;
+            std::uint64_t hash = 0;
+            std::string name;
+            coop::protocol::Vec3 from{};
+            coop::protocol::Vec3 to{};
+            std::uint64_t anchor = 0;
+        };
+        std::vector<BlockFix> blocks;
         std::vector<std::string> notes;  // log lines
     };
 
@@ -309,6 +357,7 @@ private:
         bool following = false;            // another game's moves are placed
         bool stirred = false;              // moved since the walk before
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
+        std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it
         std::uint64_t quiet_until = 0;
     };
@@ -330,6 +379,16 @@ private:
     std::map<std::uint64_t, Break> broken_;    // by placement hash, this scene
     std::map<std::uint64_t, Remote> remote_;   // by placement hash, this scene
     std::vector<Gone> gone_;
+    struct Anchor {
+        std::uint64_t address = 0;
+        coop::protocol::Vec3 position{};
+    };
+    std::vector<Anchor> anchors_;  // block base anchors in the last walk
+    struct AnchorHold {
+        coop::protocol::Vec3 to{};
+        std::uint64_t until_us = 0;
+    };
+    std::map<std::uint64_t, AnchorHold> anchor_holds_;  // by actor address
     // Hits for signs, until our copy is there to take them (by hash).
     std::map<std::uint64_t, std::vector<std::pair<coop::protocol::Vec3, coop::protocol::Vec3>>> hits_;
     // Another player's cut words for signs (SIGN_CUT), until our copy is there (by hash).

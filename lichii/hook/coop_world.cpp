@@ -78,6 +78,10 @@ bool IsMovable(std::string_view name) {
            name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_");
 }
 
+bool IsBlockAnchor(std::string_view name) {
+    return name == "Obj_MovableBox_BasePosAnchor";
+}
+
 bool IsSign(std::string_view name) {
     return name.starts_with("Obj_") &&
            (name.find("SignBoard_") != std::string_view::npos ||
@@ -190,6 +194,8 @@ void WorldSync::Reset() {
     hits_.clear();
     cuts_.clear();
     early_.clear();
+    anchors_.clear();
+    anchor_holds_.clear();
     player_.reset();
     probe_.Reset();
     std::lock_guard lock(inbox_mutex_);
@@ -379,6 +385,14 @@ std::optional<WorldSync::Sample> WorldSync::PoseAt(const Remote& r, std::uint64_
 }
 
 void WorldSync::Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const {
+    for (const auto& [address, hold] : anchor_holds_) {
+        if (now_us < hold.until_us) {
+            CoopObjects::PoseWrite w;
+            w.address = address;
+            w.position = hold.to;  // place only: the anchor keeps its turn
+            out.push_back(w);
+        }
+    }
     for (const auto& [address, o] : objects_) {
         if (!o.following || o.remove) {
             continue;
@@ -424,6 +438,9 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
     }
     const bool settling = !o.ours && o.settle_us != 0 && now_us - o.settle_us < kSettleUs;
     if (!o.ours && (remote || settling)) {
+        if (!o.following && !o.follow_from && !o.breakable) {
+            o.follow_from = o.rest;  // where our copy rested before (issue 147)
+        }
         if (!o.following && remote) {
             out.notes.push_back(
                 Line("world: %016llx %s moved by another player%s", o.hash, o.name, ""));
@@ -437,6 +454,35 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         o.following = false;
         o.rest = o.position;
         o.quiet_until = now_us + kQuietUs;
+        if (o.follow_from && Finite(o.position) &&
+            Distance(*o.follow_from, o.position) > kBlockStartM) {
+            // Issue 147: our block's own memory still says it rests at
+            // follow_from; the glue rewrites that (RestWords), and its base
+            // anchor, found there, is put where it rests now.
+            Out::BlockFix fix;
+            fix.address = o.address;
+            fix.hash = o.hash;
+            fix.name = o.name;
+            fix.from = *o.follow_from;
+            fix.to = o.position;
+            float best = kAnchorNearM;
+            for (const Anchor& a : anchors_) {
+                const float d = Distance(a.position, fix.from);
+                if (d <= best) {
+                    best = d;
+                    fix.anchor = a.address;
+                }
+            }
+            if (fix.anchor != 0) {
+                anchor_holds_[fix.anchor] = {fix.to, now_us + kAnchorHoldUs};
+            }
+            out.notes.push_back(Line("world: %016llx %s came to rest where another player left it; "
+                                     "its base anchor%s",
+                                     o.hash, o.name,
+                                     fix.anchor != 0 ? " is put there too" : " was not found near its old place"));
+            out.blocks.push_back(std::move(fix));
+        }
+        o.follow_from.reset();
     }
     if (now_us < o.quiet_until) {
         o.rest = o.position;  // settling after another game's move: no claim
@@ -546,6 +592,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         went_.clear();
         hits_.clear();
         cuts_.clear();
+        anchor_holds_.clear();
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
             if (*SceneOfMessage(m) == scene_) {
@@ -556,6 +603,13 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
     }
     Drain(now_us);
 
+    anchors_.clear();
+    std::erase_if(anchor_holds_, [now_us](const auto& h) { return now_us >= h.second.until_us; });
+    for (const CoopObjects::Seen& s : seen) {
+        if (IsBlockAnchor(s.name)) {
+            anchors_.push_back({s.address, s.position});
+        }
+    }
     std::set<std::uint64_t> now_seen;
     for (const CoopObjects::Seen& s : seen) {
         if (s.hash == 0 || s.hash == kNoHash) {
@@ -1529,6 +1583,89 @@ void WorldSync::ProbeSigns(const SignProbe::ReadWord& read, std::uint64_t now_us
                                  it != objects_.end() ? it->second.name : std::string("?"), more));
         out.send.emplace_back(std::move(m));
     }
+}
+
+RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                   std::uint64_t actor, const proto::Vec3& from, const proto::Vec3& to) {
+    RestScan out;
+    if (!Finite(from) || !Finite(to) || Distance(from, to) < WorldSync::kBlockStartM ||
+        std::max({std::fabs(from[0]), std::fabs(from[1]), std::fabs(from[2])}) < 1.0f) {
+        return out;
+    }
+    struct Region {
+        std::uint64_t base = 0;
+        std::size_t bytes = 0;
+        std::string name;
+    };
+    std::vector<Region> regions{{actor, 0x600, "actor"}};
+    std::set<std::uint64_t> taken{actor};
+    char text[48];
+    if (const auto table = read(actor + SignProbe::kActorTable); table && HeapPointer(*table)) {
+        for (std::uint64_t at = 0; at < SignProbe::kTableWords * 8; at += 8) {
+            const auto c = read(*table + at);
+            if (c && HeapPointer(*c) && taken.insert(*c).second) {
+                std::snprintf(text, sizeof text, "c+%#llx", static_cast<unsigned long long>(at));
+                regions.push_back({*c, SignProbe::kComponentWords * 8, text});
+            }
+        }
+        if (const auto physics = read(*table + 0x50); physics && HeapPointer(*physics)) {
+            if (const auto root = read(*physics + 0x20); root && HeapPointer(*root) &&
+                                                         taken.insert(*root).second) {
+                regions.push_back({*root, 0x400, "physics root"});
+            }
+        }
+    }
+    const auto matches = [&](const std::optional<float>& v, int axis) {
+        return v && std::isfinite(*v) && std::fabs(*v - from[axis]) <= kRestMatchM;
+    };
+    const auto bits = [](float f) {
+        std::uint32_t b = 0;
+        std::memcpy(&b, &f, 4);
+        return b;
+    };
+    std::size_t triplets = 0;
+    for (const Region& region : regions) {
+        std::vector<std::optional<float>> f(region.bytes / 4);
+        for (std::size_t w = 0; w < region.bytes / 8; ++w) {
+            if (const auto v = read(region.base + 8 * w)) {
+                float lo = 0.0f, hi = 0.0f;
+                const auto lo_bits = static_cast<std::uint32_t>(*v);
+                const auto hi_bits = static_cast<std::uint32_t>(*v >> 32);
+                std::memcpy(&lo, &lo_bits, 4);
+                std::memcpy(&hi, &hi_bits, 4);
+                f[2 * w] = lo;
+                f[2 * w + 1] = hi;
+            }
+        }
+        std::set<std::size_t> used;
+        for (std::size_t i = 0; i < f.size(); ++i) {
+            const std::uint64_t offset = 4 * i;
+            if (region.name == "actor" && offset >= 0x31c && offset < 0x34c) {
+                continue;  // its own place and turn: the setter wrote them
+            }
+            for (const std::size_t stride : {std::size_t{1}, std::size_t{4}}) {
+                if (i + 2 * stride >= f.size() || used.contains(i) || used.contains(i + stride) ||
+                    used.contains(i + 2 * stride) || !matches(f[i], 0) || !matches(f[i + stride], 1) ||
+                    !matches(f[i + 2 * stride], 2)) {
+                    continue;
+                }
+                for (int axis = 0; axis < 3; ++axis) {
+                    const std::size_t k = i + axis * stride;
+                    used.insert(k);
+                    out.writes.push_back({region.base + 4 * k, bits(to[axis])});
+                }
+                std::snprintf(text, sizeof text, "+%#llx", static_cast<unsigned long long>(offset));
+                out.where.push_back(region.name + text + (stride == 4 ? " (matrix)" : ""));
+                ++triplets;
+                break;
+            }
+        }
+    }
+    if (triplets > kMaxRestTriplets) {
+        out.too_many = true;
+        out.writes.clear();
+    }
+    return out;
 }
 
 } // namespace CoopWorld

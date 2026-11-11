@@ -105,10 +105,23 @@ When the last player leaves a scene the server forgets its breaks, as the game r
 | Ice pillars, beehive, spider webs | `Obj_BrokenIcePillar_*`, `*Beehive_*`, `*SpiderWeb_*` | hit, fire | life, `WORLD_BREAK` | unit tests only |
 | Red ice | `Obj_RedIce_*` | blue fire (no life: it goes) | gone-near-Link, `WORLD_BREAK`, deleted | unit tests only |
 | Signs | `*SignBoard_*`, `*Signboard_*`, `*GuidePost_*` | sword cut | `WORLD_HIT`: the swing is replayed on the others' sign (below) | unit tests only; the replayed hit may not cut (the sign probe, below, shows it in the next run) |
-| Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE` | unit tests only |
+| Push and pull blocks | `*MovableBox_*`, `Obj_SliderBox_*`, `Obj_AmosStatue_*` | pushed, pulled | `WORLD_MOVE`, `WORLD_PLACE`; the block's own rest place and base anchor rewritten where it is followed (issue 147, below) | moves seen by players (test6); the rewrite unit tests only |
 | Rolling rocks | `*RollingRock_*` | roll by themselves | each game's own (not shared) | - |
 | Bomb flowers | `Obj_BombFlower_*` | picked, thrown, explode | not shared here (the fruit is made by the game, no placement) | - |
 | Moving floors, lifts, shutters, water level | `*MoveFloor_*`, `*ElevatorLift_*`, `*SwitchShutter_*`, `*WaterPlane_*` | driven by switches | the switch flags ([flags.md](flags.md)); not positions | - |
+
+### Blocks: the remembered rest place (issue 147)
+
+Players on test6 (Deku Tree basement): either player could push the block and it moved in both games, and both collided with it, but a player who then pushed it was snapped back to where that game's block had rested before. The copies are moved with the actor's own force-set-matrix (place, turn, physics body; above), which does not touch the block's own idea of where it rests. What the pack shows (`Obj_MovableBox_A_01`, read 2026-11-10): `MovableBoxParam` pushes by `PushPerBlock`, a `DgnObj_MovableBox` constraint controller holds the body, the blackboard has `MovableBox_MoveState`, and there is an anchor actor `Obj_MovableBox_BasePosAnchor` (no model, a dummy body) that no map places, so the block makes it at its base. Each basement block also links to an `Obj_Gimmick_AnswerPosAnchor` (the puzzle's goal). Block places are not in GameData (no flag holds either basement block's hash).
+
+What is built (no game run): in a game that follows another's push, `WorldSync::Move` keeps where its copy rested before (`follow_from`). When the follow ends (the rest place held 0.5 s), it hands the glue a `BlockFix`:
+
+- the base anchor found within 0.5 m of the old rest place is put at the new one through the same setter for 1 s (`Poses`; place only);
+- `RestWords` looks through the block's memory (the actor +0..+0x600 but its own place, the first 0x200 bytes of each component its table points to, the physics root `[[table+0x50]+0x20]` +0..+0x400) for the old rest place as three floats in a row or a 3x4 matrix's translation, each axis within 2 cm, and the glue writes the new place there. Nothing is written for a move under 5 cm, a place near the origin, or more than 12 places (a wrong match).
+
+A late joiner gets the same: its block is first seen where the map made it, the server's `WORLD_PLACE` puts it at the rest place, and the fix runs from the made place. The pusher's own game needs nothing. One mover at a time as before (the lower player number keeps it), so no tug-of-war.
+
+Logs: `world: <hash> <name> came to rest where another player left it; its base anchor is put there too` (or `was not found near its old place`), then `world: <hash> <name> old rest x y z -> x y z: N places rewritten: actor+0x.. c+0x..+0x.. (matrix) physics root+0x..`, or `... found N times, not written (too many)`. The places listed are where the game keeps the rest place: the run tells which of the two (anchor or memory) mattered.
 
 ### Signs (issue 90): what the pack says
 

@@ -1291,3 +1291,155 @@ TEST_CASE("sign cut: what another player's word may be written over") {
     b.Receive(cut);
     CHECK(Walk(b, 2000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, "Obj_GuidePost_A_02")}).words.empty());
 }
+
+// Issue 147: a block another game pushed keeps its old rest place in its own
+// memory; the follower gives the glue a fix, and the base anchor is moved.
+TEST_CASE("world: a block another player pushed asks for its old rest place to be rewritten (issue 147)") {
+    CHECK(CoopWorld::IsBlockAnchor("Obj_MovableBox_BasePosAnchor"));
+    CHECK_FALSE(CoopWorld::IsMovable("Obj_MovableBox_BasePosAnchor"));
+    CHECK_FALSE(CoopWorld::IsBlockAnchor(kBox));
+    const auto anchor = [](proto::Vec3 at) {
+        return Thing(0x900, 0, std::nullopt, "Obj_MovableBox_BasePosAnchor", at);
+    };
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox), anchor({1.0f, 2.0f, 3.0f})});
+    w.Receive(MoveOf(0x50, 2000 * kMs, 1.0f));
+    w.Receive(MoveOf(0x50, 2100 * kMs, 2.0f));
+    auto out = Walk(w, 2100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox), anchor({1.0f, 2.0f, 3.0f})});
+    CHECK(out.blocks.empty());  // still moving
+    w.Receive(PlaceOf(0x50, 2.5f));
+    Walk(w, 2300 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.0f, 2.0f, 3.0f}), anchor({1.0f, 2.0f, 3.0f})});
+    CHECK(Walk(w, 2700 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f}),
+                               anchor({1.0f, 2.0f, 3.0f})}).blocks.empty());  // held at its rest
+    out = Walk(w, 2900 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f}), anchor({1.0f, 2.0f, 3.0f})});
+    REQUIRE(out.blocks.size() == 1);
+    const auto& fix = out.blocks[0];
+    CHECK(fix.address == 0x100);
+    CHECK(fix.hash == 0x50);
+    CHECK(fix.from[0] == doctest::Approx(1.0f));
+    CHECK(fix.to[0] == doctest::Approx(2.5f));
+    CHECK(fix.anchor == 0x900);
+    // The anchor is put at the new rest place for a while, then let be.
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(3000 * kMs, poses);
+    REQUIRE(poses.size() == 1);
+    CHECK(poses[0].address == 0x900);
+    CHECK(poses[0].position[0] == doctest::Approx(2.5f));
+    CHECK_FALSE(poses[0].rotation);
+    Walk(w, 4000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f}), anchor({2.5f, 2.0f, 3.0f})});
+    poses.clear();
+    w.Poses(4000 * kMs, poses);
+    CHECK(poses.empty());
+    // Once only; and our own push next makes none.
+    CHECK(Walk(w, 4100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})}).blocks.empty());
+    out = Walk(w, 6000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})}, proto::Vec3{3.0f, 2.0f, 4.0f});
+    CHECK(Sent<proto::WorldMove>(out).size() == 1);
+    CHECK(out.blocks.empty());
+    out = Walk(w, 6600 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {3.0f, 2.0f, 3.0f})}, proto::Vec3{3.0f, 2.0f, 4.0f});
+    CHECK(Sent<proto::WorldPlace>(out).size() == 1);
+    CHECK(out.blocks.empty());
+}
+
+TEST_CASE("world: a block first seen after it was moved is fixed from where it was made (issue 147)") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {});
+    w.Receive(PlaceOf(0x50, 7.0f));  // the server's replay as we entered
+    Walk(w, 30000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    Walk(w, 30200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {7.0f, 2.0f, 3.0f})});
+    const auto out = Walk(w, 30600 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {7.0f, 2.0f, 3.0f})});
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].from[0] == doctest::Approx(1.0f));
+    CHECK(out.blocks[0].to[0] == doctest::Approx(7.0f));
+    CHECK(out.blocks[0].anchor == 0);  // none seen
+}
+
+TEST_CASE("world: a pot carried by another player asks for no block fix") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x51, 1, "Obj_Pot_A_01")});
+    w.Receive(MoveOf(0x51, 2000 * kMs, 1.0f));
+    w.Receive(PlaceOf(0x51, 4.0f));
+    Walk(w, 2100 * kMs, {Thing(0x100, 0x51, 1, "Obj_Pot_A_01", {3.0f, 2.0f, 3.0f})});
+    const auto out = Walk(w, 3000 * kMs, {Thing(0x100, 0x51, 1, "Obj_Pot_A_01", {4.0f, 2.0f, 3.0f})});
+    CHECK(out.blocks.empty());
+}
+
+namespace {
+
+void PutFloats(FakeGame& g, std::uint64_t at, std::initializer_list<float> v, std::size_t stride = 4) {
+    std::size_t i = 0;
+    for (const float f : v) {
+        g.Put(at + stride * i++, &f, 4);
+    }
+}
+
+float FloatAt(const FakeGame& g, std::uint64_t at) {
+    std::uint8_t b[4];
+    for (int i = 0; i < 4; ++i) {
+        b[i] = g.bytes.at(at + i);
+    }
+    float f = 0.0f;
+    std::memcpy(&f, b, 4);
+    return f;
+}
+
+// A block's memory: the actor, its component table, one component and the
+// physics root, all zero.
+constexpr std::uint64_t kBlockActor = 0x2100100000, kBlockTable = 0x2100200000,
+                        kBlockComp = 0x2100300000, kBlockPhysics = 0x2100400000,
+                        kBlockRoot = 0x2100500000;
+void BlockMemory(FakeGame& g) {
+    for (std::uint64_t a = 0; a < 0x600; a += 8) g.Word(kBlockActor + a, 0);
+    for (std::uint64_t a = 0; a < 0x300; a += 8) g.Word(kBlockTable + a, 0);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kBlockComp + a, 0);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kBlockPhysics + a, 0);
+    for (std::uint64_t a = 0; a < 0x400; a += 8) g.Word(kBlockRoot + a, 0);
+    g.Word(kBlockActor + 0x270, kBlockTable);
+    g.Word(kBlockTable + 0x10, kBlockComp);
+    g.Word(kBlockTable + 0x50, kBlockPhysics);
+    g.Word(kBlockPhysics + 0x20, kBlockRoot);
+}
+
+} // namespace
+
+TEST_CASE("world: RestWords puts the new rest place where the block's memory keeps the old (issue 147)") {
+    FakeGame g;
+    BlockMemory(g);
+    PutFloats(g, kBlockActor + 0x31c, {10.0f, 20.0f, 30.0f});  // its own place: the setter's
+    PutFloats(g, kBlockActor + 0x100, {10.0f, 20.0f, 30.0f});  // a remembered place
+    PutFloats(g, kBlockComp + 0x40, {10.01f, 20.0f, 29.99f}, 16);  // a 3x4 matrix's translation
+    PutFloats(g, kBlockRoot + 0x1d0, {10.0f, 20.0f, 30.0f});   // the physics root
+    PutFloats(g, kBlockActor + 0x200, {10.0f, 20.0f, 31.0f});  // not the place (z off)
+    const proto::Vec3 from{10.0f, 20.0f, 30.0f}, to{12.0f, 20.0f, 30.0f};
+    const auto scan = CoopWorld::RestWords(g.Reader(), kBlockActor, from, to);
+    CHECK_FALSE(scan.too_many);
+    REQUIRE(scan.where.size() == 3);
+    CHECK(scan.where[0] == "actor+0x100");
+    CHECK(scan.where[1] == "c+0x10+0x40 (matrix)");
+    CHECK(scan.where[2] == "physics root+0x1d0");
+    REQUIRE(scan.writes.size() == 9);
+    for (const auto& w : scan.writes) {
+        g.Put(w.address, &w.value, 4);
+    }
+    CHECK(FloatAt(g, kBlockActor + 0x100) == 12.0f);
+    CHECK(FloatAt(g, kBlockActor + 0x104) == 20.0f);
+    CHECK(FloatAt(g, kBlockComp + 0x40) == 12.0f);
+    CHECK(FloatAt(g, kBlockComp + 0x50) == 20.0f);
+    CHECK(FloatAt(g, kBlockComp + 0x60) == 30.0f);
+    CHECK(FloatAt(g, kBlockRoot + 0x1d0) == 12.0f);
+    CHECK(FloatAt(g, kBlockActor + 0x31c) == 10.0f);  // left alone
+    CHECK(FloatAt(g, kBlockActor + 0x200) == 10.0f);  // not a match
+
+    // No real move, a place near the origin (zeros would match), or too many: nothing.
+    CHECK(CoopWorld::RestWords(g.Reader(), kBlockActor, from, {10.01f, 20.0f, 30.0f}).writes.empty());
+    FakeGame z;
+    BlockMemory(z);
+    CHECK(CoopWorld::RestWords(z.Reader(), kBlockActor, {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}).writes.empty());
+    FakeGame many;
+    BlockMemory(many);
+    for (std::uint64_t i = 0; i <= CoopWorld::kMaxRestTriplets; ++i) {
+        PutFloats(many, kBlockActor + 0x20 * i, {10.0f, 20.0f, 30.0f});
+    }
+    const auto lots = CoopWorld::RestWords(many.Reader(), kBlockActor, from, to);
+    CHECK(lots.too_many);
+    CHECK(lots.writes.empty());
+}

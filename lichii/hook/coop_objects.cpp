@@ -878,6 +878,7 @@ public:
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
             sign_words_ = std::move(world.words);  // written after the probe's look
+            block_fixes_ = std::move(world.blocks);  // issue 147, written below
             if (!world.hits.empty()) {
                 // A sign another player's sword passed: the same hit on ours.
                 u64 link = 0;
@@ -951,6 +952,32 @@ public:
                 }
             }
             sign_words_.clear();
+            // Issue 147: a block another game moved rests here now; its own
+            // memory's old rest place gets the new one.
+            for (const auto& fix : block_fixes_) {
+                const auto scan = CoopWorld::RestWords(
+                    [&r](u64 address) { return r.Get<u64>(address); }, fix.address, fix.from,
+                    fix.to);
+                std::string where;
+                for (const auto& w : scan.where) {
+                    where += " " + w;
+                }
+                if (scan.too_many) {
+                    LOG_INFO(Core, "coop: world: {:016x} {} rest place {:.2f} {:.2f} {:.2f} found {} times, "
+                                   "not written (too many):{}",
+                             fix.hash, fix.name, fix.from[0], fix.from[1], fix.from[2],
+                             scan.where.size(), where);
+                    continue;
+                }
+                for (const auto& w : scan.writes) {
+                    memory_->Write32(w.address, w.value);
+                }
+                LOG_INFO(Core, "coop: world: {:016x} {} old rest {:.2f} {:.2f} {:.2f} -> {:.2f} {:.2f} {:.2f}: "
+                               "{} places rewritten{}{}",
+                         fix.hash, fix.name, fix.from[0], fix.from[1], fix.from[2], fix.to[0],
+                         fix.to[1], fix.to[2], scan.where.size(), where.empty() ? "" : ":", where);
+            }
+            block_fixes_.clear();
         }
         if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
             grass_made_logged_ = made;
@@ -1064,6 +1091,7 @@ public:
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
+    std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     int world_lines_ = 0;
     CoopWorld::FoliageProbe foliage_;
@@ -1175,6 +1203,7 @@ private:
                 }
             }
             if (IsShared(known.first) || CoopWorld::IsMovable(known.first) ||
+                CoopWorld::IsBlockAnchor(known.first) ||  // moved with its block (issue 147)
                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
                 Seen s;
                 s.address = a;

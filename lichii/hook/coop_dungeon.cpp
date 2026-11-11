@@ -1001,6 +1001,63 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x2a8640b7, false, "WaterTemple_WaterLevelChange02"},
     {0xa4456820, false, "WaterTemple_WaterLevelChange03"},
     {0xd6ed78c9, false, "WaterTemple_Waterlevelrise_Room06"},
+    // Softlock audit (test7): saved room state the prefix scan missed, because the
+    // game spells the dungeon another way (Insidejabujabu_, Firetemple_,
+    // Foresttemple_) or puts it after Gimmick_ (the enemies-beaten shutters).
+    // Left out: the Room7 area sensors (_InsideArea, _NearTheSwitch*: set true and
+    // false from where a player or Ruto is), Room7_Switch2_OnlyLinkOrLuto (Ruto),
+    // two-way state (Jabu-Jabu's Room 14 water, the Water Temple torch shutters
+    // Gimmick_Ignition_Open_*: step switches and torches set them both ways) and
+    // the Spirit Temple stone tablets (what Link reads, not room state).
+    {0xdd4e1676, false, "Firetemple_SongOfTimeBlock_A_01_Disappearance"},
+    {0x2312e749, false, "Foresttemple_SongOfTimeBlock_A_01_Disappearance"},
+    {0xdba3c3ef, false, "Gimmick_DefeatEnemy_Open_DodongoCave_01"},
+    {0xccf631b5, false, "Gimmick_DefeatEnemy_Open_DodongoCave_02"},
+    {0xf764d7da, false, "Gimmick_DefeatEnemy_Open_FireTemple_01"},
+    {0x950d163c, false, "Gimmick_DefeatEnemy_Open_FireTemple_02"},
+    {0x8689ff41, false, "Gimmick_DefeatEnemy_Open_FireTemple_02_CounterOff"},
+    {0x09efdbb8, false, "Gimmick_DefeatEnemy_Open_FireTemple_03"},
+    {0x7a0dfb05, false, "Gimmick_DefeatEnemy_Open_ForestTemple_01"},
+    {0x0ad068f9, false, "Gimmick_DefeatEnemy_Open_ForestTemple_02"},
+    {0x936fce7b, false, "Gimmick_DefeatEnemy_Open_ForestTemple_03"},
+    {0x54184cc6, false, "Gimmick_DefeatEnemy_Open_ForestTemple_05"},
+    {0x77e573a4, false, "Gimmick_DeleteFire_FireTemple"},
+    {0x482f8dd4, false, "Insidejabujabu_Gimmick_Room12_Treasure"},
+    {0x90629ec0, false, "Insidejabujabu_Gimmick_Room7Event"},
+    {0x2d748eb5, false, "Insidejabujabu_Room0_Cleared"},
+    {0x64513208, false, "Insidejabujabu_Room10_Cleared"},
+    {0x587e4130, false, "Insidejabujabu_Room11_Cleared"},
+    {0x76f26ef4, false, "Insidejabujabu_Room12_Cleared"},
+    {0xeddaa0bd, false, "Insidejabujabu_Room14_Cleared"},
+    {0x2ea0d05d, false, "Insidejabujabu_Room1_Cleared"},
+    {0x695a1137, false, "Insidejabujabu_Room5_Cleared"},
+    {0xf13c8337, false, "Insidejabujabu_Room7_01_Cleared"},
+    {0xd3cbed11, false, "Insidejabujabu_Room7_Cleared"},
+    {0xfb335d8a, false, "Insidejabujabu_Room8_Cleared"},
+    {0xed5247fb, false, "Insidejabujabu_Room9_Cleared"},
+    // Also (softlock audit, second pass): the Fire Temple's Goron cell shutters (named
+    // after the Goron, in the scene's PlgGdTable) and the dungeon gimmick scenes a room's own logic reads
+    // for its end state (Dodongo's broken stair, the Fire Temple hammer stair, Forest
+    // Room 16, Water Room 17's pond, Ganon's Castle lift rock and tower barrier).
+    // Story scenes stay out, and so do the Forest Temple corridor (Dm_ForestTemple_0007,
+    // one-way) and the boss intro (Dm_Deku_BossIn, dungeons-boss.md).
+    {0x6e021914, false, "HavePlayedEvent.Dm_DodongoCave_0010"},
+    {0xd55d4cba, false, "HavePlayedEvent.Dm_FireTemple_0029"},
+    {0x8d604980, false, "HavePlayedEvent.Dm_ForestTemple_0010"},
+    {0x40cc8f08, false, "HavePlayedEvent.Dm_ForestTemple_0014"},
+    {0xe7470f91, false, "HavePlayedEvent.Dm_InsideGanonCastle_0035"},
+    {0xa77c636f, false, "HavePlayedEvent.Dm_InsideGanonCastle_0090"},
+    {0x95228e5a, false, "HavePlayedEvent.Dm_WaterTemple_0010"},
+    {0x4a022de3, false, "HavePlayedEvent.Dm_WaterTemple_0015"},
+    {0x023e190f, false, "Npc_Goron_001_ShutterisOpen"},
+    {0x7b118b57, false, "Npc_Goron_002_ShutterisOpen"},
+    {0x92cb9a2f, false, "Npc_Goron_003_ShutterisOpen"},
+    {0x61b1a755, false, "Npc_Goron_004_ShutterisOpen"},
+    {0x72ff8447, false, "Npc_Goron_005_ShutterisOpen"},
+    {0x69aeba66, false, "Npc_Goron_007_ShutterisOpen"},
+    {0xd6a8c454, false, "Npc_Goron_008_ShutterisOpen"},
+    {0x1d5d75c3, false, "Npc_Goron_009_ShutterisOpen"},
+    {0x6948b592, false, "Npc_Goron_010_ShutterisOpen"},
 });
 
 // Every placement in a dungeon's Banc files (Banc/<Dungeon>/*.bcett.byml)

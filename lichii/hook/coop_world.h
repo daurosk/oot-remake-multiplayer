@@ -43,6 +43,14 @@ bool IsSign(std::string_view name);
 // games (writing life 0 did not remove it, run of 2026-11-09).
 bool IsGrassActor(std::string_view name);
 
+// Things a hit makes fall and that then stay, as ground or a bridge: the Fire
+// Temple's hammer pillars (Obj_FireTemple_HammerSlipPillar_*, life
+// Obj_HammerSlipPillar, destruction FallingRock). Shared by WorldSync like a
+// breakable, but never moved and never deleted: another game's break writes
+// life 0 so the game drops it here too (breakables, sync-coverage P1). Not
+// IsBreakable: the enemy-style object sharing leaves them alone.
+bool IsFaller(std::string_view name);
+
 // Research for signs (issue 90; docs/world.md, "Signs: the probe"). A sign's
 // cut is not in its life and its pack keeps no flag for it, and whether the
 // replayed hit (WORLD_HIT) cuts the others' sign has not been seen. The probe
@@ -175,6 +183,7 @@ public:
     static constexpr std::uint64_t kStaleUs = 1'500'000;      // a break this soon after we first saw the object is older than our sight of it
     static constexpr std::uint64_t kDeleteGrassUs = 400'000;  // life 0 written, still there: delete
     static constexpr std::uint64_t kDeleteUs = 6'000'000;     // (a crate takes 4.6 s to go)
+    static constexpr std::uint64_t kFallerRetryUs = 1'000'000;  // a faller's life 0, again
     static constexpr std::uint64_t kGoneHoldUs = 700'000;     // a gone-near-Link break waits this long
     static constexpr std::uint64_t kRespawnUs = 3'000'000;    // back this long after it went: put back by the game
     static constexpr std::uint64_t kEchoUs = 2'000'000;       // our break this soon before theirs was theirs
@@ -288,6 +297,7 @@ private:
         bool breakable = false;
         bool grass = false;
         bool sign = false;
+        bool faller = false;  // IsFaller: falls and stays, never moved or deleted
         std::uint64_t hit_sent_us = 0;
         std::uint64_t hit_given_us = 0;
         std::optional<std::int32_t> life;

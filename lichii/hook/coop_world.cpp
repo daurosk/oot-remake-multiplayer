@@ -85,6 +85,10 @@ bool IsSign(std::string_view name) {
             name.find("GuidePost_") != std::string_view::npos);
 }
 
+bool IsFaller(std::string_view name) {
+    return name.starts_with("Obj_FireTemple_HammerSlipPillar_");
+}
+
 bool IsGrassActor(std::string_view name) {
     if (name.starts_with("Obj_Plant_Grass_")) {
         return true;
@@ -310,6 +314,20 @@ void WorldSync::MakeBreak(Object& o, const Break& b, std::uint64_t now_us, Out& 
     if (o.remove || b.local) {
         return;  // our own break: the game is doing it
     }
+    if (o.faller) {
+        // It falls and stays (a bridge): never deleted. Life 0 makes the
+        // game drop it; written again each second until the life reads 0
+        // (a pillar that loaded fallen reads 0 already, nothing to write).
+        if (o.life && *o.life > 0 &&
+            (o.life_written_us == 0 || now_us - o.life_written_us >= kFallerRetryUs)) {
+            out.lives.push_back({o.address, 0, 0, {}});
+            out.notes.push_back(Line("world: %016llx %s %s", o.hash, o.name,
+                                     o.life_written_us == 0 ? "felled by another player"
+                                                            : "still standing: life 0 again"));
+            o.life_written_us = now_us;
+        }
+        return;
+    }
     if (b.got_us <= o.first_us + kStaleUs) {
         // Broken before we ever saw it (we came later, or it loaded later).
         o.remove = true;
@@ -399,6 +417,9 @@ void WorldSync::Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>&
 
 void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
                      const std::optional<proto::Vec3>& player, Out& out) {
+    if (o.faller) {
+        return;  // its fall is the break, not a move
+    }
     const auto found = remote_.find(o.hash);
     Remote* r = found != remote_.end() ? &found->second : nullptr;
     bool remote = r != nullptr && !r->samples.empty() && now_us - r->got_us < kRemoteHoldUs;
@@ -561,7 +582,8 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         if (s.hash == 0 || s.hash == kNoHash) {
             continue;
         }
-        const bool breakable = IsBreakable(s.name);
+        const bool faller = IsFaller(s.name);
+        const bool breakable = IsBreakable(s.name) || faller;
         if (!breakable && !IsMovable(s.name)) {
             continue;
         }
@@ -583,6 +605,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             o.breakable = breakable;
             o.grass = IsGrassActor(s.name);
             o.sign = IsSign(s.name);
+            o.faller = faller;
             o.life = life;
             o.position = s.position;
             o.rotation = s.rotation;

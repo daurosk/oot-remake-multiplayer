@@ -1291,3 +1291,63 @@ TEST_CASE("sign cut: what another player's word may be written over") {
     b.Receive(cut);
     CHECK(Walk(b, 2000 * kMs, {Thing(FakeSign::kActor, 0x70, 100, "Obj_GuidePost_A_02")}).words.empty());
 }
+
+namespace {
+const char* const kPillar = "Obj_FireTemple_HammerSlipPillar_A_01";
+Seen Fallen(std::uint64_t address, std::uint64_t hash, std::optional<std::int32_t> life) {
+    // Fallen over: a metre and a half lower and further on (a bridge now).
+    return Thing(address, hash, life, kPillar, proto::Vec3{3.5f, 0.5f, 3.0f});
+}
+} // namespace
+
+TEST_CASE("world: hammer pillars fall for everyone and are never moved or deleted (breakables)") {
+    CHECK(CoopWorld::IsFaller(kPillar));
+    CHECK(CoopWorld::IsFaller("Obj_FireTemple_HammerSlipPillar_A_02"));
+    CHECK_FALSE(CoopWorld::IsFaller("Obj_Pot_A_01"));
+    CHECK_FALSE(CoopWorld::IsBreakable(kPillar));  // the object sharing leaves it alone
+
+    // Ours: the hammer takes its life, it falls; the break is sent once, the fall is no move.
+    WorldSync a;
+    Walk(a, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    const auto hit = Walk(a, 1100 * kMs, {Thing(0x100, 0x11, 0, kPillar)});
+    REQUIRE(Sent<proto::WorldBreak>(hit).size() == 1);
+    for (std::uint64_t t = 1200; t < 4000; t += 100) {
+        const auto out = Walk(a, t * kMs, {Fallen(0x100, 0x11, 0)});
+        CHECK(Sent<proto::WorldMove>(out).empty());
+        CHECK(Sent<proto::WorldPlace>(out).empty());
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+    }
+    CHECK(a.Removes().empty());
+
+    // Another player's: life 0 is written, again each second while it stands, never deleted.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    Walk(b, 5000 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    b.Receive(BreakOf(0x11));
+    auto out = Walk(b, 5100 * kMs, {Thing(0x100, 0x11, 1, kPillar)});
+    REQUIRE(out.lives.size() == 1);
+    CHECK(out.lives[0].address == 0x100);
+    CHECK(out.lives[0].life == 0);
+    CHECK(out.send.empty());
+    CHECK(Walk(b, 5600 * kMs, {Thing(0x100, 0x11, 1, kPillar)}).lives.empty());
+    CHECK(Walk(b, 6200 * kMs, {Thing(0x100, 0x11, 1, kPillar)}).lives.size() == 1);  // again
+    for (std::uint64_t t = 6300; t < 20000; t += 100) {
+        out = Walk(b, t * kMs, {Fallen(0x100, 0x11, 0)});  // it fell
+        CHECK(out.lives.empty());
+        CHECK(Sent<proto::WorldMove>(out).empty());
+    }
+    CHECK(b.Removes().empty());
+
+    // A game that loads the room after the break: no delete; a pillar that loaded
+    // standing is felled, one that loaded fallen (life 0) is left as it is.
+    WorldSync c;
+    c.Receive(BreakOf(0x11));
+    c.Receive(BreakOf(0x22));
+    out = Walk(c, 1000 * kMs, {Thing(0x100, 0x11, 1, kPillar), Fallen(0x200, 0x22, 0)});
+    REQUIRE(out.lives.size() == 1);
+    CHECK(out.lives[0].address == 0x100);
+    for (std::uint64_t t = 1100; t < 10000; t += 100) {
+        Walk(c, t * kMs, {Fallen(0x100, 0x11, 0), Fallen(0x200, 0x22, 0)});
+    }
+    CHECK(c.Removes().empty());
+}

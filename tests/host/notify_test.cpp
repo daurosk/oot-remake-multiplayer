@@ -89,7 +89,7 @@ TEST_CASE("notify: a join and a host's save load are one line each") {
   CHECK(lines[0] == "Tobi loaded a save - the group follows it (1 items, 1 heart containers changed)");
 }
 
-TEST_CASE("notify: one player's items in one frame are one line; a burst is held back") {
+TEST_CASE("notify: one player's items in one frame are one line, a burst is held back") {
   Notifier n = Make();
   auto lines = n.Take({Bool("IsGet.Item_Bomb", 2), Bool("IsGet.Item_DekuNut", 2)}, 1, 1000);
   REQUIRE(lines.size() == 1);

@@ -20,6 +20,7 @@
 // No emulator code: tested in tests/lichii/projectiles_test.cpp.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -107,6 +108,25 @@ public:
 private:
     std::deque<std::uint64_t> lives_;
 };
+
+// The moment of a shot, from the shooter's ammo (issue 158): the seed and
+// the arrow sit nocked until let go, and their count goes down then. One
+// AmmoWatch per game; Dropped is asked once a walk per kind with the count
+// read now (nothing when the flags cannot be read: the last count is kept).
+class AmmoWatch {
+public:
+    // True once for each read lower than the one before.
+    bool Dropped(Kind kind, std::optional<std::int32_t> count);
+    void Reset() { last_.fill(-1); }
+
+private:
+    std::array<std::int32_t, 8> last_{-1, -1, -1, -1, -1, -1, -1, -1};
+};
+// The ammo count's flag (PouchData.<item>.StockNum, docs/items.md) for a
+// kind that sits nocked: seeds and arrows. 0 for the others.
+std::uint32_t AmmoFlag(Kind kind);
+// The speed a made-up flight of `kind` goes at, metres a second.
+float ShotSpeed(Kind kind);
 
 // Why an owner's projectile left the list after `lifetime_us`, last seen
 // moving at `speed` metres a second.

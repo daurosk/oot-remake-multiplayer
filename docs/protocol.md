@@ -1,4 +1,4 @@
-# Wire protocol, version 7
+# Wire protocol, version 8
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -220,7 +220,7 @@ How it moves:
 
 ### Pose (`PLAYER_POSE`)
 
-The local Link's skeleton after its animation, so the puppet can copy it bone by bone ([puppet.md](puppet.md), "Pose"). On channel 3 with `PLAYER_SAMPLE`, unreliable: a lost pose is replaced by the next one.
+The local Link's skeleton after its animation, so the puppet can copy it bone by bone ([puppet.md](puppet.md), "Pose"). On channel 3 with `PLAYER_SAMPLE`, unreliable: a lost pose is replaced by the next one. Since protocol 8 a player also sends a `PLAYER_POSE` for each piece out in Link's hands (the slingshot, the bow), with that piece's own skeleton id and every bone ([puppet.md](puppet.md), "Held pieces"); the receiver keeps one track per skeleton id and writes each onto the piece of that skeleton. The layout is unchanged.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
@@ -352,4 +352,5 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 6 (chunk 4): `SIGN_CUT` (80; 80 to 84 kept for signs). No earlier layout changed. The version went up so that a version 5 server, which would not relay it, is refused at `HELLO`.
 - Version 7 (chunk 5, test7): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
 - Version 8 (test8): `FLAG_ORIGIN` (150; 150 to 154 kept), from the server only. A version 7 game would refuse it as unknown, so every game and the server must be 8.
+- Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of test8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 7 also brings `FLAG_RESET` (135; 135 to 139 kept for saves, branch `host-save`): the host's save load sets every game's shared flags to the save's values. A version 6 server would not relay it.

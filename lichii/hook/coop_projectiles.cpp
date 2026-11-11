@@ -192,6 +192,41 @@ std::optional<float> FuseClock::Left(std::uint64_t age_us) const {
 
 // ---------------------------------------------------------------- reasons
 
+bool AmmoWatch::Dropped(Kind kind, std::optional<std::int32_t> count) {
+    if (!count || *count < 0) {
+        return false;
+    }
+    std::int32_t& last = last_[static_cast<std::size_t>(kind)];
+    const bool dropped = last >= 0 && *count < last;
+    last = *count;
+    return dropped;
+}
+
+std::uint32_t AmmoFlag(Kind kind) {
+    switch (kind) {
+    case Kind::seed:
+        return 0x5fadf7fc;  // Item_DekuSeed
+    case Kind::arrow:
+        return 0x518ec74b;  // Item_Arrow_Normal
+    default:
+        return 0;
+    }
+}
+
+// From the data files: the bow's BowParam has an initial speed of 1.875 a
+// frame (about 56 m/s at 30 frames a second) and a range of 20. The
+// slingshot has only the default BowParam; its seed is taken a little slower.
+float ShotSpeed(Kind kind) {
+    switch (kind) {
+    case Kind::arrow:
+        return 56.0f;
+    case Kind::seed:
+        return 40.0f;
+    default:
+        return 30.0f;
+    }
+}
+
 proto::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, float speed) {
     if (info.blasts) {
         // A bomb or bombchu that lived at all went off; one gone at once was

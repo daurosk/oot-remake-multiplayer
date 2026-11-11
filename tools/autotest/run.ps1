@@ -31,7 +31,7 @@ param(
     [double]$Every = 3,
     # LICHII_COOP_... switches for both games, as NAME=value (replaces the default list).
     # As NAME=value: an array, or one comma list ("A=1,B=1"), which is how powershell -File passes it.
-    [string[]]$Switches = @("LICHII_COOP_PUPPET=1", "LICHII_COOP_OBJECTS=1", "LICHII_COOP_DEBUG_OBJECTS=1"),
+    [string[]]$Switches = @("LICHII_COOP_PUPPET=1", "LICHII_COOP_OBJECTS=1", "LICHII_COOP_SPAWN=1", "LICHII_COOP_DEBUG_OBJECTS=1"),
     # Seconds to wait for each phase (boot and join, load, scenario).
     [int]$Timeout = 180,
     # Steps files: how long an `expect` line waits for the counts (seconds).

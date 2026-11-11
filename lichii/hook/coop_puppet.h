@@ -13,6 +13,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -290,6 +291,10 @@ public:
         std::string anim_name;  // what was last played on it
     };
     std::vector<SlotView> Slots() const;  // the calc thread, or tests
+    // Any thread: bit n set while puppet n's actor is live in this scene and
+    // shown or held (not parked for a hide), as of the last calc frame. The
+    // fairies follow it, so a Navi never shows without her puppet (issue 145).
+    std::uint32_t LiveMask() const { return live_mask_.load(std::memory_order_relaxed); }
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
 
@@ -418,6 +423,7 @@ private:
     std::uint8_t pending_slot_ = 0;
     int calls_ = 0;  // this frame
     std::uint64_t frames_ = 0;
+    std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
     std::uint64_t frames_at_status_ = 0;
     std::uint64_t status_ms_ = 0;
     std::string scene_;               // input_.scene as last seen
@@ -478,6 +484,8 @@ private:
 // Configure once, before the game starts (CoopSvc does it).
 void Configure(PlannerSettings settings, bool verbose, Director::Log log);
 Director& TheDirector();
+// Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
+std::uint32_t LivePuppets();
 
 // Every remote player presence shows at `server_now_us`, with scene, status,
 // age, newest animation and gear: what Publish plans from. CoopFairy plans

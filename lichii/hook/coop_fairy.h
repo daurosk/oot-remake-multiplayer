@@ -50,6 +50,12 @@ struct Settings {
     float circle_hz = 0.35f;
     float follow_rate = 5.0f;   // 1/s: how fast it closes on where it should be
     float snap = 4.0f;          // farther than this (units) it jumps there
+    // Issue 145: a puppet farther than `far` from our Link (another room or
+    // floor of the scene) parks its fairy under the floor; nearer than
+    // `near` she shows again. Her glow was seen in our room while the puppet
+    // was not. 0: no distance rule.
+    float far = 30.0f;
+    float near = 25.0f;
 };
 
 // The svc cave's order for the fairy director (puppets first, CoopSpawn 10).
@@ -62,7 +68,13 @@ public:
 
     // `puppets` is what the puppet planner gives for this frame. Returns the
     // same input with each target a fairy beside its puppet (same numbers).
-    CoopPuppet::Input Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms);
+    // `live`: CoopPuppet::LivePuppets(), bit n while puppet n's actor is live
+    // and not parked; a fairy whose puppet is not (still being made, refused,
+    // gone) is parked under the floor (issue 145). `local`: our Link, for the
+    // distance rule (Settings::far); none: no distance rule.
+    CoopPuppet::Input Follow(const CoopPuppet::Input& puppets, std::uint64_t now_ms,
+                             std::uint32_t live = ~0u,
+                             const std::optional<Vec3>& local = std::nullopt);
 
     const Settings& settings() const { return settings_; }
 
@@ -77,6 +89,7 @@ private:
     };
     Settings settings_;
     std::map<std::uint8_t, Track> tracks_;
+    std::map<std::uint8_t, bool> far_;  // per player: parked for distance
     std::string scene_;
 };
 

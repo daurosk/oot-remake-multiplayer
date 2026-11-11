@@ -294,3 +294,58 @@ TEST_CASE("fairy: carries her puppet's wait for the drawing (issue 93)") {
     CHECK(out.drawn_since_ms == 1234);
     CHECK(out.settle_ms == 1000);
 }
+
+TEST_CASE("fairy: parked while her puppet is not live, placed from the puppet (issue 145)") {
+    Follower f(Still());
+    Input in = Puppets(1, {10, 0, 5});
+    // Puppet 1 is still being made (or refused, or gone): no bit.
+    auto out = f.Follow(in, 1000, 0u);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].show == CoopPuppet::Show::hide);
+    CHECK(std::string(out.targets[0].why) == "her puppet is not shown");
+    // Still placed from the puppet's spot (the director parks her under it).
+    CHECK(out.targets[0].position[0] == doctest::Approx(10 + Still().offset[0]));
+    // Another player's puppet is live, not hers.
+    out = f.Follow(in, 1033, 1u << 2);
+    CHECK(out.targets[0].show == CoopPuppet::Show::hide);
+    // Her puppet is live: she shows.
+    out = f.Follow(in, 1066, 1u << 1);
+    CHECK(out.targets[0].show == CoopPuppet::Show::show);
+    // A puppet hidden by the plan keeps its own reason.
+    in.targets[0].show = CoopPuppet::Show::hide;
+    in.targets[0].why = "our cutscene";
+    out = f.Follow(in, 1100, 0u);
+    CHECK(out.targets[0].show == CoopPuppet::Show::hide);
+    CHECK(std::string(out.targets[0].why) == "our cutscene");
+    // Held with a live puppet: held.
+    in.targets[0].show = CoopPuppet::Show::hold;
+    out = f.Follow(in, 1133, 1u << 1);
+    CHECK(out.targets[0].show == CoopPuppet::Show::hold);
+}
+
+TEST_CASE("fairy: parked while her puppet is far from our Link, with some slack (issue 145)") {
+    Settings s = Still();
+    Follower f(s);
+    const std::uint32_t live = 1u << 1;
+    const CoopPuppet::Vec3 us{0, 0, 0};
+    auto show_at = [&](float x, std::uint64_t now) {
+        return f.Follow(Puppets(1, {x, 0, 0}), now, live, us).targets.at(0).show;
+    };
+    CHECK(show_at(10, 0) == CoopPuppet::Show::show);
+    CHECK(show_at(s.far - 1, 33) == CoopPuppet::Show::show);
+    CHECK(show_at(40, 66) == CoopPuppet::Show::hide);  // the compass room, two floors off
+    CHECK(std::string(f.Follow(Puppets(1, {40, 0, 0}), 99, live, us).targets[0].why) ==
+          "her puppet is far away");
+    // Coming back: still parked between near and far, shown once nearer.
+    CHECK(show_at(s.far - 1, 133) == CoopPuppet::Show::hide);
+    CHECK(show_at(s.near - 1, 166) == CoopPuppet::Show::show);
+    // Vertical distance counts (another floor right above).
+    CHECK(show_at(0, 200) == CoopPuppet::Show::show);
+    CHECK(f.Follow(Puppets(1, {0, 35, 0}), 233, live, us).targets[0].show ==
+          CoopPuppet::Show::hide);
+    // Without our position, or with the rule off: no distance rule.
+    CHECK(f.Follow(Puppets(1, {90, 0, 0}), 266, live).targets[0].show == CoopPuppet::Show::show);
+    s.far = 0.0f;
+    Follower off(s);
+    CHECK(off.Follow(Puppets(1, {90, 0, 0}), 0, live, us).targets[0].show == CoopPuppet::Show::show);
+}

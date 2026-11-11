@@ -383,6 +383,11 @@ public:
                         LOG_INFO(Core, "coop: items: {} capacities mended after a load", raised);
                     }
                 }
+                // Issue 125: a shared bracelet or gauntlets give the lift
+                // grade too, or every pulled bomb is deleted at once.
+                if (load_mend_.ready()) {
+                    MendLiftGrade(*memory);
+                }
             }
         }
         if (pickups_) {
@@ -1211,6 +1216,25 @@ private:
     std::uint32_t samples_seq_ = 0;
     std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
+
+    // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to
+    // what the held bracelet or gauntlets give. Only ever raised; an unknown
+    // value or a flag that cannot be read is left alone.
+    void MendLiftGrade(EmulatorMemory& memory) {
+        namespace lift = coop::host::lift;
+        coop::host::GameFlags flags(memory);
+        const auto grade = flags.get_enum(lift::kGrade);
+        if (!grade) {
+            return;
+        }
+        const auto stock = [&](std::uint32_t hash) { return flags.get_int(hash).value_or(0); };
+        const auto raise = coop::host::lift_grade_raise(stock(lift::kGoron), stock(lift::kSilver),
+                                                        stock(lift::kGold), *grade);
+        if (raise && coop::host::GameFlags::set_enum(memory, lift::kGrade, *raise)) {
+            LOG_INFO(Core, "coop: items: lift grade {:#x} -> {:#x} for the held strength item",
+                     *grade, *raise);
+        }
+    }
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

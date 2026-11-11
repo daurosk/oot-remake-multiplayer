@@ -1004,3 +1004,35 @@ TEST_CASE("item grants: the mend lasts 1.5 s at 165 presents a second (issue 106
   CHECK(last_mend - in >= 1'450'000);
   CHECK(last_mend - in <= 1'550'000);
 }
+
+TEST_CASE("game items: a held strength item raises the lift grade (issue 125)") {
+  namespace lift = coop::host::lift;
+  using coop::host::lift_grade_raise;
+  // The hashes are the names' (GameDataList: PlayerStatus.LiftGrade, enum
+  // None/Low/Middle/High; real bomb saves hold the bracelet and Low).
+  CHECK(protocol::flag_hash("PlayerStatus.LiftGrade") == lift::kGrade);
+  CHECK(protocol::flag_hash("None") == lift::kNone);
+  CHECK(protocol::flag_hash("Low") == lift::kLow);
+  CHECK(protocol::flag_hash("Middle") == lift::kMiddle);
+  CHECK(protocol::flag_hash("High") == lift::kHigh);
+  CHECK(protocol::flag_hash("PouchData.Armor_Child_Gauntlet_Goron.StockNum") == lift::kGoron);
+  CHECK(protocol::flag_hash("PouchData.Armor_Adult_Gauntlet_Silver.StockNum") == lift::kSilver);
+  CHECK(protocol::flag_hash("PouchData.Armor_Adult_Gauntlet_Gold.StockNum") == lift::kGold);
+  // The three are shared items, so a shared bracelet reaches this check.
+  for (const std::uint32_t h : {lift::kGoron, lift::kSilver, lift::kGold}) {
+    REQUIRE(find_item(h) != nullptr);
+    CHECK(find_item(h)->rule == ItemRule::max);
+  }
+
+  // A bracelet from another player: None -> Low (the test saves' case).
+  CHECK(lift_grade_raise(1, 0, 0, lift::kNone) == lift::kLow);
+  CHECK(lift_grade_raise(1, 1, 0, lift::kLow) == lift::kMiddle);
+  CHECK(lift_grade_raise(1, 1, 1, lift::kNone) == lift::kHigh);
+  CHECK(lift_grade_raise(0, 0, 1, lift::kMiddle) == lift::kHigh);
+  // Nothing held, or the grade already there or above: nothing written.
+  CHECK_FALSE(lift_grade_raise(0, 0, 0, lift::kNone));
+  CHECK_FALSE(lift_grade_raise(1, 0, 0, lift::kLow));
+  CHECK_FALSE(lift_grade_raise(1, 0, 0, lift::kHigh));  // never lowered
+  // A value that is not a grade (memory not what we think): left alone.
+  CHECK_FALSE(lift_grade_raise(1, 0, 0, 0));
+}

@@ -758,6 +758,72 @@ TEST_CASE("objects: one game rolls Stalchild, the others delete theirs and make 
     CHECK(b.Creates().empty());
 }
 
+TEST_CASE("objects: a decided Stalchild copy that sank by itself is made again, a dead one is not") {
+    // Issue 124 (chunk 2 test, B's log): B made A's three Stalchild, each played
+    // its own 'Disappear' 2 s later and left B's list while A's still fought.
+    Sync a;  // player 1: decides
+    Sync b;  // player 2
+    a.Receive(Where(2, kScene, 0));
+    b.Receive(Where(1, kScene, 0));
+    const auto spawns = All<proto::ObjectSpawn>(
+        Tick(a, 100 * kMs, {Enemy(0x100, ~0ULL, 2, 7.0f), Enemy(0x101, ~0ULL, 2, 20.0f)}, 1));
+    REQUIRE(spawns.size() == 2);
+    Tick(b, 100 * kMs, {}, 2);  // B is in the scene first
+    b.Receive(spawns[0]);
+    b.Receive(spawns[1]);
+    Tick(b, 150 * kMs, {}, 2);
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 2);
+    for (const auto& c : creates) {
+        CHECK(c.remakes == Sync::kRemakes);
+    }
+    const auto key_at = [&](float x) {
+        for (const auto& c : b.Creates()) {
+            if (c.position[0] == x) return c.key;
+        }
+        return std::uint64_t{0};
+    };
+    const std::uint64_t sinks = key_at(7.0f), dies = key_at(20.0f);
+
+    // Both made and listed.
+    Seen sinking = Enemy(0x600, ~0ULL, 2, 7.0f);
+    Seen dying = Enemy(0x601, ~0ULL, 2, 20.0f);
+    b.Bind({{sinks, 0x600}, {dies, 0x601}});
+    Tick(b, 200 * kMs, {sinking, dying}, 2);
+    REQUIRE(b.IdOf(0x600));
+    REQUIRE(b.IdOf(0x601));
+
+    // One sinks by its own AI; the other is killed here (life 0, 'Die').
+    sinking.animation = proto::Animation{"Disappear", 0.0f, 1.0f};
+    dying.life = proto::ObjectLife{0, 2};
+    dying.animation = proto::Animation{"Die", 0.0f, 1.0f};
+    b.Bind({{sinks, 0x600}, {dies, 0x601}});
+    Tick(b, 250 * kMs, {sinking, dying}, 2);
+    b.Bind({});
+    Tick(b, 300 * kMs, {}, 2);
+    Tick(b, 350 * kMs, {}, 2);
+    CHECK_FALSE(b.IdOf(0x600));
+    CHECK_FALSE(b.IdOf(0x601));
+
+    // A's are still alive: both stay wanted; only the sunk one may come back.
+    creates = b.Creates();
+    REQUIRE(creates.size() == 2);
+    for (const auto& c : creates) {
+        CHECK_FALSE(c.removed);
+        CHECK(c.remakes == (c.key == sinks ? Sync::kRemakes : 0));
+    }
+
+    // The director makes it again near A's one: B waits for it instead of
+    // deleting it as an own roll, and it takes A's id again.
+    Tick(b, 1400 * kMs, {Enemy(0x700, ~0ULL, 2, 7.2f)}, 2);
+    CHECK(b.Removes().empty());
+    CHECK(b.Refused() == 0);
+    b.Bind({{sinks, 0x700}});
+    Tick(b, 1450 * kMs, {Enemy(0x700, ~0ULL, 2, 7.2f)}, 2);
+    REQUIRE(b.IdOf(0x700));
+    CHECK(*b.IdOf(0x700) == spawns[0].id);
+}
+
 TEST_CASE("objects: alone or first in the scene, a game rolls its own Stalchild") {
     Sync b;
     // Player 1 is elsewhere, or its scene is old news: B decides.

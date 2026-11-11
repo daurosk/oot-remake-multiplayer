@@ -72,6 +72,12 @@ struct Copy {
     // physics takes the new place (as the objects' Mover does).
     std::optional<CoopPuppet::Mat3> rotation;
     bool setter = false;
+    // A copy that goes by itself while still wanted (act show) is made again
+    // up to this many times, Director::kRemakeDelayMs after it went. 0: never
+    // (a bomb that went off is not made again). Rolled enemies (issue 124):
+    // a Stalchild copy can sink into the ground by its own AI while the
+    // decider's one still fights.
+    std::uint8_t remakes = 0;
 };
 
 class Sync {
@@ -165,6 +171,7 @@ public:
     static constexpr std::size_t kSlots = 16;
     static constexpr std::uint64_t kSlotSize = 0x180;  // arg 0x100, name 0x10, handle 8, text 0x40
     static constexpr std::uint64_t kCreateTimeoutMs = 3000;
+    static constexpr std::uint64_t kRemakeDelayMs = 1000;  // see Copy::remakes
 
     // Present thread.
     void SetInput(std::uint64_t main_base, std::vector<Copy> copies);
@@ -216,7 +223,14 @@ private:
 
     std::uint64_t base_ = 0;
     std::vector<Copy> copies_;
-    std::set<std::uint64_t> started_;  // keys ever created: never twice
+    std::set<std::uint64_t> started_;  // keys created: not twice, unless remade
+    // Copies that went by themselves and are made again (Copy::remakes).
+    struct Remade {
+        std::uint8_t count = 0;
+        std::uint64_t gone_ms = 0;
+    };
+    std::map<std::uint64_t, Remade> remade_;
+    bool Due(const Copy& c, std::uint64_t now_ms) const;
     std::uint64_t block_ = 0;
     bool allocating_ = false;
     std::uint64_t retry_ms_ = 0;

@@ -854,6 +854,7 @@ public:
                 c.position = e.position;
                 c.act = e.removed ? CoopSpawn::Act::remove : CoopSpawn::Act::show;
                 c.place = false;
+                c.remakes = e.remakes;  // issue 124: a copy that sank by itself comes back
                 enemies.push_back(std::move(c));
             }
             if (enemies.size() != enemies_logged_ || sync_.Refused() != refused_logged_ ||

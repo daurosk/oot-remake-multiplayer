@@ -371,6 +371,21 @@ std::map<std::uint64_t, std::uint64_t> Director::Live() const {
     return live_;
 }
 
+bool Director::Due(const Copy& c, std::uint64_t now_ms) const {
+    if (c.act != Act::show || started_.count(c.key) != 0) {
+        return false;
+    }
+    const auto r = remade_.find(c.key);
+    if (r == remade_.end()) {
+        return true;
+    }
+    // A copy waiting to be made again: the input in force now decides. A
+    // copy killed here is seen gone at once, but Sync sends remakes 0 only
+    // after it missed two walks, within the delay.
+    return c.remakes != 0 && r->second.count <= c.remakes &&
+           now_ms - r->second.gone_ms >= kRemakeDelayMs;
+}
+
 const Copy* Director::Wanted(std::uint64_t key) const {
     for (const Copy& c : copies_) {
         if (c.key == key) {
@@ -483,8 +498,10 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
         block_ = 0;
         allocating_ = false;
         started_.clear();
+        remade_.clear();
         slots_.assign(kSlots, Slot{});
     }
+    std::erase_if(remade_, [this](const auto& e) { return Wanted(e.first) == nullptr; });
     std::map<std::uint64_t, std::uint64_t> live;
     for (std::size_t i = 0; i < slots_.size(); ++i) {
         Slot& slot = slots_[i];
@@ -517,6 +534,22 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
             if (!ReadValue(guest, slot.taken, vtable) || vtable != slot.vtable ||
                 !ReadValue(guest, slot.taken + addr::kActorState, state) || Gone(state)) {
                 slot.phase = Phase::done;  // it went by itself (a fuse, a hit)
+                if (const Copy* c = Wanted(slot.key);
+                    c != nullptr && c->act == Act::show && c->remakes != 0) {
+                    Remade& r = remade_[slot.key];
+                    if (r.count < c->remakes) {
+                        ++r.count;
+                        r.gone_ms = now_ms;
+                        started_.erase(slot.key);
+                        Say(slot.actor + ": copy " + std::to_string(slot.key) +
+                            " went by itself; made again (" + std::to_string(r.count) + " of " +
+                            std::to_string(c->remakes) + ")");
+                    } else {
+                        Say(slot.actor + ": copy " + std::to_string(slot.key) +
+                            " went by itself; not made again (made " + std::to_string(r.count) +
+                            " times already)");
+                    }
+                }
             } else if (const Copy* c = Wanted(slot.key); c != nullptr && c->act != Act::remove && c->place) {
                 if (c->rotation) {
                     // Place and turn are one block at +0x31c, as the Mover writes them.
@@ -562,7 +595,7 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
 std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     namespace addr = CoopPuppet::addr;
     const bool any_new = std::any_of(copies_.begin(), copies_.end(), [&](const Copy& c) {
-        return c.act == Act::show && started_.count(c.key) == 0;
+        return Due(c, now_ms);
     });
     if (block_ == 0) {
         if (!any_new || allocating_ || now_ms < retry_ms_) {
@@ -631,7 +664,7 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         return std::nullopt;
     }
     for (const Copy& copy : copies_) {
-        if (copy.act != Act::show || started_.count(copy.key) != 0) {
+        if (!Due(copy, now_ms)) {
             continue;
         }
         const auto free = std::find_if(slots_.begin(), slots_.end(),

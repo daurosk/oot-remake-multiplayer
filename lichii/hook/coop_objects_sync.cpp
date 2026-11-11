@@ -1360,7 +1360,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // and takes its OBJECT_REMOVE (it hands an unlisted object over at once).
     for (const Egg& e : eggs_) {
         if (std::none_of(present.begin(), present.end(), [&e](const auto& p) { return p.id == e.id; })) {
-            present.push_back({e.id, 0});
+            present.push_back({e.id, proto::object_presence::awake});  // unchanged from its last listing
         }
     }
     std::sort(present.begin(), present.end(),

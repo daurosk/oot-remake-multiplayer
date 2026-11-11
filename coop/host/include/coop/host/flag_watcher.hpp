@@ -123,10 +123,11 @@ class FlagWatcher {
   // shared by the snapshot was reset by the joiner's save load, sent back as
   // 0, and the group's later 1 was written while the load ran and lost).
   // Saves (Caleb, 2026-11-11, docs/flags.md "Saves"): the host's save is the
-  // truth. While there is no Link nothing is sent. When kSaveLoadMin named
-  // flags go back (a Bool to 0, an Int lower) with no Link, a save was
-  // loaded: a cutscene, warp, time travel or death sets flags forward or not
-  // at all, a door none. Then nothing is sent until the window ends, when
+  // truth. While there is no Link nothing is sent. A save was loaded when,
+  // in one window, no scene was loaded for kTitleFrames (the title screen
+  // or file select) and kSaveLoadMin named flags went back (a Bool to 0, an
+  // Int lower) with no Link. A door, warp, cutscene, time travel or death
+  // keeps a scene loaded, and its room "enter" flags do not count then. Then nothing is sent until the window ends, when
   // the host sends what its load changed as FLAG_RESET, which replaces the
   // group's values, and a player's game takes the group's values back for
   // what its load changed (the group is not changed). One-way room flags
@@ -139,6 +140,12 @@ class FlagWatcher {
   // rule) is not sent: the group's value is written back. A Bool going to 1,
   // or an Int to any other value, is the game's own change and is sent.
   void set_loading(bool loading);
+  // Whether a scene (Banc) is loaded this frame. None for kTitleFrames in a
+  // load window means the title screen or file select: the only way to a
+  // save load (docs/flags.md, "Saves"). Default: loaded.
+  void set_scene(bool readable) { scene_readable_ = readable; }
+  static constexpr int kTitleFrames = 30;
+  static constexpr int kSaveLoadMin = 2;
   static constexpr int kSettleFrames = 120;
   bool settling() const { return loading_ || settle_left_ > 0; }
 
@@ -207,9 +214,10 @@ class FlagWatcher {
   // A load window (docs/flags.md, "Saves"): from the first loading frame to
   // the end of the settle frames. Nothing is sent from inside it.
   bool window_ = false;
-  bool moved_ = false;  // a save was loaded in it (kSaveLoadMin flags went back with no Link)
+  bool moved_ = false;  // a save was loaded in it (the title seen, kSaveLoadMin flags back)
   int backward_ = 0;    // named flags that went back with no Link in this window
-  static constexpr int kSaveLoadMin = 2;
+  int no_scene_frames_ = 0;  // frames in this window with no scene loaded
+  bool scene_readable_ = true;  // set_scene
   bool reset_seen_ = false;  // take_reset
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;

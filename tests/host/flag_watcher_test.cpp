@@ -554,8 +554,10 @@ TEST_CASE("flag watcher: a guest's save load takes the group's values and sends 
   CHECK(w.frame(store).empty());
   CHECK(store.get(kDoor) == 1);
 
-  // The save loads: an older one, so two of them go back to 0 (the sign of a
-  // save load), and its own progress (the chest) comes in with it. Nothing
+  w.set_scene(false);  // the title screen and file select: no scene loaded
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  // The save loads: an older one, so two of them go back to 0 (with the
+  // title screen before, the sign of a save load), and its own progress (the chest) comes in with it. Nothing
   // goes out: a guest's load never changes the group (docs/flags.md, "Saves").
   store.set(kDoor, 0);
   store.set(kKey0, 0);
@@ -566,6 +568,7 @@ TEST_CASE("flag watcher: a guest's save load takes the group's values and sends 
   CHECK(w.stats().load_reverts == 2);
 
   // Link is there, but the load still runs a moment: the same again.
+  w.set_scene(true);
   w.set_loading(false);
   CHECK(w.settling());
   store.set(kDoor, 0);
@@ -636,12 +639,16 @@ TEST_CASE("flag watcher, host: the host's save load resets the group to its save
   store.set(kDoor, 1);
   store.set(kKey0, 1);
   w.frame(store);
-  // The host loads an older save: the door is shut and the key unused in it.
+  // The host goes to the title screen and loads an older save: the door is
+  // shut and the key unused in it.
   w.set_loading(true);
+  w.set_scene(false);  // the title screen and file select: no scene loaded
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
   store.set(kDoor, 0);
   store.set(kKey0, 0);
   CHECK(w.frame(store).empty());  // nothing during the load
   CHECK(store.get(kDoor) == 0);   // the host's save is the truth: not put back
+  w.set_scene(true);
   w.set_loading(false);
   std::vector<proto::FlagEntry> reset;
   for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
@@ -854,10 +861,13 @@ TEST_CASE("flag watcher: a one-way room flag the game resets is no save load and
   store.set(kChest, 1);
   w.frame(store);
   w.set_loading(true);
+  w.set_scene(false);  // the title screen and file select: no scene loaded
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
   store.set(kDoor, 0);
   store.set(kKey0, 0);
   store.set(kChest, 0);
   w.frame(store);
+  w.set_scene(true);
   w.set_loading(false);
   std::vector<proto::FlagEntry> reset;
   for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
@@ -882,4 +892,43 @@ TEST_CASE("item store: a reset that lowers the hearts holds life to the new maxi
   game_store.values[kLife] = entry(kLife, 8, proto::FlagKind::int32);
   CHECK(store.write_exact(entry(kMaxLife, 10, proto::FlagKind::int32)));
   CHECK(game_store.get(kLife) == 8);
+}
+
+TEST_CASE("flag watcher, host: two flags back with a scene loaded is no save load (doors, enter flags, death)") {
+  // A door out of a room whose "enter" flags reset, a Game Over continue in
+  // the same scene, a warp: Link is gone a moment, the scene stays loaded.
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  store.set(kKey0, 1);
+  w.frame(store);
+  w.set_loading(true);
+  store.set(kDoor, 0);
+  store.set(kKey0, 0);
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 5; ++i) w.frame(store);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher, host: the title screen with only one flag back is no save load") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.set(kDoor, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  store.set(kDoor, 0);
+  w.frame(store);
+  w.set_scene(true);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  }
+  CHECK(w.stats().host_resets == 0);
 }

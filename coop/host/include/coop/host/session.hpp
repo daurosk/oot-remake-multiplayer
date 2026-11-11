@@ -86,6 +86,11 @@ class Session {
   Session(const Session&) = delete;
   Session& operator=(const Session&) = delete;
 
+  // Emulator thread, before frame(): whether a scene (Banc) is loaded now
+  // (PlayerReader::read_scene). Its absence for a while in a load is the
+  // title screen, the sign of a save load (FlagWatcher::set_scene).
+  void set_scene_readable(bool readable) { scene_readable_ = readable; }
+
   // Emulator thread, once per emulated frame. `reading` is this frame's
   // PlayerReader::read() (nothing when the game is not the right one);
   // `flags` the game's flags, or null when they cannot be reached this frame
@@ -93,6 +98,7 @@ class Session {
   FrameReport frame(const std::optional<PlayerReading>& reading, FlagStore* flags);
   FrameReport frame(GameMemory& memory, FlagStore* flags) {
     PlayerReader reader(memory, &drawn_state_);
+    scene_readable_ = reader.read_scene().has_value();
     return frame(reader.read(), flags);
   }
 
@@ -163,6 +169,7 @@ class Session {
   Sampler sampler_;
   std::optional<FlagWatcher> watcher_;
   bool reset_sampler_ = false;
+  bool scene_readable_ = true;  // set_scene_readable
   PlayerReader::DrawnState drawn_state_{};  // frame(GameMemory&)'s readers share it
 
   // Guarded by net_mutex_.

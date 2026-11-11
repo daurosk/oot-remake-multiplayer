@@ -382,6 +382,9 @@ public:
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);
             });
         }
+        if (memory) {  // docs/flags.md, "Saves": no scene for a while is the title screen
+            session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
+        }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
         if (report.host_reset) {
             // docs/flags.md, "Saves": the host loaded a save. Session-wide state

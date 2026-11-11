@@ -70,6 +70,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     if (watcher_ && flags != nullptr) {
       // No Link to read: the game is loading (FlagWatcher::set_loading).
       watcher_->set_loading(!reading.has_value());
+      watcher_->set_scene(scene_readable_);
       queue_flags(watcher_->frame(*flags), out);
     }
   }

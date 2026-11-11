@@ -224,7 +224,9 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     window_ = true;
     moved_ = false;
     backward_ = 0;
-  } else if (!settling() && window_) {
+    no_scene_frames_ = 0;
+  }
+  if (window_ && loading_ && !scene_readable_) ++no_scene_frames_; else if (!settling() && window_) {
     window_ = false;
     end_window(store, resets);
   }
@@ -504,9 +506,10 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
     if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
-        went_back(it->second, *now) && ++backward_ >= kSaveLoadMin) {
-      // No Link and saved progress going back: a save was loaded. A cutscene,
-      // a warp, time travel or a death sets flags forward or not at all.
+        went_back(it->second, *now) && ++backward_ >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames) {
+      // The title screen (no scene) and saved progress going back: a save
+      // was loaded. A door, warp, cutscene, time travel or death keeps a
+      // scene, and its flags going back are the room's or the story's.
       moved_ = true;
     }
     if (window_ && moved_) {

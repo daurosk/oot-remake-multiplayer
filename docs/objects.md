@@ -169,7 +169,7 @@ Caleb (2026-11-09): every player must see the same Stalchild rise out of the gro
 
 #### What is built (branch `projectiles`, issue 85)
 
-The copies are still the game's own actors made by the spawn sync ([spawns.md](spawns.md), `LICHII_COOP_SPAWN=1`); the `CoopShot_*` packs above are not made. On top of it, `lichii/hook/coop_projectiles.{h,cpp}` (tested in `tests/lichii/projectiles_test.cpp`) holds the rules below, used by `coop_spawn.cpp` and `coop_objects_sync.cpp`. No new message: everything rides on `OBJECT_SPAWN`, `OBJECT_SAMPLE` and `OBJECT_REMOVE` components that protocol 4 already has (rotation, fuse), so the protocol version stays.
+The copies are the game's own actors made by the spawn sync ([spawns.md](spawns.md), `LICHII_COOP_SPAWN=1`), except seeds, arrows and hookshot tips. Since issue 85 those are the `CoopShot_Seed`, `CoopShot_Arrow`, `CoopShot_Hook` and `CoopShot_HookLong` stand-ins ([spawns.md](spawns.md), "Seeds, arrows and hookshot tips"); the other `CoopShot_*` packs above are not made. On top of it, `lichii/hook/coop_projectiles.{h,cpp}` (tested in `tests/lichii/projectiles_test.cpp`) holds the rules below, used by `coop_spawn.cpp` and `coop_objects_sync.cpp`. No new message: everything rides on `OBJECT_SPAWN`, `OBJECT_SAMPLE` and `OBJECT_REMOVE` components that protocol 4 already has (rotation, fuse), so the protocol version stays.
 
 | Kind | Actor | Copy's path | Its end |
 |---|---|---|---|

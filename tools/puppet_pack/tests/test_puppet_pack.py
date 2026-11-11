@@ -333,6 +333,47 @@ class BuildPackTest(unittest.TestCase):
         again = build.upsert_rows(out, [new])
         self.assertEqual(len(again), 4)
 
+    def test_stand_in(self):
+        # Issue 85: a projectile copy's stand-in is the shootable's model only.
+        seed = {"Components": {
+            "ModelInfoRef": "?Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml",
+            "LODRef": "?Component/LODParam/Shared.engine__component__LODParam.bgyml",
+            "PhysicsRef": "?Component/Physics/Seed.engine__component__PhysicsParam.bgyml",
+            "ShootableRef": "?Component/ShootableParam/Seed.game__component__ShootableParam.bgyml",
+            "ELinkRef": "?Component/ELink/Seed.engine__component__ELinkParam.bgyml",
+            "AttackRef": "?GameBalance/AttackParam/Seed.game__gamebalance__AttackParam.bgyml",
+        }}
+        members = {
+            "Actor/Shootable_DekuSeed.engine__actor__ActorParam.bgyml": byml.dumps(seed),
+            "Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml": byml.dumps({"FmdbName": "Seed"}),
+            "Component/LODParam/Shared.engine__component__LODParam.bgyml": byml.dumps({}),
+            "Component/Physics/Seed.engine__component__PhysicsParam.bgyml": byml.dumps({}),
+            "Component/ShootableParam/Seed.game__component__ShootableParam.bgyml": byml.dumps({}),
+        }
+        pack, ap, names = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShot_Seed")
+        comps = byml.loads(ap)["Components"]
+        self.assertEqual(comps["ModelInfoRef"], seed["Components"]["ModelInfoRef"])
+        for k in ("PhysicsRef", "ShootableRef", "ELinkRef", "AttackRef"):
+            self.assertNotIn(k, comps)
+        self.assertEqual(comps["ActorLogicNodeRef"], build.FIXED_COMPONENTS["ActorLogicNodeRef"])
+        self.assertEqual(names, ["Actor/CoopShot_Seed.engine__actor__ActorParam.bgyml",
+                                 "Component/LODParam/Shared.engine__component__LODParam.bgyml",
+                                 "Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml"])
+        self.assertEqual(sorted(sarc.read(pack)), names)
+        row = build.stand_in_row({"__RowId": "Shootable_DekuSeed", "ActorName": "Item_DekuSeed",
+                                  "ELinkUserName": "Shootable_DekuSeed", "SLinkUserName": "Shootable_DekuSeed",
+                                  "FmdbName": "Item_Shootable_DekuSeed"}, "CoopShot_Seed")
+        self.assertEqual(row["FmdbName"], "Item_Shootable_DekuSeed")
+        for k in ("ActorName", "ELinkUserName", "SLinkUserName"):
+            self.assertNotIn(k, row)
+        self.assertEqual(row["CalcRadius"], 100000.0)  # calculated wherever it is, as the puppet
+        self.assertEqual(row["__RowId"], "CoopShot_Seed")
+        with self.assertRaises(build.BuildError):
+            build.make_stand_in_param({"PhysicsRef": "x"})
+        # The hook's CoopSpawn::StandIn makes these same four.
+        self.assertEqual([n for _, n in build.STAND_INS],
+                         ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong"])
+
     def test_actor_param_chain(self):
         members = fake_player_pack("Adult")
         self.assertEqual([p for p, _ in build.actor_param_chain(members, "Player_Adult")],
@@ -451,6 +492,7 @@ class FullBuildTest(unittest.TestCase):
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertEqual([a["actor"] for a in man["actors"]], ["CoopPuppet_Child", "CoopPuppet_Adult"])
         self.assertIs(man["sound"], True)
+        self.assertEqual(man["shots"], [])  # the made-up romfs has no shootables
         self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 10245064])
         self.assertEqual([a["param_size"] for a in man["actors"]], [21336, 21336])
         for a in man["actors"]:

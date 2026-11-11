@@ -93,6 +93,24 @@ INFO_OVERRIDES = {"CalcRadius": 100000.0, "CoreUsedLevel": byml.UInt(0)}
 # Room left in a size-table entry above the bytes we wrote.
 PACK_SIZE_MARGIN = 0x1000
 
+# Stand-ins for other players' projectiles (issue 85). The copy of a slingshot seed, an arrow or a
+# hookshot tip used to be the game's own shootable, made without a shooter: it starts in its
+# `UsedExternally` state, and the seed's ShootableParam hides it until it is shot
+# (`IsPrepareVisibleOff`), so in the test4 player logs every seed copy was made and none was seen.
+# A stand-in is the shootable's model only, with the shared default components the puppet uses:
+# no physics, sensor, attack, AI, effects or sound. It is drawn wherever the hook puts it and can
+# hit nothing (the hook's CoopSpawn::StandIn has the same names). A romfs without the source pack
+# (the tests' made-up one) gets no stand-in.
+STAND_INS = (
+    ("Shootable_DekuSeed", "CoopShot_Seed"),
+    ("NormalArrow", "CoopShot_Arrow"),
+    ("Shootable_Hook", "CoopShot_Hook"),
+    ("Shootable_HookLong", "CoopShot_HookLong"),
+)
+STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
+# ActorInfo fields of the shootable that a model-only actor must not take over.
+STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")
+
 
 class BuildError(RuntimeError):
     pass
@@ -239,6 +257,33 @@ def build_pack(members, variant, sound=True):
     return sarc.write(files), ap, sorted(files), keys
 
 
+def make_stand_in_param(components):
+    """A stand-in's ActorParam: the shootable's model (and LOD) with the shared defaults."""
+    if "ModelInfoRef" not in components:
+        raise BuildError("the shootable's ActorParam has no ModelInfoRef")
+    comps = {k: components[k] for k in STAND_IN_COMPONENTS if k in components}
+    comps.update(FIXED_COMPONENTS)
+    return {"Components": comps}
+
+
+def build_stand_in(members, source, name):
+    """Returns (pack bytes, actor param bytes, member list) for one stand-in."""
+    doc = make_stand_in_param(flatten_actor_param(members, source))
+    files = collect_members(members, doc)
+    ap = byml.dumps(doc)
+    files[actor_param_path(name)] = ap
+    return sarc.write(files), ap, sorted(files)
+
+
+def stand_in_row(source_row, name):
+    """The stand-in's ActorInfo row: the shootable's, less its effect, sound and name fields, with
+    the puppet's INFO_OVERRIDES."""
+    row = {k: v for k, v in source_row.items() if k not in STAND_IN_DROP_INFO}
+    row.update(INFO_OVERRIDES)  # calculated wherever it is, as the puppet (a far shot)
+    row["__RowId"] = name
+    return row
+
+
 def _num(v):
     return v.v if isinstance(v, byml._Num) else v
 
@@ -367,6 +412,26 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True):
                      "members": names, "equipment_keys": keys})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
+    shots = []
+    for source, name in STAND_INS:
+        src = os.path.join(romfs, "Pack", "Actor", f"{source}.pack.zs")
+        if not os.path.isfile(src) or source not in ai_rows:
+            log(f"{name}: no {source} in this romfs, left out")
+            continue
+        members = sarc.read(dicts.decompress(read(src)))
+        pack, ap, names = build_stand_in(members, source, name)
+        dst_rel = f"Pack/Actor/{name}.pack.zs"
+        write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
+        new_ai.append(stand_in_row(ai_rows[source], name))
+        new_gai.append({"__RowId": name})
+        table.add_new(strip_zs(dst_rel), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+        chain_ap = sum(table.get(path) or 0 for path, _ in actor_param_chain(members, source))
+        ap_size = max(chain_ap, len(ap) + PACK_SIZE_MARGIN)
+        table.add_new(actor_param_path(name), ap_size)
+        shots.append({"actor": name, "from": source, "pack": dst_rel, "pack_bytes": len(pack),
+                      "param_size": ap_size, "members": names})
+        log(f"{name}: {len(names)} files, {len(pack)} bytes -> {dst_rel}")
+
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))
     for path, old, new in ((ai_path, ai_old, ai_new), (gai_path, gai_old, gai_new)):
@@ -384,6 +449,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True):
         "tool": "tools/puppet_pack",
         "title_id": TITLE_ID,
         "actors": made,
+        "shots": shots,
         "sound": sound,
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()

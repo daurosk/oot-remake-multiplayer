@@ -541,6 +541,10 @@ public:
                 }
             }
         }
+        if (!(hold && live_events_)) {
+            std::lock_guard lock(dungeon_events_mutex_);
+            dungeon_events_in_.clear();  // nothing takes them now: none applied late
+        }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
         // (coop_live_events.h; off with LICHII_COOP_LIVE_EVENTS=0).

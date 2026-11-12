@@ -1,4 +1,5 @@
-# deku-water-floor, B: at the basement room's edge, facing the moving floors (see deku-water-floor.A.txt).
+# deku-water-floor, B: the rider. Put on Obj_Deku_MoveFloor_A_01 (-30.2 75.4 37.0, 0.3 m up) before A
+# presses the dive switch, and stands still on it (see deku-water-floor.A.txt).
 mark start
 warp InsideTheDekuTree Entrance
 wait 1200
@@ -12,15 +13,24 @@ wait 300
 press A
 wait 2400
 mark after
-wait 240
-place -36.0 79.5 30.0
 wait 120
-mark placed
-toward -30.2 37.0 6
+place -30.2 75.7 37.0
+wait 240
+mark on-floor
 press ZL 10
-wait 600
+wait 480
+mark placed
+wait 150
+mark ride1
+wait 150
+mark ride2
+wait 300
 mark moving
-wait 900
+wait 300
+mark ride3
+wait 600
 mark moved
-wait 1800
+wait 600
+mark ride4
+wait 1200
 mark late

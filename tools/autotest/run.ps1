@@ -69,7 +69,22 @@ param(
     [switch]$Fps30,
     # A join password for the server (passed through an environment variable, not the command
     # line). The games send none unless a steps file says `password A TEXT`.
-    [string]$ServerPassword = ""
+    [string]$ServerPassword = "",
+    # A bad connection (docs/testing.md, "Bad connections"): tools\netsim\netsim.py relays each game
+    # in -NetSimFor to the server, on port -Port+1 (A) or -Port+2 (B). -Lag is added round trip in
+    # ms (half each way), -Jitter +- ms each way, -Loss % each way, -Spike "<ms>/<every s>" a stall
+    # of both directions (rubber-banding). Off when all are 0/empty.
+    [double]$Lag = 0,
+    [double]$Jitter = 0,
+    [double]$Loss = 0,
+    [string]$Spike = "",
+    # The games that go through the relay: A, B or both ("A,B"); the others connect straight.
+    [string[]]$NetSimFor = @("A", "B"),
+    # More relay options, as for netsim.py (for example "--dup 1", "--down loss=5" or "--seed 3");
+    # "A:--rate 256" gives one to that game's relay only. Also turns the relay on alone.
+    [string[]]$NetSimArgs = @(),
+    # Python 3.8+ for the relay. Default: the recomp's .venv beside the repo, else py -3 / python.
+    [string]$Python = ""
 )
 $ErrorActionPreference = 'Stop'
 
@@ -465,7 +480,7 @@ function Start-Game([string]$x) {
         }
         Write-Host "game ${x}: saves restored from $(Baseline-Dir $kits[$x])"
     }
-    $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $Port`r`nname = $x" }
+    $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $($netPort[$x])`r`nname = $x" }
     if (-not $NoCoop -and $script:passwords[$x]) { $ini += "`r`npassword = $($script:passwords[$x])" }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') $ini
     Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
@@ -674,10 +689,60 @@ function Run-Steps([string]$file) {
     }
 }
 
+# The bad-connection relays (one per game in -NetSimFor), started once with the first server and
+# kept through server restarts. $netPort[x] is the port that game's coop.ini names.
+$netProcs = @{}
+$netPort = @{ A = $Port; B = $Port }
+$NetSimFor = @($NetSimFor | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ })
+$NetSimArgs = @($NetSimArgs | Where-Object { $_ })
+$netOn = (-not $NoCoop) -and ($Lag -or $Jitter -or $Loss -or $Spike -or $NetSimArgs.Count) -and $NetSimFor.Count
+function Find-Python {
+    if ($Python) { return @($Python) }
+    for ($d = Get-Item $here; $d; $d = $d.Parent) {
+        $v = Join-Path $d.FullName 'oot-remake-recomp\.venv\Scripts\python.exe'
+        if (Test-Path $v) { return @($v) }
+    }
+    if (Get-Command py -ErrorAction SilentlyContinue) { return @('py', '-3') }
+    if (Get-Command python -ErrorAction SilentlyContinue) { return @('python') }
+    throw "no Python for the relay (tools\netsim\netsim.py); pass -Python"
+}
+function Start-NetSim {
+    if (-not $netOn) { return }
+    $py = @(Find-Python)
+    $relay = Resolve "$here\..\netsim\netsim.py"
+    $lines = @("netsim: lag $Lag ms (round trip), jitter +-$Jitter ms, loss $Loss %, spike '$Spike', for $($NetSimFor -join ','), extra '$($NetSimArgs -join ' ')'")
+    foreach ($x in $NetSimFor) {
+        if ($x -notin @('A', 'B')) { throw "-NetSimFor: '$x' is not A or B" }
+        $p = if ($x -eq 'A') { $Port + 1 } else { $Port + 2 }
+        $a = @($py | Select-Object -Skip 1) + @("`"$relay`"", '--listen', "127.0.0.1:$p", '--server', "127.0.0.1:$Port",
+            '--name', $x, '--report-every', '10',
+            '--lag', "$Lag", '--jitter', "$Jitter", '--loss', "$Loss")
+        if ($Spike) { $a += @('--spike', $Spike) }
+        foreach ($e in $NetSimArgs) {
+            if ($e -match '^([AB]):(.*)$') { if ($Matches[1] -eq $x) { $a += $Matches[2] } } else { $a += $e }
+        }
+        $proc = Start-Process $py[0] -ArgumentList ($a -join ' ') -PassThru -WindowStyle Minimized `
+            -RedirectStandardOutput "$out\netsim-$x.txt" -RedirectStandardError "$out\netsim-err-$x.txt"
+        $script:netProcs[$x] = $proc
+        $script:netPort[$x] = $p
+        $lines += "game ${x}: relay 127.0.0.1:$p -> server 127.0.0.1:$Port ($($a -join ' '))"
+    }
+    Start-Sleep 1
+    foreach ($x in $netProcs.Keys) {
+        if ($netProcs[$x].HasExited) { throw "the relay for $x stopped: $(Get-Content "$out\netsim-err-$x.txt" -Raw)" }
+    }
+    $lines | ForEach-Object { Write-Host $_ }
+    Set-Content -Encoding utf8 "$out\netsim.txt" $lines
+}
+function Stop-NetSim {
+    foreach ($p in $script:netProcs.Values) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+}
+
 $failed = $null
 $stepFails = 0
 try {
     Start-Server
+    Start-NetSim
 
     # powershell -File passes -Switches "A=1","B=1" as one string "A=1,B=1": split on commas.
     $Switches = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
@@ -722,6 +787,7 @@ try {
     if (-not $KeepOpen) {
         foreach ($x in $kits.Keys) { $expectedExit[$x] = $true; $p = $st[$x].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
         Stop-Server
+        Stop-NetSim
     }
     foreach ($x in $kits.Keys) { if (Test-Path $st[$x].Log) { Copy-Item $st[$x].Log "$out\eden_log-$x.txt" } }
     if (-not $KeepOpen) {

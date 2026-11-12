@@ -14,7 +14,8 @@
 //
 // The sign: a reliable command sent kStuckSends times or more while the other
 // side still acknowledges our small packets (one sent after its last send).
-// Either side that sees it ends the connection and both connect again with kSmallDatagramBytes, ENet's smallest
+// Either side that sees it ends the connection and both connect again with
+// kSmallDatagramBytes, ENet's smallest
 // (604 bytes on the wire, under any IPv4 path's 576-byte minimum plus a
 // tunnel or two). The server tells the game with the disconnect's data
 // (kDisconnectSmallDatagrams) and remembers the address, so a game that

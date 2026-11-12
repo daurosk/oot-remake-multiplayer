@@ -34,6 +34,7 @@ add_executable(coop_tests
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
   lichii/fairy_test.cpp
+  lichii/rooms_test.cpp
   lichii/objects_test.cpp
   lichii/spawn_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_spawn.cpp
   lichii/projectiles_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_projectiles.cpp
@@ -64,6 +65,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_events.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_places.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pose.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp

@@ -76,7 +76,7 @@ Yes, by design. Both run main `e0f3ccfaf50065ae` with the same co-op code, so po
 
 ## Credits
 
-Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-recomp and built with a64-kit, suyu's translator and Eden's shader recompiler (see its readme). Co-op only patches and links to it; none of its code is in this repository.
+Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-recomp and built with a64-kit, suyu's translator and Eden's shader recompiler (see its readme). Co-op only patches and links to it; of its code, only the context lines of our patch (`hookshot/patches`) are in this repository (THIRD_PARTY_NOTICES.md).
 
 ## Status
 

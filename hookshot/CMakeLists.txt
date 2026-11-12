@@ -7,11 +7,10 @@
 # stay out: src/coop_hookshot.cpp does those jobs here.
 include(FetchContent)
 # fmt (MIT), for the hook's LOG_* lines (compat/common/logging.h), as the
-# emulator has it. Fetched at a fixed tag, never copied into the tree.
+# emulator has it. Fetched at a fixed commit, never copied into the tree.
 FetchContent_Declare(fmt
   GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG        12.1.0 # as Fritchii (its cpmfile.json)
-  GIT_SHALLOW    TRUE
+  GIT_TAG        407c905e45ad75fc29bf0f9bb7c5c2fd3475976f # 12.1.0, as Fritchii (its cpmfile.json)
 )
 set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(fmt)

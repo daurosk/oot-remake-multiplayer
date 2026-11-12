@@ -114,8 +114,12 @@ const std::string& MainBuildHex() {
     return g_build;
 }
 std::filesystem::path GameDir() {
-    return g_api != nullptr && g_api->game_dir != nullptr ? std::filesystem::path(g_api->game_dir)
-                                                          : std::filesystem::path(".");
+    if (g_api == nullptr || g_api->game_dir == nullptr) {
+        return std::filesystem::path(".");
+    }
+    // UTF-8 from the bridge: a folder name outside the ANSI code page stays whole.
+    const std::string dir = g_api->game_dir;
+    return std::filesystem::path(std::u8string(dir.begin(), dir.end()));
 }
 bool Valid(std::uint64_t address, std::size_t size) {
     // The bridge checks a whole range before it copies: one byte at each end

@@ -30,7 +30,7 @@ typedef struct HosCoopApi {
     uint32_t size;                /* sizeof(HosCoopApi) */
     uint64_t main_base;           /* main's guest address (0x80020000) */
     const char *main_build_id;    /* main's build id, hex (32 digits) */
-    const char *game_dir;         /* the folder of the game's executable, no trailing separator */
+    const char *game_dir;         /* the folder of the game's executable, UTF-8, no trailing separator */
     /* Guest memory, any thread. 0 when any byte is outside mapped guest memory (nothing copied). */
     int (*read)(uint64_t address, void *out, size_t size);
     int (*write)(uint64_t address, const void *in, size_t size);   /* also marks the pages for the GPU mirror */

@@ -1,4 +1,4 @@
-From 28d541209fc40fbdd55e5f0dfb0913c866762e44 Mon Sep 17 00:00:00 2001
+From e61509dedc5bb9e14b7a5629f635ee32f894432b Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -10,21 +10,21 @@ loads hookshot_coop.dll beside the game and gives it guest memory, game
 function calls and the log (host/hos_coop_api.h). From oot-remake-multiplayer
 (GPL-3.0), docs/hookshot.md.
 ---
- host/coop_bridge.c  | 152 ++++++++++++++++++++++++++++++++++++++++++++
- host/hos_coop_api.h |  51 +++++++++++++++
- nx2/coop_hooks.py   |  61 ++++++++++++++++++
+ host/coop_bridge.c  | 169 ++++++++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_api.h |  51 +++++++++++++
+ nx2/coop_hooks.py   |  61 ++++++++++++++++
  nx2/lift.py         |   2 +
- 4 files changed, 266 insertions(+)
+ 4 files changed, 283 insertions(+)
  create mode 100644 host/coop_bridge.c
  create mode 100644 host/hos_coop_api.h
  create mode 100644 nx2/coop_hooks.py
 
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
 new file mode 100644
-index 00000000..54960b50
+index 00000000..d5c17813
 --- /dev/null
 +++ b/host/coop_bridge.c
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,169 @@
 +/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md): the bridge between the game and the co-op module.
 +
 +   nx2/coop_hooks.py puts two calls into the lifted game: hos_coop_frame at the frame function's two calls in moduleCalc_,
@@ -47,6 +47,7 @@ index 00000000..54960b50
 +
 +#ifdef _WIN32
 +#define COOP_DLL "hookshot_coop.dll"
++#define COOP_DLL_W L"hookshot_coop.dll"
 +#else
 +#define COOP_DLL "hookshot_coop.so"
 +#endif
@@ -55,7 +56,7 @@ index 00000000..54960b50
 +static hos_coop_frame_fn coop_frame;
 +static hos_coop_hold_fn coop_hold;
 +static hos_coop_stop_fn coop_stop;
-+static char game_dir[MAX_PATH];
++static char game_dir[MAX_PATH * 3];   /* (UTF-8) */
 +
 +static int in_guest(uint64_t a, size_t n) { return n == 0 || (a + n > a && hos_mem_region(a, n)); }
 +
@@ -114,24 +115,40 @@ index 00000000..54960b50
 +        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
 +        return;
 +    }
-+    char path[MAX_PATH];
++    char path[MAX_PATH * 3];   /* (UTF-8: the module's folder for the module, and for the log) */
++#ifdef _WIN32
++    /* Wide calls, so a game folder whose name has characters outside the ANSI code page still loads the module. */
++    wchar_t wpath[MAX_PATH];
++    const DWORD wn = GetModuleFileNameW(NULL, wpath, MAX_PATH);
++    wchar_t *wslash = wn && wn < MAX_PATH ? wcsrchr(wpath, L'\\') : NULL;
++    if (!wslash || (size_t)(wslash + 1 - wpath) + sizeof COOP_DLL > MAX_PATH) {
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    *wslash = 0;
++    if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, game_dir, sizeof game_dir, NULL, NULL)) {
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    memcpy(wslash, L"\\" COOP_DLL_W, sizeof(L"\\" COOP_DLL_W));
++    snprintf(path, sizeof path, "%s\\" COOP_DLL, game_dir);
++    if (GetFileAttributesW(wpath) == INVALID_FILE_ATTRIBUTES) {   /* (no module: not a co-op game folder, nothing to say) */
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    HMODULE m = LoadLibraryW(wpath);
++#else
 +    const DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
-+    char *slash = n && n < MAX_PATH ? (strrchr(path, '\\') ? strrchr(path, '\\') : strrchr(path, '/')) : NULL;
-+    if (!slash || (size_t)(slash + 1 - path) + sizeof COOP_DLL > sizeof path) {
++    char *slash = n && n < MAX_PATH ? strrchr(path, '/') : NULL;
++    if (!slash || (size_t)(slash + 1 - path) + sizeof COOP_DLL > MAX_PATH) {
 +        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
 +        return;
 +    }
 +    *slash = 0;
 +    snprintf(game_dir, sizeof game_dir, "%s", path);
 +    memcpy(slash, "/" COOP_DLL, sizeof "/" COOP_DLL);
-+#ifdef _WIN32
-+    *slash = '\\';
-+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {   /* (no module: not a co-op game folder, nothing to say) */
-+        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
-+        return;
-+    }
-+#endif
 +    HMODULE m = LoadLibraryA(path);
++#endif
 +    if (!m) {
 +        hos_log("coop: %s did not load (%lu): co-op off", path, (unsigned long)GetLastError());
 +        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
@@ -179,7 +196,7 @@ index 00000000..54960b50
 +}
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
 new file mode 100644
-index 00000000..51ed8684
+index 00000000..8c0f6814
 --- /dev/null
 +++ b/host/hos_coop_api.h
 @@ -0,0 +1,51 @@
@@ -215,7 +232,7 @@ index 00000000..51ed8684
 +    uint32_t size;                /* sizeof(HosCoopApi) */
 +    uint64_t main_base;           /* main's guest address (0x80020000) */
 +    const char *main_build_id;    /* main's build id, hex (32 digits) */
-+    const char *game_dir;         /* the folder of the game's executable, no trailing separator */
++    const char *game_dir;         /* the folder of the game's executable, UTF-8, no trailing separator */
 +    /* Guest memory, any thread. 0 when any byte is outside mapped guest memory (nothing copied). */
 +    int (*read)(uint64_t address, void *out, size_t size);
 +    int (*write)(uint64_t address, const void *in, size_t size);   /* also marks the pages for the GPU mirror */

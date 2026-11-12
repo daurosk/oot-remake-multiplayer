@@ -17,7 +17,8 @@
    bit 16 of actor+0x30, and it was clear): a = the actor, b = the reason (x1). Once for an actor: not for one already
    being deleted (state 7 to 11), a refused request or a repeated one. */
 #define HOS_COOP_WORLD_DELETE_REQUEST 3u
-/* main+0x49d8c0, the Life component's step, every frame for every Life component: a = the component
+/* main+0x49d8c0, the Life component's step, each frame it reaches its damage sum (not when it leaves early: bits 3
+   and 12 of Life+0x1d18 set, or no life value at Life+0x1c10): a = the component
    ([[actor + 0x270] + 0x2b8]), b = the address (in hookshot.exe, not the guest) of an int32 holding this frame's damage
    sum, before the step stores it and takes it off life. The module may change it: what it holds afterwards is the
    damage the game's own step takes this frame. */
@@ -30,9 +31,14 @@
    no creates now" exit (main+0x372c88: result 1 in the caller's status word, returns 0) and no actor is made. */
 #define HOS_COOP_WORLD_CREATE_STOP 6u
 
+/* main+0xc16cf0, the game's shoot code about to make a shot (it calls the create request at main+0xc172fc): a = x1,
+   whose first 8 bytes are the shooter's actor (the callers store it there: main+0x992e44, main+0xd36a0's same lines),
+   b = x0, the shooter's shot record. Before that create's CREATE_FROM, on the same thread. */
+#define HOS_COOP_WORLD_SHOOT_FROM 7u
+
 /* The event numbers are one space with hos_coop_world.h's, which names the ranges: the actor events have
-   HOS_COOP_WORLD_ACTOR_FIRST to HOS_COOP_WORLD_ACTOR_LAST (2 to 15; 2 to 6 used). */
-#if HOS_COOP_WORLD_CREATE_REQUEST < HOS_COOP_WORLD_ACTOR_FIRST || HOS_COOP_WORLD_CREATE_STOP > HOS_COOP_WORLD_ACTOR_LAST
+   HOS_COOP_WORLD_ACTOR_FIRST to HOS_COOP_WORLD_ACTOR_LAST (2 to 15; 2 to 7 used). */
+#if HOS_COOP_WORLD_CREATE_REQUEST < HOS_COOP_WORLD_ACTOR_FIRST || HOS_COOP_WORLD_SHOOT_FROM > HOS_COOP_WORLD_ACTOR_LAST
 #error "hos_coop_actors.h: an actor event number outside its range (hos_coop_world.h)"
 #endif
 

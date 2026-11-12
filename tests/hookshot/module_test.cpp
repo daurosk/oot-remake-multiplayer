@@ -330,6 +330,12 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     CHECK(lift.find("(0x372a9c, 0x37080f68)") != std::string::npos);  // tbnz w8, #1, main+0x372c88
     CHECK(lift.find("(0x372c88, 0xb4000137)") != std::string::npos);
     CHECK(HOS_COOP_WORLD_CREATE_STOP <= HOS_COOP_WORLD_ACTOR_LAST);
+    // The shoot code names the shooter before its create (its x1 holds the actor first).
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[1], c->x[0])", HOS_COOP_WORLD_SHOOT_FROM);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(lift.find("(0xc16d24, 0xaa0103f6)") != std::string::npos);
+    CHECK(lift.find("(0xc172fc, 0x97dd6ddd)") != std::string::npos);  // its create call: the module's kShootCreateReturn - 4
+    CHECK(HOS_COOP_WORLD_SHOOT_FROM <= HOS_COOP_WORLD_ACTOR_LAST);
     std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[19], c->x[20])", HOS_COOP_WORLD_DELETE_REQUEST);
     CHECK(lift.find(call) != std::string::npos);
     std::snprintf(call, sizeof call,

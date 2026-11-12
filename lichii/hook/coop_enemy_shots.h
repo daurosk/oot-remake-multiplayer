@@ -47,6 +47,7 @@ struct Shooter {
     std::string name;
     Vec3 position{};
     Owner owner = Owner::unknown;
+    std::uint64_t address = 0;  // the actor (for StopAtCreate's shooter); 0 when not known
 };
 
 enum class Verdict : std::uint8_t {
@@ -71,7 +72,11 @@ std::vector<Shooter> Shooters(std::uint64_t now_us);
 // and the shot never exists here; the owner's comes as a copy. Never waits:
 // with the shooters' list busy it answers false, and the walk's rule deletes
 // the shot as before. A place of all zeros (not read) is never stopped.
-bool StopAtCreate(std::string_view shot, const Vec3& at);
+// `shooter`: the actor the game's own shoot code makes the shot for (patch
+// 0007's SHOOT_FROM), 0 when not known. A noted shooter at that address
+// decides by its owner alone, with no guess by place; an actor that is not
+// in the list falls back to the place.
+bool StopAtCreate(std::string_view shot, const Vec3& at, std::uint64_t shooter = 0);
 std::uint64_t StoppedAtCreate();  // how many so far
 // LICHII_COOP_ENEMY_SHOTS_STOP=0: never stopped at the create (deleted by the
 // walk's rule, as on the emulator).

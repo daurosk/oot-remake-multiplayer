@@ -1137,6 +1137,15 @@ public:
             return;
         }
 #ifdef COOP_HOOKSHOT
+        if (*scene != life_scene_) {
+            // Another scene's actors: their Life components' slots are free
+            // again (a slot is a component's for good otherwise, and 256 of
+            // them fill up over a long session). Nothing given there is owed.
+            life_scene_ = *scene;
+            CoopActorEvents::TheLifeTable().Clear();
+            life_given_.clear();
+            step_hits_.clear();
+        }
         ActorEvents(server_now_us);
 #endif
         if (test_take_ != 0 && sharing_ && self_ == 2 && take_at_ != 0 &&
@@ -1252,7 +1261,8 @@ public:
                     shooters.push_back({s.name, s.position,
                                         !owner || *owner == 0 ? CoopEnemyShots::Owner::unknown
                                         : *owner == self      ? CoopEnemyShots::Owner::ours
-                                                              : CoopEnemyShots::Owner::theirs});
+                                                              : CoopEnemyShots::Owner::theirs,
+                                        s.address});
                 }
             }
             CoopEnemyShots::NoteShooters(std::move(shooters), server_now_us);
@@ -1986,8 +1996,8 @@ private:
                 if (value && memory.IsValidVirtualAddressRange(value->first + 8, 4) &&
                     r.Get<s32>(value->first + 8).value_or(g.life) > g.life) {
                     memory.Write32(value->first + 8, static_cast<u32>(g.life));
-                    LOG_INFO(Core, "coop: objects: {:#x}: its Life step did not take the change: life written {}",
-                             g.address, g.life);
+                    LOG_INFO(Core, "coop: objects: {:#x} '{}': its Life step did not take the change: life written {}",
+                             g.address, NameOf(g.address), g.life);
                 }
             }
             return true;
@@ -1999,6 +2009,12 @@ private:
         s32 life = 0;
         u64 at_us = 0;
     };
+    std::string NameOf(u64 actor) const {
+        const auto known = names_.find(actor);
+        return known != names_.end() ? known->second.first : std::string("?");
+    }
+    std::string life_scene_;
+    bool life_table_full_said_ = false;
     static constexpr std::size_t kStepHitsKept = 4096;
     static constexpr u64 kGivenWaitUs = 250'000;
     std::vector<std::pair<u64, s32>> step_hits_;
@@ -2605,8 +2621,15 @@ private:
                     return;
                 }
                 if (stale != 0) {
-                    LOG_INFO(Core, "coop: objects: {:#x}: {} given earlier was never taken by its Life step",
-                             w.address, stale);
+                    // (its step did not run: asleep or paused, or one of the
+                    // step's two paths that skip the sum; the name says which actors)
+                    LOG_INFO(Core, "coop: objects: {:#x} '{}': {} given earlier was never taken by its Life step",
+                             w.address, NameOf(w.address), stale);
+                } else if (!life_table_full_said_) {
+                    life_table_full_said_ = true;
+                    LOG_WARNING(Core, "coop: objects: no room to give a hit to the game's Life step ({:#x} '{}'): "
+                                      "life is written directly until the next scene",
+                                w.address, NameOf(w.address));
                 }
             }
         }

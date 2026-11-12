@@ -4,7 +4,7 @@ Date: Thu, 12 Nov 2026 13:30:00 -0900
 Subject: [PATCH] Co-op actor events: creates, deletes and the Life step go to
  the module
 
-nx2/coop_actor_lift.py adds three lift-time hooks that hand actor
+nx2/coop_actor_lift.py adds four lift-time hooks that hand actor
 events to the co-op module through host/coop_world.c (patch 0005):
 the create request (main+0x372a94: CREATE_FROM with the caller and the
 create argument, then CREATE_REQUEST with the name and the handle
@@ -16,22 +16,24 @@ and this frame's damage sum, which the module may change, so another
 player's hit goes in through the game's own step). The words and the
 build id are checked; a hook whose words differ is left out. They go
 in before the wrapped functions of patch 0005.
+The fourth is the game's shoot code (main+0xc16d24: SHOOT_FROM with
+the shooter's actor, before the create it makes).
 ---
- nx2/coop_actor_lift.py | 89 ++++++++++++++++++++++++++++++++++++++++++
- nx2/coop_hooks.py      |  2 +
- 2 files changed, 91 insertions(+)
+ nx2/coop_actor_lift.py | 103 +++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_hooks.py      |   2 +
+ 2 files changed, 105 insertions(+)
  create mode 100644 nx2/coop_actor_lift.py
 
 diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
 new file mode 100644
-index 0000000..32219b9
+index 0000000..7e67e39
 --- /dev/null
 +++ b/nx2/coop_actor_lift.py
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,103 @@
 +"""Co-op's actor events (oot-remake-multiplayer's patch 0007, its docs/hookshot.md "World hooks": enemies, breakables,
 +drops and projectiles straight from the game's C).
 +
-+Three C hooks, each after one ordinary instruction near a game function's start, hand what the function was asked to
++Four C hooks, each after one ordinary instruction in a game function, hand what the function was asked to
 +do to the co-op module through host/coop_world.c (patch 0005), the same world hook layer as the pause counters. The
 +event numbers are in the module's hookshot/src/hos_coop_actors.h:
 +
@@ -46,10 +48,16 @@ index 0000000..32219b9
 +  is accepted: the function has just set bit 16 of actor+0x30 and found it clear; a request for an actor already
 +  being deleted, a refused one and a repeated one never get there): 3 = DELETE_REQUEST (a = x19, the actor,
 +  b = x20, the reason).
-+- main+0x49d8c0 the Life component's step: after `add w9, w10, w9` (main+0x49dcb0, which every path of the step
-+  reaches: w9 = the damage dealt to it this frame, before it is stored at +0x1cb0 and taken off life): 4 = LIFE_STEP
++- main+0x49d8c0 the Life component's step: after `add w9, w10, w9` (main+0x49dcb0: w9 = the damage dealt to it this
++  frame, before it is stored at +0x1cb0 and taken off life. A step reaches it unless it leaves early: bits 3 and 12
++  of Life+0x1d18 set, or no life value at Life+0x1c10; on those frames there is no event): 4 = LIFE_STEP
 +  (a = the Life component, b = the address of an int32 holding w9 in our C). The module may change that number: a hit
 +  from another player goes in through the game's own step (its clamp, its death, its drop), and w9 takes the result.
++
++- main+0xc16cf0 the game's shoot code, which makes a shot with the create request at main+0xc172fc: after
++  `mov x22, x1` (main+0xc16d24): 7 = SHOOT_FROM (a = x1, whose first 8 bytes are the shooter's actor: each of its
++  three callers stores [its component + 0x18] there, b = x0, the shot record). The module then knows whose shot the
++  create that follows is.
 +
 +The module only reads in them (no game call, no lock), besides that one number and the create's stop. The words are checked and the build id; another game version, or
 +a word that differs, leaves that hook out.
@@ -90,6 +98,14 @@ index 0000000..32219b9
 +     "{ int32_t coop_sum = (int32_t)(uint32_t)c->x[9]; " + EVENT +
 +     "hos_coop_world_event(4u, c->x[19], (uint64_t)(uintptr_t)&coop_sum); c->x[9] = (uint32_t)coop_sum; }   "
 +     "/* (nx2/coop_actor_lift.py: co-op's actor events, 4 = LIFE_STEP) */"),
++    ("shoot", 0xc16d24,
++     ((0xc16cf0, 0xd503237f),   # pacibsp
++      (0xc16d18, 0xaa0003f4),   # mov x20, x0
++      (0xc16d20, 0xaa0203f5),   # mov x21, x2
++      (0xc16d24, 0xaa0103f6),   # mov x22, x1
++      (0xc172fc, 0x97dd6ddd)),  # bl main+0x372a70: the shot's create request
++     "{ " + EVENT + "hos_coop_world_event(7u, c->x[1], c->x[0]); }   "
++     "/* (nx2/coop_actor_lift.py: co-op's actor events, 7 = SHOOT_FROM) */"),
 +)
 +
 +

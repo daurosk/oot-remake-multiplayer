@@ -157,6 +157,25 @@ TEST_CASE("enemy shots: a copy enemy's own shot is stopped at the game's create 
     CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {11.0f, 0.0f, 0.5f}));
 }
 
+TEST_CASE("enemy shots: the shooter the game's shoot code names decides, not the place") {
+    // Two Octoroks side by side, ours nearer the shot's place than the copy that fires it.
+    es::NoteShooters({{"Enemy_Octorok", {10.0f, 0.0f, 0.0f}, Owner::theirs, 0x1000},
+                      {"Enemy_Octorok", {11.0f, 0.0f, 0.0f}, Owner::ours, 0x2000},
+                      {"Enemy_Octorok", {12.0f, 0.0f, 0.0f}, Owner::unknown, 0x3000}},
+                     7'000'000);
+    const proto::Vec3 at{11.1f, 0.0f, 0.0f};
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", at));     // by place: ours is nearest
+    CHECK(es::StopAtCreate("Octorok_Bullet", at, 0x1000));   // the copy fired it: never made
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", at, 0x2000));  // ours fired it
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", at, 0x3000));  // no owner known: left alone
+    // A shooter that is not a shared enemy here: the place decides, as before.
+    CHECK(es::StopAtCreate("Octorok_Bullet", {9.9f, 0.0f, 0.0f}, 0x9999));
+    // The copy's shot is stopped even when its place was not read.
+    CHECK(es::StopAtCreate("Octorok_Bullet", {0.0f, 0.0f, 0.0f}, 0x1000));
+    CHECK_FALSE(es::StopAtCreate("Item_Bomb", at, 0x1000));  // no enemy shot
+    es::NoteShooters({}, 8'000'000);
+}
+
 TEST_CASE("enemy shots: the owner's game sends its enemy's shot") {
     CoopSpawn::Sync sync;
     sync.SetShooters({{"Enemy_Octorok", {0.0f, 1.0f, 2.0f}, Owner::ours}});

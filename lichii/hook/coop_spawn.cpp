@@ -1166,6 +1166,7 @@ std::optional<CoopPuppet::Call> Director::NextEmit(CoopPuppet::Guest& guest) {
 std::optional<CoopPuppet::Call> Director::EmitCall(CoopPuppet::Guest& guest, std::size_t i) {
     const Slot& slot = slots_[i];
     std::uint64_t vtable = 0, locator = 0;
+    // (emit_notes_ is the calc thread's, as Say's other callers here)
     if (slot.key == 0 || slot.phase != Phase::live || !ReadValue(guest, slot.taken, vtable) ||
         vtable != slot.vtable) {
         return std::nullopt;  // (gone between the two calls)
@@ -1173,7 +1174,12 @@ std::optional<CoopPuppet::Call> Director::EmitCall(CoopPuppet::Guest& guest, std
     const std::uint64_t user = ELinkUser(guest, slot.taken);
     const std::uint64_t b = SlotBase(i);
     if (user == 0 || !ReadValue(guest, b + kSlotLocator, locator) || locator == 0) {
-        return std::nullopt;  // (found, but the search named nothing)
+        if (emit_notes_ < 8) {
+            ++emit_notes_;
+            Say(slot.actor + ": the game's search found the key but named nothing; no hit effect for copy " +
+                std::to_string(slot.key));
+        }
+        return std::nullopt;
     }
     CoopPuppet::Call call;
     call.function = base_ + kXLinkEmit;

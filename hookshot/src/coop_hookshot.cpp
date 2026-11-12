@@ -720,6 +720,10 @@ thread_local std::uint64_t t_create_from = 0;
 thread_local std::uint64_t t_create_arg = 0;
 // (CREATE_REQUEST's verdict until that thread's CREATE_STOP)
 thread_local bool t_create_stop = false;
+// (SHOOT_FROM's shooter until that thread's next CREATE_REQUEST; used only for
+// the create the shoot code itself makes, by its return address)
+thread_local std::uint64_t t_shooter = 0;
+constexpr std::uint64_t kShootCreateReturn = 0xc17300;  // (after the bl at main+0xc172fc)
 
 // The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
 int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
@@ -748,6 +752,11 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
     }
     // The actor events (patch 0007, hos_coop_actors.h; coop_actor_events.h:
     // the Objects step drains them on the frame hook). Only reads here.
+    case HOS_COOP_WORLD_SHOOT_FROM: {  // (a: its first 8 bytes are the shooter's actor)
+        std::uint64_t actor = 0;
+        t_shooter = a != 0 && CoopRuntime::Read(a, &actor, sizeof actor) ? actor : 0;
+        return 1;
+    }
     case HOS_COOP_WORLD_CREATE_FROM: {  // (just before CREATE_REQUEST, on this thread)
         t_create_from = a;
         t_create_arg = b;
@@ -776,8 +785,12 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         // A copy enemy's own shot is not made at all (coop_enemy_shots.h):
         // the owner's game fires, and its shot comes as a copy, which is
         // one of our own creates and never stopped.
+        // The shooter is the one the game's shoot code named, when this is
+        // that code's own create; any other create is judged by its place.
+        const std::uint64_t shooter = std::exchange(t_shooter, 0);
+        const bool shot = e.from != 0 && e.from == CoopRuntime::MainBase() + kShootCreateReturn;
         t_create_stop = !t_own_call && name[0] != 0 &&
-                        CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]});
+                        CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]}, shot ? shooter : 0);
         if (t_create_stop) {
             e.flags |= CoopActorEvents::kStopped;
         }

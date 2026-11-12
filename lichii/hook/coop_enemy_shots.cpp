@@ -169,9 +169,8 @@ void NoteShooters(std::vector<Shooter> shooters, std::uint64_t now_us) {
     g_noted = std::chrono::steady_clock::now();
 }
 
-bool StopAtCreate(std::string_view shot, const Vec3& at) {
-    if (!IsEnemyShot(shot) || !On() || !HideOn() || !StopOn() ||
-        (at[0] == 0.0f && at[1] == 0.0f && at[2] == 0.0f)) {
+bool StopAtCreate(std::string_view shot, const Vec3& at, std::uint64_t shooter) {
+    if (!IsEnemyShot(shot) || !On() || !HideOn() || !StopOn()) {
         return false;
     }
     std::unique_lock lock(g_mutex, std::try_to_lock);
@@ -179,7 +178,18 @@ bool StopAtCreate(std::string_view shot, const Vec3& at) {
         std::chrono::steady_clock::now() - g_noted > std::chrono::microseconds(kFreshUs)) {
         return false;
     }
-    if (Decide(shot, at, g_shooters) != Verdict::hide) {
+    const Shooter* by = nullptr;
+    for (const Shooter& s : g_shooters) {
+        if (shooter != 0 && s.address == shooter) {
+            by = &s;
+            break;
+        }
+    }
+    if (by != nullptr) {
+        if (by->owner != Owner::theirs) {
+            return false;  // ours fires; no owner known: left alone
+        }
+    } else if ((at[0] == 0.0f && at[1] == 0.0f && at[2] == 0.0f) || Decide(shot, at, g_shooters) != Verdict::hide) {
         return false;
     }
     g_stopped.fetch_add(1, std::memory_order_relaxed);

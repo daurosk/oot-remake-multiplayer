@@ -35,6 +35,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
 #include "coop_runtime.h"
@@ -230,6 +231,55 @@ unsigned g_box_lead = 0;  // a double-byte code page's lead byte, waiting for it
 // The item cheats panel (coop_cheats_panel.h), under the same mutex.
 CoopCheatsPanel::Panel g_cheats;
 
+// The game look (coop_draw.h Look): the HUD pack's font and heart pictures,
+// loaded through hos_coop_draw2's font and image calls on the render thread
+// the first time it draws. Off for good when there is no pack, a file will
+// not load, or Hookshot is older (it calls hos_coop_draw only).
+enum : int { kLookNotYet = 0, kLookOn = 1, kLookOff = 2 };
+std::atomic<int> g_look_state{kLookNotYet};
+CoopDraw::Look g_look;  // the render thread's
+
+std::string Utf8(const std::filesystem::path& p) {
+    const auto u = p.u8string();
+    return std::string(u.begin(), u.end());
+}
+
+void LoadLook(const HosCoopDraw& d) {
+    const auto dir = CoopHud::Folder();  // it logs why not
+    if (!dir) {
+        g_look_state = kLookOff;
+        return;
+    }
+    CoopDraw::Look l;
+    l.regular = d.font(d.user, Utf8(*dir / "font-regular.otf").c_str());
+    l.medium = d.font(d.user, Utf8(*dir / "font-medium.otf").c_str());
+    if (l.medium == 0) {
+        l.medium = l.regular;
+    }
+    std::string missing = l.regular == 0 ? "font-regular.otf" : "";
+    for (int q = 0; q < 5; ++q) {
+        const std::string name = "heart-" + std::to_string(q) + ".png";
+        const auto img = CoopPng::Load(*dir / name);
+        l.hearts[q] = img ? d.image(d.user, img->width, img->height, img->rgba.data()) : 0;
+        if (l.hearts[q] == 0 && missing.empty()) {
+            missing = name;
+        }
+    }
+    if (!l.On()) {
+        LOG_WARNING(Core, "coop: hud: {} in {} could not be loaded; plain look", missing, dir->string());
+        g_look_state = kLookOff;
+        return;
+    }
+    LOG_INFO(Core, "coop: hud: game look on Hookshot: the game font and heart pictures loaded");
+    g_look = l;
+    g_look_state = kLookOn;
+}
+
+// The game look may be used: not known to be off, and the pack is there.
+bool LookPossible() {
+    return g_look_state.load() != kLookOff && CoopHud::Folder().has_value();
+}
+
 std::vector<CoopCheatsPanel::Row> CheatRows() {
     static const std::vector<std::string> items = CoopCheats::Items();
     return CoopCheatsPanel::Rows(g_cheats.filter(), items);
@@ -302,9 +352,30 @@ CoopDraw::Scene DrawScene() {
         list = g_keys.list || always;
         panel = g_keys.panel;
     }
-    const auto rows = CoopHook::PlayerList();
-    static const bool hud_off = Env("LICHII_COOP_HUD") == "0";
-    for (const auto& row : hud_off ? std::vector<CoopHook::PlayerRow>{} : rows) {
+    auto rows = CoopHook::PlayerList();
+    // The HUD blocks, players' colours and place names are the game look's
+    // (as the co-op window: LICHII_COOP_HUD=0 or no pack, the plain look).
+    const bool game = LookPossible();
+    if (game) {
+        std::uint8_t self = 0;
+        for (const auto& row : rows) {
+            if (row.self) {
+                self = row.number;
+            }
+        }
+        for (std::uint8_t n = 1; n <= 4; ++n) {  // a tag with no name
+            s.colours["P" + std::to_string(n)] = CoopDraw::Lifted(CoopPuppet::NameColor(n, self));
+        }
+        if (self != 0) {
+            s.colours["you"] = CoopDraw::Lifted(CoopPuppet::NameColor(self, self));
+        }
+        for (const auto& row : rows) {
+            if (row.number != 0 && !row.name.empty()) {
+                s.colours[row.name] = CoopDraw::Lifted(CoopPuppet::NameColor(row.number, self));
+            }
+        }
+    }
+    for (const auto& row : game ? rows : std::vector<CoopHook::PlayerRow>{}) {
         if (row.self) {
             continue;
         }
@@ -320,6 +391,13 @@ CoopDraw::Scene DrawScene() {
         s.hud.push_back(std::move(b));
     }
     if (list) {
+        if (game) {
+            for (auto& row : rows) {
+                if (row.scene && !row.scene->empty()) {
+                    row.scene = CoopHud::PlaceName(*row.scene);
+                }
+            }
+        }
         s.players = rows;
     }
     if (panel) {
@@ -461,6 +539,21 @@ void Stop() {
     }
 }
 
+void NoGameLook() {
+    g_look_state = kLookOff;
+}
+
+void DrawWithLook(const HosCoopDraw& d) {
+    if (g_look_state.load() == kLookNotYet) {
+        if (d.font && d.use_font && d.image && d.draw_image) {
+            LoadLook(d);
+        } else {
+            g_look_state = kLookOff;
+        }
+    }
+    CoopDraw::Draw(d, DrawScene(), g_look_state.load() == kLookOn ? g_look : CoopDraw::Look{});
+}
+
 }  // namespace CoopHookshot
 
 extern "C" {
@@ -494,10 +587,32 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
     if (g_on && d != nullptr) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{}); plain look: "
+                     "this Hookshot has no hos_coop_draw2 (build it again with our patch for the game look)",
+                     static_cast<int>(d->width), static_cast<int>(d->height));
+        }
+        CoopHookshot::NoGameLook();
+        // An older Hookshot's table ends at text_width: the rest stays empty.
+        HosCoopDraw t{};
+        t.width = d->width;
+        t.height = d->height;
+        t.user = d->user;
+        t.rect = d->rect;
+        t.circle = d->circle;
+        t.triangle = d->triangle;
+        t.text = d->text;
+        t.text_width = d->text_width;
+        CoopDraw::Draw(t, CoopHookshot::DrawScene());
+    }
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
+    if (g_on && d != nullptr) {
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",
                      static_cast<int>(d->width), static_cast<int>(d->height));
         }
-        CoopDraw::Draw(*d, CoopHookshot::DrawScene());
+        CoopHookshot::DrawWithLook(*d);
     }
 }
 }

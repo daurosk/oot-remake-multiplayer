@@ -13,13 +13,15 @@ namespace {
 
 struct Call {
     std::string kind;
-    float x = 0, y = 0, px = 0;
+    float x = 0, y = 0, px = 0;  // an image: px is its width
     std::uint32_t rgba = 0;
-    std::string text;
+    std::string text;            // an image: its id
+    int font = 0;                // a text: the font it was drawn with
 };
 
 struct Canvas {
     std::vector<Call> calls;
+    int font = 0;
     HosCoopDraw d{};
 
     Canvas(float w, float h) {
@@ -36,10 +38,18 @@ struct Canvas {
             static_cast<Canvas*>(u)->calls.push_back({"triangle", x0, y0, 0, rgba, {}});
         };
         d.text = [](void* u, float x, float y, float px, std::uint32_t rgba, const char* s) {
-            static_cast<Canvas*>(u)->calls.push_back({"text", x, y, px, rgba, s});
+            auto* c = static_cast<Canvas*>(u);
+            c->calls.push_back({"text", x, y, px, rgba, s, c->font});
         };
         d.text_width = [](void*, float px, const char* s) {
             return static_cast<float>(std::string(s).size()) * px * 0.5f;  // half the size per byte
+        };
+        // hos_coop_draw2's calls (the game look).
+        d.font = [](void*, const char*) { return 0; };
+        d.use_font = [](void* u, int id) { static_cast<Canvas*>(u)->font = id; };
+        d.image = [](void*, int, int, const std::uint8_t*) { return 0; };
+        d.draw_image = [](void* u, int id, float x0, float y0, float x1, float, std::uint32_t tint) {
+            static_cast<Canvas*>(u)->calls.push_back({"image", x0, y0, x1 - x0, tint, std::to_string(id)});
         };
     }
 
@@ -54,6 +64,15 @@ struct Canvas {
 
 int AlphaOf(std::uint32_t rgba) {
     return static_cast<int>(rgba >> 24);
+}
+
+// The game look's ids, as Hookshot's calls would give them: fonts 1 and 2, hearts 11 (empty) to 15 (full).
+CoopDraw::Look GameLook() {
+    CoopDraw::Look l;
+    l.regular = 1;
+    l.medium = 2;
+    l.hearts = {11, 12, 13, 14, 15};
+    return l;
 }
 
 }  // namespace
@@ -197,25 +216,152 @@ TEST_CASE("hookshot draw: the panel at the top left, and F7 turns it over on eac
     CHECK_FALSE(k.list);
 }
 
-TEST_CASE("hookshot draw: the other players under your hearts, hearts as shapes") {
-    Canvas c(1280, 720);
+TEST_CASE("hookshot draw: the other players under your hearts in the game look only, with the heart pictures") {
     CoopDraw::Scene s;
     s.hud = {{"Mido", "Kokiri Forest", {4, 4, 2, 0}, false}, {"Saria", "", {}, true}};
     CHECK(CoopDraw::Wanted(s));
-    CoopDraw::Draw(c.d, s);
+    Canvas plain(1280, 720);
+    CoopDraw::Draw(plain.d, s);
+    CHECK(plain.calls.empty());  // the plain look has no HUD blocks (as the co-op window)
+
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s, GameLook());
     const auto texts = c.Of("text");
-    REQUIRE(texts.size() == 27);  // three outlined lines: Mido, Kokiri Forest, Saria
-    const auto& mido = texts[8];
+    REQUIRE(texts.size() == 18);  // three lines, each the game's rim (4), shadow and fill
+    const auto& mido = texts[5];
     CHECK(mido.text == "Mido");
-    CHECK(mido.x == doctest::Approx(40.0f));                      // 40 of 720 lines at 720 high
+    CHECK(mido.font == 2);                                      // the medium font
+    CHECK(mido.x == doctest::Approx(40.0f));                    // 40 of 720 lines at 720 high
     CHECK(mido.y == doctest::Approx(CoopHudLayout::BlocksTop(1280, 720)));
-    CHECK(texts[17].text == "Kokiri Forest");
-    CHECK(texts[17].y > mido.y);
-    CHECK(texts[26].text == "Saria");
-    CHECK(AlphaOf(texts[26].rgba) == 150);  // not connected: dim
-    // Four hearts: each a dark one; three of them filled (two full, one half), the empty one not.
-    CHECK(c.Of("triangle").size() == 4 + 3);
-    CHECK(c.Of("circle").size() == 2 * (4 + 3));
+    CHECK(AlphaOf(texts[4].rgba) == 150);                       // the drop shadow
+    CHECK(texts[4].x > mido.x);
+    CHECK(texts[11].text == "Kokiri Forest");
+    CHECK(texts[11].font == 1);                                 // the regular font
+    CHECK(texts[11].y > mido.y);
+    CHECK(texts[17].text == "Saria");
+    CHECK(AlphaOf(texts[17].rgba) == 150);                      // not connected: dim
+    // Four hearts as the pictures for 4, 4, 2 and 0 quarters, 38 of 720 lines big, 0.55 of that apart.
+    const auto hearts = c.Of("image");
+    REQUIRE(hearts.size() == 4);
+    CHECK(hearts[0].text == "15");
+    CHECK(hearts[1].text == "15");
+    CHECK(hearts[2].text == "13");
+    CHECK(hearts[3].text == "11");
+    CHECK(hearts[0].px == doctest::Approx(38.0f));
+    CHECK(hearts[1].x - hearts[0].x == doctest::Approx(38.0f * 0.55f));
+    CHECK(hearts[0].rgba == CoopDraw::Rgba(255, 255, 255, 255));
+    CHECK(c.Of("rect").empty());
+    CHECK(c.font == 0);  // Hookshot's own font again after drawing
+}
+
+TEST_CASE("hookshot draw: game look name tags in the players' colours, over the game's shadow") {
+    CoopHook::Markers m{640, 360, {}};
+    CoopHook::Marker other;
+    other.x = 320;
+    other.y = 180;
+    other.tag = "Saria";
+    other.tag_x = 320;
+    other.tag_y = 150;
+    other.tag_head = true;
+    CoopHook::Marker self = other;
+    self.self = true;
+    self.tag = "you";
+    CoopHook::Marker edge = other;
+    edge.edge = true;
+    edge.tag = "P3";
+    m.items = {other, self, edge};
+    CoopDraw::Scene s;
+    s.markers = m;
+    s.colours["Saria"] = CoopDraw::Lifted(0xFF0000);
+    CHECK(CoopDraw::Lifted(0xFF0000) == CoopDraw::Rgba(255, 89, 89, 255));  // 35% of the way to white
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s, GameLook());
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() == 18);
+    CHECK(texts[5].text == "Saria");
+    CHECK(texts[5].rgba == CoopDraw::Lifted(0xFF0000));
+    CHECK(texts[5].font == 2);
+    CHECK(texts[5].px == doctest::Approx(25.2f * 1.1f));  // the game's font a little bigger
+    CHECK(texts[11].rgba == CoopDraw::Rgba(255, 210, 60, 255));  // yourself
+    CHECK(texts[17].text == "P3");
+    CHECK(texts[17].rgba == CoopDraw::Rgba(255, 255, 255, 255));  // nobody known: white
+    // The edge arrow in that player's colour too.
+    const auto arrows = c.Of("triangle");
+    REQUIRE(arrows.size() == 1);
+    CHECK(arrows[0].rgba == CoopDraw::Rgba(255, 255, 255, 255));
+}
+
+TEST_CASE("hookshot draw: game look chat, the name in its colour, no boxes, the box without a box") {
+    CoopDraw::Scene s;
+    s.chat = {{"Saria: hi", false, 1.0f}, {"Mido joined", true, 0.5f}};
+    s.colours["Saria"] = CoopDraw::Lifted(0x00FF00);
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s, GameLook());
+    auto texts = c.Of("text");
+    REQUIRE(texts.size() == 18);  // "Saria:", " hi", "Mido joined"
+    CHECK(texts[5].text == "Saria:");
+    CHECK(texts[5].rgba == CoopDraw::Lifted(0x00FF00));
+    CHECK(texts[5].font == 1);
+    CHECK(texts[5].x == doctest::Approx(40.0f));  // the HUD blocks' left edge (32) + the pad
+    CHECK(texts[11].text == " hi");
+    CHECK(texts[11].x > texts[5].x);
+    CHECK(texts[11].rgba == CoopDraw::Rgba(255, 255, 255, 255));
+    CHECK(texts[17].rgba == CoopDraw::Rgba(255, 206, 82, 127));  // a notice: the highlight colour, half faded
+    CHECK(texts[17].px == doctest::Approx(23.0f));
+    CHECK(c.Of("rect").empty());
+
+    Canvas b(1280, 720);
+    s.box = CoopDraw::ChatBoxView{"hello", true};
+    CoopDraw::Draw(b.d, s, GameLook());
+    texts = b.Of("text");
+    REQUIRE(texts.size() == 24);
+    CHECK(texts[5].text == "hello_");                           // the box first
+    CHECK(texts[5].rgba == CoopDraw::Rgba(255, 122, 106, 255));  // refused: red text, no red frame
+    CHECK(texts[23].y < texts[5].y);                            // the lines above it
+    CHECK(b.Of("rect").empty());
+}
+
+TEST_CASE("hookshot draw: game look player list, no box, Place, the header highlighted") {
+    CoopHook::PlayerRow me;
+    me.number = 1;
+    me.name = "Saria";
+    me.self = true;
+    me.state = "connected";
+    me.scene = "Kokiri Forest";
+    const auto cells = CoopDraw::PlayerCells({me}, true);
+    CHECK(cells[0][4] == "Place");
+    CHECK(cells[1][4] == "Kokiri Forest");
+    CoopDraw::Scene s;
+    s.players = std::vector<CoopHook::PlayerRow>{me};
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s, GameLook());
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() == 60);  // ten cells, each with the game's shadow
+    CHECK(texts[5].text == "#");
+    CHECK(texts[5].rgba == CoopDraw::kHighlight);
+    CHECK(texts[5].px == doctest::Approx(24.0f));
+    CHECK(c.Of("rect").empty());
+}
+
+TEST_CASE("hookshot draw: no game look without every piece, or with an older Hookshot's table") {
+    const auto look = GameLook();
+    Canvas c(1280, 720);
+    CHECK(CoopDraw::GameLook(c.d, look));
+    CoopDraw::Look missing = look;
+    missing.hearts[2] = 0;  // a heart picture that did not load
+    CHECK_FALSE(CoopDraw::GameLook(c.d, missing));
+    CHECK_FALSE(CoopDraw::GameLook(c.d, CoopDraw::Look{}));
+    Canvas old(1280, 720);
+    old.d.font = nullptr;
+    old.d.use_font = nullptr;
+    old.d.image = nullptr;
+    old.d.draw_image = nullptr;
+    CHECK_FALSE(CoopDraw::GameLook(old.d, look));
+    CoopDraw::Scene s;
+    s.chat = {{"Saria: hi", false, 1.0f}};
+    CoopDraw::Draw(old.d, s, look);
+    CHECK(old.Of("rect").size() == 1);  // the plain look's box
+    CHECK(old.Of("text").size() == 1);
 }
 
 TEST_CASE("hookshot draw: the chat box at the bottom left, the lines above it and unfaded") {

@@ -64,6 +64,13 @@ inline FrameWork WorkAt(int site, bool present_seen) {
 // is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
 CoopDraw::Scene DrawScene();
 
+// hos_coop_draw2: the scene drawn, in the game look when the HUD pack's font
+// and heart pictures load through the table's calls (the first call loads
+// them; coop_draw.h, "The game look"). NoGameLook: hos_coop_draw was called
+// instead (an older Hookshot), so the plain look for good.
+void DrawWithLook(const HosCoopDraw& d);
+void NoGameLook();
+
 // Typing (hos_coop_key / hos_coop_char / hos_coop_keys_taken): the chat box.
 bool TypeKey(std::uint32_t vk, bool repeat);
 bool TypeChar(std::uint32_t byte);

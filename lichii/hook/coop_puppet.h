@@ -23,6 +23,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop_ocarina.h"
+
 namespace coop::protocol {
 struct Equipment;
 }
@@ -377,6 +379,8 @@ private:
         std::uint64_t wanted_since_ms = 0;  // since when (Input::settle_ms)
         int refused = 0;                    // creates refused in a row
         std::string anim_name;        // played on it; "" none yet
+        CoopOcarina::HandBind ocarina_hand;  // issue 152: Ocarina in hand while it plays
+        std::string their_anim;              // their last AS command (debug log)
         std::uint32_t anim_serial = 0;
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play

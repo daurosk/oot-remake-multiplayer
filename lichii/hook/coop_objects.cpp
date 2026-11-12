@@ -1395,6 +1395,11 @@ public:
                                                         our_link_, server_now_us)) {
                 LOG_INFO(Core, "coop: {}", line);
             }
+            // Issue 152: what moves the Ocarina from the belt to the hand.
+            for (const auto& line : ocarina_hold_probe_.Step([&r](u64 address) { return r.Get<u64>(address); },
+                                                             our_link_, ocarina_probe_.Active(), server_now_us)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
         }
         if (const u64 made = TheGrass().Made(); made != grass_made_logged_) {
             grass_made_logged_ = made;
@@ -1586,6 +1591,7 @@ public:
     std::vector<CoopScrubs::Seen> scrubs_seen_;
     bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
     CoopOcarina::OcarinaProbe ocarina_probe_;
+    CoopOcarina::HoldProbe ocarina_hold_probe_;
     u64 our_link_ = 0;                        // our Link's actor, from the last walk
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix

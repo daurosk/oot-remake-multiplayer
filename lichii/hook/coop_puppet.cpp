@@ -247,6 +247,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
                 slot.lost_ms = now_ms;  // a load deletes it before the camera goes
             } else if (const Target* t = Wanted(slot.number);
@@ -267,6 +268,26 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     parked[1] -= kHideDrop;
                     Pose(slot, guest, parked, nullptr, now_ms);
                 }  // hold: left where it is
+                // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
+                // by their own command: while held for their cutscene (free play
+                // is DemoOcarina) nothing new is played on the puppet.
+                const std::string their = t->anim ? t->anim->name : std::string();
+                if (anim_ && their != slot.their_anim) {
+                    Say("P" + std::to_string(slot.number) + " their command '" + their + "'");
+                }
+                slot.their_anim = their;
+                const std::string hand = slot.ocarina_hand.Step(
+                    [&guest](std::uint64_t a) -> std::optional<std::uint64_t> {
+                        std::uint64_t w = 0;
+                        return guest.Read(a, &w, 8) ? std::optional<std::uint64_t>(w) : std::nullopt;
+                    },
+                    [&guest](std::uint64_t a, std::uint64_t w) { return guest.Write(a, &w, 8); },
+                    slot.actor,
+                    t->show != Show::hide &&
+                        CoopOcarina::HandBind::Playing(their.empty() ? slot.anim_name : their));
+                if (!hand.empty()) {
+                    Say("P" + std::to_string(slot.number) + " " + hand + " ('" + their + "')");
+                }
             }
             break;
         case Phase::deleting:
@@ -276,6 +297,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
             }
             break;
@@ -608,6 +630,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.vtable = 0;
     slot.take = slot.drop = false;
     slot.anim_name.clear();
+    slot.ocarina_hand = {};  // a new puppet may reuse the old address
+    slot.their_anim.clear();
     slot.anim_serial = 0;
     slot.frame_to_set.reset();
     slot.held_frame.reset();

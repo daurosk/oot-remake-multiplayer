@@ -70,15 +70,19 @@ TEST_CASE("hookshot draw: chat lines show 8 s, fade in 1 s, then go") {
     CHECK(shown[0].alpha == doctest::Approx(1.0f));
     CHECK(shown[1].notice);
     CHECK(shown[1].alpha == doctest::Approx(0.5f));
-    CHECK_FALSE(CoopDraw::Wanted({}, std::nullopt));
-    CHECK(CoopDraw::Wanted(shown, std::nullopt));
-    CHECK_FALSE(CoopDraw::Wanted({}, CoopHook::Markers{640, 360, {}}));
+    CoopDraw::Scene s;
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    s.markers = CoopHook::Markers{640, 360, {}};
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    s.chat = shown;
+    CHECK(CoopDraw::Wanted(s));
 }
 
 TEST_CASE("hookshot draw: chat at the bottom left, oldest first, long lines cut") {
     Canvas c(1280, 720);
-    CoopDraw::Draw(c.d, {{"Saria: hi", false, 1.0f}, {"Mido joined", true, 0.5f}, {std::string(300, 'x'), false, 1.0f}},
-                   std::nullopt);
+    CoopDraw::Scene s;
+    s.chat = {{"Saria: hi", false, 1.0f}, {"Mido joined", true, 0.5f}, {std::string(300, 'x'), false, 1.0f}};
+    CoopDraw::Draw(c.d, s);
     const auto texts = c.Of("text");
     REQUIRE(texts.size() == 3);
     CHECK(texts[0].text == "Saria: hi");
@@ -113,7 +117,9 @@ TEST_CASE("hookshot draw: name tags scaled from the scene target to the picture"
     gone.alpha = 0;
     m.items = {head, dot, edge, gone};
     Canvas c(1280, 720);
-    CoopDraw::Draw(c.d, {}, m);
+    CoopDraw::Scene s;
+    s.markers = m;
+    CoopDraw::Draw(c.d, s);
     CHECK(c.Of("triangle").size() == 1);  // the edge arrow
     CHECK(c.Of("circle").size() == 2);    // the dot and its dark rim (no dot for a head tag)
     const auto texts = c.Of("text");
@@ -129,6 +135,63 @@ TEST_CASE("hookshot draw: name tags scaled from the scene target to the picture"
 TEST_CASE("hookshot draw: a table without every function draws nothing") {
     Canvas c(1280, 720);
     c.d.triangle = nullptr;
-    CoopDraw::Draw(c.d, {{"Saria: hi", false, 1.0f}}, std::nullopt);
+    CoopDraw::Scene s;
+    s.chat = {{"Saria: hi", false, 1.0f}};
+    CoopDraw::Draw(c.d, s);
     CHECK(c.calls.empty());
+}
+
+TEST_CASE("hookshot draw: the player list while F6 is held, as the co-op window's") {
+    CoopHook::PlayerRow me;
+    me.number = 1;
+    me.name = "Saria";
+    me.self = true;
+    me.state = "connected";
+    me.ms = 42;
+    me.scene = "KokiriForest_Child";
+    CoopHook::PlayerRow other;
+    other.number = 2;
+    other.name = "Mido";
+    other.state = "reconnecting";
+    other.ms = 120;
+    const auto cells = CoopDraw::PlayerCells({me, other});
+    REQUIRE(cells.size() == 3);
+    CHECK(cells[0] == std::vector<std::string>{"#", "Player", "State", "Ping", "Scene"});
+    CHECK(cells[1] == std::vector<std::string>{"P1", "Saria (you)", "connected", "42 ms", "KokiriForest_Child"});
+    CHECK(cells[2] == std::vector<std::string>{"P2", "Mido", "reconnecting", "~120 ms", "?"});
+
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    s.players = std::vector<CoopHook::PlayerRow>{me, other};
+    CHECK(CoopDraw::Wanted(s));
+    CoopDraw::Draw(c.d, s);
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() == 15);
+    CHECK(texts[0].text == "#");
+    CHECK(texts[0].y > 720.0f / 6);              // below a sixth of the height
+    CHECK(texts[10].rgba != texts[5].rgba);     // the reconnecting row is dim
+    CHECK(c.Of("rect").size() == 1);
+}
+
+TEST_CASE("hookshot draw: the panel at the top left, and F7 turns it over on each press") {
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    s.panel = std::vector<CoopHook::OverlayLine>{{"coop: connected", false}, {"P2 Mido: other scene", true}};
+    CoopDraw::Draw(c.d, s);
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() == 2);
+    CHECK(texts[0].x < 40.0f);
+    CHECK(texts[0].y < 40.0f);
+    CHECK(texts[1].rgba != texts[0].rgba);  // dim
+    CoopDraw::Keys k;
+    k.Update(false, true);
+    CHECK(k.panel);
+    k.Update(false, true);  // still held: no change
+    CHECK(k.panel);
+    k.Update(true, false);
+    CHECK(k.list);
+    CHECK(k.panel);
+    k.Update(false, true);
+    CHECK_FALSE(k.panel);
+    CHECK_FALSE(k.list);
 }

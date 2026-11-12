@@ -15,6 +15,7 @@
 #include "coop_hookshot.h"
 
 #include <atomic>
+#include <mutex>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,16 @@
 #include "coop_svc.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -163,6 +174,55 @@ std::string Refusal() {
 
 namespace CoopHookshot {
 
+namespace {
+
+// F6 and F7 (CoopDraw::Keys), only while one of this process's windows has
+// the keyboard. Windows only: on Linux the list and panel stay hidden.
+bool KeyDown(int vk) {
+#ifdef _WIN32
+    DWORD pid = 0;
+    const HWND front = GetForegroundWindow();
+    if (front == nullptr || (GetWindowThreadProcessId(front, &pid), pid) != GetCurrentProcessId()) {
+        return false;
+    }
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+#else
+    (void)vk;
+    return false;
+#endif
+}
+
+std::mutex g_keys_mutex;
+CoopDraw::Keys g_keys;
+
+}  // namespace
+
+CoopDraw::Scene DrawScene() {
+    CoopDraw::Scene s;
+    s.chat = CoopDraw::ShownChat(CoopHook::ChatLines());
+    s.markers = CoopHook::CurrentMarkers();
+    bool list = false, panel = false;
+    {
+        std::lock_guard lock(g_keys_mutex);
+        static bool panel_env = [] {
+            g_keys.panel = EnvOn("LICHII_COOP_DEBUG_PANEL");
+            return true;
+        }();
+        (void)panel_env;
+        g_keys.Update(KeyDown(0x75 /* F6 */), KeyDown(0x76 /* F7 */));
+        static const bool always = EnvOn("LICHII_COOP_SHOW_PLAYERS");  // tests: no F6 to hold
+        list = g_keys.list || always;
+        panel = g_keys.panel;
+    }
+    if (list) {
+        s.players = CoopHook::PlayerList();
+    }
+    if (panel) {
+        s.panel = CoopHook::OverlayLines();
+    }
+    return s;
+}
+
 bool Start(const HosCoopApi* api) {
     if (api == nullptr || api->version != HOS_COOP_API_VERSION || api->size < kFirstApiSize) {
         return false;
@@ -257,7 +317,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
 }
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
-    return g_on && CoopDraw::Wanted(CoopDraw::ShownChat(CoopHook::ChatLines()), CoopHook::CurrentMarkers()) ? 1 : 0;
+    return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
     if (g_on && d != nullptr) {
@@ -266,7 +326,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
             LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",
                      static_cast<int>(d->width), static_cast<int>(d->height));
         }
-        CoopDraw::Draw(*d, CoopDraw::ShownChat(CoopHook::ChatLines()), CoopHook::CurrentMarkers());
+        CoopDraw::Draw(*d, CoopHookshot::DrawScene());
     }
 }
 }

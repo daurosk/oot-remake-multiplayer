@@ -105,7 +105,76 @@ void DrawChat(const HosCoopDraw& d, const std::vector<ChatShown>& chat) {
     }
 }
 
+void DrawPanel(const HosCoopDraw& d, const std::vector<CoopHook::OverlayLine>& lines) {
+    if (lines.empty()) {
+        return;
+    }
+    const float px = std::clamp(d.height * 0.018f, 13.0f, 24.0f);
+    const float line = px + 4.0f;
+    float width = 0;
+    for (const auto& l : lines) {
+        width = std::max(width, d.text_width(d.user, px, l.text.c_str()));
+    }
+    width = std::min(width, d.width - 2 * kMargin - 2 * kPad);
+    d.rect(d.user, kMargin, kMargin, kMargin + width + 2 * kPad, kMargin + line * lines.size() + 2 * kPad - 4,
+           Rgba(0, 0, 0, 150), 6.0f);
+    float y = kMargin + kPad;
+    for (const auto& l : lines) {
+        const std::string text = Elided(d, px, l.text, width);
+        d.text(d.user, kMargin + kPad, y, px, l.dim ? Rgba(170, 170, 170, 255) : Rgba(255, 255, 255, 255),
+               text.c_str());
+        y += line;
+    }
+}
+
+void DrawPlayers(const HosCoopDraw& d, const std::vector<CoopHook::PlayerRow>& rows) {
+    const auto cells = PlayerCells(rows);
+    const float px = std::clamp(d.height * 0.022f, 14.0f, 28.0f);
+    const float line = px + 6.0f;
+    const float gap = 18.0f * px / 14.0f;
+    std::vector<float> widths(cells[0].size(), 0.0f);
+    for (const auto& r : cells) {
+        for (std::size_t c = 0; c < r.size(); ++c) {
+            widths[c] = std::max(widths[c], d.text_width(d.user, px, r[c].c_str()));
+        }
+    }
+    float width = 4 * kPad - gap;
+    for (const float w : widths) {
+        width += w + gap;
+    }
+    const float height = static_cast<float>(cells.size()) * line + 4 * kPad;
+    const float left = std::max(0.0f, (d.width - width) / 2);
+    const float top = d.height / 6;
+    d.rect(d.user, left, top, left + width, top + height, Rgba(0, 0, 0, 170), 8.0f);
+    float y = top + 2 * kPad;
+    for (std::size_t r = 0; r < cells.size(); ++r) {
+        const bool dim = r > 0 && rows[r - 1].state != "connected";
+        const std::uint32_t colour = r == 0 ? Rgba(255, 220, 120, 255)
+                                     : dim  ? Rgba(170, 170, 170, 255)
+                                            : Rgba(255, 255, 255, 255);
+        float x = left + 2 * kPad;
+        for (std::size_t c = 0; c < cells[r].size(); ++c) {
+            d.text(d.user, x, y, px, colour, cells[r][c].c_str());
+            x += widths[c] + gap;
+        }
+        y += line;
+    }
+}
+
 }  // namespace
+
+std::vector<std::vector<std::string>> PlayerCells(const std::vector<CoopHook::PlayerRow>& rows) {
+    std::vector<std::vector<std::string>> cells{{"#", "Player", "State", "Ping", "Scene"}};
+    for (const auto& row : rows) {
+        std::string ms = "-";
+        if (row.ms) {
+            ms = (row.self ? "" : "~") + std::to_string(*row.ms) + " ms";
+        }
+        cells.push_back({row.number ? "P" + std::to_string(row.number) : std::string("-"),
+                         row.name + (row.self ? " (you)" : ""), row.state, ms, row.scene.value_or("?")});
+    }
+    return cells;
+}
 
 std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines) {
     std::vector<ChatShown> out;
@@ -121,18 +190,25 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines) {
     return out;
 }
 
-bool Wanted(const std::vector<ChatShown>& chat, const std::optional<CoopHook::Markers>& markers) {
-    return !chat.empty() || (markers && !markers->items.empty());
+bool Wanted(const Scene& s) {
+    return !s.chat.empty() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
+           (s.panel && !s.panel->empty());
 }
 
-void Draw(const HosCoopDraw& d, const std::vector<ChatShown>& chat, const std::optional<CoopHook::Markers>& markers) {
+void Draw(const HosCoopDraw& d, const Scene& s) {
     if (d.width <= 0 || d.height <= 0 || !d.rect || !d.circle || !d.triangle || !d.text || !d.text_width) {
         return;
     }
-    if (markers) {
-        DrawMarkers(d, *markers);
+    if (s.markers) {
+        DrawMarkers(d, *s.markers);
     }
-    DrawChat(d, chat);
+    if (s.panel) {
+        DrawPanel(d, *s.panel);
+    }
+    DrawChat(d, s.chat);
+    if (s.players) {
+        DrawPlayers(d, *s.players);
+    }
 }
 
 }  // namespace CoopDraw

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Co-op over Hookshot's picture (docs/hookshot.md): the chat lines and the
-// players' name tags the emulator's co-op window draws with Qt
-// (lichii/hook/coop_window.cpp, its plain look), drawn here through
-// Hookshot's Dear ImGui (hos_coop_draw.h). The player list, the chat box,
-// the HUD hearts and the cheats window are not drawn on Hookshot yet.
+// Co-op over Hookshot's picture (docs/hookshot.md): what the emulator's co-op
+// window draws with Qt (lichii/hook/coop_window.cpp, its plain look), drawn
+// here through Hookshot's Dear ImGui (hos_coop_draw.h): the chat lines, the
+// players' name tags, the player list (F6 held) and the panel (F7). The chat
+// box, the HUD hearts and the cheats window are not drawn on Hookshot yet.
 #pragma once
 
 #include <cstdint>
@@ -35,11 +35,40 @@ struct ChatShown {
 // The chat lines still showing, oldest first, with their fade.
 std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines);
 
-// Anything to draw: a chat line showing, or a marker.
-bool Wanted(const std::vector<ChatShown>& chat, const std::optional<CoopHook::Markers>& markers);
+// What to draw this present.
+struct Scene {
+    std::vector<ChatShown> chat;
+    std::optional<CoopHook::Markers> markers;
+    std::optional<std::vector<CoopHook::PlayerRow>> players;  // the player list key is held
+    std::optional<std::vector<CoopHook::OverlayLine>> panel;  // the panel is on
+};
+
+// Anything to draw.
+bool Wanted(const Scene& scene);
 
 // Draws the markers (scaled from the game's scene target to the picture),
-// then the chat lines at the bottom left.
-void Draw(const HosCoopDraw& d, const std::vector<ChatShown>& chat, const std::optional<CoopHook::Markers>& markers);
+// the panel at the top left, the chat lines at the bottom left, then the
+// player list over the top middle.
+void Draw(const HosCoopDraw& d, const Scene& scene);
+
+// The player list's cells: a header row, then one row per player (as the
+// co-op window's: "P1", the name with " (you)", state, ping, scene).
+std::vector<std::vector<std::string>> PlayerCells(const std::vector<CoopHook::PlayerRow>& rows);
+
+// The keys (docs/hookshot.md): F6 held shows the player list, F7 turns the
+// panel on and off. Tab and Enter, the emulator's keys, are the game's Plus
+// on Hookshot. Update turns the panel over when F7 goes down.
+struct Keys {
+    bool list = false;
+    bool panel = false;
+    bool panel_was_down = false;
+    void Update(bool list_down, bool panel_down) {
+        list = list_down;
+        if (panel_down && !panel_was_down) {
+            panel = !panel;
+        }
+        panel_was_down = panel_down;
+    }
+};
 
 }  // namespace CoopDraw

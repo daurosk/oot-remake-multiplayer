@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 
+#include "coop_draw.h"
 #include "coop_game_build.h"
 #include "hos_coop_api.h"
 
@@ -58,6 +59,10 @@ inline FrameWork WorkAt(int site, bool present_seen) {
     }
     return w;
 }
+
+// What hos_coop_draw shows now (chat, name tags; the player list while F6
+// is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
+CoopDraw::Scene DrawScene();
 
 // Whether co-op knows the game whose main has this build id (hex, 16 or more
 // digits; Hookshot gives 32).

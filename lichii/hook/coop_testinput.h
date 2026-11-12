@@ -110,6 +110,7 @@ enum class Kind {
     assign,  // test only: the item on ZR (PlayerStatus.AssignableItem.Child and .Adult)
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
+    setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)
 };
 
 struct Step {

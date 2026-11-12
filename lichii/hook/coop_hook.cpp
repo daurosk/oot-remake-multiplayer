@@ -25,8 +25,10 @@
 #include <mutex>
 #include <optional>
 #include <utility>
+#include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -61,6 +63,7 @@
 #include "coop_flags.h"
 #include "coop_save.h"
 #include "coop_game_build.h"
+#include "coop_game_scan.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_drops.h"
@@ -1110,6 +1113,7 @@ private:
         if (process == nullptr) {
             view.game_note = "no game";
             build_warned_ = nullptr;  // the next game start warns again
+            scanned_ = nullptr;       // and is scanned again
             return std::nullopt;
         }
         if (system.GetApplicationProcessProgramID() != kOcarinaProgramId) {
@@ -1117,7 +1121,12 @@ private:
             return std::nullopt;
         }
         const auto build = Hex(system.GetApplicationProcessBuildID(), 8);
-        if (CoopGameBuild::Find(build) == nullptr) {
+        // Issue 97: the signature scan, once per game start (coop_game_scan.h).
+        if (scanned_ != process) {
+            scanned_ = process;
+            scan_runs_ = ScanBuild(system, process, build);
+        }
+        if (CoopGameBuild::Find(build) == nullptr && !scan_runs_) {
             view.game_note = CoopGameBuild::PanelRefusal(build);
             if (build_warned_ != process) {
                 build_warned_ = process;  // once per game start
@@ -1162,6 +1171,95 @@ private:
             modules = Core::FindModules(process);
         }
         return modules;
+    }
+
+    // Issue 97: scans main for the offsets (coop_game_scan.h) and logs what it
+    // found. True when co-op may run on a build the table does not know:
+    // every offset found once and equal to the 1.1.1 ones, since the readers
+    // still use those (docs/game-builds.md). A known build runs on its table
+    // whatever the scan says; the log then shows whether the scan agrees.
+    static std::string Join(const std::vector<std::string>& parts) {
+        std::string out;
+        for (const auto& part : parts) {
+            out += (out.empty() ? "" : ", ") + part;
+        }
+        return out;
+    }
+
+    static bool ScanBuild(Core::System& system, Kernel::KProcess* process,
+                          const std::string& build) {
+        const auto* known = CoopGameBuild::Find(build);
+        // A known build runs on its table; the scan there only checks itself.
+        // LICHII_COOP_SCAN=0 leaves that check out (unknown builds still scan).
+        if (const char* env = std::getenv("LICHII_COOP_SCAN");
+            known != nullptr && env != nullptr && std::string_view(env) == "0") {
+            return false;
+        }
+        const u64 base = FindMain(system, process);
+        auto& memory = system.ApplicationMemory();
+        u32 mod0 = 0;
+        if (base == 0 || !memory.ReadBlockUnsafe(base + 4, &mod0, sizeof(mod0))) {
+            LOG_WARNING(Core, "coop: build {}: scan skipped, main not readable", build);
+            return false;
+        }
+        const u64 rodata = CoopGameScan::RodataStart(mod0);
+        // Range first: a bad MOD0 word must not size a 4 GB buffer.
+        if (rodata == 0 || rodata > 0x10000000) {
+            LOG_WARNING(Core, "coop: build {}: scan skipped, rodata at {:#x} is not sensible",
+                        build, rodata);
+            return false;
+        }
+        std::vector<u32> text(rodata / 4);
+        if (!memory.ReadBlockUnsafe(base, text.data(), text.size() * 4)) {
+            LOG_WARNING(Core, "coop: build {}: scan skipped, main's code ({:#x} bytes) not readable",
+                        build, rodata);
+            return false;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        const auto result = CoopGameScan::Scan(
+            text.data(), text.size(), rodata, [&](u64 slot) -> std::optional<u64> {
+                u64 value = 0;
+                if (!memory.ReadBlockUnsafe(base + slot, &value, sizeof(value)) || value < base) {
+                    return std::nullopt;
+                }
+                return value - base;
+            });
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+        if (!result.Complete()) {
+            LOG_WARNING(Core, "coop: build {}: scan did not find {} of {} offsets: {} ({} ms)", build,
+                        result.missing.size(), std::size(CoopGameScan::kPatterns),
+                        CoopGameScan::MissingText(result.missing), ms);
+            return false;
+        }
+        const auto diff = CoopGameScan::Differences(result.main, CoopGameBuild::kPrimary.main);
+        if (known != nullptr) {
+            const auto own = CoopGameScan::Differences(result.main, known->main);
+            if (own.empty()) {
+                LOG_INFO(Core, "coop: build {}: offsets by scan match the table ({} patterns, {} ms)",
+                         build, std::size(CoopGameScan::kPatterns), ms);
+            } else {
+                LOG_WARNING(Core, "coop: build {}: scan differs from the table, the table is used: {}",
+                            build, Join(own));
+            }
+            return false;
+        }
+        if (diff.empty()) {
+            // Partial: the loader patch (puppets, svc hooks) and the object,
+            // drop and spawn readers still want build 1.1.1 by id, and HELLO
+            // names 1.1.1 (docs/game-builds.md).
+            LOG_INFO(Core,
+                     "coop: build {}: offsets by scan ({} ms); partial co-op: position, scene and "
+                     "flags only, no puppets, objects, drops or spawns on this build",
+                     build, ms);
+            return true;
+        }
+        // Found, but elsewhere than in 1.1.1: log them so a table entry can be
+        // made (docs/game-builds.md, steps for one new build).
+        LOG_WARNING(Core, "coop: build {}: offsets by scan differ from 1.1.1, co-op stays off until "
+                          "the readers use them: {}",
+                    build, Join(diff));
+        return false;
     }
 
     static u64 FindMain(Core::System& system, Kernel::KProcess* process) {
@@ -1393,6 +1491,8 @@ private:
     CoopEvery::Every debug_log_{kDebugLogUs};
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
+    Kernel::KProcess* scanned_ = nullptr;  // issue 97: the process last scanned
+    bool scan_runs_ = false;               // its scan lets an unknown build run
     Kernel::KProcess* build_warned_ = nullptr;  // the process last warned about
     FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.

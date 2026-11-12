@@ -1230,6 +1230,10 @@ public:
             }
             sync_.Bind(live);
         }
+#ifdef COOP_HOOKSHOT
+        StepHits();
+#endif
+        share_now_us_ = server_now_us;
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
@@ -1558,6 +1562,9 @@ public:
                          passed.released, passed.dropped);
             }
         }
+#ifdef COOP_HOOKSHOT
+        StaleGiven(system.ApplicationMemory(), r, server_now_us);
+#endif
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
@@ -1906,6 +1913,9 @@ private:
             case CoopActorEvents::Kind::Damage:
                 ++actor_hits_;
                 actor_hit_sum_ += CoopActorEvents::Amount(e.b);
+                if (step_hits_.size() < kStepHitsKept) {
+                    step_hits_.emplace_back(e.a, CoopActorEvents::Amount(e.b));  // (for the Sync: StepHits)
+                }
                 break;
             default:
                 break;
@@ -1922,6 +1932,67 @@ private:
             actor_hit_sum_ = 0;
         }
     }
+    // The game's hits since the last walk, by Life component, handed to the
+    // Sync as this game's hits on its copies (Sync::GameHit) instead of the
+    // life read falling. Not with LICHII_COOP_OBJECTS_HIT_REPLAY: there the
+    // other players' hits are dealt by the game too and would come back.
+    void StepHits() {
+        const bool on = CoopActorEvents::LifeStepSeen().load(std::memory_order_relaxed) && !replay_;
+        if (on != sync_.LifeEvents()) {
+            sync_.SetLifeEvents(on);
+            LOG_INFO(Core, "coop: actors: hits on copies are {}", on ? "taken from the game's Life step (patch 0007)"
+                                                                     : "read from the life falling");
+        }
+        for (const auto& [component, amount] : step_hits_) {
+            const auto actor = life_components_.find(component);
+            if (on && actor != life_components_.end()) {
+                sync_.GameHit(actor->second, amount);
+            }
+        }
+        step_hits_.clear();
+        if (const std::size_t loose = sync_.LooseDrops(); loose != loose_said_) {
+            LOG_INFO(Core, "coop: actors: {} life fell on copies with no Life step for it (counted as hits)",
+                     loose - loose_said_);
+            loose_said_ = loose;
+        }
+    }
+    // A life change given to the Life step that no step took in kGivenWaitUs
+    // (the actor asleep or paused): taken back and written, as before.
+    void StaleGiven(Core::Memory::Memory& memory, Reader& r, u64 now_us) {
+        auto& steps = CoopActorEvents::TheLifeTable();
+        std::erase_if(life_given_, [&](const LifeGiven& g) {
+            if (now_us < g.at_us + kGivenWaitUs) {
+                return false;
+            }
+            const auto table = r.Ptr(g.address + kActorComponents);
+            const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+            if (!life || *life != g.component) {
+                steps.Take(g.component);  // (another actor there now, or none)
+                return true;
+            }
+            if (steps.Take(g.component) != 0) {
+                const auto value = LifeValue(r, g.address);
+                if (value && memory.IsValidVirtualAddressRange(value->first + 8, 4) &&
+                    r.Get<s32>(value->first + 8).value_or(g.life) > g.life) {
+                    memory.Write32(value->first + 8, static_cast<u32>(g.life));
+                    LOG_INFO(Core, "coop: objects: {:#x}: its Life step did not take the change: life written {}",
+                             g.address, g.life);
+                }
+            }
+            return true;
+        });
+    }
+    struct LifeGiven {
+        u64 component = 0;
+        u64 address = 0;
+        s32 life = 0;
+        u64 at_us = 0;
+    };
+    static constexpr std::size_t kStepHitsKept = 4096;
+    static constexpr u64 kGivenWaitUs = 250'000;
+    std::vector<std::pair<u64, s32>> step_hits_;
+    std::vector<LifeGiven> life_given_;
+    std::size_t loose_said_ = 0;
     std::size_t actor_creates_ = 0;
     std::size_t actor_deletes_ = 0;
     std::size_t actor_hits_ = 0;
@@ -2120,6 +2191,7 @@ private:
         }
         std::optional<coop::protocol::Vec3> player;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
+        std::unordered_map<u64, u64> life_components;
         for (const u64 a : actors) {
             auto it = names_.find(a);
             std::pair<std::string, u64> known;
@@ -2240,6 +2312,10 @@ private:
                     const auto max = r.Get<s32>(value->second + 8);
                     if (life && max) {
                         s.life = coop::protocol::ObjectLife{*life, *max};
+                        const auto table = r.Ptr(a + kActorComponents);
+                        if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
+                            life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
+                        }
                     }
                 }
                 out.push_back(std::move(s));
@@ -2247,6 +2323,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        life_components_ = std::move(life_components);
         sync_.SetPlayer(player);
         sync_.SetEvent(TheLocalEvent().load());  // issue 200: our cutscene's NPCs become ours
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
@@ -2486,6 +2563,7 @@ private:
                 return;  // the game takes the life; Sync writes it after 400 ms if not
             }
         }
+        bool stepped = false;  // (Hookshot: the game's Life step is ours to use, the damage field is not)
 #ifdef COOP_HOOKSHOT
         // Hookshot with patch 0007: the hit (or the life the owner says this
         // copy has lost) goes in through the game's own Life step on its own
@@ -2493,8 +2571,10 @@ private:
         // and runs its own death. A hit still waiting from an earlier write
         // (the actor's step did not run: asleep, paused) is taken back and
         // the life written directly, so nothing is dealt twice.
-        if (CoopActorEvents::LifeStepSeen().load(std::memory_order_relaxed) && old >= 0 &&
-            (w.hurt > 0 || w.life < old)) {
+        // The damage field is left alone then: the step reads it into the
+        // sum it tells us, and it would come back as a hit of this game's.
+        stepped = CoopActorEvents::LifeStepSeen().load(std::memory_order_relaxed);
+        if (stepped && old >= 0 && (w.hurt > 0 || w.life < old)) {
             const auto table = r.Ptr(w.address + kActorComponents);
             const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
             if (life) {
@@ -2504,6 +2584,11 @@ private:
                 if (stale == 0 && steps.Give(*life, amount)) {
                     LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
                              w.hurt > 0 ? "hurt" : "life", w.address, amount, old, w.life);
+                    if (w.hurt <= 0) {
+                        // (a hurt's fall the Sync already expects, and writes itself when not taken)
+                        sync_.Stepped(w.address, amount, share_now_us_);
+                        life_given_.push_back({*life, w.address, w.life, share_now_us_});
+                    }
                     return;
                 }
                 if (stale != 0) {
@@ -2513,7 +2598,7 @@ private:
             }
         }
 #endif
-        if (w.hurt > 0) {
+        if (w.hurt > 0 && !stepped) {
             const auto table = r.Ptr(w.address + kActorComponents);
             const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
             if (life && memory.IsValidVirtualAddressRange(*life + kLifeHurt, 4)) {
@@ -2976,6 +3061,8 @@ private:
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
+    std::unordered_map<u64, u64> life_components_;  // the actor by its Life component (shared actors with a life)
+    u64 share_now_us_ = 0;  // this Share's server time (WriteLife)
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;

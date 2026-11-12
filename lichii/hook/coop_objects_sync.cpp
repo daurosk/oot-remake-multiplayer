@@ -705,6 +705,61 @@ void Sync::Written(std::uint64_t address, std::int32_t life, std::uint64_t now_u
     }
 }
 
+void Sync::GameHit(std::uint64_t address, std::int32_t amount) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end() && amount > 0) {
+        it->second.step_new += amount;
+    }
+}
+
+void Sync::Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end() && amount > 0) {
+        it->second.step_given += amount;
+        it->second.step_given_until = now_us + kStepGivenUs;
+    }
+}
+
+std::int32_t Sync::StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us) {
+    std::int32_t hits = 0;
+    std::int32_t stepped = std::exchange(o.step_new, 0);
+    if (o.loose > 0 && now_us >= o.loose_until) {
+        // No step came for that fall: something outside the Life step took
+        // the life. Counted as before the events, and said (LooseDrops).
+        hits += o.loose;
+        loose_drops_ += static_cast<std::size_t>(o.loose);
+        o.loose = 0;
+    }
+    if (o.step_wait > 0 && now_us >= o.step_wait_until) {
+        o.step_wait = 0;  // (the game clamped it, or took nothing)
+    }
+    if (o.step_given > 0 && now_us >= o.step_given_until) {
+        o.step_given = 0;
+    }
+    // A fall seen before its step: this step is that hit.
+    const std::int32_t late = std::min(stepped, o.loose);
+    o.loose -= late;
+    stepped -= late;
+    hits += late;
+    if (stepped > 0) {
+        o.step_wait += stepped;
+        o.step_wait_until = now_us + kStepWaitUs;
+    }
+    const std::int32_t now_hit = std::min(fell, o.step_wait);
+    o.step_wait -= now_hit;
+    hits += now_hit;
+    if (life <= 0) {
+        o.step_wait = 0;  // more than it had left: the rest never shows
+    }
+    // What another game's change put through the step (Stepped) is no hit.
+    std::int32_t rest = fell - now_hit;
+    const std::int32_t given = std::min(rest, o.step_given);
+    o.step_given -= given;
+    rest -= given;
+    o.step_rest = rest;
+    return hits;
+}
+
 std::uint8_t Sync::OwnerOf(const proto::ObjectId& id) const {
     const auto it = owners_.find(id);
     return it == owners_.end() ? 0 : it->second.player;
@@ -1077,10 +1132,25 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             life = proto::ObjectLife{0, o.max};
         }
         if (life) {
-            if (o.life && life->life < *o.life) {
+            const std::int32_t fell = o.life && life->life < *o.life ? *o.life - life->life : 0;
+            // The game's own Life step said its hits (SetLifeEvents): those
+            // are this game's, whatever else the life lost.
+            const std::optional<std::int32_t> stepped =
+                life_events_ ? std::optional<std::int32_t>(StepHits(o, fell, life->life, now_us)) : std::nullopt;
+            if (fell > 0 || stepped.value_or(0) > 0) {
                 o.fight_until = now_us + kFightUs;
-                std::int32_t drop = *o.life - life->life;
-                if (o.hurt_left > 0) {
+                // (with step events: the part of the fall no step explained)
+                std::int32_t drop = stepped ? o.step_rest : fell;
+                o.step_rest = 0;
+                if (stepped && *stepped > 0 && o.hurt_until != 0) {
+                    // Our own hit while the owner's hurt is in flight: the
+                    // life to reach is that much lower (the owner takes our
+                    // hit too), so it is not written back up over it.
+                    o.hurt_target = std::max(0, o.hurt_target - *stepped);
+                }
+                if (drop == 0) {
+                    // (all of it the game's own hits)
+                } else if (o.hurt_left > 0) {
                     // Our own hurt landing (or the game taking more for it):
                     // not a hit of ours.
                     o.hurt_left = std::max(0, o.hurt_left - drop);
@@ -1101,6 +1171,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     drop -= back;
                     writes.push_back({o.address, life->life, 0, {}});
                     ++hurt_late_;
+                }
+                if (stepped) {
+                    // A fall nothing explains waits for its step (the walk
+                    // may read the life before the event is drained); one
+                    // that never comes counts as a hit after kStepWaitUs.
+                    if (drop > 0) {
+                        o.loose += drop;
+                        o.loose_until = now_us + kStepWaitUs;
+                    }
+                    drop = *stepped;
                 }
                 const auto owner = owners_.find(o.id);
                 if (drop > 0 && blast_near_ && owner != owners_.end() &&

@@ -458,6 +458,127 @@ TEST_CASE("objects: with hurt on, a copy loses life through the game and it is n
     CHECK(All<proto::Damage>(Tick(sync, 800 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
 }
 
+// Hookshot, patch 0007: this game's hits on a copy come from the game's own
+// Life step (Sync::GameHit), not from the life read falling.
+namespace {
+std::int32_t DamageSent(const Step& step) {
+    std::int32_t sum = 0;
+    for (const auto& d : All<proto::Damage>(step)) {
+        sum += d.amount;
+    }
+    return sum;
+}
+} // namespace
+
+TEST_CASE("objects: life events: the Life step's hit on a copy goes to the owner, whichever comes first") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6)});
+
+    // The hit and its fall in the same walk.
+    sync.GameHit(0x100, 1);
+    CHECK(DamageSent(Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 5)})) == 0);
+    CHECK(DamageSent(Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 5)})) == 1);
+    // The hit one walk before the life read shows it: counted once.
+    sync.GameHit(0x100, 2);
+    std::int32_t sent = DamageSent(Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 5)}));
+    sent += DamageSent(Tick(sync, 220 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 2);
+    // The fall read first, its hit drained one walk later: counted once, at the hit.
+    sent = DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sync.GameHit(0x100, 1);
+    sent += DamageSent(Tick(sync, 520 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 2)}));
+    CHECK(sent == 1);
+    CHECK(sync.LooseDrops() == 0);
+    // A hit for more than it has left: only what it had goes.
+    sync.GameHit(0x100, 9);
+    sent = DamageSent(Tick(sync, 1300 * kMs, {Enemy(0x100, 0x11, 0)}));
+    sent += DamageSent(Tick(sync, 1500 * kMs, {Enemy(0x100, 0x11, 0)}));
+    CHECK(sent == 2);
+}
+
+TEST_CASE("objects: life events: a hit that took no life is forgotten, a fall with no step still counts") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6)});
+    // The step said 1 but the life stayed (the game's own guard): nothing goes, and a fall
+    // long after it is not paired with it.
+    sync.GameHit(0x100, 1);
+    std::int32_t sent = 0;
+    for (std::uint64_t t = 20; t <= 400; t += 20) {
+        sent += DamageSent(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 6)}));
+    }
+    CHECK(sent == 0);
+    // Life gone with no step for it (something outside the Life step): a hit after the wait.
+    sent = DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 4)}));
+    sent += DamageSent(Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 4)}));
+    CHECK(sent == 0);
+    CHECK(sync.LooseDrops() == 0);
+    sent += DamageSent(Tick(sync, 810 * kMs, {Enemy(0x100, 0x11, 4)}));
+    sent += DamageSent(Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 4)}));
+    CHECK(sent == 2);
+    CHECK(sync.LooseDrops() == 2);
+}
+
+TEST_CASE("objects: life events: our hit in the same frames as the owner's hurt is still ours") {
+    Sync sync;
+    sync.SetHurt(true);
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.state.life = proto::ObjectLife{3, 4};
+    sync.Receive(s);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    // The game takes the owner's hurt and our Link's own hit in one step: 2 gone, 1 of it ours.
+    sync.GameHit(0x100, 1);
+    std::int32_t sent = DamageSent(Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 2)}));
+    CHECK(sent == 1);
+    CHECK(sync.LooseDrops() == 0);
+    CHECK(sync.HurtsTaken() == 1);  // (and its life is not written back up to the owner's 3)
+    // The owner's hurt alone: nothing of ours.
+    Sync other;
+    other.SetHurt(true);
+    other.SetLifeEvents(true);
+    Tick(other, 0, {Enemy(0x100, 0x11, 4)});
+    Own(other, id, 2);
+    other.Receive(s);
+    Tick(other, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    sent = DamageSent(Tick(other, 40 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(other, 900 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 0);
+    CHECK(other.HurtsTaken() == 1);
+}
+
+TEST_CASE("objects: life events: life we put through the step ourselves is no hit of this game's") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 5)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 5)});
+    sync.Stepped(0x100, 2, 10 * kMs);  // (the owner's life, given to the Life step: no GameHit for it)
+    std::int32_t sent = DamageSent(Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 0);
+    CHECK(sync.LooseDrops() == 0);
+}
+
 TEST_CASE("objects: a hurt the game does not take is written as life after 400 ms") {
     Sync sync;
     sync.SetHurt(true);

@@ -331,6 +331,24 @@ public:
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
     void SetHurt(bool on) { hurt_ = on; }
 
+    // Hookshot with patch 0007 (coop_actor_events.h): the game's own Life
+    // step says every hit it deals, so a hit of this game's on a copy is
+    // taken from that (GameHit, before the Tick) and no longer guessed from
+    // the life read falling. The fall is still read, only to pair it: a hit
+    // and its fall may come in either order (the walk and the game's threads
+    // do not wait for each other), a fall with a hurt of ours in flight is
+    // that hurt, and a fall no step explains within kStepWaitUs counts as a
+    // hit as before (LooseDrops says how much: life taken outside the step).
+    void SetLifeEvents(bool on) { life_events_ = on; }
+    bool LifeEvents() const { return life_events_; }
+    void GameHit(std::uint64_t address, std::int32_t amount);
+    // Life another game's change takes through the Life step itself (not
+    // the game's damage, so no GameHit comes for it): its fall is no hit.
+    void Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us);
+    static constexpr std::uint64_t kStepWaitUs = 300'000;
+    static constexpr std::uint64_t kStepGivenUs = 1'000'000;
+    std::size_t LooseDrops() const { return loose_drops_; }
+
     // Projectiles (coop_projectiles.h): true for a life drop at a place and
     // server time that a projectile copy's blast here may have made. A copy
     // bomb is the game's own bomb, so the owner's real bomb and our copy both
@@ -612,6 +630,18 @@ private:
         // much is the game taking that same hit.
         std::int32_t late_left = 0;
         std::uint64_t late_until = 0;
+        // With life events (SetLifeEvents). step_new: the game's hits
+        // since the last Tick; step_wait: hits whose fall is not seen yet;
+        // loose: a fall no hit explained yet; step_given: what we put
+        // through the step ourselves; step_rest: this Tick's unexplained fall.
+        std::int32_t step_new = 0;
+        std::int32_t step_wait = 0;
+        std::uint64_t step_wait_until = 0;
+        std::int32_t loose = 0;
+        std::uint64_t loose_until = 0;
+        std::int32_t step_given = 0;
+        std::uint64_t step_given_until = 0;
+        std::int32_t step_rest = 0;
         // Owner side: life a copy bomb's blast took here (BlastNear).
         std::int32_t blast_credit = 0;
         std::uint64_t blast_until = 0;
@@ -660,6 +690,9 @@ private:
     static void ChaseStep(Object& o, std::uint64_t now_us);
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
+    // The hits the game's Life step dealt o that count now (SetLifeEvents);
+    // o.step_rest gets the part of `fell` that no step explains.
+    std::int32_t StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us);
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter);
 
@@ -747,6 +780,8 @@ private:
     std::vector<coop::protocol::ObjectGroupEntry> groups_sent_;  // as last sent
     std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
     bool hurt_ = false;
+    bool life_events_ = false;
+    std::size_t loose_drops_ = 0;
     std::uint8_t self_ = 0;
     // Take(): each key taken in this scene, and the actors that had it in the
     // two Ticks after it came (the first walk was collected before Taken()

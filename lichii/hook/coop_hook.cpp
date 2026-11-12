@@ -402,6 +402,9 @@ public:
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory);
+                    if (CoopStory::On()) {
+                        CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
+                    }
                 }
             }
         }
@@ -1311,6 +1314,22 @@ private:
         }
     }
     bool ocarina_mend_failed_logged_ = false;
+
+    // Issue 130 (docs/flags.md, "Story and cutscenes"): raises our own
+    // Meet_DekuTree quest to what the shared story says (Mido let someone by:
+    // Step03; the Deku Tree scene played: Complete), so the Kokiri Shop sells
+    // here too. Only ever raised; anything unread is left alone.
+    void CatchUpQuest(EmulatorMemory& memory) {
+        namespace quest = CoopStory::quest;
+        coop::host::GameFlags flags(memory);
+        const auto step = flags.get_enum(quest::kMeetDekuTree);
+        const auto raise = CoopStory::QuestCatchUp(step, flags.get_bool(quest::kMidoBlocker),
+                                                   flags.get_bool(quest::kMetDekuTree));
+        if (raise && coop::host::GameFlags::set_enum(memory, quest::kMeetDekuTree, *raise)) {
+            LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
+                     *step, *raise);
+        }
+    }
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

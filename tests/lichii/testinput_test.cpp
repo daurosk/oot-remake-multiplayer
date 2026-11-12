@@ -429,3 +429,21 @@ TEST_CASE("testinput: kill hands the hook an actor name as written, then the scr
     CHECK(log[0] == "mark killed");
     CHECK(r.Done());
 }
+
+TEST_CASE("testinput: setflag hands the hook a flag name and a whole number (issue 130)") {
+    std::string error;
+    CHECK_FALSE(Parse("setflag\n", error));
+    CHECK_FALSE(Parse("setflag PlayerStatus.CurrentRupee\n", error));
+    CHECK_FALSE(Parse("setflag PlayerStatus.CurrentRupee lots\n", error));
+    CHECK_FALSE(Parse("setflag PlayerStatus.CurrentRupee 9 9\n", error));
+    Runner r(Must("setflag PouchData.Weapon_Shield_Deku.StockNum 0\nsetflag PlayerStatus.CurrentRupee 99\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::setflag);
+    CHECK(requests[0].name == "PouchData.Weapon_Shield_Deku.StockNum");
+    CHECK(requests[0].start == "0");
+    CHECK(requests[1].name == "PlayerStatus.CurrentRupee");
+    CHECK(requests[1].start == "99");
+}

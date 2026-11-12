@@ -116,6 +116,7 @@ enum class Kind {
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
+    setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)
 };
 
 struct Step {

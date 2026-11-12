@@ -20,7 +20,7 @@ namespace coop::protocol {
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
 // (types 28 to 39) and the server sending HANDOVER_ASK; 9: the join password
 // (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
-inline constexpr std::uint16_t kProtocolVersion = 9;
+inline constexpr std::uint16_t kProtocolVersion = 10;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -105,6 +105,13 @@ enum class MessageType : std::uint16_t {
   join_proof = 192,
   save_ask = 206,   // 206 to 215: the host's save sent to guests (docs/protocol.md, "Save transfer")
   save_part = 207,
+  pvp_mode = 241,  // 241 to 250: player against player (docs/protocol.md, "PvP")
+  pvp_hit = 242,
+  pvp_hurt = 243,
+  player_life = 251,  // 251 to 255: the co-op HUD (docs/protocol.md, "Hearts")
+  fish_lure = 320,  // 320 to 324: the fishing pond (docs/protocol.md, "Fishing")
+  rejoin_token = 345,  // 345 to 349: rejoin after a crash or drop (docs/protocol.md, "Rejoin")
+  rejoin_claim = 346,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -206,6 +213,23 @@ struct JoinProof {
   bool operator==(const JoinProof&) const = default;
 };
 
+// REJOIN_TOKEN, server to client, right after WELCOME: a fresh random token
+// for this player's place. Only a connection that shows it (REJOIN_CLAIM)
+// may take that place over while the old connection is quiet, so two players
+// behind one address cannot push each other out by name.
+using RejoinTokenBytes = JoinNonce;
+struct RejoinToken {
+  RejoinTokenBytes token{};
+  bool operator==(const RejoinToken&) const = default;
+};
+
+// REJOIN_CLAIM, client to server, before its HELLO on a new connection: the
+// token its last WELCOME came with. Without one no takeover happens.
+struct RejoinClaim {
+  RejoinTokenBytes token{};
+  bool operator==(const RejoinClaim&) const = default;
+};
+
 struct PlayerJoined {
   std::uint8_t player_number = 1;  // 1 to 4
   std::string nickname;
@@ -249,6 +273,22 @@ struct PlayerStatus {
   std::uint8_t flags = 0;
   bool operator==(const PlayerStatus&) const = default;
 };
+
+// PLAYER_LIFE (protocol 10): a player's hearts, in quarter hearts as the game
+// keeps them (4 = one heart): life now and the most it can be. Sent reliably
+// on every change and again when another player joins; the others draw it
+// under their own hearts (docs/overlay.md). Same player field rules as
+// PLAYER_STATUS. max_life 0: not known (the game's Link is not loaded).
+struct PlayerLife {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::uint16_t life = 0;
+  std::uint16_t max_life = 0;
+  bool operator==(const PlayerLife&) const = default;
+};
+
+// The most quarter hearts PLAYER_LIFE carries: 20 hearts, with room for a
+// game that allows more.
+inline constexpr std::uint16_t kMaxLifeQuarters = 4 * 40;
 
 struct Chat {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
@@ -819,6 +859,34 @@ struct ObjectGroupEntry {
   bool operator==(const ObjectGroupEntry&) const = default;
 };
 
+// FISH_LURE (client only, not relayed; issue 151, docs/objects.md "Fish and
+// lures"): every fish the sender has loaded and how near the sender's own cast
+// lure is to it. It replaces the sender's previous list. The server gives each
+// fish to the game whose lure is nearest (a hooked fish stays with its owner),
+// and a fish is never moved by the distance rule or held by a fight lock.
+namespace fish_lure {
+inline constexpr std::uint8_t hooked = 1u << 0;  // the sender owns it and it is on its lure
+inline constexpr std::uint8_t drawn = 1u << 1;   // it swims at the sender's lure
+}  // namespace fish_lure
+
+// distance_cm when no lure of the sender's is in reach.
+inline constexpr std::uint16_t kFishLureNone = 0xffff;
+// Most fish in one FISH_LURE. 0 to this many, no fish twice.
+inline constexpr std::size_t kMaxFishLures = 256;
+
+struct FishLureEntry {
+  ObjectId id;
+  std::uint16_t distance_cm = kFishLureNone;  // fish to our nearest lure
+  std::uint8_t flags = 0;                     // fish_lure bits
+  bool operator==(const FishLureEntry&) const = default;
+};
+
+struct FishLure {
+  std::uint8_t player_number = kPlayerSelf;
+  std::vector<FishLureEntry> fish;
+  bool operator==(const FishLure&) const = default;
+};
+
 // Most entries in one OBJECT_GROUP. 1 to this many, no member twice.
 inline constexpr std::size_t kMaxGroupEntries = 256;
 
@@ -974,6 +1042,8 @@ struct DropSpawn {
 };
 
 // DROP_TAKE: a drop is gone from the sender's game; every game removes it.
+// The id is a made drop's, or (protocol 10) a placed one's: kind placed and
+// the placement hash, for the loot a bush or grass tuft has in every game.
 enum class DropTakeReason : std::uint8_t {
   picked_up = 0,  // the sender's Link collected it
   gone = 1,       // it blinked out
@@ -1016,6 +1086,55 @@ struct BossRoom {
   bool operator==(const BossRoom&) const = default;
 };
 
+// PvP (protocol 10; docs/protocol.md, "PvP"). Off unless the host turns it
+// on; the server's value (set by the host) is the whole session's.
+
+// Most life one PvP hit may take, and most life a PVP_HURT may report:
+// quarter hearts (20 hearts).
+inline constexpr std::int32_t kMaxPvpLife = 80;
+
+// PVP_MODE: whether players hurt each other in this session. From the server
+// to each player when it joins and to everyone on a change: `set_by` is 0
+// when the server's start decided it (coop_server --pvp), else the player
+// (the host) who changed it. From a player: the host asks for a change
+// (`set_by` 0; the server ignores it from anyone but the host).
+struct PvpMode {
+  std::uint8_t set_by = 0;  // 0 the server, 1 to 4 a player
+  bool on = false;
+  bool operator==(const PvpMode&) const = default;
+};
+
+// PVP_HIT: the sender's attack reached another player's Link on the sender's
+// screen. The server passes it to the victim only, and only while PvP is on;
+// the victim's game decides whether it hurts (PVP_HURT).
+struct PvpHit {
+  std::uint8_t player_number = kPlayerSelf;  // the attacker
+  std::uint8_t victim = 0;                   // 1 to 4, not the attacker
+  std::uint8_t cause = 0;                    // DamageCause; others kept
+  std::int32_t amount = 0;                   // quarter hearts, 1 to kMaxPvpLife
+  Vec3 at{};    // where the blow landed
+  Vec3 from{};  // where the attacker stood
+  bool operator==(const PvpHit&) const = default;
+};
+
+// PVP_HURT flags.
+namespace pvp_hurt {
+inline constexpr std::uint8_t died = 1;     // the hit took the last of the life
+inline constexpr std::uint8_t guarded = 2;  // not taken (amount 0): a cutscene, a menu, ...
+inline constexpr std::uint8_t known = died | guarded;
+}  // namespace pvp_hurt
+
+// PVP_HURT: what a PVP_HIT did in the victim's game (the victim decides).
+// Relayed to everyone else, so the attacker's screen shows it.
+struct PvpHurt {
+  std::uint8_t player_number = kPlayerSelf;  // the victim
+  std::uint8_t attacker = 0;                 // 1 to 4, not the victim
+  std::int32_t amount = 0;                   // taken: 0 to kMaxPvpLife
+  std::int32_t life = 0;                     // left after it: 0 to kMaxPvpLife
+  std::uint8_t flags = 0;                    // pvp_hurt; other bits refused
+  bool operator==(const PvpHurt&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1025,7 +1144,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
-                             JoinChallenge, JoinProof, SaveAsk, SavePart>;
+                             JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
+                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim>;
 
 MessageType type_of(const Message& message);
 

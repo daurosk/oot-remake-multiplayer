@@ -1,0 +1,24 @@
+# deku-scrubs-solo (#149): B stands in the room and watches (see deku-scrubs-solo.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -36.0 53.2 24.0
+wait 240
+mark placed
+toward -29.0 41.2 10
+wait 3600
+mark end

@@ -191,3 +191,117 @@ TEST_CASE("time: no clock (a load) sends nothing, and the next read is no jump")
     a.Tick(70'000, false, 200 * kMs, send);
     CHECK(send.empty());
 }
+
+TEST_CASE("time: a guest's save load is not sent as a jump, it takes the host's clock again (issue 159)") {
+    Sync guest;
+    std::vector<proto::Message> send;
+    // Joined and in sync with the host at 10:00.
+    guest.Receive(From(1, 36'000));
+    CHECK_FALSE(guest.Tick(36'000, false, 0, send));
+    guest.Tick(36'025, false, 250 * kMs, send);
+    // The guest loads its save (11:59): the hook reports the load, the
+    // clock reads the save's time just after.
+    guest.SaveLoaded(10'000 * kMs);
+    guest.Tick(43'166, false, 10'100 * kMs, send);
+    guest.Tick(43'190, false, 10'350 * kMs, send);
+    CHECK(send.empty());  // the host is not moved to the guest's save
+    // A host word in the first second is not taken yet (the load still settles).
+    guest.Receive(From(1, 37'000));
+    CHECK_FALSE(guest.Tick(43'215, false, 10'600 * kMs, send));
+    // The next one is: the guest goes back to the group's clock, once.
+    guest.Receive(From(1, 37'100));
+    const auto set = guest.Tick(43'240, false, 11'100 * kMs, send);
+    REQUIRE(set);
+    CHECK(*set == 37'100);
+    // The set's time change stands the clock for seconds: no second set.
+    std::uint32_t host = 37'100;
+    int sets = 0;
+    for (std::uint64_t t = 11'350; t < 20'000; t += 250) {
+        if (t % 1000 == 100) {
+            host += 100;
+            guest.Receive(From(1, host));
+        }
+        if (guest.Tick(37'100, false, t * kMs, send)) ++sets;
+    }
+    CHECK(sets == 0);
+    CHECK(send.empty());
+}
+
+TEST_CASE("time: the host's save load is sent as a jump (the group follows the host's save)") {
+    Sync host;
+    std::vector<proto::Message> send;
+    host.Tick(36'000, true, 0, send);
+    send.clear();
+    host.SaveLoaded(5'000 * kMs);
+    host.Tick(43'166, true, 5'100 * kMs, send);
+    bool jump = false;
+    for (const auto& t : Sent(send)) {
+        if ((t.flags & proto::time_of_day::jump) != 0 && t.seconds == 43'166) jump = true;
+    }
+    CHECK(jump);
+}
+
+TEST_CASE("time: guests loading saves again and again never move the host's clock") {
+    Sync host;
+    Sync guest;
+    std::vector<proto::Message> to_guest;
+    std::vector<proto::Message> to_host;
+    std::uint32_t host_clock = 36'000;
+    std::uint32_t guest_clock = 36'000;
+    int host_sets = 0;
+    int guest_sets = 0;
+    for (std::uint64_t t = 0; t < 300'000; t += 250) {  // 5 min, ticks every 250 ms
+        host_clock = (host_clock + 25) % proto::kSecondsPerDay;
+        guest_clock = (guest_clock + 25) % proto::kSecondsPerDay;
+        if (t % 30'000 == 10'000) {  // the guest loads a save at 06:00 every 30 s
+            guest.SaveLoaded(t * kMs);
+            guest_clock = 21'600;
+        }
+        to_guest.clear();
+        to_host.clear();
+        if (const auto s = host.Tick(host_clock, true, t * kMs, to_guest)) {
+            host_clock = *s;
+            ++host_sets;
+        }
+        if (const auto s = guest.Tick(guest_clock, false, t * kMs, to_host)) {
+            guest_clock = *s;
+            ++guest_sets;
+        }
+        for (const auto& m : to_guest) guest.Receive(m);
+        for (const auto& m : to_host) host.Receive(m);
+    }
+    CHECK(host_sets == 0);
+    CHECK(guest_sets == 10);  // once after each of its loads
+}
+
+TEST_CASE("time: a guest's reload without a save load seen (Link gone) sends no jump either") {
+    Sync guest;
+    std::vector<proto::Message> send;
+    guest.Receive(From(1, 55'000));
+    guest.Tick(55'000, false, 0, send);
+    guest.Tick(55'025, false, 250 * kMs, send);
+    // A death's reload: Link cannot be read for a few frames, then the clock
+    // reads the reload's time (four hours back, as in Caleb's hand test at 245.8 s).
+    for (std::uint64_t t = 500; t <= 1000; t += 16) guest.Loading(t * kMs);
+    guest.Tick(40'817, false, 1'600 * kMs, send);
+    CHECK(send.empty());
+    // Link stays gone for 8 s (no Tick change); then the host's word is taken once.
+    for (std::uint64_t t = 1000; t <= 9000; t += 16) guest.Loading(t * kMs);
+    guest.Receive(From(1, 56'000));
+    CHECK_FALSE(guest.Tick(40'817, false, 9'500 * kMs, send));  // under 1 s after Link came back
+    guest.Receive(From(1, 56'100));
+    const auto set = guest.Tick(40'817, false, 10'250 * kMs, send);
+    REQUIRE(set);
+    CHECK(*set == 56'100);
+    CHECK(send.empty());
+
+    // A blink of Link with no jump changes nothing, and a real jump later is sent.
+    Sync b;
+    send.clear();
+    b.Tick(36'000, false, 0, send);
+    b.Loading(100 * kMs);
+    b.Tick(36'025, false, 250 * kMs, send);
+    b.Tick(64'800, false, 6'000 * kMs, send);  // the Sun's Song, 6 s later
+    REQUIRE(send.size() == 1);
+    CHECK((std::get<proto::TimeOfDay>(send[0]).flags & proto::time_of_day::jump) != 0);
+}

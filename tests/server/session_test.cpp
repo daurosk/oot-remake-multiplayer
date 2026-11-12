@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -51,6 +52,8 @@ struct Harness {
   Session session;
   std::vector<Sent> sent;
   std::vector<ConnectionId> dropped;
+  // The REJOIN_TOKEN each connection was sent last (right after WELCOME).
+  std::map<ConnectionId, RejoinTokenBytes> tokens;
   std::uint64_t now = 1'000'000;
 
   explicit Harness(SessionConfig config = {}) : session(std::move(config)) {}
@@ -62,6 +65,13 @@ struct Harness {
         REQUIRE(decode(s->bytes, m) == Error::none);
         // What the server sends must pass a client's own check.
         CHECK(check_received(m, Sender::server, s->channel) == Error::none);
+        // Kept apart, so the tests that count what a joiner is sent need not
+        // count it (see tokens).
+        if (const auto* token = std::get_if<RejoinToken>(&m)) {
+          CHECK(s->channel == kChannelSession);
+          tokens[s->to] = token->token;
+          continue;
+        }
         sent.push_back({s->to, s->channel, m});
       } else {
         dropped.push_back(std::get<DisconnectAction>(a).who);
@@ -1097,6 +1107,23 @@ std::vector<Sent> hello_on(Harness& h, ConnectionId id, const std::string& nickn
   return h.to(id);
 }
 
+// The same, but the connection first shows a REJOIN_CLAIM with that token.
+std::vector<Sent> rejoin_on(Harness& h, ConnectionId id, const std::string& nickname,
+                            std::optional<std::uint32_t> address, const RejoinTokenBytes& token) {
+  h.clear();
+  h.connect(id, address);
+  h.receive(id, RejoinClaim{token}, kChannelSession);
+  h.receive(id, hello_from(nickname), kChannelSession);
+  return h.to(id);
+}
+
+// The token connection `id` holds (REQUIREs one).
+RejoinTokenBytes token_of(const Harness& h, ConnectionId id) {
+  auto it = h.tokens.find(id);
+  REQUIRE(it != h.tokens.end());
+  return it->second;
+}
+
 RefuseReason refused_reason(const std::vector<Sent>& msgs) {
   REQUIRE(msgs.size() == 1);
   return std::get<Refused>(msgs[0].message).reason;
@@ -1113,7 +1140,7 @@ TEST_CASE("a killed build restarted on the same PC takes its old place after 1 s
   h.now += 1'000'000;
   h.receive(2, Ping{h.now}, kChannelSession);
 
-  auto msgs = hello_on(h, 9, "link", kHomePc);
+  auto msgs = rejoin_on(h, 9, "link", kHomePc, token_of(h, 1));
   REQUIRE(!msgs.empty());
   const auto* w = std::get_if<Welcome>(&msgs[0].message);
   REQUIRE(w != nullptr);
@@ -1148,7 +1175,7 @@ TEST_CASE("a rejoining host hands over as on any leave, alone it hosts again wit
   h.join(2, "Zelda", kOtherPc);
   h.receive(1, FlagState{0, {FlagEntry{0x1234, 0, FlagKind::boolean, 1}}}, kChannelProgress);
   h.now += 1'500'000;
-  auto msgs = hello_on(h, 9, "Link", kHomePc);
+  auto msgs = rejoin_on(h, 9, "Link", kHomePc, token_of(h, 1));
   CHECK(h.session.host() == std::optional<std::uint8_t>{2});
   CHECK(messages_of<Host>(h, 2) == std::vector<Host>{Host{2}});
   CHECK(messages_of<Host>(h, 9) == std::vector<Host>{Host{2}});
@@ -1159,7 +1186,7 @@ TEST_CASE("a rejoining host hands over as on any leave, alone it hosts again wit
   Harness solo;
   solo.join(1, "Link", kHomePc);
   solo.now += 1'000'000;
-  auto again = hello_on(solo, 9, "Link", kHomePc);
+  auto again = rejoin_on(solo, 9, "Link", kHomePc, token_of(solo, 1));
   REQUIRE(std::holds_alternative<Welcome>(again[0].message));
   CHECK(std::get<Welcome>(again[0].message).player_number == 1);
   CHECK(solo.session.host() == std::optional<std::uint8_t>{1});
@@ -1172,7 +1199,7 @@ TEST_CASE("a rejoin into a full session takes the old place instead of being ref
   h.join(3, "Saria", kOtherPc);
   h.join(4, "Darunia", kOtherPc);
   h.now += 1'000'000;
-  auto msgs = hello_on(h, 9, "Link", kHomePc);
+  auto msgs = rejoin_on(h, 9, "Link", kHomePc, token_of(h, 1));
   REQUIRE(std::holds_alternative<Welcome>(msgs[0].message));
   CHECK(h.session.player_count() == 4);
   // A fifth name is still refused as full.
@@ -1208,8 +1235,111 @@ TEST_CASE("rejoin_stale_us 0 turns the takeover off") {
   Harness h(config);
   h.join(1, "Link", kHomePc);
   h.now += 9'000'000;
-  CHECK(refused_reason(hello_on(h, 9, "Link", kHomePc)) == RefuseReason::name_taken);
+  CHECK(refused_reason(rejoin_on(h, 9, "Link", kHomePc, token_of(h, 1))) ==
+        RefuseReason::name_taken);
   CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
+}
+
+TEST_CASE("issue 163: without the rejoin token a quiet player's place is never taken") {
+  Harness h;
+  // Two players behind one router: the same public address.
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kHomePc);
+  h.now += 5'000'000;  // Link stalls for 5 s; Zelda talks
+  h.receive(2, Ping{h.now}, kChannelSession);
+
+  // Zelda's PC (or anyone there) asks for Link's name: no token, refused.
+  CHECK(refused_reason(hello_on(h, 9, "Link", kHomePc)) == RefuseReason::name_taken);
+  // With Zelda's own token, not Link's: refused too.
+  CHECK(refused_reason(rejoin_on(h, 10, "Link", kHomePc, token_of(h, 2))) ==
+        RefuseReason::name_taken);
+  // A made-up token: refused.
+  RejoinTokenBytes guess{};
+  guess.fill(0x5A);
+  CHECK(refused_reason(rejoin_on(h, 11, "Link", kHomePc, guess)) == RefuseReason::name_taken);
+  CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
+  CHECK(h.session.stats().rejoined == 0);
+  CHECK(h.session.stats().rejoin_no_token == 3);
+
+  // Link's own token from another address: still refused (the address rule stays).
+  CHECK(refused_reason(rejoin_on(h, 12, "Link", kOtherPc, token_of(h, 1))) ==
+        RefuseReason::name_taken);
+  // Link's own token while Link is live: refused.
+  h.receive(1, Ping{h.now}, kChannelSession);
+  CHECK(refused_reason(rejoin_on(h, 13, "Link", kHomePc, token_of(h, 1))) ==
+        RefuseReason::name_taken);
+  CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
+
+  // Link quiet again and its own build comes back with its token: it rejoins.
+  h.now += 1'000'000;
+  h.receive(2, Ping{h.now}, kChannelSession);
+  auto msgs = rejoin_on(h, 14, "Link", kHomePc, token_of(h, 1));
+  REQUIRE(!msgs.empty());
+  REQUIRE(std::holds_alternative<Welcome>(msgs[0].message));
+  CHECK(std::get<Welcome>(msgs[0].message).player_number == 1);
+  CHECK(h.session.stats().rejoined == 1);
+  CHECK(h.session.player_number(2) == std::optional<std::uint8_t>{2});
+}
+
+TEST_CASE("issue 163: every WELCOME comes with a fresh token, an old one is spent") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+  const RejoinTokenBytes first = token_of(h, 1);
+  CHECK(first != token_of(h, 2));
+  h.now += 1'000'000;
+  auto back = rejoin_on(h, 9, "Link", kHomePc, first);
+  REQUIRE(!back.empty());
+  REQUIRE(std::holds_alternative<Welcome>(back[0].message));
+  const RejoinTokenBytes second = token_of(h, 9);
+  CHECK(second != first);
+  // The first token no longer takes the place over.
+  h.now += 1'000'000;
+  CHECK(refused_reason(rejoin_on(h, 10, "Link", kHomePc, first)) == RefuseReason::name_taken);
+  CHECK(h.session.player_number(9) == std::optional<std::uint8_t>{1});
+}
+
+TEST_CASE("issue 163: a REJOIN_CLAIM after HELLO is dropped and never relayed") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+  h.clear();
+  h.receive(2, RejoinClaim{token_of(h, 1)}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().stray_rejoin_claim == 1);
+  // Who may send which, and on which channel.
+  CHECK_FALSE(may_send(Sender::client, MessageType::rejoin_token));
+  CHECK_FALSE(may_send(Sender::server, MessageType::rejoin_claim));
+  CHECK(allowed_on_channel(MessageType::rejoin_claim, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::rejoin_claim, kChannelProgress));
+}
+
+TEST_CASE("issue 163: a rejoin with a join password shows the token, then the proof") {
+  SessionConfig config;
+  config.join_password = "kokiri";
+  Harness h(config);
+  auto join_with_proof = [&](ConnectionId id, const std::string& name,
+                             std::optional<RejoinTokenBytes> token) {
+    h.clear();
+    h.connect(id, kHomePc);
+    if (token) h.receive(id, RejoinClaim{*token}, kChannelSession);
+    h.receive(id, hello_from(name), kChannelSession);
+    const auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge.has_value());
+    h.clear();
+    h.receive(id, JoinProof{join_proof("kokiri", challenge->nonce)}, kChannelSession);
+    return h.to(id);
+  };
+  auto first = join_with_proof(1, "Link", std::nullopt);
+  REQUIRE(!first.empty());
+  REQUIRE(std::holds_alternative<Welcome>(first[0].message));
+  h.now += 1'000'000;
+  // The password alone does not take the place over (a housemate knows it).
+  CHECK(refused_reason(join_with_proof(9, "Link", std::nullopt)) == RefuseReason::name_taken);
+  auto with_token = join_with_proof(10, "Link", token_of(h, 1));
+  REQUIRE(!with_token.empty());
+  REQUIRE(std::holds_alternative<Welcome>(with_token[0].message));
+  CHECK(h.session.stats().rejoined == 1);
 }
 
 // ---------------------------------------------------------------- objects
@@ -3311,4 +3441,192 @@ TEST_CASE("the host's save: SAVE_ASK goes to the host, SAVE_PART from the host t
   for (int i = 0; i < 200; ++i) h.receive(1, part, kChannelSession);
   CHECK(messages_to<SavePart>(h, 2).size() == 200);
   CHECK(h.session.stats().rate_limited == 0);
+}
+
+TEST_CASE("pvp: off by default, nothing told at join, hits dropped") {
+  Harness h;
+  CHECK_FALSE(h.session.pvp());
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  CHECK(messages_of<PvpMode>(h, 1).empty());
+  CHECK(messages_of<PvpMode>(h, 2).empty());
+  h.clear();
+  h.receive(1, PvpHit{0, 2, 1, 4, {1, 2, 3}, {0, 2, 3}}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().pvp_hits_dropped == 1);
+}
+
+TEST_CASE("pvp: --pvp on is told at join, and hits go to their victim only") {
+  SessionConfig config;
+  config.pvp = true;
+  Harness h(config);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  CHECK(messages_of<PvpMode>(h, 2) == std::vector<PvpMode>{PvpMode{0, true}});
+  h.clear();
+  h.receive(1, PvpHit{0, 3, 1, 4, {1, 2, 3}, {0, 2, 3}}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  const auto hit = only_message_to<PvpHit>(h, 3);
+  REQUIRE(hit);
+  CHECK(hit->player_number == 1);
+  CHECK(hit->amount == 4);
+  CHECK(h.session.stats().pvp_hits_relayed == 1);
+  // To a player who is not there: dropped.
+  h.clear();
+  h.receive(1, PvpHit{0, 4, 1, 4, {}, {}}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  // The victim's answer goes to everyone else, with its sender written in.
+  h.receive(3, PvpHurt{0, 1, 4, 8, 0}, kChannelOwnership);
+  CHECK(only_message_to<PvpHurt>(h, 1) == PvpHurt{3, 1, 4, 8, 0});
+  CHECK(only_message_to<PvpHurt>(h, 2) == PvpHurt{3, 1, 4, 8, 0});
+  // A hurt by itself is nobody's.
+  h.clear();
+  h.receive(3, PvpHurt{0, 3, 4, 8, 0}, kChannelOwnership);
+  CHECK(h.sent.empty());
+}
+
+TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goes back") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(2, PvpMode{0, true}, kChannelSession);  // a guest cannot
+  CHECK_FALSE(h.session.pvp());
+  CHECK(only_message_to<PvpMode>(h, 2) == PvpMode{0, false});
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().pvp_mode_refused == 1);
+  h.clear();
+  h.receive(1, PvpMode{0, true}, kChannelSession);
+  CHECK(h.session.pvp());
+  CHECK(only_message_to<PvpMode>(h, 1) == PvpMode{1, true});
+  CHECK(only_message_to<PvpMode>(h, 2) == PvpMode{1, true});
+  // A newcomer learns it at join.
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_of<PvpMode>(h, 3) == std::vector<PvpMode>{PvpMode{1, true}});
+  // Everyone leaves: the next session starts from the server's own value.
+  for (ConnectionId id : {1u, 2u, 3u}) h.session.disconnected(id, h.now);
+  h.collect();
+  CHECK_FALSE(h.session.pvp());
+}
+
+// Issue 151 (fishing-3): a fish goes to the game whose lure is nearest it.
+namespace {
+FishLure lure_at(std::uint16_t cm, std::uint8_t flags = 0) {
+  return FishLure{0, {FishLureEntry{placed(7), cm, flags}}};
+}
+}  // namespace
+
+TEST_CASE("issue 151: a fish is moved by the lures, not by who stands near it") {
+  OwnerHarness h;
+  h.stand(1, 50);
+  h.stand(2, 5);  // the distance rule would give an enemy to 2 after 3 s
+  h.receive(1, lure_at(kFishLureNone), kChannelOwnership);
+  h.receive(2, lure_at(kFishLureNone), kChannelOwnership);
+  h.run(4 * kSecond);
+  CHECK(h.asks() == 0);
+  // 2 casts 3 m from it; 1 has no lure in reach.
+  h.receive(2, lure_at(300), kChannelOwnership);
+  h.run(250'000);
+  CHECK(h.asks() == 0);  // held 300 ms first
+  h.run(500'000);
+  REQUIRE(h.asks() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
+  CHECK(h.session.stats().fish_to_lure == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+}
+
+TEST_CASE("issue 151: the owner keeps a fish on its lure, or one the other lure is not clearly nearer") {
+  auto asked = [](FishLure owners, FishLure others, bool fight = false) {
+    OwnerHarness h;
+    h.stand(1, 3);
+    h.stand(2, 4);
+    h.run(kSecond);
+    if (fight) {  // the owner says it fights it: no fight lock for a fish
+      ObjectPresent p = present_in("Field", {placed(7)});
+      p.objects[0].flags = object_presence::awake | object_presence::in_fight;
+      h.receive(1, p, kChannelOwnership);
+    }
+    h.receive(1, owners, kChannelOwnership);
+    h.receive(2, others, kChannelOwnership);
+    h.run(1'500'000);
+    return h.asks() == 1;
+  };
+  CHECK_FALSE(asked(lure_at(50, fish_lure::hooked), lure_at(0, fish_lure::drawn)));  // hooked
+  CHECK_FALSE(asked(lure_at(300), lure_at(250)));  // only 50 cm nearer
+  CHECK(asked(lure_at(300), lure_at(150)));        // 1.5 m nearer
+  CHECK(asked(lure_at(300), lure_at(350, fish_lure::drawn)));  // it swims at 2's lure
+  // Review must-fix: 2's copy turns at a lure 3 m farther than 1's, which
+  // the owner's fish circles before it bites: it stays (no ping-pong).
+  CHECK_FALSE(asked(lure_at(100), lure_at(400, fish_lure::drawn)));
+  // Only the owner's hooked counts: a late list from an old owner is distance.
+  CHECK_FALSE(asked(lure_at(300), lure_at(250, fish_lure::hooked)));
+  CHECK(asked(lure_at(300), lure_at(150, fish_lure::hooked)));
+  CHECK_FALSE(asked(lure_at(100, fish_lure::drawn), lure_at(400, fish_lure::drawn)));
+  CHECK(asked(lure_at(kFishLureNone), lure_at(550)));  // the owner has none in reach
+  CHECK_FALSE(asked(lure_at(300), lure_at(kFishLureNone)));
+  CHECK(asked(lure_at(300), lure_at(150), true));  // a fight lock does not hold a fish
+}
+
+TEST_CASE("issue 151: an old lure list counts as no lure") {
+  SessionConfig config = quiet_config();
+  config.fish_lure_cooldown_us = 3 * kSecond;
+  OwnerHarness h(config);
+  h.stand(1, 3);
+  h.stand(2, 4);
+  h.receive(2, lure_at(kFishLureNone), kChannelOwnership);
+  h.run(3 * kSecond);
+  // 1 owns it; 2 casts near it, then says nothing more for 3 s.
+  h.receive(2, lure_at(100), kChannelOwnership);
+  h.receive(1, lure_at(kFishLureNone), kChannelOwnership);
+  h.run(750'000);
+  REQUIRE(h.asks() == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+  // 2 owns it now. 1's lure is nearer, but its list is stale by the time
+  // the 3 s cooldown is over: no ask.
+  h.clear();
+  h.receive(1, lure_at(50), kChannelOwnership);
+  h.run(3'500'000);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+  // Said again, fresh: asked.
+  h.receive(1, lure_at(50), kChannelOwnership);
+  h.run(750'000);
+  CHECK(messages_to<HandoverAsk>(h, 2).size() == 1);
+}
+
+TEST_CASE("issue 151: a hooked fish waits for its owner: a late list, a pause") {
+  auto other_takes = [](bool pause) {
+    OwnerHarness h;
+    h.stand(1, 3);
+    h.stand(2, 4);
+    h.run(kSecond);
+    h.receive(1, lure_at(25, fish_lure::hooked), kChannelOwnership);
+    if (pause) h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
+    // 1 says nothing more for 8 s (a network stall, or the pause menu);
+    // 2's lure is right beside the fish all the while.
+    for (int i = 0; i < 16; ++i) {
+      h.receive(2, lure_at(0, fish_lure::drawn), kChannelOwnership);
+      h.run(500'000);
+    }
+    return h.asks() != 0;
+  };
+  CHECK_FALSE(other_takes(false));
+  CHECK_FALSE(other_takes(true));
+
+  // Not hooked: a paused owner's fish goes to the lure near it.
+  OwnerHarness h;
+  h.stand(1, 3);
+  h.stand(2, 40);
+  h.run(kSecond);
+  h.receive(1, lure_at(300), kChannelOwnership);
+  h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
+  for (int i = 0; i < 14; ++i) {
+    h.receive(2, lure_at(400), kChannelOwnership);
+    h.run(500'000);
+  }
+  REQUIRE(h.asks() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
 }

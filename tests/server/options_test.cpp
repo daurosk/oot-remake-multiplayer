@@ -88,3 +88,23 @@ TEST_CASE("command line: --password and --password-env") {
   CHECK(password_problem(std::string(128, 'x')) == nullptr);
   CHECK(password_problem("") == nullptr);
 }
+
+TEST_CASE("command line: --pvp on or off, off by default") {
+  std::string error;
+  CHECK_FALSE(parse_command_line({}, error)->pvp);
+  for (const char* on : {"on", "1", "yes"}) {
+    auto line = parse_command_line({"--pvp", on}, error);
+    REQUIRE(line.has_value());
+    CHECK(line->pvp);
+  }
+  auto off = parse_command_line({"--pvp", "off", "--port", "4000"}, error);
+  REQUIRE(off.has_value());
+  CHECK_FALSE(off->pvp);
+  CHECK(off->port == 4000);
+  for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
+           {"--pvp"}, {"--pvp", "maybe"}, {"--pvp", ""}}) {
+    error.clear();
+    CHECK(!parse_command_line(bad, error).has_value());
+    CHECK(!error.empty());
+  }
+}

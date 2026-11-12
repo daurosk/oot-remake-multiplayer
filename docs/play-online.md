@@ -119,6 +119,15 @@ By default anyone who can reach the server's port may join. Three lines in the h
 
 For `server_allow` and `server_bind`: remove the `#` in front of the line, put in the addresses and start `Host.bat` again. The server window then says `listening on port 27510 (only 25.1.2.3, ...)` and `only the N address range(s) given with --allow may connect`. A player who is turned away is counted as `not allowed` when the server stops. More in [SECURITY.md](../SECURITY.md).
 
+## PvP: players hurting each other
+
+Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bombs hurt the other players' Links as they hurt enemies, and theirs hurt you; with it off, nothing changes.
+
+- **The host decides, for everyone.** In the host's coop-options.ini: `pvp = on` (the line is `pvp = off` in a new kit; Host.bat passes it to the server). A guest's own `pvp` line does nothing, so nobody is hurt in a session whose host did not choose it. While playing, the host can type `/pvp on` or `/pvp off` in the chat; anyone can type `/pvp` to see it. The co-op panel shows "PvP on" while it is on, and the chat says when it changes.
+- **Your own game decides whether you are hurt.** A hit that reached you on the other player's screen is checked by your game: nothing while you or the attacker are in a cutscene, a talk, a menu, paused or loading, nothing from a player in another area, and at most one hit every 0.8 s (Link blinks after a hit). So a player who lags cannot hurt you when you got away on your screen.
+- **How much:** a sword hit takes half a heart, a seed or the boomerang a quarter, an arrow (fire and ice too) a heart, a light arrow or a bomb two hearts; a Deku nut stuns nobody and hurts nobody. The chat says who hit whom ("Saria hit you (-1/2 heart)", "you defeated Mido").
+- **Not yet:** the sword is read where the area has the game's grass (outdoor areas); a sword swing indoors is not seen yet. A shot hits only when it ended (hit something or went off) beside the other player. Shown in the debug log as lines with `coop: pvp:`.
+
 ## When you are done
 
 Our programs open nothing by themselves: no UPnP, no firewall or router changes, and when the server window is closed nothing listens. What you opened by hand stays open until you close it:

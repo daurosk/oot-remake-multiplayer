@@ -1406,6 +1406,11 @@ TEST_CASE("the drop messages have their numbers, channel and layout") {
   REQUIRE(decode(b, back) == Error::none);
   CHECK(back == spawn);
   CHECK(must_encode(DropTake{0, id, DropTakeReason::gone}).size() == kHeaderSize + 1 + 10 + 1);
+  // A placed drop's take (a bush's loot, protocol 10): the placement hash.
+  const Message placed_take = DropTake{0, ObjectId{ObjectKind::placed, 0, 0x3e4fb463e9948383ULL},
+                                       DropTakeReason::picked_up};
+  REQUIRE(decode(must_encode(placed_take), back) == Error::none);
+  CHECK(back == placed_take);
   CHECK(must_encode(DropAsk{0, "Graveyard"}).size() == kHeaderSize + 1 + 2 + 9);
 }
 
@@ -1420,7 +1425,8 @@ TEST_CASE("bad drop messages are refused") {
   CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {std::numeric_limits<float>::infinity(), 0, 0}, 0, 0},
                out) == Error::bad_value);
   CHECK(encode(DropSpawn{5, made, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(DropTake{0, placed, DropTakeReason::gone}, out) == Error::bad_value);
+  CHECK(encode(DropTake{0, ObjectId{ObjectKind::placed, 1, 7}, DropTakeReason::gone}, out) ==
+        Error::bad_value);
   CHECK(encode(DropTake{0, made, static_cast<DropTakeReason>(2)}, out) == Error::bad_value);
   CHECK(encode(DropAsk{0, ""}, out) == Error::bad_value);
   Message m;
@@ -1545,4 +1551,144 @@ TEST_CASE("save ask and save part: types 206 and 207, session channel, both ways
   Bytes b = must_encode(m);
   b.pop_back();  // one byte short
   CHECK(decode(b, back) != Error::none);
+}
+
+TEST_CASE("player life: type 251, session channel, quarter hearts, both ways") {
+  CHECK(static_cast<int>(MessageType::player_life) == 251);
+  CHECK(channel_of(MessageType::player_life) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::player_life, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::player_life, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::player_life));
+  CHECK(may_send(Sender::server, MessageType::player_life));
+
+  Message back;
+  Message m = PlayerLife{2, 13, 20};
+  const Bytes b = must_encode(m);
+  CHECK(b.size() == 4 + 5);  // type, length, then u8 player, u16 life, u16 max
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == m);
+  CHECK(type_of(back) == MessageType::player_life);
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{2});
+  CHECK(check_received(Message{PlayerLife{0, 4, 12}}, Sender::client, kChannelSession) == Error::none);
+  CHECK(check_received(Message{PlayerLife{3, 4, 12}}, Sender::client, kChannelSession) == Error::wrong_sender);
+
+  Bytes out;
+  CHECK(encode(PlayerLife{0, 0, kMaxLifeQuarters + 1}, out) == Error::bad_value);
+  CHECK(encode(PlayerLife{5, 4, 12}, out) == Error::bad_value);
+  Bytes short_one = b;
+  short_one.pop_back();
+  CHECK(decode(short_one, back) != Error::none);
+}
+
+TEST_CASE("pvp messages: types 241 to 243, mode on the session channel, hits and hurts on ownership") {
+  CHECK(static_cast<int>(MessageType::pvp_mode) == 241);
+  CHECK(static_cast<int>(MessageType::pvp_hit) == 242);
+  CHECK(static_cast<int>(MessageType::pvp_hurt) == 243);
+  CHECK(channel_of(MessageType::pvp_mode) == kChannelSession);
+  CHECK(channel_of(MessageType::pvp_hit) == kChannelOwnership);
+  CHECK(channel_of(MessageType::pvp_hurt) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::pvp_hit, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::pvp_mode, kChannelOwnership));
+  for (const auto t : {MessageType::pvp_mode, MessageType::pvp_hit, MessageType::pvp_hurt}) {
+    CHECK(may_send(Sender::client, t));
+    CHECK(may_send(Sender::server, t));
+  }
+
+  Message mode = PvpMode{0, true};
+  CHECK_FALSE(sender_of(mode));  // no player field: the server says who set it
+  Bytes b = must_encode(mode);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == mode);
+
+  Message hit = PvpHit{0, 2, static_cast<std::uint8_t>(DamageCause::sword), 4, {1, 2, 3}, {4, 5, 6}};
+  CHECK(check_received(hit, Sender::client, kChannelOwnership) == Error::none);
+  CHECK_FALSE(set_sender(hit, 2));  // nobody hits themselves
+  CHECK(set_sender(hit, 1));
+  CHECK(sender_of(hit) == 1);
+  b = must_encode(hit);
+  REQUIRE(b.size() == kHeaderSize + 3 + 4 + 24);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == hit);
+
+  Message hurt = PvpHurt{0, 1, 4, 8, pvp_hurt::died};
+  CHECK_FALSE(set_sender(hurt, 1));
+  CHECK(set_sender(hurt, 3));
+  b = must_encode(hurt);
+  REQUIRE(b.size() == kHeaderSize + 2 + 8 + 1);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == hurt);
+}
+
+TEST_CASE("bad pvp messages are refused") {
+  Bytes out;
+  CHECK(encode(PvpMode{kMaxPlayers + 1, true}, out) == Error::bad_value);
+  CHECK(encode(PvpHit{0, 0, 1, 4, {}, {}}, out) == Error::bad_value);   // no victim
+  CHECK(encode(PvpHit{2, 2, 1, 4, {}, {}}, out) == Error::bad_value);   // itself
+  CHECK(encode(PvpHit{0, 1, 1, 0, {}, {}}, out) == Error::bad_value);   // nothing
+  CHECK(encode(PvpHit{0, 1, 1, kMaxPvpLife + 1, {}, {}}, out) == Error::bad_value);
+  CHECK(encode(PvpHit{0, 1, 1, 4, {std::nanf(""), 0, 0}, {}}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 0, 1, 1, 0}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 1, -1, 1, 0}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 1, 1, kMaxPvpLife + 1, 0}, out) == Error::bad_value);
+  CHECK(encode(PvpHurt{0, 1, 1, 1, 4}, out) == Error::bad_value);  // unknown flag
+
+  Message m;
+  Bytes b = must_encode(PvpMode{0, true});
+  b.back() = 2;  // neither off nor on
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(PvpHurt{0, 1, 1, 1, 0});
+  b.back() = 4;
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(PvpHit{0, 1, 1, 4, {}, {}});
+  b[kHeaderSize + 3] = 0xff;  // amount far over the most
+  CHECK(decode(b, m) == Error::bad_value);
+}
+
+TEST_CASE("fish lure has its number, channel and layout, only a client sends it (issue 151)") {
+  CHECK(static_cast<int>(MessageType::fish_lure) == 320);
+  CHECK(channel_of(MessageType::fish_lure) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::fish_lure, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::fish_lure));
+  CHECK_FALSE(may_send(Sender::server, MessageType::fish_lure));
+  const ObjectId fish{ObjectKind::placed, 0, 0x0102030405060708ull};
+  const ObjectId other{ObjectKind::placed, 0, 9};
+  const Message f = FishLure{0, {{fish, 0x0123, fish_lure::hooked}, {other, kFishLureNone, 0}}};
+  CHECK(check_received(f, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(f, Sender::server, kChannelOwnership) == Error::wrong_sender);
+  const Bytes b = must_encode(f);
+  // u8 player, u16 count, then per fish: id (10 bytes), u16 cm, u8 flags.
+  REQUIRE(b.size() == kHeaderSize + 3 + 2 * 13);
+  CHECK(b[kHeaderSize + 1] == 2);
+  CHECK(b[kHeaderSize + 5] == 0x08);  // its hash, little-endian
+  CHECK(b[kHeaderSize + 13] == 0x23);  // 0x123 cm, little-endian
+  CHECK(b[kHeaderSize + 14] == 0x01);
+  CHECK(b[kHeaderSize + 15] == fish_lure::hooked);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == f);
+  // An empty list is allowed: the last fish went.
+  const Message none = FishLure{0, {}};
+  REQUIRE(decode(must_encode(none), back) == Error::none);
+  CHECK(back == none);
+}
+
+TEST_CASE("bad fish lures are refused (issue 151)") {
+  const ObjectId a{ObjectKind::placed, 0, 1};
+  Bytes out;
+  CHECK(encode(FishLure{0, {{a, 10, 0}, {a, 20, 0}}}, out) == Error::bad_value);  // a fish twice
+  CHECK(encode(FishLure{0, {{a, 10, 4}}}, out) == Error::bad_value);  // an unknown flag
+  CHECK(encode(FishLure{0, {{a, kFishLureNone, fish_lure::drawn}}}, out) ==
+        Error::bad_value);  // drawn to no lure
+  CHECK(encode(FishLure{5, {{a, 10, 0}}}, out) == Error::bad_value);
+  std::vector<FishLureEntry> many;
+  for (std::uint64_t i = 0; i <= kMaxFishLures; ++i) {
+    many.push_back({ObjectId{ObjectKind::placed, 0, i}, 10, 0});
+  }
+  CHECK(encode(FishLure{0, many}, out) == Error::bad_value);
+  Message m;
+  Bytes b = must_encode(FishLure{0, {{a, 10, 0}}});
+  b[kHeaderSize + 1] = 2;  // two said, one sent
+  CHECK(decode(b, m) == Error::truncated);
 }

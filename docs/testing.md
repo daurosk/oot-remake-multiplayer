@@ -277,6 +277,16 @@ It refuses a kit in which any file names the build PC's user folder (`tools/rele
 
 To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
 
+### Signing the release
+
+The kit is signed in CI, with no key on the build PC and no secret in the repo ([#161](https://github.com/daurosk/oot-remake-multiplayer/issues/161)). When a release is published, `.github/workflows/release-attest.yml` downloads its `oot-coop-<tag>.zip` and `Update.bat`, checks the zip against the release's `.sha256`, and makes a GitHub artifact attestation for each: a statement about that exact file (its SHA-256), signed through Sigstore with this repository's workflow identity and logged publicly. The release step, after the assets are uploaded:
+
+1. Publish the release with the assets in place (`gh release create <tag> <zip> <zip>.sha256 Update.bat ...`: gh uploads them before it publishes). The "Release attest" run starts by itself; check once that it is green (`gh run list --workflow release-attest.yml --limit 1`; no watch loops). If it did not run (the release was published from a draft in the web page, or it failed), start it: `gh workflow run release-attest.yml -f tag=<tag>`.
+2. Check the files from the build PC: `powershell -ExecutionPolicy Bypass -File tools\release\verify_kit.ps1 -Zip <OutRoot>\oot-coop-<tag>.zip` and the same with `-Zip <OutRoot>\Update.bat`. Both must say `OK: signed by our release workflow`.
+
+What it proves: the file is the one the release had when it was published, checked by our workflow, and a file swapped in later has no attestation. What it does not prove: who uploaded it in the first place; anyone with write access to the repo could publish a release and get it attested. `Update.bat` still checks only the `.sha256`; players check the signature by hand ([setup.md, Check the download](setup.md#check-the-download)). The workflow also tests itself on a push that changes it or `verify_kit.ps1`: it attests a made-up zip, `verify_kit.ps1` accepts it, and refuses a changed copy and a wrong `.sha256`.
+
+
 ## Automatic tests
 
 `tools/autotest/run.ps1` runs a two-game test on one PC with no one playing: it plays scripted controller input into both games and keeps screenshots of both windows, so a check can be done and looked at later.
@@ -358,7 +368,9 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 | `warp KakarikoVillage_Child Kakariko_WellSide` | test only: changes scene the game's own way (the String64 flag `Sequence_ReservedNextBanc`, and `Sequence_ReservedNextStartPosName` for the start position, a `StartPos` name in the scene's Banc). The game takes it only during an event, such as the one right after a save loads, so a warp scenario loads the save itself (run with `-NoLoad`) and asks for the warp first; the hook asks again every 0.5 s until Link is in that scene (up to 90 s) and logs `coop: test warp done`. A scene ending in `_Adult` or `_Child` also sets the bool `Sequence_IsChildhood` (false or true) through the game's queue, to load Link at that age |
 | `chat /teleport Saria` | test only: sends the rest of the line as the chat box does (chat, or a command such as `/teleport`); logs `coop: test chat '...': sent`. `#` still starts a comment |
 | `place -37.2 109.8 13.5` | test only: puts Link at world x, y (height), z in the scene he is in, through the boss pull's free-play move (`CoopBoss::MoveLink`, needs `LICHII_COOP_BOSS` on, the default); logs `coop: test place x y z: done` (or `failed`: no Link). For rooms no `goto` reaches (other floors of a dungeon). Positions as for `goto`: the objects debug log or a placement's `Translate` |
+| `kill Enemy_Skulltula_Gold` | test only: the nearest actor of that name to Link with a life takes a hit of its whole life from Link, through the game's own damage (as a real kill, so it drops what it drops); needs `LICHII_COOP_OBJECTS` on (the kit's default); logs `coop: test kill NAME 0x... at x y z (m, life L): hit`, or `none here with a life`. For kills the aim cannot make (the slingshot never hit the Graveyard Skulltula) |
 | `give bombs` | test only: gives `bombs`, `bow`, `hookshot` or any item flag `coop_cheats` knows (needs `LICHII_COOP_CHEATS=1` in `-Switches`) |
+| `setflag PlayerStatus.CurrentRupee 99` | test only: sets this game's Int flag, or else its Bool flag, of that name (GameDataList spelling) to the whole number, through the game's queue; logs `coop: test setflag NAME (int\|bool) N: set`. A max-rule item lowered this way stays in this game (not sent). Scenario `shop-buy` empties the kit saves' Deku Shield with it |
 | `wear head Armor_Child_Mask_Keaton` | test only: sets this game's `PlayerStatus.Equip*` flag for `weapon`, `shield`, `head`, `armor`, `boots` or `hand` (gauntlets) ([items.md](items.md)). Only the flag changes, not this game's Link; the other games' puppets wear it (scenario `wear`). `wear head none` empties the flag: the piece is taken off |
 | `assign Bow` | test only: puts an item on ZR, for both ages, through the game's Enum queue (`PlayerStatus.AssignableItem.Child` and `.Adult`); the name is the button enum's (`Bow`, `Hookshot`, `Hammer`, `SlingShot`, `Bomb`, `DekuStick`, ...; GameDataList spelling). The item must be owned (`give`). R is the quick-select carousel and assigns nothing |
 | `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
@@ -373,14 +385,22 @@ Chunk 2 scenarios (written 2026-11-10, first run in the chunk 2 test turn, see t
 
 - `held-tools` (#92): A puts the Deku Stick, Deku Nut, a bottle, bombs and the slingshot on ZR through the pause menu's Items page, one at a time, and uses each facing B. R is a quick-select carousel, not "next item", so the chunk 1 version never changed A's item. The menu moves assume the cursor opens on the item last put on ZR; each `menu-*` mark is a screenshot to check that, and `menu-1` shows where the given boomerang sits.
 - `skulltula` (#89): the Graveyard's nocturnal Gold Skulltula (on a web at -20.20 104.30 26.40). The save is at 10:01, so the header sets the host's clock to 20:00 75 s after joining and both games walk out to Kakariko and back to load the Graveyard at night; A shoots it with the slingshot while targeting, then jumps for the token; B watches.
+- `skulltula-kill` (#89, items-sync): as `skulltula`, but A's Skulltula dies by the test-only `kill` step and `place` puts A's Link on the token where the Skulltula was. The header lists the log lines that pass: A's token goes out once, B's token (if its game made one) is deleted, both token counts end at the same N+1.
 - `pot-drops` (#102): both warp to `Kakariko_MountainTrailSide`; A lifts and throws (A, ZR) the pot 16 m west of it and then the pair 28 m south, and walks over where each broke. Lifting breaks a pot for sure, where chunk 1's sword swings at the house pots never reached them.
+- `kak-gate` (#171, world-objects-2): both warp to `Kakariko_MountainTrailSide`, on the trail side of the guard's gate; A sets the guard's flag `Npc_Hylia_Soldier_003_GateOpen` (0x19898d14) at 70 s; B tries the gate before (should stop) and after (should pass), shots of the gate in both.
+- `deku-map-both` (#146, world-objects-2): both stand at the Deku Tree map chest and open it at about the same time, then open the pause map; both watch `DungeonInfo.InsideTheDekuTree.IsGetMap` (0x89787395).
 - `stalchild`: Hyrule Field at night (clock set by the header); A walks to where two Stalchildren rose in a chunk 1 run (about 173 29) and fights at once (ZL, Y), then walks over the fight for the drops; B watches from 8 m.
 - `rock` needed no change: it failed in chunk 1 only because the game started in Kakariko.
 
 Enemy scenarios (branch `enemy-sync`, not run yet; each file's header has what to look for):
 
 - `deku-wake` (#132, #133): both games in the Deku Tree entrance room; A wakes and fights the Baba at -22.81 -1.82, B the one at -71.33 3.50, about 49 m apart. Both Babas must be up on both screens at `risen`, and each killed Baba gone on both at `after-kill`.
+- `skull-sling` (#133): both games in the Deku Tree slingshot room (`place`, as deku-ladder). A stands 6 m from the wall Skulltula 0x282f9be0f907855f and owns it; B shoots it with the slingshot from the door. It must die in both games: A `share got damage`, then gone in A (or `dead by a hit our game did not take`), gone in B; no Skulltula on the wall in either `after-shot` shot.
 - `chase` (#101): Hyrule Field at night (clock set by the header); A stands 40 m east of where the Stalchildren rise, B raises them and walks to A with them behind it. At `came` A's screen must show them next to B's puppet; A's `share worst copy` lines (debug, every 5 s when a copy is 1 m or more from where the Mover put it) name any copy the setter does not hold.
+- `gohma-door` (#150, #178): both load at the Deku Tree entrance, are put in the corridor before Gohma's door (`place`) and walk in through it, so the game's own boss trigger makes Gohma (a warp into the room skips it, and the old `gohma` scenario had no boss). A then stands at the room's edge; B stays near Gohma and shoots it three times with the slingshot. Needs the kit saves' `Gohma_DefeatBoss` and `HavePlayedEvent.Dm_Deku_BossOut` at 0.
+- `gohma-movein` (#148, branch boss-movein-2): A is warped into Gohma's room, B waits at the Deku Tree entrance and is moved in only after A's game says A is past the door (shut in). Inconclusive if the warp leaves ShutIn at 0.
+- `peahat` (#157): child field by day; A is put 25 m east of the Peahat west of the market and stands still, B is put 25 m from it and walks right up to it, then A walks up too. The Peahat must rise on both screens (shots `b-at`, `risen`).
+- `shop-buy` (#130): both load in Kokiri Forest, empty their own Deku Shield (`setflag`, a max drop stays in its game); A gets 99 rupees, is put at the Kokiri Shop's counter, talks to the keeper and buys the shield; B waits in the shop, then equips the Deku Shield from the menu. Pass: B's flags debug `int 0x7ca64f23 0 -> 1` after A's, the shield on B's Link (`equipped`) and on B's puppet in A. Not run yet: the shop's menu presses are a guess; the `item-N` and `on-shield` shots show where the cursor is.
 
 Route fixes after the chunk 2 test (2026-11-10, shots in `coop-kit\shots`): a 6-tick `press A` at a prompt ("Pick Up" at the rock, "Check" at the sign) did nothing, so `rock` and `cutscene` let the stick settle 20 ticks and press 12. With the cheat's bombs every ZR makes a bomb that the game deletes 0.1 s later, held or not (`spawn-bomb` run 20261110-010524, held 60 and 150 ticks): not an input problem; the cheat gives the bag, count and capacity but something else the game checks is missing, so no bomb is thrown yet. `held-tools` waits out the bottle swing before opening the menu again (PLUS was lost and item 4 ended on the Save screen). `skulltula` puts B about 5 m from the Skulltula; A's slingshot never locked on or hit it (no hit line), so the token is still not taken. `pot-drops`: the route is still wrong; A stops at a wall at x -48.9 going west to the pot at -56.92 -16.01, and at z -12.4 going south to the pair. `deku-web` needs a save where the web is not burned yet.
 
@@ -388,6 +408,67 @@ Chunk 2 test turn scenarios (2026-11-10): `boss` (A loads into the Water Temple 
 
 Chunk 7 world-objects scenarios (2026-11-11, `-NoLoad`; they use the test-only `place` step to reach rooms no walk can; each file's header lists the log lines and shots that pass): `deku-ladder` (#129: A opens the slingshot room chest, the trap, and shoots the eye switch; B by the door watches the trap floor and the ladder), `deku-block` (#147: A pushes the basement block, then B pushes it on from where A left it: no snap back), `boulder` (#84: both in the Kokiri Sword crawlspace; the rolling boulder at the same place in both) and `pots-place` (#84: A lifts and throws one Kakariko pot and cuts another; B sees both go). `sign` now has B press ZL so its camera frames the post (#90).
 
+PvP scenario (branch `pvp`, `-NoLoad`; not run yet): `pvp` (both land in Hyrule Field in front of Kakariko; A swings at B with PvP off, types `/pvp on`, swings three more times, then `/pvp off` and swings once more; the A file's header lists the log lines and shots that pass).
+
+World-breakables scenarios (2026-11-11, `-NoLoad`): `sign` (#90) warps both to `Kakariko_GraveYardSide` and places B facing the post (the old walk left B facing a wall), `sign-late` (#90: B walks in from the Graveyard after A's cut) and `goron-rock` (#84: A throws a bomb flower at the Goron City rock `Obj_Goron_BrokenRock_A_01`; B watches it go).
+
 Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at the well) and `water` (both load into the Water Temple entrance; checked 2026-11-09: both logs `warp done` after about 50 s, screenshots in the temple). Warping a game that is already playing works only while an event runs.
 
 Scenarios (checked 2026-11-09 unless said): `walk` (A walks, dashes, turns; B sees it move), `slingshot` (aims and fires a seed), `menu-gear` (equips the Deku Shield in the menu), `sword` (target and swing; no enemy at the save point, so no hit seen yet), `bomb` (not checked: the auto kits' save has no bombs), `buttons` (presses each button with a screenshot after it). The bindings are the game's own (pause menu > System > Basic Controls): ZL target, ZR use item, L/R quick select, MINUS map, PLUS menu (L/R change page), A actions and dash (hold), B put away, X jump, Y attack. Screenshots are the screen under each game's client area: the runner keeps both windows on top, side by side, at real pixels (DPI-aware).
+
+## Bad connections
+
+Two games on one PC talk over a perfect network: no delay, nothing lost. `tools/netsim/netsim.py` is a small UDP relay that sits between a game and the server and makes the connection bad on purpose, so sync can be watched under lag, loss and stalls without a second PC. Nothing in the game or the server changes; the game's `coop.ini` names the relay's port instead of the server's. It needs Python 3.8 or newer and nothing else.
+
+| Option | What |
+|---|---|
+| `--lag MS` | added round trip (ping), half each way |
+| `--jitter MS` | each packet ± up to this, each way; packets stay in order (one route) |
+| `--loss PCT` | packets dropped, each way |
+| `--dup PCT` | packets sent twice |
+| `--reorder PCT` | packets held back past later ones (by twice the jitter, at least 10 ms; `--up reorder_gap=..` sets it) |
+| `--rate KBIT` | link speed each way; a packet that would wait more than `--queue` ms (default 500) is dropped |
+| `--spike MS/S` | a stall of MS ms every S seconds, both ways at once: what comes in meanwhile is held and comes out together at the end. This is what makes rubber-banding. |
+| `--up`, `--down` | one direction only, as `name=value,...` (lag here is one way): `--down lag=300,loss=5,spike=500/10` |
+| `--seed N` | the same drops and delays every run |
+
+Every 10 s (`--report-every`) and at the end it prints, per client and direction, the packets in and out, lost, dropped by the queue, doubled, reordered and held by a stall, and the average and highest delay it gave.
+
+By hand, with any server (here a kit's on 27510) and a game whose `coop.ini` says `port = 27511`:
+
+```
+python tools\netsim\netsim.py --listen 27511 --server 127.0.0.1:27510 --lag 150 --jitter 20 --loss 2 --spike 500/10
+```
+
+It listens on 127.0.0.1 only (no firewall question); `--listen 0.0.0.0:27511` lets another PC in.
+
+### In the automatic tests
+
+`run.ps1` starts one relay per game when any of these is given, and points that game's `coop.ini` at it (A on `-Port`+1, B on `-Port`+2; the server stays on `-Port`):
+
+```
+tools\autotest\run.ps1 -Scenario walk -Lag 150 -Jitter 20 -Loss 2 -Spike 500/10
+```
+
+`-NetSimFor A` puts only A behind the relay (B connects straight: A slow, B fine). `-NetSimArgs` passes more relay options, `A:` or `B:` for one game only: `-NetSimArgs "--seed 3","B:--down loss=10"`. The relay's Python is the recomp's `.venv` beside the repo, else `py -3` or `python` (`-Python` sets it). The run folder gets `netsim.txt` (the conditions and each relay's command line) and `netsim-A.txt` / `netsim-B.txt` (each relay's counts).
+
+### What it does to the puppet
+
+`coop_test` ([soak.md](soak.md)) shows the effect without the game: its clients draw each other with the same `coop/presence` code as the emulator, and its `shown error` line is how far, in game units, the drawn player is from where it really was at the time shown. The largest is the biggest correction the puppet makes when the late samples arrive: the rubber-band. One server, client `lagA` through the relay, client `okB` straight, 30 s each (`coop_test --server-only`, then one `--connect` client each; the moving player runs a circle of 100 units every 4 s, about 157 units/s):
+
+| Relay on `lagA` | Round trip of `lagA` (avg / max ms) | `okB` draws `lagA`: error avg / max (units) | `lagA` draws `okB`: error avg / max | Frames extrapolated / held (of about 1780) |
+|---|---|---|---|---|
+| none (0 ms) | 14 / 17 | 0.000 / 0.08 | 0.000 / 0.00 | 3 / 0 |
+| `--lag 100` | 119 / 144 | 0.003 / 0.22 | 0.002 / 0.14 | 190-240 / 0 |
+| `--lag 250` | 260 / 296 | 0.26 / 1.26 | 0.26 / 1.27 | all / 0 |
+| `--lag 150 --jitter 20 --loss 2` | 170 / 420 | 0.005 / 0.11 | 0.002 / 0.16 | 255-461 / 0 |
+| `--lag 100 --spike 500/5` | 106 / 246 | 1.9 / **46** | 2.2 / **50** | 54 / 126-132 (36-42 faded out) |
+
+(2026-11-11, one PC, Python 3.13, coop_test from a main build of that day. The 14 ms round trip with no relay is ENet's own, the same for a client that connects straight.)
+
+Reading it:
+
+- Plain lag hardly moves the puppet: the samples carry velocity, and the moving player is shown 100 ms behind the server clock. Up to about 100 ms one way it is drawn between two samples it already has; past that (250 ms round trip is 125 one way) every frame is extrapolated from the last sample, which on this smooth circle is off by about a unit. A player who turns or stops sharply is off by more, for up to 150 ms.
+- 2 % loss with jitter is the same story: a lost sample is bridged by the next one.
+- Stalls are what rubber-band. 500 ms with nothing arriving is longer than the 150 ms of extrapolation, so the puppet is held, fades, and when the held samples all arrive at once it jumps up to 50 units (about a third of a second of running) to where the player really is. That jump is the number to watch when changing `coop/presence` (show delay, extrapolation, catching up smoothly instead of jumping).
+- The same runs in the game: `run.ps1 -Lag ... -Spike ...`, with the puppet's position read off the screenshots or `LICHII_COOP_DEBUG_CAMERA=1` (`camera debug: P<n> at (x, y, z)`, every 2 s).

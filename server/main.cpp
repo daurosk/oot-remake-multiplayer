@@ -192,6 +192,7 @@ int main(int argc, char** argv) {
       options.session.allowed.push_back(AddressRange{0x7F000001u, 32});
     }
     options.session.join_password = line->password;
+    options.session.pvp = line->pvp;
     options.bind = line->bind;
     options.session.log = [](const std::string& text) {
       std::printf("coop_server: %s\n", text.c_str());
@@ -216,6 +217,9 @@ int main(int argc, char** argv) {
                   static_cast<unsigned>(coop::protocol::kDatagramBytes));
       if (!line->password.empty()) {
         std::printf("coop_server: players must give the join password to join\n");
+      }
+      if (line->pvp) {
+        std::printf("coop_server: PvP is on: players can hurt each other\n");
       }
       if (!line->allowed.empty()) {
         std::printf("coop_server: only the %u address range(s) given with --allow may connect\n",
@@ -265,6 +269,9 @@ int main(int argc, char** argv) {
       auto started = std::chrono::steady_clock::now();
       std::uint64_t shown_resets = 0;
       std::uint64_t shown_limited = 0;
+      // Enemy counts (issues 105, 133), at most every 5 s while they change.
+      std::uint64_t shown_enemies = 0;
+      auto enemies_at = started;
       while (!g_stop) {
         // Relayed datagrams wait for this round: keep it short with a relay.
         server.service(link ? 1 : 5);
@@ -287,6 +294,21 @@ int main(int argc, char** argv) {
           std::fflush(stdout);
         }
         shown_limited = now.rate_limited;
+        const std::uint64_t enemies = now.group_links + now.group_refused + now.damage_relayed +
+                                      now.damage_dropped + now.dead_told;
+        if (enemies != shown_enemies &&
+            std::chrono::steady_clock::now() - enemies_at >= std::chrono::seconds(5)) {
+          shown_enemies = enemies;
+          enemies_at = std::chrono::steady_clock::now();
+          std::printf("coop_server: enemies: group entries taken %llu, refused %llu; "
+                      "damage relayed %llu, dropped %llu; kills told late %llu\n",
+                      static_cast<unsigned long long>(now.group_links),
+                      static_cast<unsigned long long>(now.group_refused),
+                      static_cast<unsigned long long>(now.damage_relayed),
+                      static_cast<unsigned long long>(now.damage_dropped),
+                      static_cast<unsigned long long>(now.dead_told));
+          std::fflush(stdout);
+        }
         if (line->run_for_ms &&
             std::chrono::steady_clock::now() - started >=
                 std::chrono::milliseconds(*line->run_for_ms)) {

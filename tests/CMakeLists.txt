@@ -34,11 +34,14 @@ add_executable(coop_tests
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
   lichii/fairy_test.cpp
+  lichii/rooms_test.cpp
   lichii/objects_test.cpp
   lichii/spawn_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_spawn.cpp
   lichii/projectiles_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_projectiles.cpp
+  lichii/enemy_shots_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_enemy_shots.cpp
   lichii/drops_test.cpp
   lichii/guard_test.cpp
+  lichii/scrub_talk_test.cpp
   lichii/chests_test.cpp
   lichii/dungeon_test.cpp
   lichii/story_test.cpp
@@ -49,10 +52,13 @@ add_executable(coop_tests
   lichii/testinput_test.cpp
   lichii/time_test.cpp
   lichii/every_test.cpp
+  lichii/hud_test.cpp
   lichii/game_build_test.cpp
   lichii/boss_test.cpp
   lichii/teleport_test.cpp
+  lichii/pvp_test.cpp
   lichii/live_events_test.cpp
+  lichii/scrubs_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_scrubs.cpp
   lichii/cheat_items_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_cheat_items.cpp
   # These hook files have no emulator code, so they are tested on their own.
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss.cpp
@@ -64,6 +70,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_events.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_places.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pose.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp
@@ -73,6 +80,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pickups.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_testinput.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_teleport.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pvp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_time_sync.cpp
 )
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)

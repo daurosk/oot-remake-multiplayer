@@ -1,0 +1,19 @@
+# gohma-movein (was gohma-door on boss-movein-2): B loads at the Deku Tree's entrance and waits; it is moved into Gohma's room only
+# after A's game says A is past the door (see gohma-movein.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+wait 3600
+mark b-in
+wait 1800
+mark end

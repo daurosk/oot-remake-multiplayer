@@ -300,6 +300,42 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     return shared->size() - before;
 }
 
+std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
+                                          std::optional<bool> mido_blocker,
+                                          std::optional<bool> met_deku_tree) {
+    const auto rank = [](std::uint32_t v) -> int {
+        switch (v) {
+        case quest::kReady:
+            return 1;
+        case quest::kStep01:
+            return 2;
+        case quest::kStep02:
+            return 3;
+        case quest::kStep03:
+            return 4;
+        case quest::kComplete:
+            return 5;
+        default:
+            return 0;  // NotReady or a value we do not know
+        }
+    };
+    if (!step || rank(*step) == 0) {
+        return std::nullopt;
+    }
+    std::uint32_t target = 0;
+    if (met_deku_tree == true) {
+        target = quest::kComplete;
+    } else if (mido_blocker == false) {
+        target = quest::kStep03;
+    } else {
+        return std::nullopt;
+    }
+    if (rank(target) <= rank(*step)) {
+        return std::nullopt;
+    }
+    return target;
+}
+
 bool On() {
     return !EnvOff("LICHII_COOP_STORY");
 }

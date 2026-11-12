@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -302,12 +304,29 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             const auto from = static_cast<std::size_t>(w[1].data() - line.data());
             const auto to = static_cast<std::size_t>(w.back().data() + w.back().size() - line.data());
             step.mark = std::string(line.substr(from, to - from));
+        } else if (cmd == "KILL") {
+            if (w.size() != 2) {
+                return fail("want: kill ACTOR");
+            }
+            step.kind = Kind::kill;
+            step.mark = std::string(w[1]);
         } else if (cmd == "GIVE") {
             if (w.size() != 2) {
                 return fail("want: give ITEM");
             }
             step.kind = Kind::give;
             step.mark = std::string(w[1]);
+        } else if (cmd == "SETFLAG") {
+            // setflag NAME VALUE: this game's Int or Bool flag NAME (a GameDataList
+            // name) to VALUE, through the game's queue. Test only.
+            int value = 0;
+            const auto* end = w.size() == 3 ? w[2].data() + w[2].size() : nullptr;
+            if (w.size() != 3 || std::from_chars(w[2].data(), end, value).ptr != end) {
+                return fail("want: setflag NAME VALUE (an Int or Bool flag, a whole number)");
+            }
+            step.kind = Kind::setflag;
+            step.mark = std::string(w[1]);
+            step.start = std::string(w[2]);
         } else if (cmd == "WEAR") {
             if (w.size() != 3 || !WearFlag(w[1])) {
                 return fail("want: wear weapon|shield|head|armor|boots|hand NAME");
@@ -417,7 +436,8 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             continue;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign || s.kind == Kind::chat) {
+            s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill ||
+            s.kind == Kind::setflag) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
             continue;
@@ -561,6 +581,7 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include "coop_camera.h"
 #include "coop_flags.h"
 #include "coop_hook.h"
+#include "coop_objects.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
@@ -756,6 +777,26 @@ void Assign(Core::System& system, const std::string& item) {
     LOG_INFO(Core, "coop: test assign {}: {}", item, all ? "set" : "NOT set");
 }
 
+// setflag: this game's Int flag, or else its Bool flag, of that name to the
+// value, through the game's own queue (issue 130: shop-buy empties the kit
+// saves' Deku Shield and fills the wallet). A max-rule item lowered so stays
+// in this game (FlagWatcher max_drops_kept). Test only.
+void SetFlag(Core::System& system, const std::string& name, int value) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    const std::uint32_t hash = coop::host::flag_hash(name);
+    coop::host::GameFlags flags(memory);
+    bool ok = false;
+    const char* type = "unknown";
+    if (flags.get_int(hash)) {
+        type = "int";
+        ok = coop::host::GameFlags::set_int(memory, hash, value);
+    } else if (flags.get_bool(hash)) {
+        type = "bool";
+        ok = coop::host::GameFlags::set_bool(memory, hash, value != 0);
+    }
+    LOG_INFO(Core, "coop: test setflag {} ({}) {}: {}", name, type, value, ok ? "set" : "NOT set");
+}
+
 // give: bombs, bow and hookshot are the item flags of each; any other name is
 // given as it is. Needs LICHII_COOP_CHEATS=1 (applied on the co-op frame).
 void Give(const std::string& item) {
@@ -898,11 +939,15 @@ void OnFrame(Core::System& system) {
             Wear(system, request.start, request.name);
         } else if (request.kind == Kind::assign) {
             Assign(system, request.name);
+        } else if (request.kind == Kind::setflag) {
+            SetFlag(system, request.name, std::stoi(request.start));
         } else if (request.kind == Kind::place) {
             const bool ok = CoopBoss::MoveLink(system, g_state.main,
                                                CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});
             LOG_INFO(Core, "coop: test place {:.2f} {:.2f} {:.2f}: {}", request.at[0], request.at[1],
                      request.at[2], ok ? "done" : "failed");
+        } else if (request.kind == Kind::kill) {
+            CoopObjects::QueueTestKill(request.name);  // logged where it is done
         } else if (request.kind == Kind::chat) {
             const bool sent = CoopHook::SendChat(request.name);
             LOG_INFO(Core, "coop: test chat '{}': {}", request.name, sent ? "sent" : "NOT sent");

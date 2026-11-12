@@ -271,7 +271,13 @@ void Client::service(std::uint32_t wait_ms) {
         if (event.peer == peer_ && state_ == State::connecting) {
           proto::Hello hello = config_.hello;
           last_receive_us_ = now_us();  // the server answered the connect
-          if (send_raw(hello, proto::channel_of(hello))) {
+          // The token of our last place, shown before HELLO: with it the
+          // server lets this connection take over our own quiet place.
+          bool claimed = true;
+          if (rejoin_token_) {
+            claimed = send_raw(proto::RejoinClaim{*rejoin_token_}, proto::kChannelSession);
+          }
+          if (claimed && send_raw(hello, proto::channel_of(hello))) {
             hello_sent_us_ = now_us();
             challenge_answered_ = false;
             state_ = State::handshaking;
@@ -446,6 +452,11 @@ void Client::on_connected_message(proto::Message message, std::uint8_t channel) 
     } else {
       ++rejected_;
     }
+    return;
+  }
+
+  if (const auto* token = std::get_if<proto::RejoinToken>(&message)) {
+    rejoin_token_ = token->token;  // kept for the next connection
     return;
   }
 

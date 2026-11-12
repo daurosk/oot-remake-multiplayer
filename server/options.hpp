@@ -39,6 +39,8 @@ struct CommandLine {
   // hosts must give; with --relay-via: the one to give).
   std::string relay_key;
   std::string relay_key_env;
+  // --pvp on|off: players hurt each other (docs/play-online.md, "PvP").
+  bool pvp = false;
   bool help = false;
 };
 

@@ -499,6 +499,41 @@ class BuildPackTest(unittest.TestCase):
                           "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb",
                           "CoopShot_Boomerang", "CoopRide_Epona"])
 
+    def test_seed_stand_in_plays_its_tail(self):
+        # Issue 198: with the impacts' AI template the seed stand-in also plays the seed's Tail.
+        from puppet_pack import ainb
+        seed = {"Components": {
+            "ModelInfoRef": "?Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml",
+            "ELinkRef": "?Component/ELink/Seed.engine__component__ELinkParam.bgyml",
+        }}
+        members = {
+            "Actor/Shootable_DekuSeed.engine__actor__ActorParam.bgyml": byml.dumps(seed),
+            "Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml": byml.dumps({"FmdbName": "Seed"}),
+        }
+        pack, ap, names = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShot_Seed",
+                                               fake_emit_ainb())
+        comps = byml.loads(ap)["Components"]
+        self.assertEqual(comps["ModelInfoRef"], seed["Components"]["ModelInfoRef"])
+        self.assertEqual(comps["ELinkRef"],
+                         "?Component/ELink/CoopShot_Seed.engine__component__ELinkParam.bgyml")
+        self.assertNotIn("SLinkRef", comps)
+        files = sarc.read(pack)
+        self.assertEqual(sorted(files), names)
+        self.assertEqual(byml.loads(files[comps["ELinkRef"][1:]]), {"UserName": "Shootable_DekuSeed"})
+        self.assertEqual(byml.loads(files[comps["AIInfoRef"][1:]]),
+                         {"RootAIRef": "Work/AI/Root/CoopShot_Seed.root.ain"})
+        self.assertEqual(ainb.describe(files["AI/CoopShot_Seed.root.ainb"]),
+                         ("OneShotXLinkSearchAndEmit", "Tail", True, False, "CoopShot_Seed.root"))
+        row = build.stand_in_row({"__RowId": "Shootable_DekuSeed", "ELinkUserName": "Shootable_DekuSeed"},
+                                 "CoopShot_Seed", True)
+        self.assertEqual(row["ELinkUserName"], "Shootable_DekuSeed")
+        # Without the template (or for other stand-ins) it stays model-only.
+        _, plain, _ = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShot_Seed")
+        self.assertNotIn("ELinkRef", byml.loads(plain)["Components"])
+        _, arrow, _ = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShot_Arrow", fake_emit_ainb())
+        self.assertNotIn("AIInfoRef", byml.loads(arrow)["Components"])
+        self.assertNotIn("ELinkUserName", build.stand_in_row({"ELinkUserName": "x"}, "CoopShot_Arrow", True))
+
     def test_impact(self):
         # Issue 166: an impact actor plays one xlink key where a copy lands.
         from puppet_pack import ainb

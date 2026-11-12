@@ -152,6 +152,14 @@ STAND_IN_EXTRA_COMPONENTS = {
 }
 # ActorInfo fields of the shootable that a model-only actor must not take over.
 STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")
+# Issue 198: stand-ins that also play one effect of the shootable's ELink user, through an AI root
+# like the impact actors' (below), once when the copy is made. A seed copy is a few pixels for the
+# ~0.1 s it flies; the shooter's own seed draws its `Tail` (a trail; key from the seed's ELink user
+# table, shot-impacts). The copy is made as the seed is nocked, so the trail runs from then on and
+# draws where the copy moves. (stand-in name: (ELink user, xlink key))
+STAND_IN_EFFECTS = {
+    "CoopShot_Seed": ("Shootable_DekuSeed", "Tail"),
+}
 
 
 # Issue 166: the spark and sound where another player's seed or arrow lands. In the shooter's game
@@ -377,11 +385,18 @@ def make_stand_in_param(components, extra=()):
     return {"Components": comps}
 
 
-def build_stand_in(members, source, name):
-    """Returns (pack bytes, actor param bytes, member list) for one stand-in."""
+def build_stand_in(members, source, name, template=None):
+    """Returns (pack bytes, actor param bytes, member list) for one stand-in. With the impacts' AI
+    `template`, a stand-in in STAND_IN_EFFECTS also gets its ELink user and an AI root that plays
+    its effect key once."""
     doc = make_stand_in_param(flatten_actor_param(members, source),
                               STAND_IN_EXTRA_COMPONENTS.get(name, ()))
     files = collect_members(members, doc)
+    effect = STAND_IN_EFFECTS.get(name) if template is not None else None
+    if effect:
+        extra, comps = effect_files(template, name, effect[0], None, effect[1])
+        files.update(extra)
+        doc["Components"].update(comps)
     ap = byml.dumps(doc)
     files[actor_param_path(name)] = ap
     return sarc.write(files), ap, sorted(files)
@@ -389,9 +404,19 @@ def build_stand_in(members, source, name):
 
 def impact_files(template, name, elink_user, slink_user, key):
     """{member path: bytes} of one impact actor's pack (its ActorParam last)."""
-    files = {}
     comps = dict(FIXED_COMPONENTS)
     comps.update(IMPACT_COMPONENTS)
+    files, effect_comps = effect_files(template, name, elink_user, slink_user, key)
+    comps.update(effect_comps)
+    files[actor_param_path(name)] = byml.dumps({"Components": comps})
+    return files
+
+
+def effect_files(template, name, elink_user, slink_user, key):
+    """({member path: bytes}, {component: ref}) that make actor `name` play xlink `key` once on
+    its own ELink and/or SLink user: the user params, the AI root and the AIInfo."""
+    files = {}
+    comps = {}
     if elink_user:
         path = f"{ELINK_DIR}{name}{ELINK_SUFFIX}"
         files[path] = byml.dumps({"UserName": elink_user})
@@ -405,8 +430,7 @@ def impact_files(template, name, elink_user, slink_user, key):
     info = f"AI/AIInfo/{name}.engine__actor__AIInfo.bgyml"
     files[info] = byml.dumps({"RootAIRef": f"Work/AI/Root/{name}.root.ain"})
     comps["AIInfoRef"] = "?" + info
-    files[actor_param_path(name)] = byml.dumps({"Components": comps})
-    return files
+    return files, comps
 
 
 def impact_row(source_row, name, elink_user, slink_user):
@@ -424,10 +448,12 @@ def impact_row(source_row, name, elink_user, slink_user):
     return row
 
 
-def stand_in_row(source_row, name):
+def stand_in_row(source_row, name, with_effect=False):
     """The stand-in's ActorInfo row: the shootable's, less its effect, sound and name fields, with
-    the puppet's INFO_OVERRIDES."""
+    the puppet's INFO_OVERRIDES (and its STAND_IN_EFFECTS ELink user when `with_effect`)."""
     row = {k: v for k, v in source_row.items() if k not in STAND_IN_DROP_INFO}
+    if with_effect and name in STAND_IN_EFFECTS:
+        row["ELinkUserName"] = STAND_IN_EFFECTS[name][0]
     row.update(INFO_OVERRIDES)  # calculated wherever it is, as the puppet (a far shot)
     row["__RowId"] = name
     return row
@@ -584,6 +610,13 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                      "members": names, "equipment_keys": keys, "footstep": footstep})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
+    src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
+    template = None
+    if os.path.isfile(src) and IMPACT_SOURCE in ai_rows:
+        template = sarc.read(dicts.decompress(read(src))).get(IMPACT_TEMPLATE)
+    if template is None:
+        log(f"impacts: no {IMPACT_TEMPLATE} in this romfs, left out")
+
     shots = []
     for source, name in STAND_INS:
         src = os.path.join(romfs, "Pack", "Actor", f"{source}.pack.zs")
@@ -591,26 +624,27 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             log(f"{name}: no {source} in this romfs, left out")
             continue
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names = build_stand_in(members, source, name)
+        pack, ap, names = build_stand_in(members, source, name, template)
+        effect = name in STAND_IN_EFFECTS and template is not None
         dst_rel = f"Pack/Actor/{name}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
-        new_ai.append(stand_in_row(ai_rows[source], name))
+        new_ai.append(stand_in_row(ai_rows[source], name, effect))
         new_gai.append({"__RowId": name})
         table.add_new(strip_zs(dst_rel), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
         chain_ap = sum(table.get(path) or 0 for path, _ in actor_param_chain(members, source))
         ap_size = max(chain_ap, len(ap) + PACK_SIZE_MARGIN)
         table.add_new(actor_param_path(name), ap_size)
+        if effect:  # its own AI, AIInfo and ELink param (sizes as for the impacts)
+            for path, data in effect_files(template, name, STAND_IN_EFFECTS[name][0], None,
+                                           STAND_IN_EFFECTS[name][1])[0].items():
+                grow = (table.get(IMPACT_TEMPLATE) or 0) + len(data) if path.endswith(".ainb") else 0
+                table.add_new(path, max(grow, len(data) + PACK_SIZE_MARGIN))
         shots.append({"actor": name, "from": source, "pack": dst_rel, "pack_bytes": len(pack),
-                      "param_size": ap_size, "members": names})
+                      "param_size": ap_size, "members": names,
+                      "effect": STAND_IN_EFFECTS[name][1] if effect else None})
         log(f"{name}: {len(names)} files, {len(pack)} bytes -> {dst_rel}")
 
     impacts = []
-    src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
-    template = None
-    if os.path.isfile(src) and IMPACT_SOURCE in ai_rows:
-        template = sarc.read(dicts.decompress(read(src))).get(IMPACT_TEMPLATE)
-    if template is None:
-        log(f"impacts: no {IMPACT_TEMPLATE} in this romfs, left out")
     for name, elink_user, slink_user, key in IMPACTS if template is not None else ():
         files = impact_files(template, name, elink_user, slink_user, key)
         pack = sarc.write(files)

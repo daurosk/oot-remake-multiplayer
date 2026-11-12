@@ -74,6 +74,10 @@ Each of our projectiles that leaves the list now logs how it moved: `coop: shots
 - Switches, for the in-game check: `LICHII_COOP_SHOT_AXIS` (0 to 5: +x +y +z -x -y -z of the turn, default 2) if the copies fly the wrong way, and `LICHII_COOP_SHOT_SPEED` (m/s).
 - Not covered: the hookshot tip (no ammo count) and a shot of the last seed or arrow if the count is not read in time. Bombs, bombchus, nuts and the boomerang are thrown actors with their own physics and keep their samples.
 
+## Seen on screen (issue 198, 2026-11-12)
+
+A player test said the other player's seeds were never seen, while Deku Nuts were. Until then every run proved the seed copy only in the logs: the shooter's puppet was off the watcher's screen. Scenario `seed-view` (tools/autotest) puts the shooter (B) 4 m in front of the watcher (A), both facing the Graveyard wall. Run 2026-11-12 (kit build without smooth-shots/shot-impacts): A logged three `CoopShot_Seed` copies, each `held where the owner's shot hit`, and A's screenshots show the yellow seed copy beside B's puppet while B aims. So the stand-in is drawn. The flight to a wall 5 m away lasts about 0.1 s and no screenshot caught it. A copy is a bare model: the shooter's own seed also plays its ELink `Tail` (a trail), which the copy does not, so in flight the copy is only a few pixels for a few frames. A Deku Nut is the game's own actor with its flash, which is why nuts were noticed and seeds were not.
+
 ## Where a shot lands (issue 166)
 
 With the stand-ins in the pack and the spawn sync on, the spawn-seed run of 2026-11-11 00:44 shows the seed's place does move in flight: A's seeds went 11 to 15 m at 70 to 80 m/s and were removed as `hit` (reason 3). B made each `CoopShot_Seed` copy and deleted it at the remove. So the seed now flies on every screen. What was missing is its end.

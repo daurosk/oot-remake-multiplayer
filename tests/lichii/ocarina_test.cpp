@@ -120,3 +120,67 @@ TEST_CASE("ocarina: a word that steps all the time is muted") {
     }
     CHECK(seen == CoopOcarina::OcarinaProbe::kNoisySteps);
 }
+
+namespace {
+
+// Our Link with an EquipmentUser whose armor link 5 holds the Ocarina.
+constexpr std::uint64_t kLink = 0x10000;
+constexpr std::uint64_t kEu = 0x20000;
+constexpr std::uint64_t kOcarina = 0x30000;
+constexpr std::uint64_t kOcarinaParts = 0x38000;
+
+Memory Belt() {
+    using P = CoopOcarina::HoldProbe;
+    Memory m;
+    m.Put(kLink + P::kParts, 0x11000);
+    m.Put(0x11000 + P::kPartsEquipment, kEu);
+    for (std::uint32_t i = 0; i < P::kArmorLinkCount; ++i) {
+        m.Put(kEu + P::kArmorLinks + P::kLinkStride * i + P::kLinkId, 0xffffffffu);
+    }
+    const std::uint64_t link5 = kEu + P::kArmorLinks + P::kLinkStride * 5;
+    m.Put(link5 + P::kLinkId, 0x2f2);
+    m.Put(link5 + P::kLinkHolder, 0x12000);
+    m.Put(0x12000 + P::kHolderActor, kOcarina);
+    m.Put(kOcarina + P::kActorName, 0x13000);
+    m.PutName(0x13000, "Item_Ocarina_Fairy");
+    m.Put(kOcarina + P::kParts, kOcarinaParts);
+    m.Put(kOcarinaParts + 0x10, 0x39000);  // a component block (same heap)
+    m.Put(kOcarinaParts + 0x18, 0x5);      // not a pointer
+    return m;
+}
+
+} // namespace
+
+TEST_CASE("ocarina hold probe: finds the Ocarina on the belt and its blocks") {
+    CoopOcarina::HoldProbe probe;
+    Memory m = Belt();
+    const auto regions = probe.Regions(m.Reader(), kLink);
+    REQUIRE(regions.size() == 4);
+    CHECK(regions[0].base == kEu);
+    CHECK(regions[1].base == kOcarina);
+    CHECK(regions[2].base == kOcarinaParts);
+    CHECK(regions[3].base == 0x39000);
+    CHECK(regions[3].name == "ocaparts+0x10");
+    m.PutName(0x13000, "Item_Ocarina_Fairy_Holder");  // only a holder: nothing
+    CHECK(probe.Regions(m.Reader(), kLink).empty());
+}
+
+TEST_CASE("ocarina hold probe: logs the words that change while playing and come back") {
+    CoopOcarina::HoldProbe probe;
+    Memory m = Belt();
+    CHECK(probe.Step(m.Reader(), kLink, false, 1'000'000).empty());
+    auto lines = probe.Step(m.Reader(), kLink, true, 2'000'000);
+    CHECK(Has(lines, "ocarina hold probe: playing; 4 regions"));
+    m.Put(kEu + 0x500, 7);           // the bind: changes, comes back
+    m.Put(0x39000 + 0x40, 0xabc);    // a counter: changes, stays
+    lines = probe.Step(m.Reader(), kLink, true, 3'600'000);
+    CHECK(Has(lines, "during"));
+    CHECK(probe.Step(m.Reader(), kLink, false, 4'000'000).empty());
+    m.Put(kEu + 0x500, 0);
+    CHECK(probe.Step(m.Reader(), kLink, false, 4'500'000).empty());  // settling
+    lines = probe.Step(m.Reader(), kLink, false, 5'600'000);
+    CHECK(Has(lines, "eu 0x20000+0x500: 0x0 > 0x7"));
+    CHECK_FALSE(Has(lines, "0x39000+0x40"));
+    CHECK(Has(lines, "1 words changed"));
+    CHECK(probe.Step(m.Reader(), kLink, true, 9'000'000).empty());  // once per session
+}

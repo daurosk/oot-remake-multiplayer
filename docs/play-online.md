@@ -167,6 +167,21 @@ Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bomb
 - **How much:** a sword hit takes half a heart, a seed or the boomerang a quarter, an arrow (fire and ice too) a heart, a light arrow or a bomb two hearts; a Deku nut stuns nobody and hurts nobody. The chat says who hit whom ("Saria hit you (-1/2 heart)", "you defeated Mido").
 - **Not yet:** the sword is read where the area has the game's grass (outdoor areas); a sword swing indoors is not seen yet. A shot hits only when it ended (hit something or went off) beside the other player. Shown in the debug log as lines with `coop: pvp:`.
 
+## On Hookshot (experimental)
+
+[Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0) runs the game as a native PC program instead of in the emulator. The kit can build a co-op Hookshot game for you from your own game files. Emulator players and Hookshot players can be in the same session: same game build, same server.
+
+**You need:** a graphics card with Vulkan 1.3 and mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM, about 60 GB free while it builds, and your game as a `.nup` file (or its `romfs` and `exefs` folders), the same version as for the emulator. [setup.md](setup.md#hookshot-instead-of-the-emulator-experimental) has the details.
+
+1. Double-click `Build-Hookshot-Coop.bat` in the kit. It finds your `.nup` as `make-puppet-pack.cmd` does, or asks you to drag it into the window. The first time it downloads Hookshot's build tools (about 400 MB, checked against what Hookshot published), then builds the game: 10 to 45 minutes. When it finishes, the game is in `hookshot\game` in the kit, with co-op and the puppet pack already in it.
+2. Server and name: the build copies them from the kit's emulator (Host.bat and Join.bat set them there). To change them, edit `coop.ini` beside `hookshot.exe` in `hookshot\game`, the same keys as the emulator's (`server`, `port`, `name`, `password`).
+3. The host runs `start-server.cmd` (or `Host.bat`, which also starts the emulator) and gives the others the address, as for the emulator. Invite codes and relay join codes are not in the Hookshot game yet: use an address (LAN, a VPN network or a port forward).
+4. Start `hookshot\game\hookshot.exe`. Its `hookshot_log.txt` says `coop: module loaded`, then `coop: connected`.
+
+**After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files into the game in a few minutes, and builds the game again only when the update moved to a newer Hookshot.
+
+**What works on Hookshot so far:** seeing each other (the puppets) and the session itself. The rest of co-op (shared items, flags, enemies, the co-op window and chat) is emulator-only for now; [known-issues.md](known-issues.md) says what changes. `HOS_COOP=0` starts the Hookshot game without co-op. Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD device losses) are listed in its readme.
+
 ## When you are done
 
 Our programs change no firewall rule. The router forward Host.bat asks for (UPnP) ends when the server window closes (after a crash, within 10 minutes; a router that only takes permanent forwards keeps it until you remove it on its page, and the server window says so). The invite code stops working when the window closes, and nothing listens then. What you opened by hand stays open until you close it:

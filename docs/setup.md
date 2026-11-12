@@ -82,6 +82,16 @@ The other players appear as Link only with the puppet pack, which is made from y
 
 Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 
+## Hookshot instead of the emulator (experimental)
+
+The kit can also build co-op into [Hookshot](https://github.com/NotRexed/Hookshot), a native PC version of the game that you build from your own copy. How to play with it: [play-online.md, "On Hookshot"](play-online.md#on-hookshot-experimental). What it needs:
+
+- A graphics card with Vulkan 1.3 and **mesh shaders**: NVIDIA RTX 20 series or newer, AMD RX 6000 series or newer (Intel: few reports). Without mesh shaders, play on the emulator.
+- 16 GB of RAM (a game uses about 10 GB), a CPU with AVX2 for the fastest build, and about 60 GB free on the kit's drive while it builds (`hookshot\work`, kept for the next build; delete it to get the space back, and the next build takes the full time again).
+- Your game as a `.nup` file, or its `romfs` and `exefs` folders, the same version as for the emulator (program `0400486024DEC000`, update v131072, build `e0f3ccfa`). No keys or firmware are needed. `Build-Hookshot-Coop.bat -CheckOnly` only checks your files.
+
+`Build-Hookshot-Coop.bat` puts everything in the kit's `hookshot\` folder: `tools\` (Hookshot's build tools and source with our patch), `downloads\`, `work\` and `game\` (`-Out <folder>` puts the game elsewhere). None of these are part of the kit, so `Update.bat` keeps them. Like the puppet pack, the built game comes from your game files: never share it.
+
 ## Settings
 
 `coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again. The **join password** is optional: the host sets it once when `Host.bat` asks (saved as `server_password` in `coop-options.ini`, Enter for none), and every other player types it when `Join.bat` asks (Enter keeps the last one, `-` for none; kept in `coop.ini` as `password`). A wrong one shows `wrong join password` in the `Join.bat` window and in the game's co-op panel ([play-online.md](play-online.md), "Who can join").

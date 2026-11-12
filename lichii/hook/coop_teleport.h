@@ -192,6 +192,7 @@ public:
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
         bool cancel_scene = false;           // clear our scene change request and its switch (settled, given up)
         bool release = false;                // the game took it: drop only the free-play switch
+        bool game_cleared = false;           // the game emptied our request itself (after its arrival): log only
         bool start_event = false;            // with the request set: start kSceneEvent (no event runs)
         // With cancel_scene, not arrived (given up, the player left, a new
         // /teleport) and no load ran in this trip: put back the start name the

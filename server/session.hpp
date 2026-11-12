@@ -201,7 +201,9 @@ struct SessionConfig {
   // that they owned before turn into copies all at once, and a game aborted
   // on that (stray, 2026-11-12). So objects first listed within this long
   // of the session's first listing get no owner yet; then each goes to the
-  // lowest player number that lists it (with keep-number, the old owner).
+  // lowest player number that lists it. With keep-number that gives player
+  // 1 (who comes back as 1) back what it owned, which is what stray needed;
+  // between other players the lowest number need not be the old owner.
   // 0: off (the first to list owns it at once).
   std::uint64_t owner_hold_us = 2'000'000;
   // A kill (OBJECT_REMOVE, dead) from the owner before the last change is

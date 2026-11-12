@@ -1,4 +1,4 @@
-# stray-diag-noobj (#175 root cause; A worker local_d02593a5, reports/stray-server-back.md): all object sharing off (LICHII_COOP_OBJECTS=0).
+# stray-diag-noobj (#175 root cause): all object sharing off (LICHII_COOP_OBJECTS=0).
 # After a server restart the first game to list the scene's objects owns them all. When B lists first,
 # A's live actors it owned become copies at once, and in stray (2026-11-12) A's game aborted 66 ms later
 # (result 2162-0001). This file turns ONE part of object sharing off and restarts the server three times

@@ -469,7 +469,13 @@ std::string HandBind::Step(const ReadWord& read, const WriteWord& write, std::ui
         block_ = block;
         just = true;
     }
-    // Every frame while playing, in case the game writes the belt back.
+    // Every frame while playing, in case the game writes the belt back; only
+    // while the puppet still wears that same Ocarina (an equip refresh or a
+    // re-made puppet gives a new block: the old one is not written).
+    if (!just && Find(read, actor) != block_) {
+        block_ = 0;
+        return "ocarina changed while held; let go";
+    }
     const auto bone = read(block_ + kBindBone);
     if (!bone) {
         block_ = 0;

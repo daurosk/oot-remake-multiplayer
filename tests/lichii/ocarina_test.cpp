@@ -273,3 +273,29 @@ TEST_CASE("ocarina hand: a new puppet actor drops the old bind without writing i
     CHECK(m.words == before);
     CHECK_FALSE(hand.Held());
 }
+
+TEST_CASE("ocarina hand: a new Ocarina block at the same puppet address is not written") {
+    using B = CoopOcarina::HandBind;
+    B hand;
+    Memory m = Puppet();
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true) == "ocarina to the hand");
+    // Re-made at the same address (equip refresh, reload): its Ocarina has a new bind block.
+    constexpr std::uint64_t kNewBind = 0x3b000;
+    m.Put(kOcarinaParts, kNewBind);
+    m.Put(kNewBind + B::kBindBone, kBeltWord);
+    m.Put(kNewBind + B::kBindName, B::kBeltName);
+    m.Put(kBind + B::kBindBone, 0x1234);  // the old, freed block: must stay as it is
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true) == "ocarina changed while held; let go");
+    CHECK(m.words[kBind + B::kBindBone] == 0x1234);
+    CHECK(m.words[kNewBind + B::kBindBone] == kBeltWord);
+    CHECK_FALSE(hand.Held());
+    // Still playing: the new block is taken from the belt like the first.
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true) == "ocarina to the hand");  // held again
+    CHECK(m.words[kNewBind + B::kBindBone] == 0x2100440000);
+    CHECK(m.words[kBind + B::kBindBone] == 0x1234);
+    // A reset (puppet gone or made again) forgets the block without writing.
+    hand = {};
+    const auto before = m.words;
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, false).empty());
+    CHECK(m.words == before);
+}

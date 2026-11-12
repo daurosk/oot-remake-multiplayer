@@ -1,8 +1,9 @@
 # ocarina-hand (issue 152): A walks ahead, turns to face B, takes out the Ocarina (DLEFT), plays a
 # few notes, holds it out for a while and puts it away (B). B watches A's puppet from the front.
-# Expect in B's shots: the Ocarina at the puppet's mouth at "out" and "playing", back on the belt
-# at "away". A's log (LICHII_COOP_OCARINA_PROBE=1) has the "ocarina hold probe:" lines: the words
-# of A's own Link and Ocarina that change while it plays and come back after.
+# Expect (child save): B's log has "P1 ocarina to the hand ('DemoOcarina')" while A plays and
+# "P1 ocarina back on the belt" after; B's shots at "playing"/"playing2" show the Ocarina in the
+# puppet's right hand, "before"/"away" empty hands. A's log (LICHII_COOP_OCARINA_PROBE=1) has the
+# "ocarina hold probe:" lines (the bind words of A's own Ocarina, "during bone 'Weapon_R'").
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 stick 0 0.6 100

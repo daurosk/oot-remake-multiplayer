@@ -247,6 +247,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
                 slot.lost_ms = now_ms;  // a load deletes it before the camera goes
             } else if (const Target* t = Wanted(slot.number);
@@ -283,8 +284,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     [&guest](std::uint64_t a, std::uint64_t w) { return guest.Write(a, &w, 8); },
                     slot.actor,
                     t->show != Show::hide &&
-                        (CoopOcarina::HandBind::Playing(their) ||
-                         CoopOcarina::HandBind::Playing(slot.anim_name)));
+                        CoopOcarina::HandBind::Playing(their.empty() ? slot.anim_name : their));
                 if (!hand.empty()) {
                     Say("P" + std::to_string(slot.number) + " " + hand + " ('" + their + "')");
                 }
@@ -297,6 +297,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
             }
             break;
@@ -629,6 +630,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.vtable = 0;
     slot.take = slot.drop = false;
     slot.anim_name.clear();
+    slot.ocarina_hand = {};  // a new puppet may reuse the old address
+    slot.their_anim.clear();
     slot.anim_serial = 0;
     slot.frame_to_set.reset();
     slot.held_frame.reset();

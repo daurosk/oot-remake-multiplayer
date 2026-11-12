@@ -267,7 +267,8 @@ TEST_CASE("host service: the invite code holds this server's address and the pas
   REQUIRE(status.invite_done);
   REQUIRE_FALSE(status.invite.empty());
   const InviteRead read = read_invite(status.invite);
-  REQUIRE(read.error == CodeError::kOk);
+  // 127.0.0.1 is not an internet address: read, but refused for a real join.
+  REQUIRE(read.error == CodeError::kNotPublic);
   CHECK(read.invite.host.ip == 0x7F000001u);
   CHECK(read.invite.host.port == service.port());
   CHECK(read.invite.password == config.session.join_password);

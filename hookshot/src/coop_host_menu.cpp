@@ -179,6 +179,10 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     } else if (const char* why = coop::server::password_problem(job.password)) {
         Fail(std::string("the join password is ") + why, HOS_COOP_PROBLEM_BAD_PASSWORD);
         return 0;
+    } else if (job.password.find(' ') != std::string::npos) {
+        // The invite code cannot hold one (nat::make_invite), as Host.bat says.
+        Fail("the join password has a space; use one without", HOS_COOP_PROBLEM_BAD_PASSWORD);
+        return 0;
     }
     {
         std::lock_guard lock(mutex_);
@@ -311,7 +315,9 @@ int Menu::Join(const HosCoopJoinOptions* o) {
         status_.state = HOS_COOP_STARTING;
     }
     const nat::InviteRead invite = nat::read_invite(target);
-    if (invite.error == nat::CodeError::kOk) {
+    // Tests host on 127.0.0.1, which an invite code never holds otherwise.
+    const bool loopback_ok = hooks_.allow_private && invite.error == nat::CodeError::kNotPublic;
+    if (invite.error == nat::CodeError::kOk || loopback_ok) {
         JoinJob job{name, invite.invite.password, invite.invite.host};
         stop_ = false;
         thread_ = std::thread([this, job = std::move(job)]() mutable { RunJoin(std::move(job)); });

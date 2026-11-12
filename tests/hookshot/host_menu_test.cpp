@@ -220,12 +220,12 @@ TEST_CASE("host menu: an older caller's smaller struct is read only as far as it
     CHECK(game.target()->name == "Malon");
     CHECK(status_of(menu).upnp_open == 0);
     // A status struct of an older caller is filled only as far as it goes.
-    HosCoopStatus small{};
-    std::memset(&small, 0x7f, sizeof small);
-    small.size = static_cast<std::uint32_t>(offsetof(HosCoopStatus, invite));
-    menu.Status(&small);
-    CHECK(small.state == HOS_COOP_HOSTING);
-    CHECK(small.invite[0] == 0x7f);  // not touched
+    HosCoopStatus older{};  // ("small" is a macro in windows.h)
+    std::memset(&older, 0x7f, sizeof older);
+    older.size = static_cast<std::uint32_t>(offsetof(HosCoopStatus, invite));
+    menu.Status(&older);
+    CHECK(older.state == HOS_COOP_HOSTING);
+    CHECK(older.invite[0] == 0x7f);  // not touched
     menu.Leave();
 }
 
@@ -287,7 +287,9 @@ TEST_CASE("host menu: Host with an invite code, and a second game joins with onl
     const HosCoopStatus hs = status_of(host);
     REQUIRE(hs.invite[0] != '\0');
     const nat::InviteRead read = nat::read_invite(hs.invite);
-    REQUIRE(read.error == nat::CodeError::kOk);
+    // 127.0.0.1 is not an internet address: read, but refused for a real join.
+    REQUIRE(read.error == nat::CodeError::kNotPublic);
+    CHECK(read.invite.host.ip == 0x7F000001u);
     CHECK(read.invite.host.port == hs.port);
     CHECK(read.invite.password == std::string(hs.password));
     host_game.start_client();
@@ -297,6 +299,7 @@ TEST_CASE("host menu: Host with an invite code, and a second game joins with onl
     gh.log = hh.log;
     gh.stun_servers = std::vector<nat::Addr>{stun.address()};
     gh.helper_port = 0;  // any free one
+    gh.allow_private = true;  // the invite holds 127.0.0.1
     CoopHostMenu::Menu guest(gh);
     HosCoopJoinOptions j{};
     j.size = sizeof j;

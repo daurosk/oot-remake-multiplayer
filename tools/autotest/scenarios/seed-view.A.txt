@@ -1,0 +1,12 @@
+# seed-view (#198): A watches from 4 m behind B, camera behind A, looking at B's back
+# and the wall B shoots at (see seed-view.B.txt). Every mark is a screenshot of both.
+mark start
+wait 900
+place -35.7 98.3 7.0
+wait 30
+toward -35.7 40 10
+press ZL 10
+wait 60
+mark ready
+wait 900
+mark end

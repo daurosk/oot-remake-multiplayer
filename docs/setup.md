@@ -2,7 +2,7 @@
 
 This is an early test build of online co-op (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)) for the Ocarina of Time remake, on the kit's Fritchii emulator or, as an experiment, on Hookshot. Expect bugs; [known-issues.md](known-issues.md) lists what works and what does not yet. After this page, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet) says how to play together.
 
-This page goes: [Hookshot](#play-on-hookshot-experimental) (new and experimental), then the [emulator setup for new players](#emulator-setup-for-new-players), then [updating a kit you already have](#updating), then settings, chat commands, saves, [Linux](#linux-and-steam-deck) and [troubleshooting](#troubleshooting).
+This page goes: [Hookshot](#play-on-hookshot-experimental) (new and experimental), then the [emulator setup for new players](#emulator-setup-for-new-players), then [updating a kit you already have](#updating), then settings, chat commands, saves, [Linux](#linux-and-steam-deck) <!-- DROP if linux-2 is not in the release --> and [troubleshooting](#troubleshooting).
 
 ## Play on Hookshot (experimental)
 
@@ -21,8 +21,8 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
 1. **Download and unzip.** Download `oot-coop-<version>.zip` from the newest release on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases) (the same zip as for the emulator) and unzip it to a short folder you can write to, for example `C:\oot-coop`.
 2. **Optional: check your game files first.** Open a command prompt in the kit folder and run `Build-Hookshot-Coop.bat -CheckOnly -Game <your .nup>`. It downloads the build tools, checks them and your game, and builds nothing. It ends with "Your game files are right for Hookshot" when all is well.
 3. **Build the game.** Double-click `Build-Hookshot-Coop.bat`. It finds your `.nup` in the emulator's game list folders if you set the emulator up before; otherwise it asks you to drag the `.nup` (or its `romfs` folder, then its `exefs` folder) into the window and press Enter. Then it:
-   - downloads Hookshot's build tools and its source for the version this kit was made for, each checked against the SHA-256 Hookshot published (a file that does not match stops it);
-   - adds co-op's patch and builds the game from your files: **10 to 60 minutes the first time**, with the window showing each stage;
+   - downloads Hookshot's build tools and its source for the version this kit was made for, each checked against the SHA-256 this kit expects (a file that does not match stops it);
+   - adds co-op's patch and builds the game from your files: **10 to 45 minutes the first time**, with the window showing each stage;
    - puts co-op in it: `hookshot_coop.dll`, the co-op settings (`coop.ini` beside `hookshot.exe`) and the puppet pack (the other players' Link and the tunic colours), made from your own game files as `make-puppet-pack.cmd` makes them for the emulator.
    It ends with "Done." and the game's path, in the kit's `hookshot\game` folder (`-Out <folder>` puts it elsewhere).
 4. **First start, as the host.** Double-click `Host-Hookshot.bat`. It works like `Host.bat`: it asks for your player name, starts the co-op server, makes a new random join password, asks your router to open the port and copies an **invite code** for your friends (see [Playing over the internet](play-online.md#the-easy-way-hostbat-and-an-invite-code)). Then it starts the Hookshot game instead of the emulator.
@@ -188,7 +188,7 @@ Press Enter in the game to open the chat box. A line that starts with `/teleport
 - `/teleport <player>` takes you to that player. The whole name works in any case, and so does the start of a name if only one player's name starts that way, or the player's number (`/teleport 2`).
   - The other player's game answers with where they last stood on their feet, so you never land in a wall or in mid-air.
   - In the same scene you are moved there at once.
-  - In another scene the game changes scene first: talk to someone or read a sign within a minute, and when the talk ends there is a fade and a load, arriving at that place's entrance nearest the other player. After the load you are moved next to them. A scene change not taken in 60 seconds is given up. (Test 9 changed scene with no talk, but that left your Link unable to move after the load, #197.)
+  - In another scene the game changes scene first: talk to someone or read a sign within a minute, and when the talk ends there is a fade and a load, arriving at that place's entrance nearest the other player. After the load you are moved next to them. A scene change not taken in 60 seconds is given up. (An earlier build changed scene with no talk, but that left your Link unable to move after the load, #197.)
   - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link, or in a place with no entrance to arrive at (the boss-rush room, the ending, the Sage room). Lake Hylia, Lon Lon Ranch, the Temple of Time and the houses are parts of Hyrule Field, the Market or their village, so those work. A dungeon gives a warning: you may need its items to get on from there.
   - A player with an older build does not answer: "no answer from" after 5 seconds.
 

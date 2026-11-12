@@ -21,3 +21,6 @@ set_tests_properties(server_refuses_bad_arguments PROPERTIES WILL_FAIL TRUE)
 add_test(NAME relay_starts_and_stops COMMAND coop_server --relay --port 0 --run-for-ms 200)
 add_test(NAME server_refuses_upnp_without_access_control COMMAND coop_server --port 0 --upnp --run-for-ms 200)
 set_tests_properties(server_refuses_upnp_without_access_control PROPERTIES WILL_FAIL TRUE)
+# A relay needs a join password; --allow is not enough (every relayed guest is 127.0.0.1).
+add_test(NAME server_refuses_relay_without_password COMMAND coop_server --port 0 --relay-via 127.0.0.1:27530 --allow 25.1.2.3 --run-for-ms 200)
+set_tests_properties(server_refuses_relay_without_password PROPERTIES WILL_FAIL TRUE)

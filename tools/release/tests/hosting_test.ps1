@@ -155,9 +155,11 @@ $h = Get-ServerHostingArgs @{ Upnp = $true; Relay = ''; RelayKey = '' } 'secret'
 Check (($h.Args -join ' ') -eq '--upnp') 'upnp: on with a join password'
 $h = Get-ServerHostingArgs @{ Upnp = $false; Relay = ''; RelayKey = '' } '' '25.1.2.3'
 Check ($h.Args.Count -eq 0) 'upnp: off by default'
-$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; RelayKey = 'k' } '' ''
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; RelayKey = 'k' } 'secret' ''
 Check (($h.Args -join ' ') -eq '--relay-via relay.example.net:27530 --relay-key-env OOT_COOP_RELAY_KEY') 'relay: via the relay, key in the environment'
-$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'bad relay;x'; RelayKey = '' } '' ''
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; RelayKey = '' } '' '25.1.2.3'
+Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'NOT used') 'relay: refused without a join password, even with server_allow'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'bad relay;x'; RelayKey = '' } 'secret' ''
 Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'not a relay address') 'relay: a bad address is named, not used'
 
 if ($failed) { Write-Host "$failed failed"; exit 1 }

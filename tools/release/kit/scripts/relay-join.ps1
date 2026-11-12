@@ -131,6 +131,11 @@ function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
         if ($Access.Relay -notmatch '^[A-Za-z0-9._-]{1,253}(:\d{1,5})?$') {
             $notes += "relay = '$($Access.Relay)' is not a relay address (a name or IPv4 address, optional :port); not used."
         }
+        elseif (-not $Password) {
+            # server_allow is not enough: every guest through the relay comes from 127.0.0.1.
+            $notes += 'relay = ... is NOT used: the join code only finds your server, the join password keeps'
+            $notes += 'strangers out, so set server_password in coop-options.ini as well (server_allow is not enough).'
+        }
         else {
             $list += @('--relay-via', $Access.Relay)
             if ($Access.RelayKey) { $list += @('--relay-key-env', 'OOT_COOP_RELAY_KEY') }

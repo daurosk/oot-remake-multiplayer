@@ -150,6 +150,18 @@ int main(int argc, char** argv) {
                  "was not started.\n");
     return 2;
   }
+  // The relay lets guests in by their internet address once one of them sent
+  // the code, so others on that address (CGNAT, dorm, hotspot) get in without
+  // it, and every relayed guest is 127.0.0.1 here, so --allow cannot tell them
+  // apart. The join code only finds the host; the password is the lock.
+  if (!line->relay_via.empty() && line->password.empty()) {
+    std::fprintf(stderr,
+                 "coop_server: --relay-via (relay = ...) needs a join password (server_password): the "
+                 "join code only finds your server, the password keeps strangers out. server_allow is "
+                 "not enough, because every guest through the relay comes from this PC (127.0.0.1). "
+                 "The server was not started.\n");
+    return 2;
+  }
 #ifdef _WIN32
   SetConsoleCtrlHandler(on_console_event, TRUE);
 #endif

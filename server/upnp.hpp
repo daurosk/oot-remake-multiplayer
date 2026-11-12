@@ -80,6 +80,9 @@ struct Config {
   std::uint16_t discovery_port = 1900;
   std::uint32_t discovery_ms = 2500;
   std::uint32_t http_timeout_ms = 3000;
+  // A renewal runs inside the server's loop and blocks it while it waits, so
+  // it waits less (a router on the home network answers in milliseconds).
+  std::uint32_t renew_timeout_ms = 1000;
   std::function<void(const std::string&)> log;
 };
 
@@ -102,7 +105,7 @@ class Mapping {
   const std::string& internal_address() const { return internal_; }
 
  private:
-  bool add(std::uint32_t lease);
+  bool add(std::uint32_t lease, std::uint32_t timeout_ms);
   void say(const std::string& text) const;
 
   Config config_;

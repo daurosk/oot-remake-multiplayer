@@ -229,7 +229,13 @@ void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uin
     g.count = 0;
     // No address in the log: the log may be sent to others (collect-logs).
     log("too many wrong join passwords from one address: it is turned away for " +
-        std::to_string(config_.wrong_password_block_us / 1'000'000) + " s");
+        std::to_string(config_.wrong_password_block_us / 1'000'000) + " s" +
+        // Through a relay every guest is this PC (relay_link.hpp): name it,
+        // since the block then turns away all new relayed players.
+        (*address == 0x7F000001u
+             ? std::string(" (it is this PC's own address: with a relay that is every relayed player, "
+                           "so new ones wait too; players already in stay)")
+             : std::string()));
   }
 }
 

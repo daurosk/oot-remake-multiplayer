@@ -402,7 +402,7 @@ void Mapping::say(const std::string& text) const {
   if (config_.log) config_.log("UPnP: " + text);
 }
 
-bool Mapping::add(std::uint32_t lease) {
+bool Mapping::add(std::uint32_t lease, std::uint32_t timeout_ms) {
   if (!service_) return false;
   const std::string port = std::to_string(config_.external_port);
   const std::string request = soap_request(
@@ -415,7 +415,7 @@ bool Mapping::add(std::uint32_t lease) {
        {"NewEnabled", "1"},
        {"NewPortMappingDescription", config_.description},
        {"NewLeaseDuration", std::to_string(lease)}});
-  auto raw = exchange(service_->control, request, config_.http_timeout_ms, nullptr);
+  auto raw = exchange(service_->control, request, timeout_ms, nullptr);
   auto reply = raw ? parse_http_reply(*raw) : std::nullopt;
   if (!reply) {
     say("the router did not answer the request to forward UDP port " + port);
@@ -429,7 +429,7 @@ bool Mapping::add(std::uint32_t lease) {
   const int error = upnp_error(reply->body);
   if (error == 725 && lease != 0) {
     say("the router only keeps mappings until it is told to remove them; asking for one of those");
-    return add(0);
+    return add(0, timeout_ms);
   }
   if (error == 718) {
     say("the router already forwards UDP port " + port +
@@ -521,11 +521,12 @@ bool Mapping::open() {
       }
     }
     if (internal_.empty()) continue;
-    if (!add(config_.lease_seconds)) return false;
+    if (!add(config_.lease_seconds, config_.http_timeout_ms)) return false;
     open_ = true;
     const std::string port = std::to_string(config_.external_port);
     say("the router now forwards UDP port " + port + " to this PC (" + internal_ + ")" +
-        (lease_ == 0 ? std::string(" until the server stops")
+        (lease_ == 0 ? std::string(" until the server stops (this router only keeps permanent forwards: if the "
+                                   "server crashes, remove it in the router's page)")
                      : " for " + std::to_string(lease_ / 60) + " minutes at a time, renewed while the server runs") +
         "; it is removed when the server stops");
     if (const auto ext = parse_ipv4(external_)) {
@@ -549,9 +550,10 @@ void Mapping::renew_if_due() {
   if (!open_ || lease_ == 0) return;
   const std::uint64_t half = std::uint64_t{lease_} * 500;
   if (steady_ms() - opened_ms_ < half) return;
-  if (!add(lease_)) {
-    say("could not renew the forward; trying again in 30 seconds");
-    opened_ms_ = steady_ms() - half + 30'000;
+  // Blocks the server loop for at most renew_timeout_ms (twice on error 725).
+  if (!add(lease_, config_.renew_timeout_ms)) {
+    say("could not renew the forward; trying again in 60 seconds");
+    opened_ms_ = steady_ms() - half + 60'000;
   }
 }
 

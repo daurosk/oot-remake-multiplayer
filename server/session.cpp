@@ -1325,53 +1325,71 @@ void Session::on_fish_lure(Connection& c, const FishLure& m, std::uint64_t now_u
   c.lures_at = stamp(now_us);
 }
 
-void Session::fish_owner(const ObjectId& oid, Object& o, ConnectionId owner,
+void Session::fish_owner(const ObjectId& oid, Object& o, ConnectionId owner, bool unfit,
                          std::uint64_t now_us) {
-  // A game's claim on the fish: its lure in reach, from a fresh list.
+  // A game's claim on the fish: its lure in reach, from a fresh list. The
+  // owner's hooked fish is kept longer: a late list must not free it.
   auto claim = [&](ConnectionId cid) -> std::optional<FishLureEntry> {
     const Connection& pc = connections_.at(cid);
-    if (pc.lures_at == 0 || now_us < pc.lures_at ||
-        now_us - pc.lures_at > config_.fish_lure_stale_us) {
+    auto it = pc.lures.find(oid);
+    if (pc.lures_at == 0 || now_us < pc.lures_at || it == pc.lures.end() ||
+        it->second.distance_cm == kFishLureNone) {
       return std::nullopt;
     }
-    auto it = pc.lures.find(oid);
-    if (it == pc.lures.end() || it->second.distance_cm == kFishLureNone) return std::nullopt;
-    return it->second;
+    FishLureEntry e = it->second;
+    const bool hooked = cid == owner && (e.flags & fish_lure::hooked);
+    // Only the owner's game runs the fish, so only its hooked counts.
+    if (cid != owner) e.flags &= static_cast<std::uint8_t>(~fish_lure::hooked);
+    const std::uint64_t keep = hooked ? config_.fish_hooked_stale_us : config_.fish_lure_stale_us;
+    if (now_us - pc.lures_at > keep) return std::nullopt;
+    return e;
   };
   // Lower is better: on the lure, then swimming at it, then the distance.
   auto rank = [](const FishLureEntry& e) {
     return (e.flags & fish_lure::hooked) ? 0 : (e.flags & fish_lure::drawn) ? 1 : 2;
   };
-  const auto mine = claim(owner);
+  auto mine = claim(owner);
+  if (mine && (mine->flags & fish_lure::hooked)) {
+    o.candidate.reset();  // kept, even while its game stands still (paused mid-fight)
+    return;
+  }
+  if (unfit) mine.reset();  // a game that stands still has no lure to offer
+  const double margin_cm = static_cast<double>(config_.fish_lure_margin_m) * 100.0;
   std::optional<ConnectionId> want;
-  if (!(mine && (mine->flags & fish_lure::hooked))) {
-    const double margin_cm = static_cast<double>(config_.fish_lure_margin_m) * 100.0;
-    std::optional<FishLureEntry> best;
-    std::uint8_t best_number = 0;
-    for (ConnectionId other : o.present) {
-      if (other == owner || !has_loaded(other, o)) continue;
-      const Connection& pc = connections_.at(other);
-      if (pc.status & kBusy) continue;
-      const auto theirs = claim(other);
-      if (!theirs) continue;
-      // Beats the owner: a better rank, or the same and clearly nearer.
-      if (mine && (rank(*theirs) > rank(*mine) ||
-                   (rank(*theirs) == rank(*mine) &&
-                    theirs->distance_cm + margin_cm > mine->distance_cm))) {
-        continue;
-      }
-      if (!best || rank(*theirs) < rank(*best) ||
-          (rank(*theirs) == rank(*best) &&
-           (theirs->distance_cm < best->distance_cm ||
-            (theirs->distance_cm == best->distance_cm && pc.number < best_number)))) {
-        best = theirs;
-        best_number = pc.number;
-        want = other;
-      }
+  std::optional<FishLureEntry> best;
+  std::uint8_t best_number = 0;
+  for (ConnectionId other : o.present) {
+    if (other == owner || !has_loaded(other, o)) continue;
+    const Connection& pc = connections_.at(other);
+    if (pc.status & kBusy) continue;
+    const auto theirs = claim(other);
+    if (!theirs) continue;
+    if (mine) {
+      // Beats the owner: the same rank and clearly nearer, or a better
+      // rank (drawn) and not clearly farther. A copy's AI may turn at a
+      // far lure while the owner's fish is about to bite a near one.
+      const double t = theirs->distance_cm;
+      const double m = mine->distance_cm;
+      const bool beats = rank(*theirs) == rank(*mine) ? t + margin_cm <= m
+                         : rank(*theirs) < rank(*mine) ? t <= m + margin_cm
+                                                       : false;
+      if (!beats) continue;
+    }
+    if (!best || rank(*theirs) < rank(*best) ||
+        (rank(*theirs) == rank(*best) &&
+         (theirs->distance_cm < best->distance_cm ||
+          (theirs->distance_cm == best->distance_cm && pc.number < best_number)))) {
+      best = theirs;
+      best_number = pc.number;
+      want = other;
     }
   }
   if (!want) {
     o.candidate.reset();
+    // An owner that stands still with no lure near anyone: as any object.
+    if (unfit) {
+      if (auto next = best_other(o, owner, true, now_us)) ask_handover(oid, o, *next, now_us);
+    }
     return;
   }
   if (o.candidate != want) {
@@ -1428,13 +1446,17 @@ void Session::run_ownership(std::uint64_t now_us) {
 
     // An owner whose game stands still gives it up, fight or not.
     if (unfit_owner(oc, now_us)) {
-      if (auto next = best_other(o, owner, true, now_us)) ask_handover(oid, o, *next, now_us);
+      if (o.fish) {
+        fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
+      } else if (auto next = best_other(o, owner, true, now_us)) {
+        ask_handover(oid, o, *next, now_us);
+      }
       continue;
     }
 
     // A fish goes by the lures only (issue 151).
     if (o.fish) {
-      fish_owner(oid, o, owner, now_us);
+      fish_owner(oid, o, owner, false, now_us);
       continue;
     }
 

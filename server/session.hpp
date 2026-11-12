@@ -129,13 +129,17 @@ struct SessionConfig {
   // goes to the game whose lure is nearest it, not by the distance rule and
   // never held by a fight lock. Its owner keeps it while the fish is hooked,
   // and while no other lure is fish_lure_margin_m nearer (or drawn when the
-  // owner's is not). A better lure must stay better for fish_lure_hold_us,
-  // and not within fish_lure_cooldown_us of the last change. A list older
-  // than fish_lure_stale_us counts as no lure.
+  // owner's is not, and is not fish_lure_margin_m farther). A better lure
+  // must stay better for fish_lure_hold_us, and not within
+  // fish_lure_cooldown_us of the last change. A list older than
+  // fish_lure_stale_us counts as no lure; the owner's hooked fish is kept on
+  // its list for fish_hooked_stale_us, and while its game stands still.
+  // Only the owner's hooked counts.
   float fish_lure_margin_m = 1.0f;
   std::uint64_t fish_lure_hold_us = 300'000;
   std::uint64_t fish_lure_cooldown_us = 1'000'000;
   std::uint64_t fish_lure_stale_us = 2'500'000;
+  std::uint64_t fish_hooked_stale_us = 10'000'000;
   // How long the owner has to answer HANDOVER_ASK with its state before the
   // server moves the object with the last sample it relayed.
   std::uint64_t handover_answer_us = 500'000;
@@ -470,7 +474,8 @@ class Session {
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
   // A fish's owner by the lures (issue 151): asks it over when another game's
   // lure is clearly better than its owner's.
-  void fish_owner(const protocol::ObjectId& oid, Object& o, ConnectionId owner,
+  // unfit: its owner's game stands still (unfit_owner).
+  void fish_owner(const protocol::ObjectId& oid, Object& o, ConnectionId owner, bool unfit,
                   std::uint64_t now_us);
   void on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us);
   void on_grass_cut(ConnectionId id, Connection& c, protocol::GrassCut& cut,

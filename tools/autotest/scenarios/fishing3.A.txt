@@ -7,6 +7,8 @@
 #  - both logs: `share fish lure N fish` lines (every fish listed; N about 30).
 #  - after a cast: `near our lure` above 0 in the caster's log; `share owner <fish> is player
 #    <caster>` for fish near that lure.
+#  - while both lures are in the water no fish has more than 2 `share owner` changes (no
+#    ping-pong between the games).
 #  - a bite: `<fish> ... hooked` in the caster's log only; that fish is never handed over
 #    while hooked (no `share owner` line for it in either log until it is gone).
 #  - a landed fish: `share caught here:` in the catcher's log, `share caught in its owner's

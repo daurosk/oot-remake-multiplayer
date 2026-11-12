@@ -3359,7 +3359,13 @@ TEST_CASE("issue 151: the owner keeps a fish on its lure, or one the other lure 
   CHECK_FALSE(asked(lure_at(50, fish_lure::hooked), lure_at(0, fish_lure::drawn)));  // hooked
   CHECK_FALSE(asked(lure_at(300), lure_at(250)));  // only 50 cm nearer
   CHECK(asked(lure_at(300), lure_at(150)));        // 1.5 m nearer
-  CHECK(asked(lure_at(100), lure_at(400, fish_lure::drawn)));  // it swims at 2's lure
+  CHECK(asked(lure_at(300), lure_at(350, fish_lure::drawn)));  // it swims at 2's lure
+  // Review must-fix: 2's copy turns at a lure 3 m farther than 1's, which
+  // the owner's fish circles before it bites: it stays (no ping-pong).
+  CHECK_FALSE(asked(lure_at(100), lure_at(400, fish_lure::drawn)));
+  // Only the owner's hooked counts: a late list from an old owner is distance.
+  CHECK_FALSE(asked(lure_at(300), lure_at(250, fish_lure::hooked)));
+  CHECK(asked(lure_at(300), lure_at(150, fish_lure::hooked)));
   CHECK_FALSE(asked(lure_at(100, fish_lure::drawn), lure_at(400, fish_lure::drawn)));
   CHECK(asked(lure_at(kFishLureNone), lure_at(550)));  // the owner has none in reach
   CHECK_FALSE(asked(lure_at(300), lure_at(kFishLureNone)));
@@ -3391,4 +3397,38 @@ TEST_CASE("issue 151: an old lure list counts as no lure") {
   h.receive(1, lure_at(50), kChannelOwnership);
   h.run(750'000);
   CHECK(messages_to<HandoverAsk>(h, 2).size() == 1);
+}
+
+TEST_CASE("issue 151: a hooked fish waits for its owner: a late list, a pause") {
+  auto other_takes = [](bool pause) {
+    OwnerHarness h;
+    h.stand(1, 3);
+    h.stand(2, 4);
+    h.run(kSecond);
+    h.receive(1, lure_at(25, fish_lure::hooked), kChannelOwnership);
+    if (pause) h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
+    // 1 says nothing more for 8 s (a network stall, or the pause menu);
+    // 2's lure is right beside the fish all the while.
+    for (int i = 0; i < 16; ++i) {
+      h.receive(2, lure_at(0, fish_lure::drawn), kChannelOwnership);
+      h.run(500'000);
+    }
+    return h.asks() != 0;
+  };
+  CHECK_FALSE(other_takes(false));
+  CHECK_FALSE(other_takes(true));
+
+  // Not hooked: a paused owner's fish goes to the lure near it.
+  OwnerHarness h;
+  h.stand(1, 3);
+  h.stand(2, 40);
+  h.run(kSecond);
+  h.receive(1, lure_at(300), kChannelOwnership);
+  h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
+  for (int i = 0; i < 14; ++i) {
+    h.receive(2, lure_at(400), kChannelOwnership);
+    h.run(500'000);
+  }
+  REQUIRE(h.asks() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
 }

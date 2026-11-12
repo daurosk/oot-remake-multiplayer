@@ -130,9 +130,15 @@ bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
   if (!cap || !buf) return false;
   const std::uint64_t word_addr = mgr + word_at;
   std::optional<std::uint32_t> taken_word;
+  // Half the queue stays free for the game. Its own setters (0x608a10, a Bool
+  // set an actor makes every frame) abort the game when they find the queue
+  // full (0x34fc280), and this runs on another thread at any point of the
+  // frame. Issue 175: a whole join snapshot written at once filled it. What
+  // is refused here is written again on a later frame (FlagWatcher).
+  const std::uint32_t ours = *cap / 2;
   for (int t = 0; t < kCasTries && !taken_word; ++t) {
     const auto w = read_u32(m, word_addr);
-    if (!w || (*w & kTakenMask) >= *cap) return false;
+    if (!w || (*w & kTakenMask) >= ours) return false;
     if (m.compare_exchange_u32(word_addr, *w, *w + 1) == w) taken_word = *w;
   }
   if (!taken_word) return false;
@@ -371,6 +377,15 @@ std::optional<protocol::FlagEntry> GameFlagStore::read(FlagKey key) {
 
 bool GameFlagStore::write(const protocol::FlagEntry& entry) {
   const FlagKey& key = entry.key;
+  // A value the game already holds (or has queued) takes no queue slot: a join
+  // snapshot is mostly such values (issue 175). Only for what this store
+  // writes: a BoolArray element is refused below whatever it holds.
+  const bool writable = key.kind == FlagKeyKind::key64 ? key.table == 0
+                                                       : key.kind == FlagKeyKind::named && key.index == 0;
+  if (const auto now = writable ? read(key) : std::nullopt;
+      now && now->kind == entry.kind && now->value == entry.value) {
+    return true;
+  }
   if (key.kind == FlagKeyKind::key64) {
     if (key.table != 0 || entry.kind != protocol::FlagKind::boolean || entry.value > 1) {
       return false;

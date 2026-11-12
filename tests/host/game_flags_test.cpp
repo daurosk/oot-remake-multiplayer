@@ -49,7 +49,7 @@ constexpr std::uint64_t kUIntEntries = 0x8500000000ull, kUIntSlots = 0x851000000
                         kUIntQueue = 0x8520000000ull;
 constexpr std::uint64_t kEnumEntries = 0x8600000000ull, kEnumSlots = 0x8610000000ull,
                         kEnumQueue = 0x8620000000ull;
-constexpr std::uint32_t kCap = 7, kQueueCap = 4;
+constexpr std::uint32_t kCap = 7, kQueueCap = 8;
 
 void zero(FakeMemory& m, std::uint64_t a, std::size_t n) {
   for (std::size_t i = 0; i < n; ++i) m.put_u8(a + i, 0);
@@ -214,8 +214,10 @@ TEST_CASE("game flags: refused when unknown, full, or the queue was applied mean
   CHECK_FALSE(GameFlags::set_bool(w, 0x25, true));
   CHECK_FALSE(GameFlags::set_bool(w, 0x22, true));  // an Int hash
   CHECK_FALSE(GameFlags::set_key64(w, 6, true));
-  for (std::uint32_t i = 0; i < kQueueCap; ++i) REQUIRE(GameFlags::set_bool(w, 0x18, true));
+  // Half the queue stays the game's (issue 175).
+  for (std::uint32_t i = 0; i < kQueueCap / 2; ++i) REQUIRE(GameFlags::set_bool(w, 0x18, true));
   CHECK_FALSE(GameFlags::set_bool(w, 0x18, true));
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x40) == 0x30400004u);  // 4 of 8 taken, 4 finished
 
   auto v = game();
   int cas = 0;
@@ -223,6 +225,31 @@ TEST_CASE("game flags: refused when unknown, full, or the queue was applied mean
     if (++cas == 1) v.mem.put_u32(kMgr + 0x40, 0x40000000);  // the game emptied the queue
   };
   CHECK_FALSE(GameFlags::set_bool(v, 0x11, true));
+}
+
+TEST_CASE("game flags: slots the game took count against our half (issue 175)") {
+  auto w = game();
+  w.mem.put_u32(kMgr + 0x40, 0x30300003u);  // the game's own sets: 3 taken, 3 finished
+  REQUIRE(GameFlags::set_bool(w, 0x11, true));  // the 4th slot
+  CHECK_FALSE(GameFlags::set_bool(w, 0x11, false));  // half of 8 taken: the rest is the game's
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x40) == 0x30400004u);
+  w.mem.put_u32(kMgr + 0x40, 0x40000000u);  // the game applied the queue: room again
+  CHECK(GameFlags::set_bool(w, 0x11, false));
+}
+
+TEST_CASE("game flag store: a value the game already holds takes no slot (issue 175)") {
+  auto w = game();
+  GameFlagStore store(w);
+  CHECK(store.write({0x11, 0, protocol::FlagKind::boolean, 0}));  // already 0
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x40) == 0x30000000u);  // nothing taken
+  CHECK(store.write({0x11, 0, protocol::FlagKind::boolean, 1}));
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x40) == 0x30100001u);
+  CHECK(store.write({0x11, 0, protocol::FlagKind::boolean, 1}));  // queued already
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0x40) == 0x30100001u);
+  const auto chest = protocol::FlagKey::key64_flag(0x8c44828386468bfull);
+  CHECK(store.write({chest, protocol::FlagKind::boolean, 0}));
+  CHECK(coop::host::read_u32(w.mem, kMgr + 0xc78) == 0u);  // nothing taken
+  CHECK_FALSE(store.write({0x11, 0, protocol::FlagKind::int32, 1}));  // still refused
 }
 
 TEST_CASE("game flags: the finished count wraps as the game's does") {

@@ -27,6 +27,7 @@
 
 #include "coop_ocarina.h"
 #include "coop_snap.h"
+#include "coop_puppet_sound.h"
 
 namespace coop::protocol {
 struct Equipment;
@@ -267,6 +268,8 @@ struct Target {
     // The player's colour, 0xRRGGBB (coop_colors.h): the puppet is tinted
     // with it while live. Unset: no tint.
     std::optional<std::uint32_t> color;
+    // The player's newest OCARINA_NOTE, played on the puppet (issue 152).
+    CoopPuppetSound::Wanted ocarina;
 };
 
 struct Input {
@@ -446,9 +449,11 @@ private:
         std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
         std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
+        CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
+        sound
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
@@ -528,6 +533,7 @@ struct Remote {
     // PLAYER_EQUIP's colour; unset: the player chose none, and Plan gives the
     // player's slot colour (coop::protocol::slot_color).
     std::optional<std::uint32_t> color;
+    CoopPuppetSound::Wanted ocarina;                 // as Target::ocarina
 };
 
 struct PlannerSettings {

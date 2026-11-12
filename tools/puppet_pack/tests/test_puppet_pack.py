@@ -350,16 +350,25 @@ class BuildPackTest(unittest.TestCase):
         self.assertIsInstance(fs["ProcType"], byml.UInt)
         self.assertEqual(fs["ProcType"].v, 3069107721)
         self.assertEqual(sorted(fs), ["$parent", "IsEnableGrass", "IsUseRayCast", "ProcType"])
-        self.assertEqual(comps["XLinkRef"], build.FIXED_COMPONENTS["XLinkRef"])
+        # The player's XLink param, for the property tables Link's SLink user reads (puppet-looks).
+        self.assertEqual(comps["XLinkRef"], "?Component/XLink/Player.engine__component__XLinkParam.bgyml")
         self.assertNotIn("ELinkRef", comps)
         for p in ("Component/SLink/Player_Child.engine__component__SLinkParam.bgyml",
                   "Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.bgyml",
-                  "Component/SoundFootStepParam/Player.game__component__SoundFootStepParam.bgyml"):
+                  "Component/SoundFootStepParam/Player.game__component__SoundFootStepParam.bgyml",
+                  "Component/XLink/Player.engine__component__XLinkParam.bgyml"):
             self.assertIn(p, out)
         for p in ("Component/SLink/Player.engine__component__SLinkParam.bgyml",
-                  "Component/ELink/Player.engine__component__ELinkParam.bgyml",
-                  "Component/XLink/Player.engine__component__XLinkParam.bgyml"):
+                  "Component/ELink/Player.engine__component__ELinkParam.bgyml"):
             self.assertNotIn(p, out)
+
+    def test_pack_basic_xlink_and_no_sound(self):
+        members = fake_player_pack("Child")
+        for kwargs in ({"basic_xlink": True}, {"sound": False}):
+            pack, _, names, _ = build.build_pack(members, "Child", **kwargs)
+            comps = byml.loads(sarc.read(pack)["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
+            self.assertEqual(comps["XLinkRef"], build.FIXED_COMPONENTS["XLinkRef"])
+            self.assertNotIn("Component/XLink/Player.engine__component__XLinkParam.bgyml", names)
 
     def test_footstep_proc_type_is_none(self):
         # The hashes in the game's files are murmur3 of the enum names: Player and None.

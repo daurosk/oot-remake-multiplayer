@@ -1537,6 +1537,21 @@ Error encode_body(const TimeOfDay& m, Writer& w) {
   return Error::none;
 }
 
+Error encode_body(const OcarinaNote& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || m.note > kOcarinaNotes) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u8(m.note);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, OcarinaNote& m) {
+  m = OcarinaNote{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.note));
+  if (!valid_player_or_self(m.player_number) || m.note > kOcarinaNotes) return Error::bad_value;
+  return Error::none;
+}
+
 Error decode_body(Reader& r, TimeOfDay& m) {
   m = TimeOfDay{};
   COOP_READ(r.u8(m.player_number));
@@ -2088,6 +2103,7 @@ MessageType type_of(const Message& message) {
       MessageType::fish_lure,   MessageType::rejoin_token, MessageType::rejoin_claim,
       MessageType::dungeon_event,
       MessageType::player_ride,
+      MessageType::ocarina_note,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2161,6 +2177,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
+    case MessageType::ocarina_note:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -2254,6 +2271,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::pvp_mode:
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
+    case MessageType::ocarina_note:
       return true;
   }
   return false;
@@ -2287,7 +2305,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife> ||
                       std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt> ||
                       std::is_same_v<T, DungeonEvent> ||
-                      std::is_same_v<T, PlayerRide>) {
+                      std::is_same_v<T, PlayerRide> ||
+                      std::is_same_v<T, OcarinaNote>) {
           field = &m.player_number;
         }
       },
@@ -2376,6 +2395,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
     case MessageType::flag_reset: return decode_as<FlagReset>(body, out);
     case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
+    case MessageType::ocarina_note: return decode_as<OcarinaNote>(body, out);
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);
     case MessageType::pvp_mode: return decode_as<PvpMode>(body, out);

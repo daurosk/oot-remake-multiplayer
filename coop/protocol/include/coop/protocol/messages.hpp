@@ -100,6 +100,7 @@ enum class MessageType : std::uint16_t {
   boss_room = 50,  // 50 to 54: boss rooms (docs/dungeons-boss.md)
   sign_cut = 80,   // 80 to 84: signs (docs/world.md, "Signs")
   flag_reset = 135,  // 135 to 139: the host's save load (docs/protocol.md, "Saves")
+  ocarina_note = 140,  // 140 to 144: the other players' Ocarina (docs/protocol.md, "Ocarina")
   flag_origin = 150,  // 150 to 154: who made a shared change (docs/protocol.md, "Who did it")
   join_challenge = 191,  // 191 to 195: the join password (docs/protocol.md, "Join password")
   join_proof = 192,
@@ -889,6 +890,18 @@ namespace time_of_day {
 inline constexpr std::uint8_t jump = 1u << 0;
 }  // namespace time_of_day
 
+// OCARINA_NOTE (issue 152): a note the sender's Link starts or stops on the
+// Ocarina, relayed to everyone else, who play it on that player's puppet.
+// `note` 0: the note held so far was let go; 1 to kOcarinaNotes: the game's
+// own note table (OcarinaMgr + 0x40, the SLink assets Ocarina_LowB ...
+// Ocarina_HighF in that order), plus one.
+inline constexpr std::uint8_t kOcarinaNotes = 19;
+struct OcarinaNote {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::uint8_t note = 0;                     // 0 to kOcarinaNotes
+  bool operator==(const OcarinaNote&) const = default;
+};
+
 struct TimeOfDay {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
   std::uint32_t seconds = 0;                 // 0 to kSecondsPerDay - 1
@@ -1214,7 +1227,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
-                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide>;
+                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
+                             OcarinaNote>;
 
 MessageType type_of(const Message& message);
 

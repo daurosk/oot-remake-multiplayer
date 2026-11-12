@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string_view>
 
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
@@ -21,6 +22,18 @@
 
 namespace CoopPuppet {
 namespace {
+
+// The puppet plays the other player's Ocarina notes (issue 152) only with
+// LICHII_COOP_OCARINA_SOUND=1: off by default until the game's own note player
+// is found (the notes are in the Ocarina.bars bank, not an SLink user, 2026-11-12).
+bool OcarinaSoundOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_OCARINA_SOUND");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    return on;
+}
+
 
 template <typename T>
 bool ReadValue(Guest& guest, std::uint64_t address, T& out) {
@@ -494,6 +507,9 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     }
     case Pending::move:
         break;
+    case Pending::sound:
+        CoopPuppetSound::Finish(slot.sound, result, who, [this](const std::string& line) { Say(line); });
+        break;
     case Pending::none:
         break;
     }
@@ -582,6 +598,25 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             slot.since_ms = now_ms;
             pending_ = Pending::remove;
             return c;
+        }
+        // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
+        // what the puppet's sound user plays (issue 131).
+        // Not only in show: A playing is an event on A, so B holds the puppet (still,
+        // seen) the whole song; the notes must sound then too.
+        if (t->show != Show::hide) {
+            const std::string who = "P" + std::to_string(slot.number);
+            const auto say = [this](const std::string& line) { Say(line); };
+            if (anim_) {
+                CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
+            }
+            if (!OcarinaSoundOn()) {
+                // notes are received and logged by the receiver, not played
+            } else if (auto c = CoopPuppetSound::Next(slot.sound, t->ocarina, guest,
+                                                      input_.main_base, slot.actor, slot.block,
+                                                      now_ms, who, say)) {
+                pending_ = Pending::sound;
+                return c;
+            }
         }
         if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
@@ -696,6 +731,20 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
 }
 
 namespace {
+// The state the equip call is given (issue 91, puppet-looks): 2 (worn put
+// away, as the GameData path wears a sword or a tunic) for every piece but
+// the mask, which gets 1. Through the GameData path (state 2) the game drew
+// no mask even on the player's own Link (wear-masks 20261110-155536), and the
+// call keeps the state per kind (eu + 0x12d4 + 8 * kind: {1, state}) for
+// when the piece is made. LICHII_COOP_HEAD_STATE=2 goes back to 2.
+std::uint64_t EquipState(std::uint32_t kind) {
+    static const std::uint64_t head = [] {
+        const char* v = std::getenv("LICHII_COOP_HEAD_STATE");
+        return v != nullptr && std::string_view(v) == "2" ? std::uint64_t{2} : std::uint64_t{1};
+    }();
+    return kind == addr::kArmorKindFirst ? head : std::uint64_t{2};
+}
+
 // The eight equipment slots of an actor's EquipmentUser, for the debug log:
 // for each slot that holds a piece its id, actor, state, place (height over
 // the wearer and distance on the ground), the request byte, and the slot
@@ -772,6 +821,16 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
                       static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
         text += "; armor " + std::to_string(a) + ": id " + Hex(id) + " actor " + Hex(piece) +
                 " state " + std::to_string(state) + " " + place;
+    }
+    // Issue 91 (puppet-looks): the equip call's per-kind words (eu + 0x12d4 +
+    // 8 * kind, two u32), to tell how the game wears a real mask from the
+    // puppet's (the GameData path asks state 1 or 2 per piece).
+    text += "; kinds";
+    for (std::uint32_t k = 0; k < 18; ++k) {
+        std::array<std::uint32_t, 2> words{};
+        if (ReadValue(guest, eu + 0x12d4 + 8 * k, words) && (words[0] != 0 || words[1] != 0)) {
+            text += " " + std::to_string(k) + ":" + Hex(words[0]) + "/" + Hex(words[1]);
+        }
     }
     return text;
 }
@@ -873,7 +932,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
         c.x[0] = eu;
         c.x[1] = kGearKinds[i];
         c.x[2] = cell;
-        c.x[3] = 2;
+        c.x[3] = EquipState(kGearKinds[i]);
         c.x[4] = 0xFFFFFFFF;
         c.x[5] = 1;
         c.x[6] = 0;
@@ -1410,6 +1469,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
         t.drawn = r.drawn;
+        t.ocarina = r.ocarina;
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -1470,6 +1530,7 @@ std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
 std::array<Gear, 5> g_gear;  // the same; guarded
 std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
 std::array<std::optional<std::uint32_t>, 5> g_color;               // the same; guarded
+std::array<CoopPuppetSound::Wanted, 5> g_ocarina;  // the same; guarded (issue 152)
 
 } // namespace
 
@@ -1484,12 +1545,14 @@ void OnEvent(const coop::net::Event& event) {
         g_gear = {};
         g_drawn = {};
         g_color = {};
+        g_ocarina = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
         g_gear[event.player] = {};
         g_drawn[event.player].reset();
         g_color[event.player].reset();
+        g_ocarina[event.player] = {};
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -1503,6 +1566,18 @@ void OnEvent(const coop::net::Event& event) {
         g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;
         g_color[event.player] = e.color;
+    } else if (const auto* note = std::get_if<coop::protocol::OcarinaNote>(&event.message);
+               event.kind == EventKind::message && note != nullptr) {
+        if (note->player_number == 0 || note->player_number >= g_ocarina.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        std::lock_guard lock(g_anim_mutex);
+        auto& w = g_ocarina[note->player_number];
+        w = CoopPuppetSound::Wanted{note->note, w.serial + 1, now_ms};
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -1574,6 +1649,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
                 r.color = g_color[r.number];
+                r.ocarina = g_ocarina[r.number];
             }
         }
     }

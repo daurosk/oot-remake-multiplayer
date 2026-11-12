@@ -744,6 +744,27 @@ TEST_CASE("puppet gear: each known piece worn once, on its own name cell") {
     CHECK(calls[0].x[1] == 6u);
 }
 
+
+TEST_CASE("puppet gear: a mask is worn in state 1, other pieces in state 2") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[2] = "Armor_Child_Mask_Keaton";  // head, kind 7
+    t.gear[3] = "Armor_Adult_Goron";        // tunic, kind 8
+    d.SetInput(Wants({t}));
+    const auto calls = Frame(d, g, 30);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].x[1] == 7u);
+    CHECK(calls[0].x[3] == 1u);
+    CHECK(calls[1].x[1] == 8u);
+    CHECK(calls[1].x[3] == 2u);
+}
 TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a held item is only put away") {
     Game g;
     Director d;

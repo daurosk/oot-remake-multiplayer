@@ -595,7 +595,8 @@ function Puppet-Count([string]$x) {
 #                         welcomed (its log), refused (a new "refused a connection" line in the
 #                         server log) or none (neither: turned away at connect); then end B
 #   lines NAME B max=N REGEX  game B's log has at most N lines matching REGEX (the rest of the
-#                         line, spaces kept); PASS or FAIL with the count (a loop, a repeat)
+#                         line, spaces kept); PASS or FAIL with the count (a loop, a repeat);
+#                         min=N instead: at least N (the case really happened)
 # Results go to counts.txt beside the screenshots.
 function Run-Steps([string]$file) {
     $n = 0
@@ -662,15 +663,17 @@ function Run-Steps([string]$file) {
             }
             'shot' { Shot-Both "s$n-$($rest[0])" }
             'lines' {
-                if ($rest.Count -lt 4 -or $rest[2] -notmatch '^max=(\d+)$') { throw "steps line ${n}: want lines NAME B max=N REGEX" }
-                $most = [int]$Matches[1]
+                if ($rest.Count -lt 4 -or $rest[2] -notmatch '^(max|min)=(\d+)$') { throw "steps line ${n}: want lines NAME B max=N|min=N REGEX" }
+                $atLeast = $Matches[1] -eq 'min'
+                $bound = [int]$Matches[2]
                 $pattern = ($line -split '\s+', 5)[4]
                 $got = Count (Read-Log $rest[1]) "(?m)^.*$pattern"
-                $res = '{0} {1} ({2}: {3} lines match ''{4}'', at most {5})' -f $(if ($got -le $most) { 'PASS' } else { 'FAIL' }),
-                    $rest[0], $rest[1], $got, $pattern, $most
+                $ok = if ($atLeast) { $got -ge $bound } else { $got -le $bound }
+                $res = '{0} {1} ({2}: {3} lines match ''{4}'', {5} {6})' -f $(if ($ok) { 'PASS' } else { 'FAIL' }),
+                    $rest[0], $rest[1], $got, $pattern, $(if ($atLeast) { 'at least' } else { 'at most' }), $bound
                 Write-Host $res
                 Add-Content "$out\counts.txt" $res
-                if ($got -gt $most) { $script:stepFails++ }
+                if (-not $ok) { $script:stepFails++ }
             }
             'expect' {
                 $name = $rest[0]

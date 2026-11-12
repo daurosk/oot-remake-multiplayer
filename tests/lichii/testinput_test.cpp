@@ -447,3 +447,21 @@ TEST_CASE("testinput: setflag hands the hook a flag name and a whole number (iss
     CHECK(requests[1].name == "PlayerStatus.CurrentRupee");
     CHECK(requests[1].start == "99");
 }
+
+TEST_CASE("testinput: setenum hands the hook an Enum flag (name or 0x hash) and a value's name (issue 193)") {
+    std::string error;
+    CHECK_FALSE(Parse("setenum\n", error));
+    CHECK_FALSE(Parse("setenum 0xdb89c1a9\n", error));
+    CHECK_FALSE(Parse("setenum 0xdb89c1a9 Step03 more\n", error));
+    Runner r(Must("setenum 0xdb89c1a9 Step03\nsetenum PlayerStatus.AssignableItem.Child Bow\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::setenum);
+    CHECK(requests[0].name == "0xdb89c1a9");
+    CHECK(requests[0].start == "Step03");
+    CHECK(requests[1].kind == Kind::setenum);
+    CHECK(requests[1].name == "PlayerStatus.AssignableItem.Child");
+    CHECK(requests[1].start == "Bow");
+}

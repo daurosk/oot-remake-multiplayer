@@ -22,6 +22,7 @@ Each rule answers a way the TotK online sync was seen to break.
 
 - ENet over UDP, default port **27510** (changeable in settings).
 - Datagrams of at most **1100 bytes** (ENet's MTU, `kDatagramBytes`), set on the server and in every game; ENet takes the smaller of the two sides at connect, so this is not part of the protocol version. ENet's default 1392 made 1420-byte IP packets, more than a VPN carries (Hamachi about 1404, Tailscale 1280; issue 143). Larger messages are split by ENet into several datagrams.
+- Smaller paths (issue 143, `coop/net/enet_path.hpp`): when a reliable command too big for a 576-byte datagram has been sent 3 times and then once more without an ACK, each time while packets sent after it were acknowledged, the path loses full datagrams and no full-size command has got through on that connection yet (plain loss and short outages do not count: small commands are not looked at, one full-size command acknowledged (within 32 bytes of the datagram size), as the join snapshot is at once on a good line, ends the check for that connection, and a big one resent after the line is back gets through). The server then ends that connection with ENet disconnect data `0x534D4C4C` ("SMLL") and remembers the address for 60 s; the game connects again at once with **576-byte** datagrams (ENet's smallest, 604 bytes on the wire) and keeps them until it is restarted. A game that sees it on its own sends does the same. A remembered address that connects again with bigger datagrams within those 60 s gets the same disconnect at once, before anything big is sent, and is then forgotten. The game never switches back until it is restarted. No message type or version change: the size is agreed by ENet at connect.
 - Channels:
 
 | Channel | Kind | Carries |
@@ -66,6 +67,8 @@ The host may set a join password (`coop_server --password TEXT`, or `--password-
 3. The server compares in constant time. Right: the usual checks (game build, name, full) and `WELCOME` or `REFUSED`. Wrong: `REFUSED` 6, bad password, and the connection is closed; the client shows "wrong join password" and does not retry.
 
 The password never goes on the wire, and a proof is good for one nonce only, so a recorded proof is refused on any other connection. The server sends one challenge per connection (a second `HELLO` gets none), takes one proof, and the 10 s `HELLO` timeout covers the proof too; a connection waiting for its proof counts as half-open. A `JOIN_PROOF` from a joined player is dropped, never relayed. Guessing is slowed down: 5 wrong proofs from one address within 60 s close that address at connect for 60 s (`SessionConfig::max_wrong_passwords`, stat `password_blocked`; the log line names no address). Someone who records a challenge and its proof can still try passwords offline against it, as with any password check without a key exchange: use a long password used nowhere else. Passwords are at most 128 bytes with no control characters; the kit also refuses spaces.
+
+Other datagrams on the server's port, outside the protocol: STUN answers and NAT punches for the invite code (`coop_server --invite`; datagrams starting with `OCP` and version 1, signed with a key made from the join password). They are handled before ENet sees them, use no message types and change nothing in the session; the punch only opens the way through the routers, and the join password check above still decides who joins. [play-online.md](play-online.md), "How the invite code works".
 
 ### Rejoin after a crash
 
@@ -116,11 +119,14 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 345 | `REJOIN_TOKEN` | 0 | server | 32-byte random token, sent right after `WELCOME` (protocol 10, "Rejoin after a crash"; 345 to 349 kept for it) |
 | 346 | `REJOIN_CLAIM` | 0 | client | 32-byte token from the last `REJOIN_TOKEN`, sent before `HELLO` on a new connection |
 | 355 | `DUNGEON_EVENT` | 0 | both | `u8` player field, scene (string, 1 to 64), event name (string, 1 to 96, no `HavePlayedEvent.`): a room gimmick's event started in the sender's game. Relayed to the others in that scene (only while the sender is in it), never kept (protocol 10, branch `deku-dungeon-2`; 356 to 359 kept; [dungeon.md](dungeon.md), "Live events") |
+| 385 | `PLAYER_RIDE` | 3 | both | `u8` player field, `u8` flags (bit 0 riding; other bits refused), horse actor name (string, up to 64 characters; not empty when riding), offset 3 x f32 (each within 10 m), rotation 4 x f32 quaternion, `u8` 1 when an animation follows (string name up to 64 characters, f32 frame, f32 rate) else 0. Relayed (protocol 10, issue 199; 385 to 389 are for riding, [Riding](#riding-player_ride)) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 | 251 | `PLAYER_LIFE` | 0 | both | `u8` player field, `u16` life, `u16` max life, quarter hearts (protocol 10; 251 to 255 are the co-op HUD's, [Hearts](#hearts-player_life)) |
 
 Type numbers are never reused or renumbered; new types are added at the end.
+
+Protocol 10 also keeps 360 to 364 for `cutscene-snap` (issue 194); none is used yet (the fix needs no message).
 
 `PLAYER_SAMPLE` components:
 
@@ -220,6 +226,10 @@ Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.
 - A player writes a total on top of any change its game made that it has not sent yet, and still sends that change. So every gain and every spend is counted once, whatever the order.
 - A count change does not wait for an answer of its own. A delta not answered when the host changes is sent again to the new host (the sum, if there were several); when the new host is us, it is dropped, since our game holds it and our snapshot carries it. A host's own count change goes out as its total. Our own delta that comes back to us as host (sent before we knew we host) is not added again.
 - Not covered: a delta that reached a host who left before its `FLAG_STATE` went out is lost with that host's game; one answered by a `FLAG_STATE` for the same flag from another player's change is no longer sent again on a host change.
+
+### Riding (`PLAYER_RIDE`)
+
+Issue 199 (protocol 10): a player riding Epona stays seen by the others, on a copy of the horse ([puppet.md](puppet.md#riding-issue-199)). While its Link's command names a horse, a build sends `PLAYER_RIDE` about 30 times a second on the samples channel: the horse it sits on (`Animal_Epona_Adult`), the horse's place minus its Link's and the horse's turn, both in its Link's own frame (turned back by its rotation), and the horse's AS slot 0. Getting off sends riding off (flags 0, no name) three times. The others put the copy at the rider's puppet plus the offset turned by the puppet's turn, so horse and puppet move together whatever the delay; a ride not heard of for 0.6 s is over (the channel is unreliable). The server relays it to everyone else with the sender's number. A build without it ignores the type; its riders show on foot in their riding pose.
 
 ### Hearts (`PLAYER_LIFE`)
 
@@ -371,7 +381,7 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 
 ### Gimmick events (`DUNGEON_EVENT`)
 
-Protocol 10, type 355 (355 to 359 kept; branch `deku-dungeon-2`, issues 176 and 196). When a game starts one of the room gimmick events whose played flag the others hold ([dungeon.md](dungeon.md), "Live events"), it sends the event's name at once. The others in that scene start the same event as soon as their Link is near its place, instead of waiting for the played flag, which comes only at the end of the sender's event. On channel 0, reliable; the server writes the sender's number, relays it to the others in the sender's scene and keeps nothing (a game that comes later gets the played flag). A version 9 server refuses it as unknown.
+Protocol 10, type 355 (355 to 359 kept; branch `deku-dungeon-2`, issues 176 and 196). When a game starts one of the room gimmick events whose played flag the others hold ([dungeon.md](dungeon.md), "Live events"), it sends the event's name at once. The others in that scene start the same event as soon as their Link is near its place, instead of waiting for the played flag, which comes only at the end of the sender's event. On channel 0, reliable; the server writes the sender's number, relays it to the others in the sender's scene and keeps nothing (a game that comes later gets the played flag). A version 9 server refuses it as unknown. Story cutscenes use the same message (branch `shared-cutscenes`): the name is one of the story cutscenes in `coop_shared_scenes.cpp`, and the others in the room play it at once ([scenes.md](scenes.md), "Shared story cutscenes"); a game without that branch ignores such a name.
 
 ### Boss rooms (`BOSS_ROOM`)
 
@@ -431,3 +441,4 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also brings `FISH_LURE` (320; 320 to 324 kept, branch `fishing-3`, issue 151), from a client only and not relayed. A version 9 server refuses it as unknown.
 - Version 10 also brings `DUNGEON_EVENT` (355; 355 to 359 kept, branch `deku-dungeon-2`, issues 176 and 196), from either side, relayed to the sender's scene, never kept.
 - Version 10 (host-fixes, issue 163): `REJOIN_TOKEN` (345) and `REJOIN_CLAIM` (346); 345 to 349 kept. A build without them is never given a takeover (it shows no token), which is only slower, so no bump of its own.
+- Version 10 also brings `PLAYER_RIDE` (385; 385 to 389 kept, branch `epona-ride`, issue 199), on the samples channel, relayed to everyone else. A build without it ignores the type and its riders show on foot.

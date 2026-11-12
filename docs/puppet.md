@@ -407,7 +407,7 @@ The planner runs `coop::host::visibility` (`coop/host/scene.hpp`) for each remot
 |---|---|
 | hide, other or unknown scene | Not planned: none is made, one that exists is deleted after the 2 s grace (or at once on our scene change) |
 | hide, our cutscene | Kept, written 500 units below its spot (`kHideDrop`), no animation calls, so it is not deleted and made again for every cutscene |
-| park, they ride a horse | As "our cutscene": kept, parked below its spot. Their Epona is not in our game, so the puppet would sit in the air at saddle height. The marker stays. Also while they get on (`RideonRunHorse` and the like, 1 to 2 s), so the puppet vanishes as they mount |
+| ride, they ride a horse (issue 199) | Shown as usual, in their riding animation, and a copy of their horse is made under it ([Riding](#riding-issue-199)). Before issue 199 the puppet was parked out of sight here, so a rider vanished for the others |
 | hold, their cutscene | Kept where it is, no pose write; slot 0's frame from the start of the hold is set again once a frame, so it stands frozen. Not while they play the Ocarina (then show) |
 | show, our Ocarina song starts an event | A song that starts an event where it is played (Zelda's Lullaby on a Triforce plate, the Song of Time block) keeps our slot 0 on an `Ocarina_*` command for the first moments, so the others stay visible at the start of that shot until our animation changes. Known, small |
 | show | Pose written every frame, animation as above |
@@ -423,20 +423,30 @@ What each case does now. "Handled" is by code and unit tests; none of these is p
 | Case | Whose | What happens | Status | Scenario |
 |---|---|---|---|---|
 | Cutscene (event running) | ours | Every puppet and Navi parked, no markers | Handled | `cutscene` (A talks to a sign, B watches) |
-| Cutscene | theirs | Their puppet held frozen | Handled | `cutscene` (reverse) |
+| Cutscene | theirs | Their puppet's animation held frozen; it follows their place (issue 194, below) | Handled | `cutscene` (reverse), `cutscene-snap` |
 | Title screen, file select | ours | No player actor, so no reading and no scene: nothing planned, puppets deleted | Handled if the title has no player actor (unknown: the title demo may have one) | `screens` |
 | Title screen, file select | theirs | They send no samples (no reading): their pose fades in 0.4 s and the puppet is deleted after the 2 s grace | Handled | `screens` |
 | Pause menu, item menu | ours | Nothing changes: puppets stay; whether the game draws them behind the menu, and whether our pose writes run while paused, is not known | Unknown | `screens` (B pauses) |
 | Pause menu | theirs | Keep-alive samples go on; the puppet stands where they stopped. The `paused` and `in_menu` status bits are never set by the sender, and do not hide | Handled (stands) | `screens` |
 | Loading | ours | Scene change deletes every puppet; creates wait until the game draws again (`kDrawnMs`) | Handled (proven before, puppet-join) | `stray` |
 | Loading, other scene | theirs | Their scene changes: other place, deleted | Handled (proven, `stray`) | `stray` |
-| Riding Epona | theirs | Puppet parked while their command names a horse (`Horse...`, `Evt_Horse_...`, not `DismountHorse` or `HorseAccess`), marker kept | Handled; names read from the romfs, not seen played yet | `epona` (needs an adult save with Epona) |
-| Riding Epona | ours | Nothing changes | Handled (nothing to do) | `epona` |
+| Riding Epona | theirs | Puppet shown in its riding animation while their command names a horse (`Horse...`, `Evt_Horse_...`, not `DismountHorse` or `HorseAccess`), with a copy of their Epona under it (`CoopRide_Epona`, [Riding](#riding-issue-199)); dismount: the copy goes, the puppet walks on | Built (issue 199); not run in game yet | `epona` |
+| Riding Epona | ours | We send `PLAYER_RIDE` while we ride | Built (issue 199) | `epona` |
 | Ocarina played freely | theirs | Shown (not held) while their command starts `Ocarina`, even if their event bit is set | Handled; whether the game sets the event bit then is not known | `ocarina` |
 | Ocarina played freely | ours | Our event does not hide the others while our own command starts `Ocarina` | Handled, same unknown | `ocarina` |
 | Song taught, warp song, Song of Time block | either | `DemoOcarina...` and what follows are cutscenes: as a cutscene | Handled as a cutscene | `ocarina` (log only) |
 | Time travel (Master Sword) | either | A cutscene, then the age changes: the puppet is made again as the other age (settle 1 s) | Handled (the age swap is proven, `stray-adult`) | none new |
 | Crawlspace | either | Unknown: the AS tables have no crawl command name (`Crouch...` is crouching); if the game runs it as an event, ours hides puppets and theirs holds them at the entrance | Unknown | `crawl` (logs the commands and event bit; needs a save by a crawlspace) |
+
+### Cutscenes without snaps (issue 194, branch `cutscene-snap`)
+
+Player test 2026-11-12: after cutscenes (a door opening, the Deku Tree ladder falling, the timed-platform switch) the other player's Link snapped or rubber-banded, and the switch's result came late.
+- **Their cutscene.** The puppet was held (frame and place) where the event began. An event moves Link (through a door, a few metres), so when it ended the puppet jumped to where they were. Now a held puppet keeps its frozen frame but follows their place and turn, as their samples go on during events (`sampler.cpp` sends them as always).
+- **Any jump.** A move of the place we are handed of more than 0.75 m in one frame and less than 20 m (`CoopSnap::kSnapM`, `kWarpM`, `lichii/hook/coop_snap.h`) is eased: the puppet stays where it was that frame and closes the gap over 250 ms, or at 15 m/s for longer gaps, while it follows their new place. A jump is the target's own move since the last frame, not the drawn step, so their running during a long ease starts no new one (no stutter). A move of 20 m or more is a warp, drawn at once; so is any jump while their cutscene runs (held): their samples move smoothly then, so a jump is a real teleport (a void-out, the event's start mark), not a slide through a wall. While hidden (our cutscene) the drawn place is set to theirs, so it shows again where they are, with no ease from the parked spot.
+- **World objects during our event.** The issue 144 rule left every shared change within 8 m of our Link waiting while our event ran. A world object another game moves (`CoopWorld::WorldSync::Follows`: the falling ladder, the falling floors, blocks, and a moved block's base anchor) is no event's partner: its place and played animation now go on during our event (`CoopGuard::Skip`'s `never_waits`), so the ladder no longer stays up during our live-event cutscene and jumps after it. Kills and removes still wait (the Deku Scrub of issue 144 is placed by the enemy sharing, not a world object, so its rule is unchanged).
+- **Logs** (`coop: puppet: ...`, also `fairy coop: puppet: ...` for Navi): `P<n> target jump <m> m (show|hold, eased|at once|warp)` for every jump in the place we are handed (before easing), and `P<n> snap <m> m (show|hold|warp)` for every step past 0.75 m of the puppet's own place read back from the game each frame (what it drew; the first frame after a hide is skipped, it was parked).
+- **Not changed:** a live event (a switch another player pressed) is still not started while our own event runs (the game runs one event at a time), so it starts when ours ends; the timed platforms then run on our own timer from that moment. Sharing the timer is dungeon object state (deku-dungeon-2).
+- Scenario `cutscene-snap` (steps file): the ladder falls (A shoots the eye, a cutscene for both), then B walks through the slingshot room's door (a door cutscene) while A watches. Its `lines` checks: `min=1` that the hold/hide and back happened in both games (else the run checked nothing), no read-back snap, at most 2 target jumps, no Navi snap. `lines ... min=N` is new in `run.ps1` for this.
 
 ### The first run
 
@@ -625,6 +635,22 @@ Test switch for that case: `--sound-user NAME` gives each puppet its own SLink p
 **Not covered, and the fallback.** Sounds the player's own code plays outside the AS (a pickup jingle, the ocarina notes, perhaps the hurt voice) do not come from the animation, so the puppet does not make them. If they are wanted, or if the pack path fails in the game, the next step is a message (types 85 to 89 are reserved for this, protocol 6): the hook catches the SLink play call on the local player and sends the sound's name or hash, and the receiver plays it on the puppet. The SLink play function in `main` has not been looked for yet.
 
 **What the game run must show** (none of it run): footsteps, sword swings and voice from the puppet; louder near it, fading with distance, silent far away; the local player's own sounds unchanged; no crash or `Unmapped` lines when a puppet is made (the size table entries are the pack's new size, the ActorParam's entry is unchanged since the file is still a part of the player's chain). Risks: a sound the user marks as the player's (played without position, or with the listener) could sound as if it were ours; the footstep component may need the physics the puppet does not have (then it is silent, or the create fails: try `--no-sound` to tell).
+
+## Riding (issue 199)
+
+Caleb (2026-11-12): "epona makes another player disappear when they mount her". Up to then a remote rider was parked out of sight on purpose (cutscene-hide): the other game has no horse, so the puppet would sit in the air. Now the rider stays seen, on a copy of the horse (`lichii/hook/coop_ride.h`):
+
+| Part | Where | What |
+|---|---|---|
+| Rule | `coop/host/scene.hpp` | Their command names a horse: `Visibility::ride` (was `park`). The puppet shows and plays their command (`HorseMove`, `RideonRunHorse` ...), which the puppet's own AS (`Player_Adult.root.asb`) has. Also in a talk on horseback (their cutscene) |
+| Sender | `CoopRide::Rider` | While our command names a horse, the nearest `Animal_Epona_Adult` on the actor list within 4 m (walked only then, at most 30 a second) is sent as `PLAYER_RIDE` ([protocol.md](protocol.md#riding-player_ride)): its place and turn in our Link's frame, and its AS slot 0. Got off: riding off, three times |
+| Copy | `CoopRide::Rides`, `CoopSpawn::Director::SetRides` | For each remote with a fresh ride (under 0.6 s old), its puppet live and the rule `ride`: one copy at the puppet's place plus the offset turned by the puppet's turn, so the horse moves and turns with the puppet whatever the network delay. Its animation is the sender's, moved on by the age. Keys have bit 61 set; a new mount gets a new key (a new actor) |
+| Pack | `tools/puppet_pack` STAND_INS | `CoopRide_Epona`: Epona's model, LOD and animation set (`AS/Animal_Horse_New.root.asb`) with the shared defaults; no AI, physics, riding or sound. Only ever the stand-in (`CoopSpawn::StandInOnly`): the game's own Epona made here would run on her own AI |
+| Fallback | | A pack without `CoopRide_Epona` (built before issue 199), a rider on an old build (no `PLAYER_RIDE`), or no horse found near the rider: no copy, the puppet still shows in its riding pose where the rider is, never hidden |
+
+Log lines: the rider's game `coop: ride: we ride Animal_Epona_Adult, sending PLAYER_RIDE (1 horse seen)` and `coop: ride: we got off, riding off sent`, or `we ride ('...') but no Animal_Epona_Adult within 4 m on the list` when none is found; the other games `coop: ride: P<n> rides Animal_Epona_Adult (horse copy CoopRide_Epona)` and `coop: ride: P<n> off the horse (copy deleted)`, plus the spawn director's `CoopRide_Epona: create copy ...`. `LICHII_COOP_RIDE=0` turns all of it off (then the rider's puppet shows without a horse). The kit needs its puppet pack made again (make-puppet-pack.cmd) for the horse copy.
+
+Not checked in game: that the rider's place while riding is the saddle (the offset copes either way), that `Animal_Epona_Adult` is the horse you ride (Epona's adult pack; the child one cannot be ridden), and that the stand-in plays the horse's commands by the names slot 0 shows.
 
 ## Ocarina
 

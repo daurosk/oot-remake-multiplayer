@@ -1,0 +1,5 @@
+# threads-of-time, A step 2: the tab opened (as the owl's event does), the quest one step on.
+setflag UI_IsFinishChallengeMenuOpenEvent 1
+setenum 0x9472302b MeetPierre
+wait 300
+mark opened

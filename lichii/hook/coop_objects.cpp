@@ -2232,13 +2232,17 @@ private:
             const CoopGuard::Local local = GuardLocal();
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
-            CoopGuard::Skip(wish, local, where, [](const Mover::Pose& p) { return p.actor; });
+            // Issue 194: a world object another game moves (coop_world: a falling ladder,
+            // a block and its base anchor) is no event's partner: it follows at once, else
+            // it jumped after.
+            const auto world = [this](std::uint64_t a) { return world_.Follows(a); };
+            CoopGuard::Skip(wish, local, where, [](const Mover::Pose& p) { return p.actor; }, world);
             std::vector<u64> wanted_plays;
             wanted_plays.reserve(plays.size());
             for (const PlayWish& p : plays) {
                 wanted_plays.push_back(p.address);
             }
-            CoopGuard::Skip(plays, local, where, [](const PlayWish& p) { return p.address; });
+            CoopGuard::Skip(plays, local, where, [](const PlayWish& p) { return p.address; }, world);
             if (wanted_plays.size() != plays.size()) {
                 // A chest's open idle held back: its show-open clock waits too.
                 std::set<u64> sent;

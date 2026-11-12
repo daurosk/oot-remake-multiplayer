@@ -2,10 +2,47 @@
 
 For players in different places. Every player has done [setup.md](setup.md) first, with the same release. One player is the **host** (their PC runs the server); the others **join**.
 
-## The quickest safe way: a free VPN network
+## The easy way: Host.bat and an invite code
+
+No router settings, no VPN, no server of ours.
+
+1. **The host** double-clicks `Host.bat`. A few seconds later the server window shows `invite code: XXXXX-XXXXX-...` and has copied it to the clipboard. Paste it to your friends (a private message, not a public channel).
+2. **The others** double-click `Join.bat`, paste the invite code and press Enter. A second window opens, the **join helper**: keep it open while you play. Nobody types an address or a password.
+3. If the helper says `the host's server answered directly`, the game connects by itself. If instead it shows an **ANSWER CODE** (also copied to the clipboard), send it back to the host. **The host** pastes it into the server window (right-click pastes) and presses Enter. Within a few seconds the helper says `the way through both routers is open` and the game connects.
+
+What Host.bat does for this, by itself:
+
+- It makes a **new random join password** each time it starts (20 letters, 100 random bits) and puts it in the invite code, so nobody has to type it. If you set your own `server_password` in `coop-options.ini`, that one is used instead (an empty `server_password =` line means no password, and then there is no invite code and no router forward).
+- It asks your router to **forward the game's UDP port** (UPnP) while the server runs; see [Let the router forward the port](#let-the-router-forward-the-port-upnp). Many routers have UPnP off; the invite code then still works for most friends through the answer code.
+- It asks a free public **STUN server** (Google's `stun.l.google.com`, then Cloudflare's `stun.cloudflare.com`) which internet address and port your router gives the game's port. That address goes into the invite code.
+
+**Keep the invite code among friends.** It contains your internet address and the join password: anyone who has it can join while your server runs. It stops working when the server window closes, and Host.bat makes a new one each time. It is never written to the server's log or into `collect-logs` output.
+
+**Privacy:** the STUN server sees your internet address (as every website you visit does), nothing of the game. To not use it, write `invite = no` in `coop-options.ini`; `stun_servers = name:port, ...` picks other ones. The friend's join helper asks the same servers.
+
+**Windows Firewall:** the first time the server runs, Windows may ask whether `coop_server.exe` may use the network. For the answer-code way nothing more is needed (Windows lets in the answers to what the server sent). If friends should connect directly through a UPnP forward, allow it for the network you are on, or run the rule `check-hosting.cmd` prints.
+
+### When the invite code does not connect
+
+- `answer code not used: ...` in the server window: the line says why (a letter wrong or missing, an answer older than 10 minutes, or one made from an old invite code). Ask for a new answer code: closing the join helper and starting Join.bat again makes one.
+- The helper keeps waiting and after 3 minutes says **No way through the routers was found**: both routers change the port for every address (symmetric NAT), or a provider shares one internet address between many homes (CGNAT). That happens on some mobile and dorm connections. Use a [free VPN network](#when-the-invite-code-does-not-work-a-free-vpn-network) (always works), or the host forwards the port by hand ([port forwarding](#without-a-vpn-port-forwarding)).
+- The server window says `no invite code: no STUN server answered`: the PC has no internet, or a firewall blocks UDP. Same help as above.
+- The server window says `your router gives every address its own port (symmetric NAT)`: the answer-code way will probably not work for this host; a VPN will.
+
+### How the invite code works (design note)
+
+- **Invite code** (`server/nat_codes.hpp`): a kind and version byte, the host's internet IPv4 address and port, the join password (a made password packed in 13 bytes, or your own as text) and the first 4 bytes of its SHA-256, written as letters from 32 that cannot be mixed up (no I, O, 0, 1) in groups of five. A mistyped or missing letter is caught by the checksum; a code from a newer version says so. It is made only with a join password, and only for a real internet address. Join.bat reads it in `tools/release/kit/scripts/invite.ps1`; both sides are tested against the same codes.
+- **STUN** (`server/stun.hpp`, RFC 5389): one Binding request from the game server's own UDP socket (the join helper uses its own socket the same way), so the address in the answer is the one friends' packets reach. Only an answer from the server we asked, with our 96-bit transaction id, is used, and every length in it is checked before it is read (unit tests with every shortened copy and 20000 random answers). When two STUN servers see different ports, the window warns about symmetric NAT.
+- **Direct try:** the join helper sends signed probes to the invite address for 3 seconds. The server answers a probe only when it is signed with the join password, and its answer is no bigger than the probe.
+- **Answer code:** the helper's internet address and port (from STUN), a random 8-byte nonce and the time, signed with HMAC-SHA256 under a key made from the join password (truncated to 8 bytes), plus a 2-byte checksum. The server takes it only when the signature is right, it is at most 10 minutes old, and the address is an internet address. A stranger cannot make the server send packets anywhere: it only punches toward an address in a signed answer code that the host pasted.
+- **Punches** (`server/punch.hpp`): 72-byte datagrams starting with `OCP` and version 1 (ENet never sends that), with the type, the nonce, the time, both addresses and an HMAC-SHA256 over all of it. The key is HMAC-SHA256(password, "oot-coop nat punch v1"), so it is never the same as a join proof. The server drops a punch that is unsigned, more than 60 seconds off its clock, or for a nonce it was not given; it checks at most 10 datagrams a second from one address and 100 from all before it computes any signature. After the host pastes an answer code, the server punches toward that address 5 times a second for 10 seconds, and answers that helper's punches (toward the answer code's address, never toward the sender) for 10 minutes. Both routers then let the other side's packets in, and ENet connects over the same ports; the helper forwards the game's datagrams between 127.0.0.1 and that socket.
+- The game, the join password check, the 5-wrong-passwords block, the half-open limit and `server_allow` are unchanged: the punch only opens the way. A port scan finds nothing new: without the password the server answers no punch.
+- Tests: `tests/server/nat_test.cpp` (codes, STUN, punches, the host's rules: every mistyped letter, forged and stale codes, a stranger without the password gets nothing, rate limit, punches only toward the answer address), `tests/server/nat_loopback_test.cpp` (a real server, the join helper, a fake STUN server and an ENet game over 127.0.0.1: answer code, punches, the game reaches the server; a helper with another password never gets a punch back; the direct way), `tools/release/tests/hosting_test.ps1` (Join.bat's reader, the defaults, UPnP and the invite need a password). 127.0.0.1 has no routers: a real two-network test is still to do.
+
+## When the invite code does not work: a free VPN network
 
 1. **Everyone** installs [Radmin VPN](https://www.radmin-vpn.com) (free, no account). The host clicks **Network > Create network**, picks a name and a password, and sends both to the others; the others click **Network > Join network** and type them in. ([Hamachi](#hamachi) works the same way.)
-2. **The host** double-clicks `Host.bat`. The server window shows **Give your friends ONE of these**, with the **Over Radmin VPN** address (`26.x.x.x`) first, and has already copied it: paste it to the others with Ctrl+V.
+2. **The host** double-clicks `Host.bat`. The server window shows **Give your friends ONE of these**, with the **Over Radmin VPN** address (`26.x.x.x`) first, and has already copied it (the invite code replaces that copy a few seconds later; copy the address from the window then). Send it with the join password: the window shows it as `Join password for this session: ...` (only in the window, never in the log), or set your own `server_password`.
 3. **The others** double-click `Join.bat`, paste that address and press Enter. Join.bat says when you are connected.
 
 Nobody touches a router. Only people with the network password can reach the server. If the others cannot connect, the host runs `check-hosting.cmd` in the kit folder while the server window is open: it prints exactly what is wrong and the command that fixes it (usually one firewall line for Radmin addresses; it changes nothing by itself).
@@ -18,13 +55,42 @@ Only if the host can change their router and has a public IP address (no CGNAT: 
 
 1. Start `Host.bat` once and read the server window: the **Same house** line is your PC's address (for example `192.168.1.20`), the **Over the internet** line your public address.
 2. On your router's settings page (often `192.168.1.1`; the address and password are usually on a sticker on the router), under **Port forwarding**, add: protocol **UDP**, port **27510**, to your PC's Same-house address.
-3. **Safety:** ask the others for their public address (they open [api.ipify.org](https://api.ipify.org)) and put them in `coop-options.ini` beside `Host.bat`: remove the `#` in front of `server_allow` and write, for example, `server_allow = 81.2.3.4,82.5.6.7`. Then nobody else can join ([Who can join](#who-can-join)). Also set a **join password**: `Host.bat` asks for one the first time; give it to the others with the address. Their addresses can change; the password still keeps strangers out when you have to widen `server_allow`.
+3. **Safety:** ask the others for their public address (they open [api.ipify.org](https://api.ipify.org)) and put them in `coop-options.ini` beside `Host.bat`: remove the `#` in front of `server_allow` and write, for example, `server_allow = 81.2.3.4,82.5.6.7`. Then nobody else can join ([Who can join](#who-can-join)). Keep the **join password** on (Host.bat makes one each time unless you set `server_password`; the server window shows it): give it to the others with the address, or send the invite code. Their addresses can change; the password still keeps strangers out when you have to widen `server_allow`.
 4. Run `check-hosting.cmd` while the server window is open and run the firewall command it prints under **Over the internet with port forwarding** (in Command Prompt as administrator). It allows only `coop_server.exe`, and with `server_allow` set only those addresses. It applies on networks Windows calls Private: if the check says your home network is Public, switch it to Private as it says.
 5. Close and start `Host.bat` again, and send the **Over the internet** address and the join password to the others.
 
 **Others:** double-click `Join.bat` and paste the host's address.
 
 **When you stop playing:** delete the port forward on the router and the firewall rule ([When you are done](#when-you-are-done)). Your public address can change from time to time: read it again in the server window before each session.
+
+### Let the router forward the port (UPnP)
+
+Instead of step 2, the server asks the router itself: Host.bat does this by default (`upnp = no` in `coop-options.ini` turns it off). It maps only the game's UDP port, only to this PC, with a 10-minute lease renewed while the server runs, and removes it when the server stops or its window closes. It is never used without a join password (`server_allow` alone is not enough: it opens your PC's port to the whole internet while the server runs). The server window then says in plain words what happened, and the server log keeps the line:
+
+- `UPnP: the router now forwards UDP port 27510 to this PC (192.168.1.20) for 10 minutes at a time, renewed while the server runs` and your internet address for the others. The forward is removed when the server stops or its window closes; after a crash the router drops it within 10 minutes. Some routers only take a permanent forward: then the window says `until the server stops` and, because after a crash such a forward stays until you remove it by hand, to remove it in the router's page if the server crashes. A renewal asks the router while the server runs; a router that does not answer holds the server up for at most a second each time (then it tries again a minute later).
+- `no router answered`: UPnP is off on the router (many have it off, some players turn it off on purpose: Host.bat never turns it on for you). Forward the port by hand (step 2) or use a VPN.
+- `the router's own internet address is 100.x / 192.168.x / 10.x`: your router is behind your provider's (CGNAT) or another router; no forward on it can let anyone in. The invite code may still get through with an answer code; otherwise use a VPN.
+- `the router already forwards UDP port 27510 to another device`: an old forward by hand; remove it on the router's page.
+
+The firewall rule (step 4) is still needed, and stays your choice: the kit prints it and never adds it.
+
+## Advanced: relay with join codes
+
+Off, and not needed for most players: the invite code above does the same without a third PC. For hosts who cannot open a port at all (CGNAT, a dorm or a phone hotspot) and players who do not want a VPN. Someone whose UDP port is reachable from the internet runs a **relay**: a friend who has forwarded a port, or a small rented server. Nothing is hosted by this project and no other service is used.
+
+1. **Relay owner:** run `start-relay.cmd` in a kit (or `coop_server --relay` on any PC with the server). It listens on UDP port **27530**: forward that port and allow `coop_server.exe` in the firewall as in [Without a VPN](#without-a-vpn-port-forwarding). Give the hosts your address. Optional: `start-relay.cmd --relay-key-env NAME` with a host key in that environment variable, so only hosts with the key can use it.
+2. **Host:** in `coop-options.ini` remove the `#` in front of `relay =` and write the relay's address (`relay = relay.example.net:27530`; `relay_key =` if the owner gave you one). Start `Host.bat`. A few seconds later the server window shows `relay: join code ABCD-EFGH. Give your friends ABCD-EFGH@relay.example.net:27530` and copies it. Your router needs no change: the server connects out to the relay. A **join password is required** (`server_password`): without one Host.bat does not use the relay and says so. The join code only finds your server; the password is the lock. `server_allow` does not help here, because every guest through the relay reaches your server from your own PC (127.0.0.1).
+3. **Others:** double-click `Join.bat` and paste the whole `ABCD-EFGH@relay...` text. Join.bat sends the code to the relay, says `Join code accepted`, and the game connects through the relay. Next time Enter offers it again; the code changes each time the host starts the server.
+
+**Trade-offs:** the relay owner sees every player's address and all game traffic (the protocol has no encryption; the join password is only sent as a proof). Each packet takes the detour through the relay, so the delay is the host-relay plus relay-player delay. Pick a relay near all of you, run by someone you trust. All relayed players share one address on the host's server (127.0.0.1), so its per-address limits are shared too: when one of them types a wrong join password 5 times, every new relayed player is turned away for 60 seconds (players already in stay in), and at most 4 can be connecting at the same moment.
+
+### How the relay works (design note)
+
+- The relay is `coop_server --relay` (`server/relay.hpp`): one UDP port, its own small messages (`server/relay_wire.hpp`, all starting with `OCR` and version 1) next to the game's plain ENet datagrams. No game code changes: the game talks ENet to the relay's address as to any server.
+- The host's server with `--relay-via` (`server/relay_link.hpp`) sends **REGISTER** with a random 64-bit session token and gets a **join code**: 8 letters from 32 that cannot be mixed up (no I, O, 0, 1), 40 bits. A **KEEPALIVE** every 5 seconds keeps the code and the host's router path open; 30 seconds of silence ends the code. The token, not the address, says it is the same host, so a router that renumbers the host's port does not break it. A **BYE** on stop ends the code at once.
+- A guest's Join.bat sends **LOOKUP** with the code. A right code lets that guest's internet address send to that host for 30 minutes after its last packet; datagrams from addresses without a code are dropped unread. Each guest port is a **flow**: the relay wraps its datagrams for the host's link, and the link gives each flow its own UDP socket on 127.0.0.1, so the server sees every guest as a separate player at 127.0.0.1 (with `server_allow` set, 127.0.0.1 is let in). The relay lets in an **address**, not a person: anyone else behind the same internet address (CGNAT, a dorm, a hotspot, an office) can reach the host for those 30 minutes without the code. So the code only finds the host, and `--relay-via` refuses to start without a join password: the password is the lock.
+- Limits: 10 wrong codes per address per 10 minutes (then even the right one waits), 6 registrations per address per 10 minutes, 2 hosts per address, 64 hosts, 32 flows and 16 guest addresses per host, 1400-byte datagrams (ENet's are 1100, so a relayed one stays under a 1200-byte path, issue 143). The code is not a lock: the join password (required) and the server's own checks are.
+- Tests: `tests/server/relay_test.cpp` (the rules, and a host's server + link + relay + a guest joining over 127.0.0.1; a guest without the code never connects), `tests/server/upnp_test.cpp` (a fake router on 127.0.0.1), `tools/release/tests/hosting_test.ps1` (Join.bat's part).
 
 ## Radmin VPN step by step (and ZeroTier, Tailscale)
 
@@ -78,11 +144,13 @@ Only join Hamachi networks of people you know: everyone in the network can reach
 
 A virtual LAN adds a little delay when it cannot connect the PCs directly; the ping in the game's co-op panel shows how much.
 
+**Dropped every 15-20 seconds?** Older kits sent packets too big for some VPNs and tunnels (Hamachi, Tailscale, DS-Lite internet lines, a VPN inside another VPN): small things got through, but the big ones (the shared flags sent when you join) were lost, and the game was cut after 10 s and joined again, over and over. The packets now fit Hamachi and lines down to 1200 bytes, and a game whose line still loses them switches by itself to the smallest size once (the host's server window shows `its path lost our 1100-byte datagrams ...; told it to connect again with 576-byte ones`, one short reconnect) and then stays in. Both players need the same, current kit. Still dropped? Run `collect-logs.cmd` on both PCs and send the zips.
+
 ## Who can join
 
 By default anyone who can reach the server's port may join. Three lines in the host's `coop-options.ini` (beside `Host.bat`) narrow that:
 
-- `server_password = ...`: the **join password** (protocol 9). `Host.bat` asks for it the first time and saves it here (Enter for none); send it to your friends with the address. `Join.bat` asks for it each time (Enter keeps the last one, `-` for none) and keeps it in `emulator\user\config\coop.ini`. A player with a wrong or no password is turned away and their `Join.bat` window says `wrong join password`. The password itself never goes over the network: the server sends a random number, and the game answers with a proof made from the password and that number (HMAC-SHA256), which is no good for any other connection. No spaces, at most 128 characters; pick a long one (12 characters or more; three random words joined by dashes work) that you use nowhere else, since a short or common word can be guessed. To change it, change the line and start `Host.bat` again; delete the line to be asked again. `check-hosting.cmd` says whether one is set.
+- `server_password = ...`: the **join password** (protocol 9). Without this line `Host.bat` makes a new random one each time and puts it in the invite code (the server window shows it too, never the log); set your own here to keep the same one, or `server_password =` (empty) for none, which also turns off the invite code and the router forward. Without an invite code, send it to your friends with the address. `Join.bat` asks for it each time (Enter keeps the last one, `-` for none) and keeps it in `emulator\user\config\coop.ini`. A player with a wrong or no password is turned away and their `Join.bat` window says `wrong join password`. The password itself never goes over the network: the server sends a random number, and the game answers with a proof made from the password and that number (HMAC-SHA256), which is no good for any other connection. No spaces, at most 128 characters; pick a long one (12 characters or more; three random words joined by dashes work) that you use nowhere else, since a short or common word can be guessed. To change it, change the line and start `Host.bat` again; delete the line to get a new random one each time. `check-hosting.cmd` says whether one is set.
 - `server_allow = 25.1.2.3,25.4.5.6`: only these addresses may connect; anyone else is turned away at once. Use the others' Hamachi (`25.`), Radmin (`26.`) or Tailscale (`100.`) addresses, or with port forwarding their public addresses (api.ipify.org on their PC). A whole range: `26.0.0.0/8`.
 - `server_bind = 25.1.2.3`: the server listens only on this address of your own PC (your Hamachi or Radmin address), so it cannot be reached through your home network or Wi-Fi at all.
 
@@ -101,7 +169,7 @@ Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bomb
 
 ## When you are done
 
-Our programs open nothing by themselves: no UPnP, no firewall or router changes, and when the server window is closed nothing listens. What you opened by hand stays open until you close it:
+Our programs change no firewall rule. The router forward Host.bat asks for (UPnP) ends when the server window closes (after a crash, within 10 minutes; a router that only takes permanent forwards keeps it until you remove it on its page, and the server window says so). The invite code stops working when the window closes, and nothing listens then. What you opened by hand stays open until you close it:
 
 - **The firewall rule:** Command Prompt as administrator, `netsh advfirewall firewall delete rule name="OoT co-op server UDP 27510"`.
 - **The router's port forward** (if you made one): delete the UDP 27510 rule on the router's Port forwarding page.

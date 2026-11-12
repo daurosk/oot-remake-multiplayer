@@ -678,6 +678,12 @@ void Director::SetDrops(std::uint64_t main_base, std::vector<Copy> copies) {
     next_drops_ = std::move(copies);
 }
 
+void Director::SetRides(std::uint64_t main_base, std::vector<Copy> copies) {
+    std::lock_guard lock(mutex_);
+    next_ride_base_ = main_base;
+    next_rides_ = std::move(copies);
+}
+
 void Director::SetDoomed(std::vector<Doomed> doomed) {
     if (doomed.empty()) {
         return;
@@ -841,7 +847,7 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
 }
 
 std::string_view StandIn(std::string_view actor) {
-    constexpr std::array<std::pair<std::string_view, std::string_view>, 7> kStandIns{{
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 8> kStandIns{{
         {"Shootable_DekuSeed", "CoopShot_Seed"},
         {"NormalArrow", "CoopShot_Arrow"},
         {"Shootable_Hook", "CoopShot_Hook"},
@@ -851,6 +857,9 @@ std::string_view StandIn(std::string_view actor) {
         // Issue 85: the game's own boomerang made here homes on our enemies
         // and hits them; the stand-in is its model only.
         {"Weapon_Boomerang", "CoopShot_Boomerang"},
+        // Issue 199: another player's Epona under their puppet (coop_ride.h):
+        // her model and animations, no AI, physics or riding.
+        {"Animal_Epona_Adult", "CoopRide_Epona"},
     }};
     for (const auto& [shared, stand_in] : kStandIns) {
         if (shared == actor) {
@@ -861,7 +870,9 @@ std::string_view StandIn(std::string_view actor) {
 }
 
 bool StandInOnly(std::string_view actor) {
-    return CoopProjectiles::IsLure(actor);
+    // Issue 199: the game's own Epona made here would be a second horse with
+    // her own AI (she runs off, or to us): only ever the stand-in.
+    return CoopProjectiles::IsLure(actor) || actor == "Animal_Epona_Adult";
 }
 
 std::string_view HeldStandIn(std::string_view actor) {
@@ -872,7 +883,7 @@ std::set<std::string> StandInsIn(std::string_view manifest) {
     std::set<std::string> out;
     for (const std::string_view shared :
          {"Shootable_DekuSeed", "NormalArrow", "Shootable_Hook", "Shootable_HookLong", "Weapon_Lure",
-          "Weapon_SinkingLure", "Weapon_Boomerang"}) {
+          "Weapon_SinkingLure", "Weapon_Boomerang", "Animal_Epona_Adult"}) {
         const std::string quoted = "\"" + std::string(StandIn(shared)) + "\"";
         if (manifest.find(quoted) != std::string_view::npos) {
             out.insert(std::string(StandIn(shared)));
@@ -1023,10 +1034,12 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     std::uint64_t base = 0;
     {
         std::lock_guard lock(mutex_);
-        base = next_base_ != 0 ? next_base_ : next_enemy_base_ != 0 ? next_enemy_base_ : next_drop_base_;
+        base = next_base_ != 0 ? next_base_ : next_enemy_base_ != 0 ? next_enemy_base_ : next_drop_base_ != 0 ? next_drop_base_
+                                                                        : next_ride_base_;
         copies_ = next_;
         copies_.insert(copies_.end(), next_enemies_.begin(), next_enemies_.end());
         copies_.insert(copies_.end(), next_drops_.begin(), next_drops_.end());
+        copies_.insert(copies_.end(), next_rides_.begin(), next_rides_.end());
     }
     if (base != base_) {
         // A new game (or none): nothing we had is ours any more.

@@ -135,6 +135,10 @@ STAND_INS = (
     # Issue 85: another player's thrown boomerang. The game's own one made here homed on this
     # game's enemies and hit them.
     ("Weapon_Boomerang", "CoopShot_Boomerang"),
+    # Issue 199: another player's Epona under their puppet while they ride. The game's own horse
+    # made here would run on her own AI; the stand-in is her model and animations only, placed
+    # and played by the hook (lichii/hook/coop_ride.h).
+    ("Animal_Epona_Adult", "CoopRide_Epona"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
 # Components some stand-ins keep beyond the model (by stand-in name): the animation set, so the
@@ -144,6 +148,7 @@ STAND_IN_EXTRA_COMPONENTS = {
     "CoopShot_Bomb": ("ASRef", "ASInfoRef", "AnimationRef"),
     "CoopShot_Hook": ("ASRef", "ASInfoRef", "AnimationRef"),
     "CoopShot_HookLong": ("ASRef", "ASInfoRef", "AnimationRef"),
+    "CoopRide_Epona": ("ASRef", "ASInfoRef", "AnimationRef"),
 }
 # ActorInfo fields of the shootable that a model-only actor must not take over.
 STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")

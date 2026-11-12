@@ -69,9 +69,11 @@
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_live_events.h"
+#include "coop_shared_scenes.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
+#include "coop_ride.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
 #include "coop_scrub_talk.h"
@@ -286,11 +288,14 @@ public:
             if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
                 if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
                     std::lock_guard lock(dungeon_events_mutex_);
-                    if (dungeon_events_in_.size() < 16) {
-                        dungeon_events_in_.push_back(*e);
+                    // A story cutscene's start (coop_shared_scenes.h) has its own queue.
+                    auto& in = CoopSharedScenes::IsShared(e->name) ? story_events_in_ : dungeon_events_in_;
+                    if (in.size() < 16) {
+                        in.push_back(*e);
                     }
                 }
             }
+            CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -328,6 +333,10 @@ public:
             });
             LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
         }
+        // Shared story cutscenes: they start by the live-event requester.
+        shared_scenes_ = live_events_ && CoopSharedScenes::OnFromEnv(EnvString("LICHII_COOP_SHARED_CUTSCENES"));
+        LOG_INFO(Core, "coop: cutscene: shared story cutscenes {}",
+                 shared_scenes_ ? "on (off with LICHII_COOP_SHARED_CUTSCENES=0)" : "off");
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
                 session_->share_one_way(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
@@ -569,6 +578,9 @@ public:
             std::lock_guard lock(dungeon_events_mutex_);
             dungeon_events_in_.clear();  // nothing takes them now: none applied late
         }
+        if (shared_scenes_) {
+            SharedScenes(view, reading, memory, report.server_now_us);
+        }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
         // (coop_live_events.h; off with LICHII_COOP_LIVE_EVENTS=0).
@@ -751,6 +763,12 @@ public:
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Issue 199: our horse sent while we ride; a copy of theirs under each
+        // riding puppet (coop_ride.h).
+        CoopRide::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
+                        view.scene, event, view.position,
+                        reading ? reading->rotation : std::nullopt,
+                        reading ? reading->animation : std::nullopt, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
         CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)
@@ -1391,7 +1409,12 @@ private:
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
-    CoopLiveEvents::StartWatch start_watch_;  // deku-dungeon-2: our own gimmick event starts
+    CoopLiveEvents::StartWatch start_watch_;
+    // Shared story cutscenes (coop_shared_scenes.h).
+    bool shared_scenes_ = false;  // LICHII_COOP_SHARED_CUTSCENES, needs live events
+    CoopSharedScenes::Joiner shared_joiner_;
+    CoopLiveEvents::StartWatch story_watch_;  // our own story cutscene starts
+    std::vector<coop::protocol::DungeonEvent> story_events_in_;  // under dungeon_events_mutex_  // deku-dungeon-2: our own gimmick event starts
     std::mutex dungeon_events_mutex_;         // DUNGEON_EVENT from the network thread
     std::vector<coop::protocol::DungeonEvent> dungeon_events_in_;
     static bool ReadGuest(void* context, std::uint64_t address, void* out, std::size_t size) {
@@ -1404,6 +1427,80 @@ private:
     std::uint32_t samples_seq_ = 0;
     std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
+
+    // Shared story cutscenes (coop_shared_scenes.h): a story cutscene
+    // our game starts goes to the others in our scene (DUNGEON_EVENT, as a
+    // gimmick event's start); one another player started near us plays here
+    // too, through the live-event requester. Once a frame.
+    void SharedScenes(const FrameView& view, const std::optional<coop::host::PlayerReading>& reading,
+                      std::optional<EmulatorMemory>& memory, std::uint64_t server_now_us) {
+        namespace proto = coop::protocol;
+        std::vector<proto::DungeonEvent> got;
+        {
+            std::lock_guard lock(dungeon_events_mutex_);
+            got.swap(story_events_in_);
+        }
+        const std::uint64_t now_us = CoopEvery::NowUs();
+        if (!got.empty()) {
+            const auto remotes = CoopPuppet::Collect(session_.get(), server_now_us);
+            for (const auto& e : got) {
+                std::optional<CoopSharedScenes::Vec3> starter;
+                for (const auto& r : remotes) {
+                    if (r.number == e.player_number && r.scene == e.scene) {
+                        starter = r.position;
+                    }
+                }
+                shared_joiner_.Started(e.player_number, e.name, e.scene, starter, now_us);
+            }
+        }
+        const bool running = reading && reading->event_running.value_or(false);
+        std::uint8_t status = 0;
+        session_->with_client([&](coop::net::Client& c) {
+            if (const auto* me = c.find_player(c.player_number())) {
+                status = me->status.value_or(0);
+            }
+            return 0;
+        });
+        CoopSharedScenes::Here here;
+        here.scene = view.scene.value_or(std::string());
+        here.link = view.position;
+        here.can_start = reading && !running &&
+                         (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0;
+        here.now_us = now_us;
+        // Our own start: found in the event session on a few early frames.
+        if (memory && !here.scene.empty()) {
+            static const std::vector<std::string_view> names = [] {
+                const auto all = CoopSharedScenes::Names();
+                return std::vector<std::string_view>(all.begin(), all.end());
+            }();
+            const auto found = story_watch_.Frame(running, [&] {
+                return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
+            });
+            if (found && shared_joiner_.Ours(*found, here.scene)) {
+                proto::DungeonEvent e;
+                e.scene = here.scene;
+                e.name = *found;
+                session_->with_client([&](coop::net::Client& c) {
+                    const bool sent = c.send(proto::Message{e});
+                    LOG_INFO(Core, "coop: cutscene: our game started the story cutscene {}: {}", *found,
+                             sent ? "sent to the others in this scene" : "not sent");
+                    return 0;
+                });
+            }
+        }
+        const auto name = shared_joiner_.Next(here, [&](const std::string& n) {
+            return memory && coop::host::GameFlags(*memory)
+                                 .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                                 .value_or(false);
+        });
+        for (const auto& line : shared_joiner_.TakeNotes()) {
+            LOG_INFO(Core, "coop: cutscene: {}", line);
+        }
+        if (name) {
+            std::lock_guard lock(live_mutex_);
+            live_requester_.Want(*name);
+        }
+    }
 
     // Issue 173 (coop_quest.h): raises our own quests (Goto_HyruleCastle,
     // DoorOfTime) to what the shared story scenes say, so a scene another

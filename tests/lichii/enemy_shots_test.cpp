@@ -2,6 +2,8 @@
 // sync and its director use them.
 #include <doctest/doctest.h>
 
+#include <algorithm>
+
 #include <array>
 #include <map>
 #include <string>
@@ -79,6 +81,18 @@ private:
 };
 
 } // namespace
+
+TEST_CASE("enemy shots: Ganondorf's own shots name him as a maker (native boss sync)") {
+    // His pack makes DungeonBossGanondrof_Bullet_* (shared with Phantom Ganon) and
+    // Ganondorf_Bullet_Thunder_Shockwave: only the owner's Ganondorf fires them.
+    for (const char* name : {"DungeonBossGanondrof_Bullet_ChargeLightBall", "Ganondorf_Bullet_Thunder_Shockwave"}) {
+        CAPTURE(name);
+        const auto makers = es::MakersOf(name);
+        CHECK(std::find(makers.begin(), makers.end(), "Enemy_DungeonBoss_Ganondorf") != makers.end());
+    }
+    const auto pg = es::MakersOf("DungeonBossGanondrof_Bullet_LightBall");
+    CHECK(std::find(pg.begin(), pg.end(), "Enemy_DungeonBoss_PhantomGanon") != pg.end());
+}
 
 TEST_CASE("enemy shots: the names are known, with their makers") {
     for (const char* name :

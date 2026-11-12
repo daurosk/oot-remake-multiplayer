@@ -31,7 +31,7 @@ constexpr std::array<Shot, 12> kShots{{
     {"SkullKid_Bullet", {"Enemy_SkullKid"}},
     {"PoeHyrule_Bullet_", {"Enemy_Poe"}},
     {"FlareDancer_Bullet_", {"Enemy_MiddleBoss_FlareDancer"}},
-    {"DungeonBossGanondrof_Bullet_", {"Enemy_DungeonBoss_PhantomGanon"}},
+    {"DungeonBossGanondrof_Bullet_", {"Enemy_DungeonBoss_PhantomGanon", "Enemy_DungeonBoss_Ganondorf"}},
     {"DungeonBossPhantomGanon_Bullet_", {"Enemy_DungeonBoss_PhantomGanon"}},
     {"PhantomGanon_Bullet_", {"Enemy_DungeonBoss_PhantomGanon"}},
     {"Enemy_MoblinClub_ShockWave", {"Enemy_Moblin"}},
@@ -41,7 +41,7 @@ constexpr std::array<Shot, 5> kBossShots{{
     {"Twinrova_Bullet_", {"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Kotake", "Enemy_DungeonBoss_Koume"}},
     {"KotakeKoumeTwinrova_Bullet_", {"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Kotake", "Enemy_DungeonBoss_Koume"}},
     {"Ganon_Bullet_", {"Enemy_DungeonBoss_Ganon"}},
-    {"Ganondorf_Bullet_", {"Enemy_DungeonBoss_Ganon"}},
+    {"Ganondorf_Bullet_", {"Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Ganon"}},
     {"DungeonBossGanon_Bullet_", {"Enemy_DungeonBoss_Ganon"}},
 }};
 

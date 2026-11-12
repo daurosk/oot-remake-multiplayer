@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_enemy_shots.h"
 #include "coop_projectiles.h"
 #include "coop_puppet.h"
 
@@ -55,6 +56,17 @@ struct Seen {
     std::optional<CoopPuppet::Mat3> rotation;
     // Issue 169: a bomb's AS slot 0 (the fuse's Bomb_Blink), when read.
     std::optional<coop::protocol::Animation> animation;
+    // Enemy shots (coop_enemy_shots.h): the actor's vtable, so a delete
+    // later is sure it is still the same actor.
+    std::uint64_t vtable = 0;
+};
+
+// An enemy shot of a copy enemy here (CoopEnemyShots::Verdict::hide): the
+// director deletes it if the actor at `address` still has `vtable`.
+struct Doomed {
+    std::uint64_t address = 0;
+    std::uint64_t vtable = 0;
+    std::uint64_t since_ms = 0;  // the director's own (first seen there)
 };
 
 // What the director should do with one copy.
@@ -119,6 +131,24 @@ public:
     // Issue 169: our Link's place, before each Tick (nothing: not known, so
     // none of our bombs is held).
     void SetLink(std::optional<Vec3> link) { link_ = link; }
+    // Enemy shots: the shared enemies and their owners (CoopEnemyShots::
+    // Shooters), before each Tick. A new enemy shot is sent only when the
+    // enemy that fired it is ours; another player's enemy's shot here is
+    // given to the director to delete (Doomed) once it was seen on
+    // kDoomWalks walks (so a copy the director just made is never taken
+    // for one).
+    void SetShooters(std::vector<CoopEnemyShots::Shooter> shooters) { shooters_ = std::move(shooters); }
+    void SetHide(bool on) { hide_ = on; }
+    static constexpr unsigned kDoomWalks = 2;
+    // The enemy shots to delete now (filled by Tick).
+    const std::vector<Doomed>& Doom() const { return doom_; }
+    // The enemy shots first seen in the last Tick and what was decided.
+    struct Decided {
+        std::string name;
+        Vec3 position{};
+        CoopEnemyShots::Verdict verdict = CoopEnemyShots::Verdict::keep;
+    };
+    const std::vector<Decided>& EnemyShotsDecided() const { return decided_; }
     // How many of our bombs are held now, and how many copies are shown held.
     std::size_t HeldMine() const;
     std::size_t HeldCopies() const;
@@ -265,6 +295,20 @@ private:
     std::size_t landed_ = 0;
     std::vector<Flight> flights_;
     std::vector<MadeUp> made_up_;
+    // Enemy shots on our list that are not sent (verdict keep or hide), by
+    // address, and how many walks each was seen.
+    struct Local {
+        std::string name;
+        CoopEnemyShots::Verdict verdict = CoopEnemyShots::Verdict::keep;
+        unsigned walks = 0;
+        std::uint64_t vtable = 0;
+        bool doomed = false;
+    };
+    std::map<std::uint64_t, Local> local_;
+    std::vector<CoopEnemyShots::Shooter> shooters_;
+    bool hide_ = true;
+    std::vector<Doomed> doom_;
+    std::vector<Decided> decided_;
     ShotSettings shot_settings_;
     bool setter_ = true;
     std::optional<Vec3> link_;
@@ -330,6 +374,11 @@ public:
     // Present thread: drops another game rolled (coop_drops). Keys have bit
     // 62 set.
     void SetDrops(std::uint64_t main_base, std::vector<Copy> copies);
+    // Present thread: enemy shots of copy enemies to delete (Sync::Doom).
+    // Each is deleted once, with the game's delete request, only if it is
+    // still on the actor list with the same vtable and is none of ours.
+    void SetDoomed(std::vector<Doomed> doomed);
+    std::size_t Deleted() const;  // enemy shots deleted so far
     std::map<std::uint64_t, std::uint64_t> Live() const;  // key to actor
     // Present thread: the stand-ins the installed puppet pack has
     // (StandInsIn). None (the default): every copy is the game's own actor.
@@ -406,6 +455,10 @@ private:
     // Shared actors whose stand-in failed kStandInTries times in a row:
     // copied as the game's own actor from then on.
     std::set<std::string> no_stand_in_;
+    std::vector<Doomed> doomed_;                     // guarded
+    std::map<std::uint64_t, std::uint64_t> done_doomed_;  // address to when deleted (ms)
+    std::size_t deleted_ = 0;                        // guarded
+    std::optional<CoopPuppet::Call> NextDoomed(CoopPuppet::Guest& guest, std::uint64_t now_ms);
     std::map<std::string, int> stand_in_fails_;  // in a row, by shared actor
 };
 

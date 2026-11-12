@@ -12,6 +12,10 @@
 #    bool:0x66b97a4a=0 bool:0xe44433dc=0 bool:0x88b1b922=0 bool:0x3d5c0bad=0, the same for hookshot-B4); hs-gohma warps
 #    into the boss rush and does not need them. Put them back afterwards.
 # On the emulator (a server restart is a steps-file step): `stray` proves keep-number (#175 #86).
+#  - g7 (save setups, once for the group, put back afterwards):
+#    save_flags.py set <kit>\hookshot-A7\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0 bool:0x429126ef=0
+#    bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0 bool:0x89787395=0 (and the same for hookshot-B7),
+#    then save_flags.py no-ocarina <kit>\hookshot-B7\autotest-save\slot_0*\progress.sav (B only).
 # After the groups, by hand on one pair (no expect= possible: the keys are posted to the window):
 #  - hs-chatbox (row 7): any run with -KeepOpen, then the PostMessage snippet in reports/hookshot-parity.md (T, "hi", Enter).
 #  - hs-cheats (row 8): the same with LICHII_COOP_CHEATS=1 (F8, "token", Enter, F8).
@@ -40,6 +44,7 @@ hs-ocarina  expect='A:coop: ocarina note 4 \(Ocarina_D\) sent'  expect='A:coop: 
 # Dungeons and the frame cadence: /teleport into a dungeon room (#197), the ladder (#129), work during a load.
 warp  expect='A:coop: Hookshot calls co-op at each present'  expect='B:coop: Hookshot calls co-op at each present'  label="cadence"
 hs-teleport-room  expect='A:scene change taken'  expect='A:coop: teleport: not moved to .*\(issue 197\)'  expect='A:test steer at'  label="#197"
+hs-door  expect='A:P2 show -> hold \(their cutscene\)'  expect='A:P2 hold -> show'  label="#194 door cutscene (B by goto)"
 hs-ladder  expect='A:test setflag HavePlayedEvent\.InsideTheDekuTree_Gimmick_FallingLadder \(bool\) 0: set'  expect='A:get_bool\(0xb3a4fe84\) = 1 \(was 0\)'  expect='B:starting the event InsideTheDekuTree_Gimmick_FallingLadder here'  label="#129 eye shot"
 
 
@@ -60,3 +65,11 @@ hs-skulltula-token  expect='A:Obj_Token_Gold broken here'  expect='B:a token tak
 hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark talk.*npc-anim: our Link is in an event: \d+ NPCs near it claimed'  expect='A:(?s)test mark talk.*npc-anim: \d+ of the \d+ claimed NPCs are ours now'  expect='A:(?s)test mark closed.*npc-anim: the event.s NPCs are free again'  label="#200 NPC animations"
 hs-kak-letter  expect='A:bool 0x19898d14.*0 -> 1'  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 letter at the gate"
 hs-fishing  expect="B:held 'Weapon_FishingRod'"  expect='A:share fish lure \d+ fish, [1-9]\d* near our lure'  label="#151 fishing (inconclusive if A rents no rod)"
+
+[g7]
+# The save setups (header step): the Deku Tree gimmicks (#176 #177 #196), the map chest (#195), the Ocarina given back (#190).
+hs-deku-platforms  expect='B:our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this scene'  label="#176 platforms"
+hs-deku-torch  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb in this scene'  label="#176 #177 torch and web"
+hs-deku-water-floor  expect='A:RoomG_WaterLevel.*0 -> 1'  expect='B:Obj_Deku_MoveFloor_A_01 moved by another player'  label="#196 water floor"
+hs-chest-other  expect='B:0x89787395.*0 -> 1'  expect='A:opened in another game, shows open here'  label="#195 map chest"
+hs-ocarina-given  expect='B:ocarina bool 0x[0-9a-f]+ 0 -> 1 for the held ocarina'  expect='B:ocarina probe: our Link plays the ocarina'  label="#190 Ocarina given back"

@@ -81,9 +81,11 @@ std::optional<std::uint8_t> NoteSender::Update(bool playing, std::uint64_t butto
 #include "coop/net/client.hpp"
 #include "coop/protocol/messages.hpp"
 #include "core/core.h"
+#ifndef COOP_HOOKSHOT
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
 #include "hid_core/hid_types.h"
+#endif
 
 namespace CoopOcarinaSound {
 
@@ -92,6 +94,11 @@ namespace {
 NoteSender g_sender;  // the present thread only
 
 std::uint64_t Buttons(Core::System& system) {
+#ifdef COOP_HOOKSHOT
+    // Hookshot: no emulated pad to read here, so our own notes are not sent.
+    (void)system;
+    return 0;
+#else
     auto& hid = system.HIDCore();
     for (const auto id : {Core::HID::NpadIdType::Player1, Core::HID::NpadIdType::Handheld}) {
         auto* c = hid.GetEmulatedController(id);
@@ -100,6 +107,7 @@ std::uint64_t Buttons(Core::System& system) {
         }
     }
     return 0;
+#endif
 }
 
 } // namespace

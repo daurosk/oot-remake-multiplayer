@@ -973,13 +973,12 @@ void OnFrame(Core::System& system) {
         g_state.checked_env = true;
         g_state.path = EnvPath();
         if (!g_state.path.empty()) {
-            LOG_INFO(Core, "coop: test {} file {}",
 #ifdef COOP_HOOKSHOT
-                     "commands",
+            constexpr const char* kWhat = "commands";
 #else
-                     "script",
+            constexpr const char* kWhat = "script";
 #endif
-                     g_state.path.string());
+            LOG_INFO(Core, "coop: test {} file {}", kWhat, g_state.path.string());
         }
     }
     if (g_state.path.empty()) {

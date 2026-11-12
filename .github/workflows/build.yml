@@ -146,7 +146,7 @@ jobs:
   # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the
   # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every push
   # only the hook's files are compiled; the whole emulator, its AppImage and a start without a
-  # game run on the linux-build branch, on tags and by hand (workflow_dispatch).
+  # game run on the linux-build and linux-2 branches, on tags and by hand (workflow_dispatch).
   linux-emulator:
     runs-on: ubuntu-24.04
     name: linux-emulator (${{ matrix.part }})
@@ -161,7 +161,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.part }}" = full ] && [ "${{ github.event_name }}" != workflow_dispatch ] &&
-             [ "${{ github.ref }}" != refs/heads/linux-build ] && [[ "${{ github.ref }}" != refs/tags/* ]]; then
+             [ "${{ github.ref }}" != refs/heads/linux-build ] && [ "${{ github.ref }}" != refs/heads/linux-2 ] && [[ "${{ github.ref }}" != refs/tags/* ]]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"

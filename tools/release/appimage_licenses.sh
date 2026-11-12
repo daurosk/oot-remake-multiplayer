@@ -24,7 +24,7 @@ list=$out/BUNDLED.txt
     echo "The AppImage's own start program (AppRun, the type 2 runtime) is linuxdeploy's (MIT)."
     echo
 } >"$list"
-unknown=0
+unknown=0 icu=0
 while IFS= read -r f; do
     rel=${f#"$root"/}
     base=${f##*/}
@@ -34,10 +34,12 @@ while IFS= read -r f; do
     fi
     # Other files of the Qt install (ICU, which Qt ships, under the Unicode licence).
     if [[ -n ${QT_ROOT_DIR-} && -e $QT_ROOT_DIR/lib/$base ]]; then
-        echo "$rel  from the Qt 6 install (The Qt Company's build; ICU: Unicode-3.0, https://github.com/unicode-org/icu)" >>"$list"
+        echo "$rel  from the Qt 6 install (The Qt Company's build; ICU: Unicode-3.0, ICU-Unicode-3.0.txt)" >>"$list"
+        [[ $base == libicu* ]] && icu=1
         continue
     fi
-    pkg=$(dpkg -S "*/$base" 2>/dev/null | head -n1 | cut -d: -f1 || true)
+    # dpkg -S prints "pkg: /path", or "pkgA, pkgB: /path" when several packages hold it.
+    pkg=$(dpkg -S "*/$base" 2>/dev/null | head -n1 | cut -d: -f1 | cut -d, -f1 | tr -d ' ' || true)
     if [[ -z $pkg ]]; then
         echo "$rel  not from a package (built with the emulator: see SOURCE.txt and ../SPDX-*.txt)" >>"$list"
         unknown=$((unknown + 1))
@@ -47,4 +49,17 @@ while IFS= read -r f; do
     echo "$rel  Ubuntu package $pkg $version: $pkg.copyright" >>"$list"
     [[ -f $out/$pkg.copyright || ! -f /usr/share/doc/$pkg/copyright ]] || cp "/usr/share/doc/$pkg/copyright" "$out/$pkg.copyright"
 done < <(find "$root" \( -type f -o -type l \) -name '*.so*' | LC_ALL=C sort)
+# ICU (in Qt's install) is under the Unicode licence: its text goes beside the list. Taken from
+# this system's ICU package (the same licence for every ICU since 74; Qt 6.8 ships ICU 73,
+# whose text is the same Unicode License V3), or failing that from ICU's own source at a tag.
+if ((icu)) || grep -q 'libicu' "$list"; then
+    icu_text=$(ls /usr/share/doc/libicu[0-9]*/copyright 2>/dev/null | head -n1 || true)
+    if [[ -n $icu_text ]]; then
+        cp "$icu_text" "$out/ICU-Unicode-3.0.txt"
+    else
+        curl -fsSL -o "$out/ICU-Unicode-3.0.txt" https://raw.githubusercontent.com/unicode-org/icu/release-74-2/LICENSE ||
+            { echo 'No ICU licence text found (no libicu package, and the download failed).' >&2; exit 1; }
+    fi
+    grep -qi 'unicode' "$out/ICU-Unicode-3.0.txt" || { echo "ICU-Unicode-3.0.txt is not ICU's licence." >&2; exit 1; }
+fi
 echo "appimage_licenses.sh: $(grep -c '  ' "$list") files listed, $(ls "$out" | grep -c '\.copyright$') licence texts, $unknown not from a package"

@@ -91,6 +91,11 @@ if [[ -n $emu_source && -f $emu_source/LICENSE.txt ]]; then
 else
     echo 'Warning: no --emu-source with LICENSE.txt; add the emulator licence texts by hand.' >&2
 fi
+# Qt inside the AppImage is LGPL-3.0 (and the emulator GPL-3.0): a kit without those texts is
+# not one we may give out.
+for f in SPDX-LGPL-3.0-or-later.txt SPDX-GPL-3.0-or-later.txt; do
+    [[ -f $kit/licenses/$f ]] || die "licenses/$f is missing (it comes from --emu-source's LICENSES folder); the kit may not ship without it."
+done
 # ENet's MIT text, from the server's build folder (CMake fetches ENet into _deps).
 enet_license=$(find "$(dirname "$server")/.." -maxdepth 4 -path '*enet-src/LICENSE' 2>/dev/null | head -n1)
 if [[ -n $enet_license ]]; then cp "$enet_license" "$kit/licenses/ENet-MIT.txt"

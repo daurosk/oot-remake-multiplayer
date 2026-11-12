@@ -1243,6 +1243,7 @@ public:
                 ScrubsBox& box = TheScrubs();
                 std::lock_guard lock(box.mutex);
                 box.main = main_;
+                box.puzzle.SetEvent(TheLocalEvent().load(), CoopEvery::NowUs());  // issue 144
                 box.puzzle.Look(*scene, scrubs_seen_, player_, CoopEvery::NowUs(), out);
             }
             for (auto& h : out.send) {

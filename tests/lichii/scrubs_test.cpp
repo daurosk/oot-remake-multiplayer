@@ -282,3 +282,66 @@ TEST_CASE("scrubs: a failed malloc turns the giving off") {
     p.Receive(HitOn(kTwo), 5'100'000);
     CHECK_FALSE(p.Step(m, false, 0, kMain, 5'100'000));
 }
+
+TEST_CASE("scrubs: issue 144, a hit from another game waits for our Link's talk and is dropped once solved here") {
+    Puzzle p;
+    Mem m = Game();
+    Puzzle::Out out;
+    p.Look(kScene, Room(), std::nullopt, 1'000'000, out);
+    p.Look(kScene, Room(), std::nullopt, 5'000'000, out);
+    // Our Link is in an event: B's hit on Three waits, longer than the 2 s wait.
+    p.SetEvent(true, 5'000'000);
+    CHECK(p.Receive(HitOn(kThree), 5'000'000));
+    CHECK(Frame(p, m, 5'100'000).empty());
+    CHECK(Frame(p, m, 9'000'000).empty());
+    CHECK(p.Pending() == 1);
+    p.SetEvent(true, 9'000'000);
+    p.SetEvent(false, 9'500'000);  // the event ended: the 2 s tail still waits
+    p.Look(kScene, Room(), std::nullopt, 10'900'000, out);  // the walk runs on meanwhile
+    p.SetEvent(false, 10'900'000);
+    CHECK(Frame(p, m, 10'900'000).empty());
+    CHECK(p.Pending() == 1);
+    p.Look(kScene, Room(), std::nullopt, 11'100'000, out);
+    p.SetEvent(false, 11'100'000);  // the tail is over: given now, the wait starts again
+    REQUIRE(Frame(p, m, 11'200'000).size() == 1);
+    CHECK(m.Get32(kBlock + addr::kPayload) == 2);
+    // Our One takes the last right hit here: the manager is solved, and A talks to One.
+    out = {};
+    p.Look(kScene, Room("Paralysis", "Paralysis", "SmallHit"), std::nullopt, 12'000'000, out);
+    CHECK(p.Solved(kManager));
+    p.SetEvent(true, 12'500'000);
+    // B's own last hit on One comes in during the talk: dropped, never sent to our manager.
+    CHECK(p.Receive(HitOn(kOne), 13'000'000));
+    CHECK(p.Pending() == 0);
+    p.Look(kScene, Room("Paralysis", "Paralysis", "SmallHit"), std::nullopt, 17'000'000, out);
+    p.SetEvent(false, 17'000'000);
+    CHECK(Frame(p, m, 17'100'000).empty());
+    // A new visit is a new try.
+    p.Look("KokiriForest", {}, std::nullopt, 20'000'000, out);
+    CHECK_FALSE(p.Solved(kManager));
+}
+
+TEST_CASE("scrubs: issue 144, a hit queued before the solve is dropped, not given") {
+    Puzzle p;
+    Mem m = Game();
+    Puzzle::Out out;
+    p.Look(kScene, Room(), std::nullopt, 1'000'000, out);
+    p.Look(kScene, Room(), std::nullopt, 5'000'000, out);
+    p.SetEvent(true, 5'000'000);
+    CHECK(p.Receive(HitOn(kOne), 5'000'000));
+    p.Look(kScene, Room("Paralysis", "Paralysis", "SmallHit"), std::nullopt, 5'100'000, out);
+    p.Look(kScene, Room("Paralysis", "Paralysis", "SmallHit"), std::nullopt, 7'500'000, out);
+    p.SetEvent(false, 7'500'000);  // after the tail
+    CHECK(Frame(p, m, 7'500'000).empty());
+    CHECK(p.Pending() == 0);
+}
+
+TEST_CASE("scrubs: issue 144, a SmallHit on a brother before the last does not solve") {
+    Puzzle p;
+    Puzzle::Out out;
+    p.Look(kScene, Room(), std::nullopt, 1'000'000, out);
+    p.Look(kScene, Room("SmallHit"), std::nullopt, 2'000'000, out);  // Two (order 1)
+    CHECK_FALSE(p.Solved(kManager));
+    CHECK(p.Receive(HitOn(kThree), 5'000'000));
+    CHECK(p.Pending() == 1);
+}

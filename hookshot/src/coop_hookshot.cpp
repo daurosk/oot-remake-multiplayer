@@ -46,6 +46,7 @@
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
+#include "coop_time.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
 #include "hos_coop_world.h"
@@ -739,6 +740,12 @@ bool HasWrap(std::uint32_t id) {
 // The wrapped game functions (patch 0005, nx2/coop_world_wraps.py). The game's function always runs (0 at phase 0).
 int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_TIME_SET && phase == 0) {
+        // The game's own time change, with its exact time: the time sync's jump (coop_time_sync.h, GameSet).
+        CoopTime::OnGameSet(static_cast<std::uint32_t>(x[1]), static_cast<std::uint32_t>(x[2]),
+                            static_cast<std::int32_t>(x[3]));
         return 0;
     }
     if (id == HOS_COOP_WRAP_FLAG_APPLY && phase == 0) {

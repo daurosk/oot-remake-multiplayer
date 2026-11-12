@@ -21,14 +21,14 @@ One hook layer for co-op on Hookshot (hos_coop_world.h, host/coop_world.c):
 The exports are kept once the module answers HOS_COOP_WORLD_HELLO.
 ---
  host/coop_platform_ring.c            | 19 --------
- host/coop_world.c                    | 62 ++++++++++++++++++++++++++
- host/hos_coop_world.h                | 44 +++++++++++++++++++
+ host/coop_world.c                    | 62 +++++++++++++++++++++++++
+ host/hos_coop_world.h                | 46 +++++++++++++++++++
  nx2/chunks.py                        |  3 +-
  nx2/coop_hooks.py                    |  3 ++
- nx2/coop_platform_lift.py            | 15 ++++---
- nx2/coop_world_wraps.py              | 66 ++++++++++++++++++++++++++++
+ nx2/coop_platform_lift.py            | 15 +++---
+ nx2/coop_world_wraps.py              | 69 ++++++++++++++++++++++++++++
  third_party/a64-kit/lift/a64_lift.py | 26 ++++++++++-
- 8 files changed, 210 insertions(+), 28 deletions(-)
+ 8 files changed, 215 insertions(+), 28 deletions(-)
  delete mode 100644 host/coop_platform_ring.c
  create mode 100644 host/coop_world.c
  create mode 100644 host/hos_coop_world.h
@@ -129,10 +129,10 @@ index 0000000..ffea5b0
 +}
 diff --git a/host/hos_coop_world.h b/host/hos_coop_world.h
 new file mode 100644
-index 0000000..d961208
+index 0000000..9835df6
 --- /dev/null
 +++ b/host/hos_coop_world.h
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,46 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   Co-op's world hooks on Hookshot (oot-remake-multiplayer, docs/hookshot.md "World hooks"; our patch 0005).
 +
@@ -149,7 +149,7 @@ index 0000000..d961208
 +
 +/* The level of the hooks in this file: one more with every change of the events or the wraps. Hookshot tells the module
 +   at HOS_COOP_WORLD_HELLO, so a module knows what the Hookshot it runs in has (1, the first, sent 0 there). */
-+#define HOS_COOP_WORLD_VERSION 2u
++#define HOS_COOP_WORLD_VERSION 3u
 +
 +/* Events. a and b as listed; a new event takes the next number, an old module answers 0 to one it does not know. */
 +#define HOS_COOP_WORLD_HELLO 0u           /* asked by Hookshot before it keeps the exports: 1 once the module is on.
@@ -164,6 +164,8 @@ index 0000000..d961208
 +
 +/* Wrapped game functions (nx2/coop_world_wraps.py WRAPS: id, main offset, first words). A new wrap takes the next id. */
 +#define HOS_COOP_WRAP_FLAG_APPLY 1u   /* main+0xb99980: the game applies its queued flag writes (the save load's too) */
++#define HOS_COOP_WRAP_TIME_SET 2u     /* main+0xeee640: the game sets its clock (x0 the time object, w1 seconds since
++                                         midnight, w2 a mode, w3 days or -1); every time change goes through it */
 +
 +/* The module's exports (extern "C"), both optional. Called on the game thread that ran the hooked function (not always
 +   the calc thread): quick, no lock the game waits on, no game call. hos_coop_world returns 1 when taken.
@@ -243,10 +245,10 @@ index 9c9944b..4d5c73f 100644
      return 1
 diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
 new file mode 100644
-index 0000000..02fe686
+index 0000000..814c881
 --- /dev/null
 +++ b/nx2/coop_world_wraps.py
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,69 @@
 +"""Co-op's wrapped game functions (oot-remake-multiplayer's patch 0005, its docs/hookshot.md "World hooks").
 +
 +A wrap is the native way for co-op to see and take part in what the game does in its world: every call of the game's
@@ -264,6 +266,9 @@ index 0000000..02fe686
 +WRAPS = (
 +    # HOS_COOP_WRAP_FLAG_APPLY: the game applies its queued flag writes (the save load's too); the module counts them
 +    (1, 0xb99980, (0xd503237f, 0xd10243ff, 0xfd0013e8, 0xa9037bfd)),   # pacibsp; sub sp; str d8; stp x29, x30
++    # HOS_COOP_WRAP_TIME_SET: the game sets its clock (the AI node's set, the Sun's Song, a night's sleep, a save's
++    # time: its three callers main+0x34522e0, 0x3cd5cc, 0x34250f4); the module sends the jump to the other games
++    (2, 0xeee640, (0xd503237f, 0xa9bd7bfd, 0xf9000bfc, 0xa9024ff4)),   # pacibsp; stp x29, x30; str x28; stp x20, x19
 +)
 +
 +

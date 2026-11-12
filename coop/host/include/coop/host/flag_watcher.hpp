@@ -166,11 +166,15 @@ class FlagWatcher {
   // the next gain of a count (a small key, a heart piece; never a guarded
   // count, guard_count: no chest holds a token) in our own game within
   // kDoubledGainFrames is put back and not sent (take_counts_guarded reports
-  // it). One call drops one gain; unused ones lapse. Short on purpose: the
-  // get scene gives the item 2-3 s after the opening is seen and holds our
-  // Link meanwhile, so a real key from elsewhere cannot come inside it (a
-  // map or compass chest arms it too: no content table).
+  // it). One call drops one gain. There is no table of what a chest holds,
+  // so the caller bounds it to that chest's own get scene: the hook calls
+  // end_doubled_gain() when our Link's event ends (or never started), and
+  // kDoubledGainFrames is only a cap. Inside the scene our Link is held, so
+  // the only count gain there is the chest's own (none for a map, compass
+  // or rupees, and then nothing is taken).
   void expect_doubled_gain();
+  // The reopened chest's get scene is over: nothing more is taken back.
+  void end_doubled_gain() { doubled_ = 0; }
   static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
   static constexpr std::int32_t kMaxDoubledGains = 4;
 

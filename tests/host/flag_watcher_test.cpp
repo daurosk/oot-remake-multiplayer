@@ -1506,3 +1506,16 @@ TEST_CASE("doubled chest: a guarded count (tokens, never in a chest) is left to 
   CHECK(store.tokens() == 6);
   CHECK(w.stats().doubled_gains == 0);
 }
+
+TEST_CASE("doubled chest: once its get scene ends, a key counts again") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  w.frame(store);
+  w.expect_doubled_gain();
+  w.frame(store);
+  w.end_doubled_gain();  // a map chest: no count in its scene
+  store.tokens(6);       // a real key just after
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().doubled_gains == 0);
+}

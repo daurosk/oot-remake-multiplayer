@@ -663,10 +663,24 @@ public:
                      "put back, not sent",
                      g.count.hash, g.amount);
         }
-        for (unsigned n = CoopObjects::TakeChestsOpenedTwice(); n > 0; --n) {  // issue 195
-            if (session_->expect_doubled_gain()) {
-                LOG_INFO(Core, "coop: flags: a chest another player had opened was opened here too: "
-                               "this game's next count gain is taken back");
+        {  // issue 195: a chest another player had opened, opened again here
+            const bool in_event = reading && reading->event_running.value_or(false);
+            for (unsigned n = CoopObjects::TakeChestsOpenedTwice(); n > 0; --n) {
+                if (session_->expect_doubled_gain()) {
+                    LOG_INFO(Core, "coop: flags: a chest another player had opened was opened here too: "
+                                   "this game's count gain in its get scene is taken back");
+                    doubled_since_ms_ = SteadyMs();
+                    doubled_event_seen_ = in_event;
+                }
+            }
+            if (doubled_since_ms_ != 0) {
+                // Only its own get scene: over when our Link's event ends, or
+                // when none started (the opening was not ours after all).
+                doubled_event_seen_ = doubled_event_seen_ || in_event;
+                if (!in_event && (doubled_event_seen_ || SteadyMs() - doubled_since_ms_ > kDoubledNoEventMs)) {
+                    session_->end_doubled_gain();
+                    doubled_since_ms_ = 0;
+                }
             }
         }
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
@@ -1363,6 +1377,9 @@ private:
     std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
     std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
+    std::uint64_t doubled_since_ms_ = 0;  // issue 195: a reopened chest's take-back is armed
+    bool doubled_event_seen_ = false;     // its get scene (our Link's event) began
+    static constexpr std::uint64_t kDoubledNoEventMs = 1000;
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event

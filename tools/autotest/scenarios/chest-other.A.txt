@@ -14,7 +14,7 @@
 #  - "a-try" (A presses A at the shown-open chest): the double give. PASS: nothing opens. If the
 #    AI still opens it (A logs "Obj_TBox_A_02: opened here too after another game (... N this
 #    session)" and shot "a-try-get" shows A's own get scene), A must ALSO log "a chest another
-#    player had opened was opened here too: this game's next count gain is taken back": then a
+#    player had opened was opened here too: this game's count gain in its get scene is taken back": then a
 #    small key or heart piece in such a chest counts once (flag_watcher expect_doubled_gain);
 #    record in #195 that the AI lets it open. FAIL: "opened here too" without that line.
 #    (The map is one-way shared, so no count moves here: the lines and the shot are the proof.)

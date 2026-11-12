@@ -3732,10 +3732,11 @@ TEST_CASE("encrypted traffic: a right proof switches the connection to its keys 
   // The challenge carries the server's key share.
   std::vector<Action> actions = h.session.take_actions();
   REQUIRE(actions.size() == 1);
-  const auto& challenge_send = std::get<SendAction>(actions[0]);
+  // A copy: `actions` is reassigned below.
+  const SendAction challenge_send = std::get<SendAction>(actions[0]);
   Message decoded;
   REQUIRE(decode(challenge_send.bytes, decoded) == Error::none);
-  const auto& challenge = std::get<JoinChallenge>(decoded);
+  const JoinChallenge challenge = std::get<JoinChallenge>(decoded);  // a copy: `decoded` is reused below
   REQUIRE(challenge.key_share.has_value());
 
   h.session.received(1, kChannelSession,
@@ -3791,13 +3792,13 @@ TEST_CASE("encrypted traffic: without a password the traffic stays plain") {
   h.clear();
   h.receive(1, hello_from("Link"), kChannelSession);  // with a key share
   CHECK(h.encrypted.empty());
-  CHECK(only_message_to<Welcome>(h, 1).has_value());
+  CHECK(messages_to<Welcome>(h, 1).size() == 1);  // the first player also gets HOST and FLAG_SNAPSHOT
   Hello plain = hello_from("Zelda");
   plain.key_share.reset();
   h.connect(2);
   h.clear();
   h.receive(2, plain, kChannelSession);
-  CHECK(only_message_to<Welcome>(h, 2).has_value());
+  CHECK(messages_to<Welcome>(h, 2).size() == 1);
   CHECK(h.encrypted.empty());
 }
 

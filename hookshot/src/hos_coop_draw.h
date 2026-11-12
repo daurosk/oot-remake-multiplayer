@@ -32,5 +32,12 @@ typedef struct HosCoopDraw {
 typedef int (*hos_coop_draw_wanted_fn)(void);             /* 1: something to draw now (Hookshot then makes an ImGui frame) */
 typedef void (*hos_coop_draw_fn)(const HosCoopDraw *d);   /* draws it (the table up to text_width) */
 typedef void (*hos_coop_draw2_fn)(const HosCoopDraw *d);  /* draws it (the whole table) */
+/* The game's camera, for co-op's name tags and edge arrows (optional exports; an older module has none). For each draw
+   into the scene's colour target (B10G11R11 with depth), on the thread that records it: hos_coop_camera_wanted says
+   whether this frame (Hookshot's frame number) still wants a camera from a target this size (the largest of a frame
+   wins); if so, hos_coop_camera gets the draw's vertex-stage uniform buffer 3, its first 0x130 bytes (the game's
+   camera block: view-projection at 0x30, the target's size at 0x120), and checks it itself. */
+typedef int (*hos_coop_camera_wanted_fn)(uint64_t frame, float width, float height);
+typedef void (*hos_coop_camera_fn)(uint64_t frame, const float *block, float width, float height);
 
 #endif

@@ -4,6 +4,8 @@
 #        play.cmd -Server 192.168.1.20 -Name Saria [-Port 27510]   no questions
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
+#        Host-Hookshot.bat, Join-Hookshot.bat (play.ps1 host|join -Hookshot)  the same with the
+#                                  Hookshot game Build-Hookshot-Coop.bat built (coop.ini beside its hookshot.exe)
 # On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
 # says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
 # Every later play.ps1 must accept -NoUpdate.
@@ -12,7 +14,8 @@ param(
     [string]$Server = '',
     [string]$Name = '',
     [string]$Port = '',
-    [switch]$NoUpdate
+    [switch]$NoUpdate,
+    [switch]$Hookshot
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
@@ -25,6 +28,20 @@ $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
 $ini = Join-Path $emu 'user\config\coop.ini'
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
+if ($Hookshot) {
+    # The game Build-Hookshot-Coop.bat built (hookshot-build.ps1 notes where, for -Out); its module
+    # reads coop.ini beside hookshot.exe. The emulator's own steps below are skipped for it.
+    $hsGame = Join-Path $kit 'hookshot\game'
+    $hsWhere = Join-Path $kit 'hookshot\game-folder.txt'
+    if (Test-Path -LiteralPath $hsWhere) { $hsGame = (Get-Content -LiteralPath $hsWhere -TotalCount 1).Trim() }
+    $exe = @((Join-Path $hsGame 'bin\hookshot.exe'), (Join-Path $hsGame 'hookshot.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $exe -or -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
+        Write-Host "No co-op Hookshot game in $hsGame yet. Run Build-Hookshot-Coop.bat first (PLAY-ONLINE.md, ""On Hookshot"")."
+        exit 1
+    }
+    $emu = Split-Path -Parent $exe
+    $ini = Join-Path $emu 'coop.ini'
+}
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
@@ -111,6 +128,7 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
                 foreach ($pair in @(@('-Mode', $Mode), @('-Server', $Server), @('-Name', $Name), @('-Port', $Port))) {
                     if ($pair[1]) { $next += $pair }
                 }
+                if ($Hookshot) { $next += '-Hookshot' }
                 & $ps @next -NoUpdate
                 exit $LASTEXITCODE
             }
@@ -245,9 +263,14 @@ Write-CoopIni $template $ini $Server $Port $Name $Password
 Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'none' })   (play.cmd change to change the name)"
 
 $user = Join-Path $emu 'user'
-if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
+if ($Hookshot) {
+    $running = Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+    if ($running) { Write-Host 'This Hookshot game is already running; close it first to use new settings.'; exit 1 }
+}
+elseif (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
     Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
 }
+if (-not $Hookshot) {
 $running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
 if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
 
@@ -265,6 +288,7 @@ if ($mods.Count -gt 0) {
     Write-Host 'Remove those folders, or turn them off: in the emulator, right-click the game,'
     Write-Host 'Properties, Add-Ons, untick them. Then start again.'
     exit 1
+}
 }
 # Invite code: the helper window that carries the game's traffic to the host (start-join.ps1).
 if ($inviteJoin) {
@@ -312,6 +336,14 @@ foreach ($key in $options.Keys) {
     }
     Set-Item -Path "env:$key" -Value $value
     Write-Host "Option: $key=$value"
+}
+if ($Hookshot) {
+    if (Test-Path -LiteralPath (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json')) { Write-Host 'Puppet pack: found.' }
+    else { Write-Host 'Puppet pack: not in the Hookshot game; run Build-Hookshot-Coop.bat -Game <your .nup> again.' }
+    $started = Get-Date
+    $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+    Write-Host "Hookshot started. Its hookshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
+    exit 0
 }
 # AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).
 $cardList = $null

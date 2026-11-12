@@ -174,6 +174,20 @@ To pick your own: open `coop-options.ini` beside `Host.bat` and `Join.bat`, remo
 
 The tunics come in ten colours (green, red, orange, yellow, cyan, blue, purple, pink, white, black); another colour gets the nearest of them (brown looks black, gray looks white). They are made by `make-puppet-pack.cmd` from your own game, so run it again after an update that brings them. A puppet pack from before the colours still works: everyone then wears green (after about 30 s the first time). `LICHII_COOP_TUNICS=0` in `coop-options.ini` turns the colours off for what you see.
 
+## On Hookshot (experimental)
+
+[Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0) runs the game as a native PC program instead of in the emulator. The kit can build a co-op Hookshot game for you from your own game files. Emulator players and Hookshot players can be in the same session: same game build, same server.
+
+**You need:** a graphics card with Vulkan 1.3 and mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM, about 60 GB free while it builds, and your game as a `.nup` file (or its `romfs` and `exefs` folders), the same version as for the emulator. [setup.md](setup.md#hookshot-instead-of-the-emulator-experimental) has the details.
+
+1. Double-click `Build-Hookshot-Coop.bat` in the kit. It finds your `.nup` as `make-puppet-pack.cmd` does, or asks you to drag it into the window. The first time it downloads Hookshot's build tools (about 400 MB, checked against what Hookshot published), then builds the game: 10 to 45 minutes. When it finishes, the game is in `hookshot\game` in the kit, with co-op and the puppet pack already in it.
+2. The host double-clicks `Host-Hookshot.bat`, the others `Join-Hookshot.bat`. They work like `Host.bat` and `Join.bat` (same questions, same server; invite codes too, not yet tested on Hookshot) but start the Hookshot game instead of the emulator; they write its `coop.ini` beside its `hookshot.exe`. Hookshot and emulator players can join each other's games.
+3. The game's `hookshot_log.txt` (beside it) says `coop: module loaded`, then `coop: connected`. `Join-Hookshot.bat` does not yet watch for the connection as `Join.bat` does: look in the log, or for the other players in the game.
+
+**After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files into the game in a few minutes, and builds the game again only when the update moved to a newer Hookshot.
+
+**What works on Hookshot so far:** seeing each other (the puppets) and the session itself. The rest of co-op (shared items, flags, enemies, the co-op window and chat) is emulator-only for now; [known-issues.md](known-issues.md) says what changes. `HOS_COOP=0` starts the Hookshot game without co-op. Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD device losses) are listed in its readme.
+
 ## When you are done
 
 Our programs change no firewall rule. The router forward Host.bat asks for (UPnP) ends when the server window closes (after a crash, within 10 minutes; a router that only takes permanent forwards keeps it until you remove it on its page, and the server window says so). The invite code stops working when the window closes, and nothing listens then. What you opened by hand stays open until you close it:

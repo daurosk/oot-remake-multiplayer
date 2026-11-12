@@ -68,6 +68,7 @@
 #include "coop_story.h"
 #include "coop_live_events.h"
 #include "coop_objects.h"
+#include "coop_ocarina.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
@@ -318,6 +319,19 @@ public:
             });
             LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
         }
+        ocarina_sound_ = EnvString("LICHII_COOP_OCARINA_SOUND") != "0";
+        if (ocarina_sound_) {
+            CoopSvc::AddCaller(70, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                          std::uint64_t) {
+                std::lock_guard lock(voices_mutex_);
+                auto call = voices_.Step(guest, after_call, result, base_);
+                for (const auto& line : voices_.TakeNotes()) {
+                    LOG_INFO(Core, "coop: ocarina: {}", line);
+                }
+                return call;
+            });
+            LOG_INFO(Core, "coop: ocarina: the other players' notes sound here (off with LICHII_COOP_OCARINA_SOUND=0)");
+        }
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
                 session_->share_one_way(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
@@ -526,6 +540,25 @@ public:
                          *name);
                 std::lock_guard lock(live_mutex_);
                 live_requester_.Want(*name);
+            }
+        }
+        // Issue 152: the notes of the players in our scene sound here; the
+        // others, and everyone while we are not connected, are silent.
+        if (ocarina_sound_) {
+            std::array<std::optional<coop::protocol::OcarinaNote>, CoopOcarina::Voices::kVoices> notes{};
+            if (report.connected && view.scene) {
+                session_->with_presence([&](coop::presence::Presence& p) {
+                    for (const std::uint8_t n : p.players()) {
+                        const auto* pl = p.player(n);
+                        if (pl && n >= 1 && n <= notes.size() && p.same_scene(n, *view.scene)) {
+                            notes[n - 1] = pl->ocarina();
+                        }
+                    }
+                });
+            }
+            std::lock_guard lock(voices_mutex_);
+            for (std::size_t i = 0; i < notes.size(); ++i) {
+                voices_.Want(i, notes[i]);
             }
         }
         if (hold && (hold->held() != 0) != holding_logged_) {
@@ -1290,6 +1323,11 @@ private:
     CoopLiveEvents::Requester live_requester_;
     CoopLiveEvents::SceneSync scene_sync_decider_;
     bool scene_sync_ = true;
+    // Issue 152: the other players' ocarina notes, sounded here (off with
+    // LICHII_COOP_OCARINA_SOUND=0). Voices runs on the calc thread (CoopSvc caller).
+    bool ocarina_sound_ = true;
+    std::mutex voices_mutex_;
+    CoopOcarina::Voices voices_;
     std::optional<std::string> tunic_;  // coop.ini tunic / LICHII_COOP_TUNIC / the Co-op menu
     std::mutex tunic_mutex_;
     const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106

@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_ocarina.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
+#include <utility>
 
 namespace CoopOcarina {
 
 const std::vector<std::string>& NoteNames() {
-    // The SLink assets Ocarina_<name> (SLink2/slink2.Product.111.bslnk).
+    // The SLink assets Ocarina_<name>, in the order the ocarina sound object
+    // keeps them (its constructor, main 0xe7c570): sound n is names[n].
     static const std::vector<std::string> names{
-        "",       "LowB", "LowC",  "LowCsharp", "C",     "Csharp", "D",      "Dsharp",
-        "E",      "F",    "Fsharp", "G",        "Gsharp", "A",     "Asharp", "B",
+        "",       "LowB", "LowC",   "LowCsharp", "D",      "Dsharp", "E",     "F",
+        "Fsharp", "G",    "Gsharp", "A",         "Asharp", "B",      "C",     "Csharp",
         "HighD",  "HighDsharp", "HighE", "HighF"};
     return names;
 }
@@ -169,6 +173,127 @@ std::vector<std::string> OcarinaProbe::Look(const ReadWord& read, std::uint64_t 
         ++lines_;
     }
     return lines;
+}
+
+std::optional<CoopPuppet::Call> Voices::Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                             std::uint64_t main_base) {
+    if (after_call) {
+        Finish(guest, result);
+    } else if (pending_ != Pending::none) {
+        // A new frame and the last call never came back: the cave did not
+        // make it. Ask again.
+        if (pending_ == Pending::malloc) {
+            allocating_ = false;
+        }
+        pending_ = Pending::none;
+    }
+    if (main_base == 0) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < voices_.size(); ++i) {
+        Voice& v = voices_[i];
+        if (v.playing == v.want) {
+            continue;
+        }
+        if (v.playing && !v.handle) {  // nothing sounds (the play gave no sound): nothing to stop
+            v.playing.reset();
+            if (!v.want) {
+                continue;
+            }
+        }
+        if (v.playing) {
+            CoopPuppet::Call c;
+            c.function = main_base + kStopSound;
+            c.x[0] = block_ + kHandles + kHandleSize * i;
+            c.s0 = -1.0f;  // at once, as the game when the button is let go
+            pending_ = Pending::stop;
+            pending_voice_ = i;
+            return c;
+        }
+        if (block_ == 0) {
+            if (allocating_ || no_memory_) {
+                return std::nullopt;
+            }
+            CoopPuppet::Call c;
+            c.function = main_base + kMalloc;
+            c.x[0] = kBlockSize;
+            pending_ = Pending::malloc;
+            allocating_ = true;
+            return c;
+        }
+        // The request, as the object's update builds it (main 0x3294df0):
+        // +0 a byte 0, +8 the name, +0x10 0, +0x18 0.0, +0x1c the volume,
+        // +0x20 0, +0x24 -1.
+        std::array<std::uint8_t, kRequestSize> request{};
+        const std::uint64_t name = main_base + kNoteNames[v.want->note % kNoteNames.size()];
+        const std::int32_t minus_one = -1;
+        std::memcpy(request.data() + 0x08, &name, 8);
+        std::memcpy(request.data() + 0x1c, &volume_, 4);
+        std::memcpy(request.data() + 0x24, &minus_one, 4);
+        if (!guest.Write(block_ + kRequest, request.data(), request.size())) {
+            v.playing = v.want;  // no more tries for this note
+            v.handle = false;
+            continue;
+        }
+        CoopPuppet::Call c;
+        c.function = main_base + kPlaySound;
+        c.x[0] = block_ + kRequest;
+        pending_ = Pending::play;
+        pending_voice_ = i;
+        return c;
+    }
+    return std::nullopt;
+}
+
+void Voices::Finish(CoopPuppet::Guest& guest, std::uint64_t result) {
+    const Pending was = std::exchange(pending_, Pending::none);
+    if (was == Pending::none) {
+        return;
+    }
+    if (was == Pending::malloc) {
+        allocating_ = false;
+        const std::array<std::uint8_t, kBlockSize> zero{};
+        if (result != 0 && guest.Write(result, zero.data(), zero.size())) {
+            block_ = result;
+            notes_.push_back("memory for the notes at " + Hex(result));
+        } else {
+            no_memory_ = true;  // these notes stay silent this run
+            notes_.push_back("no memory for the notes: the other players' notes stay silent");
+        }
+        return;
+    }
+    Voice& v = voices_[pending_voice_];
+    if (was == Pending::stop) {
+        v.playing.reset();
+        v.handle = false;
+        return;
+    }
+    // A play: the handle the game keeps is the sound and its serial (+0x10
+    // of the sound), which every later use checks against the sound's own.
+    v.playing = v.want;
+    v.handle = false;
+    std::uint32_t serial = 0;
+    if (result != 0 && guest.Read(result + 0x10, &serial, 4)) {
+        const std::array<std::uint64_t, 2> words{result, serial};
+        v.handle = guest.Write(block_ + kHandles + kHandleSize * pending_voice_, words.data(), sizeof(words));
+    }
+    ++played_;
+}
+
+void Voices::Want(std::size_t voice, std::optional<coop::protocol::OcarinaNote> note) {
+    if (voice < voices_.size()) {
+        voices_[voice].want = note;
+    }
+}
+
+std::vector<std::string> Voices::TakeNotes() {
+    return std::exchange(notes_, {});
+}
+
+std::string Voices::Hex(std::uint64_t v) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(v));
+    return text;
 }
 
 } // namespace CoopOcarina

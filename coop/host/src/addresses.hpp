@@ -206,5 +206,17 @@ inline constexpr std::uint64_t kOcarinaEntry = 0x100;
 inline constexpr std::uint32_t kOcarinaMinCount = 0x21;
 inline constexpr std::uint64_t kOcarinaSoundVtable = 0x4ba1978;
 inline constexpr std::uint64_t kOcarinaLastNote = 0x23c;
+// What the object's own update (main 0x3294df0) sounds now: the note sound
+// 1 to 19 (names[n - 1]: Ocarina_LowB ... Ocarina_HighF) at + 0x234, or at
+// + 0x280 while the state at + 0x230 is 5, 6, 8 or 12 or the byte at + 0x288
+// is 1 (the game plays a melody back); nothing when bit 0 of + 0x271 is set
+// (the button let go) or the note is 0. A u32 at + 0x278 other than 0, or
+// state 12 or 14, leaves the sound as it is.
+inline constexpr std::uint64_t kOcarinaState = 0x230;
+inline constexpr std::uint64_t kOcarinaSound = 0x234;
+inline constexpr std::uint64_t kOcarinaReleased = 0x271;
+inline constexpr std::uint64_t kOcarinaHold = 0x278;
+inline constexpr std::uint64_t kOcarinaMelodySound = 0x280;
+inline constexpr std::uint64_t kOcarinaMelodyOn = 0x288;
 
 }  // namespace coop::host::addr

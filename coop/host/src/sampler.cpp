@@ -126,7 +126,7 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
   // A new note: the game's last note changed while we play, or we started.
   if (reading->ocarina_note) {
     if (!ocarina_ || ocarina_->note != *reading->ocarina_note) {
-      if (ocarina_ || (previous_ && previous_->ocarina_note)) ++ocarina_count_;
+      ++ocarina_count_;  // every note that starts, the same one again too
       ocarina_ = protocol::OcarinaNote{*reading->ocarina_note, ocarina_count_};
     }
   } else {

@@ -120,3 +120,112 @@ TEST_CASE("ocarina: a word that steps all the time is muted") {
     }
     CHECK(seen == CoopOcarina::OcarinaProbe::kNoisySteps);
 }
+
+namespace {
+
+// Guest memory for Voices: bytes by address.
+struct Bytes : CoopPuppet::Guest {
+    std::map<std::uint64_t, std::uint8_t> at;
+    bool Read(std::uint64_t address, void* out, std::size_t size) override {
+        auto* o = static_cast<std::uint8_t*>(out);
+        for (std::size_t i = 0; i < size; ++i) {
+            const auto it = at.find(address + i);
+            o[i] = it == at.end() ? 0 : it->second;
+        }
+        return true;
+    }
+    bool Write(std::uint64_t address, const void* in, std::size_t size) override {
+        const auto* p = static_cast<const std::uint8_t*>(in);
+        for (std::size_t i = 0; i < size; ++i) {
+            at[address + i] = p[i];
+        }
+        return true;
+    }
+    std::uint64_t U64(std::uint64_t address) {
+        std::uint64_t v = 0;
+        Read(address, &v, 8);
+        return v;
+    }
+};
+
+constexpr std::uint64_t kMain = 0x8000'0000;
+constexpr std::uint64_t kBlock = 0x1'0000;
+constexpr std::uint64_t kSound = 0x2'0000;
+
+} // namespace
+
+TEST_CASE("ocarina voices: a note from another player plays and stops here (issue 152)") {
+    using CoopOcarina::Voices;
+    Bytes g;
+    Voices v;
+    CHECK_FALSE(v.Step(g, false, 0, kMain).has_value());  // nothing wanted: no call
+    v.Want(1, coop::protocol::OcarinaNote{10, 1});         // player 2 plays A
+    // First the memory block.
+    auto c = v.Step(g, false, 0, kMain);
+    REQUIRE(c.has_value());
+    CHECK(c->function == kMain + Voices::kMalloc);
+    CHECK(c->x[0] == Voices::kBlockSize);
+    // Then the play, with a request that names Ocarina_A.
+    c = v.Step(g, true, kBlock, kMain);
+    REQUIRE(c.has_value());
+    CHECK(c->function == kMain + Voices::kPlaySound);
+    CHECK(c->x[0] == kBlock + Voices::kRequest);
+    CHECK(g.U64(kBlock + Voices::kRequest + 8) == kMain + Voices::kNoteNames[10]);
+    // The sound comes back, serial 7: kept in player 2's handle.
+    const std::uint32_t serial = 7;
+    g.Write(kSound + 0x10, &serial, 4);
+    CHECK_FALSE(v.Step(g, true, kSound, kMain).has_value());
+    const std::uint64_t handle = kBlock + Voices::kHandles + Voices::kHandleSize;
+    CHECK(g.U64(handle) == kSound);
+    CHECK(g.U64(handle + 8) == serial);
+    CHECK(v.Played() == 1);
+    // Held: nothing more.
+    CHECK_FALSE(v.Step(g, false, 0, kMain).has_value());
+    // Let go: stopped at once through the handle.
+    v.Want(1, std::nullopt);
+    c = v.Step(g, false, 0, kMain);
+    REQUIRE(c.has_value());
+    CHECK(c->function == kMain + Voices::kStopSound);
+    CHECK(c->x[0] == handle);
+    CHECK(c->s0 < 0.0f);
+    CHECK_FALSE(v.Step(g, true, 0, kMain).has_value());
+    CHECK_FALSE(v.Step(g, false, 0, kMain).has_value());
+}
+
+TEST_CASE("ocarina voices: a new note stops the last one first; the same note again plays again") {
+    using CoopOcarina::Voices;
+    Bytes g;
+    Voices v;
+    const std::uint32_t serial = 3;
+    g.Write(kSound + 0x10, &serial, 4);
+    v.Want(0, coop::protocol::OcarinaNote{3, 1});
+    REQUIRE(v.Step(g, false, 0, kMain).has_value());         // malloc
+    REQUIRE(v.Step(g, true, kBlock, kMain).has_value());     // play
+    CHECK_FALSE(v.Step(g, true, kSound, kMain).has_value());
+    v.Want(0, coop::protocol::OcarinaNote{3, 2});            // the same note, pressed again
+    auto c = v.Step(g, false, 0, kMain);
+    REQUIRE(c.has_value());
+    CHECK(c->function == kMain + Voices::kStopSound);
+    c = v.Step(g, true, 0, kMain);
+    REQUIRE(c.has_value());
+    CHECK(c->function == kMain + Voices::kPlaySound);
+    CHECK_FALSE(v.Step(g, true, kSound, kMain).has_value());
+    CHECK(v.Played() == 2);
+}
+
+TEST_CASE("ocarina voices: no memory leaves the notes silent without asking again") {
+    using CoopOcarina::Voices;
+    Bytes g;
+    Voices v;
+    v.Want(0, coop::protocol::OcarinaNote{0, 1});
+    REQUIRE(v.Step(g, false, 0, kMain).has_value());
+    CHECK_FALSE(v.Step(g, true, 0, kMain).has_value());  // malloc gave nothing
+    CHECK_FALSE(v.Step(g, false, 0, kMain).has_value());
+    CHECK(v.Block() == 0);
+}
+
+TEST_CASE("ocarina: the note names are the game's own order") {
+    CHECK(CoopOcarina::NoteNames()[11] == "A");
+    CHECK(CoopOcarina::NoteNames()[4] == "D");
+    CHECK(CoopOcarina::NoteNames()[16] == "HighD");
+}

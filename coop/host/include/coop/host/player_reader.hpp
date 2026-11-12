@@ -35,7 +35,8 @@ struct PlayerReading {
   // The running event's flow name while its current part is a cinematic
   // (Dm_...); nothing otherwise (talks, signs, item gets).
   std::optional<std::string> cutscene;
-  // The game's last ocarina note (0 to 18), read only while our Link plays
+  // The ocarina note that sounds now (0 to 18: Ocarina_LowB ... HighF),
+  // nothing between notes; read only while our Link plays
   // the ocarina (an AS command with "Ocarina" in it) and no cutscene runs.
   std::optional<std::uint8_t> ocarina_note;
   std::optional<protocol::Animation> animation;  // AS command in the main slot

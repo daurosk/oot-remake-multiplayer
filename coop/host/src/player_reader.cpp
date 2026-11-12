@@ -186,9 +186,17 @@ std::optional<std::uint8_t> PlayerReader::read_ocarina_note() {
   // The entry is the sound object itself (its own vtable), as seen in a run.
   const auto vtable = read_u64(memory_, *sound);
   if (!vtable || *vtable != memory_.main_base() + addr::kOcarinaSoundVtable) return std::nullopt;
-  const auto note = read_u32(memory_, *sound + addr::kOcarinaLastNote);
-  if (!note || *note >= protocol::kOcarinaNotes) return std::nullopt;
-  return static_cast<std::uint8_t>(*note);
+  // The note that sounds now, as the object's own update picks it.
+  const auto released = read_u8(memory_, *sound + addr::kOcarinaReleased);
+  const auto state = read_u32(memory_, *sound + addr::kOcarinaState);
+  const auto hold = read_u32(memory_, *sound + addr::kOcarinaHold);
+  const auto melody_on = read_u8(memory_, *sound + addr::kOcarinaMelodyOn);
+  if (!released || !state || !hold || !melody_on) return std::nullopt;
+  if ((*released & 1) != 0 || *hold != 0 || (*state | 2) == 0xe) return std::nullopt;
+  const bool melody = (*state < 13 && ((1u << *state) & 0x1160u) != 0) || *melody_on == 1;
+  const auto note = read_u32(memory_, *sound + (melody ? addr::kOcarinaMelodySound : addr::kOcarinaSound));
+  if (!note || *note == 0 || *note > protocol::kOcarinaNotes) return std::nullopt;
+  return static_cast<std::uint8_t>(*note - 1);
 }
 
 std::optional<std::string> PlayerReader::read_cutscene() {

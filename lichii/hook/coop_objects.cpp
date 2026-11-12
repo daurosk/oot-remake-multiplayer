@@ -641,7 +641,7 @@ public:
                 AnimationBase(slot_name) != AnimationBase(p.name)) {
                 took_over = slot_name;
                 if (took_over_.size() < 256) {
-                    took_over_.push_back(p.address);
+                    took_over_.emplace_back(p.address, slot_name);
                 }
             }
             // Remembered even on the first play we make on this copy (the
@@ -732,7 +732,7 @@ public:
 
     // Present thread: the copies whose own AI put another animation in slot 0
     // over the owner's since the last ask (issue 157).
-    std::vector<u64> TakeTakeovers() {
+    std::vector<std::pair<u64, std::string>> TakeTakeovers() {
         std::lock_guard lock(mutex_);
         return std::exchange(took_over_, {});
     }
@@ -920,7 +920,7 @@ private:
     std::optional<std::pair<u64, float>> frame_after_;  // actor, frame: set after the play
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
-    std::vector<u64> took_over_;  // copies whose own AI changed slot 0 (TakeTakeovers)
+    std::vector<std::pair<u64, std::string>> took_over_;  // copies whose own AI changed slot 0, and to what
     std::unordered_map<std::string, u64> cells_;
     u64 block_ = 0;
     bool allocating_ = false;
@@ -1980,8 +1980,8 @@ private:
             wish.push_back(*drive_pose_);
         }
         // Copies whose own AI wanted another animation (issue 157).
-        for (const u64 a : TheMover().TakeTakeovers()) {
-            sync_.NoteTakeover(a, now_us);
+        for (const auto& [a, name] : TheMover().TakeTakeovers()) {
+            sync_.NoteTakeover(a, now_us, name);
         }
         for (const PoseWrite& w : poses) {
             const u32 state = r.Get<u32>(w.address + kActorState).value_or(0);

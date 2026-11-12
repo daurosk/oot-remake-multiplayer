@@ -183,6 +183,19 @@ TEST_CASE("title menu: the main page moves round, Back closes it") {
     CHECK_FALSE(m.open());
 }
 
+TEST_CASE("title menu: it opens on another page for the title's own rows") {
+    Menu m;
+    m.Open(Options{}, Page::kSettings);
+    CHECK(m.page() == Page::kSettings);
+    CHECK(m.view().title == "Multiplayer settings");
+    CHECK(m.Press(Input::kBack) == Sound::kBack);
+    CHECK(m.page() == Page::kMain);
+    m.Open(Options{}, Page::kJoin);
+    CHECK(m.view().title == "Join a game");
+    m.Open(Options{}, Page::kClosed);
+    CHECK(m.page() == Page::kMain);
+}
+
 TEST_CASE("title menu: Host asks the module to host") {
     Menu m;
     m.Open(Options{});

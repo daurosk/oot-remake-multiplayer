@@ -1,22 +1,18 @@
-# hs-title-menu, A (see hs-title-menu.steps.txt): at the title, the Multiplayer menu with the pad.
-mark prompt
-press MINUS
-wait 90
-mark open
+# hs-title-menu, A (see hs-title-menu.steps.txt): the title's own co-op rows with the pad.
+mark rows
 press DDOWN
 wait 30
 press DDOWN
 wait 30
+press DDOWN
+wait 45
+mark third-down
+press DDOWN
+wait 45
+mark fourth-down
 press A
-wait 90
-mark settings
-press B
-wait 60
-press DUP
-wait 30
-press A
-wait 90
-mark join
+wait 120
+mark pressed
 press B
 wait 60
 press B

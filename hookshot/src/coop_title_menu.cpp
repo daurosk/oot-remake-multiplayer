@@ -422,11 +422,11 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {
 
 // ---------------------------------------------------------------------------
 
-void Menu::Open(const Options& options) {
+void Menu::Open(const Options& options, Page page) {
     options_ = saved_ = options;
     status_.clear();
     request_.reset();
-    Go(Page::kMain);
+    Go(page == Page::kClosed ? Page::kMain : page);
 }
 
 void Menu::Close() {

@@ -157,8 +157,9 @@ class Menu {
 public:
     bool open() const { return page_ != Page::kClosed; }
     Page page() const { return page_; }
-    // Opens on the main page with these settings to edit.
-    void Open(const Options& options);
+    // Opens with these settings to edit, on the main page or another (the title's
+    // own Join and Co-op Settings rows open theirs).
+    void Open(const Options& options, Page page = Page::kMain);
     void Close();
     // One press; the sound to play for it. A request may be waiting after it.
     Sound Press(Input input);

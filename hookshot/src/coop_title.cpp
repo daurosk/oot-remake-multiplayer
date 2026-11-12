@@ -51,6 +51,15 @@ constexpr std::uint64_t kTitleButtons = 0x2d0;        // its buttons' array
 constexpr std::uint64_t kTitleFocused = 0x2e0;        // the focused button (f_83426f40)
 constexpr std::uint64_t kTitleSounds = 0x198;         // *(+0x198)+8: its UI sound player
 constexpr std::uint64_t kPlaySound = 0x80ac65d0;      // (player, name; x8 the result's place)
+constexpr std::uint64_t kTitleLayout = 0x28;          // the screen's layout
+// A pane's text from a message, as UISystemWindowScreen sets its buttons' (f_83425bc0):
+constexpr std::uint64_t kMsgRefInit = 0x80a86f70;     // (ref): {0, 0, -1}, 24 bytes
+constexpr std::uint64_t kMsgRefSet = 0x80a8afe0;      // (ref, &"LayoutMsg/...", &"label", 1)
+constexpr std::uint64_t kPaneText = 0x80a87d30;       // (layout, "pane/T_Btn_00", ref, 1, 0)
+// The title's own co-op rows (tools/puppet_pack/title_menu.py adds them to Title_00 and their
+// texts to LayoutMsg/Title_00): Pa_Button_04 Host, _05 Join, _06 Co-op Settings.
+constexpr int kFirstRow = 4;
+constexpr std::array<const char*, 3> kRowLabels{"0100", "0101", "0102"};
 struct SoundName {
     Sound sound;
     std::uint64_t address;   // the name in the game's read-only data
@@ -81,6 +90,7 @@ std::atomic<std::uint64_t> g_screen{0};
 std::atomic<std::uint64_t> g_last_step_ms{0};
 std::atomic<bool> g_step_seen{false};
 std::atomic<bool> g_start_coop{false};
+std::atomic<bool> g_rows{false};   // the title has our three rows (the puppet pack's Title_00), texts set
 
 std::mutex g_mutex;   // everything below
 CoopTitleMenu::Menu g_menu;
@@ -623,6 +633,63 @@ int FocusedIndex(std::uint64_t screen) {
     return -1;
 }
 
+std::int32_t ButtonCount(std::uint64_t screen) {
+    std::int32_t count = 0;
+    CoopRuntime::Read(screen + kTitleCount, &count, sizeof count);
+    return count;
+}
+
+// The rows' texts, from the game's message files (LayoutMsg/Title_00: labels 0100..0102), set the way
+// the game sets its own buttons' (kPaneText). Each needs the strings and the message ref in the game's
+// memory: one scratch block (patch 0004) for a row's calls. True when all three were set.
+bool SetRowTexts(void* ctx, std::uint64_t screen) {
+    const std::uint64_t layout = Read64(screen + kTitleLayout);
+    if (ctx == nullptr || layout == 0 || !HasScratch()) {
+        return false;
+    }
+    int set = 0;
+    for (std::size_t i = 0; i < kRowLabels.size(); ++i) {
+        // [0x00] the ref, [0x20] &path, [0x28] &label, [0x30] path, [0x50] label, [0x60] pane
+        std::array<std::uint8_t, 0x90> b{};
+        const std::uint64_t base = g_api->scratch(ctx, b.data(), b.size());   // (where it goes: the same each time)
+        if (base == 0) {
+            return false;
+        }
+        const std::string path = "LayoutMsg/Title_00", label = kRowLabels[i];
+        const std::string pane = fmt::format("Pa_Button_{:02d}/T_Btn_00", kFirstRow + static_cast<int>(i));
+        const std::uint64_t at_path = base + 0x30, at_label = base + 0x50, at_pane = base + 0x60;
+        std::memcpy(b.data() + 0x20, &at_path, 8);
+        std::memcpy(b.data() + 0x28, &at_label, 8);
+        std::memcpy(b.data() + 0x30, path.c_str(), path.size() + 1);
+        std::memcpy(b.data() + 0x50, label.c_str(), label.size() + 1);
+        std::memcpy(b.data() + 0x60, pane.c_str(), pane.size() + 1);
+        if (g_api->scratch(ctx, b.data(), b.size()) != base) {
+            return false;
+        }
+        std::uint64_t x0 = 0;
+        HosCoopCall k{};
+        k.function = kMsgRefInit;
+        k.x[0] = base;
+        if (!g_api->call(ctx, &k, &x0)) {
+            return false;
+        }
+        k = HosCoopCall{};
+        k.function = kMsgRefSet;
+        k.x[0] = base, k.x[1] = base + 0x20, k.x[2] = base + 0x28, k.x[3] = 1;
+        if (!g_api->call(ctx, &k, &x0)) {
+            return false;
+        }
+        k = HosCoopCall{};
+        k.function = kPaneText;
+        k.x[0] = layout, k.x[1] = at_pane, k.x[2] = base, k.x[3] = 1, k.x[4] = 0;
+        if (!g_api->call(ctx, &k, &x0)) {
+            return false;
+        }
+        ++set;
+    }
+    return set == static_cast<int>(kRowLabels.size());
+}
+
 // The sounds waiting, played with the title screen's own sound player.
 void PlaySounds(void* ctx) {
     std::vector<Sound> sounds;
@@ -725,9 +792,20 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
         }
         return;
     }
-    if (g_screen.exchange(screen) != screen || event == HOS_COOP_TITLE_SETUP) {
-        if (event == HOS_COOP_TITLE_SETUP) {
-            LogButtons(screen);
+    g_screen = screen;
+    if (event == HOS_COOP_TITLE_SETUP) {
+        LogButtons(screen);
+        const std::int32_t count = ButtonCount(screen);
+        if (count >= kFirstRow + static_cast<std::int32_t>(kRowLabels.size())) {
+            const bool ok = SetRowTexts(ctx, screen);
+            g_rows = ok;
+            LOG_INFO(Core, "coop: title menu: the title's own rows Host, Join, Co-op Settings (buttons {} to {}){}",
+                     kFirstRow, kFirstRow + 2, ok ? "" : ": their texts could not be set");
+        } else {
+            g_rows = false;
+            LOG_INFO(Core, "coop: title menu: the title has {} buttons, not the puppet pack's {}: the Minus prompt "
+                     "instead (build the puppet pack again for the title's own rows)",
+                     count, kFirstRow + static_cast<int>(kRowLabels.size()));
         }
     }
     if (event == HOS_COOP_TITLE_STEP) {
@@ -800,7 +878,25 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     if (!HasScratch() || !TitleUp()) {
         return buttons;
     }
-    bool open = (down & kMinus) != 0;
+    if (g_rows && (down & kA) != 0) {
+        // The title's own rows: the game takes the A too (the button's own press look and sound), and its
+        // title sequence has nothing for these buttons; ours opens.
+        const int f = FocusedIndex(g_screen.load());
+        if (f >= kFirstRow && f < kFirstRow + static_cast<int>(kRowLabels.size())) {
+            LOG_INFO(Core, "coop: title menu: the title's row {} pressed",
+                     kRowLabels[static_cast<std::size_t>(f - kFirstRow)]);
+            const auto options = ReadOptions();
+            if (f == kFirstRow) {
+                g_menu.Open(options, Page::kMain);
+                Host();
+            } else {
+                g_menu.Open(options, f == kFirstRow + 1 ? Page::kJoin : Page::kSettings);
+            }
+            g_pad_eat = true;
+        }
+        return buttons;
+    }
+    bool open = !g_rows && (down & kMinus) != 0;
     if (!open && g_native && (down & kA) != 0 && FocusedIndex(g_screen.load()) == 3) {
         open = true;   // the 4th title button (LICHII_COOP_TITLE_NATIVE)
     }
@@ -870,7 +966,7 @@ std::optional<CoopDraw::TitleView> View() {
         }
         return CoopDraw::TitleView{"", std::move(v)};
     }
-    if (!HasScratch() || !TitleUp()) {
+    if (!HasScratch() || !TitleUp() || g_rows) {   // (the title's own rows: no prompt)
         return std::nullopt;
     }
     return CoopDraw::TitleView{g_doing.empty() ? std::string("Multiplayer") : g_doing, std::nullopt};

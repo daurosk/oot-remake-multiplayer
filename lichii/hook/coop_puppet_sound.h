@@ -54,6 +54,9 @@ inline constexpr std::uint64_t kSearchAsset = 0x43db00;  // (accessor, &asset, n
 inline constexpr std::uint64_t kEmit = 0x440630;         // (user, &asset, &handle, 0)
 inline constexpr std::uint64_t kKill = 0x7cc120;         // (&handle)
 inline constexpr std::uint64_t kSoundRootGot = 0x4c7e678;
+inline constexpr std::uint64_t kOcarinaModuleVtableGot = 0x4c8bfd0;  // + 0x10 = vtable
+inline constexpr std::uint64_t kModuleUser = 0x40;  // 0xd1f360 stores the made user here
+inline constexpr std::uint64_t kUserModuleBack = 0x138;  // ... and module + 0x38 here
 inline constexpr std::uint64_t kRootSLinkSystem = 0x18;
 }  // namespace addr
 
@@ -140,6 +143,14 @@ std::uint64_t SoundRoot(CoopPuppet::Guest& guest, std::uint64_t main_base);
 std::uint64_t FindUserInModules(CoopPuppet::Guest& guest, std::uint64_t root,
                                 const std::string& name, std::string* how = nullptr);
 inline constexpr std::uint64_t kModuleScan = 0x100;
+// The "Ocarina" module itself, by its vtable: [main + addr::kOcarinaModuleVtableGot] + 0x10
+// (its constructor 0xf17c30 stores that), held by the root directly or in an array, or one
+// object further down (each object's first kRootScan bytes). `how` says where. 0 if none.
+std::uint64_t FindOcarinaModule(CoopPuppet::Guest& guest, std::uint64_t main_base,
+                                std::uint64_t root, std::string* how = nullptr);
+inline constexpr std::uint64_t kRootScan = 0x200;
+// One line on a module and the user at its +0x40 (name, accessor, user checks), for the log.
+std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module);
 // The checks FindUser makes on a candidate (debug: logged for the puppet's own user).
 bool LooksLikeUser(CoopPuppet::Guest& guest, std::uint64_t user);
 inline constexpr std::uint64_t kSystemScan = 0x400;

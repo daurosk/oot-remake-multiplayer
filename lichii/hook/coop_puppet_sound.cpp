@@ -150,6 +150,75 @@ std::uint64_t FindUserInModules(CoopPuppet::Guest& guest, std::uint64_t root,
     return 0;
 }
 
+std::uint64_t FindOcarinaModule(CoopPuppet::Guest& guest, std::uint64_t main_base,
+                                std::uint64_t root, std::string* how) {
+    if (main_base == 0 || root == 0) {
+        return 0;
+    }
+    const std::uint64_t got = Pointer(guest, main_base + addr::kOcarinaModuleVtableGot);
+    if (got == 0) {
+        return 0;
+    }
+    const std::uint64_t vtable = got + 0x10;
+    const auto is = [&](std::uint64_t p) { return p != 0 && Pointer(guest, p) == vtable; };
+    // In `object`'s first kRootScan bytes: a field pointing at it, or an array holding it.
+    const auto look = [&](std::uint64_t object, std::string& where) -> std::uint64_t {
+        for (std::uint64_t off = 0; off < kRootScan; off += 8) {
+            const std::uint64_t p = Pointer(guest, object + off);
+            if (is(p)) {
+                where = "+" + Hex(off);
+                return p;
+            }
+            std::int32_t count = 0;
+            std::int32_t capacity = 0;
+            if (!Read(guest, object + off, count) || !Read(guest, object + off + 4, capacity) ||
+                count <= 0 || count > capacity || capacity > 1024) {
+                continue;
+            }
+            const std::uint64_t data = Pointer(guest, object + off + 8);
+            for (std::int32_t i = 0; data != 0 && i < count; ++i) {
+                const std::uint64_t m = Pointer(guest, data + 8 * static_cast<std::uint64_t>(i));
+                if (is(m)) {
+                    where = "array +" + Hex(off) + " [" + std::to_string(i) + "]";
+                    return m;
+                }
+            }
+        }
+        return 0;
+    };
+    std::string where;
+    if (const std::uint64_t m = look(root, where); m != 0) {
+        if (how != nullptr) {
+            *how = "root " + where;
+        }
+        return m;
+    }
+    for (std::uint64_t off = 0; off < kRootScan; off += 8) {
+        const std::uint64_t child = Pointer(guest, root + off);
+        if (child == 0 || child == root || (child & 7) != 0) {
+            continue;
+        }
+        if (const std::uint64_t m = look(child, where); m != 0) {
+            if (how != nullptr) {
+                *how = "root +" + Hex(off) + " -> " + where;
+            }
+            return m;
+        }
+    }
+    return 0;
+}
+
+std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module) {
+    const std::uint64_t user = Pointer(guest, module + addr::kModuleUser);
+    std::uint32_t flags = 0;
+    Read(guest, user + addr::kUserFlags, flags);
+    const std::uint64_t back = Pointer(guest, user + addr::kUserModuleBack);
+    return "module " + Hex(module) + ", user +0x40 " + Hex(user) + " '" + UserName(guest, user) +
+           "' accessor " + Hex(user != 0 ? Accessor(guest, user) : 0) + " flags " + Hex(flags) +
+           (user != 0 && LooksLikeUser(guest, user) ? " passes" : " fails") +
+           " the user check, back link " + (back == module + 0x38 ? "ok" : Hex(back));
+}
+
 std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,
                                const std::string& name, std::string* how) {
     if (system == 0) {
@@ -285,6 +354,21 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             std::string how;
             const std::uint64_t system = SLinkSystem(guest, main_base);
             state.ocarina_user = FindUserInModules(guest, SoundRoot(guest, main_base), kOcarinaUser, &how);
+            if (state.ocarina_user == 0) {
+                // The module by its vtable: its user even when the name checks fail (logged).
+                std::string where;
+                const std::uint64_t module =
+                    FindOcarinaModule(guest, main_base, SoundRoot(guest, main_base), &where);
+                say(module != 0 ? who + ": Ocarina " + DescribeModule(guest, module) + " (" + where + ")"
+                                : who + ": no Ocarina module (vtable [main+" +
+                                      Hex(addr::kOcarinaModuleVtableGot) + "]+0x10) near the sound root " +
+                                      Hex(SoundRoot(guest, main_base)));
+                const std::uint64_t mu = module != 0 ? Pointer(guest, module + addr::kModuleUser) : 0;
+                if (mu != 0 && Accessor(guest, mu) != 0) {
+                    state.ocarina_user = mu;
+                    how = "Ocarina module at " + where + ", field +0x40";
+                }
+            }
             if (state.ocarina_user == 0) {
                 state.ocarina_user = FindUserInSystem(guest, system, kOcarinaUser, &how);
             }

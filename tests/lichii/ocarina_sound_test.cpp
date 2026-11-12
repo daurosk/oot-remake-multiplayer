@@ -376,3 +376,39 @@ TEST_CASE("the Ocarina user is found in a module of the sound root's array") {
     CHECK(c->x[0] == 0x400080000);
     CHECK(run.said.back().find("module 1 of the array at root +0xc0") != std::string::npos);
 }
+
+TEST_CASE("the Ocarina module is found by its vtable one object below the sound root") {
+    FakeGuest g = PuppetWithSound();
+    constexpr std::uint64_t kRoot = 0x4000a0000;
+    constexpr std::uint64_t kChild = 0x4000d0000;
+    constexpr std::uint64_t kModules = 0x4000b0000;
+    constexpr std::uint64_t kModule = 0x4000c0000;
+    constexpr std::uint64_t kOcarina = 0x400060000;
+    constexpr std::uint64_t kOcarinaResource = 0x400070000;
+    constexpr std::uint64_t kVtableBase = kBase + 0x4b00000;
+    g.Put<std::uint64_t>(kBase + snd::addr::kSoundRootGot, kBase + 0x100000);
+    g.Put<std::uint64_t>(kBase + 0x100000, kRoot);
+    g.Put<std::uint64_t>(kBase + snd::addr::kOcarinaModuleVtableGot, kVtableBase);
+    g.Put<std::uint64_t>(kRoot + 0x48, kChild);
+    g.Put<std::int32_t>(kChild + 0x10, 1);
+    g.Put<std::int32_t>(kChild + 0x14, 2);
+    g.Put<std::uint64_t>(kChild + 0x18, kModules);
+    g.Put<std::uint64_t>(kModules, kModule);
+    g.Put<std::uint64_t>(kModule, kVtableBase + 0x10);
+    g.Put<std::uint64_t>(kModule + snd::addr::kModuleUser, kOcarina);
+    // The user's name is not readable: found by the module anyway.
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserResource, kOcarinaResource);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceAccessor, 0x400080000);
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserModuleBack, kModule + 0x38);
+    std::string how;
+    CHECK(snd::FindOcarinaModule(g, kBase, kRoot, &how) == kModule);
+    CHECK(how == "root +0x48 -> array +0x10 [0]");
+    CHECK(snd::DescribeModule(g, kModule).find("back link ok") != std::string::npos);
+
+    Run run;
+    snd::State st;
+    auto c = snd::Next(st, snd::Wanted{4, 1, 0}, g, kBase, kActor, kBlock, 10, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->x[0] == 0x400080000);
+    CHECK(run.said.back().find("Ocarina module at root +0x48 -> array +0x10 [0]") != std::string::npos);
+}

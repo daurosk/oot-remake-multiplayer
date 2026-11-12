@@ -544,7 +544,8 @@ public:
             if (view.position) {
                 link = std::array<float, 3>{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
             }
-            if (const auto name = scene_sync_decider_.Next(others, *view.scene, running, link)) {
+            const std::optional<std::string> own = reading ? reading->cutscene : std::nullopt;
+            if (const auto name = scene_sync_decider_.Next(others, *view.scene, running, link, own)) {
                 LOG_INFO(Core, "coop: scene: starting the cutscene {} here (another player near us started it)",
                          *name);
                 std::lock_guard lock(live_mutex_);

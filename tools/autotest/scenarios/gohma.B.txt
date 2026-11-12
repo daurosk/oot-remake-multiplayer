@@ -3,6 +3,7 @@
 mark start
 warp InsideTheDekuTree StartPos_Get_StoneOfForest
 wait 1200
+sync title 2
 mark title
 press A
 wait 180
@@ -11,7 +12,7 @@ wait 180
 press A
 wait 300
 press A
-wait 2400
+wait 4200
 mark b-in
 wait 1800
 mark b-near

@@ -1358,6 +1358,29 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
+    // A boss whose owner's game has not played its intro (unready) goes to
+    // a player whose game has, the nearest: the owner's boss still waits (Gohma
+    // on the ceiling) and would hold the fighting game's boss to that pose.
+    if (o.boss && o.unready.contains(owner)) {
+      std::optional<ConnectionId> ready;
+      std::optional<double> ready_distance;
+      for (ConnectionId other : o.present) {
+        if (other == owner || o.unready.contains(other) || !has_loaded(other, o)) continue;
+        const Connection& pc = connections_.at(other);
+        if (pc.status & kBusy) continue;
+        const auto d = distance_to(pc, o, now_us);
+        if (!ready || (d && (!ready_distance || *d < *ready_distance))) {
+          ready = other;
+          ready_distance = d;
+        }
+      }
+      if (ready) {
+        ++stats_.boss_to_ready;
+        ask_handover(oid, o, *ready, now_us);
+        continue;
+      }
+    }
+
     // A boss in a fight: the player clearly nearer it than its owner (issue
     // 150). Its AI chases only its owner's Link, so the near one gets it.
     if (o.boss && config_.boss_near_hold_us != 0 && in_fight(o, now_us)) {

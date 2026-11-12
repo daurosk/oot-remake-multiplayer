@@ -3313,6 +3313,26 @@ TEST_CASE("the host's save: SAVE_ASK goes to the host, SAVE_PART from the host t
   CHECK(h.session.stats().rate_limited == 0);
 }
 
+TEST_CASE("a boss owned by a game that has not played its intro (unready) goes to a game that has") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  ObjectPresent unready = present_in("Field", {placed(7)});
+  unready.objects[0].flags = object_presence::unready;
+  h.receive(1, unready, kChannelOwnership);  // the owner's boss still waits
+  h.receive(2, unready, kChannelOwnership);  // and so does the other's
+  h.stand(1, 3);
+  h.stand(2, 30);
+  h.clear();
+  h.run(5 * kSecond);
+  CHECK(h.asks() == 0);  // nobody is ready: it stays
+  // Player 2's intro has played: its boss fights, so it takes the boss, far or not.
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.clear();
+  h.run(250'000);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_ready == 1);
+}
+
 TEST_CASE("a boss never goes to a game whose boss has not begun its fight (unready), by hit or by being near") {
   OwnerHarness h;
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);

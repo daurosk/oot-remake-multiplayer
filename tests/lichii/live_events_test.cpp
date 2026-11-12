@@ -304,3 +304,35 @@ TEST_CASE("scene sync: two players starting at once give one start, the other is
     const auto again = s.Next({Other(2, "Kakariko", "A")}, "Kakariko", false, kHere);
     CHECK(again == std::optional<std::string>("A"));
 }
+
+TEST_CASE("scene sync: a cutscene our game played itself in this visit is not played again") {
+    CoopLiveEvents::SceneSync s;
+    // We came in first and our game played the room's entry scene.
+    CHECK_FALSE(s.Next({Other(2, "Deku", std::nullopt)}, "Deku", true, kHere, std::string("Deku_ShutIn")));
+    CHECK_FALSE(s.Next({Other(2, "Deku", std::nullopt)}, "Deku", false, kHere));
+    // The other player comes in later and plays it: not replayed here.
+    CHECK_FALSE(s.Next({Other(2, "Deku", "Deku_ShutIn")}, "Deku", false, kHere));
+    // A new scene of theirs still is.
+    CHECK(s.Next({Other(2, "Deku", "Deku_Other")}, "Deku", false, kHere) == std::optional<std::string>("Deku_Other"));
+}
+
+TEST_CASE("scene sync: in a boss room nothing is started here (each game plays the boss's scenes itself)") {
+    CoopLiveEvents::SceneSync s;
+    const std::array<float, 3> under_gohma{6.7f, 47.0f, 67.6f};
+    const auto there = [&](std::optional<std::string> cutscene) {
+        CoopLiveEvents::OtherPlayer o;
+        o.number = 2;
+        o.scene = "InsideTheDekuTree";
+        o.cutscene = std::move(cutscene);
+        o.place = std::array<float, 3>{7.5f, 47.0f, 80.0f};
+        return o;
+    };
+    CHECK_FALSE(s.Next({there(std::nullopt)}, "InsideTheDekuTree", false, under_gohma));
+    CHECK_FALSE(s.Next({there("InsideTheDekuTree_BossAppear")}, "InsideTheDekuTree", false, under_gohma));
+    // Not joined later either, and the same dungeon outside the boss room is as everywhere.
+    CHECK_FALSE(s.Next({there("InsideTheDekuTree_BossAppear")}, "InsideTheDekuTree", false, under_gohma));
+    const std::array<float, 3> upstairs{7.5f, 120.0f, 80.0f};
+    auto o = there("InsideTheDekuTree_Other");
+    o.place = upstairs;
+    CHECK(s.Next({o}, "InsideTheDekuTree", false, upstairs) == std::optional<std::string>("InsideTheDekuTree_Other"));
+}

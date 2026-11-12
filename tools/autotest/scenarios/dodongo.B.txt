@@ -1,0 +1,19 @@
+# dodongo: B loads into the same room as A and stays there.
+mark start
+warp DodongoCavern StartPos_Get_StoneOfFire
+wait 1200
+sync title 2
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 4200
+mark b-in
+wait 5400
+mark b-fight
+wait 1800
+mark end

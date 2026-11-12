@@ -12,6 +12,7 @@
 mark start
 warp InsideTheDekuTree StartPos_Get_StoneOfForest
 wait 1200               # the title screen
+sync title 2
 mark title
 press A
 wait 180
@@ -20,8 +21,11 @@ wait 180
 press A
 wait 300
 press A                 # loads the save, then the warp
-wait 2400
+wait 4200               # the save loads in Kokiri Forest first, then the warp
 mark a-in
+goto 7.5 67.2 1.5 900   # under Gohma: it sees Link and its intro plays
+mark a-centre
+wait 1200
 goto 7.5 95 1.5 900     # the edge, about 28 m from the centre
 mark a-at-edge
 wait 1800

@@ -253,6 +253,7 @@ struct Stats {
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
+  std::uint64_t boss_to_ready = 0;      // a boss asked over from a game that has not played its intro
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
   // Field grass (docs/world.md). Relayed ones count in relayed too.
   std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene

@@ -24,7 +24,11 @@
 // - The first event that starts in the room is the intro (intro_start); when
 //   it ends, intro_end. A game whose own intro still runs once any other
 //   player in that room has finished theirs skips the rest of it (the game's
-//   own force skip), so all leave the intro together.
+//   own force skip), so all leave the intro together. "Finished" is only
+//   said once the room's intro has really played in that game
+//   (Local::intro_played, when read): an earlier event of the room (the Deku
+//   Tree's door shutting, long before Gohma's own intro) ends as "past the
+//   door" (intro_start), or every other game would skip its real intro.
 // - The next event in the room after the fight began may be the boss's death
 //   (outro). When the game says whether the boss is alive (Local::boss_alive,
 //   from the object walk), that event is only taken as the death once the

@@ -597,3 +597,45 @@ TEST_CASE("boss: the boss's bodies are the boss actor, and Koume and Kotake for 
     CHECK(CoopBoss::Bodies(*twinrova).size() == 3);
     CHECK(CoopBoss::Bodies(Forest()).size() == 1);
 }
+
+TEST_CASE("boss: an event before the boss's own intro does not end as 'intro over' (Gohma's door)") {
+    const auto& deku = *CoopBoss::RoomOfScene("InsideTheDekuTree");
+    auto l = At("InsideTheDekuTree", deku.arrive);
+    l.intro_played = false;
+    Sync s;
+    s.Tick(l, 1 * kS);
+    l.event = true;  // the door shuts behind us
+    auto a = s.Tick(l, 2 * kS);
+    CHECK(Has(a, proto::BossState::intro_start));
+    l.event = false;
+    a = s.Tick(l, 4 * kS);
+    CHECK(s.phase() == Sync::Phase::fight);
+    CHECK_FALSE(Has(a, proto::BossState::intro_end));
+    // The heartbeat says "past the door", so the others are moved in but skip nothing.
+    a = s.Tick(l, 6 * kS + 1);
+    CHECK(States(a) == std::vector<proto::BossState>{proto::BossState::intro_start});
+    // Gohma's own intro, much later; once it has played here, it is over.
+    l.event = true;
+    a = s.Tick(l, 40 * kS);
+    CHECK(s.phase() == Sync::Phase::intro);
+    l.event = false;
+    l.intro_played = true;
+    a = s.Tick(l, 60 * kS);
+    CHECK(Has(a, proto::BossState::intro_end));
+    a = s.Tick(l, 63 * kS);
+    CHECK(States(a) == std::vector<proto::BossState>{proto::BossState::intro_end});
+}
+
+TEST_CASE("boss: a game past the door whose intro has not played makes no one skip theirs") {
+    const auto& deku = *CoopBoss::RoomOfScene("InsideTheDekuTree");
+    auto l = At("InsideTheDekuTree", deku.arrive, false, 2);
+    l.intro_played = false;
+    Sync s;
+    s.Tick(l, 1 * kS);
+    l.event = true;
+    s.Tick(l, 2 * kS);
+    REQUIRE(s.phase() == Sync::Phase::intro);
+    s.Receive(From(1, deku, proto::BossState::intro_start));  // player 1's door event ended: still this
+    CHECK_FALSE(s.Tick(l, 3 * kS).skip_intro);
+    CHECK_FALSE(s.Tick(l, 5 * kS).skip_intro);
+}

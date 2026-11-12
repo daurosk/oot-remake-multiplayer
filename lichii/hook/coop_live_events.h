@@ -109,9 +109,17 @@ public:
     // Once a frame. Returns the event to start here now, if any: only on the
     // sample where another player's cutscene begins (a cutscene already
     // running when we arrive is not joined halfway), each name once per visit
-    // of our scene, never while our own event runs.
+    // of our scene, never while our own event runs, and never one our game
+    // played itself in this visit (own_cutscene: ours now; a replay of an
+    // entry scene, the Deku Tree boss room's door, left our game stuck in it).
+    // Never while our Link is in a boss room (CoopBoss::RoomAt): a boss's
+    // scenes are started by the room and by the boss's own AI, and one asked
+    // by name never ended (Gohma's InsideTheDekuTree_BossAppear, started in
+    // the game of a player who stood away from it: the camera stayed on the
+    // wall and the force skip did nothing). There each game plays its own.
     std::optional<std::string> Next(const std::vector<OtherPlayer>& others, const std::string& scene,
-                                    bool event_running, std::optional<std::array<float, 3>> link);
+                                    bool event_running, std::optional<std::array<float, 3>> link,
+                                    const std::optional<std::string>& own_cutscene = std::nullopt);
 
 private:
     std::string scene_;

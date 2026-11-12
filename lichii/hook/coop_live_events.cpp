@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_live_events.h"
+#include "coop_boss.h"
 
 #include <algorithm>
 #include <cmath>
@@ -64,10 +65,14 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
 }
 
 std::optional<std::string> SceneSync::Next(const std::vector<OtherPlayer>& others, const std::string& scene,
-                                           bool event_running, std::optional<std::array<float, 3>> link) {
+                                           bool event_running, std::optional<std::array<float, 3>> link,
+                                           const std::optional<std::string>& own_cutscene) {
     if (!scene.empty() && scene != scene_) {
         scene_ = scene;
         asked_.clear();
+    }
+    if (own_cutscene) {
+        asked_.insert(*own_cutscene);  // played here: never asked again this visit
     }
     std::optional<std::string> start;
     for (const OtherPlayer& o : others) {
@@ -79,6 +84,9 @@ std::optional<std::string> SceneSync::Next(const std::vector<OtherPlayer>& other
         }
         if (!o.scene || *o.scene != scene || !link || !o.place) {
             continue;
+        }
+        if (CoopBoss::RoomAt(scene, CoopBoss::Vec{(*link)[0], (*link)[1], (*link)[2]}) != nullptr) {
+            continue;  // a boss room: its scenes are the boss's own to start (coop_boss.h)
         }
         const float dx = (*link)[0] - (*o.place)[0];
         const float dy = (*link)[1] - (*o.place)[1];

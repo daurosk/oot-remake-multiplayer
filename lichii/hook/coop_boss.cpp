@@ -370,8 +370,16 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             if (fell) {
                 phase_ = Phase::fight;
                 fight_at_ = now_us;
-                Say(out, *here_, proto::BossState::intro_end);
-                out.log.push_back(skip_asked_ ? "intro ended (skipped to follow the others)" : "intro ended");
+                if (intro_pending) {
+                    // An event of the room before the boss's own intro (the
+                    // door shutting behind us): not said as "intro over", or
+                    // the others would skip their real intro to follow us.
+                    out.log.push_back("an event of the room ended; the boss's intro has not played here yet (" +
+                                      std::string(here_->intro) + ")");
+                } else {
+                    Say(out, *here_, proto::BossState::intro_end);
+                    out.log.push_back(skip_asked_ ? "intro ended (skipped to follow the others)" : "intro ended");
+                }
             }
             break;
         case Phase::fight:
@@ -486,9 +494,11 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         if (fighting && now_us - sent_at_ >= kSendEveryUs) {
             // The heartbeat says how far we are, so a game that joins late
             // knows whether to move in (issue 148).
+            // "Intro over" only once the boss's intro has really played here
+            // (when that is read): before it we are past the door, no more.
             const auto state = !committed_ ? proto::BossState::in_room
-                               : phase_ == Phase::intro ? proto::BossState::intro_start
-                                                        : proto::BossState::intro_end;
+                               : phase_ == Phase::intro || intro_pending ? proto::BossState::intro_start
+                                                                         : proto::BossState::intro_end;
             Say(out, *here_, state);
             sent_at_ = now_us;
         }

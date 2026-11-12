@@ -1,0 +1,28 @@
+# dodongo: both games load straight into King Dodongo's room (warp DodongoCavern StartPos_Get_StoneOfFire) from an owner's
+# save before the fight. A stays where it lands. Expect (boss report): the boss actor appears in
+# both games (+ Enemy_DungeonBoss_...), "intro started" in both, owner on one game, and no
+# "boss beaten" while the boss lives (an event in the fight waits for the outro's flag).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 400
+mark start
+warp DodongoCavern StartPos_Get_StoneOfFire
+wait 1200               # the title screen
+sync title 2
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 4200
+mark a-in
+wait 1800
+mark a-intro
+wait 3600
+mark a-fight
+wait 1800
+mark end

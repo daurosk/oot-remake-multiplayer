@@ -86,7 +86,7 @@ const std::uint32_t kGoto = Hash("Goto_HyruleCastle");  // not the Enum's hash: 
 
 } // namespace
 
-TEST_CASE("quest: the step hashes are the step names; each quest's steps are distinct") {
+TEST_CASE("quest: the step hashes are the step names, and each quest's steps are distinct") {
     for (const auto& q : CoopQuest::Quests()) {
         CHECK(q.steps.front() == Hash("NotReady"));
         CHECK(q.steps.back() == Hash("Complete"));

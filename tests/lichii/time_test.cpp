@@ -267,7 +267,7 @@ TEST_CASE("time: a slow guest is kept close by a nudge now and then") {
     CHECK_FALSE(r.guest.NudgesOff());
 }
 
-TEST_CASE("time: nudges that do not hold stop; the hourly set is left") {
+TEST_CASE("time: nudges that do not hold stop, and the hourly set is left") {
     Run r(20 * 60);
     r.For(60, false);
     CHECK(r.guest.NudgesOff());

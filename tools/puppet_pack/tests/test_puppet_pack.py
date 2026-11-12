@@ -1100,6 +1100,28 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(m["tunics"], {})
         self.assertEqual(sorted(a["actor"] for a in m["actors"]), ["CoopPuppet_Adult", "CoopPuppet_Child"])
 
+    def test_build_from_nup_writes_the_room_table(self):
+        # A .nup gave "coop_rooms.txt: 0 placements in 0 rooms of 0 dungeons": only the pack's own
+        # sources were taken out of it, not the scene files the room table is made from.
+        self.write("Banc/Dun/Dun_Static.bcett.byml.zs", zstandard.ZstdCompressor().compress(byml.dumps(
+            {"Actors": [{"Gyaml": "A", "Hash": byml.UInt64(1), "Translate": [1.0, 2.0, 3.0],
+                         "Dynamic": {"DefaultDungeonRoomIndex": 4}}], "FilePath": "x"})))
+        self.write("Banc/Dun/Dun_Static.other.zs", b"not a scene file")
+        tid = int(dumpcheck.TITLE_ID, 16)
+        game = os.path.join(self.dir, "game.nup")
+        nup.write_nup(game, [(tid | 0x800, 0x20000, nup.KIND_UPDATE,
+                              {k: (v, nup.CODEC_RAW) for k, v in self.romfs_files().items()})])
+        with nup.Nup(game) as n:
+            self.assertEqual(build.nup_scene_files(n), ["Banc/Dun/Dun_Static.bcett.byml.zs"])
+        mod = os.path.join(self.dir, "from_nup_rooms")
+        quiet = io.StringIO()
+        with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+            self.assertEqual(build.main(["--romfs", game, "--mod-dir", mod, "--any-version"]), 0)
+        text = build.read(os.path.join(mod, "coop_rooms.txt")).decode()
+        self.assertEqual([line for line in text.splitlines() if not line.startswith("#")], ["Dun 4 1.00 2.00 3.00"])
+        manifest = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertEqual(manifest["rooms"], {"scenes": 1, "rooms": 1, "placements": 1})
+
     def test_not_a_romfs(self):
         with self.assertRaises(build.BuildError):
             build.build(self.dir, os.path.join(self.dir, "mod"), log=lambda *_: None)

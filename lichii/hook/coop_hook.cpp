@@ -467,6 +467,7 @@ public:
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
+            CoopTime::SaveLoaded(report.server_now_us);  // issue 159
         }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
@@ -645,6 +646,7 @@ public:
         CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)
         CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
+        if (!reading) CoopTime::Loading(report.server_now_us);  // issue 159: a reload, a death
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
         // Boss rooms together (docs/dungeons-boss.md).

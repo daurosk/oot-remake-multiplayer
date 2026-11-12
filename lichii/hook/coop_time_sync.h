@@ -24,6 +24,12 @@
 //   kNudgeEveryUs. If kNudgeTries nudges in a row do not bring the clocks
 //   within kNudgeSeconds, the game keeps its own clock elsewhere and nudges
 //   stop for the session (the hourly set still works).
+// - A save load moves the clock to the save's time. The host's goes out as a
+//   jump (the group follows the host's save). A guest's does not: it would
+//   set the host's clock, and remake the host's world, every time a guest
+//   loads (each autotest's guest did, issue 159); the guest takes the host's
+//   clock again instead, as on joining. The same for any jump a guest reads
+//   while or just after its Link could not be read (a reload, a death).
 #pragma once
 
 #include <cstdint>
@@ -51,6 +57,8 @@ public:
     static constexpr std::uint32_t kNudgeStepSeconds = 600;  // ten in-game minutes per nudge at most
     static constexpr std::uint64_t kNudgeEveryUs = 1'000'000;
     static constexpr int kNudgeTries = 8;
+    static constexpr std::uint64_t kAfterLoadUs = 5'000'000;  // a guest's jump this soon after its load is not sent
+    static constexpr std::uint64_t kRejoinAfterUs = 1'000'000;  // then the host's clock is taken
 
     // Network thread: TIME_OF_DAY from the others. Applied on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -69,6 +77,15 @@ public:
     void NudgeNotWritten();
     // Nudges stopped for this session (they did not hold).
     bool NudgesOff() const { return nudges_off_; }
+    // Present thread: a save was loaded in our game just now (the hook's
+    // "save load seen"). Same clock as Tick's now_us.
+    void SaveLoaded(std::uint64_t now_us);
+    // Present thread: our Link cannot be read this frame (a load, a death's
+    // reload, a door). A guest's jump within kAfterLoadUs of it is not sent
+    // either; the host's clock is then taken as after a save load. Issue 159:
+    // a reload that brings no flags back logs no "save load seen" (Caleb's hand test 2026-11-11, game A,
+    // 245.8 s: the actor list fell to 8, the jump was read 0.6 s later).
+    void Loading(std::uint64_t now_us);
 
     void Reset();
 
@@ -81,8 +98,10 @@ private:
     bool set_once_ = false;
     std::optional<std::uint64_t> running_since_;  // our clock moved forward on every tick since
     std::optional<std::uint32_t> host_last_;  // the host's last plain TIME_OF_DAY
-    bool host_running_ = false;
-    bool joined_ = false;  // the host's first plain TIME_OF_DAY was taken (or kept)  // its last two moved forward (not indoors, no time change)
+    bool host_running_ = false;  // its last two moved forward (not indoors, no time change)
+    bool joined_ = false;  // the host's first plain TIME_OF_DAY was taken (or kept)
+    std::optional<std::uint64_t> load_at_;  // our last save load
+    bool rejoin_ = false;  // a guest after its load: take the host's clock as on joining
 
     std::optional<std::uint32_t> nudge_;  // to write, taken by TakeNudge
     std::uint64_t nudge_at_ = 0;

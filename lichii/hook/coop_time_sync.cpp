@@ -31,6 +31,15 @@ void Sync::Receive(const proto::Message& message) {
     }
 }
 
+void Sync::SaveLoaded(std::uint64_t now_us) {
+    load_at_ = now_us;
+    rejoin_ = true;  // a guest takes the host's next word, once (the host: dropped in Tick)
+}
+
+void Sync::Loading(std::uint64_t now_us) {
+    load_at_ = now_us;
+}
+
 void Sync::Reset() {
     last_.reset();
     last_at_ = 0;
@@ -46,6 +55,8 @@ void Sync::Reset() {
     nudge_at_ = 0;
     nudge_tries_ = 0;
     nudges_off_ = false;
+    load_at_.reset();
+    rejoin_ = false;
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -64,10 +75,18 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
         return std::nullopt;
     }
     const bool quiet = set_once_ && now_us - set_at_ < kQuietAfterSetUs;
+    // A guest just loaded a save: its clock is the save's now. Not the
+    // group's: the host's clock is taken again, as on joining.
+    const bool after_load =
+        !host && load_at_ && now_us >= *load_at_ && now_us - *load_at_ < kAfterLoadUs;
+    if (host) rejoin_ = false;
 
-    // Our own clock jumped (not by our set): everyone takes it.
-    if (last_ && !quiet &&
-        static_cast<std::uint32_t>(std::abs(Ahead(*last_, *now))) > kJumpSeconds) {
+    // Our own clock jumped (not by our set, not a guest's load): everyone takes it.
+    const bool jumped =
+        last_ && static_cast<std::uint32_t>(std::abs(Ahead(*last_, *now))) > kJumpSeconds;
+    if (jumped && !quiet && after_load) {
+        rejoin_ = true;  // a guest's reload: not the group's time; take the host's again
+    } else if (jumped && !quiet) {
         proto::TimeOfDay t;
         t.seconds = *now;
         t.flags = proto::time_of_day::jump;
@@ -106,6 +125,10 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
         if (!joined_ && !set_once_) {
             // Joining: take the host's clock once (only its first word).
             joined_ = true;
+            if (off > kDriftSeconds) target = t.seconds;
+        } else if (rejoin_ && now_us >= *load_at_ && now_us - *load_at_ >= kRejoinAfterUs) {
+            // After our save load, the same: the host's next word, once.
+            rejoin_ = false;
             if (off > kDriftSeconds) target = t.seconds;
         } else if (off > kResyncSeconds && running && host_running_ &&
                    now_us - set_at_ >= kSetEveryUs) {

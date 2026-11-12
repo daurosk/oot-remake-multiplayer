@@ -278,6 +278,18 @@ void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* s
     TheGlue().Frame(system, main_base, session, server_now_us);
 }
 
+void SaveLoaded(std::uint64_t server_now_us) {
+    if (server_now_us != 0) {
+        TheGlue().sync.SaveLoaded(server_now_us);
+    }
+}
+
+void Loading(std::uint64_t server_now_us) {
+    if (server_now_us != 0) {
+        TheGlue().sync.Loading(server_now_us);
+    }
+}
+
 void OnEvent(const coop::net::Event& event) {
     if (event.kind == coop::net::EventKind::message) {
         TheGlue().sync.Receive(event.message);

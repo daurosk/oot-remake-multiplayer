@@ -3326,7 +3326,7 @@ TEST_CASE("pvp: off by default, nothing told at join, hits dropped") {
   CHECK(h.session.stats().pvp_hits_dropped == 1);
 }
 
-TEST_CASE("pvp: --pvp on is told at join; hits go to their victim only") {
+TEST_CASE("pvp: --pvp on is told at join, and hits go to their victim only") {
   SessionConfig config;
   config.pvp = true;
   Harness h(config);
@@ -3356,7 +3356,7 @@ TEST_CASE("pvp: --pvp on is told at join; hits go to their victim only") {
   CHECK(h.sent.empty());
 }
 
-TEST_CASE("pvp: only the host changes it, for everyone; an empty session goes back") {
+TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goes back") {
   Harness h;
   h.join(1, "Link");
   h.join(2, "Zelda");

@@ -107,7 +107,7 @@ TEST_CASE("pvp: what a swing never hits") {
     CHECK(a.Swing(Swing(blade, "spot01"), self, "spot00", 1, std::vector<Target>{Other(2, {1, 0, 0})}, kS).empty());
 }
 
-TEST_CASE("pvp: shots hit within their reach; a nut never hurts") {
+TEST_CASE("pvp: shots hit within their reach, and a nut never hurts") {
     CoopPvp::Attacker a;
     const Vec3 self{0, 0, 0};
     const std::vector<Target> targets{Other(2, {10, 0, 0}), Other(3, {12.5f, 0, 0})};

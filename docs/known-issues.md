@@ -25,14 +25,17 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Known issues
 
-- **Bosses**: Gohma is built to fight both players with its stun and larvae in step, but our tests have no save from just before Gohma, so it is unchecked; if it still targets one player or turns wrong, tell us ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)).
-- **The Kakariko gate** opened for only one player, and Zelda's letter was gone from both; a fix is built in, not yet checked ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)).
-- **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); the ocarina in their hand is built in.
-- **Tunic, boots and masks** reach the other games but have not been seen on the other Link's screen yet ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)). Tell us if you see them.
+<!-- Phase B: final PASS/FAIL table in reports/integrate-p11.md (bigrun3 + bigrun4). Items that PASS move to Works; items that FAIL come here. -->
+- **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); the ocarina in their hand was seen in our test logs.
+- **Masks and boots** reach the other games but have not been seen on the other Link's screen yet ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)). Tell us if you see them. <!-- DROP if the gear checks PASS -->
 - **The other Links' sounds** are in the puppet pack, but our tests have no sound: tell us whether their footsteps, sword and voice can be heard ([#131](https://github.com/daurosk/oot-remake-multiplayer/issues/131)).
-- **Teleporting to another area** with `/teleport <name>` could lock the game ([#197](https://github.com/daurosk/oot-remake-multiplayer/issues/197); being fixed). <!-- DROP if teleport-lock merged and passed; keep README, notes and Discord the same -->
+- **Bosses**: Gohma is built to fight both players with its stun and larvae in step, but our tests have no save from just before Gohma, so it is unchecked; if it still targets one player or turns wrong, tell us ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)).
+- **Deku Tree falling ladder**: shooting the eye that drops the ladder in the slingshot room is built to be shared, but our tests used a save where the ladder had already fallen, so that path is unchecked ([#129](https://github.com/daurosk/oot-remake-multiplayer/issues/129)).
+- **Teleporting to another area** with `/teleport <name>` could lock the game ([#197](https://github.com/daurosk/oot-remake-multiplayer/issues/197); a fix is built in but failed our test: the game kept asking for the scene change and never took it). <!-- DROP only if teleport-lock-b passes in bigrun4; keep README, notes and Discord the same -->
+- **The Kakariko gate** opened for only one player, and Zelda's letter was gone from both; the fix's story flag was seen shared in our test logs, not yet on screen ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)). <!-- MOVE to Works if the final table keeps kak-gate PASS -->
 - **Game version**: only version 1.1.1 of the game (build `e0f3ccfaf50065ae`) is supported; every player needs that one. Co-op now looks for its places in the game's code by itself when it starts, so another build could work once someone checks it, but no other build is checked yet: a game it does not know is refused with a log line naming what differs ([#97](https://github.com/daurosk/oot-remake-multiplayer/issues/97), [game-builds.md](game-builds.md)).
 - **Linux kit (experimental)**: a Linux and Steam Deck kit (`oot-coop-<version>-linux-x86_64.tar.gz`) is built by our CI with the same co-op; it has not been played on a real Linux PC or a Deck in our tests yet, and a relay join code works only in the Windows kit ([#127](https://github.com/daurosk/oot-remake-multiplayer/issues/127), [setup.md, Linux](setup.md#linux-and-steam-deck)). <!-- If linux-2 is not in the release, replace this line with: - **Windows only** for now ([#127](https://github.com/daurosk/oot-remake-multiplayer/issues/127)). -->
+- **Hookshot** (experimental) has its own list: see [Hookshot](#hookshot-experimental) below.
 - **Shader stutter**: the first minutes and new areas stutter while the emulator builds shaders; it gets better as its cache fills ([FAQ](faq.md#the-game-stutters-what-can-i-do)).
 
 ## Not yet checked in a game

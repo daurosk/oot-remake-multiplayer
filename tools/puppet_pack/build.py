@@ -8,7 +8,9 @@ Writes, under <mod folder>/romfs:
   RSDB/ActorInfo.Product.<v>.rstbl.byml.zs        (game table plus two rows)
   RSDB/GameActorInfo.Product.<v>.rstbl.byml.zs    (game table plus two rows)
   System/Resource/ResourceSizeTable.Product.<v>.<platform>.rsizetable.zs (plus new entries)
-and <mod folder>/coop_puppet.json describing what it made.
+and <mod folder>/coop_puppet.json describing what it made, and <mod folder>/coop_rooms.txt:
+where each dungeon room's placements stand (dungeon_rooms.py; the hook guesses a player's room
+from it, issue 145).
 
 The puppets keep Link's sound components (docs/puppet.md, Sound); --no-sound leaves them out.
 
@@ -29,7 +31,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, hud, nup, rstb, sarc, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -646,6 +648,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }
+    scenes, rooms, points = dungeon_rooms.write_table(romfs, os.path.join(mod_dir, "coop_rooms.txt"), dicts)
+    log(f"coop_rooms.txt: {points} placements in {rooms} rooms of {scenes} dungeons")
+    manifest["rooms"] = {"scenes": scenes, "rooms": rooms, "placements": points}
     manifest["tool_sha256"] = tool_hash()  # the kit compares it with its own tool (Get-PuppetPackHint)
     write(os.path.join(mod_dir, "coop_puppet.json"), json.dumps(manifest, indent=1).encode())
     return manifest

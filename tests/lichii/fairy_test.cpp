@@ -322,3 +322,88 @@ TEST_CASE("fairy: parked while her puppet is not live, placed from the puppet (i
     out = f.Follow(in, 1133, 1u << 1);
     CHECK(out.targets[0].show == CoopPuppet::Show::hold);
 }
+
+namespace {
+
+// A synthetic dungeon "D": room 0 around the origin, room 3 up and 40 units
+// west, rooms 5 and 6 side by side 5 units apart.
+CoopRooms::Table Dungeon() {
+    return CoopRooms::Table(std::vector<CoopRooms::Point>{
+        {"D", 0, 0.0f, 100.0f, 0.0f},
+        {"D", 0, 5.0f, 100.0f, 5.0f},
+        {"D", 3, -40.0f, 120.0f, 0.0f},
+        {"D", 3, -25.0f, 120.0f, 0.0f},
+        {"D", 5, 0.0f, 80.0f, 30.0f},
+        {"D", 6, -5.0f, 80.0f, 30.0f},
+    });
+}
+
+}  // namespace
+
+TEST_CASE("fairy: only in our room of a dungeon (issue 145)") {
+    std::vector<std::string> lines;
+    Follower f(Still(), Dungeon(), [&](const std::string& l) { lines.push_back(l); });
+    const CoopPuppet::Vec3 ours{0.0f, 100.0f, 2.0f};  // room 0
+    // A in room 3, about 40 units off: her Navi is parked, placed from A's
+    // puppet, and the log names both rooms.
+    Input in = Puppets(1, {-40.0f, 120.0f, 0.0f}, {1, 0, 0, 0, 1, 0, 0, 0, 1}, "D");
+    auto out = f.Follow(in, 1000, ~0u, ours);
+    REQUIRE(out.targets.size() == 1);
+    CHECK(out.targets[0].show == CoopPuppet::Show::hide);
+    CHECK(std::string(out.targets[0].why) == "her player is in another room");
+    CHECK(out.targets[0].position[0] == doctest::Approx(-40.0f + Still().offset[0]));
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0] == "rooms: P1 in room 3, we in room 0: Navi parked");
+    f.Follow(in, 1016, ~0u, ours);
+    CHECK(lines.size() == 1);  // once, not each frame
+    // Both in room 3, 15 units apart (more than room_near): shown.
+    in.targets[0].position = {-40.0f, 120.0f, 0.0f};
+    out = f.Follow(in, 1033, ~0u, CoopPuppet::Vec3{-25.0f, 120.0f, 0.0f});
+    CHECK(out.targets[0].show == CoopPuppet::Show::show);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1] == "rooms: P1 in room 3, we in room 3: no longer parked for the room");
+    // Without our position, with the rule off, or with no table: no rule.
+    CHECK(f.Follow(in, 1066).targets[0].show == CoopPuppet::Show::show);
+    Settings off = Still();
+    off.rooms = false;
+    Follower g(off, Dungeon());
+    CHECK(g.Follow(in, 1066, ~0u, ours).targets[0].show == CoopPuppet::Show::show);
+    Follower none(Still());
+    CHECK(none.Follow(in, 1066, ~0u, ours).targets[0].show == CoopPuppet::Show::show);
+    // A scene with no rooms in the table (a field): shown at any distance.
+    Input field = Puppets(1, {40.0f, 0.0f, 0.0f}, {1, 0, 0, 0, 1, 0, 0, 0, 1}, "Field");
+    CHECK(f.Follow(field, 1100, ~0u, CoopPuppet::Vec3{0, 0, 0}).targets[0].show ==
+          CoopPuppet::Show::show);
+    // Back in D: a plan's own hide and the not-live park keep their reasons.
+    in.targets[0].show = CoopPuppet::Show::hide;
+    in.targets[0].why = "our cutscene";
+    out = f.Follow(in, 1133, ~0u, ours);
+    CHECK(std::string(out.targets[0].why) == "our cutscene");
+    in.targets[0].show = CoopPuppet::Show::show;
+    out = f.Follow(in, 1166, 0u, ours);
+    CHECK(std::string(out.targets[0].why) == "her puppet is not shown");
+}
+
+TEST_CASE("fairy: a player's room is tracked while ours is not known") {
+    Follower f(Still(), Dungeon());
+    // Our spot is not known (far from every placement) while A walks from
+    // room 0 into room 3; once ours is known again, A is in room 3 at once.
+    Input in = Puppets(1, {0.0f, 100.0f, 0.0f}, {1, 0, 0, 0, 1, 0, 0, 0, 1}, "D");
+    const CoopPuppet::Vec3 lost{200.0f, 0.0f, 200.0f};
+    f.Follow(in, 1000, ~0u, lost);
+    in.targets[0].position = {-40.0f, 120.0f, 0.0f};
+    f.Follow(in, 1033, ~0u, lost);
+    const auto out = f.Follow(in, 1066, ~0u, CoopPuppet::Vec3{0.0f, 100.0f, 2.0f});
+    CHECK(out.targets[0].show == CoopPuppet::Show::hide);
+}
+
+TEST_CASE("fairy: another room but within room_near of us is shown (a doorway)") {
+    const CoopPuppet::Vec3 ours{0.0f, 80.0f, 30.0f};  // room 5
+    Input in = Puppets(1, {-5.0f, 80.0f, 30.0f}, {1, 0, 0, 0, 1, 0, 0, 0, 1}, "D");  // room 6
+    Follower loose(Still(), Dungeon());
+    CHECK(loose.Follow(in, 1000, ~0u, ours).targets[0].show == CoopPuppet::Show::show);
+    Settings s = Still();
+    s.room_near = 0.0f;
+    Follower strict(s, Dungeon());
+    CHECK(strict.Follow(in, 1000, ~0u, ours).targets[0].show == CoopPuppet::Show::hide);
+}

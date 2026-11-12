@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, nup, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, nup, rstb, sarc  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -850,6 +850,18 @@ class FullBuildTest(unittest.TestCase):
         files = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/CoopPuppet_Adult.pack.zs"))))
         self.assertFalse([n for n in files if "SLink" in n or "SoundFootStep" in n])
 
+    def test_build_writes_the_room_table(self):
+        mod = os.path.join(self.dir, "mod_rooms")
+        self.write("Banc/Dun/Dun_Static.bcett.byml.zs", zstandard.ZstdCompressor().compress(byml.dumps(
+            {"Actors": [{"Gyaml": "A", "Hash": byml.UInt64(1), "Translate": [1.0, 2.0, 3.0],
+                         "Dynamic": {"DefaultDungeonRoomIndex": 4}},
+                        {"Gyaml": "B", "Hash": byml.UInt64(2), "Translate": [9.0, 9.0, 9.0]}],
+             "FilePath": "x"})))
+        m = build.build(self.romfs, mod, log=lambda *_: None)
+        text = build.read(os.path.join(mod, "coop_rooms.txt")).decode()
+        self.assertEqual([line for line in text.splitlines() if not line.startswith("#")], ["Dun 4 1.00 2.00 3.00"])
+        self.assertEqual(m["rooms"], {"scenes": 1, "rooms": 1, "placements": 1})
+
     def test_place_test(self):
         from puppet_pack import place_test, zs
         mod = os.path.join(self.dir, "mod")
@@ -1227,6 +1239,29 @@ class DumpCheckTest(unittest.TestCase):
             code = build.main(["--romfs", self.romfs, "--mod-dir", os.path.join(self.dir, "mod")])
         self.assertEqual(code, 1)
         self.assertIn("Skeleton", err.getvalue())
+
+
+class DungeonRoomsTest(unittest.TestCase):
+    def test_thin_keeps_points_a_step_apart_in_order(self):
+        pts = [[0, 0, 0], [0.5, 0, 0], [1.0, 0, 0], [3, 0, 0], [3, 0.2, 0]]
+        self.assertEqual(dungeon_rooms.thin(pts), [[0, 0, 0], [1.0, 0, 0], [3, 0, 0]])
+
+    def test_render_sorted_rows(self):
+        text = dungeon_rooms.render({"B": {2: [[1, 2, 3]]}, "A": {1: [[0, 0, 0], [0.1, 0, 0]], 0: [[-1.234, 5, 6]]}})
+        rows = [line for line in text.splitlines() if not line.startswith("#")]
+        self.assertEqual(rows, ["A 0 -1.23 5.00 6.00", "A 1 0.00 0.00 0.00", "B 2 1.00 2.00 3.00"])
+
+    @unittest.skipUnless(os.environ.get("COOP_TEST_ROMFS"), "set COOP_TEST_ROMFS to the game's romfs")
+    def test_real_romfs_each_placement_in_its_own_room(self):
+        # Only with the player's own game; nothing of it is kept in the repo.
+        rooms = dungeon_rooms.scene_rooms(os.environ["COOP_TEST_ROMFS"])
+        self.assertTrue(rooms)
+        for scene, by_room in rooms.items():
+            pts = [(r, p) for r, ps in by_room.items() for p in dungeon_rooms.thin(ps)]
+            for room, p in pts:
+                best = min(pts, key=lambda q: (q[1][0] - p[0]) ** 2 + (2 * (q[1][1] - p[1])) ** 2
+                           + (q[1][2] - p[2]) ** 2)
+                self.assertEqual(best[0], room, f"{scene} {p}")
 
 
 if __name__ == "__main__":

@@ -131,6 +131,15 @@ std::uint64_t SLinkSystem(CoopPuppet::Guest& guest, std::uint64_t main_base);
 // kSystemScan bytes. `how` says where. 0 if none.
 std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,
                                const std::string& name, std::string* how = nullptr);
+// The sound root ([[main + kSoundRootGot]]): its modules are in a pointer array (+0xc0:
+// count, +0xc8: data, as 0xd0d214 walks it), and the "Ocarina" module (vtable
+// main+0x4bd6df0, made at 0xd1f360) keeps its user at +0x40. A user named `name` held by
+// any module of any array in the root's first kSystemScan bytes, in the module's first
+// kModuleScan bytes. `how` says where. 0 if none.
+std::uint64_t SoundRoot(CoopPuppet::Guest& guest, std::uint64_t main_base);
+std::uint64_t FindUserInModules(CoopPuppet::Guest& guest, std::uint64_t root,
+                                const std::string& name, std::string* how = nullptr);
+inline constexpr std::uint64_t kModuleScan = 0x100;
 // The checks FindUser makes on a candidate (debug: logged for the puppet's own user).
 bool LooksLikeUser(CoopPuppet::Guest& guest, std::uint64_t user);
 inline constexpr std::uint64_t kSystemScan = 0x400;

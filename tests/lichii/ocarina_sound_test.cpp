@@ -342,3 +342,37 @@ TEST_CASE("the notes are searched and played on the game's Ocarina user when a l
     CHECK(c->x[0] == kOcarinaAccessor);
     CHECK(run.said.size() == lines);
 }
+
+TEST_CASE("the Ocarina user is found in a module of the sound root's array") {
+    FakeGuest g = PuppetWithSound();
+    constexpr std::uint64_t kRoot = 0x4000a0000;
+    constexpr std::uint64_t kModules = 0x4000b0000;
+    constexpr std::uint64_t kModule = 0x4000c0000;
+    constexpr std::uint64_t kOcarina = 0x400060000;
+    constexpr std::uint64_t kOcarinaResource = 0x400070000;
+    g.Put<std::uint64_t>(kBase + snd::addr::kSoundRootGot, kBase + 0x100000);
+    g.Put<std::uint64_t>(kBase + 0x100000, kRoot);
+    g.Put<std::int32_t>(kRoot + 0xc0, 2);
+    g.Put<std::int32_t>(kRoot + 0xc4, 4);
+    g.Put<std::uint64_t>(kRoot + 0xc8, kModules);
+    g.Put<std::uint64_t>(kModules, kModule + 0x800);  // another module, nothing in it
+    g.Put<std::uint64_t>(kModules + 8, kModule);
+    g.Put<std::uint64_t>(kModule + 0x40, kOcarina);
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserResource, kOcarinaResource);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceAccessor, 0x400080000);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceName, kOcarinaResource + 0x100);
+    g.PutText(kOcarinaResource + 0x100, "Ocarina");
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserFirstLink, kOcarina + snd::addr::kUserEvents);
+    g.Put<std::int32_t>(kOcarina + snd::addr::kUserLinkOffset, 0x10);
+    CHECK(snd::SoundRoot(g, kBase) == kRoot);
+    std::string how;
+    CHECK(snd::FindUserInModules(g, kRoot, "Ocarina", &how) == kOcarina);
+    CHECK(how == "module 1 of the array at root +0xc0, field +0x40");
+
+    Run run;
+    snd::State st;
+    auto c = snd::Next(st, snd::Wanted{4, 1, 0}, g, kBase, kActor, kBlock, 10, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->x[0] == 0x400080000);
+    CHECK(run.said.back().find("module 1 of the array at root +0xc0") != std::string::npos);
+}

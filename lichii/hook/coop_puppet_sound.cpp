@@ -109,10 +109,45 @@ std::uint64_t FindUser(CoopPuppet::Guest& guest, std::uint64_t from, const std::
     return 0;
 }
 
-std::uint64_t SLinkSystem(CoopPuppet::Guest& guest, std::uint64_t main_base) {
+std::uint64_t SoundRoot(CoopPuppet::Guest& guest, std::uint64_t main_base) {
     const std::uint64_t got = main_base != 0 ? Pointer(guest, main_base + addr::kSoundRootGot) : 0;
-    const std::uint64_t root = got != 0 ? Pointer(guest, got) : 0;
+    return got != 0 ? Pointer(guest, got) : 0;
+}
+
+std::uint64_t SLinkSystem(CoopPuppet::Guest& guest, std::uint64_t main_base) {
+    const std::uint64_t root = SoundRoot(guest, main_base);
     return root != 0 ? Pointer(guest, root + addr::kRootSLinkSystem) : 0;
+}
+
+std::uint64_t FindUserInModules(CoopPuppet::Guest& guest, std::uint64_t root,
+                                const std::string& name, std::string* how) {
+    if (root == 0) {
+        return 0;
+    }
+    for (std::uint64_t off = 0; off + 16 <= kSystemScan; off += 8) {
+        std::int32_t count = 0;
+        std::int32_t capacity = 0;
+        if (!Read(guest, root + off, count) || !Read(guest, root + off + 4, capacity) ||
+            count <= 0 || count > capacity || capacity > 8192) {
+            continue;
+        }
+        const std::uint64_t data = Pointer(guest, root + off + 8);
+        for (std::int32_t i = 0; data != 0 && i < count; ++i) {
+            const std::uint64_t module = Pointer(guest, data + 8 * static_cast<std::uint64_t>(i));
+            for (std::uint64_t field = 0; module != 0 && field < kModuleScan; field += 8) {
+                const std::uint64_t user = Pointer(guest, module + field);
+                if (user != 0 && Accessor(guest, user) != 0 && UserName(guest, user) == name &&
+                    LooksLikeUser(guest, user)) {
+                    if (how != nullptr) {
+                        *how = "module " + std::to_string(i) + " of the array at root +" + Hex(off) +
+                               ", field +" + Hex(field);
+                    }
+                    return user;
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,
@@ -249,7 +284,10 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             std::uint64_t off = 0;
             std::string how;
             const std::uint64_t system = SLinkSystem(guest, main_base);
-            state.ocarina_user = FindUserInSystem(guest, system, kOcarinaUser, &how);
+            state.ocarina_user = FindUserInModules(guest, SoundRoot(guest, main_base), kOcarinaUser, &how);
+            if (state.ocarina_user == 0) {
+                state.ocarina_user = FindUserInSystem(guest, system, kOcarinaUser, &how);
+            }
             if (state.ocarina_user == 0) {
                 state.ocarina_user = FindUser(guest, user, kOcarinaUser, &off);
                 how = "list at +" + Hex(off) + " of its own user";

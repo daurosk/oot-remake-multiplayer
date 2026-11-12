@@ -1,0 +1,359 @@
+From 7a12e73d4ad27d6351a3f6119b61e9d161aaa808 Mon Sep 17 00:00:00 2001
+From: daurosk <354202035+daurosk@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 13:06:15 -0900
+Subject: [PATCH] Co-op puppets: the item's read of its wearer's Player
+ component guarded; null page only a fallback
+
+A puppet (CoopPuppet_*) has no Player component. An item it wears reads that
+component at main+0x2dceef8 (guest 0x7d8), the only null read in 46 Hookshot
+logs. nx2/coop_puppet_wearer.py adds C after main+0x2dceef0 that does what the
+emulator does there (x0 = 0, w8 = 0, go on at main+0x2dcef30). Words and build
+id checked.
+
+host/coop_null_page.c no longer maps the first MB: it adds a handler that maps
+one page read-only only when an unguarded guest read there faults, and logs it.
+
+tests/test_coop_puppet_wearer.py: install checks, and the emitted C compiled and
+run on fake guest memory.
+---
+ host/coop_null_page.c            |  66 ++++++---------
+ nx2/coop_puppet_guard.py         |   2 +
+ nx2/coop_puppet_wearer.py        |  64 +++++++++++++++
+ tests/test_coop_puppet_wearer.py | 137 +++++++++++++++++++++++++++++++
+ 4 files changed, 229 insertions(+), 40 deletions(-)
+ create mode 100644 nx2/coop_puppet_wearer.py
+ create mode 100644 tests/test_coop_puppet_wearer.py
+
+diff --git a/host/coop_null_page.c b/host/coop_null_page.c
+index e64d21c5..ff2f2c19 100644
+--- a/host/coop_null_page.c
++++ b/host/coop_null_page.c
+@@ -1,18 +1,18 @@
+-/* (oot-remake-multiplayer's patch 0002, nx2/coop_puppet_guard.py) Null-pointer reads give 0 once a co-op puppet exists.
++/* (oot-remake-multiplayer's patches 0002 and 0006, nx2/coop_puppet_guard.py, nx2/coop_puppet_wearer.py) The fallback for
++   null-pointer reads once a co-op puppet exists.
+ 
+    On the emulator a guest read of an unmapped page gives 0, and the game's code for a co-op puppet (a stripped copy of
+    Link, CoopPuppet_*) relies on that without knowing it: it follows pointers of components the puppet does not have,
+    reads 0 and takes its own "nothing there" branch. Hookshot's guest window leaves the first MB unmapped on purpose
+    (mkw_glue.c commit_on_touch: a null pointer is the game's own fault), so each such read crashed the game ("guest 0x20",
+-   "guest 0x7d8").
++   "guest 0x7d8"). Both reads seen are now guarded in the lifted code (0002: slot 10, 0006: the wearer's Player
++   component), each doing what the emulator does. This file is only the net under them.
+ 
+-   hos_coop_null_page() is called the first time nx2/coop_puppet_guard.py meets a puppet (so never in a game without
+-   co-op puppets). It commits the guest's first MB read-only with PAGE_GUARD: a read there gives 0, as on the emulator,
+-   and a write still faults and is reported as a crash. Only guest memory, only that MB. The guard bit makes each page's
+-   first read since the last minute raise STATUS_GUARD_PAGE_VIOLATION once: the handler counts it, logs the first 32 (host
+-   code as hookshot.exe+offset, guest address), and lets the read go on. Once a minute a thread logs the minute's count and
+-   puts the guard bits back, so null reads the game makes stay visible in the log.
+-   HOS_COOP_NULL_READS=0: left as shipped (the puppet's update then crashes).
++   hos_coop_null_page() is called the first time a guard meets a puppet (so never in a game without co-op puppets). It
++   maps nothing: it adds a handler for one case only, a guest READ in the first MB that faults (a site no guard covers).
++   That page (4 KB) is then committed read-only, the read gives 0 as on the emulator, and the log says so ("coop:
++   unguarded null read ...": please report it, it names the host code). Writes there still fault and are reported as a
++   crash. HOS_COOP_NULL_READS=0: no handler (such a read crashes, as shipped).
+    Linux: the whole guest window is mapped readable already (hos_main.c), so nothing changes there. */
+ #include "hos.h"
+ #include <stdlib.h>
+@@ -22,33 +22,25 @@
+ #include <windows.h>
+ 
+ enum { COOP_NULL_SIZE = 0x100000, COOP_NULL_SAID = 32 };
+-static volatile LONG coop_null_hits, coop_null_minute;
++static volatile LONG coop_null_pages;
+ 
+ static LONG CALLBACK coop_null_read(EXCEPTION_POINTERS *info) {
+     const EXCEPTION_RECORD *rec = info->ExceptionRecord;
+-    if (rec->ExceptionCode != STATUS_GUARD_PAGE_VIOLATION || rec->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
++    if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || rec->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
++    if (rec->ExceptionInformation[0] != 0) return EXCEPTION_CONTINUE_SEARCH;   /* (a write or an execute: a crash) */
+     const uint8_t *p = (const uint8_t *)rec->ExceptionInformation[1];
+     if (p < (const uint8_t *)GP(0) || p >= (const uint8_t *)GP(COOP_NULL_SIZE)) return EXCEPTION_CONTINUE_SEARCH;
+-    InterlockedIncrement(&coop_null_minute);
+-    if (InterlockedIncrement(&coop_null_hits) <= COOP_NULL_SAID)
+-        hos_log("coop: null read: guest %#llx from hookshot.exe+%#llx (%s; reads 0, as on the emulator)",
+-                (unsigned long long)(p - (const uint8_t *)GP(0)),
+-                (unsigned long long)((uintptr_t)rec->ExceptionAddress - (uintptr_t)GetModuleHandleW(NULL)),
+-                rec->ExceptionInformation[0] ? "a write: it faults next" : "a read");
+-    return EXCEPTION_CONTINUE_EXECUTION;   /* (the guard bit is off for that page now: the access runs again) */
+-}
+-
+-static DWORD WINAPI coop_null_rearm(LPVOID unused) {
+-    (void)unused;
+-    for (;;) {
+-        Sleep(60000);
+-        const LONG n = InterlockedExchange(&coop_null_minute, 0);
+-        if (n) hos_log("coop: null reads in the last minute: %ld page(s) first touched (%ld since the first puppet)", n,
+-                       coop_null_hits);
+-        DWORD was;
+-        VirtualProtect(GP(0), COOP_NULL_SIZE, PAGE_READONLY | PAGE_GUARD, &was);
+-    }
+-    return 0;
++    MEMORY_BASIC_INFORMATION mbi;
++    if (!VirtualQuery(p, &mbi, sizeof mbi) || mbi.State != MEM_RESERVE) return EXCEPTION_CONTINUE_SEARCH;
++    const uint64_t guest = (uint64_t)(p - (const uint8_t *)GP(0));
++    if (!VirtualAlloc(GP(guest & ~0xFFFULL), 0x1000, MEM_COMMIT, PAGE_READONLY)) return EXCEPTION_CONTINUE_SEARCH;
++    const LONG n = InterlockedIncrement(&coop_null_pages);
++    if (n <= COOP_NULL_SAID)
++        hos_log("coop: unguarded null read: guest %#llx from hookshot.exe+%#llx (reads 0, as on the emulator; page %ld; "
++                "please report this line: a guard in the lifted code should cover it)",
++                (unsigned long long)guest,
++                (unsigned long long)((uintptr_t)rec->ExceptionAddress - (uintptr_t)GetModuleHandleW(NULL)), n);
++    return EXCEPTION_CONTINUE_EXECUTION;   /* (the page reads as zeros now: the read runs again) */
+ }
+ 
+ void hos_coop_null_page(void) {
+@@ -56,7 +48,7 @@ void hos_coop_null_page(void) {
+     if (done || InterlockedExchange(&done, 1)) return;
+     const char *v = getenv("HOS_COOP_NULL_READS");
+     if (v && v[0] == '0' && !v[1]) {
+-        hos_log("coop: null-pointer reads fault (HOS_COOP_NULL_READS=0)");
++        hos_log("coop: an unguarded null-pointer read faults (HOS_COOP_NULL_READS=0)");
+         return;
+     }
+     MEMORY_BASIC_INFORMATION mbi;
+@@ -65,14 +57,8 @@ void hos_coop_null_page(void) {
+         return;
+     }
+     AddVectoredExceptionHandler(1, coop_null_read);
+-    if (!VirtualAlloc(GP(0), COOP_NULL_SIZE, MEM_COMMIT, PAGE_READONLY | PAGE_GUARD)) {
+-        hos_log("coop: the guest's first MB could not be mapped (error %lu): null-pointer reads still fault",
+-                (unsigned long)GetLastError());
+-        return;
+-    }
+-    CloseHandle(CreateThread(NULL, 0, coop_null_rearm, NULL, 0, NULL));
+-    hos_log("coop: the guest's first MB reads as zeros from now on (null-pointer reads give 0, as on the emulator; "
+-            "counted in this log; HOS_COOP_NULL_READS=0: off)");
++    hos_log("coop: puppets' null reads are guarded in the lifted code; an unguarded one reads 0 and is logged "
++            "(HOS_COOP_NULL_READS=0: off)");
+ }
+ #else
+ void hos_coop_null_page(void) {
+diff --git a/nx2/coop_puppet_guard.py b/nx2/coop_puppet_guard.py
+index a1055fc3..f6b643c7 100644
+--- a/nx2/coop_puppet_guard.py
++++ b/nx2/coop_puppet_guard.py
+@@ -58,4 +58,6 @@ def install(lifter, img, build_id):
+     lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT
+     print("co-op puppet guard: at main+%#x (a missing component skips to main+%#x); null reads give 0 from the "
+           "first puppet on" % (SITE, SKIP))
++    import coop_puppet_wearer   # (patch 0006: the puppet's items read their wearer's Player component)
++    coop_puppet_wearer.install(lifter, img, build_id)
+     return 1
+diff --git a/nx2/coop_puppet_wearer.py b/nx2/coop_puppet_wearer.py
+new file mode 100644
+index 00000000..d5cdb621
+--- /dev/null
++++ b/nx2/coop_puppet_wearer.py
+@@ -0,0 +1,64 @@
++"""Co-op's second guard for the other players' Link (oot-remake-multiplayer's patch 0006, its docs/hookshot.md
++"Link puppets").
++
++A co-op puppet (CoopPuppet_*) is a stripped copy of Link with no Player component (slot 107 of its component table). An
++item it wears reads its wearer's Player component in the item's update (BaseProcExecutor1), main+0x2dcee60:
++
++    main+0x2dceef0  mov x23, x0              x0 = the item's wearer (an actor)
++    main+0x2dceef4  bl  main+0x82acc0        = [[x0+0x270]+0x358], its Player component; 0 for a puppet
++    main+0x2dceef8  ldr w8, [x0, #0x7d8]     faults on Hookshot: "guest 0x7d8"
++    main+0x2dceefc  cmn w8, #1
++    main+0x2dcef00  b.ne main+0x2dcef30
++
++On the emulator the read of guest 0x7d8 gives 0, so the game takes the b.ne to main+0x2dcef30 and goes on; every path
++from there sets x0, x8 and the flags before it reads them. This was the only null read in 46 Hookshot logs with patch
++0002's null page on, so with this guard the null page has nothing left to serve (host/coop_null_page.c keeps it as a
++fallback that maps nothing unless an unguarded read faults).
++
++The guard: C after main+0x2dceef0: when the wearer has no component table or no Player component, do what the emulator
++does (x0 = 0 as the call returns, w8 = 0 as the read gives, x30 as the call leaves it) and go to main+0x2dcef30. The
++first few are logged. A wearer with a Player component (Link) runs as shipped; the shipped game crashes in the other
++case, so plain play is unchanged. The words are checked and the build id; another game version leaves the guard out.
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++SITE = 0x2dceef0          # mov x23, x0
++GO = 0x2dcef30            # the b.ne's target: where the emulator goes on with w8 = 0
++RET = 0x2dceef8           # x30 as the bl leaves it
++WORDS = ((0x2dceeec, 0xb40000c0),   # cbz x0, main+0x2dcef04
++         (0x2dceef0, 0xaa0003f7),   # mov x23, x0
++         (0x2dceef4, 0x97696f73),   # bl main+0x82acc0
++         (0x2dceef8, 0xb947d808),   # ldr w8, [x0, #0x7d8]
++         (0x2dceefc, 0x3100051f),   # cmn w8, #1
++         (0x2dcef00, 0x54000181),   # b.ne main+0x2dcef30
++         (0x82acc0, 0xf9413808),    # ldr x8, [x0, #0x270]
++         (0x82acc8, 0xf941ad00))    # ldr x0, [x8, #0x358]
++TEXT = ("{ const uint64_t coop_t = recomp_load64(c, c->x[0] + 0x270); "
++        "if (!coop_t || !recomp_load64(c, coop_t + 0x358)) { extern void hos_log(const char *fmt, ...); "
++        "static volatile long said; "
++        "if (said++ < 8) { hos_log(\"coop: puppet wearer guard: actor %%#llx has no Player component: its item's \"\n"
++        "\"read of it skipped, as on the emulator (nx2/coop_puppet_wearer.py)\", (unsigned long long)c->x[0]); } "
++        "c->x[0] = 0; c->x[8] = 0; c->x[30] = 0x%xULL; goto L_%x; } }   /* (nx2/coop_puppet_wearer.py) */") % (
++            MAIN + RET, MAIN + GO)
++
++
++def install(lifter, img, build_id):
++    """The guard into lifter.after; nothing when the build or a word differs. Returns 1 when it went in."""
++    if build_id != BUILD_ID:
++        print("co-op puppet wearer guard: build %s is not %s: left out" % (build_id or "?", BUILD_ID))
++        return 0
++    for off, want in WORDS:
++        try:
++            have = img.word(MAIN + off)
++        except Exception:
++            have = None
++        if have != want:
++            print("co-op puppet wearer guard: main+%#x holds %s, not %08x: left out" % (
++                off, "?" if have is None else "%08x" % have, want))
++            return 0
++    pc = MAIN + SITE
++    lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT
++    print("co-op puppet wearer guard: at main+%#x (a wearer without a Player component goes on at main+%#x)" % (
++        SITE, GO))
++    return 1
+diff --git a/tests/test_coop_puppet_wearer.py b/tests/test_coop_puppet_wearer.py
+new file mode 100644
+index 00000000..42710dee
+--- /dev/null
++++ b/tests/test_coop_puppet_wearer.py
+@@ -0,0 +1,137 @@
++"""Game-free tests of co-op's puppet wearer guard (nx2/coop_puppet_wearer.py, oot-remake-multiplayer's patch 0006).
++
++The install is checked with a fake lifter and image. The C it adds is compiled into a small program (with $CC, else
++clang or gcc on PATH; skipped when there is none) that runs it on guest memory of its own: a wearer with a Player
++component goes on as shipped; one without a component table or without a Player component goes where the emulator
++goes, with x0, x8 and x30 as the emulator leaves them.
++"""
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT / "nx2"))
++import coop_puppet_wearer as w  # noqa: E402
++
++
++class Image:
++    def __init__(self, words):
++        self.words = words
++
++    def word(self, pc):
++        return self.words[pc - w.MAIN]
++
++
++class Lifter:
++    def __init__(self, after=None):
++        self.after = dict(after or {})
++
++
++class InstallTests(unittest.TestCase):
++    def test_goes_in_after_the_mov(self):
++        lifter = Lifter()
++        self.assertEqual(w.install(lifter, Image(dict(w.WORDS)), w.BUILD_ID), 1)
++        self.assertEqual(list(lifter.after), [w.MAIN + w.SITE])
++        text = lifter.after[w.MAIN + w.SITE]
++        self.assertIn("goto L_%x;" % (w.MAIN + w.GO), text)
++        self.assertIn("c->x[30] = 0x%xULL;" % (w.MAIN + w.RET), text)
++        self.assertIn("+ 0x358", text)
++
++    def test_keeps_what_is_there(self):
++        lifter = Lifter({w.MAIN + w.SITE: "/* before */"})
++        w.install(lifter, Image(dict(w.WORDS)), w.BUILD_ID)
++        self.assertTrue(lifter.after[w.MAIN + w.SITE].startswith("/* before */\n"))
++
++    def test_another_build_is_left_out(self):
++        lifter = Lifter()
++        self.assertEqual(w.install(lifter, Image(dict(w.WORDS)), "0" * 40), 0)
++        self.assertEqual(lifter.after, {})
++
++    def test_a_changed_word_is_left_out(self):
++        for off, _ in w.WORDS:
++            words = dict(w.WORDS)
++            words[off] ^= 1
++            lifter = Lifter()
++            self.assertEqual(w.install(lifter, Image(words), w.BUILD_ID), 0, hex(off))
++            self.assertEqual(lifter.after, {})
++
++    def test_the_words_are_the_shipped_code(self):
++        # mov x23, x0; bl main+0x82acc0; ldr w8, [x0, #0x7d8]; b.ne main+0x2dcef30
++        words = dict(w.WORDS)
++        self.assertEqual(words[w.SITE], 0xaa0003f7)
++        bl = words[w.SITE + 4]
++        imm = bl & 0x3ffffff
++        imm = imm - (1 << 26) if imm & (1 << 25) else imm
++        self.assertEqual(w.SITE + 4 + imm * 4, 0x82acc0)
++        bne = words[0x2dcef00]
++        self.assertEqual(bne & 0xff00001f, 0x54000001)
++        imm19 = (bne >> 5) & 0x7ffff
++        self.assertEqual(0x2dcef00 + imm19 * 4, w.GO)
++        self.assertEqual(w.RET, w.SITE + 8)
++
++
++HARNESS = r"""
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++typedef struct { uint64_t x[32]; } Ctx;
++static uint8_t mem[0x10000];
++static void *said_log;
++void hos_log(const char *fmt, ...) { said_log = (void *)fmt; }
++static uint64_t recomp_load64(Ctx *c, uint64_t a) { (void)c; uint64_t v = 0; if (a + 8 <= sizeof mem) memcpy(&v, mem + a, 8); return v; }
++static void put(uint64_t a, uint64_t v) { memcpy(mem + a, &v, 8); }
++static int run(Ctx *c) {
++%s
++    return 0;   /* went on as shipped */
++L_%x:;
++    return 1;   /* went where the emulator goes */
++}
++int main(void) {
++    Ctx c;
++    /* wearer 0x100: table 0x200, Player component 0x300 */
++    put(0x100 + 0x270, 0x200); put(0x200 + 0x358, 0x300);
++    memset(&c, 0, sizeof c); c.x[0] = 0x100; c.x[8] = 7; c.x[30] = 9;
++    if (run(&c) != 0 || c.x[0] != 0x100 || c.x[8] != 7 || c.x[30] != 9 || said_log) return 1;
++    /* wearer 0x400: no table */
++    memset(&c, 0, sizeof c); c.x[0] = 0x400; c.x[8] = 7;
++    if (run(&c) != 1 || c.x[0] != 0 || c.x[8] != 0 || c.x[30] != 0x%xULL || !said_log) return 2;
++    /* wearer 0x500: table 0x600 without a Player component */
++    put(0x500 + 0x270, 0x600);
++    memset(&c, 0, sizeof c); c.x[0] = 0x500; c.x[8] = 7;
++    if (run(&c) != 1 || c.x[0] != 0 || c.x[8] != 0) return 3;
++    puts("ok");
++    return 0;
++}
++"""
++
++
++def compiler():
++    for cc in (os.environ.get("CC"), "clang", "gcc", "cc"):
++        if cc and shutil.which(cc):
++            return shutil.which(cc)
++    return None
++
++
++@unittest.skipUnless(compiler(), "no C compiler ($CC, clang or gcc)")
++class EmittedCTests(unittest.TestCase):
++    def test_runs_as_the_emulator_does(self):
++        lifter = Lifter()
++        w.install(lifter, Image(dict(w.WORDS)), w.BUILD_ID)
++        src = HARNESS % (lifter.after[w.MAIN + w.SITE], w.MAIN + w.GO, w.MAIN + w.RET)
++        with tempfile.TemporaryDirectory() as d:
++            c = os.path.join(d, "t.c")
++            exe = os.path.join(d, "t.exe")
++            Path(c).write_text(src)
++            built = subprocess.run([compiler(), "-std=c11", "-Wall", "-Werror", "-Wno-unused-function", c, "-o", exe],
++                                   capture_output=True, text=True)
++            self.assertEqual(built.returncode, 0, built.stderr)
++            r = subprocess.run([exe], capture_output=True, text=True)
++            self.assertEqual((r.returncode, r.stdout.strip()), (0, "ok"))
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.56.0.windows.4
+

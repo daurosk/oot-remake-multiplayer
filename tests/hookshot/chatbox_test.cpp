@@ -39,7 +39,7 @@ TEST_CASE("chat box: T opens it, its own t is not typed, other keys pass while c
     CHECK(b.text() == "hi there");
 }
 
-TEST_CASE("chat box: Enter sends the trimmed text once; refused keeps it open") {
+TEST_CASE("chat box: Enter sends the trimmed text once, a refused send keeps it open") {
     Box b;
     b.Key(kKeyOpen, false);
     b.Char('t');
@@ -66,7 +66,7 @@ TEST_CASE("chat box: Enter sends the trimmed text once; refused keeps it open") 
     CHECK_FALSE(b.Char('\r'));        // its character after the box closed: Hookshot's
 }
 
-TEST_CASE("chat box: Enter on nothing and Esc close it; Backspace removes whole characters") {
+TEST_CASE("chat box: Enter on nothing and Esc close it, Backspace removes whole characters") {
     Box b;
     b.Key(kKeyOpen, false);
     b.Key(kKeyReturn, false);

@@ -472,6 +472,9 @@ public:
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
     // The actors of the enemies we own, with their names (for the test drive).
     std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
+    // The player who owns the object at `address` (0: the server, none: not
+    // known). For coop_enemy_shots.
+    std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }

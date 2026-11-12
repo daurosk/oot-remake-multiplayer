@@ -87,7 +87,7 @@ The bomb's fuse is in its AI: `Item_Bomb.root.ainb` uses the node `ExecuteBarrel
 
 The same node compares actor +0x260 with `"Item_Bomb"` and `"Item_Bombchu"` (0x26394e4 to 0x2639564) and then calls 0x32293a0 with 3 or 4. Checked; what 0x32293a0 does is not read.
 
-Enemy projectiles are actors too (`Octorok_Bullet`, `Dodongo_Bullet_Fire`, `Enemy_Scrub_Business_Seed`, the bosses' `*_Bullet_*`). They belong with the enemy that fires them (below).
+Enemy projectiles are actors too (`Octorok_Bullet`, `Dodongo_Bullet_Fire`, `ScrubDeku_DekuNut`, the bosses' `*_Bullet_*`). They belong with the enemy that fires them (below, "Enemy shots"). `Enemy_Scrub_Business_Seed` is not one: it is the business scrub that sells seeds (it has its own talk, `Event/EventFlow/Enemy_Scrub_Business_Seed`).
 
 ## The create path
 
@@ -206,6 +206,17 @@ The copies are the game's own actors made by the spawn sync ([spawns.md](spawns.
 
 Not proven: nothing of this has run in a game. The credit and debit are per enemy, not per thrower: on the owner, its own bomb beside another player's copy blast within 2 s of a `DAMAGE` can cancel against it (one hit lost or put back). Copy arrows and seeds that hit an enemy copy are not guarded (blasts only). Thrown from the puppet: the copy starts where the owner's projectile was made (the owner's hand), and the puppet stands at the owner's place 100 ms late, so the two should meet; not seen.
 
+#### Enemy shots (branch `enemy-shots`)
+
+Each game runs the AI of its copy of a shared enemy, and a copy plays the owner's animations, so every game's Octorok spat its own rock (aimed at its own Link) and none was the other's. Now the game that owns the enemy fires, for everyone. `lichii/hook/coop_enemy_shots.{h,cpp}` (tested in `tests/lichii/enemy_shots_test.cpp`) holds the rules; the spawn sync carries the shots like a player's projectiles (no new message, no protocol change). `LICHII_COOP_ENEMY_SHOTS=0` turns it off (each game its own shots, as before).
+
+- **Which names.** From the game's `Pack/Actor`: `Octorok_Bullet`, `Dodongo_Bullet_*`, `DungeonBossDodongo_Bullet_*`, `ScrubDeku_DekuNut`, `ScrubForestStage_DekuNut`, `SkullKid_Bullet`, `PoeHyrule_Bullet_*`, `FlareDancer_Bullet_*`, `DungeonBossGanondrof_Bullet_*`, `DungeonBossPhantomGanon_Bullet_*`, `PhantomGanon_Bullet_*`, `Twinrova_Bullet_*` and `KotakeKoumeTwinrova_Bullet_*` (not the `_MirrorShieldReflect` ones: Link's), `Ganon_Bullet_*`, `Ganondorf_Bullet_*`, `DungeonBossGanon_Bullet_*`, `Enemy_MoblinClub_ShockWave` (taken out of the objects sync's enemies). Each has its maker's name (`Enemy_Octorok`, `Enemy_Scrub_`, `Enemy_DungeonBoss_Dodongo`, ...). Beams, breath and auras (`BeamosBeam`, `Enemy_DungeonBoss_Barinade_Beam`, `DungeonBossVolvagia_FireBreath`, `Bubble_Green_Bullet_Aura`) are not shots and stay each game's own. Only `Octorok_Bullet` and the scrub nut are in the brief's test; the others are names only.
+- **Whose shot.** After each of its walks the objects sync notes every shared enemy with its place and owner (ours, another player's, not known). When the spawn sync first sees a new enemy shot, the nearest enemy of its maker's name within 10 m (30 m for a boss or mini-boss) decides: ours, the shot is sent (`OBJECT_SPAWN` with the projectile flag, samples at up to 30 a second, `OBJECT_REMOVE`); another player's, it is a copy enemy's shot and is deleted; no maker found or no owner known yet, it is left alone and not sent. Log: `coop: shots: enemy shot Octorok_Bullet at x y z: sent (our enemy's)` / `deleted (a copy's; the owner's comes)` / `kept here (no owner known)`.
+- **The copy hits.** The other games make the owner's shot as the game's own actor (no stand-in), placed on the owner's path every frame with the setter, so it can hit their Link where it meets him: the player it was aimed at takes the hit in their own game, once. In the owner's game the real shot flies through that player's puppet (a puppet has no body to hit).
+- **The delete.** A copy enemy's own shot is given to the director after it was seen on 2 walks (so a copy the director has just made, not yet reported, is never taken for one; a shot is also never claimed as a copy by its place). On the calc thread, just before the game's delete request, it is checked again: still on the actor list (its node's owner is itself), the same vtable as when seen, none of the director's copies, and no create of ours waiting to be taken; each address once. `LICHII_COOP_ENEMY_SHOTS_HIDE=0` keeps them (shared, but doubled), to compare. Log: `coop: enemy shot 0x... of a copy enemy deleted (the owner's is shown)`.
+
+Not proven: nothing of this has run in a game. Whether a shot made by our create request without its enemy flies and hurts (it might wait for its maker, or delete itself; then the copy is gone and the hit is not taken here), whether deleting a copy enemy's shot leaves that enemy waiting on it, and whether the copy's own AI fires on the same frame as the owner's (the delete then comes 2 walks later: the shot can be seen for about 50 ms).
+
 ### Enemies
 
 The rules answer each way the TotK sync broke ([protocol.md](protocol.md) "Rules it is built on"; the TotK port's `docs/online-sync.md`, section 3).
@@ -315,7 +326,7 @@ Enemies made of several actors share one owner and one fight (issue 105). `CoopO
 | `Enemy_FlockGuayManager` | `Enemy_Guay_Flock` | 60 m | no |
 | `Enemy_Peahat_AircraftCarrier` (else `Enemy_Peahat`) | `Enemy_Peahat_Larva` (not `_Independent`) | 30 m | no |
 
-Alone with the boss flag: Volvagia, Ganondorf, the Lizalfos, Iron Knuckle Nabooru and Gerudo thief mini-bosses (each thief its own fight). Not grouped: projectiles (`*_Bullet_*`, `Enemy_MoblinClub_ShockWave`, `Enemy_Scrub_Business_Seed`: their maker keeps them, branch `projectiles`), and actors that are not shared (names outside `Enemy_`).
+Alone with the boss flag: Volvagia, Ganondorf, the Lizalfos, Iron Knuckle Nabooru and Gerudo thief mini-bosses (each thief its own fight). Not grouped: projectiles (`*_Bullet_*`, `Enemy_MoblinClub_ShockWave`: the game whose enemy fired them sends them, "Enemy shots"), and actors that are not shared (names outside `Enemy_`).
 
 ## Drops
 

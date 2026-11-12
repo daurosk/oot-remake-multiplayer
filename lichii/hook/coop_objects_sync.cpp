@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_enemy_shots.h"
 #include "coop_guard.h"
 #include "coop_world.h"
 
@@ -128,6 +129,9 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
 
 bool IsShared(std::string_view name) {
     if (IsOwnPuzzle(name)) return false;  // before the Npc_ rule: the pond owner is one
+    // Enemy shots (Enemy_MoblinClub_ShockWave is named like an enemy)
+    // stay with the spawn sync: the game whose enemy fired one sends it.
+    if (CoopEnemyShots::IsEnemyShot(name)) return false;
     if (name.starts_with("Npc_")) {
         // Each player's own: Navi (the fairy sync has her), the equipment
         // a player or NPC holds, and invisible helpers.
@@ -593,6 +597,18 @@ std::optional<proto::ObjectId> Sync::IdOf(std::uint64_t address) const {
         return std::nullopt;
     }
     return it->second.id;
+}
+
+std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return std::nullopt;
+    }
+    const auto owner = owners_.find(it->second.id);
+    if (owner == owners_.end()) {
+        return std::nullopt;
+    }
+    return owner->second.player;
 }
 
 std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {

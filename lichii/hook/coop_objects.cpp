@@ -948,6 +948,20 @@ public:
             sync_.Bind(live);
         }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        {
+            // Enemy shots (coop_enemy_shots.h): which game's enemy fired one.
+            std::vector<CoopEnemyShots::Shooter> shooters;
+            for (const Seen& s : seen) {
+                if (s.name.starts_with("Enemy_")) {
+                    const auto owner = sync_.OwnerOf(s.address);
+                    shooters.push_back({s.name, s.position,
+                                        !owner || *owner == 0 ? CoopEnemyShots::Owner::unknown
+                                        : *owner == self      ? CoopEnemyShots::Owner::ours
+                                                              : CoopEnemyShots::Owner::theirs});
+                }
+            }
+            CoopEnemyShots::NoteShooters(std::move(shooters), server_now_us);
+        }
         if (sync_.BlastDrops() != blast_drops_logged_) {
             blast_drops_logged_ = sync_.BlastDrops();
             LOG_INFO(Core, "coop: shots: life drop by a projectile copy's blast kept back ({} so far)",

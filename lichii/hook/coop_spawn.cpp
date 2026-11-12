@@ -86,7 +86,7 @@ std::string Hex(std::uint64_t v) {
 } // namespace
 
 bool IsShared(std::string_view name) {
-    return Find(name) != nullptr;
+    return Find(name) != nullptr || (CoopEnemyShots::On() && CoopEnemyShots::IsEnemyShot(name));
 }
 bool Explodes(std::string_view name) {
     const Kind* k = Find(name);
@@ -94,7 +94,7 @@ bool Explodes(std::string_view name) {
 }
 bool Flies(std::string_view name) {
     const Kind* k = Find(name);
-    return k != nullptr && k->flies;
+    return (k != nullptr && k->flies) || CoopEnemyShots::IsEnemyShot(name);
 }
 
 // ---------------------------------------------------------------- Sync
@@ -127,6 +127,7 @@ void Sync::Reset() {
     mine_.clear();
     copies_.clear();
     copy_addresses_.clear();
+    local_.clear();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -210,6 +211,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     Apply(now_us);
     flights_.clear();
     made_up_.clear();
+    doom_.clear();
+    decided_.clear();
     // Issue 169: how fast our Link moves, so a bomb moving with him is held.
     link_velocity_ = {};
     if (link_ && Finite(*link_)) {
@@ -325,10 +328,41 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
             continue;
         }
+        const bool enemy_shot = CoopEnemyShots::IsEnemyShot(s.name);
+        if (enemy_shot) {
+            // A copy enemy here fires its own shot next to the owner's copy
+            // shot: never claimed by place, only by the director's report.
+            auto local = local_.find(s.address);
+            if (local != local_.end() && local->second.name != s.name) {
+                local_.erase(local);  // a new actor at an old address
+                local = local_.end();
+            }
+            if (local == local_.end()) {
+                const auto verdict = self == 0 ? CoopEnemyShots::Verdict::keep
+                                               : CoopEnemyShots::Decide(s.name, s.position, shooters_);
+                decided_.push_back({s.name, s.position, verdict});
+                if (verdict != CoopEnemyShots::Verdict::send) {
+                    local = local_.emplace(s.address, Local{s.name, verdict, 0, s.vtable, false}).first;
+                }
+            }
+            if (local != local_.end()) {
+                Local& l = local->second;
+                ++l.walks;
+                if (l.verdict == CoopEnemyShots::Verdict::hide && hide_ && !l.doomed &&
+                    l.walks >= kDoomWalks && l.vtable != 0) {
+                    doom_.push_back({s.address, l.vtable});
+                    l.doomed = true;
+                }
+                continue;
+            }
+        }
         // A copy the director made but has not reported yet: the nearest
         // unclaimed copy of that name.
         bool claimed = false;
         for (auto& [id, r] : copies_) {
+            if (enemy_shot) {
+                break;
+            }
             if (r.address == 0 && r.actor == s.name && Distance(r.Position(), s.position) < kClaimDistance) {
                 r.address = s.address;
                 copy_addresses_.insert(s.address);
@@ -405,6 +439,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // Addresses the game may give to a new actor later.
     std::erase_if(old_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
     std::erase_if(copy_addresses_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
+    std::erase_if(local_, [&](const auto& l) {
+        return on_list.count(l.first) == 0 || copy_addresses_.count(l.first) != 0;
+    });
 
     for (auto it = copies_.begin(); it != copies_.end();) {
         Remote& r = it->second;
@@ -590,6 +627,78 @@ void Director::SetDrops(std::uint64_t main_base, std::vector<Copy> copies) {
     std::lock_guard lock(mutex_);
     next_drop_base_ = main_base;
     next_drops_ = std::move(copies);
+}
+
+void Director::SetDoomed(std::vector<Doomed> doomed) {
+    if (doomed.empty()) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    for (Doomed& d : doomed) {
+        if (doomed_.size() < 64) {
+            d.since_ms = 0;
+            doomed_.push_back(d);
+        }
+    }
+}
+
+std::size_t Director::Deleted() const {
+    std::lock_guard lock(mutex_);
+    return deleted_;
+}
+
+// Enemy shots of copy enemies (coop_enemy_shots.h). Each is checked again
+// here, on the calc thread, just before the delete: still on the actor list
+// (its node's owner is itself) with the vtable it had, and no copy of ours.
+// While one of our creates waits to be taken, nothing is deleted (the
+// created actor may already be on the list before it is ours).
+std::optional<CoopPuppet::Call> Director::NextDoomed(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
+    namespace addr = CoopPuppet::addr;
+    constexpr std::uint64_t kNodeOwnerAt = 0x538 + 0x10;  // actor node + its owner
+    constexpr std::uint64_t kWaitMs = 1000;
+    std::erase_if(done_doomed_, [&](const auto& d) { return now_ms - d.second > 2000; });
+    const bool creating = std::any_of(slots_.begin(), slots_.end(), [](const Slot& slot) {
+        return slot.key != 0 && slot.phase == Phase::creating;
+    });
+    std::lock_guard lock(mutex_);
+    for (auto it = doomed_.begin(); it != doomed_.end();) {
+        Doomed& d = *it;
+        if (d.since_ms == 0) {
+            d.since_ms = now_ms;
+        }
+        if (now_ms - d.since_ms > kWaitMs || done_doomed_.count(d.address) != 0) {
+            it = doomed_.erase(it);
+            continue;
+        }
+        if (creating) {
+            ++it;
+            continue;
+        }
+        const bool ours =
+            std::any_of(slots_.begin(), slots_.end(),
+                        [&](const Slot& slot) { return slot.key != 0 && slot.taken == d.address; }) ||
+            std::any_of(live_.begin(), live_.end(),
+                        [&](const auto& l) { return l.second == d.address; });
+        std::uint64_t vtable = 0, owner = 0;
+        if (ours || !ReadValue(guest, d.address, vtable) || vtable != d.vtable ||
+            !ReadValue(guest, d.address + kNodeOwnerAt, owner) || owner != d.address) {
+            it = doomed_.erase(it);
+            continue;
+        }
+        CoopPuppet::Call c;
+        c.function = base_ + addr::kRequestDelete;
+        c.x[0] = d.address;
+        c.x[1] = 0;
+        const std::uint64_t address = d.address;
+        done_doomed_[address] = now_ms;
+        ++deleted_;
+        doomed_.erase(it);
+        pending_ = Pending::remove;
+        pending_slot_ = 0;
+        Say("enemy shot " + Hex(address) + " of a copy enemy deleted (the owner's is shown)");
+        return c;
+    }
+    return std::nullopt;
 }
 
 std::map<std::uint64_t, std::uint64_t> Director::Live() const {
@@ -985,6 +1094,9 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
 
 std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
     namespace addr = CoopPuppet::addr;
+    if (auto doomed = NextDoomed(guest, now_ms)) {
+        return doomed;
+    }
     const bool any_new = std::any_of(copies_.begin(), copies_.end(), [&](const Copy& c) {
         return Due(c, now_ms);
     });
@@ -1232,7 +1344,15 @@ public:
             CoopHook::EmulatorMemory game(memory, main_);
             sync_.SetLink(coop::host::PlayerReader(game).read_position());
         }
+        // Enemy shots: who owns the enemies (coop_objects' last walk).
+        sync_.SetShooters(CoopEnemyShots::Shooters(now_us));
+        sync_.SetHide(CoopEnemyShots::HideOn());
         sync_.Tick(*scene, self, now_us, seen, TheDirector().Live(), send, copies);
+        for (const auto& d : sync_.EnemyShotsDecided()) {
+            LOG_INFO(Core, "coop: shots: enemy shot {} at {:.2f} {:.2f} {:.2f}: {}", d.name,
+                     d.position[0], d.position[1], d.position[2], CoopEnemyShots::NameOf(d.verdict));
+        }
+        TheDirector().SetDoomed(sync_.Doom());
         if (const auto held = std::make_pair(sync_.HeldMine(), sync_.HeldCopies()); held != logged_held_) {
             LOG_INFO(Core, "coop: shots: bombs held: {} of ours, {} copies in other players' hands",
                      held.first, held.second);
@@ -1486,6 +1606,9 @@ private:
                     }
                     if (Explodes(s.name)) {
                         s.animation = Slot0(memory, a);  // issue 169: the fuse's blink
+                    }
+                    if (CoopEnemyShots::IsEnemyShot(s.name)) {
+                        s.vtable = Get<u64>(memory, a).value_or(0);  // checked again at a delete
                     }
                     out.push_back(std::move(s));
                 }

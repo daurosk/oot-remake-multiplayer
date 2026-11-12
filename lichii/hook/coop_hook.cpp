@@ -1697,6 +1697,16 @@ private:
     void MendOcarina(EmulatorMemory& memory) {
         namespace oc = coop::host::ocarina;
         coop::host::GameFlags flags(memory);
+        // The Bools a real get sets beside the count: without them D-pad Left
+        // took nothing out of a shared ocarina (ocarina-given, issue 190).
+        const auto fairy = flags.get_int(oc::kFairy).value_or(0);
+        const auto time = flags.get_int(oc::kTime).value_or(0);
+        for (const std::uint32_t hash :
+             coop::host::ocarina_bools_mend(fairy, time, [&](std::uint32_t h) { return flags.get_bool(h); })) {
+            if (coop::host::GameFlags::set_bool(memory, hash, true)) {
+                LOG_INFO(Core, "coop: items: ocarina bool {:#010x} 0 -> 1 for the held ocarina", hash);
+            }
+        }
         const auto current = flags.get_string64(oc::kEquip);
         if (!current) {
             return;

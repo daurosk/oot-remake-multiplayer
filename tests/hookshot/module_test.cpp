@@ -122,3 +122,79 @@ TEST_CASE("hookshot: test commands come from the driver's file, the pad stays th
     const std::string driver = ReadFile(kRepo / "tools" / "autotest" / "hookshot.py");
     CHECK(driver.find("LICHII_COOP_TEST_COMMANDS") != std::string::npos);
 }
+
+namespace {
+std::uint64_t TestPad() {
+    return 0xC5;  // A, X, Y, L, R
+}
+}  // namespace
+
+TEST_CASE("hookshot: own Ocarina notes read the pad word Hookshot gave the game (issue 152)") {
+    // The table: an older bridge (no pad_buttons) still starts co-op, without notes.
+    HosCoopApi api{};
+    api.version = HOS_COOP_API_VERSION;
+    api.size = static_cast<std::uint32_t>(CoopHookshot::kFirstApiSize);
+    CHECK_FALSE(CoopHookshot::HasPadButtons(&api));
+    api.size = sizeof api;
+    CHECK_FALSE(CoopHookshot::HasPadButtons(&api));  // no function
+    api.pad_buttons = TestPad;
+    CHECK(CoopHookshot::HasPadButtons(&api));
+    CHECK_FALSE(CoopHookshot::HasPadButtons(nullptr));
+    // The patch keeps the word nn::hid gives the game and hands it over.
+    const std::string patch = Patch();
+    CHECK(patch.find("+volatile uint64_t hos_coop_pad;") != std::string::npos);
+    CHECK(patch.find("+    if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);") != std::string::npos);
+    CHECK(patch.find("+        G64(e + 8) = word;") != std::string::npos);
+    CHECK(patch.find("+    api.pad_buttons = bridge_pad_buttons;") != std::string::npos);
+    // The hook asks for it on Hookshot instead of sending nothing.
+    const std::string sound = ReadFile(kRepo / "lichii" / "hook" / "coop_ocarina_sound.cpp");
+    CHECK(sound.find("CoopRuntime::PadButtons(buttons)") != std::string::npos);
+    CHECK(sound.find("so our own notes are not sent") == std::string::npos);
+}
+
+TEST_CASE("hookshot: co-op's per-frame work runs at each present, the game calls at the frame site") {
+    using CoopHookshot::WorkAt;
+    // A Hookshot from an older patch: everything at the every-frame site.
+    CHECK(WorkAt(HOS_COOP_SITE_FRAME, false).on_frame);
+    CHECK(WorkAt(HOS_COOP_SITE_FRAME, false).calls);
+    // Presents seen: OnFrame there only (as the emulator's composite), calls stay at the frame site.
+    CHECK(WorkAt(HOS_COOP_SITE_PRESENT, true).on_frame);
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_PRESENT, true).calls);
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_FRAME, true).on_frame);
+    CHECK(WorkAt(HOS_COOP_SITE_FRAME, true).calls);
+    // The rare site does nothing, as before.
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_RARE, false).on_frame);
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_RARE, true).calls);
+    // The patch calls the present site from the game's present, only once the module is loaded.
+    const std::string patch = Patch();
+    CHECK(patch.find("+    hos_coop_present();") != std::string::npos);
+    CHECK(patch.find("+    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);") !=
+          std::string::npos);
+}
+
+TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat lines, name tags)") {
+    // The draw table in our patch is hookshot/src's.
+    const std::string patch = Patch();
+    CHECK(NewFile(patch, "gpu/vk/hos_coop_draw.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_draw.h"));
+    // The renderer finds the module's two exports and draws in the menu's ImGui frame.
+    const std::string vk = NewFile(patch, "gpu/vk/vk_coop.cpp");
+    CHECK(vk.find("\"hos_coop_draw_wanted\"") != std::string::npos);
+    CHECK(vk.find("\"hos_coop_draw\"") != std::string::npos);
+    CHECK(patch.find("+    if (coop) coop::draw(w, h);") != std::string::npos);
+    // The module has them.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void)") != std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d)") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the chat box gets Hookshot's keys first, and the game none while it types") {
+    const std::string patch = Patch();
+    CHECK(patch.find("+        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) return 0;") != std::string::npos);
+    CHECK(patch.find("+        if (hos_coop_char((unsigned)wp)) return 0;") != std::string::npos);
+    CHECK(patch.find("+static int key(int vk) { return !rx_option(1, 0) && !hos_coop_keys_taken() &&") != std::string::npos);
+    CHECK(patch.find("GetProcAddress(m, \"hos_coop_keys_taken\")") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_key(uint32_t vk, int repeat)") != std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch)") != std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void)") != std::string::npos);
+}

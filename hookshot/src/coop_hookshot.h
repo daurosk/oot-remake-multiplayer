@@ -2,9 +2,11 @@
 // hookshot_coop.dll's exports (hos_coop_api.h) and what is behind them.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
+#include "coop_draw.h"
 #include "coop_game_build.h"
 #include "hos_coop_api.h"
 
@@ -26,6 +28,46 @@ void Frame(void* ctx, int site);
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits);
 // hos_coop_stop: CoopHook::Shutdown.
 void Stop();
+
+// The table's size in the first version, before pad_buttons: a Hookshot
+// built from an older patch gives this much, and co-op still runs on it.
+inline constexpr std::size_t kFirstApiSize = offsetof(HosCoopApi, pad_buttons);
+
+// The table has pad_buttons (player 1's buttons word, Ocarina notes sent).
+inline bool HasPadButtons(const HosCoopApi* api) {
+    return api != nullptr &&
+           api->size >= offsetof(HosCoopApi, pad_buttons) + sizeof(api->pad_buttons) &&
+           api->pad_buttons != nullptr;
+}
+
+// What a call of hos_coop_frame does. CoopHook::OnFrame runs once per
+// present, as the emulator runs it at the guest's present (loads and pause
+// included); a Hookshot built from an older patch never calls the present
+// site, so until one is seen it runs at the every-frame site. The callers'
+// game calls need the game's context: the every-frame site only.
+struct FrameWork {
+    bool on_frame = false;
+    bool calls = false;
+};
+inline FrameWork WorkAt(int site, bool present_seen) {
+    FrameWork w;
+    if (site == HOS_COOP_SITE_PRESENT) {
+        w.on_frame = true;
+    } else if (site == HOS_COOP_SITE_FRAME) {
+        w.on_frame = !present_seen;
+        w.calls = true;
+    }
+    return w;
+}
+
+// What hos_coop_draw shows now (chat, name tags; the player list while F6
+// is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
+CoopDraw::Scene DrawScene();
+
+// Typing (hos_coop_key / hos_coop_char / hos_coop_keys_taken): the chat box.
+bool TypeKey(std::uint32_t vk, bool repeat);
+bool TypeChar(std::uint32_t byte);
+bool KeysTaken();
 
 // Whether co-op knows the game whose main has this build id (hex, 16 or more
 // digits; Hookshot gives 32).

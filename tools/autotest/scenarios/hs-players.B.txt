@@ -1,0 +1,5 @@
+# hs-players: B waits; the shots show its list and panel too (hs-players.A.txt).
+wait 290
+mark b-list
+wait 120
+mark b-end

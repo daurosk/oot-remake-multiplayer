@@ -1,0 +1,24 @@
+# hs-panel (Hookshot): co-op drawn over Hookshot's picture. A sends a chat line, then plays nametag
+# (off the cow, by B, away and back); B answers in chat and turns away and back (edge arrow).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-panel (Hookshot built with this branch's patch).
+# Pass:
+# - both hookshot_log: "coop: drawing over Hookshot's picture: chat lines, name tags (WxH)".
+# - shots a-chat / b-chat: "A: hello from A" (and B's answer) at the bottom left, fading after 8 s.
+# - B's shots b-still / b-back: A's name over the puppet's head; b-edge: an arrow at the screen edge.
+# - A's shots near / mid / far: B's name tag, smaller and fainter with distance.
+chat hello from A
+wait 60
+mark a-chat
+stick 1 0 50            # off the cow at the save spot
+wait 120
+mark near
+wait 600                # B turns away and back
+stick 0 1 120           # walk away
+mark mid
+hold LSTICK_UP+A 240    # dash further
+mark far
+stick 0 -1 30           # turn back
+hold LSTICK_DOWN+A 240  # dash back
+mark back
+wait 120
+mark end

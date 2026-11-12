@@ -16,6 +16,9 @@
    cave has them (lichii/hook/coop_svc.h kHooks). */
 #define HOS_COOP_SITE_RARE 0    /* main+0x6e6dd8 */
 #define HOS_COOP_SITE_FRAME 1   /* main+0x6e70f8: every frame */
+/* Added after the first version: the game's present (nvnQueuePresentTexture, the emulator's composite), loads and
+   pause included; ctx is NULL there and call() may not be used. Only once the module is loaded. */
+#define HOS_COOP_SITE_PRESENT 2
 
 /* One game function call (CoopPuppet::Call): x0-x7, four words at sp, s0. */
 typedef struct HosCoopCall {
@@ -40,12 +43,24 @@ typedef struct HosCoopApi {
        no function at that address. *x0 = what it returned. */
     int (*call)(void *ctx, const HosCoopCall *call, uint64_t *x0);
     void (*log)(const char *line);   /* one line into hookshot_log.txt */
+    /* Added after the first version (check size covers it): the buttons word the game was last given for player 1
+       (Switch NpadButton bits, as nn::hid::GetNpadStates hands them, note keys included while the game waits for a
+       note), any thread. */
+    uint64_t (*pad_buttons)(void);
 } HosCoopApi;
 
 /* The module's exports (extern "C"). */
 typedef int (*hos_coop_start_fn)(const HosCoopApi *api);   /* 1: co-op on; 0: off (the bridge unloads it) */
-typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thread, at a frame hook */
+typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thread at a frame hook; the presenting
+                                                             thread at HOS_COOP_SITE_PRESENT */
 typedef uint32_t (*hos_coop_hold_fn)(uint64_t component, uint32_t bits);   /* the AI hold: a BSA component's calc bits */
 typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
+/* Typing, added after the first version (optional exports; an older module has none): Hookshot's window (display.c)
+   offers each key press (virtual-key code, repeat 1 for an auto-repeat) and each character (WM_CHAR of the ANSI window:
+   a byte of the active code page) to the module first; 1 = taken, Hookshot does nothing more with it. While
+   hos_coop_keys_taken says 1, the game reads no keys or mouse buttons (nn_hid.c key), as while the Insert menu is open. */
+typedef int (*hos_coop_key_fn)(uint32_t vk, int repeat);   /* the window's thread */
+typedef int (*hos_coop_char_fn)(uint32_t ch);              /* the window's thread */
+typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often: cheap */
 
 #endif

@@ -1,0 +1,12 @@
+# hs-players (Hookshot): the player list and the panel drawn over Hookshot's picture. The driver
+# cannot hold F6, so the switches keep both shown. A walks off the cow and by B.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-players (Hookshot built with hs-panel's patch)
+# Pass: shots a-list / b-list: a box over the top middle with "#  Player  State  Ping  Scene", one row
+# per player ("Name (you)" first, "connected", "NN ms", the scene); the panel at the top left
+# ("coop: connected", the other player's line). By hand: F6 held shows the list, F7 turns the panel off/on.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_SHOW_PLAYERS=1,LICHII_COOP_DEBUG_PANEL=1
+stick 1 0 50            # off the cow at the save spot
+wait 240
+mark a-list
+wait 120
+mark a-end

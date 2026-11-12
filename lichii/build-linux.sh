@@ -3,7 +3,7 @@
 # patches (fetch.sh), configures it with the co-op hook (LICHII_COOP=ON) the
 # way Fritchii's own Linux release is configured, and builds it.
 #
-#   lichii/build-linux.sh [--src DIR] [--build DIR] [--hook-only] [--appimage FILE] [--no-fetch]
+#   lichii/build-linux.sh [--src DIR] [--build DIR] [--hook-only] [--appimage FILE] [--no-fetch] [--cpm-cache DIR]
 #
 # --src DIR        emulator source (default: fritchii-src beside the main checkout)
 # --build DIR      build folder (default: DIR/build/coop-linux)
@@ -12,6 +12,7 @@
 #                  plugin are downloaded into the build folder); the kit ships it as
 #                  emulator/lichii.AppImage
 # --no-fetch       use the source as it is (it must already be at the pin with the patches)
+# --cpm-cache DIR  keep the downloaded libraries (CPM) in DIR, outside the source (CI caches it)
 #
 # Needs: cmake 3.24+, ninja, a C++20 compiler (gcc 13+ or clang 17+), Qt 6 (6.8 as
 # Fritchii's release; set QT_ROOT_DIR or CMAKE_PREFIX_PATH, or install qt6 dev packages)
@@ -26,7 +27,7 @@ fail() {
     exit 1
 }
 
-src=""; build=""; hook_only=0; appimage=""; fetch=1
+src=""; build=""; hook_only=0; appimage=""; fetch=1; cpm_cache=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --src) src="$2"; shift 2 ;;
@@ -34,6 +35,7 @@ while [ $# -gt 0 ]; do
         --hook-only) hook_only=1; shift ;;
         --appimage) appimage="$2"; shift 2 ;;
         --no-fetch) fetch=0; shift ;;
+        --cpm-cache) cpm_cache="$2"; shift 2 ;;
         -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) fail "unknown option $1" ;;
     esac
@@ -49,6 +51,15 @@ if [ "$fetch" = 1 ]; then
 fi
 [ -f "$src/CMakeLists.txt" ] || fail "$src is not the emulator source"
 src="$(cd "$src" && pwd)"
+# --cpm-cache DIR: Fritchii keeps the libraries CPM downloads in <source>/.cache/cpm (ignored
+# by its .gitignore). With a folder outside the source (CI's cache), that becomes a link to
+# it, so the cache never sits in the source folder before fetch.sh clones it.
+if [ -n "$cpm_cache" ]; then
+    mkdir -p "$cpm_cache" "$src/.cache"
+    cpm_cache="$(cd "$cpm_cache" && pwd)"
+    [ -L "$src/.cache/cpm" ] || [ ! -e "$src/.cache/cpm" ] || fail "$src/.cache/cpm exists; remove it to use --cpm-cache"
+    ln -sfn "$cpm_cache" "$src/.cache/cpm"
+fi
 build="${build:-$src/build/coop-linux}"
 
 prefix=()

@@ -199,14 +199,14 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
-          path: ${{ runner.temp }}/fritchii/.cache/cpm
+          path: ${{ runner.temp }}/cpm-cache
           key: fritchii-cpm-${{ hashFiles('lichii/PIN') }}
       - name: Compile the co-op hook
         if: steps.gate.outputs.run == 'true' && matrix.part == 'hook'
-        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --hook-only
+        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --cpm-cache "$RUNNER_TEMP/cpm-cache" --hook-only
       - name: Build the emulator and its AppImage
         if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
-        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --appimage "$RUNNER_TEMP/lichii.AppImage"
+        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --cpm-cache "$RUNNER_TEMP/cpm-cache" --appimage "$RUNNER_TEMP/lichii.AppImage"
       # No game here: start it with no display, check it runs, logs its version and has the
       # hook, then stop it. "coop: loaded" itself is logged when a game starts.
       - name: Start without a game

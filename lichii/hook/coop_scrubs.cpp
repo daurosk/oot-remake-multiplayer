@@ -72,7 +72,21 @@ bool IsHitAnimation(std::string_view anim, const std::set<std::string>& names) {
 }
 
 std::set<std::string> DefaultHitAnimations() {
-    return {"Paralysis_Start"};
+    // Run 2026-11-11 (autotest deku-scrubs-solo): a seed on a brother before the last plays
+    // Paralysis_Start; the last right hit plays SmallHit, then Escape, Damage, Stop.
+    return {"Paralysis_Start", "SmallHit"};
+}
+
+bool IsIdleAnimation(std::string_view anim) {
+    // The brothers' own cycle, logged only when LICHII_COOP_DEBUG_OBJECTS asks (the cap).
+    constexpr std::string_view kIdle[] = {"Dig", "Sleep", "GetUpBrothers", "WaitBrothers",
+                                          "Turn", "Attack", "Wait", "Loading_Ed"};
+    for (const std::string_view i : kIdle) {
+        if (anim == i) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::set<std::string> ParseAnimations(std::string_view text) {
@@ -119,10 +133,12 @@ void Puzzle::Look(const std::string& scene, const std::vector<Seen>& seen,
         const auto it = animation_.find(s.address);
         const std::string before = it != animation_.end() ? it->second : std::string();
         if (!s.animation.empty() && s.animation != before) {
-            if (anim_lines_ < kMaxAnimLines) {
+            if (anim_lines_ < kMaxAnimLines && !IsIdleAnimation(s.animation)) {
                 ++anim_lines_;
+                char at[64];
+                std::snprintf(at, sizeof at, " at %.2f %.2f %.2f", s.position[0], s.position[1], s.position[2]);
                 out.notes.push_back("scrubs: " + Label(*b) + " (order " + std::to_string(b->order) + ", id " +
-                                    std::to_string(s.id) + ") anim '" + s.animation + "'");
+                                    std::to_string(s.id) + ") anim '" + s.animation + "'" + at);
             }
             // The first look at a brother is its baseline, never a hit.
             if (it != animation_.end() && IsHitAnimation(s.animation, hit_animations_) &&

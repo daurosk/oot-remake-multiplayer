@@ -7,15 +7,22 @@
 # centre at -27.8 52.8 20.3. The kit saves have the puzzle solved: clear bool 0xd2f46f66
 # (InsideTheDekuTree_RoomK_Cleared) and bool 0x60c22ed7 (..._EnemyScrubDekuDestroy_003) in both
 # autotest-save baselines first (tools/autotest/save_flags.py set), and put them back after.
-# A hits Two (~10 s after placing), B hits Three (~25 s), A hits One (~45 s).
+# A hits Two (order 1, ~5-15 s after placing) and Three (order 2, ~20-30 s); B makes the last hit,
+# on One (order 3, ~40-50 s): B's manager solves only if A's two hits were counted there.
+# The brothers come up one at a time (about 4 s each, One, Two, Three in turn), so each hit is
+# three shots spread over a turn; a second shot on a brother already stunned is logged as such.
 # Expect (coop_scrubs.h, lines "coop: scrubs: ..."):
 #  - both: "brother Two/Three/One ... anim '...'" lines (the brothers are there; the hit's AS).
-#  - A "brother Two ... hit here (order 1): sending"; B "P1's hit on brother Two ... to give
-#    here", then "... given to our manager (order 1, send gave N)", and B's Two stunned in shot
-#    "two" (the manager's own stun) with no "hit here" for it in B ("not sent back").
-#  - B "brother Three ... hit here (order 2): sending"; A "... given to our manager (order 2 ...)".
-#  - A "brother One ... hit here (order 3): sending": A's solve (Talk_Deku_03_Attacked, flags
-#    RoomK_Cleared and EnemyScrubDekuDestroy_003 0 -> 1, shared to B), the shutter opens in both.
+#  - A "brother Two ... hit here (order 1): sending", then Three (order 2); B "P1's hit on brother
+#    Two/Three ... given to our manager (order N, send gave M)". B's own Two and Three keep
+#    their cycle (the stun is each brother's own; the manager only counts).
+#  - B "brother One ... anim 'SmallHit'" + "hit here (order 3): sending" (the last right hit:
+#    SmallHit, Escape, then Damage and Stop on a second seed); A's One escapes too ("not sent
+#    back"). B walks to One and presses A: One's talk (Talk_Deku_03_Attacked) and B's solve,
+#    flags bool 0xd2f46f66 (RoomK_Cleared) and 0x60c22ed7 (_003) 0 -> 1 in B (shared to A).
+#  - Reference: deku-scrubs-solo (A alone; B's Two and Three go to Paralysis from A's hits).
+#  - First run (20261111-172748): A's Two and One hits went out and were given in B; B's shot
+#    missed Three (it was underground).
 #  - If no "hit here" line comes, the hit AS is another name: read the anim lines and run again
 #    with LICHII_COOP_SCRUB_HIT_ANIMS=<name>.
 #! noload
@@ -43,23 +50,36 @@ place -29.5 53.2 29.0
 wait 240
 mark placed
 toward -29.0 41.2 10     # face Two
-wait 360
+wait 240
 mark aim-two
 hold ZL 30
-hold ZL+ZR 60
+hold ZL+ZR 50
+hold ZL 20
+wait 80
 hold ZL 30
-wait 60
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
 mark two
-wait 840                  # B hits Three meanwhile
+toward -34.0 39.6 10     # face Three
+wait 120
+mark aim-three
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 60
 mark three
-goto -24.0 29.5 0.6 240
-toward -23.7 40.0 10      # face One
-wait 120
-mark aim-one
-hold ZL 30
-hold ZL+ZR 60
-hold ZL 30
-wait 120
-mark one
-wait 1200
+wait 4200                # B hits One and talks to it
 mark end

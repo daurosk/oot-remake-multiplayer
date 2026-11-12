@@ -71,10 +71,13 @@ const Brother* FindBrother(std::uint64_t hash);
 bool IsManager(std::uint64_t hash);
 
 // The AS commands a brother plays when it is hit (its interruptsmallhit
-// module): "Paralysis_Start". LICHII_COOP_SCRUB_HIT_ANIMS=a,b replaces them.
-// A command matches when it holds one of the names.
+// module): "Paralysis_Start" (stunned, waits for the others), "SmallHit" (the
+// last right hit: then Escape, Damage, Stop, and the talk when Link comes).
+// LICHII_COOP_SCRUB_HIT_ANIMS=a,b replaces them. A command matches when it
+// holds one of the names.
 bool IsHitAnimation(std::string_view anim, const std::set<std::string>& names);
 std::set<std::string> DefaultHitAnimations();
+bool IsIdleAnimation(std::string_view anim);  // the brothers' own cycle (not logged)
 std::set<std::string> ParseAnimations(std::string_view text);  // "a,b": empty parts dropped
 
 // A brother or manager of the last objects walk.

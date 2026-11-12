@@ -127,6 +127,10 @@ TEST_CASE("scrubs: the brothers and managers from the Banc") {
 TEST_CASE("scrubs: hit animations and their override") {
     const auto names = CoopScrubs::DefaultHitAnimations();
     CHECK(CoopScrubs::IsHitAnimation("Paralysis_Start", names));
+    CHECK(CoopScrubs::IsHitAnimation("SmallHit", names));
+    CHECK_FALSE(CoopScrubs::IsHitAnimation("Escape", names));
+    CHECK(CoopScrubs::IsIdleAnimation("Dig"));
+    CHECK_FALSE(CoopScrubs::IsIdleAnimation("Paralysis_Start"));
     CHECK_FALSE(CoopScrubs::IsHitAnimation("Wait", names));
     CHECK_FALSE(CoopScrubs::IsHitAnimation("", names));
     const auto parsed = CoopScrubs::ParseAnimations(" SmallHit , ,Paralysis");

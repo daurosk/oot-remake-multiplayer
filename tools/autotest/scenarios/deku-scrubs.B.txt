@@ -1,4 +1,4 @@
-# deku-scrubs (#149): B hits Three after A hit Two (see deku-scrubs.A.txt).
+# deku-scrubs (#149): B makes the last hit, on One, after A hit Two and Three (see deku-scrubs.A.txt).
 mark start
 warp InsideTheDekuTree Entrance
 wait 1200
@@ -16,16 +16,60 @@ give PouchData.Weapon_Range_SlingShot.StockNum
 wait 120
 assign SlingShot
 wait 120
-place -34.0 53.2 29.5
+place -24.0 53.2 29.5
 wait 240
 mark placed
-toward -34.0 39.6 10     # face Three
-wait 1200                # A hits Two meanwhile
-mark aim-three
+toward -23.7 40.0 10     # face One
+wait 2400                # A hits Two and Three meanwhile
+mark aim-one
 hold ZL 30
-hold ZL+ZR 60
+hold ZL+ZR 50
+hold ZL 20
+wait 80
 hold ZL 30
-wait 60
-mark three
-wait 2400                # A hits One
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark one
+wait 300
+goto -23.1 35.5 1.0 600  # to One (it runs, then stops: the talk comes when Link is near)
+mark at-one
+mark talk
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
 mark end

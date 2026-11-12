@@ -275,7 +275,7 @@ TEST_CASE("settings: tunic key, name set or not, and the Co-op menu's ini edits"
     CHECK(CoopHook::SetIniValue("a = 1\r\ntunic = red\r\n", "tunic", std::string("green")) ==
           "a = 1\r\ntunic = green\n");
 
-    CHECK(CoopHook::NameFromProfile(std::string_view("  Sebastian Link long name\0\0", 28)) == "Sebastian Link l");
+    CHECK(CoopHook::NameFromProfile(std::string_view("  Saria of the Lost Woods\0\0", 27)) == "Saria of the Los");
     CHECK(CoopHook::NameFromProfile("Ana#1") == "Ana1");
     CHECK(CoopHook::NameFromProfile("") == "");
     CHECK(CoopHook::ValidTunic(" AZUL "));

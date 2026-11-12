@@ -111,3 +111,4 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/verify_kit.ps1 -Zip selftest/wrongsum.zip -Repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -eq 0) { throw "verify_kit.ps1 accepted a zip whose .sha256 does not match" }
           Write-Host "Wrong .sha256 refused (exit $LASTEXITCODE), as it should be."
+          exit 0

@@ -113,9 +113,9 @@ bool IsShared(std::string_view name);
 // fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
 
-// Issue 151 (fishing-2): a fish (Animal_Fish_*). Shared like any animal, with
-// one owner game; the lure rules in Sync (SetLures) move a fish to the game
-// whose lure it goes for, and a fish its owner catches is gone for everyone.
+// Issue 151 (fishing-2, fishing-3): a fish (Animal_Fish_*). Shared like any animal, with
+// one owner game; the lure rules in Sync (SetLures, FISH_LURE) move a fish to the game
+// whose lure is nearest it, and a fish its owner catches is gone for everyone.
 bool IsFish(std::string_view name);
 
 // Issue 191: guards (docs/objects.md, "Guards"). The stealth guards that throw
@@ -351,23 +351,30 @@ public:
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
 
-    // Issue 151 (fishing-2). Present thread, before Tick: where our own cast
-    // lures are (CoopProjectiles::TheLures). A fish copy we do not own whose
-    // own AI swims it towards one of them (kLureStepM or more a frame, within
-    // kLureReachM, or held within kLureHookM: it bites) for kChaseHoldUs is
-    // flagged targeting, so the server hands it to us and our game runs the
-    // bite and the fight. A fish we own within kLureHookM of our lure, or
-    // coming at it at kLureSpeed or more within kLureReachM, is flagged the
-    // same way (ChaseStep's targeting flag, as for enemies; not in_fight), so
-    // it stays ours while it is hooked
-    // and reeled in. A fish we own that leaves the walk within kCatchNearM of
-    // our Link was caught here (landed, in Link's hands): OBJECT_REMOVE dead,
-    // and every other game deletes its copy at once.
+    // Issue 151. Present thread, before Tick: where our own cast lures are
+    // (CoopProjectiles::TheLures). Each Tick sends FISH_LURE (fishing-3):
+    // every fish in the walk with how near our nearest lure is (within
+    // kLureReachM), hooked when we own it and it is within kLureHookM, drawn
+    // when we own it and it comes at our lure at kLureSpeed or more, or when
+    // it is a copy whose own AI swims it at our lure (kLureStepM or more a
+    // frame, or held within kLureHookM) for kChaseHoldUs. The server gives the
+    // fish to the nearest lure's game, so that game runs the approach, the
+    // bite and the fight; a fish is never flagged targeting or fighting (a
+    // fight lock would hold it in the wrong game). A fish we own that leaves
+    // the walk within kCatchNearM of our Link was caught here (landed, in
+    // Link's hands): OBJECT_REMOVE dead, and every other game deletes its copy
+    // at once.
     void SetLures(std::vector<coop::protocol::Vec3> lures) { lures_ = std::move(lures); }
     static constexpr float kLureReachM = 6.0f;
     static constexpr float kLureStepM = 0.005f;
     static constexpr float kLureHookM = 1.0f;
     static constexpr float kLureSpeed = 0.2f;  // metres a second
+    // fishing-3: FISH_LURE (the server gives each fish to the game whose lure
+    // is nearest). Sent on a change at most this often (a change of hooked or
+    // drawn at once), and with every presence. Distances in kFishStepCm steps.
+    static constexpr std::uint64_t kFishEveryUs = 250'000;
+    static constexpr std::uint32_t kFishStepCm = 25;
+    static constexpr std::uint64_t kFishRepeatUs = 1'000'000;
     static constexpr float kCatchNearM = 3.0f;
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
@@ -656,6 +663,13 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
+    std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE
+    std::uint64_t fish_at_ = 0;
+    // One fish's FISH_LURE entry: how near our nearest lure is, hooked (ours,
+    // within kLureHookM) or drawn (ours coming at it at kLureSpeed, or a copy
+    // whose own AI swims at it: NoteDrift's chase steps).
+    coop::protocol::FishLureEntry FishClaim(const Object& o, std::uint8_t self,
+                                            std::uint64_t now_us) const;
     // The nearest of our lures to `at` (metres), or nothing with none.
     std::optional<float> LureDistance(const coop::protocol::Vec3& at) const;
     std::vector<std::string> notes_;

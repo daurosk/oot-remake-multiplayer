@@ -1,0 +1,45 @@
+mark start
+warp HyruleField_Child MiniGame_Fishing_PlayerStart
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 180                # A talks first
+stick 0 1 60
+wait 60
+press A 12
+wait 240
+press A 12
+wait 180
+press A 12
+wait 180
+press A 12
+wait 180
+press A 12
+wait 180
+press A 12
+wait 240
+mark b-rod
+stick 0 -1 90
+wait 60
+stick 1 0 40            # a little right of A
+wait 60
+press B 12              # cast
+wait 600
+mark b-cast
+hold A 300
+mark b-reel
+wait 600
+press B 12
+wait 900
+hold A 600
+mark b-end
+wait 600
+mark end

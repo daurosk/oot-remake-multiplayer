@@ -128,6 +128,21 @@ struct SessionConfig {
   // it has said so for handover_chased_us, wherever the owner's enemy
   // stands. The owner saying the same is a fight, which keeps it.
   std::uint64_t handover_chased_us = 500'000;
+  // Issue 151 (fishing-3): a fish (an object some game listed in FISH_LURE)
+  // goes to the game whose lure is nearest it, not by the distance rule and
+  // never held by a fight lock. Its owner keeps it while the fish is hooked,
+  // and while no other lure is fish_lure_margin_m nearer (or drawn when the
+  // owner's is not, and is not fish_lure_margin_m farther). A better lure
+  // must stay better for fish_lure_hold_us, and not within
+  // fish_lure_cooldown_us of the last change. A list older than
+  // fish_lure_stale_us counts as no lure; the owner's hooked fish is kept on
+  // its list for fish_hooked_stale_us, and while its game stands still.
+  // Only the owner's hooked counts.
+  float fish_lure_margin_m = 1.0f;
+  std::uint64_t fish_lure_hold_us = 300'000;
+  std::uint64_t fish_lure_cooldown_us = 1'000'000;
+  std::uint64_t fish_lure_stale_us = 2'500'000;
+  std::uint64_t fish_hooked_stale_us = 10'000'000;
   // How long the owner has to answer HANDOVER_ASK with its state before the
   // server moves the object with the last sample it relayed.
   std::uint64_t handover_answer_us = 500'000;
@@ -274,6 +289,7 @@ struct Stats {
   std::uint64_t handover_asked = 0;       // HANDOVER_ASK sent to an owner
   std::uint64_t handover_unanswered = 0;  // moved with the last relayed sample
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
+  std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)
   std::uint64_t stale_scenes = 0;         // a late message's old scene, not taken back
@@ -384,6 +400,10 @@ class Session {
     // It entered a scene and has not been sent that scene's spawns yet.
     bool replay_due = false;
     std::uint64_t owners_told_at = 0;
+    // Its latest FISH_LURE (issue 151): each fish it has loaded and how near
+    // its own lure is; lures_at 0: none yet.
+    std::map<protocol::ObjectId, protocol::FishLureEntry> lures;
+    std::uint64_t lures_at = 0;
   };
 
   // One shared object (docs/objects.md "Server").
@@ -396,6 +416,7 @@ class Session {
     bool projectile = false;  // a made projectile: never handed over
     bool removed = false;     // its owner removed it; kept until nobody has it
     bool boss = false;        // OBJECT_GROUP said so: the long fight lock
+    bool fish = false;        // FISH_LURE listed it: owned by the nearest lure
     std::uint8_t last_owner = 0;  // the player who owned it before, 0: none
     // The owner before the last change, for a kill that crossed it.
     std::optional<ConnectionId> previous_owner;
@@ -461,6 +482,12 @@ class Session {
   void on_pvp_mode(ConnectionId id, Connection& c, const protocol::PvpMode& m);
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
+  void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
+  // A fish's owner by the lures (issue 151): asks it over when another game's
+  // lure is clearly better than its owner's.
+  // unfit: its owner's game stands still (unfit_owner).
+  void fish_owner(const protocol::ObjectId& oid, Object& o, ConnectionId owner, bool unfit,
+                  std::uint64_t now_us);
   void on_status(Connection& c, std::uint8_t flags, std::uint64_t now_us);
   void on_grass_cut(ConnectionId id, Connection& c, protocol::GrassCut& cut,
                     std::uint64_t now_us);

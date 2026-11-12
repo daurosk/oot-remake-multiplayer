@@ -2586,31 +2586,48 @@ Seen Fish(std::uint64_t address, std::uint64_t hash, float x) {
     return s;
 }
 
-// A fish copy at x, owned by player 2; each 33 ms our game's own frame swims
-// it `step` metres towards x = 0 (our lure) from where the Mover put it, each
-// 66 ms a walk. The flags of the last OBJECT_PRESENT sent, if any.
-std::optional<std::uint8_t> Swim(Sync& sync, std::uint64_t from, std::uint64_t to, float x,
-                                 float step) {
-    std::optional<std::uint8_t> flags;
-    for (std::uint64_t t = from; t < to; t += 33) {
-        sync.NoteDrift(0x100, {x, 0.0f, 0.0f}, {x - step, 0.0f, 0.0f}, t * kMs);
-        if ((t - from) % 66 == 0) {
-            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}))) {
-                REQUIRE(p.objects.size() == 1);
-                flags = p.objects[0].flags;
+// What our games says about one fish (fishing-3): its last FISH_LURE entry,
+// and whether any OBJECT_PRESENT flagged it targeting or fighting (never).
+struct FishSaid {
+    std::optional<proto::FishLureEntry> lure;
+    bool flagged = false;
+};
+
+void Note(FishSaid& said, const Step& sent) {
+    for (const auto& p : All<proto::ObjectPresent>(sent)) {
+        for (const auto& o : p.objects) {
+            if (o.flags & (proto::object_presence::targeting | proto::object_presence::in_fight)) {
+                said.flagged = true;
             }
         }
     }
-    return flags;
+    for (const auto& f : All<proto::FishLure>(sent)) {
+        REQUIRE(f.fish.size() == 1);
+        said.lure = f.fish[0];
+    }
 }
 
-bool Targets(const std::optional<std::uint8_t>& flags) {
-    return flags && (*flags & proto::object_presence::targeting) != 0;
+// A fish copy at x, owned by player 2; each 33 ms our game's own frame swims
+// it `step` metres towards x = 0 (our lure) from where the Mover put it, each
+// 66 ms a walk.
+FishSaid Swim(Sync& sync, std::uint64_t from, std::uint64_t to, float x, float step) {
+    FishSaid said;
+    for (std::uint64_t t = from; t < to; t += 33) {
+        sync.NoteDrift(0x100, {x, 0.0f, 0.0f}, {x - step, 0.0f, 0.0f}, t * kMs);
+        if ((t - from) % 66 == 0) {
+            Note(said, Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}));
+        }
+    }
+    return said;
+}
+
+bool Has(const FishSaid& said, std::uint8_t flag) {
+    return said.lure && (said.lure->flags & flag) != 0;
 }
 
 } // namespace
 
-TEST_CASE("objects: a fish copy that swims at our lure for 1 s is asked for (issue 151)") {
+TEST_CASE("objects: a fish copy that swims at our lure for 1 s is drawn to it (issue 151)") {
     auto run = [](float x, float step, std::uint8_t owner, bool lure, std::uint64_t to = 1500) {
         Sync sync;
         // Our Link on the dock, far from the fish: the lure is what counts.
@@ -2620,7 +2637,9 @@ TEST_CASE("objects: a fish copy that swims at our lure for 1 s is asked for (iss
         }
         Tick(sync, 0, {Fish(0x100, 0x11, x)});
         Own(sync, *sync.IdOf(0x100), owner);
-        return Targets(Swim(sync, 10, to, x, step));
+        const FishSaid said = Swim(sync, 10, to, x, step);
+        CHECK_FALSE(said.flagged);  // never a chase or a fight to the server
+        return Has(said, proto::fish_lure::drawn);
     };
     CHECK(run(4.0f, 0.02f, 2, true));         // swims at our lure
     CHECK_FALSE(run(4.0f, 0.02f, 2, true, 900));  // under 1 s: not yet
@@ -2629,10 +2648,39 @@ TEST_CASE("objects: a fish copy that swims at our lure for 1 s is asked for (iss
     CHECK_FALSE(run(8.0f, 0.02f, 2, true));   // over 6 m from it
     CHECK_FALSE(run(4.0f, 0.002f, 2, true));  // the Mover's noise
     CHECK_FALSE(run(4.0f, 0.02f, 2, false));  // no lure of ours cast
-    CHECK_FALSE(run(4.0f, 0.02f, 1, true));   // ours: the Mover does not place it
 }
 
-TEST_CASE("objects: a fish of ours at our lure stays ours, one away from it does not (issue 151)") {
+TEST_CASE("objects: every fish is listed with how near our lure is (issue 151)") {
+    auto said = [](float x, bool lure, std::uint8_t owner = 2) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 30.0f});
+        if (lure) {
+            sync.SetLures({proto::Vec3{0.0f, 0.0f, 0.0f}});
+        }
+        FishSaid out;
+        Note(out, Tick(sync, 1000 * kMs, {Fish(0x100, 0x11, x)}));
+        Own(sync, *sync.IdOf(0x100), owner);
+        Note(out, Tick(sync, 1066 * kMs, {Fish(0x100, 0x11, x)}));
+        return out;
+    };
+    const FishSaid far = said(3.0f, false);
+    REQUIRE(far.lure);  // listed with no lure, so the server knows it is a fish
+    CHECK(far.lure->distance_cm == proto::kFishLureNone);
+    CHECK(far.lure->flags == 0);
+    const FishSaid near = said(3.1f, true);
+    REQUIRE(near.lure);
+    CHECK(near.lure->distance_cm == 300);  // 310 cm in 25 cm steps
+    CHECK(near.lure->flags == 0);          // a copy resting near it
+    CHECK(said(7.0f, true).lure->distance_cm == proto::kFishLureNone);  // out of reach
+    CHECK(Has(said(0.5f, true, 1), proto::fish_lure::hooked));  // ours, on the lure
+    CHECK_FALSE(Has(said(0.5f, true, 2), proto::fish_lure::hooked));  // a copy is never hooked
+    // A fish that is not a fish is not listed.
+    Sync sync;
+    sync.SetLures({proto::Vec3{0.0f, 0.0f, 0.0f}});
+    CHECK(All<proto::FishLure>(Tick(sync, 1000 * kMs, {Enemy(0x200, 0x22, 2)})).empty());
+}
+
+TEST_CASE("objects: a fish of ours at our lure is hooked or drawn, never a fight (issue 151)") {
     auto run = [](float x, float dx, bool lure) {
         Sync sync;
         sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 30.0f});
@@ -2641,20 +2689,44 @@ TEST_CASE("objects: a fish of ours at our lure stays ours, one away from it does
         }
         Tick(sync, 0, {Fish(0x100, 0x11, x)});
         Own(sync, *sync.IdOf(0x100), 1);
-        std::optional<std::uint8_t> flags;
+        FishSaid said;
         for (std::uint64_t t = 66; t <= 1500; t += 66) {
             x += dx;
-            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}))) {
-                flags = p.objects[0].flags;
-            }
+            Note(said, Tick(sync, t * kMs, {Fish(0x100, 0x11, x)}));
         }
-        return Targets(flags);
+        CHECK_FALSE(said.flagged);
+        return said;
     };
-    CHECK(run(0.3f, 0.0f, true));     // hooked: held at the lure
-    CHECK(run(5.5f, -0.05f, true));   // comes at it, 0.75 m/s
-    CHECK_FALSE(run(3.0f, 0.0f, true));    // resting 3 m off
-    CHECK_FALSE(run(3.0f, 0.05f, true));   // swims off
-    CHECK_FALSE(run(0.3f, 0.0f, false));   // no lure of ours
+    CHECK(Has(run(0.3f, 0.0f, true), proto::fish_lure::hooked));   // held at the lure
+    CHECK(Has(run(5.5f, -0.05f, true), proto::fish_lure::drawn));  // comes at it, 0.75 m/s
+    const FishSaid resting = run(3.0f, 0.0f, true);
+    CHECK(resting.lure->flags == 0);
+    CHECK(resting.lure->distance_cm == 300);
+    CHECK(run(3.0f, 0.05f, true).lure->flags == 0);  // swims off
+    CHECK(run(0.3f, 0.0f, false).lure->distance_cm == proto::kFishLureNone);  // no lure of ours
+}
+
+TEST_CASE("objects: the fish list goes once when it changes, and once more when empty (issue 151)") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 30.0f});
+    sync.SetLures({proto::Vec3{0.0f, 0.0f, 0.0f}});
+    auto lists = [&](std::uint64_t ms, std::vector<Seen> seen) {
+        return All<proto::FishLure>(Tick(sync, ms * kMs, std::move(seen)));
+    };
+    REQUIRE(lists(1000, {Fish(0x100, 0x11, 3.0f)}).size() == 1);
+    Own(sync, *sync.IdOf(0x100), 2);
+    CHECK(lists(1066, {Fish(0x100, 0x11, 3.0f)}).empty());   // the same
+    CHECK(lists(1132, {Fish(0x100, 0x11, 2.6f)}).empty());   // under 250 ms since
+    CHECK(lists(1300, {Fish(0x100, 0x11, 2.6f)}).size() == 1);  // 250 cm now, due
+    // Gone from the walk: one empty list, then nothing.
+    std::size_t empties = 0;
+    for (std::uint64_t t = 1400; t <= 2400; t += 100) {
+        for (const auto& f : lists(t, {})) {
+            CHECK(f.fish.empty());
+            ++empties;
+        }
+    }
+    CHECK(empties == 1);
 }
 
 TEST_CASE("objects: a fish its owner landed is gone for everyone (issue 151)") {

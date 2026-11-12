@@ -715,6 +715,35 @@ Error encode_body(const ObjectGroup& m, Writer& w) {
   return Error::none;
 }
 
+Error check_fish_lure(const FishLure& m) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if (m.fish.size() > kMaxFishLures) return Error::bad_value;
+  std::vector<ObjectId> ids;
+  ids.reserve(m.fish.size());
+  for (const FishLureEntry& e : m.fish) {
+    COOP_TRY(check_object_id(e.id));
+    if (e.flags & ~(fish_lure::hooked | fish_lure::drawn)) return Error::bad_value;
+    // A fish with no lure in reach cannot be on it or swim at it.
+    if (e.distance_cm == kFishLureNone && e.flags != 0) return Error::bad_value;
+    ids.push_back(e.id);
+  }
+  std::sort(ids.begin(), ids.end());
+  if (std::adjacent_find(ids.begin(), ids.end()) != ids.end()) return Error::bad_value;
+  return Error::none;
+}
+
+Error encode_body(const FishLure& m, Writer& w) {
+  COOP_TRY(check_fish_lure(m));
+  w.u8(m.player_number);
+  w.u16(static_cast<std::uint16_t>(m.fish.size()));
+  for (const FishLureEntry& e : m.fish) {
+    write_object_id(e.id, w);
+    w.u16(e.distance_cm);
+    w.u8(e.flags);
+  }
+  return Error::none;
+}
+
 Error encode_body(const ObjectSpawn& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_TRY(check_object_id(m.id));  // made, or placed (an owner naming its actor)
@@ -1258,6 +1287,22 @@ Error decode_body(Reader& r, ObjectPresent& m) {
   }
   if (has_duplicate_id(m.objects)) return Error::bad_value;
   return Error::none;
+}
+
+Error decode_body(Reader& r, FishLure& m) {
+  m = FishLure{};
+  COOP_READ(r.u8(m.player_number));
+  std::uint16_t count = 0;
+  COOP_READ(r.u16(count));
+  if (count > kMaxFishLures) return Error::bad_value;
+  if (r.left() < std::size_t{count} * 13) return Error::truncated;
+  m.fish.resize(count);
+  for (FishLureEntry& e : m.fish) {
+    COOP_TRY(read_object_id(r, e.id));
+    COOP_READ(r.u16(e.distance_cm));
+    COOP_READ(r.u8(e.flags));
+  }
+  return check_fish_lure(m);
 }
 
 Error decode_body(Reader& r, ObjectGroup& m) {
@@ -1888,6 +1933,7 @@ MessageType type_of(const Message& message) {
       MessageType::flag_origin, MessageType::join_challenge, MessageType::join_proof,
       MessageType::save_ask,    MessageType::save_part,   MessageType::player_life,
       MessageType::pvp_mode,    MessageType::pvp_hit,   MessageType::pvp_hurt,
+      MessageType::fish_lure,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1919,6 +1965,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::object_remove:
     case MessageType::damage:
     case MessageType::object_group:
+    case MessageType::fish_lure:
     case MessageType::drop_spawn:
     case MessageType::drop_take:
     case MessageType::drop_ask:
@@ -1978,6 +2025,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::object_remove:
     case MessageType::damage:
     case MessageType::object_group:
+    case MessageType::fish_lure:
     case MessageType::drop_spawn:
     case MessageType::drop_take:
     case MessageType::drop_ask:
@@ -1995,6 +2043,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::hello:
     case MessageType::join_proof:
     case MessageType::object_group:
+    case MessageType::fish_lure:
       return from == Sender::client;
     case MessageType::welcome:
     case MessageType::refused:
@@ -2066,7 +2115,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, ObjectSample> || std::is_same_v<T, ObjectRemove> ||
                       std::is_same_v<T, Damage> || std::is_same_v<T, PlayerPose> ||
                       std::is_same_v<T, TimeOfDay> || std::is_same_v<T, GrassCut> ||
-                      std::is_same_v<T, ObjectGroup> ||
+                      std::is_same_v<T, ObjectGroup> || std::is_same_v<T, FishLure> ||
                       std::is_same_v<T, WorldBreak> || std::is_same_v<T, WorldMove> ||
                       std::is_same_v<T, WorldPlace> || std::is_same_v<T, WorldHit> ||
                       std::is_same_v<T, DropSpawn> || std::is_same_v<T, DropTake> ||
@@ -2178,6 +2227,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
     case MessageType::time_of_day: return decode_as<TimeOfDay>(body, out);
     case MessageType::object_group: return decode_as<ObjectGroup>(body, out);
+    case MessageType::fish_lure: return decode_as<FishLure>(body, out);
     case MessageType::grass_cut: return decode_as<GrassCut>(body, out);
     case MessageType::world_break: return decode_as<WorldBreak>(body, out);
     case MessageType::world_move: return decode_as<WorldMove>(body, out);

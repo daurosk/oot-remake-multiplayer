@@ -1115,6 +1115,7 @@ class FullBuildTest(unittest.TestCase):
         m = build.build(self.romfs, os.path.join(self.dir, "mod_n"), log=lambda *_: None, tunics=["red"])
         self.assertEqual(m["tunics"], {})
         self.assertEqual(m["self_tiles"], {})
+        self.assertFalse(m["tunics_off"])  # asked for, none made: the kit says so
         self.assertEqual(sorted(a["actor"] for a in m["actors"]), ["CoopPuppet_Adult", "CoopPuppet_Child"])
 
     def test_build_from_nup_writes_the_room_table(self):

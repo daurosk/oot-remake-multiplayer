@@ -658,6 +658,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             raise BuildError(f"no tunic colour {c} (have {', '.join(tunic.COLORS)})")
     tunics = list(dict.fromkeys(list(tunics) + ([test_tunic] if test_tunic else [])))
     self_tiles = {}
+    tunics_off = not tunics  # --tunics none: on purpose, the kit says nothing (kit-paths.ps1)
     tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log,
                                self_dir=os.path.join(mod_dir, tunic.SELF_DIR), self_tiles=self_tiles) if tunics else {}
     tunics = [c for c in tunics if c in tunic_files]
@@ -792,6 +793,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "impacts": impacts,
         "tunics": tunic_files,
         "self_tiles": self_tiles,
+        "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",

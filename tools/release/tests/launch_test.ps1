@@ -180,6 +180,8 @@ try {
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
     Write-File $man '{"actors": [], "sound": true}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours.*green.*make-puppet-pack\.cmd') 'a pack from before the tunics: run make-puppet-pack again (#202)'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tunics_off": true}'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'a --tunics none pack: no tunic line'
     Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours') 'a pack with no tunics made: the tunic line first'
     Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}, "tool_sha256": "0000"}'

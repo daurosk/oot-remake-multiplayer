@@ -722,7 +722,7 @@ All three get size-table entries (the game's own file's size). About 69 MB for t
 
 Your tile is the one the plain puppet wears too, so with it a green player would wear your colour. The pack therefore also has a green puppet (`CoopPuppet_<Age>_Green`, the game's tile renamed `Angin_Tile_G_Alb`), and the emulator picks it for green players when `LICHII_COOP_SELF_TUNIC` is set (not green) and the installed pack's `coop_puppet.json` lists both green puppets (`PackHasGreenPuppets`); otherwise the plain puppet, and the log says so. The autotest starts the emulator without `play.ps1`: copy the tile and set the switch by hand there.
 
-**Pack hints.** A pack whose `coop_puppet.json` has no tunics (made before the colours, with `--tunics none`, or from a game without the tunic tile) makes the kit say at every start that the other players show in green and to run `make-puppet-pack.cmd` again; a pack built with `--tunics none` on purpose gets that line each time.
+**Pack hints.** A pack whose `coop_puppet.json` has no tunics (made before the colours, with `--tunics none`, or from a game without the tunic tile) makes the kit say at every start that the other players show in green and to run `make-puppet-pack.cmd` again; a pack built with `--tunics none` on purpose says so in its manifest (`tunics_off`) and gets no line.
 
 **Hookshot.** The recomp reads the same romfs mods, so the same pack gives the same tunics there. Your own colour is not done there: the Hookshot start does not call `Set-KitSelfTunic`.
 

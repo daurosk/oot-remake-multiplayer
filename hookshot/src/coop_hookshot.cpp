@@ -14,6 +14,7 @@
 //   as in the emulator (the kit's launcher sets them from coop-options.ini).
 #include "coop_hookshot.h"
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <chrono>
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "common/fs/path_util.h"
@@ -101,9 +103,45 @@ std::string CreateName(const CoopPuppet::Call& c) {
     return std::string(name);
 }
 
-// coop_hookshot.h RefuseCreate: a Link-model puppet crashes Hookshot's game.
+// Our patch 0002 (nx2/coop_puppet_guard.py) is in this hookshot.exe: its log text is in the exe's read-only data.
+// (Linux: always true, see the end.)
+bool PuppetGuardInExe() {
+#ifdef _WIN32
+    static const char kMark[] = "coop: puppet guard: actor";
+    const auto* base = reinterpret_cast<const unsigned char*>(GetModuleHandleW(nullptr));
+    if (base == nullptr) {
+        return false;
+    }
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec) {
+        if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0 || (sec->Characteristics & IMAGE_SCN_MEM_READ) == 0) {
+            continue;
+        }
+        const std::string_view data(reinterpret_cast<const char*>(base + sec->VirtualAddress),
+                                    std::min<std::size_t>(sec->Misc.VirtualSize, sec->SizeOfRawData));
+        if (data.find(std::string_view(kMark, sizeof(kMark) - 1)) != std::string_view::npos) {
+            return true;
+        }
+    }
+    return false;
+#else
+    return true;  // (Linux: Hookshot maps the whole guest window readable, so a puppet's null reads give 0 there
+                  //  as on the emulator, with or without patch 0002; untested on Linux)
+#endif
+}
+
+// coop_hookshot.h AllowLinkPuppets / RefuseCreate: without patch 0002 a Link-model puppet crashes Hookshot's game.
 bool Refused(const CoopPuppet::Call& c) {
-    static const bool allow = EnvOn("LICHII_COOP_HOOKSHOT_LINK_PUPPETS");
+    static const bool allow = [] {
+        const bool guard = PuppetGuardInExe();
+        const bool on = CoopHookshot::AllowLinkPuppets(Env("LICHII_COOP_HOOKSHOT_LINK_PUPPETS"), guard);
+        LOG_INFO(Core, "coop: Hookshot: other players as Link {} (puppet guard {} this hookshot.exe{})",
+                 on ? "on" : "off", guard ? "in" : "NOT in",
+                 guard ? "" : ": build it again with Build-Hookshot-Coop for patch 0002");
+        return on;
+    }();
     if (c.function != CoopRuntime::MainBase() + CoopPuppet::addr::kCreate) {
         return false;
     }
@@ -115,8 +153,8 @@ bool Refused(const CoopPuppet::Call& c) {
     if (!said) {
         said = true;
         LOG_WARNING(Core,
-                    "coop: Hookshot: {} not made (a second Link model crashes Hookshot's game); other players "
-                    "show as their fairy. LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 tries them again",
+                    "coop: Hookshot: {} not made (this hookshot.exe has no puppet guard, or "
+                    "LICHII_COOP_HOOKSHOT_LINK_PUPPETS=0); other players show as their fairy",
                     actor);
     }
     return true;

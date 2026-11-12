@@ -504,6 +504,7 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CHECK(copies[0].act == Act::show);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
     CHECK(sync.Landed() == 1);
+    CHECK(copies[0].effect.empty());  // (not shown at the spot yet)
     // Held its full time after it is shown reaching the spot (100 ms late).
     copies.clear();
     const std::uint64_t got = now + 33 * kMs;
@@ -511,6 +512,11 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     sync.Tick(kScene, 2, got + hold - kMs, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::show);
+    // Issue 166: at the spot the copy itself plays the arrow's own hit effect (the director emits it once).
+    CHECK(copies[0].effect == "Hit_AdditionalAttacker");
+    CHECK(sync.HitEffects() == 1);
+    CHECK(shots::HitEffect(shots::Kind::seed) == "Hit_AdditionalAttacker");
+    CHECK(shots::HitEffect(shots::Kind::bomb).empty());
     copies.clear();
     sync.Tick(kScene, 2, got + hold, {}, live, send, copies);
     REQUIRE(copies.size() == 1);

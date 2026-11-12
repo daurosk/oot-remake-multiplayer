@@ -360,6 +360,17 @@ std::vector<std::string_view> ImpactActors(Kind kind) {
     }
 }
 
+std::string_view HitEffect(Kind kind) {
+    switch (kind) {
+    case Kind::seed:
+    case Kind::arrow:
+        // (read from the romfs's ELink2 table: both users have it; docs/spawns.md)
+        return "Hit_AdditionalAttacker";
+    default:
+        return {};
+    }
+}
+
 bool IsImpact(std::string_view actor) {
     for (const Kind kind : {Kind::seed, Kind::arrow}) {
         for (const std::string_view name : ImpactActors(kind)) {

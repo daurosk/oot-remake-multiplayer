@@ -20,7 +20,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 - **Enemies**: their position, animation and life follow the player who owns them. All the Deku Babas of the Deku Tree's first room show in both games ([#132](https://github.com/daurosk/oot-remake-multiplayer/issues/132)). Townspeople and animals move the same in every game. The Stalchildren in Hyrule Field are shared too ([#124](https://github.com/daurosk/oot-remake-multiplayer/issues/124)).
 - **Crates and thrown rocks** break in every game.
 - **Things a player makes**: Deku seeds and arrows in flight and Deku Nuts appear in the other games, and seeds and arrows stay where they hit. A bomb another player holds stays in their hands with its fuse blinking, and it explodes on every screen at once, held or thrown.
-- **`/teleport <name>`** moves you next to another player, in the same area or another one.
+- **`/teleport <name>`** moves you next to another player, in the same area or another one, except into a dungeon (see Known issues).
 - **Kit**: `collect-logs` masks addresses and your PC and user name; the updater adds every new `coop-options.ini` setting below your own lines.
 - **Mods**: texture and model mods work; a code or cheat mod stops co-op (see Other notes).
 

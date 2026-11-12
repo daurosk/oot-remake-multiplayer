@@ -3,13 +3,16 @@
 # loads at the Deku Tree's entrance and stays there. B must be moved in only after A's game says A
 # is past the door, and A is never moved and never outside a shut door.
 # Expect A: "coop: boss: in the boss room of InsideTheDekuTree", the debug lines "phase ..., shut
-# in 0/1" (write down when ShutIn turns 1: at the door's cutscene, or at once), then "past the door
-# (shut in)" or "past the door (the intro is over)", never "moving in". Any "that event was not the
-# intro" line must come while A's shut in is 0. B: no "moving in" before A's "past the door" line
+# in 0/1" (write down whether the warp sets ShutIn), then "past the door (shut in)" (in the Deku
+# Tree the flag decides, so never "the intro is over"), never "moving in". Any "that event was not
+# the intro" line must come while A's shut in is 0. B: no "moving in" before A's "past the door" line
 # (compare the times); after it, within about 1 s, "another player is in the boss room of
 # InsideTheDekuTree: moving in (try 1)", then "moved Link to" or "asked the scene change".
 # Screenshots at b-in: both inside the room, the door behind them shut in each game for its own
 # Link only (A's door state is A's own: the ShutIn flag is not shared).
+# Limits: the warp puts A in the room without going through the door, so this does not play the
+# door's cutscene. If the warp leaves ShutIn at 0, B is never moved: inconclusive, not a failure.
+# Only the hand route (reports/boss-movein-2.md, check 2) can prove issue 148 fixed.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_BOSS=1

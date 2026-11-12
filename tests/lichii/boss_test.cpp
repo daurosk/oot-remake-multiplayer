@@ -607,3 +607,38 @@ TEST_CASE("boss: shut in while the intro runs says intro_start, then intro_end a
     CHECK_FALSE(Has(out, proto::BossState::intro_start));
     CHECK(a.phase() == Sync::Phase::fight);
 }
+
+TEST_CASE("boss: a real intro long after an event that was not the intro is the intro, not the death") {
+    // Review of issue 148: the rejected event started the 10 s no-intro wait again; the real
+    // intro 12 s later came in the no-intro fight and was taken for the boss's death.
+    Sync a;
+    a.Tick(Alive(Forest().arrive, false, true, 1), 1 * kS);
+    a.Tick(Alive(Forest().arrive, true, true, 1), 2 * kS);
+    a.Tick(Alive(Forest().arrive, false, true, 1), 3 * kS);  // 1 s: a door, a text
+    REQUIRE(a.phase() == Sync::Phase::waiting);
+    a.Tick(Alive(Forest().arrive, false, true, 1), 14 * kS);  // no intro for 10 s
+    REQUIRE(a.phase() == Sync::Phase::fight);
+    auto out = a.Tick(Alive(Forest().arrive, true, true, 1), 15 * kS);  // the real intro, 16 s long
+    CHECK(a.phase() == Sync::Phase::intro);
+    for (std::uint64_t t = 16; t < 31; ++t) {
+        out = a.Tick(Alive(Forest().arrive, true, true, 1), t * kS);
+        CHECK_FALSE(Has(out, proto::BossState::defeated));
+    }
+    out = a.Tick(Alive(Forest().arrive, false, true, 1), 31 * kS);
+    CHECK(Has(out, proto::BossState::intro_end));  // past the door: the others are moved in
+    CHECK_FALSE(Has(out, proto::BossState::defeated));
+    CHECK(a.phase() == Sync::Phase::fight);
+    // Now the fight's events are the fight's again: the boss gone in one is its death.
+    a.Tick(Alive(Forest().arrive, true, true, 1), 50 * kS);
+    out = a.Tick(Alive(Forest().arrive, true, false, 1), 52 * kS);
+    CHECK(Has(out, proto::BossState::defeated));
+}
+
+TEST_CASE("boss: in a no-intro fight nobody is past the door for, the boss dead in an event is its death") {
+    Sync a;
+    a.Tick(Alive(Forest().arrive, false, true, 1), 1 * kS);
+    a.Tick(Alive(Forest().arrive, false, true, 1), 12 * kS);
+    REQUIRE(a.phase() == Sync::Phase::fight);
+    auto out = a.Tick(Alive(Forest().arrive, true, false, 1), 40 * kS);
+    CHECK(Has(out, proto::BossState::defeated));
+}

@@ -644,8 +644,12 @@ public:
         if (memory && view.scene) {
             if (const CoopBoss::Room* room = CoopBoss::RoomOfScene(*view.scene)) {
                 if (const std::string_view flag = CoopBoss::ShutInFlag(*room); !flag.empty()) {
+                    if (flag != boss_shut_in_name_) {  // hashed once, not every frame
+                        boss_shut_in_name_ = flag;
+                        boss_shut_in_hash_ = coop::host::flag_hash(std::string(flag));
+                    }
                     coop::host::GameFlagStore flags(*memory);
-                    const auto v = flags.read(coop::protocol::FlagKey{coop::host::flag_hash(std::string(flag)), 0});
+                    const auto v = flags.read(coop::protocol::FlagKey{boss_shut_in_hash_, 0});
                     if (v) boss_shut_in = v->value != 0;
                 }
             }
@@ -1203,6 +1207,8 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
+    std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame

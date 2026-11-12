@@ -397,7 +397,17 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             }
             break;
         case Phase::fight:
-            if (rose && now_us - fight_at_ < kMinFightUs) {
+            if (rose && !committed_ && local.boss_alive.value_or(true)) {
+                // The fight began here with no intro and nobody past the door
+                // (no event yet, or one that was not the intro): this event
+                // may be the real intro, not the boss's death (review of
+                // issue 148: a real intro 10 s after a door event was taken
+                // for an outro, so nobody was pulled, and a 15 s one for the
+                // boss's death).
+                phase_ = Phase::intro;
+                intro_at_ = now_us;
+                out.log.push_back("intro started (" + std::string(here_->intro) + ", after the wait)");
+            } else if (rose && now_us - fight_at_ < kMinFightUs) {
                 out.log.push_back("an event right after the intro: the rest of it, not the boss's death");
             } else if (rose) {
                 phase_ = Phase::outro;

@@ -226,6 +226,7 @@ Error encode_body(const Hello& m, Writer& w) {
   w.str(m.game_build_id);
   w.str(m.game_version);
   w.str(m.nickname);
+  if (m.key_share) w.bytes(m.key_share->data(), m.key_share->size());
   return Error::none;
 }
 
@@ -258,6 +259,7 @@ Error encode_body(const Refused& m, Writer& w) {
 
 Error encode_body(const JoinChallenge& m, Writer& w) {
   w.bytes(m.nonce.data(), m.nonce.size());
+  if (m.key_share) w.bytes(m.key_share->data(), m.key_share->size());
   return Error::none;
 }
 
@@ -912,6 +914,14 @@ Error encode_body(const PlayerPose& m, Writer& w) {
 }
 // ---------------------------------------------------------------- bodies: decode
 
+template <std::size_t N>
+Error read_array(Reader& r, std::array<std::uint8_t, N>& out) {
+  std::span<const std::uint8_t> part;
+  if (!r.take(N, part)) return Error::truncated;
+  std::copy(part.begin(), part.end(), out.begin());
+  return Error::none;
+}
+
 Error decode_body(Reader& r, Hello& m) {
   COOP_READ(r.u16(m.protocol_version));
   COOP_TRY(r.str(m.build_id, kMaxBuildIdChars));
@@ -919,6 +929,8 @@ Error decode_body(Reader& r, Hello& m) {
   COOP_TRY(r.str(m.game_version, kMaxGameVersionChars));
   COOP_TRY(r.str(m.nickname, kMaxNicknameChars));
   if (m.nickname.empty()) return Error::bad_value;
+  // Nothing more, or exactly the key share (anything else is trailing bytes).
+  if (r.left() == kKeyShareBytes) COOP_TRY(read_array(r, m.key_share.emplace()));
   return Error::none;
 }
 
@@ -952,15 +964,12 @@ Error decode_body(Reader& r, Refused& m) {
   return Error::none;
 }
 
-template <std::size_t N>
-Error read_array(Reader& r, std::array<std::uint8_t, N>& out) {
-  std::span<const std::uint8_t> part;
-  if (!r.take(N, part)) return Error::truncated;
-  std::copy(part.begin(), part.end(), out.begin());
+
+Error decode_body(Reader& r, JoinChallenge& m) {
+  COOP_TRY(read_array(r, m.nonce));
+  if (r.left() == kKeyShareBytes) COOP_TRY(read_array(r, m.key_share.emplace()));
   return Error::none;
 }
-
-Error decode_body(Reader& r, JoinChallenge& m) { return read_array(r, m.nonce); }
 
 Error decode_body(Reader& r, JoinProof& m) { return read_array(r, m.proof); }
 

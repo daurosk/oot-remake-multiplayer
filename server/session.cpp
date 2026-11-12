@@ -154,6 +154,7 @@ void Session::received(ConnectionId id, std::uint8_t channel,
 
   if (c.state == State::awaiting_hello) {
     if (const auto* hello = std::get_if<Hello>(&message)) {
+      c.hello_packet.assign(bytes.begin(), bytes.end());
       on_hello(id, c, *hello, now_us);
     } else if (const auto* claim = std::get_if<RejoinClaim>(&message)) {
       // Shown before HELLO; one per connection, the first one counts.
@@ -198,12 +199,25 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
   // The password comes before every other check, so someone without it
   // learns nothing about the session (its game build, names, how full).
   if (!config_.join_password.empty()) {
+    // With a password the traffic is encrypted, always: a game that offers
+    // no key share is not let in plain (so nobody can strip it on the way).
+    if (!hello.key_share) {
+      ++stats_.no_key_share;
+      refuse(id, c, RefuseReason::wrong_protocol_version, now_us,
+             "the game offers no traffic encryption (an older build?)");
+      return;
+    }
     c.state = State::awaiting_proof;
     c.pending_hello = hello;
     c.nonce = random_nonce();
-    send(id, kChannelSession, JoinChallenge{c.nonce});
+    c.key_pair = std::make_shared<const KeyPair>(KeyPair::generate());
+    const JoinChallenge challenge{c.nonce, c.key_pair->share()};
+    c.challenge_packet.clear();
+    if (encode(challenge, c.challenge_packet) != Error::none) return;
+    actions_.push_back(SendAction{id, kChannelSession, c.challenge_packet});
     return;
   }
+  c.hello_packet.clear();
   admit(id, c, hello, now_us);
 }
 
@@ -211,14 +225,36 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
                             std::uint64_t now_us) {
   const Hello hello = *c.pending_hello;
   c.pending_hello.reset();
-  const bool right = same_proof(proof.proof, join_proof(config_.join_password, c.nonce));
+  std::shared_ptr<const KeyPair> key_pair = std::move(c.key_pair);
+  // Bound to both key shares: a proof relayed by someone who swapped them
+  // (to sit in the middle) does not match.
+  const bool right =
+      key_pair != nullptr && hello.key_share &&
+      same_proof(proof.proof, join_proof(config_.join_password, c.nonce, *hello.key_share,
+                                         key_pair->share()));
   c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
+  std::vector<std::uint8_t> hello_packet = std::move(c.hello_packet);
+  std::vector<std::uint8_t> challenge_packet = std::move(c.challenge_packet);
+  c.key_pair.reset();
+  c.hello_packet.clear();
+  c.challenge_packet.clear();
   if (!right) {
     ++stats_.bad_password;
     note_wrong_password(c.address, now_us);
     refuse(id, c, RefuseReason::bad_password, now_us, "wrong join password");
     return;
   }
+  // The keys for this connection: from here on, all of it is sealed.
+  std::optional<TrafficKeys> keys =
+      derive_traffic_keys(*key_pair, *hello.key_share, config_.join_password, hello_packet,
+                          challenge_packet, /*is_server=*/true);
+  if (!keys) {
+    ++stats_.no_key_share;
+    refuse(id, c, RefuseReason::wrong_protocol_version, now_us, "unusable traffic key share");
+    return;
+  }
+  actions_.push_back(EncryptAction{id, *keys});
+  keys->wipe();
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
   admit(id, c, hello, now_us);
 }

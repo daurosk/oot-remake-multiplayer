@@ -181,6 +181,7 @@ struct World {
     hello.game_build_id = "e0f3ccfaf50065ae";
     hello.game_version = "1.1.1";
     hello.nickname = "Saria";
+    hello.key_share = KeyPair::generate().share();  // as every game sends
     auto bytes = encode(Message{hello});
     REQUIRE(bytes.has_value());
     ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(), ENET_PACKET_FLAG_RELIABLE);

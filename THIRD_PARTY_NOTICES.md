@@ -12,6 +12,7 @@ No game files, keys or firmware are part of this repository or of any kit.
 | doctest | Unit tests only, not shipped | MIT | https://github.com/doctest/doctest, fetched by CMake at a pinned version |
 | fmt 12.1.0 (Victor Zverovich and contributors) | The co-op hook's log lines in the Hookshot module (`hookshot_coop.dll`, `hookshot/compat/common/logging.h`) | MIT | https://github.com/fmtlib/fmt, fetched by CMake (`hookshot/CMakeLists.txt`) at a pinned commit |
 | Hookshot (NotRexed and contributors) | `hookshot/patches/` changes it: the patch holds a few context lines of its `nx2/lift.py`; it is applied to Hookshot's source at the commit in `hookshot/PIN`, outside this repository | GPL-3.0 | https://github.com/NotRexed/Hookshot |
+| Monocypher 4.0.2 (Loup Vaillant, Michael Savage, Fabio Scotoni) | Traffic encryption: X25519, BLAKE2b, XChaCha20-Poly1305 (server, emulator hook, Hookshot module) | CC0-1.0 or BSD-2-Clause, the user's choice; we use it under CC0-1.0 | https://github.com/LoupVaillant/Monocypher, fetched by CMake at a pinned commit (cmake/monocypher.cmake) |
 
 Code copied in from other projects gets an entry here, with its copyright line and licence text, when it is added.
 
@@ -27,6 +28,7 @@ Code copied in from other projects gets an entry here, with its copyright line a
 | ENet 1.3.18 | `server\coop_server.exe`, `emulator\lichii.exe`, `hookshot\hookshot_coop.dll` | MIT | `ENet-MIT.txt` |
 | fmt 12.1.0 (Victor Zverovich and contributors) (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` | MIT | `fmt-MIT.txt` |
 | Microsoft Visual C++ runtime | `emulator\*140*.dll`, `server\*140*.dll`, `hookshot\*140*.dll` | Microsoft Visual C++ redistributable licence | (redistributable files) |
+| Monocypher 4.0.2 | `server\coop_server.exe`, `emulator\lichii.exe` | CC0-1.0 (used under it; also offered under BSD-2-Clause) | none needed under CC0-1.0; source at https://github.com/LoupVaillant/Monocypher |
 | Python (only in kits made with `-Python`) | `python\` | PSF License | `python\LICENSE.txt` |
 | python-zstandard (only with `-Python`) | `python\Lib\site-packages\zstandard\` | BSD-3-Clause | its `zstandard-*.dist-info` folder |
 | This repository's Hookshot module and patches (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` (with ENet and fmt built in), `hookshot\patches\`, `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat` | GPL-3.0; the patches change, and hold a few context lines of, Hookshot (NotRexed and contributors, GPL-3.0, https://github.com/NotRexed/Hookshot) | `oot-remake-multiplayer-GPL-3.0.txt` |

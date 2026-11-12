@@ -43,10 +43,17 @@ struct Received {
   ENetPeer* peer = nullptr;
   proto::Message message;
   std::uint8_t channel = 0;
+  std::vector<std::uint8_t> raw;  // the packet as it came (opened, if sealed)
 };
 
 class FakeServer {
  public:
+  // Set by send_challenge: seals what it sends, opens what it gets.
+  std::unique_ptr<proto::TrafficCipher> cipher;
+  std::optional<proto::TrafficKeys> pending_keys;
+  // The two key shares of the last send_challenge, for the proof it expects.
+  proto::KeyShare server_share{};
+  proto::KeyShare client_share{};
   FakeServer() {
     REQUIRE(enet_initialize() == 0);
     ENetAddress address{};
@@ -73,20 +80,30 @@ class FakeServer {
       switch (event.type) {
         case ENET_EVENT_TYPE_CONNECT:
           ++connects;
+          cipher.reset();  // a new connection starts plain
+          pending_keys.reset();
           last_peer = event.peer;
           break;
         case ENET_EVENT_TYPE_RECEIVE: {
           Received r;
           r.peer = event.peer;
           r.channel = event.channelID;
-          const auto decoded = proto::decode(
-              std::span<const std::uint8_t>(event.packet->data,
-                                            event.packet->dataLength),
-              r.message);
+          r.raw.assign(event.packet->data, event.packet->data + event.packet->dataLength);
+          if (cipher) {
+            // Once keyed, everything from the client must open.
+            std::vector<std::uint8_t> plain;
+            REQUIRE(cipher->open(r.channel, r.raw, plain) == proto::OpenError::none);
+            r.raw = std::move(plain);
+          }
+          const auto decoded = proto::decode(r.raw, r.message);
           REQUIRE(decoded == proto::Error::none);
           // Everything the client sends must pass the server's own check.
           CHECK(proto::check_received(r.message, proto::Sender::client,
                                       r.channel) == proto::Error::none);
+          if (pending_keys && std::holds_alternative<proto::JoinProof>(r.message)) {
+            cipher = std::make_unique<proto::TrafficCipher>(*pending_keys);
+            pending_keys.reset();
+          }
           received.push_back(std::move(r));
           enet_packet_destroy(event.packet);
           break;
@@ -109,13 +126,38 @@ class FakeServer {
     send_bytes(*bytes, channel);
   }
 
-  void send_bytes(const std::vector<std::uint8_t>& bytes, std::uint8_t channel) {
+  void send_bytes(const std::vector<std::uint8_t>& plain, std::uint8_t channel) {
     REQUIRE(last_peer != nullptr);
+    std::vector<std::uint8_t> bytes = plain;
+    if (cipher) bytes = *cipher->seal(channel, plain);
     ENetPacket* packet = enet_packet_create(
         bytes.data(), bytes.size(),
         channel < proto::kChannelPlayerSamples ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u);
     REQUIRE(enet_peer_send(last_peer, channel, packet) == 0);
     enet_host_flush(host_);
+  }
+
+  // What the real server does with a join password: JOIN_CHALLENGE with its
+  // key share (plain), then the keys from the client's HELLO, the challenge
+  // and `password`; everything after is sealed both ways.
+  void send_challenge(const proto::JoinNonce& nonce, const std::string& password) {
+    std::optional<std::size_t> hello;
+    for (std::size_t i = 0; i < received.size(); ++i) {
+      if (std::holds_alternative<proto::Hello>(received[i].message)) hello = i;
+    }
+    REQUIRE(hello.has_value());
+    const auto& share = std::get<proto::Hello>(received[*hello].message).key_share;
+    REQUIRE(share.has_value());
+    const proto::KeyPair keys = proto::KeyPair::generate();
+    server_share = keys.share();
+    client_share = *share;
+    const auto bytes = proto::encode(proto::JoinChallenge{nonce, keys.share()});
+    REQUIRE(bytes.has_value());
+    send_bytes(*bytes, proto::kChannelSession);
+    const auto derived = proto::derive_traffic_keys(keys, *share, password,
+                                                    received[*hello].raw, *bytes, true);
+    REQUIRE(derived.has_value());
+    pending_keys = *derived;  // in use from the (plain) JOIN_PROOF on
   }
 
   // As the real server sends poses and samples: unreliable, in fragments
@@ -512,11 +554,11 @@ TEST_CASE("client: a JOIN_CHALLENGE is answered once with the proof of the join 
   REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
   proto::JoinNonce nonce{};
   for (std::size_t i = 0; i < nonce.size(); ++i) nonce[i] = static_cast<std::uint8_t>(i * 7);
-  server.send(proto::JoinChallenge{nonce}, proto::kChannelSession);
+  server.send_challenge(nonce, "hunter2");
   REQUIRE(pump(client, server, [&] { return server.find<proto::JoinProof>().has_value(); }));
   const auto& proof = std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message);
-  CHECK(proof.proof == proto::join_proof("hunter2", nonce));
-  CHECK(proof.proof != proto::join_proof("hunter3", nonce));
+  CHECK(proof.proof == proto::join_proof("hunter2", nonce, server.client_share, server.server_share));
+  CHECK(proof.proof != proto::join_proof("hunter3", nonce, server.client_share, server.server_share));
 
   // A second challenge on the same connection gets no second proof: a fake
   // server cannot collect proofs for nonces of its choosing on one connection.
@@ -528,6 +570,8 @@ TEST_CASE("client: a JOIN_CHALLENGE is answered once with the proof of the join 
           return std::holds_alternative<proto::JoinProof>(r.message);
         }) == 1);
 
+  // A wrong password: the real server has no keys, so its REFUSED is plain.
+  server.cipher.reset();
   server.send(proto::Refused{proto::RefuseReason::bad_password}, proto::kChannelSession);
   REQUIRE(wait_event(client, server, events, EventKind::refused));
   const Event& refused = events.all[*events.find(EventKind::refused)];
@@ -544,10 +588,63 @@ TEST_CASE("client: with no join password a challenge is answered with the empty 
   REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
   proto::JoinNonce nonce{};
   nonce[5] = 42;
-  server.send(proto::JoinChallenge{nonce}, proto::kChannelSession);
+  server.send_challenge(nonce, "");
   REQUIRE(pump(client, server, [&] { return server.find<proto::JoinProof>().has_value(); }));
   CHECK(std::get<proto::JoinProof>(server.received[*server.find<proto::JoinProof>()].message).proof ==
-        proto::join_proof("", nonce));
+        proto::join_proof("", nonce, server.client_share, server.server_share));
+}
+
+TEST_CASE("client: after the challenge the traffic is encrypted both ways") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  CHECK_FALSE(client.encrypted());
+  // The HELLO offers a key share.
+  CHECK(std::get<proto::Hello>(server.received[*server.find<proto::Hello>()].message)
+            .key_share.has_value());
+  proto::JoinNonce nonce{};
+  nonce[0] = 9;
+  server.send_challenge(nonce, "hunter2");
+  // The proof is plain; from it on the FakeServer uses its keys.
+  REQUIRE(pump(client, server, [&] { return server.cipher != nullptr; }));
+  CHECK(client.encrypted());
+
+  // A plain WELCOME is dropped now: it could be anyone's.
+  const std::size_t rejected = client.rejected_count();
+  {
+    auto keep = std::move(server.cipher);
+    server.send(proto::Welcome{1, 5, 20, {}}, proto::kChannelSession);
+    pump(client, server, [] { return false; }, 200);
+    server.cipher = std::move(keep);
+  }
+  CHECK(client.rejected_count() > rejected);
+  CHECK(client.state() == State::handshaking);
+
+  // A sealed one is taken, and what the client sends opens with our keys.
+  server.send(proto::Welcome{1, 5, 20, {}}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+  REQUIRE(client.send_chat("hi"));
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Chat>().has_value(); }));
+  CHECK(std::get<proto::Chat>(server.received[*server.find<proto::Chat>()].message).text == "hi");
+}
+
+TEST_CASE("client: a challenge without a key share is refused, never answered plain") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  server.send(proto::JoinChallenge{}, proto::kChannelSession);  // someone took the share out
+  REQUIRE(wait_event(client, server, events, EventKind::refused));
+  CHECK_FALSE(server.find<proto::JoinProof>().has_value());
+  CHECK_FALSE(client.encrypted());
+  CHECK(client.state() == State::refused);
 }
 
 TEST_CASE("client: an unknown refusal reason is kept") {
@@ -2300,4 +2397,49 @@ TEST_CASE("client: a sample longer than a datagram stays unreliable, in unreliab
   // no message, so the client counts one rejected packet per whole one).
   const std::size_t rejected = client.rejected_count();
   REQUIRE(pump(client, server, [&] { return client.rejected_count() >= rejected + 2; }));
+}
+
+TEST_CASE("client: with a join password a plain WELCOME (a server that never asked) is refused") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  const std::size_t after_hello = server.received.size();
+  // Someone on the path answers for a server without a password.
+  server.send(proto::Welcome{1, 5, 20, {}}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::refused));
+  const Event& refused = events.all[*events.find(EventKind::refused)];
+  CHECK(refused.refuse_reason == proto::RefuseReason::not_encrypted);
+  CHECK(refuse_reason_text(refused.refuse_reason).starts_with("the server did not ask"));
+  CHECK(client.state() == State::refused);
+  events.drain(client);
+  CHECK_FALSE(events.find(EventKind::welcomed).has_value());
+  pump(client, server, [] { return false; }, 200);
+  CHECK(server.received.size() == after_hello);  // nothing more went out
+}
+
+TEST_CASE("client: once keyed, only a plain REFUSED 6 is believed") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password = "hunter2";
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  server.send_challenge(proto::JoinNonce{}, "hunter2");
+  REQUIRE(pump(client, server, [&] { return server.cipher != nullptr; }));
+  server.cipher.reset();  // plain from here: as someone on the path would send
+  server.send(proto::Refused{proto::RefuseReason::name_taken}, proto::kChannelSession);
+  server.send(proto::Refused{proto::RefuseReason::server_full}, proto::kChannelSession);
+  pump(client, server, [] { return false; }, 200);
+  CHECK(client.state() == State::handshaking);
+  events.drain(client);
+  CHECK_FALSE(events.find(EventKind::refused).has_value());
+  server.send(proto::Refused{proto::RefuseReason::bad_password}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::refused));
+  CHECK(events.all[*events.find(EventKind::refused)].refuse_reason ==
+        proto::RefuseReason::bad_password);
 }

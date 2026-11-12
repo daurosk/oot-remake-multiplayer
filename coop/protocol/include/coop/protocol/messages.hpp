@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "coop/protocol/join_password.hpp"
+#include "coop/protocol/traffic_crypto.hpp"
 
 namespace coop::protocol {
 
@@ -171,6 +172,10 @@ struct Hello {
   std::string game_build_id;  // for example "e0f3ccfaf50065ae"
   std::string game_version;   // for example "1.1.1"
   std::string nickname;       // 1 to 16 characters
+  // The game's X25519 public key for traffic encryption (traffic_crypto.hpp),
+  // 32 bytes after the nickname. Sent by every game since protocol 10; a
+  // server with a join password refuses a HELLO without it.
+  std::optional<KeyShare> key_share{};
   bool operator==(const Hello&) const = default;
 };
 
@@ -197,6 +202,10 @@ enum class RefuseReason : std::uint8_t {
   name_taken = 4,
   bad_name = 5,  // empty or nothing but spaces
   bad_password = 6,  // the server has a join password and the JOIN_PROOF did not match
+  // Never sent: the game's own refusal of a server that did not encrypt
+  // although the game has a join password (docs/protocol.md "Encrypted
+  // traffic"), so nobody on the path can stand in for a no-password server.
+  not_encrypted = 200,
 };
 
 struct Refused {
@@ -209,6 +218,9 @@ struct Refused {
 // answers with JOIN_PROOF; WELCOME or REFUSED follows.
 struct JoinChallenge {
   JoinNonce nonce{};
+  // The server's X25519 public key, 32 bytes after the nonce, when the
+  // HELLO had one: from the JOIN_PROOF on, the connection is encrypted.
+  std::optional<KeyShare> key_share{};
   bool operator==(const JoinChallenge&) const = default;
 };
 

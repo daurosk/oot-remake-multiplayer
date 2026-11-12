@@ -1,8 +1,26 @@
 #include "coop/protocol/join_password.hpp"
 
-#include <bit>
-#include <random>
 #include <algorithm>
+#include <bit>
+#include <cerrno>
+#include <exception>
+
+// The OS's cryptographic random source, called directly (std::random_device
+// is not promised to be one).
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#elif defined(__APPLE__)
+#include <cstdlib>
+#else
+#include <sys/random.h>
+#endif
 
 namespace coop::protocol {
 namespace {
@@ -125,6 +143,17 @@ JoinProofBytes join_proof(std::string_view password, const JoinNonce& nonce) {
   return hmac_sha256({bytes, password.size()}, nonce);
 }
 
+JoinProofBytes join_proof(std::string_view password, const JoinNonce& nonce,
+                          const std::array<std::uint8_t, 32>& client_share,
+                          const std::array<std::uint8_t, 32>& server_share) {
+  std::array<std::uint8_t, kJoinNonceBytes + 64> message{};
+  std::copy(nonce.begin(), nonce.end(), message.begin());
+  std::copy(client_share.begin(), client_share.end(), message.begin() + kJoinNonceBytes);
+  std::copy(server_share.begin(), server_share.end(), message.begin() + kJoinNonceBytes + 32);
+  const auto* bytes = reinterpret_cast<const std::uint8_t*>(password.data());
+  return hmac_sha256({bytes, password.size()}, message);
+}
+
 bool same_proof(const JoinProofBytes& a, const JoinProofBytes& b) {
   std::uint8_t diff = 0;
   for (std::size_t i = 0; i < a.size(); ++i) diff |= static_cast<std::uint8_t>(a[i] ^ b[i]);
@@ -132,12 +161,25 @@ bool same_proof(const JoinProofBytes& a, const JoinProofBytes& b) {
 }
 
 JoinNonce random_nonce() {
-  std::random_device device;
   JoinNonce nonce{};
-  for (std::size_t i = 0; i < nonce.size(); i += 4) {
-    const std::uint32_t v = device();
-    for (std::size_t j = 0; j < 4; ++j) nonce[i + j] = static_cast<std::uint8_t>(v >> (8 * j));
+#if defined(_WIN32)
+  if (BCryptGenRandom(nullptr, nonce.data(), static_cast<ULONG>(nonce.size()),
+                      BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+    std::terminate();  // no random source: a guessable key is worse than stopping
   }
+#elif defined(__APPLE__)
+  arc4random_buf(nonce.data(), nonce.size());
+#else
+  std::size_t got = 0;
+  while (got < nonce.size()) {
+    const ssize_t n = getrandom(nonce.data() + got, nonce.size() - got, 0);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      std::terminate();  // no random source: a guessable key is worse than stopping
+    }
+    got += static_cast<std::size_t>(n);
+  }
+#endif
   return nonce;
 }
 

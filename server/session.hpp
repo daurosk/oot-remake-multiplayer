@@ -11,6 +11,7 @@
 #include <functional>
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
@@ -218,7 +219,15 @@ struct DisconnectAction {
   ConnectionId who = 0;
 };
 
-using Action = std::variant<SendAction, DisconnectAction>;
+// From now on, seal what goes to this connection and open what comes from
+// it with these keys (docs/protocol.md "Encrypted traffic"). Comes right
+// after the right JOIN_PROOF, before the answer to it.
+struct EncryptAction {
+  ConnectionId who = 0;
+  protocol::TrafficKeys keys;
+};
+
+using Action = std::variant<SendAction, DisconnectAction, EncryptAction>;
 
 // What the session refused or ignored, so a bad client shows in the numbers
 // instead of in a crash.
@@ -255,6 +264,9 @@ struct Stats {
   std::uint64_t bad_password = 0;
   // JOIN_PROOFs nobody asked for: no challenge open on that connection.
   std::uint64_t stray_proof = 0;
+  // A HELLO without a key share to a server with a join password (refused
+  // as the wrong version: an older game, or someone stripping it).
+  std::uint64_t no_key_share = 0;
   // Connections closed at connect: their address made too many wrong
   // guesses at the join password lately (max_wrong_passwords). Not packets,
   // so not in dropped().
@@ -395,6 +407,11 @@ class Session {
     // While awaiting_proof: the HELLO to admit and the nonce it was sent.
     std::optional<protocol::Hello> pending_hello;
     protocol::JoinNonce nonce{};
+    // While awaiting_proof: the HELLO and JOIN_CHALLENGE packets as on the
+    // wire and our key pair, for the traffic keys.
+    std::vector<std::uint8_t> hello_packet;
+    std::vector<std::uint8_t> challenge_packet;
+    std::shared_ptr<const protocol::KeyPair> key_pair;
     // Once joined: the token sent with its WELCOME (REJOIN_TOKEN). Before
     // HELLO: the token its REJOIN_CLAIM showed, if any.
     protocol::RejoinTokenBytes rejoin_token{};

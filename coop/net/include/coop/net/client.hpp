@@ -93,6 +93,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -404,6 +405,10 @@ class Client {
   // Messages dropped: not decodable, unknown type, or refused by
   // check_received, or not expected in the current state.
   std::size_t rejected_count() const { return rejected_; }
+  // This connection's traffic is encrypted (a server with a join password;
+  // docs/protocol.md "Encrypted traffic"). False before the JOIN_CHALLENGE
+  // and on a server without a password, whose traffic stays plain.
+  bool encrypted() const { return cipher_ != nullptr; }
   // Attempts since the last WELCOME.
   std::uint32_t failed_attempts() const { return failed_attempts_; }
   // REFUSED "name taken" answers that were tried again (name_taken_retry_ms).
@@ -431,6 +436,15 @@ class Client {
   bool on_host(std::uint8_t number);  // false when it names the same host
   void settle_pending(std::span<const protocol::FlagEntry> flags);
   bool send_raw(const protocol::Message& message, std::uint8_t channel);
+  // One encoded message to the server, sealed once the keys are known.
+  bool send_packet(std::span<const std::uint8_t> bytes, std::uint8_t channel);
+  // A JOIN_CHALLENGE: checks it offers a key share, answers it, and makes
+  // this connection's keys from it. False when it did not work out.
+  bool answer_challenge(const protocol::JoinChallenge& challenge,
+                        std::span<const std::uint8_t> packet);
+  // Stops for good: the server did not encrypt although we have a join
+  // password (REFUSED not_encrypted, shown like a server's refusal).
+  void refuse_unencrypted();
   void push(Event event);
   // Checks a room message against players_ and updates it; sets `out` to
   // the event that follows its `message` event, if any. False to refuse.
@@ -462,6 +476,11 @@ class Client {
   std::uint64_t hello_sent_us_ = 0;
   // This attempt has answered its JOIN_CHALLENGE: a second one is refused.
   bool challenge_answered_ = false;
+  // This attempt's X25519 key pair and HELLO as sent, until the challenge;
+  // then the keys (traffic_crypto.hpp) for the rest of the connection.
+  std::optional<protocol::KeyPair> key_pair_;
+  std::vector<std::uint8_t> hello_packet_;
+  std::unique_ptr<protocol::TrafficCipher> cipher_;
   // From REJOIN_TOKEN after our last WELCOME; shown (REJOIN_CLAIM) before
   // each later HELLO to this server.
   std::optional<protocol::RejoinTokenBytes> rejoin_token_;

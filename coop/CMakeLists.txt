@@ -3,9 +3,13 @@
 add_library(coop_protocol STATIC
   protocol/src/codec.cpp
   protocol/src/join_password.cpp
+  protocol/src/traffic_crypto.cpp
 )
 target_include_directories(coop_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/protocol/include")
-target_link_libraries(coop_protocol PRIVATE coop_warnings)
+target_link_libraries(coop_protocol PRIVATE monocypher coop_warnings)
+if(WIN32)
+  target_link_libraries(coop_protocol PRIVATE bcrypt)  # BCryptGenRandom (join_password.cpp)
+endif()
 
 # The client over ENet that the test tool, Lichii and the recomp use.
 add_library(coop_net STATIC

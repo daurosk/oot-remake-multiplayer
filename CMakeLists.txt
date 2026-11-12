@@ -68,6 +68,11 @@ else()
   include(cmake/enet.cmake)
 endif()
 
+# Traffic encryption (cmake/monocypher.cmake).
+if(NOT TARGET monocypher)
+  include(cmake/monocypher.cmake)
+endif()
+
 add_subdirectory(coop)
 if(COOP_BUILD_HOOKSHOT)
   add_subdirectory(hookshot)

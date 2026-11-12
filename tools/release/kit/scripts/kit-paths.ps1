@@ -349,6 +349,62 @@ function Get-PuppetToolHash([string]$ToolDir) {
 # made before issue 131 has no "sound": true, so the other players' Links make no sound; a pack
 # whose tool_sha256 is not the kit's tool hash was made by another version of the tool (a hash,
 # not file times: a kit zip's times are the builder's local time). Never throws: the start goes on.
+# Your own Link in your colour (#202). The tunic preset nearest a colour (a name or #RRGGBB), as
+# the emulator picks the other players' puppets (lichii/hook/coop_colors.cpp TunicOf; keep the
+# colours the same): luma and chroma apart, chroma counted double. '' when it is not a colour.
+$KitTunicColors = [ordered]@{ red = 0xFF3030; orange = 0xFF8020; yellow = 0xFFC020; green = 0x30D040; cyan = 0x20D0E0
+    blue = 0x3070FF; purple = 0xA040FF; pink = 0xFF60C0; white = 0xFFFFFF; black = 0x202020 }
+function Get-KitTunic([string]$Color) {
+    if (-not $Color) { return '' }
+    $c = $Color.Trim().ToLowerInvariant()
+    $named = @{ brown = 0x8B5A2B; gray = 0xA0A0A0; grey = 0xA0A0A0 }
+    if ($KitTunicColors.Contains($c)) { $rgb = $KitTunicColors[$c] }
+    elseif ($named.ContainsKey($c)) { $rgb = $named[$c] }
+    elseif ($c -match '^#?([0-9a-f]{6})$') { $rgb = [Convert]::ToInt32($Matches[1], 16) }
+    else { return '' }
+    $ycc = {
+        param($v)
+        $r = ($v -shr 16) -band 0xFF; $g = ($v -shr 8) -band 0xFF; $b = $v -band 0xFF
+        $y = 0.299 * $r + 0.587 * $g + 0.114 * $b
+        , @($y, (0.564 * ($b - $y)), (0.713 * ($r - $y)))
+    }
+    $want = & $ycc $rgb
+    $best = ''; $bestD = -1.0
+    foreach ($name in $KitTunicColors.Keys) {
+        $have = & $ycc $KitTunicColors[$name]
+        $dy = $want[0] - $have[0]; $db = $want[1] - $have[1]; $dr = $want[2] - $have[2]
+        $d = $dy * $dy + 2.0 * ($db * $db + $dr * $dr)
+        if ($bestD -lt 0 -or $d -lt $bestD) { $bestD = $d; $best = $name }
+    }
+    return $best
+}
+
+# Puts your colour's tile (the pack tool's coop_self/<colour>.bntx.zs, listed in coop_puppet.json
+# as self_tiles) over the game's tunic tile in the pack's romfs, so your own Link wears it; green,
+# no colour or a pack without it: takes the copy away, the game's own green. Only the Kokiri
+# tunic: the Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
+function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
+    $dst = Join-Path $PackDir 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs'
+    $tunic = Get-KitTunic $Color
+    $src = $null
+    if ($tunic -and $tunic -ne 'green') {
+        try {
+            $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
+            $rel = if ($json.self_tiles) { $json.self_tiles.$tunic } else { $null }
+            if ($rel -and $json.tunics -and $json.tunics.green) { $src = Join-Path $PackDir $rel }
+        } catch { }
+    }
+    try {
+        if ($src -and (Test-Path -LiteralPath $src -PathType Leaf)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+            Copy-Item -LiteralPath $src -Destination $dst -Force
+            return $tunic
+        }
+        if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force }
+    } catch { }
+    return ''
+}
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop

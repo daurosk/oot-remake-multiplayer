@@ -68,6 +68,10 @@ void ConfigurePuppets() {
     if (const auto tunics = Env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
         settings.tunics = false;
     }
+    // The kit's tools/release/kit/scripts/kit-paths.ps1 Set-KitSelfTunic.
+    if (const auto self = Env("LICHII_COOP_SELF_TUNIC"); !self.empty() && self != "green") {
+        settings.green_puppet = true;
+    }
     const bool verbose = EnvOn("LICHII_COOP_DEBUG_PUPPET");
     LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
              settings.debug ? ", test puppet beside you" : "");

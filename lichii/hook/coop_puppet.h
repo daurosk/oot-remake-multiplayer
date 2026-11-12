@@ -544,6 +544,10 @@ struct PlannerSettings {
     // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
     // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
     bool tunics = true;
+    // Your own Link wears another colour (LICHII_COOP_SELF_TUNIC, set by the
+    // kit when it put that colour's tile over the game's): the plain puppet
+    // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
+    bool green_puppet = false;
     bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
@@ -566,6 +570,7 @@ public:
     // CoopPuppet_<Age>_<Colour> (CoopColors::TunicOf) while tunics are on.
     std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}) const;
     void SetTunics(bool on) { settings_.tunics = on; }
+    void SetGreenPuppet(bool on) { settings_.green_puppet = on; }
     // Tunic actors that do not work here (Director::FailedTunics): the plain
     // puppet for them.
     void SetFailedTunics(std::vector<std::string> names) { failed_tunics_ = std::move(names); }

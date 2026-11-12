@@ -183,14 +183,16 @@ TEST_CASE("truncated buffers are refused at every length") {
         const Error e = decode(fixed, back);
         // A TEST_PAYLOAD filler or an optional sample component can be cut
         // off cleanly, and so can any PLAYER_EQUIP component; anything else must
-        // be refused.
+        // be refused. A VOICE_FRAME's Opus packet is the rest of the body, so
+        // a shorter one is still a packet (Opus refuses it when decoding).
         if (e == Error::none) {
           const bool may_shrink = std::holds_alternative<TestPayload>(m) ||
                                   std::holds_alternative<PlayerSample>(m) ||
                                   std::holds_alternative<PlayerEquip>(m) ||
                                   std::holds_alternative<HandoverState>(m) ||
                                   std::holds_alternative<ObjectSpawn>(m) ||
-                                  std::holds_alternative<ObjectSample>(m);
+                                  std::holds_alternative<ObjectSample>(m) ||
+                                  std::holds_alternative<VoiceFrame>(m);
           CHECK(may_shrink);
         }
       }

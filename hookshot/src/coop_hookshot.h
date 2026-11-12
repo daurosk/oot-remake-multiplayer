@@ -33,4 +33,16 @@ inline bool BuildSupported(const std::string& build_id_hex) {
     return build_id_hex.size() >= 16 && CoopGameBuild::Find(build_id_hex.substr(0, 16)) != nullptr;
 }
 
+// Hookshot crashes when the game makes a second Link model (any
+// CoopPuppet_<Age>[_<Colour>], plain or coloured; the emulator does not).
+// The game's create thread sets ns_tex_mtx0 on the model's Mt_Hairs
+// (main+0x4b8240, from main+0x10aceb0, the call at main+0x4b8334) and reads a
+// null material pointer: "CRASH ... guest 0x20" in BaseProcCreateAndDeleteThread
+// (reports/hs-crash-b.md). Until that is fixed in Hookshot, the module refuses
+// those creates: other players show as their Navi only. `allow`:
+// LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1, to try them again.
+inline bool RefuseCreate(const std::string& actor, bool allow) {
+    return !allow && actor.rfind("CoopPuppet_", 0) == 0;
+}
+
 }  // namespace CoopHookshot

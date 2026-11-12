@@ -396,6 +396,17 @@ public:
             // A pose wished before it became ours would set the bit again
             // in the same frame: it is no copy any more.
             std::erase_if(poses_, [a](const Pose& p) { return p.actor == a; });
+            // Issue 157 (peahat autotest 2026-11-12): the Peahat's own AI
+            // started 'TakeOffAnticipation' for our Link, the copy was put
+            // back to 'GroundWait', and once it became ours it never tried
+            // again: its AI waits for the end of a play we took away. Give
+            // it that play back once.
+            if (const auto w = wanted_.find(a); w != wanted_.end()) {
+                if (SteadyMs() - w->second.second <= kWakeReplayMs && wakes_.size() < 64) {
+                    wakes_.emplace_back(a, w->second.first);
+                }
+                wanted_.erase(w);
+            }
         }
     }
 
@@ -468,6 +479,8 @@ public:
             }
             work_plays_ = plays_;
             next_play_ = 0;
+            work_wakes_ = std::exchange(wakes_, {});
+            next_wake_ = 0;
             for (const Hit& h : hits_) {
                 // A hit that waited too long (no game frame ran) is dropped:
                 // by then its life has been written directly.
@@ -497,6 +510,41 @@ public:
         }
         if (main_ == 0) {
             return std::nullopt;
+        }
+        while (next_wake_ < work_wakes_.size() && block_ != 0) {
+            const auto [actor, name] = work_wakes_[next_wake_++];
+            if (!Alive(guest, actor)) {
+                continue;
+            }
+            const u64 controller = Controller(guest, actor);
+            if (controller == 0 || SlotName(guest, controller) == name) {
+                continue;  // its AI already plays it again
+            }
+            const u64 text = Cell(guest, name);
+            if (text == 0) {
+                continue;
+            }
+            std::array<std::uint8_t, 0x30> request{};
+            const float unset = -1.0f;
+            const float rate = 1.0f;
+            const std::int32_t index = 0;
+            std::memcpy(request.data() + 0x00, &actor, 8);
+            std::memcpy(request.data() + 0x08, &text, 8);
+            std::memcpy(request.data() + 0x10, &index, 4);
+            std::memcpy(request.data() + 0x14, &rate, 4);
+            std::memcpy(request.data() + 0x18, &unset, 4);
+            std::memcpy(request.data() + 0x1c, &unset, 4);
+            if (!guest.Write(block_ + kBlockRequest, request.data(), request.size())) {
+                continue;
+            }
+            played_at_.erase(actor);
+            ++woken_;
+            LOG_INFO(Core, "coop: objects: {:#x} became ours: plays its own AI's '{}' again (issue 157)",
+                     actor, name);
+            CoopPuppet::Call c;
+            c.function = main_ + kPlayAs;
+            c.x[0] = block_ + kBlockRequest;
+            return c;
         }
         while (next_play_ < work_plays_.size() && block_ != 0) {
             const PlayWish& p = work_plays_[next_play_++];
@@ -540,6 +588,14 @@ public:
                 took_over = slot_name;
                 if (took_over_.size() < 256) {
                     took_over_.push_back(p.address);
+                }
+                if (wanted_.size() >= 256) {
+                    std::erase_if(wanted_, [now_ms](const auto& e) {
+                        return now_ms - e.second.second > kWakeReplayMs;
+                    });
+                }
+                if (wanted_.size() < 256) {
+                    wanted_[p.address] = {slot_name, now_ms};
                 }
             }
             const u64 text = Cell(guest, p.name);
@@ -809,6 +865,14 @@ private:
     bool allocating_ = false;
     bool alloc_tried_ = false;
     std::vector<Pose> work_;
+    // Issue 157: the animation each copy's own AI last chose that we put
+    // back (name, steady ms), and the ones to give back once it is ours.
+    static constexpr u64 kWakeReplayMs = 8000;
+    std::unordered_map<u64, std::pair<std::string, u64>> wanted_;
+    std::vector<std::pair<u64, std::string>> wakes_;
+    std::vector<std::pair<u64, std::string>> work_wakes_;
+    std::size_t next_wake_ = 0;
+    std::size_t woken_ = 0;
     std::vector<u64> work_removes_;
     std::unordered_set<u64> asked_;  // deletes asked once
     std::size_t next_ = 0;

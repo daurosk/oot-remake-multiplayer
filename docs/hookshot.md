@@ -11,7 +11,7 @@ Hookshot's own repository is never forked or committed to from here. Our reposit
 - Co-op fits Hookshot better than the emulator. The emulator cannot call a game function, so `lichii/hook` writes caves into main and talks to them through a custom SVC. Hookshot calls a game function from host C directly (`a64_lookup(address)(ctx)`), and adds C after any ordinary instruction at build time (`Lifter.after`; not after a call). The SVC cave, the hold cave and their assembly go away.
 - Hookshot already does, for its own menu, much of what we need: a hook on Link's update (`hos_oot_is_player`), game function calls by address (`oot_teleport`, the GameDataMgr getters), the current map, cross-map teleports, and a local control socket for tests.
 - Addresses: Hookshot loads main at **`0x80020000`** (Eden's layout: rtld at `0x80000000`, then main). Every offset in `CoopGameBuild::MainOffsets` becomes `0x80020000 + offset`. Checked on one function: our `set_time` `0x34522d0` is Hookshot's `0x834722d0` (`hos_main.c` `oot_set_time`). Data slots go through the same offsets; the first runs check them.
-- Emulator and Hookshot players can join the same game: same game build, same coordinates and data, same protocol, same server. Nothing on the wire says which runs the game. (In this release a Hookshot game does not show the others: making their Link crashes Hookshot, so it is switched off; see Status.)
+- Emulator and Hookshot players can join the same game: same game build, same coordinates and data, same protocol, same server. Nothing on the wire says which runs the game. (Making the other players' Link crashed Hookshot until our patch's puppet guard; see Status.) <!-- TBC big run: hs-puppets-b -->
 - One copy of co-op for both: the module builds every `lichii/hook` file unchanged, with stand-ins for the emulator API they use (`hookshot/compat`). Our patch to Hookshot is about 270 lines in one file.
 
 ## How co-op maps onto Hookshot
@@ -63,7 +63,7 @@ What the module expects from that install (`hookshot/compat`): `coop.ini` beside
 - **Patch upkeep.** Hookshot moves fast. Our patch touches three new files and two lines of `nx2/lift.py`; moving `hookshot/PIN` (and the kit's list of builder parts with it) is a test like moving the Fritchii pin.
 - **Frame timing.** Hookshot runs at its own speed (30 to 60 fps, a high-fps option). The co-op sampler and puppets work from time, not frames; to check with a puppet in view.
 - **Addresses.** Code offsets are checked (`set_time`); the data slots are read through the same `CoopGameBuild` offsets from main's base, and the first runs check them (the scene and Link read, puppets made).
-- **No co-op window yet.** The emulator's Qt window (panel, chat box, player list, hearts) is not on Hookshot; an ImGui panel in Hookshot's menu is later work.
+- **The co-op window.** The emulator's Qt window is not on Hookshot; the chat, name tags, player list, panel, HUD and cheats are drawn in Hookshot's ImGui frame instead ("Where the co-op module lives" above).
 - **Licences.** Hookshot is GPL-3.0, as we are. Its lifted C contains the game and is never shared; we ship our module, our patch and our scripts, and each player builds Hookshot from their own game.
 
 ## Emulator and Hookshot players together

@@ -9,8 +9,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string_view>
 
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
@@ -644,6 +646,20 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
 }
 
 namespace {
+// The state the equip call is given (issue 91, puppet-looks): 2 (worn put
+// away, as the GameData path wears a sword or a tunic) for every piece but
+// the mask, which gets 1. Through the GameData path (state 2) the game drew
+// no mask even on the player's own Link (wear-masks 20261110-155536), and the
+// call keeps the state per kind (eu + 0x12d4 + 8 * kind: {1, state}) for
+// when the piece is made. LICHII_COOP_HEAD_STATE=2 goes back to 2.
+std::uint64_t EquipState(std::uint32_t kind) {
+    static const std::uint64_t head = [] {
+        const char* v = std::getenv("LICHII_COOP_HEAD_STATE");
+        return v != nullptr && std::string_view(v) == "2" ? std::uint64_t{2} : std::uint64_t{1};
+    }();
+    return kind == addr::kArmorKindFirst ? head : std::uint64_t{2};
+}
+
 // The eight equipment slots of an actor's EquipmentUser, for the debug log:
 // for each slot that holds a piece its id, actor, state, place (height over
 // the wearer and distance on the ground), the request byte, and the slot
@@ -720,6 +736,16 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
                       static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
         text += "; armor " + std::to_string(a) + ": id " + Hex(id) + " actor " + Hex(piece) +
                 " state " + std::to_string(state) + " " + place;
+    }
+    // Issue 91 (puppet-looks): the equip call's per-kind words (eu + 0x12d4 +
+    // 8 * kind, two u32), to tell how the game wears a real mask from the
+    // puppet's (the GameData path asks state 1 or 2 per piece).
+    text += "; kinds";
+    for (std::uint32_t k = 0; k < 18; ++k) {
+        std::array<std::uint32_t, 2> words{};
+        if (ReadValue(guest, eu + 0x12d4 + 8 * k, words) && (words[0] != 0 || words[1] != 0)) {
+            text += " " + std::to_string(k) + ":" + Hex(words[0]) + "/" + Hex(words[1]);
+        }
     }
     return text;
 }
@@ -821,7 +847,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
         c.x[0] = eu;
         c.x[1] = kGearKinds[i];
         c.x[2] = cell;
-        c.x[3] = 2;
+        c.x[3] = EquipState(kGearKinds[i]);
         c.x[4] = 0xFFFFFFFF;
         c.x[5] = 1;
         c.x[6] = 0;

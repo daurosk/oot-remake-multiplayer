@@ -1,11 +1,13 @@
 // Tests for the co-op HUD's place names and hearts (lichii/hook/coop_hud_places.h,
 // coop_hud_hearts.h).
-#include <doctest/doctest.h>
-
-#include <ostream>  // doctest prints string_view (MSVC needs it here)
+// <ostream> before doctest: it prints std::string_view, which MSVC's
+// <string_view> can only do with <ostream> in.
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <doctest/doctest.h>
 
 #include "coop_hud_hearts.h"
 #include "coop_hud_places.h"

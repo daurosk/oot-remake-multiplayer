@@ -1493,3 +1493,16 @@ TEST_CASE("doubled chest: the host takes it back too and sends no total") {
   CHECK(store.tokens() == 5);
   CHECK(w.stats().doubled_gains == 1);
 }
+
+TEST_CASE("doubled chest: a guarded count (tokens, never in a chest) is left to its guard") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  guard(w);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.set(kSkull, 1);  // a token taken here: its own key and the count
+  store.tokens(6);
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 6);
+  CHECK(w.stats().doubled_gains == 0);
+}

@@ -163,11 +163,15 @@ class FlagWatcher {
   // Issue 195: our Link opened a chest that another player had opened
   // already (the hook shows it open, but its AI still lets it open again).
   // Its content was given in the other game and counted for the group, so
-  // the next gain of any count (a small key, a heart piece) in our own game
-  // within kDoubledGainFrames is put back and not sent (take_counts_guarded
-  // reports it). One call drops one gain; unused ones lapse.
+  // the next gain of a count (a small key, a heart piece; never a guarded
+  // count, guard_count: no chest holds a token) in our own game within
+  // kDoubledGainFrames is put back and not sent (take_counts_guarded reports
+  // it). One call drops one gain; unused ones lapse. Short on purpose: the
+  // get scene gives the item 2-3 s after the opening is seen and holds our
+  // Link meanwhile, so a real key from elsewhere cannot come inside it (a
+  // map or compass chest arms it too: no content table).
   void expect_doubled_gain();
-  static constexpr std::uint64_t kDoubledGainFrames = 15 * 60;
+  static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
   static constexpr std::int32_t kMaxDoubledGains = 4;
 
   // The host left and this player takes over, or the other way round. Keeps

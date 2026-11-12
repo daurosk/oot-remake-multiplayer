@@ -56,7 +56,7 @@ press A
 wait 60
 press A
 wait 300
-mark a-try-get            # a get scene here = the chest opened twice (FAIL)
+mark a-try-get            # a get scene here = opened twice: PASS only with the "taken back" line (header)
 wait 300
 press A
 wait 120

@@ -764,7 +764,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       continue;
     }
     if (doubled_ > 0 && frames_ > doubled_until_) doubled_ = 0;  // lapsed
-    if (doubled_ > 0 && !restate_.contains(key) && store.is_count(key) &&
+    if (doubled_ > 0 && !restate_.contains(key) && store.is_count(key) && !guards_.contains(key) &&
         before.kind == protocol::FlagKind::int32 && now->kind == protocol::FlagKind::int32 &&
         as_int(now->value) > as_int(before.value)) {
       // A chest another player had opened, opened again here (issue 195):

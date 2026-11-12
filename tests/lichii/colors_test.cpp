@@ -187,6 +187,19 @@ TEST_CASE("colours: the tunic of a colour, and the puppet actor for it") {
     CHECK(p.ActorFor(true, 0x3070FFu) == "CoopPuppet_Adult_Blue");
     p.SetFailedTunics({});
     CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Red");
+    p.SetGreenPuppet(true);  // your own Link wears your colour: green players get their own puppet
+    CHECK(p.ActorFor(false, 0x30D040u) == "CoopPuppet_Child_Green");
+    CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Red");
+    p.SetFailedTunics({"CoopPuppet_Child_Green"});
+    CHECK(p.ActorFor(false, 0x30D040u) == "CoopPuppet_Child");
+    p.SetFailedTunics({});
+    CHECK(CoopPuppet::Director::IsTunicActor("CoopPuppet_Child_Green"));
+    CHECK(CoopPuppet::PackHasGreenPuppets(
+        R"({"actors": [{"actor": "CoopPuppet_Child_Green"}, {"actor": "CoopPuppet_Adult_Green"}]})"));
+    CHECK_FALSE(CoopPuppet::PackHasGreenPuppets(R"({"actors": [{"actor": "CoopPuppet_Child_Red"}]})"));
+    CHECK_FALSE(CoopPuppet::PackHasGreenPuppets(R"({"actors": [{"actor": "CoopPuppet_Child_Green"}]})"));
+    CHECK_FALSE(CoopPuppet::PackHasGreenPuppets(""));
+    p.SetGreenPuppet(false);
     p.SetTunics(false);  // LICHII_COOP_TUNICS=0
     CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult");
     CHECK(CoopPuppet::Director::IsTunicActor("CoopPuppet_Adult_Red"));

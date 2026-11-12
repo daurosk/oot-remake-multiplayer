@@ -180,6 +180,8 @@ try {
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
     Write-File $man '{"actors": [], "sound": true}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours.*green.*make-puppet-pack\.cmd') 'a pack from before the tunics: run make-puppet-pack again (#202)'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tunics_off": true}'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'a --tunics none pack: no tunic line'
     Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours') 'a pack with no tunics made: the tunic line first'
     Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}, "tool_sha256": "0000"}'
@@ -187,6 +189,33 @@ try {
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
     Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
+    # Your own Link in your colour (#202): the nearest preset, as coop_colors.cpp TunicOf.
+    Check ((Get-KitTunic 'red') -eq 'red') 'tunic: red'
+    Check ((Get-KitTunic ' Blue ') -eq 'blue') 'tunic: a name, any case'
+    Check ((Get-KitTunic '#FF3333') -eq 'red') 'tunic: #RRGGBB nearest'
+    Check ((Get-KitTunic 'A0A0A0') -eq 'white') 'tunic: gray is white, as the emulator says'
+    Check ((Get-KitTunic 'gray') -eq 'white') 'tunic: the name gray too'
+    Check ((Get-KitTunic 'green') -eq 'green') 'tunic: green'
+    Check ((Get-KitTunic 'blurple') -eq '') 'tunic: not a colour'
+    Check ((Get-KitTunic '') -eq '') 'tunic: none chosen'
+    $sp = Join-Path $ph 'self-pack'
+    New-Item -ItemType Directory -Force -Path (Join-Path $sp 'coop_self') | Out-Null
+    Write-File (Join-Path $sp 'coop_self\red.bntx.zs') 'RED'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    $tile = Join-Path $sp 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red') 'self tunic: red put in'
+    Check ((Test-Path -LiteralPath $tile) -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'self tunic: the red tile over the game''s'
+    Check ((Set-KitSelfTunic $sp 'blue') -eq '') 'self tunic: no blue in the pack: none'
+    Check (-not (Test-Path -LiteralPath $tile)) 'self tunic: and the old copy taken away'
+    [void](Set-KitSelfTunic $sp 'red')
+    Check ((Set-KitSelfTunic $sp 'green') -eq '' -and -not (Test-Path -LiteralPath $tile)) 'self tunic: green: the game''s own tile'
+    [void](Set-KitSelfTunic $sp 'red')
+    Check ((Set-KitSelfTunic $sp '') -eq '' -and -not (Test-Path -LiteralPath $tile)) 'self tunic: no colour: the game''s own tile'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Check ((Set-KitSelfTunic $sp 'red') -eq '' -and -not (Test-Path -LiteralPath $tile)) 'self tunic: no green puppet in the pack: none (green players would wear yours)'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{ not json'
+    Check ((Set-KitSelfTunic $sp 'red') -eq '') 'self tunic: a broken coop_puppet.json: none, no throw'
+    Check ((Set-KitSelfTunic (Join-Path $ph 'no-pack') 'red') -eq '') 'self tunic: no pack: none, no throw'
 } finally {
     Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -1490,13 +1490,22 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
     return in;
 }
 
+bool PackHasGreenPuppets(std::string_view manifest) {
+    return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
+           manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
+}
+
 std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
     const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
     if (settings_.tunics && color) {
-        if (const auto tunic = CoopColors::TunicOf(*color); !tunic.empty()) {
+        std::string_view tunic = CoopColors::TunicOf(*color);
+        if (tunic.empty() && settings_.green_puppet) {
+            tunic = "Green";  // the plain puppet wears your own colour (PlannerSettings)
+        }
+        if (!tunic.empty()) {
             std::string name = plain + '_' + std::string(tunic);
             if (std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end()) {
                 return name;

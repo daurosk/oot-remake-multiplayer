@@ -360,6 +360,17 @@ if (Test-Path -LiteralPath $pack) {
     # Made before sound or before the kit's pack tool changed (kit-paths.ps1): say so, start anyway.
     $hint = Get-PuppetPackHint $pack (Join-Path $kit 'tools\puppet_pack')
     if ($hint) { Write-Host $hint }
+    # Your own Link in your colour (#202); LICHII_COOP_TUNICS=0 keeps everyone green.
+    $want = if ($env:LICHII_COOP_TUNICS -match '^(0|off)$') { '' } else { $env:LICHII_COOP_COLOR }
+    $self = Set-KitSelfTunic (Split-Path -Parent $pack) $want
+    if ($self) {
+        $env:LICHII_COOP_SELF_TUNIC = $self
+        Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+    }
+    elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
+    if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
+        Write-Host 'Your Link stays green: the puppet pack has no tunic of your colour. Run make-puppet-pack.cmd again.'
+    }
 }
 else {
     Write-Host 'Puppet pack: not made yet, so the other players show only as markers.'

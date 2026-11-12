@@ -570,9 +570,11 @@ def recompress(dicts, original_raw, data, level=16):
     return dicts.compress(data, name, level=level)
 
 
-def write_tunics(romfs, out_romfs, dicts, table, colors, log=print):
+def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None):
     """The recoloured tiles and the model copies that name them (puppet_pack.tunic), with their
-    size-table entries (the game's own file's). Returns {colour: [paths]}."""
+    size-table entries (the game's own file's). Returns {colour: [paths]}. With `self_dir`, also
+    the game's tile recoloured under its own name per colour (not green) into it, listed in
+    `self_tiles` ({colour: file name}): your own Link in your colour."""
     out = {}
     tile_rel = f"Tex/{tunic.TILE}.bntx.zs"
     tile_src = os.path.join(romfs, tile_rel)
@@ -592,9 +594,15 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print):
         paths = []
         name = tunic.tile_name(c)
         try:
-            data = tunic.recolor_bntx(tile, tunic.COLORS[c][1], tunic.TILE, name)
+            data = tunic.tile_for(tile, c)
+            own = tunic.self_tile(tile, c) if self_dir and c != "green" else None
         except tunic.TunicError as e:
             raise BuildError(f"{tile_rel}: {e}")
+        if own is not None:
+            # Same size as the game's tile once unpacked: its size-table entry stands.
+            fname = f"{c}.bntx.zs"
+            write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own))
+            self_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
         dst = f"Tex/{name}.bntx.zs"
         write(os.path.join(out_romfs, dst), recompress(dicts, tile_raw, data))
         table.add_new(strip_zs(dst), table.get(strip_zs(tile_rel)) or len(data) + PACK_SIZE_MARGIN)
@@ -649,7 +657,10 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         if c not in tunic.COLORS:
             raise BuildError(f"no tunic colour {c} (have {', '.join(tunic.COLORS)})")
     tunics = list(dict.fromkeys(list(tunics) + ([test_tunic] if test_tunic else [])))
-    tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log) if tunics else {}
+    self_tiles = {}
+    tunics_off = not tunics  # --tunics none: on purpose, the kit says nothing (kit-paths.ps1)
+    tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log,
+                               self_dir=os.path.join(mod_dir, tunic.SELF_DIR), self_tiles=self_tiles) if tunics else {}
     tunics = [c for c in tunics if c in tunic_files]
     test_tunic = test_tunic if test_tunic in tunic_files else None
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
@@ -781,6 +792,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "shots": shots,
         "impacts": impacts,
         "tunics": tunic_files,
+        "self_tiles": self_tiles,
+        "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",

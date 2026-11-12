@@ -3757,6 +3757,34 @@ TEST_CASE("a gimmick event start goes to the others in the sender's scene only, 
   CHECK(messages_to<DungeonEvent>(h, 3).empty());
 }
 
+TEST_CASE("a platform clock goes to the others in the sender's scene only, never kept (platforms-b)") {
+  ObjectHarness h;
+  h.receive(1, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  h.receive(2, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  h.receive(3, sample_in("KokiriForest"), kChannelPlayerSamples);
+  h.clear();
+  PlatformClock p;
+  p.player_number = 0;  // ours: the server writes the sender
+  p.scene = "DodongoCavern";
+  p.server_time_us = 5'000'000;
+  p.ticks.push_back({0x7f36b7404e6b5890ull, (std::uint64_t{4} << 32) | 0x30, 2.5f, 1.0f, 0.0f});
+  h.receive(1, p, kChannelObjectSamples);
+  const auto got = messages_to<PlatformClock>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().player_number == 1);
+  CHECK(got.front().ticks == p.ticks);
+  CHECK(got.front().server_time_us == p.server_time_us);
+  CHECK(messages_to<PlatformClock>(h, 1).empty());
+  CHECK(messages_to<PlatformClock>(h, 3).empty());
+  h.clear();
+  p.scene = "KokiriForest";  // a scene the sender is not in (late): dropped
+  h.receive(1, p, kChannelObjectSamples);
+  CHECK(messages_to<PlatformClock>(h, 3).empty());
+  h.clear();
+  h.receive(3, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  CHECK(messages_to<PlatformClock>(h, 3).empty());  // not kept
+}
+
 // --- Encrypted traffic (docs/protocol.md "Encrypted traffic") ---
 
 TEST_CASE("encrypted traffic: a right proof switches the connection to its keys first") {

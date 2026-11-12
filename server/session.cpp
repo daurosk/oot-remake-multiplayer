@@ -460,6 +460,15 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     ++stats_.relayed;
     return;
   }
+  if (std::holds_alternative<PlatformClock>(message)) {
+    // platforms-b: as DUNGEON_EVENT, relayed to the sender's scene, never kept.
+    set_sender(message, c.number);
+    const auto& p = std::get<PlatformClock>(message);
+    if (p.scene != c.scene) return;
+    send_to_scene(p.scene, id, channel, message);
+    ++stats_.relayed;
+    return;
+  }
   if (std::holds_alternative<WorldBreak>(message) || std::holds_alternative<WorldMove>(message) ||
       std::holds_alternative<WorldPlace>(message) || std::holds_alternative<WorldHit>(message) ||
       std::holds_alternative<SignCut>(message)) {

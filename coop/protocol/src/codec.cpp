@@ -1782,6 +1782,78 @@ Error decode_body(Reader& r, DungeonEvent& m) {
   return check_dungeon_event(m);
 }
 
+// PLATFORM_CLOCK: u8 player, scene, u64 server time, u8 count, then count x
+// (u64 hash, u64 key, f32 value, f32 rate, f32 cycle).
+Error check_platform_tick(const PlatformTick& t) {
+  if (t.hash == 0 || t.hash == ~std::uint64_t{0}) return Error::bad_value;
+  const std::uint64_t region = t.key >> 32;
+  const std::uint64_t offset = t.key & 0xffffffffu;
+  if (offset % 4 != 0) return Error::bad_value;
+  if (region == kPlatformAsFrameRegion) {
+    if (offset != 0) return Error::bad_value;
+  } else if (region == 0) {
+    if (offset >= kPlatformActorBytes) return Error::bad_value;
+  } else if (region < 2 || region - 2 >= kPlatformComponents || offset >= kPlatformComponentBytes) {
+    return Error::bad_value;
+  }
+  if (!std::isfinite(t.value) || !std::isfinite(t.rate) || !std::isfinite(t.cycle) ||
+      std::fabs(t.value) > kMaxPlatformValue || t.rate == 0.0f ||
+      std::fabs(t.rate) > kMaxPlatformRate || t.cycle < 0.0f || t.cycle > kMaxPlatformValue) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
+Error check_platform_clock(const PlatformClock& m) {
+  if (!valid_player_or_self(m.player_number) || m.scene.empty() || m.server_time_us == 0 ||
+      m.ticks.empty() || m.ticks.size() > kMaxPlatformTicks) {
+    return Error::bad_value;
+  }
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  for (std::size_t i = 0; i < m.ticks.size(); ++i) {
+    COOP_TRY(check_platform_tick(m.ticks[i]));
+    for (std::size_t j = 0; j < i; ++j) {
+      if (m.ticks[j].hash == m.ticks[i].hash) return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+Error encode_body(const PlatformClock& m, Writer& w) {
+  COOP_TRY(check_platform_clock(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.server_time_us);
+  w.u8(static_cast<std::uint8_t>(m.ticks.size()));
+  for (const PlatformTick& t : m.ticks) {
+    w.u64(t.hash);
+    w.u64(t.key);
+    w.f32(t.value);
+    w.f32(t.rate);
+    w.f32(t.cycle);
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PlatformClock& m) {
+  m = PlatformClock{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.server_time_us));
+  std::uint8_t count = 0;
+  COOP_READ(r.u8(count));
+  if (count == 0 || count > kMaxPlatformTicks) return Error::bad_value;
+  m.ticks.resize(count);
+  for (PlatformTick& t : m.ticks) {
+    COOP_READ(r.u64(t.hash));
+    COOP_READ(r.u64(t.key));
+    COOP_READ(r.f32(t.value));
+    COOP_READ(r.f32(t.rate));
+    COOP_READ(r.f32(t.cycle));
+  }
+  return check_platform_clock(m);
+}
+
 // SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
 Error check_sign_cut(const SignCut& m) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
@@ -2126,6 +2198,7 @@ MessageType type_of(const Message& message) {
       MessageType::dungeon_event,
       MessageType::player_ride,
       MessageType::ocarina_note,
+      MessageType::platform_clock,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2149,6 +2222,7 @@ std::uint8_t channel_of(MessageType type) {
       return kChannelProgress;
     case MessageType::object_sample:
     case MessageType::world_move:
+    case MessageType::platform_clock:
       return kChannelObjectSamples;
     case MessageType::object_present:
     case MessageType::object_owner:
@@ -2214,6 +2288,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
       return channel == kChannelPlayerSamples;
     case MessageType::object_sample:
     case MessageType::world_move:
+    case MessageType::platform_clock:
       return channel == kChannelObjectSamples;
     case MessageType::object_present:
     case MessageType::object_owner:
@@ -2280,6 +2355,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::grass_cut:
     case MessageType::world_break:
     case MessageType::world_move:
+    case MessageType::platform_clock:
     case MessageType::world_place:
     case MessageType::world_hit:
     case MessageType::drop_spawn:
@@ -2328,7 +2404,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt> ||
                       std::is_same_v<T, DungeonEvent> ||
                       std::is_same_v<T, PlayerRide> ||
-                      std::is_same_v<T, OcarinaNote>) {
+                      std::is_same_v<T, OcarinaNote> ||
+                      std::is_same_v<T, PlatformClock>) {
           field = &m.player_number;
         }
       },
@@ -2445,6 +2522,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::world_hit: return decode_as<WorldHit>(body, out);
     case MessageType::sign_cut: return decode_as<SignCut>(body, out);
     case MessageType::dungeon_event: return decode_as<DungeonEvent>(body, out);
+    case MessageType::platform_clock: return decode_as<PlatformClock>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

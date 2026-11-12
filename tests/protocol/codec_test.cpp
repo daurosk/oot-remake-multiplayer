@@ -1837,3 +1837,55 @@ TEST_CASE("player ride: type 385, samples channel, horse and offset, both ways")
   flag_two[4 + 1] = 0x03;  // flags byte
   CHECK(decode(flag_two, back) == Error::bad_value);
 }
+
+TEST_CASE("platform clock: type 400, object samples channel, checked keys and floats (platforms-b)") {
+  CHECK(static_cast<int>(MessageType::platform_clock) == 400);
+  CHECK(channel_of(MessageType::platform_clock) == kChannelObjectSamples);
+  CHECK(allowed_on_channel(MessageType::platform_clock, kChannelObjectSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::platform_clock, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::platform_clock));
+  CHECK(may_send(Sender::server, MessageType::platform_clock));
+
+  PlatformClock m;
+  m.player_number = 2;
+  m.scene = "DodongoCavern";
+  m.server_time_us = 123'456'789;
+  m.ticks.push_back({0x7f36b7404e6b5890ull, (std::uint64_t{5} << 32) | 0x44, 3.25f, 1.0f, 6.0f});
+  m.ticks.push_back({0x8eddec7d2165a41dull, std::uint64_t{0x1c4}, 1.5f, -0.75f, 0.0f});
+  m.ticks.push_back({0xa20f9483567524d2ull, kPlatformAsFrameRegion << 32, 12.0f, 30.0f, 0.0f});
+  const Bytes b = must_encode(Message{m});
+  // type, length; u8 player, scene (2 + 13), u64 time, u8 count, 3 x (8 + 8 + 12)
+  CHECK(b.size() == 4 + 1 + 15 + 8 + 1 + 3 * 28);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{m});
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{2});
+
+  Bytes out;
+  const auto bad = [&](auto change) {
+    PlatformClock c = m;
+    change(c);
+    return encode(c, out) == Error::bad_value;
+  };
+  CHECK(bad([](PlatformClock& c) { c.scene.clear(); }));
+  CHECK(bad([](PlatformClock& c) { c.server_time_us = 0; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks.clear(); }));
+  CHECK(bad([](PlatformClock& c) { c.ticks.resize(kMaxPlatformTicks + 1, c.ticks[0]); }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[1].hash = c.ticks[0].hash; }));  // twice
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].hash = 0; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{5} << 32) | 0x46; }));  // not a float's place
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{1} << 32) | 0x8; }));   // the table
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{5} << 32) | 0x200; })); // past the component
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = 0x600; }));                             // past the actor
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformAsFrameRegion << 32) | 4; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = 0.0f; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = kMaxPlatformRate * 2; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].value = std::numeric_limits<float>::quiet_NaN(); }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].cycle = -1.0f; }));
+  CHECK(bad([](PlatformClock& c) { c.player_number = 9; }));
+
+  // A count larger than the ticks sent is cut short.
+  Bytes cut = must_encode(Message{m});
+  cut[kHeaderSize + 1 + 15 + 8] = 4;
+  CHECK(decode(cut, back) == Error::truncated);
+}

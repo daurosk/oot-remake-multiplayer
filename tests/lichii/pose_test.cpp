@@ -361,7 +361,7 @@ TEST_CASE("pose: the piece in a hand goes as a pose of its own skeleton (issue 1
     CHECK(CoopPose::Drives(3, 101'016));
 }
 
-TEST_CASE("pose: poses of the highest player number are kept (16 players); one past it is not") {
+TEST_CASE("pose: poses of the highest player number are kept (16 players), one past it is not") {
     CoopPose::SetLog({}, false);
     const std::uint8_t top = coop::protocol::kMaxPlayers;
     for (const std::uint8_t n : {top, static_cast<std::uint8_t>(top + 1)}) {
@@ -499,4 +499,56 @@ TEST_CASE("pose: Fill puts the newest pose's bones under a partial one, in bone 
     CHECK(got.bones[3].bone == 5);
     part.skeleton = 8;  // another skeleton: nothing of this track's
     CHECK(track.Fill(part).bones.size() == 2);
+}
+
+TEST_CASE("pose: with every limb moving fast, a still bone is still sent within the refresh bound") {
+    // 80 limb bones turn thousands of packed units a send (a run); 220 others
+    // change once, a little (a hand that closed), then hold still. The limbs
+    // win every change slot; the refresh tier still gets the others across.
+    constexpr std::uint16_t kLimbs = 80, kAll = 300;
+    auto pose = [&](int send) {
+        std::vector<proto16::PoseBone> bones;
+        for (std::uint16_t i = 0; i < kAll; ++i) {
+            proto16::PoseBone b;
+            b.bone = i;
+            std::int16_t v = 0;
+            if (i < kLimbs) {
+                v = static_cast<std::int16_t>((send * 3001 + i * 97) % 30000 - 15000);
+            } else if (send >= 10) {
+                v = static_cast<std::int16_t>(i % 2 == 0 ? 5 : 600);  // under kBoneStep, and over it
+            }
+            b.rotation = std::array<std::int16_t, 4>{v, 0, 0, 30000};
+            bones.push_back(b);
+        }
+        return bones;
+    };
+    const std::uint64_t interval = 1000 / CoopPose::kSendHz;
+    const std::uint64_t bound =
+        CoopPose::kBoneRefreshMs + (kAll / CoopPose::kRefreshBones + 2) * interval;
+    CoopPose::BonePicker picker;
+    CoopPose::Track track;
+    std::vector<std::uint64_t> last(kAll, 0);
+    std::uint64_t worst = 0, ms = 10'000;
+    for (int send = 0; send < 120; ++send, ms += interval) {  // 8 s
+        const auto full = pose(send);
+        const auto sent = picker.Pick(0x1234, full, ms);
+        CHECK(sent.size() <= CoopPose::kMaxSendBones);
+        for (const auto& b : sent) last[b.bone] = ms;
+        track.Push(track.Fill(Unpacked(sent)), ms);
+        if (send >= 10) {  // after everyone was sent once
+            for (std::uint16_t i = 0; i < kAll; ++i) worst = std::max(worst, ms - last[i]);
+        }
+        if (send == 10 + static_cast<int>(bound / interval) + 1) {
+            // The hand's change has reached the receiver, small or not.
+            const auto shown = *track.At(ms + 1000);
+            const auto want = Unpacked(full);
+            REQUIRE(shown.bones.size() == kAll);
+            for (std::uint16_t i = kLimbs; i < kAll; ++i) {
+                INFO("bone " << i);
+                CHECK(*shown.bones[i].rotation == *want.bones[i].rotation);
+            }
+        }
+    }
+    MESSAGE("longest a bone went unsent: " << worst << " ms (bound " << bound << ")");
+    CHECK(worst <= bound);
 }

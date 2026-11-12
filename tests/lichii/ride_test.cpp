@@ -222,7 +222,7 @@ TEST_CASE("ride: the ridable horse is never a shared object (one horse per game)
     CHECK_FALSE(CoopObjects::IsShared(CoopRide::kHorse));
 }
 
-TEST_CASE("ride: the highest player number rides too (16 players); one past it is ignored") {
+TEST_CASE("ride: the highest player number rides too (16 players), one past it is ignored") {
     CoopRide::Rider rider;
     HorseSeen horse;
     horse.address = 0x1;

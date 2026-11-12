@@ -59,13 +59,17 @@ inline constexpr std::size_t kMaxBones = 512;
 // Link's pose goes 15 times a second (30 before the 16-player work); the
 // receiver's Track blends the last two, so it still plays smooth.
 inline constexpr int kSendHz = 15;
-// At most this many of Link's bones go in one pose (about 300 move): the ones
-// changed most since they were last sent, a bone unsent for kBoneRefreshMs
-// coming first. The receiver keeps the rest from its newest pose (Track::Fill).
+// At most this many of Link's bones go in one pose (about 300 move). First up
+// to kRefreshBones of those unsent for kBoneRefreshMs or longer, oldest first
+// (a lost or thinned pose, a late joiner: every bone goes again within about
+// kBoneRefreshMs + 300 / kRefreshBones sends, ~3 s), then the ones changed most
+// since they were last sent. The receiver keeps the rest from its newest pose
+// (Track::Fill).
 // About 48 x 18 bytes x 15/s = 13 KB/s per player, where every moving bone at
 // 30/s was about 160 KB/s.
 inline constexpr std::size_t kMaxSendBones = 48;
 inline constexpr std::uint64_t kBoneRefreshMs = 500;
+inline constexpr std::size_t kRefreshBones = 8;
 // A bone is changed once a packed part moved more than this (in the packed
 // units: 1/32767 of a quaternion part, 1/kPoseUnit of a translation or scale).
 inline constexpr int kBoneStep = 8;

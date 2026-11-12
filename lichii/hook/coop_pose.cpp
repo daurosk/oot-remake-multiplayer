@@ -197,15 +197,15 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
         skeleton_ = skeleton;
         sent_.clear();
     }
-    // Priority: the change in packed units plus a unit per millisecond of
-    // age, so a small change waits but is never starved; a bone never sent
-    // first. A bone unsent for kBoneRefreshMs goes even unchanged (a lost
-    // packet, a late joiner).
+    // Two tiers. Refresh: up to kRefreshBones of the bones unsent for
+    // kBoneRefreshMs, oldest first, whatever they changed: a big limb motion
+    // never starves them. Then the rest by the change in packed units plus a
+    // unit per millisecond of age; a bone never sent before any change.
     struct Wanted {
         std::int64_t priority;
         std::size_t index;
     };
-    std::vector<Wanted> wanted;
+    std::vector<Wanted> wanted, aged;
     wanted.reserve(full.size());
     for (std::size_t i = 0; i < full.size(); ++i) {
         const auto it = sent_.find(full[i].bone);
@@ -215,9 +215,26 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
         }
         const std::uint64_t age = now_ms - std::min(now_ms, it->second.ms);
         const int change = Change(it->second.bone, full[i]);
-        if (age >= kBoneRefreshMs || change > kBoneStep) {
-            wanted.push_back({change + static_cast<std::int64_t>(age), i});
+        const std::int64_t priority = change + static_cast<std::int64_t>(age);
+        if (age >= kBoneRefreshMs) {
+            aged.push_back({static_cast<std::int64_t>(age), i});
+            wanted.push_back({priority, i});  // also in the change tier, below
+        } else if (change > kBoneStep) {
+            wanted.push_back({priority, i});
         }
+    }
+    const auto first = [](const Wanted& a, const Wanted& b) {
+        return a.priority != b.priority ? a.priority > b.priority : a.index < b.index;
+    };
+    const std::size_t refresh = std::min({kRefreshBones, budget, aged.size()});
+    std::partial_sort(aged.begin(), aged.begin() + static_cast<std::ptrdiff_t>(refresh),
+                      aged.end(), first);
+    aged.resize(refresh);
+    if (refresh > 0) {
+        std::vector<bool> taken(full.size(), false);
+        for (const Wanted& w : aged) taken[w.index] = true;
+        std::erase_if(wanted, [&](const Wanted& w) { return taken[w.index]; });
+        budget -= refresh;
     }
     if (wanted.size() > budget) {
         std::nth_element(wanted.begin(), wanted.begin() + static_cast<std::ptrdiff_t>(budget),
@@ -227,6 +244,7 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
                          });
         wanted.resize(budget);
     }
+    wanted.insert(wanted.end(), aged.begin(), aged.end());
     std::sort(wanted.begin(), wanted.end(),
               [](const Wanted& a, const Wanted& b) { return a.index < b.index; });
     std::vector<proto::PoseBone> out;

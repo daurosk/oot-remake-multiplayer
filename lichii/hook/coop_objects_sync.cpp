@@ -577,6 +577,7 @@ void Sync::Reset() {
     objects_.clear();
     taken_.clear();  // a new scene's actors were made knowing every key
     chest_animations_.clear();
+    chest_shown_.clear();
     hidden_.clear();
     dead_.clear();
     order_.clear();
@@ -879,13 +880,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             chests.emplace(s.address, std::move(now));
         }
         chest_animations_.swap(chests);
+        std::erase_if(chest_shown_, [this](const auto& e) { return !chest_animations_.contains(e.first); });
     }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
             if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
                 // A chest has no near rule (issue 87): it is bound beside our
-                // Link too, and then goes at once (below), before our Link can
-                // open it a second time.
+                // Link too, and shown open (below, issue 195).
                 const bool chest = s.name.starts_with("Obj_TBox_");
                 const bool beside = player_ && Finite(*player_) && Finite(s.position) &&
                                     CoopGuard::Near(player_, s.position, kTakeNearM);
@@ -922,30 +923,78 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         notes_.emplace_back(s.name + " " + key + ": opened in another game, shows open here");
                     } else {
                         notes_.emplace_back(s.name + " " + key +
-                                            (chest ? ": opened in another game, waiting to see it open here"
+                                            (chest ? ": opened in another game"
                                                    : ": taken or opened in another game, removed here"));
                     }
                 }
                 if (t->second.addresses.contains(s.address)) {
-                    // A chest may show itself open from the shared flag (issue
-                    // 87): left so; removed only if still closed after the wait.
-                    // Only while our Link is not beside it: an opening seen then
-                    // is its own AI's, not ours (a closed chest beside our Link
-                    // goes at once, so our Link cannot open it again).
+                    // A chest (issues 87, 195): shown open here, never removed
+                    // unless the play of its open idle does not take.
                     if (chest) {
                         Taking& tk = t->second;
                         if (tk.shown_open.contains(s.address)) {
                             continue;
                         }
-                        const auto b = tk.bound_animation.find(s.address);
-                        const bool changed = b != tk.bound_animation.end() && b->second != animation;
-                        if (open && changed && !beside) {
-                            tk.shown_open.insert(s.address);
-                            notes_.emplace_back(s.name + ": opened in another game, shows open here");
-                            continue;
-                        }
-                        if (!beside && now_us - tk.since_us < kChestOpenWaitUs) {
-                            continue;  // not yet: it may still open itself
+                        // Issue 195: never removed while it can be shown open.
+                        // Its AI does not react to the shared flag while loaded
+                        // (autotest logs: closed until our remove), so we play its
+                        // own open idle on it (Plays, only over its closed idle).
+                        if (!tk.show_failed.contains(s.address)) {
+                            if (animation == kChestOpenIdle && !chest_shown_.contains(s.address)) {
+                                // Made open already (its flag came before it
+                                // was made): left so (the old rule removed these too).
+                                tk.shown_open.insert(s.address);
+                                notes_.emplace_back(s.name + ": opened in another game, already shows open here");
+                                continue;
+                            }
+                            const auto shown = chest_shown_.find(s.address);
+                            if (shown == chest_shown_.end()) {
+                                chest_shown_.emplace(s.address, ChestShow{now_us, false});
+                                notes_.emplace_back(s.name + ": opened in another game, shown open here (" +
+                                                    kChestOpenIdle + " played)");
+                                continue;
+                            }
+                            if (animation == kChestOpenIdle) {
+                                if (!shown->second.took) {
+                                    shown->second.took = true;
+                                    notes_.emplace_back(s.name + ": opened in another game, shows open here");
+                                }
+                                continue;
+                            }
+                            if (animation.find(kChestClosedIdle) == std::string::npos && !animation.empty()) {
+                                // Its own AI plays another: the play is not
+                                // forced over that (PlayWish::only_over). Beside
+                                // our Link: ours opens it again here.
+                                chest_shown_.erase(shown);
+                                tk.shown_open.insert(s.address);
+                                if (beside) {
+                                    ++chests_opened_twice_;
+                                    notes_.emplace_back(s.name + ": opened here too after another game ('" +
+                                                        animation + "', its content may count twice; " +
+                                                        std::to_string(chests_opened_twice_) + " this session)");
+                                } else {
+                                    notes_.emplace_back(s.name + ": its own AI shows it open ('" + animation + "')");
+                                }
+                                continue;
+                            }
+                            if (shown->second.took) {
+                                // Its AI put its closed idle back after it showed
+                                // open (we play it again): the lid may flicker.
+                                const unsigned n = ++shown->second.flicks;
+                                if (n == 1 || n % 10 == 0) {
+                                    notes_.emplace_back(s.name + ": closed idle back after it showed open, " +
+                                                        std::to_string(n) + " walks (the lid may flicker)");
+                                }
+                                continue;
+                            }
+                            if (now_us - shown->second.since_us < kChestShowFailUs) {
+                                continue;  // still to take
+                            }
+                            // Never showed open: the play does not take here.
+                            // Removed as before, so its content is not given twice.
+                            chest_shown_.erase(shown);
+                            tk.show_failed.insert(s.address);
+                            notes_.emplace_back(s.name + ": could not be shown open here, removed");
                         }
                     }
                     // A falling floor or a web's parts (dungeon-switches, the
@@ -2089,6 +2138,11 @@ float FrameAfter(float frame, float rate, std::int64_t age_us) {
 }
 
 void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
+    for (const auto& [address, since] : chest_shown_) {
+        // Issue 195: a chest opened elsewhere shows its open idle; played
+        // again only over its closed idle (sample 1: its frame is set once).
+        out.push_back({address, kChestOpenIdle, 1.0f, 0.0f, 1, 0, kChestClosedIdle});
+    }
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||
             now_us - o.received.back().time > kPoseStaleUs) {
@@ -2116,7 +2170,7 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
             -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
-                       last.time});
+                       last.time, 0, {}});
         // Issue 150: a boss's other slots (Gohma's eye guard and eyelids,
         // whose AS events open and close the eye's guard). Without them
         // each game's copy kept its own AI's guard: the eye stood open for
@@ -2129,8 +2183,14 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
                                 ? s.animation.rate
                                 : 1.0f;
             out.push_back({address, s.animation.name, r, FrameAfter(s.animation.frame, r, age),
-                           last.time, s.slot});
+                           last.time, s.slot, {}});
         }
+    }
+}
+
+void Sync::ChestPlayHeld(std::uint64_t address, std::uint64_t now_us) {
+    if (const auto it = chest_shown_.find(address); it != chest_shown_.end() && !it->second.took) {
+        it->second.since_us = now_us;
     }
 }
 

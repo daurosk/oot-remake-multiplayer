@@ -15,6 +15,7 @@
 
 namespace proto = coop::protocol;
 using CoopObjects::LifeWrite;
+using CoopObjects::PlayWish;
 using CoopObjects::Seen;
 using CoopObjects::Sync;
 
@@ -592,13 +593,14 @@ TEST_CASE("objects: a pickup another game took is removed here") {
     CHECK(sync.Removes().empty());
 }
 
-TEST_CASE("objects: a chest opened elsewhere goes only while it was loaded closed") {
+TEST_CASE("objects: a chest opened elsewhere is shown open here, never removed (issue 195)") {
     Sync sync;
     Seen chest;
     chest.address = 0x500;
     chest.name = "Obj_TBox_A_01";
     chest.hash = 0x3c5bb811b4cf54dd;
     chest.position = {1.0f, 0.0f, 1.0f};
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     // Collect lists a chest only once its key is taken: the walk of the Tick
     // that brings the take does not have it yet, the next one does.
@@ -606,20 +608,38 @@ TEST_CASE("objects: a chest opened elsewhere goes only while it was loaded close
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
-    // A chest first gets kChestOpenWaitUs to show itself open (issue 87).
     CHECK(sync.Removes().empty());
-    Tick(sync, 1600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+    // Its own open idle is played on it, only over its closed idle.
+    std::vector<PlayWish> plays;
+    sync.Plays(30 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x500);
+    CHECK(plays[0].name == "OpenWait");
+    CHECK(plays[0].only_over == "Close");
+    chest.animation->name = "OpenWait";
+    Tick(sync, 100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // Its AI puts its closed idle back for a walk: still never removed.
+    chest.animation->name = "CloseWait";
+    Tick(sync, 4000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 9000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool shows = false;
+    for (const auto& n : sync.TakeNotes()) shows |= n.find("shows open here") != std::string::npos;
+    CHECK(shows);
     // The room loads again in the same scene (a new actor): the game made it
-    // open, knowing the key. Left alone.
+    // open, knowing the flag. Left alone, and nothing is played on it.
     chest.address = 0x600;
-    Tick(sync, 1700 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    chest.animation->name = "OpenWait";
+    Tick(sync, 9100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
+    plays.clear();
+    sync.Plays(9110 * kMs, plays);
+    CHECK(plays.empty());
     // Another scene and back: the take is forgotten, nothing goes.
-    Tick(sync, 1800 * kMs, {}, 1, "Other");
+    Tick(sync, 9200 * kMs, {}, 1, "Other");
     CHECK_FALSE(sync.Taken(chest.hash));
     chest.address = 0x700;
-    Tick(sync, 2800 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 9300 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
 
@@ -661,12 +681,13 @@ TEST_CASE("objects: keys written while no walk ran remove nothing (title, save l
     sync.Take(0x3c5bb811b4cf54dd);
     Tick(sync, 3040 * kMs, {Enemy(0x200, 0x22, 2)}, 1, "Other");
     Tick(sync, 3050 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
-    CHECK(sync.Removes().empty());  // the chest's wait to show itself open
-    Tick(sync, 4600 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    CHECK(sync.Removes().empty());  // shown open: its open idle is played
+    // It never shows open (no animation here): removed after the fallback.
+    Tick(sync, 6100 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
 }
 
-TEST_CASE("objects: a chest opened elsewhere that shows itself open stays, open (issue 87)") {
+TEST_CASE("objects: a chest opened elsewhere that shows open stays, open (issues 87, 195)") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     sync.Take(0x3c5bb811b4cf54dd);
@@ -692,10 +713,14 @@ TEST_CASE("objects: a chest opened elsewhere that shows itself open stays, open 
     sync.Take(0x77);
     Tick(sync, 2010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
     Tick(sync, 2020 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
-    Tick(sync, 3000 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes().empty());
     Tick(sync, 3600 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    // Its open idle never took (still closed kChestShowFailUs after): removed.
+    Tick(sync, 5100 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x600});
+    bool failed = false;
+    for (const auto& n : sync.TakeNotes()) failed |= n.find("could not be shown open here") != std::string::npos;
+    CHECK(failed);
 }
 
 TEST_CASE("objects: a pickup beside our Link is not removed (we may be taking it too)") {
@@ -724,16 +749,22 @@ TEST_CASE("objects: a pickup beside our Link is not removed (we may be taking it
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x900});
 }
 
-TEST_CASE("objects: a chest beside our Link shows open or goes, it is never left closed (issue 87)") {
+TEST_CASE("objects: a chest beside our Link is shown open too, never removed (issue 195)") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // 0.5 m from the chests
-    // Closed beside our Link: removed at once, before our Link can open it
-    // and get its content a second time.
+    // Closed beside our Link: shown open (the old rule removed it at once, and
+    // Caleb saw the chest vanish).
+    Seen closed = Chest(0x500);
+    closed.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
     sync.Take(0x3c5bb811b4cf54dd);
-    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+    Tick(sync, 10 * kMs, {closed, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {closed, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    std::vector<PlayWish> plays;
+    sync.Plays(25 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x500);
     sync.TakeNotes();
     // Ours started opening just before the other's flag came (both at once):
     // its animation changed to "Open" with our Link beside it. It stays, and
@@ -746,16 +777,17 @@ TEST_CASE("objects: a chest beside our Link shows open or goes, it is never left
     sync.Take(0x2222);
     Tick(sync, 30 * kMs, {opening, Enemy(0x100, 0x11, 2)});
     Tick(sync, 40 * kMs, {opening, Enemy(0x100, 0x11, 2)});
-    Tick(sync, 2000 * kMs, {opening, Enemy(0x100, 0x11, 2)});
+    closed.animation->name = "OpenWait";
+    Tick(sync, 2000 * kMs, {closed, opening, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
     bool said = false;
     for (const auto& n : sync.TakeNotes()) said |= n.find("at once") != std::string::npos;
     CHECK(said);
 }
 
-TEST_CASE("objects: a closed chest whose idle has Open in its name is not taken for opened (integrate-p8)") {
-    // B never touched the chest; its closed idle animation has "Open" in its
-    // name and has not changed since the chest was made.
+TEST_CASE("objects: a chest made open is never removed when its flag comes (issue 195)") {
+    // B never touched the chest; it was made open ("OpenWait") and has not
+    // changed since (the old rule removed it: a vanished open chest).
     for (const bool beside : {false, true}) {
         Sync sync;
         sync.SetPlayer(beside ? proto::Vec3{1.5f, 0.0f, 1.0f} : proto::Vec3{20.0f, 0.0f, 1.0f});
@@ -766,17 +798,17 @@ TEST_CASE("objects: a closed chest whose idle has Open in its name is not taken 
         sync.Take(chest.hash);
         Tick(sync, 5010 * kMs, {chest, Enemy(0x100, 0x11, 2)});
         Tick(sync, 5020 * kMs, {chest, Enemy(0x100, 0x11, 2)});
-        if (beside) {
-            CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});  // at once
-        } else {
-            CHECK(sync.Removes().empty());  // its wait to show itself open
-            Tick(sync, 6600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
-            CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
-        }
+        Tick(sync, 9000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+        CHECK(sync.Removes().empty());
+        std::vector<PlayWish> plays;
+        sync.Plays(9010 * kMs, plays);
+        CHECK(plays.empty());
+        bool already = false;
         for (const auto& n : sync.TakeNotes()) {
             CHECK(n.find("at once") == std::string::npos);
-            CHECK(n.find("shows open here") == std::string::npos);
+            already |= n.find("already shows open here") != std::string::npos;
         }
+        CHECK(already);
     }
 }
 
@@ -804,22 +836,64 @@ TEST_CASE("objects: a chest away from our Link that starts opening as the flag c
     CHECK_FALSE(at_once);
 }
 
-TEST_CASE("objects: a chest waiting to show itself open goes when our Link comes beside it (issue 87)") {
+TEST_CASE("objects: our Link opening a chest shown open is not fought, and logged (issue 195)") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});  // far
+    Seen chest = Chest(0x500);
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
     sync.Take(0x3c5bb811b4cf54dd);
-    Tick(sync, 10 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes().empty());  // waiting
-    // A second take of the same key (its opened flag a frame later) does
-    // not start the wait again.
-    sync.Take(0x3c5bb811b4cf54dd);
-    Tick(sync, 30 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    // Our Link walks up to it, still closed: it goes at once.
+    Tick(sync, 10 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    chest.animation->name = "OpenWait";
+    Tick(sync, 100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // Our Link walks up and opens it anyway (its AI's own opening).
     sync.SetPlayer(proto::Vec3{2.0f, 0.0f, 1.0f});
-    Tick(sync, 500 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+    chest.animation->name = "Open";
+    Tick(sync, 500 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 9000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    std::vector<PlayWish> plays;
+    sync.Plays(9010 * kMs, plays);
+    CHECK(plays.empty());  // no longer played over its own animation
+    bool again = false;
+    for (const auto& n : sync.TakeNotes()) again |= n.find("opened here too") != std::string::npos;
+    CHECK(again);
+    CHECK(sync.ChestsOpenedTwice() == 1);
+}
+
+TEST_CASE("objects: a chest's show-open clock waits while its play is held in an event (chest-sync-2 review)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    Seen chest = Chest(0x500);
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // Our Link is in a long event beside it: CoopGuard holds the play.
+    for (std::uint64_t t = 500; t <= 8000; t += 500) {
+        sync.ChestPlayHeld(0x500, t * kMs);
+        sync.ChestPlayHeld(0x999, t * kMs);  // not a chest shown open: ignored
+        Tick(sync, t * kMs + 1, {chest, Enemy(0x100, 0x11, 2)});
+        CHECK(sync.Removes().empty());
+    }
+    // The event ends and the play is sent: it shows open, never removed.
+    chest.animation->name = "OpenWait";
+    Tick(sync, 8100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // Its AI puts the closed idle back: kept, and the flicker is logged.
+    chest.animation->name = "CloseWait";
+    Tick(sync, 8200 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool flicker = false;
+    bool removed = false;
+    for (const auto& n : sync.TakeNotes()) {
+        flicker |= n.find("the lid may flicker") != std::string::npos;
+        removed |= n.find("removed") != std::string::npos;
+    }
+    CHECK(flicker);
+    CHECK_FALSE(removed);
+    CHECK(sync.ChestsOpenedTwice() == 0);
 }
 
 TEST_CASE("objects: a second take of a key does not start the chest's wait again") {
@@ -830,9 +904,11 @@ TEST_CASE("objects: a second take of a key does not start the chest's wait again
     Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
     sync.Take(0x3c5bb811b4cf54dd);  // the same chest's other flag, later
     Tick(sync, 1000 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3000 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
-    Tick(sync, 1520 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});  // 1.5 s from the first
+    // Never shown open: removed kChestShowFailUs after its first play.
+    Tick(sync, 3030 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
 }
 
 TEST_CASE("objects: a take for a chest not loaded removes nothing that loads later") {
@@ -2168,10 +2244,11 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     sync.Take(chest.hash);
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     Tick(sync, 20 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes().empty());  // the chest's wait to show itself open
-    Tick(sync, 1600 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());  // shown open: its open idle is played
+    // It never shows open (no animation here): removed after the fallback.
+    Tick(sync, 3100 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
-    Tick(sync, 1610 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3110 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
 

@@ -132,6 +132,12 @@ void FlagWatcher::guard_count(FlagKey count, std::span<const FlagKey> sources) {
   }
 }
 
+void FlagWatcher::expect_doubled_gain() {
+  if (doubled_ == 0 || frames_ > doubled_until_) doubled_ = 0;
+  doubled_ = std::min(doubled_ + 1, kMaxDoubledGains);
+  doubled_until_ = frames_ + kDoubledGainFrames;
+}
+
 bool FlagWatcher::share_pickup_named(FlagKey key) {
   if (key.kind != FlagKeyKind::named || !pickups_.insert(key).second) return false;
   shared_.add(key);
@@ -763,6 +769,25 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       ++stats_.max_drops_kept;
       pending_.erase(key);
       continue;
+    }
+    if (doubled_ > 0 && frames_ > doubled_until_) doubled_ = 0;  // lapsed
+    if (doubled_ > 0 && !restate_.contains(key) && store.is_count(key) && !guards_.contains(key) &&
+        before.kind == protocol::FlagKind::int32 && now->kind == protocol::FlagKind::int32 &&
+        as_int(now->value) > as_int(before.value)) {
+      // A chest another player had opened, opened again here (issue 195):
+      // its content counts once for the group. Put back, not sent.
+      FlagEntry back = before;
+      back.key = key;
+      if (store.write(back)) {
+        --doubled_;
+        ++stats_.doubled_gains;
+        ++stats_.applied;
+        counts_guarded_.push_back(
+            CountGuarded{key, static_cast<std::int32_t>(as_int(now->value) - as_int(before.value))});
+        it->second = back;
+        continue;
+      }
+      ++stats_.write_failures;  // sent as any gain
     }
     if (const auto g = guards_.find(key); g != guards_.end() &&
                                           before.kind == protocol::FlagKind::int32 &&

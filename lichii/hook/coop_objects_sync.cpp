@@ -723,6 +723,15 @@ std::size_t Sync::EventNpcs(std::uint64_t now_us) const {
     }));
 }
 
+std::size_t Sync::EventNpcsOurs(std::uint64_t now_us) const {
+    if (self_ == 0) {
+        return 0;
+    }
+    return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [&](const auto& e) {
+        return e.second.npc && e.second.event_until > now_us && OwnerOf(e.second.id) == self_;
+    }));
+}
+
 void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
     const auto it = objects_.find(address);
     if (it == objects_.end()) {

@@ -2079,11 +2079,19 @@ private:
         const std::size_t claimed = sync_.EventNpcs(now_us);
         if ((claimed == 0) != (npc_claimed_ == 0)) {
             if (claimed != 0) {
-                LOG_INFO(Core, "coop: npc-anim: our Link is in an event: {} NPCs near it are ours now", claimed);
+                LOG_INFO(Core, "coop: npc-anim: our Link is in an event: {} NPCs near it claimed", claimed);
             } else {
                 LOG_INFO(Core, "coop: npc-anim: the event's NPCs are free again");
             }
         }
+        // The hand-over itself (the server may give them 0.5 s later, or
+        // keep one in another game's fight lock): log each change of how
+        // many of the claimed ones are ours.
+        const std::size_t ours = claimed == 0 ? 0 : sync_.EventNpcsOurs(now_us);
+        if (ours != npc_ours_) {
+            LOG_INFO(Core, "coop: npc-anim: {} of the {} claimed NPCs are ours now", ours, claimed);
+        }
+        npc_ours_ = ours;
         npc_claimed_ = claimed;
         static const bool debug_npc = EnvOn("LICHII_COOP_DEBUG_NPC");
         const bool every = debug_npc && now_us - npc_log_at_ >= 1'000'000;
@@ -2393,6 +2401,7 @@ private:
     std::optional<Mover::Pose> drive_pose_;
     // Issue 200 (npc-anim): the log of our event's claim and of NPC copies.
     std::size_t npc_claimed_ = 0;
+    std::size_t npc_ours_ = 0;     // how many of them the server gave us (log)
     u64 npc_log_at_ = 0;
     std::unordered_map<u64, u8> npc_owner_;  // the owner each NPC copy was last logged with
     u64 drive_enemy_ = 0;

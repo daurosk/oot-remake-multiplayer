@@ -369,6 +369,9 @@ public:
     std::uint8_t OwnerAt(std::uint64_t address) const;
     // How many townspeople our event flags now (for the log).
     std::size_t EventNpcs(std::uint64_t now_us) const;
+    // How many of them the server has handed to us already (for the log:
+    // the claim is a wish, this is the hand-over).
+    std::size_t EventNpcsOurs(std::uint64_t now_us) const;
     static constexpr float kEventNpcM = 30.0f;
     static constexpr std::uint64_t kEventNpcKeepUs = 2'000'000;
 

@@ -1,13 +1,15 @@
-# npc-anim, B: walks into Kakariko with A, stops a few metres from the signpost and faces it (as
-# cutscene.B.txt), outside A's event. Its log should show the NPCs near the post copied from P1.
+# npc-anim, B: walks to Dampe in the Graveyard first and stays within about 5 m of him, so it owns
+# him (distance rule) before A comes to talk to him (npc-anim.A.txt has the checks). B never talks:
+# it is outside A's event. It locks the camera on him (ZL, no A) so its shots show him.
 mark start
 wait 120
-stick 0 -1 300          # its save is further up the Graveyard path than A's
-wait 420
-mark kakariko
-stick 0 1 60            # out of the gate passage first
-goto -2.5 72.5 1.0      # the post to the west
-toward -7.46 71.12 10   # face it, so the camera looks at it
+goto -16.0 17.5 1.0 900  # about 4 m from his placed spot
+hold ZL+LSTICK_UP 40     # follow him a little if he walked on
+mark near-dampe
+wait 300
+hold ZL+LSTICK_UP 40
+wait 300
+hold ZL+LSTICK_UP 40     # still near him when A comes (about 20 s in)
 mark watching
-wait 1200
+hold ZL 1800             # stand, camera on him, through A's talk
 mark end

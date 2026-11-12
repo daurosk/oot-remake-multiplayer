@@ -2963,6 +2963,11 @@ TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the e
     CHECK(sync.OwnerAt(0x100) == 2);
     CHECK(sync.EventNpc(0x100, 100 * kMs));
     CHECK(sync.EventNpcs(100 * kMs) == 1);
+    CHECK(sync.EventNpcsOurs(100 * kMs) == 0);  // claimed, not handed over yet
+    Own(sync, id, 1, 1);                         // the server gives it to us (P1)
+    Tick(sync, 120 * kMs, {npc});
+    CHECK(sync.OwnerAt(0x100) == 1);
+    CHECK(sync.EventNpcsOurs(120 * kMs) == 1);
     sync.SetEvent(false);
     std::optional<std::uint8_t> flags;
     for (std::uint64_t t = 166; t <= 4000; t += 66) {

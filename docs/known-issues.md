@@ -2,7 +2,7 @@
 
 This is an early test release. Everything under "Works" was seen in our two-game tests: two copies of the game on one PC talking through the server, driven by the [autotest](../tools/autotest) scripts, with the logs and screenshots of both games read afterwards. Testers play the releases on separate PCs, over a LAN and the internet. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)); every open problem is on the [issues page](https://github.com/daurosk/oot-remake-multiplayer/issues).
 
-**Every player needs the same release.** The release is protocol 10: a game and a server (or another game) of different protocol versions refuse each other, so every player updates (`Update.bat` in the kit folder, or answer **Y** when `Host.bat` / `Join.bat` offer it). Then run `make-puppet-pack.cmd` once more: the pack has new parts (Epona for riders, the game-style HUD, Navi's room list).
+**Every player needs the same release.** The release is protocol 10: a game and a server (or another game) of different protocol versions refuse each other, so every player updates (`Update.bat` in the kit folder, or answer **Y** when `Host.bat` / `Join.bat` offer it). Then run `make-puppet-pack.cmd` once more: `Update.bat` does not rebuild the pack, and the pack has new parts (the tunic colours, Epona for riders, the game-style HUD, Navi's room list). With an old pack the other players stay green; the kit warns at start when the pack has no colours.
 
 **The emulator is Fritchii v5.8.4.** The first start after an update prepares the shaders again ("Preparing shaders"); let it finish.
 

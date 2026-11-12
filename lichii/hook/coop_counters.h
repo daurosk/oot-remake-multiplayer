@@ -174,7 +174,11 @@ private:
         std::uint64_t key = 0;
         std::uint64_t owner_hash = 0;
         std::string owner_name;
-        float last_remaining = -1.0f;
+        // The frames left at the last look. The game's counters go below
+        // zero when a pause ends (-0.6 in the 2026-11-12 run), so a value
+        // below zero is no "never looked" mark: `looked` is.
+        float last_remaining = 0.0f;
+        bool looked = false;
         std::uint64_t start_us = 0;           // server time of the last start
         std::deque<std::uint64_t> periods;    // the last four
         std::uint64_t cycle_us = 0;           // the loop: one period, or two that alternate

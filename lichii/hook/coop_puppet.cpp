@@ -526,7 +526,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         }
         // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
         // what the puppet's sound user plays (issue 131).
-        if (t->show == Show::show) {
+        // Not only in show: A playing is an event on A, so B holds the puppet (still,
+        // seen) the whole song; the notes must sound then too.
+        if (t->show != Show::hide) {
             const std::string who = "P" + std::to_string(slot.number);
             const auto say = [this](const std::string& line) { Say(line); };
             if (anim_) {

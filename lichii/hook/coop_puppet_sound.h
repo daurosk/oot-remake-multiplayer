@@ -53,6 +53,8 @@ inline constexpr std::uint64_t kEventAsset = 0x30;       // -> {char* name, ...}
 inline constexpr std::uint64_t kSearchAsset = 0x43db00;  // (accessor, &asset, name) -> bool
 inline constexpr std::uint64_t kEmit = 0x440630;         // (user, &asset, &handle, 0)
 inline constexpr std::uint64_t kKill = 0x7cc120;         // (&handle)
+inline constexpr std::uint64_t kSoundRootGot = 0x4c7e678;
+inline constexpr std::uint64_t kRootSLinkSystem = 0x18;
 }  // namespace addr
 
 // Room in the puppet's block (CoopPuppet::block, after the gear pointers).
@@ -79,9 +81,15 @@ struct State {
     std::uint8_t sounding = 0;   // emitted; its handle may still play
     Step step = Step::none;      // the next call
     Step pending = Step::none;   // the call made, until Finish
-    std::uint64_t user = 0;      // the sound user found last
+    std::uint64_t user = 0;      // the sound user the note is emitted on
+    std::uint64_t logged_user = 0;  // the puppet's own sound user, as last logged
     bool user_said = false;      // its name logged
     bool missing_said = false;   // "no sound user" logged
+    // The game's own "Ocarina" SLink user, which holds the Ocarina_<note> assets (the
+    // player's user has none of them): found once by walking the user lists from the
+    // puppet's user (FindUser); 0 not looked for or not found (then the puppet's user).
+    std::uint64_t ocarina_user = 0;
+    bool ocarina_looked = false;
     std::string playing;         // the names last logged (debug)
     std::uint64_t playing_ms = 0;
 };
@@ -107,6 +115,28 @@ void Reset(State& state);
 
 // The sound user of an actor (its SLink user instance), 0 if none.
 std::uint64_t SoundUser(CoopPuppet::Guest& guest, std::uint64_t actor);
+// The name of a user's resource ("Player_Child", "Ocarina"), empty if unreadable.
+std::string UserName(CoopPuppet::Guest& guest, std::uint64_t user);
+// Another user named `name`, found by walking every circular list that runs through
+// `from` (each 8-byte field in its first kUserScan bytes taken as a list link): 0 if none.
+// `link` gets the field's offset.
+std::uint64_t FindUser(CoopPuppet::Guest& guest, std::uint64_t from, const std::string& name,
+                       std::uint64_t* link = nullptr);
+inline constexpr std::uint64_t kUserScan = 0x140;
+// The game's SLink system, which makes the users (0xd1f360 makes "Ocarina" with its
+// vfunc +0x28): [[[main + kSoundRootGot]] + kRootSLinkSystem].
+std::uint64_t SLinkSystem(CoopPuppet::Guest& guest, std::uint64_t main_base);
+// A user named `name` the system keeps: in a pointer array ({s32 count, s32 capacity,
+// T** data}) or a circular list (any link offset below kUserScan) in the system's first
+// kSystemScan bytes. `how` says where. 0 if none.
+std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,
+                               const std::string& name, std::string* how = nullptr);
+// The checks FindUser makes on a candidate (debug: logged for the puppet's own user).
+bool LooksLikeUser(CoopPuppet::Guest& guest, std::uint64_t user);
+inline constexpr std::uint64_t kSystemScan = 0x400;
+inline constexpr int kSystemListSteps = 4096;
+inline constexpr int kListSteps = 2048;
+inline constexpr const char* kOcarinaUser = "Ocarina";
 // The asset names a user plays now (at most kMaxEvents), joined with ", ".
 std::string Playing(CoopPuppet::Guest& guest, std::uint64_t user);
 // Debug (LICHII_COOP_DEBUG_ANIM): every kPlayingEveryMs, a line when what the

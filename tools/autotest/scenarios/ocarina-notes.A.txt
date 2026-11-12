@@ -16,6 +16,11 @@ wait 60
 press DLEFT 12
 wait 240
 mark out
+# The first Ocarina use shows an "Ocarina Audio Input" note that eats L R Y X; A closes it
+# (the A press may also send one HighD note before the test notes).
+press A 12
+wait 120
+mark ready
 mark note-L
 hold L 30
 wait 90

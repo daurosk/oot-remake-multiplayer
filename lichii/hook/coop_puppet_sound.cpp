@@ -56,6 +56,112 @@ std::uint64_t Accessor(CoopPuppet::Guest& guest, std::uint64_t user) {
 
 } // namespace
 
+std::string UserName(CoopPuppet::Guest& guest, std::uint64_t user) {
+    const std::uint64_t resource = user != 0 ? Pointer(guest, user + addr::kUserResource) : 0;
+    return resource != 0 ? Text(guest, Pointer(guest, resource + addr::kResourceName)) : std::string();
+}
+
+// Looks like a sound user: its event list (Playing) runs from its first link back to its
+// head, and it is not an effect user. A field that only holds the resource pointer does not.
+bool LooksLikeUser(CoopPuppet::Guest& guest, std::uint64_t user) {
+    std::uint32_t flags = 0;
+    std::int32_t offset = 0;
+    if (!Read(guest, user + addr::kUserFlags, flags) || (flags & addr::kUserFlagEffect) != 0 ||
+        !Read(guest, user + addr::kUserLinkOffset, offset) || offset < 0 || offset > 0x400) {
+        return false;
+    }
+    const std::uint64_t head = user + addr::kUserEvents;
+    std::uint64_t link = Pointer(guest, user + addr::kUserFirstLink);
+    for (int i = 0; i <= kMaxEvents; ++i) {
+        if (link == head) {
+            return true;
+        }
+        if (link == 0) {
+            return false;
+        }
+        link = Pointer(guest, link + addr::kLinkNext);
+    }
+    return false;
+}
+
+std::uint64_t FindUser(CoopPuppet::Guest& guest, std::uint64_t from, const std::string& name,
+                       std::uint64_t* link) {
+    if (from == 0) {
+        return 0;
+    }
+    for (std::uint64_t off = 0; off < kUserScan; off += 8) {
+        const std::uint64_t head = from + off;
+        std::uint64_t node = Pointer(guest, head);
+        for (int i = 0; node != 0 && node != head && i < kListSteps; ++i) {
+            if (node > off) {
+                const std::uint64_t user = node - off;
+                if (user != from && Accessor(guest, user) != 0 && UserName(guest, user) == name &&
+                    LooksLikeUser(guest, user)) {
+                    if (link != nullptr) {
+                        *link = off;
+                    }
+                    return user;
+                }
+            }
+            node = Pointer(guest, node);
+        }
+    }
+    return 0;
+}
+
+std::uint64_t SLinkSystem(CoopPuppet::Guest& guest, std::uint64_t main_base) {
+    const std::uint64_t got = main_base != 0 ? Pointer(guest, main_base + addr::kSoundRootGot) : 0;
+    const std::uint64_t root = got != 0 ? Pointer(guest, got) : 0;
+    return root != 0 ? Pointer(guest, root + addr::kRootSLinkSystem) : 0;
+}
+
+std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,
+                               const std::string& name, std::string* how) {
+    if (system == 0) {
+        return 0;
+    }
+    const auto is = [&](std::uint64_t user) {
+        return user != 0 && Accessor(guest, user) != 0 && UserName(guest, user) == name &&
+               LooksLikeUser(guest, user);
+    };
+    // Pointer arrays.
+    for (std::uint64_t off = 0; off + 16 <= kSystemScan; off += 8) {
+        std::int32_t count = 0;
+        std::int32_t capacity = 0;
+        if (!Read(guest, system + off, count) || !Read(guest, system + off + 4, capacity) ||
+            count <= 0 || count > capacity || capacity > 8192) {
+            continue;
+        }
+        const std::uint64_t data = Pointer(guest, system + off + 8);
+        for (std::int32_t i = 0; data != 0 && i < count; ++i) {
+            const std::uint64_t user = Pointer(guest, data + 8 * static_cast<std::uint64_t>(i));
+            if (is(user)) {
+                if (how != nullptr) {
+                    *how = "array at system +" + Hex(off) + " [" + std::to_string(i) + "]";
+                }
+                return user;
+            }
+        }
+    }
+    // Circular lists, the link anywhere in the user's first kUserScan bytes.
+    for (std::uint64_t off = 0; off < kSystemScan; off += 8) {
+        const std::uint64_t head = system + off;
+        std::uint64_t node = Pointer(guest, head);
+        for (int i = 0; node != 0 && node != head && i < kSystemListSteps; ++i) {
+            for (std::uint64_t link = 0; link < kUserScan && link <= node; link += 8) {
+                if (is(node - link)) {
+                    if (how != nullptr) {
+                        *how = "list at system +" + Hex(off) + ", link +" + Hex(link);
+                    }
+                    return node - link;
+                }
+            }
+            node = Pointer(guest, node);
+        }
+    }
+    return 0;
+}
+
 std::uint64_t SoundUser(CoopPuppet::Guest& guest, std::uint64_t actor) {
     const std::uint64_t parts = Pointer(guest, actor + addr::kActorParts);
     const std::uint64_t xlink = parts != 0 ? Pointer(guest, parts + addr::kPartsXLink) : 0;
@@ -67,8 +173,11 @@ void Reset(State& state) {
     state.step = State::Step::none;
     state.pending = State::Step::none;
     state.user = 0;
+    state.logged_user = 0;
     state.user_said = false;
     state.missing_said = false;
+    state.ocarina_user = 0;
+    state.ocarina_looked = false;
     state.playing.clear();
 }
 
@@ -122,8 +231,8 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             state.step = State::Step::none;
             return std::nullopt;
         }
-        if (user != state.user || !state.user_said) {
-            state.user = user;
+        if (user != state.logged_user || !state.user_said) {
+            state.logged_user = user;
             state.user_said = true;
             const std::uint64_t resource = Pointer(guest, user + addr::kUserResource);
             std::uint32_t flags = 0;
@@ -133,6 +242,34 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
                 ((flags & addr::kUserFlagEffect) != 0 ? "ELink" : "SLink") + " flags " +
                 Hex(flags) + ")");
         }
+        // The notes are the game's "Ocarina" user's assets (issue 152): played on it
+        // (not placed at the puppet: the game's own notes are not placed either).
+        if (!state.ocarina_looked) {
+            state.ocarina_looked = true;
+            std::uint64_t off = 0;
+            std::string how;
+            const std::uint64_t system = SLinkSystem(guest, main_base);
+            state.ocarina_user = FindUserInSystem(guest, system, kOcarinaUser, &how);
+            if (state.ocarina_user == 0) {
+                state.ocarina_user = FindUser(guest, user, kOcarinaUser, &off);
+                how = "list at +" + Hex(off) + " of its own user";
+            }
+            say(state.ocarina_user != 0
+                    ? who + ": Ocarina notes go to sound user " + Hex(state.ocarina_user) + " '" +
+                          kOcarinaUser + "' (" + how + ")"
+                    : who + ": no '" + kOcarinaUser + "' sound user found (SLink system " +
+                          Hex(system) + " vtable main+" +
+                          Hex(Pointer(guest, system) - main_base) + ", own user " + Hex(user) + (LooksLikeUser(guest, user) ? " passes" : " fails") +
+                          " the user check): notes searched in its own user");
+        }
+        const std::uint64_t notes_user = state.ocarina_user != 0 ? state.ocarina_user : user;
+        const std::uint64_t notes_accessor =
+            state.ocarina_user != 0 ? Accessor(guest, state.ocarina_user) : accessor;
+        if (notes_accessor == 0) {
+            state.step = State::Step::none;
+            return std::nullopt;
+        }
+        state.user = notes_user;
         const std::string name = CoopOcarinaSound::AssetName(state.want);
         std::array<char, block::kTextCapacity> text{};
         for (std::size_t i = 0; i < name.size() && i + 1 < text.size(); ++i) {
@@ -148,7 +285,7 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             return std::nullopt;
         }
         c.function = main_base + addr::kSearchAsset;
-        c.x[0] = accessor;
+        c.x[0] = notes_accessor;
         c.x[1] = block + block::kAsset;
         c.x[2] = block + block::kText;
         break;
@@ -216,7 +353,14 @@ void LogPlaying(State& state, CoopPuppet::Guest& guest, std::uint64_t actor,
         return;
     }
     state.playing_ms = now_ms;
-    const std::string now = Playing(guest, SoundUser(guest, actor));
+    std::string now = Playing(guest, SoundUser(guest, actor));
+    if (state.ocarina_user != 0) {
+        // The game's Ocarina user: the notes played there (issue 152).
+        const std::string notes = Playing(guest, state.ocarina_user);
+        if (!notes.empty()) {
+            now += (now.empty() ? "" : ", ") + std::string("Ocarina user: ") + notes;
+        }
+    }
     if (now != state.playing) {
         state.playing = now;
         say(who + " sounds: " + (now.empty() ? std::string("none") : now));

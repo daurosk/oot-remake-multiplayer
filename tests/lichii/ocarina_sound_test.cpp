@@ -172,8 +172,9 @@ TEST_CASE("a note on a puppet: search the asset, then emit it on the sound user"
     std::array<std::uint8_t, 8> handle{};
     g.Read(kBlock + snd::block::kHandle, handle.data(), handle.size());
     CHECK(handle == std::array<std::uint8_t, 8>{0xff, 0, 0xff, 0xff, 0, 0, 0, 0});
-    REQUIRE_FALSE(run.said.empty());
-    CHECK(run.said.back().find("'Player_Child' (SLink") != std::string::npos);
+    REQUIRE(run.said.size() == 2);
+    CHECK(run.said[0].find("'Player_Child' (SLink") != std::string::npos);
+    CHECK(run.said[1].find("no 'Ocarina' sound user found") != std::string::npos);
     snd::Finish(st, 1, "P1", run.say());
     c = snd::Next(st, w, g, kBase, kActor, kBlock, 1110, "P1", run.say());
     REQUIRE(c.has_value());
@@ -290,4 +291,54 @@ TEST_CASE("what a sound user plays is read from its event list") {
     g.Put<std::uint64_t>(kUser + snd::addr::kUserFirstLink, kUser + snd::addr::kUserEvents);
     snd::LogPlaying(st, g, kActor, 1300, "P1", run.say());
     CHECK(run.said.back() == "P1 sounds: none");
+}
+
+TEST_CASE("the notes are searched and played on the game's Ocarina user when a list reaches it") {
+    FakeGuest g = PuppetWithSound();
+    // A circular list through both users at +0x40, with the system's head between them.
+    constexpr std::uint64_t kOcarina = 0x400060000;
+    constexpr std::uint64_t kOcarinaResource = 0x400070000;
+    constexpr std::uint64_t kOcarinaAccessor = 0x400080000;
+    constexpr std::uint64_t kHead = 0x400090000;
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserResource, kOcarinaResource);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceAccessor, kOcarinaAccessor);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceName, kOcarinaResource + 0x100);
+    g.PutText(kOcarinaResource + 0x100, "Ocarina");
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserFirstLink, kOcarina + snd::addr::kUserEvents);
+    g.Put<std::int32_t>(kOcarina + snd::addr::kUserLinkOffset, 0x10);
+    g.Put<std::uint64_t>(kUser + 0x40, kHead);
+    g.Put<std::uint64_t>(kHead, kOcarina + 0x40);
+    g.Put<std::uint64_t>(kOcarina + 0x40, kUser + 0x40);
+    std::uint64_t link = 0;
+    CHECK(snd::FindUser(g, kUser, "Ocarina", &link) == kOcarina);
+    CHECK(link == 0x40);
+    CHECK(snd::FindUser(g, kUser, "Nobody") == 0);
+    // Something that only points at the resource (no event list) is not a user.
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserFirstLink, 0);
+    CHECK(snd::FindUser(g, kUser, "Ocarina") == 0);
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserFirstLink, kOcarina + snd::addr::kUserEvents);
+
+    Run run;
+    snd::State st;
+    snd::Wanted w{16, 1, 1000};
+    auto c = snd::Next(st, w, g, kBase, kActor, kBlock, 1100, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->function == kBase + snd::addr::kSearchAsset);
+    CHECK(c->x[0] == kOcarinaAccessor);
+    CHECK(run.said.back().find("Ocarina notes go to sound user") != std::string::npos);
+    snd::Finish(st, 1, "P1", run.say());
+    c = snd::Next(st, w, g, kBase, kActor, kBlock, 1110, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->function == kBase + snd::addr::kEmit);
+    CHECK(c->x[0] == kOcarina);
+    snd::Finish(st, 1, "P1", run.say());
+    // The next note: no new lookup, no new user lines.
+    const auto lines = run.said.size();
+    w = snd::Wanted{4, 2, 1200};
+    c = snd::Next(st, w, g, kBase, kActor, kBlock, 1210, "P1", run.say());  // kill
+    snd::Finish(st, 0, "P1", run.say());
+    c = snd::Next(st, w, g, kBase, kActor, kBlock, 1220, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->x[0] == kOcarinaAccessor);
+    CHECK(run.said.size() == lines);
 }

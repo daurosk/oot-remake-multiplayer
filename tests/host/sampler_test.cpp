@@ -369,3 +369,21 @@ TEST_CASE("host sampler: equipment on every change, not every frame") {
   now += kFrameUs;
   CHECK(decode(sampler.frame(r, now)).equips.size() == 1);
 }
+
+TEST_CASE("host sampler: a cutscene goes out at once, in every sample while it plays (scene sync)") {
+  Sampler sampler;
+  PlayerReading r = at(1.0f, false);
+  decode(sampler.frame(r, kStart));
+  // Standing still, inside the min gap: only a change of cutscene sends.
+  r.event_running = true;
+  r.cutscene = "KokiriForest_Dm_Kokiri_0080";
+  auto d = decode(sampler.frame(r, kStart + kFrameUs));
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].cutscene == std::optional<std::string>("KokiriForest_Dm_Kokiri_0080"));
+  // It ends: the next sample carries none, also at once.
+  r.event_running = false;
+  r.cutscene.reset();
+  d = decode(sampler.frame(r, kStart + 2 * kFrameUs));
+  REQUIRE(d.samples.size() == 1);
+  CHECK_FALSE(d.samples[0].cutscene.has_value());
+}

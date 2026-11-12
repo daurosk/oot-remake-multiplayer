@@ -129,6 +129,12 @@ SampleResult Player::add(const protocol::PlayerSample& in) {
     age_ = in.age;
     age_sequence_ = t.sequence;
   }
+  // The cutscene is in every sample while it plays and in none after it.
+  if (!cutscene_sequence_ || sequence_after(t.sequence, *cutscene_sequence_)) {
+    cutscene_ = in.cutscene;
+    if (in.position) cutscene_place_ = in.position;
+    cutscene_sequence_ = t.sequence;
+  }
 
   if (!in.position) return SampleResult::state_only;
   // Older than the time already shown: it would rewrite a past already

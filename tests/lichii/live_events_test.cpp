@@ -249,3 +249,58 @@ TEST_CASE("live events: no scene read is the same visit, and an empty name is lo
     REQUIRE(notes.size() == 1);
     CHECK(notes[0] == "live event with no name not asked");
 }
+
+namespace {
+
+CoopLiveEvents::OtherPlayer Other(std::uint8_t n, const char* scene, std::optional<std::string> cutscene,
+                                  float x = 0.0f) {
+    CoopLiveEvents::OtherPlayer o;
+    o.number = n;
+    o.scene = scene;
+    o.cutscene = std::move(cutscene);
+    o.place = std::array<float, 3>{x, 0.0f, 0.0f};
+    return o;
+}
+
+const std::array<float, 3> kHere{5.0f, 0.0f, 0.0f};
+
+}  // namespace
+
+TEST_CASE("scene sync: a cutscene another player starts beside us starts here, once") {
+    CoopLiveEvents::SceneSync s;
+    CHECK_FALSE(s.Next({Other(2, "KokiriForest", std::nullopt)}, "KokiriForest", false, kHere));
+    const auto a = s.Next({Other(2, "KokiriForest", "KokiriForest_Saria")}, "KokiriForest", false, kHere);
+    CHECK(a == std::optional<std::string>("KokiriForest_Saria"));
+    // While it plays (theirs and then ours), nothing more.
+    CHECK_FALSE(s.Next({Other(2, "KokiriForest", "KokiriForest_Saria")}, "KokiriForest", true, kHere));
+    CHECK_FALSE(s.Next({Other(2, "KokiriForest", std::nullopt)}, "KokiriForest", false, kHere));
+    // The same name again in this visit: not asked twice.
+    CHECK_FALSE(s.Next({Other(2, "KokiriForest", "KokiriForest_Saria")}, "KokiriForest", false, kHere));
+}
+
+TEST_CASE("scene sync: apart, in another scene or with our own event, the cutscene is theirs only") {
+    CoopLiveEvents::SceneSync far;
+    CHECK_FALSE(far.Next({Other(2, "KokiriForest", "X", 40.0f)}, "KokiriForest", false, kHere));  // 35 m away
+    CoopLiveEvents::SceneSync other_scene;
+    CHECK_FALSE(other_scene.Next({Other(2, "HyruleField", "X")}, "KokiriForest", false, kHere));
+    CoopLiveEvents::SceneSync busy;
+    CHECK_FALSE(busy.Next({Other(2, "KokiriForest", "X")}, "KokiriForest", true, kHere));
+    // A start we could not join is not joined halfway when we become free.
+    CHECK_FALSE(busy.Next({Other(2, "KokiriForest", "X")}, "KokiriForest", false, kHere));
+    CoopLiveEvents::SceneSync no_link;
+    CHECK_FALSE(no_link.Next({Other(2, "KokiriForest", "X")}, "KokiriForest", false, std::nullopt));
+}
+
+TEST_CASE("scene sync: two players starting at once give one start, the other is not lost later") {
+    CoopLiveEvents::SceneSync s;
+    s.Next({Other(2, "Kakariko", std::nullopt), Other(3, "Kakariko", std::nullopt)}, "Kakariko", false, kHere);
+    const auto a =
+        s.Next({Other(2, "Kakariko", "A"), Other(3, "Kakariko", "B")}, "Kakariko", false, kHere);
+    CHECK(a == std::optional<std::string>("A"));
+    // B's began in the same frame: seen, not started later out of step.
+    CHECK_FALSE(s.Next({Other(2, "Kakariko", "A"), Other(3, "Kakariko", "B")}, "Kakariko", false, kHere));
+    // A new visit of the scene may start the same name again.
+    s.Next({Other(2, "Kakariko", std::nullopt)}, "HyruleField", false, kHere);
+    const auto again = s.Next({Other(2, "Kakariko", "A")}, "Kakariko", false, kHere);
+    CHECK(again == std::optional<std::string>("A"));
+}

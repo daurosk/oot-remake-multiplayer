@@ -39,6 +39,7 @@ inline constexpr std::size_t kMaxNicknameChars = 16;
 inline constexpr std::size_t kMaxChatChars = 200;
 inline constexpr std::size_t kMaxSceneChars = 64;
 inline constexpr std::size_t kMaxAnimationChars = 64;
+inline constexpr std::size_t kMaxCutsceneChars = 96;
 
 // ENet channels (docs/protocol.md, "Transport").
 inline constexpr std::uint8_t kChannelSession = 0;
@@ -116,6 +117,11 @@ enum class SampleComponent : std::uint16_t {
   scene = 5,
   age = 6,
   animation = 7,
+  // The event (cutscene) this player's game is playing now, by the name the
+  // game asks for it with (its event flow), only while that flow plays a
+  // cinematic part (Dm_...). Absent when none. Scene sync: a game near this
+  // player in the same scene starts the same event, so both watch it at once.
+  cutscene = 8,
 };
 
 // PLAYER_EQUIP component ids. 1 to 8 are the game's equipped actor names
@@ -292,6 +298,7 @@ struct PlayerSample {
   std::optional<std::string> scene;
   std::optional<Age> age;
   std::optional<Animation> animation;
+  std::optional<std::string> cutscene;  // SampleComponent::cutscene
   bool operator==(const PlayerSample&) const = default;
 };
 

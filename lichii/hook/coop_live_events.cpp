@@ -2,6 +2,7 @@
 #include "coop_live_events.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace CoopLiveEvents {
@@ -60,6 +61,36 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
         return name;
     }
     return std::nullopt;
+}
+
+std::optional<std::string> SceneSync::Next(const std::vector<OtherPlayer>& others, const std::string& scene,
+                                           bool event_running, std::optional<std::array<float, 3>> link) {
+    if (!scene.empty() && scene != scene_) {
+        scene_ = scene;
+        asked_.clear();
+    }
+    std::optional<std::string> start;
+    for (const OtherPlayer& o : others) {
+        auto& last = last_[o.number];
+        const bool began = o.cutscene.has_value() && o.cutscene != last;
+        last = o.cutscene;
+        if (!began || start || scene.empty() || event_running) {
+            continue;  // seen, so a start we could not join is not joined later
+        }
+        if (!o.scene || *o.scene != scene || !link || !o.place) {
+            continue;
+        }
+        const float dx = (*link)[0] - (*o.place)[0];
+        const float dy = (*link)[1] - (*o.place)[1];
+        const float dz = (*link)[2] - (*o.place)[2];
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) > kTogetherM) {
+            continue;
+        }
+        if (asked_.insert(*o.cutscene).second) {
+            start = *o.cutscene;
+        }
+    }
+    return start;
 }
 
 std::optional<std::set<std::string>> ParseNames(std::string_view text) {

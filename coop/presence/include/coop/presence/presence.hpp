@@ -107,6 +107,12 @@ class Player {
   // the sender's clock estimate cannot freeze them.
   const std::optional<std::string>& scene() const { return scene_; }
   std::optional<Age> age() const { return age_; }
+  // The cutscene the newest sample says the player's game plays (scene sync,
+  // protocol SampleComponent::cutscene), with the place it was sent from;
+  // nothing when that sample carried none. Counted from the newest sample by
+  // sequence, like the scene.
+  const std::optional<std::string>& cutscene() const { return cutscene_; }
+  const std::optional<Vec3>& cutscene_place() const { return cutscene_place_; }
   // False while the player's scene is not known.
   bool same_scene(std::string_view local_scene) const;
 
@@ -129,6 +135,9 @@ class Player {
   std::optional<std::uint32_t> scene_sequence_;
   std::optional<Age> age_;
   std::optional<std::uint32_t> age_sequence_;
+  std::optional<std::string> cutscene_;
+  std::optional<Vec3> cutscene_place_;
+  std::optional<std::uint32_t> cutscene_sequence_;
   std::deque<Sample> samples_;
   std::optional<std::uint64_t> last_shown_us_;
 };

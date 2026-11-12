@@ -18,6 +18,7 @@ inline PlayerSample full_sample() {
   s.scene = "spot00";
   s.age = Age::adult;
   s.animation = Animation{"link_run", 12.5f, 1.0f};
+  s.cutscene = "InsideTheDekuTree_BossAppear";
   return s;
 }
 

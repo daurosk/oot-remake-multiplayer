@@ -78,6 +78,7 @@ bool Sampler::should_send(const PlayerReading& reading, std::uint64_t now) const
   if (now < last || now - last >= settings_.keepalive_us) return true;  // keep-alive
   if (reading.scene != last_sent_->scene) return true;
   if (reading.age != last_sent_->age) return true;
+  if (reading.cutscene != last_sent_->cutscene) return true;  // at once: scene sync
   // Anything else waits for the gap: the change is still there next frame,
   // as it is compared with the last sample sent, not the last frame.
   if (now - last < settings_.min_gap_us) return false;
@@ -131,6 +132,7 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
     sample.scene = reading->scene;
     sample.age = reading->age;
     sample.animation = reading->animation;
+    sample.cutscene = reading->cutscene;
     ++sequence_;
     push(out, sample);
     last_sent_ = std::move(sample);

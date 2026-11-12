@@ -346,6 +346,7 @@ Error encode_body(const PlayerSample& m, Writer& w) {
       w.f32(m.animation->rate);
     });
   }
+  if (m.cutscene) component(SampleComponent::cutscene, [&] { w.str(*m.cutscene); });
   return Error::none;
 }
 
@@ -924,6 +925,8 @@ Error decode_component(SampleComponent id, Reader& c, PlayerSample& m, bool& kno
       if (!std::isfinite(a.frame) || !std::isfinite(a.rate)) return Error::bad_value;
       return Error::none;
     }
+    case SampleComponent::cutscene:
+      return c.str(m.cutscene.emplace(), kMaxCutsceneChars);
   }
   known = false;
   return Error::none;

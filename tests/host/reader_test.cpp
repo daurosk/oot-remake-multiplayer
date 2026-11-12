@@ -645,3 +645,23 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(alone.read_equipment()->drawn == 0x00);
   }
 }
+
+TEST_CASE("tunic choice: the others see the chosen adult tunic, child Link unchanged") {
+  CHECK(tunic_actor("Roja") == std::optional<std::string>("Armor_Adult_Goron"));
+  CHECK(tunic_actor(" blue ") == std::optional<std::string>("Armor_Adult_Zora"));
+  CHECK(tunic_actor("verde") == std::optional<std::string>("Armor_Adult_Normal"));
+  CHECK_FALSE(tunic_actor("purple").has_value());
+  PlayerReading r;
+  r.age = coop::protocol::Age::adult;
+  r.equipment = coop::protocol::Equipment{};
+  r.equipment->armor = "Armor_Adult_Normal";
+  apply_tunic_choice(r, tunic_actor("azul"));
+  CHECK(r.equipment->armor == std::optional<std::string>("Armor_Adult_Zora"));
+  r.age = coop::protocol::Age::child;
+  r.equipment->armor = "";
+  apply_tunic_choice(r, tunic_actor("azul"));
+  CHECK(r.equipment->armor == std::optional<std::string>(""));
+  r.age = coop::protocol::Age::adult;
+  apply_tunic_choice(r, std::nullopt);
+  CHECK(r.equipment->armor == std::optional<std::string>(""));
+}

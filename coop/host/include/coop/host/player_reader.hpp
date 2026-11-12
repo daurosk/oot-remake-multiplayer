@@ -32,10 +32,23 @@ struct PlayerReading {
   std::optional<protocol::Age> age;
   std::optional<std::string> scene;     // for example "spot00"
   std::optional<bool> event_running;    // an event (cutscene) has control
+  // The running event's flow name while its current part is a cinematic
+  // (Dm_...); nothing otherwise (talks, signs, item gets).
+  std::optional<std::string> cutscene;
   std::optional<protocol::Animation> animation;  // AS command in the main slot
   std::optional<protocol::Equipment> equipment;  // what the player wears
   bool operator==(const PlayerReading&) const = default;
 };
+
+// The tunic a player chose to be seen in (LICHII_COOP_TUNIC): the adult
+// tunic actor for "green"/"verde", "red"/"roja"/"goron", "blue"/"azul"/"zora"
+// (any case); nothing for anything else. Child Link has no other tunic model.
+std::optional<std::string> tunic_actor(std::string_view choice);
+
+// What the others are sent: the chosen tunic replaces the worn one while the
+// player is adult and the game says what it wears. Only the others' view of
+// this player changes; the game's own Link and its flags stay as they are.
+void apply_tunic_choice(PlayerReading& reading, const std::optional<std::string>& tunic);
 
 class PlayerReader {
  public:
@@ -60,6 +73,7 @@ class PlayerReader {
   std::optional<protocol::Age> read_age();
   std::optional<std::string> read_scene();
   std::optional<bool> read_event_running();
+  std::optional<std::string> read_cutscene();
   // The AS command playing in the player's main slot, its frame and rate.
   // Nothing when no command plays, or the name is not 1 to
   // protocol::kMaxAnimationChars printable ASCII characters, or the frame or

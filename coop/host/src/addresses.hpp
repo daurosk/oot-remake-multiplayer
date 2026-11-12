@@ -176,5 +176,17 @@ inline constexpr std::uint64_t kBancPathCapacity = 0x48;
 // as the map's peek reads.
 inline constexpr std::uint64_t kEventManagerPtr = 0x4e94840;
 inline constexpr std::uint64_t kEventRunning = 0x68;
+// The running event session (manager + kEventRunning): its flow name (char*)
+// at +0x8; its events at +0xeb8 (pointers), count (u32) +0xeb0, the current
+// index (u32) +0xf18, each event's own name (char*) at +0x8. Read in a run
+// (oot-nx2-coop tools/evprobe.py, Deku Tree boss room): session
+// "InsideTheDekuTree_BossAppear", current event "Dm_Deku_BossIn"; the same
+// list the boss force skip walks (coop_boss_game.cpp).
+inline constexpr std::uint64_t kSessionName = 0x8;
+inline constexpr std::uint64_t kSessionEvents = 0xeb8;
+inline constexpr std::uint64_t kSessionCount = 0xeb0;
+inline constexpr std::uint64_t kSessionCurrent = 0xf18;
+inline constexpr std::uint64_t kEventName = 0x8;
+inline constexpr std::uint32_t kMaxSessionEvents = 64;
 
 }  // namespace coop::host::addr

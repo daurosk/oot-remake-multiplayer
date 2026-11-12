@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <span>
 #include <vector>
@@ -134,6 +135,58 @@ std::optional<bool> PlayerReader::read_event_running() {
   const auto running = read_u64(memory_, *events + addr::kEventRunning);
   if (!running) return std::nullopt;
   return *running != 0;
+}
+
+namespace {
+
+// A NUL-terminated printable name of at most `max` bytes at `at`.
+std::optional<std::string> read_name(GameMemory& memory, std::uint64_t at, std::size_t max) {
+  std::vector<std::uint8_t> bytes(max + 1);
+  if (at == 0 || !memory.read(at, bytes)) return std::nullopt;
+  std::string name;
+  for (const std::uint8_t b : bytes) {
+    if (b == 0) return name.empty() ? std::nullopt : std::optional<std::string>(name);
+    if (b < 0x20 || b > 0x7e) return std::nullopt;
+    name.push_back(static_cast<char>(b));
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<std::string> tunic_actor(std::string_view choice) {
+  std::string c;
+  for (const char ch : choice) {
+    if (ch != ' ' && ch != '	') c.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+  }
+  if (c == "green" || c == "verde" || c == "kokiri") return std::string("Armor_Adult_Normal");
+  if (c == "red" || c == "roja" || c == "rojo" || c == "goron") return std::string("Armor_Adult_Goron");
+  if (c == "blue" || c == "azul" || c == "zora") return std::string("Armor_Adult_Zora");
+  return std::nullopt;
+}
+
+void apply_tunic_choice(PlayerReading& reading, const std::optional<std::string>& tunic) {
+  if (!tunic || reading.age != protocol::Age::adult || !reading.equipment) return;
+  reading.equipment->armor = *tunic;
+}
+
+std::optional<std::string> PlayerReader::read_cutscene() {
+  const auto events = read_ptr(memory_, memory_.main_base() + addr::kEventManagerPtr);
+  if (!events) return std::nullopt;
+  const auto session = read_ptr(memory_, *events + addr::kEventRunning);
+  if (!session) return std::nullopt;
+  const auto count = read_u32(memory_, *session + addr::kSessionCount);
+  const auto current = read_u32(memory_, *session + addr::kSessionCurrent);
+  if (!count || !current || *count > addr::kMaxSessionEvents || *current >= *count) return std::nullopt;
+  const auto list = read_ptr(memory_, *session + addr::kSessionEvents);
+  if (!list) return std::nullopt;
+  const auto event = read_ptr(memory_, *list + 8ull * *current);
+  if (!event) return std::nullopt;
+  const auto part_at = read_ptr(memory_, *event + addr::kEventName);
+  const auto part = part_at ? read_name(memory_, *part_at, protocol::kMaxCutsceneChars) : std::nullopt;
+  if (!part || !part->starts_with("Dm_")) return std::nullopt;
+  const auto flow_at = read_ptr(memory_, *session + addr::kSessionName);
+  return flow_at ? read_name(memory_, *flow_at, protocol::kMaxCutsceneChars) : std::nullopt;
 }
 
 std::optional<protocol::Animation> PlayerReader::read_animation() {
@@ -310,6 +363,7 @@ std::optional<PlayerReading> PlayerReader::read() {
   reading.age = read_age();
   reading.scene = read_scene();
   reading.event_running = read_event_running();
+  if (reading.event_running.value_or(false)) reading.cutscene = read_cutscene();
   reading.animation = read_animation();
   reading.equipment = read_equipment();
   return reading;

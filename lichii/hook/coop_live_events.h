@@ -23,6 +23,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -86,6 +87,36 @@ private:
     std::set<std::string> allowed_;
     std::string scene_;
     std::set<std::string> asked_;  // this visit of scene_
+};
+
+// Scene sync: a cutscene another player's game starts plays here too, at the
+// same time, when we stand with them: same scene, within kTogetherM of where
+// they were when it began, no event of our own running. Apart, nothing is
+// started here: the game's own played flag reaches us when theirs ends (the
+// shared story flags), so the scene counts as seen by both. On unless
+// LICHII_COOP_SCENE_SYNC=0. Pure: the hook gives it what presence knows.
+inline constexpr float kTogetherM = 20.0f;
+
+struct OtherPlayer {
+    std::uint8_t number = 0;
+    std::optional<std::string> scene;
+    std::optional<std::string> cutscene;          // the event flow it plays now
+    std::optional<std::array<float, 3>> place;    // where it was when it said so
+};
+
+class SceneSync {
+public:
+    // Once a frame. Returns the event to start here now, if any: only on the
+    // sample where another player's cutscene begins (a cutscene already
+    // running when we arrive is not joined halfway), each name once per visit
+    // of our scene, never while our own event runs.
+    std::optional<std::string> Next(const std::vector<OtherPlayer>& others, const std::string& scene,
+                                    bool event_running, std::optional<std::array<float, 3>> link);
+
+private:
+    std::string scene_;
+    std::set<std::string> asked_;                                  // this visit of scene_
+    std::map<std::uint8_t, std::optional<std::string>> last_;      // each player's last cutscene
 };
 
 // LICHII_COOP_LIVE_EVENT_NAMES: "a,b,c" (spaces trimmed, empty parts

@@ -287,6 +287,13 @@ public:
         // On unless LICHII_COOP_LIVE_EVENTS=0 (dungeon-switches): another
         // player's gimmick event plays here too when our Link comes near it.
         live_events_ = EnvString("LICHII_COOP_LIVE_EVENTS") != "0";
+        // Scene sync rides on the live event requester (off with LICHII_COOP_SCENE_SYNC=0).
+        scene_sync_ = EnvString("LICHII_COOP_SCENE_SYNC") != "0";
+        if (const std::string t = EnvString("LICHII_COOP_TUNIC"); !t.empty()) {
+            tunic_ = coop::host::tunic_actor(t);
+            LOG_INFO(Core, "coop: tunic: {}", tunic_ ? "the others see you (adult) in " + *tunic_
+                                                     : "LICHII_COOP_TUNIC '" + t + "' is not green, red or blue: ignored");
+        }
         if (live_events_) {
             // LICHII_COOP_LIVE_EVENT_NAMES=a,b,...: only these events (default
             // and "all": every held gimmick event with a known place).
@@ -477,6 +484,38 @@ public:
             }
             if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
+                std::lock_guard lock(live_mutex_);
+                live_requester_.Want(*name);
+            }
+        }
+        // Scene sync (coop_live_events.h): a cutscene another player starts
+        // while we stand with them starts here too, so both watch it at once.
+        if (live_events_ && scene_sync_ && report.connected && view.scene) {
+            std::vector<CoopLiveEvents::OtherPlayer> others =
+                session_->with_presence([](coop::presence::Presence& p) {
+                    std::vector<CoopLiveEvents::OtherPlayer> out;
+                    for (const std::uint8_t n : p.players()) {
+                        const auto* pl = p.player(n);
+                        if (!pl) continue;
+                        CoopLiveEvents::OtherPlayer o;
+                        o.number = n;
+                        o.scene = pl->scene();
+                        o.cutscene = pl->cutscene();
+                        if (const auto& at = pl->cutscene_place()) {
+                            o.place = std::array<float, 3>{(*at)[0], (*at)[1], (*at)[2]};
+                        }
+                        out.push_back(std::move(o));
+                    }
+                    return out;
+                });
+            const bool running = reading && reading->event_running.value_or(false);
+            std::optional<std::array<float, 3>> link;
+            if (view.position) {
+                link = std::array<float, 3>{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
+            }
+            if (const auto name = scene_sync_decider_.Next(others, *view.scene, running, link)) {
+                LOG_INFO(Core, "coop: scene: starting the cutscene {} here (another player near us started it)",
+                         *name);
                 std::lock_guard lock(live_mutex_);
                 live_requester_.Want(*name);
             }
@@ -939,6 +978,7 @@ private:
         coop::host::PlayerReader reader(memory, &drawn_state_);
         auto reading = reader.read();
         if (reading) {
+            coop::host::apply_tunic_choice(*reading, tunic_);  // what the others see (LICHII_COOP_TUNIC)
             view.position = reading->position;
             view.scene = reading->scene;
             view.age = reading->age;
@@ -1237,6 +1277,9 @@ private:
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
+    CoopLiveEvents::SceneSync scene_sync_decider_;
+    bool scene_sync_ = true;
+    std::optional<std::string> tunic_;  // LICHII_COOP_TUNIC
     const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106
     CoopEvery::Every samples_log_{5 * CoopEvery::kSecondUs};
     std::uint64_t samples_log_at_ = 0;

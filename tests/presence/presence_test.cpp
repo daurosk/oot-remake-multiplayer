@@ -561,3 +561,24 @@ TEST_CASE("presence: unknown player numbers are ignored") {
   CHECK(p.players() == std::vector<std::uint8_t>{2});
   CHECK(p.on_sample(sample(1, 0, 1, {0, 0, 0})) == SampleResult::self);
 }
+
+TEST_CASE("presence: the newest sample says which cutscene a player plays, and where (scene sync)") {
+  Presence p = two_players();
+  proto::PlayerSample s = sample(2, 1000 * kMs, 1, {1.0f, 2.0f, 3.0f});
+  s.scene = "KokiriForest";
+  s.cutscene = "KokiriForest_Dm_Kokiri_0080";
+  p.on_sample(s);
+  const Player* pl = p.player(2);
+  REQUIRE(pl != nullptr);
+  CHECK(pl->cutscene() == std::optional<std::string>("KokiriForest_Dm_Kokiri_0080"));
+  REQUIRE(pl->cutscene_place().has_value());
+  CHECK((*pl->cutscene_place())[2] == 3.0f);
+  // An older sample arriving late does not bring it back or clear it.
+  proto::PlayerSample old = sample(2, 990 * kMs, 0, {0.0f, 0.0f, 0.0f});
+  p.on_sample(old);
+  CHECK(p.player(2)->cutscene().has_value());
+  // The next one has none: over.
+  proto::PlayerSample next = sample(2, 1010 * kMs, 2, {1.0f, 2.0f, 3.0f});
+  p.on_sample(next);
+  CHECK_FALSE(p.player(2)->cutscene().has_value());
+}

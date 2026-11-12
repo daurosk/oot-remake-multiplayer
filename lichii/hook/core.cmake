@@ -21,6 +21,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_quests.cpp"
     "${_coop_hook}/coop_live_events.cpp"
     "${_coop_hook}/coop_live_places.cpp"
+    "${_coop_hook}/coop_shared_scenes.cpp"
     "${_coop_hook}/coop_scrubs.cpp"
     "${_coop_hook}/coop_fairy.cpp"
     "${_coop_hook}/coop_rooms.cpp"

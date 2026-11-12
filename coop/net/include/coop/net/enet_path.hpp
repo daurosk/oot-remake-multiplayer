@@ -13,8 +13,8 @@
 // 15-18 s.
 //
 // The sign: a reliable command sent kStuckSends times or more while the other
-// side still acknowledges our small packets. Either side that sees it ends the
-// connection and both connect again with kSmallDatagramBytes, ENet's smallest
+// side still acknowledges our small packets (one sent after its last send).
+// Either side that sees it ends the connection and both connect again with kSmallDatagramBytes, ENet's smallest
 // (604 bytes on the wire, under any IPv4 path's 576-byte minimum plus a
 // tunnel or two). The server tells the game with the disconnect's data
 // (kDisconnectSmallDatagrams) and remembers the address, so a game that
@@ -50,33 +50,37 @@ inline constexpr std::uint32_t kHeardWithinMs = 2000;
 // Disconnect data from the server: "connect again with small datagrams".
 inline constexpr std::uint32_t kDisconnectSmallDatagrams = 0x534D4C4Cu;  // "SMLL"
 
-// The most sends of any reliable command still waiting for its ACK (sent or
-// queued again after a timeout).
-inline std::uint16_t most_sends(const ENetPeer& peer) {
-  std::uint16_t most = 0;
-  auto scan = [&most](const ENetList& list) {
+// True when a reliable command still waiting for its ACK (sent, or queued
+// again after a timeout) went kStuckSends times or more, and the other side
+// acknowledged something AFTER that command's latest send: it is alive and
+// gets our small packets, just not that one. A peer that died (a killed
+// game) acknowledges nothing after, so it is left to ENet's timeout.
+inline bool stuck_while_heard(const ENetPeer& peer) {
+  bool stuck = false;
+  auto scan = [&](const ENetList& list) {
     for (const ENetListNode* node = list.sentinel.next; node != &list.sentinel; node = node->next) {
       const auto* command = reinterpret_cast<const ENetOutgoingCommand*>(node);
       if ((command->command.header.command & ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE) != 0 &&
-          command->sendAttempts > most) {
-        most = command->sendAttempts;
+          command->sendAttempts >= kStuckSends &&
+          static_cast<std::int32_t>(peer.lastReceiveTime - command->sentTime) > 0) {
+        stuck = true;
       }
     }
   };
   scan(peer.sentReliableCommands);
   scan(peer.outgoingCommands);
-  return most;
+  return stuck;
 }
 
-// True when `peer` uses datagrams above kSmallDatagramBytes, a reliable
-// command went kStuckSends times without an ACK, and yet the other side was
-// heard within kHeardWithinMs of `now_ms` (ENet's clock, host->serviceTime).
+// True when `peer` uses datagrams above kSmallDatagramBytes, the other side
+// acknowledged something within kHeardWithinMs of `now_ms` (ENet's clock,
+// host->serviceTime), and stuck_while_heard().
 inline bool full_datagrams_lost(const ENetPeer& peer, enet_uint32 now_ms) {
   if (peer.state != ENET_PEER_STATE_CONNECTED || peer.mtu <= kSmallDatagramBytes) return false;
   // ENet's clock wraps; its ENET_TIME_DIFFERENCE is not public.
   const enet_uint32 since = now_ms - peer.lastReceiveTime;
   if (peer.lastReceiveTime == 0 || since >= kHeardWithinMs) return false;
-  return most_sends(peer) >= kStuckSends;
+  return stuck_while_heard(peer);
 }
 
 }  // namespace coop::net

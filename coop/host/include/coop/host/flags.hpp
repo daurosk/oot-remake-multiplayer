@@ -53,6 +53,14 @@ class FlagStore {
   // FlagKind::count_delta entry and adds it. Default: no counts.
   virtual bool is_count(FlagKey) { return false; }
 
+  // True for a flag merged by the highest value (ItemRule::max: upgrades,
+  // PlayerStatus.MaxLife). Every store keeps the higher of its value and one
+  // that comes in, so a drop in one game can never win anywhere: the watcher
+  // keeps it in that game and sends nothing (issue: the MaxLife echo, where
+  // the game wrote its own lower value back, the host answered the higher one
+  // and the two went round for ever). Default: none.
+  virtual bool is_max(FlagKey) { return false; }
+
   // True while the game must not take this flag yet (HoldFlagStore): a
   // write of it is refused, and the watcher keeps the value and tries again
   // each frame; the host answers with the value asked. Default: never.
@@ -87,6 +95,7 @@ class HoldFlagStore final : public FlagStore {
     return inner_.write(entry);
   }
   bool is_count(FlagKey key) override { return inner_.is_count(key); }
+  bool is_max(FlagKey key) override { return inner_.is_max(key); }
   bool is_one_way(FlagKey key) override { return inner_.is_one_way(key); }
   bool holds(FlagKey key) override { return hold_ && hold_(key); }
   // The host's save load (docs/flags.md, "Saves"): a held 1 still waits, a

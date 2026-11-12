@@ -209,3 +209,23 @@ TEST_CASE("notify: FLAG_ORIGIN is the server's, with a player and flags") {
   m.player_number = 0;  // a player is named
   CHECK_FALSE(proto::encode(proto::Message{m}).has_value());
 }
+
+TEST_CASE("notify: the same heart coming back again and again is told once (MaxLife echo)") {
+  Notifier n = Make();
+  // Our game kept writing its own 12 back and the group's 16 came in again
+  // each time: one line, not one every round.
+  auto lines = n.Take({Int("PlayerStatus.MaxLife", 12, 16, 2)}, 1, 1000);
+  REQUIRE(lines.size() == 1);
+  CHECK(lines[0] == "Tobi got a Heart Container - your max health went up");
+  for (int i = 1; i <= 20; ++i) {
+    CHECK(n.Take({Int("PlayerStatus.MaxLife", 12, 16, 2)}, 1, 1000 + 4000 * static_cast<std::uint64_t>(i)).empty());
+  }
+  // A real new heart is told.
+  lines = n.Take({Int("PlayerStatus.MaxLife", 16, 20, 2)}, 1, 100000);
+  REQUIRE(lines.size() == 1);
+  // A host's save with fewer hearts sets the maximum lower: the next heart counts again.
+  n.Take({Int("PlayerStatus.MaxLife", 20, 12, 2, Kind::reset)}, 1, 110000);
+  lines = n.Take({Int("PlayerStatus.MaxLife", 12, 16, 2)}, 1, 120000);
+  REQUIRE(lines.size() == 1);
+  CHECK(lines[0] == "Tobi got a Heart Container - your max health went up");
+}

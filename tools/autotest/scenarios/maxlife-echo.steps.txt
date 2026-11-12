@@ -1,0 +1,19 @@
+# maxlife-echo: a heart container that B's game will not keep must not loop. Run:
+#   tools\autotest\run.ps1 -Scenario maxlife-echo
+# A (host) gets a heart container through the test give (PlayerStatus.MaxLife + 4). B runs with
+# LICHII_COOP_HEARTS_TO_LINK=0, so nothing raises its Link's hearts and its game writes its own
+# MaxLife back, as B's did after the host's save load in the run that found the loop (only
+# LICHII_COOP_PUPPET on there). Before the fix B sent that lower value, the host answered with
+# its higher one, and the two went round for ever: B's MaxLife flipping many times a second, the
+# "got a Heart Container" notice in bursts of 4 every 3 s and the heal sound.
+# Pass: B's MaxLife changes a few times at most (the group's value in, its own back) and the
+# notice is said once.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1,B:LICHII_COOP_HEARTS_TO_LINK=0
+start A B
+load A B
+play A maxlife-echo.A.txt
+sleep 20
+shot end
+lines notice B max=1 got a Heart Container
+lines maxlife B max=4 flags debug: int 0xfbe01da1 .* -> 
+lines notice-a A max=0 got a Heart Container

@@ -200,8 +200,22 @@ std::vector<std::string> Notifier::Take(const std::vector<FlagWatcher::Received>
   std::vector<std::pair<std::pair<std::uint8_t, std::string>, std::vector<Notice>>> live;
   for (const auto& r : received) {
     if (r.kind == FlagWatcher::ReceivedKind::live && r.from != 0 && r.from == self) continue;
+    if (r.kind != FlagWatcher::ReceivedKind::live && r.after.kind == protocol::FlagKind::int32) {
+      // A join or a host's save sets the maximum, lower too: a heart after it counts again.
+      if (const auto told = hearts_told_.find(r.key); told != hearts_told_.end()) told->second = AsInt(r.after);
+    }
     const auto notice = Explain(r);
     if (!notice) continue;
+    if (notice->kind == "heart" && r.after.kind == protocol::FlagKind::int32) {
+      // Said once per new maximum: the same value coming back (our game
+      // lowered it, the group's came in again) is not a new heart.
+      const std::int32_t value = AsInt(r.after);
+      const auto told = hearts_told_.find(r.key);
+      if (r.kind == FlagWatcher::ReceivedKind::live && told != hearts_told_.end() && value <= told->second) {
+        continue;
+      }
+      hearts_told_[r.key] = value;
+    }
     if (r.kind == FlagWatcher::ReceivedKind::join) {
       ++join[notice->kind];
     } else if (r.kind == FlagWatcher::ReceivedKind::reset) {

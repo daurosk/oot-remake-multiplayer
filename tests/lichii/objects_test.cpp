@@ -2459,6 +2459,7 @@ TEST_CASE("objects: a boss's other AS slots go with its samples and are played o
     s.player_number = 1;
     s.state.time = {1000 * kMs, 1};
     copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);  // the copy takes the sample in
     std::vector<CoopObjects::PlayWish> plays;
     copy.Plays(1020 * kMs, plays);
     REQUIRE(plays.size() == 2);  // slot 0 and the eyelid; the empty slot 2 is left alone

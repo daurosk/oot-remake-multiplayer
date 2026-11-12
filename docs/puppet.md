@@ -418,13 +418,13 @@ Every change is logged once: `coop: puppet: P<n> show -> hide (our cutscene)`, `
 
 ### Cases (issue 86)
 
-What each case does now. "Handled" is by code and unit tests; none of these is proven in the game yet (the chunk 2 test turn runs the scenarios named).
+What each case does now. "Handled" is by code and unit tests; none of these is proven in the game yet. Each scenario named has a steps file (`toolsutotestun.ps1 -Scenario <name>`) whose `counts.txt` lines check its case; its header says which shots to look at and when a run is inconclusive.
 
 | Case | Whose | What happens | Status | Scenario |
 |---|---|---|---|---|
 | Cutscene (event running) | ours | Every puppet and Navi parked, no markers | Handled | `cutscene` (A talks to a sign, B watches) |
 | Cutscene | theirs | Their puppet's animation held frozen; it follows their place (issue 194, below) | Handled | `cutscene` (reverse), `cutscene-snap` |
-| Title screen, file select | ours | No player actor, so no reading and no scene: nothing planned, puppets deleted | Handled if the title has no player actor (unknown: the title demo may have one) | `screens` |
+| Title screen, file select | ours | No player actor, so no reading and no scene: nothing planned, puppets deleted | Handled if the title has no player actor (unknown: the title demo may have one) | `screens` (B on the title, then A back on it) |
 | Title screen, file select | theirs | They send no samples (no reading): their pose fades in 0.4 s and the puppet is deleted after the 2 s grace | Handled | `screens` |
 | Pause menu, item menu | ours | Nothing changes: puppets stay; whether the game draws them behind the menu, and whether our pose writes run while paused, is not known | Unknown | `screens` (B pauses) |
 | Pause menu | theirs | Keep-alive samples go on; the puppet stands where they stopped. The `paused` and `in_menu` status bits are never set by the sender, and do not hide | Handled (stands) | `screens` |
@@ -436,7 +436,7 @@ What each case does now. "Handled" is by code and unit tests; none of these is p
 | Ocarina played freely | ours | Our event does not hide the others while our own command starts `Ocarina` | Handled, same unknown | `ocarina` |
 | Song taught, warp song, Song of Time block | either | `DemoOcarina...` and what follows are cutscenes: as a cutscene | Handled as a cutscene | `ocarina` (log only) |
 | Time travel (Master Sword) | either | A cutscene, then the age changes: the puppet is made again as the other age (settle 1 s) | Handled (the age swap is proven, `stray-adult`) | none new |
-| Crawlspace | either | Unknown: the AS tables have no crawl command name (`Crouch...` is crouching); if the game runs it as an event, ours hides puppets and theirs holds them at the entrance | Unknown | `crawl` (logs the commands and event bit; needs a save by a crawlspace) |
+| Crawlspace | either | Unknown: the AS tables have no crawl command name (`Crouch...` is crouching); if the game runs it as an event, ours hides puppets and theirs holds them at the entrance | Unknown | `crawl` (both warp into Kokiri Forest; A crawls the Kokiri Sword tunnel, B watches from inside; no save to set up) |
 
 ### Cutscenes without snaps (issue 194, branch `cutscene-snap`)
 

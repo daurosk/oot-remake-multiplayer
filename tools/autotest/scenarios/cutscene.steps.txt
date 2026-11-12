@@ -1,0 +1,17 @@
+# cutscene (issue 86), checked by itself: A reads the Kakariko signpost (cutscene.A.txt), B watches
+# (cutscene.B.txt). Our cutscene hides the others (A), their cutscene holds the frame and follows
+# (B, cutscene-snap rule). Run: tools\autotest\run.ps1 -Scenario cutscene
+# Shot at "reading": A's window has no puppet or Navi of B; B's has A's puppet standing at the post.
+# If both "hide" counts are 0 and "hold" too, reading a sign ran no event: INCONCLUSIVE, not FAIL.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
+start A B
+load A B
+expect both-in A=1 B=1
+play A cutscene.A.txt B cutscene.B.txt
+lines our-hides-A A min=1 (?<!fairy )coop: puppet: P\d+ show -> hide \(our cutscene\)
+lines our-navi-hides-A A min=1 fairy coop: puppet: P\d+ show -> hide \(our cutscene\)
+lines our-back-A A min=1 (?<!fairy )coop: puppet: P\d+ hide -> show
+lines their-holds-B B min=1 (?<!fairy )coop: puppet: P\d+ show -> hold \(their cutscene\)
+lines their-back-B B min=1 (?<!fairy )coop: puppet: P\d+ hold -> show
+lines snap-B B max=0 (?<!fairy )coop: puppet: P\d+ snap \S+ m \((show|hold)\)
+expect after A=1 B=1

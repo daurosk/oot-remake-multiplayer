@@ -1,0 +1,17 @@
+# crawl (issue 86), checked by itself: both warp into Kokiri Forest as child (no save set up), A
+# crawls the Kokiri Sword tunnel, B watches from inside (crawl.A.txt / crawl.B.txt).
+# Run: tools\autotest\run.ps1 -Scenario crawl
+# The counts are what the game does (event or not); PASS/FAIL is by the shots and the end state:
+# at "through" and "end" B's window shows A's puppet (crawling or standing past the tunnel), not
+# frozen at the mouth and not standing inside the rock. a-moved-B 0 = A never reached the tunnel.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+start A B
+play A crawl.A.txt B crawl.B.txt
+lines warped-A A min=1 coop: test warp done
+lines warped-B B min=1 coop: test warp done
+lines a-moved-B B min=1 (?<!fairy )coop: puppet: P\d+ plays '
+lines crawl-held-B B max=99 (?<!fairy )coop: puppet: P\d+ show -> (hold|hide)
+lines crawl-back-B B max=99 (?<!fairy )coop: puppet: P\d+ (hold|hide) -> show
+lines crawl-hides-A A max=99 (?<!fairy )coop: puppet: P\d+ show -> hide \(our cutscene\)
+expect end A=1 B=1

@@ -194,6 +194,11 @@ TEST_CASE("colours: the tunic of a colour, and the puppet actor for it") {
     CHECK(p.ActorFor(false, 0x30D040u) == "CoopPuppet_Child");
     p.SetFailedTunics({});
     CHECK(CoopPuppet::Director::IsTunicActor("CoopPuppet_Child_Green"));
+    CHECK(CoopPuppet::PackHasGreenPuppets(
+        R"({"actors": [{"actor": "CoopPuppet_Child_Green"}, {"actor": "CoopPuppet_Adult_Green"}]})"));
+    CHECK_FALSE(CoopPuppet::PackHasGreenPuppets(R"({"actors": [{"actor": "CoopPuppet_Child_Red"}]})"));
+    CHECK_FALSE(CoopPuppet::PackHasGreenPuppets(R"({"actors": [{"actor": "CoopPuppet_Child_Green"}]})"));
+    CHECK_FALSE(CoopPuppet::PackHasGreenPuppets(""));
     p.SetGreenPuppet(false);
     p.SetTunics(false);  // LICHII_COOP_TUNICS=0
     CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult");

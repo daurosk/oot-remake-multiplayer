@@ -718,7 +718,13 @@ All three get size-table entries (the game's own file's size). About 69 MB for t
 
 **When a tunic does not work.** Each coloured actor falls back on its own to the plain puppet (the planner gets `Director::FailedTunics`; the log names the actor and why): when its create times out twice while no tunic puppet has spawned yet (an older pack; once one has spawned with its model, slow loads no longer count), or when it spawns but has no `Player_` model 3 s later (`kTunicModelCheckMs`: neither a model name through the skeleton nor a model object at parts + 0x260), which is how a model copy the engine refused would show. `LICHII_COOP_TUNICS=0` turns the colours off. The old model tint stays for tests only (`LICHII_COOP_PUPPET_TINT=<0 to 1>`, off by default).
 
-**Hookshot.** The recomp reads the same romfs mods, so the same pack gives the same tunics there.
+**Your own Link (#202).** The pack tool also writes, for each colour but green, the game's tile recoloured under its own name (`Angin_Tile_A_Alb`) into `coop_self/<colour>.bntx.zs` beside the pack's `romfs/`, where the game does not load it; `coop_puppet.json` lists them as `self_tiles`. It is as long as the game's tile once unpacked, so the size-table entry stands. At each start the kit's `play.ps1` (`Set-KitSelfTunic` in `scripts/kit-paths.ps1`) copies the one nearest your `color` (`Get-KitTunic`, the same rule as `CoopColors::TunicOf`) over `romfs/Tex/Angin_Tile_A_Alb.bntx.zs` in the pack, and sets `LICHII_COOP_SELF_TUNIC=<colour>`; for green, no colour, `LICHII_COOP_TUNICS=0` or a pack without it, it takes that copy away and your Link is the game's green. Only the Kokiri tunic changes: the Goron and Zora tunics are other models with their own textures. A player who chose no colour sees their own Link green while the others see their player number's colour.
+
+Your tile is the one the plain puppet wears too, so with it a green player would wear your colour. The pack therefore also has a green puppet (`CoopPuppet_<Age>_Green`, the game's tile renamed `Angin_Tile_G_Alb`), and the emulator picks it for green players when `LICHII_COOP_SELF_TUNIC` is set (not green) and the installed pack's `coop_puppet.json` lists both green puppets (`PackHasGreenPuppets`); otherwise the plain puppet, and the log says so. The autotest starts the emulator without `play.ps1`: copy the tile and set the switch by hand there.
+
+**Pack hints.** A pack whose `coop_puppet.json` has no tunics (made before the colours, with `--tunics none`, or from a game without the tunic tile) makes the kit say at every start that the other players show in green and to run `make-puppet-pack.cmd` again; a pack built with `--tunics none` on purpose gets that line each time.
+
+**Hookshot.** The recomp reads the same romfs mods, so the same pack gives the same tunics there. Your own colour is not done there: the Hookshot start does not call `Set-KitSelfTunic`.
 
 ## Not done
 

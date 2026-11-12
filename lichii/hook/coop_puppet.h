@@ -554,6 +554,12 @@ struct PlannerSettings {
     Vec3 debug_offset{2.0f, 0.0f, 0.0f};  // from you, in game units (about metres)
 };
 
+// A puppet pack's coop_puppet.json lists both green puppets
+// (CoopPuppet_Child_Green, CoopPuppet_Adult_Green): only then may
+// PlannerSettings::green_puppet ask for them. An older pack has neither, and a
+// green player would wait for an actor ActorInfo does not know.
+bool PackHasGreenPuppets(std::string_view manifest);
+
 class Planner {
 public:
     explicit Planner(PlannerSettings settings = {}) : settings_(std::move(settings)) {}

@@ -1490,6 +1490,11 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
     return in;
 }
 
+bool PackHasGreenPuppets(std::string_view manifest) {
+    return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
+           manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
+}
+
 std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;

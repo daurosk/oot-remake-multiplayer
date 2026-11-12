@@ -1,5 +1,6 @@
 # crawl (issue 86): what a crawlspace does to the puppets. Both warp into Kokiri Forest as child
-# (no hand-made save: as boulder.A.txt). The Kokiri Sword area's tunnel runs between the two
+# (no hand-made save). Bigrun 2026-11-12: a warp with no start put Link at 0 0 0, falling, in an
+# endless event (black screen, 'our cutscene'): now the FrontDekuTree StartPos (90.0 115.5 -27.9). The Kokiri Sword area's tunnel runs between the two
 # PushAirWall_Slope placements of KokiriForest_Child_Static, (-68.47 8.00) outside by the
 # signpost KokiriForest_008 and (-75.58 14.13) inside. A is put outside it and pushes into it;
 # B stands inside (boulder.B.txt's spot) facing the tunnel and watches A come through.
@@ -15,7 +16,7 @@
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 360
 mark start
-warp KokiriForest_Child
+warp KokiriForest_Child FrontDekuTree
 wait 1200
 mark title
 press A
@@ -27,6 +28,7 @@ wait 300
 press A
 wait 2400
 mark after
+wait 600                # let the arrival event end before the place
 place -66.3 118.3 5.8
 wait 240
 toward -68.47 8.00 20

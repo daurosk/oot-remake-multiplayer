@@ -1,7 +1,7 @@
 # crawl, B: put inside the Kokiri Sword area facing the tunnel's inner mouth; watches A crawl
 # through (see crawl.A.txt).
 mark start
-warp KokiriForest_Child
+warp KokiriForest_Child FrontDekuTree
 wait 1200
 mark title
 press A
@@ -13,6 +13,7 @@ wait 300
 press A
 wait 2400
 mark after
+wait 600                # let the arrival event end before the place
 wait 60
 place -78.94 119.3 17.04
 wait 180

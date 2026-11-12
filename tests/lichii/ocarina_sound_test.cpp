@@ -396,7 +396,8 @@ TEST_CASE("the Ocarina module is found by its vtable one object below the sound 
     g.Put<std::uint64_t>(kModules, kModule);
     g.Put<std::uint64_t>(kModule, kVtableBase + 0x10);
     g.Put<std::uint64_t>(kModule + snd::addr::kModuleUser, kOcarina);
-    // The user's name is not readable: found by the module anyway.
+    // A sound bank, not a named SLink user (as in game): the module is found and logged,
+    // but the notes are not played on it.
     g.Put<std::uint64_t>(kOcarina + snd::addr::kUserResource, kOcarinaResource);
     g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceAccessor, 0x400080000);
     g.Put<std::uint64_t>(kOcarina + snd::addr::kUserModuleBack, kModule + 0x38);
@@ -409,11 +410,16 @@ TEST_CASE("the Ocarina module is found by its vtable one object below the sound 
     snd::State st;
     auto c = snd::Next(st, snd::Wanted{4, 1, 0}, g, kBase, kActor, kBlock, 10, "P1", run.say());
     REQUIRE(c.has_value());
-    CHECK(c->x[0] == 0x400080000);
-    CHECK(run.said.back().find("Ocarina module at root +0x48 -> array +0x10 [0]") != std::string::npos);
+    CHECK(c->x[0] != 0x400080000);  // its own user, not the bank
+    bool logged = false;
+    for (const auto& line : run.said) {
+        logged = logged || line.find("P1: Ocarina module 0x4000c0000") != std::string::npos;
+        CHECK(line.find("Ocarina notes go to sound user 0x400060000") == std::string::npos);
+    }
+    CHECK(logged);
 }
 
-TEST_CASE("the Ocarina module's user is taken on a later note once it has its resource") {
+TEST_CASE("the Ocarina module's user is taken on a later note once it is a named SLink user") {
     FakeGuest g = PuppetWithSound();
     constexpr std::uint64_t kRoot = 0x4000a0000;
     constexpr std::uint64_t kModules = 0x4000b0000;
@@ -440,6 +446,10 @@ TEST_CASE("the Ocarina module's user is taken on a later note once it has its re
 
     g.Put<std::uint64_t>(kOcarina + snd::addr::kUserResource, kOcarinaResource);
     g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceAccessor, 0x400080000);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceName, kOcarinaResource + 0x100);
+    g.PutText(kOcarinaResource + 0x100, "Ocarina");
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserFirstLink, kOcarina + snd::addr::kUserEvents);
+    g.Put<std::int32_t>(kOcarina + snd::addr::kUserLinkOffset, 0x10);
     c = snd::Next(st, snd::Wanted{6, 2, 500}, g, kBase, kActor, kBlock, 510, "P1", run.say());
     REQUIRE(c.has_value());
     CHECK(c->x[0] == 0x400080000);

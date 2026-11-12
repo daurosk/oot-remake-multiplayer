@@ -22,6 +22,18 @@
 namespace CoopPuppet {
 namespace {
 
+// The puppet plays the other player's Ocarina notes (issue 152) only with
+// LICHII_COOP_OCARINA_SOUND=1: off by default until the game's own note player
+// is found (the notes are in the Ocarina.bars bank, not an SLink user, 2026-11-12).
+bool OcarinaSoundOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_OCARINA_SOUND");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    return on;
+}
+
+
 template <typename T>
 bool ReadValue(Guest& guest, std::uint64_t address, T& out) {
     return guest.Read(address, &out, sizeof(T));
@@ -534,8 +546,11 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             if (anim_) {
                 CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
             }
-            if (auto c = CoopPuppetSound::Next(slot.sound, t->ocarina, guest, input_.main_base,
-                                               slot.actor, slot.block, now_ms, who, say)) {
+            if (!OcarinaSoundOn()) {
+                // notes are received and logged by the receiver, not played
+            } else if (auto c = CoopPuppetSound::Next(slot.sound, t->ocarina, guest,
+                                                      input_.main_base, slot.actor, slot.block,
+                                                      now_ms, who, say)) {
                 pending_ = Pending::sound;
                 return c;
             }

@@ -8,7 +8,7 @@
 #   "P1 plays sound 'Ocarina_D' (returned ...)"; with LICHII_COOP_DEBUG_ANIM
 #   "P1 sounds: Ocarina_D" while it sounds and "P1 sounds: none" after (and the puppet's other
 #   sounds, issue 131: footsteps while A walks in).
-#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OCARINA_SOUND=1
 mark start
 wait 120
 hold LSTICK_UP 40

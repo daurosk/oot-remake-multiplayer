@@ -395,7 +395,8 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
                     say(line);
                 }
             }
-            if (mu != 0 && Accessor(guest, mu) != 0) {
+            if (mu != 0 && Accessor(guest, mu) != 0 && UserName(guest, mu) == kOcarinaUser &&
+                LooksLikeUser(guest, mu)) {
                 state.ocarina_user = mu;
                 say(who + ": Ocarina notes go to sound user " + Hex(mu) + " '" + kOcarinaUser +
                     "' (Ocarina module at " + where + ", field +0x40, on a later note)");
@@ -409,7 +410,9 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             state.ocarina_user = FindUserInModules(guest, SoundRoot(guest, main_base), kOcarinaUser, &how);
             std::string no_module;
             if (state.ocarina_user == 0) {
-                // The module by its vtable: its user even when the name checks fail (logged).
+                // The module by its vtable. Its +0x40 object is taken only if it is a real SLink
+                // user named "Ocarina": in game (2026-11-12) it was the Ocarina.bars sound bank
+                // (accessor set, no name), which must not be played on: logged only.
                 std::string where;
                 const std::uint64_t module =
                     FindOcarinaModule(guest, main_base, SoundRoot(guest, main_base), &where);
@@ -422,7 +425,8 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
                                 Hex(SoundRoot(guest, main_base));
                 }
                 const std::uint64_t mu = module != 0 ? Pointer(guest, module + addr::kModuleUser) : 0;
-                if (mu != 0 && Accessor(guest, mu) != 0) {
+                if (mu != 0 && Accessor(guest, mu) != 0 && UserName(guest, mu) == kOcarinaUser &&
+                LooksLikeUser(guest, mu)) {
                     state.ocarina_user = mu;
                     how = "Ocarina module at " + where + ", field +0x40";
                 }

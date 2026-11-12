@@ -30,6 +30,7 @@ struct Lift {
     std::vector<proto::PlatformCounter> sent;
     std::vector<std::string> notes;
     bool frozen = false;  // the game paused
+    bool probe = false;   // LICHII_COOP_PLATFORMS=probe
 
     double Cycle() const { return pause / 60.0 + move; }
     // Where the lift is (0 at the bottom pause, 1 at the top), for the check.
@@ -53,7 +54,7 @@ struct Lift {
         s.duration = pause;
         s.key = KeyOf(kHash, pause, node, graph);
         CounterSync::Out out;
-        sync.Tick(scene, self, time_us + 50'000'000, {s}, out);
+        sync.Tick(scene, self, time_us + 50'000'000, {s}, probe, out);
         for (auto& m : out.send) {
             sent.push_back(std::get<proto::PlatformCounter>(m));
         }
@@ -221,7 +222,7 @@ TEST_CASE("counters: a counter that never loops (a switch's one move) is never s
 TEST_CASE("counters: a late or other scene's line is not used; a scene change forgets") {
     CounterSync s;
     CounterSync::Out out;
-    s.Tick("DodongoCavern", 2, 1'000'000, {}, out);
+    s.Tick("DodongoCavern", 2, 1'000'000, {}, false, out);
     proto::PlatformCounter m;
     m.player_number = 1;
     m.scene = "KokiriForest";
@@ -254,7 +255,26 @@ TEST_CASE("counters: two of our nodes with one key are neither sent nor followed
         Seen x{0x10, 99, kHash, "Obj_X", r, 60.0f};
         Seen y{0x20, 99, kHash, "Obj_X", r, 60.0f};
         CounterSync::Out out;
-        s.Tick("DodongoCavern", 1, time, {x, y}, out);
+        s.Tick("DodongoCavern", 1, time, {x, y}, false, out);
         CHECK(out.send.empty());
     }
+}
+
+TEST_CASE("counters: probe mode says what it would write, writes nothing, keeps its own loop (review)") {
+    Lift a;
+    Lift b;
+    a.self = 1;
+    b.self = 2;
+    b.probe = true;
+    b.t_in = 1.6;
+    std::uint64_t time = 0;
+    Play(a, b, time, 20000);
+    CHECK(b.sync.Writes() == 0);
+    CHECK(PhaseApart(a, b) > 1.0);  // still out of phase
+    int said = 0;
+    for (const auto& n : b.notes) {
+        said += n.find("(probe: not written)") != std::string::npos ? 1 : 0;
+    }
+    CHECK(said >= 2);  // once a pause, every pause: its loop is still seen
+    CHECK(b.sync.Looping(KeyOf(kHash, 60.0f, b.node, b.graph)));
 }

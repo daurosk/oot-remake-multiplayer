@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_svc.h"
 
@@ -45,10 +46,15 @@ inline std::optional<std::uint64_t> ChangedSite(const std::vector<std::uint8_t>&
     if (WordAt(module, header + CoopHold::kHookOffset) != CoopHold::kHookOriginal) {
         return CoopHold::kHookOffset;
     }
+    if (WordAt(module, header + CoopCounters::kStartOffset) != CoopCounters::kStartOriginal) {
+        return CoopCounters::kStartOffset;  // the pause counters' start (platforms-b2)
+    }
     const std::pair<std::uint64_t, std::size_t> zero[] = {
         {CoopSvc::kCaveOffset, CoopSvc::kCave.size()},
         {CoopHold::kCaveOffset, CoopHold::kCave.size()},
         {CoopHold::kTableOffset, CoopHold::kTableSize},
+        {CoopCounters::kCaveOffset, CoopCounters::kCave.size()},
+        {CoopCounters::kRingPointer, 8},
     };
     for (const auto& [from, size] : zero) {
         for (std::uint64_t i = from; i < from + size; ++i) {

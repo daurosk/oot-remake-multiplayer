@@ -207,6 +207,7 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     std::vector<std::uint8_t> main(CoopSvc::kCaveEnd, 0);
     for (const auto& h : CoopSvc::kHooks) put(main, h.offset, h.original);
     put(main, CoopHold::kHookOffset, CoopHold::kHookOriginal);
+    put(main, CoopCounters::kStartOffset, CoopCounters::kStartOriginal);
     CHECK_FALSE(CoopSites::ChangedSite(main).has_value());
     // The emulator's own built-ins and other bytes in the padding are not ours.
     main[0x3c46200] = 0xff;  // Dynamic FPS
@@ -227,6 +228,16 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     mod[CoopHold::kTableOffset + CoopHold::kTableSize - 1] = 1;
     CHECK(CoopSites::ChangedSite(mod) ==
           std::optional<std::uint64_t>(CoopHold::kTableOffset + CoopHold::kTableSize - 1));
+    // The pause counters' start, its cave and the ring's address (platforms-b2).
+    mod = main;
+    put(mod, CoopCounters::kStartOffset, 0xd503201f);
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kStartOffset));
+    mod = main;
+    mod[CoopCounters::kCaveOffset + 4] = 1;
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kCaveOffset + 4));
+    mod = main;
+    mod[CoopCounters::kRingPointer + 7] = 1;
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kRingPointer + 7));
     // With the NSO header in front, and a module too short to tell.
     std::vector<std::uint8_t> nso(0x100, 0);
     nso.insert(nso.end(), main.begin(), main.end());

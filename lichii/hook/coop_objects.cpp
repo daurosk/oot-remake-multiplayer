@@ -238,8 +238,13 @@ std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool a
     if (after_call || box.main == 0 || box.ring != 0 || box.asked) {
         return std::nullopt;
     }
-    u32 word = 0;  // only when the loader put the cave in
-    if (!guest.Read(box.main + CoopCounters::kStartOffset, &word, 4) || word != CoopCounters::HookWord()) {
+    u32 word = 0;  // only when the loader put the cave in (Hookshot: patch 0003's lift hook, not checkable here)
+#ifdef COOP_HOOKSHOT
+    word = CoopCounters::HookWord();
+#else
+    guest.Read(box.main + CoopCounters::kStartOffset, &word, 4);
+#endif
+    if (word != CoopCounters::HookWord()) {
         box.asked = true;
         LOG_INFO(Core, "coop: platforms: no counter cave (main+{:#x} holds {:#010x}): pause counters off",
                  CoopCounters::kStartOffset, word);
@@ -1683,7 +1688,8 @@ public:
     std::vector<coop::protocol::PlatformClock> platforms_in_;  // under platforms_mutex_
     std::vector<coop::protocol::PlatformCounter> counters_in_;  // under platforms_mutex_
     CoopCounters::CounterSync counters_;
-    std::set<u64> counter_nodes_;  // every node the ring named, while its actor is here
+    std::set<u64> counter_nodes_;  // the platform nodes the ring named, while their actor is here
+    std::set<u64> counter_others_;  // nodes of other actors (not Obj_), not read again
     std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
@@ -1849,6 +1855,14 @@ private:
         {
             CounterRingBox& box = TheCounterRing();
             std::lock_guard lock(box.mutex);
+            if (box.main != main_) {
+                // A new game boot in this process: a new ring for its heap (review).
+                box.ring = 0;
+                box.asked = false;
+                box.allocating = false;
+                counter_nodes_.clear();
+                counter_others_.clear();
+            }
             box.main = main_;
             ring = box.ring;
         }
@@ -1868,7 +1882,7 @@ private:
                 entries[i] = r.Get<u64>(ring + 8 + 8 * i).value_or(0);
             }
             for (const u64 node : CoopCounters::RingNodes(entries)) {
-                if (counter_nodes_.size() < 512) {
+                if (counter_nodes_.size() < 512 && !counter_others_.contains(node)) {
                     counter_nodes_.insert(node);
                 }
             }
@@ -1887,10 +1901,16 @@ private:
                 it = counter_nodes_.erase(it);  // gone, reused, or its actor left the walk
                 continue;
             }
-            ++it;
             if (!CoopCounters::IsPlatformOwner(known->second.first)) {
+                // An enemy's, an NPC's, Link's: never looked at again (review).
+                if (counter_others_.size() >= 4096) {
+                    counter_others_.clear();
+                }
+                counter_others_.insert(node);
+                it = counter_nodes_.erase(it);
                 continue;
             }
+            ++it;
             CoopCounters::Seen s;
             s.node = node;
             s.owner_name = known->second.first;
@@ -1901,7 +1921,7 @@ private:
             seen.push_back(std::move(s));
         }
         CoopCounters::CounterSync::Out out;
-        counters_.Tick(scene, self, server_now_us, seen, out);
+        counters_.Tick(scene, self, server_now_us, seen, platforms_mode_ == 2, out);
         for (auto& m : out.send) {
             send.emplace_back(std::move(m));
         }

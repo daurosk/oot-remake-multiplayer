@@ -84,7 +84,7 @@ void CounterSync::Receive(const coop::protocol::PlatformCounter& message) {
 }
 
 void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t server_us,
-                       const std::vector<Seen>& seen, Out& out) {
+                       const std::vector<Seen>& seen, bool probe_only, Out& out) {
     if (scene != scene_) {
         Reset();
         scene_ = scene;
@@ -190,21 +190,25 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
         if (target < 0.0f) {
             target = s.remaining + (static_cast<float>(period) / 1e6f - gap) * kFramesPerSecond;
         }
-        out.writes.push_back({s.node, n.key, target, s.remaining});
-        ++writes_;
-        // The pause now ends as if it began this much earlier (negative: later).
-        const auto shift = static_cast<std::int64_t>(static_cast<double>(s.remaining - target) /
-                                                     kFramesPerSecond * 1e6);
-        n.start_us = static_cast<std::uint64_t>(static_cast<std::int64_t>(n.start_us) - shift);
-        n.written_start_us = n.start_us;
-        n.last_remaining = target;
+        if (probe_only) {
+            n.written_start_us = n.start_us;  // said once a pause; nothing changes
+        } else {
+            out.writes.push_back({s.node, n.key, target, s.remaining});
+            ++writes_;
+            // The pause now ends as if it began this much earlier (negative: later).
+            const auto shift = static_cast<std::int64_t>(static_cast<double>(s.remaining - target) /
+                                                         kFramesPerSecond * 1e6);
+            n.start_us = static_cast<std::uint64_t>(static_cast<std::int64_t>(n.start_us) - shift);
+            n.written_start_us = n.start_us;
+            n.last_remaining = target;
+        }
         char text[220];
         std::snprintf(text, sizeof text,
-                      "%016llx %s: pause counter %016llx %.2f s off player %u's: frames left %.1f -> %.1f",
+                      "%016llx %s: pause counter %016llx %.2f s off player %u's: frames left %.1f -> %.1f%s",
                       static_cast<unsigned long long>(n.owner_hash), n.owner_name.c_str(),
                       static_cast<unsigned long long>(n.key), static_cast<double>(gap),
                       static_cast<unsigned>(best_player), static_cast<double>(s.remaining),
-                      static_cast<double>(target));
+                      static_cast<double>(target), probe_only ? " (probe: not written)" : "");
         out.notes.emplace_back(text);
     }
     std::erase_if(nodes_, [&](const auto& p) { return !here.contains(p.first); });

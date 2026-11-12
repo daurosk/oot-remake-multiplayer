@@ -119,8 +119,10 @@ public:
     void Receive(const coop::protocol::PlatformCounter& message);
 
     // Present thread, every look (a few frames): the nodes seen now.
+    // `probe_only` (LICHII_COOP_PLATFORMS=probe): what would be written is
+    // logged, not given as a write, and the node's state stays as read.
     void Tick(const std::string& scene, std::uint8_t self, std::uint64_t server_us,
-              const std::vector<Seen>& seen, Out& out);
+              const std::vector<Seen>& seen, bool probe_only, Out& out);
 
     void Reset();
 

@@ -162,7 +162,7 @@ class RunnerTest(unittest.TestCase):
         self.g = FakeGames(self.clock)
         self.lines = []
         self.r = hs.Runner(self.g, self.out, say=self.lines.append, expect_wait=30, try_wait=40, clock=self.clock,
-                           sleep=self.clock.sleep)
+                           sleep=self.clock.sleep, default_password="")
 
     def tearDown(self):
         shutil.rmtree(self.out, ignore_errors=True)
@@ -191,6 +191,27 @@ class RunnerTest(unittest.TestCase):
         self.r.run(hs.parse_steps("password B secret\nstart A B\n"))
         self.assertEqual(self.g.calls[:4], [("start", "A", ""), ("start", "B", "secret"), ("wait", "A"),
                                             ("wait", "B")])
+
+    def test_a_game_without_a_password_line_sends_the_servers(self):
+        # Every session may have a join password (OOT_COOP_TEST_PASSWORD, run.ps1 -ServerPassword): a game with no
+        # password line sends it, as run.ps1's Start-Game does; "password X -" is none.
+        r = hs.Runner(self.g, self.out, say=self.lines.append, clock=self.clock, sleep=self.clock.sleep,
+                      default_password="autotest-pass")
+        self.g.join_rule = lambda x, pw: "welcomed" if pw == "autotest-pass" else "refused"
+        fails = r.run(hs.parse_steps("start A B\npassword B -\ntry B refused\npassword B wrong\ntry B refused\n"))
+        self.assertEqual(self.g.calls[:2], [("start", "A", "autotest-pass"), ("start", "B", "autotest-pass")])
+        self.assertEqual(self.counts(), ["PASS try B (want refused, got refused, password set: False)",
+                                         "PASS try B (want refused, got refused, password set: True)"])
+        self.assertEqual(fails, 0)
+        old = os.environ.get("OOT_COOP_TEST_PASSWORD")
+        try:
+            os.environ["OOT_COOP_TEST_PASSWORD"] = "from-env"
+            self.assertEqual(hs.Runner(self.g, self.out).password("A"), "from-env")
+        finally:
+            if old is None:
+                os.environ.pop("OOT_COOP_TEST_PASSWORD", None)
+            else:
+                os.environ["OOT_COOP_TEST_PASSWORD"] = old
 
     def test_expect_waits_then_passes(self):
         self.g.running = {"A": True, "B": True}

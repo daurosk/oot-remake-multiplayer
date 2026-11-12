@@ -13,7 +13,8 @@ run.ps1 -Runtime hookshot calls `run` when the scenario is a steps file. The ver
   close B / kill B      B quits through its control bridge (it leaves the server) / B ends at once (a crash)
   server stop|start     the server goes away / comes back on the same port (server-out[-n].txt)
   sleep S               seconds
-  password B TEXT       the join password game B sends from its next start (LICHII_COOP_PASSWORD; - for none)
+  password B TEXT       the join password game B sends from its next start (LICHII_COOP_PASSWORD; - for none);
+                        without a password line a game sends the server's (OOT_COOP_TEST_PASSWORD)
   try B welcomed|refused|none   start B without waiting and see within 40 s: welcomed (its log), refused (a new
                         "refused a connection" in the server log) or none; then end B
   expect NAME A=1 B=0   wait up to --expect-wait s until each game named has that many puppets (CoopPuppet_*) and
@@ -183,12 +184,19 @@ class Runner:
     """Plays parsed steps through a backend (HookshotGames, or a fake in the tests)."""
 
     def __init__(self, games, out, say=print, expect_wait=60.0, try_wait=40.0, clock=time.monotonic,
-                 sleep=time.sleep):
+                 sleep=time.sleep, default_password=None):
         self.g, self.out, self.say = games, out, say
+        # A game with no `password` line sends the server's own (run.ps1's Start-Game does the same): every
+        # session may have one. `password X -` is none.
+        self.default_password = (os.environ.get("OOT_COOP_TEST_PASSWORD", "") if default_password is None
+                                 else default_password)
         self.expect_wait, self.try_wait = expect_wait, try_wait
         self.clock, self.sleep = clock, sleep
         self.passwords = {}
         self.fails = 0
+
+    def password(self, x):
+        return self.passwords[x] if x in self.passwords else self.default_password
 
     def result(self, ok, text):
         line = "%s %s" % ("PASS" if ok else "FAIL", text)
@@ -212,7 +220,7 @@ class Runner:
 
     def do_start(self, s):
         for x in s.args:
-            self.g.start(x, self.passwords.get(x, ""), wait=False)
+            self.g.start(x, self.password(x), wait=False)
         for x in s.args:
             self.g.wait_joined(x)
 
@@ -242,7 +250,7 @@ class Runner:
     def do_try(self, s):
         x, want = s.args
         before = self.g.server_log().count("refused a connection")
-        self.g.start(x, self.passwords.get(x, ""), wait=False)
+        self.g.start(x, self.password(x), wait=False)
         got, t0 = "none", self.clock()
         while self.clock() - t0 < self.try_wait:
             if JOINED in self.g.log(x):
@@ -255,7 +263,7 @@ class Runner:
         self.sleep(3)
         self.g.shot("s%d-try-%s-%s" % (s.n, x, want))
         self.result(got == want, "try %s (want %s, got %s, password set: %s)" % (x, want, got,
-                                                                                  bool(self.passwords.get(x))))
+                                                                                  bool(self.password(x))))
         self.g.kill(x, keep_log="try%d" % s.n)
 
     def do_expect(self, s):

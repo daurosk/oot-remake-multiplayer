@@ -163,7 +163,10 @@ if ($Runtime -eq 'hookshot') {
     foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
         if ($PSBoundParameters.ContainsKey($o)) { throw "-$o is for the emulator; not with -Runtime hookshot" }
     }
-    if ($ServerPassword -and -not $steps) { throw "-ServerPassword with -Runtime hookshot: only for a steps file (its 'password' and 'try' lines)" }
+    # The server's join password: always through the environment for the server (OOT_COOP_TEST_PASSWORD);
+    # hs_steps.py gives it to every game without a 'password' line, and a hookshot.py that knows
+    # --password (every session has one) gets it there.
+    if ($ServerPassword) { $env:OOT_COOP_TEST_PASSWORD = $ServerPassword }
     if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
     if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
     if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
@@ -184,8 +187,6 @@ if ($Runtime -eq 'hookshot') {
             '--timeout', "$([Math]::Max($Timeout, 900))", '--expect-wait', "$ExpectWait")
         if ($NoRestore) { $a += '--no-restore' }
         if ($DryRun) { $a += '--dry-run' }
-        # The server's join password reaches it through the environment, never the command line.
-        if ($ServerPassword) { $env:OOT_COOP_TEST_PASSWORD = $ServerPassword }
     } else {
         $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
             '--game-b', (Resolve $HookshotB), '--out', $out, '--name', $Scenario, '--script-a', $scA, '--every', "$Every",
@@ -194,6 +195,9 @@ if ($Runtime -eq 'hookshot') {
         if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
         if ($NoRestore) { $a += '--no-restore' }
         if ($KeepOpen) { $a += '--keep-open' }
+        if ($ServerPassword -and (Select-String -Quiet -SimpleMatch -Path "$here\hookshot.py" -Pattern '"--password"')) {
+            $a += @('--password', $ServerPassword)
+        }
     }
     if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
     if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }

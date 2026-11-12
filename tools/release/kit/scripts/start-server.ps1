@@ -60,7 +60,11 @@ $log = Join-Path $logs ('server-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date))
 
 Write-Host "Co-op server on UDP port $Port. Log: $log"
 Write-Host 'Keep this window open while you play; closing it (or Ctrl+C) stops the server.'
-if ($madePassword) { Write-Host 'Join password: a new random one for this session; it is inside the invite code (server_password in coop-options.ini sets your own).' }
+if ($madePassword) {
+    Write-Host 'Join password: a new random one for this session; it is inside the invite code (server_password in coop-options.ini sets your own).'
+    # Shown here only (never in the log), for friends who join by a VPN or home-network address.
+    Write-Host "Join password for this session: $password   (only needed when a friend joins by address instead of the invite code)"
+}
 elseif ($password) { Write-Host 'Join password: on (server_password in coop-options.ini). Send it to your friends with the address.' }
 else { Write-Host 'Join password: none (set one with server_password in coop-options.ini).' }
 if ($kitAccess.Pvp) { Write-Host 'PvP: on (pvp in coop-options.ini): players can hurt each other. /pvp off in the game chat turns it off.' }

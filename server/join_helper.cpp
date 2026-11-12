@@ -20,7 +20,7 @@ std::string no_way_help() {
   return "No way through the routers was found. This happens when both routers change the port for every "
          "address (symmetric NAT) or a provider shares one internet address between many homes (CGNAT). "
          "What always works: a free VPN network such as Radmin VPN or Tailscale (docs/play-online.md, "
-         "\"The quickest safe way: a free VPN network\"), or the host opens UDP port 27510 in the router "
+         "\"When the invite code does not work: a free VPN network\"), or the host opens UDP port 27510 in the router "
          "(\"Without a VPN: port forwarding\").";
 }
 

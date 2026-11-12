@@ -67,6 +67,8 @@ The host may set a join password (`coop_server --password TEXT`, or `--password-
 
 The password never goes on the wire, and a proof is good for one nonce only, so a recorded proof is refused on any other connection. The server sends one challenge per connection (a second `HELLO` gets none), takes one proof, and the 10 s `HELLO` timeout covers the proof too; a connection waiting for its proof counts as half-open. A `JOIN_PROOF` from a joined player is dropped, never relayed. Guessing is slowed down: 5 wrong proofs from one address within 60 s close that address at connect for 60 s (`SessionConfig::max_wrong_passwords`, stat `password_blocked`; the log line names no address). Someone who records a challenge and its proof can still try passwords offline against it, as with any password check without a key exchange: use a long password used nowhere else. Passwords are at most 128 bytes with no control characters; the kit also refuses spaces.
 
+Other datagrams on the server's port, outside the protocol: STUN answers and NAT punches for the invite code (`coop_server --invite`; datagrams starting with `OCP` and version 1, signed with a key made from the join password). They are handled before ENet sees them, use no message types and change nothing in the session; the punch only opens the way through the routers, and the join password check above still decides who joins. [play-online.md](play-online.md), "How the invite code works".
+
 ### Rejoin after a crash
 
 A dropped or killed emulator stays in the session until the server times it out, so its new connection would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when all three hold:

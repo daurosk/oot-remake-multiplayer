@@ -31,7 +31,7 @@ The people you play with share your game's progress: items, songs, flags, enemie
 
 - Prefer a password-protected Radmin VPN or Hamachi network (or ZeroTier, Tailscale) over port forwarding: only the people in your private network can reach the server. Only join VPN networks of people you know.
 - Make the firewall rule as narrow as it can be: for the program (`program=...\server\coop_server.exe`, not only the port, so nothing else that later listens on 27510 is let in), on Private networks where possible (`profile=private`), and only from the addresses that need it (`remoteip=localsubnet` on a LAN, `25.0.0.0/8` for Hamachi, `26.0.0.0/8` for Radmin VPN). The commands are in [play-lan.md](docs/play-lan.md#firewall) and [play-online.md](docs/play-online.md). Never allow the port on Public networks for every address.
-- When you are done, delete the firewall rule and any router port forward: our programs never add or remove them for you ([When you are done](docs/play-online.md#when-you-are-done)).
+- When you are done, delete the firewall rule and any router port forward you made by hand: our programs never touch firewall rules, and the router forward Host.bat asks for (UPnP, only with a join password) ends when the server window closes ([When you are done](docs/play-online.md#when-you-are-done)).
 - In the host's `coop-options.ini`, `server_allow` lists the addresses that may join and `server_bind` makes the server listen on your VPN address only ([Who can join](docs/play-online.md#who-can-join)).
 - With port forwarding, share your public address only with the people you play with.
 - Close the server window when you are done: nothing listens once it is closed.

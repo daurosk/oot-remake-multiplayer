@@ -14,8 +14,8 @@
 #    puppet that follows their place gives no jump when the cutscene ends. Each jump is logged
 #    "P<n> target jump <m> m (show|hold, eased|at once|warp)": read them when it fails.
 #    Counted only after each game's own "mark placed": the test's `place` moves of both
-#    Links (setup, 35-53 m handed over 3-5 packets) are target jumps by design and made
-#    jump-A 3 / jump-B 5 in test10's big run, all before "placed" (cutscene-snap-b2).
+#    Links (setup, 35-53 m handed over 3-5 packets) are target jumps by design and
+#    can give 3-5 such lines per game, all before "placed".
 #  - navi-snap-A/B: the same snap check for Navi.
 # Read too: B "...FallingLadder... moved by another player" lines while B's event runs, and the
 # shots: B's puppet in A's window walks to the door during B's door cutscene.

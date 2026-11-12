@@ -450,15 +450,10 @@ TEST_CASE("testinput: setflag hands the hook a flag name and a whole number (iss
 
 TEST_CASE("testinput: setenum hands the hook an Enum flag (name or 0x hash) and a value's name (issue 193)") {
     std::string error;
-    CHECK_FALSE(Parse("setenum
-", error));
-    CHECK_FALSE(Parse("setenum 0xdb89c1a9
-", error));
-    CHECK_FALSE(Parse("setenum 0xdb89c1a9 Step03 more
-", error));
-    Runner r(Must("setenum 0xdb89c1a9 Step03
-setenum PlayerStatus.AssignableItem.Child Bow
-"));
+    CHECK_FALSE(Parse("setenum\n", error));
+    CHECK_FALSE(Parse("setenum 0xdb89c1a9\n", error));
+    CHECK_FALSE(Parse("setenum 0xdb89c1a9 Step03 more\n", error));
+    Runner r(Must("setenum 0xdb89c1a9 Step03\nsetenum PlayerStatus.AssignableItem.Child Bow\n"));
     std::vector<std::string> log;
     r.Advance(0.0, std::nullopt, log);
     const auto requests = r.TakeRequests();

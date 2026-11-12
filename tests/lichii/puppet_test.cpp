@@ -207,6 +207,7 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     std::vector<std::uint8_t> main(CoopSvc::kCaveEnd, 0);
     for (const auto& h : CoopSvc::kHooks) put(main, h.offset, h.original);
     put(main, CoopHold::kHookOffset, CoopHold::kHookOriginal);
+    put(main, CoopCounters::kStartOffset, CoopCounters::kStartOriginal);
     CHECK_FALSE(CoopSites::ChangedSite(main).has_value());
     // The emulator's own built-ins and other bytes in the padding are not ours.
     main[0x3c46200] = 0xff;  // Dynamic FPS
@@ -227,6 +228,16 @@ TEST_CASE("puppet cave: a game mod at a place co-op patches is found, others' by
     mod[CoopHold::kTableOffset + CoopHold::kTableSize - 1] = 1;
     CHECK(CoopSites::ChangedSite(mod) ==
           std::optional<std::uint64_t>(CoopHold::kTableOffset + CoopHold::kTableSize - 1));
+    // The pause counters' start, its cave and the ring's address (platforms-b2).
+    mod = main;
+    put(mod, CoopCounters::kStartOffset, 0xd503201f);
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kStartOffset));
+    mod = main;
+    mod[CoopCounters::kCaveOffset + 4] = 1;
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kCaveOffset + 4));
+    mod = main;
+    mod[CoopCounters::kRingPointer + 7] = 1;
+    CHECK(CoopSites::ChangedSite(mod) == std::optional<std::uint64_t>(CoopCounters::kRingPointer + 7));
     // With the NSO header in front, and a module too short to tell.
     std::vector<std::uint8_t> nso(0x100, 0);
     nso.insert(nso.end(), main.begin(), main.end());
@@ -459,6 +470,44 @@ TEST_CASE("puppet: a tunic actor that is never made falls back after two timeout
         Frame(d, g, t);
     }
     CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
+}
+
+TEST_CASE("puppet: a tunic actor the game keeps refusing falls back (an older pack, Hookshot proof 3)") {
+    Game g;
+    g.create_result = 0;  // the game refuses: no such actor in its ActorInfo
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+    std::uint64_t t = 0;
+    for (; t < 60000 && d.FailedTunics().empty(); t += 250) {
+        Frame(d, g, t);
+    }
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
+    // About 3 x 1 s + 3 x 5 s: longer than a load's refusals, well before a minute.
+    CHECK(t > 3 * Director::kRefusedRetryMs + 2 * Director::kRefusedSlowMs);
+    CHECK(t < 30000);
+}
+
+TEST_CASE("puppet: refusals do not cost the plain puppet or a tunic one that is made in time") {
+    {
+        Game g;
+        g.create_result = 0;
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+        for (std::uint64_t t = 0; t < 60000; t += 250) Frame(d, g, t);
+        CHECK(d.FailedTunics().empty());  // the plain one has nothing to fall back to: it keeps asking
+    }
+    {
+        Game g;
+        g.create_result = 0;  // refused while the scene loads ...
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+        std::uint64_t t = 0;
+        for (; t < 8000; t += 250) Frame(d, g, t);  // 3 fast refusals and one slow one
+        g.create_result = 1;  // ... then accepted (the refusal count starts again)
+        for (; t < 8000 + Director::kCreateTimeoutMs; t += 250) Frame(d, g, t);
+        CHECK(d.FailedTunics().empty());
+        CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child_Blue");
+    }
 }
 
 TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
@@ -1124,7 +1173,7 @@ TEST_CASE("puppet planner: riding shows (issue 199), the Ocarina plays through t
     remotes[2].number = 3;
     remotes[2].scene = "HyruleField_Child";
     remotes[2].status = coop::protocol::status::in_cutscene;
-    remotes[2].anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};
+    remotes[2].anim = CoopPuppet::Anim{"DemoOcarinaMelodyGet", 0.0f, 1.0f};  // a song taught
 
     auto in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 3);
@@ -1707,4 +1756,21 @@ TEST_CASE("fairy join: the fairy waits for the drawing after a load, as her pupp
     calls = Frame(d, g, 3400 + Director::kDrawnMs);
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet planner: the Ocarina played freely (DemoOcarina) shows through their event bit (#86)") {
+    CoopPuppet::Planner p;
+    std::vector<CoopPuppet::Remote> remotes(1);
+    remotes[0].number = 1;
+    remotes[0].scene = "Graveyard_Child";
+    remotes[0].status = coop::protocol::status::in_cutscene;
+    remotes[0].anim = CoopPuppet::Anim{"EvtWait", 0.0f, 1.0f};  // taking it out: any event
+    auto in = p.Plan(kBase, std::string("Graveyard_Child"), std::nullopt, false, remotes, 0);
+    REQUIRE(in.targets.size() == 1);
+    CHECK(in.targets[0].show == CoopPuppet::Show::hold);
+    remotes[0].anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};  // playing
+    in = p.Plan(kBase, std::string("Graveyard_Child"), std::nullopt, false, remotes, 10);
+    REQUIRE(in.targets.size() == 1);
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);
+    CHECK(std::string(in.targets[0].why) == "ocarina");
 }

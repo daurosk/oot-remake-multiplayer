@@ -724,7 +724,11 @@ def run(a):
     try:
         if a.server:
             with open(os.path.join(out, "server-out.txt"), "w") as so:
-                server = subprocess.Popen([a.server, "--port", str(a.port)], stdout=so, stderr=subprocess.STDOUT)
+                # Every session has a join password (it encrypts the traffic): in the
+                # environment, never on the command line.
+                senv = dict(os.environ, OOT_COOP_TEST_PASSWORD=a.password)
+                server = subprocess.Popen([a.server, "--port", str(a.port), "--password-env", "OOT_COOP_TEST_PASSWORD"],
+                                          stdout=so, stderr=subprocess.STDOUT, env=senv)
             time.sleep(1)
         for i, x in enumerate(tags):
             g = games[x]
@@ -739,6 +743,7 @@ def run(a):
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port
                 env["LICHII_COOP_NAME"] = "Hook" + x
+                env["LICHII_COOP_PASSWORD"] = a.password
             for kv in a.env:
                 k, v = kv.split("=", 1)
                 if k[:2] in ("A:", "B:"):
@@ -848,7 +853,10 @@ def run(a):
             if server:
                 server.terminate()
         for x in tags:
-            lp = find_log(games[x])
+            # Hookshot writes hookshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
+            # that is the log (an old hookshot_log.txt in the folder is from another run). The game's file otherwise.
+            go = os.path.join(out, "game-out-%s.txt" % x)
+            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(games[x])
             if lp:
                 shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
     if failed:
@@ -874,6 +882,8 @@ def main(argv=None):
     r.add_argument("--game-b", required=True)
     r.add_argument("--server", help="coop_server to start (none: the games use their coop.ini)")
     r.add_argument("--port", type=int, default=27560)
+    r.add_argument("--password", default="autotest-pass",
+                   help="the join password of the server it starts, given to both games (every session has one)")
     r.add_argument("--out", required=True)
     r.add_argument("--name", default="scenario")
     r.add_argument("--script-a", required=True)

@@ -604,6 +604,19 @@ std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int3
   return std::nullopt;  // the better one already, or a name we do not know
 }
 
+std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t time,
+                                              const std::function<std::optional<bool>(std::uint32_t)>& get) {
+  std::vector<std::uint32_t> want;
+  if (fairy >= 1) want.insert(want.end(), {ocarina::kIsGetFairy, ocarina::kGotFairy});
+  if (time >= 1) want.insert(want.end(), {ocarina::kIsGetTime, ocarina::kGotTime});
+  if (fairy >= 1 || time >= 1) want.insert(want.end(), {ocarina::kSlotA, ocarina::kSlotB});
+  std::vector<std::uint32_t> out;
+  for (const std::uint32_t hash : want) {
+    if (get(hash) == false) out.push_back(hash);  // unreadable (nullopt) is left alone
+  }
+  return out;
+}
+
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
   if (!ready_) {
     // No Link: a load would undo it. A new item gets it all at the mend.

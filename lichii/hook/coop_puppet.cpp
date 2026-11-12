@@ -324,8 +324,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     Pose(slot, guest, parked, nullptr, now_ms);
                 }
                 // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
-                // by their own command: while held for their cutscene (free play
-                // is DemoOcarina) nothing new is played on the puppet.
+                // by their own command (free play is DemoOcarina: shown, not held,
+                // coop/host/scene.hpp activity_of).
                 const std::string their = t->anim ? t->anim->name : std::string();
                 if (anim_ && their != slot.their_anim) {
                     Say("P" + std::to_string(slot.number) + " their command '" + their + "'");
@@ -397,6 +397,20 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         }
         ++slot.refused;
         slot.phase = Phase::idle;
+        // A tunic actor the game keeps refusing is not in its ActorInfo: an
+        // older puppet pack without the colours (Hookshot proof 3: the pairs
+        // had the pack from before the tunics, CoopPuppet_Child_Blue refused
+        // for good, so no puppet at all). The plain puppet then, as after two
+        // create timeouts. Only while no tunic puppet has spawned: refusals
+        // during a load must not cost a working pack its colours.
+        if (IsTunicActor(slot.actor_name) && !tunic_proven_ && slot.refused == kRefusedTunicFallback) {
+            TunicFails(slot.actor_name, "refused " + std::to_string(kRefusedTunicFallback) +
+                                            " times: the puppet pack has no tunic colours (an older pack? run "
+                                            "make-puppet-pack again)");
+            slot.refused = 0;
+            slot.retry_ms = now_ms;  // the plain puppet at once
+            break;
+        }
         if (slot.refused < kRefusedFast) {
             slot.retry_ms = now_ms + kRefusedRetryMs;
             if (slot.refused == 1) {
@@ -1247,10 +1261,15 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
             Say(who + " snap " + std::to_string(*snap).substr(0, 5) + " m (" +
                 (*snap >= CoopSnap::kWarpM ? std::string("warp") : ShowText(target.show)) + ")");
         }
+        slot.smooth.Spawned(at, target.position);  // a new puppet: eased from where the game made it (no spawn pop)
     }
     float jump = 0.0f;
     const Vec3 drawn = slot.smooth.Step(target.position, now_ms, !held, &jump);
-    if (jump > 0.0f) {
+    if (jump > 0.0f && slot.smooth.FromSpawn()) {
+        // Held (their cutscene) the smoother does not ease: the step is drawn at once then.
+        Say(who + (held ? " drawn at once from where it was made, " : " eased from where it was made, ") +
+            std::to_string(jump).substr(0, 5) + " m");
+    } else if (jump > 0.0f) {
         Say(who + " target jump " + std::to_string(jump).substr(0, 5) + " m (" + ShowText(target.show) +
             (jump >= CoopSnap::kWarpM ? ", warp" : held ? ", at once" : ", eased") + ")");
     }
@@ -1493,6 +1512,11 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
 bool PackHasGreenPuppets(std::string_view manifest) {
     return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
            manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
+}
+
+bool PackHasTunicPuppets(std::string_view manifest) {
+    return manifest.find("\"CoopPuppet_Child_") != std::string_view::npos ||
+           manifest.find("\"CoopPuppet_Adult_") != std::string_view::npos;
 }
 
 std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {

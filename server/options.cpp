@@ -56,6 +56,13 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.run_for_ms = ms;
+    } else if (arg == "--owner-hold-ms") {
+      std::uint32_t ms = 0;
+      if (!has_value || !parse_number(args[++i], ms)) {
+        error = "--owner-hold-ms needs a number of milliseconds";
+        return std::nullopt;
+      }
+      line.owner_hold_ms = ms;
     } else if (arg == "--max-half-open") {
       if (!has_value || !parse_number(args[++i], line.max_half_open)) {
         error = "--max-half-open needs a number (0 for no limit)";
@@ -181,11 +188,15 @@ const char* usage() {
          "  --max-half-open N  most connections one address may hold before\n"
          "                   sending HELLO (default 4, 0 for no limit)\n"
          "  --run-for-ms N   stop by itself after N milliseconds\n"
-         "  --password TEXT  players must give this join password (default: none)\n"
+         "  --owner-hold-ms N  after the start, objects get their first owner\n"
+         "                   only after N ms, the lowest player number that lists\n"
+         "                   them (default 2000; 0: the first to list owns at once)\n"
+         "  --password TEXT  players must give this join password; it also\n"
+         "                   encrypts the traffic (required, but not with --relay)\n"
          "  --password-env NAME  the join password is in this environment\n"
          "                   variable (keeps it off the command line)\n"
          "  --upnp           ask the router (UPnP) to forward the port while the\n"
-         "                   server runs; needs a join password or --allow\n"
+         "                   server runs\n"
          "  --relay-via ADDRESS[:PORT]  host through a relay (default port 27530)\n"
          "                   and print a join code for the players\n"
          "  --relay          run as a relay for hosts that use --relay-via\n"
@@ -195,7 +206,7 @@ const char* usage() {
          "                   to give\n"
          "  --invite         learn this PC's internet address (STUN), print an invite\n"
          "                   code with it and the join password, and take answer\n"
-         "                   codes typed here; needs a join password\n"
+         "                   codes typed here\n"
          "  --stun NAME:PORT STUN server to ask (more than once; default: Google's\n"
          "                   and Cloudflare's free ones)\n"
          "  --join ADDRESS:PORT [--game-port N]  Join.bat's helper for an invite\n"

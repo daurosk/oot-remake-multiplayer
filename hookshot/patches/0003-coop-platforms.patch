@@ -1,0 +1,109 @@
+From e715e0044476f5c2275dc09b950b93bf41a39254 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 12 Nov 2026 08:35:18 -0900
+Subject: [PATCH] Co-op platforms: started AI pause counters go into co-op's
+ ring
+
+Looping platforms (Dodongo's Cavern's lifts) are timed by AI
+ExecuteGenericCounter nodes; main+0x5e6760 starts one each time the graph
+enters it (method and addresses from Hot Onion). nx2/coop_platform_lift.py
+puts C after `mov x19, x0` (main+0x5e6778, words and build id checked):
+host/coop_platform_ring.c writes the node into the ring whose address the
+co-op module keeps at main+0x3c46780 (0: nothing written), as the
+emulator's cave does. Called from nx2/coop_hooks.py install().
+---
+ host/coop_platform_ring.c | 19 ++++++++++++++++
+ nx2/coop_hooks.py         |  2 ++
+ nx2/coop_platform_lift.py | 46 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 67 insertions(+)
+ create mode 100644 host/coop_platform_ring.c
+ create mode 100644 nx2/coop_platform_lift.py
+
+diff --git a/host/coop_platform_ring.c b/host/coop_platform_ring.c
+new file mode 100644
+index 00000000..b2417033
+--- /dev/null
++++ b/host/coop_platform_ring.c
+@@ -0,0 +1,19 @@
++/* (oot-remake-multiplayer's patch 0003, nx2/coop_platform_lift.py) A started AI pause counter goes into co-op's ring.
++
++   The same ring the emulator's cave fills (lichii/hook/coop_counter.s): its address is the u64 at main+0x3c46780,
++   0 until the co-op module made it with the game's malloc (lichii/hook/coop_counters.h). Ring: +0 a u32 count, +8 256
++   u64 nodes; the node goes at (count + 1) % 256 and the count goes up. The module reads it a few times a second and
++   checks every node itself (vtable, actor), so a lost or doubled entry costs nothing; no lock, as on the emulator. */
++#include "hos.h"
++
++enum { COOP_RING_NODES = 256 };
++#define COOP_MAIN 0x80020000ull
++#define COOP_RING_POINTER (COOP_MAIN + 0x3c46780ull)
++
++void hos_coop_counter(uint64_t node) {
++    const uint64_t ring = G64(COOP_RING_POINTER);
++    if (!ring || !node) return;
++    const uint32_t n = G32(ring) + 1;
++    G32(ring) = n;
++    *(uint64_t *)GP(ring + 8 + 8ull * (n % COOP_RING_NODES)) = node;
++}
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index 9648af65..52a19bc9 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -60,4 +60,6 @@ def install(lifter, img, build_id):
+         FRAME_SITES[0][0], FRAME_SITES[1][0], HOLD_CALL + 4))
+     import coop_puppet_guard   # (patch 0002: the other players' Link)
+     coop_puppet_guard.install(lifter, img, build_id)
++    import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
++    coop_platform_lift.install(lifter, img, build_id)
+     return len(FRAME_SITES) + 1
+diff --git a/nx2/coop_platform_lift.py b/nx2/coop_platform_lift.py
+new file mode 100644
+index 00000000..9c9944b6
+--- /dev/null
++++ b/nx2/coop_platform_lift.py
+@@ -0,0 +1,46 @@
++"""Co-op's looping platforms (oot-remake-multiplayer's patch 0003, its docs/objects.md "Moving platforms: the pause
++counters"; method and addresses from Hot Onion).
++
++main+0x5e6760 starts an AI ExecuteGenericCounter node (x0 = the node), the timer of each pause between two moves of a
++looping platform (Dodongo's Cavern's lifts), each time the AI graph enters it. On the emulator co-op patches its first
++word into a jump to a small cave (lichii/hook/coop_counter.s) that puts the node into a ring in the game's heap. Here:
++C after `mov x19, x0` (main+0x5e6778, the end of the prologue) puts x0 into that same ring through
++host/coop_platform_ring.c. The co-op module makes the ring (the game's malloc) and writes its address at
++main+0x3c46780; until then, and without the module, nothing is written.
++
++The words are checked and the build id; another game version leaves the hook out.
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++SITE = 0x5e6778           # mov x19, x0
++WORDS = ((0x5e6760, 0xd503237f),   # pacibsp
++         (0x5e6764, 0xfc1d0fe8),   # str d8, [sp, #-0x30]!
++         (0x5e6774, 0xf9400008),   # ldr x8, [x0]
++         (0x5e6778, 0xaa0003f3),   # mov x19, x0
++         (0x5e677c, 0xf940a108))   # ldr x8, [x8, #0x140]: the base length getter
++TEXT = ("{ extern void hos_coop_counter(uint64_t node); hos_coop_counter(c->x[0]); }   "
++        "/* (nx2/coop_platform_lift.py: co-op's pause counters, host/coop_platform_ring.c) */")
++
++
++def _word(img, pc):
++    try:
++        return img.word(pc)
++    except Exception:
++        return None
++
++
++def install(lifter, img, build_id):
++    """The hook into lifter.after; nothing when the build or a word differs. Returns 1 when it went in."""
++    if build_id != BUILD_ID:
++        return 0
++    for off, want in WORDS:
++        have = _word(img, MAIN + off)
++        if have != want:
++            print("co-op platforms: main+%#x holds %s, not %08x: left out" % (
++                off, "?" if have is None else "%08x" % have, want))
++            return 0
++    pc = MAIN + SITE
++    lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT
++    print("co-op platforms: pause counter hook at main+%#x" % SITE)
++    return 1

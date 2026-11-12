@@ -67,9 +67,10 @@ param(
     [string[]]$AddOnsOff = @(),
     # The emulator's "30 FPS mode" (oot_30fps) for this run: the game steps twice per frame.
     [switch]$Fps30,
-    # A join password for the server (passed through an environment variable, not the command
-    # line). The games send none unless a steps file says `password A TEXT`.
-    [string]$ServerPassword = "",
+    # The server's join password (passed through an environment variable, not the command
+    # line). Every session has one, and it encrypts the traffic. The games send it too unless a
+    # steps file says `password A TEXT` (or `password A -` for none).
+    [string]$ServerPassword = "autotest-pass",
     # A bad connection (docs/testing.md, "Bad connections"): tools\netsim\netsim.py relays each game
     # in -NetSimFor to the server, on port -Port+1 (A) or -Port+2 (B). -Lag is added round trip in
     # ms (half each way), -Jitter +- ms each way, -Loss % each way, -Spike "<ms>/<every s>" a stall
@@ -93,7 +94,12 @@ param(
     # puppet pack in mods\). Default: hookshot-A and hookshot-B in the coop-kit folder. A folder's
     # autotest-save\ (a copy of its user\save\) is put back over user\save\ before each run.
     [string]$HookshotA = "",
-    [string]$HookshotB = ""
+    [string]$HookshotB = "",
+    # Hookshot: the control pipes' name (\\.\pipe\<Pipe>-A and -B). Pairs that run at the same time
+    # (tools\autotest\groups.py) each need their own, as they need their own -Port.
+    [string]$Pipe = "coop-auto",
+    # Hookshot: print the hookshot.py command and stop (nothing started, no run folder made).
+    [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
 
@@ -122,17 +128,19 @@ if (-not $TakeBaseline -and -not $steps -and -not (Test-Path $scA)) { throw "no 
 #   #! noload                  the script loads the save itself (as -NoLoad)
 #   #! switches NAME=v,NAME=v  added to the switches (-Switches given on the command line win)
 #   #! timeout 300             seconds for each phase (as -Timeout, which wins)
+#   #! server ARGS             more coop_server arguments (stray-diag: --owner-hold-ms 0)
 #   #! start REGEX             the game log must match REGEX once the save is loaded (default: a
 #                              Graveyard object, the save point); checked after load.txt, or at
 #                              the end for a script that loads itself
 if ($NoCoop -and -not $PSBoundParameters.ContainsKey('Switches')) { $Switches = @('LICHII_COOP_DEBUG_OBJECTS=1') }
-$headNoLoad = $false; $headSwitches = @(); $headStart = $null
+$headNoLoad = $false; $headSwitches = @(); $headStart = $null; $headServer = ''
 $headFile = if ($steps) { $steps } elseif (Test-Path $scA) { $scA } else { $null }
 if ($headFile) {
     foreach ($l in Get-Content $headFile) {
         if ($l -match '^#!\s*noload\s*$') { $headNoLoad = $true }
         elseif ($l -match '^#!\s*switches\s+(.+)$') { $headSwitches += @($Matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
         elseif ($l -match '^#!\s*start\s+(.+)$') { $headStart = $Matches[1].Trim() }
+        elseif ($l -match '^#!\s*server\s+(.+)$') { $headServer = $Matches[1].Trim() }
         elseif ($l -match '^#!\s*timeout\s+(\d+)\s*$' -and -not $PSBoundParameters.ContainsKey('Timeout')) { $Timeout = [int]$Matches[1] }
     }
 }
@@ -147,21 +155,26 @@ if ($headSwitches.Count) {
 if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not (@($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() }) -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
 
 $Server = Resolve $Server
-if (-not $TakeBaseline -and -not $NoCoop -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+if (-not $TakeBaseline -and -not $NoCoop -and -not ($DryRun -and $Runtime -eq 'hookshot') -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
 
 # Hookshot: tools\autotest\hookshot.py runs the whole test (server, both games, load, scenario,
 # shots, logs) and leaves them in the run folder like the emulator run does.
 if ($Runtime -eq 'hookshot') {
-    if ($steps) { throw "-Runtime hookshot plays A/B scripts only; steps files ($Scenario.steps.txt) read the emulator's logs" }
+    # A steps file ($Scenario.steps.txt) is played by tools\autotest\hs_steps.py: the same verbs as
+    # Run-Steps below (start, load, play, close, kill, server stop/start, password, try, expect, lines, shot).
     if ($TakeBaseline) { throw "-Runtime hookshot: copy <game>\user\save to <game>\autotest-save for a baseline" }
-    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'ServerPassword', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
+    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
         if ($PSBoundParameters.ContainsKey($o)) { throw "-$o is for the emulator; not with -Runtime hookshot" }
     }
+    # The server's join password: always through the environment for the server (OOT_COOP_TEST_PASSWORD);
+    # hs_steps.py gives it to every game without a 'password' line, and a hookshot.py that knows
+    # --password (every session has one) gets it there.
+    if ($ServerPassword) { $env:OOT_COOP_TEST_PASSWORD = $ServerPassword }
     if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
     if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
     if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
     $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
-    New-Item -ItemType Directory -Force $out | Out-Null
+    if (-not $DryRun) { New-Item -ItemType Directory -Force $out | Out-Null }
     $py = @()
     if ($Python) { $py = @($Python) } else {
         for ($d = Get-Item $here; $d; $d = $d.Parent) {
@@ -170,24 +183,40 @@ if ($Runtime -eq 'hookshot') {
         }
         if (-not $py.Count) { if (Get-Command py -ErrorAction SilentlyContinue) { $py = @('py', '-3') } else { $py = @('python') } }
     }
-    $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
-        '--game-b', (Resolve $HookshotB), '--out', $out, '--name', $Scenario, '--script-a', $scA, '--every', "$Every",
-        '--timeout', "$([Math]::Max($Timeout, 900))", '--scenario-timeout', "$([Math]::Max($Timeout, 600))")
-    if (Test-Path $scB) { $a += @('--script-b', $scB) }
-    if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
-    if ($NoRestore) { $a += '--no-restore' }
-    if ($KeepOpen) { $a += '--keep-open' }
+    if ($steps) {
+        if ($NoCoop) { throw "-NoCoop: a steps file needs the server" }
+        $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hs_steps.py", 'run', '--steps', $steps,
+            '--game-a', (Resolve $HookshotA), '--game-b', (Resolve $HookshotB), '--out', $out,
+            '--timeout', "$([Math]::Max($Timeout, 900))", '--expect-wait', "$ExpectWait")
+        if ($NoRestore) { $a += '--no-restore' }
+        if ($DryRun) { $a += '--dry-run' }
+    } else {
+        $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
+            '--game-b', (Resolve $HookshotB), '--out', $out, '--name', $Scenario, '--script-a', $scA, '--every', "$Every",
+            '--timeout', "$([Math]::Max($Timeout, 900))", '--scenario-timeout', "$([Math]::Max($Timeout, 600))")
+        if (Test-Path $scB) { $a += @('--script-b', $scB) }
+        if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
+        if ($NoRestore) { $a += '--no-restore' }
+        if ($KeepOpen) { $a += '--keep-open' }
+        if ($ServerPassword -and (Select-String -Quiet -SimpleMatch -Path "$here\hookshot.py" -Pattern '"--password"')) {
+            $a += @('--password', $ServerPassword)
+        }
+    }
     if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
+    if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }
     foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
         $a += @('--env', $e)
     }
     Write-Host "hookshot: $($py[0]) $($a -join ' ')"
+    if ($DryRun -and $steps) { & $py[0] @a; return }   # hs_steps.py --dry-run prints the plan
+    if ($DryRun) { Write-Host "hookshot: dry run, nothing started"; return }
     & $py[0] @a
     $code = $LASTEXITCODE
     $out
     if ($code) { exit $code }
     return
 }
+if ($DryRun -or $PSBoundParameters.ContainsKey('Pipe')) { throw "-DryRun and -Pipe are for -Runtime hookshot" }
 
 # The folders a kit's emulator really uses: qt-config.ini can point nand/sdmc/load/dump anywhere
 # (kits copied from another kit keep that kit's absolute paths).
@@ -457,7 +486,9 @@ function Start-Server {
     $script:serverRuns++
     $sfx = if ($script:serverRuns -gt 1) { "-$($script:serverRuns)" } else { '' }
     $sargs = "--port $Port"
-    if ($ServerPassword) { $env:OOT_COOP_TEST_PASSWORD = $ServerPassword; $sargs += " --password-env OOT_COOP_TEST_PASSWORD" }
+    if (-not $ServerPassword) { throw "-ServerPassword: every session has a join password (coop_server does not start without one)" }
+    $env:OOT_COOP_TEST_PASSWORD = $ServerPassword; $sargs += " --password-env OOT_COOP_TEST_PASSWORD"
+    if ($headServer) { $sargs += " $headServer" }
     $script:serverProc = Start-Process $Server -ArgumentList $sargs -PassThru -WindowStyle Minimized `
         -RedirectStandardOutput "$out\server-out$sfx.txt" -RedirectStandardError "$out\server-err$sfx.txt"
     Start-Sleep 1
@@ -530,7 +561,8 @@ function Start-Game([string]$x) {
         Write-Host "game ${x}: saves restored from $(Baseline-Dir $kits[$x])"
     }
     $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $($netPort[$x])`r`nname = $x" }
-    if (-not $NoCoop -and $script:passwords[$x]) { $ini += "`r`npassword = $($script:passwords[$x])" }
+    $pw = if ($script:passwords.ContainsKey($x)) { $script:passwords[$x] } else { $ServerPassword }
+    if (-not $NoCoop -and $pw) { $ini += "`r`npassword = $pw" }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') $ini
     Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
     Set-RunSettings $x (Join-Path $s.Emu 'user\config\qt-config.ini')
@@ -703,7 +735,7 @@ function Run-Steps([string]$file) {
                 }
                 Start-Sleep 3
                 Shot-Both "s$n-try-$x-$want"
-                $res = '{0} try {1} (want {2}, got {3}, password set: {4})' -f $(if ($got -eq $want) { 'PASS' } else { 'FAIL' }), $x, $want, $got, [bool]$script:passwords[$x]
+                $res = '{0} try {1} (want {2}, got {3}, password set: {4})' -f $(if ($got -eq $want) { 'PASS' } else { 'FAIL' }), $x, $want, $got, [bool]$(if ($script:passwords.ContainsKey($x)) { $script:passwords[$x] } else { $ServerPassword })
                 Write-Host $res; Add-Content "$out\counts.txt" $res
                 if ($got -ne $want) { $script:stepFails++ }
                 $expectedExit[$x] = $true; $p = $st[$x].Proc

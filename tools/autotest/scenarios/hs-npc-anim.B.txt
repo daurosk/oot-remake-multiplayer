@@ -1,0 +1,15 @@
+# hs-npc-anim, B: put 2.9 m from Dampe at once, owns him, stays locked on him through A's talk
+# (see hs-npc-anim.A.txt). b-a-talks is about 2 s after A's talk mark (same timeline from the load).
+mark start
+wait 120
+place -15.30 100.90 18.80
+wait 60
+toward -12.55 20.01 10
+hold ZL 60
+mark b-owns
+wait 1040                 # A talks at about 1170 frames from the load: b-a-talks about 2 s later
+mark b-a-talks
+hold ZL 1200              # camera on him through the talk
+mark b-closed
+wait 300
+mark end

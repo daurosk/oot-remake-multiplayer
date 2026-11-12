@@ -1,0 +1,68 @@
+# hs-deku-water-floor (Hookshot and emulator, issue #196): deku-water-floor with the basement's water level and moving floors (event InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop) not yet played.
+# bigrun (2026-11-12): INCONCLUSIVE, both games in the Deku Tree but no "our game started the event" line:
+# the kit saves are past the Deku Tree. The Hookshot pairs' baselines have these set too (save_flags.py get
+# on hookshot-A, 2026-11-12: all 1): HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop (0xfcbd74e3), InsideTheDekuTree_RoomG_WaterLevel (0x8d2b85ef), InsideTheDekuTree_RoomG_WaterLevel_timing (0x392a228a).
+# BEFORE the run (games closed; a Hookshot pair needs save_flags.py from save-flags-hookshot), for both
+# games of the pair (emulator kits: <kit>\autotest-save\*\*\slot_0*\progress.sav), and put them back
+# from <pair>\autotest-save-backup afterwards:
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-deku-water-floor (emulator: -Scenario deku-water-floor)
+# Pass: A and B "bool ... InsideTheDekuTree_RoomG_WaterLevel 0 -> 1"; A "world: bc566175e558d7f5 Obj_Deku_MoveFloor_A_01
+#   moved here: sending", B "moved by another player"; shots moving/moved/late: the floor at the same place in
+#   both games.
+# deku-water-floor's own notes follow.
+# deku-water-floor (deku-dungeon-2, #196: the water-level switch syncs, the moving platform does not).
+# Basement (InsideTheDekuTree room G): dive switch Obj_DiveSwitch_A_01 5fc823393e3eed90 at -25.6 74.2
+# 40.6, moving floors Obj_Deku_MoveFloor_A_01 bc566175e558d7f5 at -30.2 75.4 37.0 and _A_02
+# 4d4f51fac8cc023e at -27.9 74.0 36.3 (GroundControlActor_ResidentMoveTo moves their actor place),
+# water gate Obj_InsideTheDekuTree_WaterGate_A_01 at -24.8 75.6 43.0.
+# B is put ON Obj_Deku_MoveFloor_A_01 first (a rider: the case most likely to fall or jitter, since B's
+# floor is held at A's place by writes while B's own ResidentMoveTo/WaveLoop runs). Then A is put on the
+# dive switch (a guess: if A's log shows no "InsideTheDekuTree_RoomG_WaterLevel" flag line, press it by
+# hand). Every "coop: test mark" line has "(Link at x height z)".
+# Expect:
+#  - A "bool ... InsideTheDekuTree_RoomG_WaterLevel 0 -> 1" (DEBUG_FLAGS), B the same.
+#  - A "world: bc566175e558d7f5 Obj_Deku_MoveFloor_A_01 moved here: sending" (or _A_02), then
+#    "... at rest: place sent"; B "... moved by another player", "put where another player left it".
+#  - Shots "moving"/"moved"/"late": the floor at the same place in both games, and it stays there in B
+#    (held while A's place is away from where it starts). A floor that only bobs sends nothing.
+#  - The rider: B's mark lines "on-floor", "ride1".."ride4", "moved", "late": B's Link height stays the
+#    floor's top (about 75.4 + its rise in A, never dropping to the water or the floor below) and its x/z
+#    follow the floor; shots show B standing on it. B's log: one "moved by another player" per move of A's,
+#    not a run of them (jitter). FAIL (B falls or shakes): keep both logs; the fix is then sharing only the
+#    switch and letting each game move its own floor.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 720                 # B gets on the floor first
+place -25.6 74.6 40.6
+wait 120
+mark placed
+wait 150
+mark ride1
+wait 150
+mark ride2
+wait 300
+mark moving
+wait 300
+mark ride3
+wait 600
+mark moved
+wait 600
+mark ride4
+wait 1200
+mark late

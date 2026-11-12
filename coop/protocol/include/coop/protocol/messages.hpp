@@ -116,6 +116,8 @@ enum class MessageType : std::uint16_t {
   rejoin_claim = 346,
   dungeon_event = 355,  // 355 to 359: a room gimmick's event started (docs/protocol.md, "Gimmick events")
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
+  platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
+  platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -176,6 +178,12 @@ struct Hello {
   // 32 bytes after the nickname. Sent by every game since protocol 10; a
   // server with a join password refuses a HELLO without it.
   std::optional<KeyShare> key_share{};
+  // Since protocol 10 (this release's): the player number this game had in its last session
+  // (1 to 4), one byte after the key share (or after the nickname without
+  // one). The server gives it back when it is free, so a server restart
+  // does not swap the players' numbers (and with them their colours and
+  // every object's owner). Nothing on a game's first join.
+  std::optional<std::uint8_t> previous_number{};
   bool operator==(const Hello&) const = default;
 };
 
@@ -1222,6 +1230,67 @@ struct PvpHurt {
 // never kept.
 inline constexpr std::size_t kMaxEventNameChars = 96;
 
+// PLATFORM_CLOCK (protocol 10, branch platforms-b, issues 196 and 194): the
+// clock word of each moving platform's driver the sender owns, read at
+// `server_time_us` (server time). The others put value + rate x (their
+// server time now - server_time_us) into their own word, looped by `cycle`
+// when it is over 0 (docs/objects.md, "Moving platforms"). On channel 4 like
+// WORLD_MOVE, unreliable: the next one comes a second later. Relayed to the
+// sender's scene, never kept.
+inline constexpr std::size_t kMaxPlatformTicks = 16;
+inline constexpr std::uint64_t kPlatformAsFrameRegion = 0xffff;  // key region: the AS slot 0 frame
+inline constexpr std::uint64_t kPlatformActorBytes = 0x600;
+inline constexpr std::uint64_t kPlatformComponentBytes = 0x200;
+inline constexpr std::uint64_t kPlatformComponents = 0x300 / 8;  // table entries
+inline constexpr float kMaxPlatformRate = 10000.0f;
+inline constexpr float kMaxPlatformValue = 1.0e7f;
+
+struct PlatformTick {
+  std::uint64_t hash = 0;  // the driver's placement hash
+  // Where the word is: region << 32 | byte offset (a multiple of 4).
+  // Region 0 the actor (offset under 0x600), 2 + n the component in table
+  // entry n (under 0x200), kPlatformAsFrameRegion the AS slot 0 frame (offset 0).
+  std::uint64_t key = 0;
+  float value = 0.0f;
+  float rate = 0.0f;   // per second, not 0
+  float cycle = 0.0f;  // where it loops back; 0 when not seen
+  bool operator==(const PlatformTick&) const = default;
+};
+
+struct PlatformClock {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t server_time_us = 0;
+  std::vector<PlatformTick> ticks;  // 1 to kMaxPlatformTicks, no hash twice
+  bool operator==(const PlatformClock&) const = default;
+};
+
+// PLATFORM_COUNTER (protocol 10, branch platforms-b2): the looping pause
+// counters (AI ExecuteGenericCounter nodes) of the platforms near the
+// sender, each with the time since its last pause began, read at
+// `server_time_us`. A game that has seen fewer starts of the same key
+// shifts its own pause once to be in phase (docs/objects.md, "Moving
+// platforms: the pause counters"). Channel 4, unreliable, every 3 s;
+// relayed to the sender's scene, never kept.
+inline constexpr std::size_t kMaxPlatformCounters = 32;
+inline constexpr std::uint32_t kMinCounterPeriodUs = 100'000;
+
+struct CounterTick {
+  std::uint64_t key = 0;        // hash of the actor's placement, the pause's length and its place in the graph
+  std::uint32_t period_us = 0;  // between two starts; at least kMinCounterPeriodUs
+  std::uint32_t since_us = 0;   // since the last start
+  std::uint32_t starts = 0;     // starts the sender has seen, at least 1
+  bool operator==(const CounterTick&) const = default;
+};
+
+struct PlatformCounter {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t server_time_us = 0;
+  std::vector<CounterTick> ticks;  // 1 to kMaxPlatformCounters, no key twice
+  bool operator==(const PlatformCounter&) const = default;
+};
+
 struct DungeonEvent {
   std::uint8_t player_number = kPlayerSelf;
   std::string scene;
@@ -1240,7 +1309,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote>;
+                             OcarinaNote, PlatformClock, PlatformCounter>;
 
 MessageType type_of(const Message& message);
 

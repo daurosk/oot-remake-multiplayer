@@ -207,21 +207,9 @@ TEST_CASE("encrypted traffic: with a join password nothing readable crosses the 
   CHECK_FALSE(w.tap.saw("deku-sprout-31"));
   CHECK_FALSE(w.tap.saw("Link"));
   CHECK(w.server.unsealed_drops() == 0);
-}
-
-TEST_CASE("encrypted traffic: without a password the traffic stays plain (the tap reads it)") {
-  World w("", "");
-  REQUIRE(w.host.start());
-  REQUIRE(w.pump([&] { return w.host.state() == State::connected; }));
-  REQUIRE(w.guest.start());
-  REQUIRE(w.pump([&] { return w.guest.state() == State::connected; }));
-  CHECK_FALSE(w.host.encrypted());
-  CHECK_FALSE(w.guest.encrypted());
-  CHECK(w.server.encrypted_connections() == 0);
-  REQUIRE(w.guest.send_chat("plain as day"));
-  std::optional<std::string> got;
-  REQUIRE(w.pump([&] { return (got = chat_seen(w.host)).has_value(); }));
-  CHECK(w.tap.saw("plain as day"));  // so the check above can see a chat line
+  // The tap does read what is plain: the HELLO before the keys (so the
+  // checks above can see a line).
+  CHECK(w.tap.saw("Saria"));
 }
 
 TEST_CASE("encrypted traffic: a wrong password is refused as before and gets no keys") {
@@ -240,14 +228,21 @@ TEST_CASE("encrypted traffic: a wrong password is refused as before and gets no 
   CHECK(w.server.encrypted_connections() == 1);  // only the host's
 }
 
-TEST_CASE("encrypted traffic: a game with a password does not join a server without one") {
-  World w("", "leftover-password");
-  REQUIRE(w.guest.start());
-  REQUIRE(w.pump([&] { return w.guest.state() == State::refused; }));
-  std::optional<proto::RefuseReason> reason;
-  while (auto e = w.guest.next_event()) {
-    if (e->kind == EventKind::refused) reason = e->refuse_reason;
+TEST_CASE("encrypted traffic: a server without a join password lets nobody in, password or not") {
+  // coop_server does not start without one (every session is encrypted); a
+  // server made without it in code refuses every HELLO, so nothing goes plain.
+  for (const std::string guest_password : {"", "leftover-password"}) {
+    World w("", guest_password);
+    REQUIRE(w.guest.start());
+    REQUIRE(w.pump([&] { return w.guest.state() == State::refused; }));
+    std::optional<proto::RefuseReason> reason;
+    while (auto e = w.guest.next_event()) {
+      if (e->kind == EventKind::refused) reason = e->refuse_reason;
+    }
+    REQUIRE(reason.has_value());
+    CHECK(*reason == proto::RefuseReason::bad_password);
+    CHECK_FALSE(w.guest.encrypted());
+    CHECK(w.server.session().player_count() == 0);
+    CHECK(w.server.encrypted_connections() == 0);
   }
-  REQUIRE(reason.has_value());
-  CHECK(*reason == proto::RefuseReason::not_encrypted);
 }

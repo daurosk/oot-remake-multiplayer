@@ -79,6 +79,13 @@ std::optional<Options> parse_options(const std::vector<std::string>& args,
         return std::nullopt;
       }
       options.connect_host = text.substr(0, colon);
+    } else if (arg == "--password") {
+      if (!value(text)) return std::nullopt;
+      if (text.empty() || text.size() > 128) {
+        error = "--password must be 1 to 128 characters";
+        return std::nullopt;
+      }
+      options.password = text;
     } else if (arg == "--name") {
       if (!value(text)) return std::nullopt;
       // Room for the index: nicknames are at most 16 characters.
@@ -127,6 +134,8 @@ const char* usage() {
          "  --port N             the server's port, 0 for any free one (default 27510)\n"
          "  --report-every N     also report every N seconds, 0 for never (default 10)\n"
          "  --name TEXT          nickname prefix, 1 to 15 characters (default test)\n"
+         "  --password TEXT      the join password (default coop-test; with --connect,\n"
+         "                       the server's)\n"
          "  --help               this text\n"
          "\n"
          "Exits 1 if a reliable message was lost, a client was refused or dropped,\n"

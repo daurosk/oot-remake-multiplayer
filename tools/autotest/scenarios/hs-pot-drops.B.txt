@@ -1,0 +1,22 @@
+# hs-pot-drops, B: put 4 m south of the pots, facing them (camera behind), watches A cut them and pick
+# up the drops (see hs-pot-drops.A.txt). Shots come at A's marks.
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -50.0 109.2 95.5
+wait 240
+toward -50.0 91.0 10
+press ZL 10
+mark b-placed
+wait 2400
+mark b-end

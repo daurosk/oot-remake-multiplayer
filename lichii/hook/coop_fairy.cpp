@@ -399,6 +399,10 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         glue.follower->Follow(puppets, now_ms, CoopPuppet::LivePuppets(), position));
 }
 
+CoopRooms::Table RoomTable() {
+    return LoadRooms();
+}
+
 } // namespace CoopFairy
 
 #endif  // LICHII_COOP

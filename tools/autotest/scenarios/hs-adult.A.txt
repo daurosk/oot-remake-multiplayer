@@ -1,0 +1,16 @@
+# hs-adult (Hookshot): both players adult, each sees the other as adult Link (hs-puppets-b).
+# Both games set Sequence_IsChildhood 0 and warp to Graveyard_Adult after the save loads; A then walks in front of B.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-adult
+# Pass: no "CRASH:" in either log; B: "P1: create CoopPuppet_Adult_<Colour> requested (returned 0x1)" and
+# "P1 CoopPuppet_Adult_<Colour> spawned after"; A the same for P2. Shots hs-adult-A-walked-A/-B: the other's adult Link.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_PUPPET=1
+mark start
+setflag Sequence_IsChildhood 0
+warp Graveyard_Adult
+wait 900                # the warp's load, the puppets made
+mark arrived
+stick 0 0.5 90          # walk forward slowly, in front of B
+mark walked
+stick 1 0 60            # turn and walk right
+mark turned
+wait 120

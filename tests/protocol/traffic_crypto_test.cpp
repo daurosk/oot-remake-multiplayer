@@ -218,7 +218,23 @@ TEST_CASE("traffic crypto: the key share rides at the end of HELLO and JOIN_CHAL
   CHECK(std::get<Hello>(back) == hello);
   REQUIRE(decode(*plain, back) == Error::none);
   CHECK_FALSE(std::get<Hello>(back).key_share.has_value());
-  // Anything else after the nickname is still refused.
+  // Protocol 10 (this release's): the previous number after the key share, or alone.
+  hello.previous_number = 2;
+  const auto with_number = encode(hello);
+  REQUIRE(with_number.has_value());
+  CHECK(with_number->size() == with_key->size() + 1);
+  REQUIRE(decode(*with_number, back) == Error::none);
+  CHECK(std::get<Hello>(back) == hello);
+  Hello no_key = hello;
+  no_key.key_share.reset();
+  const auto number_only = encode(no_key);
+  REQUIRE(number_only.has_value());
+  REQUIRE(decode(*number_only, back) == Error::none);
+  CHECK(std::get<Hello>(back) == no_key);
+  hello.previous_number = 5;  // not a player number
+  CHECK_FALSE(encode(hello).has_value());
+  hello.previous_number.reset();
+  // Anything else after the nickname is still refused (a lone byte 0 is no player number).
   Bytes odd = *plain;
   odd.push_back(0);
   odd[2] = static_cast<std::uint8_t>(odd.size() - 4);

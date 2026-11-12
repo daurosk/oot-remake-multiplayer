@@ -1087,3 +1087,22 @@ TEST_CASE("game items: a held ocarina is equipped (issue 190)") {
   CHECK_FALSE(ocarina_equip_mend(1, 0, oc::kTimeName));
   CHECK_FALSE(ocarina_equip_mend(1, 1, "Item_Something_Else"));
 }
+
+TEST_CASE("ocarina_bools_mend: a shared ocarina gets the Bools a real get sets (issue 190)") {
+  using coop::host::ocarina_bools_mend;
+  namespace oc = coop::host::ocarina;
+  std::map<std::uint32_t, std::optional<bool>> flags;
+  const auto get = [&](std::uint32_t h) -> std::optional<bool> {
+    const auto it = flags.find(h);
+    return it == flags.end() ? std::optional<bool>(false) : it->second;
+  };
+  CHECK(ocarina_bools_mend(0, 0, get).empty());  // none held: nothing
+  auto want = ocarina_bools_mend(1, 0, get);     // the Fairy Ocarina from another player
+  CHECK(want == std::vector<std::uint32_t>{oc::kIsGetFairy, oc::kGotFairy, oc::kSlotA, oc::kSlotB});
+  flags[oc::kIsGetFairy] = true;                 // already set: left out
+  flags[oc::kSlotB] = std::nullopt;              // unreadable: left alone
+  want = ocarina_bools_mend(1, 0, get);
+  CHECK(want == std::vector<std::uint32_t>{oc::kGotFairy, oc::kSlotA});
+  want = ocarina_bools_mend(0, 1, get);          // the Ocarina of Time
+  CHECK(want == std::vector<std::uint32_t>{oc::kIsGetTime, oc::kGotTime, oc::kSlotA});
+}

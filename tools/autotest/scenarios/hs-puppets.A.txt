@@ -1,0 +1,27 @@
+# hs-puppets (Hookshot): the other player's puppet shows. Hookshot proof 3 (walk, 2026-11-12) had none:
+# B's log "P1: create CoopPuppet_Child_Blue requested (returned 0)", "create refused", for good. The
+# pairs' puppet pack (mods\contents\0400486024DEC000\coop-puppet) was made before the tunics: it has only
+# CoopPuppet_Child / _Adult, and the game refuses an actor its ActorInfo does not know. ("fairy coop:
+# puppet: P1 show -> hide (our cutscene)" in that log is Navi's, not the puppet's.)
+# Since hs-puppets: a pack without tunic puppets gives the plain puppet at start, and a tunic actor
+# refused 6 times in a row falls back to the plain one.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-puppets   (A walks in front of B, B stands)
+# Pass, B's log (A's the same with P2):
+# - old pack in the pair: "coop: the puppet pack has no tunic colours (made before them)" and
+#   "coop: puppets on, actor by age, tunics off (the pack has none)"; then
+#   "P1: create CoopPuppet_Child requested (returned 0x1)" and "P1 CoopPuppet_Child spawned after".
+# - fresh pack: "P1: create CoopPuppet_Child_<Colour> requested (returned 0x1)", "spawned after",
+#   "P1 CoopPuppet_Child_<Colour>: model Player_Child".
+# - never "create refused 3 times" without a "spawned" after it.
+# Shots: B's shots at A's marks (hs-puppets-A-spawned-B, -walked-B, -turned-B)
+# show A's puppet in front of B; A's shots the same of B's puppet.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_PUPPET=1
+mark start
+wait 1500               # the puppets made (an old pack's fallback needs about 18 s at most)
+mark spawned
+stick 0 0.5 90          # walk forward slowly, in front of B
+mark walked
+stick 1 0 60            # turn and walk right
+mark turned
+wait 120
+mark end

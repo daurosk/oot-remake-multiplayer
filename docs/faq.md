@@ -49,11 +49,11 @@ Share it only with the people you play with. It holds your internet address, the
 
 ## Emulator or Hookshot?
 
-The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build, and it has no co-op window or chat box yet. Both can join one session; Hookshot players don't see the others yet.
+The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build. It has the same co-op features, with some keys of its own (T for chat, F6 for the player list). Both can join one session and see each other as Link in their colours (checked by hand).
 
 ## Is my game traffic encrypted?
 
-Yes, when the session has a join password, which `Host.bat` makes by itself each time. The co-op panel's first line ends in `, encrypted`. Only a host who set `server_password =` (empty) plays without one; then the traffic is plain.
+Yes, always. Every session has a join password, which `Host.bat` makes by itself each time (or the host sets with `server_password`), and the traffic is encrypted with it. The co-op panel's first line ends in `, encrypted`. There is no plain mode: the server does not start without a password, and the game does not join a server that does not encrypt.
 
 ## The other players are all green
 

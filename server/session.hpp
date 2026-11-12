@@ -53,8 +53,9 @@ struct SessionConfig {
   std::uint16_t tick_rate = 60;
   std::uint64_t hello_timeout_us = 10'000'000;    // connect to HELLO
   // The join password (coop_server --password): a player must answer the
-  // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce.
-  // Empty: no password, HELLO is answered at once as before.
+  // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce and
+  // both key shares; the traffic keys come from it too. Required: empty, every
+  // HELLO is refused (there is no plain way in, docs/protocol.md).
   std::string join_password;
   // PvP (coop_server --pvp): players hurt each other. The host may change it
   // in the session (PVP_MODE); every player gets the server's value.
@@ -195,6 +196,16 @@ struct SessionConfig {
   // for all it lists, so a game that forgot its table (a reload of the same
   // scene) learns the owners again. 0: never.
   std::uint64_t owner_refresh_us = 10'000'000;
+  // After a (re)start the games come back in whatever order they notice it,
+  // and the first to list an object would own it: the others' live actors
+  // that they owned before turn into copies all at once, and a game aborted
+  // on that (stray, 2026-11-12). So objects first listed within this long
+  // of the session's first listing get no owner yet; then each goes to the
+  // lowest player number that lists it. With keep-number that gives player
+  // 1 (who comes back as 1) back what it owned, which is what stray needed;
+  // between other players the lowest number need not be the old owner.
+  // 0: off (the first to list owns it at once).
+  std::uint64_t owner_hold_us = 2'000'000;
   // A kill (OBJECT_REMOVE, dead) from the owner before the last change is
   // still taken this long after it: the kill was real.
   std::uint64_t late_remove_us = 2'000'000;
@@ -320,6 +331,7 @@ struct Stats {
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)
+  std::uint64_t owners_held = 0;          // objects given their first owner after owner_hold_us
   std::uint64_t stale_scenes = 0;         // a late message's old scene, not taken back
   std::uint64_t group_links = 0;          // OBJECT_GROUP entries taken
   std::uint64_t group_refused = 0;        // OBJECT_GROUP entries turned away
@@ -450,6 +462,7 @@ class Session {
     std::optional<ConnectionId> owner;  // none: nobody, or removed
     std::uint16_t epoch = 0;
     bool made = false;        // made by a player (OBJECT_SPAWN)
+    bool held = false;        // listed in the owner hold after a start: no owner yet (owner_hold_us)
     bool projectile = false;  // a made projectile: never handed over
     bool removed = false;     // its owner removed it; kept until nobody has it
     bool boss = false;        // OBJECT_GROUP said so: the long fight lock
@@ -562,6 +575,9 @@ class Session {
   // The rules that run on the clock: answers that never came, groups,
   // owners that cannot play, the distance rule.
   void run_ownership(std::uint64_t now_us);
+  // The end of the owner hold: each held object to the lowest player number
+  // that lists it, announced to its scene.
+  void end_owner_hold(std::uint64_t now_us);
   // Asks the owner to let go of it to `to`; finish_handover follows.
   void ask_handover(const protocol::ObjectId& oid, Object& o, ConnectionId to,
                     std::uint64_t now_us);
@@ -633,6 +649,10 @@ class Session {
   Objects objects_;
   std::uint32_t next_serial_ = 1;
   std::uint64_t ownership_checked_at_ = 0;
+  // The owner hold (owner_hold_us): until when, from the session's first
+  // object listing (0: not started), and whether its objects got owners.
+  std::uint64_t owner_hold_until_ = 0;
+  bool owner_hold_done_ = false;
   // The field grass cut in each scene (GRASS_CUT), oldest first, at most
   // kMaxGrassCuts a scene; sent to a player who enters the scene. Forgotten
   // when no player is in the scene.

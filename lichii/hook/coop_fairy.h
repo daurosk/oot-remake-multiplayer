@@ -162,6 +162,10 @@ private:
 // LICHII_COOP_FAIRY=0 off, LICHII_COOP_FAIRY_ACTOR another actor) and
 // registers the fairy director with the cave. Each Navi shows, holds or
 // hides as her puppet does (CoopPuppet::Collect, the same `local_event`).
+// The dungeon room table from the puppet pack (coop_rooms.txt), read now;
+// empty without one. Also for /teleport (coop_teleport.h CheckMove).
+CoopRooms::Table RoomTable();
+
 void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
              const std::optional<Vec3>& position, bool local_event,
              coop::host::Session* session, std::uint64_t server_now_us);

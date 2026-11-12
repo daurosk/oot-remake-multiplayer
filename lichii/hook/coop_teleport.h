@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_rooms.h"
 
 namespace CoopTeleport {
 
@@ -47,6 +48,26 @@ struct Vec {
     float y = 0.0f;  // height
     float z = 0.0f;
 };
+
+// Whether the "next to" move may put our Link from `from` at `to` in
+// `scene` (issue 197). Moving Link into another room of a dungeon right
+// after the load left the picture black and Link held for good (bigrun4:
+// Kokiri Forest -> the Deku Tree's slingshot room, arrival at Entrance, the
+// move into room C): a dungeon loads one room at a time. So in a dungeon the
+// move stays within our room: by the puppet pack's room table when it knows
+// both rooms, else only within kNearMove. Outside dungeons (overworld,
+// interiors) any move is fine (teleport-other passes).
+enum class MoveCheck : std::uint8_t {
+    ok,
+    other_room,  // the room table puts `to` in another room of the dungeon
+    too_far,     // no room known for one of them, and farther than kNearMove
+};
+inline constexpr float kNearMove = 10.0f;  // game units (about metres)
+MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to);
+// The chat line when CheckMove refused (not ok): "<name> is in another room of this dungeon;
+// you are at its entrance: walk there" (`after_load`: just arrived by a scene change) or
+// "...; walk there" (a /teleport within the dungeon: we stay where we were).
+std::string NotMovedLine(MoveCheck check, std::string_view name, bool after_load);
 
 // The entrance start point of `scene` nearest `to` (coop_start_points.inc,
 // written from the game's scene files by tools/puppet_pack/start_points.py).
@@ -141,6 +162,11 @@ public:
     static constexpr std::uint64_t kGiveUpUs = 60'000'000;
     static constexpr std::uint64_t kAskAgainUs = 500'000;
     // After the new scene is in with our Link standing, before asking again.
+    // The request is emptied then too, not on the first frame of the new
+    // scene (#197): the warp of tools/autotest never empties it and its
+    // arrivals play the game's arrival event and hand Link back; every
+    // /teleport that emptied it on that first frame stayed black and held
+    // (teleport-lock, teleport-other runs of 2026-11-12).
     static constexpr std::uint64_t kSettleUs = 1'500'000;
     // A taken scene change that ended somewhere else is asked again after this.
     static constexpr std::uint64_t kRearmUs = 5'000'000;
@@ -162,9 +188,11 @@ public:
         std::optional<std::string> scene;    // ask the game's scene change to it (free play or event)
         std::string start;                   // with scene: the start point there (never empty)
         std::optional<Vec> move;             // move our Link here (same scene)
+        bool after_load = false;             // with move: we just arrived by a scene change (at an entrance)
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
-        bool cancel_scene = false;           // clear our scene change request and its switch (arrived, given up)
+        bool cancel_scene = false;           // clear our scene change request and its switch (settled, given up)
         bool release = false;                // the game took it: drop only the free-play switch
+        bool game_cleared = false;           // the game emptied our request itself (after its arrival): log only
         bool start_event = false;            // with the request set: start kSceneEvent (no event runs)
         // With cancel_scene, not arrived (given up, the player left, a new
         // /teleport) and no load ran in this trip: put back the start name the
@@ -204,6 +232,7 @@ private:
     bool taken_ = false;          // travelling: the game took the request
     bool seen_request_ = false;   // travelling: the game's flag showed our request
     bool loaded_ = false;         // this trip: a load ran (then the old start name is stale)
+    bool requested_ = false;      // our request may still be in the game (asked, not yet emptied)
     std::uint64_t taken_us_ = 0;
 };
 

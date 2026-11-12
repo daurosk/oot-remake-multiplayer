@@ -1,0 +1,25 @@
+# hs-deku-torch, B: deku-torch's B (see hs-deku-torch.A.txt).
+# deku-torch, B: put on the torch room's plate (see deku-torch.A.txt) after A is in place.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1100
+place -10.2 80.0 -9.0
+wait 60
+mark pressed
+wait 300
+mark lit
+wait 600
+mark web
+wait 900
+mark late

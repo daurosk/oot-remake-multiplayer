@@ -218,7 +218,7 @@ function Read-KitOptions([string]$Path) {
             $c = $Matches[1] -replace '\s+[#;].*$', ''  # a comment after it: 'color = blue  # mine'
             if (-not $c) { continue }  # none chosen: the player number's colour
             if ((Get-Command Test-CoopColor -ErrorAction SilentlyContinue) -and -not (Test-CoopColor $c)) {
-                Write-Host "coop-options.ini: color '$c' is not a colour (red, blue, ... or #RRGGBB); your player number's colour is used"
+                Write-Host "coop-options.ini: color '$c' is not a colour (red, blue, ... or #RRGGBB); the host's blue or the joiners' red is used"
                 continue
             }
             $values['LICHII_COOP_COLOR'] = $c
@@ -232,8 +232,8 @@ function Read-KitOptions([string]$Path) {
 
 # coop-options.ini's server_allow and server_bind (the host's server only; start-server.ps1
 # checks them): an ordered table with Allow and Bind, '' when not set. Password is the join
-# password (server_password): $null when no line without a '#' sets it (Host.bat then asks
-# once), '' when the host chose none. Upnp (on unless upnp = no), Invite (on unless invite =
+# password (server_password): $null when no line without a '#' sets it, or the line is empty
+# (every session has a password: Host.bat then makes a new random one). Upnp (on unless upnp = no), Invite (on unless invite =
 # no), Stun (stun_servers), Relay (relay = address[:port]) and RelayKey (relay_key) are the
 # router forward, the invite code and the relay (docs/play-online.md). Pvp: $true
 # only for 'pvp = on' (or yes, 1, true); anything else, or no line, is off.
@@ -243,7 +243,7 @@ function Read-KitServerAccess([string]$Path) {
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         if ($line -match '^\s*server_allow\s*=\s*(.*?)\s*$') { $access.Allow = $Matches[1] }
         elseif ($line -match '^\s*server_bind\s*=\s*(.*?)\s*$') { $access.Bind = $Matches[1] }
-        elseif ($line -match '^\s*server_password\s*=\s*(.*?)\s*$') { $access.Password = $Matches[1] }
+        elseif ($line -match '^\s*server_password\s*=\s*(.*?)\s*$') { if ($Matches[1]) { $access.Password = $Matches[1] } }
         elseif ($line -match '^\s*upnp\s*=\s*(.*?)\s*$') { $access.Upnp = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*invite\s*=\s*(.*?)\s*$') { $access.Invite = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*stun_servers\s*=\s*(.*?)\s*$') { $access.Stun = $Matches[1] }
@@ -254,7 +254,8 @@ function Read-KitServerAccess([string]$Path) {
     return $access
 }
 
-# Saves the join password in coop-options.ini as 'server_password = ...' ('' for none): over
+# Saves the join password in coop-options.ini as 'server_password = ...' ('' to go back to a
+# new random one each session): over
 # the first server_password line (with or without a '#'), else at the end of the file.
 function Set-KitServerPassword([string]$Path, [string]$Password) {
     $lines = @()
@@ -399,6 +400,7 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     # Every file a colour may put in, taken away first: no copy stays after a change of colour.
     # The fixed list also covers a pack without self_files (made again older): no stale copy.
     $targets = @($tile, $dark, 'Tex/Mt_Vest_Player_Adult_Alb.bntx.zs', 'Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs',
+        'Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs', 'Tex/Mt_Vest_Player_Child_Alb.bntx.zs',
         'Model/Player_Adult.Player_Adult.bfres.zs')
     $put = [ordered]@{}
     try {
@@ -437,6 +439,56 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
         if ($put.Count) { return $tunic }
     } catch { }
     return ''
+}
+
+# With no colour chosen (coop-options.ini's color behind its '#'), the others see you in your player
+# number's colour (1 blue, 2 red), which is known only once the game has joined. Your own Link wears
+# the tunic put in before the game starts, so it stayed green (the hand test of a768c36). The colour of
+# the number you will most likely get is taken now, for both: the one who hosts (Host.bat,
+# Host-Hookshot.bat) joins first, player 1, blue; the others red (a relay join also goes to 127.0.0.1:
+# that is no host). It is passed as LICHII_COOP_COLOR, so the others see the same colour your Link wears
+# even when the number turns out another. Nothing with a colour chosen, with LICHII_COOP_TUNICS=0, or
+# with no server (alone). Returns the colour taken, or ''.
+function Set-KitDefaultColor([string]$Mode, [string]$Server) {
+    if ($env:LICHII_COOP_COLOR -or $env:LICHII_COOP_TUNICS -match '^(0|off)$') { return '' }
+    if ($Mode -ne 'host' -and -not $Server) { return '' }
+    $local = $Mode -eq 'host'
+    $color = if ($local) { 'blue' } else { 'red' }
+    $env:LICHII_COOP_COLOR = $color
+    $who = if ($local) { 'you host, so you join first: player 1' } else { 'player 2, the first to join a host' }
+    Write-Host "Your colour: $color (none chosen in coop-options.ini; $who). Pick one with color = ... there."
+    return $color
+}
+
+# The puppet pack before the game starts, the same for the emulator and Hookshot (play.ps1): the pack
+# hints, your own Link in your colour (#202: LICHII_COOP_SELF_TUNIC and the tile over the game's), and with
+# no pack the puppets off. $Manifest: the pack's coop_puppet.json (the emulator's load\<title>\coop-puppet,
+# Hookshot's mods\contents\<title>\coop-puppet). $Missing: the lines to say when there is no pack.
+# Hookshot indexes its mod files once at start, so this runs before Start-Process there too.
+# Returns $true when the pack is there.
+function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing) {
+    if (Test-Path -LiteralPath $Manifest) {
+        Write-Host 'Puppet pack: found.'
+        # Made before sound or before the kit's pack tool changed: say so, start anyway.
+        $hint = Get-PuppetPackHint $Manifest $ToolDir
+        if ($hint) { Write-Host $hint }
+        # Your own Link in your colour (#202); LICHII_COOP_TUNICS=0 keeps everyone green.
+        $want = if ($env:LICHII_COOP_TUNICS -match '^(0|off)$') { '' } else { $env:LICHII_COOP_COLOR }
+        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want
+        if ($self) {
+            $env:LICHII_COOP_SELF_TUNIC = $self
+            Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+        }
+        elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
+        if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
+            Write-Host 'Your Link stays green: the puppet pack has no tunic of your colour. Run make-puppet-pack.cmd again.'
+        }
+        return $true
+    }
+    foreach ($line in $Missing) { Write-Host $line }
+    if ($env:LICHII_COOP_PUPPET) { Remove-Item env:LICHII_COOP_PUPPET; Write-Host 'Option: LICHII_COOP_PUPPET off (no pack)' }
+    if ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
+    return $false
 }
 
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {

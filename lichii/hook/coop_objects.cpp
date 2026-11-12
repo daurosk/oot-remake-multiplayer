@@ -92,6 +92,8 @@
 #include <atomic>
 #include <unordered_map>
 #include "coop_world.h"
+#include "coop_platforms.h"
+#include "coop_counters.h"
 #include "coop_scrubs.h"
 #include <set>
 
@@ -202,6 +204,59 @@ constexpr u64 kBlockNames = 0x40;
 constexpr u64 kNameCell = 0x50;
 constexpr u64 kNameCells = 400;
 constexpr u64 kBlockSize = kBlockNames + kNameCell * kNameCells;
+
+// The pause counters' ring (coop_counters.h): made once with the game's
+// malloc on the calc thread, its address put where the cave reads it.
+constexpr int kCountersCallerOrder = 63;
+struct CounterRingBox {
+    std::mutex mutex;
+    u64 main = 0;    // set by Share while sharing; 0: nothing to do
+    u64 ring = 0;
+    bool asked = false;
+    bool allocating = false;
+};
+CounterRingBox& TheCounterRing() {
+    static CounterRingBox box;
+    return box;
+}
+
+std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool after_call,
+                                                std::uint64_t result) {
+    CounterRingBox& box = TheCounterRing();
+    std::lock_guard lock(box.mutex);
+    if (after_call && box.allocating) {
+        box.allocating = false;
+        if (result != 0 && box.main != 0) {
+            const std::array<u8, CoopCounters::kRingBytes> zeros{};
+            guest.Write(result, zeros.data(), zeros.size());
+            guest.Write(box.main + CoopCounters::kRingPointer, &result, 8);
+            box.ring = result;
+            LOG_INFO(Core, "coop: platforms: pause counter ring at {:#x}", result);
+        }
+        return std::nullopt;
+    }
+    if (after_call || box.main == 0 || box.ring != 0 || box.asked) {
+        return std::nullopt;
+    }
+    u32 word = 0;  // only when the loader put the cave in (Hookshot: patch 0003's lift hook, not checkable here)
+#ifdef COOP_HOOKSHOT
+    word = CoopCounters::HookWord();
+#else
+    guest.Read(box.main + CoopCounters::kStartOffset, &word, 4);
+#endif
+    if (word != CoopCounters::HookWord()) {
+        box.asked = true;
+        LOG_INFO(Core, "coop: platforms: no counter cave (main+{:#x} holds {:#010x}): pause counters off",
+                 CoopCounters::kStartOffset, word);
+        return std::nullopt;
+    }
+    box.asked = true;
+    box.allocating = true;
+    CoopPuppet::Call c;
+    c.function = box.main + kMalloc;
+    c.x[0] = CoopCounters::kRingBytes;
+    return c;
+}
 constexpr u64 kPlayLogMs = 1000;  // a copy's replays of one name: one log line a second
 // LICHII_COOP_OBJECTS_HIT_REPLAY=1 (experiment): a life a copy must lose is
 // given to the game as a whole hit, written into the copy's Life component
@@ -1108,6 +1163,11 @@ public:
                                       std::uint64_t result, std::uint64_t now_ms) {
                                        return TheMover().Step(guest, after_call, result, now_ms);
                                    });
+                CoopSvc::AddCaller(kCountersCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t) {
+                                       return CounterRingStep(guest, after_call, result);
+                                   });
                 CoopSvc::AddCaller(kGrassCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call,
                                       std::uint64_t result, std::uint64_t now_ms) {
@@ -1487,6 +1547,9 @@ public:
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
+        if (platforms_mode_ != 0) {
+            Platforms(r, *scene, self, server_now_us, send);
+        }
         if (send.empty()) {
             return;
         }
@@ -1597,6 +1660,18 @@ public:
             }
             world_.Receive(m);
             return;
+        } else if (const auto* pc = std::get_if<coop::protocol::PlatformClock>(&m)) {
+            std::lock_guard lock(platforms_mutex_);  // taken on the present thread (Platforms)
+            if (platforms_in_.size() < 64) {
+                platforms_in_.push_back(*pc);
+            }
+            return;
+        } else if (const auto* pk = std::get_if<coop::protocol::PlatformCounter>(&m)) {
+            std::lock_guard lock(platforms_mutex_);
+            if (counters_in_.size() < 64) {
+                counters_in_.push_back(*pk);
+            }
+            return;
         }        sync_.Receive(m);
     }
 
@@ -1604,6 +1679,24 @@ public:
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
     CoopWorld::GimmickProbe gimmick_probe_;  // LICHII_COOP_GIMMICK_PROBE=1 turns it on
+    // Moving platforms (coop_platforms.h, issues 196 and 194).
+    // LICHII_COOP_PLATFORMS: on unless 0; "probe" finds and sends, never writes.
+    int platforms_mode_ = 1;  // 0 off, 1 on, 2 probe
+    CoopPlatforms::PlatformSync platforms_;
+    std::vector<CoopPlatforms::PlatformSync::Driver> platform_drivers_;
+    std::mutex platforms_mutex_;
+    std::vector<coop::protocol::PlatformClock> platforms_in_;  // under platforms_mutex_
+    std::vector<coop::protocol::PlatformCounter> counters_in_;  // under platforms_mutex_
+    CoopCounters::CounterSync counters_;
+    std::set<u64> counter_nodes_;  // the platform nodes the ring named, while their actor is here
+    CoopCounters::OtherNodes counter_others_;  // nodes of other actors (not Obj_), not read every look
+    std::string counter_scene_;
+    u32 ring_count_seen_ = 0;      // the ring's count at the last look
+    u64 ring_starts_ = 0;          // counter starts since the last line
+    u64 ring_overruns_ = 0;        // looks that found more starts than the ring holds
+    u64 counter_said_us_ = 0;
+    int counter_lines_ = 0;
+    std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
     bool scrubs_on_ = true;  // LICHII_COOP_SCRUBS=0 turns it off (issue 149)
@@ -1705,8 +1798,229 @@ private:
 
     // The shared actors of one whole walk, with life and place. False when
     // the list changed under us (try the next frame).
+    // Moving platforms (coop_platforms.h): our drivers' clocks out, the
+    // owners' clocks into ours.
+    void Platforms(Reader& r, const std::string& scene, u8 self, u64 server_now_us,
+                   std::vector<coop::protocol::Message>& send) {
+        {
+            std::vector<coop::protocol::PlatformClock> in;
+            {
+                std::lock_guard lock(platforms_mutex_);
+                in.swap(platforms_in_);
+            }
+            for (const auto& m : in) {
+                platforms_.Receive(m);
+            }
+        }
+        // Looping platforms' pause counters first (coop_counters.h): the
+        // clock-word path below leaves their actors alone.
+        Counters(r, scene, self, server_now_us, send);
+        if (const auto& looping = counters_.CounterOwners(); !looping.empty()) {
+            std::erase_if(platform_drivers_, [&](const auto& d) { return looping.contains(d.hash); });
+        }
+        const auto read = [&r](const CoopPlatforms::PlatformSync::Driver& d) {
+            auto words = CoopWorld::SignProbe::Read([&r](u64 a) { return r.Get<u64>(a); }, d.address);
+            if (!words.empty()) {
+                if (const u64 slot = AsSlot0(r, d.address); slot != 0) {
+                    if (const auto frame = r.Get<u32>(slot + kAsSlotFrame)) {
+                        words[CoopPlatforms::Key(CoopPlatforms::kRegionAsFrame, 0)] = *frame;
+                    }
+                }
+            }
+            return words;
+        };
+        CoopPlatforms::PlatformSync::Out out;
+        platforms_.Tick(scene, self, CoopEvery::NowUs(), server_now_us, platform_drivers_, player_, read,
+                        platforms_mode_ == 2, out);
+        for (auto& m : out.send) {
+            send.emplace_back(std::move(m));
+        }
+        for (const auto& w : out.writes) {
+            const u64 at = PlatformWordAt(r, w.address, w.key);
+            if (at == 0 || memory_ == nullptr || !memory_->IsValidVirtualAddressRange(at, 4)) {
+                continue;
+            }
+            u32 bits = 0;
+            std::memcpy(&bits, &w.value, 4);
+            memory_->Write32(at, bits);
+            if (platform_lines_ < 200) {
+                ++platform_lines_;
+                LOG_INFO(Core, "coop: platforms: {:016x} {} {:.3f} -> {:.3f}", w.hash,
+                         CoopPlatforms::Where(w.key), w.was, w.value);
+            }
+        }
+        for (const auto& line : out.notes) {
+            LOG_INFO(Core, "coop: platforms: {}", line);
+        }
+    }
+
+    // The pause counters (coop_counters.h): the nodes the cave kept, read.
+    void Counters(Reader& r, const std::string& scene, u8 self, u64 server_now_us,
+                  std::vector<coop::protocol::Message>& send) {
+        u64 ring = 0;
+        {
+            CounterRingBox& box = TheCounterRing();
+            std::lock_guard lock(box.mutex);
+            if (box.main != main_) {
+                // A new game boot in this process: a new ring for its heap (review).
+                box.ring = 0;
+                box.asked = false;
+                box.allocating = false;
+                counter_nodes_.clear();
+                counter_others_.Clear();
+                ring_count_seen_ = 0;
+            }
+            box.main = main_;
+            ring = box.ring;
+        }
+        {
+            std::vector<coop::protocol::PlatformCounter> in;
+            {
+                std::lock_guard lock(platforms_mutex_);
+                in.swap(counters_in_);
+            }
+            for (const auto& m : in) {
+                counters_.Receive(m);
+            }
+        }
+        if (scene != counter_scene_) {
+            counter_scene_ = scene;  // a new scene: its actors are new
+            counter_nodes_.clear();
+            counter_others_.Clear();
+        }
+        counter_others_.Keep([this](std::uint64_t actor) { return names_.contains(actor); });
+        const auto actor_of = [&](u64 node, u64* graph_out) -> u64 {
+            const u64 vtable = r.Get<u64>(node).value_or(0);
+            const u64 graph = vtable == main_ + CoopCounters::kNodeVtable
+                                  ? r.Get<u64>(node + CoopCounters::kNodeGraph).value_or(0)
+                                  : 0;
+            const u64 mid = graph ? r.Get<u64>(graph + CoopCounters::kGraphOwner).value_or(0) : 0;
+            if (graph_out != nullptr) {
+                *graph_out = graph;
+            }
+            return mid ? r.Get<u64>(mid + CoopCounters::kOwnerActor).value_or(0) : 0;
+        };
+        std::size_t named_new = 0;
+        if (ring != 0) {
+            std::array<u64, CoopCounters::kRingNodes> entries{};
+            for (std::size_t i = 0; i < entries.size(); ++i) {
+                entries[i] = r.Get<u64>(ring + 8 + 8 * i).value_or(0);
+            }
+            // Starts since the last look: more than the ring holds and some were lost.
+            const u32 count = r.Get<u32>(ring).value_or(0);
+            const u32 since = count - ring_count_seen_;
+            ring_count_seen_ = count;
+            ring_starts_ += since;
+            if (since > CoopCounters::kRingNodes) {
+                ++ring_overruns_;
+            }
+            for (const u64 node : CoopCounters::RingNodes(entries)) {
+                if (counter_nodes_.size() < 512 && !counter_nodes_.contains(node) &&
+                    !(counter_others_.Contains(node) && counter_others_.Skip(node, actor_of(node, nullptr)))) {
+                    counter_nodes_.insert(node);
+                    ++named_new;
+                }
+            }
+        }
+        std::vector<CoopCounters::Seen> seen;
+        for (auto it = counter_nodes_.begin(); it != counter_nodes_.end();) {
+            const u64 node = *it;
+            u64 graph = 0;
+            const u64 actor = actor_of(node, &graph);
+            const auto known = actor ? names_.find(actor) : names_.end();
+            if (known == names_.end()) {
+                it = counter_nodes_.erase(it);  // gone, reused, or its actor left the walk
+                continue;
+            }
+            if (!CoopCounters::IsPlatformOwner(known->second.first)) {
+                // An enemy's, an NPC's, Link's: not read again while it is
+                // that actor's (CoopCounters::OtherNodes).
+                counter_others_.Add(node, actor);
+                it = counter_nodes_.erase(it);
+                continue;
+            }
+            ++it;
+            CoopCounters::Seen s;
+            s.node = node;
+            s.owner_name = known->second.first;
+            s.owner_hash = known->second.second;
+            s.remaining = r.Get<float>(node + CoopCounters::kNodeRemaining).value_or(0.0f);
+            s.duration = r.Get<float>(node + CoopCounters::kNodeDuration).value_or(0.0f);
+            s.key = CoopCounters::KeyOf(s.owner_hash, s.duration, node, graph);
+            seen.push_back(std::move(s));
+        }
+        // What the ring caught, every 10 s while a platform counter is near
+        // (the 2026-11-12 run had no counter line at all; this says why).
+        if (ring != 0 && counter_lines_ < 60 &&
+            (counter_said_us_ == 0 || server_now_us >= counter_said_us_ + 10'000'000)) {
+            counter_said_us_ = server_now_us;
+            ++counter_lines_;
+            std::string platforms;
+            for (std::size_t i = 0; i < seen.size() && i < 6; ++i) {
+                platforms += fmt::format(" {} {:.1f}/{:.1f}", seen[i].owner_name, seen[i].remaining,
+                                         seen[i].duration);
+            }
+            LOG_INFO(Core,
+                     "coop: platforms: pause counters: {} starts in 10 s ({} looks overran the ring), "
+                     "{} new nodes now, {} platform nodes, {} other actors' nodes, {} looping:{}",
+                     ring_starts_, ring_overruns_, named_new, seen.size(), counter_others_.Size(),
+                     counters_.LoopingOwners().size(), platforms);
+            ring_starts_ = 0;
+            ring_overruns_ = 0;
+        }
+        CoopCounters::CounterSync::Out out;
+        counters_.Tick(scene, self, server_now_us, seen, platforms_mode_ == 2, out);
+        for (auto& m : out.send) {
+            send.emplace_back(std::move(m));
+        }
+        for (const auto& w : out.writes) {
+            if (platforms_mode_ == 2 || memory_ == nullptr ||
+                !memory_->IsValidVirtualAddressRange(w.node + CoopCounters::kNodeRemaining, 4)) {
+                continue;  // LICHII_COOP_PLATFORMS=probe: logged, not written
+            }
+            u32 bits = 0;
+            std::memcpy(&bits, &w.remaining, 4);
+            memory_->Write32(w.node + CoopCounters::kNodeRemaining, bits);
+        }
+        for (const auto& line : out.notes) {
+            LOG_INFO(Core, "coop: platforms: {}", line);
+        }
+    }
+
+    // The actor's AS slot 0, or 0 (the chain Animation reads).
+    static u64 AsSlot0(Reader& r, u64 actor) {
+        const u64 table = r.Get<u64>(actor + kActorComponents).value_or(0);
+        const u64 as = table ? r.Get<u64>(table + kComponentsAs).value_or(0) : 0;
+        const u64 inner = as ? r.Get<u64>(as + kAsInner).value_or(0) : 0;
+        const u64 controller = inner ? r.Get<u64>(inner + kAsController).value_or(0) : 0;
+        const u64 array = controller ? r.Get<u64>(controller + kAsSlotArray).value_or(0) : 0;
+        return array ? r.Get<u64>(array).value_or(0) : 0;
+    }
+
+    // Where a PLATFORM_CLOCK key is in this actor, or 0.
+    static u64 PlatformWordAt(Reader& r, u64 actor, std::uint64_t key) {
+        const std::uint64_t region = key >> 32;
+        const std::uint64_t offset = key & 0xffffffffu;
+        if (region == CoopPlatforms::kRegionAsFrame) {
+            const u64 slot = AsSlot0(r, actor);
+            return slot ? slot + kAsSlotFrame : 0;
+        }
+        if (region == CoopPlatforms::kRegionActor) {
+            return offset < coop::protocol::kPlatformActorBytes ? actor + offset : 0;
+        }
+        if (region < CoopPlatforms::kRegionComponent ||
+            region - CoopPlatforms::kRegionComponent >= coop::protocol::kPlatformComponents ||
+            offset >= coop::protocol::kPlatformComponentBytes) {
+            return 0;
+        }
+        const u64 table = r.Get<u64>(actor + kActorComponents).value_or(0);
+        const u64 c = table ? r.Get<u64>(table + 8 * (region - CoopPlatforms::kRegionComponent)).value_or(0) : 0;
+        return c ? c + offset : 0;
+    }
+
     bool Collect(Reader& r, std::vector<Seen>& out) {
         gimmicks_.clear();  // dungeon gimmicks for the probe
+        platform_drivers_.clear();
         scrubs_seen_.clear();  // issue 149
         std::vector<u64> actors;
         if (!List(r, actors)) {
@@ -1791,6 +2105,16 @@ private:
                     sc.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
                 scrubs_seen_.push_back(std::move(sc));
+            }
+            if (platforms_mode_ != 0 && CoopPlatforms::IsDriver(known.first)) {
+                CoopPlatforms::PlatformSync::Driver d;  // moving platforms (coop_platforms.h)
+                d.address = a;
+                d.hash = known.second;
+                d.name = known.first;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    d.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                platform_drivers_.push_back(std::move(d));
             }
             if (gimmick_probe_on_ && CoopWorld::IsGimmick(known.first)) {
                 CoopWorld::GimmickProbe::Gimmick g;
@@ -2548,6 +2872,10 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        {
+            const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
+            objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
+        }
         objects.scrubs_on_ = EnvOn("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
         objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given

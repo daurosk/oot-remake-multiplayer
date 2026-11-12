@@ -65,6 +65,7 @@ struct FlagStats {
   std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
   std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
   std::uint64_t doubled_gains = 0;     // a chest opened again here: its gain taken back (expect_doubled_gain)
+  std::uint64_t entries_unsent = 0;    // entries a message kind cannot carry: left out, the rest sent
 };
 
 class FlagWatcher {

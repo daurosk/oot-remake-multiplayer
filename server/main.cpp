@@ -241,33 +241,19 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
-  // A forward opens this PC to the whole internet while the server runs:
-  // never without a join password (issue 165; --allow alone is not enough:
-  // the password is the lock, an address can be shared).
-  if (line->upnp && line->password.empty()) {
+  // Every session has a join password: it lets players in and makes the
+  // traffic keys, so nothing goes plain (docs/protocol.md "Encrypted
+  // traffic"). This also covers --upnp (issue 165), the invite code and join
+  // helper (they carry the password, punches are signed with it) and
+  // --relay-via (every relayed guest is 127.0.0.1, so --allow cannot tell
+  // them apart). Only the relay itself (--relay) needs none: it forwards
+  // sealed bytes it cannot read.
+  if (!line->relay && line->password.empty()) {
     std::fprintf(stderr,
-                 "coop_server: --upnp (upnp = yes) opens this PC's port to the whole internet, so it "
-                 "needs a join password (server_password) as well. The server was not started.\n");
-    return 2;
-  }
-  // An invite code holds the join password, and punches are signed with it:
-  // no invite (and no join helper) without one.
-  if ((line->invite || !line->join.empty()) && line->password.empty()) {
-    std::fprintf(stderr,
-                 "coop_server: --invite and --join need a join password (server_password, or the one in the "
-                 "invite code). The server was not started.\n");
-    return 2;
-  }
-  // The relay lets guests in by their internet address once one of them sent
-  // the code, so others on that address (CGNAT, dorm, hotspot) get in without
-  // it, and every relayed guest is 127.0.0.1 here, so --allow cannot tell them
-  // apart. The join code only finds the host; the password is the lock.
-  if (!line->relay_via.empty() && line->password.empty()) {
-    std::fprintf(stderr,
-                 "coop_server: --relay-via (relay = ...) needs a join password (server_password): the "
-                 "join code only finds your server, the password keeps strangers out. server_allow is "
-                 "not enough, because every guest through the relay comes from this PC (127.0.0.1). "
-                 "The server was not started.\n");
+                 "coop_server: a join password is needed: every session has one, and it also "
+                 "encrypts the traffic. Give one with --password TEXT or --password-env NAME. "
+                 "With the kit, Host.bat / Host.sh make a new random one when server_password in "
+                 "coop-options.ini is empty or missing. The server was not started.\n");
     return 2;
   }
 #ifdef _WIN32
@@ -309,6 +295,7 @@ int main(int argc, char** argv) {
     }
     options.session.join_password = line->password;
     options.session.pvp = line->pvp;
+    if (line->owner_hold_ms) options.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
     options.bind = line->bind;
     options.session.log = [](const std::string& text) {
       std::printf("coop_server: %s\n", text.c_str());
@@ -331,9 +318,7 @@ int main(int argc, char** argv) {
       std::printf("coop_server: listening on port %u (%s, datagrams of %u bytes)\n",
                   static_cast<unsigned>(server.port()), where.c_str(),
                   static_cast<unsigned>(coop::protocol::kDatagramBytes));
-      if (!line->password.empty()) {
-        std::printf("coop_server: players must give the join password to join\n");
-      }
+      std::printf("coop_server: players must give the join password to join; the traffic is encrypted\n");
       if (line->pvp) {
         std::printf("coop_server: PvP is on: players can hurt each other\n");
       }

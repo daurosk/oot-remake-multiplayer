@@ -1,0 +1,32 @@
+# hs-kak-letter, B: gets the letter too, tries the shut gate first (it must stop B), then walks through
+# once A has shown the letter (see hs-kak-letter.A.txt). As kak-gate.B, with the give and later times.
+mark start
+warp KakarikoVillage_Child Kakariko_MountainTrailSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Item_ZeldaLetter.StockNum
+wait 60
+give IsGet.Item_ZeldaLetter
+mark b-before
+goto -42.4 2.0 1.5 300     # into the village before the letter: the gate should stop B
+mark b-stopped
+goto -41.2 -16.0 1.5 300   # back to the start
+wait 2100                  # A shows the letter (talk, then ZR)
+toward -42.36 -13.02 10
+press ZL 10
+mark open
+wait 300
+mark b-walk
+goto -42.4 2.0 1.5 600     # through the gate now
+mark b-through
+wait 600
+mark end

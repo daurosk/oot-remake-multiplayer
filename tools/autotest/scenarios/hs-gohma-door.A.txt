@@ -1,0 +1,77 @@
+# hs-gohma-door (Hookshot and emulator, issue 178): gohma-movein with the boss flags cleared in the
+# saved games BEFORE the run. In bigrun3 both games cleared the 8 Deku boss flags with setflag after
+# the load ("test setflag ... set" x8 each), and still no Gohma, "boss: no intro": the room's one-shot
+# trigger (Area_6c3c -> EventRequestActor InsideTheDekuTree_BossArea_ShutIn -> EntryBossRoom) reads them
+# when the Deku Tree loads, before any setflag can run. The Hookshot pairs' baseline has them set too
+# (save_flags.py get on hookshot-A, 2026-11-12: 0xffde6400 0x00c0a2f6 0x66b97a4a 0xe44433dc 0x88b1b922
+# 0x3d5c0bad all 1). Cause: the test setup, no code.
+# BEFORE the run (games closed; save_flags.py takes a Hookshot pair's baseline since save-flags-hookshot):
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0xffde6400=0 bool:0x00c0a2f6=0 bool:0x66b97a4a=0 bool:0xe44433dc=0 bool:0x88b1b922=0 bool:0x3d5c0bad=0
+#   for hookshot-A and hookshot-B (emulator kits: <kit>\autotest-save\*\0400486024DEC000\slot_0*\progress.sav),
+#   and put them back from <pair>\autotest-save-backup afterwards.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-gohma-door (emulator: -Scenario gohma-movein)
+# Pass: "+ Enemy_DungeonBoss_Gohma" in both logs; A "coop: boss: in the boss room of InsideTheDekuTree"
+# and "past the door (shut in)"; B "another player is in the boss room of InsideTheDekuTree: moving in
+# (try 1)" only after it. Still no Gohma with the baselines cleared: the trigger needs more (say so on #178).
+# gohma-movein's own notes follow.
+# gohma-movein (was gohma-door on boss-movein-2) (#148, branch boss-movein-2): A loads into the Deku Tree and is put in Gohma's room
+# (loads at the entrance, clears the kit save's Deku boss flags, is put in the corridor and walks
+# in through the door like gohma-door; a warp straight into the room came before any setflag
+# could run, and the save had the trap event played, issue 178), then walks to the room's edge
+# and back; B
+# loads at the Deku Tree's entrance and stays there. B must be moved in only after A's game says A
+# is past the door, and A is never moved and never outside a shut door.
+# Expect A: "coop: boss: in the boss room of InsideTheDekuTree", the debug lines "phase ..., shut
+# in 0/1" (write down when the door sets ShutIn), then "past the door (shut in)" (in the Deku
+# Tree the flag decides, so never "the intro is over"), never "moving in". Any "that event was not
+# the intro" line must come while A's shut in is 0. B: no "moving in" before A's "past the door" line
+# (compare the times); after it, within about 1 s, "another player is in the boss room of
+# InsideTheDekuTree: moving in (try 1)", then "moved Link to" or "asked the scene change".
+# Screenshots at b-in: both inside the room, the door behind them shut in each game for its own
+# Link only (A's door state is A's own: the ShutIn flag is not shared).
+# Expect also 8x "coop: test setflag ... (bool) 0: set" in both logs. If ShutIn stays 0 after the
+# door, B is never moved: inconclusive, not a failure.
+# Only the hand route (reports/boss-movein-2.md, check 2) can prove issue 148 fixed.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+# The kit saves have the Deku Tree beaten (issue 178, gohma-door-b): Gohma_DefeatBoss and
+# Dm_Deku_BossOut were cleared, but the trap event, the intro and the room's battle state were
+# still marked as played, so the boss room's one-shot trigger (Area_6c3c -> EventRequestActor
+# InsideTheDekuTree_BossArea_ShutIn -> EntryBossRoom) never fired. Clear them in this game only
+# (none is shared) while still in the entrance room, before the boss room loads.
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 240
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 1800               # the door's event and the intro
+goto 7.5 95 1.5 900     # the room's edge, toward the circle's rim
+mark a-at-edge
+goto 6.7 67.6 1.5 900   # back to the centre
+mark b-in
+wait 1800
+mark end

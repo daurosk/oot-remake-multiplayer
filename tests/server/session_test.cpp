@@ -52,6 +52,9 @@ struct Sent {
 // Runs the session and splits what it asked for into decoded sends and
 // disconnects.
 struct Harness {
+  static constexpr const char* kTestPassword = "test-pass";
+  bool auto_answer;      // declared before session: the constructor sets these first
+  std::string password;
   Session session;
   std::vector<Sent> sent;
   std::vector<ConnectionId> dropped;
@@ -71,7 +74,27 @@ struct Harness {
   std::map<ConnectionId, RejoinTokenBytes> tokens;
   std::uint64_t now = 1'000'000;
 
-  explicit Harness(SessionConfig config = {}) : session(std::move(config)) {}
+  // Every session has a join password (there is no plain way in). A config
+  // without one gets kTestPassword, and the harness answers each challenge
+  // with its right proof at once, so the tests that are not about the
+  // password see HELLO -> WELCOME as before (the challenge is kept out of
+  // `sent`). A config with its own password is driven by hand.
+  // The owner hold after a start (SessionConfig::owner_hold_us) is off unless
+  // a test asks for it: the object tests see the first lister own at once.
+  explicit Harness(SessionConfig config = {}, bool owner_hold = false)
+      : auto_answer(config.join_password.empty()),
+        password(auto_answer ? std::string(kTestPassword) : config.join_password),
+        session(with_join_password(owner_hold ? std::move(config) : hold_off(std::move(config)), password)) {}
+
+  static SessionConfig hold_off(SessionConfig config) {
+    config.owner_hold_us = 0;
+    return config;
+  }
+
+  static SessionConfig with_join_password(SessionConfig config, const std::string& password) {
+    config.join_password = password;
+    return config;
+  }
 
   void collect() {
     for (Action& a : session.take_actions()) {
@@ -89,6 +112,10 @@ struct Harness {
         }
         if (const auto* challenge = std::get_if<JoinChallenge>(&m)) {
           if (challenge->key_share) server_shares[challenge->nonce] = *challenge->key_share;
+          if (auto_answer) {
+            to_answer.emplace_back(s->to, challenge->nonce);
+            continue;
+          }
         }
         sent.push_back({s->to, s->channel, m});
       } else if (auto* d = std::get_if<DisconnectAction>(&a)) {
@@ -97,7 +124,15 @@ struct Harness {
         encrypted.push_back(std::get<EncryptAction>(a).who);
       }
     }
+    // The game's answer, as a real one sends it right after the challenge.
+    std::vector<std::pair<ConnectionId, JoinNonce>> answer = std::move(to_answer);
+    to_answer.clear();
+    for (const auto& [id, nonce] : answer) {
+      session.received(id, kChannelSession, bytes_of(JoinProof{proof(password, nonce)}), now);
+      collect();
+    }
   }
+  std::vector<std::pair<ConnectionId, JoinNonce>> to_answer;
 
   void connect(ConnectionId id, std::optional<std::uint32_t> address = std::nullopt) {
     REQUIRE(session.connected(id, now, address));
@@ -317,6 +352,41 @@ TEST_CASE("a player who leaves is reported to the others and frees the number") 
   Welcome w = h.join(4, "Darunia");
   CHECK(w.player_number == 2);
   CHECK(w.players.size() == 2);
+}
+
+// Stray (2026-11-12): after a server restart the games came back in the order
+// they noticed it, so A (was 1) became 2 and B (was 2) became 1. With their
+// previous numbers in HELLO (protocol 10) they keep them.
+TEST_CASE("a restarted server gives each game back its previous number when free") {
+  Harness h;
+  Hello b = hello_from("B");
+  b.previous_number = 2;
+  h.connect(1);
+  h.receive(1, b, kChannelSession);
+  Welcome wb;
+  for (const auto& s : h.to(1)) {
+    if (const auto* w = std::get_if<Welcome>(&s.message)) wb = *w;
+  }
+  CHECK(wb.player_number == 2);  // B came back first, still 2
+  Hello a = hello_from("A");
+  a.previous_number = 1;
+  h.connect(2);
+  h.receive(2, a, kChannelSession);
+  Welcome wa;
+  for (const auto& s : h.to(2)) {
+    if (const auto* w = std::get_if<Welcome>(&s.message)) wa = *w;
+  }
+  CHECK(wa.player_number == 1);
+  // A number already taken is not given twice: the lowest free one instead.
+  Hello c = hello_from("C");
+  c.previous_number = 1;
+  h.connect(3);
+  h.receive(3, c, kChannelSession);
+  Welcome wc;
+  for (const auto& s : h.to(3)) {
+    if (const auto* w = std::get_if<Welcome>(&s.message)) wc = *w;
+  }
+  CHECK(wc.player_number == 3);
 }
 
 TEST_CASE("relayed messages carry the sender's real number, on the channel they came in on") {
@@ -1431,6 +1501,83 @@ TEST_CASE("the first game to report a placed object owns it, epoch 0") {
   CHECK(std::get<ObjectOwner>(h.sent[0].message) == ObjectOwner{placed(7), 1, 0, 0});
   // OBJECT_PRESENT itself is not relayed.
   CHECK(h.session.stats().relayed == 0);
+}
+
+// The owner hold after a (re)start (SessionConfig::owner_hold_us, stray
+// 2026-11-12): B came back first and listed the Graveyard first, so it got
+// every object A owned before; A's game aborted when its live actors all
+// became copies at once.
+struct HoldHarness : Harness {
+  HoldHarness() : Harness({}, true) {
+    join(1, "A");  // player 1 (the old owner, keep-number)
+    join(2, "B");  // player 2
+    clear();
+  }
+  void tick(std::uint64_t by) {
+    now += by;
+    session.tick(now);
+    collect();
+  }
+};
+
+TEST_CASE("after a start, objects get no owner until the hold ends, then the lowest player number") {
+  HoldHarness h;
+  h.receive(2, present_in("Graveyard", {placed(7), placed(8)}), kChannelOwnership);   // B lists first
+  h.now += 20'000;
+  h.receive(1, present_in("Graveyard", {placed(7), placed(8)}), kChannelOwnership);   // A, 20 ms later
+  CHECK(messages_to<ObjectOwner>(h, 1).empty());   // nobody is told an owner yet
+  CHECK(messages_to<ObjectOwner>(h, 2).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(0, 0));
+  h.tick(1'000'000);
+  CHECK(h.session.object_owner(placed(7)) == owned(0, 0));   // still in the hold
+  h.tick(1'000'000);                                          // 2 s after B's listing
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  CHECK(h.session.object_owner(placed(8)) == owned(1, 0));
+  // Both games in the Graveyard are told, once, epoch 0: no owner change for anyone.
+  for (ConnectionId id : {ConnectionId{1}, ConnectionId{2}}) {
+    const auto told = messages_to<ObjectOwner>(h, id);
+    REQUIRE(told.size() == 2);
+    CHECK(told[0].owner == 1);
+    CHECK(told[0].epoch == 0);
+  }
+  CHECK(h.session.stats().owners_held == 2);
+  CHECK(h.session.stats().owner_changes == 0);
+}
+
+TEST_CASE("after the hold the old rule: the first game to list a new object owns it at once") {
+  HoldHarness h;
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.tick(2'000'000);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 0));   // B alone listed it: B's
+  h.clear();
+  h.receive(2, present_in("Graveyard", {placed(7), placed(9)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(9)) == owned(2, 0));   // listed after the hold: B's at once
+  CHECK(messages_to<ObjectOwner>(h, 2) == std::vector<ObjectOwner>{{placed(9), 2, 0, 0}});
+  h.clear();
+  h.receive(1, present_in("Graveyard", {placed(7), placed(9)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(9)) == owned(2, 0));   // A only learns it
+  CHECK(messages_to<ObjectOwner>(h, 1).size() == 2);
+}
+
+TEST_CASE("a held object nobody lists any more at the end of the hold is forgotten, then owned anew") {
+  HoldHarness h;
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);   // B's game unloads it
+  h.tick(2'000'000);
+  CHECK_FALSE(h.session.object_owner(placed(7)).has_value());
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+}
+
+TEST_CASE("owner_hold_us 0: the first game to list owns at once, as before the hold") {
+  SessionConfig config;
+  config.owner_hold_us = 0;
+  Harness h(config, true);
+  h.join(1, "A");
+  h.join(2, "B");
+  h.clear();
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 0));
 }
 
 TEST_CASE("object samples go only from the owner of the current epoch, to its scene") {
@@ -3329,11 +3476,10 @@ TEST_CASE("join password: one HELLO, one nonce: a second HELLO gets no new chall
   CHECK(h.session.player_count() == 1);
 }
 
-TEST_CASE("join password: off, HELLO is welcomed at once and a proof is never relayed") {
-  Harness h;
+TEST_CASE("join password: a joined player's JOIN_PROOF is dropped, never relayed") {
+  Harness h;  // the harness's own password, answered by it
   h.join(1, "Link");
   h.join(2, "Zelda");
-  for (const Sent& s : h.sent) CHECK_FALSE(std::holds_alternative<JoinChallenge>(s.message));
   h.clear();
   h.receive(1, JoinProof{}, kChannelSession);
   CHECK(h.sent.empty());
@@ -3722,6 +3868,47 @@ TEST_CASE("a gimmick event start goes to the others in the sender's scene only, 
   CHECK(messages_to<DungeonEvent>(h, 3).empty());
 }
 
+TEST_CASE("a platform clock goes to the others in the sender's scene only, never kept (platforms-b)") {
+  ObjectHarness h;
+  h.receive(1, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  h.receive(2, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  h.receive(3, sample_in("KokiriForest"), kChannelPlayerSamples);
+  h.clear();
+  PlatformClock p;
+  p.player_number = 0;  // ours: the server writes the sender
+  p.scene = "DodongoCavern";
+  p.server_time_us = 5'000'000;
+  p.ticks.push_back({0x7f36b7404e6b5890ull, (std::uint64_t{4} << 32) | 0x30, 2.5f, 1.0f, 0.0f});
+  h.receive(1, p, kChannelObjectSamples);
+  const auto got = messages_to<PlatformClock>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().player_number == 1);
+  CHECK(got.front().ticks == p.ticks);
+  CHECK(got.front().server_time_us == p.server_time_us);
+  CHECK(messages_to<PlatformClock>(h, 1).empty());
+  CHECK(messages_to<PlatformClock>(h, 3).empty());
+  h.clear();
+  p.scene = "KokiriForest";  // a scene the sender is not in (late): dropped
+  h.receive(1, p, kChannelObjectSamples);
+  CHECK(messages_to<PlatformClock>(h, 3).empty());
+  h.clear();
+  h.receive(3, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  CHECK(messages_to<PlatformClock>(h, 3).empty());  // not kept
+  // The pause counters (platforms-b2) go the same way.
+  h.clear();
+  PlatformCounter k;
+  k.scene = "DodongoCavern";
+  k.server_time_us = 6'000'000;
+  k.ticks.push_back({0xabcdefull, 3'000'000, 500'000, 4});
+  h.receive(2, k, kChannelObjectSamples);
+  const auto counters = messages_to<PlatformCounter>(h, 3);
+  REQUIRE(counters.size() == 1);
+  CHECK(counters.front().player_number == 2);
+  CHECK(counters.front().ticks == k.ticks);
+  CHECK(messages_to<PlatformCounter>(h, 1).size() == 1);  // all three are in DodongoCavern now
+  CHECK(messages_to<PlatformCounter>(h, 2).empty());      // not back to the sender
+}
+
 // --- Encrypted traffic (docs/protocol.md "Encrypted traffic") ---
 
 TEST_CASE("encrypted traffic: a right proof switches the connection to its keys first") {
@@ -3771,7 +3958,7 @@ TEST_CASE("encrypted traffic: a wrong proof gets no keys") {
   CHECK(refused->reason == RefuseReason::bad_password);
 }
 
-TEST_CASE("encrypted traffic: with a password, a HELLO without a key share is refused") {
+TEST_CASE("encrypted traffic: a HELLO without a key share is refused before the challenge") {
   Harness h(with_password("hunter2"));
   h.connect(1);
   h.clear();
@@ -3786,20 +3973,43 @@ TEST_CASE("encrypted traffic: with a password, a HELLO without a key share is re
   CHECK(h.session.player_count() == 0);
 }
 
-TEST_CASE("encrypted traffic: without a password the traffic stays plain") {
-  Harness h;
-  h.connect(1);
-  h.clear();
-  h.receive(1, hello_from("Link"), kChannelSession);  // with a key share
-  CHECK(h.encrypted.empty());
-  CHECK(messages_to<Welcome>(h, 1).size() == 1);  // the first player also gets HOST and FLAG_SNAPSHOT
+TEST_CASE("encrypted traffic: a session without a join password lets nobody in") {
+  // coop_server does not start without one; the session refuses as well.
+  Session open{SessionConfig{}};
+  REQUIRE(open.connected(1, 0, std::nullopt));
+  open.take_actions();
+  open.received(1, kChannelSession, bytes_of(hello_from("Link")), 0);
+  bool refused = false;
+  for (const Action& a : open.take_actions()) {
+    CHECK_FALSE(std::holds_alternative<EncryptAction>(a));
+    if (const auto* send = std::get_if<SendAction>(&a)) {
+      Message m;
+      REQUIRE(decode(send->bytes, m) == Error::none);
+      CHECK_FALSE(std::holds_alternative<Welcome>(m));
+      CHECK_FALSE(std::holds_alternative<JoinChallenge>(m));
+      if (const auto* r = std::get_if<Refused>(&m)) refused = r->reason == RefuseReason::bad_password;
+    }
+  }
+  CHECK(refused);
+  CHECK(open.player_count() == 0);
+}
+
+TEST_CASE("encrypted traffic: every join is keyed, and a HELLO without a key share is refused") {
+  Harness h;  // the default test password, answered by the harness
+  h.join(1, "Link");
+  CHECK(h.encrypted == std::vector<ConnectionId>{1});
   Hello plain = hello_from("Zelda");
-  plain.key_share.reset();
+  plain.key_share.reset();  // an older game, or someone took it out on the way
   h.connect(2);
   h.clear();
   h.receive(2, plain, kChannelSession);
-  CHECK(messages_to<Welcome>(h, 2).size() == 1);
-  CHECK(h.encrypted.empty());
+  CHECK(messages_to<Welcome>(h, 2).empty());
+  const auto refused = only_message_to<Refused>(h, 2);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::wrong_protocol_version);
+  CHECK(h.session.stats().no_key_share == 1);
+  CHECK(h.encrypted == std::vector<ConnectionId>{1});
+  CHECK(h.session.player_count() == 1);
 }
 
 TEST_CASE("encrypted traffic: a proof for other key shares (a relay in the middle) is refused") {

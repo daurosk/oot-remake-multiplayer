@@ -120,8 +120,7 @@ function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
     if ($Access.Upnp) {
         if (-not $Password) {
             $notes += 'The router forward (UPnP) is NOT used: it opens your PC to the whole internet while the server'
-            $notes += 'runs, so it needs a join password. coop-options.ini has an empty server_password line: delete it'
-            $notes += '(Host.bat then makes a password each time) or set one.'
+            $notes += 'runs, so it needs the join password, and none was given (Host.bat always makes one).'
         }
         else {
             $list += '--upnp'
@@ -131,8 +130,7 @@ function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
     }
     if ($Access.Invite) {
         if (-not $Password) {
-            $notes += 'No invite code: it carries the join password, and coop-options.ini says none (an empty'
-            $notes += 'server_password line). Delete that line to get one.'
+            $notes += 'No invite code: it carries the join password, and none was given (Host.bat always makes one).'
         }
         else {
             $list += '--invite'
@@ -153,7 +151,7 @@ function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
         elseif (-not $Password) {
             # server_allow is not enough: every guest through the relay comes from 127.0.0.1.
             $notes += 'relay = ... is NOT used: the join code only finds your server, the join password keeps'
-            $notes += 'strangers out, so set server_password in coop-options.ini as well (server_allow is not enough).'
+            $notes += 'strangers out, and none was given (Host.bat always makes one; server_allow is not enough).'
         }
         else {
             $list += @('--relay-via', $Access.Relay)

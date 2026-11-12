@@ -1,0 +1,42 @@
+# hs-ocarina-given, B: ocarina-given's B (see hs-ocarina-given.A.txt).
+# ocarina-given (#190), B's part: see ocarina-given.A.txt.
+mark start
+wait 240
+mark before
+press DLEFT 12
+wait 240
+mark out
+mark note-A
+press A 12
+wait 120
+mark note-down
+press L 12
+wait 120
+mark note-right
+press R 12
+wait 120
+mark note-left
+press Y 12
+wait 120
+mark note-up
+press X 12
+wait 120
+mark saria
+press L 12
+wait 40
+press R 12
+wait 40
+press Y 12
+wait 40
+press L 12
+wait 40
+press R 12
+wait 40
+press Y 12
+wait 40
+wait 300
+mark after-song
+press B 12
+wait 120
+press B 12
+wait 90

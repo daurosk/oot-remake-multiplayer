@@ -80,11 +80,9 @@ if ((!KA_PASSWORD_SET)); then
     password=${OOT_COOP_SESSION_PASSWORD:-$(kit_new_password)}
     made_password=1
 fi
-if [[ -n $password ]]; then
-    coop_test_password "$password" || { echo 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1; }
-    export OOT_COOP_SERVER_PASSWORD=$password
-    access+=(--password-env OOT_COOP_SERVER_PASSWORD)
-fi
+coop_test_password "$password" || { echo 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1; }
+export OOT_COOP_SERVER_PASSWORD=$password
+access+=(--password-env OOT_COOP_SERVER_PASSWORD)
 kit_hosting_args "$password"
 access+=("${HOSTING_ARGS[@]}")
 [[ -n $KA_RELAY_KEY ]] && export OOT_COOP_RELAY_KEY=$KA_RELAY_KEY
@@ -104,11 +102,10 @@ echo "Players on this PC use 127.0.0.1. Log: $log"
 if ((made_password)); then
     echo 'Join password: a new random one for this session; it is inside the invite code (server_password in coop-options.ini sets your own).'
     echo "Join password for this session: $password   (only needed when a friend joins by address instead of the invite code)"
-elif [[ -n $password ]]; then
-    echo 'Join password: on (server_password in coop-options.ini). Send it to your friends with the address.'
 else
-    echo 'Join password: none (set one with server_password in coop-options.ini).'
+    echo "Join password: $password   (server_password in coop-options.ini). Send it to your friends with the address."
 fi
+echo 'Every session has a join password, and the traffic is encrypted with it.'
 if ((KA_PVP)); then echo 'PvP: on (pvp in coop-options.ini): players can hurt each other. /pvp off in the game chat turns it off.'
 else echo 'PvP: off (players cannot hurt each other; pvp = on in coop-options.ini, or /pvp on in the game chat).'; fi
 for line in "${HOSTING_NOTES[@]}"; do echo "$line"; done

@@ -50,7 +50,7 @@ Checked at 0x838960 (binary search, value at +0xc) and 0xba24b0 (applier). The s
 
 ### The queue word
 
-Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back to 0 after 255), bits 28–31 are a round number that the applier moves on (wrapping after 14) each time it empties the queue. A setter takes a slot with compare-and-swap on the word, writes the slot, then counts it finished with a second compare-and-swap. When the round changed between the two, or the queue was full, it calls 0x34fc280 (not read). Checked at 0x682b20.
+Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back to 0 after 255), bits 28–31 are a round number that the applier moves on (wrapping after 14) each time it empties the queue. A setter takes a slot with compare-and-swap on the word, writes the slot, then counts it finished with a second compare-and-swap. When the round changed between the two, or the queue was full, it calls 0x34fc280, which ends the game (result 2162-0001). Checked at 0x682b20 and 0x608a10 (a second Bool setter, table at x0). Our writes therefore take a slot only while fewer than half the queue's slots are taken, and never write a value the game already holds (issue 175: a join snapshot written at once filled the Bool queue, and an actor's own set in Graveyard_Child ended the game).
 
 ## Functions
 
@@ -170,5 +170,5 @@ A tester (2026-11-11): every player loaded a save by hand, and a guest whose own
 ## Not done
 
 1. Float, Enum and the other types (UInt is read, above): their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
-2. 0x34fc280, called when a write is late or the queue is full.
+2. The queue sizes (read at run time, never logged).
 3. BoolArray writes, Struct (+0xc20) and BoolExp (+0xc48).

@@ -36,6 +36,7 @@ add_executable(coop_tests
   lichii/camera_test.cpp
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
+  lichii/puppet_config_test.cpp
   lichii/callers_test.cpp
   lichii/fairy_test.cpp
   lichii/rooms_test.cpp
@@ -51,6 +52,8 @@ add_executable(coop_tests
   lichii/chests_test.cpp
   lichii/colors_test.cpp
   lichii/dungeon_test.cpp
+  lichii/platforms_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_platforms.cpp
+  lichii/counters_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_counters.cpp
   lichii/quest_test.cpp
   lichii/story_test.cpp
   lichii/quests_test.cpp
@@ -91,6 +94,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pose.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet_config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_world.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
@@ -104,7 +108,11 @@ add_executable(coop_tests
 )
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)
 # The Hookshot module and our patch to Hookshot (hookshot/): what can be checked without the game.
-target_sources(coop_tests PRIVATE hookshot/module_test.cpp)
+target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_draw.cpp
+  hookshot/chatbox_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_chatbox.cpp
+  hookshot/cheats_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_cheats_panel.cpp
+  hookshot/png_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_png.cpp)
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src)
 target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host coop_overlay doctest::doctest coop_warnings)
 # The session tests run the real server in process.

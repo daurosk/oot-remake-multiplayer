@@ -1,0 +1,123 @@
+# The Hookshot parity run (reports/hookshot-parity.md, "Big-run checks"): every hs-* scenario on integrate-p12, in
+# three groups that play at the same time (tools/autotest/groups.py; docs/testing.md, "Hookshot test loop").
+# Group N plays on <kit>\hookshot-A<N> + -B<N>, port 27560 + 10*(N-1), pipes coop-auto-g<N>-A/-B.
+# BLOCKER from main (docs/hookshot.md, proofs 3 and 4): the module refuses to make other players' Link
+# (CoopPuppet_*) on Hookshot because making one crashed it; LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 makes them
+# again and the game then crashes. Every run that reads puppet lines (g1, hs-ocarina-show, hs-teleport-room's
+# 'next to', hs-door, hs-gohma) proves nothing until that crash is fixed (B's hs-crash-b) or is run with the
+# switch on a build that has the fix. Runs without puppets (world, flags, drops, overlay text) are not affected.
+# g5 and g6 (hs-scenarios-2) need nothing done to the saves; the other groups' steps are below.
+# Hookshot must be built with integrate-p12's patch (hs.py build): the module's start line must NOT end in
+# "gives no pad word" (expect= cannot check an absence: look once in any run's hookshot_log-A.txt).
+# Before `groups.py run`:
+#  - g3's hs-ladder: clear the ladder's flag in g3's baselines (save_flags.py from save-flags-hookshot: set <kit>\hookshot-A3\autotest-save\slot_0*\progress.sav
+#    bool:0xb3a4fe84=0, the same for hookshot-B3) and put them back from <kit>\autotest-save-backup afterwards.
+#  - g4's hs-gohma-door (#178 #148): clear the six Deku boss flags in g4's baselines, after hs-gohma ran
+#    (save_flags.py set <kit>\hookshot-A4\autotest-save\slot_0*\progress.sav bool:0xffde6400=0 bool:0x00c0a2f6=0
+#    bool:0x66b97a4a=0 bool:0xe44433dc=0 bool:0x88b1b922=0 bool:0x3d5c0bad=0, the same for hookshot-B4); hs-gohma warps
+#    into the boss rush and does not need them. Put them back afterwards.
+# On the emulator (a server restart is a steps-file step): `stray` proves keep-number (#175 #86).
+#  - g7 (save setups, once for the group, put back afterwards):
+#    save_flags.py set <kit>\hookshot-A7\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0 bool:0x429126ef=0
+#    bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0 bool:0x89787395=0 (and the same for hookshot-B7),
+#    then save_flags.py no-ocarina <kit>\hookshot-B7\autotest-save\slot_0*\progress.sav (B only).
+# After the groups, by hand on one pair (no expect= possible: the keys are posted to the window):
+#  - hs-chatbox (row 7): any run with -KeepOpen, then the PostMessage snippet in reports/hookshot-parity.md (T, "hi", Enter).
+#  - hs-cheats (row 8): the same with LICHII_COOP_CHEATS=1 (F8, "token", Enter, F8).
+#  - g2's hs-seed (row 15): the pairs' puppet pack made again with this branch's pack tool first (its log:
+#    "stand-in effects (seed trail): left out"); with the old pack the seed copy is still dropped.
+
+[g1]
+# Puppet looks: the puppet shows (hs-puppets), tunics (#202), masks (#91), the HUD blocks under your hearts.
+hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_SELF_TUNIC=blue  expect='A:coop: your Link wears blue; green players get CoopPuppet_<Age>_Green'  label="#202 own colour"
+hs-tunic  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_TUNICS=0  expect='A:tunics off \(LICHII_COOP_TUNICS=0\)'  expect='B:tunics off \(LICHII_COOP_TUNICS=0\)'  label="#202 tunics off"
+hs-puppets  expect='B:P1: create CoopPuppet_(Child|Adult)\S* requested \(returned 0x1\)'  expect='B:P1 CoopPuppet_(Child|Adult)\S* spawned after'  expect='A:P2 CoopPuppet_(Child|Adult)\S* spawned after'  label="#202 puppet shows (fresh pack)"
+hs-spawn  expect='B:P1 (eased|drawn at once) from where it was made'  label="spawn pop (B: no 'P1 snap' before the first hold)"
+hs-masks  expect="B:P1 wears head 'Armor_Child_Mask_Skull'"  expect='B:P1 takes off head'  label="#91 masks"
+hs-hud  expect='A:coop: drawing over Hookshot.s picture'  label="HUD blocks"
+hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: no block)"
+
+[g2]
+# The overlay and the Ocarina: chat lines and name tags, list and panel, own notes (#152).
+hs-panel  expect='A:coop: drawing over Hookshot.s picture'  expect='B:coop: drawing over Hookshot.s picture'  label="chat lines, name tags"
+hs-players  expect='A:coop: drawing over Hookshot.s picture'  label="player list, panel"
+hs-ocarina-show  expect="B:P1 hold -> show \(ocarina\)"  expect='A:P2 hide -> show'  label="#86 Ocarina: stays seen"
+hs-seed  expect='A:spawn: CoopShot_Seed: copy [0-9]+ is actor'  label="#198 seed copy (pack made again)"
+hs-ocarina  expect='A:coop: ocarina note 4 \(Ocarina_D\) sent'  expect='A:coop: ocarina note 16 \(Ocarina_HighD\) sent'  expect="B:plays sound 'Ocarina_D'"  label="#152 own notes"
+
+[g3]
+# Dungeons and the frame cadence: /teleport into a dungeon room (#197), the ladder (#129), work during a load.
+warp  expect='A:coop: Hookshot calls co-op at each present'  expect='B:coop: Hookshot calls co-op at each present'  label="cadence"
+hs-teleport-room  expect='A:scene change taken'  expect='A:coop: teleport: not moved to .*\(issue 197\)'  expect='A:test steer at'  label="#197"
+hs-door  expect='A:P2 show -> hold \(their cutscene\)'  expect='A:P2 hold -> show'  label="#194 door cutscene (B by goto)"
+hs-ladder  expect='A:test setflag HavePlayedEvent\.InsideTheDekuTree_Gimmick_FallingLadder \(bool\) 0: set'  expect='A:get_bool\(0xb3a4fe84\) = 1 \(was 0\)'  expect='B:starting the event InsideTheDekuTree_Gimmick_FallingLadder here'  label="#129 eye shot"
+
+
+[g4]
+# The boss: the Gohma fight started, then one owner (#150 #178).
+hs-gohma  expect="A:anim Enemy_DungeonBoss_Gohma \S+ '(?!Pre_Battle)[^']+' \(ours\)"  expect='B:share damage'  label="#150 #178 Gohma fight"
+hs-gohma-door  expect='A:\+ Enemy_DungeonBoss_Gohma'  expect='B:\+ Enemy_DungeonBoss_Gohma'  expect='A:past the door \(shut in\)'  expect='B:moving in \(try 1\)'  label="#178 #148 Gohma door (baseline step)"
+
+[g5]
+# World objects (hs-scenarios-2): pot drops (#101 #102), a late loader's cut sign (#90), the Goron rock (#84), the token (#89).
+hs-pot-drops  expect='A:coop: drops: sent '  expect='B:coop: drops: got '  label="#101 #102 pot drops (a roll: inconclusive if none drops)"
+hs-sign-late  expect='A:Obj_GuidePost_A_02 cut here: \d+ words sent'  expect='B:Obj_GuidePost_A_02 cut by another player: \d+ of \d+ words to write'  label="#90 late loader"
+hs-goron-rock  expect='A:751d254f812d5cfb Obj_Goron_BrokenRock_A_01 broken here'  expect='B:751d254f812d5cfb .*broken by another player'  label="#84 Goron rock"
+hs-skulltula-token  expect='A:Obj_Token_Gold broken here'  expect='B:a token taken elsewhere'  label="#89 token (no switches: its header's @75 must win)"
+
+[g6]
+# People and items (hs-scenarios-2): NPC animations (#200), Zelda's Letter at the gate (#171), fishing (#151).
+hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark talk.*npc-anim: our Link is in an event: \d+ NPCs near it claimed'  expect='A:(?s)test mark talk.*npc-anim: \d+ of the \d+ claimed NPCs are ours now'  expect='A:(?s)test mark closed.*npc-anim: the event.s NPCs are free again'  label="#200 NPC animations"
+hs-kak-letter  expect='A:bool 0x19898d14.*0 -> 1'  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 letter at the gate"
+hs-fishing  expect="B:held 'Weapon_FishingRod'"  expect='A:share fish lure \d+ fish, [1-9]\d* near our lure'  label="#151 fishing (inconclusive if A rents no rod)"
+
+[g7]
+# The save setups (header step): the Deku Tree gimmicks (#176 #177 #196), the map chest (#195), the Ocarina given back (#190).
+hs-deku-platforms  expect='B:our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp in this scene'  label="#176 platforms"
+hs-deku-torch  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb in this scene'  label="#176 #177 torch and web"
+hs-deku-water-floor  expect='A:RoomG_WaterLevel.*0 -> 1'  expect='B:Obj_Deku_MoveFloor_A_01 moved by another player'  label="#196 water floor"
+hs-chest-other  expect='B:0x89787395.*0 -> 1'  expect='A:opened in another game, shows open here'  label="#195 map chest"
+hs-ocarina-given  expect='B:ocarina bool 0x[0-9a-f]+ 0 -> 1 for the held ocarina'  expect='B:ocarina probe: our Link plays the ocarina'  label="#190 Ocarina given back"
+
+[g8]
+# The emulator big run's scenarios on Hookshot as they are (no twin needed: plain A/B scripts) and the two steps-file
+# twins: puppets moving, riding, crawling, the HUD hearts. Pass lines: each scenario's header (and hs-crawl/hs-epona's).
+walk  label="walk (puppet follows)"
+hs-crawl  expect='A:coop: test warp done'  expect="B:(?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?!Wait)"  label="#86 crawl (twin of crawl)"
+hs-epona  expect='B:coop: ride: we ride Animal_Epona_Adult'  expect='A:coop: ride: P\d+ rides Animal_Epona_Adult'  expect='A:coop: spawn: CoopRide_Epona: create copy'  label="#199 Epona (twin of epona)"
+color-field  label="#202 colours in the field (adult)"
+hearts  label="HUD hearts (puppet life)"
+ocarina-hand  label="#152 ocarina in hand"
+spawn-seed  label="#166 seed copy held"
+
+[g9]
+# World and enemies on Hookshot as on the emulator: chest notice, drops, signs, Peahat, Stalchildren, scrubs, Navi.
+chest-notice  label="#195 chest notice"
+drops  label="#101 #102 enemy drops"
+sign  label="#90 sign cut live"
+peahat  label="#157 Peahat"
+stalchild  label="#124 Stalchildren (its own time switch: give it no switches=)"
+deku-scrubs  label="#149 Deku Scrub brothers"
+navi-room  label="#145 Navi per room"
+
+[g10]
+# Teleport, PvP and the gate on Hookshot as on the emulator.
+teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"
+kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"
+pvp  expect='A:coop: pvp: our sword reached P2'  label="PvP hits"
+
+[g11]
+# Steps files on Hookshot (G7, tools/autotest/hs_steps.py through run.ps1 -Runtime hookshot): close, start, kill,
+# server stop/start, password tries. Graded by each run's counts.txt (PASS/FAIL lines, as on the emulator).
+# stray and screens count puppets (expect A=1): they FAIL while the module refuses Link puppets on Hookshot
+# (docs/hookshot.md, proofs 3 and 4) unless the crash is fixed; their joins, leaves and server restart still show.
+join-password  password=zelda-test-ocarina-42  label="#160 #201 join password and encrypted traffic (G6)"
+world-reset  label="#159 world reset"
+threads-of-time  label="#193 Threads of Time"
+stray  label="#175 stray: leave, rejoin, crash, server restart, keep-number"
+screens  label="screens: rejoin on other screens"
+
+[g12]
+# Moving platforms in step (platforms-b, #196 #194: one clock word per platform, PLATFORM_CLOCK). The Dodongo's Cavern
+# room 1 lifts; its own warp (noload). Shots s1..s4: the lift under A's Link at the same height in both games.
+hs-platforms-dodongo  expect='A:coop: platforms: .*: ours to send'  expect="B:coop: platforms: .*following player 1's clock"  label="#196 #194 moving platforms (Dodongo lifts)"

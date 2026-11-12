@@ -402,6 +402,18 @@ public:
             flag_debug_.Frame(*memory);
             if (sharing_ || cheats_) {
                 game_store.emplace(*memory);
+                if (!queue_sizes_logged_) {  // once: half of each is ours (issue 175)
+                    if (const auto q = coop::host::GameFlags(*memory).queue_sizes()) {
+                        queue_sizes_logged_ = true;
+                        const std::uint32_t least =
+                            std::min({q->boolean, q->int32, q->uint32, q->enumeration, q->key64});
+                        LOG_INFO(Core,
+                                 "coop: flags: the game's write queues hold Bool {}, Int {}, UInt {}, Enum {}, "
+                                 "64-bit keys {} slots; ours is half of each{}",
+                                 q->boolean, q->int32, q->uint32, q->enumeration, q->key64,
+                                 least < 2 ? " (a queue under 2 slots gets no write of ours)" : "");
+                    }
+                }
             }
             if (cheats_) {
                 CoopCheats::Frame(*game_store);
@@ -1287,7 +1299,7 @@ private:
                 if (last_state == coop::net::State::connected) {
                     LOG_INFO(Core, "coop: traffic {}", room.encrypted
                                                            ? "encrypted"
-                                                           : "not encrypted (the host set no join password)");
+                                                           : "NOT encrypted (should never happen: the client joins only encrypted servers)");
                 }
             }
             // Issue 108: each REFUSED name taken asked again, so a log shows
@@ -1432,8 +1444,8 @@ private:
             if (CoopPvp::On()) {
                 head += ", PvP on";
             }
-            // Plain only on a server without a join password: say so.
-            head += room.encrypted ? ", encrypted" : ", not encrypted (no join password)";
+            // Every session is encrypted (the client refuses a plain server).
+            head += room.encrypted ? ", encrypted" : ", NOT encrypted";
             lines.push_back({head});
         } else {
             std::string head = "Co-op: " + std::string(coop::net::to_string(room.state));
@@ -1503,6 +1515,7 @@ private:
     bool scan_runs_ = false;               // its scan lets an unknown build run
     Kernel::KProcess* build_warned_ = nullptr;  // the process last warned about
     FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
+    bool queue_sizes_logged_ = false;  // the game's flag queue sizes, logged once
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
@@ -1697,6 +1710,16 @@ private:
     void MendOcarina(EmulatorMemory& memory) {
         namespace oc = coop::host::ocarina;
         coop::host::GameFlags flags(memory);
+        // The Bools a real get sets beside the count: without them D-pad Left
+        // took nothing out of a shared ocarina (ocarina-given, issue 190).
+        const auto fairy = flags.get_int(oc::kFairy).value_or(0);
+        const auto time = flags.get_int(oc::kTime).value_or(0);
+        for (const std::uint32_t hash :
+             coop::host::ocarina_bools_mend(fairy, time, [&](std::uint32_t h) { return flags.get_bool(h); })) {
+            if (coop::host::GameFlags::set_bool(memory, hash, true)) {
+                LOG_INFO(Core, "coop: items: ocarina bool {:#010x} 0 -> 1 for the held ocarina", hash);
+            }
+        }
         const auto current = flags.get_string64(oc::kEquip);
         if (!current) {
             return;

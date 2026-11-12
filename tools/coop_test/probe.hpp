@@ -83,6 +83,7 @@ struct ProbeConfig {
   std::string host = "127.0.0.1";
   std::uint16_t port = protocol::kDefaultPort;
   std::string nickname;
+  std::string password;  // the join password
 };
 
 class Probe {

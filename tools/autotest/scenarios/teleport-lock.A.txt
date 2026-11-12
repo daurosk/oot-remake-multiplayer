@@ -43,9 +43,11 @@ wait 600
 mark loaded
 wait 600
 mark arrived
-goto -38.0 12.0 1.0 600   # 5 m along the room: "test steer at" lines must show Link moving
+# A arrives at the Deku Tree entrance (0.2 14.7); B stays in another room (-33 10), so the
+# gotos stay near the entrance, on points Link reached in the 20261112-110820 run.
+goto -2.8 11.0 1.0 600   # 4 m from the entrance: "test steer at" lines must show Link moving
 wait 60
-goto -33.0 9.0 1.0 600
+goto -5.5 8.0 1.0 600    # on along the path Link took
 wait 60
 mark walked
 wait 1200

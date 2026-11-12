@@ -141,6 +141,7 @@ int run_clients(const Options& options, coop::server::EnetServer* server) {
     config.host = options.connect_host ? *options.connect_host : "127.0.0.1";
     config.port = options.connect_host ? options.connect_port : server->port();
     config.nickname = options.name + std::to_string(i + 1);
+    config.password = options.password;
     probes.push_back(std::make_unique<Probe>(config));
     if (!probes.back()->start()) {
       std::fprintf(stderr, "coop_test: client %d could not start ENet\n", i + 1);
@@ -229,6 +230,7 @@ int main(int argc, char** argv) {
     if (!options->connect_host) {
       coop::server::ServerOptions server_options;
       server_options.port = options->port;
+      server_options.session.join_password = options->password;
       server_options.session.log = [](const std::string& text) {
         std::printf("server: %s\n", text.c_str());
         std::fflush(stdout);

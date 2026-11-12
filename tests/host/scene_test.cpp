@@ -71,7 +71,10 @@ TEST_CASE("activity_of: riding and the Ocarina by the AS command name") {
   CHECK(activity_of(std::string_view("HorseAccess")) == Activity::none);  // walking up to it
   CHECK(activity_of(std::string_view("OcarinaReadyStart")) == Activity::ocarina);
   CHECK(activity_of(std::string_view("Ocarina_Adult_B_lp")) == Activity::ocarina);
-  CHECK(activity_of(std::string_view("DemoOcarina")) == Activity::none);  // a song taught
+  // ocarina-b (2026-11-12): free play is "DemoOcarina"; a song taught is "DemoOcarinaMelodyGet".
+  CHECK(activity_of(std::string_view("DemoOcarina")) == Activity::ocarina);
+  CHECK(activity_of(std::string_view("DemoOcarinaMelodyGet")) == Activity::none);
+  CHECK(activity_of(std::string_view("DemoOcarinaFace")) == Activity::ocarina);
   CHECK(activity_of(std::string_view("Ocar")) == Activity::none);
 }
 
@@ -81,7 +84,8 @@ TEST_CASE("local_event_hides: every event of ours but the Ocarina") {
   CHECK_FALSE(local_event_hides(false, std::string_view("HorseMove")));
   CHECK(local_event_hides(true, std::nullopt));
   CHECK(local_event_hides(true, std::string_view("EvtWait")));
-  CHECK(local_event_hides(true, std::string_view("DemoOcarina")));
+  CHECK_FALSE(local_event_hides(true, std::string_view("DemoOcarina")));  // playing freely (#86)
+  CHECK(local_event_hides(true, std::string_view("DemoOcarinaMelodyGet")));  // a song taught
   CHECK_FALSE(local_event_hides(true, std::string_view("OcarinaReadyStart")));
 }
 
@@ -90,13 +94,15 @@ TEST_CASE("visibility with their animation: riding shows with a horse (issue 199
   const auto ride = std::optional<std::string_view>("HorseMove");
   const auto play = std::optional<std::string_view>("Ocarina_Adult_B_lp");
   const auto demo = std::optional<std::string_view>("DemoOcarina");
+  const auto taught = std::optional<std::string_view>("DemoOcarinaMelodyGet");
   CHECK(visibility(a, false, a, 0, ride) == Visibility::ride);
   CHECK(visibility(a, false, a, status::in_cutscene, ride) == Visibility::ride);
   CHECK(visibility(a, true, a, 0, ride) == Visibility::hide);   // our cutscene first
   CHECK(visibility(a, false, b, 0, ride) == Visibility::hide);  // elsewhere first
   CHECK(visibility(a, false, a, status::in_cutscene, play) == Visibility::show);
   CHECK(visibility(a, false, a, 0, play) == Visibility::show);
-  CHECK(visibility(a, false, a, status::in_cutscene, demo) == Visibility::hold);
+  CHECK(visibility(a, false, a, status::in_cutscene, demo) == Visibility::show);  // free play (#86)
+  CHECK(visibility(a, false, a, status::in_cutscene, taught) == Visibility::hold);
   CHECK(visibility(a, false, a, status::in_cutscene, std::nullopt) == Visibility::hold);
   // Paused, in a menu or loading: the bits are not cutscenes; they stand.
   CHECK(visibility(a, false, a, status::paused | status::in_menu | status::loading, std::nullopt) ==

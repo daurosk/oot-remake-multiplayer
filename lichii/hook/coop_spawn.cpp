@@ -489,6 +489,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                     now_us + CoopProjectiles::kImpactLifeUs});
                 ++impacts_made_;
             }
+            // At most kMaxImpacts live: the oldest go (the director deletes
+            // them), so sparks never starve the shot copies of slots.
+            if (impacts_.size() > CoopProjectiles::kMaxImpacts) {
+                impacts_.erase(impacts_.begin(),
+                               impacts_.begin() + static_cast<std::ptrdiff_t>(impacts_.size() -
+                                                                              CoopProjectiles::kMaxImpacts));
+            }
         }
         c.act = explode ? Act::explode : (!r.removed || landing) ? Act::show : Act::remove;
         if (explode && r.explode_once_made && !made) {

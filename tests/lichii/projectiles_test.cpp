@@ -581,6 +581,60 @@ TEST_CASE("shots: our seed's bounce is sent at once, and the log counts it") {
     CHECK(Of<proto::ObjectRemove>(send).size() == 1);
 }
 
+TEST_CASE("shots: rapid hits keep at most kMaxImpacts impact actors, the newest (issue 166)") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    std::uint64_t now = 10'000'000;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    // Five seeds that all hit, one walk apart: ten impacts asked for.
+    for (std::uint64_t value = 1; value <= 5; ++value) {
+        proto::ObjectSpawn spawn;
+        spawn.id = {proto::ObjectKind::made, 1, value};
+        spawn.actor = "Shootable_DekuSeed";
+        spawn.state.time = {now, 0};
+        spawn.state.position = proto::Vec3{0.0f, 5.0f, static_cast<float>(value)};
+        spawn.state.velocity = proto::Vec3{40.0f, 0.0f, 0.0f};
+        sync.Receive(Wire(spawn, 1));
+        proto::ObjectRemove remove;
+        remove.id = spawn.id;
+        remove.reason = proto::RemoveReason::hit;
+        remove.position = {4.0f, 5.0f, static_cast<float>(value)};
+        sync.Receive(Wire(remove, 1));
+        now += 10 * kMs;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);  // taken in
+        now += shots::Track::kBehindUs;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);  // the copy reaches the spot
+        std::size_t count = 0;
+        for (const Copy& c : copies) {
+            if (shots::IsImpact(c.actor)) {
+                ++count;
+            }
+        }
+        CHECK(count <= shots::kMaxImpacts);
+    }
+    CHECK(sync.Impacts() == 10);  // all asked for; only the newest kept
+    std::vector<Copy> kept;
+    for (const Copy& c : copies) {
+        if (shots::IsImpact(c.actor)) {
+            kept.push_back(c);
+        }
+    }
+    REQUIRE(kept.size() == shots::kMaxImpacts);
+    for (const Copy& c : kept) {
+        CHECK(c.position[2] >= 4.0f);  // the last two seeds' sparks and sounds
+    }
+    // And all gone once their short life is over.
+    copies.clear();
+    sync.Tick(kScene, 2, now + shots::kImpactLifeUs, {}, live, send, copies);
+    for (const Copy& c : copies) {
+        CHECK_FALSE(shots::IsImpact(c.actor));
+    }
+}
+
 TEST_CASE("shots: where a seed copy lands, its spark and sound are made once (issue 166)") {
     CHECK(shots::ImpactActors(shots::Kind::seed) ==
           std::vector<std::string_view>{"CoopHit_SeedSpark", "CoopHit_SeedSound"});

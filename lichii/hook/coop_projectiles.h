@@ -200,8 +200,11 @@ std::uint64_t LandHoldUs(Kind kind);
 std::vector<std::string_view> ImpactActors(Kind kind);
 bool IsImpact(std::string_view actor);
 // How long an impact actor is kept before it is deleted: its effect and
-// sound are one-shots, over by then.
-inline constexpr std::uint64_t kImpactLifeUs = 2'000'000;
+// sound are one-shots, over by then. Short, and at most kMaxImpacts live at
+// once (the oldest goes first), so impacts never hold the spawn director's
+// slots that shot, bomb and lure copies need (rapid slingshot fire).
+inline constexpr std::uint64_t kImpactLifeUs = 750'000;
+inline constexpr std::size_t kMaxImpacts = 4;
 // A bomb gone sooner than this did not explode: taking one out the first
 // time makes a bomb that lasts about 0.1 s while the game shows its help.
 inline constexpr std::uint64_t kExplodeMinUs = 1'000'000;

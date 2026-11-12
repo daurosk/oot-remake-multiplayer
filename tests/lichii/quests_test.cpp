@@ -256,6 +256,50 @@ TEST_CASE("quests: A's progress reaches B, B's progress reaches A (issue 193 sce
     CHECK(a.at(kGotoCastle, "Step02"));
 }
 
+TEST_CASE("quests: below Goto's floor a player waits, then catches up once its game sends Step01") {
+    std::optional<host::SharedFlags> list;
+    CoopQuests::Merge(list, true);
+    Game h;  // the host's game: past the owl
+    Game b;  // a player still in the opening
+    for (Game* g : {&h, &b}) {
+        for (const auto& q : CoopQuests::Quests()) g->step(q.hash, "NotReady");
+    }
+    h.step(kGotoCastle, "Step03");
+    b.step(kGotoCastle, "Ready");
+    host::FlagWatcher wh(*list, host::FlagRole::host);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wh.frame(h.store);
+    wb.frame(b.store);
+
+    const auto decode_one = [](const std::vector<host::Outgoing>& out) {
+        REQUIRE(out.size() == 1);
+        proto::Message m;
+        REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+        return m;
+    };
+
+    // The host's step reaches B below the floor: B's quest stays where it is.
+    wb.receive(proto::Message{proto::FlagState{0, {{Key(kGotoCastle), proto::FlagKind::int32,
+                                                   static_cast<std::uint32_t>(RankOf(kGotoCastle, "Step03"))}}}});
+    wb.frame(b.store);
+    CHECK(b.at(kGotoCastle, "Ready"));
+
+    // B leaves the Deku Tree (Step01): its game sends it, the host keeps its
+    // higher step and answers it, and B takes it now.
+    b.step(kGotoCastle, "Step01");
+    const auto sent = decode_one(wb.frame(b.store));
+    const auto* set = std::get_if<proto::FlagSet>(&sent);
+    REQUIRE(set);
+    CHECK(wh.receive(proto::Message{proto::FlagSet{2, set->flags}}));
+    const auto answer = decode_one(wh.frame(h.store));
+    const auto* state = std::get_if<proto::FlagState>(&answer);
+    REQUIRE(state);
+    CHECK(h.at(kGotoCastle, "Step03"));  // never lowered on the host
+    wb.receive(proto::Message{proto::FlagState{0, state->flags}});
+    wb.frame(b.store);
+    CHECK(b.at(kGotoCastle, "Step03"));
+}
+
 TEST_CASE("quests: a guest who joins later gets the group's steps") {
     std::optional<host::SharedFlags> list;
     CoopQuests::Merge(list, true);

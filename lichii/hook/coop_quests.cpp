@@ -64,7 +64,7 @@ const std::vector<Quest>& Table() {
           "Step06_1_1", "Step06_1_2", "Step06_2", "Step07", "Step08", "Step09", "Complete"}},
         {0xdb89c1a9u, "Goto_HyruleCastle",
          {"NotReady", "Ready", "Step01", "Step02", "Step02_01", "Step03", "Step03_01", "Step03_02",
-          "Step04", "Complete"}
+          "Step04", "Complete"},
          2},  // floor: Step01 (Dm_SY_BancChange_EscapeDungeon sets it as Link leaves the Deku Tree)
         {0xeea87aecu, "SageOfFire",
          {"NotReady", "Ready", "StopDaruniaJr", "TalkDaruniaJr", "MoveStatue", "EnterCrater", "MeetSheik",

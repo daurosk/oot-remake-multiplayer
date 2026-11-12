@@ -59,6 +59,7 @@ add_executable(coop_tests
   lichii/every_test.cpp
   lichii/hud_test.cpp
   lichii/game_build_test.cpp
+  lichii/game_scan_test.cpp
   lichii/boss_test.cpp
   lichii/teleport_test.cpp
   lichii/pvp_test.cpp

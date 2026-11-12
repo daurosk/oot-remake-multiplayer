@@ -155,7 +155,7 @@ Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 
 Every player needs the same version: a game of one version cannot join a server of another.
 
-**This release is protocol 11: everyone updates.** A game of it refuses a server of an older release, and the other way round, so the host and every guest update before playing. In short:
+**This release is protocol 10: everyone updates.** A game of it refuses a server of an older release, and the other way round, so the host and every guest update before playing. In short:
 
 1. Close the games and the server window.
 2. Double-click `Update.bat` (or answer **Y** when `Host.bat` or `Join.bat` asks).

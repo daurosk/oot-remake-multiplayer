@@ -218,7 +218,7 @@ TEST_CASE("traffic crypto: the key share rides at the end of HELLO and JOIN_CHAL
   CHECK(std::get<Hello>(back) == hello);
   REQUIRE(decode(*plain, back) == Error::none);
   CHECK_FALSE(std::get<Hello>(back).key_share.has_value());
-  // Protocol 11: the previous number after the key share, or alone.
+  // Protocol 10 (this release's): the previous number after the key share, or alone.
   hello.previous_number = 2;
   const auto with_number = encode(hello);
   REQUIRE(with_number.has_value());

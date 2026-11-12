@@ -4092,7 +4092,10 @@ TEST_CASE("16 players: the 16th's WELCOME lists the 15 others") {
   for (ConnectionId id = 1; id <= 15; ++id) h.join(id, "p" + std::to_string(id));
   h.clear();
   h.join(16, "p16");
-  const auto w = only_message_to<Welcome>(h, 16);
+  std::optional<Welcome> w;
+  for (const auto& m : h.to(16)) {
+    if (const auto* got = std::get_if<Welcome>(&m.message)) w = *got;
+  }
   REQUIRE(w.has_value());
   CHECK(w->player_number == 16);
   CHECK(w->players.size() == 15);

@@ -234,9 +234,9 @@ TEST_CASE("values out of range are refused") {
     b.back() = 2;
     CHECK(decode_bytes(b) == Error::bad_value);
   }
-  SUBCASE("player 5 on the wire") {
+  SUBCASE("player 17 on the wire") {
     Bytes b = must_encode(PlayerLeft{1, LeaveReason::left});
-    b[kHeaderSize] = 5;
+    b[kHeaderSize] = 17;
     CHECK(decode_bytes(b) == Error::bad_value);
   }
   SUBCASE("bad UTF-8 on the wire") {
@@ -364,7 +364,7 @@ TEST_CASE("the protocol version check") {
 
 TEST_CASE("encode leaves the buffer alone on an error") {
   Bytes out{9, 9};
-  CHECK(encode(Message{Chat{9, "x"}}, out) == Error::bad_value);
+  CHECK(encode(Message{Chat{17, "x"}}, out) == Error::bad_value);
   CHECK(out == Bytes{9, 9});
 
   TestPayload big;
@@ -446,7 +446,7 @@ TEST_CASE("the server stamps the sender on a relayed message") {
   CHECK(std::get<Chat>(m).player_number == 3);
   CHECK(sender_of(m) == std::optional<std::uint8_t>{3});
   CHECK_FALSE(set_sender(m, 0));
-  CHECK_FALSE(set_sender(m, 5));
+  CHECK_FALSE(set_sender(m, 17));
   CHECK(std::get<Chat>(m).player_number == 3);
 
   Message s = PlayerSample{};
@@ -498,7 +498,7 @@ TEST_CASE("bad join partner messages are refused") {
   JoinPartner j = test::join_messages()[0];
   j.other_player = 0;
   CHECK(refused(j));
-  j.other_player = 5;
+  j.other_player = 17;
   CHECK(refused(j));
   j = test::join_messages()[0];
   j.player_number = 2;  // relayed: asks to join itself
@@ -693,7 +693,7 @@ TEST_CASE("bad flag messages are refused") {
   auto refused = [](const Message& m) { return encode(m) == std::nullopt; };
   CHECK(refused(FlagSet{0, {}}));  // a change of nothing
   CHECK(refused(FlagState{0, {}}));
-  CHECK(refused(FlagSet{5, {test::flag_entries()[0]}}));
+  CHECK(refused(FlagSet{17, {test::flag_entries()[0]}}));
   CHECK(refused(FlagSet{0, {{1, 0, FlagKind::boolean, 2}}}));
   CHECK(refused(FlagSet{0, {{1, 0, static_cast<FlagKind>(5), 0}}}));
   CHECK(refused(FlagSet{0, {{1, 0, FlagKind::float32, 0x7F800000u}}}));  // infinity
@@ -888,7 +888,7 @@ TEST_CASE("host names the hosting player, from the server on the progress channe
   CHECK(sender_of(back) == std::nullopt);
   Bytes out;
   CHECK(encode(Host{0}, out) == Error::bad_value);
-  CHECK(encode(Host{5}, out) == Error::bad_value);
+  CHECK(encode(Host{17}, out) == Error::bad_value);
   CHECK(decode_bytes(Bytes{16, 0, 1, 0, 0}) == Error::bad_value);
   CHECK(decode_bytes(Bytes{16, 0, 2, 0, 1, 0}) == Error::trailing_bytes);
   // A stage 0 reader skips it like the other new types.
@@ -969,7 +969,7 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   // A component longer than the body.
   CHECK(decode_bytes(Bytes{17, 0, 6, 0, 0, 1, 0, 9, 0, 0}) == Error::bad_length);
   // Player 5, a control character, a name over 64 characters.
-  CHECK(decode_bytes(Bytes{17, 0, 1, 0, 5}) == Error::bad_value);
+  CHECK(decode_bytes(Bytes{17, 0, 1, 0, 17}) == Error::bad_value);
   CHECK(decode_bytes(Bytes{17, 0, 8, 0, 0, 1, 0, 3, 0, 1, 0, 0x01}) == Error::bad_value);
   Bytes out;
   PlayerEquip big;
@@ -977,7 +977,7 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   CHECK(encode(big, out) == Error::string_too_long);
   big.equipment.ocarina = std::string(kMaxEquipNameChars, 'o');
   CHECK(encode(big, out) == Error::none);
-  CHECK(encode(PlayerEquip{5, {}}, out) == Error::bad_value);
+  CHECK(encode(PlayerEquip{17, {}}, out) == Error::bad_value);
   PlayerEquip colored;
   colored.equipment.color = 0x1000000u;  // more than 24 bits
   CHECK(encode(colored, out) == Error::bad_value);
@@ -1057,8 +1057,8 @@ TEST_CASE("bad object messages are refused") {
   // A placed id names no maker; a made id names one.
   CHECK(encode(ObjectOwner{{ObjectKind::placed, 1, 5}, 1, 0, 0}, out) == Error::bad_value);
   CHECK(encode(ObjectOwner{{ObjectKind::made, 0, 5}, 1, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(ObjectOwner{{ObjectKind::made, 5, 5}, 1, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(ObjectOwner{test::kPlacedId, 5, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(ObjectOwner{{ObjectKind::made, 17, 5}, 1, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(ObjectOwner{test::kPlacedId, 17, 0, 0}, out) == Error::bad_value);
   CHECK(encode(HandoverAsk{test::kPlacedId, 0, 0}, out) == Error::bad_value);
   // A spawn names its actor; a placed id names no maker (version 2).
   Bytes placed_spawn;
@@ -1223,7 +1223,7 @@ TEST_CASE("an ocarina note has its number, channel and layout") {
   CHECK(std::get<OcarinaNote>(back).note == kOcarinaNotes);
   Bytes out;
   CHECK(encode(OcarinaNote{0, kOcarinaNotes + 1}, out) == Error::bad_value);
-  CHECK(encode(OcarinaNote{5, 1}, out) == Error::bad_value);
+  CHECK(encode(OcarinaNote{17, 1}, out) == Error::bad_value);
   Bytes bad = must_encode(OcarinaNote{0, 1});
   bad[kHeaderSize + 1] = 20;  // past the last note
   Message m;
@@ -1234,7 +1234,7 @@ TEST_CASE("bad times of day are refused") {
   Bytes out;
   CHECK(encode(TimeOfDay{0, kSecondsPerDay, 0}, out) == Error::bad_value);
   CHECK(encode(TimeOfDay{0, 10, 2}, out) == Error::bad_value);
-  CHECK(encode(TimeOfDay{5, 10, 0}, out) == Error::bad_value);
+  CHECK(encode(TimeOfDay{17, 10, 0}, out) == Error::bad_value);
   Bytes b = must_encode(TimeOfDay{0, 10, 0});
   b[kHeaderSize + 5] = 0x80;  // an unknown flag
   Message m;
@@ -1276,7 +1276,7 @@ TEST_CASE("bad object groups are refused") {
   CHECK(encode(ObjectGroup{0, {}}, out) == Error::bad_value);                    // empty
   CHECK(encode(ObjectGroup{0, {{a, c, 0}, {a, a, 0}}}, out) == Error::bad_value);  // a member twice
   CHECK(encode(ObjectGroup{0, {{a, c, 2}}}, out) == Error::bad_value);           // an unknown flag
-  CHECK(encode(ObjectGroup{5, {{a, c, 0}}}, out) == Error::bad_value);
+  CHECK(encode(ObjectGroup{17, {{a, c, 0}}}, out) == Error::bad_value);
   CHECK(encode(ObjectGroup{0, {{a, ObjectId{ObjectKind::placed, 1, 2}, 0}}}, out) ==
         Error::bad_value);  // a placed id with a maker
   std::vector<ObjectGroupEntry> many;
@@ -1510,7 +1510,7 @@ TEST_CASE("bad drop messages are refused") {
   CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {}, 0, 4}, out) == Error::bad_value);
   CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {std::numeric_limits<float>::infinity(), 0, 0}, 0, 0},
                out) == Error::bad_value);
-  CHECK(encode(DropSpawn{5, made, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DropSpawn{17, made, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
   CHECK(encode(DropTake{0, ObjectId{ObjectKind::placed, 1, 7}, DropTakeReason::gone}, out) ==
         Error::bad_value);
   CHECK(encode(DropTake{0, made, static_cast<DropTakeReason>(2)}, out) == Error::bad_value);
@@ -1660,7 +1660,7 @@ TEST_CASE("player life: type 251, session channel, quarter hearts, both ways") {
 
   Bytes out;
   CHECK(encode(PlayerLife{0, 0, kMaxLifeQuarters + 1}, out) == Error::bad_value);
-  CHECK(encode(PlayerLife{5, 4, 12}, out) == Error::bad_value);
+  CHECK(encode(PlayerLife{17, 4, 12}, out) == Error::bad_value);
   Bytes short_one = b;
   short_one.pop_back();
   CHECK(decode(short_one, back) != Error::none);
@@ -1767,7 +1767,7 @@ TEST_CASE("bad fish lures are refused (issue 151)") {
   CHECK(encode(FishLure{0, {{a, 10, 4}}}, out) == Error::bad_value);  // an unknown flag
   CHECK(encode(FishLure{0, {{a, kFishLureNone, fish_lure::drawn}}}, out) ==
         Error::bad_value);  // drawn to no lure
-  CHECK(encode(FishLure{5, {{a, 10, 0}}}, out) == Error::bad_value);
+  CHECK(encode(FishLure{17, {{a, 10, 0}}}, out) == Error::bad_value);
   std::vector<FishLureEntry> many;
   for (std::uint64_t i = 0; i <= kMaxFishLures; ++i) {
     many.push_back({ObjectId{ObjectKind::placed, 0, i}, 10, 0});
@@ -1887,7 +1887,7 @@ TEST_CASE("platform clock: type 400, object samples channel, checked keys and fl
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = kMaxPlatformRate * 2; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].value = std::numeric_limits<float>::quiet_NaN(); }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].cycle = -1.0f; }));
-  CHECK(bad([](PlatformClock& c) { c.player_number = 9; }));
+  CHECK(bad([](PlatformClock& c) { c.player_number = 17; }));
 
   // A count larger than the ticks sent is cut short.
   Bytes cut = must_encode(Message{m});

@@ -166,3 +166,31 @@ TEST_CASE("snap: a jump is the target's own move, so running during a long ease 
     }
     CHECK(s.Easing());
 }
+
+TEST_CASE("snap: a new puppet eases from where the game made it (no 0.8 m spawn pop)") {
+    Smoother s;
+    std::uint64_t now = 0;
+    // The game made it where its player was a few frames ago; the player is 0.835 m on now.
+    s.Spawned({0, 0, 0}, {0.835f, 0, 0});
+    float jump = 0.0f;
+    CHECK(s.Step({0.835f, 0, 0}, now, true, &jump) == Vec3{0, 0, 0});  // drawn where it was made
+    CHECK(s.FromSpawn());
+    CHECK(jump == doctest::Approx(0.835f));
+    Vec3 last{};
+    CHECK(Run(s, {0.835f, 0, 0}, now, 15, &last) == 0.0f);  // no drawn step past kSnapM
+    CHECK(last[0] == doctest::Approx(0.835f));
+    CHECK_FALSE(s.FromSpawn());  // later steps are ordinary
+    // Spawned after the first Step changes nothing (only a new puppet).
+    s.Spawned({50, 0, 0}, {0.9f, 0, 0});
+    CHECK(s.Step({0.9f, 0, 0}, now + 33) == Vec3{0.9f, 0, 0});
+    // Reset (a new puppet in the slot) forgets it.
+    s.Spawned({1.5f, 1, 1}, {1, 1, 1});
+    s.Reset();
+    CHECK(s.Step({1, 1, 1}, now + 66) == Vec3{1, 1, 1});
+    CHECK_FALSE(s.FromSpawn());
+    // A made spot farther than kSpawnLagM (a half-made actor's place): drawn at the target at once.
+    Smoother far;
+    far.Spawned({0, 0, 0}, {4, 5, 6});
+    CHECK(far.Step({4, 5, 6}, 0) == Vec3{4, 5, 6});
+    CHECK_FALSE(far.FromSpawn());
+}

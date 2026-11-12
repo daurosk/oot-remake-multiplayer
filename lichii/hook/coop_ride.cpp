@@ -90,7 +90,9 @@ std::optional<proto::PlayerRide> Rider::Tick(bool riding, const std::optional<Ve
                                              const std::optional<Quat>& rotation,
                                              const std::vector<HorseSeen>& horses,
                                              std::uint64_t now_us) {
-    tried_us_ = now_us;
+    if (riding) {
+        tried_us_ = now_us;  // a walk was made for this Tick
+    }
     if (riding && position && Finite(*position)) {
         if (last_us_ != 0 && now_us < last_us_ + kEveryUs && riding_) {
             return std::nullopt;

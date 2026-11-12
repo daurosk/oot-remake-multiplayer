@@ -98,6 +98,15 @@ TEST_CASE("hookshot: Link-model puppets are not made (they crash Hookshot's game
     CHECK_FALSE(CoopHookshot::RefuseCreate("CoopPuppet_Child_Red", true));
 }
 
+TEST_CASE("hookshot: Link puppets follow the puppet guard in hookshot.exe") {
+    // Unset: on with patch 0002's guard in the exe, off without it.
+    CHECK(CoopHookshot::AllowLinkPuppets("", true));
+    CHECK_FALSE(CoopHookshot::AllowLinkPuppets("", false));
+    // LICHII_COOP_HOOKSHOT_LINK_PUPPETS forces it either way.
+    CHECK(CoopHookshot::AllowLinkPuppets("1", false));
+    CHECK_FALSE(CoopHookshot::AllowLinkPuppets("0", true));
+}
+
 TEST_CASE("hookshot: the module refuses puppet creates before they reach the game") {
     const std::string src = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     const auto refused = src.find("if (Refused(c))");

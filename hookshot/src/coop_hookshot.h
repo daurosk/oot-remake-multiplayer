@@ -78,11 +78,21 @@ inline bool BuildSupported(const std::string& build_id_hex) {
 // Hookshot crashes when the game makes a second Link model (any
 // CoopPuppet_<Age>[_<Colour>], plain or coloured; the emulator does not).
 // The game's create thread sets ns_tex_mtx0 on the model's Mt_Hairs
-// (main+0x4b8240, from main+0x10aceb0, the call at main+0x4b8334) and reads a
-// null material pointer: "CRASH ... guest 0x20" in BaseProcCreateAndDeleteThread
-// (reports/hs-crash-b.md). Until that is fixed in Hookshot, the module refuses
-// those creates: other players show as their Navi only. `allow`:
-// LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1, to try them again.
+// (main+0x4b8240, from main+0x10aceb0, the call at main+0x4b8334). On
+// Hookshot a new Link model's material has no parameter table yet there, and
+// the setter (main+0x3596870) read guest 0x20: "CRASH ... guest 0x20" in
+// BaseProcCreateAndDeleteThread (reports/hs-crash-b.md). Our Hookshot patch
+// 0002 (nx2/coop_puppet_guard.py) makes the setter skip that parameter.
+// AllowLinkPuppets: LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 / 0 force it; unset,
+// Link puppets are made only when the guard is in this hookshot.exe.
+inline bool AllowLinkPuppets(const std::string& env, bool guard_in_exe) {
+    if (!env.empty()) {
+        return env != "0";
+    }
+    return guard_in_exe;
+}
+
+// Refused while not allowed: other players then show as their Navi only.
 inline bool RefuseCreate(const std::string& actor, bool allow) {
     return !allow && actor.rfind("CoopPuppet_", 0) == 0;
 }

@@ -830,6 +830,14 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
     ++stats_.owners_refreshed;
   }
 
+  // The owner hold after a (re)start (SessionConfig::owner_hold_us): it starts
+  // with the session's first listing; when it is over, its objects get owners.
+  if (config_.owner_hold_us != 0 && owner_hold_until_ == 0 && !p.objects.empty()) {
+    owner_hold_until_ = stamp(now_us) + config_.owner_hold_us;
+  }
+  end_owner_hold(now_us);
+  const bool holding = config_.owner_hold_us != 0 && !owner_hold_done_ && now_us < owner_hold_until_;
+
   std::set<ObjectId> listed;
   for (const ObjectPresence& e : p.objects) listed.insert(e.id);
   const std::set<ObjectId> before = c.present;
@@ -871,8 +879,12 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
       o.scene = p.scene;
       o.serial = next_serial_++;
       o.present.insert(id);
-      o.owner = id;
       c.present.insert(oid);
+      if (holding) {
+        o.held = true;  // no owner and no OBJECT_OWNER yet: end_owner_hold decides
+        continue;
+      }
+      o.owner = id;
       if (e.flags & kFighting) mark_fight(o, now_us);
       announce_owner(oid, o);
       continue;
@@ -883,6 +895,7 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
     if (o.scene != p.scene || o.projectile) continue;
     c.present.insert(oid);
     const bool fresh = o.present.insert(id).second;
+    if (o.held) continue;  // its owner is decided when the hold ends
     if (o.owner == id) {
       o.orphan_since = 0;
       if (e.flags & kFighting) mark_fight(o, now_us);
@@ -1976,9 +1989,41 @@ void Session::tick(std::uint64_t now_us) {
     remove_player(id, LeaveReason::timed_out, now_us,
                   "timed out: nothing heard for " + std::to_string(quiet_ms) + " ms");
   }
+  end_owner_hold(now_us);
   if (now_us - ownership_checked_at_ >= config_.ownership_check_us) {
     ownership_checked_at_ = now_us;
     run_ownership(now_us);
+  }
+}
+
+void Session::end_owner_hold(std::uint64_t now_us) {
+  if (owner_hold_done_ || owner_hold_until_ == 0 || now_us < owner_hold_until_) return;
+  owner_hold_done_ = true;
+  std::vector<ObjectId> gone;
+  for (auto& [oid, o] : objects_) {
+    if (!o.held) continue;
+    o.held = false;
+    // The lowest player number among the joined games that list it.
+    std::optional<ConnectionId> best;
+    std::uint8_t best_number = 0;
+    for (const ConnectionId id : o.present) {
+      auto it = connections_.find(id);
+      if (it == connections_.end() || it->second.state != State::joined) continue;
+      if (!best || it->second.number < best_number) {
+        best = id;
+        best_number = it->second.number;
+      }
+    }
+    if (!best) {
+      gone.push_back(oid);  // nobody lists it any more: forgotten, the next listing owns it
+      continue;
+    }
+    o.owner = best;
+    ++stats_.owners_held;
+    announce_owner(oid, o);
+  }
+  for (const ObjectId& oid : gone) {
+    if (auto it = objects_.find(oid); it != objects_.end()) forget(it);
   }
 }
 

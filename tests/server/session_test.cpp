@@ -79,10 +79,17 @@ struct Harness {
   // with its right proof at once, so the tests that are not about the
   // password see HELLO -> WELCOME as before (the challenge is kept out of
   // `sent`). A config with its own password is driven by hand.
-  explicit Harness(SessionConfig config = {})
+  // The owner hold after a start (SessionConfig::owner_hold_us) is off unless
+  // a test asks for it: the object tests see the first lister own at once.
+  explicit Harness(SessionConfig config = {}, bool owner_hold = false)
       : auto_answer(config.join_password.empty()),
         password(auto_answer ? std::string(kTestPassword) : config.join_password),
-        session(with_join_password(std::move(config), password)) {}
+        session(with_join_password(owner_hold ? std::move(config) : hold_off(std::move(config)), password)) {}
+
+  static SessionConfig hold_off(SessionConfig config) {
+    config.owner_hold_us = 0;
+    return config;
+  }
 
   static SessionConfig with_join_password(SessionConfig config, const std::string& password) {
     config.join_password = password;
@@ -1494,6 +1501,83 @@ TEST_CASE("the first game to report a placed object owns it, epoch 0") {
   CHECK(std::get<ObjectOwner>(h.sent[0].message) == ObjectOwner{placed(7), 1, 0, 0});
   // OBJECT_PRESENT itself is not relayed.
   CHECK(h.session.stats().relayed == 0);
+}
+
+// The owner hold after a (re)start (SessionConfig::owner_hold_us, stray
+// 2026-11-12): B came back first and listed the Graveyard first, so it got
+// every object A owned before; A's game aborted when its live actors all
+// became copies at once.
+struct HoldHarness : Harness {
+  HoldHarness() : Harness({}, true) {
+    join(1, "A");  // player 1 (the old owner, keep-number)
+    join(2, "B");  // player 2
+    clear();
+  }
+  void tick(std::uint64_t by) {
+    now += by;
+    session.tick(now);
+    collect();
+  }
+};
+
+TEST_CASE("after a start, objects get no owner until the hold ends, then the lowest player number") {
+  HoldHarness h;
+  h.receive(2, present_in("Graveyard", {placed(7), placed(8)}), kChannelOwnership);   // B lists first
+  h.now += 20'000;
+  h.receive(1, present_in("Graveyard", {placed(7), placed(8)}), kChannelOwnership);   // A, 20 ms later
+  CHECK(messages_to<ObjectOwner>(h, 1).empty());   // nobody is told an owner yet
+  CHECK(messages_to<ObjectOwner>(h, 2).empty());
+  CHECK(h.session.object_owner(placed(7)) == owned(0, 0));
+  h.tick(1'000'000);
+  CHECK(h.session.object_owner(placed(7)) == owned(0, 0));   // still in the hold
+  h.tick(1'000'000);                                          // 2 s after B's listing
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  CHECK(h.session.object_owner(placed(8)) == owned(1, 0));
+  // Both games in the Graveyard are told, once, epoch 0: no owner change for anyone.
+  for (ConnectionId id : {ConnectionId{1}, ConnectionId{2}}) {
+    const auto told = messages_to<ObjectOwner>(h, id);
+    REQUIRE(told.size() == 2);
+    CHECK(told[0].owner == 1);
+    CHECK(told[0].epoch == 0);
+  }
+  CHECK(h.session.stats().owners_held == 2);
+  CHECK(h.session.stats().owner_changes == 0);
+}
+
+TEST_CASE("after the hold the old rule: the first game to list a new object owns it at once") {
+  HoldHarness h;
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.tick(2'000'000);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 0));   // B alone listed it: B's
+  h.clear();
+  h.receive(2, present_in("Graveyard", {placed(7), placed(9)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(9)) == owned(2, 0));   // listed after the hold: B's at once
+  CHECK(messages_to<ObjectOwner>(h, 2) == std::vector<ObjectOwner>{{placed(9), 2, 0, 0}});
+  h.clear();
+  h.receive(1, present_in("Graveyard", {placed(7), placed(9)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(9)) == owned(2, 0));   // A only learns it
+  CHECK(messages_to<ObjectOwner>(h, 1).size() == 2);
+}
+
+TEST_CASE("a held object nobody lists any more at the end of the hold is forgotten, then owned anew") {
+  HoldHarness h;
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);   // B's game unloads it
+  h.tick(2'000'000);
+  CHECK_FALSE(h.session.object_owner(placed(7)).has_value());
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+}
+
+TEST_CASE("owner_hold_us 0: the first game to list owns at once, as before the hold") {
+  SessionConfig config;
+  config.owner_hold_us = 0;
+  Harness h(config, true);
+  h.join(1, "A");
+  h.join(2, "B");
+  h.clear();
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 0));
 }
 
 TEST_CASE("object samples go only from the owner of the current epoch, to its scene") {

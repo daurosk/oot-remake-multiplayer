@@ -128,17 +128,19 @@ if (-not $TakeBaseline -and -not $steps -and -not (Test-Path $scA)) { throw "no 
 #   #! noload                  the script loads the save itself (as -NoLoad)
 #   #! switches NAME=v,NAME=v  added to the switches (-Switches given on the command line win)
 #   #! timeout 300             seconds for each phase (as -Timeout, which wins)
+#   #! server ARGS             more coop_server arguments (stray-diag: --owner-hold-ms 0)
 #   #! start REGEX             the game log must match REGEX once the save is loaded (default: a
 #                              Graveyard object, the save point); checked after load.txt, or at
 #                              the end for a script that loads itself
 if ($NoCoop -and -not $PSBoundParameters.ContainsKey('Switches')) { $Switches = @('LICHII_COOP_DEBUG_OBJECTS=1') }
-$headNoLoad = $false; $headSwitches = @(); $headStart = $null
+$headNoLoad = $false; $headSwitches = @(); $headStart = $null; $headServer = ''
 $headFile = if ($steps) { $steps } elseif (Test-Path $scA) { $scA } else { $null }
 if ($headFile) {
     foreach ($l in Get-Content $headFile) {
         if ($l -match '^#!\s*noload\s*$') { $headNoLoad = $true }
         elseif ($l -match '^#!\s*switches\s+(.+)$') { $headSwitches += @($Matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
         elseif ($l -match '^#!\s*start\s+(.+)$') { $headStart = $Matches[1].Trim() }
+        elseif ($l -match '^#!\s*server\s+(.+)$') { $headServer = $Matches[1].Trim() }
         elseif ($l -match '^#!\s*timeout\s+(\d+)\s*$' -and -not $PSBoundParameters.ContainsKey('Timeout')) { $Timeout = [int]$Matches[1] }
     }
 }
@@ -486,6 +488,7 @@ function Start-Server {
     $sargs = "--port $Port"
     if (-not $ServerPassword) { throw "-ServerPassword: every session has a join password (coop_server does not start without one)" }
     $env:OOT_COOP_TEST_PASSWORD = $ServerPassword; $sargs += " --password-env OOT_COOP_TEST_PASSWORD"
+    if ($headServer) { $sargs += " $headServer" }
     $script:serverProc = Start-Process $Server -ArgumentList $sargs -PassThru -WindowStyle Minimized `
         -RedirectStandardOutput "$out\server-out$sfx.txt" -RedirectStandardError "$out\server-err$sfx.txt"
     Start-Sleep 1

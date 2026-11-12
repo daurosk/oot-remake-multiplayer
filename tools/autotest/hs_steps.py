@@ -125,8 +125,9 @@ def parse_steps(text):
 
 
 def parse_header(text):
-    """The `#!` lines: switches (list), start (regex or None), timeout (int or None)."""
-    head = {"switches": [], "start": None, "timeout": None}
+    """The `#!` lines: switches (list), start (regex or None), timeout (int or None), server (more coop_server
+    arguments, a list; run.ps1's `#! server`)."""
+    head = {"switches": [], "start": None, "timeout": None, "server": []}
     for raw in text.splitlines():
         m = re.match(r"^#!\s*(\w+)\s*(.*?)\s*$", raw)
         if not m:
@@ -138,6 +139,8 @@ def parse_header(text):
             head["start"] = v
         elif k == "timeout" and v.isdigit():
             head["timeout"] = int(v)
+        elif k == "server":
+            head["server"] += v.split()
     return head
 
 
@@ -535,6 +538,7 @@ class HookshotGames:
         args = [self.server_exe, "--port", str(self.port)]
         if os.environ.get("OOT_COOP_TEST_PASSWORD"):
             args += ["--password-env", "OOT_COOP_TEST_PASSWORD"]
+        args += self.head.get("server", [])   # the steps file's `#! server` arguments
         with open(os.path.join(self.out, "server-out%s.txt" % sfx), "w") as so:
             self.server = subprocess.Popen(args, stdout=so, stderr=subprocess.STDOUT)
         time.sleep(1)

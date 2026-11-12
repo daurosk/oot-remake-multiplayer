@@ -132,8 +132,10 @@ lines keep-number-A A max=0 coop: welcomed as player [2-4] on
                 hs.parse_steps(text)
 
     def test_header(self):
-        h = hs.parse_header("#! switches A=1,B:C=2\n#! switches D=3\n#! start coop: test warp done\n#! timeout 300\n")
-        self.assertEqual(h, {"switches": ["A=1", "B:C=2", "D=3"], "start": "coop: test warp done", "timeout": 300})
+        h = hs.parse_header("#! switches A=1,B:C=2\n#! switches D=3\n#! start coop: test warp done\n#! timeout 300\n"
+                            "#! server --owner-hold-ms 0\n")
+        self.assertEqual(h, {"switches": ["A=1", "B:C=2", "D=3"], "start": "coop: test warp done", "timeout": 300,
+                             "server": ["--owner-hold-ms", "0"]})
 
 
 class CountTest(unittest.TestCase):
@@ -333,7 +335,7 @@ class HookshotGamesTest(unittest.TestCase):
         hk.Bridge = Bridge
         self.restored = restored
         self.g = hs.HookshotGames(hk, self.games, self.out, None, 27560, "coop-test", ["X=1"], 30,
-                                  {"switches": [], "start": None, "timeout": None}, say=said.append)
+                                  {"switches": [], "start": None, "timeout": None, "server": []}, say=said.append)
 
     def tearDown(self):
         for p in self.g.procs.values():

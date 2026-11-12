@@ -56,6 +56,13 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.run_for_ms = ms;
+    } else if (arg == "--owner-hold-ms") {
+      std::uint32_t ms = 0;
+      if (!has_value || !parse_number(args[++i], ms)) {
+        error = "--owner-hold-ms needs a number of milliseconds";
+        return std::nullopt;
+      }
+      line.owner_hold_ms = ms;
     } else if (arg == "--max-half-open") {
       if (!has_value || !parse_number(args[++i], line.max_half_open)) {
         error = "--max-half-open needs a number (0 for no limit)";
@@ -181,6 +188,9 @@ const char* usage() {
          "  --max-half-open N  most connections one address may hold before\n"
          "                   sending HELLO (default 4, 0 for no limit)\n"
          "  --run-for-ms N   stop by itself after N milliseconds\n"
+         "  --owner-hold-ms N  after the start, objects get their first owner\n"
+         "                   only after N ms, the lowest player number that lists\n"
+         "                   them (default 2000; 0: the first to list owns at once)\n"
          "  --password TEXT  players must give this join password; it also\n"
          "                   encrypts the traffic (required, but not with --relay)\n"
          "  --password-env NAME  the join password is in this environment\n"

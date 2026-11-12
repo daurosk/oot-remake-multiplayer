@@ -363,6 +363,10 @@ public:
     // After this many refusals in a row (a long load or cutscene), every 5 s.
     static constexpr int kRefusedFast = 3;
     static constexpr std::uint64_t kRefusedSlowMs = 5000;
+    // A tunic actor (CoopPuppet_<Age>_<Colour>) refused this many times in a
+    // row, before any tunic puppet spawned, is not in the pack: the plain
+    // puppet from then on (about 3 x 1 s + 3 x 5 s, longer than a load).
+    static constexpr int kRefusedTunicFallback = 6;
     // A live puppet whose player drops out of the plan in the same scene
     // (a stalled or late peer fades to 0 for a moment) is kept this long
     // before it is deleted, so a hiccup does not delete and create it again.
@@ -559,6 +563,13 @@ struct PlannerSettings {
 // PlannerSettings::green_puppet ask for them. An older pack has neither, and a
 // green player would wait for an actor ActorInfo does not know.
 bool PackHasGreenPuppets(std::string_view manifest);
+
+// A puppet pack's coop_puppet.json lists at least one tunic puppet
+// (CoopPuppet_Child_<Colour> or CoopPuppet_Adult_<Colour>). A pack made
+// before the tunics (or with --tunics none) lists only the plain ones; the
+// game refuses an actor its ActorInfo does not have, so with such a pack every
+// puppet must be the plain one (Hookshot proof 3: no puppet at all).
+bool PackHasTunicPuppets(std::string_view manifest);
 
 class Planner {
 public:

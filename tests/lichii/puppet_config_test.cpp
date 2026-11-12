@@ -77,3 +77,47 @@ TEST_CASE("puppet config: actor, test puppet and animation log switches") {
     CHECK(s.debug_anim);
     CHECK_FALSE(From({{"LICHII_COOP_TEST_PUPPET", "0"}}, false).debug);
 }
+
+TEST_CASE("puppet config: a pack without tunic puppets turns the tunics off (Hookshot proof 3)") {
+    const auto with = [](std::optional<bool> has, std::vector<std::string>* log = nullptr, int* asked = nullptr,
+                         std::map<std::string, std::string> vars = {}) {
+        return CoopPuppetConfig::Settings(
+            [&](const char* name) {
+                const auto it = vars.find(name);
+                return it == vars.end() ? std::string() : it->second;
+            },
+            [] { return false; }, log,
+            [&]() -> std::optional<bool> {
+                if (asked != nullptr) ++*asked;
+                return has;
+            });
+    };
+    // The pairs' pack from before the tunics: plain puppets only, and the log says why.
+    std::vector<std::string> log;
+    CHECK_FALSE(with(false, &log).tunics);
+    REQUIRE(log.size() == 2);
+    CHECK(log[0].find("no tunic colours") != std::string::npos);
+    CHECK(log[0].find("make-puppet-pack") != std::string::npos);
+    CHECK(log[1].find(", tunics off (the pack has none)") != std::string::npos);
+    // A pack with them, or no manifest found: as before.
+    CHECK(with(true).tunics);
+    CHECK(with(std::nullopt).tunics);
+    // LICHII_COOP_TUNICS=0 wins and the pack is not read for it.
+    int asked = 0;
+    log.clear();
+    CHECK_FALSE(with(true, &log, &asked, {{"LICHII_COOP_TUNICS", "0"}}).tunics);
+    CHECK(asked == 0);
+    CHECK(log.back().find("(LICHII_COOP_TUNICS=0)") != std::string::npos);
+}
+
+TEST_CASE("puppet config: the manifest names tunic puppets or only the plain ones") {
+    // Lines as tools/puppet_pack writes them (coop_puppet.json "actors").
+    const std::string plain = R"({"actors": [{"actor": "CoopPuppet_Child", "pack": "Pack/Actor/CoopPuppet_Child.pack.zs",
+        "members": ["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"]}, {"actor": "CoopPuppet_Adult"}]})";
+    const std::string tunics = R"({"actors": [{"actor": "CoopPuppet_Child"}, {"actor": "CoopPuppet_Child_Blue"},
+        {"actor": "CoopPuppet_Adult_Blue"}]})";
+    CHECK_FALSE(CoopPuppet::PackHasTunicPuppets(plain));
+    CHECK(CoopPuppet::PackHasTunicPuppets(tunics));
+    CHECK(CoopPuppet::PackHasTunicPuppets(R"({"actor": "CoopPuppet_Adult_Red"})"));
+    CHECK_FALSE(CoopPuppet::PackHasTunicPuppets(""));
+}

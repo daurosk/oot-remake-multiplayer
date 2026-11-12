@@ -461,6 +461,44 @@ TEST_CASE("puppet: a tunic actor that is never made falls back after two timeout
     CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
 }
 
+TEST_CASE("puppet: a tunic actor the game keeps refusing falls back (an older pack, Hookshot proof 3)") {
+    Game g;
+    g.create_result = 0;  // the game refuses: no such actor in its ActorInfo
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+    std::uint64_t t = 0;
+    for (; t < 60000 && d.FailedTunics().empty(); t += 250) {
+        Frame(d, g, t);
+    }
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
+    // About 3 x 1 s + 3 x 5 s: longer than a load's refusals, well before a minute.
+    CHECK(t > 3 * Director::kRefusedRetryMs + 2 * Director::kRefusedSlowMs);
+    CHECK(t < 30000);
+}
+
+TEST_CASE("puppet: refusals do not cost the plain puppet or a tunic one that is made in time") {
+    {
+        Game g;
+        g.create_result = 0;
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+        for (std::uint64_t t = 0; t < 60000; t += 250) Frame(d, g, t);
+        CHECK(d.FailedTunics().empty());  // the plain one has nothing to fall back to: it keeps asking
+    }
+    {
+        Game g;
+        g.create_result = 0;  // refused while the scene loads ...
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+        std::uint64_t t = 0;
+        for (; t < 8000; t += 250) Frame(d, g, t);  // 3 fast refusals and one slow one
+        g.create_result = 1;  // ... then accepted (the refusal count starts again)
+        for (; t < 8000 + Director::kCreateTimeoutMs; t += 250) Frame(d, g, t);
+        CHECK(d.FailedTunics().empty());
+        CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child_Blue");
+    }
+}
+
 TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
     Game g;
     Director d;

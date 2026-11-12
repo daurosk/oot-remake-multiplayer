@@ -5,6 +5,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,11 +16,17 @@ namespace CoopPuppetConfig {
 // One variable's value, "" when it is not set.
 using EnvFn = std::function<std::string(const char*)>;
 
+// Whether the puppet pack has tunic puppets (CoopPuppet::PackHasTunicPuppets);
+// std::nullopt when no pack manifest was found (nothing to judge by).
+using PackTunicsFn = std::function<std::optional<bool>()>;
+
 // The settings the variables ask for. pack_green answers whether the puppet
 // pack has both green puppets; it is asked only when the player's own Link
-// wears another colour. Each line for the log goes into *log.
+// wears another colour. pack_tunics (optional): a pack without tunic puppets
+// turns the tunics off, so every puppet is the plain one the pack has. Each
+// line for the log goes into *log.
 CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool()>& pack_green,
-                                     std::vector<std::string>* log);
+                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics = {});
 
 #ifdef LICHII_COOP
 // Settings() from the process's variables and the puppet pack under

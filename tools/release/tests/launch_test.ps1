@@ -452,6 +452,8 @@ try {
     Write-File (Join-Path $hsPack 'coop_self\red.bntx.zs') 'RED'
     Write-File (Join-Path $hsPack 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
     Add-Content -LiteralPath (Join-Path $kit 'coop-options.ini') -Value "`r`ncolor = red"
+    # A saved join password (Enter keeps it): the join goes on whether play.ps1 asks for one or insists on one.
+    Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`npassword = hunter2`r`n"
     $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
     $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts\play.ps1') join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate 2>&1) -join '|'
     Check ($out -match 'Puppet pack: found\.' -and $out -match 'Your Link: the red tunic' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: the pack found and your red tunic said [$out]"

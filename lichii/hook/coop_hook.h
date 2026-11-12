@@ -26,6 +26,11 @@ void OnFrame(Core::System& system);
 // Says goodbye to the server and joins the network thread. Call once, when
 // the program closes (after emulation has stopped).
 void Shutdown();
+// The tunic the other players see on us, now ("" for the game's own;
+// green/red/blue or verde/roja/azul). From the Co-op menu.
+void SetTunic(const std::string& word);
+// The emulator's current profile name, fit for a co-op name ("" if none).
+std::string CurrentProfileName();
 
 // What the co-op window shows: one line of text each. Empty when co-op is
 // off. Any thread.

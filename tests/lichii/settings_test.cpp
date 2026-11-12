@@ -251,3 +251,33 @@ TEST_CASE("settings: the join password from coop.ini and LICHII_COOP_PASSWORD") 
   CHECK(errors.size() == 1);
   CHECK(s.password == "fromenv");
 }
+
+TEST_CASE("settings: tunic key, name set or not, and the Co-op menu's ini edits") {
+    Settings s;
+    std::vector<std::string> errors;
+    ApplyIni("server = 1.2.3.4\ntunic = Roja\n", s, errors);
+    CHECK(errors.empty());
+    CHECK(s.tunic == "Roja");
+    CHECK_FALSE(s.name_set);  // no name line: the emulator's profile name is used
+    ApplyIni("tunic = purple\n", s, errors);
+    CHECK(errors.size() == 1);
+    Settings n;
+    std::vector<std::string> none;
+    ApplyIni("name = Saria\n", n, none);
+    CHECK(n.name_set);
+
+    const std::string ini = "# comment\nserver = 1.2.3.4\n# name = Old\nname = Mido\nport = 27510\n";
+    CHECK(CoopHook::SetIniValue(ini, "name", std::string("Saria")) ==
+          "# comment\nserver = 1.2.3.4\n# name = Old\nname = Saria\nport = 27510\n");
+    CHECK(CoopHook::SetIniValue(ini, "name", std::nullopt) ==
+          "# comment\nserver = 1.2.3.4\n# name = Old\nport = 27510\n");
+    CHECK(CoopHook::SetIniValue("server = x", "tunic", std::string("blue")) == "server = x\ntunic = blue\n");
+    CHECK(CoopHook::SetIniValue("a = 1\r\ntunic = red\r\n", "tunic", std::string("green")) ==
+          "a = 1\r\ntunic = green\n");
+
+    CHECK(CoopHook::NameFromProfile(std::string_view("  Sebastian Link long name\0\0", 28)) == "Sebastian Link l");
+    CHECK(CoopHook::NameFromProfile("Ana#1") == "Ana1");
+    CHECK(CoopHook::NameFromProfile("") == "");
+    CHECK(CoopHook::ValidTunic(" AZUL "));
+    CHECK_FALSE(CoopHook::ValidTunic("negra"));
+}

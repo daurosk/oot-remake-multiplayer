@@ -35,6 +35,8 @@
 #include "core/arm/debug.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/hle/service/acc/profile_manager.h"
+#include "common/settings.h"
 #include "core/loader/loader.h"
 #include "core/memory.h"
 
@@ -289,11 +291,8 @@ public:
         live_events_ = EnvString("LICHII_COOP_LIVE_EVENTS") != "0";
         // Scene sync rides on the live event requester (off with LICHII_COOP_SCENE_SYNC=0).
         scene_sync_ = EnvString("LICHII_COOP_SCENE_SYNC") != "0";
-        if (const std::string t = EnvString("LICHII_COOP_TUNIC"); !t.empty()) {
-            tunic_ = coop::host::tunic_actor(t);
-            LOG_INFO(Core, "coop: tunic: {}", tunic_ ? "the others see you (adult) in " + *tunic_
-                                                     : "LICHII_COOP_TUNIC '" + t + "' is not green, red or blue: ignored");
-        }
+        // coop.ini `tunic` (or LICHII_COOP_TUNIC); the Co-op menu changes it live.
+        SetTunic(settings_.tunic);
         if (live_events_) {
             // LICHII_COOP_LIVE_EVENT_NAMES=a,b,...: only these events (default
             // and "all": every held gimmick event with a known place).
@@ -346,6 +345,15 @@ public:
     }
 
     // `quiet`: no logging, for the end of the program, when the log may be gone.
+public:
+    // Any thread: the tunic the others see ("" for the game's own).
+    void SetTunic(const std::string& word) {
+        std::lock_guard lock(tunic_mutex_);
+        tunic_ = word.empty() ? std::nullopt : coop::host::tunic_actor(word);
+        LOG_INFO(Core, "coop: tunic: {}", tunic_ ? "the others see you (adult) in " + *tunic_
+                                                 : std::string("the game's own"));
+    }
+
     void End(bool quiet) {
         CoopCamera::SetWanted(false);
         quiet_ = quiet;
@@ -978,7 +986,10 @@ private:
         coop::host::PlayerReader reader(memory, &drawn_state_);
         auto reading = reader.read();
         if (reading) {
-            coop::host::apply_tunic_choice(*reading, tunic_);  // what the others see (LICHII_COOP_TUNIC)
+            {
+                std::lock_guard lock(tunic_mutex_);
+                coop::host::apply_tunic_choice(*reading, tunic_);  // what the others see
+            }
             view.position = reading->position;
             view.scene = reading->scene;
             view.age = reading->age;
@@ -1279,7 +1290,8 @@ private:
     CoopLiveEvents::Requester live_requester_;
     CoopLiveEvents::SceneSync scene_sync_decider_;
     bool scene_sync_ = true;
-    std::optional<std::string> tunic_;  // LICHII_COOP_TUNIC
+    std::optional<std::string> tunic_;  // coop.ini tunic / LICHII_COOP_TUNIC / the Co-op menu
+    std::mutex tunic_mutex_;
     const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106
     CoopEvery::Every samples_log_{5 * CoopEvery::kSecondUs};
     std::uint64_t samples_log_at_ = 0;
@@ -1355,12 +1367,33 @@ struct AtExit {
     }
 } g_at_exit;
 
+// The emulator's current user profile's name, made fit for co-op ("" if none).
+std::string ProfileName() {
+    Service::Account::ProfileManager profiles;
+    const auto user = profiles.GetUser(static_cast<std::size_t>(::Settings::values.current_user.GetValue()));
+    Service::Account::ProfileBase base{};
+    if (!user || !profiles.GetProfileBase(*user, base)) {
+        return {};
+    }
+    return NameFromProfile(std::string_view(reinterpret_cast<const char*>(base.username.data()),
+                                            base.username.size()));
+}
+
 Coop* Get() {
     std::lock_guard lock(g_mutex);
     return g_coop.get();
 }
 
 } // namespace
+
+void SetTunic(const std::string& word) {
+    std::lock_guard lock(g_mutex);
+    if (g_coop) g_coop->SetTunic(word);
+}
+
+std::string CurrentProfileName() {
+    return ProfileName();
+}
 
 void Start() {
     std::lock_guard lock(g_mutex);
@@ -1385,6 +1418,13 @@ void Start() {
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     auto settings = LoadSettings(ini, errors);
+    // No name in coop.ini or LICHII_COOP_NAME: the emulator's own profile name.
+    if (!settings.name_set) {
+        if (const std::string profile = ProfileName(); !profile.empty()) {
+            settings.name = profile;
+            LOG_INFO(Core, "coop: name from the emulator's profile: '{}'", profile);
+        }
+    }
     for (const auto& e : errors) {
         LOG_ERROR(Core, "coop: {}", e);
     }

@@ -1,5 +1,11 @@
 #include "coop_settings.h"
 
+#include <optional>
+
+#include <cctype>
+
+#include <algorithm>
+
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -108,6 +114,13 @@ void Set(std::string_view key, std::string_view value, const std::string& where,
             return;
         }
         settings.name = std::string(value);
+        settings.name_set = true;
+    } else if (key == "tunic") {
+        if (!value.empty() && !ValidTunic(value)) {
+            errors.push_back(where + ": tunic must be green, red or blue (verde, roja, azul)");
+            return;
+        }
+        settings.tunic = std::string(value);
     } else if (key == "password") {
         // The join password (empty: none). Its HMAC answers the server's
         // challenge; the server, not this, says whether it is right.
@@ -161,6 +174,7 @@ void ApplyEnvironment(const std::function<std::optional<std::string>(const char*
         {"LICHII_COOP_PORT", "port"},
         {"LICHII_COOP_NAME", "name"},
         {"LICHII_COOP_PASSWORD", "password"},
+        {"LICHII_COOP_TUNIC", "tunic"},
     };
     // Server first, so LICHII_COOP_PORT wins over a port inside it.
     for (const auto& v : kVariables) {
@@ -203,6 +217,64 @@ Settings LoadSettings(const std::filesystem::path& ini, std::vector<std::string>
         settings.server.clear();
     }
     return settings;
+}
+
+} // namespace CoopHook
+
+namespace CoopHook {
+
+bool ValidTunic(std::string_view word) {
+    std::string w;
+    for (const char c : word) {
+        if (c != ' ' && c != '\t') w.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    static constexpr std::string_view kWords[] = {"green", "verde", "kokiri", "red", "roja", "rojo",
+                                                  "goron", "blue", "azul", "zora"};
+    return std::find(std::begin(kWords), std::end(kWords), w) != std::end(kWords);
+}
+
+std::string NameFromProfile(std::string_view username) {
+    std::string out;
+    for (const char c : username) {
+        const auto b = static_cast<unsigned char>(c);
+        if (b == 0) break;
+        if (b >= 0x20 && b < 0x7f && c != '#' && c != ';' && c != '=') out.push_back(c);
+    }
+    while (!out.empty() && out.front() == ' ') out.erase(out.begin());
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    if (out.size() > 16) out.resize(16);
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+std::string SetIniValue(std::string_view text, std::string_view key, const std::optional<std::string>& value) {
+    std::string out;
+    bool done = false;
+    while (!text.empty()) {
+        const auto end = text.find('\n');
+        std::string_view line = text.substr(0, end == std::string_view::npos ? text.size() : end + 1);
+        text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+        std::string_view body = line;
+        while (!body.empty() && (body.back() == '\n' || body.back() == '\r')) body.remove_suffix(1);
+        std::size_t i = 0;
+        while (i < body.size() && (body[i] == ' ' || body[i] == '\t')) ++i;
+        const auto eq = body.find('=');
+        bool match = false;
+        if (!done && eq != std::string_view::npos && i < body.size() && body[i] != '#' && body[i] != ';') {
+            std::string_view k = body.substr(i, eq - i);
+            while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.remove_suffix(1);
+            match = k == key;
+        }
+        if (match) {
+            done = true;
+            if (value) out += std::string(key) + " = " + *value + "\n";
+            continue;
+        }
+        out += line;
+        if (end == std::string_view::npos && !line.empty()) out += "\n";
+    }
+    if (!done && value) out += std::string(key) + " = " + *value + "\n";
+    return out;
 }
 
 } // namespace CoopHook

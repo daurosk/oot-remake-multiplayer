@@ -7,6 +7,16 @@
 #include <vector>
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLabel>
+#include <QMainWindow>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMessageBox>
 #include <QEvent>
 #include <QFontMetrics>
 #include <QKeyEvent>
@@ -20,6 +30,10 @@
 #include <QWidget>
 
 #include "coop_hook.h"
+#include "coop_settings.h"
+#include "common/fs/path_util.h"
+#include <fstream>
+#include <sstream>
 
 namespace CoopWindow {
 namespace {
@@ -609,9 +623,95 @@ private:
     QPointer<PlayerList> list_;
 };
 
+
+// The Co-op menu: name and tunic, written to coop.ini (the tunic also applies
+// at once; a new name is used from the next start of the emulator).
+void NameAndTunic(QWidget* main) {
+    const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
+    std::string text;
+    {
+        std::ifstream in(ini, std::ios::binary);
+        std::ostringstream all;
+        all << in.rdbuf();
+        text = all.str();
+    }
+    std::vector<std::string> errors;
+    const CoopHook::Settings now = CoopHook::LoadSettings(ini, errors);
+    const std::string profile = CoopHook::CurrentProfileName();
+
+    QDialog dialog(main);
+    dialog.setWindowTitle(QStringLiteral("Co-op: nombre y t\u00fanica"));
+    auto* form = new QFormLayout(&dialog);
+    auto* use_profile = new QCheckBox(
+        QStringLiteral("Usar el nombre del perfil del emulador (%1)")
+            .arg(profile.empty() ? QStringLiteral("sin perfil") : QString::fromStdString(profile)));
+    auto* name = new QLineEdit(QString::fromStdString(now.name_set ? now.name : profile));
+    name->setMaxLength(16);
+    use_profile->setChecked(!now.name_set && !profile.empty());
+    name->setEnabled(!use_profile->isChecked());
+    QObject::connect(use_profile, &QCheckBox::toggled, name, [name, profile](bool on) {
+        name->setEnabled(!on);
+        if (on) name->setText(QString::fromStdString(profile));
+    });
+    auto* tunic = new QComboBox;
+    tunic->addItem(QStringLiteral("La del juego"), QString());
+    tunic->addItem(QStringLiteral("Verde (Kokiri)"), QStringLiteral("green"));
+    tunic->addItem(QStringLiteral("Roja (Goron)"), QStringLiteral("red"));
+    tunic->addItem(QStringLiteral("Azul (Zora)"), QStringLiteral("blue"));
+    for (int i = 0; i < tunic->count(); ++i) {
+        const std::string v = tunic->itemData(i).toString().toStdString();
+        if (!now.tunic.empty() && CoopHook::ValidTunic(now.tunic) && v == now.tunic) tunic->setCurrentIndex(i);
+    }
+    form->addRow(use_profile);
+    form->addRow(QStringLiteral("Nombre (1 a 16 letras):"), name);
+    form->addRow(QStringLiteral("T\u00fanica que ven los dem\u00e1s (de adulto):"), tunic);
+    form->addRow(new QLabel(QStringLiteral("El nombre nuevo se usa al volver a abrir el emulador; la t\u00fanica, al momento.")));
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    form->addRow(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    std::optional<std::string> new_name;
+    if (!use_profile->isChecked()) {
+        const std::string typed = CoopHook::NameFromProfile(name->text().toStdString());
+        if (typed.empty()) {
+            QMessageBox::warning(main, QStringLiteral("Co-op"), QStringLiteral("El nombre debe tener de 1 a 16 letras."));
+            return;
+        }
+        new_name = typed;
+    }
+    const std::string tunic_word = tunic->currentData().toString().toStdString();
+    text = CoopHook::SetIniValue(text, "name", new_name);
+    text = CoopHook::SetIniValue(text, "tunic",
+                                 tunic_word.empty() ? std::nullopt : std::optional<std::string>(tunic_word));
+    {
+        std::ofstream out(ini, std::ios::binary | std::ios::trunc);
+        out << text;
+        if (!out) {
+            QMessageBox::warning(main, QStringLiteral("Co-op"), QStringLiteral("No se pudo guardar coop.ini."));
+            return;
+        }
+    }
+    CoopHook::SetTunic(tunic_word);
+}
+
+void AddMenu(QWidget* main) {
+    auto* window = qobject_cast<QMainWindow*>(main);
+    if (window == nullptr || window->menuBar() == nullptr) {
+        return;
+    }
+    QMenu* menu = window->menuBar()->addMenu(QStringLiteral("Co-op"));
+    QAction* act = menu->addAction(QStringLiteral("Nombre y t\u00fanica\u2026"));
+    QObject::connect(act, &QAction::triggered, main, [main] { NameAndTunic(main); });
+}
+
 } // namespace
 
 void Attach(QWidget* main, QWidget* render) {
+    AddMenu(main);  // also with co-op off: the name can be set before a server is set
+
     CoopHook::Start();
     if (CoopHook::OverlayLines().empty()) {
         return;  // co-op is off

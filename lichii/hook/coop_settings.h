@@ -18,6 +18,8 @@ struct Settings {
     std::string server;            // IP or host name; empty means co-op off
     std::uint16_t port = 27510;    // protocol default
     std::string name = "Player";   // nickname, 1 to 16 characters
+    bool name_set = false;         // name came from coop.ini or LICHII_COOP_NAME
+    std::string tunic;             // "green", "red", "blue" (any case, or verde, roja, azul); "": the game's own
     std::string password;          // join password; empty: none
     bool enabled() const { return !server.empty(); }
 };
@@ -37,5 +39,17 @@ void ApplyEnvironment(const std::function<std::optional<std::string>(const char*
 // Any error turns co-op off (server cleared), so a typo never connects
 // somewhere unintended.
 Settings LoadSettings(const std::filesystem::path& ini, std::vector<std::string>& errors);
+
+// The same text with `key = value` set: the first uncommented line for the key
+// is replaced (or removed when value is nothing); when there is none, the line
+// is added at the end. Every other line is kept as it was.
+std::string SetIniValue(std::string_view text, std::string_view key, const std::optional<std::string>& value);
+
+// Whether `word` names a tunic colour LICHII_COOP_TUNIC / coop.ini take.
+bool ValidTunic(std::string_view word);
+
+// A profile's username made into a co-op name: trimmed, printable ASCII
+// only, at most 16 characters; "" when nothing is left.
+std::string NameFromProfile(std::string_view username);
 
 } // namespace CoopHook

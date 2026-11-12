@@ -63,6 +63,7 @@ std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies);
 // The boss bodies our game is not ready to own (its intro not played here);
 // empty when none. Any thread; used by the next share.
 void SetUnreadyBosses(std::vector<std::string> bodies);
+std::vector<std::string> UnreadyBosses();
 // Small keys to give back to our game (the SmallKeyNum flag of the dungeon,
 // once each): a door's lock this game opened after another player already
 // had, or at the same moment with the higher player number (docs/dungeon.md,

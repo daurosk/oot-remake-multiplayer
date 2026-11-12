@@ -1454,7 +1454,9 @@ TEST_CASE("sign cut: our cut's words go out as SIGN_CUT and are written into the
     CHECK(b.SignWordTarget(read_b, step.words[1]) == FakeSign::kPoint + 0x1e8);
     auto moved = step.words[0];
     other.words[FakeSign::kTable + 0x268] = FakeSign::kCut;  // the table changed since the copy
-    CHECK_FALSE(b.SignWordTarget(read_b, moved).has_value());
+    std::string why;
+    CHECK_FALSE(b.SignWordTarget(read_b, moved, &why).has_value());
+    CHECK(why.find("component moved") != std::string::npos);
     other.words[FakeSign::kTable + 0x268] = FakeSign::kPoint;
     moved.part.component = 0x7;  // not a pointer
     CHECK_FALSE(b.SignWordTarget(read_b, moved).has_value());
@@ -1465,7 +1467,14 @@ TEST_CASE("sign cut: our cut's words go out as SIGN_CUT and are written into the
     moved.key = (moved.key & ~0xffffffffull) | 0x1f0;  // off the list
     CHECK_FALSE(b.SignWordTarget(read_b, moved).has_value());
     other.words[FakeSign::kPoint + 0x98] = 0x42cd0ee8c0eedabe;  // a transform there now
-    CHECK_FALSE(b.SignWordTarget(read_b, step.words[0]).has_value());
+    why.clear();
+    CHECK_FALSE(b.SignWordTarget(read_b, step.words[0], &why).has_value());
+    CHECK(why.find("holds 42cd0ee8c0eedabe here") != std::string::npos);
+    moved = step.words[0];
+    moved.key = (moved.key & ~0xffffffffull) | 0x1f0;
+    why.clear();
+    CHECK_FALSE(b.SignWordTarget(read_b, moved, &why).has_value());
+    CHECK(why == "word off the list");
     CHECK(Walk(b, 1900 * kMs, {Thing(FakeSign::kActor, 0x70, 100, name)}).words.empty());  // once
 
     // A game entering later gets the words (no hit) once the sign is loaded and copied.

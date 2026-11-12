@@ -1,0 +1,45 @@
+# goron-rock (#84, a Goron City / Death Mountain rock broken in one game): both warp into Goron
+# City (child). A is put by the bomb flower Obj_BombFlower_A_03 6e8e13516d051ed1 (15.46 106.43
+# 0.93), lifts it (A) and throws it (ZR) at the rock Obj_Goron_BrokenRock_A_01 751d254f812d5cfb
+# (16.07 104.91 -1.58, Banc GoronCity_Child_Static), then runs east. B watches from the start
+# point GoronCity_LostWoodSide_before (21.70 104.94 -2.54), facing the rock.
+# Expect: A "world: 751d254f812d5cfb Obj_Goron_BrokenRock_A_01 broken here" (or the objects
+# "share life ... -> 0" / "share gone" line), B "... broken by another player" and B's rock gone
+# at the same time (shots boom/end). If A's own rock does not break (the throw missed), the
+# run proves nothing: note where the flower went in A's shots. The Death Mountain Trail
+# boulder over Dodongo's Cavern (Obj_DeathMtTrail_BrokenRock_A_01, the same BrokenRock_ part)
+# needs the ledge flower dropped from above: not scripted.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp GoronCity_Child GoronCity_LostWoodSide_before
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 15.9 106.5 1.9
+wait 180
+mark at-flower
+toward 15.46 0.93 20
+wait 20
+press A 12              # lift the bomb flower
+wait 60
+mark lifted
+toward 16.07 -1.58 10   # face the rock
+press ZR 12             # throw
+wait 20
+mark thrown
+goto 21.0 -6.0 1.0 200  # run clear of the blast
+wait 240
+mark boom
+wait 600
+mark end

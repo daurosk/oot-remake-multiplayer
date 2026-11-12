@@ -1989,24 +1989,51 @@ std::optional<SignProbe::Part> SignProbe::PartOf(std::uint64_t address, std::uin
 }
 
 std::optional<std::uint64_t> WorldSync::SignWordTarget(const SignProbe::ReadWord& read,
-                                                       const Out::Word& w) const {
-    const auto o = objects_.find(w.address);
-    if (o == objects_.end() || o->second.hash != w.hash || !o->second.sign ||
-        !SignCutKeyAllowed(w.key) || !ProbePointer(w.part.table) ||
-        !ProbePointer(w.part.component)) {
+                                                       const Out::Word& w,
+                                                       std::string* why) const {
+    auto fail = [why](const std::string& reason) -> std::optional<std::uint64_t> {
+        if (why) {
+            *why = reason;
+        }
         return std::nullopt;
+    };
+    auto hex = [](std::uint64_t v) {
+        char text[24];
+        std::snprintf(text, sizeof text, "%llx", static_cast<unsigned long long>(v));
+        return std::string(text);
+    };
+    const auto o = objects_.find(w.address);
+    if (o == objects_.end() || o->second.hash != w.hash || !o->second.sign) {
+        return fail("the sign left the walk");
+    }
+    if (!SignCutKeyAllowed(w.key)) {
+        return fail("word off the list");
+    }
+    if (!ProbePointer(w.part.table) || !ProbePointer(w.part.component)) {
+        return fail("no component pointer from the probe");
     }
     const auto table = read(w.address + SignProbe::kActorTable);
+    if (!table || *table != w.part.table) {
+        return fail("component table moved (" + hex(table.value_or(0)) + ", probe saw " +
+                    hex(w.part.table) + ")");
+    }
     const std::uint64_t entry = (w.key >> 32) - 2;
-    const auto part =
-        table && *table == w.part.table ? read(*table + 8 * entry) : std::nullopt;
+    const auto part = read(*table + 8 * entry);
     const std::uint64_t offset = w.key & 0xffffffffu;
-    if (!part || *part != w.part.component || offset >= 8 * SignProbe::kComponentWords) {
-        return std::nullopt;
+    if (!part || *part != w.part.component) {
+        return fail("component moved (" + hex(part.value_or(0)) + ", probe saw " +
+                    hex(w.part.component) + ")");
+    }
+    if (offset >= 8 * SignProbe::kComponentWords) {
+        return fail("offset past the copy");
     }
     const auto now = read(*part + offset);
-    if (!now || !SignWordWritable(*now, w.value)) {
-        return std::nullopt;
+    if (!now) {
+        return fail("not readable");
+    }
+    if (!SignWordWritable(*now, w.value)) {
+        return fail("holds " + hex(*now) + " here (a pointer or two floats), " + hex(w.value) +
+                    " not written over it");
     }
     return *part + offset;
 }

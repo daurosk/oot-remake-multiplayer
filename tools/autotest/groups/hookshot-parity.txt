@@ -12,9 +12,10 @@
 # Not merged yet (in review): hs-gohma (row 12) and spawn-pop's hs-spawn (row 13): uncomment once integrate-p12 has them.
 
 [g1]
-# Puppet looks: tunics (#202), masks (#91), the HUD blocks under your hearts.
+# Puppet looks: the puppet shows (hs-puppets), tunics (#202), masks (#91), the HUD blocks under your hearts.
 hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_SELF_TUNIC=blue  expect='A:coop: your Link wears blue; green players get CoopPuppet_<Age>_Green'  label="#202 own colour"
 hs-tunic  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_TUNICS=0  expect='A:tunics off \(LICHII_COOP_TUNICS=0\)'  expect='B:tunics off \(LICHII_COOP_TUNICS=0\)'  label="#202 tunics off"
+hs-puppets  expect='B:P1: create CoopPuppet_(Child|Adult)\S* requested \(returned 0x1\)'  expect='B:P1 CoopPuppet_(Child|Adult)\S* spawned after'  expect='A:P2 CoopPuppet_(Child|Adult)\S* spawned after'  label="#202 puppet shows (fresh pack)"
 hs-masks  expect="B:P1 wears head 'Armor_Child_Mask_Skull'"  expect='B:P1 takes off head'  label="#91 masks"
 hs-hud  expect='A:coop: drawing over Hookshot.s picture'  label="HUD blocks"
 hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: no block)"

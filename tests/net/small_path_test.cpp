@@ -351,7 +351,7 @@ TEST_CASE("small path: plain loss and short outages on a line that carries full 
   std::mt19937 random(143);
   std::bernoulli_distribution loss(0.05);
   const auto begin = Clock::now();
-  bool lossy = false;
+  bool lossy = true;  // from the joiner's first packet on
   joiner.path.lose = [&](std::size_t) {
     if (!lossy) return false;
     const int t = ms_since(begin) % 4000;
@@ -387,9 +387,9 @@ TEST_CASE("small path: plain loss and short outages on a line that carries full 
   REQUIRE(host.send_flag_snapshot(flags_from(1, 2000, 7)));
   run_until(300, [] { return false; });
   REQUIRE(joiner.client.start());
-  REQUIRE(run_until(5000, [&] { return joiner.client.synced(); }));
+  REQUIRE(run_until(15000, [&] { return joiner.client.synced(); }));
+  CHECK(joiner.small_path_drops == 0);
 
-  lossy = true;
   const auto start = Clock::now();
   auto next_host = start;
   auto next_join = start;

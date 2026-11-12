@@ -196,7 +196,7 @@ void Client::stop() {
 
 void Client::begin_attempt() {
   attempt_started_us_ = now_us();
-  path_mark_.reset();
+  path_mark_ = PathMark{};
   last_receive_us_ = 0;
   link_ = LinkInfo{};
   ENetAddress address{};

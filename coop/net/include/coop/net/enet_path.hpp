@@ -24,20 +24,24 @@
 //
 // Plain loss or an outage (Wi-Fi) also leaves commands unacknowledged after
 // several sends, but: a small one (PINGs, single flags) does not count at
-// all; a big one is resent after the line is back and that send gets
-// through, which takes the mark off. By chance it takes four lost sends of
-// one big command, the last of them while later packets get through: at 6%
-// loss each way about 1 in 77000 per big command (a few a minute), so about
-// once in a few hundred hours of play; it costs one reconnect.
+// all; once one big command got through on a connection (the join snapshot
+// does at once on a line that carries full datagrams) nothing counts for
+// the rest of it; and before that a big one must also stay stuck through
+// one more send after the line is back. A false switch needs a line that
+// loses the join snapshot's first datagrams four or more times running, and
+// costs one reconnect.
 
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <enet/enet.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "coop/net/path_mark.hpp"
 
@@ -119,21 +123,54 @@ inline bool still_waiting(const ENetPeer& peer, const StuckCommand& mark) {
   return waiting;
 }
 
-// Called for each peer after each service round, with that peer's mark.
-// A loss burst or an outage (Wi-Fi) can also lose every send of a big
-// command and then let later packets through; but then its next send, made
-// after the line came back, gets through too. So a stuck command is only
-// marked first, and counts once the SAME command was sent again after the
-// mark and that send too stayed unacknowledged while later packets were
-// acknowledged.
+// Updates mark.big_acked: true once a big command sent on this connection
+// left ENet's lists (acknowledged) while the peer stayed connected.
+inline void note_big_acks(PathMark& mark, const ENetPeer& peer) {
+  std::vector<std::uint32_t> now;
+  auto scan = [&](const ENetList& list) {
+    for (const ENetListNode* node = list.sentinel.next; node != &list.sentinel; node = node->next) {
+      const auto* command = reinterpret_cast<const ENetOutgoingCommand*>(node);
+      if ((command->command.header.command & ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE) != 0 &&
+          command->sendAttempts > 0 && too_big_for_small(*command)) {
+        now.push_back(std::uint32_t{command->command.header.channelID} << 16 |
+                      command->reliableSequenceNumber);
+      }
+    }
+  };
+  scan(peer.sentReliableCommands);
+  scan(peer.outgoingCommands);
+  std::sort(now.begin(), now.end());
+  if (!mark.big_acked) {
+    mark.big_acked = !std::includes(now.begin(), now.end(), mark.big_waiting.begin(), mark.big_waiting.end());
+  }
+  mark.big_waiting = mark.big_acked ? std::vector<std::uint32_t>{} : std::move(now);
+}
+
+// Called for each peer after each service round, with that peer's mark
+// (a new one for each connection).
 //
-// True when `peer` uses datagrams above kSmallDatagramBytes, the other side
-// acknowledged something within kHeardWithinMs of `now_ms` (ENet's clock,
-// host->serviceTime), and the marked command was sent again and is still
-// stuck after that send.
+// Plain loss or an outage (Wi-Fi) can also lose every send of a big command
+// and then let later packets through. Two things keep that from counting:
+// - once any big command was acknowledged on this connection, the path
+//   carries full datagrams, and nothing counts any more (a small path never
+//   gets one through);
+// - a stuck command is only marked first, and counts once the SAME command
+//   was sent again after the mark and that send too stayed unacknowledged
+//   while later packets were acknowledged (an outage's next resend usually
+//   gets through).
+//
+// True when `peer` uses datagrams above kSmallDatagramBytes, no big command
+// got through yet, the other side acknowledged something within
+// kHeardWithinMs of `now_ms` (ENet's clock, host->serviceTime), and the
+// marked command was sent again and is still stuck after that send.
 inline bool full_datagrams_lost(PathMark& mark, const ENetPeer& peer, enet_uint32 now_ms) {
   if (peer.state != ENET_PEER_STATE_CONNECTED || peer.mtu <= kSmallDatagramBytes) {
-    mark.reset();
+    mark.marked.reset();
+    return false;
+  }
+  note_big_acks(mark, peer);
+  if (mark.big_acked) {
+    mark.marked.reset();
     return false;
   }
   // ENet's clock wraps; its ENET_TIME_DIFFERENCE is not public.
@@ -144,13 +181,14 @@ inline bool full_datagrams_lost(PathMark& mark, const ENetPeer& peer, enet_uint3
     // Not stuck now: acknowledged at last, or not heard after its last send
     // yet (or the peer is gone: ENet's timeout). The mark stays only while
     // its command waits.
-    if (mark && !still_waiting(peer, *mark)) mark.reset();
+    if (mark.marked && !still_waiting(peer, *mark.marked)) mark.marked.reset();
     return false;
   }
-  if (mark && mark->channel == stuck->channel && mark->sequence == stuck->sequence) {
-    return stuck->sends > mark->sends;
+  if (mark.marked && mark.marked->channel == stuck->channel &&
+      mark.marked->sequence == stuck->sequence) {
+    return stuck->sends > mark.marked->sends;
   }
-  mark = stuck;
+  mark.marked = stuck;
   return false;
 }
 

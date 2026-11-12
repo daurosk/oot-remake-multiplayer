@@ -26,27 +26,10 @@
 #include "coop_hold.h"
 #include "coop_sites.h"
 #include "coop_puppet.h"
+#include "coop_puppet_config.h"
 
 namespace CoopSvc {
 namespace {
-
-// Any mod folder's coop_puppet.json under load/<title id> with both green
-// puppets (CoopPuppet::PackHasGreenPuppets), as coop_spawn's PackStandIns looks.
-bool PackGreenPuppets() {
-    std::error_code ec;
-    const auto title = Common::FS::GetEdenPath(Common::FS::EdenPath::LoadDir) / "0400486024DEC000";
-    for (const auto& mod : std::filesystem::directory_iterator(title, ec)) {
-        std::ifstream in(mod.path() / "coop_puppet.json", std::ios::binary);
-        if (!in) {
-            continue;
-        }
-        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        if (CoopPuppet::PackHasGreenPuppets(text)) {
-            return true;
-        }
-    }
-    return false;
-}
 
 constexpr std::uint64_t kOcarinaProgramId = 0x0400486024DEC000ULL;
 constexpr std::string_view kMainBuild = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348";
@@ -75,35 +58,6 @@ bool EnvOn(const char* name) {
 bool Wanted() {
     return EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET") ||
            EnvOn("LICHII_COOP_SPAWN") || EnvOn("LICHII_COOP_LIVE_EVENTS");
-}
-
-// Settings for the puppets, once, when the patch goes in.
-void ConfigurePuppets() {
-    CoopPuppet::PlannerSettings settings;
-    // The test puppet has its own switch: the logs alone must not put a
-    // second Link in the game (Caleb's run of 2026-11-09 with the logs on).
-    settings.debug = EnvOn("LICHII_COOP_TEST_PUPPET");
-    settings.debug_anim = EnvOn("LICHII_COOP_DEBUG_ANIM");
-    if (const auto actor = Env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
-        settings.actor = actor;
-    }
-    if (const auto tunics = Env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
-        settings.tunics = false;
-    }
-    // The kit's tools/release/kit/scripts/kit-paths.ps1 Set-KitSelfTunic. Only
-    // with a pack that has the green puppets (a hand-set switch and an older
-    // pack must not leave green players without a puppet).
-    if (const auto self = Env("LICHII_COOP_SELF_TUNIC"); !self.empty() && self != "green") {
-        settings.green_puppet = PackGreenPuppets();
-        LOG_INFO(Core, "coop: your Link wears {}; green players {}", self,
-                 settings.green_puppet ? "get CoopPuppet_<Age>_Green"
-                                       : "get the plain puppet (the pack has no green puppet; make it again)");
-    }
-    const bool verbose = EnvOn("LICHII_COOP_DEBUG_PUPPET");
-    LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
-             settings.debug ? ", test puppet beside you" : "");
-    CoopPuppet::Configure(std::move(settings), verbose,
-                          [](const std::string& line) { LOG_INFO(Core, "{}", line); });
 }
 
 std::uint32_t Word(const std::vector<std::uint8_t>& bytes, std::size_t at) {
@@ -236,7 +190,7 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
         }
     }
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
-        ConfigurePuppets();  // the cave may be here for the other callers alone
+        CoopPuppetConfig::Configure();  // the cave may be here for the other callers alone
     }
 }
 

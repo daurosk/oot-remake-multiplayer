@@ -1,0 +1,13 @@
+# hs-tunic (Hookshot): B faces where A stands, camera behind, screenshots of
+# A's puppet (A's colour, or green with LICHII_COOP_TUNICS=0).
+wait 120
+stick 1 0 8             # face right
+press ZL                # camera behind B
+wait 170
+mark b-sees-a
+wait 60
+mark b-sees-a-2
+wait 120
+mark b-after-walk
+wait 120
+mark b-end

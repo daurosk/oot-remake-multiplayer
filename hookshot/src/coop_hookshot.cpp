@@ -28,6 +28,7 @@
 #include "coop_hold.h"
 #include "coop_hook.h"
 #include "coop_puppet.h"
+#include "coop_puppet_config.h"
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
@@ -56,20 +57,6 @@ std::uint64_t SteadyMs() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                           std::chrono::steady_clock::now().time_since_epoch())
                                           .count());
-}
-
-// As CoopSvc::PatchMain's, when the emulator puts its cave in.
-void ConfigurePuppets() {
-    CoopPuppet::PlannerSettings settings;
-    settings.debug = EnvOn("LICHII_COOP_TEST_PUPPET");
-    settings.debug_anim = EnvOn("LICHII_COOP_DEBUG_ANIM");
-    if (const auto actor = Env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
-        settings.actor = actor;
-    }
-    LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
-             settings.debug ? ", test puppet beside you" : "");
-    CoopPuppet::Configure(std::move(settings), EnvOn("LICHII_COOP_DEBUG_PUPPET"),
-                          [](const std::string& line) { LOG_INFO(Core, "{}", line); });
 }
 
 class BridgeGuest final : public CoopPuppet::Guest {
@@ -174,7 +161,7 @@ bool Start(const HosCoopApi* api) {
     }
     // The same switches that make the emulator put its cave in.
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
-        ConfigurePuppets();
+        CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopHook::Start();

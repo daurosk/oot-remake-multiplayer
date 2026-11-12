@@ -36,6 +36,7 @@ add_executable(coop_tests
   lichii/camera_test.cpp
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
+  lichii/puppet_config_test.cpp
   lichii/callers_test.cpp
   lichii/fairy_test.cpp
   lichii/rooms_test.cpp
@@ -91,6 +92,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pose.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet_config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_world.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp

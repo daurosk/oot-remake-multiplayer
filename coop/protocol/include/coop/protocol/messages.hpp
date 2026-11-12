@@ -706,6 +706,7 @@ enum class ObjectComponent : std::uint16_t {
   fuse = 17,
   state = 18,
   slots = 19,  // protocol 10, issue 150: a boss's other AS slots (below)
+  bsa = 20,    // native boss sync: a boss's brain and action verbs (BossBsa below)
 };
 
 struct ObjectLife {
@@ -731,6 +732,29 @@ struct SlotAnimation {
 inline constexpr std::size_t kMaxObjectSlots = 8;
 inline constexpr std::uint8_t kMaxSlotIndex = 31;
 
+// Native boss sync (docs/dungeons-boss.md, "Native boss sync"): the owner's last brain
+// verb and action verb request of a boss (the game's BSA component), so the
+// other games put the same ones into their copy through the game's own
+// functions. An optional component: an older build skips it. seq counts the
+// owner's changes for this boss (a copy applies each seq once).
+struct BossAction {
+  std::int32_t verb = 0;
+  std::int32_t slot = 0;
+  std::uint16_t flags = 0;
+  // The request's three places (target, look-at, a third), each optional
+  // (the game marks a missing one NaN), and its pair of extra values.
+  std::array<std::optional<Vec3>, 3> places{};
+  std::optional<std::array<float, 2>> extra;
+  bool operator==(const BossAction&) const = default;
+};
+struct BossBsa {
+  std::uint32_t seq = 0;
+  std::int32_t brain_verb = 0;
+  bool brain_force = false;
+  std::optional<BossAction> action;
+  bool operator==(const BossBsa&) const = default;
+};
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -743,6 +767,7 @@ struct ObjectState {
   std::optional<float> fuse;          // seconds left
   std::optional<std::uint8_t> state;  // object_state bits
   std::optional<std::vector<SlotAnimation>> slots;  // issue 150: bosses only
+  std::optional<BossBsa> bsa;                       // native boss sync: bosses only
   bool operator==(const ObjectState&) const = default;
 };
 

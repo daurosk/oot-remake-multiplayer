@@ -2729,6 +2729,55 @@ TEST_CASE("objects: a boss's other AS slots go with its samples and are played o
     CHECK_FALSE(ps[0].state.slots);
 }
 
+TEST_CASE("objects: a boss's brain and action verbs go with its samples, a new one at once (native boss sync)") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Wait", 0.0f, 1.0f};
+    e.bsa = proto::BossBsa{1, 2, false, std::nullopt};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.bsa);
+    CHECK(samples[0].state.bsa->brain_verb == 2);
+    // Nothing new, standing still: no sample (until the still one, 1 s).
+    CHECK(All<proto::ObjectSample>(Tick(owner, 100 * kMs, {e})).empty());
+    // A new verb (seq 2), nothing else changed: a sample at the next 50 ms step.
+    e.bsa = proto::BossBsa{2, 3, true, std::nullopt};
+    auto changed = All<proto::ObjectSample>(Tick(owner, 200 * kMs, {e}));
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0].state.bsa->seq == 2);
+
+    // The copy keeps the owner's latest for the boss module, and its AI is never held.
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    CHECK(copy.BossVerbsIn().empty());
+    proto::ObjectSample s = changed[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    const auto in = copy.BossVerbsIn();
+    REQUIRE(in.size() == 1);
+    CHECK(in[0].first == 0x200);
+    CHECK(in[0].second.brain_verb == 3);
+    CHECK(copy.Holds(1020 * kMs).empty());
+
+    // A plain enemy's samples carry no verbs.
+    Sync plain;
+    Seen p = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");
+    Tick(plain, 0, {p});
+    Own(plain, *plain.IdOf(0x300), 1);
+    auto ps = All<proto::ObjectSample>(Tick(plain, 10 * kMs, {p}));
+    REQUIRE(ps.size() == 1);
+    CHECK_FALSE(ps[0].state.bsa);
+}
+
 TEST_CASE("objects: no stun DAMAGE from a plain enemy, our own boss, or when the owner is stunned too") {
     const std::string gohma = "Enemy_DungeonBoss_Gohma";
     Seen plain = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");

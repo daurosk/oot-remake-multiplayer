@@ -664,6 +664,20 @@ std::optional<proto::ObjectId> Sync::IdOf(std::uint64_t address) const {
     return it->second.id;
 }
 
+std::vector<std::pair<std::uint64_t, proto::BossBsa>> Sync::BossVerbsIn() const {
+    std::vector<std::pair<std::uint64_t, proto::BossBsa>> out;
+    for (const auto& [address, o] : objects_) {
+        if (!o.bsa_in) {
+            continue;
+        }
+        const auto owner = owners_.find(o.id);
+        if (owner != owners_.end() && owner->second.player != 0 && owner->second.player != self_) {
+            out.emplace_back(address, *o.bsa_in);
+        }
+    }
+    return out;
+}
+
 std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
     const auto it = objects_.find(address);
     if (it == objects_.end()) {
@@ -780,6 +794,9 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     state.animation = o.animation;
     if (!o.slots.empty()) {
         state.slots = o.slots;  // issue 150: a boss's eye guard and the like
+    }
+    if (o.bsa) {
+        state.bsa = o.bsa;  // native boss sync: a boss's brain and action verbs
     }
     if (o.rotation) {
         state.rotation = QuatOf(*o.rotation);
@@ -1132,6 +1149,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         o.animation = s.animation;
         o.slots = s.slots;
+        o.bsa = s.bsa;
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
         std::optional<proto::ObjectLife> life = s.life;
@@ -1352,6 +1370,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.rotation = s->rotation;
         o.animation = s->animation;
         o.slots = s->slots;
+        o.bsa = s->bsa;
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
@@ -1529,7 +1548,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
             const bool changed = life != o.sent_life || Moved(o.position, o.sent_position) ||
                                  Turned(rotation, o.sent_rotation) ||
-                                 animation != o.sent_animation || slots != o.sent_slots;
+                                 animation != o.sent_animation || slots != o.sent_slots ||
+                                 (o.bsa && o.sent_bsa_seq != o.bsa->seq);  // native boss sync: a new boss verb at once
             if (!o.sent_once || changed || now_us - o.sent_at >= kStillEveryUs) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -1543,6 +1563,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.sent_rotation = rotation;
                 o.sent_animation = animation;
                 o.sent_slots = std::move(slots);
+                if (o.bsa) {
+                    o.sent_bsa_seq = o.bsa->seq;
+                }
             }
         }
     }
@@ -2011,6 +2034,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (own != owners_.end() && sample->epoch < own->second.epoch) {
                 continue;  // from an owner before the last change
             }
+            if (sample->state.bsa) {
+                o->bsa_in = sample->state.bsa;  // native boss sync: the owner's boss verbs
+            }
             if (sample->state.position && Finite(*sample->state.position)) {
                 const std::uint64_t t = sample->state.time.server_time_us;
                 if (o->received.empty() || t > o->received.back().time) {
@@ -2216,7 +2242,9 @@ std::vector<std::uint64_t> Sync::Holds(std::uint64_t now_us) const {
     std::vector<std::uint64_t> out;
     for (const PoseWrite& w : placed) {
         const auto o = objects_.find(w.address);
-        if (o != objects_.end() && o->second.reacts) {
+        // Native boss sync: a boss copy that takes its owner's verbs (native boss sync)
+        // must run its own AI, so it is never held.
+        if (o != objects_.end() && o->second.reacts && !o->second.bsa_in) {
             out.push_back(w.address);
         }
     }

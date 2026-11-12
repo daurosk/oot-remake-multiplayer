@@ -670,7 +670,41 @@ Error check_object_state(const ObjectState& s) {
       }
     }
   }
+  if (s.bsa && s.bsa->action) {
+    for (const auto& p : s.bsa->action->places) {
+      if (p && !all_finite(*p)) return Error::bad_value;
+    }
+    if (s.bsa->action->extra && !all_finite(*s.bsa->action->extra)) return Error::bad_value;
+  }
   return Error::none;
+}
+
+// Component 20, a boss's brain and action verbs (BossBsa). The
+// action's optional parts are named by one bit each in a mask byte.
+void write_bsa(const BossBsa& b, Writer& w) {
+  w.u32(b.seq);
+  w.u32(static_cast<std::uint32_t>(b.brain_verb));
+  w.u8(b.brain_force ? 1 : 0);
+  w.u8(b.action ? 1 : 0);
+  if (!b.action) return;
+  const BossAction& a = *b.action;
+  w.u32(static_cast<std::uint32_t>(a.verb));
+  w.u32(static_cast<std::uint32_t>(a.slot));
+  w.u16(a.flags);
+  std::uint8_t mask = 0;
+  for (std::size_t i = 0; i < a.places.size(); ++i) {
+    if (a.places[i]) mask |= static_cast<std::uint8_t>(1u << i);
+  }
+  if (a.extra) mask |= 1u << 3;
+  w.u8(mask);
+  for (const auto& p : a.places) {
+    if (p) {
+      for (float f : *p) w.f32(f);
+    }
+  }
+  if (a.extra) {
+    for (float f : *a.extra) w.f32(f);
+  }
 }
 
 void write_object_state(const ObjectState& s, Writer& w) {
@@ -713,6 +747,7 @@ void write_object_state(const ObjectState& s, Writer& w) {
       }
     });
   }
+  if (s.bsa) component(ObjectComponent::bsa, [&] { write_bsa(*s.bsa, w); });
 }
 
 bool has_duplicate_id(const std::vector<ObjectPresence>& objects) {
@@ -1385,6 +1420,36 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
           return Error::bad_value;
         }
       }
+      return Error::none;
+    }
+    case ObjectComponent::bsa: {
+      BossBsa& b = s.bsa.emplace();
+      std::uint32_t verb = 0;
+      std::uint8_t force = 0;
+      std::uint8_t has_action = 0;
+      COOP_READ(c.u32(b.seq));
+      COOP_READ(c.u32(verb));
+      COOP_READ(c.u8(force));
+      COOP_READ(c.u8(has_action));
+      if (force > 1 || has_action > 1) return Error::bad_value;
+      b.brain_verb = static_cast<std::int32_t>(verb);
+      b.brain_force = force != 0;
+      if (has_action == 0) return Error::none;
+      BossAction& a = b.action.emplace();
+      std::uint32_t action_verb = 0;
+      std::uint32_t slot = 0;
+      std::uint8_t mask = 0;
+      COOP_READ(c.u32(action_verb));
+      COOP_READ(c.u32(slot));
+      COOP_READ(c.u16(a.flags));
+      COOP_READ(c.u8(mask));
+      if (mask > 0x0f) return Error::bad_value;
+      a.verb = static_cast<std::int32_t>(action_verb);
+      a.slot = static_cast<std::int32_t>(slot);
+      for (std::size_t i = 0; i < a.places.size(); ++i) {
+        if (mask & (1u << i)) COOP_TRY(read_floats(c, a.places[i].emplace()));
+      }
+      if (mask & (1u << 3)) COOP_TRY(read_floats(c, a.extra.emplace()));
       return Error::none;
     }
   }

@@ -54,6 +54,11 @@ struct Seen {
     // Issue 150: a boss's other AS slots (Gohma's eye guard, eyelids),
     // read only for bosses (IsBoss); empty otherwise.
     std::vector<coop::protocol::SlotAnimation> slots;
+    // Native boss sync (coop_boss_native.h): a boss's BSA component
+    // (0 when not read) and, for one of ours, its brain and action verbs as
+    // our game last set them (sent in its samples).
+    std::uint64_t bsa_component = 0;
+    std::optional<coop::protocol::BossBsa> bsa;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -575,6 +580,9 @@ public:
     // lines; taken (and cleared) by the caller.
     std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
+    // Native boss sync: each copy's latest owner's boss verbs, by the
+    // copy's address (coop_boss_native.h puts them into the game).
+    std::vector<std::pair<std::uint64_t, coop::protocol::BossBsa>> BossVerbsIn() const;
     // The actors of the enemies we own, with their names (for the test drive).
     std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
     // The player who owns the object at `address` (0: the server, none: not
@@ -607,6 +615,8 @@ private:
         std::optional<Mat3> rotation;
         std::optional<coop::protocol::Animation> animation;
         std::vector<coop::protocol::SlotAnimation> slots;  // issue 150: a boss's, as last read
+        std::optional<coop::protocol::BossBsa> bsa;         // native boss sync: ours, as last read
+        std::optional<coop::protocol::BossBsa> bsa_in;      // native boss sync: a copy's, the owner's latest
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
         std::string name;
@@ -621,6 +631,7 @@ private:
         std::optional<coop::protocol::Quat> sent_rotation;
         std::string sent_animation;
         std::string sent_slots;  // issue 150: the slot names last sent
+        std::optional<std::uint32_t> sent_bsa_seq;  // native boss sync: the boss verbs' seq last sent
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;

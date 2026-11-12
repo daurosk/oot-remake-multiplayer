@@ -1,0 +1,74 @@
+# hs-gohma-native, B: hs-gohma-door's B (moved in after A), then hs-gohma's B (see hs-gohma-native.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+wait 4800                # A now walks in through the door first
+mark b-in
+wait 1800
+wait 600
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+mark b-ready
+wait 1500
+goto 7.5 67.2 1.5 600   # the room's centre (Deku Tree boss room 7.5 67.2); Gohma comes down near it
+mark b-near
+wait 600
+wait 150                # A's first seed
+hold ZL+LSTICK_UP 90     # locked on: walk up to Gohma (the stunned eye)
+mark b-at1
+hold ZL+Y 8             # the sword is Y (B puts it away)
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark b-hit1
+wait 700
+hold ZL+LSTICK_UP 90     # locked on: walk up to Gohma (the stunned eye)
+mark b-at2
+hold ZL+Y 8             # the sword is Y (B puts it away)
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark b-hit2
+wait 700
+hold ZL+LSTICK_UP 90     # locked on: walk up to Gohma (the stunned eye)
+mark b-at3
+hold ZL+Y 8             # the sword is Y (B puts it away)
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark b-hit3
+wait 600
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed
+wait 900
+mark b-after
+wait 1800
+mark eggs
+wait 2400
+mark end

@@ -15,6 +15,7 @@
 #include "coop_hookshot.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
+#include "hos_coop_bosses.h"
 #include "coop_svc.h"
 
 namespace {
@@ -358,4 +359,11 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     CHECK(patch.find("+    coop_actor_lift.install(lifter, img, build_id)") != std::string::npos);
     // New numbers follow the world hook's own (0 hello, 1 counter start).
     CHECK(HOS_COOP_WORLD_CREATE_REQUEST > HOS_COOP_WORLD_COUNTER_START);
+}
+
+TEST_CASE("hookshot: the boss wraps take the next ids of the one wrap space (native boss sync)") {
+    // (patch 0005's wraps are 1 to 3; the hook table's rows 4 and 5 are the bosses')
+    CHECK(HOS_COOP_WRAP_BRAIN_VERB == HOS_COOP_WRAP_EVENT_REQUEST + 1);
+    CHECK(HOS_COOP_WRAP_ACTION_VERB == HOS_COOP_WRAP_BRAIN_VERB + 1);
+    CHECK(HOS_COOP_WRAP_ACTION_VERB < 64);  // (one bit each in HELLO's b)
 }

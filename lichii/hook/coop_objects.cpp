@@ -54,6 +54,7 @@
 #include "coop_flags.h"
 #include "coop_hold.h"
 #include "coop_actor_events.h"
+#include "coop_boss_native.h"
 #include "coop_puppet.h"
 #include "coop_pvp_game.h"
 #include "coop_svc.h"
@@ -460,6 +461,12 @@ public:
 private:
     Core::Memory::Memory& memory_;
 };
+
+// Native boss sync: main's base for the boss caller (set by the walk).
+std::atomic<std::uint64_t>& TheBossMain() {
+    static std::atomic<std::uint64_t> main{0};
+    return main;
+}
 
 // The game's calc thread, at the svc cave (coop_svc.h AddCaller): moves the
 // copies with the game's own setter and deletes the taken pickups. The
@@ -1191,6 +1198,13 @@ public:
                                       std::uint64_t result, std::uint64_t) {
                                        return CounterRingStep(guest, after_call, result);
                                    });
+                // Native boss sync: the owner's boss verbs put into our copies.
+                CoopSvc::AddCaller(CoopBossNative::Table::kCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t) {
+                                       return CoopBossNative::TheTable().Step(guest, after_call, result,
+                                                                              TheBossMain().load());
+                                   });
                 CoopSvc::AddCaller(kGrassCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call,
                                       std::uint64_t result, std::uint64_t now_ms) {
@@ -1266,6 +1280,30 @@ public:
                 }
             }
             CoopEnemyShots::NoteShooters(std::move(shooters), server_now_us);
+        }
+        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); bosses.BrainOn()) {
+            // Native boss sync (coop_boss_native.h): which bosses are
+            // ours (our game runs them and sends their verbs) and which are
+            // copies (they take the owner's verbs, put in by its caller).
+            std::vector<CoopBossNative::Boss> list;
+            for (const Seen& s : seen) {
+                if (s.bsa_component == 0) {
+                    continue;
+                }
+                const std::optional<u8> owner = sync_.OwnerOf(s.address);
+                if (owner && *owner != 0) {
+                    list.push_back({s.address, s.bsa_component,
+                                    *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name});
+                }
+            }
+            TheBossMain().store(main_);
+            bosses.Publish(list);
+            for (const auto& [address, state] : sync_.BossVerbsIn()) {
+                bosses.Receive(address, state);
+            }
+            for (const std::string& note : bosses.TakeNotes()) {
+                LOG_INFO(Core, "coop: bosses: {}", note);
+            }
         }
         if (sync_.BlastDrops() != blast_drops_logged_) {
             blast_drops_logged_ = sync_.BlastDrops();
@@ -2335,6 +2373,12 @@ private:
                 s.animation = Animation(r, a);
                 if (IsBoss(s.name)) {
                     s.slots = OtherSlots(r, a);  // issue 150
+                    // Native boss sync (coop_boss_native.h): its BSA
+                    // component, and our game's verbs for it when it is ours.
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
+                    }
+                    s.bsa = CoopBossNative::TheTable().OwnerState(a);
                 }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);

@@ -39,6 +39,7 @@
 #include "coop_hold.h"
 #include "coop_counters.h"
 #include "coop_actor_events.h"
+#include "coop_boss_native.h"
 #include "coop_enemy_shots.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
@@ -53,6 +54,7 @@
 #include "coop_time.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
+#include "hos_coop_bosses.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
 
@@ -257,6 +259,47 @@ void LogFlagNative() {
                    "{} setter calls made for co-op ({} waiting, {} frames waited for room)",
              applies, c.writes.load(), CoopFlagNative::Events().dropped(), setters, CoopFlagNative::Calls().size(),
              c.no_room.load());
+}
+
+// Native boss sync (coop_boss_native.h): on when this hookshot.exe has
+// both wraps (the hook table's rows 4 and 5) and LICHII_COOP_BOSS_NATIVE is not
+// 0; the action verbs also need LICHII_COOP_BOSS_ACTIONS not 0.
+bool WrapIn(std::uint32_t id) {  // (as CoopHookshot::HasWrap)
+    return id < 64 && (g_world_wraps.load() >> id & 1) != 0;
+}
+void SetBossNative() {
+    const bool brain = WrapIn(HOS_COOP_WRAP_BRAIN_VERB) && Env("LICHII_COOP_BOSS_NATIVE") != "0";
+    const bool actions = brain && WrapIn(HOS_COOP_WRAP_ACTION_VERB) && Env("LICHII_COOP_BOSS_ACTIONS") != "0";
+    CoopBossNative::Table& t = CoopBossNative::TheTable();
+    if (t.BrainOn() == brain && t.ActionsOn() == actions) {
+        return;
+    }
+    t.SetOn(brain, actions);
+    LOG_INFO(Core, "coop: bosses: native sync {} (brain verbs {}, action verbs {}){}", brain ? "on" : "off",
+             WrapIn(HOS_COOP_WRAP_BRAIN_VERB) ? "wrapped" : "not wrapped in this hookshot.exe",
+             WrapIn(HOS_COOP_WRAP_ACTION_VERB) ? (actions ? "wrapped" : "wrapped, off") : "not wrapped",
+             brain ? "" : ": bosses as before (owner's animations, gohma-sync)");
+}
+
+// Every 10 s while a boss is synced natively: the counts (first proof lines).
+void LogBossNative() {
+    static std::uint64_t said_ms = 0;
+    static CoopBossNative::Counts said{};
+    const std::uint64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopBossNative::Counts c = CoopBossNative::TheTable().Totals();
+    if (c.owner_brain == said.owner_brain && c.owner_action == said.owner_action && c.copy_skipped == said.copy_skipped &&
+        c.brain_applied == said.brain_applied && c.action_applied == said.action_applied) {
+        return;
+    }
+    said_ms = now;
+    said = c;
+    LOG_INFO(Core, "coop: bosses: ours sent {} brain + {} action verbs ({} by plug); copies: {} own skipped, {} brain + "
+                   "{} action verbs put in ({} waited for a node), {} busy",
+             c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
+             c.action_waiting, c.busy);
 }
 
 void RunCalls(void* ctx) {
@@ -713,6 +756,7 @@ void Frame(void* ctx, int site) {
         RunFlagSetters(ctx);
         LogFlagNative();
         RunCalls(ctx);
+        LogBossNative();
     }
 }
 
@@ -736,6 +780,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         // (the first patch 0005 sent a = 0: level 1, with the flag applier's wrap)
         const WorldLevel level = HelloLevel(a, b);
         g_world_wraps.store(level.wraps);
+        SetBossNative();
         if (g_world_version.exchange(level.version) != level.version) {
             LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
                      HOS_COOP_WORLD_VERSION, level.wraps,
@@ -858,6 +903,26 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             CoopLiveEvents::TheGameRequests().Push(name, x[0] != 0);
         }
         return 0;
+    }
+    if (id == HOS_COOP_WRAP_BRAIN_VERB && phase == 0) {
+        // Native boss sync: a boss's brain verb change (x0 BSA, w1 verb, w2 force). A copy's own is skipped
+        // once the owner's verbs have come (1: the game's function does not run).
+        return CoopBossNative::TheTable().OnBrainVerb(x[0], static_cast<std::int32_t>(x[1]), (x[2] & 1) != 0,
+                                                      t_own_call)
+                   ? 1
+                   : 0;
+    }
+    if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
+        // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
+        CoopBossNative::Table& t = CoopBossNative::TheTable();
+        if (!t.ActionsOn() || x[1] == 0) {
+            return 0;
+        }
+        CoopBossNative::Request r{};
+        if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
+            return 0;
+        }
+        return t.OnActionVerb(x[0], r, t_own_call) ? 1 : 0;
     }
     if (id == HOS_COOP_WRAP_TIME_SET && phase == 0) {
         // The game's own time change, with its exact time: the time sync's jump (coop_time_sync.h, GameSet).

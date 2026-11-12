@@ -153,6 +153,8 @@ So the cut is now written: 0.5 s after our own cut, the game that cut sends the 
 
 Not known until a run: whether the destruction reads that state and breaks the pieces, or needs the contact itself (then the next step is to find the contact call).
 
+Run of 2026-11-10 (`coop-kit/shots/sign/20261110-175836`, read again 2026-11-11): B wrote 9 of the 11 words; `c+0x58+0x120` and `c+0x60+0xc8` (the NaN floats) were refused with no reason given, and B's camera faced the gate wall, so B's post was never on screen. The refusal line now names the failed check (`sign word <where> not written: component moved (...)`, `holds <value> here ...`, ...). The `sign` scenario now warps both into Kakariko at `Kakariko_GraveYardSide`, 6 m from the post, and puts B there with `place` (no walk), and A steps aside after the cut; `sign-late` has B in the Graveyard during the cut and walking into Kakariko after it (the late joiner's words).
+
 ### Signs: the probe (issue 90)
 
 Point (2) above is answered by the next run, without a memory tool: the hook compares the sign's memory before and after a hit (`CoopWorld::SignProbe` in `lichii/hook/coop_world.{h,cpp}`, tested in `tests/lichii/world_test.cpp`; always on, it reads only signs within 12 m of our Link, the nearest 3, once a second).

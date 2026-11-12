@@ -473,8 +473,11 @@ public:
     // just before the write: nothing unless the actor is still that sign,
     // its table and component are the ones the probe saw (pointers), the
     // key is on the list and the word may be written (SignWordWritable).
+    // `why` (if given) says which check failed, for the log (issue 90: in
+    // the run of 2026-11-10 two of the cut words were refused unexplained).
     std::optional<std::uint64_t> SignWordTarget(const SignProbe::ReadWord& read,
-                                                const Out::Word& w) const;
+                                                const Out::Word& w,
+                                                std::string* why = nullptr) const;
 
     // For tests and logs.
     std::size_t Count() const { return objects_.size(); }

@@ -393,6 +393,8 @@ Chunk 7 world-objects scenarios (2026-11-11, `-NoLoad`; they use the test-only `
 
 PvP scenario (branch `pvp`, `-NoLoad`; not run yet): `pvp` (both land in Hyrule Field in front of Kakariko; A swings at B with PvP off, types `/pvp on`, swings three more times, then `/pvp off` and swings once more; the A file's header lists the log lines and shots that pass).
 
+World-breakables scenarios (2026-11-11, `-NoLoad`): `sign` (#90) warps both to `Kakariko_GraveYardSide` and places B facing the post (the old walk left B facing a wall), `sign-late` (#90: B walks in from the Graveyard after A's cut) and `goron-rock` (#84: A throws a bomb flower at the Goron City rock `Obj_Goron_BrokenRock_A_01`; B watches it go).
+
 Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at the well) and `water` (both load into the Water Temple entrance; checked 2026-11-09: both logs `warp done` after about 50 s, screenshots in the temple). Warping a game that is already playing works only while an event runs.
 
 Scenarios (checked 2026-11-09 unless said): `walk` (A walks, dashes, turns; B sees it move), `slingshot` (aims and fires a seed), `menu-gear` (equips the Deku Shield in the menu), `sword` (target and swing; no enemy at the save point, so no hit seen yet), `bomb` (not checked: the auto kits' save has no bombs), `buttons` (presses each button with a screenshot after it). The bindings are the game's own (pause menu > System > Basic Controls): ZL target, ZR use item, L/R quick select, MINUS map, PLUS menu (L/R change page), A actions and dash (hold), B put away, X jump, Y attack. Screenshots are the screen under each game's client area: the runner keeps both windows on top, side by side, at real pixels (DPI-aware).

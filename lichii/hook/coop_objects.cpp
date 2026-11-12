@@ -1213,13 +1213,14 @@ public:
                 LOG_INFO(Core, "coop: {}", note);
             }
             for (const auto& w : sign_words_) {
+                std::string why;
                 const auto at = world_.SignWordTarget(
-                    [&r](u64 address) { return r.Get<u64>(address); }, w);
+                    [&r](u64 address) { return r.Get<u64>(address); }, w, &why);
                 if (at) {
                     memory_->Write64(*at, w.value);
                 } else {
-                    LOG_INFO(Core, "coop: world: {:016x} sign word {} not written (checks)", w.hash,
-                             CoopWorld::SignProbe::Where(w.key));
+                    LOG_INFO(Core, "coop: world: {:016x} sign word {} not written: {}", w.hash,
+                             CoopWorld::SignProbe::Where(w.key), why);
                 }
             }
             sign_words_.clear();

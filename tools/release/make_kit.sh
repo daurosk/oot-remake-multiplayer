@@ -75,8 +75,11 @@ text "$here/kit/coop-options.ini" "$kit/coop-options.ini"
 # The empty coop.ini, as the Windows kit has it.
 . "$src/kit-lib.sh"
 coop_write_ini "$kit/scripts/coop.ini.template" "$kit/emulator/user/config/coop.ini" '' "$port" ''
-for f in build.py __init__.py byml.py dumpcheck.py nup.py rstb.py sarc.py zs.py; do
-    text "$repo/tools/puppet_pack/$f" "$kit/tools/puppet_pack/$f"
+# Every module of the pack tool (build.py imports several; a list here would miss new ones),
+# not its tests.
+for f in "$repo"/tools/puppet_pack/*.py; do
+    case ${f##*/} in *test*.py) continue ;; esac
+    text "$f" "$kit/tools/puppet_pack/${f##*/}"
 done
 for pair in setup.md:SETUP.md play-lan.md:PLAY-LAN.md play-online.md:PLAY-ONLINE.md known-issues.md:KNOWN-ISSUES.md; do
     text "$repo/docs/${pair%%:*}" "$kit/${pair#*:}"

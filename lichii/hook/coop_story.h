@@ -24,6 +24,7 @@ enum class Kind : std::uint8_t {
     scene,  // a story scene or story event has played (HavePlayedEvent.)
     owl,    // a talk with the owl (Kaepora Gaebora)
     world,  // a story gate placements test: an invisible wall, a blocker, a water plane
+    talk,   // a talk shared on request (the Kokiri Shop keeper's)
 };
 
 // One story flag: the Murmur3 hash of its name, what it is, and the name, for

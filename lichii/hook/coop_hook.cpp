@@ -65,6 +65,7 @@
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_dungeon.h"
+#include "coop_quest.h"
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_live_events.h"
@@ -376,6 +377,10 @@ public:
             }
             if (cheats_) {
                 CoopCheats::Frame(*game_store);
+            }
+            if (sharing_ && load_mend_.ready() && CoopStory::On() &&
+                quest_catch_up_.Due(CoopEvery::NowUs())) {
+                CatchUpQuests(*memory);  // issue 173: Impa comes for every player
             }
             if (sharing_) {
                 // A small key or token we and another player took at once: ours
@@ -689,7 +694,8 @@ public:
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         if (!reading) CoopTime::Loading(report.server_now_us);  // issue 159: a reload, a death
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
-                        report.server_now_us);
+                        report.server_now_us,
+                        reading && reading->event_running.value_or(false));  // issue 192: no nudge in a cutscene
         // Boss rooms together (docs/dungeons-boss.md). Issue 148: the room's
         // "shut in" flag says when we are past its door.
         std::optional<bool> boss_shut_in;
@@ -1327,6 +1333,24 @@ private:
     std::uint32_t samples_seq_ = 0;
     std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
+
+    // Issue 173 (coop_quest.h): raises our own quests (Goto_HyruleCastle,
+    // DoorOfTime) to what the shared story scenes say, so a scene another
+    // player played does not leave our quest behind. Only ever raised.
+    CoopEvery::Every quest_catch_up_{CoopEvery::kSecondUs};
+    void CatchUpQuests(EmulatorMemory& memory) {
+        coop::host::GameFlags flags(memory);
+        const CoopQuest::ReadBool flag = [&](std::uint32_t h) { return flags.get_bool(h); };
+        const CoopQuest::ReadEnum value = [&](std::uint32_t h) { return flags.get_enum(h); };
+        for (const auto& quest : CoopQuest::Quests()) {
+            const auto was = flags.get_enum(quest.hash);
+            const auto raise = CoopQuest::CatchUp(quest, flag, value);
+            if (raise && was && coop::host::GameFlags::set_enum(memory, quest.hash, *raise)) {
+                LOG_INFO(Core, "coop: story: quest {} {:#x} -> {:#x} (shared story; issue 173)",
+                         quest.name, *was, *raise);
+            }
+        }
+    }
 
     // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to
     // what the held bracelet or gauntlets give. Only ever raised; an unknown

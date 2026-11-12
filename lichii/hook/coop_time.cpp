@@ -122,6 +122,14 @@ struct Glue {
     std::optional<std::uint32_t> test_set;
     std::uint64_t test_delay_us = 5'000'000;
     std::uint64_t joined_at = 0;
+    // LICHII_COOP_TIME_TEST_DRIFT=<seconds>[@<delay s>] (tests only, issue
+    // 192): <delay> seconds (default 60) after joining, a guest moves its own
+    // seconds word <seconds> ahead (under kJumpSeconds, so it is no jump and
+    // is not sent), as a slow drift would; the nudges must bring it back.
+    // The host ignores it.
+    std::optional<std::uint32_t> test_drift;
+    std::uint64_t test_drift_delay_us = 60'000'000;
+    bool nudges_off_logged = false;
     Sync sync;
     Setter setter;
 
@@ -137,6 +145,16 @@ struct Glue {
             }
             if (v < coop::protocol::kSecondsPerDay) {
                 test_set = static_cast<std::uint32_t>(v);
+            }
+        }
+        if (const auto t = Env("LICHII_COOP_TIME_TEST_DRIFT"); !t.empty()) {
+            char* rest = nullptr;
+            const unsigned long v = std::strtoul(t.c_str(), &rest, 10);
+            if (rest != nullptr && *rest == '@') {
+                test_drift_delay_us = std::strtoull(rest + 1, nullptr, 10) * 1'000'000;
+            }
+            if (v > 0 && v < Sync::kJumpSeconds) {
+                test_drift = static_cast<std::uint32_t>(v);
             }
         }
         if (on) {
@@ -184,14 +202,48 @@ struct Glue {
         return seconds;
     }
 
+    // Issue 192: write our clock's seconds word directly (no time change, so
+    // the world is not made again). Only when no time change or override
+    // runs (flags 0), and only if the word still holds what Tick read.
+    // Our clock's seconds word (record + 8), only while no time change or
+    // override runs (flags 0); 0 otherwise.
+    static std::uint64_t QuietSecondsWord(Core::Memory::Memory& memory, std::uint64_t main) {
+        const auto world = Get<std::uint64_t>(memory, main + kWorldMgrPtr);
+        const auto time =
+            world && *world != 0 ? Get<std::uint64_t>(memory, *world + kTimeObject) : std::nullopt;
+        if (!time || *time == 0) {
+            return 0;
+        }
+        const auto flags = Get<std::uint32_t>(memory, *time + kTimeFlags);
+        return flags && *flags == 0 ? *time + kTimeNow + 8 : 0;
+    }
+
+    void Nudge(Core::System& system, std::uint64_t main, std::uint32_t was, std::uint32_t to) {
+        auto& memory = system.ApplicationMemory();
+        const std::uint64_t word = QuietSecondsWord(memory, main);
+        const auto current = word != 0 ? Get<std::uint32_t>(memory, word) : std::nullopt;
+        if (!current ||
+            static_cast<std::uint32_t>(std::abs(Ahead(was, *current))) > 60) {
+            sync.NudgeNotWritten();
+            return;
+        }
+        const std::uint32_t value = static_cast<std::uint32_t>(
+            (static_cast<std::int64_t>(to) + Ahead(was, *current) +
+             coop::protocol::kSecondsPerDay) % coop::protocol::kSecondsPerDay);
+        memory.Write32(word, value);
+        LOG_INFO(Core, "coop: time: nudged {:02}:{:02}:{:02} -> {:02}:{:02}:{:02}", *current / 3600,
+                 *current / 60 % 60, *current % 60, value / 3600, value / 60 % 60, value % 60);
+    }
+
     void Frame(Core::System& system, std::uint64_t main, coop::host::Session* session,
-               std::uint64_t now_us) {
+               std::uint64_t now_us, bool in_event) {
         if (!on || !every.Due(CoopEvery::NowUs())) {
             return;
         }
         if (main == 0 || now_us == 0 || session == nullptr) {
             if (connected) {
                 sync.Reset();
+                nudges_off_logged = false;
                 connected = false;
             }
             if (main != 0 && debug) {
@@ -212,9 +264,31 @@ struct Glue {
             }
             test_set.reset();
         }
+        if (test_drift && now && now_us - joined_at >= test_drift_delay_us) {
+            auto& memory = system.ApplicationMemory();
+            const std::uint64_t word = host ? 0 : QuietSecondsWord(memory, main);
+            if (host) {
+                test_drift.reset();
+            } else if (word != 0) {
+                const std::uint32_t value = (*now + *test_drift) % coop::protocol::kSecondsPerDay;
+                memory.Write32(word, value);
+                LOG_INFO(Core, "coop: time: test drift {} s -> {:02}:{:02}:{:02}", *test_drift,
+                         value / 3600, value / 60 % 60, value % 60);
+                test_drift.reset();
+                return;  // the next tick reads the moved clock
+            }
+        }
         std::vector<coop::protocol::Message> send;
+        sync.SetEvent(in_event);  // issue 192: no nudge during a cutscene
         if (const auto target = sync.Tick(now, host, now_us, send)) {
             setter.Want(main, *target);
+        }
+        if (const auto nudge = sync.TakeNudge()) {
+            Nudge(system, main, *now, *nudge);
+        }
+        if (sync.NudgesOff() && !nudges_off_logged) {
+            nudges_off_logged = true;
+            LOG_INFO(Core, "coop: time: nudges did not hold; only the hourly set is left (issue 192)");
         }
         if (send.empty()) {
             return;
@@ -241,8 +315,8 @@ Glue& TheGlue() {
 } // namespace
 
 void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* session,
-           std::uint64_t server_now_us) {
-    TheGlue().Frame(system, main_base, session, server_now_us);
+           std::uint64_t server_now_us, bool in_event) {
+    TheGlue().Frame(system, main_base, session, server_now_us, in_event);
 }
 
 void SaveLoaded(std::uint64_t server_now_us) {

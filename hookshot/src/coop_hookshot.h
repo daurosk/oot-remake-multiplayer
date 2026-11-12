@@ -8,6 +8,7 @@
 
 #include "coop_draw.h"
 #include "coop_game_build.h"
+#include "coop_host_menu.h"
 #include "hos_coop_api.h"
 
 #if defined(_WIN32)
@@ -28,6 +29,11 @@ void Frame(void* ctx, int site);
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits);
 // hos_coop_stop: CoopHook::Shutdown.
 void Stop();
+
+// Host and Join from the game's title menu (hos_coop_host.h): the module's one
+// CoopHostMenu::Menu, which also answers the hos_coop_host_* exports. Stop
+// leaves it first, so our own server goes after our own client.
+CoopHostMenu::Menu& HostMenu();
 
 // The table's size in the first version, before pad_buttons: a Hookshot
 // built from an older patch gives this much, and co-op still runs on it.

@@ -310,6 +310,16 @@ The struct `PouchData.Item_Bomb` has no member but `StockNum`. The capacity stru
 
 **The cause: no lift grade (Caleb's hint, the Goron's Bracelet).** A bomb is lifted out of the bag, and what Link can lift is `PlayerStatus.LiftGrade` (0x59979321, Enum None/Low/Middle/High), not the bracelet's own flags. Every real bomb save holds the Goron's Bracelet and `Low`; the test saves had no bracelet and `None`, so every pulled bomb was deleted at once. The game sets the grade when Link gets the bracelet himself. Co-op shares the bracelet's `StockNum`/`IsGet` (max), not the grade, so a player who got the bracelet from another player had the same problem with bombs (and anything else lifted). Fixed both ways: `save_flags.py bombs` also gives the bracelet and `Low`, and the hook raises the grade to what the held strength items give whenever Link is in the game (`lift_grade_raise`: bracelet Low, Silver Gauntlets Middle, Golden Gauntlets High; never lowered, an unknown value left alone; log `coop: items: lift grade ... -> ...`).
 
+## The ocarina (issue 190)
+
+A player given the ocarina by another player could not take it out. D-pad Left takes out the ocarina named in `PlayerStatus.EquipOcarina` (String64, an actor name, "" by default). The game writes it when Link gets an ocarina himself; co-op shares the ocarina's `StockNum` and `IsGet` (max, OR) but not the equipped name, so the player who never met Saria had the ocarina in the menu and "" in `EquipOcarina`.
+
+Checked offline on 2026-11-11 (no game run): every one of the 63 distinct saves in `coop-kit` holds the Fairy Ocarina and `EquipOcarina = "Item_Ocarina_Fairy"`. Besides it, they hold three Bools set to 1 (default false), named by walking `GameDataList`'s structs: `0x541947d0.Ocarina` (0xaacdef1f), `0x57f52eb8.Ocarina` (0xda41879d), the two help-box structs that the bombs showed ([above](#bombs-from-the-cheat-issue-125)), and `0x41f3e410.Item_Ocarina_Fairy` (0x137df1ac). The ocarina has no get order (it is not one of struct 0xf5ab6461's 42 members) and no item button (D-pad Left is its own).
+
+The fix: whenever Link is in the game, the hook equips the best held ocarina when `EquipOcarina` is "" or is the Fairy Ocarina while the Ocarina of Time is held (`ocarina_equip_mend`; log `coop: items: ocarina '' -> 'Item_Ocarina_Fairy' for the held ocarina`). It is written straight into the String64's buffer, as the teleport does; never lowered, and a name it does not know is left alone. The help-box Bools are left to the game: at worst the first D-pad Left shows the ocarina's help box. Songs are `IsGet.Item_Melody_*` (shared, OR).
+
+Not checked in a run yet: that the written name is enough for D-pad Left (the in-game check below), and that songs learned by another player can be played.
+
 ## Not done
 
 1. Gold Skulltula placement keys: one known (above); the rest (`Obj_RupeeToken`, 85 placements, and any others) to read from the Banc placements; a loaded Skulltula or token removed when its key is set by another player; heart piece placement keys.

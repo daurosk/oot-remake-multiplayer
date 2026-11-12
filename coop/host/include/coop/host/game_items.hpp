@@ -116,6 +116,26 @@ constexpr std::uint32_t kGold = 0x40ae1183;    // PouchData.Armor_Adult_Gauntlet
 std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t silver,
                                               std::int32_t gold, std::uint32_t current);
 
+// Issue 190 (docs/items.md, "The ocarina"): D-pad Left takes out the ocarina
+// named in PlayerStatus.EquipOcarina (String64, an actor name, "" by
+// default). The game writes it when Link gets an ocarina himself; an ocarina
+// shared by another player leaves it "", so nothing comes out. Every save of
+// a player who got it from Saria holds "Item_Ocarina_Fairy".
+namespace ocarina {
+constexpr std::uint32_t kEquip = 0xb72cd3fc;  // PlayerStatus.EquipOcarina
+constexpr std::uint32_t kFairy = 0xb7df60f1;  // PouchData.Item_Ocarina_Fairy.StockNum
+constexpr std::uint32_t kTime = 0x54e2a3d1;   // PouchData.Item_Ocarina_Time.StockNum
+constexpr std::string_view kFairyName = "Item_Ocarina_Fairy";
+constexpr std::string_view kTimeName = "Item_Ocarina_Time";
+}  // namespace ocarina
+
+// The ocarina to equip for the held ones (Ocarina of Time over the Fairy
+// Ocarina), when `current` is "" or the Fairy Ocarina and a better one is
+// held. Nothing otherwise: never lowered, and a name we do not know is left
+// alone.
+std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
+                                                   std::string_view current);
+
 // When to mend (ItemFlagStore::mend), kept by the hook across frames: for
 // the first frames after Link comes into the game (a save or a scene
 // loaded: no Link, then Link), once a frame. The load may still be writing

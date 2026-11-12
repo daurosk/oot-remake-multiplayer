@@ -1036,3 +1036,30 @@ TEST_CASE("game items: a held strength item raises the lift grade (issue 125)") 
   // A value that is not a grade (memory not what we think): left alone.
   CHECK_FALSE(lift_grade_raise(1, 0, 0, 0));
 }
+
+TEST_CASE("game items: a held ocarina is equipped (issue 190)") {
+  namespace oc = coop::host::ocarina;
+  using coop::host::ocarina_equip_mend;
+  CHECK(protocol::flag_hash("PlayerStatus.EquipOcarina") == oc::kEquip);
+  CHECK(protocol::flag_hash("PouchData.Item_Ocarina_Fairy.StockNum") == oc::kFairy);
+  CHECK(protocol::flag_hash("PouchData.Item_Ocarina_Time.StockNum") == oc::kTime);
+  // Both are shared items, so an ocarina from another player reaches this.
+  for (const std::uint32_t h : {oc::kFairy, oc::kTime}) {
+    REQUIRE(find_item(h) != nullptr);
+    CHECK(find_item(h)->rule == ItemRule::max);
+  }
+
+  // The Fairy Ocarina from another player: "" -> the Fairy Ocarina.
+  CHECK(ocarina_equip_mend(1, 0, "") == oc::kFairyName);
+  // The Ocarina of Time, given or shared: it replaces the Fairy Ocarina.
+  CHECK(ocarina_equip_mend(1, 1, "") == oc::kTimeName);
+  CHECK(ocarina_equip_mend(1, 1, oc::kFairyName) == oc::kTimeName);
+  CHECK(ocarina_equip_mend(0, 1, "") == oc::kTimeName);
+  // Already equipped, or no ocarina: nothing written.
+  CHECK_FALSE(ocarina_equip_mend(1, 0, oc::kFairyName));
+  CHECK_FALSE(ocarina_equip_mend(1, 1, oc::kTimeName));
+  CHECK_FALSE(ocarina_equip_mend(0, 0, ""));
+  // Never lowered, and a name we do not know is left alone.
+  CHECK_FALSE(ocarina_equip_mend(1, 0, oc::kTimeName));
+  CHECK_FALSE(ocarina_equip_mend(1, 1, "Item_Something_Else"));
+}

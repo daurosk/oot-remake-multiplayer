@@ -179,7 +179,11 @@ TEST_CASE("relay: wrong codes are counted and then refused for a while") {
   CHECK(f.relay.stats().lookups_limited == 1);
   // Another address is not held up.
   CHECK(f.lookup(code, Endpoint{0x0300000Au, 1}, 200) == LookupResult::kOk);
-  // After the window (10 minutes).
+  // After the window (10 minutes); the host kept its code with a keepalive.
+  Message keep;
+  keep.kind = Kind::kKeepalive;
+  keep.token = 1;
+  CHECK(f.relay.received(kHost, encode(keep), 100 + 10 * 60'000).size() == 1);
   f.relay.tick(100 + 10 * 60'000);
   CHECK(f.lookup(code, kGuest, 100 + 10 * 60'000) == LookupResult::kOk);
 }

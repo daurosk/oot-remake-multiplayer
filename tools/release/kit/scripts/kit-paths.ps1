@@ -379,39 +379,59 @@ function Get-KitTunic([string]$Color) {
     return $best
 }
 
-# Puts your colour's tile (the pack tool's coop_self/<colour>.bntx.zs, listed in coop_puppet.json
-# as self_tiles) over the game's tunic tile in the pack's romfs, so your own Link wears it; green,
-# no colour or a pack without it: takes the copy away, the game's own green. The same for the
-# dark tile (self_dark_tiles, over Angin_Tile_A_Dark_Alb: the child's tunic body, #202). Only the
-# Kokiri tunic: the Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
+# Puts your colour's tunic textures over the game's in the pack's romfs, so your own Link wears
+# your colour: the pack tool's coop_self/ files, listed in coop_puppet.json as self_files
+# ({colour: {romfs path: file}}: the tile, the child's dark tile and the adult's other tunic
+# textures, #202); a pack from before that: self_tiles / self_dark_tiles. Green, no colour or a
+# pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
+# Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
 function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
-    $tex = Join-Path $PackDir 'romfs\Tex'
-    $dst = Join-Path $tex 'Angin_Tile_A_Alb.bntx.zs'
-    $dstDark = Join-Path $tex 'Angin_Tile_A_Dark_Alb.bntx.zs'
+    $romfs = Join-Path $PackDir 'romfs'
+    $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
+    $dark = 'Tex/Angin_Tile_A_Dark_Alb.bntx.zs'
     $tunic = Get-KitTunic $Color
-    $src = $null
-    $srcDark = $null
-    if ($tunic -and $tunic -ne 'green') {
-        try {
-            $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
-            $rel = if ($json.self_tiles) { $json.self_tiles.$tunic } else { $null }
-            $relDark = if ($json.self_dark_tiles) { $json.self_dark_tiles.$tunic } else { $null }
-            if ($rel -and $json.tunics -and $json.tunics.green) {
-                $src = Join-Path $PackDir $rel
-                if ($relDark) { $srcDark = Join-Path $PackDir $relDark }
-            }
-        } catch { }
-    }
+    $json = $null
     try {
-        if ($src -and (Test-Path -LiteralPath $src -PathType Leaf)) {
-            New-Item -ItemType Directory -Force -Path $tex | Out-Null
-            Copy-Item -LiteralPath $src -Destination $dst -Force
-            if ($srcDark -and (Test-Path -LiteralPath $srcDark -PathType Leaf)) {
-                Copy-Item -LiteralPath $srcDark -Destination $dstDark -Force
-            } elseif (Test-Path -LiteralPath $dstDark) { Remove-Item -LiteralPath $dstDark -Force }
-            return $tunic
+        $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
+    } catch { }
+    $ok = { param($rel) $rel -is [string] -and $rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' }
+    # Every file a colour may put in, taken away first: no copy stays after a change of colour.
+    $targets = @($tile, $dark)
+    $put = [ordered]@{}
+    try {
+        if ($json -and $json.self_files) {
+            foreach ($c in $json.self_files.PSObject.Properties) {
+                foreach ($f in $c.Value.PSObject.Properties) { if (& $ok $f.Name) { $targets += $f.Name } }
+            }
         }
-        foreach ($f in @($dst, $dstDark)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
+        if ($json -and $tunic -and $tunic -ne 'green' -and $json.tunics -and $json.tunics.green) {
+            if ($json.self_files -and $json.self_files.$tunic) {
+                foreach ($f in $json.self_files.$tunic.PSObject.Properties) {
+                    if ((& $ok $f.Name) -and $f.Value) { $put[$f.Name] = Join-Path $PackDir $f.Value }
+                }
+            } else {
+                $rel = if ($json.self_tiles) { $json.self_tiles.$tunic } else { $null }
+                $relDark = if ($json.self_dark_tiles) { $json.self_dark_tiles.$tunic } else { $null }
+                if ($rel) { $put[$tile] = Join-Path $PackDir $rel }
+                if ($rel -and $relDark) { $put[$dark] = Join-Path $PackDir $relDark }
+            }
+        }
+    } catch { $put = [ordered]@{} }
+    # The tile is the one that must be there; a missing other file is left to the game's.
+    if (-not $put.Contains($tile) -or -not (Test-Path -LiteralPath $put[$tile] -PathType Leaf)) { $put = [ordered]@{} }
+    try {
+        foreach ($t in ($targets | Select-Object -Unique)) {
+            $dst = Join-Path $romfs $t
+            if (-not $put.Contains($t) -and (Test-Path -LiteralPath $dst)) { Remove-Item -LiteralPath $dst -Force }
+        }
+        foreach ($t in @($put.Keys)) {
+            $dst = Join-Path $romfs $t
+            if (Test-Path -LiteralPath $put[$t] -PathType Leaf) {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+                Copy-Item -LiteralPath $put[$t] -Destination $dst -Force
+            } elseif (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force }
+        }
+        if ($put.Count) { return $tunic }
     } catch { }
     return ''
 }

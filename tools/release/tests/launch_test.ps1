@@ -224,6 +224,13 @@ try {
     Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
     Write-File $dark 'STALE'
     Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and -not (Test-Path -LiteralPath $dark)) 'self tunic: an older pack without dark tiles: no stale dark copy'
+    # self_files (#202 adult): every tunic texture of your colour, all taken away on a change
+    Write-File (Join-Path $sp 'coop_self\red.vest.bntx.zs') 'REDVEST'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs": "coop_self/red.dark.bntx.zs", "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs": "coop_self/red.vest.bntx.zs", "../evil.bntx.zs": "coop_self/red.vest.bntx.zs"}}}'
+    $vest = Join-Path $sp 'romfs\Tex\Mt_Vest_Player_Adult_Alb.bntx.zs'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($vest) -eq 'REDVEST' -and [System.IO.File]::ReadAllText($dark) -eq 'REDDARK' -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'self tunic: self_files: tile, dark tile and vest put in'
+    Check (-not (Test-Path -LiteralPath (Join-Path $sp 'evil.bntx.zs'))) 'self tunic: self_files: a path outside Tex/ is not written'
+    Check ((Set-KitSelfTunic $sp 'green') -eq '' -and -not (Test-Path -LiteralPath $vest) -and -not (Test-Path -LiteralPath $dark) -and -not (Test-Path -LiteralPath $tile)) 'self tunic: self_files: green takes every copy away'
 } finally {
     Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -311,7 +311,7 @@ TEST_CASE("platforms: a late tick older than one we have is not used") {
     CHECK(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 1);
 }
 
-TEST_CASE("platforms: when the owner goes quiet the next game takes over; a later lower number follows") {
+TEST_CASE("platforms: when the owner goes quiet the next game takes over, and a later lower number follows") {
     Game a;
     Game b;
     a.self = 1;

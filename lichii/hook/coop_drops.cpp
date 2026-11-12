@@ -108,6 +108,9 @@ void Sync::Reset() {
     tell_at_ = 0;
     outbox_.clear();
     held_.clear();
+    placed_.clear();
+    placed_taken_.clear();
+    placed_deleting_.clear();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -234,6 +237,57 @@ void Sync::Learn(const proto::DropSpawn& spawn, std::uint64_t now_us,
     }
 }
 
+void Sync::TickPlaced(const std::vector<Seen>& seen, const std::optional<Vec3>& player,
+                      std::uint64_t now_us, std::vector<Remove>& removes) {
+    std::set<std::uint64_t> listed;
+    std::set<std::uint64_t> addresses;
+    for (const Seen& s : seen) {
+        listed.insert(s.hash);
+        addresses.insert(s.address);
+        if (placed_taken_.count(s.hash) != 0) {
+            // Taken somewhere: ours goes (asked again if it never went).
+            placed_.erase(s.hash);
+            auto [it, fresh] = placed_deleting_.emplace(s.address, now_us);
+            if (fresh || now_us - it->second > kDeleteWaitUs) {
+                it->second = now_us;
+                removes.push_back({s.address, s.name});
+                if (fresh) {
+                    Note("placed " + Hex(s.hash) + " " + s.name + " taken elsewhere, deleted here");
+                }
+            }
+            continue;
+        }
+        if (placed_.size() >= kMaxDrops && placed_.count(s.hash) == 0) {
+            continue;
+        }
+        PlacedDrop& p = placed_[s.hash];
+        p.address = s.address;
+        p.name = s.name;
+        if (Finite(s.position)) {
+            p.position = s.position;
+        }
+        p.missed = 0;
+    }
+    std::erase_if(placed_deleting_, [&](const auto& e) { return addresses.count(e.first) == 0; });
+    for (auto it = placed_.begin(); it != placed_.end();) {
+        PlacedDrop& p = it->second;
+        if (listed.count(it->first) != 0 || ++p.missed < kGoneWalks) {
+            ++it;
+            continue;
+        }
+        // Left the list. Only Link standing on it is a pickup: a placed
+        // drop never blinks out, and further away it was unloaded.
+        if (player && Distance(*player, p.position) < kTakeM && placed_taken_.size() < kMaxDrops) {
+            placed_taken_.insert(it->first);
+            held_.push_back({proto::DropTake{0, {proto::ObjectKind::placed, 0, it->first},
+                                             proto::DropTakeReason::picked_up},
+                             now_us});
+            Note("placed " + Hex(it->first) + " " + p.name + " picked up here");
+        }
+        it = placed_.erase(it);
+    }
+}
+
 void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<Remove>& removes) {
     std::vector<proto::Message> inbox;
     {
@@ -248,6 +302,14 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<Remove>& r
                 continue;
             }
             Learn(*s, now_us, removes);
+        } else if (const auto* t = std::get_if<proto::DropTake>(&m);
+                   t != nullptr && t->id.kind == proto::ObjectKind::placed) {
+            // A bush's or a grass tuft's loot taken in another game: ours
+            // goes in the placed step of this walk.
+            if (t->player_number != self && placed_taken_.size() < kMaxDrops &&
+                placed_taken_.insert(t->id.value).second) {
+                Note("placed " + Hex(t->id.value) + " taken in another game");
+            }
         } else if (const auto* t = std::get_if<proto::DropTake>(&m)) {
             const auto it = drops_.find(t->id);
             if (it == drops_.end()) {
@@ -266,7 +328,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<Remove>& r
 }
 
 void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_us,
-                const std::vector<Seen>& seen, const std::optional<Vec3>& player,
+                const std::vector<Seen>& listed, const std::optional<Vec3>& player,
                 const std::vector<Vec3>& owned, const std::map<std::uint64_t, std::uint64_t>& made,
                 std::vector<proto::Message>& send, std::vector<Create>& creates,
                 std::vector<Remove>& removes) {
@@ -282,6 +344,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         Queue(proto::DropAsk{0, scene});
     }
     self_ = self;
+
+    // Placed drops (a hash) only share their pickup; the rest are rolls.
+    std::vector<Seen> seen;
+    std::vector<Seen> placed;
+    seen.reserve(listed.size());
+    for (const Seen& s : listed) {
+        (s.hash != 0 ? placed : seen).push_back(s);
+    }
 
     // The shared things we own, where they were last seen.
     for (const Vec3& p : owned) {
@@ -327,6 +397,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
 
     Apply(self, now_us, removes);
+    TickPlaced(placed, player, now_us, removes);
 
     std::map<std::uint64_t, const Seen*> on_list;
     for (const Seen& s : seen) {
@@ -376,14 +447,28 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
     }
     // Several gone within the hold, or Link gone: an unload, not pickups.
-    if (!held_.empty() && (!player || held_.size() >= kUnloadCount)) {
-        for (const HeldTake& h : held_) {
+    // A placed drop's take is only held when Link stood on it, so only
+    // Link gone calls it off (running through a row of a bush's hearts
+    // takes three at once).
+    const auto rolled = static_cast<std::size_t>(std::count_if(held_.begin(), held_.end(), [](const HeldTake& h) {
+        return h.take.id.kind == proto::ObjectKind::made;
+    }));
+    if (!held_.empty() && (!player || rolled >= kUnloadCount)) {
+        std::erase_if(held_, [&](const HeldTake& h) {
+            if (h.take.id.kind == proto::ObjectKind::placed) {
+                if (player) {
+                    return false;
+                }
+                placed_taken_.erase(h.take.id.value);
+                Note("placed " + Hex(h.take.id.value) + " unloaded here, not taken");
+                return true;
+            }
             if (const auto it = drops_.find(h.take.id); it != drops_.end()) {
                 it->second.state = State::away;
                 Note(Tag(h.take.id) + " " + it->second.name + " unloaded here, not taken");
             }
-        }
-        held_.clear();
+            return true;
+        });
     }
     std::erase_if(held_, [&](const HeldTake& h) {
         if (now_us - h.since_us < kTakeHoldUs) {
@@ -496,6 +581,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // A player came into the scene: the drops we still show, again.
     if (tell_at_ != 0 && now_us >= tell_at_) {
         tell_at_ = 0;
+        for (const std::uint64_t hash : placed_taken_) {
+            Queue(proto::DropTake{0, {proto::ObjectKind::placed, 0, hash},
+                                  proto::DropTakeReason::picked_up});
+        }
         for (const auto& [id, d] : drops_) {
             if (d.state != State::live || d.address == 0) {
                 continue;
@@ -887,6 +976,11 @@ private:
     }
 
     enum class What : u8 { other, drop, player };
+    struct Entry {
+        What what = What::other;
+        std::string name;
+        u64 hash = 0;  // a placed drop's (bush and grass loot)
+    };
 
     // The drop actors on the list, our Link, and the places of the shared
     // things we own. False when the list changed under us.
@@ -903,7 +997,7 @@ private:
         if (!count) {
             return false;
         }
-        std::unordered_map<u64, std::pair<What, std::string>> known;
+        std::unordered_map<u64, Entry> known;
         std::size_t walked = 0;
         auto node = Get<u64>(memory, head);
         while (node && *node != 0 && *node != head && walked < kMaxWalk) {
@@ -911,33 +1005,39 @@ private:
             const auto owner = Get<u64>(memory, *node + kNodeOwner);
             if (owner && *owner + kActorNode == *node) {
                 const u64 a = *owner;
-                std::pair<What, std::string> entry{What::other, {}};
+                Entry entry;
                 bool cached = false;
                 if (const auto it = known_.find(a); it != known_.end()) {
                     entry = it->second;
-                    cached = entry.first != What::drop || Name(memory, a) == entry.second;
+                    cached = entry.what != What::drop || Name(memory, a) == entry.name;
                 }
                 if (!cached) {
-                    entry = {What::other, {}};
+                    entry = {};
                     std::string name = Name(memory, a);
                     if (name == "Player_Child" || name == "Player_Adult") {
-                        entry.first = What::player;
+                        entry.what = What::player;
                     } else if (IsDrop(name)) {
                         const auto placement = Get<u64>(memory, a + kActorPlacement);
                         const u64 hash = placement && *placement != 0
                                              ? Get<u64>(memory, *placement + kPlacementHash).value_or(0)
                                              : 0;
-                        if (hash == 0 || hash == ~u64{0} || placed_) {
-                            entry = {What::drop, std::move(name)};
-                        } else if (!first_) {
-                            LOG_INFO(Core, "coop: drops: {} {:#x} is placed (hash {:#x}): not shared",
-                                     name, a, hash);
+                        entry.what = What::drop;
+                        if (hash != 0 && hash != ~u64{0} && !placed_) {
+                            // Bush and grass loot (#102): every game has
+                            // its own with this hash; only pickups are shared.
+                            entry.hash = hash;
+                            if (!first_ && placed_logged_ < 64) {
+                                ++placed_logged_;
+                                LOG_INFO(Core, "coop: drops: {} {:#x} is placed (hash {:#x}): pickup shared",
+                                         name, a, hash);
+                            }
                         }
+                        entry.name = std::move(name);
                     }
                 }
-                if (entry.first == What::drop) {
-                    out.push_back({a, entry.second, Place(memory, a)});
-                } else if (entry.first == What::player) {
+                if (entry.what == What::drop) {
+                    out.push_back({a, entry.name, Place(memory, a), entry.hash});
+                } else if (entry.what == What::player) {
                     player = Place(memory, a);
                 }
                 known.emplace(a, std::move(entry));
@@ -970,7 +1070,8 @@ private:
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;
-    std::unordered_map<u64, std::pair<What, std::string>> known_;
+    std::unordered_map<u64, Entry> known_;
+    std::size_t placed_logged_ = 0;
     std::set<u64> listed_;
     std::vector<Remove> removing_;
     std::size_t live_logged_ = 0;

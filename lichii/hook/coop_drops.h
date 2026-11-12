@@ -56,8 +56,10 @@ namespace CoopDrops {
 using coop::protocol::Vec3;
 
 // The actors that are drops: rupees, recovery hearts, magic jars, arrows,
-// bombs, nuts, seeds and sticks to pick up. Only ones the game made (no
-// placement hash) count; a placed rupee is a flag's business (docs/items.md).
+// bombs, nuts, seeds and sticks to pick up. Ones the game made (no placement
+// hash) are rolled per game and matched; placed ones (a bush's or a grass
+// tuft's fixed loot, #102) lie in every game with the same hash and only
+// their pickup is shared.
 bool IsDrop(std::string_view name);
 
 // One drop actor of one walk.
@@ -65,6 +67,9 @@ struct Seen {
     std::uint64_t address = 0;
     std::string name;
     Vec3 position{};
+    // The placement hash of a placed drop (bush and grass loot: every game
+    // has its own, same hash); 0 for one the game made.
+    std::uint64_t hash = 0;
 };
 
 // A copy for the spawn director to make. `release`: it is made and known;
@@ -177,6 +182,20 @@ private:
     void Bind(Drop& d, std::uint64_t address);
     void Queue(coop::protocol::Message message);
     void Note(std::string text);
+    // Placed drops (Seen::hash): a pickup here is told as a DROP_TAKE with a
+    // placed id; one taken anywhere is deleted here whenever it shows up
+    // while we stay in the scene.
+    void TickPlaced(const std::vector<Seen>& seen, const std::optional<Vec3>& player,
+                    std::uint64_t now_us, std::vector<Remove>& removes);
+    struct PlacedDrop {
+        std::uint64_t address = 0;
+        std::string name;
+        Vec3 position{};
+        unsigned missed = 0;
+    };
+    std::map<std::uint64_t, PlacedDrop> placed_;               // hash: our actor of it
+    std::set<std::uint64_t> placed_taken_;                     // hashes taken in this scene
+    std::map<std::uint64_t, std::uint64_t> placed_deleting_;  // actor: when its delete was asked
 
     // A create that was called off before the director reported its actor.
     struct Ghost {

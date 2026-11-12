@@ -974,6 +974,8 @@ struct DropSpawn {
 };
 
 // DROP_TAKE: a drop is gone from the sender's game; every game removes it.
+// The id is a made drop's, or (protocol 10) a placed one's: kind placed and
+// the placement hash, for the loot a bush or grass tuft has in every game.
 enum class DropTakeReason : std::uint8_t {
   picked_up = 0,  // the sender's Link collected it
   gone = 1,       // it blinked out

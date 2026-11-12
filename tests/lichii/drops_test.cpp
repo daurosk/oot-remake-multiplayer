@@ -891,3 +891,151 @@ TEST_CASE("drops: a server time that steps back does not end the waits") {
     REQUIRE(b.creates.size() == 1);  // still asked, not given up
     CHECK(b.sync.Live() == 1);
 }
+
+// ---------------------------------------------------------------- placed loot (#102)
+
+namespace {
+
+constexpr std::uint64_t kBushHash = 0x3e4fb463e9948383ULL;  // a Kokiri Forest bush's, from a player log
+
+Seen Placed(std::uint64_t address, float x, std::uint64_t hash, std::string name = kHeart) {
+    return Seen{address, std::move(name), {x, 0.0f, 0.0f}, hash};
+}
+
+proto::ObjectId PlacedId(std::uint64_t hash) {
+    return {proto::ObjectKind::placed, 0, hash};
+}
+
+} // namespace
+
+TEST_CASE("drops: a bush's placed loot is never rolled, its pickup is told by hash") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Placed(0x1000, 100.5f, kBushHash)};  // Link stands at 100
+    a.Tick();
+    CHECK(a.send.empty());  // every game has it: no DROP_SPAWN
+    CHECK(a.creates.empty());
+    CHECK(a.sync.Live() == 0);
+
+    a.Gone(0x1000);
+    a.Tick();
+    a.Tick();
+    CHECK(Of<proto::DropTake>(a.send).empty());  // held a moment
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
+    const auto takes = Of<proto::DropTake>(a.send);
+    REQUIRE(takes.size() == 1);
+    CHECK(takes[0].id == PlacedId(kBushHash));
+    CHECK(takes[0].reason == proto::DropTakeReason::picked_up);
+
+    // The bush grows back with it while we stay: picked up already, it goes.
+    a.seen = {Placed(0x5000, 100.5f, kBushHash)};
+    a.Tick();
+    REQUIRE(a.removes.size() == 1);
+    CHECK(a.removes[0] == Remove{0x5000, kHeart});
+    CHECK(Of<proto::DropTake>(a.send).empty());
+}
+
+TEST_CASE("drops: placed loot taken in another game is deleted here, also when it loads later") {
+    Game b(2);
+    b.Tick();
+    b.seen = {Placed(0x1000, 40.0f, kBushHash), Placed(0x2000, 41.0f, 0x1234)};
+    b.Tick();
+    b.sync.Receive(proto::DropTake{1, PlacedId(kBushHash), proto::DropTakeReason::picked_up});
+    b.Tick();
+    REQUIRE(b.removes.size() == 1);
+    CHECK(b.removes[0] == Remove{0x1000, kHeart});
+    b.Tick();
+    CHECK(b.removes.empty());  // asked once
+    b.Tick(CoopDrops::Sync::kDeleteWaitUs / kMs + 1);
+    CHECK(b.removes.size() == 1);  // a delete that never came true is asked again
+
+    // Ours went: never told as a pickup of ours, wherever Link stands.
+    b.player = Vec3{40.0f, 0.0f, 0.0f};
+    b.Gone(0x1000);
+    for (int i = 0; i < 30; ++i) {
+        b.Tick();
+        CHECK(Of<proto::DropTake>(b.send).empty());
+    }
+
+    // A take for loot not loaded here yet: it goes when it shows up.
+    b.sync.Receive(proto::DropTake{1, PlacedId(0x9999), proto::DropTakeReason::picked_up});
+    b.Tick();
+    b.seen.push_back(Placed(0x3000, 80.0f, 0x9999));
+    b.Tick();
+    REQUIRE(b.removes.size() == 1);
+    CHECK(b.removes[0].address == 0x3000);
+}
+
+TEST_CASE("drops: placed loot unloaded far away is not a pickup, a row of hearts taken at once is") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Placed(0x1000, 120.0f, 0x11), Placed(0x2000, 100.2f, 0x21), Placed(0x3000, 100.4f, 0x22),
+              Placed(0x4000, 100.6f, 0x23)};
+    a.Tick();
+    a.Gone(0x1000);  // 20 m away: unloaded
+    a.Tick();
+    a.Tick();
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
+    CHECK(Of<proto::DropTake>(a.send).empty());
+
+    // Link runs through three hearts within one walk: three pickups.
+    a.Gone(0x2000);
+    a.Gone(0x3000);
+    a.Gone(0x4000);
+    a.Tick();
+    a.Tick();
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
+    CHECK(Of<proto::DropTake>(a.send).size() == 3);
+}
+
+TEST_CASE("drops: placed loot gone with no Link is not taken, and a new scene forgets the takes") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Placed(0x1000, 100.0f, kBushHash)};
+    a.Tick();
+    a.Gone(0x1000);
+    a.Tick();
+    a.Tick();
+    a.player.reset();  // Link left the list within the hold: an unload
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
+    CHECK(Of<proto::DropTake>(a.send).empty());
+    a.player = Vec3{100.0f, 0.0f, 0.0f};
+    a.seen = {Placed(0x5000, 100.0f, kBushHash)};
+    a.Tick();
+    CHECK(a.removes.empty());  // still ours to take
+
+    a.sync.Receive(proto::DropTake{2, PlacedId(kBushHash), proto::DropTakeReason::picked_up});
+    a.Tick();
+    CHECK(a.removes.size() == 1);
+    // Another scene and back: the game lays the bush's loot out again.
+    a.now += 33 * kMs;
+    a.sync.Tick("Another_Scene", a.self, a.now, {}, a.player, {}, {}, a.send, a.creates, a.removes);
+    a.Tick();
+    a.removes.clear();
+    a.Tick();
+    CHECK(a.removes.empty());
+}
+
+TEST_CASE("drops: a player who comes in is told the placed loot already taken") {
+    Game a(1);
+    a.Tick();
+    a.sync.Receive(proto::DropTake{2, PlacedId(kBushHash), proto::DropTakeReason::picked_up});
+    a.Tick();
+    a.sync.Receive(proto::DropAsk{3, kScene});
+    a.Tick();
+    a.Tick(CoopDrops::Sync::kTellAfterUs / kMs);
+    const auto takes = Of<proto::DropTake>(a.send);
+    REQUIRE(takes.size() == 1);
+    CHECK(takes[0].id == PlacedId(kBushHash));
+
+    // The newcomer deletes its own when the game lays it out.
+    Game c(3);
+    c.Tick();
+    auto told = takes[0];
+    told.player_number = 1;
+    c.sync.Receive(told);
+    c.seen = {Placed(0x1000, 0.0f, kBushHash)};
+    c.Tick();
+    REQUIRE(c.removes.size() == 1);
+    CHECK(c.removes[0].address == 0x1000);
+}

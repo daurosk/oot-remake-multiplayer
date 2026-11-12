@@ -1406,6 +1406,11 @@ TEST_CASE("the drop messages have their numbers, channel and layout") {
   REQUIRE(decode(b, back) == Error::none);
   CHECK(back == spawn);
   CHECK(must_encode(DropTake{0, id, DropTakeReason::gone}).size() == kHeaderSize + 1 + 10 + 1);
+  // A placed drop's take (a bush's loot, protocol 10): the placement hash.
+  const Message placed_take = DropTake{0, ObjectId{ObjectKind::placed, 0, 0x3e4fb463e9948383ULL},
+                                       DropTakeReason::picked_up};
+  REQUIRE(decode(must_encode(placed_take), back) == Error::none);
+  CHECK(back == placed_take);
   CHECK(must_encode(DropAsk{0, "Graveyard"}).size() == kHeaderSize + 1 + 2 + 9);
 }
 
@@ -1420,7 +1425,8 @@ TEST_CASE("bad drop messages are refused") {
   CHECK(encode(DropSpawn{0, made, "s", "Obj_Heart", {std::numeric_limits<float>::infinity(), 0, 0}, 0, 0},
                out) == Error::bad_value);
   CHECK(encode(DropSpawn{5, made, "s", "Obj_Heart", {}, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(DropTake{0, placed, DropTakeReason::gone}, out) == Error::bad_value);
+  CHECK(encode(DropTake{0, ObjectId{ObjectKind::placed, 1, 7}, DropTakeReason::gone}, out) ==
+        Error::bad_value);
   CHECK(encode(DropTake{0, made, static_cast<DropTakeReason>(2)}, out) == Error::bad_value);
   CHECK(encode(DropAsk{0, ""}, out) == Error::bad_value);
   Message m;

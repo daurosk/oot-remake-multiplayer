@@ -431,6 +431,20 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
             return true;
         }
     }
+    static const bool keyed = [] {  // LICHII_COOP_CHAT_KEY: the key that opens the box (T unless set)
+        const std::string v = Env("LICHII_COOP_CHAT_KEY");
+        if (v.empty()) {
+            return true;
+        }
+        if (const auto k = CoopChatBox::ParseOpenKey(v)) {
+            g_box.SetOpenKey(*k);
+            LOG_INFO(Core, "coop: chat box key: {}", *k == 0 ? std::string("off") : v);
+        } else {
+            LOG_WARNING(Core, "coop: LICHII_COOP_CHAT_KEY={} is not a letter, a digit, F1 to F12 or off; T opens the chat box", v);
+        }
+        return true;
+    }();
+    (void)keyed;
     const bool taken = g_box.Key(vk, repeat);
     if (auto text = g_box.TakeSend()) {
         const bool ok = CoopHook::SendChat(*text);

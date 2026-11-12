@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace CoopChatBox {
 
@@ -23,6 +24,12 @@ inline constexpr std::uint32_t kKeyOpen = 'T';
 inline constexpr std::uint32_t kKeyReturn = 0x0D;
 inline constexpr std::uint32_t kKeyEscape = 0x1B;
 inline constexpr std::uint32_t kKeyBack = 0x08;
+
+// The key that opens the box, from LICHII_COOP_CHAT_KEY (for a player who
+// bound T to a game button in Hookshot's controls): a letter or a digit,
+// F1 to F12, or "off" (0: no key opens it). Any case. Nothing for anything
+// else (the caller keeps T and says so).
+std::optional<std::uint32_t> ParseOpenKey(std::string_view text);
 
 // `cp` as UTF-8 ("" for a surrogate or a value past U+10FFFF).
 std::string Utf8(std::uint32_t cp);
@@ -48,13 +55,17 @@ public:
     // closed it is still held (else the game would see Plus, or Hookshot's
     // menu Esc, as the box closes).
     bool KeysTaken(bool return_or_escape_down);
+    // The key that opens the box (kKeyOpen unless set; 0: none).
+    void SetOpenKey(std::uint32_t vk) { open_key_ = vk; }
+    std::uint32_t open_key() const { return open_key_; }
 
 private:
     void Close();
 
     bool open_ = false;
     bool failed_ = false;
-    bool skip_open_char_ = false;  // the T's own WM_CHAR, right after it opened the box
+    std::uint32_t open_key_ = kKeyOpen;
+    bool skip_open_char_ = false;  // the opening key's own character, right after it opened the box
     bool wait_release_ = false;
     std::optional<std::string> pending_;
     std::string text_;

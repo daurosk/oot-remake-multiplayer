@@ -23,6 +23,7 @@
 #include "core/loader/nso.h"
 #include "core/memory.h"
 
+#include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_sites.h"
 #include "coop_puppet.h"
@@ -187,6 +188,32 @@ void PatchMain(std::uint64_t title_id, std::string_view module, std::string_view
                         CoopHold::kCave.size());
             LOG_INFO(Loader, "    - Applying \"coop ai hold\": bl {:#x} at main+{:#x}",
                      CoopHold::kCaveOffset, CoopHold::kHookOffset);
+        }
+    }
+    // Looping platforms' pause counters (coop_counters.h, Hot Onion's
+    // method): on with the cave unless LICHII_COOP_PLATFORMS=0.
+    if (Env("LICHII_COOP_PLATFORMS") != "0") {
+        const std::size_t at = header + CoopCounters::kStartOffset;
+        const std::size_t cave_at = header + CoopCounters::kCaveOffset;
+        bool room = cave_at + CoopCounters::kCave.size() <= original.size() &&
+                    header + CoopCounters::kRingPointer + 8 <= original.size();
+        for (std::size_t i = cave_at; room && i < cave_at + CoopCounters::kCave.size(); ++i) {
+            room = original[i] == 0 && out[i] == 0;
+        }
+        for (std::size_t i = 0; room && i < 8; ++i) {
+            const std::size_t p = header + CoopCounters::kRingPointer + i;
+            room = original[p] == 0 && out[p] == 0;
+        }
+        if (Word(original, at) != CoopCounters::kStartOriginal ||
+            Word(out, at) != CoopCounters::kStartOriginal || !room) {
+            LOG_WARNING(Loader, "    - Skipping \"coop counters\": main+{:#x} holds {:#010x}{}",
+                        CoopCounters::kStartOffset, Word(out, at), room ? "" : ", cave not room");
+        } else {
+            const std::uint32_t jump = CoopCounters::HookWord();
+            std::memcpy(out.data() + at, &jump, sizeof(jump));
+            std::memcpy(out.data() + cave_at, CoopCounters::kCave.data(), CoopCounters::kCave.size());
+            LOG_INFO(Loader, "    - Applying \"coop counters\": b {:#x} at main+{:#x}",
+                     CoopCounters::kCaveOffset, CoopCounters::kStartOffset);
         }
     }
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {

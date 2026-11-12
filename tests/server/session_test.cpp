@@ -3810,6 +3810,19 @@ TEST_CASE("a platform clock goes to the others in the sender's scene only, never
   h.clear();
   h.receive(3, sample_in("DodongoCavern"), kChannelPlayerSamples);
   CHECK(messages_to<PlatformClock>(h, 3).empty());  // not kept
+  // The pause counters (platforms-b2) go the same way.
+  h.clear();
+  PlatformCounter k;
+  k.scene = "DodongoCavern";
+  k.server_time_us = 6'000'000;
+  k.ticks.push_back({0xabcdefull, 3'000'000, 500'000, 4});
+  h.receive(2, k, kChannelObjectSamples);
+  const auto counters = messages_to<PlatformCounter>(h, 3);
+  REQUIRE(counters.size() == 1);
+  CHECK(counters.front().player_number == 2);
+  CHECK(counters.front().ticks == k.ticks);
+  CHECK(messages_to<PlatformCounter>(h, 1).size() == 1);  // all three are in DodongoCavern now
+  CHECK(messages_to<PlatformCounter>(h, 2).empty());      // not back to the sender
 }
 
 // --- Encrypted traffic (docs/protocol.md "Encrypted traffic") ---

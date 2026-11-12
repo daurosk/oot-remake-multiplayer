@@ -210,6 +210,7 @@ Copy-Text $verifyKit (Join-Path $kit 'scripts\verify_kit.ps1')
 # Hookshot (experimental): the script that builds it on the player's PC from their own game, our
 # pin and patches, the tools list and the module. No Hookshot or game file goes in.
 $hookshotNote = ''
+$fmtLicense = $null
 $hsPin = Join-Path $repo 'hookshot\PIN'
 if (-not $HookshotDll) {
     $HookshotDll = Get-ChildItem -LiteralPath $BuildDir -Filter 'hookshot_coop.dll' -File -Recurse -ErrorAction SilentlyContinue |
@@ -236,6 +237,16 @@ if (-not (Test-Path $hsPin)) {
     $hsPinMap = @{}
     Get-Content $hsPin | ForEach-Object { if ($_ -match '^(\w+)=(.*)$') { $hsPinMap[$Matches[1]] = $Matches[2].Trim() } }
     $hookshotNote = $hsPinMap.commit
+    # The module links fmt (MIT, fetched by hookshot/CMakeLists.txt): its licence text goes with it.
+    # Looked for in the CMake build the module came from (the folder above it with CMakeCache.txt), then -BuildDir.
+    $fmtRoots = @()
+    for ($d = Split-Path -Parent ([System.IO.Path]::GetFullPath($HookshotDll)); $d; $d = Split-Path -Parent $d) {
+        if (Test-Path -LiteralPath (Join-Path $d 'CMakeCache.txt')) { $fmtRoots += $d; break }
+    }
+    $fmtRoots += $BuildDir
+    $fmtLicense = $fmtRoots | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $_ '_deps\fmt-src') -Filter 'LICENSE*' -File -ErrorAction SilentlyContinue } |
+        Select-Object -First 1 -ExpandProperty FullName
+    if (-not $fmtLicense) { throw "fmt's LICENSE not found under _deps\fmt-src of the build that made $HookshotDll; the kit must carry it (MIT)." }
     Write-Host "Hookshot: module $(Split-Path -Leaf $HookshotDll), pin $($hsPinMap.commit), $($hsPatches.Count) patch(es)"
 }
 
@@ -300,6 +311,7 @@ if ($emuSource -and (Test-Path (Join-Path $emuSource 'LICENSE.txt'))) {
 $enetLicense = Join-Path $BuildDir '_deps\enet-src\LICENSE'
 if (Test-Path $enetLicense) { Copy-Item $enetLicense (Join-Path $lic 'ENet-MIT.txt') }
 else { Write-Warning 'ENet LICENSE not found in the build folder; add it by hand.' }
+if ($fmtLicense) { Copy-Item -LiteralPath $fmtLicense (Join-Path $lic 'fmt-MIT.txt') }
 
 # Where the source of this exact build is (GPL-3.0, section 6).
 $hookCommit = Invoke-Git $hookDir rev-parse HEAD

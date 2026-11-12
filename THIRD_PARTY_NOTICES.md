@@ -22,11 +22,12 @@ Code copied in from other projects gets an entry here, with its copyright line a
 | Libraries built into the emulator by Fritchii's build (Boost, fmt, SDL3, FFmpeg, OpenSSL, cubeb, libusb, zstd, lz4, zlib, opus, Vulkan headers and memory allocator, sirit, xbyak and others) | `emulator\lichii.exe` | Their own (BSL-1.0, MIT, BSD, Zlib, Apache-2.0, LGPL and others), as listed in the Fritchii source | `SPDX-*.txt` |
 | Qt 6.8.3 (The Qt Company) | `emulator\Qt6*.dll`, `emulator\plugins\` | LGPL-3.0 | `SPDX-LGPL-3.0-or-later.txt`, `SPDX-GPL-3.0-or-later.txt`; source at https://download.qt.io/archive/qt/6.8/6.8.3/ |
 | DirectX Shader Compiler (Microsoft) | `emulator\dxcompiler.dll`, `emulator\dxil.dll` | dxcompiler: University of Illinois/NCSA; dxil: Microsoft redistributable | https://github.com/microsoft/DirectXShaderCompiler |
-| ENet 1.3.18 | `server\coop_server.exe`, `emulator\lichii.exe` | MIT | `ENet-MIT.txt` |
-| Microsoft Visual C++ runtime | `emulator\*140*.dll`, `server\*140*.dll` | Microsoft Visual C++ redistributable licence | (redistributable files) |
+| ENet 1.3.18 | `server\coop_server.exe`, `emulator\lichii.exe`, `hookshot\hookshot_coop.dll` | MIT | `ENet-MIT.txt` |
+| fmt 12.1.0 (Victor Zverovich and contributors) (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` | MIT | `fmt-MIT.txt` |
+| Microsoft Visual C++ runtime | `emulator\*140*.dll`, `server\*140*.dll`, `hookshot\*140*.dll` | Microsoft Visual C++ redistributable licence | (redistributable files) |
 | Python (only in kits made with `-Python`) | `python\` | PSF License | `python\LICENSE.txt` |
 | python-zstandard (only with `-Python`) | `python\Lib\site-packages\zstandard\` | BSD-3-Clause | its `zstandard-*.dist-info` folder |
-| This repository's Hookshot module and patches (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` (with ENet built in), `hookshot\patches\`, `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat` | GPL-3.0 (the patches change Hookshot, itself GPL-3.0) | `oot-remake-multiplayer-GPL-3.0.txt` |
+| This repository's Hookshot module and patches (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` (with ENet and fmt built in), `hookshot\patches\`, `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat` | GPL-3.0; the patches change, and hold a few context lines of, Hookshot (NotRexed and contributors, GPL-3.0, https://github.com/NotRexed/Hookshot) | `oot-remake-multiplayer-GPL-3.0.txt` |
 
 ## Downloaded on the player's PC by Build-Hookshot-Coop (not in the kit)
 

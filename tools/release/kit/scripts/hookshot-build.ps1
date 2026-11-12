@@ -55,7 +55,7 @@ function Read-KeyFile([string]$Path) {
     return $map
 }
 function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
-function Get-Download([string]$Url, [string]$To, [string]$Sha256) {
+function Get-Download([string]$Url, [string]$To, [string]$Sha256, [string]$What = '') {
     if ((Test-Path -LiteralPath $To) -and (Get-Sha256 $To) -eq $Sha256) { return }
     Write-Host "  downloading $(Split-Path -Leaf $To) ..."
     $part = "$To.part"
@@ -63,7 +63,8 @@ function Get-Download([string]$Url, [string]$To, [string]$Sha256) {
     catch { Fail "The download of $Url failed: $($_.Exception.Message). Check the internet connection and run this again." }
     if ($Sha256 -and (Get-Sha256 $part) -ne $Sha256) {
         Remove-Item -LiteralPath $part -Force
-        Fail "$(Split-Path -Leaf $To) is not the file Hookshot published (SHA-256 differs). Run this again; if it repeats, tell the co-op testers."
+        if (-not $What) { $What = "$(Split-Path -Leaf $To) is not the file Hookshot published" }
+        Fail "$What (SHA-256 differs). Run this again; if it repeats, tell the co-op testers."
     }
     Move-Item -LiteralPath $part -Destination $To -Force
 }
@@ -91,10 +92,14 @@ if (-not $patches) { Fail 'This kit has no hookshot\patches\*.patch.' }
 $pin = Read-KeyFile (Join-Path $hs 'PIN')
 $toolsPin = Read-KeyFile (Join-Path $hs 'TOOLS.txt')
 foreach ($k in 'repo', 'commit') { if (-not $pin[$k]) { Fail "hookshot\PIN has no $k=." } }
-foreach ($k in 'release', 'setup_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
+foreach ($k in 'release', 'setup_sha256', 'source_commit', 'source_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
 if ($pin.commit -notmatch '^[0-9a-f]{40}$') { Fail "hookshot\PIN: commit=$($pin.commit) is not a full commit id." }
 if ($pin.repo -notmatch '^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a GitHub repository." }
 $repoPath = $Matches[1]
+# The source archive's SHA-256 in TOOLS.txt is for one commit: it must be PIN's.
+if ($toolsPin.source_commit -ne $pin.commit) {
+    Fail "hookshot\TOOLS.txt pins the source archive of $($toolsPin.source_commit), but hookshot\PIN says $($pin.commit). This kit is broken: tell the co-op testers."
+}
 $patchHash = (($patches | ForEach-Object { Get-Sha256 $_.FullName }) -join ',')
 # What the tools folder and the game are made from: when this is unchanged, steps 1 to 3 are done.
 $stamp = "release=$($toolsPin.release)`ncommit=$($pin.commit)`npatches=$patchHash"
@@ -117,7 +122,8 @@ if ($toolsReady) {
     $setup = Join-Path $downloads "hookshot-setup-$($toolsPin.release).txt"
     Get-Download "https://github.com/$repoPath/releases/download/$($toolsPin.release)/hookshot-setup.txt" $setup $toolsPin.setup_sha256
     # hookshot-setup.txt: "part <sha256> <size> <folder> <top folder in the zip or -> <its new name or -> <url>".
-    # The builder's own app and .NET, and emsdk (llvm-mingw builds instead), are not needed.
+    # Of the builder's own parts, app is used only for its tools\work folder (the play profile and the
+    # hot-function lists); .NET and emsdk (llvm-mingw builds instead) are not fetched.
     $wanted = 'HookshotBuilder-(app|python|cpm|third_party|wgpu-native)-|/llvm-mingw-[^/]*ucrt-x86_64\.zip$'
     $parts = @()
     foreach ($line in Get-Content -LiteralPath $setup) {
@@ -129,13 +135,10 @@ if ($toolsReady) {
     }
     if ($parts.Count -ne 6) { Fail "hookshot-setup.txt of $($toolsPin.release) does not list the six parts this script needs (found $($parts.Count))." }
     foreach ($p in $parts) { Get-Download $p.Url $p.File $p.Sha }
+    # GitHub's source archive at PIN's commit, checked against TOOLS.txt's source_sha256 (a copy
+    # already here is checked too, and fetched again when it differs).
     $sourceZip = Join-Path $downloads "hookshot-$($pin.commit).zip"
-    if (-not (Test-Path -LiteralPath $sourceZip)) {
-        Write-Host "  downloading Hookshot's source at $($pin.commit.Substring(0, 12)) ..."
-        try { Invoke-WebRequest -Uri "https://codeload.github.com/$repoPath/zip/$($pin.commit)" -OutFile "$sourceZip.part" -UseBasicParsing }
-        catch { Fail "The download of Hookshot's source failed: $($_.Exception.Message)" }
-        Move-Item -LiteralPath "$sourceZip.part" -Destination $sourceZip -Force
-    }
+    Get-Download "https://codeload.github.com/$repoPath/zip/$($pin.commit)" $sourceZip $toolsPin.source_sha256.ToLowerInvariant() "Hookshot's source archive differs from the one this kit was made with"
 
     Write-Host '  unpacking ...'
     $staging = Join-Path $hs 'tools.new'

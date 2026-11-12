@@ -1,16 +1,48 @@
-# hookshot_coop: co-op as a module Hookshot loads (docs/hookshot.md). Our
-# patch to Hookshot (patches/) loads it from beside the game and calls the four
-# exports in src/hos_coop_api.h. Copy the built hookshot_coop.dll next to
-# hookshot.exe.
-set(_coop_hook "${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook")
-add_library(hookshot_coop MODULE
-  src/coop_hookshot.cpp
-  "${_coop_hook}/coop_callers.cpp"
-  "${_coop_hook}/coop_camera.cpp"
-  "${_coop_hook}/coop_pose.cpp"
-  "${_coop_hook}/coop_puppet.cpp"
-  "${_coop_hook}/coop_settings.cpp"
+# hookshot_coop: co-op as a module Hookshot loads (docs/hookshot.md). Our patch
+# to Hookshot (patches/) loads it from beside the game and calls the four
+# exports in src/hos_coop_api.h. It is lichii/hook's co-op, the same files the
+# emulator builds (read from lichii/hook/core.cmake, so a new hook file joins
+# both), with compat/ answering the emulator API slice they use. Only the
+# emulator's cave (coop_svc.cpp) and its input injection (coop_testinput.cpp)
+# stay out: src/coop_hookshot.cpp does those jobs here.
+include(FetchContent)
+# fmt (MIT), for the hook's LOG_* lines (compat/common/logging.h), as the
+# emulator has it. Fetched at a fixed tag, never copied into the tree.
+FetchContent_Declare(fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG        12.1.0 # as Fritchii (its cpmfile.json)
+  GIT_SHALLOW    TRUE
 )
-target_include_directories(hookshot_coop PRIVATE src "${_coop_hook}")
-target_link_libraries(hookshot_coop PRIVATE coop coop_host coop_presence coop_warnings)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(fmt)
+
+set(_coop_hook "${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook")
+file(STRINGS "${_coop_hook}/core.cmake" _coop_lines REGEX "coop_[a-z0-9_]+\\.cpp")
+set(_coop_sources)
+foreach(line IN LISTS _coop_lines)
+  string(REGEX MATCH "coop_[a-z0-9_]+\\.cpp" name "${line}")
+  if(name AND NOT name STREQUAL "coop_svc.cpp" AND NOT name STREQUAL "coop_testinput.cpp")
+    list(APPEND _coop_sources "${_coop_hook}/${name}")
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES _coop_sources)
+
+add_library(hookshot_coop MODULE src/coop_hookshot.cpp ${_coop_sources})
+# compat/ first: its core/ and common/ headers stand in for the emulator's.
+target_include_directories(hookshot_coop PRIVATE compat src "${_coop_hook}")
+target_compile_definitions(hookshot_coop PRIVATE LICHII_COOP COOP_HOOKSHOT)
+target_link_libraries(hookshot_coop PRIVATE coop coop_net coop_host coop_presence coop_overlay fmt::fmt
+                      coop_warnings)
 set_target_properties(hookshot_coop PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden)
+if(MSVC)
+  # The emulator's own code builds with these off too (lichii/README.md).
+  target_compile_options(hookshot_coop PRIVATE /wd4456 /wd4457 /wd4458 /wd4459 /bigobj)
+endif()
+
+execute_process(COMMAND git -C "${CMAKE_CURRENT_SOURCE_DIR}/.." describe --tags --always --dirty
+    OUTPUT_VARIABLE _coop_version OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT _coop_version)
+  set(_coop_version "unknown")
+endif()
+set_property(SOURCE "${_coop_hook}/coop_hook.cpp" APPEND PROPERTY
+    COMPILE_DEFINITIONS "LICHII_COOP_VERSION=\"hookshot ${_coop_version}\"")

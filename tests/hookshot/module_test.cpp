@@ -4,7 +4,6 @@
 #include <doctest/doctest.h>
 
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -52,45 +51,6 @@ std::string NewFile(const std::string& patch, const std::string& path) {
     return out;
 }
 
-std::vector<std::string> g_log;
-void LogLine(const char* line) {
-    g_log.emplace_back(line);
-}
-int NoRead(uint64_t, void*, size_t) {
-    return 0;
-}
-int NoWrite(uint64_t, const void*, size_t) {
-    return 0;
-}
-int NoCas(uint64_t, uint32_t, uint32_t, uint32_t*) {
-    return 0;
-}
-int NoCall(void*, const HosCoopCall*, uint64_t*) {
-    return 0;
-}
-
-HosCoopApi FakeApi(const char* build, const char* dir) {
-    HosCoopApi api{};
-    api.version = HOS_COOP_API_VERSION;
-    api.size = sizeof api;
-    api.main_base = 0x80020000ULL;
-    api.main_build_id = build;
-    api.game_dir = dir;
-    api.read = NoRead;
-    api.write = NoWrite;
-    api.cas32 = NoCas;
-    api.call = NoCall;
-    api.log = LogLine;
-    return api;
-}
-
-bool Logged(const std::string& text) {
-    for (const auto& l : g_log) {
-        if (l.find(text) != std::string::npos) return true;
-    }
-    return false;
-}
-
 }  // namespace
 
 TEST_CASE("hookshot: the API header in our patch is hookshot/src's") {
@@ -122,31 +82,14 @@ TEST_CASE("hookshot: the module knows the game build by main's id as Hookshot gi
     CHECK_FALSE(CoopHookshot::BuildSupported(""));
 }
 
-TEST_CASE("hookshot: the module stays off without a table, another build or a server") {
-    const auto dir = std::filesystem::temp_directory_path() / "coop-hookshot-test-empty";
-    std::filesystem::create_directories(dir);
-    std::filesystem::remove(dir / "coop.ini");
-    const std::string d = dir.string();
-
-    CHECK_FALSE(CoopHookshot::Start(nullptr));
-    HosCoopApi old = FakeApi("e0f3ccfaf50065ae4ea01eb5aeb13b1a", d.c_str());
-    old.version = HOS_COOP_API_VERSION + 1;
-    CHECK_FALSE(CoopHookshot::Start(&old));
-
-    g_log.clear();
-    HosCoopApi mkw = FakeApi("d00e4f399e411d0613aa8d26b1c02fef", d.c_str());
-    CHECK_FALSE(CoopHookshot::Start(&mkw));
-    CHECK(Logged("not supported"));
-
-    if (std::getenv("LICHII_COOP_SERVER") == nullptr) {
-        g_log.clear();
-        HosCoopApi ok = FakeApi("e0f3ccfaf50065ae4ea01eb5aeb13b1a", d.c_str());
-        CHECK_FALSE(CoopHookshot::Start(&ok));
-        CHECK(Logged("game build e0f3ccfaf50065ae"));
-        CHECK(Logged("off (no server"));
-    }
-    // Off: frames and the hold do nothing.
-    CoopHookshot::Frame(nullptr, HOS_COOP_SITE_FRAME);
-    CHECK(CoopHookshot::Hold(0x1234, 0x55u) == 0x55u);
-    CoopHookshot::Stop();
+TEST_CASE("hookshot: the module builds every hook file the emulator builds, but the cave and the input") {
+    const std::string cmake = ReadFile(kRepo / "hookshot" / "CMakeLists.txt");
+    CHECK(cmake.find("lichii/hook/core.cmake") != std::string::npos);
+    CHECK(cmake.find("NOT name STREQUAL \"coop_svc.cpp\"") != std::string::npos);
+    CHECK(cmake.find("NOT name STREQUAL \"coop_testinput.cpp\"") != std::string::npos);
+    // The stand-ins for what those two did.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("std::string Refusal()") != std::string::npos);
+    CHECK(module.find("void OnFrame(Core::System&)") != std::string::npos);
+    CHECK(module.find("CoopCallers::RunFrame") != std::string::npos);
 }

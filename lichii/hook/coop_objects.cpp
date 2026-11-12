@@ -634,6 +634,12 @@ public:
                 ++framed_;
                 return SetFrame(controller, frame);
             }
+            // Issue 195: a chest shown open is played again only over its
+            // closed idle, never over its own opening (our Link opens it).
+            if (!p.only_over.empty() && !slot_name.empty() &&
+                slot_name.find(p.only_over) == std::string::npos) {
+                continue;
+            }
             // Issue 157: the name we played last is gone from slot 0, so the
             // copy's own AI chose another one (a Peahat rising for our Link).
             // It is put back below at once, so the walk would rarely see it:

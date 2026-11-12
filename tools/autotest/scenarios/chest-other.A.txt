@@ -1,0 +1,66 @@
+# chest-other (#195, chest-sync-2): B opens the Deku Tree map chest by hand; A, beside it, sees it
+# open, never vanish. Map chest Obj_TBox_A_02 0x771092ae2f3b7100 at 6.51 108.40 7.25 (entrance
+# room); B stands at its front 5.45 108.9 6.15 (as deku-map-both), A at 7.57 108.9 8.35 (1.5 m:
+# the beside case the old rule removed at once). Map flag DungeonInfo.InsideTheDekuTree.IsGetMap 0x89787395.
+# Expect in A (LICHII_COOP_DEBUG_OBJECTS=1):
+#  - after B's "opened" mark: "Obj_TBox_A_02 0x771092ae2f3b7100: opened in another game", then
+#    "Obj_TBox_A_02: opened in another game, shown open here (OpenWait played)", "copy 0x... plays
+#    'OpenWait'" and "Obj_TBox_A_02: opened in another game, shows open here".
+#  - FAIL: "could not be shown open here, removed", or "- Obj_TBox_A_02 ... 0x771092ae2f3b7100"
+#    before the "far" mark. Shot "a-look": A's chest stands with its lid open.
+#  - "a-try" (A presses A at the shown-open chest): note what happens. Best: nothing. If A logs
+#    "opened here too after another game", the AI still lets a shown-open chest open: the map
+#    is shared anyway, but write it in #195 (a small key could count twice).
+#  - bool 0x89787395 "0 -> 1" in both, never a later "1 -> 0" that stays.
+#  - "far" then "back" (both to room 3 and back: the room's actors unload and load again): in
+#    both, "+ Obj_TBox_A_02 ... 0x771092ae2f3b7100" again with no "shown open here (OpenWait
+#    played)" for it (made open from the shared flag), no "removed"; shots "back": open in both.
+# If "placed" shows Link inside the chest or falling, use 5.45 108.9 6.15 offset by 1 m in x.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 7.57 108.9 8.35
+wait 240
+toward 6.51 7.25 10       # face the chest
+mark placed
+wait 1260                 # B opens it (B's press A .. press B)
+wait 600
+mark a-look
+wait 600
+mark a-look2
+place 5.45 108.9 6.15     # A tries the chest B opened
+wait 240
+toward 6.51 7.25 10
+press A
+wait 60
+press A
+wait 600
+press A
+wait 120
+press B
+wait 300
+mark a-try
+place -29 117.6 0         # room 3 (navi-room): the entrance room's actors unload
+wait 600
+mark far
+place 7.57 108.9 8.35
+wait 240
+toward 6.51 7.25 10
+wait 360
+mark back
+wait 300
+mark end

@@ -389,6 +389,7 @@ Chunk 2 scenarios (written 2026-11-10, first run in the chunk 2 test turn, see t
 - `pot-drops` (#102): both warp to `Kakariko_MountainTrailSide`; A lifts and throws (A, ZR) the pot 16 m west of it and then the pair 28 m south, and walks over where each broke. Lifting breaks a pot for sure, where chunk 1's sword swings at the house pots never reached them.
 - `kak-gate` (#171, world-objects-2): both warp to `Kakariko_MountainTrailSide`, on the trail side of the guard's gate; A sets the guard's flag `Npc_Hylia_Soldier_003_GateOpen` (0x19898d14) at 70 s; B tries the gate before (should stop) and after (should pass), shots of the gate in both.
 - `deku-map-both` (#146, world-objects-2): both stand at the Deku Tree map chest and open it at about the same time, then open the pause map; both watch `DungeonInfo.InsideTheDekuTree.IsGetMap` (0x89787395).
+- `chest-other` (#195, chest-sync-2): B opens the Deku Tree map chest by hand while A stands beside it; A's chest must show open (`OpenWait` played), never vanish; A tries it; then both go to room 3 and back, and the chest is made open in both. The header lists the log lines.
 - `stalchild`: Hyrule Field at night (clock set by the header); A walks to where two Stalchildren rose in a chunk 1 run (about 173 29) and fights at once (ZL, Y), then walks over the fight for the drops; B watches from 8 m.
 - `rock` needed no change: it failed in chunk 1 only because the game started in Kakariko.
 

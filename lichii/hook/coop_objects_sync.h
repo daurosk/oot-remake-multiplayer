@@ -66,6 +66,10 @@ struct PlayWish {
     // latest sample: its frame plus rate * 30 a second since it was taken.
     float frame = 0.0f;
     std::uint64_t sample = 0;  // the sample's time: a new one checks the frame
+    // Not empty: played again only over an animation with this in its name
+    // (a chest shown open, issue 195: only over its closed idle "CloseWait",
+    // never over its own opening when our Link opens it here).
+    std::string only_over;
 };
 
 // The frame of an animation `age_us` after it showed `frame` at `rate`
@@ -717,12 +721,6 @@ private:
     // A taken falling floor or web part (CoopWorld::IsFallTaken) stays this
     // long, so the fall (as the others' moves) or the break shows first.
     static constexpr std::uint64_t kTakeFallUs = 4'000'000;
-    // A chest (Obj_TBox_*) taken here, away from our Link, is given this long
-    // to show itself open (its own AI reads the shared opened flag, issue 87:
-    // its animation changes, after the take, to one with "Open" in it, seen
-    // while our Link is not beside it); one still closed after that is
-    // removed. Counted from the first take.
-    static constexpr std::uint64_t kChestOpenWaitUs = 1'500'000;
     // A chest whose animation changed to one with "Open" in it this recently
     // when the take came is opening now: beside our Link, ours opened it too
     // (both at once); away from it, its AI reacted to the flag. Only a change
@@ -737,6 +735,7 @@ private:
         std::uint64_t since_us = 0;          // when the take came
         std::set<std::uint64_t> shown_open;  // chests that showed themselves open
         std::map<std::uint64_t, std::string> bound_animation;  // each chest's animation when bound
+        std::set<std::uint64_t> show_failed;  // chests the open idle never took on: removed
     };
     // Every loaded chest's animation and when it last changed (0: the same
     // since it was first seen), for the opening tests above.
@@ -745,6 +744,18 @@ private:
         std::uint64_t changed_us = 0;
     };
     std::map<std::uint64_t, ChestAnimation> chest_animations_;
+    // Issue 195: a loaded closed chest that another player opened is shown
+    // open here with its own open idle (kChestOpenIdle, through Plays), not
+    // removed (it vanished in Caleb's play-test). Address: when first played.
+    // Removed only if it still shows its closed idle kChestShowFailUs after.
+    static constexpr const char* kChestOpenIdle = "OpenWait";
+    static constexpr const char* kChestClosedIdle = "Close";  // "CloseWait"
+    static constexpr std::uint64_t kChestShowFailUs = 3'000'000;
+    struct ChestShow {
+        std::uint64_t since_us = 0;  // when first played
+        bool took = false;           // seen showing kChestOpenIdle since
+    };
+    std::map<std::uint64_t, ChestShow> chest_shown_;
     std::uint64_t last_tick_us_ = 0;
     bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)
     std::map<std::uint64_t, Taking> taken_;

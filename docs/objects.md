@@ -454,6 +454,27 @@ The rule, for every shared change made in this game to an actor (`lichii/hook/co
 
 Not covered here: the dungeon flags held while in a dungeon (dungeon-live). That is the same idea for flags, applied by the flag store, not by actor.
 
+## Moving platforms (branch `platforms-b`, issues 196 and 194)
+
+A tip from a developer working on the same game (Hot Onion, shared by Caleb, 2026-11-12): the game moves its platforms by delta time, like everything else, so syncing one variable puts a platform at the same place for every player; add a clock so packet latency is taken into account. `lichii/hook/coop_platforms.{h,cpp}` does that, with `PLATFORM_CLOCK` (type 400, [protocol.md](protocol.md), "Moving platforms").
+
+**What drives them** (read from the game's data, `Pack/Actor/*.pack.zs` and `Banc/*_Static.bcett.byml.zs`, 2026-11-12; checked unless marked):
+
+| Platform | Actor | Driver and its parameters |
+|---|---|---|
+| Deku Tree basement floors (#196) | `Obj_Deku_MoveFloor_A_01`, `_A_02` | Separate driver actors next to them: `GroundControlActor_ResidentMoveTo` (no blackboard; logic node `ActorLogicGroundControlResidentMoveTo`), `GroundControlActor_WaveLoop` (blackboard `WaveCycle_Linear`, `WaveCycle_Angular`, `WaveRadius_Linear`, `WaveRadius_Angular`: a wave of a fixed period) and `GroundControlActor_Rotate` (`RotateSpeedX`, `RotateAccelX`), all three in the deku-water-floor run's log near the floor |
+| Deku Tree compass room lifts (#176, #194) | `Obj_InsideTheDekuTree_ElevatorLift_A_01` to `_A_03` (and `ElevatorLiftLim_*`) | On/off animation (`ASCommand_OnOff`) and the blackboard's `StopTime`, `SlowDownTime` ([dungeon.md](dungeon.md)); the AS slot 0 frame is read as a candidate |
+| Dodongo's Cavern room 1 up/down lifts | `Obj_DodongoCave_MoveFloor_A_01` (three: 10.5 96.5 -23.0, -10.5 96.5 -23.0, 0.0 96.5 -12.6), `_A_02` | Their own AI (`UpDownLiftMove` module): a physics slider with a motor (`MaxMoveSpeed`, `MinMoveSpeed`, `MoveForce`, `DecelDistance`) and a wait counter (`WaitFrame`, `SwitchWaitFrame`); one `GroundControlActor_SimpleMoveTo` (`LinearVelX` 1.66, `TargetPosX` 12.25) beside them |
+| Others the same code covers (not looked at one by one) | `Obj_InsideJabu_Jabu_ElevatorLift_*`, `Obj_InsideJabu_Jabu_MoveFloor_A_01`, `Obj_ForestTemple_Elevator_A_01`, `Obj_FireTemple_MoveFloor_*`, `Obj_ShadowTemple_MoveFloor_*`, `*_RotateFloor_*`, `*_RotateBlade_*`, `Obj_MoveSpike_*`, `Obj_InsideGanonCastle_ExtendingPlatform_A_01`, `Land_GerudoValley_lift_A_01`, `Land_SpiritTemple_ElevatorMirror_A_01` / `ElevatorPit_A_01`, `GrouondControlActor_DiffentSpeedMoveTo` (the game's spelling) | as above: a `GroundControlActor_*` driver or the platform's own AI |
+
+**Which word is the clock** is not in the data (it is in the logic nodes' native code), so the hook finds it in the running game. Four times a second it copies each driver within 40 m of our Link (the 8 nearest; the actor +0..+0x600, the first 0x200 bytes of each component, and the AS slot 0 frame), as floats. A float that steps at the same rate in three looks in a row (within 8 %, between 0.05 and 2,000 a second, heap pointers and the actor's own place left out) is a candidate; after three such checks the one whose rate reads as seconds or frames (1, 30 or 60 a second) is taken, else the steadiest. When it goes back past where it was after stepping at its rate, the jump is its cycle (a loop), and it is kept. A clock that stands still (a pause, a hitch) is held but not sent, and let go after 10 s; a stall never counts as a loop. The owner sends that word's key, value, rate and cycle; the others write the word at that key in their own copy of the same driver (same placement hash). A word the game puts back after each write (four writes in a row that did not hold) is no longer followed in that visit.
+
+**Owner**: the game that has sent the clock longest without a 3 s break (a game that comes later follows; two at once: the lower player number). So a platform keeps its place for the players already riding it.
+
+**Switches**: `LICHII_COOP_PLATFORMS=0` turns it off, `LICHII_COOP_PLATFORMS=probe` finds and sends but never writes (logs only). On by default. Logs: `coop: platforms: <hash> <name>: clock <where>, <rate> a second, cycle <c>: ours to send`, `coop: platforms: <hash> <name>: following player N's clock <where> (ours .., theirs .., .. s off)`, each write `coop: platforms: <hash> <where> <ours> -> <theirs>` (200 lines a session), and `... our writes of <where> do not hold (4 in a row): stopped following`.
+
+**Not known until a run**: whether the word found is the one the platform is drawn from (a WaveLoop's phase should be; a ResidentMoveTo that steps its place toward a target may have no clock, only a place, which `WORLD_MOVE` already shares, [world.md](world.md)), and whether the Dodongo lifts' physics slider takes a written position or the AI moves it back (then the "do not hold" line comes and nothing is lost). Triggered platforms (a switch moves them once) are followed only while their clock steps in the owner's game; one that has come to rest is left to the switch's flag. Shared by both runtimes (the hook code is the same in Hookshot; nothing in `hookshot/` needed).
+
 ## Next steps
 
 In order, each its own branch:

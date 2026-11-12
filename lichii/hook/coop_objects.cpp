@@ -92,6 +92,7 @@
 #include <atomic>
 #include <unordered_map>
 #include "coop_world.h"
+#include "coop_platforms.h"
 #include "coop_scrubs.h"
 #include <set>
 
@@ -1487,6 +1488,9 @@ public:
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
+        if (platforms_mode_ != 0) {
+            Platforms(r, *scene, self, server_now_us, send);
+        }
         if (send.empty()) {
             return;
         }
@@ -1597,6 +1601,12 @@ public:
             }
             world_.Receive(m);
             return;
+        } else if (const auto* pc = std::get_if<coop::protocol::PlatformClock>(&m)) {
+            std::lock_guard lock(platforms_mutex_);  // taken on the present thread (Platforms)
+            if (platforms_in_.size() < 64) {
+                platforms_in_.push_back(*pc);
+            }
+            return;
         }        sync_.Receive(m);
     }
 
@@ -1604,6 +1614,14 @@ public:
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
     CoopWorld::GimmickProbe gimmick_probe_;  // LICHII_COOP_GIMMICK_PROBE=1 turns it on
+    // Moving platforms (coop_platforms.h, issues 196 and 194).
+    // LICHII_COOP_PLATFORMS: on unless 0; "probe" finds and sends, never writes.
+    int platforms_mode_ = 1;  // 0 off, 1 on, 2 probe
+    CoopPlatforms::PlatformSync platforms_;
+    std::vector<CoopPlatforms::PlatformSync::Driver> platform_drivers_;
+    std::mutex platforms_mutex_;
+    std::vector<coop::protocol::PlatformClock> platforms_in_;  // under platforms_mutex_
+    std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
     bool scrubs_on_ = true;  // LICHII_COOP_SCRUBS=0 turns it off (issue 149)
@@ -1705,8 +1723,90 @@ private:
 
     // The shared actors of one whole walk, with life and place. False when
     // the list changed under us (try the next frame).
+    // Moving platforms (coop_platforms.h): our drivers' clocks out, the
+    // owners' clocks into ours.
+    void Platforms(Reader& r, const std::string& scene, u8 self, u64 server_now_us,
+                   std::vector<coop::protocol::Message>& send) {
+        {
+            std::vector<coop::protocol::PlatformClock> in;
+            {
+                std::lock_guard lock(platforms_mutex_);
+                in.swap(platforms_in_);
+            }
+            for (const auto& m : in) {
+                platforms_.Receive(m);
+            }
+        }
+        const auto read = [&r](const CoopPlatforms::PlatformSync::Driver& d) {
+            auto words = CoopWorld::SignProbe::Read([&r](u64 a) { return r.Get<u64>(a); }, d.address);
+            if (!words.empty()) {
+                if (const u64 slot = AsSlot0(r, d.address); slot != 0) {
+                    if (const auto frame = r.Get<u32>(slot + kAsSlotFrame)) {
+                        words[CoopPlatforms::Key(CoopPlatforms::kRegionAsFrame, 0)] = *frame;
+                    }
+                }
+            }
+            return words;
+        };
+        CoopPlatforms::PlatformSync::Out out;
+        platforms_.Tick(scene, self, CoopEvery::NowUs(), server_now_us, platform_drivers_, player_, read,
+                        platforms_mode_ == 2, out);
+        for (auto& m : out.send) {
+            send.emplace_back(std::move(m));
+        }
+        for (const auto& w : out.writes) {
+            const u64 at = PlatformWordAt(r, w.address, w.key);
+            if (at == 0 || memory_ == nullptr || !memory_->IsValidVirtualAddressRange(at, 4)) {
+                continue;
+            }
+            u32 bits = 0;
+            std::memcpy(&bits, &w.value, 4);
+            memory_->Write32(at, bits);
+            if (platform_lines_ < 200) {
+                ++platform_lines_;
+                LOG_INFO(Core, "coop: platforms: {:016x} {} {:.3f} -> {:.3f}", w.hash,
+                         CoopPlatforms::Where(w.key), w.was, w.value);
+            }
+        }
+        for (const auto& line : out.notes) {
+            LOG_INFO(Core, "coop: platforms: {}", line);
+        }
+    }
+
+    // The actor's AS slot 0, or 0 (the chain Animation reads).
+    static u64 AsSlot0(Reader& r, u64 actor) {
+        const u64 table = r.Get<u64>(actor + kActorComponents).value_or(0);
+        const u64 as = table ? r.Get<u64>(table + kComponentsAs).value_or(0) : 0;
+        const u64 inner = as ? r.Get<u64>(as + kAsInner).value_or(0) : 0;
+        const u64 controller = inner ? r.Get<u64>(inner + kAsController).value_or(0) : 0;
+        const u64 array = controller ? r.Get<u64>(controller + kAsSlotArray).value_or(0) : 0;
+        return array ? r.Get<u64>(array).value_or(0) : 0;
+    }
+
+    // Where a PLATFORM_CLOCK key is in this actor, or 0.
+    static u64 PlatformWordAt(Reader& r, u64 actor, std::uint64_t key) {
+        const std::uint64_t region = key >> 32;
+        const std::uint64_t offset = key & 0xffffffffu;
+        if (region == CoopPlatforms::kRegionAsFrame) {
+            const u64 slot = AsSlot0(r, actor);
+            return slot ? slot + kAsSlotFrame : 0;
+        }
+        if (region == CoopPlatforms::kRegionActor) {
+            return offset < coop::protocol::kPlatformActorBytes ? actor + offset : 0;
+        }
+        if (region < CoopPlatforms::kRegionComponent ||
+            region - CoopPlatforms::kRegionComponent >= coop::protocol::kPlatformComponents ||
+            offset >= coop::protocol::kPlatformComponentBytes) {
+            return 0;
+        }
+        const u64 table = r.Get<u64>(actor + kActorComponents).value_or(0);
+        const u64 c = table ? r.Get<u64>(table + 8 * (region - CoopPlatforms::kRegionComponent)).value_or(0) : 0;
+        return c ? c + offset : 0;
+    }
+
     bool Collect(Reader& r, std::vector<Seen>& out) {
         gimmicks_.clear();  // dungeon gimmicks for the probe
+        platform_drivers_.clear();
         scrubs_seen_.clear();  // issue 149
         std::vector<u64> actors;
         if (!List(r, actors)) {
@@ -1791,6 +1891,16 @@ private:
                     sc.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
                 scrubs_seen_.push_back(std::move(sc));
+            }
+            if (platforms_mode_ != 0 && CoopPlatforms::IsDriver(known.first)) {
+                CoopPlatforms::PlatformSync::Driver d;  // moving platforms (coop_platforms.h)
+                d.address = a;
+                d.hash = known.second;
+                d.name = known.first;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    d.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                platform_drivers_.push_back(std::move(d));
             }
             if (gimmick_probe_on_ && CoopWorld::IsGimmick(known.first)) {
                 CoopWorld::GimmickProbe::Gimmick g;
@@ -2548,6 +2658,10 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        {
+            const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
+            objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
+        }
         objects.scrubs_on_ = EnvOn("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
         objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given

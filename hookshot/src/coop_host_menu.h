@@ -76,7 +76,7 @@ private:
     };
     bool Busy(const char* what);
     void StopThread();  // with calls_ held
-    void Fail(const std::string& why);
+    void Fail(const std::string& why, int problem);
     void Say(const std::string& text) const;
     void RunHost(HostJob job);
     void RunJoin(JoinJob job);

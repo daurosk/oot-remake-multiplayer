@@ -301,5 +301,6 @@ TEST_CASE("host service: no STUN answer, no invite code, and the status says why
   REQUIRE(status.invite_done);
   CHECK(status.invite.empty());
   CHECK(status.message.find("no invite code") != std::string::npos);
+  CHECK(status.problem == HostProblem::kNoInvite);
   CHECK(status.state == HostState::kHosting);  // LAN and VPN players still get in
 }

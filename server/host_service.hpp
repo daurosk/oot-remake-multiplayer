@@ -59,6 +59,8 @@ struct HostServiceConfig {
 };
 
 enum class HostState { kOff, kHosting, kStopped, kFailed };
+// What `message` is about, for a menu that says it in its own words.
+enum class HostProblem { kNone, kNoPassword, kPortTaken, kUpnp, kRelay, kNoInvite, kSymmetric };
 
 // What a menu or a window shows. Strings are empty until known.
 struct HostStatus {
@@ -71,6 +73,7 @@ struct HostStatus {
   bool upnp_open = false;
   std::string external;     // the router's internet address (UPnP), if known
   std::string message;      // the last problem or hint, plain English
+  HostProblem problem = HostProblem::kNone;
 };
 
 class HostService {
@@ -94,13 +97,15 @@ class HostService {
 
   HostStatus status() const;
   bool running() const { return server_ != nullptr && !stopped_; }
+  // start() failed because no port could be listened on (not the config).
+  bool port_failed() const { return port_failed_; }
   std::uint16_t port() const;
   const Session* session() const;
 
  private:
   std::uint64_t now_ms() const;
   void say(const std::string& text) const;
-  void set_message(const std::string& text);
+  void set_message(const std::string& text, HostProblem problem);
   void finish_invite();
   void say_counts();
 
@@ -110,6 +115,7 @@ class HostService {
   std::unique_ptr<relay::RelayLink> link_;
   std::unique_ptr<nat::HostRendezvous> rendezvous_;
   bool stopped_ = false;
+  bool port_failed_ = false;
   bool invite_shown_ = false;
   std::uint64_t shown_resets_ = 0;
   std::uint64_t shown_limited_ = 0;

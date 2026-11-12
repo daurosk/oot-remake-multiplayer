@@ -177,6 +177,7 @@ TEST_CASE("host menu: Host makes a password, runs the server and points this gam
     // A second Host while hosting is refused, and says why.
     CHECK(menu.HostStart(&o) == 0);
     CHECK(std::string(status_of(menu).message).find("already hosting") != std::string::npos);
+    CHECK(status_of(menu).problem == HOS_COOP_PROBLEM_ALREADY_RUNNING);
     // No invite was asked for, so no answer code is taken.
     CHECK(menu.Answer("ABCDE-FGHJK") == 0);
 
@@ -197,10 +198,12 @@ TEST_CASE("host menu: Host with a bad password or name is refused before anythin
     CHECK(menu.HostStart(&o) == 0);
     CHECK(status_of(menu).state == HOS_COOP_FAILED);
     CHECK(std::string(status_of(menu).message).find("join password") != std::string::npos);
+    CHECK(status_of(menu).problem == HOS_COOP_PROBLEM_BAD_PASSWORD);
     o.password = nullptr;
     o.name = "a name far longer than sixteen";
     CHECK(menu.HostStart(&o) == 0);
     CHECK(std::string(status_of(menu).message).find("16 characters") != std::string::npos);
+    CHECK(status_of(menu).problem == HOS_COOP_PROBLEM_BAD_NAME);
     CHECK(game.connects == 0);
 }
 
@@ -237,6 +240,7 @@ TEST_CASE("host menu: Join by address needs the password; with it the game conne
     o.target = "127.0.0.1:27600";
     CHECK(menu.Join(&o) == 0);
     CHECK(std::string(status_of(menu).message).find("join password") != std::string::npos);
+    CHECK(status_of(menu).problem == HOS_COOP_PROBLEM_NO_PASSWORD);
     o.password = "pw-direct";
     o.name = "Link";
     REQUIRE(menu.Join(&o) == 1);

@@ -41,6 +41,20 @@ std::string Trim(std::string s) {
     return s.substr(first, last - first + 1);
 }
 
+int ProblemOf(coop::server::HostProblem p) {
+    using coop::server::HostProblem;
+    switch (p) {
+    case HostProblem::kNoPassword: return HOS_COOP_PROBLEM_NO_PASSWORD;
+    case HostProblem::kPortTaken: return HOS_COOP_PROBLEM_PORT_TAKEN;
+    case HostProblem::kUpnp: return HOS_COOP_PROBLEM_UPNP_REFUSED;
+    case HostProblem::kRelay: return HOS_COOP_PROBLEM_RELAY_FAILED;
+    case HostProblem::kNoInvite: return HOS_COOP_PROBLEM_NO_INVITE_CODE;
+    case HostProblem::kSymmetric: return HOS_COOP_PROBLEM_SYMMETRIC_NAT;
+    case HostProblem::kNone: break;
+    }
+    return HOS_COOP_PROBLEM_NONE;
+}
+
 // Host thread rounds, ms: short, so Leave and pasted codes are quick.
 constexpr std::uint32_t kRoundMs = 5;
 
@@ -94,16 +108,18 @@ bool Menu::Busy(const char* what) {
     if (status_.state == HOS_COOP_IDLE || status_.state == HOS_COOP_FAILED) {
         return false;
     }
+    status_.problem = HOS_COOP_PROBLEM_ALREADY_RUNNING;
     CopyText(status_.message, sizeof status_.message,
              std::string("already ") + (status_.state == HOS_COOP_HOSTING ? "hosting" : "in a session") +
                  ": leave first, then " + what);
     return true;
 }
 
-void Menu::Fail(const std::string& why) {
+void Menu::Fail(const std::string& why, int problem) {
     Say("coop: host: " + why);
     std::lock_guard lock(mutex_);
     status_.state = HOS_COOP_FAILED;
+    status_.problem = problem;
     CopyText(status_.message, sizeof status_.message, why);
 }
 
@@ -149,13 +165,13 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.relay_via = Trim(COOP_HAS(o, HosCoopHostOptions, relay_via) ? Text(o->relay_via) : std::string());
     job.relay_key = COOP_HAS(o, HosCoopHostOptions, relay_key) ? Text(o->relay_key) : std::string();
     if (job.name.size() > kMaxName) {
-        Fail("the name is longer than 16 characters");
+        Fail("the name is longer than 16 characters", HOS_COOP_PROBLEM_BAD_NAME);
         return 0;
     }
     if (job.password.empty()) {
         job.password = nat::make_password();  // every session has one; the invite code carries it
     } else if (const char* why = coop::server::password_problem(job.password)) {
-        Fail(std::string("the join password is ") + why);
+        Fail(std::string("the join password is ") + why, HOS_COOP_PROBLEM_BAD_PASSWORD);
         return 0;
     }
     {
@@ -173,7 +189,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
 void Menu::RunHost(HostJob job) {
     try {
         if (enet_initialize() != 0) {
-            Fail("the network did not start (ENet)");
+            Fail("the network did not start (ENet)", HOS_COOP_PROBLEM_NETWORK);
             return;
         }
         struct EnetLife {
@@ -197,7 +213,7 @@ void Menu::RunHost(HostJob job) {
         coop::server::HostService host(config);
         std::string why;
         if (!host.start(why)) {
-            Fail(why);
+            Fail(why, host.port_failed() ? HOS_COOP_PROBLEM_PORT_TAKEN : HOS_COOP_PROBLEM_NO_PASSWORD);
             return;
         }
         const std::uint16_t port = host.port();
@@ -211,6 +227,7 @@ void Menu::RunHost(HostJob job) {
             connected = hooks_.connect(Target{"127.0.0.1", port, job.name, job.password});
             if (!connected) {
                 std::lock_guard lock(mutex_);
+                status_.problem = HOS_COOP_PROBLEM_CLIENT_FAILED;
                 CopyText(status_.message, sizeof status_.message,
                          "the server runs, but this game's co-op did not start (see the log)");
             }
@@ -225,6 +242,7 @@ void Menu::RunHost(HostJob job) {
             for (const std::string& code : pasted) {
                 const nat::CodeError e = host.add_answer(code);
                 std::lock_guard lock(mutex_);
+                status_.problem = e == nat::CodeError::kOk ? HOS_COOP_PROBLEM_NONE : HOS_COOP_PROBLEM_BAD_CODE;
                 CopyText(status_.message, sizeof status_.message,
                          e == nat::CodeError::kOk ? std::string("answer code taken: connecting to your friend")
                                                   : "answer code not used: " + nat::explain(e));
@@ -238,6 +256,7 @@ void Menu::RunHost(HostJob job) {
             CopyText(status_.relay_code, sizeof status_.relay_code, s.relay_code);
             if (!s.message.empty() && status_.message[0] == '\0') {
                 CopyText(status_.message, sizeof status_.message, s.message);
+                status_.problem = ProblemOf(s.problem);
             }
         }
         // Our own game says goodbye first, while the server still listens.
@@ -250,7 +269,7 @@ void Menu::RunHost(HostJob job) {
         }
         host.stop();
     } catch (const std::exception& e) {
-        Fail(std::string("the co-op host stopped: ") + e.what());
+        Fail(std::string("the co-op host stopped: ") + e.what(), HOS_COOP_PROBLEM_INTERNAL);
     }
 }
 
@@ -267,11 +286,11 @@ int Menu::Join(const HosCoopJoinOptions* o) {
     const std::string target = Trim(COOP_HAS(o, HosCoopJoinOptions, target) ? Text(o->target) : std::string());
     std::string password = Trim(COOP_HAS(o, HosCoopJoinOptions, password) ? Text(o->password) : std::string());
     if (name.size() > kMaxName) {
-        Fail("the name is longer than 16 characters");
+        Fail("the name is longer than 16 characters", HOS_COOP_PROBLEM_BAD_NAME);
         return 0;
     }
     if (target.empty()) {
-        Fail("paste the invite code the host sent you, or type the host's address");
+        Fail("paste the invite code the host sent you, or type the host's address", HOS_COOP_PROBLEM_NO_TARGET);
         return 0;
     }
     {
@@ -288,7 +307,7 @@ int Menu::Join(const HosCoopJoinOptions* o) {
         return 1;
     }
     if (invite.error != nat::CodeError::kNotACode) {
-        Fail("invite code not used: " + nat::explain(invite.error));
+        Fail("invite code not used: " + nat::explain(invite.error), HOS_COOP_PROBLEM_BAD_CODE);
         return 0;
     }
     // A plain address: this game connects there itself.
@@ -299,20 +318,20 @@ int Menu::Join(const HosCoopJoinOptions* o) {
         enet_deinitialize();
     }
     if (!where) {
-        Fail("'" + target + "' is neither an invite code nor an address this PC can find");
+        Fail("'" + target + "' is neither an invite code nor an address this PC can find", HOS_COOP_PROBLEM_NO_TARGET);
         return 0;
     }
     if (password.empty()) {
-        Fail("type the join password the host sent you (every session has one)");
+        Fail("type the join password the host sent you (every session has one)", HOS_COOP_PROBLEM_NO_PASSWORD);
         return 0;
     }
     if (const char* why = coop::server::password_problem(password)) {
-        Fail(std::string("the join password is ") + why);
+        Fail(std::string("the join password is ") + why, HOS_COOP_PROBLEM_BAD_PASSWORD);
         return 0;
     }
     const std::string host = coop::server::show_ipv4(where->ip);
     if (!hooks_.connect || !hooks_.connect(Target{host, where->port, name, password})) {
-        Fail("this game's co-op did not start (see the log)");
+        Fail("this game's co-op did not start (see the log)", HOS_COOP_PROBLEM_CLIENT_FAILED);
         return 0;
     }
     direct_connected_ = true;
@@ -325,7 +344,7 @@ int Menu::Join(const HosCoopJoinOptions* o) {
 void Menu::RunJoin(JoinJob job) {
     try {
         if (enet_initialize() != 0) {
-            Fail("the network did not start (ENet)");
+            Fail("the network did not start (ENet)", HOS_COOP_PROBLEM_NETWORK);
             return;
         }
         struct EnetLife {
@@ -342,7 +361,7 @@ void Menu::RunJoin(JoinJob job) {
         std::string why;
         if (!helper.start(why)) {
             // Join.bat's helper window may have the port.
-            Fail(why + " (is a Join.bat helper window open? close it)");
+            Fail(why + " (is a Join.bat helper window open? close it)", HOS_COOP_PROBLEM_HELPER_PORT_TAKEN);
             return;
         }
         {
@@ -359,6 +378,7 @@ void Menu::RunJoin(JoinJob job) {
                                 hooks_.connect(Target{"127.0.0.1", helper.game_port(), job.name, job.password});
                 std::lock_guard lock(mutex_);
                 status_.state = ok ? HOS_COOP_CONNECTED : HOS_COOP_FAILED;
+                status_.problem = ok ? HOS_COOP_PROBLEM_NONE : HOS_COOP_PROBLEM_CLIENT_FAILED;
                 status_.port = job.host.port;
                 CopyText(status_.answer, sizeof status_.answer, "");
                 CopyText(status_.message, sizeof status_.message,
@@ -390,7 +410,7 @@ void Menu::RunJoin(JoinJob job) {
         }
         helper.stop();
     } catch (const std::exception& e) {
-        Fail(std::string("the co-op join helper stopped: ") + e.what());
+        Fail(std::string("the co-op join helper stopped: ") + e.what(), HOS_COOP_PROBLEM_INTERNAL);
     }
 }
 

@@ -47,6 +47,27 @@ enum {
     HOS_COOP_FAILED = 6      /* message says why; hos_coop_leave, then try again */
 };
 
+/* What went wrong, as a number, so the game's own menu can say it in its own words (its message system); message holds
+   the same in English for the log. */
+enum {
+    HOS_COOP_PROBLEM_NONE = 0,
+    HOS_COOP_PROBLEM_ALREADY_RUNNING = 1,    /* hosting or joining already: leave first */
+    HOS_COOP_PROBLEM_BAD_NAME = 2,           /* longer than 16 characters */
+    HOS_COOP_PROBLEM_BAD_PASSWORD = 3,       /* a space, a control character or too long */
+    HOS_COOP_PROBLEM_NO_PASSWORD = 4,        /* joining an address needs the host's join password */
+    HOS_COOP_PROBLEM_PORT_TAKEN = 5,         /* another program (a server window?) has the port and the next ones */
+    HOS_COOP_PROBLEM_NETWORK = 6,            /* the sockets did not start */
+    HOS_COOP_PROBLEM_NO_INVITE_CODE = 7,     /* no STUN answer and no router forward: LAN or VPN only (still hosting) */
+    HOS_COOP_PROBLEM_UPNP_REFUSED = 8,       /* the router did not open the port (still hosting) */
+    HOS_COOP_PROBLEM_RELAY_FAILED = 9,       /* the relay could not be used (still hosting) */
+    HOS_COOP_PROBLEM_BAD_CODE = 10,          /* an invite or answer code that is not one, or not for this session */
+    HOS_COOP_PROBLEM_NO_TARGET = 11,         /* nothing typed, or an address this PC cannot find */
+    HOS_COOP_PROBLEM_HELPER_PORT_TAKEN = 12, /* the join helper's local port is taken (a Join.bat window open?) */
+    HOS_COOP_PROBLEM_CLIENT_FAILED = 13,     /* this game's co-op did not start (the log says why) */
+    HOS_COOP_PROBLEM_INTERNAL = 14,          /* the host thread stopped on an error (the log says which) */
+    HOS_COOP_PROBLEM_SYMMETRIC_NAT = 15      /* a hint: friends may not get through this router (still hosting) */
+};
+
 typedef struct HosCoopStatus {
     uint32_t size;           /* the caller sets sizeof(HosCoopStatus) */
     int32_t state;           /* HOS_COOP_* */
@@ -60,6 +81,7 @@ typedef struct HosCoopStatus {
     char answer[160];        /* the ANSWER CODE to send to the host (guest, WAIT_HOST) */
     char password[132];      /* the join password (host); show it only when the player asks */
     char message[256];       /* the last problem or hint, plain English; "" when none */
+    int32_t problem;         /* HOS_COOP_PROBLEM_* for message */
 } HosCoopStatus;
 
 /* The module's exports (extern "C"). */

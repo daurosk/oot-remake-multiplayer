@@ -857,6 +857,8 @@ TEST_CASE("host service: a taken port tries the next ones, then says which progr
   CHECK(why.find("is a co-op server window open already?") != std::string::npos);
   CHECK(second.status().state == HostState::kFailed);
   CHECK(second.status().message == why);
+  CHECK(second.status().problem == HostProblem::kPortTaken);
+  CHECK(second.port_failed());
 
   config.port_tries = 3;
   HostService third(config);

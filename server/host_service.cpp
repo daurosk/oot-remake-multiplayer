@@ -43,9 +43,10 @@ void HostService::say(const std::string& text) const {
   if (config_.log) config_.log(text);
 }
 
-void HostService::set_message(const std::string& text) {
+void HostService::set_message(const std::string& text, HostProblem problem) {
   std::lock_guard lock(status_mutex_);
   status_.message = text;
+  status_.problem = problem;
 }
 
 HostStatus HostService::status() const {
@@ -59,16 +60,18 @@ std::uint16_t HostService::port() const { return server_ ? server_->port() : 0; 
 const Session* HostService::session() const { return server_ ? &server_->session() : nullptr; }
 
 bool HostService::start(std::string& error) {
-  auto fail = [&](const std::string& why) {
+  auto fail = [&](const std::string& why, HostProblem problem) {
     error = why;
     std::lock_guard lock(status_mutex_);
     status_.state = HostState::kFailed;
     status_.message = why;
+    status_.problem = problem;
     return false;
   };
-  if (server_) return fail("the session is already running");
+  if (server_) return fail("the session is already running", HostProblem::kNone);
   if (config_.session.join_password.empty()) {
-    return fail("a join password is needed: every session has one, and it also encrypts the traffic");
+    return fail("a join password is needed: every session has one, and it also encrypts the traffic",
+                HostProblem::kNoPassword);
   }
   if (!config_.session.log) config_.session.log = config_.log;
 
@@ -88,7 +91,8 @@ bool HostService::start(std::string& error) {
     std::string why = "cannot listen on port " + std::to_string(config_.port);
     if (tries > 1) why += " or the " + std::to_string(tries - 1) + " after it";
     why += ": another program has it (is a co-op server window open already?)";
-    return fail(why);
+    port_failed_ = true;
+    return fail(why, HostProblem::kPortTaken);
   }
   {
     std::lock_guard lock(status_mutex_);
@@ -117,7 +121,7 @@ bool HostService::start(std::string& error) {
     mapping_ = std::make_unique<upnp::Mapping>(c);
     if (!mapping_->open()) {
       mapping_.reset();
-      set_message("the router did not open the port (UPnP is off on it, or it said no)");
+      set_message("the router did not open the port (UPnP is off on it, or it said no)", HostProblem::kUpnp);
     } else {
       std::lock_guard lock(status_mutex_);
       status_.upnp_open = true;
@@ -129,7 +133,7 @@ bool HostService::start(std::string& error) {
     relay::RelayLinkConfig c;
     if (!relay::parse_relay_address(config_.relay_via, c.relay_host, c.relay_port)) {
       say("relay: '" + config_.relay_via + "' is not a relay address (name or IPv4, optional :port)");
-      set_message("'" + config_.relay_via + "' is not a relay address");
+      set_message("'" + config_.relay_via + "' is not a relay address", HostProblem::kRelay);
     } else {
       c.server_port = server_->port();
       c.key = config_.relay_key;
@@ -146,7 +150,7 @@ bool HostService::start(std::string& error) {
       std::string why;
       if (!link_->start(why)) {
         say("relay: " + why);
-        set_message("relay: " + why);
+        set_message("relay: " + why, HostProblem::kRelay);
         link_.reset();
       } else {
         say("relay: asking " + config_.relay_via + " for a join code");
@@ -197,6 +201,7 @@ void HostService::finish_invite() {
     std::lock_guard lock(status_mutex_);
     status_.invite_done = true;
     status_.message = why;
+    status_.problem = HostProblem::kNoInvite;
     return;
   }
   say("invite code: " + *code);
@@ -212,7 +217,10 @@ void HostService::finish_invite() {
   std::lock_guard lock(status_mutex_);
   status_.invite = *code;
   status_.invite_done = true;
-  if (symmetric) status_.message = "your router gives every address its own port, so friends may not get through";
+  if (symmetric) {
+    status_.message = "your router gives every address its own port, so friends may not get through";
+    status_.problem = HostProblem::kSymmetric;
+  }
 }
 
 nat::CodeError HostService::add_answer(const std::string& typed) {

@@ -1,0 +1,66 @@
+# fishing3 (#151, branch fishing-3): two players fish at once, each with their own catch.
+# Both load into the pond (warp HyruleField_Child MiniGame_Fishing_PlayerStart), walk to the
+# owner, talk and accept (A mashed through the talk: pay, take the rod), step apart, cast (B),
+# wait for a bite, reel (A held) and wait again. B does the same 3 s later, a few metres to
+# the right, so the two lures are apart.
+# Expect (LICHII_COOP_DEBUG_OBJECTS=1):
+#  - both logs: `share fish lure N fish` lines (every fish listed; N about 30).
+#  - after a cast: `near our lure` above 0 in the caster's log; `share owner <fish> is player
+#    <caster>` for fish near that lure.
+#  - while both lures are in the water no fish has more than 2 `share owner` changes (no
+#    ping-pong between the games).
+#  - a bite: `<fish> ... hooked` in the caster's log only; that fish is never handed over
+#    while hooked (no `share owner` line for it in either log until it is gone).
+#  - a landed fish: `share caught here:` in the catcher's log, `share caught in its owner's
+#    game:` in the other's, for the same fish; each player's own record/talk afterwards.
+# Paying and casting are scripted blind (the talk's choices are guessed): look at the
+# screenshots at marks a-rod, a-cast, a-reel; if no rod came, use the in-game checks of
+# reports/fishing-3.md.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OBJECTS_RELEASE=1
+#! timeout 420
+mark start
+warp HyruleField_Child MiniGame_Fishing_PlayerStart
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+stick 0 1 60            # to the owner's counter
+wait 60
+press A 12              # talk
+wait 240
+press A 12
+wait 180
+press A 12              # yes: pay
+wait 180
+press A 12
+wait 180
+press A 12
+wait 180
+press A 12
+wait 240
+mark a-rod
+stick 0 -1 90           # back out to the water
+wait 60
+stick -1 0 40           # a little left of B
+wait 60
+press B 12              # cast
+wait 600
+mark a-cast
+hold A 300              # reel in
+mark a-reel
+wait 600
+press B 12              # cast again
+wait 900
+hold A 600
+mark a-end
+wait 600
+mark end

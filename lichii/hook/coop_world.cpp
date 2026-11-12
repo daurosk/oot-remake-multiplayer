@@ -381,6 +381,8 @@ void WorldSync::Reset() {
     hits_.clear();
     cuts_.clear();
     skulltulas_.clear();
+    skulltulas_seen_us_.clear();
+    skulltulas_dead_.clear();
     token_spots_.clear();
     early_.clear();
     anchors_.clear();
@@ -435,7 +437,7 @@ std::optional<std::string> WorldSync::TookKey(std::uint64_t hash) const {
     return std::nullopt;
 }
 
-std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at) {
+std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at, std::uint64_t now_us) {
     if (!Finite(at)) {
         return 0;
     }
@@ -453,6 +455,30 @@ std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at) {
         for (const auto& [id, where] : spots) {
             if (const float m = Distance(where, at); m <= best_m) {
                 best = id;
+                best_m = m;
+            }
+        }
+    }
+    if (best == 0) {
+        // A Skulltula that died and left our walk a moment ago, farther off:
+        // the one that left last, the nearer one on a tie. Never one whose
+        // token is known already (a token of a Skulltula with no placement
+        // must not take its id), nor one that left alive (its room unloaded).
+        std::uint64_t latest = 0;
+        best_m = kTokenFarM;
+        for (const auto& [hash, where] : skulltulas_) {
+            const auto seen = skulltulas_seen_us_.find(hash);
+            if (seen == skulltulas_seen_us_.end() || seen->second >= now_us ||
+                now_us - seen->second > kTokenAfterUs) {
+                continue;  // still in this walk, or gone too long ago
+            }
+            if (!skulltulas_dead_.contains(hash) || spots.contains(TokenId(hash))) {
+                continue;
+            }
+            const float m = Distance(where, at);
+            if (m <= kTokenFarM && (seen->second > latest || (seen->second == latest && m < best_m))) {
+                best = TokenId(hash);
+                latest = seen->second;
                 best_m = m;
             }
         }
@@ -982,6 +1008,8 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         hits_.clear();
         cuts_.clear();
         skulltulas_.clear();  // token_spots_ stay: a room loaded again
+        skulltulas_seen_us_.clear();
+        skulltulas_dead_.clear();
         anchor_holds_.clear();
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
@@ -995,6 +1023,12 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         if (s.name == "Enemy_Skulltula_Gold" && s.hash != 0 && s.hash != kNoHash &&
             Finite(s.position)) {
             skulltulas_[s.hash] = s.position;
+            skulltulas_seen_us_[s.hash] = now_us;
+            if (!s.life || s.life->life <= 0) {
+                skulltulas_dead_.insert(s.hash);  // life 0, or its life can no longer be read
+            } else {
+                skulltulas_dead_.erase(s.hash);
+            }
         }
     }
     Drain(now_us);
@@ -1015,7 +1049,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         with_tokens = seen;
         for (CoopObjects::Seen& s : with_tokens) {
             if (IsGoldToken(s.name) && (s.hash == 0 || s.hash == kNoHash)) {
-                s.hash = IdentifyToken(s.position);
+                s.hash = IdentifyToken(s.position, now_us);
             }
         }
         walk = &with_tokens;
@@ -2257,6 +2291,103 @@ RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_
     if (triplets > kMaxRestTriplets) {
         out.too_many = true;
         out.writes.clear();
+    }
+    return out;
+}
+
+std::optional<std::uint64_t> FindBlockNode(
+    const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read, std::uint64_t actor,
+    std::uint64_t main) {
+    using namespace BlockNode;
+    if (!HeapPointer(actor) || main == 0) {
+        return std::nullopt;
+    }
+    const auto is_node = [&](std::uint64_t p) {
+        const auto v1 = read(p);
+        if (!v1 || *v1 != main + kVtable) return false;
+        const auto v2 = read(p + 0x20);
+        if (!v2 || *v2 != main + kVtable2) return false;
+        const auto a = read(p + kOwner);
+        if (!a || !HeapPointer(*a)) return false;
+        const auto b = read(*a + 8);
+        if (!b || !HeapPointer(*b)) return false;
+        const auto owner = read(*b + kOwnerActor);
+        return owner && *owner == actor;
+    };
+    // Breadth first from the actor's components, so the nearest match wins.
+    std::vector<std::uint64_t> level;
+    std::set<std::uint64_t> seen{actor};
+    if (const auto table = read(actor + SignProbe::kActorTable); table && HeapPointer(*table)) {
+        for (std::uint64_t at = 0; at < SignProbe::kTableWords * 8; at += 8) {
+            const auto c = read(*table + at);
+            if (c && HeapPointer(*c) && seen.insert(*c).second) {
+                if (is_node(*c)) return *c;
+                level.push_back(*c);
+            }
+        }
+    }
+    std::size_t looks = 0;
+    for (int depth = 0; depth < kNodeDepth && !level.empty(); ++depth) {
+        std::vector<std::uint64_t> next;
+        for (const std::uint64_t object : level) {
+            if (++looks > kNodeLooks) {
+                return std::nullopt;
+            }
+            for (std::uint64_t at = 0; at < kNodeBytes; at += 8) {
+                const auto p = read(object + at);
+                if (!p || !HeapPointer(*p) || !seen.insert(*p).second) {
+                    continue;
+                }
+                if (is_node(*p)) return *p;
+                next.push_back(*p);
+            }
+        }
+        level = std::move(next);
+    }
+    return std::nullopt;
+}
+
+RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                       std::uint64_t node, const proto::Vec3& from, const proto::Vec3& to) {
+    RestScan out;
+    if (!Finite(from) || !Finite(to) || Distance(from, to) < WorldSync::kBlockStartM) {
+        return out;
+    }
+    const auto float_at = [&](std::uint64_t address) -> std::optional<float> {
+        const auto word = read(address & ~std::uint64_t{7});
+        if (!word) return std::nullopt;
+        const auto b = static_cast<std::uint32_t>((address & 4) != 0 ? *word >> 32 : *word);
+        float f = 0.0f;
+        std::memcpy(&f, &b, 4);
+        return f;
+    };
+    const auto holds_from = [&](std::uint64_t offset) {
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto v = float_at(node + offset + 4 * axis);
+            if (!v || !std::isfinite(*v) || std::fabs(*v - from[axis]) > kRestMatchM) return false;
+        }
+        return true;
+    };
+    // Both or none (review): a node with only one of them at the old place is
+    // mid-push here (its target is the next cell); writing just one would make
+    // it run from the new place toward a cell figured from the old one.
+    const bool target = holds_from(BlockNode::kTarget), start = holds_from(BlockNode::kStart);
+    if (target != start) {
+        out.busy = true;
+        return out;
+    }
+    if (!target) {
+        return out;
+    }
+    char text[32];
+    for (const std::uint64_t offset : {BlockNode::kTarget, BlockNode::kStart}) {
+        for (int axis = 0; axis < 3; ++axis) {
+            std::uint32_t b = 0;
+            std::memcpy(&b, &to[axis], 4);
+            out.writes.push_back({node + offset + 4 * axis, b});
+        }
+        std::snprintf(text, sizeof text, "node+%#llx", static_cast<unsigned long long>(offset));
+        out.where.push_back(text);
     }
     return out;
 }

@@ -564,6 +564,8 @@ void Sync::Reset() {
     present_once_ = false;
     groups_sent_.clear();
     group_links_.clear();
+    fish_sent_.clear();
+    fish_at_ = 0;
     decided_.clear();
     eggs_.clear();
     bound_.clear();
@@ -1332,6 +1334,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     std::vector<proto::ObjectPresence> present;
     present.reserve(objects_.size());
+    std::vector<proto::FishLureEntry> fish;  // issue 151: FISH_LURE
     for (auto& [address, o] : objects_) {
         if (o.dead_said) {
             // Said dead (DeadByWrite): off our list, as the server takes it
@@ -1404,35 +1407,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
             }
         }
-        // Issue 151: a fish of ours at our lure (a bite, a fight, reeled
-        // in) or coming at it stays ours.
-        if (o.fish && !lures_.empty()) {
-            const auto owner = owners_.find(o.id);
-            if (owner != owners_.end() && owner->second.player == self) {
-                std::optional<float> best;
-                float speed = 0.0f;
-                for (const proto::Vec3& lure : lures_) {
-                    if (!Finite(lure)) {
-                        continue;
-                    }
-                    const float d = Distance(o.position, lure);
-                    if (best && d >= *best) {
-                        continue;
-                    }
-                    best = d;
-                    speed = 0.0f;
-                    if (d > 0.0f) {
-                        for (std::size_t i = 0; i < 3; ++i) {
-                            speed += o.velocity[i] * (lure[i] - o.position[i]) / d;
-                        }
-                    }
-                }
-                if (best && (*best <= kLureHookM || (*best <= kLureReachM && speed >= kLureSpeed))) {
-                    ChaseStep(o, now_us);
-                }
-            }
+        // Issue 151 (fishing-3): how near our lure is to each fish. The
+        // server gives the fish to the nearest lure's game (FISH_LURE); a
+        // fish is never flagged targeting or fighting, so no fight lock
+        // holds it in the wrong game.
+        if (o.fish) {
+            fish.push_back(FishClaim(o, self, now_us));
         }
-        if (o.chase_until > now_us) {
+        if (o.chase_until > now_us && !o.fish) {
             flags |= proto::object_presence::targeting;
         }
         present.push_back({o.id, flags});
@@ -1482,6 +1464,74 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         send.emplace_back(std::move(g));
     }
     groups_sent_ = std::move(groups);
+
+    // Fishing (issue 151): after the presence, so the server knows the fish.
+    // On a change (at most every kFishEveryUs, a hook or bite at once) and
+    // again every kFishRepeatUs (the server takes a list older than 2.5 s as
+    // no lure); an empty list once, when the last fish went.
+    std::sort(fish.begin(), fish.end(),
+              [](const auto& a, const auto& b) { return a.id < b.id; });
+    if (fish.size() > proto::kMaxFishLures) {
+        fish.resize(proto::kMaxFishLures);
+    }
+    auto flags_of = [](const std::vector<proto::FishLureEntry>& v) {
+        std::vector<std::pair<proto::ObjectId, std::uint8_t>> out;
+        for (const auto& e : v) out.emplace_back(e.id, e.flags);
+        return out;
+    };
+    const bool changed = fish != fish_sent_;
+    const bool urgent = changed && flags_of(fish) != flags_of(fish_sent_);
+    const bool due = fish_at_ == 0 || now_us < fish_at_ || now_us - fish_at_ >= kFishEveryUs;
+    const bool repeat = fish_at_ == 0 || now_us < fish_at_ || now_us - fish_at_ >= kFishRepeatUs;
+    if ((!fish.empty() || !fish_sent_.empty()) &&
+        ((changed && (urgent || due)) || (!fish.empty() && (present_went || repeat)))) {
+        proto::FishLure m;
+        m.fish = fish;
+        send.emplace_back(std::move(m));
+        fish_sent_ = std::move(fish);
+        fish_at_ = now_us;
+    }
+}
+
+proto::FishLureEntry Sync::FishClaim(const Object& o, std::uint8_t self,
+                                     std::uint64_t now_us) const {
+    proto::FishLureEntry e;
+    e.id = o.id;
+    std::optional<float> best;
+    float speed = 0.0f;  // towards the nearest lure, metres a second
+    for (const proto::Vec3& lure : lures_) {
+        if (!Finite(lure)) {
+            continue;
+        }
+        const float d = Distance(o.position, lure);
+        if (best && d >= *best) {
+            continue;
+        }
+        best = d;
+        speed = 0.0f;
+        if (d > 0.0f) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                speed += o.velocity[i] * (lure[i] - o.position[i]) / d;
+            }
+        }
+    }
+    if (!best || !(*best <= kLureReachM)) {
+        return e;  // no lure of ours in reach
+    }
+    // Rounded down to kFishStepCm, so a fish that hovers does not send a new
+    // list each walk.
+    const auto cm = static_cast<std::uint32_t>(*best * 100.0f);
+    e.distance_cm = static_cast<std::uint16_t>(
+        std::min<std::uint32_t>(cm - cm % kFishStepCm, proto::kFishLureNone - 1));
+    const auto owner = owners_.find(o.id);
+    const bool ours = owner != owners_.end() && owner->second.player == self;
+    if (ours && *best <= kLureHookM) {
+        e.flags |= proto::fish_lure::hooked;
+    } else if (ours ? speed >= kLureSpeed : o.chase_until > now_us) {
+        // Ours coming at our lure; a copy whose own AI swims at it (NoteDrift).
+        e.flags |= proto::fish_lure::drawn;
+    }
+    return e;
 }
 
 // Objects that left our walk. A break read just before it went (a pot's life

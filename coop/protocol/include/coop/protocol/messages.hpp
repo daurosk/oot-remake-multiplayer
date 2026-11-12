@@ -109,6 +109,9 @@ enum class MessageType : std::uint16_t {
   pvp_hit = 242,
   pvp_hurt = 243,
   player_life = 251,  // 251 to 255: the co-op HUD (docs/protocol.md, "Hearts")
+  fish_lure = 320,  // 320 to 324: the fishing pond (docs/protocol.md, "Fishing")
+  rejoin_token = 345,  // 345 to 349: rejoin after a crash or drop (docs/protocol.md, "Rejoin")
+  rejoin_claim = 346,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -208,6 +211,23 @@ struct JoinChallenge {
 struct JoinProof {
   JoinProofBytes proof{};
   bool operator==(const JoinProof&) const = default;
+};
+
+// REJOIN_TOKEN, server to client, right after WELCOME: a fresh random token
+// for this player's place. Only a connection that shows it (REJOIN_CLAIM)
+// may take that place over while the old connection is quiet, so two players
+// behind one address cannot push each other out by name.
+using RejoinTokenBytes = JoinNonce;
+struct RejoinToken {
+  RejoinTokenBytes token{};
+  bool operator==(const RejoinToken&) const = default;
+};
+
+// REJOIN_CLAIM, client to server, before its HELLO on a new connection: the
+// token its last WELCOME came with. Without one no takeover happens.
+struct RejoinClaim {
+  RejoinTokenBytes token{};
+  bool operator==(const RejoinClaim&) const = default;
 };
 
 struct PlayerJoined {
@@ -839,6 +859,34 @@ struct ObjectGroupEntry {
   bool operator==(const ObjectGroupEntry&) const = default;
 };
 
+// FISH_LURE (client only, not relayed; issue 151, docs/objects.md "Fish and
+// lures"): every fish the sender has loaded and how near the sender's own cast
+// lure is to it. It replaces the sender's previous list. The server gives each
+// fish to the game whose lure is nearest (a hooked fish stays with its owner),
+// and a fish is never moved by the distance rule or held by a fight lock.
+namespace fish_lure {
+inline constexpr std::uint8_t hooked = 1u << 0;  // the sender owns it and it is on its lure
+inline constexpr std::uint8_t drawn = 1u << 1;   // it swims at the sender's lure
+}  // namespace fish_lure
+
+// distance_cm when no lure of the sender's is in reach.
+inline constexpr std::uint16_t kFishLureNone = 0xffff;
+// Most fish in one FISH_LURE. 0 to this many, no fish twice.
+inline constexpr std::size_t kMaxFishLures = 256;
+
+struct FishLureEntry {
+  ObjectId id;
+  std::uint16_t distance_cm = kFishLureNone;  // fish to our nearest lure
+  std::uint8_t flags = 0;                     // fish_lure bits
+  bool operator==(const FishLureEntry&) const = default;
+};
+
+struct FishLure {
+  std::uint8_t player_number = kPlayerSelf;
+  std::vector<FishLureEntry> fish;
+  bool operator==(const FishLure&) const = default;
+};
+
 // Most entries in one OBJECT_GROUP. 1 to this many, no member twice.
 inline constexpr std::size_t kMaxGroupEntries = 256;
 
@@ -1097,7 +1145,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
-                             PvpMode, PvpHit, PvpHurt>;
+                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim>;
 
 MessageType type_of(const Message& message);
 

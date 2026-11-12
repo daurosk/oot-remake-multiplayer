@@ -109,7 +109,7 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 | Threads of Time (pause menu quest log) | the unlock flag `UI_IsFinishChallengeMenuOpenEvent` in `CoopStory::Flags()`; the 15 listed quests' saved Enums by step order, highest wins (`CoopQuests`, [flags.md](flags.md#threads-of-time-issue-193)) | live; late joiner by the host's table | unit | Before (issue 193): the second player never saw the owl, so the tab stayed shut; quests were each game's own | **P1** to check in game |
 | Time of day | `TIME_OF_DAY` (host's clock) | live | game | - | P3 |
 | Song events (Zelda's Lullaby doors, Sun's Song, Song of Storms well) | none, unless the result is a flag | ? | - | The door a song opened in A stays in B | P2 |
-| Shops (stock sold out) | none; the Deku Shield is per player (issue 130), so each buys their own | - | - | - | P2 |
+| Shops (stock sold out) | none; a bought Deku Shield reaches everyone (max, issue 130), a lost one is bought again by that player | - | - | - | P2 |
 
 ## Per-player state (not shared on purpose)
 
@@ -169,7 +169,7 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 | I2 | Fish, Blue Fire, bugs and other bottle contents needed to go on (Jabu-Jabu, Zora's Domain ice, the Ice Cavern) | **OK** | Per player, and every source can be used again. |
 | I3 | Trade sequence items (mirror rule): one player hands an item over and it is gone for everyone | **P2** | Optional quests (Biggoron's Sword, masks). A player halfway through loses their step. Later: share the trade step too, or make the trade items per player. |
 | I4 | Zelda's Letter, Ocarina of Time, songs, stones and medallions | **OK** | Shared items let the other player do the per-game event themselves (Kakariko gate, Temple of Time door) or skip it. |
-| I5 | Deku Shield bought once for everyone (#130) | **P2** | Per player (branch items-progress): each player buys their own; not checked in game. |
+| I5 | Deku Shield bought once for everyone (#130) | **P2** | Shared again (max, branch shop-shield-2; items-progress had made it per player); the shop opens for every player (quest catch-up); autotest `shop-buy`. |
 | I6 | Keys and dungeon items with a join at another save point | **P2** | A late joiner takes the host's totals. A key the joiner's save had in hand but the host's did not is lost to the joiner; the chest it came from stays open in the joiner's game but closed in the host's, so the host player can take it again for both. Advice: join with saves from the same point. |
 
 ### Story, time travel, saves

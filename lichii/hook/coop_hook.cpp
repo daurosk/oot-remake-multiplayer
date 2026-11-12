@@ -73,6 +73,7 @@
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_scrub_talk.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -404,6 +405,9 @@ public:
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory);
+                    if (CoopStory::On()) {
+                        CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
+                    }
                 }
             }
         }
@@ -443,8 +447,23 @@ public:
             const bool link = !no_link_since_ || view.at - *no_link_since_ < kHoldRelease;
             const std::optional<std::string> scene =
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
-            hold.emplace(*quests, [link, scene](coop::protocol::FlagKey key) {
-                if (!link || !scene || key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
+            // Issue 144 (coop_scrub_talk.h): a scrub's destroy flag waits while our
+            // Link is in an event (its talk), or the room graph deletes the scrub mid-talk.
+            if (scrub_talk_on_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
+                                  CoopEvery::NowUs())) {
+                LOG_INFO(Core, "coop: dungeon: {}", scrub_talk_.Holding()
+                             ? "our Link is in an event: Deku Scrub destroy flags from others wait"
+                             : "the event ended: Deku Scrub destroy flags from others go through");
+            }
+            const CoopScrubTalk::Hold talk = scrub_talk_;
+            hold.emplace(*quests, [link, scene, talk](coop::protocol::FlagKey key) {
+                if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
+                    return false;
+                }
+                if (talk.Holds(key.hash)) {
+                    return true;
+                }
+                if (!link || !scene) {
                     return false;
                 }
                 if (CoopQuests::Find(key.hash) != nullptr) {
@@ -485,6 +504,7 @@ public:
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
+            CoopTime::SaveLoaded(report.server_now_us);  // issue 159
         }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
@@ -507,8 +527,12 @@ public:
                 live_requester_.Want(*name);
             }
         }
-        if (hold && (hold->held() != 0) != holding_logged_) {
-            holding_logged_ = hold->held() != 0;
+        // The scrub flags of issue 144 have their own log line (above).
+        const bool gimmick_held =
+            hold && std::any_of(hold->held_keys().begin(), hold->held_keys().end(),
+                                [](const coop::protocol::FlagKey& k) { return !CoopScrubTalk::IsTalkFlag(k.hash); });
+        if (hold && gimmick_held != holding_logged_) {
+            holding_logged_ = gimmick_held;
             LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");
@@ -663,11 +687,27 @@ public:
         CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)
         CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
+        if (!reading) CoopTime::Loading(report.server_now_us);  // issue 159: a reload, a death
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
-        // Boss rooms together (docs/dungeons-boss.md).
+        // Boss rooms together (docs/dungeons-boss.md). Issue 148: the room's
+        // "shut in" flag says when we are past its door.
+        std::optional<bool> boss_shut_in;
+        if (memory && view.scene) {
+            if (const CoopBoss::Room* room = CoopBoss::RoomOfScene(*view.scene)) {
+                if (const std::string_view flag = CoopBoss::ShutInFlag(*room); !flag.empty()) {
+                    if (flag != boss_shut_in_name_) {  // hashed once, not every frame
+                        boss_shut_in_name_ = flag;
+                        boss_shut_in_hash_ = coop::host::flag_hash(std::string(flag));
+                    }
+                    coop::host::GameFlagStore flags(*memory);
+                    const auto v = flags.read(coop::protocol::FlagKey{boss_shut_in_hash_, 0});
+                    if (v) boss_shut_in = v->value != 0;
+                }
+            }
+        }
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
-                        reading && reading->event_running.value_or(false),
+                        reading && reading->event_running.value_or(false), boss_shut_in,
                         report.connected ? session_.get() : nullptr, report.server_now_us);
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
@@ -1232,9 +1272,13 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
+    std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+    CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
@@ -1328,6 +1372,22 @@ private:
         }
     }
     bool ocarina_mend_failed_logged_ = false;
+
+    // Issue 130 (docs/flags.md, "Story and cutscenes"): raises our own
+    // Meet_DekuTree quest to what the shared story says (Mido let someone by:
+    // Step03; the Deku Tree scene played: Complete), so the Kokiri Shop sells
+    // here too. Only ever raised; anything unread is left alone.
+    void CatchUpQuest(EmulatorMemory& memory) {
+        namespace quest = CoopStory::quest;
+        coop::host::GameFlags flags(memory);
+        const auto step = flags.get_enum(quest::kMeetDekuTree);
+        const auto raise = CoopStory::QuestCatchUp(step, flags.get_bool(quest::kMidoBlocker),
+                                                   flags.get_bool(quest::kMetDekuTree));
+        if (raise && coop::host::GameFlags::set_enum(memory, quest::kMeetDekuTree, *raise)) {
+            LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
+                     *step, *raise);
+        }
+    }
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

@@ -265,6 +265,10 @@ bool& ForgetKeptFlag() {  // a host save load: WorldSync::ForgetKept before the 
     static bool f = false;
     return f;
 }
+std::vector<std::string>& TestKillQueue() {  // the test script's kill steps (QueueTestKill)
+    static std::vector<std::string> q;
+    return q;
+}
 
 bool EnvFlag(const char* name) {
 #ifdef _WIN32
@@ -1189,6 +1193,7 @@ public:
                 send.emplace_back(std::move(m));
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            TestKills(seen, writes);
             if (!world.key_refunds.empty()) {
                 std::lock_guard lock(KeyRefundMutex());
                 auto& refunds = KeyRefundQueue();
@@ -1238,6 +1243,7 @@ public:
                 ScrubsBox& box = TheScrubs();
                 std::lock_guard lock(box.mutex);
                 box.main = main_;
+                box.puzzle.SetEvent(TheLocalEvent().load(), CoopEvery::NowUs());  // issue 144
                 box.puzzle.Look(*scene, scrubs_seen_, player_, CoopEvery::NowUs(), out);
             }
             for (auto& h : out.send) {
@@ -1296,6 +1302,38 @@ public:
             // Issue 147: a block another game moved rests here now; its own
             // memory's old rest place gets the new one.
             for (const auto& fix : block_fixes_) {
+                // world-objects-2: the block's push node (known fields,
+                // found by its vtables and owner): on unless
+                // LICHII_COOP_BLOCK_NODE=0.
+                static const bool node_on = EnvOn("LICHII_COOP_BLOCK_NODE");
+                if (node_on) {
+                    const auto node = CoopWorld::FindBlockNode(
+                        [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
+                    if (!node) {
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node not found: its next push may "
+                                       "start from the old place",
+                                 fix.hash, fix.name);
+                    } else {
+                        const auto words = CoopWorld::NodeRestWords(
+                            [&r](u64 address) { return r.Get<u64>(address); }, *node, fix.from, fix.to);
+                        if (words.busy) {
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} busy (mid-push here): "
+                                           "not written",
+                                     fix.hash, fix.name, *node);
+                            continue;  // RestWords below too: one block, one decision
+                        }
+                        for (const auto& w : words.writes) {
+                            memory_->Write32(w.address, w.value);
+                        }
+                        std::string at;
+                        for (const auto& w : words.where) {
+                            at += " " + w;
+                        }
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: {} of its places moved to "
+                                       "the new rest{}{}",
+                                 fix.hash, fix.name, *node, words.where.size(), at.empty() ? "" : ":", at);
+                    }
+                }
                 const auto scan = CoopWorld::RestWords(
                     [&r](u64 address) { return r.Get<u64>(address); }, fix.address, fix.from,
                     fix.to);
@@ -1449,6 +1487,25 @@ public:
                     LOG_INFO(Core, "coop: objects: share group {} entries, {} changed{}",
                              g->entries.size(), changed, sent ? "" : " (not sent)");
                     group_logged_ = g->entries;
+                } else if (const auto* f = std::get_if<coop::protocol::FishLure>(&m)) {
+                    // Issue 151: one line when the fish at our lure change.
+                    std::size_t in_reach = 0;
+                    std::string at;
+                    for (const auto& e : f->fish) {
+                        if (e.distance_cm == coop::protocol::kFishLureNone) continue;
+                        ++in_reach;
+                        if (e.flags != 0) {
+                            at += fmt::format(" {:#x} {} cm {}", e.id.value, e.distance_cm,
+                                              (e.flags & coop::protocol::fish_lure::hooked)
+                                                  ? "hooked"
+                                                  : "drawn");
+                        }
+                    }
+                    if (std::make_pair(in_reach, at) != fish_logged_) {
+                        fish_logged_ = std::make_pair(in_reach, at);
+                        LOG_INFO(Core, "coop: objects: share fish lure {} fish, {} near our lure{}{}",
+                                 f->fish.size(), in_reach, at, sent ? "" : " (not sent)");
+                    }
                 }
             }
         });
@@ -1854,6 +1911,51 @@ private:
 
     // A direct write of life is enough for the game (docs/objects.md, "Damage").
     // A hurt is added to the damage the Life step takes off this frame.
+    // The test script's kill steps (coop_testinput, test only): the nearest
+    // actor of that name to our Link with a life takes a hit from our Link of
+    // its whole life, through the game's damage, so it dies as from a real hit
+    // (and drops what it drops: a Gold Skulltula its token).
+    void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes) {
+        std::vector<std::string> names;
+        {
+            std::lock_guard lock(KeyRefundMutex());
+            names.swap(TestKillQueue());
+        }
+        for (const std::string& name : names) {
+            const Seen* best = nullptr;
+            float best_m = 0.0f;
+            for (const Seen& s : seen) {
+                if (s.name != name || !s.life || s.life->life <= 0) {
+                    continue;
+                }
+                float m = 0.0f;
+                if (player_) {
+                    const float dx = s.position[0] - (*player_)[0];
+                    const float dy = s.position[1] - (*player_)[1];
+                    const float dz = s.position[2] - (*player_)[2];
+                    m = std::sqrt(dx * dx + dy * dy + dz * dz);
+                }
+                if (!best || m < best_m) {
+                    best = &s;
+                    best_m = m;
+                }
+            }
+            if (!best) {
+                LOG_INFO(Core, "coop: test kill {}: none here with a life", name);
+                continue;
+            }
+            LifeWrite w;
+            w.address = best->address;
+            w.life = 0;
+            w.hurt = std::max<std::int32_t>(best->life->life, 1);
+            w.from = player_;
+            writes.push_back(w);
+            LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
+                     name, best->address, best->position[0], best->position[1], best->position[2],
+                     best_m, best->life->life);
+        }
+    }
+
     void WriteLife(Core::Memory::Memory& memory, Reader& r, const LifeWrite& w) {
         const auto value = LifeValue(r, w.address);
         if (!value || !memory.IsValidVirtualAddressRange(value->first + 8, 4)) {
@@ -2257,6 +2359,7 @@ private:
     bool sharing_ = false;
     std::size_t blast_drops_logged_ = 0;
     std::size_t present_logged_ = ~std::size_t{0};
+    std::pair<std::size_t, std::string> fish_logged_;  // the last FISH_LURE logged
     std::vector<coop::protocol::ObjectGroupEntry> group_logged_;
     CoopObjects::OwnerLog owner_log_;  // network thread
     std::size_t enemies_logged_ = 0;
@@ -2372,6 +2475,13 @@ void OwnCountDrops(const std::vector<std::uint32_t>& key_flags) {
     std::lock_guard lock(KeyRefundMutex());
     auto& drops = OwnDropQueue();
     drops.insert(drops.end(), key_flags.begin(), key_flags.end());
+}
+
+void QueueTestKill(std::string name) {
+    std::lock_guard lock(KeyRefundMutex());
+    if (TestKillQueue().size() < 16) {
+        TestKillQueue().push_back(std::move(name));
+    }
 }
 
 void ForgetKeptBreaks() {

@@ -28,4 +28,10 @@ void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* s
 // Network thread, from the session's on_event.
 void OnEvent(const coop::net::Event& event);
 
+// A save was just loaded in this game (issue 159: a guest's load is not sent
+// as a jump; it takes the host's clock again).
+void SaveLoaded(std::uint64_t server_now_us);
+// Our Link cannot be read this frame (any load or reload).
+void Loading(std::uint64_t server_now_us);
+
 } // namespace CoopTime

@@ -53,7 +53,8 @@ inline bool in_cutscene(std::uint8_t status_flags) {
 enum class Activity : std::uint8_t {
   none,
   riding,   // on a horse: "HorseMove", "HorseRide", "Evt_Horse_Talk_N", ...
-  ocarina,  // playing the Ocarina freely: "OcarinaReadyStart", "Ocarina_Adult_B_lp", ...
+  ocarina,  // playing the Ocarina freely: "DemoOcarina" (seen: the probe, ocarina-b 2026-11-12),
+            // "OcarinaReadyStart", "Ocarina_Adult_B_lp", ...
 };
 
 inline Activity activity_of(std::optional<std::string_view> anim) {
@@ -64,8 +65,13 @@ inline Activity activity_of(std::optional<std::string_view> anim) {
       a != "HorseAccess") {
     return Activity::riding;
   }
-  // "DemoOcarina..." is a cutscene (a song taught): not free playing.
   if (a.substr(0, 7) == "Ocarina") return Activity::ocarina;
+  // Played freely, the game's own command is "DemoOcarina" (slot 0, with DemoOcarinaFace and
+  // DemoOcarinaFinger beside it; coop_ocarina_sound.h counts it the same way). Only a song being
+  // taught, "DemoOcarinaMelodyGet...", is a cutscene.
+  if (a.substr(0, 11) == "DemoOcarina" && a.find("MelodyGet") == std::string_view::npos) {
+    return Activity::ocarina;
+  }
   return Activity::none;
 }
 

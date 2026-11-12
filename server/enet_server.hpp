@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <span>
 
 #include <enet/enet.h>
@@ -76,6 +77,12 @@ class EnetServer {
   std::uint64_t small_path_drops() const { return small_path_drops_; }
   bool small_path(enet_uint32 host) const { return small_hosts_.count(host) != 0; }
 
+  // Sealed packets that did not open (wrong key, changed, replayed) and
+  // plain ones on an encrypted connection: dropped unread.
+  std::uint64_t unsealed_drops() const { return unsealed_drops_; }
+  // Connections whose traffic is encrypted now.
+  std::size_t encrypted_connections() const { return ciphers_.size(); }
+
  private:
   std::uint64_t now_us() const;
   void handle(const ENetEvent& event);
@@ -103,6 +110,9 @@ class EnetServer {
   // again at connect; told once, then forgotten (net::kRememberMs).
   std::map<enet_uint32, std::uint64_t> small_hosts_;
   std::map<ConnectionId, net::PathMark> path_marks_;  // coop/net/enet_path.hpp
+  // Encrypted connections (EncryptAction, docs/protocol.md "Encrypted traffic").
+  std::map<ConnectionId, std::unique_ptr<protocol::TrafficCipher>> ciphers_;
+  std::uint64_t unsealed_drops_ = 0;
   std::chrono::steady_clock::time_point start_;
   RawHandler raw_;
 };

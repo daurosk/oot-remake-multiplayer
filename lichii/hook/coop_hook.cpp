@@ -220,6 +220,7 @@ struct RoomView {
     std::optional<std::uint64_t> round_trip_us;
     std::vector<coop::net::Player> players;
     std::string note;  // the last refusal or error
+    bool encrypted = false;  // docs/protocol.md "Encrypted traffic"
 };
 
 class Coop {
@@ -1135,11 +1136,16 @@ private:
             session_->with_client([](coop::net::Client& c) { CoopPose::Send(c, SteadyMs()); });
             RoomView room = session_->with_client([&](coop::net::Client& c) {
                 return RoomView{c.state(), c.player_number(), c.round_trip_us(), c.players(),
-                                note_};
+                                note_, c.encrypted()};
             });
             if (room.state != last_state) {
                 last_state = room.state;
                 LOG_INFO(Core, "coop: {}", coop::net::to_string(last_state));
+                if (last_state == coop::net::State::connected) {
+                    LOG_INFO(Core, "coop: traffic {}", room.encrypted
+                                                           ? "encrypted"
+                                                           : "not encrypted (the host set no join password)");
+                }
             }
             // Issue 108: each REFUSED name taken asked again, so a log shows
             // the retries (every name_taken_retry_ms, at least 100 ms apart)
@@ -1283,6 +1289,8 @@ private:
             if (CoopPvp::On()) {
                 head += ", PvP on";
             }
+            // Plain only on a server without a join password: say so.
+            head += room.encrypted ? ", encrypted" : ", not encrypted (no join password)";
             lines.push_back({head});
         } else {
             std::string head = "Co-op: " + std::string(coop::net::to_string(room.state));

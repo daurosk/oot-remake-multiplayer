@@ -49,8 +49,9 @@ constexpr std::uint64_t ms_to_us(std::uint32_t ms) {
 constexpr std::uint32_t kNameTakenRetryFloorMs = 100;
 
 // The longest packet a message can fill: the 4-byte header and a body of
-// at most 65535 bytes. ENet refuses anything longer before assembling it.
-constexpr std::size_t kMaxPacketBytes = 4 + 0xffff;
+// at most 65535 bytes, and what sealing adds (traffic_crypto.hpp). ENet
+// refuses anything longer before assembling it.
+constexpr std::size_t kMaxPacketBytes = 4 + 0xffff + proto::kSealOverheadBytes;
 
 // PONGs answer at most this many PINGs at once, then one per interval.
 constexpr std::uint64_t kPongBurst = 4;
@@ -196,6 +197,9 @@ void Client::stop() {
 
 void Client::begin_attempt() {
   attempt_started_us_ = now_us();
+  cipher_.reset();
+  key_pair_.reset();
+  hello_packet_.clear();
   path_mark_ = PathMark{};
   last_receive_us_ = 0;
   link_ = LinkInfo{};
@@ -281,7 +285,13 @@ void Client::service(std::uint32_t wait_ms) {
           if (rejoin_token_) {
             claimed = send_raw(proto::RejoinClaim{*rejoin_token_}, proto::kChannelSession);
           }
-          if (claimed && send_raw(hello, proto::channel_of(hello))) {
+          // Our key share for this connection (docs/protocol.md "Encrypted
+          // traffic"); a server without a password ignores it.
+          key_pair_.emplace(proto::KeyPair::generate());
+          hello.key_share = key_pair_->share();
+          hello_packet_.clear();
+          if (claimed && proto::encode(hello, hello_packet_) == proto::Error::none &&
+              send_packet(hello_packet_, proto::channel_of(hello))) {
             hello_sent_us_ = now_us();
             challenge_answered_ = false;
             state_ = State::handshaking;
@@ -293,8 +303,29 @@ void Client::service(std::uint32_t wait_ms) {
       case ENET_EVENT_TYPE_RECEIVE:
         if (event.peer == peer_) {
           last_receive_us_ = now_us();
-          on_receive(event.packet->data, event.packet->dataLength,
-                     event.channelID);
+          if (cipher_ != nullptr) {
+            // Encrypted: only what opens with the key counts. The one plain
+            // answer left is REFUSED for a wrong password, which the server
+            // sends before it has keys (anyone on the path could also just
+            // drop our packets, so it gives nothing away).
+            std::vector<std::uint8_t> plain;
+            const std::span<const std::uint8_t> raw(event.packet->data,
+                                                    event.packet->dataLength);
+            proto::Message refused;
+            if (cipher_->open(event.channelID, raw, plain) == proto::OpenError::none) {
+              on_receive(plain.data(), plain.size(), event.channelID);
+            } else if (state_ == State::handshaking &&
+                       event.channelID == proto::kChannelSession &&
+                       proto::decode(raw, refused) == proto::Error::none &&
+                       std::holds_alternative<proto::Refused>(refused)) {
+              on_receive(raw.data(), raw.size(), event.channelID);
+            } else {
+              ++rejected_;
+            }
+          } else {
+            on_receive(event.packet->data, event.packet->dataLength,
+                       event.channelID);
+          }
         }
         enet_packet_destroy(event.packet);
         break;
@@ -409,8 +440,19 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
         return;
       }
       challenge_answered_ = true;
-      send_raw(proto::JoinProof{proto::join_proof(config_.join_password, challenge->nonce)},
-               proto::kChannelSession);
+      if (!answer_challenge(*challenge, std::span<const std::uint8_t>(data, size))) {
+        // A server with a password that does not encrypt: never fall back to
+        // plain traffic (someone on the path may have taken the key out).
+        if (peer_ != nullptr) {
+          enet_peer_disconnect_now(peer_, 0);
+          peer_ = nullptr;
+        }
+        state_ = State::refused;
+        Event event;
+        event.kind = EventKind::refused;
+        event.refuse_reason = proto::RefuseReason::wrong_protocol_version;
+        push(std::move(event));
+      }
     } else if (const auto* refused = std::get_if<proto::Refused>(&message)) {
       if (peer_ != nullptr) {
         enet_peer_disconnect_now(peer_, 0);
@@ -666,10 +708,40 @@ bool Client::send_chat(std::string_view text) {
   return send(proto::Chat{proto::kPlayerSelf, std::string(text)});
 }
 
+bool Client::answer_challenge(const proto::JoinChallenge& challenge,
+                              std::span<const std::uint8_t> packet) {
+  if (!challenge.key_share || !key_pair_) return false;
+  std::optional<proto::TrafficKeys> keys =
+      proto::derive_traffic_keys(*key_pair_, *challenge.key_share, config_.join_password,
+                                 hello_packet_, packet, /*is_server=*/false);
+  key_pair_.reset();
+  hello_packet_.clear();
+  if (!keys) return false;
+  // The proof goes out plain (the server needs it to make its keys); from
+  // the next packet on, everything is sealed.
+  const bool sent = send_raw(
+      proto::JoinProof{proto::join_proof(config_.join_password, challenge.nonce)},
+      proto::kChannelSession);
+  cipher_ = std::make_unique<proto::TrafficCipher>(*keys);
+  keys->wipe();
+  return sent;
+}
+
 bool Client::send_raw(const proto::Message& message, std::uint8_t channel) {
-  if (peer_ == nullptr) return false;
   std::vector<std::uint8_t> bytes;
   if (proto::encode(message, bytes) != proto::Error::none) return false;
+  return send_packet(bytes, channel);
+}
+
+bool Client::send_packet(std::span<const std::uint8_t> plain, std::uint8_t channel) {
+  if (peer_ == nullptr) return false;
+  std::optional<std::vector<std::uint8_t>> sealed;
+  std::span<const std::uint8_t> bytes = plain;
+  if (cipher_ != nullptr) {
+    sealed = cipher_->seal(channel, plain);
+    if (!sealed) return false;
+    bytes = *sealed;
+  }
   ENetPacket* packet =
       enet_packet_create(bytes.data(), bytes.size(), packet_flags(channel));
   if (packet == nullptr) return false;

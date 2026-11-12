@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -21,7 +22,9 @@ constexpr enet_uint32 kPeerTimeoutMs = 10'000;
 // ENet would otherwise put together packets of up to 32 MB from a peer's
 // fragments before we see them. No message is longer than its header and a
 // u16 body length, so anything bigger is thrown away by ENet unread.
-constexpr std::size_t kMaxPacketBytes = protocol::kHeaderSize + 0xFFFF;
+// The longest message, plus what sealing adds to it (traffic_crypto.hpp).
+constexpr std::size_t kMaxPacketBytes =
+    protocol::kHeaderSize + 0xFFFF + protocol::kSealOverheadBytes;
 // And at most this much a peer's received data may wait to be handled.
 constexpr std::size_t kMaxWaitingBytes = 1 << 20;
 
@@ -144,6 +147,7 @@ void EnetServer::send_small(ENetPeer* peer, const std::string& why) {
   }
   peers_.erase(id);
   path_marks_.erase(id);
+  ciphers_.erase(id);
   peer->data = nullptr;
   enet_peer_disconnect_now(peer, net::kDisconnectSmallDatagrams);
   session_.disconnected(id, now_us(), link);
@@ -181,8 +185,21 @@ void EnetServer::handle(const ENetEvent& event) {
       break;
     }
     case ENET_EVENT_TYPE_RECEIVE: {
+      const ConnectionId id = id_of(event.peer);
       std::span<const std::uint8_t> bytes(event.packet->data, event.packet->dataLength);
-      session_.received(id_of(event.peer), event.channelID, bytes, now_us());
+      if (auto cipher = ciphers_.find(id); cipher != ciphers_.end()) {
+        // Encrypted: only what opens with its key gets to the session.
+        std::vector<std::uint8_t> plain;
+        if (cipher->second->open(event.channelID, bytes, plain) != protocol::OpenError::none) {
+          ++unsealed_drops_;
+          enet_packet_destroy(event.packet);
+          break;
+        }
+        session_.received(id, event.channelID, plain, now_us());
+        enet_packet_destroy(event.packet);
+        break;
+      }
+      session_.received(id, event.channelID, bytes, now_us());
       enet_packet_destroy(event.packet);
       break;
     }
@@ -190,6 +207,7 @@ void EnetServer::handle(const ENetEvent& event) {
       ConnectionId id = id_of(event.peer);
       peers_.erase(id);
       path_marks_.erase(id);
+      ciphers_.erase(id);
       // As seen at the end of the last round: ENet has reset the peer by now.
       std::string link;
       if (auto seen = links_.find(id); seen != links_.end()) {
@@ -218,11 +236,23 @@ void EnetServer::apply_actions() {
     if (auto* send = std::get_if<SendAction>(&action)) {
       auto it = peers_.find(send->to);
       if (it == peers_.end()) continue;
+      const std::vector<std::uint8_t>* bytes = &send->bytes;
+      std::optional<std::vector<std::uint8_t>> sealed;
+      if (auto cipher = ciphers_.find(send->to); cipher != ciphers_.end()) {
+        sealed = cipher->second->seal(send->channel, send->bytes);
+        if (!sealed) continue;
+        bytes = &*sealed;
+      }
       ENetPacket* packet =
-          enet_packet_create(send->bytes.data(), send->bytes.size(), packet_flags(send->channel));
+          enet_packet_create(bytes->data(), bytes->size(), packet_flags(send->channel));
       if (packet != nullptr && enet_peer_send(it->second, send->channel, packet) != 0) {
         enet_packet_destroy(packet);
       }
+    } else if (auto* encrypt = std::get_if<EncryptAction>(&action)) {
+      if (peers_.count(encrypt->who) != 0) {
+        ciphers_[encrypt->who] = std::make_unique<protocol::TrafficCipher>(encrypt->keys);
+      }
+      encrypt->keys.wipe();
     } else if (auto* drop = std::get_if<DisconnectAction>(&action)) {
       auto it = peers_.find(drop->who);
       if (it == peers_.end()) continue;

@@ -37,6 +37,9 @@ Hello hello_from(const std::string& nickname) {
   h.game_build_id = kGameBuild;
   h.game_version = "1.1.1";
   h.nickname = nickname;
+  // Every game since protocol 10 offers a key share (traffic_crypto.hpp).
+  static const KeyPair game_keys = KeyPair::from_secret({7, 7, 7});
+  h.key_share = game_keys.share();
   return h;
 }
 
@@ -52,6 +55,8 @@ struct Harness {
   Session session;
   std::vector<Sent> sent;
   std::vector<ConnectionId> dropped;
+  // Connections the session switched to encrypted traffic (EncryptAction).
+  std::vector<ConnectionId> encrypted;
   // The REJOIN_TOKEN each connection was sent last (right after WELCOME).
   std::map<ConnectionId, RejoinTokenBytes> tokens;
   std::uint64_t now = 1'000'000;
@@ -73,8 +78,10 @@ struct Harness {
           continue;
         }
         sent.push_back({s->to, s->channel, m});
+      } else if (auto* d = std::get_if<DisconnectAction>(&a)) {
+        dropped.push_back(d->who);
       } else {
-        dropped.push_back(std::get<DisconnectAction>(a).who);
+        encrypted.push_back(std::get<EncryptAction>(a).who);
       }
     }
   }
@@ -265,7 +272,9 @@ TEST_CASE("a HELLO with a bad nickname is dropped and counted, never welcomed") 
   h.connect(1);
   // Encode a valid HELLO, then turn its nickname's 'L' into a control
   // character the codec refuses.
-  Bytes b = bytes_of(hello_from("Link"));
+  Hello hello = hello_from("Link");
+  hello.key_share.reset();  // so the nickname ends the packet
+  Bytes b = bytes_of(hello);
   b[b.size() - 4] = 0x01;
   h.receive_raw(1, b, kChannelSession);
   CHECK(h.sent.empty());
@@ -3698,4 +3707,83 @@ TEST_CASE("a gimmick event start goes to the others in the sender's scene only, 
   h.clear();
   h.receive(3, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
   CHECK(messages_to<DungeonEvent>(h, 3).empty());
+}
+
+// --- Encrypted traffic (docs/protocol.md "Encrypted traffic") ---
+
+TEST_CASE("encrypted traffic: a right proof switches the connection to its keys first") {
+  Harness h(with_password("hunter2"));
+  h.connect(1);
+  const Hello hello = hello_from("Link");
+  h.session.received(1, kChannelSession, bytes_of(hello), h.now);
+  // The challenge carries the server's key share.
+  std::vector<Action> actions = h.session.take_actions();
+  REQUIRE(actions.size() == 1);
+  const auto& challenge_send = std::get<SendAction>(actions[0]);
+  Message decoded;
+  REQUIRE(decode(challenge_send.bytes, decoded) == Error::none);
+  const auto& challenge = std::get<JoinChallenge>(decoded);
+  REQUIRE(challenge.key_share.has_value());
+
+  h.session.received(1, kChannelSession,
+                     bytes_of(JoinProof{join_proof("hunter2", challenge.nonce)}), h.now);
+  actions = h.session.take_actions();
+  REQUIRE(actions.size() >= 2);
+  // The keys come before anything else, so WELCOME already goes sealed.
+  const auto* encrypt = std::get_if<EncryptAction>(&actions[0]);
+  REQUIRE(encrypt != nullptr);
+  CHECK(encrypt->who == 1);
+  REQUIRE(decode(std::get<SendAction>(actions[1]).bytes, decoded) == Error::none);
+  CHECK(std::holds_alternative<Welcome>(decoded));
+
+  // The game makes the same keys from what it sent and got.
+  static const KeyPair game_keys = KeyPair::from_secret({7, 7, 7});
+  const auto game = derive_traffic_keys(game_keys, *challenge.key_share, "hunter2",
+                                        bytes_of(hello), challenge_send.bytes, false);
+  REQUIRE(game.has_value());
+  CHECK(game->send == encrypt->keys.receive);
+  CHECK(game->receive == encrypt->keys.send);
+  CHECK(game->send != game->receive);
+}
+
+TEST_CASE("encrypted traffic: a wrong proof gets no keys") {
+  Harness h(with_password("hunter2"));
+  const JoinNonce nonce = challenge_for(h, 1, "Link");
+  h.clear();
+  h.receive(1, JoinProof{join_proof("hunter3", nonce)}, kChannelSession);
+  CHECK(h.encrypted.empty());
+  const auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+}
+
+TEST_CASE("encrypted traffic: with a password, a HELLO without a key share is refused") {
+  Harness h(with_password("hunter2"));
+  h.connect(1);
+  h.clear();
+  Hello hello = hello_from("Link");
+  hello.key_share.reset();  // an older game, or someone took it out on the way
+  h.receive(1, hello, kChannelSession);
+  CHECK_FALSE(only_message_to<JoinChallenge>(h, 1).has_value());
+  const auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::wrong_protocol_version);
+  CHECK(h.session.stats().no_key_share == 1);
+  CHECK(h.session.player_count() == 0);
+}
+
+TEST_CASE("encrypted traffic: without a password the traffic stays plain") {
+  Harness h;
+  h.connect(1);
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);  // with a key share
+  CHECK(h.encrypted.empty());
+  CHECK(only_message_to<Welcome>(h, 1).has_value());
+  Hello plain = hello_from("Zelda");
+  plain.key_share.reset();
+  h.connect(2);
+  h.clear();
+  h.receive(2, plain, kChannelSession);
+  CHECK(only_message_to<Welcome>(h, 2).has_value());
+  CHECK(h.encrypted.empty());
 }

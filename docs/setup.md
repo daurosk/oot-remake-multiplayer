@@ -6,7 +6,7 @@ This page goes: [Hookshot](#play-on-hookshot-experimental) (new and experimental
 
 ## Play on Hookshot (experimental)
 
-Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), a native PC version of the game that the kit builds on your PC from your own copy. No emulator: the game runs as a normal Windows program. It is **experimental**: it is newer than the emulator kit and fewer players have tried it. It has the emulator kit's co-op features: the other players as Link, chat, the player list, the HUD, the item cheats, your own tunic colour and your own ocarina notes (see [Co-op on Hookshot](#co-op-on-hookshot)). Name tags over the other players do not show on Hookshot yet (fix planned for the next test). Hookshot players and emulator players are built to join the same session, on the same server (a mixed session; not yet checked). If you are not sure, play on the emulator ([Emulator setup for new players](#emulator-setup-for-new-players)). **The test releases after this one are Hookshot only**: this release still ships the emulator kit, and this page still documents it.
+Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), a native PC version of the game that the kit builds on your PC from your own copy. No emulator: the game runs as a normal Windows program. It is **experimental**: it is newer than the emulator kit and fewer players have tried it. It has the emulator kit's co-op features: the other players as Link, chat, the player list, the HUD, the item cheats, your own tunic colour and your own ocarina notes (see [Co-op on Hookshot](#co-op-on-hookshot)). Hookshot players and emulator players can join the same session, on the same server, and see each other as Link in their colours (a mixed session; checked by hand). If you are not sure, play on the emulator ([Emulator setup for new players](#emulator-setup-for-new-players)). **The test releases after this one are Hookshot only**: this release still ships the emulator kit, and this page still documents it.
 
 ### What you need for Hookshot
 
@@ -27,7 +27,7 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
    It ends with "Done." and the game's path, in the kit's `hookshot\game` folder (`-Out <folder>` puts it elsewhere).
 4. **First start, as the host.** Double-click `Host-Hookshot.bat`. It works like `Host.bat`: it asks for your player name, starts the co-op server, makes a new random join password, asks your router to open the port and copies an **invite code** for your friends (see [Playing over the internet](play-online.md#the-easy-way-hostbat-and-an-invite-code)). Then it starts the Hookshot game instead of the emulator.
 5. **Joining.** Your friends double-click `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator) and paste the invite code. Invite codes have not been tested on Hookshot yet; joining by address on the same network or a VPN works the same as on the emulator ([play-lan.md](play-lan.md)).
-6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. In the game the other players show as Link (name tags not yet on Hookshot), and **T** opens the chat box (see [Co-op on Hookshot](#co-op-on-hookshot)).
+6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. In the game the other players show as Link with their name tags, and **T** opens the chat box (see [Co-op on Hookshot](#co-op-on-hookshot)).
 
 **After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files and puppet pack into the game in a few minutes, and builds the whole game again only when the update moved to a newer Hookshot.
 
@@ -39,7 +39,7 @@ The same co-op code runs on Hookshot as in the emulator, drawn over the game's p
 
 | What | On Hookshot |
 |---|---|
-| The other players | As Link, with Navi, in their tunic colours. Name tags and edge arrows: not yet on Hookshot (fix planned for the next test) |
+| The other players | As Link, with Navi, a name tag and edge arrows, in their tunic colours (emulator and Hookshot players alike) |
 | Chat | **T** opens the chat box, Enter sends, Esc closes; chat lines show for 8 seconds. Chat commands such as `/teleport` work as on the emulator. `LICHII_COOP_CHAT_KEY` in `coop-options.ini` picks another key (a letter, a digit, F1 to F12, or `off`) if T is one of your game buttons |
 | Player list | Hold **F6** |
 | Co-op panel (ping, distances) | **F7** |

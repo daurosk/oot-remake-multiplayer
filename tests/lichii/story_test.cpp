@@ -72,6 +72,15 @@ TEST_CASE("story: Saria's goodbye, the owl, the Deku Tree and the forest-exit wa
         CHECK(std::string(f->name) == name);
     }
     CHECK(CoopStory::Find(host::flag_hash(kWall))->kind == CoopStory::Kind::world);
+    // Caleb's play-test (2026-11-12): Link's house door, the Deku Tree's mouth after
+    // its talk, the Kokiri Shop keeper's talks.
+    for (const char* name : {"HavePlayedEvent.Dm_Kokiri_0045", "HavePlayedEvent.Dm_Kokiri_0050",
+                             "KokiriForest_LinkHouseDoor_Open", "KokiriForest_Meet_DekuTree_OpenDekuTreeMouth",
+                             "HavePlayedEvent.Dm_Kokiri_0070", "HavePlayedEvent.Dm_Kokiri_0075",
+                             "HaveTalked.Npc_Kokiri_001_Shop_Child",
+                             "HaveTalked_Npc_Kokiri_001_Shop_Child_PresentDekuShield"}) {
+        CHECK_MESSAGE(CoopStory::Find(host::flag_hash(name)) != nullptr, name);
+    }
     CHECK(CoopStory::Find(host::flag_hash(kSaria))->kind == CoopStory::Kind::scene);
 }
 
@@ -100,14 +109,18 @@ TEST_CASE("story: what must stay each game's own is left out") {
                 "HavePlayedEvent.SageOfWater_KingZora_IsMelted_Ice", "SageOfWater_Icedelete"};
             CHECK_MESSAGE(kOverworld.contains(name), name);
         }
-        if (name.rfind("HaveTalked", 0) == 0) {  // a talk is one player's, the owl's is story
+        if (name.rfind("HaveTalked", 0) == 0 && f.kind != CoopStory::Kind::talk) {
+            // a talk is one player's, the owl's is story (and the few Caleb asked for)
             CHECK_MESSAGE(name.rfind("HaveTalked_Special.Npc_Kaepora_", 0) == 0, name);
         }
+        if (f.kind == CoopStory::Kind::talk) {  // only the Kokiri Shop keeper's (play-test 2026-11-12)
+            CHECK_MESSAGE(name.find("Npc_Kokiri_001_Shop_Child") != std::string::npos, name);
+        }
     }
-    // The opening of a new game: a fresh save still wakes up and walks out of its house.
+    // The opening of a new game: a fresh save still wakes up (leaving the house,
+    // 0045 and 0050, is shared since Caleb's play-test of 2026-11-12).
     for (const char* opening : {"HavePlayedEvent.Dm_Kokiri_0000", "HavePlayedEvent.Dm_Kokiri_0010",
-                                "HavePlayedEvent.Dm_Kokiri_0030", "HavePlayedEvent.Dm_Kokiri_0045",
-                                "HavePlayedEvent.Dm_Kokiri_0050"}) {
+                                "HavePlayedEvent.Dm_Kokiri_0030"}) {
         CHECK_MESSAGE(CoopStory::Find(host::flag_hash(opening)) == nullptr, opening);
     }
     // The Chamber of Sages: each game plays its own (time travel, the blue warps' scenes).

@@ -26,7 +26,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 ## Known issues
 
 - **Order puzzles split between players** do not count: the Deku Scrubs (2-3-1) only work when one player hits all three ([#149](https://github.com/daurosk/oot-remake-multiplayer/issues/149)).
-- **Bosses** target one player at a time; Gohma can freeze or turn wrong in one game ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)).
+- **Bosses** target one player at a time; Gohma can freeze or turn wrong in one game ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)). Since the gohma-sync change a boss keeps one owner for the whole fight (only a stun from the other player hands it over), so it goes after its owner's Link; a second player standing alone near it is not attacked until they stun it.
 - **Max hearts** can flip up and down after the host loads a save ([#186](https://github.com/daurosk/oot-remake-multiplayer/issues/186); being fixed).
 - **The Kakariko gate** opens for only one player, and Zelda's letter is gone from both ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)).
 - **The ocarina**: other players' songs are not heard, and the ocarina is not shown in their hands while they play ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)).

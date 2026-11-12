@@ -1,0 +1,43 @@
+# deku-torch (deku-dungeon-2, #176 #177; Caleb 2026-11-12: "The torch that burns cobwebs not synced").
+# InsideTheDekuTree room E: plate Obj_StepSwitch_A_05 ee4b6c88b0990d60 at -10.2 79.4 -9.0, switch torch
+# Obj_SwitchCandleStick_A_02 0c29e0a5d05f4426 at -12.9 79.4 -10.5, web Obj_InsideTheDekuTree_SpiderWeb_A_02
+# 0181f8a8ef2fd1d3 at -11.4 79.4 -11.0, the event's asker (…_Gimmick_CandleAndSpiderWeb) at -10.0 82.5 -9.5.
+# B steps on the plate; A stands 4 m off, facing torch and web, and only watches.
+# Expect:
+#  - B "our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others".
+#  - A "player 2 started the event ...CandleAndSpiderWeb in this scene", "starting the event ... here".
+#  - Shot "lit": the torch lit in A as in B (PASS -> the torch part of #176/#177). Shot "web": the web
+#    burning/gone in both, not vanished in A before B's fire reached it.
+#  - If A's torch stays dark although A's event played: keep both logs' "gimmick probe: 0c29e0a5d05f4426
+#    Obj_SwitchCandleStick_A_02" lines (the torch's lit words, for a torch-state share).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -14.5 79.6 -6.5
+wait 240
+mark placed
+toward -12.9 -10.5 6
+press ZL 10
+wait 600
+mark ready
+wait 360
+mark lit
+wait 600
+mark web
+wait 900
+mark late

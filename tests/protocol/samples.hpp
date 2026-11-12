@@ -126,6 +126,7 @@ inline std::vector<Message> every_message() {
   RejoinTokenBytes claim = nonce;
   claim[0] ^= 0x5A;
   all.push_back(RejoinClaim{claim});
+  all.push_back(DungeonEvent{1, "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"});
   all.push_back(PlayerJoined{4, "Darunia"});
   all.push_back(PlayerLeft{1, LeaveReason::timed_out});
   all.push_back(Ping{0xFFFF'FFFF'FFFF'FFFEull});

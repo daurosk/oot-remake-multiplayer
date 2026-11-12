@@ -1,10 +1,12 @@
 // Tests for starting another player's gimmick event here (lichii/hook/coop_live_events.cpp).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -248,4 +250,148 @@ TEST_CASE("live events: no scene read is the same visit, and an empty name is lo
     const auto notes = r.TakeNotes();
     REQUIRE(notes.size() == 1);
     CHECK(notes[0] == "live event with no name not asked");
+}
+
+// ---------------------------------------- deku-dungeon-2: DUNGEON_EVENT (issues 176, 196)
+
+namespace {
+
+constexpr std::uint64_t kSession = 0x9300000000;
+constexpr std::uint64_t kEvents = 0x9400000000;
+constexpr std::uint64_t kEvent = 0x9500000000;
+constexpr std::uint64_t kText = 0x9600000000;
+constexpr std::uint64_t kInner = 0x9700000000;
+const std::string kDeku = "InsideTheDekuTree";
+const std::string kPlatform = "InsideTheDekuTree_Gimmick_RoomD_PlatformUp";
+const std::string kLadderEvent = "InsideTheDekuTree_Gimmick_FallingLadder";
+const std::array<float, 3> kInRoomD{-22.6f, 122.6f, -3.8f};
+
+bool ReadMem(void* context, std::uint64_t address, void* out, std::size_t size) {
+    return static_cast<Mem*>(context)->Read(address, out, size);
+}
+
+void Zero(Mem& m, std::uint64_t at, std::size_t n) {
+    for (std::size_t i = 0; i < n; ++i) m.bytes[at + i] = 0;
+}
+
+void PutStr(Mem& m, std::uint64_t at, const std::string& s) {
+    m.Write(at, s.c_str(), s.size() + 1);
+}
+
+// A running event: the session with one event, both blocks readable and empty.
+Mem Running() {
+    Mem m;
+    m.Put64(kMain + addr::kEventStatePtr, kManager);
+    m.Put64(kManager + addr::kEventSession, kSession);
+    Zero(m, kSession, addr::kScanSession);
+    Zero(m, kEvent, addr::kScanEvent);
+    m.Put64(kSession + addr::kSessionEvents, kEvents);
+    m.Put32(kSession + addr::kSessionCount, 1);
+    m.Put32(kSession + addr::kSessionCurrent, 0);
+    m.Put64(kEvents, kEvent);
+    return m;
+}
+
+std::optional<std::string> Find(Mem& m, const std::vector<std::string_view>& names) {
+    return CoopLiveEvents::FindRunningEvent(&ReadMem, &m, kMain, names);
+}
+
+} // namespace
+
+TEST_CASE("live events: the Deku Tree's gimmick events with a place, each once") {
+    const auto deku = CoopLiveEvents::EventsIn(kDeku);
+    CHECK(std::count(deku.begin(), deku.end(), std::string_view(kPlatform)) == 1);
+    CHECK(std::count(deku.begin(), deku.end(), std::string_view(kLadderEvent)) == 1);
+    CHECK(CoopLiveEvents::EventsIn("NoSuchScene").empty());
+}
+
+TEST_CASE("live events: the running event's name is found in its event, its session or one step on") {
+    const std::vector<std::string_view> names{kLadderEvent, kPlatform};
+    // Not running: no session.
+    Mem none;
+    none.Put64(kMain + addr::kEventStatePtr, kManager);
+    none.Put64(kManager + addr::kEventSession, 0);
+    CHECK_FALSE(Find(none, names));
+    // Running, no name anywhere.
+    Mem m = Running();
+    CHECK_FALSE(Find(m, names));
+    // Inline in the event.
+    PutStr(m, kEvent + 0x40, kPlatform);
+    CHECK(Find(m, names) == kPlatform);
+    // A longer name that only starts with a known one is not it.
+    Mem longer = Running();
+    PutStr(longer, kEvent + 0x40, kPlatform + "_Extra");
+    CHECK_FALSE(Find(longer, names));
+    // A word of the event points to it.
+    Mem pointed = Running();
+    PutStr(pointed, kText, kLadderEvent);
+    pointed.Put64(kEvent + 0x18, kText);
+    CHECK(Find(pointed, names) == kLadderEvent);
+    // A word of the session points to it (the string ends right before unmapped memory).
+    Mem session = Running();
+    PutStr(session, kText, kPlatform);
+    session.Put64(kSession + 0x200, kText);
+    CHECK(Find(session, names) == kPlatform);
+    // One step on from the event: event word -> object -> string.
+    Mem inner = Running();
+    Zero(inner, kInner, addr::kScanInner);
+    PutStr(inner, kText, kPlatform);
+    inner.Put64(kInner + 0x28, kText);
+    inner.Put64(kEvent + 0x30, kInner);
+    CHECK(Find(inner, names) == kPlatform);
+    // No names asked: nothing read.
+    CHECK_FALSE(Find(m, {}));
+}
+
+TEST_CASE("live events: the start watch looks for a while after an event starts, one name per event") {
+    CoopLiveEvents::StartWatch w;
+    int looked = 0;
+    auto never = [&] { ++looked; return std::optional<std::string>{}; };
+    CHECK_FALSE(w.Frame(false, never));
+    CHECK(looked == 0);
+    for (int i = 0; i < 100; ++i) {
+        CHECK_FALSE(w.Frame(true, never));
+    }
+    CHECK(looked == CoopLiveEvents::StartWatch::kTries);  // then gives up for this event
+    w.Frame(false, never);
+    looked = 0;
+    int found = 0;
+    auto later = [&] { ++looked; return looked == 3 ? std::optional<std::string>(kPlatform) : std::nullopt; };
+    for (int i = 0; i < 50; ++i) {
+        if (w.Frame(true, later)) ++found;
+    }
+    CHECK(found == 1);
+    CHECK(looked == 3);
+}
+
+TEST_CASE("live events: another player's start is offered at once near its place, our own never again") {
+    // Issue 176 / Caleb's play-test: the timed platforms came in B only after A's
+    // cutscene ended (the played flag comes then). The start now comes first.
+    CoopLiveEvents::Decider d;
+    d.Started(kPlatform, kDeku);
+    CHECK_FALSE(d.Next({}, kDeku, true, kInRoomD));                  // our own event runs: waits
+    CHECK_FALSE(d.Next({}, kDeku, false, std::array<float, 3>{0, 0, 0}));  // far from it: waits
+    CHECK(d.Next({}, kDeku, false, kInRoomD) == kPlatform);
+    // Its played flag comes later: not asked twice in the visit.
+    CHECK_FALSE(d.Next({kPlatform}, kDeku, false, kInRoomD));
+    // Our own game started it: neither another player's start nor its flag asks it.
+    CoopLiveEvents::Decider own;
+    own.Ours(kPlatform, kDeku);
+    own.Started(kPlatform, kDeku);
+    CHECK_FALSE(own.Next({kPlatform}, kDeku, false, kInRoomD));
+    // Our own start after theirs came: theirs is dropped.
+    CoopLiveEvents::Decider both;
+    both.Started(kPlatform, kDeku);
+    both.Ours(kPlatform, kDeku);
+    CHECK_FALSE(both.Next({}, kDeku, false, kInRoomD));
+    // A start for another scene is forgotten when our scene is read.
+    CoopLiveEvents::Decider other;
+    other.Started(kPlatform, kDeku);
+    CHECK_FALSE(other.Next({}, "KokiriForest", false, kInRoomD));
+    CHECK_FALSE(other.Next({}, kDeku, false, kInRoomD));
+    // Empty names or scenes are ignored.
+    CoopLiveEvents::Decider empty;
+    empty.Started("", kDeku);
+    empty.Started(kPlatform, "");
+    CHECK_FALSE(empty.Next({}, kDeku, false, kInRoomD));
 }

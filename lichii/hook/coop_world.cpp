@@ -159,6 +159,13 @@ bool IsShifter(std::string_view name) {
            name == "Obj_ShadowTemple_FallingFloor_A_03";
 }
 
+bool IsGimmickMover(std::string_view name) {
+    // deku-dungeon-2 (issue 196): the Deku Tree basement's moving floor, moved
+    // by the room's GroundControlActor_ResidentMoveTo (its actor place
+    // changes, unlike the Deku lifts, which only animate: OnOffAnim).
+    return name.starts_with("Obj_Deku_MoveFloor_");
+}
+
 bool IsFallTaken(std::string_view name) {
     // A taken (keyed) piece whose fall or break plays in the game that did it:
     // the falling floors, and the visible parts of a web (the web itself is a
@@ -169,7 +176,7 @@ bool IsFallTaken(std::string_view name) {
 
 bool IsWorldObject(std::string_view name) {
     return IsBreakable(name) || IsMovable(name) || IsFaller(name) || IsLyingKey(name) ||
-           IsGoldToken(name) || IsShifter(name);
+           IsGoldToken(name) || IsShifter(name) || IsGimmickMover(name);
 }
 
 // A shifter whose AI would put it back up (hammer drop floors, pillars and
@@ -840,8 +847,13 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
     }
     // A shifter with an AI is held where it was put for good: its AI would
     // put it back up (it was not hit here).
+    // A gimmick mover (issue 196) is held at another game's place while that
+    // place is away from where the floor starts (the room's own control would
+    // put ours back); a place back home lets go.
+    const bool away = o.mover && r != nullptr && r->place &&
+                      Distance(r->place->position, o.first_position) > kMoverAwayM;
     const bool settling =
-        !o.ours && o.settle_us != 0 && (o.hold || now_us - o.settle_us < kSettleUs);
+        !o.ours && o.settle_us != 0 && (o.hold || away || now_us - o.settle_us < kSettleUs);
     if (!o.ours && (remote || settling)) {
         if (!o.following && !o.follow_from && !o.breakable && IsPushBlock(o.name)) {
             o.follow_from = o.rest;  // where our copy rested before (issue 147)
@@ -900,9 +912,13 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         // A shifter moves only by its own AI, hit here: the game that shows it
         // moved sends it, from across the room too (the slingshot room's eye
         // is shot from the chest ledge, 17 m from the ladder).
-        const bool near =
-            player && Distance(*player, o.position) <= (o.shifter ? kShifterReachM : kMoverReachM);
-        const bool shifted = Distance(o.position, o.rest) > (o.breakable ? kLooseStartM : kBlockStartM);
+        const bool near = player && Distance(*player, o.position) <=
+                                        (o.shifter || o.mover ? kShifterReachM : kMoverReachM);
+        bool shifted = Distance(o.position, o.rest) > (o.breakable ? kLooseStartM : kBlockStartM);
+        if (o.mover && Distance(o.position, o.first_position) <= kMoverAwayM &&
+            Distance(o.rest, o.first_position) <= kMoverAwayM) {
+            shifted = false;  // bobbing near its start (its wave loop): nobody's move
+        }
         // A shifter may only turn (the Deku Tree's ladder tips over on its foot).
         const bool turned = o.shifter && Turn(o.rest_rotation, o.rotation) > kShiftTurnRad;
         if (!near || !Finite(o.position) || (!shifted && !turned)) {
@@ -941,7 +957,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         v.time_us = now_us;
         v.position = o.position;
         v.rotation = UnitQuat(o.rotation);
-        if (!o.shifter && !o.roller && player && Distance(*player, o.position) <= 1.5f) {
+        if (!o.shifter && !o.roller && !o.mover && player && Distance(*player, o.position) <= 1.5f) {
             v.flags |= proto::world_move::carried;
         }
         out.send.emplace_back(std::move(v));
@@ -1071,8 +1087,9 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         const bool token = IsGoldToken(s.name);
         const bool key = IsLyingKey(s.name) || token;
         const bool shifter = IsShifter(s.name);
+        const bool mover = IsGimmickMover(s.name);
         const bool breakable = IsBreakable(s.name) || faller || key;
-        if (!breakable && !shifter && !IsMovable(s.name)) {
+        if (!breakable && !shifter && !mover && !IsMovable(s.name)) {
             continue;
         }
         now_seen.insert(s.address);
@@ -1101,6 +1118,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                 o.count = KeyCountOf(scene_).value_or("");
             }
             o.shifter = shifter;
+            o.mover = mover;
             o.roller = IsRoller(s.name);
             o.hold = shifter && HoldsPlace(s.name);
             o.life = life;

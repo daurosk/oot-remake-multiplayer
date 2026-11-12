@@ -2239,6 +2239,19 @@ TEST_CASE("another player's fight flags do not start a fight") {
   CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));
 }
 
+SessionConfig hit_handover_config() {  // the boss rule before gohma-sync
+  SessionConfig config = quiet_config();
+  config.boss_hit_handover = true;
+  config.boss_near_hold_us = 4'000'000;
+  return config;
+}
+
+SessionConfig near_config() {  // the near-player rule, off by default since gohma-sync
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 4'000'000;
+  return config;
+}
+
 TEST_CASE("a boss stays in its fight for 60 s") {
   SessionConfig config = quiet_config();
   config.boss_near_hold_us = 0;  // the near-player rule below is its own case
@@ -2256,7 +2269,7 @@ TEST_CASE("a boss stays in its fight for 60 s") {
 }
 
 TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s") {
-  OwnerHarness h;
+  OwnerHarness h(hit_handover_config());
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
   h.stand(1, 4);  // both in the boss room, a few metres apart
   h.stand(2, 6);
@@ -2283,7 +2296,7 @@ TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s")
 }
 
 TEST_CASE("issue 150: two players hitting in turn do not bounce the boss") {
-  OwnerHarness h;
+  OwnerHarness h(hit_handover_config());
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
   h.stand(1, 4);
   h.stand(2, 6);
@@ -2311,7 +2324,7 @@ TEST_CASE("issue 150: two players hitting in turn do not bounce the boss") {
 }
 
 TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies keep the distance rule") {
-  OwnerHarness h;
+  OwnerHarness h(hit_handover_config());
   h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
   h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}, {placed(8), placed(7), 0}}},
@@ -2330,7 +2343,7 @@ TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies ke
   CHECK(plain.asks() == 0);
   CHECK(plain.session.stats().boss_to_hitter == 0);
 
-  SessionConfig off = quiet_config();  // the switch
+  SessionConfig off = hit_handover_config();  // the switch
   off.boss_hitter_cooldown_us = 0;
   OwnerHarness h0(off);
   h0.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
@@ -2342,7 +2355,7 @@ TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies ke
 }
 
 TEST_CASE("issue 150: a boss in its fight goes to the player clearly nearer it, held 4 s") {
-  OwnerHarness h;
+  OwnerHarness h(near_config());
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
   REQUIRE(h.session.object_in_fight(placed(7), h.now));
@@ -2373,7 +2386,7 @@ TEST_CASE("issue 150: after a near-player move the boss stays 8 s, then needs th
     h.clear();
   };
   {  // the players swap places: not back before 8 s + 4 s held
-    OwnerHarness h;
+    OwnerHarness h(near_config());
     handed(h);
     h.stand(1, 1);
     h.stand(2, 12);
@@ -2385,7 +2398,7 @@ TEST_CASE("issue 150: after a near-player move the boss stays 8 s, then needs th
     CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
   }
   {  // player 1 comes back, but only 3 m nearer than the new owner: it stays
-    OwnerHarness h;
+    OwnerHarness h(near_config());
     handed(h);
     h.stand(1, 1);
     h.stand(2, 4);
@@ -2397,7 +2410,7 @@ TEST_CASE("issue 150: after a near-player move the boss stays 8 s, then needs th
 
 TEST_CASE("issue 150: no near-player move when both stand close, one is too far, or the owner hits it") {
   {  // 2 is nearer, but not by 4 m
-    OwnerHarness h;
+    OwnerHarness h(near_config());
     h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
     h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
     h.stand(1, 6);
@@ -2406,7 +2419,7 @@ TEST_CASE("issue 150: no near-player move when both stand close, one is too far,
     CHECK(h.asks() == 0);
   }
   {  // 2 is over 15 m from it
-    OwnerHarness h;
+    OwnerHarness h(near_config());
     h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
     h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
     h.stand(1, 40);
@@ -2415,7 +2428,7 @@ TEST_CASE("issue 150: no near-player move when both stand close, one is too far,
     CHECK(h.asks() == 0);
   }
   {  // the owner keeps hitting it (its life falls in its samples)
-    OwnerHarness h;
+    OwnerHarness h(near_config());
     h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
     h.stand(1, 12);
     h.stand(2, 3);
@@ -2428,7 +2441,7 @@ TEST_CASE("issue 150: no near-player move when both stand close, one is too far,
     CHECK(h.asks() == 0);
   }
   {  // the switch
-    SessionConfig off = quiet_config();
+    SessionConfig off = near_config();
     off.boss_near_hold_us = 0;
     OwnerHarness h(off);
     h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
@@ -2438,6 +2451,34 @@ TEST_CASE("issue 150: no near-player move when both stand close, one is too far,
     h.run(10 * kSecond);
     CHECK(h.asks() == 0);
   }
+}
+
+TEST_CASE("gohma-sync: by default a boss hit that takes life stays with the owner, a stun hands it over") {
+  OwnerHarness h;  // the defaults
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  h.stand(1, 12);  // the owner by the wall, player 2 at the boss: no near-player move
+  h.stand(2, 3);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 2, 1, {}}, kChannelOwnership);
+  // The hit goes to the owner, who takes it off its boss; no ask.
+  REQUIRE(messages_to<Damage>(h, 1).size() == 1);
+  CHECK(messages_to<Damage>(h, 1)[0].amount == 2);
+  CHECK(h.asks() == 0);
+  h.run(30 * kSecond);  // hits every few seconds, player 2 standing nearer all along
+  for (int i = 0; i < 5; ++i) {
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+    h.run(3 * kSecond);
+  }
+  CHECK(h.asks() == 0);
+  CHECK(h.session.stats().boss_to_hitter == 0);
+  CHECK(h.session.stats().boss_to_near == 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  // Player 2's seed stuns its copy (DAMAGE 0): that one hands the boss over.
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_hitter == 1);
 }
 
 TEST_CASE("issue 150: a DAMAGE of 0 (a stun in the hitter's game) asks for the boss, harmless to the owner") {
@@ -3629,4 +3670,32 @@ TEST_CASE("issue 151: a hooked fish waits for its owner: a late list, a pause") 
   }
   REQUIRE(h.asks() == 1);
   CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
+}
+
+TEST_CASE("a gimmick event start goes to the others in the sender's scene only, never kept (deku-dungeon-2)") {
+  ObjectHarness h;
+  h.receive(1, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
+  h.receive(2, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
+  h.receive(3, sample_in("KokiriForest"), kChannelPlayerSamples);
+  h.clear();
+  DungeonEvent e;
+  e.player_number = 0;  // ours: the server writes the sender
+  e.scene = "InsideTheDekuTree";
+  e.name = "InsideTheDekuTree_Gimmick_RoomD_PlatformUp";
+  h.receive(1, e, kChannelSession);
+  const auto got = messages_to<DungeonEvent>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().player_number == 1);
+  CHECK(got.front().name == e.name);
+  CHECK(messages_to<DungeonEvent>(h, 1).empty());
+  CHECK(messages_to<DungeonEvent>(h, 3).empty());
+  // From a scene the sender is not in (late): dropped.
+  h.clear();
+  e.scene = "KokiriForest";
+  h.receive(1, e, kChannelSession);
+  CHECK(messages_to<DungeonEvent>(h, 3).empty());
+  // Not kept: a player entering later gets nothing.
+  h.clear();
+  h.receive(3, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
+  CHECK(messages_to<DungeonEvent>(h, 3).empty());
 }

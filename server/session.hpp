@@ -159,6 +159,13 @@ struct SessionConfig {
   // and only the owner's game runs the boss right (the other copies follow
   // its pose), and the boss then turns on that player. 0: off.
   std::uint64_t boss_hitter_cooldown_us = 8'000'000;
+  // gohma-sync (issue 150, Caleb's play-test 2026-11-12): only a stun (a
+  // DAMAGE of 0: the stun is in the hitter's game alone) hands a boss over.
+  // A hit that takes life is passed to the owner and the boss stays: every
+  // hand-over ran the new owner's AI from a copy whose phase, eye guard and
+  // height never matched the owner's, which is what the players saw. true:
+  // a hit that takes life hands it over too, as before.
+  bool boss_hit_handover = false;
   // ... and only when its owner has not hit it itself for this long (a life
   // drop in the owner's samples with no DAMAGE passed on just before), so
   // two players hitting in turn do not bounce it (each hand-over can jump a
@@ -170,10 +177,11 @@ struct SessionConfig {
   // its fight (out of one the plain distance rule applies): then the boss
   // turns on the near one. Not while its owner hits it
   // (boss_owner_hit_hold_us) and not within boss_hitter_cooldown_us of the
-  // last change. boss_near_hold_us 0: off.
+  // last change. boss_near_hold_us 0: off, the default since gohma-sync
+  // (issue 150: each move jumps the boss's phase; 4'000'000 was the old one).
   float boss_near_m = 15.0f;
   float boss_near_margin_m = 4.0f;
-  std::uint64_t boss_near_hold_us = 4'000'000;
+  std::uint64_t boss_near_hold_us = 0;
   // An owner paused or dead this long (or loading at all) loses its objects
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;

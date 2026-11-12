@@ -643,6 +643,18 @@ Error check_object_state(const ObjectState& s) {
       return Error::bad_value;
     }
   }
+  if (s.slots) {
+    if (s.slots->size() > kMaxObjectSlots) return Error::bad_value;
+    std::uint32_t seen = 0;
+    for (const SlotAnimation& a : *s.slots) {
+      if (a.slot < 1 || a.slot > kMaxSlotIndex || (seen & (1u << a.slot))) return Error::bad_value;
+      seen |= 1u << a.slot;
+      COOP_TRY(check_string(a.animation.name, kMaxAnimationChars));
+      if (!std::isfinite(a.animation.frame) || !std::isfinite(a.animation.rate)) {
+        return Error::bad_value;
+      }
+    }
+  }
   return Error::none;
 }
 
@@ -675,6 +687,17 @@ void write_object_state(const ObjectState& s, Writer& w) {
   }
   if (s.fuse) component(ObjectComponent::fuse, [&] { w.f32(*s.fuse); });
   if (s.state) component(ObjectComponent::state, [&] { w.u8(*s.state); });
+  if (s.slots) {
+    component(ObjectComponent::slots, [&] {
+      w.u8(static_cast<std::uint8_t>(s.slots->size()));
+      for (const SlotAnimation& a : *s.slots) {
+        w.u8(a.slot);
+        w.str(a.animation.name);
+        w.f32(a.animation.frame);
+        w.f32(a.animation.rate);
+      }
+    });
+  }
 }
 
 bool has_duplicate_id(const std::vector<ObjectPresence>& objects) {
@@ -1308,6 +1331,26 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
     case ObjectComponent::state:
       COOP_READ(c.u8(s.state.emplace()));
       return Error::none;
+    case ObjectComponent::slots: {
+      std::uint8_t count = 0;
+      COOP_READ(c.u8(count));
+      if (count > kMaxObjectSlots) return Error::bad_value;
+      auto& slots = s.slots.emplace();
+      slots.resize(count);
+      std::uint32_t seen = 0;
+      for (SlotAnimation& a : slots) {
+        COOP_READ(c.u8(a.slot));
+        if (a.slot < 1 || a.slot > kMaxSlotIndex || (seen & (1u << a.slot))) return Error::bad_value;
+        seen |= 1u << a.slot;
+        COOP_TRY(c.str(a.animation.name, kMaxAnimationChars));
+        COOP_READ(c.f32(a.animation.frame));
+        COOP_READ(c.f32(a.animation.rate));
+        if (!std::isfinite(a.animation.frame) || !std::isfinite(a.animation.rate)) {
+          return Error::bad_value;
+        }
+      }
+      return Error::none;
+    }
   }
   known = false;
   return Error::none;
@@ -1663,6 +1706,31 @@ Error decode_body(Reader& r, WorldHit& m) {
   return Error::none;
 }
 
+// DUNGEON_EVENT: u8 player, scene, name.
+Error check_dungeon_event(const DungeonEvent& m) {
+  if (!valid_player_or_self(m.player_number) || m.scene.empty() || m.name.empty()) {
+    return Error::bad_value;
+  }
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  return check_string(m.name, kMaxEventNameChars);
+}
+
+Error encode_body(const DungeonEvent& m, Writer& w) {
+  COOP_TRY(check_dungeon_event(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.str(m.name);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DungeonEvent& m) {
+  m = DungeonEvent{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_TRY(r.str(m.name, kMaxEventNameChars));
+  return check_dungeon_event(m);
+}
+
 // SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
 Error check_sign_cut(const SignCut& m) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
@@ -2004,6 +2072,7 @@ MessageType type_of(const Message& message) {
       MessageType::save_ask,    MessageType::save_part,   MessageType::player_life,
       MessageType::pvp_mode,    MessageType::pvp_hit,   MessageType::pvp_hurt,
       MessageType::fish_lure,   MessageType::rejoin_token, MessageType::rejoin_claim,
+      MessageType::dungeon_event,
       MessageType::player_ride,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
@@ -2074,6 +2143,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::world_hit:
     case MessageType::boss_room:
     case MessageType::sign_cut:
+    case MessageType::dungeon_event:
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
@@ -2164,6 +2234,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::drop_ask:
     case MessageType::boss_room:
     case MessageType::sign_cut:
+    case MessageType::dungeon_event:
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
@@ -2201,6 +2272,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, SignCut> || std::is_same_v<T, SaveAsk> ||
                       std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife> ||
                       std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt> ||
+                      std::is_same_v<T, DungeonEvent> ||
                       std::is_same_v<T, PlayerRide>) {
           field = &m.player_number;
         }
@@ -2316,6 +2388,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::world_place: return decode_as<WorldPlace>(body, out);
     case MessageType::world_hit: return decode_as<WorldHit>(body, out);
     case MessageType::sign_cut: return decode_as<SignCut>(body, out);
+    case MessageType::dungeon_event: return decode_as<DungeonEvent>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

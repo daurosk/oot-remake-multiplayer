@@ -35,6 +35,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
 #include "coop_runtime.h"
@@ -204,7 +205,8 @@ namespace CoopHookshot {
 namespace {
 
 // F6 and F7 (CoopDraw::Keys), only while one of this process's windows has
-// the keyboard. Windows only: on Linux the list and panel stay hidden.
+// the keyboard. On Linux through the table's key_down (the SDL window's
+// keys, none while it does not have the keyboard).
 bool KeyDown(int vk) {
 #ifdef _WIN32
     DWORD pid = 0;
@@ -214,8 +216,7 @@ bool KeyDown(int vk) {
     }
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #else
-    (void)vk;
-    return false;
+    return HasKeyDown(g_api) && g_api->key_down(static_cast<std::uint32_t>(vk)) != 0;
 #endif
 }
 
@@ -230,21 +231,82 @@ unsigned g_box_lead = 0;  // a double-byte code page's lead byte, waiting for it
 // The item cheats panel (coop_cheats_panel.h), under the same mutex.
 CoopCheatsPanel::Panel g_cheats;
 
+// The game look (coop_draw.h Look): the HUD pack's font and heart pictures,
+// loaded through hos_coop_draw2's font and image calls on the render thread
+// the first time it draws. Off for good when there is no pack, a file will
+// not load, or Hookshot is older (it calls hos_coop_draw only).
+enum : int { kLookNotYet = 0, kLookOn = 1, kLookOff = 2 };
+std::atomic<int> g_look_state{kLookNotYet};
+CoopDraw::Look g_look;  // the render thread's
+
+std::string Utf8(const std::filesystem::path& p) {
+    const auto u = p.u8string();
+    return std::string(u.begin(), u.end());
+}
+
+void LoadLook(const HosCoopDraw& d) {
+    const auto dir = CoopHud::Folder();  // it logs why not
+    if (!dir) {
+        g_look_state = kLookOff;
+        return;
+    }
+    CoopDraw::Look l;
+    l.regular = d.font(d.user, Utf8(*dir / "font-regular.otf").c_str());
+    l.medium = d.font(d.user, Utf8(*dir / "font-medium.otf").c_str());
+    if (l.medium == 0) {
+        l.medium = l.regular;
+    }
+    std::string missing = l.regular == 0 ? "font-regular.otf" : "";
+    for (int q = 0; q < 5; ++q) {
+        const std::string name = "heart-" + std::to_string(q) + ".png";
+        const auto img = CoopPng::Load(*dir / name);
+        l.hearts[q] = img ? d.image(d.user, img->width, img->height, img->rgba.data()) : 0;
+        if (l.hearts[q] == 0 && missing.empty()) {
+            missing = name;
+        }
+    }
+    if (!l.On()) {
+        LOG_WARNING(Core, "coop: hud: {} in {} could not be loaded; plain look", missing, dir->string());
+        g_look_state = kLookOff;
+        return;
+    }
+    LOG_INFO(Core, "coop: hud: game look on Hookshot: the game font and heart pictures loaded");
+    g_look = l;
+    g_look_state = kLookOn;
+}
+
+// The game look may be used: not known to be off, and the pack is there.
+bool LookPossible() {
+    return g_look_state.load() != kLookOff && CoopHud::Folder().has_value();
+}
+
 std::vector<CoopCheatsPanel::Row> CheatRows() {
     static const std::vector<std::string> items = CoopCheats::Items();
     return CoopCheatsPanel::Rows(g_cheats.filter(), items);
 }
 
+// The flag Enter or a click chose, given (under g_box_mutex).
+void GiveChosen(const std::vector<CoopCheatsPanel::Row>& rows) {
+    if (const auto i = g_cheats.TakeGive(); i && *i < rows.size()) {
+        CoopCheats::Give(rows[*i].flag);
+        LOG_INFO(Core, "coop: cheats: give {}", rows[*i].flag);
+    }
+}
+
+// The picture's size at the last draw: where the mouse is on it.
+std::atomic<float> g_drawn_w{0.0f};
+std::atomic<float> g_drawn_h{0.0f};
+
 bool AsyncDown(int vk) {
 #ifdef _WIN32
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #else
-    (void)vk;
-    return false;
+    return HasKeyDown(g_api) && g_api->key_down(static_cast<std::uint32_t>(vk)) != 0;
 #endif
 }
 
 // A WM_CHAR byte of the ANSI window as Unicode; 0 while a lead byte waits.
+// On Linux the window hands code points already (SDL's typed text).
 std::uint32_t FromCodePage(unsigned byte) {
 #ifdef _WIN32
     char b[2];
@@ -263,7 +325,7 @@ std::uint32_t FromCodePage(unsigned byte) {
     }
     return w[0];
 #else
-    return byte < 0x80 ? byte : 0xFFFD;
+    return byte <= 0x10FFFF && (byte < 0xD800 || byte > 0xDFFF) ? byte : 0xFFFD;
 #endif
 }
 
@@ -302,9 +364,30 @@ CoopDraw::Scene DrawScene() {
         list = g_keys.list || always;
         panel = g_keys.panel;
     }
-    const auto rows = CoopHook::PlayerList();
-    static const bool hud_off = Env("LICHII_COOP_HUD") == "0";
-    for (const auto& row : hud_off ? std::vector<CoopHook::PlayerRow>{} : rows) {
+    auto rows = CoopHook::PlayerList();
+    // The HUD blocks, players' colours and place names are the game look's
+    // (as the co-op window: LICHII_COOP_HUD=0 or no pack, the plain look).
+    const bool game = LookPossible();
+    if (game) {
+        std::uint8_t self = 0;
+        for (const auto& row : rows) {
+            if (row.self) {
+                self = row.number;
+            }
+        }
+        for (std::uint8_t n = 1; n <= 4; ++n) {  // a tag with no name
+            s.colours["P" + std::to_string(n)] = CoopDraw::Lifted(CoopPuppet::NameColor(n, self));
+        }
+        if (self != 0) {
+            s.colours["you"] = CoopDraw::Lifted(CoopPuppet::NameColor(self, self));
+        }
+        for (const auto& row : rows) {
+            if (row.number != 0 && !row.name.empty()) {
+                s.colours[row.name] = CoopDraw::Lifted(CoopPuppet::NameColor(row.number, self));
+            }
+        }
+    }
+    for (const auto& row : game ? rows : std::vector<CoopHook::PlayerRow>{}) {
         if (row.self) {
             continue;
         }
@@ -320,6 +403,13 @@ CoopDraw::Scene DrawScene() {
         s.hud.push_back(std::move(b));
     }
     if (list) {
+        if (game) {
+            for (auto& row : rows) {
+                if (row.scene && !row.scene->empty()) {
+                    row.scene = CoopHud::PlaceName(*row.scene);
+                }
+            }
+        }
         s.players = rows;
     }
     if (panel) {
@@ -337,13 +427,24 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
     if (g_cheats.open() || (!g_box.open() && CoopCheats::On())) {
         const auto rows = CheatRows();
         if (g_cheats.Key(vk, repeat, rows.size())) {
-            if (const auto i = g_cheats.TakeGive(); i && *i < rows.size()) {
-                CoopCheats::Give(rows[*i].flag);
-                LOG_INFO(Core, "coop: cheats: give {}", rows[*i].flag);
-            }
+            GiveChosen(rows);
             return true;
         }
     }
+    static const bool keyed = [] {  // LICHII_COOP_CHAT_KEY: the key that opens the box (T unless set)
+        const std::string v = Env("LICHII_COOP_CHAT_KEY");
+        if (v.empty()) {
+            return true;
+        }
+        if (const auto k = CoopChatBox::ParseOpenKey(v)) {
+            g_box.SetOpenKey(*k);
+            LOG_INFO(Core, "coop: chat box key: {}", *k == 0 ? std::string("off") : v);
+        } else {
+            LOG_WARNING(Core, "coop: LICHII_COOP_CHAT_KEY={} is not a letter, a digit, F1 to F12 or off; T opens the chat box", v);
+        }
+        return true;
+    }();
+    (void)keyed;
     const bool taken = g_box.Key(vk, repeat);
     if (auto text = g_box.TakeSend()) {
         const bool ok = CoopHook::SendChat(*text);
@@ -371,6 +472,31 @@ bool TypeChar(std::uint32_t byte) {
         return g_cheats.Char(cp, CoopChatBox::Utf8(cp));
     }
     return g_box.Char(cp);
+}
+
+bool Mouse(float fx, float fy, int event) {
+    if (!g_on || event < HOS_COOP_MOUSE_MOVE || event > HOS_COOP_MOUSE_WHEEL_DOWN) {
+        return false;
+    }
+    std::lock_guard lock(g_box_mutex);
+    if (!g_cheats.open()) {
+        return false;
+    }
+    const auto rows = CheatRows();
+    const float w = g_drawn_w.load(), h = g_drawn_h.load();
+    std::optional<std::size_t> row;
+    if (w > 0 && h > 0) {
+        CoopDraw::CheatsView v;  // its layout only: how many rows, whether a result line shows
+        v.rows.resize(rows.size());
+        v.result = CoopCheats::LastResult();
+        row = CoopDraw::CheatsRowAt(w, h, v, fx * w, fy * h);
+    }
+    static constexpr CoopCheatsPanel::Mouse kWhat[] = {CoopCheatsPanel::Mouse::kMove, CoopCheatsPanel::Mouse::kLeft,
+                                                      CoopCheatsPanel::Mouse::kWheelUp,
+                                                      CoopCheatsPanel::Mouse::kWheelDown};
+    const bool taken = g_cheats.Pointer(kWhat[event], row, rows.size());
+    GiveChosen(rows);
+    return taken;
 }
 
 bool KeysTaken() {
@@ -461,6 +587,27 @@ void Stop() {
     }
 }
 
+void NoGameLook() {
+    g_look_state = kLookOff;
+}
+
+void NoteDrawn(const HosCoopDraw& d) {
+    g_drawn_w = d.width;
+    g_drawn_h = d.height;
+}
+
+void DrawWithLook(const HosCoopDraw& d) {
+    NoteDrawn(d);
+    if (g_look_state.load() == kLookNotYet) {
+        if (d.font && d.use_font && d.image && d.draw_image) {
+            LoadLook(d);
+        } else {
+            g_look_state = kLookOff;
+        }
+    }
+    CoopDraw::Draw(d, DrawScene(), g_look_state.load() == kLookOn ? g_look : CoopDraw::Look{});
+}
+
 }  // namespace CoopHookshot
 
 extern "C" {
@@ -486,6 +633,10 @@ COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
 COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
     return CoopHookshot::KeysTaken() ? 1 : 0;
 }
+// The mouse (hos_coop_api.h): the cheats panel's clicks.
+COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
+    return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
+}
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
     return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
@@ -494,10 +645,33 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
     if (g_on && d != nullptr) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{}); plain look: "
+                     "this Hookshot has no hos_coop_draw2 (build it again with our patch for the game look)",
+                     static_cast<int>(d->width), static_cast<int>(d->height));
+        }
+        CoopHookshot::NoGameLook();
+        CoopHookshot::NoteDrawn(*d);
+        // An older Hookshot's table ends at text_width: the rest stays empty.
+        HosCoopDraw t{};
+        t.width = d->width;
+        t.height = d->height;
+        t.user = d->user;
+        t.rect = d->rect;
+        t.circle = d->circle;
+        t.triangle = d->triangle;
+        t.text = d->text;
+        t.text_width = d->text_width;
+        CoopDraw::Draw(t, CoopHookshot::DrawScene());
+    }
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
+    if (g_on && d != nullptr) {
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",
                      static_cast<int>(d->width), static_cast<int>(d->height));
         }
-        CoopDraw::Draw(*d, CoopHookshot::DrawScene());
+        CoopHookshot::DrawWithLook(*d);
     }
 }
 }

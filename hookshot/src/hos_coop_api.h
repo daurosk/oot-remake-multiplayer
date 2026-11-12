@@ -47,6 +47,10 @@ typedef struct HosCoopApi {
        (Switch NpadButton bits, as nn::hid::GetNpadStates hands them, note keys included while the game waits for a
        note), any thread. */
     uint64_t (*pad_buttons)(void);
+    /* Added with Linux's keys (check size covers it): 1 while the key (a Windows virtual-key code) is held in the
+       game's window, any thread: GetAsyncKeyState's on Windows, the SDL window's keys on Linux (as nn_hid.c reads
+       them: nothing while the window does not have the keyboard). */
+    int (*key_down)(uint32_t vk);
 } HosCoopApi;
 
 /* The module's exports (extern "C"). */
@@ -57,10 +61,16 @@ typedef uint32_t (*hos_coop_hold_fn)(uint64_t component, uint32_t bits);   /* th
 typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
 /* Typing, added after the first version (optional exports; an older module has none): Hookshot's window (display.c)
    offers each key press (virtual-key code, repeat 1 for an auto-repeat) and each character (WM_CHAR of the ANSI window:
-   a byte of the active code page) to the module first; 1 = taken, Hookshot does nothing more with it. While
+   a byte of the active code page; on Linux, host/posix/display_sdl.c: SDL's typed text as Unicode code points) to the
+   module first; 1 = taken, Hookshot does nothing more with it. While
    hos_coop_keys_taken says 1, the game reads no keys or mouse buttons (nn_hid.c key), as while the Insert menu is open. */
 typedef int (*hos_coop_key_fn)(uint32_t vk, int repeat);   /* the window's thread */
 typedef int (*hos_coop_char_fn)(uint32_t ch);              /* the window's thread */
 typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often: cheap */
+/* The mouse, added with the cheats panel's clicks (an optional export): the cursor as a fraction of the window's client
+   area (0 to 1 across and down), offered first while neither Hookshot's menu nor a game menu has the mouse; 1 = taken,
+   Hookshot does nothing more with it (a click taken does not capture the mouse for the camera). */
+enum { HOS_COOP_MOUSE_MOVE = 0, HOS_COOP_MOUSE_LEFT = 1, HOS_COOP_MOUSE_WHEEL_UP = 2, HOS_COOP_MOUSE_WHEEL_DOWN = 3 };
+typedef int (*hos_coop_mouse_fn)(float fx, float fy, int event);   /* the window's thread */
 
 #endif

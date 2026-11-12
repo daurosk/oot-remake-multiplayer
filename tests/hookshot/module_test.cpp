@@ -166,6 +166,13 @@ TEST_CASE("hookshot: own Ocarina notes read the pad word Hookshot gave the game 
     api.pad_buttons = TestPad;
     CHECK(CoopHookshot::HasPadButtons(&api));
     CHECK_FALSE(CoopHookshot::HasPadButtons(nullptr));
+    // key_down (Linux's keys) is after it: an older table has none.
+    CHECK_FALSE(CoopHookshot::HasKeyDown(&api));
+    api.key_down = [](std::uint32_t vk) { return vk == 0x75 ? 1 : 0; };
+    CHECK(CoopHookshot::HasKeyDown(&api));
+    api.size = static_cast<std::uint32_t>(offsetof(HosCoopApi, key_down));
+    CHECK_FALSE(CoopHookshot::HasKeyDown(&api));
+    CHECK(CoopHookshot::HasPadButtons(&api));
     // The patch keeps the word nn::hid gives the game and hands it over.
     const std::string patch = Patch();
     CHECK(patch.find("+volatile uint64_t hos_coop_pad;") != std::string::npos);
@@ -211,6 +218,12 @@ TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void)") != std::string::npos);
     CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d)") != std::string::npos);
+    // The game look: the renderer prefers hos_coop_draw2 and hands it the font and picture calls; the module has it.
+    CHECK(vk.find("\"hos_coop_draw2\"") != std::string::npos);
+    CHECK(vk.find("font_load, use_font, image, draw_image}") != std::string::npos);
+    CHECK(vk.find("AddFontFromFileTTF") != std::string::npos);
+    CHECK(vk.find("ImGui::RegisterUserTexture(t)") != std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d)") != std::string::npos);
 }
 
 TEST_CASE("hookshot: the chat box gets Hookshot's keys first, and the game none while it types") {
@@ -224,3 +237,29 @@ TEST_CASE("hookshot: the chat box gets Hookshot's keys first, and the game none 
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch)") != std::string::npos);
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void)") != std::string::npos);
 }
+
+TEST_CASE("hookshot: the mouse reaches the cheats panel first, a click it takes never turns the camera") {
+    const std::string patch = Patch();
+    CHECK(patch.find("+    coop_mouse = (hos_coop_mouse_fn)(void *)GetProcAddress(m, \"hos_coop_mouse\");") != std::string::npos);
+    CHECK(patch.find("+        if (coop_mouse(w, (POINT){(short)LOWORD(lp), (short)HIWORD(lp)}, 1)) return 0;") != std::string::npos);
+    CHECK(patch.find("+        if (coop_mouse(w, at, GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 2 : 3)) return 0;") != std::string::npos);
+    CHECK(patch.find("+            if (mouse_captured && hos_coop_keys_taken()) mouse_capture(w, 0);") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event)") != std::string::npos);
+}
+
+TEST_CASE("hookshot: on Linux the window's keys, typed text and mouse reach co-op too (display_sdl.c)") {
+    const std::string patch = Patch();
+    // SDL's text events (both SDLs' layouts) and text input started on the window.
+    CHECK(patch.find("+        case 0x303: {   /* (SDL_TextInputEvent: the text's pointer at 24") != std::string::npos);
+    CHECK(patch.find("+        memcpy(e->text, raw + 12, sizeof e->text - 1);") != std::string::npos);
+    CHECK(patch.find("+    hos_sdl_text_input(window);") != std::string::npos);
+    // Keys by virtual-key code first, text as code points, the mouse as on Windows.
+    CHECK(patch.find("+                    if (cvk && hos_coop_key(cvk, e.repeat)) {") != std::string::npos);
+    CHECK(patch.find("+                    coop_text(e.text);") != std::string::npos);
+    CHECK(patch.find("+                    else if (e.button == 1 && !mouse_captured && coop_mouse(e.x, e.y, 1)) {}") !=
+          std::string::npos);
+    // The key state for F6, F7 and the closing keys.
+    CHECK(patch.find("+    api.key_down = bridge_key_down;") != std::string::npos);
+}
+

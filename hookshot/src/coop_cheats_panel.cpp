@@ -99,6 +99,35 @@ std::optional<std::size_t> Panel::TakeGive() {
     return out;
 }
 
+bool Panel::Pointer(Mouse what, std::optional<std::size_t> row, std::size_t rows) {
+    if (!open_) {
+        return false;
+    }
+    if (row && *row >= rows) {
+        row.reset();
+    }
+    switch (what) {
+        case Mouse::kMove:
+            if (row) {
+                selected_ = *row;
+            }
+            return false;
+        case Mouse::kLeft:
+            if (row) {
+                selected_ = *row;
+                give_ = *row;
+            }
+            return true;
+        case Mouse::kWheelUp:
+            selected_ = selected_ > 0 ? selected_ - 1 : 0;
+            return true;
+        case Mouse::kWheelDown:
+            selected_ = rows == 0 ? 0 : std::min(selected_ + 1, rows - 1);
+            return true;
+    }
+    return false;
+}
+
 bool Panel::KeysTaken(bool closing_key_down) {
     if (open_) {
         return true;

@@ -19,10 +19,18 @@ typedef struct HosCoopDraw {
     void (*triangle)(void *user, float x0, float y0, float x1, float y1, float x2, float y2, uint32_t rgba);   /* filled */
     void (*text)(void *user, float x, float y, float px, uint32_t rgba, const char *utf8);   /* x, y: the top left */
     float (*text_width)(void *user, float px, const char *utf8);
+    /* Since the game look (hos_coop_draw2 below): the HUD pack's font and heart pictures. Only a module's hos_coop_draw2
+       is handed these fields; hos_coop_draw gets the table above them alone (an older Hookshot fills nothing more). */
+    int (*font)(void *user, const char *utf8_path);   /* a TTF/OTF file loaded once (the same path again: the same id); its id, 0 on failure */
+    void (*use_font)(void *user, int id);             /* text and text_width draw with it from now on; 0: Hookshot's own */
+    int (*image)(void *user, int w, int h, const uint8_t *rgba);   /* a picture (w*h*4 bytes, rows top down, straight alpha) copied in; its id, 0 on failure */
+    void (*draw_image)(void *user, int id, float x0, float y0, float x1, float y1, uint32_t tint);   /* the whole picture into the rectangle */
 } HosCoopDraw;
 
-/* The module's exports (extern "C"), both optional (an older module has neither: nothing is drawn). */
+/* The module's exports (extern "C"), all optional (an older module has none: nothing is drawn). Hookshot calls
+   hos_coop_draw2 when the module has it, else hos_coop_draw. */
 typedef int (*hos_coop_draw_wanted_fn)(void);             /* 1: something to draw now (Hookshot then makes an ImGui frame) */
-typedef void (*hos_coop_draw_fn)(const HosCoopDraw *d);   /* draws it */
+typedef void (*hos_coop_draw_fn)(const HosCoopDraw *d);   /* draws it (the table up to text_width) */
+typedef void (*hos_coop_draw2_fn)(const HosCoopDraw *d);  /* draws it (the whole table) */
 
 #endif

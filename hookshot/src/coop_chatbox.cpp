@@ -45,12 +45,40 @@ std::string Utf8(std::uint32_t cp) {
     return out;
 }
 
+std::optional<std::uint32_t> ParseOpenKey(std::string_view text) {
+    std::string t;
+    for (const char c : text) {
+        if (c != ' ') {
+            t += static_cast<char>(c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c);
+        }
+    }
+    if (t == "OFF") {
+        return 0u;
+    }
+    if (t.size() == 1 && ((t[0] >= 'A' && t[0] <= 'Z') || (t[0] >= '0' && t[0] <= '9'))) {
+        return static_cast<std::uint32_t>(t[0]);  // the letters' and digits' virtual-key codes are their ASCII
+    }
+    if (t.size() >= 2 && t.size() <= 3 && t[0] == 'F') {
+        int n = 0;
+        for (std::size_t i = 1; i < t.size(); ++i) {
+            if (t[i] < '0' || t[i] > '9') {
+                return std::nullopt;
+            }
+            n = n * 10 + (t[i] - '0');
+        }
+        if (n >= 1 && n <= 12) {
+            return static_cast<std::uint32_t>(0x70 + n - 1);  // VK_F1..VK_F12
+        }
+    }
+    return std::nullopt;
+}
+
 bool Box::Key(std::uint32_t vk, bool repeat) {
     if (!open_) {
-        if (vk == kKeyOpen && !repeat) {
+        if (open_key_ != 0 && vk == open_key_ && !repeat) {
             open_ = true;
             failed_ = false;
-            skip_open_char_ = true;
+            skip_open_char_ = vk < 0x70;  // a letter or a digit types itself too; F keys type nothing
             wait_release_ = false;
             text_.clear();
             return true;
@@ -85,7 +113,8 @@ bool Box::Char(std::uint32_t cp) {
     }
     if (skip_open_char_) {
         skip_open_char_ = false;
-        if (cp == 't' || cp == 'T') {
+        const std::uint32_t lower = open_key_ >= 'A' && open_key_ <= 'Z' ? open_key_ + ('a' - 'A') : open_key_;
+        if (cp == open_key_ || cp == lower) {
             return true;
         }
     }

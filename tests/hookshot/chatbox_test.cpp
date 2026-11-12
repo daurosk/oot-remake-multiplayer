@@ -108,3 +108,35 @@ TEST_CASE("chat box: UTF-8") {
     CHECK(CoopChatBox::Utf8(0xD800).empty());
     CHECK(CoopChatBox::Utf8(0x110000).empty());
 }
+
+TEST_CASE("chat box: LICHII_COOP_CHAT_KEY picks the key that opens it (T may be a game button)") {
+    using CoopChatBox::ParseOpenKey;
+    CHECK(ParseOpenKey("y") == std::optional<std::uint32_t>('Y'));
+    CHECK(ParseOpenKey(" 7 ") == std::optional<std::uint32_t>('7'));
+    CHECK(ParseOpenKey("f9") == std::optional<std::uint32_t>(0x78));
+    CHECK(ParseOpenKey("F12") == std::optional<std::uint32_t>(0x7B));
+    CHECK(ParseOpenKey("Off") == std::optional<std::uint32_t>(0));
+    CHECK_FALSE(ParseOpenKey("F13"));
+    CHECK_FALSE(ParseOpenKey("ctrl+t"));
+    CHECK_FALSE(ParseOpenKey(""));
+    CoopChatBox::Box box;
+    CHECK(box.open_key() == 'T');
+    box.SetOpenKey('Y');
+    CHECK_FALSE(box.Key('T', false));  // T is the game's again
+    CHECK(box.Key('Y', false));
+    CHECK(box.open());
+    CHECK(box.Char('y'));  // the Y's own character: not typed
+    CHECK(box.text().empty());
+    CHECK(box.Char('t'));
+    CHECK(box.text() == "t");
+    box.Key(0x1B, false);
+    box.SetOpenKey(0x78);  // F9 types nothing: the next character is typed
+    CHECK(box.Key(0x78, false));
+    CHECK(box.Char('a'));
+    CHECK(box.text() == "a");
+    box.Key(0x1B, false);
+    box.SetOpenKey(0);  // off
+    CHECK_FALSE(box.Key('T', false));
+    CHECK_FALSE(box.Key(0, false));
+    CHECK_FALSE(box.open());
+}

@@ -2,6 +2,7 @@
 // The item cheats panel on Hookshot (hookshot/src/coop_cheats_panel.h).
 #include <doctest/doctest.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,4 +76,30 @@ TEST_CASE("cheats panel: F8 opens it, keys choose and give, Esc closes") {
     CHECK(p.filter().empty());
     p.Key(kKeyToggle, false, 6);
     CHECK_FALSE(p.open());
+}
+
+TEST_CASE("cheats panel: the mouse chooses the row under it, a click gives it, the wheel moves") {
+    using CoopCheatsPanel::Mouse;
+    Panel p;
+    CHECK_FALSE(p.Pointer(Mouse::kLeft, 2, 6));  // closed: the click is the game's (the camera)
+    p.Key(kKeyToggle, false, 6);
+    CHECK_FALSE(p.Pointer(Mouse::kMove, 3, 6));  // a move is never taken
+    CHECK(p.selected() == 3);
+    CHECK_FALSE(p.Pointer(Mouse::kMove, std::nullopt, 6));
+    CHECK(p.selected() == 3);  // off the rows: the choice stays
+    CHECK(p.Pointer(Mouse::kWheelDown, std::nullopt, 6));
+    CHECK(p.selected() == 4);
+    CHECK(p.Pointer(Mouse::kWheelUp, std::nullopt, 6));
+    CHECK(p.Pointer(Mouse::kWheelUp, std::nullopt, 6));
+    CHECK(p.selected() == 2);
+    CHECK(p.Pointer(Mouse::kLeft, 1, 6));
+    CHECK(p.selected() == 1);
+    const auto give = p.TakeGive();
+    REQUIRE(give);
+    CHECK(*give == 1);
+    CHECK(p.Pointer(Mouse::kLeft, std::nullopt, 6));  // beside the rows: taken, nothing given
+    CHECK_FALSE(p.TakeGive());
+    CHECK(p.Pointer(Mouse::kLeft, 9, 6));  // a row that is not there
+    CHECK_FALSE(p.TakeGive());
+    CHECK(p.open());
 }

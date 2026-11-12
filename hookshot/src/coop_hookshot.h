@@ -33,6 +33,13 @@ void Stop();
 // built from an older patch gives this much, and co-op still runs on it.
 inline constexpr std::size_t kFirstApiSize = offsetof(HosCoopApi, pad_buttons);
 
+// The table has key_down (keys held, read on Linux: F6, F7 and the closing
+// keys' release; Windows asks its own GetAsyncKeyState).
+inline bool HasKeyDown(const HosCoopApi* api) {
+    return api != nullptr && api->size >= offsetof(HosCoopApi, key_down) + sizeof(api->key_down) &&
+           api->key_down != nullptr;
+}
+
 // The table has pad_buttons (player 1's buttons word, Ocarina notes sent).
 inline bool HasPadButtons(const HosCoopApi* api) {
     return api != nullptr &&
@@ -63,6 +70,19 @@ inline FrameWork WorkAt(int site, bool present_seen) {
 // What hos_coop_draw shows now (chat, name tags; the player list while F6
 // is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
 CoopDraw::Scene DrawScene();
+
+// hos_coop_draw2: the scene drawn, in the game look when the HUD pack's font
+// and heart pictures load through the table's calls (the first call loads
+// them; coop_draw.h, "The game look"). NoGameLook: hos_coop_draw was called
+// instead (an older Hookshot), so the plain look for good.
+void DrawWithLook(const HosCoopDraw& d);
+void NoGameLook();
+// The picture's size at this draw (the mouse's fractions are of it).
+void NoteDrawn(const HosCoopDraw& d);
+
+// The mouse (hos_coop_mouse): the cheats panel's rows. fx, fy: the cursor as
+// a fraction of the window; event: HOS_COOP_MOUSE_*. True when taken.
+bool Mouse(float fx, float fy, int event);
 
 // Typing (hos_coop_key / hos_coop_char / hos_coop_keys_taken): the chat box.
 bool TypeKey(std::uint32_t vk, bool repeat);

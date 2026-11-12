@@ -35,12 +35,12 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
 
 ### What is not on Hookshot yet
 
-- **You don't see the other players yet:** showing them as Link crashes Hookshot in this version, so it is switched off (a fix is planned). Emulator players do see Hookshot players as Link. (`LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns the Links back on, but the game then crashes.)
+- **You don't see the other players yet:** showing them as Link crashes Hookshot in this version, so it is switched off (a fix is planned). Emulator players do see Hookshot players as Link (seen in our logs). (`LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns the Links back on, but the game then crashes.)
 - **No co-op window:** no status panel, no chat box (Enter) or chat lines, no player list (Tab), no markers, no co-op HUD (the other players' hearts under yours) and no cheats window, so no chat commands such as `/teleport`. The log says what the panel would.
 - **Your own ocarina notes are not sent:** the others do not hear a Hookshot player's ocarina.
 - **Tunic colours only partly:** your own Link stays green (your colour is not put on it), players whose colour is green show as the plain puppet, and `LICHII_COOP_TUNICS=0` does nothing on Hookshot (#202; the emulator kit does all of these).
 - **No old-pack hint:** `Host-Hookshot.bat` and `Join-Hookshot.bat` say when the game has no puppet pack, but not when it is an old one made before the tunic colours; rerun `Build-Hookshot-Coop.bat` after an update.
-- What has been checked on Hookshot in our two-game tests: <!-- FILL from the integrator's Hookshot proofs 3-5 (reports/integrate-p11.md) --> the rest of co-op is the same code as on the emulator but not yet checked there.
+- What has been checked on Hookshot in our two-game tests: the co-op module loads and the games connect to the server, with no crash; the rest of co-op is the same code as on the emulator but not yet checked there.
 
 ### Hookshot troubleshooting
 

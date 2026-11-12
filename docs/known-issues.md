@@ -28,10 +28,9 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Known issues
 
-<!-- Phase B: final PASS/FAIL table in reports/integrate-p11.md (bigrun3 + bigrun4). Items that PASS move to Works; items that FAIL come here. -->
 - **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); the ocarina in their hand was seen in our test logs.
 - **Your own adult Link's colour up close**: the back of the hat and the skirt show green when the camera is close (from a distance they are in your colour). Child Link is fully in your colour, for you and for the others; as others see your adult Link, a touch of green can stay at the back of the hat ([#202](https://github.com/daurosk/oot-remake-multiplayer/issues/202)).
-- **Masks and boots** reach the other games but have not been seen on the other Link's screen yet ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)). Tell us if you see them. <!-- DROP if the gear checks PASS -->
+- **Masks and boots** reach the other games but have not been seen on the other Link's screen yet ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)). Tell us if you see them.
 - **The other Links' sounds** are in the puppet pack, but our tests have no sound: tell us whether their footsteps, sword and voice can be heard ([#131](https://github.com/daurosk/oot-remake-multiplayer/issues/131)).
 - **Bosses**: Gohma is built to fight both players with its stun and larvae in step, but our tests have no save from just before Gohma, so it is unchecked; if it still targets one player or turns wrong, tell us ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)).
 - **Deku Tree falling ladder**: shooting the eye that drops the ladder in the slingshot room is built to be shared, but our tests used a save where the ladder had already fallen, so that path is unchecked ([#129](https://github.com/daurosk/oot-remake-multiplayer/issues/129)).
@@ -66,8 +65,8 @@ These are fixed or built in, but no two-game test has reached them yet, or reach
 - Test releases after this one are Hookshot only; this release still has the emulator kit.
 - Co-op also runs on [Hookshot](https://github.com/NotRexed/Hookshot), a native PC build of the game that each player builds from their own game with the kit's `Build-Hookshot-Coop.bat` ([setup.md, Hookshot](setup.md#play-on-hookshot-experimental)). Hookshot and emulator players can join the same game; Hookshot players don't see the others yet.
 - It needs Vulkan 1.3 with mesh shaders: NVIDIA RTX 20 or newer, AMD RX 6000 or newer; Intel is mostly untested.
-- Checked on Hookshot in our tests: <!-- FILL from the integrator's Hookshot proofs 3-5 --> everything else is the same co-op code as on the emulator, not yet checked on Hookshot.
-- **On Hookshot you don't see the other players yet**: showing them as Link crashes Hookshot in this version, so it is switched off (a fix is planned; `LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns it back on, but the game then crashes). Emulator players do see Hookshot players as Link.
+- Checked on Hookshot in our tests: the co-op module loads and the games connect to the server, with no crash; everything else is the same co-op code as on the emulator, not yet checked on Hookshot.
+- **On Hookshot you don't see the other players yet**: showing them as Link crashes Hookshot in this version, so it is switched off (a fix is planned; `LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns it back on, but the game then crashes). Emulator players do see Hookshot players as Link (seen in our logs).
 - Not on Hookshot yet: the co-op window (panel, chat box and chat lines, player list, markers, the co-op HUD's hearts, the cheats window; so no chat commands); a Hookshot player's own ocarina notes are not sent, so others do not hear them ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); tunic colours only partly: your own Link stays green, green players show as the plain puppet and `LICHII_COOP_TUNICS=0` is ignored ([#202](https://github.com/daurosk/oot-remake-multiplayer/issues/202)); no warning about an old puppet pack (a missing one is named); `collect-logs.cmd` does not pick up `hookshot_log.txt`; invite codes are not yet tested there.
 - Hookshot itself is young: it can crash outside Kokiri Forest, lose the graphics device early on, or crash on some AMD cards (Hookshot's own issues). Use the emulator kit for longer sessions.
 

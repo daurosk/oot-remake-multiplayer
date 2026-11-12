@@ -263,9 +263,10 @@ std::optional<std::string> NearestStart(std::string_view scene, const Vec& to) {
 
 Trip::Actions Trip::Start(std::uint8_t number, std::string name, const Local& local, std::uint64_t now_us) {
     Actions a;
-    if (phase_ == Phase::travelling) {
+    if (requested_) {
         a.cancel_scene = true;  // the old one's scene change is no longer wanted
         a.restore_start = !loaded_;
+        requested_ = false;
     }
     phase_ = Phase::idle;
     if (!local.scene || !local.position) {
@@ -343,6 +344,7 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     taken_ = false;
     seen_request_ = false;
     loaded_ = false;
+    requested_ = true;
     a.scene = scene_;
     a.start = start_;
     a.start_event = kStartSceneEvent;  // no event runs here (Accepted refuses during one)
@@ -393,8 +395,9 @@ Trip::Actions Trip::Left(std::uint8_t number) {
     if (phase_ == Phase::idle || (number != 0 && number != player_)) {
         return a;
     }
-    a.cancel_scene = phase_ == Phase::travelling;
+    a.cancel_scene = requested_;
     a.restore_start = a.cancel_scene && !loaded_;
+    requested_ = false;
     a.lines.push_back(number == 0 ? "teleport: stopped: the connection was lost"
                                   : "teleport: stopped: " + name_ + " left");
     phase_ = Phase::idle;
@@ -403,18 +406,31 @@ Trip::Actions Trip::Left(std::uint8_t number) {
 
 Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
     Actions a;
+    // A trip that ended (settle given up, left) in the middle of a load with
+    // our request still there: emptied on the first tick outside a load, or a
+    // request the game keeps taking would load the scene again and again.
+    if (phase_ == Phase::idle && requested_ && !local.loading_banc && local.scene) {
+        a.cancel_scene = true;
+        requested_ = false;
+        return a;
+    }
     if (phase_ == Phase::travelling) {
         if (local.scene && *local.scene == scene_) {
             phase_ = Phase::settling;
             settle_us_ = 0;
-            // Arrived (by the request, or on foot): the request is cleared, so
-            // the next talk or sign here does not load the scene again.
-            a.cancel_scene = true;
+            // Arrived (by the request, or on foot). The request is NOT emptied
+            // now (#197): the game's arrival step reads it after the load, plays
+            // the arrival event and then empties it itself (autotest warp:
+            // banc and start emptied by the game when that event ended). Emptied
+            // on this first frame, the picture stayed black and Link held. If
+            // the game leaves it, it is emptied once Link has settled, so a
+            // later talk or sign here does not load the scene again.
         } else if (now_us - since_us_ > kGiveUpUs && !local.loading_banc && local.scene) {
             // Never in the middle of a load: that load reads the request.
             phase_ = Phase::idle;
             a.cancel_scene = true;
             a.restore_start = !loaded_;
+            requested_ = false;
             a.lines.push_back("teleport: the game did not change scene in time; stopped");
             return a;
         } else {
@@ -456,6 +472,10 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         }
     }
     if (phase_ == Phase::settling) {
+        // The game emptied our request itself (after its arrival event).
+        if (requested_ && local.reserved_banc && local.reserved_banc->empty()) {
+            requested_ = false;
+        }
         if (!local.scene || !local.position || local.event || local.loading_banc) {
             settle_us_ = 0;  // still loading, or the arrival's own event
         } else if (*local.scene != scene_) {
@@ -470,6 +490,12 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         if (phase_ == Phase::settling && now_us - since_us_ > 2 * kGiveUpUs) {
             phase_ = Phase::idle;
             a.lines.push_back("teleport: stopped: the new scene did not settle");
+        }
+        // Settled, left, or given up with our request still there: emptied
+        // now (the start name is that scene's own after the load: kept).
+        if (phase_ != Phase::settling && requested_ && !local.loading_banc) {
+            a.cancel_scene = true;
+            requested_ = false;
         }
     }
     return a;

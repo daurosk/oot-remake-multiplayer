@@ -92,9 +92,14 @@ bool AskScene(Core::System& system, std::uint64_t main, std::string_view scene, 
 void ClearScene(Core::System& system, std::uint64_t main, bool all, bool restore,
                 const std::optional<std::string>& saved) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
-    const bool off = coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, false);
+    // Written only when it is on (a kit before #156 set it): set_bool queues
+    // the write in the game's own flag queue, and this runs on the emulator's
+    // thread while the game loads and queues its own writes (#197: nothing of
+    // ours goes into that queue during a load). Off: nothing to write.
+    const bool on = coop::host::GameFlags(memory).get_bool(kFreePlayBancChange).value_or(false);
+    const bool off = !on || coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, false);
     if (!all) {
-        LOG_INFO(Core, "coop: teleport: scene change taken: switch {}", off ? "off" : "NOT off");
+        LOG_INFO(Core, "coop: teleport: scene change taken: switch {}", !on ? "was off" : off ? "off" : "NOT off");
         return;
     }
     const bool banc = coop::host::GameFlags::set_string64_now(memory, RequestFlags().banc, "");

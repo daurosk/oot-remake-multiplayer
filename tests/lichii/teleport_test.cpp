@@ -222,14 +222,18 @@ TEST_CASE("teleport: another scene changes scene, then asks again and moves") {
     CHECK_FALSE(a.cancel_scene);
     CHECK_FALSE(trip.Tick(loading, 2 * kS + kS / 2).release);
     Local arrived = At("KakarikoVillage_Child", 0, 0, 0);
+    arrived.reserved_banc = "KakarikoVillage_Child";  // the game still holds it
     arrived.event = true;
-    CHECK(trip.Tick(arrived, 3 * kS).cancel_scene);  // the request is cleared on arrival
+    // #197: not emptied on arrival; the game's arrival step reads it.
+    CHECK_FALSE(trip.Tick(arrived, 3 * kS).cancel_scene);
     CHECK(trip.phase() == Trip::Phase::settling);
     arrived.event = false;
     CHECK_FALSE(trip.Tick(arrived, 4 * kS).ask);  // the settle starts
-    CHECK_FALSE(trip.Tick(arrived, 5 * kS).ask);
+    CHECK_FALSE(trip.Tick(arrived, 5 * kS).cancel_scene);
     a = trip.Tick(arrived, 4 * kS + Trip::kSettleUs);
     REQUIRE(a.ask);
+    CHECK(a.cancel_scene);  // settled and the game left it: emptied now
+    CHECK_FALSE(a.restore_start);
     CHECK(*a.ask == 2);
     CHECK(trip.phase() == Trip::Phase::asking_again);
     // Where Saria stands now.
@@ -414,17 +418,20 @@ TEST_CASE("teleport: a taken scene change is not asked again while it loads") {
     CHECK(a.release);
     CHECK_FALSE(a.scene);
     CHECK_FALSE(trip.Tick(here, 9 * kS).scene);  // still loading: never asked again
-    // Arrived: the request and the switch are cleared, even while the load
-    // flag is still up; the settle waits for it.
+    // Arrived while the load flag is still up: nothing is cleared yet (#197:
+    // the game's arrival reads the request); the settle waits for the load.
     Local arrived = At("HyruleField_Child", 0, 0, 0);
     arrived.loading_banc = true;
+    arrived.reserved_banc = "HyruleField_Child";
     a = trip.Tick(arrived, 10 * kS);
-    CHECK(a.cancel_scene);
+    CHECK_FALSE(a.cancel_scene);
     CHECK(trip.phase() == Trip::Phase::settling);
     CHECK_FALSE(trip.Tick(arrived, 10 * kS + 2 * Trip::kSettleUs).ask);
     arrived.loading_banc = false;
     CHECK_FALSE(trip.Tick(arrived, 13 * kS).ask);
-    CHECK(trip.Tick(arrived, 13 * kS + Trip::kSettleUs).ask);
+    a = trip.Tick(arrived, 13 * kS + Trip::kSettleUs);
+    CHECK(a.ask);
+    CHECK(a.cancel_scene);  // settled, the game left it: emptied now
 }
 
 TEST_CASE("teleport: the game emptying the request counts as taken, a load elsewhere asks again") {
@@ -467,10 +474,14 @@ TEST_CASE("teleport: a trip that never arrives puts the old start name back, an 
     a = trip.Start(3, "Sam", here, 2 * kS);
     CHECK(a.cancel_scene);
     CHECK(a.restore_start);
-    // Arrived: the request is cleared, the start name (that scene's own) kept.
+    // Arrived and settled: the request is cleared, the start name (that
+    // scene's own) kept.
     trip.Start(2, "Saria", here, 0);
     REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
-    a = trip.Tick(At("Graveyard_Child", 0, 0, 0), 2 * kS);
+    CHECK_FALSE(trip.Tick(At("Graveyard_Child", 0, 0, 0), 2 * kS).cancel_scene);
+    CHECK_FALSE(trip.Tick(At("Graveyard_Child", 0, 0, 0), 3 * kS).cancel_scene);
+    a = trip.Tick(At("Graveyard_Child", 0, 0, 0), 3 * kS + Trip::kSettleUs);
+    CHECK(a.ask);
     CHECK(a.cancel_scene);
     CHECK_FALSE(a.restore_start);
     // Not travelling: leaving clears nothing.
@@ -578,4 +589,83 @@ TEST_CASE("teleport: the not-moved line says entrance only after a scene change 
     const auto a = trip.Accepted(2, t, here, 1000);
     REQUIRE(a.move);
     CHECK_FALSE(a.after_load);
+}
+
+TEST_CASE("teleport: the request stays for the game's arrival, which empties it itself (issue 197)") {
+    const Local here = At("KokiriForest_Child", 0, 0, 0);
+    Trip trip;
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("InsideTheDekuTree", -33.2f, 109.8f, 10.4f), here, kS).scene);
+    Local loading;
+    loading.loading_banc = true;
+    CHECK(trip.Tick(loading, 2 * kS).release);
+    // The first frame of the new scene: the request is still the game's to read.
+    Local arrived = At("InsideTheDekuTree", 0.2f, 101.0f, 14.7f);
+    arrived.reserved_banc = "InsideTheDekuTree";
+    auto a = trip.Tick(arrived, 3 * kS);
+    CHECK_FALSE(a.cancel_scene);
+    CHECK(trip.phase() == Trip::Phase::settling);
+    // The arrival event runs, then the game empties the request (banc "").
+    arrived.event = true;
+    CHECK_FALSE(trip.Tick(arrived, 3 * kS + kS / 2).cancel_scene);
+    arrived.event = false;
+    arrived.reserved_banc = "";
+    CHECK_FALSE(trip.Tick(arrived, 4 * kS).cancel_scene);
+    // Settled: asks again, and writes nothing (the game emptied it).
+    a = trip.Tick(arrived, 4 * kS + Trip::kSettleUs);
+    CHECK(a.ask);
+    CHECK_FALSE(a.cancel_scene);
+    // Nothing left to clear afterwards either.
+    CHECK_FALSE(trip.Left(2).cancel_scene);
+}
+
+TEST_CASE("teleport: a request still there is emptied when leaving or a new /teleport while settling (issue 197)") {
+    const Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    Local arrived = At("Graveyard_Child", 0, 0, 0);
+    arrived.reserved_banc = "Graveyard_Child";
+    // Left the scene while settling.
+    Trip trip;
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
+    CHECK_FALSE(trip.Tick(arrived, 2 * kS).cancel_scene);
+    auto a = trip.Tick(At("KakarikoVillage_Child", 0, 0, 0), 3 * kS);
+    CHECK(trip.phase() == Trip::Phase::idle);
+    CHECK(a.cancel_scene);
+    // The other player left while settling.
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
+    CHECK_FALSE(trip.Tick(arrived, 2 * kS).cancel_scene);
+    CHECK(trip.Left(2).cancel_scene);
+    // A new /teleport while settling.
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
+    CHECK_FALSE(trip.Tick(arrived, 2 * kS).cancel_scene);
+    CHECK(trip.Start(3, "Sam", arrived, 3 * kS).cancel_scene);
+}
+
+TEST_CASE("teleport: a settle given up during a load empties the request after the load (issue 197)") {
+    const Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    Trip trip;
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
+    Local arrived = At("Graveyard_Child", 0, 0, 0);
+    arrived.reserved_banc = "Graveyard_Child";
+    CHECK_FALSE(trip.Tick(arrived, 2 * kS).cancel_scene);
+    // The arrival keeps taking our request: a load again, past the settle's give-up.
+    Local loading = arrived;
+    loading.loading_banc = true;
+    auto a = trip.Tick(loading, 2 * kS + 2 * Trip::kGiveUpUs);
+    CHECK(Has(a.lines, "did not settle"));
+    CHECK(trip.phase() == Trip::Phase::idle);
+    CHECK_FALSE(a.cancel_scene);  // never during a load
+    CHECK_FALSE(trip.Tick(loading, 3 * kS + 2 * Trip::kGiveUpUs).cancel_scene);
+    // Loading, the scene unreadable: still nothing.
+    Local gone;
+    CHECK_FALSE(trip.Tick(gone, 4 * kS + 2 * Trip::kGiveUpUs).cancel_scene);
+    // The first tick outside the load empties it, once.
+    a = trip.Tick(arrived, 5 * kS + 2 * Trip::kGiveUpUs);
+    CHECK(a.cancel_scene);
+    CHECK_FALSE(a.restore_start);
+    CHECK_FALSE(trip.Tick(arrived, 6 * kS + 2 * Trip::kGiveUpUs).cancel_scene);
+    CHECK_FALSE(trip.Left(2).cancel_scene);
 }

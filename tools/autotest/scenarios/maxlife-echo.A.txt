@@ -1,0 +1,6 @@
+# maxlife-echo: A gains one heart container (needs LICHII_COOP_CHEATS=1); see maxlife-echo.steps.txt.
+mark start
+wait 300
+give PlayerStatus.MaxLife
+wait 600
+mark container

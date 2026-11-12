@@ -54,6 +54,7 @@ struct FlagStats {
   std::uint64_t not_shared = 0;        // incoming entries not in the shared list
   std::uint64_t pickups_learned = 0;   // 64-bit keys taken as pickups from a message
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
+  std::uint64_t max_drops_kept = 0;    // a max-rule value our game lowered: ours, not sent
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped

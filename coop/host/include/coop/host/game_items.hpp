@@ -187,6 +187,8 @@ class ItemFlagStore final : public FlagStore {
   bool write(const protocol::FlagEntry& entry) override;
   // A named count item (ItemRule::count).
   bool is_count(FlagKey key) override;
+  // A named int32 item merged by the highest value (ItemRule::max).
+  bool is_max(FlagKey key) override;
   // DungeonInfo.<dungeon>.IsGetMap and .IsGetCompass (issue 146).
   bool is_one_way(FlagKey key) override;
   // The value as it is (no max, OR or mirror merging; per-player flags still

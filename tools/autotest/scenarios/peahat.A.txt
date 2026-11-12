@@ -1,0 +1,38 @@
+# peahat (#157): the Peahat west of the market (Enemy_Peahat at -113.2 146.8 58.6 in
+# HyruleField_Child) by day (the kit save is at 10:01). Both load at HyruleField_FrontOfMarket
+# and are put about 25 m from it. A (P1) stands still while B (P2) walks right up to it; then A
+# walks up too.
+# Expect (reports/peahat.md checks 1, 3, 7): the Peahat rises on both screens within about 2 s of
+# B arriving (shots b-at / risen); B's log "copy ... plays '<buried>' ... (its own AI: '<rise>')"
+# if A owned it, then "share owner ... is player 2"; or, if B owned it, B's own anim lines change
+# from the buried one. With A also beside it, no owner flip faster than every 5 s. A
+# "release: ..." 5 s line shows whether a hand-over found bit 23 set.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 300
+mark start
+warp HyruleField_Child HyruleField_FrontOfMarket
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark a-in
+place -88.0 151.0 58.6   # 25 m east of the Peahat
+wait 240
+mark a-placed
+wait 1500
+mark b-at
+wait 600
+mark risen
+wait 1200
+goto -108.0 58.6 1.5 600
+mark a-near
+wait 1800
+mark end

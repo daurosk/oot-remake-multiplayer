@@ -570,6 +570,26 @@ std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
     return decider;
 }
 
+std::uint8_t Sync::RollerFor(std::uint8_t self, const proto::Vec3& at, std::uint64_t now_us) const {
+    const auto fresh = [now_us](std::uint64_t t) {
+        return t <= now_us ? now_us - t < kSceneStaleUs : t - now_us < kSceneStaleUs;
+    };
+    std::uint8_t roller = self;
+    std::lock_guard lock(inbox_mutex_);
+    for (const auto& [player, seen] : scenes_) {
+        if (player == self || player == 0 || player >= roller || !fresh(seen.second) || seen.first != scene_) {
+            continue;
+        }
+        const auto place = places_.find(player);
+        const bool near = place == places_.end() || !fresh(place->second.second) ||
+                          Distance(place->second.first, at) <= kRollNearM;
+        if (near) {
+            roller = player;
+        }
+    }
+    return roller;
+}
+
 void Sync::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
     bound_.clear();
     for (const auto& [key, address] : live) {
@@ -1119,7 +1139,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
             }
         } else if (IsRolled(s->name)) {
-            if (decider_ == self) {
+            if (RollerFor(self, s->position, now_us) == self) {
                 // We roll this scene's enemies: share it.
                 o.id = {proto::ObjectKind::made, self, ++made_counter_};
                 owners_[o.id] = {self, 0};

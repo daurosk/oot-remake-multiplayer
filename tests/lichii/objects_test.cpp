@@ -1031,6 +1031,51 @@ TEST_CASE("objects: alone or first in the scene, a game rolls its own Stalchild"
     CHECK(a.Decider() == 1);
 }
 
+TEST_CASE("objects: a Stalchild that rose far from player 1 is player 2's to share (issue 124)") {
+    // Night field: player 1 stands at x 0, player 2 rolls one at x 100 (60 m
+    // past kRollNearM) and one at x 30 (near player 1).
+    Sync b;
+    auto p1 = Where(1, kScene, 0);
+    p1.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+    b.Receive(p1);
+    const Step far = Tick(b, 100 * kMs, {Enemy(0x500, ~0ULL, 2, 100.0f)}, 2);
+    const auto spawns = All<proto::ObjectSpawn>(far);
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].id.kind == proto::ObjectKind::made);
+    CHECK(spawns[0].id.maker == 2);
+    CHECK(b.OwnerOf(spawns[0].id) == 2);
+    CHECK(b.Removes().empty());
+
+    const Step near = Tick(b, 150 * kMs, {Enemy(0x500, ~0ULL, 2, 100.0f), Enemy(0x501, ~0ULL, 2, 30.0f)}, 2);
+    CHECK(All<proto::ObjectSpawn>(near).empty());
+    CHECK_FALSE(b.IdOf(0x501));
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x501});
+
+    // Player 1 makes player 2's far one as a copy, owned by player 2.
+    Sync a;
+    auto p2 = Where(2, kScene, 0);
+    p2.position = proto::Vec3{100.0f, 0.0f, 0.0f};
+    a.Receive(p2);
+    Tick(a, 100 * kMs, {}, 1);
+    a.Receive(spawns[0]);
+    Tick(a, 150 * kMs, {}, 1);
+    const auto creates = a.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].position[0] == doctest::Approx(100.0f));
+    CHECK(a.OwnerOf(spawns[0].id) == 2);
+
+    // Player 1's place gone stale: the old rule (lowest number) holds again.
+    Sync c;
+    auto old = Where(1, kScene, Sync::kSceneStaleUs + 200 * kMs);
+    c.Receive(old);
+    proto::PlayerSample stale = Where(1, kScene, 0);
+    stale.scene.reset();
+    stale.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+    c.Receive(stale);
+    Tick(c, Sync::kSceneStaleUs + 300 * kMs, {Enemy(0x700, ~0ULL, 2, 300.0f)}, 2);
+    CHECK(c.Removes() == std::vector<std::uint64_t>{0x700});
+}
+
 TEST_CASE("objects: a Gold Skulltula shaken out of a tree is announced and copied where missing") {
     constexpr std::uint64_t kHash = 0x32f42f523be6425ULL;
     const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};

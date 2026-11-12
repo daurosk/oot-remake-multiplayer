@@ -2,7 +2,7 @@
 # title_menu step, docs/hookshot.md "The title menu"). A starts as the harness starts it (co-op on, coop.ini
 # names the test server) and stays at the title: Continue, New Game, Options, then Host, Join, Co-op
 # Settings in the same list. A moves down four rows, presses A, then B twice.
-# Needs the puppet pack built again with this branch (tools/puppet_pack/build.py: its log says
+# Needs the puppet pack built again with this branch WITH --title-rows (Build-Hookshot-Coop passes it; its log says
 # "title menu: Host, Join and Co-op Settings on the title"), installed in A's game.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-title-menu
 # Pass: the lines below, and the shots (player-A.txt names them):

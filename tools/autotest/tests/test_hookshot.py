@@ -366,11 +366,79 @@ class PlayerTest(unittest.TestCase):
         self.assertTrue(any(line.startswith("coop: test warp KakarikoVillage_Child: sent") for line in log.lines))
         self.assertTrue(any("start Kakariko_WellSide not used" in line for line in log.lines))
 
-    def test_module_steps_are_skipped(self):
+    def test_module_steps_are_skipped_without_the_file(self):
         game, log, _, _, _ = play("give bombs\nchat /teleport B\nplace 1 2 3\nmark m")
         self.assertEqual(sum("skipped on hookshot" in line for line in log.lines), 3)
         self.assertEqual(game.cmds("press", "stick"), [])
         self.assertEqual(log.lines[-2:], ["coop: test mark m", "coop: test script done"])
+
+    def test_module_steps_go_to_the_commands_file(self):
+        """Module steps in a row are one batch, written as the script has them; the next waits until it is taken."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "commands-A.txt")
+            open(path, "w").close()
+            game = FakeGame()
+            taken = []
+            sleep = game.clock.sleep
+
+            def module_sleep(sec):   # the module: reads the file on its check, plays it, empties it
+                sleep(sec)
+                if os.path.getsize(path):
+                    with open(path, encoding="utf-8") as f:
+                        taken.append(f.read())
+                    open(path, "w").close()
+            game.clock.sleep = module_sleep
+            game, log, _, _, _ = play("""
+                give bombs
+                chat /teleport B   # to B
+                place 1 2.5 -3
+                press A
+                setflag PouchData.Item_Bomb.StockNum 20
+                wear head Mask_Keaton
+                assign Bow
+                setenum 0x1234abcd Done
+                kill Enemy_Skulltula_Gold
+                mark m
+            """, game, commands=path)
+            self.assertEqual(len(taken), 2)
+            self.assertEqual(taken[0].splitlines()[1:], ["give bombs", "chat /teleport B", "place 1 2.5 -3"])
+            self.assertEqual(taken[1].splitlines()[1:], [
+                "setflag PouchData.Item_Bomb.StockNum 20", "wear head Mask_Keaton", "assign Bow",
+                "setenum 0x1234abcd Done", "kill Enemy_Skulltula_Gold"])
+            self.assertTrue(all(t.startswith("# ") for t in taken))
+            self.assertEqual(sum(" sent (line" in line for line in log.lines), 8)
+            self.assertFalse(any("skipped" in line for line in log.lines))
+            self.assertEqual(len(game.cmds("press")), 1)
+            self.assertEqual(log.lines[-2:], ["coop: test mark m", "coop: test script done"])
+            self.assertEqual(os.listdir(tmp), ["commands-A.txt"])   # no temporary files left
+
+    def test_module_steps_not_taken(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "commands-A.txt")
+            game, log, _, _, _ = play("give bombs\nmark m", commands=path, take_for=1.0)
+            self.assertTrue(any("give NOT taken" in line for line in log.lines))
+            with open(path) as f:
+                self.assertIn("give bombs", f.read())
+            self.assertEqual(log.lines[-1], "coop: test script done")
+
+    def test_module_lines_read_back_the_same(self):
+        """The module gets each step's line as written: read alone, it is the same step."""
+        n = 0
+        for f in glob.glob(os.path.join(HERE, "..", "scenarios", "*.txt")):
+            if f.endswith(".steps.txt"):
+                continue
+            with open(f, encoding="utf-8") as fh:
+                steps = hs.parse(fh.read())
+            for s in steps:
+                if s.kind in hs.MODULE_ONLY:
+                    again = hs.parse(s.text)
+                    self.assertEqual(len(again), 1, s.text)
+                    self.assertEqual((again[0].kind, again[0].name, again[0].start, again[0].x, again[0].y,
+                                      again[0].z), (s.kind, s.name, s.start, s.x, s.y, s.z))
+                    n += 1
+        self.assertGreater(n, 0)
 
 
 class LoadTest(unittest.TestCase):
@@ -468,7 +536,9 @@ class RunTest(unittest.TestCase):
             self.assertEqual([r["buttons"] for r in gb.cmds("press")][-1], ["A"])
             with open(os.path.join(out, "player-A.txt")) as f:
                 a_log = f.read()
-            self.assertIn("coop: test give skipped on hookshot", a_log)
+            self.assertIn("coop: test give NOT taken", a_log)   # no module here to take it
+            self.assertEqual([p.env["LICHII_COOP_TEST_COMMANDS"] for p in started],
+                             [os.path.join(out, "commands-%s.txt" % x) for x in "AB"])
             self.assertIn("coop: test script done", a_log)
 
 

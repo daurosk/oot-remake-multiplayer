@@ -3,8 +3,9 @@
 # exports in src/hos_coop_api.h. It is lichii/hook's co-op, the same files the
 # emulator builds (read from lichii/hook/core.cmake, so a new hook file joins
 # both), with compat/ answering the emulator API slice they use. Only the
-# emulator's cave (coop_svc.cpp) and its input injection (coop_testinput.cpp)
-# stay out: src/coop_hookshot.cpp does those jobs here.
+# emulator's cave (coop_svc.cpp) stays out: src/coop_hookshot.cpp does its job
+# here. coop_testinput.cpp plays the autotest driver's test commands
+# (LICHII_COOP_TEST_COMMANDS); its pad input is the emulator's only.
 include(FetchContent)
 # fmt (MIT), for the hook's LOG_* lines (compat/common/logging.h), as the
 # emulator has it. Fetched at a fixed commit, never copied into the tree.
@@ -20,7 +21,7 @@ file(STRINGS "${_coop_hook}/core.cmake" _coop_lines REGEX "coop_[a-z0-9_]+\\.cpp
 set(_coop_sources)
 foreach(line IN LISTS _coop_lines)
   string(REGEX MATCH "coop_[a-z0-9_]+\\.cpp" name "${line}")
-  if(name AND NOT name STREQUAL "coop_svc.cpp" AND NOT name STREQUAL "coop_testinput.cpp")
+  if(name AND NOT name STREQUAL "coop_svc.cpp")
     list(APPEND _coop_sources "${_coop_hook}/${name}")
   endif()
 endforeach()

@@ -9,8 +9,10 @@ Windows, a Unix socket on Linux, newline-delimited JSON. This module is our clie
   wait, hold, press, stick and rstick as bridge inputs let go by `release` when their time is up; `mark` logged and
   shot; `warp` as the bridge's teleport (retried until the game takes it, as the hook does); `goto` and `toward`
   steered from Link's position read through guest memory (`HOS_CONTROL_MEM=ro`). Steps that need the co-op module
-  inside the game (chat, give, wear, assign, place, kill, setflag, setenum) are logged as skipped: Hookshot's co-op
-  module has no test commands yet.
+  inside the game (chat, give, wear, assign, place, kill, setflag, setenum) are written, as the script has them, to
+  the game's LICHII_COOP_TEST_COMMANDS file: the module (lichii/hook/coop_testinput.cpp) plays them on its next
+  check (4 a second) and empties the file, so the player knows they were taken. Without that file they are logged as
+  skipped.
 - `run`: the two-game test that tools/autotest/run.ps1 -Runtime hookshot starts: the server, both games with the bridge
   on, the save loaded (A pressed until the game plays), the scenario's A and B scripts at once, shots of both games
   at every mark and every few seconds, the logs, then everything closed.
@@ -84,6 +86,7 @@ class Step:
         self.start = ""
         self.x = self.y = self.z = 0.0
         self.radius = 1.0
+        self.text = ""            # the line as written (no comment), for the module's commands file
 
     def __repr__(self):
         return "Step(%s line %d)" % (self.kind, self.line)
@@ -141,6 +144,7 @@ def parse(text):
             raise ScriptError("line %d: %s" % (number, why))
 
         s = Step("timed", number)
+        s.text = line.strip()
         if cmd == "WAIT":
             if len(w) != 2 or _ticks(w[1]) is None:
                 fail("want: wait TICKS")
@@ -410,8 +414,11 @@ class Player:
     """Plays steps into one game. clock and sleep are for the tests."""
 
     def __init__(self, bridge, log, shot=None, connect=None, clock=time.monotonic, sleep=time.sleep,
-                 main_base=MAIN_BASE, steer_every=0.1, warp_for=90.0):
+                 main_base=MAIN_BASE, steer_every=0.1, warp_for=90.0, commands=None, take_for=5.0):
         self.b = bridge
+        self.commands = commands      # the game's LICHII_COOP_TEST_COMMANDS file, or None: module steps skipped
+        self.take_for = take_for      # seconds the module has to take them (it checks 4 times a second)
+        self.sent = 0
         self.log = log
         self.shot = shot              # shot(name): shots at a mark
         self.connect = connect        # a second connection (the warp's own), or None: warps share this one
@@ -584,10 +591,55 @@ class Player:
         t.start()
         self.warps.append(t)
 
+    # the module's test commands: written to its file, taken when it is empty again
+    def module(self, batch):
+        if not self.commands:
+            for s in batch:
+                self.log("coop: test %s skipped on hookshot (line %d: needs the co-op module's test commands)"
+                         % (s.kind, s.line))
+            return
+        deadline = self.clock() + self.take_for
+        while self._waiting() and self.clock() < deadline:   # the last batch not taken yet
+            self.sleep(0.05)
+        self.sent += 1
+        tmp = "%s.%d.tmp" % (self.commands, self.sent)
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write("# hookshot.py batch %d\n" % self.sent)
+            for s in batch:
+                f.write(s.text + "\n")
+        os.replace(tmp, self.commands)
+        deadline = self.clock() + self.take_for
+        while self._waiting() and self.clock() < deadline:
+            self.sleep(0.05)
+        taken = not self._waiting()
+        for s in batch:
+            self.log("coop: test %s %s (line %d: %s)" % (s.kind, "sent" if taken else "NOT taken", s.line,
+                                                         "the module's log says what it did" if taken else
+                                                         "no module reading LICHII_COOP_TEST_COMMANDS?"))
+
+    def _waiting(self):
+        try:
+            return os.path.getsize(self.commands) > 0
+        except OSError:
+            return False
+
     def play(self, steps):
         self.log("coop: test script %d steps" % len(steps))
         t = self.clock()
-        for s in steps:
+        i = 0
+        while i < len(steps):
+            s = steps[i]
+            i += 1
+            if s.kind in MODULE_ONLY:
+                # Steps in a row go together: the emulator plays them in one frame.
+                batch = [s]
+                while i < len(steps) and steps[i].kind in MODULE_ONLY:
+                    batch.append(steps[i])
+                    i += 1
+                self._until(t)
+                self.module(batch)
+                t = max(t, self.clock())
+                continue
             if s.kind == "timed":
                 t = self.timed(s, t)
             elif s.kind == "mark":
@@ -596,9 +648,6 @@ class Player:
                 t = max(t, self.steer(s, max(t, self.clock())))
             elif s.kind == "warp":
                 self.warp(s)
-            else:
-                self.log("coop: test %s skipped on hookshot (line %d: needs the co-op module's test commands)"
-                         % (s.kind, s.line))
         self.log("coop: test script done")
         return t
 
@@ -670,7 +719,7 @@ def run(a):
     if a.load:
         with open(a.load, encoding="utf-8") as f:
             load = parse(f.read())   # (checked; the load itself is "A until play", see to_play)
-    procs, bridges, server = {}, {}, None
+    procs, bridges, server, commands = {}, {}, None, {}
     failed = None
     try:
         if a.server:
@@ -684,7 +733,9 @@ def run(a):
             if not a.no_restore:
                 say("%s: save baseline %s" % (x, "restored" if restore_save(g) else "none (autotest-save missing)"))
             sock = "%s-%s" % (a.pipe, x) if WINDOWS else os.path.join(out, "control-%s.sock" % x)
-            env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro")
+            commands[x] = os.path.join(out, "commands-%s.txt" % x)
+            open(commands[x], "w").close()
+            env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port
                 env["LICHII_COOP_NAME"] = "Hook" + x
@@ -748,7 +799,7 @@ def run(a):
                 pb = Bridge.connect(bridges[x][0])
                 try:
                     p = Player(pb, Log(os.path.join(out, "player-%s.txt" % x)), shot=shooter(x, a.name),
-                               connect=lambda: Bridge.connect(bridges[x][0]))
+                               connect=lambda: Bridge.connect(bridges[x][0]), commands=commands[x])
                     players[x] = p
                     p.play(parsed[x])
                 finally:
@@ -817,6 +868,7 @@ def main(argv=None):
     pl.add_argument("--script", required=True)
     pl.add_argument("--log")
     pl.add_argument("--shots", help="folder for a shot at each mark")
+    pl.add_argument("--commands", help="the game's LICHII_COOP_TEST_COMMANDS file (none: module steps skipped)")
     r = sub.add_parser("run", help="the two-game test (tools/autotest/run.ps1 -Runtime hookshot)")
     r.add_argument("--game-a", required=True)
     r.add_argument("--game-b", required=True)
@@ -846,8 +898,8 @@ def main(argv=None):
                     print("%s: %s" % (path, e))
                     bad += 1
                     continue
-            skipped = sorted({s.kind for s in steps if s.kind in MODULE_ONLY})
-            print("%s: %d steps%s" % (path, len(steps), (", skipped on hookshot: " + " ".join(skipped)) if skipped
+            module = sorted({s.kind for s in steps if s.kind in MODULE_ONLY})
+            print("%s: %d steps%s" % (path, len(steps), (", through the module: " + " ".join(module)) if module
                                        else ""))
         return 1 if bad else 0
     if a.what == "play":
@@ -858,7 +910,7 @@ def main(argv=None):
         def shot(name):
             b.request("shot", reply_timeout=30.0, path=os.path.abspath(os.path.join(a.shots, name + ".png")))
         player = Player(b, Log(a.log, echo=print), shot=shot if a.shots else None,
-                        connect=lambda: Bridge.connect(a.sock))
+                        connect=lambda: Bridge.connect(a.sock), commands=a.commands)
         player.play(steps)
         for t in player.warps:
             t.join(player.warp_for)

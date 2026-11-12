@@ -45,7 +45,7 @@ Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part
 | 4. Shared progress (chests, keys, doors, songs) | Done on one PC: world flags shared through the host ([docs/flags.md](docs/flags.md)); items, songs and one-time pickups shared while rupees and the rest stay per player ([docs/items.md](docs/items.md)); small keys, Skulltula tokens and heart pieces add up; a late joiner gets them; dungeon switches, doors, cleared rooms and water levels shared ([docs/dungeon.md](docs/dungeon.md)), and a save load no longer undoes them (#129); chests opened in one game are open in all (#87); a shared item comes with its ammo and room (#128, #138). Heart containers raise everyone's maximum health (#88). The host's save decides: a host's save load resets the group to it. A guest who joins from the title gets the host's save in a co-op save folder (#167; the transfer seen in a two-game test). Story and cutscene flags shared (#173, built). |
 | 5. Shared enemies and objects | In progress: enemies, townspeople and animals move, animate and die the same in every game, owned by one player ([docs/objects.md](docs/objects.md)); seeds and nuts a player makes appear in the other games ([docs/spawns.md](docs/spawns.md)); crates and thrown rocks break in every game ([docs/world.md](docs/world.md)). Built, not yet fully checked in a game: pots, the time of day following the host ([docs/time.md](docs/time.md)), bombs, arrows and other projectiles, multi-part enemies and bosses. Signs cut in one game are cut in the others (seen in the logs; the pieces on the other screen not yet). Stalchildren in Hyrule Field are shared (#124); boss rooms pull a player who walks out back in (#109). A held bomb stays in the holder's hands and explodes on every screen at once (#169). Built, not yet checked in a game: the Deku Tree's switches, plates, ladder, bridge and webs (#176, #177), Gohma's larvae (#178). |
 | 6. Chat, player list, reconnects | Done on one PC: reconnects and rejoining after a crash; the host moves to another player when one leaves; an in-game chat box (Enter) and player list (Tab); a join password (#160). Fewer disconnects over the internet built in (#175). |
-| Recomp port of stages 0 to 6 | Waits for a playable recomp |
+| Recomp port of stages 0 to 6 | Planned on [Hookshot](https://github.com/NotRexed/Hookshot), a static recompilation of the same game build: [docs/hookshot.md](docs/hookshot.md). Not built yet. |
 
 The emulator side is a small patch on Frizti's Fritchii, pinned in [lichii/PIN](lichii/PIN); `lichii/fetch.ps1` fetches that source and applies the patches. See [lichii/README.md](lichii/README.md).
 
@@ -69,6 +69,11 @@ Anyone can contribute: fork, branch, pull request. Every pull request is reviewe
 - **No game content.** No game files, keys, firmware, saves, shader caches or builds that contain them. `tools/check_content.py` runs on every push and pull request and fails if any are found.
 - **Our own code only.** Other projects (Lichii, Eden, the TOTK Online mod, recomp projects) may be read to understand how they behave. Their code is not copied in unless its licence allows it, and then it is credited.
 - **Plain English** in commits, pull requests and docs.
+
+## Credits
+
+- [Fritchii](https://github.com/Frizti/Fritchii) by Frizti (GPL-3.0): the emulator co-op is built into today.
+- [Hookshot](https://github.com/NotRexed/Hookshot) by NotRexed and contributors (GPL-3.0): the recomp co-op is moving to ([docs/hookshot.md](docs/hookshot.md)).
 
 ## Licence
 

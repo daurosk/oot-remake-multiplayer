@@ -11,6 +11,8 @@ No game files, keys or firmware are part of this repository or of any kit.
 | ENet 1.3.18 (Lee Salzman) | Network transport (server, emulator hook) | MIT | https://github.com/lsalzman/enet, fetched by CMake at a pinned version |
 | doctest | Unit tests only, not shipped | MIT | https://github.com/doctest/doctest, fetched by CMake at a pinned version |
 | Monocypher 4.0.2 (Loup Vaillant, Michael Savage, Fabio Scotoni) | Traffic encryption: X25519, BLAKE2b, XChaCha20-Poly1305 (server, emulator hook) | CC0-1.0 or BSD-2-Clause, the user's choice; we use it under CC0-1.0 | https://github.com/LoupVaillant/Monocypher, fetched by CMake at a pinned commit (cmake/monocypher.cmake) |
+| fmt 12.1.0 (Victor Zverovich and contributors) | The co-op hook's log lines in the Hookshot module (`hookshot_coop.dll`, `hookshot/compat/common/logging.h`) | MIT | https://github.com/fmtlib/fmt, fetched by CMake (`hookshot/CMakeLists.txt`) at a pinned commit |
+| Hookshot (NotRexed and contributors) | `hookshot/patches/` changes it: the patch holds a few context lines of its `nx2/lift.py`; it is applied to Hookshot's source at the commit in `hookshot/PIN`, outside this repository | GPL-3.0 | https://github.com/NotRexed/Hookshot |
 
 Code copied in from other projects gets an entry here, with its copyright line and licence text, when it is added.
 

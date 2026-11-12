@@ -6,6 +6,20 @@ option(COOP_BUILD_TESTS "Build the unit tests" ON)
 option(COOP_BUILD_PROGRAMS "Build the server and tools/coop_test" ON)
 option(COOP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC or Clang)" OFF)
 option(COOP_TSAN "Build with ThreadSanitizer (GCC or Clang; not with COOP_SANITIZE)" OFF)
+# The Hookshot module builds lichii/hook as the emulator does: on Windows, with MSVC (the
+# emulator's own compiler for that code). Its tests run everywhere (tests/hookshot).
+if(WIN32 AND MSVC)
+  set(_coop_hookshot_default ON)
+else()
+  set(_coop_hookshot_default OFF)
+endif()
+option(COOP_BUILD_HOOKSHOT "Build hookshot_coop, the co-op module for Hookshot (docs/hookshot.md)" ${_coop_hookshot_default})
+if(COOP_SANITIZE OR COOP_TSAN)
+  set(COOP_BUILD_HOOKSHOT OFF)  # a shared module with sanitizers adds nothing the tests do not check
+endif()
+if(COOP_BUILD_HOOKSHOT AND NOT WIN32)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)  # the static co-op libraries go into a shared module
+endif()
 
 # No build machine folders in the programs (the server goes into the kit).
 include(cmake/trim_paths.cmake)
@@ -60,6 +74,9 @@ if(NOT TARGET monocypher)
 endif()
 
 add_subdirectory(coop)
+if(COOP_BUILD_HOOKSHOT)
+  add_subdirectory(hookshot)
+endif()
 if(COOP_BUILD_PROGRAMS)
   add_subdirectory(server)
   add_subdirectory(tools/coop_test)

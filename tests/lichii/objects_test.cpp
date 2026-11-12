@@ -2209,10 +2209,11 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     sync.Take(chest.hash);
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     Tick(sync, 20 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes().empty());  // the chest's wait to show itself open
-    Tick(sync, 1600 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());  // shown open: its open idle is played
+    // It never shows open (no animation here): removed after the fallback.
+    Tick(sync, 3100 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
-    Tick(sync, 1610 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 3110 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
 }
 

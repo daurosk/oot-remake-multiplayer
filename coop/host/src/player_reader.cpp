@@ -170,7 +170,7 @@ void apply_tunic_choice(PlayerReading& reading, const std::optional<std::string>
   reading.equipment->armor = *tunic;
 }
 
-std::optional<std::uint8_t> PlayerReader::read_ocarina_note() {
+std::optional<std::uint64_t> PlayerReader::ocarina_sound_object() {
   const auto root = read_ptr(memory_, memory_.main_base() + addr::kOcarinaRootPtr);
   if (!root) return std::nullopt;
   const auto scene = read_ptr(memory_, *root);
@@ -186,6 +186,12 @@ std::optional<std::uint8_t> PlayerReader::read_ocarina_note() {
   // The entry is the sound object itself (its own vtable), as seen in a run.
   const auto vtable = read_u64(memory_, *sound);
   if (!vtable || *vtable != memory_.main_base() + addr::kOcarinaSoundVtable) return std::nullopt;
+  return *sound;
+}
+
+std::optional<std::uint8_t> PlayerReader::read_ocarina_note() {
+  const auto sound = ocarina_sound_object();
+  if (!sound) return std::nullopt;
   // The note that sounds now, as the object's own update picks it.
   const auto released = read_u8(memory_, *sound + addr::kOcarinaReleased);
   const auto state = read_u32(memory_, *sound + addr::kOcarinaState);
@@ -197,6 +203,14 @@ std::optional<std::uint8_t> PlayerReader::read_ocarina_note() {
   const auto note = read_u32(memory_, *sound + (melody ? addr::kOcarinaMelodySound : addr::kOcarinaSound));
   if (!note || *note == 0 || *note > protocol::kOcarinaNotes) return std::nullopt;
   return static_cast<std::uint8_t>(*note - 1);
+}
+
+bool is_system_event(std::string_view name) {
+  // The game's own system events (event flows Dm_SY_*): playing the ocarina,
+  // an item get, a bottle, a scene change. Each player's own, never a scene
+  // to watch together (the ocarina's Dm_SY_Ocarina made the other game take
+  // its ocarina out too).
+  return name.starts_with("Dm_SY_");
 }
 
 std::optional<std::string> PlayerReader::read_cutscene() {
@@ -213,9 +227,11 @@ std::optional<std::string> PlayerReader::read_cutscene() {
   if (!event) return std::nullopt;
   const auto part_at = read_ptr(memory_, *event + addr::kEventName);
   const auto part = part_at ? read_name(memory_, *part_at, protocol::kMaxCutsceneChars) : std::nullopt;
-  if (!part || !part->starts_with("Dm_")) return std::nullopt;
+  if (!part || !part->starts_with("Dm_") || is_system_event(*part)) return std::nullopt;
   const auto flow_at = read_ptr(memory_, *session + addr::kSessionName);
-  return flow_at ? read_name(memory_, *flow_at, protocol::kMaxCutsceneChars) : std::nullopt;
+  auto flow = flow_at ? read_name(memory_, *flow_at, protocol::kMaxCutsceneChars) : std::nullopt;
+  if (flow && is_system_event(*flow)) return std::nullopt;
+  return flow;
 }
 
 std::optional<protocol::Animation> PlayerReader::read_animation() {

@@ -277,11 +277,19 @@ void Voices::Finish(CoopPuppet::Guest& guest, std::uint64_t result) {
         const std::array<std::uint64_t, 2> words{result, serial};
         v.handle = guest.Write(block_ + kHandles + kHandleSize * pending_voice_, words.data(), sizeof(words));
     }
+    if (played_ < 3 || !v.handle) {  // the first notes and any that gave no sound, for the log
+        notes_.push_back(v.handle ? "the game sounds it (" + Hex(result) + " serial " + std::to_string(serial) + ")"
+                                  : "the game gave no sound for that note");
+    }
     ++played_;
 }
 
 void Voices::Want(std::size_t voice, std::optional<coop::protocol::OcarinaNote> note) {
     if (voice < voices_.size()) {
+        if (note && note != voices_[voice].want) {
+            notes_.push_back("player " + std::to_string(voice + 1) + " plays " +
+                             NoteNames()[(note->note % coop::protocol::kOcarinaNotes) + 1]);
+        }
         voices_[voice].want = note;
     }
 }

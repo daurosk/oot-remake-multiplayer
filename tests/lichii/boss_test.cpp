@@ -425,6 +425,107 @@ TEST_CASE("boss: the boss dead when the event starts, or no reading, is the deat
     CHECK(u.phase() == Sync::Phase::done);
 }
 
+TEST_CASE("boss: with the outro readable, only the outro played is the death (every boss)") {
+    // A talk with Navi left open, a phase change, Twinrova's change scene (Koume and Kotake
+    // gone, Twinrova not made yet): events of the fight, however long, whatever the life says.
+    Sync s;
+    ToFight(s);
+    Local l = Alive(Forest().arrive, true, false);  // the boss reads as gone
+    l.boss_hurt = true;
+    l.intro_played = true;
+    l.outro_played = false;
+    auto a = s.Tick(l, 30 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    a = s.Tick(l, 60 * kS);  // 30 s long
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(Has(a, proto::BossState::intro_end));  // the heartbeat goes on
+    l.event = false;
+    a = s.Tick(l, 61 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::fight);
+    // The real death: the outro's flag goes up while its event still runs.
+    l.event = true;
+    s.Tick(l, 80 * kS);
+    l.outro_played = true;
+    a = s.Tick(l, 100 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::outro);
+    a = s.Tick(l, 101 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));  // said once
+    l.event = false;
+    s.Tick(l, 102 * kS);
+    CHECK(s.phase() == Sync::Phase::done);
+}
+
+TEST_CASE("boss: a boss only made by its intro is not dead before it (Dodongo, Volvagia, Morpha...)") {
+    // In the room's circle for 25 s before the trigger: no "fight" by time while the intro has
+    // not played, and the intro, when it comes, is the intro, not a death of a boss that is not there.
+    Sync s;
+    Local l = Alive(Forest().arrive, false, false);  // no boss actor yet
+    l.intro_played = false;
+    l.outro_played = false;
+    s.Tick(l, 1 * kS);
+    s.Tick(l, 25 * kS);
+    CHECK(s.phase() == Sync::Phase::waiting);
+    l.event = true;
+    auto a = s.Tick(l, 26 * kS);
+    CHECK(Has(a, proto::BossState::intro_start));
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    // A first event (the door) already taken as the intro: the real one is said again.
+    Sync t;
+    Local m = Alive(Forest().arrive, false, false);
+    m.intro_played = false;
+    t.Tick(m, 1 * kS);
+    m.event = true;
+    t.Tick(m, 2 * kS);
+    m.event = false;
+    t.Tick(m, 4 * kS);
+    REQUIRE(t.phase() == Sync::Phase::fight);
+    m.event = true;
+    a = t.Tick(m, 30 * kS);
+    CHECK(Has(a, proto::BossState::intro_start));
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    m.event = false;
+    m.intro_played = true;
+    m.boss_alive = true;
+    a = t.Tick(m, 50 * kS);
+    CHECK(Has(a, proto::BossState::intro_end));
+    CHECK(t.phase() == Sync::Phase::fight);
+}
+
+TEST_CASE("boss: a game that never had the boss (beaten in its save) never says it died") {
+    Sync s;
+    Local l = Alive(Forest().arrive, false, false);
+    l.intro_played = true;
+    l.outro_played = true;  // this save beat it before
+    s.Tick(l, 1 * kS);
+    s.Tick(l, 12 * kS);  // no intro: "fight" by time, nobody moved in
+    REQUIRE(s.phase() == Sync::Phase::fight);
+    l.event = true;  // a talk with Navi
+    auto a = s.Tick(l, 30 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    a = s.Tick(l, 60 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+}
+
+TEST_CASE("boss: a Link of the other age is not moved into the fight (the Spirit Temple is one scene)") {
+    const CoopBoss::Room& spirit = *CoopBoss::RoomOfScene("SpiritTemple");
+    Sync s;
+    s.Receive(proto::Message{From(1, spirit, proto::BossState::intro_start)});
+    Local child = At("SpiritTemple", Vec{0.0f, 100.0f, 0.0f}, false, 2);
+    child.age = CoopBoss::Era::child;
+    auto a = s.Tick(child, 1 * kS);
+    CHECK_FALSE(a.pull.has_value());
+    a = s.Tick(child, 5 * kS);
+    CHECK_FALSE(a.pull.has_value());
+    Sync t;
+    t.Receive(proto::Message{From(1, spirit, proto::BossState::intro_start)});
+    Local adult = At("SpiritTemple", Vec{0.0f, 100.0f, 0.0f}, false, 2);
+    adult.age = CoopBoss::Era::adult;
+    a = t.Tick(adult, 1 * kS);
+    CHECK(a.pull.has_value());
+}
+
 TEST_CASE("boss: an event right after a skipped intro is not the boss's death (integrate-p8)") {
     // B in its intro; A's intro is over: B skips. B's event ends, and 0.1 s later the next one
     // starts (the skipped intro's next shot), with no reading of the boss.

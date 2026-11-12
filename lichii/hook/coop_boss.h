@@ -88,6 +88,9 @@ struct Room {
     std::string_view intro;        // the intro event flow
     std::string_view outro;        // the boss's death
     std::span<const std::string_view> parts;  // actor names of the boss and its parts
+    // A scene in the fight that makes the boss actor itself (Twinrova, made by
+    // Dm_SpiritTemple_0030 once Koume and Kotake are beaten), or "".
+    std::string_view change = {};
 };
 
 // The actors that are the boss itself, for "is it alive" (issue 109): the
@@ -138,6 +141,14 @@ struct Local {
     // An untouched boss is not dying, so a long event then is not its death
     // (Gohma's ceiling intro starts well after the room's entry event).
     std::optional<bool> boss_hurt;
+    // The game's saved HavePlayedEvent.<intro> and .<outro> of this dungeon's
+    // boss room (set when that scene ends); nothing when not read. Every boss
+    // but Gohma is only made by its intro, so "gone" before it is not "dead";
+    // the outro played is the one sure sign of the death.
+    std::optional<bool> intro_played;
+    std::optional<bool> outro_played;
+    // Our Link's age (Sequence_IsChildhood); nothing when not read.
+    std::optional<Era> age;
 };
 
 class Sync {
@@ -202,6 +213,9 @@ private:
     std::uint64_t skip_since_ = 0;
     bool event_ = false;  // last Tick's event
     bool committed_ = false;  // our intro started in this room: our heartbeat says how far (issue 148)
+    bool boss_read_ = false;   // the boss was read (alive or gone) while we were in this room
+    bool seen_alive_ = false;  // ...and seen alive at least once
+    std::optional<bool> outro_was_;  // Local::outro_played of the Tick before
     std::uint64_t last_now_ = 0;  // the clock never goes back (server time can)
     std::optional<std::string> scene_;  // the scene of the last Tick with one
     std::vector<std::uint8_t> defeated_;  // rooms beaten while we were in this scene

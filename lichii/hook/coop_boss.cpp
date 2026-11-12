@@ -67,7 +67,8 @@ const std::array<Room, 8> kRooms{{
      {-138.3f, -11.5f, 22.0f}, "StartPos_SageOfShadow", "Dm_ShadowTemple_BossIn", "Dm_ShadowTemple_BossOut",
      kBongoBongo},
     {7, "SpiritTemple", "Enemy_DungeonBoss_Twinrova", Era::adult, 33, 0.0f, -157.8f, 38.0f, 139.0f, 165.0f,
-     {-0.7f, 142.2f, -158.6f}, "", "Dm_SpiritTemple_BossIn", "Dm_SpiritTemple_BossOut", kTwinrova},
+     {-0.7f, 142.2f, -158.6f}, "", "Dm_SpiritTemple_BossIn", "Dm_SpiritTemple_BossOut", kTwinrova,
+     "Dm_SpiritTemple_0030"},
 }};
 
 constexpr float kArrivalSpread = 1.5f;
@@ -175,6 +176,8 @@ void Sync::Reset() {
     phase_ = Phase::none;
     entered_at_ = sent_at_ = intro_at_ = skip_at_ = skip_since_ = 0;
     committed_ = false;
+    boss_read_ = seen_alive_ = false;
+    outro_was_.reset();
     skip_asked_ = false;
     event_ = false;
     last_now_ = 0;
@@ -301,6 +304,14 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
     const bool rose = local.event && !event_;
     const bool fell = !local.event && event_;
     event_ = local.event;
+    // The room's intro has not played in this game: its boss is not made yet
+    // (or, Gohma, waits on the ceiling), so nothing here can be its death.
+    const bool intro_pending = local.intro_played.has_value() && !*local.intro_played;
+    // The room's outro ended this Tick: the one sure sign of the death.
+    const bool outro_now = outro_was_.has_value() && !*outro_was_ && local.outro_played.value_or(false);
+    // With the outro readable and not played, it decides; else the boss's life does, as before.
+    const bool by_outro = local.outro_played.has_value() && !*local.outro_played;
+    outro_was_ = local.outro_played;
 
     // In or out of a boss room.
     const Room* room = RoomAt(*local.scene, *local.position);
@@ -315,6 +326,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         intro_at_ = 0;
         skip_asked_ = false;
         committed_ = false;
+        boss_read_ = seen_alive_ = false;
         phase_ = Phase::none;
         if (here_ != nullptr) {
             pulls_ = 0;
@@ -346,7 +358,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 committed_ = true;
                 Say(out, *here_, proto::BossState::intro_start);
                 out.log.push_back("intro started (" + std::string(here_->intro) + ")");
-            } else if (now_us - entered_at_ >= kNoIntroUs) {
+            } else if (now_us - entered_at_ >= kNoIntroUs && !intro_pending) {
                 // No event said we are past the door (we may stand on the way
                 // to it): a fight here, but nobody is moved in for it (issue 148).
                 phase_ = Phase::fight;
@@ -363,12 +375,33 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             }
             break;
         case Phase::fight:
-            if (rose && now_us - fight_at_ < kMinFightUs) {
+            if (rose && intro_pending) {
+                // The real intro, after an earlier event in the room (the door
+                // shutting; Gohma's ceiling scene): said again, so the others
+                // wait for it and skip with it.
+                phase_ = Phase::intro;
+                intro_at_ = now_us;
+                committed_ = true;
+                skip_asked_ = false;
+                Say(out, *here_, proto::BossState::intro_start);
+                out.log.push_back("the boss's intro started (" + std::string(here_->intro) + ")");
+            } else if (rose && now_us - fight_at_ < kMinFightUs) {
                 out.log.push_back("an event right after the intro: the rest of it, not the boss's death");
+            } else if (rose && boss_read_ && !seen_alive_ &&
+                       !(local.boss_alive.has_value() && *local.boss_alive)) {
+                // Never alive in this game while we were here (beaten in this
+                // save, or not made): an event here is not its death.
+                out.log.push_back("an event in the fight, but this game never had the boss: not its death");
             } else if (rose) {
                 phase_ = Phase::outro;
                 outro_at_ = now_us;
-                if (local.boss_alive.has_value() && *local.boss_alive) {
+                if (by_outro) {
+                    // Decided by the outro's own flag (a talk with Navi, a
+                    // phase change and Twinrova's change scene end without it).
+                    provisional_ = true;
+                    out.log.push_back("an event in the fight: its death only if the outro plays (" +
+                                      std::string(here_->outro) + ")");
+                } else if (local.boss_alive.has_value() && *local.boss_alive) {
                     // Maybe the death, maybe a grab: decided while it runs.
                     provisional_ = true;
                     out.log.push_back("an event in the fight; the boss is still there: waiting to see");
@@ -378,7 +411,14 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             }
             break;
         case Phase::outro:
-            if (provisional_) {
+            if (provisional_ && by_outro) {
+                if (fell) {
+                    provisional_ = false;
+                    phase_ = Phase::fight;
+                    out.log.push_back("the event is over and the outro has not played: the fight goes on");
+                    break;
+                }
+            } else if (provisional_ && !outro_now) {
                 const bool gone = local.boss_alive.has_value() && !*local.boss_alive;
                 // An untouched boss is not dying: a long event with the boss at
                 // full life is a scene of the fight (Gohma's ceiling intro).
@@ -406,6 +446,18 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         case Phase::none:
         case Phase::done:
             break;
+        }
+        if (local.boss_alive.has_value()) {
+            boss_read_ = true;
+            seen_alive_ = seen_alive_ || *local.boss_alive;
+        }
+        // The outro has played here: the boss is dead, whatever else was read.
+        if (outro_now && (phase_ == Phase::fight || phase_ == Phase::intro || phase_ == Phase::waiting ||
+                          (phase_ == Phase::outro && provisional_))) {
+            provisional_ = false;
+            Defeat(out);
+            out.log.back() += ": its outro has played";
+            phase_ = local.event ? Phase::outro : Phase::done;
         }
         // A defeat heard from another game while we fight: stop the heartbeat.
         if ((phase_ == Phase::waiting || phase_ == Phase::fight) && beaten(*here_)) {
@@ -451,6 +503,14 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         return out;
     }
     if (gave_up_ || (pulls_ > 0 && now_us - pulled_at_ < kPullEveryUs)) {
+        return out;
+    }
+    if (local.age.has_value() && *local.age != dungeon->era) {
+        // The Spirit Temple is one scene for both ages: a child there must not
+        // be put in Twinrova's room, which only an adult's story can leave.
+        gave_up_ = true;
+        out.log.push_back("another player is in the boss room of " + std::string(dungeon->scene) +
+                          ", a fight for the other age: not moving in");
         return out;
     }
     if (pulls_ >= kPullTries) {

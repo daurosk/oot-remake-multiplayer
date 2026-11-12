@@ -665,3 +665,11 @@ TEST_CASE("tunic choice: the others see the chosen adult tunic, child Link uncha
   apply_tunic_choice(r, std::nullopt);
   CHECK(r.equipment->armor == std::optional<std::string>(""));
 }
+
+TEST_CASE("host reader: the game's system events are no cutscene to share") {
+  CHECK(coop::host::is_system_event("Dm_SY_Ocarina"));
+  CHECK(coop::host::is_system_event("Dm_SY_Get"));
+  CHECK(coop::host::is_system_event("Dm_SY_DrinkBottle"));
+  CHECK_FALSE(coop::host::is_system_event("Dm_Deku_BossIn"));
+  CHECK_FALSE(coop::host::is_system_event("InsideTheDekuTree_BossAppear"));
+}

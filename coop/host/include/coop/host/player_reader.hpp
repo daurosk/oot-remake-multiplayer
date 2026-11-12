@@ -26,6 +26,10 @@ inline constexpr float kMaxAnimationRate = 100.0f;
 // One frame's reading. The position is required; without it there is no
 // reading. Each other field is nothing when its own read failed or was
 // implausible.
+// An event of the game's own system (Dm_SY_*: the ocarina, an item get, a
+// bottle, a scene change): never shared as a cutscene.
+bool is_system_event(std::string_view name);
+
 struct PlayerReading {
   Vec3 position{};
   std::optional<Quat> rotation;
@@ -90,6 +94,9 @@ class PlayerReader {
   std::optional<protocol::Equipment> read_equipment();
   // The player actor's guest address, after the link choice and id test.
   std::optional<std::uint64_t> find_player_actor();
+
+  // The ocarina sound object (addresses.hpp), for the log; nothing when not found.
+  std::optional<std::uint64_t> ocarina_sound_object();
 
  private:
   std::optional<std::uint64_t> game_ui();

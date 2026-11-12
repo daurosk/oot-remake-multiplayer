@@ -243,11 +243,22 @@ struct Glue {
                 // game's boss there (the eye shut, no fight).
                 CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
                 coop::host::GameFlags flags(memory);
-                const auto intro = flags.get_bool(
-                    coop::host::flag_hash("HavePlayedEvent." + std::string(room->intro)));
+                const auto played = [&flags](std::string_view scene_name) {
+                    return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + std::string(scene_name)));
+                };
+                const auto intro = played(room->intro);
+                local.intro_played = intro;
+                local.outro_played = played(room->outro);
+                // A boss made by a scene in the fight (Twinrova) is ready once
+                // that scene has played here, the other bodies after the intro.
+                const auto change = room->change.empty() ? intro : played(room->change);
                 std::vector<std::string> unready;
-                if (intro.has_value() && !*intro) {
-                    for (const auto body : Bodies(*room)) unready.emplace_back(body);
+                for (const auto body : Bodies(*room)) {
+                    const auto& ready = body == room->boss ? change : intro;
+                    if (ready.has_value() && !*ready) unready.emplace_back(body);
+                }
+                if (const auto child = flags.get_bool(coop::host::flag_hash("Sequence_IsChildhood"))) {
+                    local.age = *child ? Era::child : Era::adult;
                 }
                 if (unready.empty() != unready_logged_) {
                     unready_logged_ = unready.empty();

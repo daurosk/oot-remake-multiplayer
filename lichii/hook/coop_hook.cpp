@@ -384,6 +384,15 @@ public:
         FrameView view;
         view.at = Clock::now();
         const auto reading = Read(system, view);
+        if (ocarina_sound_) {  // each note we play, for the log (issue 152)
+            const std::optional<std::uint8_t> note = reading ? reading->ocarina_note : std::nullopt;
+            if (note != ocarina_logged_) {
+                ocarina_logged_ = note;
+                if (note) {
+                    LOG_INFO(Core, "coop: ocarina: we play {}", CoopOcarina::NoteNames()[*note + 1]);
+                }
+            }
+        }
 
         // The game's flags, when it is the right game and a list is shared.
         std::optional<EmulatorMemory> memory;
@@ -1018,6 +1027,27 @@ private:
         EmulatorMemory memory(system.ApplicationMemory(), base_);
         coop::host::PlayerReader reader(memory, &drawn_state_);
         auto reading = reader.read();
+        // Issue 152: what the ocarina sound object holds while our Link plays,
+        // each time it changes (the sender's note comes from it).
+        if (reading && ocarina_sound_ && reading->animation &&
+            reading->animation->name.find("Ocarina") != std::string::npos) {
+            std::string fields = "none";
+            if (const auto sound = reader.ocarina_sound_object()) {
+                const auto u32 = [&](std::uint64_t off) {
+                    const auto v = coop::host::read_u32(memory, *sound + off);
+                    return v ? fmt::format("{:x}", *v) : std::string("?");
+                };
+                fields = fmt::format("state {} sound {} last {} released {} hold {} melody {} melody_on {} playing {}",
+                                     u32(0x230), u32(0x234), u32(0x23c), u32(0x270), u32(0x278), u32(0x280),
+                                     u32(0x288), u32(0x274));
+            }
+            fields += fmt::format(" | cutscene {} note {}", reading->cutscene.value_or("-"),
+                                  reading->ocarina_note ? std::to_string(*reading->ocarina_note) : "-");
+            if (fields != ocarina_fields_logged_) {
+                ocarina_fields_logged_ = fields;
+                LOG_INFO(Core, "coop: ocarina: {}", fields);
+            }
+        }
         if (reading) {
             {
                 std::lock_guard lock(tunic_mutex_);
@@ -1328,6 +1358,8 @@ private:
     bool ocarina_sound_ = true;
     std::mutex voices_mutex_;
     CoopOcarina::Voices voices_;
+    std::optional<std::uint8_t> ocarina_logged_;
+    std::string ocarina_fields_logged_;
     std::optional<std::string> tunic_;  // coop.ini tunic / LICHII_COOP_TUNIC / the Co-op menu
     std::mutex tunic_mutex_;
     const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106

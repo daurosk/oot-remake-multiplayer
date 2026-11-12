@@ -17,6 +17,7 @@ namespace {
 
 constexpr std::uint32_t kGotoCastle = 0xdb89c1a9u;  // Goto_HyruleCastle (the owl's quest)
 constexpr std::uint32_t kFairy = 0x682d1169u;       // Meet_GreatFairy
+constexpr std::uint32_t kForest = 0x7d776b61u;      // Get_StoneOfForest (the Deku Tree)
 
 host::FlagKey Key(std::uint32_t hash) {
     return host::FlagKey(hash, std::uint16_t{0});
@@ -298,6 +299,35 @@ TEST_CASE("quests: below Goto's floor a player waits, then catches up once its g
     wb.receive(proto::Message{proto::FlagState{0, state->flags}});
     wb.frame(b.store);
     CHECK(b.at(kGotoCastle, "Step03"));
+}
+
+TEST_CASE("quests: a step held in a dungeon is not lost when our game takes a lower step of its own (review should-fix 4)") {
+    std::optional<host::SharedFlags> list;
+    CoopQuests::Merge(list, true);
+    Game b;
+    for (const auto& q : CoopQuests::Quests()) b.step(q.hash, "NotReady");
+    b.step(kForest, "GoInside");
+    bool in_dungeon = true;
+    host::HoldFlagStore hold(b.store, [&](host::FlagKey key) {
+        return in_dungeon && CoopQuests::Find(key.hash) != nullptr;
+    });
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wb.frame(hold);
+
+    // A beat the boss: DefeatBoss comes in while B is inside, so it waits.
+    wb.receive(proto::Message{proto::FlagState{0, {{Key(kForest), proto::FlagKind::int32,
+                                                   static_cast<std::uint32_t>(RankOf(kForest, "DefeatBoss"))}}}});
+    wb.frame(hold);
+    CHECK(b.at(kForest, "GoInside"));
+    // B's own game moves on, still below A's step.
+    b.step(kForest, "MeetBoss");
+    wb.frame(hold);
+    wb.frame(hold);
+    CHECK(b.at(kForest, "MeetBoss"));
+    // B leaves the dungeon: the held step is written.
+    in_dungeon = false;
+    wb.frame(hold);
+    CHECK(b.at(kForest, "DefeatBoss"));
 }
 
 TEST_CASE("quests: a guest who joins later gets the group's steps") {

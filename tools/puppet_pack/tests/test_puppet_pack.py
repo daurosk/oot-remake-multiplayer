@@ -436,7 +436,8 @@ class BuildPackTest(unittest.TestCase):
         # The hook's CoopSpawn::StandIn makes these same ones.
         self.assertEqual([n for _, n in build.STAND_INS],
                          ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong",
-                          "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb"])
+                          "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb",
+                          "CoopShot_Boomerang"])
 
     def test_bomb_stand_in_keeps_its_animations(self):
         # Issue 169: the held bomb's stand-in has the model and the animation set (its fuse can
@@ -471,6 +472,21 @@ class BuildPackTest(unittest.TestCase):
             {"Actor/Shootable_DekuSeed.engine__actor__ActorParam.bgyml": byml.dumps(bomb)},
             "Shootable_DekuSeed", "CoopShot_Seed")
         self.assertNotIn("ASRef", byml.loads(seed_ap)["Components"])
+        # Issue 85: the hookshot tip keeps its animations (the chain), the boomerang does not.
+        for src, name in (("Shootable_Hook", "CoopShot_Hook"),
+                          ("Shootable_HookLong", "CoopShot_HookLong")):
+            _, hook_ap, _ = build.build_stand_in(
+                {f"Actor/{src}.engine__actor__ActorParam.bgyml": byml.dumps(bomb)}, src, name)
+            hook = byml.loads(hook_ap)["Components"]
+            self.assertEqual(hook["ASRef"], bomb["Components"]["ASRef"])
+            self.assertNotIn("AIInfoRef", hook)
+        _, boom_ap, _ = build.build_stand_in(
+            {"Actor/Weapon_Boomerang.engine__actor__ActorParam.bgyml": byml.dumps(bomb)},
+            "Weapon_Boomerang", "CoopShot_Boomerang")
+        boom = byml.loads(boom_ap)["Components"]
+        self.assertNotIn("ASRef", boom)
+        self.assertNotIn("PhysicsRef", boom)
+        self.assertIn("ModelInfoRef", boom)
 
     def test_actor_param_chain(self):
         members = fake_player_pack("Adult")

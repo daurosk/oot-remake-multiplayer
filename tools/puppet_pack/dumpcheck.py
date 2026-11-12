@@ -53,7 +53,7 @@ REQUIRED = (
 VERSIONED = REQUIRED[3]
 # Read when there, not needed: the shots' sources, for the stand-ins (build.py STAND_INS). A
 # .nup build extracts only what nup_files names, so without these the pack had no stand-ins
-# ("shots": []) and other players' seeds, arrows, hookshot tips and lures had no copy to show.
+# ("shots": []) and other players' seeds, arrows, hookshot tips, lures and boomerangs had no copy to show.
 OPTIONAL = (
     "Pack/Actor/Shootable_DekuSeed.pack.zs",
     "Pack/Actor/NormalArrow.pack.zs",
@@ -62,6 +62,7 @@ OPTIONAL = (
     "Pack/Actor/Weapon_Lure.pack.zs",
     "Pack/Actor/Weapon_SinkingLure.pack.zs",
     "Pack/Actor/Item_Bomb.pack.zs",
+    "Pack/Actor/Weapon_Boomerang.pack.zs",
 )
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "

@@ -130,12 +130,18 @@ STAND_INS = (
     # its physics body's fall between the hook's places and dropped out of the puppet's hands; the
     # stand-in has no body. It keeps the bomb's animations, so its fuse can blink.
     ("Item_Bomb", "CoopShot_Bomb"),
+    # Issue 85: another player's thrown boomerang. The game's own one made here homed on this
+    # game's enemies and hit them.
+    ("Weapon_Boomerang", "CoopShot_Boomerang"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
 # Components some stand-ins keep beyond the model (by stand-in name): the animation set, so the
-# hook can play the owner's animation on it (the bomb's Bomb_Blink).
+# hook can play the owner's animation on it (the bomb's Bomb_Blink; the hookshot tip's chain, whose
+# length is its animation set's ChainExtend, issue 85).
 STAND_IN_EXTRA_COMPONENTS = {
     "CoopShot_Bomb": ("ASRef", "ASInfoRef", "AnimationRef"),
+    "CoopShot_Hook": ("ASRef", "ASInfoRef", "AnimationRef"),
+    "CoopShot_HookLong": ("ASRef", "ASInfoRef", "AnimationRef"),
 }
 # ActorInfo fields of the shootable that a model-only actor must not take over.
 STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")

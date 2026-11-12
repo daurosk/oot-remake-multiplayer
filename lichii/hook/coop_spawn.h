@@ -53,7 +53,8 @@ struct Seen {
     Vec3 position{};
     // The actor's 3x3 at +0x328 (rows), when the walk read one.
     std::optional<CoopPuppet::Mat3> rotation;
-    // Issue 169: a bomb's AS slot 0 (the fuse's Bomb_Blink), when read.
+    // Issue 169: a bomb's AS slot 0 (the fuse's Bomb_Blink), when read;
+    // issue 85: a hookshot tip's too (its chain).
     std::optional<coop::protocol::Animation> animation;
 };
 

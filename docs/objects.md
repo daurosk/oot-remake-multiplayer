@@ -185,7 +185,7 @@ Issue 178, a player test in the Deku Tree: Gohma's eggs killed as eggs were shar
 
 #### What is built (branch `projectiles`, issue 85)
 
-The copies are the game's own actors made by the spawn sync ([spawns.md](spawns.md), `LICHII_COOP_SPAWN=1`), except seeds, arrows and hookshot tips. Since issue 85 those are the `CoopShot_Seed`, `CoopShot_Arrow`, `CoopShot_Hook` and `CoopShot_HookLong` stand-ins ([spawns.md](spawns.md), "Seeds, arrows and hookshot tips"); the other `CoopShot_*` packs above are not made. On top of it, `lichii/hook/coop_projectiles.{h,cpp}` (tested in `tests/lichii/projectiles_test.cpp`) holds the rules below, used by `coop_spawn.cpp` and `coop_objects_sync.cpp`. No new message: everything rides on `OBJECT_SPAWN`, `OBJECT_SAMPLE` and `OBJECT_REMOVE` components that protocol 4 already has (rotation, fuse), so the protocol version stays.
+The copies are the game's own actors made by the spawn sync ([spawns.md](spawns.md), `LICHII_COOP_SPAWN=1`), except seeds, arrows, hookshot tips and boomerangs. Since issue 85 those are the `CoopShot_Seed`, `CoopShot_Arrow`, `CoopShot_Hook`, `CoopShot_HookLong` and `CoopShot_Boomerang` stand-ins ([spawns.md](spawns.md), "Seeds, arrows and hookshot tips"); the other `CoopShot_*` packs above are not made. On top of it, `lichii/hook/coop_projectiles.{h,cpp}` (tested in `tests/lichii/projectiles_test.cpp`) holds the rules below, used by `coop_spawn.cpp` and `coop_objects_sync.cpp`. No new message: everything rides on `OBJECT_SPAWN`, `OBJECT_SAMPLE` and `OBJECT_REMOVE` components that protocol 4 already has (rotation, fuse), so the protocol version stays.
 
 | Kind | Actor | Copy's path | Its end |
 |---|---|---|---|
@@ -194,8 +194,8 @@ The copies are the game's own actors made by the spawn sync ([spawns.md](spawns.
 | Deku nut | `Item_DekuNut` | samples, carried on along its arc | deleted; `hit` if it went at 3 m/s or more |
 | Slingshot seed | `Shootable_DekuSeed` | the same; a bounce is sent at once | the same; a `hit` copy stays 0.2 s where it struck ([spawns.md](spawns.md), issue 166) |
 | Arrow (all elements) | `NormalArrow` | the same | the same; a `hit` copy sticks 1.5 s where it struck |
-| Boomerang | `Weapon_Boomerang` | samples (it homes and turns back) | deleted |
-| Hookshot, longshot tip | `Shootable_Hook`, `Shootable_HookLong` | samples | deleted |
+| Boomerang | `Weapon_Boomerang`, shown as `CoopShot_Boomerang` (the game's own one would home on this game's enemies) | samples (it homes and turns back) | deleted |
+| Hookshot, longshot tip | `Shootable_Hook`, `Shootable_HookLong` | samples, with the tip's animation (its model is the chain, `Item_Hookshot_Chain`; the chain's length is its animation set's `ChainExtend`) | deleted |
 
 - **Turned the owner's way.** The maker reads the 3x3 at actor +0x328 with the place and sends it as a quaternion in the spawn and every sample. The copy is created with that turn in the create argument, and each game frame the director writes place and turn as one 48-byte block at +0x31c, then calls the actor's own vtable slot 0x218 `(actor, 0)` (0x4c6580 on every actor seen; the director checks the slot points into main), as `ExecuteActorForceSetMtx` does, so the physics takes the new place. `LICHII_COOP_SHOTS_SETTER=0` leaves the call out.
 - **The same path at the same time.** A copy is placed where the owner's projectile is *now*: the latest sample carried on by its velocity for the time since the sample's server time (at most 250 ms), with the fall that two samples show (velocity y lost per second, 0 to 60 m/s²) for arrows, seeds and nuts. Before, it was carried on by the time since the message arrived, so a copy ran one network delay behind.

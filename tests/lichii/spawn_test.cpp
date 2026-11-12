@@ -747,7 +747,7 @@ TEST_CASE("spawn: a seed copy is the stand-in the pack has, placed as the puppet
     CHECK(std::string(CoopSpawn::StandIn("Shootable_HookLong")) == "CoopShot_HookLong");
     CHECK(CoopSpawn::StandIn("Item_Bomb").empty());
     CHECK(CoopSpawn::StandIn("Item_DekuNut").empty());
-    CHECK(CoopSpawn::StandIn("Weapon_Boomerang").empty());
+    CHECK(std::string(CoopSpawn::StandIn("Weapon_Boomerang")) == "CoopShot_Boomerang");
 
     StandInRig rig;
     CoopSpawn::Director d;
@@ -1220,4 +1220,76 @@ TEST_CASE("spawn: a held copy is the bomb stand-in, and the owner's animation is
     c = plain.Step(rig2.guest, true, R::block, 0);
     REQUIRE(c);
     CHECK(rig2.Name(*c) == "Item_Bomb");
+}
+
+// ---------------------------------------------------------------- issue 85
+
+TEST_CASE("spawn: a boomerang copy is its stand-in, never the game's homing boomerang (issue 85)") {
+    CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Boomerang\"}]}") ==
+          std::set<std::string>{"CoopShot_Boomerang"});
+    using R = StandInRig;
+    StandInRig rig;
+    CoopSpawn::Director d;
+    d.SetStandIns({"CoopShot_Boomerang"});
+    Copy copy;
+    copy.key = 9;
+    copy.actor = "Weapon_Boomerang";
+    copy.position = {1.0f, 2.0f, 3.0f};
+    d.SetInput(R::base, {copy});
+    REQUIRE(d.Step(rig.guest, false, 0, 0));  // malloc
+    auto c = d.Step(rig.guest, true, R::block, 0);
+    REQUIRE(c);
+    CHECK(rig.Name(*c) == "CoopShot_Boomerang");
+}
+
+TEST_CASE("spawn: our hookshot tip sends its animation (the chain), a seed does not (issue 85)") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+
+    auto seen = [](std::uint64_t address, const char* name, float z, const char* animation) {
+        Seen s;
+        s.address = address;
+        s.name = name;
+        s.position = {0.0f, 1.0f, z};
+        s.animation = proto::Animation{animation, 2.0f, 1.0f};
+        return s;
+    };
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now,
+              {seen(0x7000, "Shootable_Hook", 0.5f, "HookshotShootHook"),
+               seen(0x7100, "Shootable_DekuSeed", 0.5f, "Anything")},
+              none, send, copies);
+    auto spawns = Of<proto::ObjectSpawn>(send);
+    REQUIRE(spawns.size() == 2);
+    for (const auto& s : spawns) {
+        if (s.actor == "Shootable_Hook") {
+            REQUIRE(s.state.animation);
+            CHECK(s.state.animation->name == "HookshotShootHook");
+            CHECK_FALSE(s.state.fuse);
+        } else {
+            CHECK_FALSE(s.state.animation);
+        }
+    }
+
+    send.clear();
+    now += 40 * kMs;
+    sync.Tick(kScene, 1, now,
+              {seen(0x7000, "Shootable_Hook", 3.0f, "HookshotChainExtend"),
+               seen(0x7100, "Shootable_DekuSeed", 3.0f, "Anything")},
+              none, send, copies);
+    auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE_FALSE(samples.empty());
+    int hooks = 0;
+    for (const auto& s : samples) {
+        if (s.state.animation) {
+            ++hooks;
+            CHECK(s.state.animation->name == "HookshotChainExtend");
+            CHECK_FALSE(s.state.state);  // never the bomb's held bit
+        }
+    }
+    CHECK(hooks == 1);
 }

@@ -92,6 +92,11 @@ bool Explodes(std::string_view name) {
     const Kind* k = Find(name);
     return k != nullptr && k->explodes;
 }
+// Issue 85: a hookshot tip's animation set draws its chain (ChainExtend in
+// Weapon_Range_Hookshot.root.asb), so its copy plays the owner's animation too.
+bool Animated(std::string_view name) {
+    return Explodes(name) || name == "Shootable_Hook" || name == "Shootable_HookLong";
+}
 bool Flies(std::string_view name) {
     const Kind* k = Find(name);
     return k != nullptr && k->flies;
@@ -316,6 +321,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (Explodes(m.name)) {
                     out.state.fuse = fuse_.Left(now_us - m.made_at);
                     out.state.state = m.held ? proto::object_state::held : std::uint8_t{0};
+                }
+                if (Animated(m.name)) {
                     out.state.animation = m.animation;
                 }
                 send.emplace_back(std::move(out));
@@ -365,6 +372,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (Explodes(s.name)) {
             out.state.fuse = fuse_.Left(0);  // known once one of ours went off
             out.state.state = m.held ? proto::object_state::held : std::uint8_t{0};
+        }
+        if (Animated(s.name)) {
             out.state.animation = m.animation;
         }
         m.sent_held = m.held;
@@ -693,13 +702,16 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
 }
 
 std::string_view StandIn(std::string_view actor) {
-    constexpr std::array<std::pair<std::string_view, std::string_view>, 6> kStandIns{{
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 7> kStandIns{{
         {"Shootable_DekuSeed", "CoopShot_Seed"},
         {"NormalArrow", "CoopShot_Arrow"},
         {"Shootable_Hook", "CoopShot_Hook"},
         {"Shootable_HookLong", "CoopShot_HookLong"},
         {"Weapon_Lure", "CoopShot_Lure"},
         {"Weapon_SinkingLure", "CoopShot_SinkingLure"},
+        // Issue 85: the game's own boomerang made here homes on our enemies
+        // and hits them; the stand-in is its model only.
+        {"Weapon_Boomerang", "CoopShot_Boomerang"},
     }};
     for (const auto& [shared, stand_in] : kStandIns) {
         if (shared == actor) {
@@ -721,7 +733,7 @@ std::set<std::string> StandInsIn(std::string_view manifest) {
     std::set<std::string> out;
     for (const std::string_view shared :
          {"Shootable_DekuSeed", "NormalArrow", "Shootable_Hook", "Shootable_HookLong", "Weapon_Lure",
-          "Weapon_SinkingLure"}) {
+          "Weapon_SinkingLure", "Weapon_Boomerang"}) {
         const std::string quoted = "\"" + std::string(StandIn(shared)) + "\"";
         if (manifest.find(quoted) != std::string_view::npos) {
             out.insert(std::string(StandIn(shared)));
@@ -1494,8 +1506,9 @@ private:
                         memory.ReadBlockUnsafe(r, m.data(), sizeof(m));
                         s.rotation = m;
                     }
-                    if (Explodes(s.name)) {
-                        s.animation = Slot0(memory, a);  // issue 169: the fuse's blink
+                    if (Animated(s.name)) {
+                        // Issue 169: the fuse's blink; issue 85: the hook's chain.
+                        s.animation = Slot0(memory, a);
                     }
                     out.push_back(std::move(s));
                 }

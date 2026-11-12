@@ -1,6 +1,6 @@
 # Chat and name tags as the game's own UI (Hookshot)
 
-From test11 co-op's chat and name tags are drawn by the game itself, not over the picture. The module
+Co-op's chat and name tags are drawn by the game itself, not over the picture. The module
 (`hookshot_coop.dll`, `hookshot/src/coop_native_ui.*`) hands our text to the game's own screens on the game's
 thread, at the frame hook. The game's font, frames and animations are used, and the game hides these screens
 itself in cutscenes and menus.

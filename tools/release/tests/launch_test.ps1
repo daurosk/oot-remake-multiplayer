@@ -215,6 +215,15 @@ try {
     Write-File (Join-Path $sp 'coop_puppet.json') '{ not json'
     Check ((Set-KitSelfTunic $sp 'red') -eq '') 'self tunic: a broken coop_puppet.json: none, no throw'
     Check ((Set-KitSelfTunic (Join-Path $ph 'no-pack') 'red') -eq '') 'self tunic: no pack: none, no throw'
+    # the dark tile (the child's tunic body, #202): copied with the main one, taken away with it
+    Write-File (Join-Path $sp 'coop_self\red.dark.bntx.zs') 'REDDARK'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}, "self_dark_tiles": {"red": "coop_self/red.dark.bntx.zs"}}'
+    $dark = Join-Path $sp 'romfs\Tex\Angin_Tile_A_Dark_Alb.bntx.zs'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and (Test-Path -LiteralPath $dark) -and [System.IO.File]::ReadAllText($dark) -eq 'REDDARK') 'self tunic: the red dark tile over the game''s'
+    Check ((Set-KitSelfTunic $sp 'green') -eq '' -and -not (Test-Path -LiteralPath $dark) -and -not (Test-Path -LiteralPath $tile)) 'self tunic: green: the game''s own dark tile too'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Write-File $dark 'STALE'
+    Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and -not (Test-Path -LiteralPath $dark)) 'self tunic: an older pack without dark tiles: no stale dark copy'
 } finally {
     Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
 }

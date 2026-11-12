@@ -69,6 +69,7 @@ OPTIONAL = (
     "Pack/Actor/Shootable_ScrubBusinessSees.pack.zs",
     # The tunic colours (puppet_pack/tunic.py): the green tile and the two player models.
     "Tex/Angin_Tile_A_Alb.bntx.zs",
+    "Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
     "Model/Player_Child.Player_Child.bfres.zs",
     "Model/Player_Adult.Player_Adult.bfres.zs",
 )

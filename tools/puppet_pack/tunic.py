@@ -156,14 +156,14 @@ def average_luma(data):
     return total / n
 
 
-def recolor_bntx(data, target, old_name, new_name):
+def recolor_bntx(data, target, old_name, new_name, scale=1.0):
     """A copy of a BC1/BC3 BNTX with every block's end colours recoloured and the texture's name
-    changed (same length)."""
+    changed (same length). `scale` darkens (below 1) the result's average against `target`."""
     if len(old_name) != len(new_name):
         raise TunicError("the new name must be as long as the old one")
     fmt, start, end = _brti(data)
     step, off = _blocks(fmt)
-    f = Recolor(target, average_luma(data))
+    f = Recolor(target, average_luma(data) / scale)
     out = bytearray(data)
     for p in range(start, end - step + 1, step):
         q = p + off
@@ -218,6 +218,63 @@ def self_tile(data, color):
     return recolor_bntx(data, COLORS[color][1], TILE, TILE)
 
 
-def model_for(model, color):
-    """A copy of a player model (bfres) that names the colour's tile instead of the green one."""
-    return rename(model, TILE, tile_name(color), at_least=1, at_most=1)
+def model_for(model, color, dark=True):
+    """A copy of a player model (bfres) that names the colour's tile instead of the green one,
+    and the colour's dark tile instead of the green dark one if it names it (the child model;
+    `dark`: the dark tiles are made, else the dark name stays the game's)."""
+    out = rename(model, TILE, tile_name(color), at_least=1, at_most=1)
+    if dark:
+        out = rename(out, DARK, dark_name(color), at_least=0, at_most=1)
+    return out
+
+
+# --- the darker tile (#202) ---
+# Child Link's model names a second tunic texture, `Tex/Angin_Tile_A_Dark_Alb.bntx` (the tunic's
+# body; the adult model does not name it). With only the main tile recoloured, the hat and
+# shoulders took your colour and the body stayed green. That texture is ASTC 5x4, which has no
+# cheap in-place recolour, so its colour copies are the main (BC3) tile recoloured, a little
+# darker, under the dark tile's name: both are 512x512 and the game's two files lay out their
+# string section the same way (`_STR` up to `_DIC`, with room for either name), so the dark
+# file's string section is put into the BC3 copy. A different format and size: the size-table
+# entry of each dark copy is the main tile's (build.py write_tunics).
+DARK = "Angin_Tile_A_Dark_Alb"
+# The dark tile's brightness against the main tile's (linear luma of the block end colours of
+# the game's two files, measured once: 0.0476 / 0.0746). Not data from the game, a ratio.
+DARK_SCALE = 0.64
+
+
+def dark_name(color):
+    return f"Angin_Tile_{COLORS[color][0]}_Dark_Alb"
+
+
+def _str_section(data):
+    s, e = data.find(b"_STR"), data.find(b"_DIC")
+    if s < 0 or e < s:
+        raise TunicError("no _STR section before _DIC in the BNTX")
+    return s, e
+
+
+def with_name_of(data, named):
+    """`data` (a BNTX) with the string section of `named` (another BNTX whose string section
+    starts and ends at the same offsets): the texture then has `named`'s name."""
+    a, b = _str_section(data), _str_section(named)
+    if a != b:
+        raise TunicError("the two textures' string sections differ in place or size")
+    return data[:a[0]] + named[a[0]:a[1]] + data[a[1]:]
+
+
+def dark_tile_for(tile, dark, color):
+    """The dark tile of a colour under its name: green is the game's own dark tile renamed, the
+    rest the main tile recoloured darker under the dark tile's name, then renamed."""
+    if color == "green":
+        return rename(dark, DARK, dark_name(color), at_least=1)
+    return rename(self_dark_tile(tile, dark, color), DARK, dark_name(color), at_least=1)
+
+
+def self_dark_tile(tile, dark, color):
+    """Your own Link's dark tile in `color` (not green), under the game's dark tile's name."""
+    out = recolor_bntx(tile, COLORS[color][1], TILE, TILE, scale=DARK_SCALE)
+    out = with_name_of(out, dark)
+    if (DARK.encode() + b"\0") not in out:
+        raise TunicError(f"the dark tile's string section does not name {DARK}")
+    return out

@@ -677,8 +677,9 @@ def fake_bntx(name, blocks=None, fmt=0x1C):
         for i in range(8):  # BC3: 8 alpha bytes, two greens, indices
             blocks.append(bytes(8) + struct.pack("<HHI", 0x2a05 + i * 0x20, 0x1903, 0xE4E4E4E4))
         blocks.append(bytes(16))  # padding
-    head = b"BNTX" + bytes(12) + struct.pack("<H", len(name)) + name.encode() + b"\x00"
-    head += bytes(-len(head) % 8)
+    # The string section has room for either tunic name, as in the game's two tiles.
+    strs = b"_STR" + struct.pack("<H", len(name)) + name.encode() + b"\x00"
+    head = b"BNTX" + bytes(12) + strs + bytes(0x30 - len(strs)) + b"_DIC" + bytes(4)
     brti = b"BRTI" + bytes(0x18) + struct.pack("<I", fmt << 8 | 6) + bytes(0x20)
     data = b"".join(blocks)
     brtd = b"BRTD" + bytes(4) + struct.pack("<Q", 0x10 + len(data)) + data
@@ -686,6 +687,32 @@ def fake_bntx(name, blocks=None, fmt=0x1C):
 
 
 class TunicTest(unittest.TestCase):
+    def test_dark_tile(self):
+        # #202: the child's tunic body is the dark tile (ASTC in the game): your colour's copy is
+        # the main BC3 tile recoloured darker, under the dark tile's name.
+        from puppet_pack import tunic
+        tile, dark = fake_bntx(tunic.TILE), fake_bntx(tunic.DARK, blocks=[b"\x77" * 16] * 4, fmt=0x2E)
+        own = tunic.self_dark_tile(tile, dark, "red")
+        self.assertEqual(len(own), len(tile))
+        self.assertEqual(own.count(b"Angin_Tile_A_Dark_Alb\x00"), 1)
+        self.assertNotIn(b"Angin_Tile_A_Alb\x00", own)
+        self.assertEqual(tunic._brti(own)[0], tunic.BC3)
+        light = tunic.self_tile(tile, "red")
+        self.assertLess(tunic.average_luma(own), tunic.average_luma(light))
+        # the puppet's: renamed to the colour's dark name; green is the game's dark tile renamed
+        self.assertIn(b"Angin_Tile_R_Dark_Alb\x00", tunic.dark_tile_for(tile, dark, "red"))
+        self.assertEqual(tunic.dark_tile_for(tile, dark, "green"),
+                         dark.replace(b"Angin_Tile_A_Dark_Alb\x00", b"Angin_Tile_G_Dark_Alb\x00"))
+        # the child model names both; the adult only the main tile
+        child = b"FRES\x00Angin_Tile_A_Alb\x00Angin_Tile_A_Dark_Alb\x00"
+        self.assertEqual(tunic.model_for(child, "red"),
+                         b"FRES\x00Angin_Tile_R_Alb\x00Angin_Tile_R_Dark_Alb\x00")
+        self.assertEqual(tunic.model_for(child, "red", dark=False),
+                         b"FRES\x00Angin_Tile_R_Alb\x00Angin_Tile_A_Dark_Alb\x00")
+        self.assertEqual(tunic.model_for(b"FRES\x00Angin_Tile_A_Alb\x00", "red"), b"FRES\x00Angin_Tile_R_Alb\x00")
+        with self.assertRaises(tunic.TunicError):  # string sections not in the same place
+            tunic.with_name_of(tile, b"BNTX" + bytes(4) + dark[16:])
+
     def test_recolor_bc3(self):
         from puppet_pack import tunic
         src = fake_bntx("Angin_Tile_A_Alb")
@@ -784,9 +811,13 @@ class FullBuildTest(unittest.TestCase):
         self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(t.dumps()))
         # The tunic tile and the two player models (puppet_pack.tunic).
         self.write("Tex/Angin_Tile_A_Alb.bntx.zs", plain.compress(fake_bntx("Angin_Tile_A_Alb")))
+        self.write("Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
+                   plain.compress(fake_bntx("Angin_Tile_A_Dark_Alb", blocks=[b"\x77" * 16] * 4, fmt=0x2E)))
         for v in ("Child", "Adult"):
+            dark = b"\x15\x00Angin_Tile_A_Dark_Alb\x00" if v == "Child" else b""
             self.write(f"Model/Player_{v}.Player_{v}.bfres.zs",
-                       plain.compress(b"FRES" + bytes(12) + b"\x10\x00Angin_Tile_A_Alb\x00" + f"Player_{v}\x00".encode()))
+                       plain.compress(b"FRES" + bytes(12) + b"\x10\x00Angin_Tile_A_Alb\x00" + dark
+                                      + f"Player_{v}\x00".encode()))
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -1109,6 +1140,22 @@ class FullBuildTest(unittest.TestCase):
             out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
         self.assertIsNotNone(t.get("Tex/Angin_Tile_B_Alb.bntx"))
         self.assertIsNotNone(t.get("Model/CoopTunic_Child_Red.Player_Child.bfres"))
+        # the dark tile (#202): per colour for the puppets, your own beside romfs/, and the child
+        # models name the colour's dark tile
+        game_dark = d.decompress(build.read(os.path.join(self.romfs, "Tex/Angin_Tile_A_Dark_Alb.bntx.zs")))
+        self.assertEqual(m["self_dark_tiles"],
+                         {"red": "coop_self/red.dark.bntx.zs", "blue": "coop_self/blue.dark.bntx.zs"})
+        for c in ("red", "blue"):
+            own = d.decompress(build.read(os.path.join(mod, m["self_dark_tiles"][c])))
+            self.assertEqual(own, tunic.self_dark_tile(game_tile, game_dark, c))
+            self.assertGreaterEqual(t.get(f"Tex/{tunic.dark_name(c)}.bntx"), len(own))
+        self.assertEqual(d.decompress(build.read(os.path.join(out, "Tex/Angin_Tile_G_Dark_Alb.bntx.zs"))),
+                         game_dark.replace(b"Angin_Tile_A_Dark_Alb\x00", b"Angin_Tile_G_Dark_Alb\x00"))
+        child = d.decompress(build.read(os.path.join(out, "Model/CoopTunic_Child_Blue.Player_Child.bfres.zs")))
+        self.assertIn(b"Angin_Tile_B_Dark_Alb\x00", child)
+        self.assertNotIn(b"Angin_Tile_A_Dark_Alb\x00", child)
+        # the game's dark tile's entry holds the BC3 copy the kit puts in its place
+        self.assertGreaterEqual(t.get("Tex/Angin_Tile_A_Dark_Alb.bntx"), len(game_tile))
 
     def test_build_no_tile_no_tunics(self):
         os.remove(os.path.join(self.romfs, "Tex", "Angin_Tile_A_Alb.bntx.zs"))
@@ -1215,7 +1262,7 @@ class NupTest(unittest.TestCase):
         # every STAND_INS source was "left out". They are read from the .nup when it has them.
         self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS} |
                          {f"Pack/Actor/{build.IMPACT_SOURCE}.pack.zs"} |
-                         {"Tex/Angin_Tile_A_Alb.bntx.zs"} |
+                         {"Tex/Angin_Tile_A_Alb.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs"} |
                          {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"

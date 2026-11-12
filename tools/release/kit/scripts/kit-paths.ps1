@@ -381,26 +381,37 @@ function Get-KitTunic([string]$Color) {
 
 # Puts your colour's tile (the pack tool's coop_self/<colour>.bntx.zs, listed in coop_puppet.json
 # as self_tiles) over the game's tunic tile in the pack's romfs, so your own Link wears it; green,
-# no colour or a pack without it: takes the copy away, the game's own green. Only the Kokiri
-# tunic: the Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
+# no colour or a pack without it: takes the copy away, the game's own green. The same for the
+# dark tile (self_dark_tiles, over Angin_Tile_A_Dark_Alb: the child's tunic body, #202). Only the
+# Kokiri tunic: the Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
 function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
-    $dst = Join-Path $PackDir 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs'
+    $tex = Join-Path $PackDir 'romfs\Tex'
+    $dst = Join-Path $tex 'Angin_Tile_A_Alb.bntx.zs'
+    $dstDark = Join-Path $tex 'Angin_Tile_A_Dark_Alb.bntx.zs'
     $tunic = Get-KitTunic $Color
     $src = $null
+    $srcDark = $null
     if ($tunic -and $tunic -ne 'green') {
         try {
             $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
             $rel = if ($json.self_tiles) { $json.self_tiles.$tunic } else { $null }
-            if ($rel -and $json.tunics -and $json.tunics.green) { $src = Join-Path $PackDir $rel }
+            $relDark = if ($json.self_dark_tiles) { $json.self_dark_tiles.$tunic } else { $null }
+            if ($rel -and $json.tunics -and $json.tunics.green) {
+                $src = Join-Path $PackDir $rel
+                if ($relDark) { $srcDark = Join-Path $PackDir $relDark }
+            }
         } catch { }
     }
     try {
         if ($src -and (Test-Path -LiteralPath $src -PathType Leaf)) {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+            New-Item -ItemType Directory -Force -Path $tex | Out-Null
             Copy-Item -LiteralPath $src -Destination $dst -Force
+            if ($srcDark -and (Test-Path -LiteralPath $srcDark -PathType Leaf)) {
+                Copy-Item -LiteralPath $srcDark -Destination $dstDark -Force
+            } elseif (Test-Path -LiteralPath $dstDark) { Remove-Item -LiteralPath $dstDark -Force }
             return $tunic
         }
-        if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force }
+        foreach ($f in @($dst, $dstDark)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
     } catch { }
     return ''
 }

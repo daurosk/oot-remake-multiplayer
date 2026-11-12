@@ -570,11 +570,15 @@ def recompress(dicts, original_raw, data, level=16):
     return dicts.compress(data, name, level=level)
 
 
-def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None):
+def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None,
+                 self_dark_tiles=None):
     """The recoloured tiles and the model copies that name them (puppet_pack.tunic), with their
     size-table entries (the game's own file's). Returns {colour: [paths]}. With `self_dir`, also
     the game's tile recoloured under its own name per colour (not green) into it, listed in
-    `self_tiles` ({colour: file name}): your own Link in your colour."""
+    `self_tiles` ({colour: file name}): your own Link in your colour; and the dark tile (the child's
+    tunic body, tunic.DARK) the same way in `self_dark_tiles`."""
+    if self_dark_tiles is None:
+        self_dark_tiles = {}
     out = {}
     tile_rel = f"Tex/{tunic.TILE}.bntx.zs"
     tile_src = os.path.join(romfs, tile_rel)
@@ -585,6 +589,17 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         return out
     tile_raw = read(tile_src)
     tile = dicts.decompress(tile_raw)
+    # The child model's second tunic texture (puppet_pack.tunic DARK): without it the child's
+    # tunic body stays green. A romfs without it: the dark name stays the game's in the models.
+    dark_rel = f"Tex/{tunic.DARK}.bntx.zs"
+    dark_raw = dark = None
+    if os.path.isfile(os.path.join(romfs, dark_rel)):
+        dark_raw = read(os.path.join(romfs, dark_rel))
+        dark = dicts.decompress(dark_raw)
+    else:
+        log(f"tunics: no {dark_rel} in this romfs, the child's tunic body stays green")
+    tile_size = table.get(strip_zs(tile_rel))
+    dark_size = table.get(strip_zs(dark_rel))
     models = {}
     for v in VARIANTS:
         m_rel = f"Model/Player_{v}.Player_{v}.bfres.zs"
@@ -605,11 +620,28 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             self_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
         dst = f"Tex/{name}.bntx.zs"
         write(os.path.join(out_romfs, dst), recompress(dicts, tile_raw, data))
-        table.add_new(strip_zs(dst), table.get(strip_zs(tile_rel)) or len(data) + PACK_SIZE_MARGIN)
+        table.add_new(strip_zs(dst), tile_size or len(data) + PACK_SIZE_MARGIN)
         paths.append(dst)
+        if dark is not None:
+            try:
+                ddata = tunic.dark_tile_for(tile, dark, c)
+                own_dark = tunic.self_dark_tile(tile, dark, c) if self_dir and c != "green" else None
+            except tunic.TunicError as e:
+                raise BuildError(f"{dark_rel}: {e}")
+            # Green is the game's dark tile (its size); the rest are BC3 like the main tile.
+            size = dark_size if c == "green" else tile_size
+            if own_dark is not None:
+                fname = f"{c}.dark.bntx.zs"
+                write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own_dark))
+                self_dark_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
+            ddst = f"Tex/{tunic.dark_name(c)}.bntx.zs"
+            write(os.path.join(out_romfs, ddst),
+                  recompress(dicts, dark_raw if c == "green" else tile_raw, ddata))
+            table.add_new(strip_zs(ddst), size or len(ddata) + PACK_SIZE_MARGIN)
+            paths.append(ddst)
         for v, (m_rel, m_raw) in models.items():
             try:
-                data = tunic.model_for(dicts.decompress(m_raw), c)
+                data = tunic.model_for(dicts.decompress(m_raw), c, dark=dark is not None)
             except tunic.TunicError as e:
                 raise BuildError(f"{m_rel}: {e}")
             dst = f"Model/{tunic.project_name(v, c)}.Player_{v}.bfres.zs"
@@ -618,6 +650,12 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             paths.append(dst)
         out[c] = paths
         log(f"tunic {c}: {name} and {len(models)} models")
+    if self_dark_tiles and dark is not None:
+        # The kit puts a BC3 copy (the main tile's size) over the game's ASTC dark tile: its
+        # entry must hold the bigger of the two. A bigger entry is fine for the game's own file.
+        need = tile_size or len(tile) + PACK_SIZE_MARGIN
+        if dark_size is None or dark_size < need:
+            table.set(strip_zs(dark_rel), need)
     return out
 
 
@@ -658,9 +696,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             raise BuildError(f"no tunic colour {c} (have {', '.join(tunic.COLORS)})")
     tunics = list(dict.fromkeys(list(tunics) + ([test_tunic] if test_tunic else [])))
     self_tiles = {}
+    self_dark_tiles = {}
     tunics_off = not tunics  # --tunics none: on purpose, the kit says nothing (kit-paths.ps1)
     tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log,
-                               self_dir=os.path.join(mod_dir, tunic.SELF_DIR), self_tiles=self_tiles) if tunics else {}
+                               self_dir=os.path.join(mod_dir, tunic.SELF_DIR), self_tiles=self_tiles,
+                               self_dark_tiles=self_dark_tiles) if tunics else {}
     tunics = [c for c in tunics if c in tunic_files]
     test_tunic = test_tunic if test_tunic in tunic_files else None
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
@@ -793,6 +833,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "impacts": impacts,
         "tunics": tunic_files,
         "self_tiles": self_tiles,
+        "self_dark_tiles": self_dark_tiles,
         "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,

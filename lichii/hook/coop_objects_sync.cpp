@@ -2076,7 +2076,7 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
             -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
-                       last.time});
+                       last.time, {}});
     }
 }
 

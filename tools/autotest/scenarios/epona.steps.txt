@@ -16,4 +16,4 @@ lines b-got-off B min=1 coop: ride: we got off
 lines a-sees-ride A min=1 coop: ride: P\d+ rides Animal_Epona_Adult
 lines a-sees-off A min=1 coop: ride: P\d+ off the horse
 lines horse-made-A A min=1 coop: spawn: CoopRide_Epona: create copy
-lines a-never-hides A max=0 (?<=coop: ride: P\d+ rides [\s\S]*)(?<!fairy )coop: puppet: P\d+ show -> (?:hide|hold)(?=[\s\S]*coop: ride: P\d+ off the horse)
+lines a-never-hides A max=0 (?<!fairy )coop: puppet: P\d+ show -> (?:hide|hold)(?<=coop: ride: P\d+ rides [\s\S]*)(?=[\s\S]*coop: ride: P\d+ off the horse)

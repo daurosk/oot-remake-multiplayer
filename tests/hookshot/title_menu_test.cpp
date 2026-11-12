@@ -316,7 +316,7 @@ TEST_CASE("title menu: the name stops at 16 characters, the password takes no sp
     CHECK(m.options().password == "myx");
 }
 
-TEST_CASE("title menu: Up or Down while editing ends the edit; keys only type into a field") {
+TEST_CASE("title menu: Up or Down while editing ends the edit, and keys only type into a field") {
     Menu m;
     m.Open(Options{});
     CHECK_FALSE(m.Char('a'));   // the main page has no field

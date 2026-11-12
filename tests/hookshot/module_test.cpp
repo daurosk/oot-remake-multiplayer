@@ -57,25 +57,20 @@ std::string NewFile(const std::string& patch, const std::string& path) {
 std::string Applied(const std::string& text, const std::string& patch, const std::string& path) {
     std::vector<std::string> lines;
     for (std::size_t at = 0; at < text.size();) {
-        const auto end = text.find('
-', at);
+        const auto end = text.find('\n', at);
         lines.push_back(text.substr(at, end - at));
         at = end == std::string::npos ? text.size() : end + 1;
     }
-    auto at = patch.find("+++ b/" + path + "
-");
+    auto at = patch.find("+++ b/" + path + "\n");
     REQUIRE(at != std::string::npos);
-    at = patch.find('
-', at) + 1;
+    at = patch.find('\n', at) + 1;
     long shift = 0;
     while (at < patch.size() && patch.compare(at, 3, "@@ ") == 0) {
         const long old_start = std::stol(patch.substr(at + 4));
-        at = patch.find('
-', at) + 1;
+        at = patch.find('\n', at) + 1;
         std::size_t pos = static_cast<std::size_t>(old_start - 1 + shift);
         while (at < patch.size()) {
-            const auto end = patch.find('
-', at);
+            const auto end = patch.find('\n', at);
             const std::string line = patch.substr(at, end - at);
             if (line.empty() || (line[0] != ' ' && line[0] != '-' && line[0] != '+')) break;
             if (line[0] == '+') {
@@ -94,8 +89,7 @@ std::string Applied(const std::string& text, const std::string& patch, const std
         }
     }
     std::string out;
-    for (const auto& l : lines) out += l + "
-";
+    for (const auto& l : lines) out += l + "\n";
     return out;
 }
 

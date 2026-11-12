@@ -113,6 +113,9 @@ int main(int argc, char** argv) {
       auto started = std::chrono::steady_clock::now();
       std::uint64_t shown_resets = 0;
       std::uint64_t shown_limited = 0;
+      // Enemy counts (issues 105, 133), at most every 5 s while they change.
+      std::uint64_t shown_enemies = 0;
+      auto enemies_at = started;
       while (!g_stop) {
         server.service(5);
         // Counts a window or a test can read while the server runs (it is
@@ -132,6 +135,21 @@ int main(int argc, char** argv) {
           std::fflush(stdout);
         }
         shown_limited = now.rate_limited;
+        const std::uint64_t enemies = now.group_links + now.group_refused + now.damage_relayed +
+                                      now.damage_dropped + now.dead_told;
+        if (enemies != shown_enemies &&
+            std::chrono::steady_clock::now() - enemies_at >= std::chrono::seconds(5)) {
+          shown_enemies = enemies;
+          enemies_at = std::chrono::steady_clock::now();
+          std::printf("coop_server: enemies: group entries taken %llu, refused %llu; "
+                      "damage relayed %llu, dropped %llu; kills told late %llu\n",
+                      static_cast<unsigned long long>(now.group_links),
+                      static_cast<unsigned long long>(now.group_refused),
+                      static_cast<unsigned long long>(now.damage_relayed),
+                      static_cast<unsigned long long>(now.damage_dropped),
+                      static_cast<unsigned long long>(now.dead_told));
+          std::fflush(stdout);
+        }
         if (line->run_for_ms &&
             std::chrono::steady_clock::now() - started >=
                 std::chrono::milliseconds(*line->run_for_ms)) {

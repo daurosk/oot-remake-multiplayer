@@ -152,7 +152,7 @@ HosCoopHostOptions host_options() {
 
 } // namespace
 
-TEST_CASE("host menu: Host makes a password, runs the server and points this game at it; the game joins") {
+TEST_CASE("host menu: Host makes a password, runs the server and points this game at it, and the game joins") {
     EnetLife enet;
     Game game;
     CoopHostMenu::Menu menu(game.hooks());
@@ -229,7 +229,7 @@ TEST_CASE("host menu: an older caller's smaller struct is read only as far as it
     menu.Leave();
 }
 
-TEST_CASE("host menu: Join by address needs the password; with it the game connects there") {
+TEST_CASE("host menu: Join by address needs the password, and with it the game connects there") {
     Game game;
     CoopHostMenu::Menu menu(game.hooks());
     HosCoopJoinOptions o{};
@@ -266,7 +266,7 @@ TEST_CASE("host menu: a broken invite code is explained, not used as an address"
     CHECK(game.connects == 0);
 }
 
-TEST_CASE("host menu: Host with an invite code; a second game joins with only that code, through its helper") {
+TEST_CASE("host menu: Host with an invite code, and a second game joins with only that code, through its helper") {
     EnetLife enet;
     FakeStun stun;
     Game host_game;

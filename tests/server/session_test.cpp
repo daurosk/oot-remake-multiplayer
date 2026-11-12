@@ -4081,7 +4081,7 @@ TEST_CASE("a voice frame goes to the players in the speaker's scene within the v
   CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
 }
 
-TEST_CASE("a voice frame with no known place goes to the whole scene; range 0 is the whole scene") {
+TEST_CASE("a voice frame with no known place goes to the whole scene, and range 0 is the whole scene") {
   SessionConfig config;
   config.voice_range_m = 0.0f;
   Harness h(config);

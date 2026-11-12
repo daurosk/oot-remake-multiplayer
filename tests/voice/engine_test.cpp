@@ -193,7 +193,7 @@ TEST_CASE("voice engine: sixteen players talking at once all play") {
   CHECK(fec == 1);
 }
 
-TEST_CASE("voice engine: the volume scales every voice; a player's own volume scales its") {
+TEST_CASE("voice engine: the volume scales every voice, a player's own volume scales its") {
   Settings s;
   s.volume = 0.5f;
   s.player_volume[2] = 2.0f;

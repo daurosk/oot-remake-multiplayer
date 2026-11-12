@@ -85,7 +85,7 @@ TEST_CASE("voice jitter: a late frame is dropped") {
   CHECK(j.stats().repeated == 1);
 }
 
-TEST_CASE("voice jitter: the end frame closes the spurt; the next one waits again") {
+TEST_CASE("voice jitter: the end frame closes the spurt, the next one waits again") {
   JitterBuffer j;
   push(j, 1, 0);
   push(j, 2, 0);

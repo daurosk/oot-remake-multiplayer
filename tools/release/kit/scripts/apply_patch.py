@@ -207,6 +207,10 @@ def refresh(root, keep, patch_texts):
             new[name] = "A" if have is None else "M"
             if have is not None:   # the source's own file: kept before it changes
                 write_if_changed(os.path.join(orig, *name.split("/")), joined(have))
+    # Before any file of the source changes: the list of every file this run may change, old and new, so a run
+    # stopped half way leaves a list that still names each changed file with its original (the next run applies
+    # to those originals again).
+    write_manifest(keep, dict(old, **new))
     written = 0
     for name, value in staged.items():
         target = os.path.join(root, *name.split("/"))
@@ -228,12 +232,23 @@ def refresh(root, keep, patch_texts):
             have = read_disk(orig, name)
             if have is not None and write_if_changed(target, joined(have)):
                 written += 1
-            os.remove(os.path.join(orig, *name.split("/")))
-    os.makedirs(keep, exist_ok=True)
-    with open(os.path.join(keep, MANIFEST), "w", encoding="utf-8", newline="\n") as f:
-        for name in sorted(new):
-            f.write("%s %s\n" % (new[name], name))
+    write_manifest(keep, new)
+    for name, kind in old.items():   # originals no longer needed: only once the list no longer names them
+        if name not in staged and kind == "M":
+            try:
+                os.remove(os.path.join(orig, *name.split("/")))
+            except OSError:
+                pass
     return written
+
+
+def write_manifest(keep, kinds):
+    os.makedirs(keep, exist_ok=True)
+    tmp = os.path.join(keep, MANIFEST + ".new")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        for name in sorted(kinds):
+            f.write("%s %s\n" % (kinds[name], name))
+    os.replace(tmp, os.path.join(keep, MANIFEST))
 
 
 def main(argv):

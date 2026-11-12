@@ -353,9 +353,12 @@ class BuildSpeedTest(Fixture):
         line = [ln for ln in out.splitlines() if ln.startswith("$ ") and "hookshot-build.ps1" in ln][0]
         self.assertIn('-Tools "%s"' % os.path.join(shared, "tools") if " " in shared else os.path.join(shared, "tools"), line)
         self.assertIn(os.path.join(shared, "work"), line)
+        self.assertIn(os.path.join(shared, "game"), line)   # the pin's one game folder: the lift key stays the same
+        self.assertIn("would store %s as" % os.path.join(shared, "game"), out)
+        self.assertNotIn(".build", line)
         self.assertNotIn("-Jobs", line)   # Hookshot's own choice: one compiler per CPU thread
         self.assertIn("--parallel %d" % (os.cpu_count() or 8), out)   # the module: every thread too
-        self.assertIn("shared folders", out)
+        self.assertIn("game folder", out)
 
     def test_an_old_kit_builds_as_before_and_jobs_are_passed_when_asked(self):
         hs.build([os.path.join(self.tmp, "A1")], os.path.join(self.tmp, "b"), kit=self.kit(False), jobs=12,
@@ -365,28 +368,7 @@ class BuildSpeedTest(Fixture):
         self.assertNotIn("-Work", line)
         self.assertIn("-Jobs 12", line)
         self.assertIn("a full build in the kit's own folders", out)
-
-    def test_seed_takes_the_newest_warm_entry_of_the_same_pin(self):
-        warm = self.game("warm")
-        for n in ("hookshot_pipelines.bin", "hookshot_pipelines.bin.built", "hookshot_prepared.bin", "mkw_vk_pipelines.bin"):
-            write(os.path.join(warm, n), "warm " + n)
-        old_patches = hs.stamp(self.repo).replace("patches=", "patches=older,")
-        hs.cache_store(warm, self.repo, force=True, say=self.say)   # stored under the current key
-        cold = self.game("cold", stamp=old_patches)
-        hs.cache_store(cold, self.repo, force=True, say=self.say)   # same key folder already stored: skipped
-        out = os.path.join(self.tmp, "new.build")
-        k = hs.seed_warm(out, old_patches, say=self.say)   # another patch set, the same pin: seeded
-        self.assertEqual(k, hs.key_of(hs.stamp(self.repo)))
-        self.assertEqual(sorted(os.listdir(out)), ["hookshot_pipelines.bin", "hookshot_pipelines.bin.built",
-                                                   "hookshot_prepared.bin", "mkw_vk_pipelines.bin"])
-        other_pin = "release=v9\ncommit=%s\npatches=x" % ("1" * 40)
-        self.assertIsNone(hs.seed_warm(os.path.join(self.tmp, "other.build"), other_pin, say=self.say))
-        self.assertFalse(os.path.exists(os.path.join(self.tmp, "other.build")))
-
-    def test_seed_skips_an_entry_never_warmed(self):
-        hs.cache_store(self.game("cold"), self.repo, say=self.say)
-        self.assertIsNone(hs.seed_warm(os.path.join(self.tmp, "x.build"), hs.stamp(self.repo), say=self.say))
-
+        self.assertIn(".build", line)   # an old kit: a new folder, removed after the store
 
 class LockTest(unittest.TestCase):
     def setUp(self):

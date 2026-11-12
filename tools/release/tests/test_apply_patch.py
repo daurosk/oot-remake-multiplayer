@@ -213,6 +213,36 @@ class RefreshTest(unittest.TestCase):
         self.assertEqual(self.read("nx2", "lift.py"), before)
         self.assertTrue(os.path.exists(os.path.join(self.root, "host", "new.c")))
 
+    def test_a_run_stopped_half_way_applies_cleanly_next_time(self):
+        # (review should-fix) the list is written before the files: a stop after the first file leaves it naming that
+        # file with its original, so the next run applies to the original again instead of to a patched file.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("apply_patch", TOOL)
+        ap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ap)
+        with open(self.p1, encoding="utf-8") as f:
+            text1 = f.read()
+        real = ap.write_if_changed
+        written = []
+
+        def stop_after_one(target, data):
+            if os.path.join(self.root, "") in target and written:
+                raise KeyboardInterrupt("the window was closed")
+            r = real(target, data)
+            if os.path.join(self.root, "") in target:
+                written.append(target)
+            return r
+
+        ap.write_if_changed = stop_after_one
+        with self.assertRaises(KeyboardInterrupt):
+            ap.refresh(self.root, self.keep, [("0001", text1)])
+        self.assertEqual(len(written), 1)   # one file of the source changed, then the stop
+        ap.write_if_changed = real
+        r = refresh(self.keep, self.root, self.p1)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("import coop_hooks\n", self.read("nx2", "lift.py"))
+        self.assertEqual(self.read("nx2", "lift.py").count("import coop_hooks"), 1)
+        self.assertEqual(self.read("host", "new.c"), "int x;\nint y;\n")
 
 if __name__ == "__main__":
     unittest.main()

@@ -132,9 +132,14 @@ $samePin = -not $toolsReady -and (Test-Path -LiteralPath $toolsStamp) -and (Test
 if ($samePin) {
     Step "Hookshot's source: the co-op patches changed ($($patches.Count) patch(es); the tools and pin stay)"
     & $python -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh $keep $tools @($patches | ForEach-Object FullName)
-    if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Hookshot $($pin.commit). This kit is broken: tell the co-op testers." }
-    [System.IO.File]::WriteAllText($toolsStamp, $stamp)
-    $toolsReady = $true
+    if ($LASTEXITCODE -eq 0) {
+        [System.IO.File]::WriteAllText($toolsStamp, $stamp)
+        $toolsReady = $true
+    } else {
+        # (a refresh stopped half way, or a source changed by hand: the whole source again, once)
+        Write-Host '  The source could not be refreshed in place: unpacking it again.' -ForegroundColor Yellow
+        Remove-Item -LiteralPath $toolsStamp -Force -ErrorAction SilentlyContinue
+    }
 }
 if ($toolsReady) {
     Step "Hookshot's tools: ready ($($toolsPin.release) tools, Hookshot $($pin.commit.Substring(0, 12)) with $($patches.Count) co-op patch(es))"
@@ -263,6 +268,9 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
     # skips the translation unless a lift file changed. A kit's own folder keeps Hookshot's default.)
     if ($sharedWork) { $env:HOOKSHOT_KEEP_BUILD_FILES = '1' }
+    # (Hookshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
+    # (the test cache, the test password) would make a new key, and a whole new translation, for nothing)
+    Get-ChildItem Env: | Where-Object { $_.Name -like 'OOT_COOP_*' } | ForEach-Object { Remove-Item "Env:\$($_.Name)" }
     $logArgs = if ($Log) { @('--log', $Log) } else { @() }
     Push-Location $tools
     try {

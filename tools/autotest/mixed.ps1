@@ -61,23 +61,26 @@ New-Item -ItemType Directory -Force $out | Out-Null
 # Start-Process joins an argument list with spaces and quotes nothing: the kit paths have spaces.
 function Quote([string[]]$list) { ($list | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ' }
 function Note([string]$t) { Add-Content "$out\steps.txt" ("{0:HH:mm:ss.fff} {1}" -f (Get-Date), $t) }
-$server = Start-Process $Server -ArgumentList "--port $Port" -PassThru -WindowStyle Minimized `
+# Not $server: PowerShell names are case-blind, that is the -Server string.
+$srvProc = Start-Process $Server -ArgumentList "--port $Port" -PassThru -WindowStyle Minimized `
     -RedirectStandardOutput "$out\server-out.txt" -RedirectStandardError "$out\server-err.txt"
-Note "server pid $($server.Id) on port $Port"
+Note "server pid $($srvProc.Id) on port $Port"
 Start-Sleep 1
 $emu = $null; $hs = $null
 try {
-    if ($server.HasExited) { throw "the server stopped: $(Get-Content -Raw "$out\server-err.txt")" }
+    if ($srvProc.HasExited) { throw "the server stopped: $(Get-Content -Raw "$out\server-err.txt")" }
     $emu = Start-Process powershell -ArgumentList (Quote $emuArgs) -PassThru -WindowStyle Minimized `
         -RedirectStandardOutput "$out\emu-out.txt" -RedirectStandardError "$out\emu-err.txt"
+    $null = $emu.Handle   # keeps ExitCode readable after the exit (PowerShell 5.1)
     Note "emulator run pid $($emu.Id)"
     $hs = Start-Process powershell -ArgumentList (Quote $hsArgs) -PassThru -WindowStyle Minimized `
         -RedirectStandardOutput "$out\hs-out.txt" -RedirectStandardError "$out\hs-err.txt"
+    $null = $hs.Handle
     Note "hookshot run pid $($hs.Id)"
     $emu.WaitForExit(); Note "emulator run ended ($($emu.ExitCode))"
     $hs.WaitForExit(); Note "hookshot run ended ($($hs.ExitCode))"
 } finally {
-    if (-not $KeepOpen -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+    if (-not $KeepOpen -and -not $srvProc.HasExited) { Stop-Process -Id $srvProc.Id -Force }
 }
 
 # Grading: one row per check, from the logs both runs copied into their folders.
@@ -103,6 +106,7 @@ function Made([string]$text, [string]$re) {
     foreach ($m in [regex]::Matches($text, "coop: objects: \+ ($re) (0x[0-9a-f]+)")) { $set[$m.Groups[2].Value] = 1 }
     $set.Count
 }
+foreach ($m in [regex]::Matches($srv, '(?m)^.*refused a connection.*$')) { Row 'server-refused' $false $m.Value.Trim() }
 $joined = Count $srv 'player \d+ joined'
 Row 'server-3-joined' ($joined -ge 3) "$joined 'player N joined' lines (want A, HookA, HookB)"
 Row 'emu-welcomed' ((Count $emuLog 'coop: welcomed as player') -ge 1) 'emulator log: coop: welcomed as player'

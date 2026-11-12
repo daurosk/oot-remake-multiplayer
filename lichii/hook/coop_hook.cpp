@@ -402,6 +402,18 @@ public:
             flag_debug_.Frame(*memory);
             if (sharing_ || cheats_) {
                 game_store.emplace(*memory);
+                if (!queue_sizes_logged_) {  // once: half of each is ours (issue 175)
+                    if (const auto q = coop::host::GameFlags(*memory).queue_sizes()) {
+                        queue_sizes_logged_ = true;
+                        const std::uint32_t least =
+                            std::min({q->boolean, q->int32, q->uint32, q->enumeration, q->key64});
+                        LOG_INFO(Core,
+                                 "coop: flags: the game's write queues hold Bool {}, Int {}, UInt {}, Enum {}, "
+                                 "64-bit keys {} slots; ours is half of each{}",
+                                 q->boolean, q->int32, q->uint32, q->enumeration, q->key64,
+                                 least < 2 ? " (a queue under 2 slots gets no write of ours)" : "");
+                    }
+                }
             }
             if (cheats_) {
                 CoopCheats::Frame(*game_store);
@@ -1503,6 +1515,7 @@ private:
     bool scan_runs_ = false;               // its scan lets an unknown build run
     Kernel::KProcess* build_warned_ = nullptr;  // the process last warned about
     FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
+    bool queue_sizes_logged_ = false;  // the game's flag queue sizes, logged once
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin

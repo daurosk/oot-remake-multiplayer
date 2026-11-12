@@ -84,6 +84,14 @@ class GameFlags {
   // a flag's type. Nothing when none does.
   std::optional<int> find_type(std::uint32_t hash);
 
+  // The sizes (slots) of the write queues our sets use: Bool, Int, UInt, Enum
+  // and 64-bit keys. Half of each is ours (issue 175); a queue of fewer than
+  // 2 slots gets no write of ours. Nothing before the manager is up.
+  struct QueueSizes {
+    std::uint32_t boolean = 0, int32 = 0, uint32 = 0, enumeration = 0, key64 = 0;
+  };
+  std::optional<QueueSizes> queue_sizes();
+
  private:
   GameMemory& memory_;
 };

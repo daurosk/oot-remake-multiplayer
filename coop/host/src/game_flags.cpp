@@ -307,6 +307,18 @@ bool GameFlags::set_string64_now(WritableGameMemory& m, std::uint32_t hash,
   return m.write(*buffer, std::span<const std::uint8_t>(bytes.data(), text.size() + 1));
 }
 
+std::optional<GameFlags::QueueSizes> GameFlags::queue_sizes() {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  const auto b = read_u32(memory_, *mgr + kBool.queue_cap);
+  const auto i = read_u32(memory_, *mgr + kInt.queue_cap);
+  const auto u = read_u32(memory_, *mgr + kUInt.queue_cap);
+  const auto e = read_u32(memory_, *mgr + kEnum.queue_cap);
+  const auto k = read_u32(memory_, *mgr + kKeyQueueCap);
+  if (!b || !i || !u || !e || !k || *b == 0) return std::nullopt;  // 0: the tables are not made yet
+  return QueueSizes{*b, *i, *u, *e, *k};
+}
+
 std::optional<int> GameFlags::find_type(std::uint32_t hash) {
   const auto mgr = manager(memory_);
   if (!mgr) return std::nullopt;

@@ -237,6 +237,19 @@ TEST_CASE("game flags: slots the game took count against our half (issue 175)") 
   CHECK(GameFlags::set_bool(w, 0x11, false));
 }
 
+TEST_CASE("game flags: the queue sizes, for the log (issue 175)") {
+  auto w = game();
+  const auto q = GameFlags(w).queue_sizes();
+  REQUIRE(q);
+  CHECK(q->boolean == kQueueCap);
+  CHECK(q->int32 == kQueueCap);
+  CHECK(q->uint32 == kQueueCap);
+  CHECK(q->enumeration == kQueueCap);
+  CHECK(q->key64 == kQueueCap);
+  w.mem.put_u64(FakeMemory::kBase + 0x4e842a8, 0);
+  CHECK_FALSE(GameFlags(w).queue_sizes());  // no manager yet
+}
+
 TEST_CASE("game flag store: busy while its queue has no room for us (issue 175)") {
   auto w = game();
   GameFlagStore store(w);

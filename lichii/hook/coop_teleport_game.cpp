@@ -29,6 +29,7 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_boss.h"
+#include "coop_fairy.h"
 #include "coop_flags.h"
 #include "coop_live_events.h"
 #include "coop_svc.h"
@@ -353,6 +354,30 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                      Trip::kSceneEvent);
             std::lock_guard lock(g.event_mutex);
             g.events.Want(Trip::kSceneEvent);
+        }
+        if (act.move && local.scene && local.position) {
+            // Issue 197: never into another room of a dungeon (Link stays held).
+            // Read once, at the first move: a pack made (again) while the game runs is
+            // seen after a restart; until then no table means short moves only.
+            static const CoopRooms::Table rooms = CoopFairy::RoomTable();
+            const auto check = CheckMove(rooms, *local.scene, *local.position, *act.move);
+            if (check != MoveCheck::ok) {
+                LOG_INFO(Core, "coop: teleport: not moved to {:.1f} {:.1f} {:.1f}: {} (issue 197)", act.move->x,
+                         act.move->y, act.move->z,
+                         check == MoveCheck::other_room ? "another room of this dungeon"
+                                                        : "far, and no room table for this dungeon");
+                bool told = false;
+                for (auto& line : act.lines) {
+                    if (line.rfind("teleport: next to ", 0) == 0) {
+                        line = NotMovedLine(check, line.substr(18), act.after_load);
+                        told = true;
+                    }
+                }
+                if (!told) {
+                    act.lines.push_back(NotMovedLine(check, "", act.after_load));
+                }
+                act.move.reset();
+            }
         }
         if (act.move) {
             const bool ok = CoopBoss::MoveLink(system, main_base, CoopBoss::Vec{act.move->x, act.move->y, act.move->z});

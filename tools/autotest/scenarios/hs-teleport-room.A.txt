@@ -1,0 +1,54 @@
+# hs-teleport-room (Hookshot, issue 197): teleport-lock with the fix. A /teleports from Kokiri Forest
+# to B in the Deku Tree's slingshot room (another room than the arrival start, Entrance at
+# 0.22 101.00 14.71). The "next to B" move into that room left Link held with a black picture
+# (bigrun4); now it is not made in a dungeon unless both spots are in one room.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-teleport-room (and the emulator too).
+# Pass, A's log: "scene change taken", "scene change cleared", then
+# "coop: teleport: not moved to -33.2 ... another room of this dungeon (issue 197)" (or, with an
+# old pack without coop_rooms.txt, "far, and no room table"), no "boss: moved Link" after the load,
+# "test steer at" positions changing during the two gotos near the entrance, no "goto timed out".
+# Chat line: "B is in another room of this dungeon; you are at its entrance: walk there".
+# Shots arrived / walked: A in the Deku Tree entrance room, not black.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_SCENE_PROBE=1
+#! timeout 420
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -31.1 111.7 12.6     # 1.5 m in front of the sign Obj_SignBoard_A_01 (-30.38 111.65 13.88, yaw 3.64: front -0.48 -0.88; Banc KokiriForest_Child_Static). 3 m (bigrun2) was too far: A pressed nothing
+wait 240
+mark placed
+wait 900
+chat /teleport B
+wait 120
+mark asked
+toward -30.38 13.88 8
+wait 20
+press A 12                 # read it: an event, the scene change is taken when it ends
+wait 120
+press A 12
+wait 120
+press A 12
+wait 600
+mark loaded
+wait 600
+mark arrived
+goto 2.0 14.0 1.0 600      # a few metres from the entrance start: Link must move
+wait 60
+goto 0.5 15.5 1.0 600
+wait 60
+mark walked
+wait 600
+mark end

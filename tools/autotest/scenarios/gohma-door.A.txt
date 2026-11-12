@@ -3,8 +3,8 @@
 # had a boss. Here both load at the Deku Tree entrance and are put in the corridor before the
 # boss door (floor about y 47.5 at x -12..-4, z 62..71; the door InsideTheDekuTree SwitchShutter
 # at -1.0 52.4 67.5, Gohma placed at 18.5 60.0 67.8), then walk in through the door.
-# The kit saves need Gohma_DefeatBoss 0x6b093b51 = 0 and HavePlayedEvent.Dm_Deku_BossOut
-# 0x5882768c = 0 (set in auto-A/auto-B since integrate-p9).
+# The kit saves have the Deku Tree beaten; both games clear the boss flags with setflag after
+# the load (below; Gohma_DefeatBoss alone was not enough, issue 178). Pass also needs "setflag ... set".
 # A (P1) goes in first and then stands at the room's edge, never hitting; B (P2) comes in 10 s
 # later, stays near Gohma and shoots the slingshot at it three times.
 # Expect: "+ Enemy_DungeonBoss_Gohma" in both logs (the boss exists at all); boss lines "intro
@@ -28,6 +28,20 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400
 mark a-in
+# The kit saves have the Deku Tree beaten (issue 178, gohma-door-b): Gohma_DefeatBoss and
+# Dm_Deku_BossOut were cleared, but the trap event, the intro and the room's battle state were
+# still marked as played, so the boss room's one-shot trigger (Area_6c3c -> EventRequestActor
+# InsideTheDekuTree_BossArea_ShutIn -> EntryBossRoom) never fired. Clear them in this game only
+# (none is shared) while still in the entrance room, before the boss room loads.
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
 place -12.0 48.5 66.5   # the corridor, 11 m before the door
 wait 240
 mark placed

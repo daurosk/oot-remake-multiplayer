@@ -27,7 +27,7 @@ Projects without a licence file (all rights reserved, for example Ship of Harkin
 
 ## Reporting bugs and desyncs
 
-Use the issue forms. Include the co-op build version (`VERSION.txt` in the kit), whether you played on the kit's emulator or on Hookshot (experimental), the game version, how you connected (invite code, VPN, port forwarding, relay or LAN), how many players, who hosted, and the steps to reproduce. For a desync, say what each player saw; clips from both sides help the most. Logs are welcome; recordings of long play sessions are not needed.
+Use the issue forms. Include the co-op build version (`VERSION.txt` in the kit), whether you played on the kit's emulator, on Hookshot (experimental) or with the Linux kit (experimental), the game version, how you connected (invite code, VPN, port forwarding, relay or LAN), how many players, who hosted, and the steps to reproduce. For a desync, say what each player saw; clips from both sides help the most. Logs are welcome; recordings of long play sessions are not needed.
 
 ## Pull requests
 

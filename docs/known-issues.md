@@ -27,19 +27,20 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 - **Bosses**: Gohma is built to fight both players with its stun and larvae in step, but our tests have no save from just before Gohma, so it is unchecked; if it still targets one player or turns wrong, tell us ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)).
 - **The Kakariko gate** opened for only one player, and Zelda's letter was gone from both; a fix is built in, not yet checked ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)).
-- **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)).
+- **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); the ocarina in their hand is built in.
 - **Tunic, boots and masks** reach the other games but have not been seen on the other Link's screen yet ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)). Tell us if you see them.
 - **The other Links' sounds** are in the puppet pack, but our tests have no sound: tell us whether their footsteps, sword and voice can be heard ([#131](https://github.com/daurosk/oot-remake-multiplayer/issues/131)).
 - **Teleporting to another area** with `/teleport <name>` could lock the game ([#197](https://github.com/daurosk/oot-remake-multiplayer/issues/197); being fixed).
-- **Game version**: only version 1.1.1 of the game (build `e0f3ccfaf50065ae`) is supported; every player needs that one ([#97](https://github.com/daurosk/oot-remake-multiplayer/issues/97)).
-- **Windows only** for now ([#127](https://github.com/daurosk/oot-remake-multiplayer/issues/127)).
+- **Game version**: only version 1.1.1 of the game (build `e0f3ccfaf50065ae`) is supported; every player needs that one. Co-op now looks for its places in the game's code by itself when it starts, so another build could work once someone checks it, but no other build is checked yet: a game it does not know is refused with a log line naming what differs ([#97](https://github.com/daurosk/oot-remake-multiplayer/issues/97), [game-builds.md](game-builds.md)).
+- **Linux kit (experimental)**: a Linux and Steam Deck kit (`oot-coop-<version>-linux-x86_64.tar.gz`) is built by our CI with the same co-op; it has not been played on a real Linux PC or a Deck in our tests yet, and a relay join code works only in the Windows kit ([#127](https://github.com/daurosk/oot-remake-multiplayer/issues/127), [setup.md, Linux](setup.md#linux-and-steam-deck)). <!-- DROP this line and keep 'Windows only' if linux-2 is not in the release -->
 - **Shader stutter**: the first minutes and new areas stutter while the emulator builds shaders; it gets better as its cache fills ([FAQ](faq.md#the-game-stutters-what-can-i-do)).
 
 ## Not yet checked in a game
 
 These are fixed or built in, but no two-game test has reached them yet. Please tell us whether they work for you.
 
-- **Hosting**: the invite code, the router port opened by UPnP and the hole punching between two homes, with no VPN ([#165](https://github.com/daurosk/oot-remake-multiplayer/issues/165)); signed updates ([#161](https://github.com/daurosk/oot-remake-multiplayer/issues/161)); a rejoin from the same address can no longer take over a player ([#163](https://github.com/daurosk/oot-remake-multiplayer/issues/163)).
+- **Hosting**: the invite code, the router port opened by UPnP and the hole punching between two homes, with no VPN ([#165](https://github.com/daurosk/oot-remake-multiplayer/issues/165)); signed updates ([#161](https://github.com/daurosk/oot-remake-multiplayer/issues/161)); a rejoin from the same address can no longer take over a player ([#163](https://github.com/daurosk/oot-remake-multiplayer/issues/163)). Game traffic encrypted with the join password ([#201](https://github.com/daurosk/oot-remake-multiplayer/issues/201); unit-tested, the panel says `, encrypted`).
+- **Tunic colours**: every player's Link in their own colour in the other games ([#202](https://github.com/daurosk/oot-remake-multiplayer/issues/202)), and your own Link in your colour on the emulator kit; needs a puppet pack made after updating. <!-- MOVE to Works if the colour runs pass; if they fail, make it a Known issue: 'other players' tunic still green (#202)' -->
 - **HUD and PvP**: the other players' names, hearts and place under your own hearts, in the game's font; PvP, off unless the host sets `pvp = on` in `coop-options.ini`.
 - **Story**: story cutscenes watched together by players near each other, and the story and cutscene flags (Saria, the owl, the forest-exit wall) shared ([#173](https://github.com/daurosk/oot-remake-multiplayer/issues/173)); fewer snaps back after cutscenes ([#194](https://github.com/daurosk/oot-remake-multiplayer/issues/194)); the host's time of day in every game ([#192](https://github.com/daurosk/oot-remake-multiplayer/issues/192), [time.md](time.md)); the Threads of Time for every player ([#193](https://github.com/daurosk/oot-remake-multiplayer/issues/193)).
 - **Deku Tree**: the Deku Scrubs' 2-3-1 order split between players ([#149](https://github.com/daurosk/oot-remake-multiplayer/issues/149)) and talking to a scrub both players beat ([#144](https://github.com/daurosk/oot-remake-multiplayer/issues/144)); eye switches, floor plates and torches ([#176](https://github.com/daurosk/oot-remake-multiplayer/issues/176)); the moving platform ([#196](https://github.com/daurosk/oot-remake-multiplayer/issues/196)); the slingshot room's trap, ladder, bridge and webs ([#129](https://github.com/daurosk/oot-remake-multiplayer/issues/129), [#177](https://github.com/daurosk/oot-remake-multiplayer/issues/177)); the map chest ([#146](https://github.com/daurosk/oot-remake-multiplayer/issues/146)); the pushed block ([#147](https://github.com/daurosk/oot-remake-multiplayer/issues/147)); Gohma's larvae ([#178](https://github.com/daurosk/oot-remake-multiplayer/issues/178)); the boss room no longer pulling players in too early ([#148](https://github.com/daurosk/oot-remake-multiplayer/issues/148)).
@@ -51,10 +52,11 @@ These are fixed or built in, but no two-game test has reached them yet. Please t
 
 ## Hookshot (experimental)
 
-- Co-op also runs on [Hookshot](https://github.com/NotRexed/Hookshot), a native PC build of the game that each player makes from their own dump ([hookshot.md](hookshot.md)). Hookshot and emulator players can play together.
+- Co-op also runs on [Hookshot](https://github.com/NotRexed/Hookshot), a native PC build of the game that each player builds from their own game with the kit's `Build-Hookshot-Coop.bat` ([setup.md, Hookshot](setup.md#play-on-hookshot-experimental)). Hookshot and emulator players can play together.
 - It needs Vulkan 1.3 with mesh shaders: NVIDIA RTX 20 or newer, AMD RX 6000 or newer; Intel is mostly untested.
+- Checked on Hookshot in our tests: <!-- FILL from the integrator's Hookshot proofs 3-5 --> everything else is the same co-op code as on the emulator, not yet checked on Hookshot.
+- Not on Hookshot yet: the co-op window (panel, chat box, player list, so no chat commands); a Hookshot player's own ocarina notes are not sent, so others do not hear them; your own Link stays green (your colour shows only in the other games); `collect-logs.cmd` does not pick up `hookshot_log.txt`; invite codes are not yet tested there.
 - Hookshot itself is young: it can crash outside Kokiri Forest, lose the graphics device early on, or crash on some AMD cards (Hookshot's own issues). Use the emulator kit for longer sessions.
-- The co-op window, chat box and player list are not on Hookshot yet.
 
 ## AMD graphics cards
 

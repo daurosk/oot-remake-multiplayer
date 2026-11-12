@@ -97,7 +97,7 @@ Caleb's calls, taken 2026-11-09 (the suggested answers this plan assumed, plus t
 | Bytes a player may send through the server | 1 MB a second, bursts of 2 MB, besides the 60 + 240 messages a second; `FLAG_SNAPSHOT` (server only, bounded by max_flags) is not counted. The fast (unreliable) messages leave the last 256 KB for the reliable ones, so flags, items and chat still go when poses fill the rate. See [SECURITY.md](../SECURITY.md). |
 | Who may connect | Whoever has the join password (Host.bat makes a new one each start unless `server_password` is set; the invite code carries it). The host can also list addresses (`coop_server --allow`, `server_allow` in coop-options.ini) or listen on one address (`--bind`, `server_bind`). |
 | Times in `PLAYER_SAMPLE` | Server time. ENet's throttle stays at its default. |
-| Player colours (tunic by slot) | Planned, on its own branch: a colour per player for names and tunics. |
+| Player colours (tunic by slot) | Built in: each player picks a colour (`color =` in coop-options.ini, else the slot's: 1 blue, 2 red, 3 green, 4 yellow); name tags and the puppets' tunics use it, and your own Link's Kokiri tunic on the emulator kit. Ten tunic colours, made by the puppet pack tool. |
 
 ## Risks
 

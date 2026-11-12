@@ -36,7 +36,7 @@ if ($Hookshot) {
     if (Test-Path -LiteralPath $hsWhere) { $hsGame = (Get-Content -LiteralPath $hsWhere -TotalCount 1).Trim() }
     $exe = @((Join-Path $hsGame 'bin\hookshot.exe'), (Join-Path $hsGame 'hookshot.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $exe -or -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $exe) 'hookshot_coop.dll'))) {
-        Write-Host "No co-op Hookshot game in $hsGame yet. Run Build-Hookshot-Coop.bat first (PLAY-ONLINE.md, ""On Hookshot"")."
+        Write-Host "No co-op Hookshot game in $hsGame yet. Run Build-Hookshot-Coop.bat first (SETUP.md, ""Play on Hookshot"")."
         exit 1
     }
     $emu = Split-Path -Parent $exe

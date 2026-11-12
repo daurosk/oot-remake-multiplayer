@@ -19,6 +19,7 @@ body:
       options:
         - The kit's emulator (Lichii / Fritchii)
         - Hookshot (experimental)
+        - The Linux kit (experimental)
         - Not sure
     validations:
       required: true

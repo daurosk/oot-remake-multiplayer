@@ -598,9 +598,11 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include "core/hle/kernel/k_process.h"
 #include "core/loader/loader.h"
 #include "core/memory.h"
+#ifndef COOP_HOOKSHOT
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
 #include "hid_core/hid_types.h"
+#endif
 
 namespace CoopTestInput {
 
@@ -620,7 +622,9 @@ struct Running {
     std::unique_ptr<Runner> runner;
     std::shared_ptr<Shared> shared;
     Clock::time_point start;
+#ifndef COOP_HOOKSHOT
     Core::HID::EmulatedController* controller = nullptr;
+#endif
 };
 
 struct State {
@@ -644,22 +648,37 @@ struct State {
     std::optional<PendingWarp> warp;
 } g_state;  // only touched on the present thread
 
+// The emulator plays LICHII_COOP_TEST_SCRIPT whole, input and all. Hookshot's
+// driver (tools/autotest/hookshot.py) gives the input through Hookshot's
+// control bridge and writes only the steps that need the game's inside (place,
+// give, assign, chat, setflag, setenum, wear, kill) to LICHII_COOP_TEST_COMMANDS,
+// a few lines at a time; the module plays them at once and empties the file,
+// so the driver knows they were taken.
+#ifdef COOP_HOOKSHOT
+#define COOP_TEST_ENV "LICHII_COOP_TEST_COMMANDS"
+#else
+#define COOP_TEST_ENV "LICHII_COOP_TEST_SCRIPT"
+#endif
+#define COOP_WIDEN2(x) L##x
+#define COOP_WIDEN(x) COOP_WIDEN2(x)
+
 std::filesystem::path EnvPath() {
 #ifdef _MSC_VER
     wchar_t* value = nullptr;
     std::size_t size = 0;
-    if (_wdupenv_s(&value, &size, L"LICHII_COOP_TEST_SCRIPT") != 0 || value == nullptr) {
+    if (_wdupenv_s(&value, &size, COOP_WIDEN(COOP_TEST_ENV)) != 0 || value == nullptr) {
         return {};
     }
     std::filesystem::path p(value);
     std::free(value);
     return p;
 #else
-    const char* value = std::getenv("LICHII_COOP_TEST_SCRIPT");
+    const char* value = std::getenv(COOP_TEST_ENV);
     return value ? std::filesystem::path(value) : std::filesystem::path{};
 #endif
 }
 
+#ifndef COOP_HOOKSHOT
 Core::HID::EmulatedController* PickController(Core::System& system) {
     auto& hid = system.HIDCore();
     auto* player1 = hid.GetEmulatedController(Core::HID::NpadIdType::Player1);
@@ -672,6 +691,7 @@ Core::HID::EmulatedController* PickController(Core::System& system) {
     }
     return nullptr;
 }
+#endif
 
 // Link's position (x, z), for goto and toward.
 std::optional<std::array<float, 2>> PlayerXZ(Core::System& system) {
@@ -856,12 +876,27 @@ void Give(const std::string& item) {
 }
 
 void StopRunning() {
+#ifndef COOP_HOOKSHOT
     if (g_state.running && g_state.running->controller) {
         g_state.running->controller->SetInputInjector({});
     }
+#endif
     g_state.running.reset();
 }
 
+#ifdef COOP_HOOKSHOT
+// Hookshot: no pad here (the driver holds the buttons through the bridge);
+// the steps are the driver's test commands, played from this frame.
+void Begin(Core::System&, Script script) {
+    StopRunning();
+    Running r;
+    r.runner = std::make_unique<Runner>(std::move(script));
+    r.shared = std::make_shared<Shared>();
+    r.start = Clock::now();
+    LOG_INFO(Core, "coop: test commands started: {} steps", r.runner->StepCount());
+    g_state.running = std::move(r);
+}
+#else
 void Begin(Core::System& system, Script script) {
     StopRunning();
     auto* controller = PickController(system);
@@ -894,6 +929,7 @@ void Begin(Core::System& system, Script script) {
     LOG_INFO(Core, "coop: test script started: {} steps", r.runner->StepCount());
     g_state.running = std::move(r);
 }
+#endif
 
 void CheckFile(Core::System& system) {
     std::error_code ec;
@@ -911,9 +947,16 @@ void CheckFile(Core::System& system) {
     if (size == 0) {
         return;
     }
-    std::ifstream in(g_state.path, std::ios::binary);
     std::stringstream text;
-    text << in.rdbuf();
+    {
+        std::ifstream in(g_state.path, std::ios::binary);
+        text << in.rdbuf();
+    }
+#ifdef COOP_HOOKSHOT
+    // Taken: emptied, so the driver writes the next ones (an empty file is
+    // not played).
+    std::ofstream(g_state.path, std::ios::binary | std::ios::trunc);
+#endif
     std::string error;
     auto script = Parse(text.str(), error);
     if (!script) {
@@ -930,7 +973,13 @@ void OnFrame(Core::System& system) {
         g_state.checked_env = true;
         g_state.path = EnvPath();
         if (!g_state.path.empty()) {
-            LOG_INFO(Core, "coop: test script file {}", g_state.path.string());
+            LOG_INFO(Core, "coop: test {} file {}",
+#ifdef COOP_HOOKSHOT
+                     "commands",
+#else
+                     "script",
+#endif
+                     g_state.path.string());
         }
     }
     if (g_state.path.empty()) {
@@ -1021,7 +1070,11 @@ void OnFrame(Core::System& system) {
         r.shared->out = out;
     }
     if (r.runner->Done()) {
+#ifdef COOP_HOOKSHOT
+        LOG_INFO(Core, "coop: test commands done");  // the driver writes "test script done"
+#else
         LOG_INFO(Core, "coop: test script done");
+#endif
         StopRunning();
     }
 }

@@ -82,14 +82,30 @@ TEST_CASE("hookshot: the module knows the game build by main's id as Hookshot gi
     CHECK_FALSE(CoopHookshot::BuildSupported(""));
 }
 
-TEST_CASE("hookshot: the module builds every hook file the emulator builds, but the cave and the input") {
+TEST_CASE("hookshot: the module builds every hook file the emulator builds, but the cave") {
     const std::string cmake = ReadFile(kRepo / "hookshot" / "CMakeLists.txt");
     CHECK(cmake.find("lichii/hook/core.cmake") != std::string::npos);
     CHECK(cmake.find("NOT name STREQUAL \"coop_svc.cpp\"") != std::string::npos);
-    CHECK(cmake.find("NOT name STREQUAL \"coop_testinput.cpp\"") != std::string::npos);
-    // The stand-ins for what those two did.
+    // The test commands are built in (the autotest driver's place, give, ...).
+    CHECK(cmake.find("NOT name STREQUAL \"coop_testinput.cpp\"") == std::string::npos);
+    // The stand-ins for what the cave did.
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("std::string Refusal()") != std::string::npos);
-    CHECK(module.find("void OnFrame(Core::System&)") != std::string::npos);
     CHECK(module.find("CoopCallers::RunFrame") != std::string::npos);
+    CHECK(module.find("namespace CoopTestInput") == std::string::npos);  // the real one is built
+}
+
+TEST_CASE("hookshot: test commands come from the driver's file, the pad stays the emulator's") {
+    const std::string input = ReadFile(kRepo / "lichii" / "hook" / "coop_testinput.cpp");
+    CHECK(input.find("\"LICHII_COOP_TEST_COMMANDS\"") != std::string::npos);
+    CHECK(input.find("\"LICHII_COOP_TEST_SCRIPT\"") != std::string::npos);
+    // The hid headers only for the emulator.
+    const auto hid = input.find("#include \"hid_core/");
+    REQUIRE(hid != std::string::npos);
+    const auto guard = input.rfind("#ifndef COOP_HOOKSHOT", hid);
+    CHECK(guard != std::string::npos);
+    CHECK(hid - guard < 30);
+    // The driver writes the same variable.
+    const std::string driver = ReadFile(kRepo / "tools" / "autotest" / "hookshot.py");
+    CHECK(driver.find("LICHII_COOP_TEST_COMMANDS") != std::string::npos);
 }

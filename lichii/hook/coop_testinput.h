@@ -238,7 +238,11 @@ private:
 };
 
 // Called once per emulated frame by the hook. Does nothing unless
-// LICHII_COOP_TEST_SCRIPT is set. Only in the emulator build.
+// LICHII_COOP_TEST_SCRIPT is set. In the Hookshot module (COOP_HOOKSHOT) it
+// reads LICHII_COOP_TEST_COMMANDS instead: the autotest driver
+// (tools/autotest/hookshot.py) holds the pad through Hookshot's control bridge
+// and writes only the test-only steps there; they are played without a pad
+// and the file is emptied once read.
 void OnFrame(Core::System& system);
 
 } // namespace CoopTestInput

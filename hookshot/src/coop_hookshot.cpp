@@ -31,7 +31,6 @@
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
-#include "coop_testinput.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
 
@@ -147,9 +146,6 @@ std::string Refusal() {
     return {};  // nothing to refuse: Hookshot applies no exefs patches (its host/mods.c)
 }
 }  // namespace CoopSvc
-namespace CoopTestInput {
-void OnFrame(Core::System&) {}  // tests drive Hookshot through its control bridge (docs/hookshot.md)
-}  // namespace CoopTestInput
 
 namespace CoopHookshot {
 

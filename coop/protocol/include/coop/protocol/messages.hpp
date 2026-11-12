@@ -113,6 +113,7 @@ enum class MessageType : std::uint16_t {
   rejoin_token = 345,  // 345 to 349: rejoin after a crash or drop (docs/protocol.md, "Rejoin")
   rejoin_claim = 346,
   dungeon_event = 355,  // 355 to 359: a room gimmick's event started (docs/protocol.md, "Gimmick events")
+  player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -320,6 +321,25 @@ struct Animation {
   float frame = 0.0f;
   float rate = 0.0f;
   bool operator==(const Animation&) const = default;
+};
+
+// PLAYER_RIDE (protocol 10, issue 199): the horse a player rides, sent with
+// its samples (channel 3) while it rides, and once with riding off when it
+// gets down. The others draw a copy of the horse under the rider's puppet:
+// at the puppet's place plus `offset` (the horse's place minus the rider's,
+// metres), turned `rotation`, playing `animation` (the horse's AS slot 0).
+// Same player field rules as PLAYER_STATUS. Floats must be finite.
+inline constexpr std::uint8_t kRideRiding = 0x01;
+inline constexpr float kMaxRideOffset = 10.0f;  // each axis
+inline constexpr std::size_t kMaxRideHorseChars = 64;
+struct PlayerRide {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
+  std::uint8_t flags = 0;                     // kRideRiding; other bits refused
+  std::string horse;                          // the horse's actor name; empty when off
+  Vec3 offset{};
+  Quat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+  std::optional<Animation> animation;
+  bool operator==(const PlayerRide&) const = default;
 };
 
 // PLAYER_SAMPLE. The time component is always sent; the others only when the
@@ -1175,7 +1195,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
-                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent>;
+                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide>;
 
 MessageType type_of(const Message& message);
 

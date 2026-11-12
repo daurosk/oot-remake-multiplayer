@@ -119,6 +119,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 345 | `REJOIN_TOKEN` | 0 | server | 32-byte random token, sent right after `WELCOME` (protocol 10, "Rejoin after a crash"; 345 to 349 kept for it) |
 | 346 | `REJOIN_CLAIM` | 0 | client | 32-byte token from the last `REJOIN_TOKEN`, sent before `HELLO` on a new connection |
 | 355 | `DUNGEON_EVENT` | 0 | both | `u8` player field, scene (string, 1 to 64), event name (string, 1 to 96, no `HavePlayedEvent.`): a room gimmick's event started in the sender's game. Relayed to the others in that scene (only while the sender is in it), never kept (protocol 10, branch `deku-dungeon-2`; 356 to 359 kept; [dungeon.md](dungeon.md), "Live events") |
+| 385 | `PLAYER_RIDE` | 3 | both | `u8` player field, `u8` flags (bit 0 riding; other bits refused), horse actor name (string, up to 64 characters; not empty when riding), offset 3 x f32 (each within 10 m), rotation 4 x f32 quaternion, `u8` 1 when an animation follows (string name up to 64 characters, f32 frame, f32 rate) else 0. Relayed (protocol 10, issue 199; 385 to 389 are for riding, [Riding](#riding-player_ride)) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 | 251 | `PLAYER_LIFE` | 0 | both | `u8` player field, `u16` life, `u16` max life, quarter hearts (protocol 10; 251 to 255 are the co-op HUD's, [Hearts](#hearts-player_life)) |
@@ -225,6 +226,10 @@ Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.
 - A player writes a total on top of any change its game made that it has not sent yet, and still sends that change. So every gain and every spend is counted once, whatever the order.
 - A count change does not wait for an answer of its own. A delta not answered when the host changes is sent again to the new host (the sum, if there were several); when the new host is us, it is dropped, since our game holds it and our snapshot carries it. A host's own count change goes out as its total. Our own delta that comes back to us as host (sent before we knew we host) is not added again.
 - Not covered: a delta that reached a host who left before its `FLAG_STATE` went out is lost with that host's game; one answered by a `FLAG_STATE` for the same flag from another player's change is no longer sent again on a host change.
+
+### Riding (`PLAYER_RIDE`)
+
+Issue 199 (protocol 10): a player riding Epona stays seen by the others, on a copy of the horse ([puppet.md](puppet.md#riding-issue-199)). While its Link's command names a horse, a build sends `PLAYER_RIDE` about 30 times a second on the samples channel: the horse it sits on (`Animal_Epona_Adult`), the horse's place minus its Link's and the horse's turn, both in its Link's own frame (turned back by its rotation), and the horse's AS slot 0. Getting off sends riding off (flags 0, no name) three times. The others put the copy at the rider's puppet plus the offset turned by the puppet's turn, so horse and puppet move together whatever the delay; a ride not heard of for 0.6 s is over (the channel is unreliable). The server relays it to everyone else with the sender's number. A build without it ignores the type; its riders show on foot in their riding pose.
 
 ### Hearts (`PLAYER_LIFE`)
 

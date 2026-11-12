@@ -1330,8 +1330,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
             show = Show::hide;  // our cutscene: kept, out of sight
             why = "our cutscene";
             break;
-        case coop::host::Visibility::park:
-            show = Show::hide;  // riding: kept, out of sight
+        case coop::host::Visibility::ride:
+            // Issue 199: shown in its riding animation; CoopRide draws a
+            // copy of the horse under it.
             why = "riding";
             break;
         case coop::host::Visibility::hold:

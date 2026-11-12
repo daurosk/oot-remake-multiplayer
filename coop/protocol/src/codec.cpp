@@ -324,6 +324,42 @@ Error encode_body(const PlayerLife& m, Writer& w) {
   return Error::none;
 }
 
+Error check_player_ride(const PlayerRide& m) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  if ((m.flags & ~kRideRiding) != 0) return Error::bad_value;
+  COOP_TRY(check_string(m.horse, kMaxRideHorseChars));
+  if ((m.flags & kRideRiding) != 0 && m.horse.empty()) return Error::bad_value;
+  if (!all_finite(m.offset) || !all_finite(m.rotation)) return Error::bad_value;
+  for (float f : m.offset) {
+    if (std::fabs(f) > kMaxRideOffset) return Error::bad_value;
+  }
+  if (m.animation) {
+    COOP_TRY(check_string(m.animation->name, kMaxAnimationChars));
+    if (!std::isfinite(m.animation->frame) || !std::isfinite(m.animation->rate)) {
+      return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+// u8 player, u8 flags, horse name, offset 3 x f32, rotation 4 x f32, u8 1 when an
+// animation follows (name, f32 frame, f32 rate), else 0.
+Error encode_body(const PlayerRide& m, Writer& w) {
+  COOP_TRY(check_player_ride(m));
+  w.u8(m.player_number);
+  w.u8(m.flags);
+  w.str(m.horse);
+  for (float f : m.offset) w.f32(f);
+  for (float f : m.rotation) w.f32(f);
+  w.u8(m.animation ? 1 : 0);
+  if (m.animation) {
+    w.str(m.animation->name);
+    w.f32(m.animation->frame);
+    w.f32(m.animation->rate);
+  }
+  return Error::none;
+}
+
 Error encode_body(const Chat& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_TRY(check_string(m.text, kMaxChatChars));
@@ -963,6 +999,26 @@ Error decode_body(Reader& r, PlayerLife& m) {
   COOP_READ(r.u16(m.life));
   COOP_READ(r.u16(m.max_life));
   return check_player_life(m);
+}
+
+Error decode_body(Reader& r, PlayerRide& m) {
+  m = PlayerRide{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.flags));
+  COOP_TRY(r.str(m.horse, kMaxRideHorseChars));
+  for (float& f : m.offset) COOP_READ(r.f32(f));
+  for (float& f : m.rotation) COOP_READ(r.f32(f));
+  std::uint8_t has_animation = 0;
+  COOP_READ(r.u8(has_animation));
+  if (has_animation > 1) return Error::bad_value;
+  if (has_animation == 1) {
+    Animation a;
+    COOP_TRY(r.str(a.name, kMaxAnimationChars));
+    COOP_READ(r.f32(a.frame));
+    COOP_READ(r.f32(a.rate));
+    m.animation = std::move(a);
+  }
+  return check_player_ride(m);
 }
 
 Error decode_body(Reader& r, Chat& m) {
@@ -2017,6 +2073,7 @@ MessageType type_of(const Message& message) {
       MessageType::pvp_mode,    MessageType::pvp_hit,   MessageType::pvp_hurt,
       MessageType::fish_lure,   MessageType::rejoin_token, MessageType::rejoin_claim,
       MessageType::dungeon_event,
+      MessageType::player_ride,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2028,6 +2085,7 @@ std::uint8_t channel_of(MessageType type) {
   switch (type) {
     case MessageType::player_sample:
     case MessageType::player_pose:
+    case MessageType::player_ride:
     case MessageType::test_payload:
       return kChannelPlayerSamples;
     case MessageType::flag_set:
@@ -2099,6 +2157,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
       return channel == kChannelProgress;
     case MessageType::player_sample:
     case MessageType::player_pose:
+    case MessageType::player_ride:
       return channel == kChannelPlayerSamples;
     case MessageType::object_sample:
     case MessageType::world_move:
@@ -2150,6 +2209,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::chat:
     case MessageType::player_sample:
     case MessageType::player_pose:
+    case MessageType::player_ride:
     case MessageType::test_payload:
     case MessageType::join_partner:
     case MessageType::flag_set:
@@ -2212,7 +2272,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, SignCut> || std::is_same_v<T, SaveAsk> ||
                       std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife> ||
                       std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt> ||
-                      std::is_same_v<T, DungeonEvent>) {
+                      std::is_same_v<T, DungeonEvent> ||
+                      std::is_same_v<T, PlayerRide>) {
           field = &m.player_number;
         }
       },
@@ -2317,6 +2378,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::object_remove: return decode_as<ObjectRemove>(body, out);
     case MessageType::damage: return decode_as<Damage>(body, out);
     case MessageType::player_pose: return decode_as<PlayerPose>(body, out);
+    case MessageType::player_ride: return decode_as<PlayerRide>(body, out);
     case MessageType::time_of_day: return decode_as<TimeOfDay>(body, out);
     case MessageType::object_group: return decode_as<ObjectGroup>(body, out);
     case MessageType::fish_lure: return decode_as<FishLure>(body, out);

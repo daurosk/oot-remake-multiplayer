@@ -291,7 +291,12 @@ class CompileTest(unittest.TestCase):
             steps = hs.unit_steps(b, 8, repo="R")
             self.assertEqual(steps[0][:6], ["cmake", "-S", "R", "-B", b, "-G"])
             self.assertIn("-DCOOP_BUILD_TESTS=ON", steps[0])
+            # A configure that failed: the cache is there, build.ninja is not -> configure again.
             write(os.path.join(b, "CMakeCache.txt"), "")
+            steps = hs.unit_steps(b, 8, repo="R", target="hookshot_coop")
+            self.assertEqual(len(steps), 2)
+            self.assertEqual(steps[0][:2], ["cmake", "-S"])
+            write(os.path.join(b, "build.ninja"), "")
             steps = hs.unit_steps(b, 8, repo="R", target="hookshot_coop")
             self.assertEqual(steps, [["cmake", "--build", b, "--parallel", "8", "--target", "hookshot_coop"]])
 

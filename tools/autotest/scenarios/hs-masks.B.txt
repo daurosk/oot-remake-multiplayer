@@ -1,0 +1,16 @@
+# hs-masks: B faces where A stands after A steps aside, camera behind B, and takes a shot
+# while each mask is on (A's marks skull, bunny, keaton, off come at about these times).
+mark start
+wait 120
+stick 1 0 8             # face right, towards A
+press ZL                # camera behind B
+wait 470
+mark b-skull
+wait 280
+mark b-bunny
+wait 280
+mark b-keaton
+wait 300
+mark b-off
+wait 300
+mark end

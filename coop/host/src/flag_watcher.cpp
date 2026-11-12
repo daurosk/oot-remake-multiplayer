@@ -775,7 +775,8 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         --doubled_;
         ++stats_.doubled_gains;
         ++stats_.applied;
-        counts_guarded_.push_back(CountGuarded{key, as_int(now->value) - as_int(before.value)});
+        counts_guarded_.push_back(
+            CountGuarded{key, static_cast<std::int32_t>(as_int(now->value) - as_int(before.value))});
         it->second = back;
         continue;
       }

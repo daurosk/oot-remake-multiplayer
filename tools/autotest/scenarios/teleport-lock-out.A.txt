@@ -1,7 +1,8 @@
-# teleport-lock-out (#197): /teleport from a dungeon room out to the overworld. A is in the Deku
-# Tree slingshot room (room C), B in Kokiri Forest in front of the Deku Tree. A types /teleport B,
-# then walks for 10 s: A must move (no lock). Expect as teleport-lock, with
-# "asked the scene change to KokiriForest_Child at FrontDekuTree".
+# teleport-lock-out (#197): /teleport from a dungeon out to the overworld. A is in the Deku Tree,
+# put next to its stone sign on the ground floor; B in Kokiri Forest in front of the Deku Tree.
+# A types /teleport B and reads the sign, then walks: A must move after the load (no lock, no
+# black picture). Expect as teleport-lock, with "asked the scene change to KokiriForest_Child at
+# FrontDekuTree".
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_SCENE_PROBE=1
@@ -20,13 +21,20 @@ press A
 wait 2400
 mark after
 wait 240
-place -33.2 110.3 10.4
+place -22.2 77.5 -4.0      # next to the stone sign Land_Deku_SignStone_A_01 (-20.2 77.3 -6.2)
 wait 240
 mark placed
 wait 900
 chat /teleport B
 wait 120
 mark asked
+toward -20.2 -6.2 8
+wait 20
+press A 12                 # read it: an event, the scene change is taken when it ends
+wait 120
+press A 12
+wait 120
+press A 12
 wait 600
 mark loaded
 wait 600

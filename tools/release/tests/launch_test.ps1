@@ -20,17 +20,16 @@ function Write-File([string]$Path, [string]$Text) {
     [System.IO.File]::WriteAllText($Path, $Text)
 }
 function Read-File([string]$Path) { if (Test-Path -LiteralPath $Path) { [System.IO.File]::ReadAllText($Path) } else { '<none>' } }
-# A kit file as make_kit.ps1 writes it: Windows line ends, the port filled in.
-function Copy-KitText([string]$From, [string]$To) {
-    $text = [System.IO.File]::ReadAllText($From).Replace("`r`n", "`n").Replace('@PORT@', '27510')
-    Write-File $To $text.Replace("`n", "`r`n")
-}
+# A kit file as make_kit.ps1 writes it (its own copy function): Windows line ends, the port
+# filled in, except in coop.ini.template.
+. (Join-Path $release 'kit_text.ps1')
+function Copy-KitFile([string]$From, [string]$To) { Copy-KitText $From $To 27510 }
 # A kit of this repo's scripts. Tag: its release; Marker: a line its play.ps1 writes to
 # played.txt when it runs, so a test sees which kit's play.ps1 started the game.
 function New-Kit([string]$Dir, [string]$Tag, [string]$Marker) {
-    foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd', 'coop-options.ini') { Copy-KitText (Join-Path $kitSrc $f) (Join-Path $Dir $f) }
-    foreach ($f in Get-ChildItem (Join-Path $kitSrc 'scripts') -Filter *.ps1) { Copy-KitText $f.FullName (Join-Path $Dir "scripts\$($f.Name)") }
-    Copy-KitText (Join-Path $kitSrc 'coop.ini.template') (Join-Path $Dir 'scripts\coop.ini.template')
+    foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd', 'coop-options.ini') { Copy-KitFile (Join-Path $kitSrc $f) (Join-Path $Dir $f) }
+    foreach ($f in Get-ChildItem (Join-Path $kitSrc 'scripts') -Filter *.ps1) { Copy-KitFile $f.FullName (Join-Path $Dir "scripts\$($f.Name)") }
+    Copy-KitFile (Join-Path $kitSrc 'coop.ini.template') (Join-Path $Dir 'scripts\coop.ini.template')
     $play = Join-Path $Dir 'scripts\play.ps1'
     $text = [System.IO.File]::ReadAllText($play)
     $at = $text.IndexOf('$current = Read-CoopIni $ini')
@@ -390,6 +389,30 @@ try {
     $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
     Check ($ini -notmatch '(?m)^password' -and ($out -join ' ') -match 'join password none') "Join.bat: '-' clears the password [$(($ini -split "`n") -match 'password' -join '|')]"
+    # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
+    # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an
+    # invite code, the given port for host:port.
+    $kit = Join-Path $tmp 'kit port'; New-Kit $kit 'v0.1.0-beta4' 'old'
+    Check ((Read-File "$kit\scripts\coop.ini.template") -match '(?m)^port = @PORT@\r?$') 'kit: coop.ini.template keeps @PORT@'
+    Check ((Read-File "$kit\scripts\coop-ini.ps1") -match "'@PORT@'") 'kit: coop-ini.ps1 looks for @PORT@'
+    Check ((Read-File "$kit\scripts\play.ps1") -notmatch '@PORT@') 'kit: play.ps1 has the default port filled in'
+    # start-join.cmd stub: notes what it was started with (no join helper, no network).
+    Write-File "$kit\start-join.cmd" "@echo %*> `"%~dp0join-args.txt`"`r`n@exit /b 0`r`n"
+    $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
+    $out = cmd /c "`"$kit\play.cmd`" -Server CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA -Name Saria < nul" 2>&1
+    $ini = Read-File "$kit\emulator\user\config\coop.ini"
+    Check ($ini -match '(?m)^server = 127\.0\.0\.1\s*$' -and $ini -match '(?m)^port = 27512\s*$') "invite code: coop.ini is 127.0.0.1 port 27512, the join helper [$(($ini -split "`n") -match '^(server|port)' -join '|')]"
+    Check ($ini -match '(?m)^password = ABCDEFGHJKLMNPQRSTUV\s*$') 'invite code: the password from the code is in coop.ini'
+    $deadline = (Get-Date).AddSeconds(5)
+    while (-not (Test-Path "$kit\join-args.txt") -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+    Check ((Read-File "$kit\join-args.txt") -match '203\.0\.113\.5:27510.*-GamePort 27512') "invite code: the join helper is started for the host, game port 27512 [$((Read-File "$kit\join-args.txt").Trim())]"
+    Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
+    $out = cmd /c "`"$kit\play.cmd`" -Server 26.1.2.3:27600 -Name Saria < nul" 2>&1
+    $ini = Read-File "$kit\emulator\user\config\coop.ini"
+    Check ($ini -match '(?m)^server = 26\.1\.2\.3\s*$' -and $ini -match '(?m)^port = 27600\s*$') "host:port: coop.ini has the given port 27600 [$(($ini -split "`n") -match '^(server|port)' -join '|')]"
+    Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
     # The launch files run all on one line (the update may replace them while they run).
     foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

@@ -76,12 +76,10 @@ function Test-BinaryHas([string]$Path, [string]$Text) {
     $bytes = [System.IO.File]::ReadAllBytes($Path)
     return [System.Text.Encoding]::ASCII.GetString($bytes).Contains($Text)
 }
-# Copies a text file and gives it Windows line ends (the repo stores LF) with @PORT@ filled in.
-function Copy-Text([string]$From, [string]$To) {
-    $text = [System.IO.File]::ReadAllText($From).Replace("`r`n", "`n").Replace('@PORT@', "$Port")
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $To) | Out-Null
-    [System.IO.File]::WriteAllText($To, $text.Replace("`n", "`r`n"), [System.Text.UTF8Encoding]::new($false))
-}
+# Copies a text file with Windows line ends and @PORT@ filled in, except in coop.ini.template,
+# which keeps @PORT@ for play.ps1 (an invite-code join writes 27512 there). kit_text.ps1.
+. (Join-Path $PSScriptRoot 'kit_text.ps1')
+function Copy-Text([string]$From, [string]$To) { Copy-KitText $From $To $Port }
 
 $repo = Invoke-Git $here rev-parse --show-toplevel
 if (-not $repo) { throw "tools\release is not inside a git checkout" }

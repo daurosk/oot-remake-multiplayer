@@ -265,6 +265,34 @@ TEST_CASE("teleport: free play starts a short event so the game takes the scene 
     CHECK_FALSE(trip.Tick(Local{}, 20 * kS).start_event);
 }
 
+TEST_CASE("teleport: once arrived, one short event runs before the move, so Link is not left locked (#197)") {
+    Trip trip;
+    const Local there = At("KokiriForest_Child", 0, 0, 0);
+    trip.Start(2, "Saria", there, 0);
+    REQUIRE(trip.Accepted(2, Target("InsideTheDekuTree", -33, 110, 10), there, kS).scene);
+    const Local arrived = At("InsideTheDekuTree", 0, 101, 14);
+    auto a = trip.Tick(arrived, 10 * kS);  // the scene is in: the request is cleared
+    CHECK(a.cancel_scene);
+    CHECK_FALSE(a.start_event);
+    CHECK(trip.phase() == Trip::Phase::settling);
+    // Still loading or in the game's own event: not yet.
+    Local busy = arrived;
+    busy.event = true;
+    CHECK_FALSE(trip.Tick(busy, 10 * kS + kS / 10).start_event);
+    // The first quiet frame: the event, once.
+    CHECK(trip.Tick(arrived, 10 * kS + kS / 5).start_event);
+    // It runs: no ask, no second event.
+    a = trip.Tick(busy, 11 * kS);
+    CHECK_FALSE(a.start_event);
+    CHECK_FALSE(a.ask);
+    // It ended: the settle counts from here, then the second ask; no more events.
+    CHECK_FALSE(trip.Tick(arrived, 12 * kS).start_event);
+    a = trip.Tick(arrived, 12 * kS + Trip::kSettleUs);
+    CHECK_FALSE(a.start_event);
+    REQUIRE(a.ask);
+    CHECK(trip.phase() == Trip::Phase::asking_again);
+}
+
 TEST_CASE("teleport: after the scene change, a busy or silent player still gives the first place") {
     for (int silent = 0; silent < 2; ++silent) {
         Trip trip;

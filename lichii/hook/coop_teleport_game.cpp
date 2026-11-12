@@ -60,13 +60,7 @@ struct Request {
     std::uint32_t banc = coop::host::flag_hash("Sequence_ReservedNextBanc");
     std::uint32_t start = coop::host::flag_hash("Sequence_ReservedNextStartPosName");
     std::uint32_t loading = coop::host::flag_hash("Sequence_IsLoadingBanc");
-    // What a loading zone also reserves (#197): the arrival event the new
-    // scene plays, and the start it plays at. Without that event our Link
-    // stays locked after the load (no event ever hands control back).
-    std::uint32_t boot = coop::host::flag_hash("Sequence_ReservedBootEventName");
-    std::uint32_t starter = coop::host::flag_hash("Sequence_ReservedEventStarterName");
 };
-constexpr std::string_view kArriveEvent = "Dm_SY_BancChangeArrive";
 const Request& RequestFlags() {
     static const Request r;
     return r;
@@ -84,11 +78,9 @@ bool AskScene(Core::System& system, std::uint64_t main, std::string_view scene, 
         saved = coop::host::GameFlags(memory).get_string64(RequestFlags().start);
     }
     const bool start_ok = coop::host::GameFlags::set_string64_now(memory, RequestFlags().start, start);
-    const bool arrive = coop::host::GameFlags::set_string64_now(memory, RequestFlags().starter, start) &&
-                        coop::host::GameFlags::set_string64_now(memory, RequestFlags().boot, kArriveEvent);
     const bool banc = start_ok && coop::host::GameFlags::set_string64_now(memory, RequestFlags().banc, scene);
-    LOG_INFO(Core, "coop: teleport: asked the scene change to {} at {}: scene {}, arrival event {}", scene, start,
-             banc ? "set" : "NOT set", arrive ? "set" : "NOT set");
+    LOG_INFO(Core, "coop: teleport: asked the scene change to {} at {}: scene {}", scene, start,
+             banc ? "set" : "NOT set");
     return banc;
 }
 
@@ -96,7 +88,7 @@ bool AskScene(Core::System& system, std::uint64_t main, std::string_view scene, 
 // itself (arrived or given up), so no later event or frame takes it again.
 // `restore`: not arrived, the start name from before the trip is put back
 // (arrived: the start name is that scene's own, as after a normal load).
-void ClearScene(Core::System& system, std::uint64_t main, bool all, bool restore, bool arrived,
+void ClearScene(Core::System& system, std::uint64_t main, bool all, bool restore,
                 const std::optional<std::string>& saved) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
     const bool off = coop::host::GameFlags::set_bool(memory, kFreePlayBancChange, false);
@@ -105,14 +97,6 @@ void ClearScene(Core::System& system, std::uint64_t main, bool all, bool restore
         return;
     }
     const bool banc = coop::host::GameFlags::set_string64_now(memory, RequestFlags().banc, "");
-    // Arrived: the scene is readable a little before the game plays the
-    // arrival event, so it is left for the game (it empties it after, as
-    // after a loading zone). Not arrived: never leave our arrival event for a
-    // later load to play.
-    if (!arrived) {
-        coop::host::GameFlags::set_string64_now(memory, RequestFlags().boot, "");
-        coop::host::GameFlags::set_string64_now(memory, RequestFlags().starter, "");
-    }
     std::string start = "kept";
     if (restore && saved) {
         start = coop::host::GameFlags::set_string64_now(memory, RequestFlags().start, *saved)
@@ -345,13 +329,13 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     {
         std::lock_guard lock(g.event_mutex);
         g.main = main_base;
-        g.events_open = g.trip.phase() == Trip::Phase::travelling && local.scene && !local.loading_banc;
+        const auto phase = g.trip.phase();
+        g.events_open = (phase == Trip::Phase::travelling || phase == Trip::Phase::settling) && local.scene &&
+                        !local.loading_banc;
     }
     for (auto& act : all) {
         if ((act.cancel_scene || act.release) && main_base != 0) {
-            // Tick's arrival is the only cancel that leaves the trip settling.
-            const bool arrived = act.cancel_scene && g.trip.phase() == Trip::Phase::settling;
-            ClearScene(system, main_base, act.cancel_scene, act.restore_start, arrived, g.saved_start);
+            ClearScene(system, main_base, act.cancel_scene, act.restore_start, g.saved_start);
             if (act.cancel_scene) {
                 g.saved_start.reset();  // the next trip reads it afresh
                 g.saved_read = false;
@@ -367,8 +351,9 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
             }
         }
         if (act.start_event && main_base != 0) {
-            LOG_INFO(Core, "coop: teleport: starting the event {} so the game takes the scene change",
-                     Trip::kSceneEvent);
+            LOG_INFO(Core, "coop: teleport: starting the event {} ({})", Trip::kSceneEvent,
+                     g.trip.phase() == Trip::Phase::settling ? "arrived: hands Link back to the player"
+                                                             : "so the game takes the scene change");
             std::lock_guard lock(g.event_mutex);
             g.events.Want(Trip::kSceneEvent);
         }

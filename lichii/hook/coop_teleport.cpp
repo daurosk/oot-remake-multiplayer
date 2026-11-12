@@ -341,6 +341,7 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     taken_ = false;
     seen_request_ = false;
     loaded_ = false;
+    arrival_event_ = false;
     a.scene = scene_;
     a.start = start_;
     a.start_event = true;  // no event runs here (Accepted refuses during one)
@@ -454,6 +455,14 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         } else if (*local.scene != scene_) {
             phase_ = Phase::idle;
             a.lines.push_back("teleport: stopped: you left " + scene_);
+        } else if (!arrival_event_) {
+            // The first quiet frame in the new scene: one short event (#197).
+            // A loading zone's load is followed by its arrival event; ours had
+            // none, and our Link stayed locked (the stick moved nothing) until
+            // an event ran and ended. The move waits until it has.
+            arrival_event_ = true;
+            a.start_event = true;
+            settle_us_ = now_us;
         } else if (settle_us_ == 0) {
             settle_us_ = now_us;
         } else if (now_us - settle_us_ >= kSettleUs) {

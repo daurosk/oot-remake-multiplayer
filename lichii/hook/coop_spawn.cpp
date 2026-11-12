@@ -1348,9 +1348,6 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 if (c->animation && c->act == Act::show && !c->animation->name.empty()) {
                     plays_.push_back(i);  // issue 169: the fuse's blink
                 }
-                if (!c->effect.empty() && !slot.emitted && c->act == Act::show) {
-                    emits_.push_back(i);  // issue 166: the hit effect, once
-                }
                 if (c->act == Act::explode && !slot.exploded) {
                     // A bomb's life is 1; at 0 the game runs its own explosion.
                     std::uint64_t table = 0, life = 0, value = 0;
@@ -1366,6 +1363,12 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 if (slot.exploded && now_ms - slot.since_ms > 3000) {
                     slot.phase = Phase::done;  // it should be gone by now; let go
                 }
+            }
+        }
+        if (slot.phase == Phase::live && !slot.emitted) {
+            // Issue 166: the hit effect, once (also for an actor that is not placed: Copy::real).
+            if (const Copy* c = Wanted(slot.key); c != nullptr && c->act == Act::show && !c->effect.empty()) {
+                emits_.push_back(i);
             }
         }
         if (slot.phase == Phase::done) {

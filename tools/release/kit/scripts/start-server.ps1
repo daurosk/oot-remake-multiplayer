@@ -30,8 +30,16 @@ if ($Bind.Trim()) {
 # and is never printed or logged.
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
+. (Join-Path $PSScriptRoot 'invite.ps1')
 $kitAccess = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
 $password = $kitAccess.Password
+# No server_password line: a new random one for this session (docs/play-online.md). Host.bat
+# makes it and hands it over in OOT_COOP_SESSION_PASSWORD, so the host's own game has it too.
+$madePassword = $false
+if ($null -eq $password) {
+    $password = if ($env:OOT_COOP_SESSION_PASSWORD) { $env:OOT_COOP_SESSION_PASSWORD } else { New-JoinPassword }
+    $madePassword = $true
+}
 if ($password) {
     if (-not (Test-CoopPassword $password)) { Write-Host 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1 }
     $env:OOT_COOP_SERVER_PASSWORD = $password
@@ -52,7 +60,8 @@ $log = Join-Path $logs ('server-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date))
 
 Write-Host "Co-op server on UDP port $Port. Log: $log"
 Write-Host 'Keep this window open while you play; closing it (or Ctrl+C) stops the server.'
-if ($password) { Write-Host 'Join password: on (server_password in coop-options.ini). Send it to your friends with the address.' }
+if ($madePassword) { Write-Host 'Join password: a new random one for this session; it is inside the invite code (server_password in coop-options.ini sets your own).' }
+elseif ($password) { Write-Host 'Join password: on (server_password in coop-options.ini). Send it to your friends with the address.' }
 else { Write-Host 'Join password: none (set one with server_password in coop-options.ini).' }
 if ($kitAccess.Pvp) { Write-Host 'PvP: on (pvp in coop-options.ini): players can hurt each other. /pvp off in the game chat turns it off.' }
 else { Write-Host 'PvP: off (players cannot hurt each other; pvp = on in coop-options.ini, or /pvp on in the game chat).' }
@@ -92,9 +101,16 @@ $args2 = @('--port', "$Port") + $access + @($Rest | Where-Object { $_ })
     if ($text -match 'relay: join code \S+\. Give your friends (\S+) ') {
         try { Set-Clipboard -Value $Matches[1] -ErrorAction Stop; $text += ' Copied to the clipboard.' } catch { }
     }
+    # The invite code (coop_server --invite): copied for the host, and never written to the log
+    # (it holds the join password).
+    $logged = $text
+    if ($text -match 'invite code: ([A-Z2-9-]+)') {
+        try { Set-Clipboard -Value $Matches[1] -ErrorAction Stop; $text += '   (copied to the clipboard)' } catch { }
+        $logged = 'coop_server: invite code: (not in the log: it holds the join password)'
+    }
     $line = '{0:HH:mm:ss.fff} {1}' -f (Get-Date), $text
     Write-Host $line
-    Add-Content -Path $log -Value $line -Encoding UTF8
+    Add-Content -Path $log -Value ('{0:HH:mm:ss.fff} {1}' -f (Get-Date), $logged) -Encoding UTF8
 }
 $code = $LASTEXITCODE
 Add-Content -Path $log -Value ('{0:HH:mm:ss.fff} (server exited with code {1})' -f (Get-Date), $code) -Encoding UTF8

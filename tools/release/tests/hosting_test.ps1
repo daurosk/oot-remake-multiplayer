@@ -123,6 +123,8 @@ Check ((Text $f 'problem') -match 'is not a list of addresses' -and (Text $f 'pr
 
 # --- Joining through a relay (relay-join.ps1) ---
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\scripts\relay-join.ps1')
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\scripts\invite.ps1')
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\scripts\kit-paths.ps1')
 $j = ConvertTo-RelayJoin ' abcd-efgh@relay.example.net:27600. '
 Check ($j -and $j.Code -eq 'ABCDEFGH' -and $j.Relay -eq 'relay.example.net' -and $j.Port -eq 27600) 'relay: a pasted join code with its relay and port'
 $j = ConvertTo-RelayJoin 'ABCDEFGH@1.2.3.4'
@@ -161,6 +163,43 @@ $h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; 
 Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'NOT used') 'relay: refused without a join password, even with server_allow'
 $h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'bad relay;x'; RelayKey = '' } 'secret' ''
 Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'not a relay address') 'relay: a bad address is named, not used'
+
+# UPnP and the invite code need the join password; server_allow is not enough.
+$h = Get-ServerHostingArgs @{ Upnp = $true; Invite = $true; Stun = ''; Relay = ''; RelayKey = '' } '' '25.1.2.3'
+Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'NOT used' -and ($h.Notes -join ' ') -match 'No invite code') 'upnp and invite: refused without a join password, even with server_allow'
+$h = Get-ServerHostingArgs @{ Upnp = $true; Invite = $true; Stun = 'stun.example.net:3478, bad host;x'; Relay = ''; RelayKey = '' } 'secret' ''
+Check (($h.Args -join ' ') -eq '--upnp --invite --stun stun.example.net:3478' -and ($h.Notes -join ' ') -match "'bad host;x' is not") 'upnp and invite: on with a join password, stun servers checked'
+
+# The defaults when coop-options.ini says nothing: UPnP and the invite code on.
+$optDir = Join-Path ([System.IO.Path]::GetTempPath()) ('hosting-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $optDir | Out-Null
+$opt = Join-Path $optDir 'coop-options.ini'
+[System.IO.File]::WriteAllText($opt, "# upnp = no`r`n# invite = no`r`n")
+$a = Read-KitServerAccess $opt
+Check ($a.Upnp -and $a.Invite -and $null -eq $a.Password) 'defaults: upnp and invite on, no password line'
+[System.IO.File]::WriteAllText($opt, "upnp = no`r`ninvite = no`r`nstun_servers = a.example:1`r`n")
+$a = Read-KitServerAccess $opt
+Check (-not $a.Upnp -and -not $a.Invite -and $a.Stun -eq 'a.example:1') 'upnp = no and invite = no turn them off'
+Remove-Item -Recurse -Force $optDir
+
+# Invite codes: the server's vectors (tests/server/nat_test.cpp) read back here.
+$r = ConvertFrom-InviteCode 'CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA'
+Check ($r.Ok -and $r.Address -eq '203.0.113.5' -and $r.Port -eq 27510 -and $r.Password -ceq 'ABCDEFGHJKLMNPQRSTUV') 'invite: a made password'
+$r = ConvertFrom-InviteCode ' cmddg 3acpp 5be7d jqkuy lmmun fzgj5 5pfx5 y86ve qrwxf efr. '
+Check ($r.Ok -and $r.Address -eq '198.51.100.2' -and $r.Password -ceq 'three-random-words') 'invite: the host''s own password, pasted loosely'
+$good = 'CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA'
+$allCaught = $true
+for ($i = 0; $i -lt $good.Length; $i++) {
+    if ($good[$i] -eq '-') { continue }
+    $c = $good.ToCharArray(); $c[$i] = if ($c[$i] -eq 'A') { 'B' } else { 'A' }
+    if ((ConvertFrom-InviteCode (-join $c)).Ok) { $allCaught = $false }
+}
+Check $allCaught 'invite: every mistyped letter is caught'
+Check (-not (ConvertFrom-InviteCode $good.Substring(0, $good.Length - 1)).Ok) 'invite: a missing letter is caught'
+Check ((ConvertFrom-InviteCode 'EHDDG-3ACVT-ASCAS-DASCS-NB2JP-PE7EA-GJEUQ-WC2NA-MLPZ3-JS').Error -match 'ANSWER') 'invite: an answer code is named as one'
+Check (-not (Test-InviteCodeText 'ABCD-EFGH') -and -not (Test-InviteCodeText '203.0.113.5') -and (Test-InviteCodeText $good)) 'invite: told apart from relay codes and addresses'
+$p1 = New-JoinPassword; $p2 = New-JoinPassword
+Check ($p1.Length -eq 20 -and $p1 -match '^[A-HJ-NP-Z2-9]{20}$' -and $p1 -ne $p2) 'invite: a made password is 20 letters (100 bits) and new each time'
 
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

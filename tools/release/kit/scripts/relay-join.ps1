@@ -111,20 +111,39 @@ function Connect-RelayJoin($Join) {
 }
 
 # The host's side: coop_server arguments and the lines to show for coop-options.ini's upnp,
-# relay and relay_key. @{ Args = @(...); Notes = @(...) }. The relay key goes in the
+# invite, stun_servers, relay and relay_key. UPnP and the invite code need the join password
+# (server_allow is not enough: the password is the lock). @{ Args = @(...); Notes = @(...) }. The relay key goes in the
 # environment variable OOT_COOP_RELAY_KEY (start-server.ps1 sets it), never on the command line.
 function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
     $list = @()
     $notes = @()
     if ($Access.Upnp) {
-        if (-not $Password -and -not $Allow) {
-            $notes += 'upnp = yes is NOT used: it opens your PC to the whole internet while the server runs, so it'
-            $notes += 'needs a join password (server_password) or server_allow in coop-options.ini as well.'
+        if (-not $Password) {
+            $notes += 'The router forward (UPnP) is NOT used: it opens your PC to the whole internet while the server'
+            $notes += 'runs, so it needs a join password. coop-options.ini has an empty server_password line: delete it'
+            $notes += '(Host.bat then makes a password each time) or set one.'
         }
         else {
             $list += '--upnp'
-            $notes += 'UPnP (upnp = yes): asking your router to forward the port while the server runs. The'
-            $notes += 'server''s lines below say whether the router did it; the forward ends when this window closes.'
+            $notes += 'UPnP: asking your router to forward the game''s port while the server runs. The server''s lines'
+            $notes += 'below say whether it did; the forward ends when this window closes (upnp = no turns it off).'
+        }
+    }
+    if ($Access.Invite) {
+        if (-not $Password) {
+            $notes += 'No invite code: it carries the join password, and coop-options.ini says none (an empty'
+            $notes += 'server_password line). Delete that line to get one.'
+        }
+        else {
+            $list += '--invite'
+            foreach ($s in @($Access.Stun -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+                if ($s -match '^[A-Za-z0-9._-]{1,253}(:\d{1,5})?$') { $list += @('--stun', $s) }
+                else { $notes += "stun_servers: '$s' is not a name:port; not used." }
+            }
+            $notes += 'INVITE CODE: shows below in a few seconds and is copied to the clipboard. Send it to your friends'
+            $notes += '(only to friends: it holds your internet address and the join password); they paste it into'
+            $notes += 'Join.bat. It stops working when this window closes. If a friend''s Join.bat shows an ANSWER CODE,'
+            $notes += 'paste it into this window and press Enter.'
         }
     }
     if ($Access.Relay) {

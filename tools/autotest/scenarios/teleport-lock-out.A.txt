@@ -21,14 +21,14 @@ press A
 wait 2400
 mark after
 wait 240
-place -22.2 77.5 -4.0      # next to the stone sign Land_Deku_SignStone_A_01 (-20.2 77.3 -6.2)
+place -18.7 77.6 -6.25     # 1.5 m in front (+X) of the stone sign Land_Deku_SignStone_A_01 (-20.23 77.32 -6.25, yaw pi/2; Banc InsideTheDekuTree_Dynamic). -22.2 -4.0 (bigrun2) was behind it, in the water: A dived
 wait 240
 mark placed
 wait 900
 chat /teleport B
 wait 120
 mark asked
-toward -20.2 -6.2 8
+toward -20.23 -6.25 8
 wait 20
 press A 12                 # read it: an event, the scene change is taken when it ends
 wait 120

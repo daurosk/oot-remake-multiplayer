@@ -1,0 +1,78 @@
+# shop-buy (#130): A buys the Deku Shield in the Kokiri Shop; B must get it (pouch, menu, worn).
+# Banc KokiriForest_Child_Static: keeper Npc_Kokiri_001_Shop_Child at -2.10 110.20 -25.25
+# (there only from quest Meet_DekuTree Step02: the kit saves are past the Deku Tree), the
+# shield Shop_Weapon_Shield_Deku (ShopItemIndex 6) on the shelf at -1.24 111.18 -26.50, the
+# shop door at -1.05 110.11 -18.38. Both kit saves own the Deku Shield, so both empty it first
+# (setflag, after the load has settled: a max-rule drop stays in its own game) and A gets 99
+# rupees (the shield is 40).
+# Expect: A "coop: test setflag PouchData.Weapon_Shield_Deku.StockNum (int) 0: set", then after
+# `bought` A's flags debug line "int 0x7ca64f23 0 -> 1" and B's "int 0x7ca64f23 0 -> 1" (from
+# the other player); B's `equipped` shot shows the Deku Shield on B's Link, A's shot shows it on
+# B's puppet. FAIL = no 0x7ca64f23 line in B, or B's menu without the shield.
+# NOT RUN YET: the shop menu presses below are a guess (cursor on the first item, DRIGHT moves
+# one item, A picks, A confirms "Buy"). Check the item-N shots; if the cursor starts elsewhere,
+# change the number of DRIGHT presses so `on-shield` shows the Deku Shield picked.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1
+#! timeout 420
+mark start
+warp KokiriForest_Child
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark loaded
+setflag PouchData.Weapon_Shield_Deku.StockNum 0
+setflag PlayerStatus.CurrentRupee 99
+wait 300
+place -2.10 110.30 -22.60
+wait 300
+toward -2.10 -25.25 12
+wait 60
+mark a-at-counter
+press A
+wait 240
+mark talk
+press A
+wait 180
+press A
+wait 180
+mark shop-open
+press DRIGHT
+wait 45
+mark item-2
+press DRIGHT
+wait 45
+mark item-3
+press DRIGHT
+wait 45
+mark item-4
+press DRIGHT
+wait 45
+mark item-5
+press DRIGHT
+wait 45
+mark on-shield
+press A
+wait 180
+mark buy-ask
+press A
+wait 300
+press A
+wait 180
+press A
+wait 180
+mark bought
+press B
+wait 120
+press B
+wait 120
+wait 1800
+mark end

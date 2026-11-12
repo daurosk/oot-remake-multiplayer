@@ -2353,3 +2353,176 @@ TEST_CASE("world: RestWords skips exact zeros and finds a place ending on a regi
     REQUIRE(scan.where.size() == 1);
     CHECK(scan.where[0] == "c+0x10+0x1f4");
 }
+
+TEST_CASE("world: a token far from where its Skulltula was seen is its own when the Skulltula just died (items-sync)") {
+    const auto dying = [](proto::Vec3 at = kGoldAt) { return Thing(0x100, kGoldHash, 0, kGold, at); };
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(a, 1050 * kMs, {dying()});
+    // Knocked 6 m away as it died: the token is not within 3 m of where we saw it.
+    GraveWalk(a, 1100 * kMs, {});
+    const proto::Vec3 by_token{7.0f, 2.0f, 4.0f};  // our Link walked over to it
+    Walk(a, 1200 * kMs, {Token(0x200, {7.0f, 2.5f, 3.0f})}, by_token, 2, kGrave);
+    std::vector<proto::WorldBreak> sent;
+    for (std::uint64_t t = 1300; t <= 2800; t += 100) {
+        for (const auto& b : Sent<proto::WorldBreak>(Walk(a, t * kMs, {}, by_token, 2, kGrave))) {
+            sent.push_back(b);
+        }
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == CoopWorld::TokenId(kGoldHash));
+
+    // Taken elsewhere: B's far token goes too.
+    WorldSync b;
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(b, 1050 * kMs, {dying()});
+    GraveWalk(b, 1100 * kMs, {});
+    GraveWalk(b, 1200 * kMs, {Token(0x300, {1.0f, -6.0f, 3.0f})});  // fell 9 m
+    b.Receive(BreakOf(CoopWorld::TokenId(kGoldHash), 0, kGrave));
+    GraveWalk(b, 1300 * kMs, {Token(0x300, {1.0f, -6.0f, 3.0f})});
+    CHECK(Removed(b, 0x300));
+
+    // Not its: long after it left, farther than 12 m, or it left alive (its room unloaded).
+    WorldSync c;
+    GraveWalk(c, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(c, 1050 * kMs, {dying()});
+    GraveWalk(c, 1100 * kMs, {});
+    GraveWalk(c, 7000 * kMs, {Token(0x400, {7.0f, 2.5f, 3.0f})});
+    WorldSync d;
+    GraveWalk(d, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(d, 1050 * kMs, {dying()});
+    GraveWalk(d, 1100 * kMs, {});
+    GraveWalk(d, 1200 * kMs, {Token(0x500, {20.0f, 2.5f, 3.0f})});
+    WorldSync e;
+    GraveWalk(e, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(e, 1100 * kMs, {});
+    const proto::Vec3 by_e{7.0f, 2.0f, 4.0f};
+    Walk(e, 1200 * kMs, {Token(0x600, {7.0f, 2.5f, 3.0f})}, by_e, 2, kGrave);
+    for (std::uint64_t t = 7100; t <= 8600; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(c, t * kMs, {})).empty());
+    }
+    for (std::uint64_t t = 1300; t <= 2800; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(d, t * kMs, {})).empty());
+        CHECK(Sent<proto::WorldBreak>(Walk(e, t * kMs, {}, by_e, 2, kGrave)).empty());
+    }
+}
+
+TEST_CASE("world: two tokens after one Skulltula died: only one takes its id (items-sync review)") {
+    // A second token (from a Skulltula with no placement) near the first:
+    // it must not get the known token's id, or its taking deletes the other
+    // game's real token.
+    const proto::Vec3 by{7.0f, 2.0f, 4.0f};
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(a, 1050 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt)});
+    GraveWalk(a, 1100 * kMs, {});
+    Walk(a, 1200 * kMs, {Token(0x200, {7.0f, 2.5f, 3.0f}), Token(0x300, {7.5f, 2.5f, 9.0f})}, by, 2, kGrave);
+    // The first (at 7, 3) stays; the second (6 m off) is taken by our Link.
+    const proto::Vec3 far_link{7.5f, 2.0f, 9.0f};
+    std::vector<proto::WorldBreak> sent;
+    Walk(a, 1300 * kMs, {Token(0x200, {7.0f, 2.5f, 3.0f})}, far_link, 2, kGrave);
+    for (std::uint64_t t = 1400; t <= 2900; t += 100) {
+        for (const auto& b : Sent<proto::WorldBreak>(
+                 Walk(a, t * kMs, {Token(0x200, {7.0f, 2.5f, 3.0f})}, far_link, 2, kGrave))) {
+            sent.push_back(b);
+        }
+    }
+    CHECK(sent.empty());  // the second token has no id: nothing goes out for it
+
+    // Two Skulltulas died in the window: the token is the one that left last.
+    constexpr std::uint64_t kOther = 0x1234567890abcdefULL;
+    const proto::Vec3 other_at{9.0f, 3.0f, 3.0f};
+    WorldSync b;
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt), Thing(0x110, kOther, 1, kGold, other_at)});
+    GraveWalk(b, 1050 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt), Thing(0x110, kOther, 1, kGold, other_at)});
+    GraveWalk(b, 1100 * kMs, {Thing(0x110, kOther, 0, kGold, other_at)});  // X left first, the other last
+    GraveWalk(b, 1200 * kMs, {});
+    const proto::Vec3 mid{5.0f, -4.0f, 3.0f};  // over 3 m from both
+    Walk(b, 1300 * kMs, {Token(0x200, mid)}, mid, 2, kGrave);
+    sent.clear();
+    for (std::uint64_t t = 1400; t <= 2900; t += 100) {
+        for (const auto& br : Sent<proto::WorldBreak>(Walk(b, t * kMs, {}, mid, 2, kGrave))) {
+            sent.push_back(br);
+        }
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == CoopWorld::TokenId(kOther));
+}
+
+namespace {
+
+// The block's push node (ExecuteMovableBoxControl), as the game lays it out:
+// both vtables, owner chain [[[node+8]+8]+0x1f0] = actor, reached from a
+// component through one more object.
+constexpr std::uint64_t kNodeMain = 0x0080004000, kNodeHolder = 0x2100600000, kNode = 0x2100700000,
+                        kNodeCtx = 0x2100800000, kNodeAi = 0x2100900000;
+void BlockNodeMemory(FakeGame& g) {
+    BlockMemory(g);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kNodeHolder + a, 0);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kNode + a, 0);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kNodeAi + a, 0);
+    g.Word(kBlockComp + 0x38, kNodeHolder);  // component -> holder -> node
+    g.Word(kNodeHolder + 0x10, kNode);
+    g.Word(kNode, kNodeMain + CoopWorld::BlockNode::kVtable);
+    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
+    g.Word(kNode + 8, kNodeCtx);
+    g.Word(kNodeCtx + 8, kNodeAi);
+    g.Word(kNodeAi + 0x1f0, kBlockActor);
+}
+
+} // namespace
+
+TEST_CASE("world: the block's push node is found by its vtables and owner (issue 147)") {
+    FakeGame g;
+    BlockNodeMemory(g);
+    const auto node = CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain);
+    REQUIRE(node);
+    CHECK(*node == kNode);
+    // Another block's node (owner is not this actor): not taken.
+    g.Word(kNodeAi + 0x1f0, kBlockActor + 0x1000);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
+    g.Word(kNodeAi + 0x1f0, kBlockActor);
+    // Only the first vtable right: not taken.
+    g.Word(kNode + 0x20, 0);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
+    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
+    // Another main: not taken.
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain + 0x1000));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, 0));
+}
+
+TEST_CASE("world: a followed push puts the new rest in the push node's target and start (issue 147)") {
+    FakeGame g;
+    BlockNodeMemory(g);
+    const proto::Vec3 from{-51.06f, 79.27f, 47.1f}, to{-51.06f, 79.27f, 45.6f};
+    PutFloats(g, kNode + CoopWorld::BlockNode::kBase, {-51.06f, 79.27f, 47.1f});  // grid base
+    PutFloats(g, kNode + CoopWorld::BlockNode::kGoal, {-51.06f, 79.27f, 42.6f});  // the answer
+    PutFloats(g, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 47.1f});
+    PutFloats(g, kNode + CoopWorld::BlockNode::kStart, {-51.07f, 79.27f, 47.11f});
+    const auto words = CoopWorld::NodeRestWords(g.Reader(), kNode, from, to);
+    REQUIRE(words.where.size() == 2);
+    CHECK(words.where[0] == "node+0xfc");
+    CHECK(words.where[1] == "node+0x108");
+    REQUIRE(words.writes.size() == 6);
+    for (const auto& w : words.writes) {
+        g.Put(w.address, &w.value, 4);
+    }
+    CHECK(FloatAt(g, kNode + 0xfc + 8) == 45.6f);
+    CHECK(FloatAt(g, kNode + 0x108) == -51.06f);
+    CHECK(FloatAt(g, kNode + 0x108 + 8) == 45.6f);
+    CHECK(FloatAt(g, kNode + 0x40 + 8) == 47.1f);  // base left alone
+    CHECK(FloatAt(g, kNode + 0x4c + 8) == 42.6f);  // goal left alone
+    // Mid-push here: the start is the old place, the target the next cell.
+    {
+        FakeGame m;
+        BlockNodeMemory(m);
+        PutFloats(m, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 45.6f});
+        PutFloats(m, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 47.1f});
+        const auto busy = CoopWorld::NodeRestWords(m.Reader(), kNode, from, to);
+        CHECK(busy.busy);
+        CHECK(busy.writes.empty());
+    }
+    // Already at the new place, or a move under 5 cm: nothing.
+    CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, from, to).writes.empty());
+    CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, to, {-51.06f, 79.27f, 45.62f}).writes.empty());
+}

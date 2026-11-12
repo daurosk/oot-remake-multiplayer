@@ -155,6 +155,13 @@ void Session::received(ConnectionId id, std::uint8_t channel,
   if (c.state == State::awaiting_hello) {
     if (const auto* hello = std::get_if<Hello>(&message)) {
       on_hello(id, c, *hello, now_us);
+    } else if (const auto* claim = std::get_if<RejoinClaim>(&message)) {
+      // Shown before HELLO; one per connection, the first one counts.
+      if (c.rejoin_claim) {
+        ++stats_.stray_rejoin_claim;
+      } else {
+        c.rejoin_claim = claim->token;
+      }
     } else {
       ++stats_.before_welcome;
     }
@@ -172,6 +179,10 @@ void Session::received(ConnectionId id, std::uint8_t channel,
   }
   if (std::holds_alternative<JoinProof>(message)) {
     ++stats_.stray_proof;  // a joined player's: never relayed
+    return;
+  }
+  if (std::holds_alternative<RejoinClaim>(message)) {
+    ++stats_.stray_rejoin_claim;  // after HELLO: never relayed
     return;
   }
   on_player_message(id, c, channel, message, bytes.size(), now_us);
@@ -249,16 +260,20 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
   }
-  // A crashed build restarted on the same machine finds its old self still
-  // in until the silence timeout. It takes that place when the old one is
-  // quiet and from the same address; a live player's name, or one from
-  // another address, stays refused, so nobody can push a player out.
+  // A build that lost its connection finds its old self still in until the
+  // silence timeout. It takes that place when the old one is quiet, from the
+  // same address, and the new connection showed the old one's rejoin token
+  // (REJOIN_CLAIM); a live player's name, one from another address, or one
+  // without the token stays refused, so nobody can push a player out by name
+  // (two players behind one router share an address).
   std::uint8_t preferred = 0;
   if (auto holder = holder_of(hello.nickname)) {
     const Connection& old = connections_.at(*holder);
-    const bool stale = config_.rejoin_stale_us != 0 && c.address && old.address == c.address &&
+    const bool quiet = config_.rejoin_stale_us != 0 && c.address && old.address == c.address &&
                        now_us - old.last_heard >= config_.rejoin_stale_us;
-    if (!stale) {
+    const bool token = c.rejoin_claim && same_proof(*c.rejoin_claim, old.rejoin_token);
+    if (quiet && !token) ++stats_.rejoin_no_token;
+    if (!quiet || !token) {
       refuse(id, c, RefuseReason::name_taken, now_us);
       return;
     }
@@ -296,6 +311,9 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   if (player_count() == 1) session_game_build_ = hello.game_build_id;
 
   send(id, kChannelSession, welcome);
+  c.rejoin_claim.reset();
+  c.rejoin_token = random_nonce();
+  send(id, kChannelSession, RejoinToken{c.rejoin_token});
   send_to_others(id, kChannelSession, PlayerJoined{c.number, c.nickname});
   // The first player in hosts. The joiner learns who hosts, then gets the
   // whole flag table, both on the progress channel and so before any
@@ -377,6 +395,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (const auto* group = std::get_if<ObjectGroup>(&message)) {
     on_object_group(id, c, *group);
+    return;
+  }
+  if (const auto* lure = std::get_if<FishLure>(&message)) {
+    on_fish_lure(c, *lure, now_us);
     return;
   }
   if (auto* cut = std::get_if<GrassCut>(&message)) {
@@ -986,7 +1008,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     return;  // a boss is not moved by the distance rule below
   }
 
-  if (o.ask || o.root || o.projectile || (c.status & kBusy) || !has_loaded(id, o)) return;
+  if (o.ask || o.root || o.projectile || o.fish || (c.status & kBusy) || !has_loaded(id, o)) return;
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
   auto owner = connections_.find(*o.owner);
   if (owner == connections_.end()) return;
@@ -1360,6 +1382,99 @@ void Session::change_owner(const ObjectId& oid, Object& o, std::optional<Connect
   announce_owner(oid, o);
 }
 
+// Fishing (issue 151, docs/objects.md "Fish and lures"). Each game says how
+// near its own lure is to every fish it has loaded. A fish's AI only sees the
+// lure of the game it runs in, so the fish belongs in the game whose lure is
+// nearest: that game runs the approach, the bite, the fight and the catch.
+void Session::on_fish_lure(Connection& c, const FishLure& m, std::uint64_t now_us) {
+  c.lures.clear();
+  for (const FishLureEntry& e : m.fish) {
+    c.lures.emplace(e.id, e);
+    auto it = objects_.find(e.id);
+    if (it != objects_.end() && it->second.scene == c.scene) it->second.fish = true;
+  }
+  c.lures_at = stamp(now_us);
+}
+
+void Session::fish_owner(const ObjectId& oid, Object& o, ConnectionId owner, bool unfit,
+                         std::uint64_t now_us) {
+  // A game's claim on the fish: its lure in reach, from a fresh list. The
+  // owner's hooked fish is kept longer: a late list must not free it.
+  auto claim = [&](ConnectionId cid) -> std::optional<FishLureEntry> {
+    const Connection& pc = connections_.at(cid);
+    auto it = pc.lures.find(oid);
+    if (pc.lures_at == 0 || now_us < pc.lures_at || it == pc.lures.end() ||
+        it->second.distance_cm == kFishLureNone) {
+      return std::nullopt;
+    }
+    FishLureEntry e = it->second;
+    const bool hooked = cid == owner && (e.flags & fish_lure::hooked);
+    // Only the owner's game runs the fish, so only its hooked counts.
+    if (cid != owner) e.flags &= static_cast<std::uint8_t>(~fish_lure::hooked);
+    const std::uint64_t keep = hooked ? config_.fish_hooked_stale_us : config_.fish_lure_stale_us;
+    if (now_us - pc.lures_at > keep) return std::nullopt;
+    return e;
+  };
+  // Lower is better: on the lure, then swimming at it, then the distance.
+  auto rank = [](const FishLureEntry& e) {
+    return (e.flags & fish_lure::hooked) ? 0 : (e.flags & fish_lure::drawn) ? 1 : 2;
+  };
+  auto mine = claim(owner);
+  if (mine && (mine->flags & fish_lure::hooked)) {
+    o.candidate.reset();  // kept, even while its game stands still (paused mid-fight)
+    return;
+  }
+  if (unfit) mine.reset();  // a game that stands still has no lure to offer
+  const double margin_cm = static_cast<double>(config_.fish_lure_margin_m) * 100.0;
+  std::optional<ConnectionId> want;
+  std::optional<FishLureEntry> best;
+  std::uint8_t best_number = 0;
+  for (ConnectionId other : o.present) {
+    if (other == owner || !has_loaded(other, o)) continue;
+    const Connection& pc = connections_.at(other);
+    if (pc.status & kBusy) continue;
+    const auto theirs = claim(other);
+    if (!theirs) continue;
+    if (mine) {
+      // Beats the owner: the same rank and clearly nearer, or a better
+      // rank (drawn) and not clearly farther. A copy's AI may turn at a
+      // far lure while the owner's fish is about to bite a near one.
+      const double t = theirs->distance_cm;
+      const double m = mine->distance_cm;
+      const bool beats = rank(*theirs) == rank(*mine) ? t + margin_cm <= m
+                         : rank(*theirs) < rank(*mine) ? t <= m + margin_cm
+                                                       : false;
+      if (!beats) continue;
+    }
+    if (!best || rank(*theirs) < rank(*best) ||
+        (rank(*theirs) == rank(*best) &&
+         (theirs->distance_cm < best->distance_cm ||
+          (theirs->distance_cm == best->distance_cm && pc.number < best_number)))) {
+      best = theirs;
+      best_number = pc.number;
+      want = other;
+    }
+  }
+  if (!want) {
+    o.candidate.reset();
+    // An owner that stands still with no lure near anyone: as any object.
+    if (unfit) {
+      if (auto next = best_other(o, owner, true, now_us)) ask_handover(oid, o, *next, now_us);
+    }
+    return;
+  }
+  if (o.candidate != want) {
+    o.candidate = want;
+    o.candidate_since = now_us;
+  }
+  const bool settled =
+      o.changed_at == 0 || now_us - o.changed_at >= config_.fish_lure_cooldown_us;
+  if (settled && now_us - o.candidate_since >= config_.fish_lure_hold_us) {
+    ++stats_.fish_to_lure;
+    ask_handover(oid, o, *want, now_us);
+  }
+}
+
 void Session::run_ownership(std::uint64_t now_us) {
   std::vector<ObjectId> ids;
   ids.reserve(objects_.size());
@@ -1402,7 +1517,17 @@ void Session::run_ownership(std::uint64_t now_us) {
 
     // An owner whose game stands still gives it up, fight or not.
     if (unfit_owner(oc, now_us)) {
-      if (auto next = best_other(o, owner, true, now_us)) ask_handover(oid, o, *next, now_us);
+      if (o.fish) {
+        fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
+      } else if (auto next = best_other(o, owner, true, now_us)) {
+        ask_handover(oid, o, *next, now_us);
+      }
+      continue;
+    }
+
+    // A fish goes by the lures only (issue 151).
+    if (o.fish) {
+      fish_owner(oid, o, owner, false, now_us);
       continue;
     }
 

@@ -912,6 +912,39 @@ TEST_CASE("client: the player list follows joins, statuses, leaves and reconnect
   CHECK(client.players().empty());
 }
 
+TEST_CASE("issue 163: the client shows its rejoin token before HELLO on the next connection") {
+  FakeServer server;
+  Client client(config_for(server));
+  Events events;
+  REQUIRE(client.start());
+  // The first connection has no token to show.
+  welcome_client(client, server);
+  REQUIRE(wait_event(client, server, events, EventKind::welcomed));
+  CHECK_FALSE(server.find<proto::RejoinClaim>().has_value());
+  CHECK_FALSE(client.has_rejoin_token());
+
+  proto::RejoinTokenBytes token{};
+  for (std::size_t i = 0; i < token.size(); ++i) token[i] = static_cast<std::uint8_t>(i * 7 + 1);
+  const std::size_t rejected = client.rejected_count();
+  server.send(proto::RejoinToken{token}, proto::kChannelSession);
+  REQUIRE(pump(client, server, [&] { return client.has_rejoin_token(); }));
+  CHECK(client.rejected_count() == rejected);
+
+  // Dropped: the next connection shows the token, then sends HELLO.
+  const std::size_t from = server.received.size();
+  server.drop();
+  REQUIRE(wait_event(client, server, events, EventKind::disconnected));
+  welcome_client(client, server, 0, from);
+  const auto claim = server.find<proto::RejoinClaim>(from);
+  const auto hello = server.find<proto::Hello>(from);
+  REQUIRE(claim.has_value());
+  REQUIRE(hello.has_value());
+  CHECK(*claim < *hello);
+  CHECK(std::get<proto::RejoinClaim>(server.received[*claim].message).token == token);
+  CHECK(server.received[*claim].channel == proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::reconnected));
+}
+
 TEST_CASE("client: the new event kinds are named") {
   CHECK(to_string(EventKind::chat) == "chat");
   CHECK(to_string(EventKind::player_joined) == "player joined");

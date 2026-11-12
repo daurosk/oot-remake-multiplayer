@@ -113,10 +113,25 @@ bool IsShared(std::string_view name);
 // fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
 
-// Issue 151 (fishing-2): a fish (Animal_Fish_*). Shared like any animal, with
-// one owner game; the lure rules in Sync (SetLures) move a fish to the game
-// whose lure it goes for, and a fish its owner catches is gone for everyone.
+// Issue 151 (fishing-2, fishing-3): a fish (Animal_Fish_*). Shared like any animal, with
+// one owner game; the lure rules in Sync (SetLures, FISH_LURE) move a fish to the game
+// whose lure is nearest it, and a fish its owner catches is gone for everyone.
 bool IsFish(std::string_view name);
+
+// Issue 191: guards (docs/objects.md, "Guards"). The stealth guards that throw
+// a child out when they spot him (Npc_Hylia_Soldier_SecurityGuard in the
+// castle garden, Npc_Gerudo_GEN_SecurityGuard and Npc_Gerudo_FortressGuard),
+// and the town soldiers (Npc_Hylia_Soldier_*, Npc_Hylia_ImperialSoldier_*),
+// who salute, greet and turn to Link. Shared like any townsperson, with one
+// owner; a copy that reacts to our Link (IsGuardReaction) is handed to us.
+bool IsGuard(std::string_view name);
+
+// A guard animation that answers this game's Link and no other: noticing,
+// discovering, surprise, alert, found (the stealth guards' 'Notice',
+// 'NoticeTurn_Quick', 'Discover', 'Surprise'), and the town soldiers'
+// 'Salute', greeting and talk. Not walking, waiting or turning on a patrol,
+// which differ between games only by timing.
+bool IsGuardReaction(std::string_view name);
 
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver
@@ -336,23 +351,30 @@ public:
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
 
-    // Issue 151 (fishing-2). Present thread, before Tick: where our own cast
-    // lures are (CoopProjectiles::TheLures). A fish copy we do not own whose
-    // own AI swims it towards one of them (kLureStepM or more a frame, within
-    // kLureReachM, or held within kLureHookM: it bites) for kChaseHoldUs is
-    // flagged targeting, so the server hands it to us and our game runs the
-    // bite and the fight. A fish we own within kLureHookM of our lure, or
-    // coming at it at kLureSpeed or more within kLureReachM, is flagged the
-    // same way (ChaseStep's targeting flag, as for enemies; not in_fight), so
-    // it stays ours while it is hooked
-    // and reeled in. A fish we own that leaves the walk within kCatchNearM of
-    // our Link was caught here (landed, in Link's hands): OBJECT_REMOVE dead,
-    // and every other game deletes its copy at once.
+    // Issue 151. Present thread, before Tick: where our own cast lures are
+    // (CoopProjectiles::TheLures). Each Tick sends FISH_LURE (fishing-3):
+    // every fish in the walk with how near our nearest lure is (within
+    // kLureReachM), hooked when we own it and it is within kLureHookM, drawn
+    // when we own it and it comes at our lure at kLureSpeed or more, or when
+    // it is a copy whose own AI swims it at our lure (kLureStepM or more a
+    // frame, or held within kLureHookM) for kChaseHoldUs. The server gives the
+    // fish to the nearest lure's game, so that game runs the approach, the
+    // bite and the fight; a fish is never flagged targeting or fighting (a
+    // fight lock would hold it in the wrong game). A fish we own that leaves
+    // the walk within kCatchNearM of our Link was caught here (landed, in
+    // Link's hands): OBJECT_REMOVE dead, and every other game deletes its copy
+    // at once.
     void SetLures(std::vector<coop::protocol::Vec3> lures) { lures_ = std::move(lures); }
     static constexpr float kLureReachM = 6.0f;
     static constexpr float kLureStepM = 0.005f;
     static constexpr float kLureHookM = 1.0f;
     static constexpr float kLureSpeed = 0.2f;  // metres a second
+    // fishing-3: FISH_LURE (the server gives each fish to the game whose lure
+    // is nearest). Sent on a change at most this often (a change of hooked or
+    // drawn at once), and with every presence. Distances in kFishStepCm steps.
+    static constexpr std::uint64_t kFishEveryUs = 250'000;
+    static constexpr std::uint32_t kFishStepCm = 25;
+    static constexpr std::uint64_t kFishRepeatUs = 1'000'000;
     static constexpr float kCatchNearM = 3.0f;
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
@@ -396,12 +418,17 @@ public:
     // Peahat rising out of the ground) is rarely seen in it by the walk.
     // The Mover tells each such put-back (NoteTakeover, present thread); the
     // copy then counts as playing its own animation for kWakeLatchUs.
-    void NoteTakeover(std::uint64_t address, std::uint64_t now_us);
+    // `name` is what the copy's own AI played (a guard is taken only for an
+    // IsGuardReaction one).
+    void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
     static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
     static constexpr std::uint64_t kWakeOwnUs = 4'000'000;
+    // Issue 191: a guard sees further than an enemy wakes; its reaction to
+    // our Link (IsGuardReaction) counts within this, the patrol never does.
+    static constexpr float kGuardWakeM = 25.0f;
     // A copy's kill counts for a resend this long after our hit took it to 0.
     static constexpr std::uint64_t kKilledKeepUs = 5'000'000;
 
@@ -549,6 +576,7 @@ private:
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
         bool fish = false;                      // IsFish: the lure rules
+        bool guard = false;                     // IsGuard: handed over on a reaction
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         // Chasing our Link (NoteDrift): the run of steps towards it.
@@ -559,6 +587,7 @@ private:
         std::string rest_animation;
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
         std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
+        std::string took_over_name;      // ... and what it was (a guard's, issue 191)
         // Our own hit took its life to 0 here (the DAMAGE resend's mark).
         std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when
@@ -634,6 +663,13 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
+    std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE
+    std::uint64_t fish_at_ = 0;
+    // One fish's FISH_LURE entry: how near our nearest lure is, hooked (ours,
+    // within kLureHookM) or drawn (ours coming at it at kLureSpeed, or a copy
+    // whose own AI swims at it: NoteDrift's chase steps).
+    coop::protocol::FishLureEntry FishClaim(const Object& o, std::uint8_t self,
+                                            std::uint64_t now_us) const;
     // The nearest of our lures to `at` (metres), or nothing with none.
     std::optional<float> LureDistance(const coop::protocol::Vec3& at) const;
     std::vector<std::string> notes_;

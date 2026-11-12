@@ -3,6 +3,7 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -138,3 +139,92 @@ jobs:
           set -o pipefail
           ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
           grep -q '^result: PASS' coop_test.log
+
+  # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the
+  # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every push
+  # only the hook's files are compiled; the whole emulator, its AppImage and a start without a
+  # game run on the linux-build branch, on tags and by hand (workflow_dispatch).
+  linux-emulator:
+    runs-on: ubuntu-24.04
+    name: linux-emulator (${{ matrix.part }})
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [hook, full]
+    steps:
+      - name: Skip the full build here
+        id: gate
+        shell: bash
+        run: |
+          if [ "${{ matrix.part }}" = full ] && [ "${{ github.event_name }}" != workflow_dispatch ] &&
+             [ "${{ github.ref }}" != refs/heads/linux-build ] && [[ "${{ github.ref }}" != refs/tags/* ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+      # The packages Fritchii's Linux release installs (release-binaries.yml).
+      - name: Install Linux dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev \
+            libpulse-dev libtool libudev-dev libxkbcommon-x11-0 \
+            mesa-common-dev nasm ninja-build pkg-config zlib1g-dev libva-dev libvdpau-dev \
+            libavfilter-dev libavcodec-dev libswscale-dev \
+            spirv-tools spirv-headers libusb-1.0-0-dev \
+            libboost-dev libboost-fiber-dev libboost-context-dev \
+            libopus-dev libasound2-dev xvfb \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+      - name: Install Qt
+        if: steps.gate.outputs.run == 'true'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+      - name: Emulator dependency cache
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fritchii/.cache/cpm
+          key: fritchii-cpm-${{ hashFiles('lichii/PIN') }}
+      - name: Compile the co-op hook
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'hook'
+        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --hook-only
+      - name: Build the emulator and its AppImage
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --appimage "$RUNNER_TEMP/lichii.AppImage"
+      # No game here: start it with no display, check it runs, logs its version and has the
+      # hook, then stop it. "coop: loaded" itself is logged when a game starts.
+      - name: Start without a game
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        run: |
+          set -u
+          mkdir -p "$RUNNER_TEMP/smoke/user"
+          cd "$RUNNER_TEMP/smoke"
+          status=0
+          APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen timeout 30 "$RUNNER_TEMP/lichii.AppImage" || status=$?
+          echo "exit status $status (124: still running after 30 s, stopped)"
+          ls -R user | head -n 20
+          log=user/log/eden_log.txt
+          test -s "$log"
+          grep -m3 -i "version" "$log" || true
+          if grep -q -i "crash\|segmentation" "$log"; then exit 1; fi
+          test "$status" = 0 -o "$status" = 124
+      - name: Keep the AppImage
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        run: tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/lichii-linux.tar" lichii.AppImage
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        with:
+          name: lichii-linux-x86_64
+          path: ${{ runner.temp }}/lichii-linux.tar
+          retention-days: 14

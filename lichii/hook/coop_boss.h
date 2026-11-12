@@ -148,6 +148,11 @@ struct Local {
     // ShutInFlag(room) of the scene's boss room as the game has it: nothing
     // when the room has no such flag or it cannot be read (issue 148).
     std::optional<bool> shut_in;
+    // Whether the boss has lost life: true once a body's life is below its
+    // maximum, false while every body is at full life, nothing when unread.
+    // An untouched boss is not dying, so a long event then is not its death
+    // (Gohma's ceiling intro starts well after the room's entry event).
+    std::optional<bool> boss_hurt;
 };
 
 class Sync {
@@ -162,7 +167,8 @@ public:
     // (seen before, for example), so the fight has begun.
     static constexpr std::uint64_t kNoIntroUs = 10'000'000;
     // An event in the fight this long is the boss's death even when the walk
-    // still sees the boss (a dead boss actor may stay with its life unread).
+    // still sees the boss (a dead boss actor may stay with its life unread),
+    // unless the boss is known to be at full life (Local::boss_hurt false).
     static constexpr std::uint64_t kLongEventUs = 15'000'000;
     // An event this soon after the fight began is never the boss's death: the
     // rest of an intro (a skipped one plays its next shot), not an outro

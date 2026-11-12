@@ -3343,4 +3343,13 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     return BossAlive(g_bosses, bodies);
 }
 
+std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies) {
+    std::lock_guard lock(g_bosses_mutex);
+    const std::uint64_t now = CoopEvery::NowUs();
+    if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
+        return std::nullopt;
+    }
+    return BossHurt(g_bosses, bodies);
+}
+
 } // namespace CoopObjects

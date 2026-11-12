@@ -167,6 +167,10 @@ bool RemovedWhenTaken(std::string_view name);
 // there, or every one there is at 0 life; nothing when one is there whose
 // life was not read (unknown: the boss logic then keeps its old rule).
 std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
+// Whether any of the boss's bodies has lost life (life below its maximum):
+// false while every body seen is at full life, nothing when none is seen or a
+// life is not read.
+std::optional<bool> BossHurt(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
 
 // The id of an enemy the scene made without a placement hash: the scene, the
 // actor name and its place in the order such enemies of that name appeared

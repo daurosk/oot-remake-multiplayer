@@ -127,6 +127,18 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
     return false;
 }
 
+std::optional<bool> BossHurt(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
+    bool any = false;
+    for (const Seen& s : seen) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) == bodies.end()) continue;
+        if (!s.life || s.life->max <= 0) return std::nullopt;
+        if (s.life->life < s.life->max) return true;
+        any = true;
+    }
+    if (!any) return std::nullopt;
+    return false;
+}
+
 bool IsShared(std::string_view name) {
     if (IsOwnPuzzle(name)) return false;  // before the Npc_ rule: the pond owner is one
     // Enemy shots (Enemy_MoblinClub_ShockWave is named like an enemy)

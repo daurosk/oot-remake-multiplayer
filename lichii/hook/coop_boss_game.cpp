@@ -236,6 +236,7 @@ struct Glue {
         if (scene) {
             if (const Room* room = RoomOfScene(*scene)) {
                 local.boss_alive = CoopObjects::LastBossAlive(Bodies(*room));
+                local.boss_hurt = CoopObjects::LastBossHurt(Bodies(*room));
             }
         }
         local.self = session->with_client([](coop::net::Client& c) { return c.player_number(); });

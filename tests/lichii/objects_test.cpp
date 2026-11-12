@@ -2454,6 +2454,23 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
     CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
 }
 
+TEST_CASE("objects: a boss is hurt once a body's life is below its maximum (Gohma's intro)") {
+    constexpr std::array<std::string_view, 1> kGohma{"Enemy_DungeonBoss_Gohma"};
+    Seen boss = Chest(0x940, 0);
+    boss.name = "Enemy_DungeonBoss_Gohma";
+    CHECK_FALSE(CoopObjects::BossHurt({}, kGohma).has_value());      // not seen: unknown
+    CHECK_FALSE(CoopObjects::BossHurt({boss}, kGohma).has_value());  // no life read: unknown
+    boss.life = coop::protocol::ObjectLife{21, 21};
+    CHECK(CoopObjects::BossHurt({boss}, kGohma) == std::optional<bool>(false));
+    boss.life = coop::protocol::ObjectLife{17, 21};
+    CHECK(CoopObjects::BossHurt({boss}, kGohma) == std::optional<bool>(true));
+    Seen egg = Chest(0x950, 0);
+    egg.name = "Enemy_Gohma_Egg";
+    egg.life = coop::protocol::ObjectLife{0, 1};
+    boss.life = coop::protocol::ObjectLife{21, 21};
+    CHECK(CoopObjects::BossHurt({egg, boss}, kGohma) == std::optional<bool>(false));  // not a body
+}
+
 TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is deleted only if it stands") {
     // breakables-2 (player test): the Deku Tree web burnt in A just vanished
     // in B. One with a life (a bomb web, a cracked wall) gets life 0 first, so

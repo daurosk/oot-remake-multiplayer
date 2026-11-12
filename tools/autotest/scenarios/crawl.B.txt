@@ -1,0 +1,23 @@
+# crawl, B: put inside the Kokiri Sword area facing the tunnel's inner mouth; watches A crawl
+# through (see crawl.A.txt).
+mark start
+warp KokiriForest_Child
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 60
+place -78.94 119.3 17.04
+wait 180
+toward -75.58 14.13 10
+press ZL 10
+mark watching
+wait 900
+mark end

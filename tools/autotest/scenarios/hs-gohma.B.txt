@@ -1,0 +1,63 @@
+# hs-gohma, B: gohma-sync's B unchanged (see hs-gohma.A.txt).
+# A's seeds (A owns Gohma), swings the sword (ZL+Y) three times, then shoots a seed itself (the
+# stun hand-over), then watches. Each walk-up and swing has a mark (a screenshot of both).
+mark start
+warp GohmaStage GohmaStage
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+mark b-ready
+wait 1500
+goto 7.5 67.2 1.5 600   # the room's centre (Deku Tree boss room 7.5 67.2); Gohma comes down near it
+mark b-near
+wait 600
+wait 150                # A's first seed
+hold ZL+LSTICK_UP 90     # locked on: walk up to Gohma (the stunned eye)
+mark b-at1
+hold ZL+Y 8             # the sword is Y (B puts it away)
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark b-hit1
+wait 700
+hold ZL+LSTICK_UP 90     # locked on: walk up to Gohma (the stunned eye)
+mark b-at2
+hold ZL+Y 8             # the sword is Y (B puts it away)
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark b-hit2
+wait 700
+hold ZL+LSTICK_UP 90     # locked on: walk up to Gohma (the stunned eye)
+mark b-at3
+hold ZL+Y 8             # the sword is Y (B puts it away)
+wait 12
+hold ZL+Y 8
+wait 12
+hold ZL+Y 8
+mark b-hit3
+wait 600
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed
+wait 900
+mark b-after
+wait 1800
+mark eggs
+wait 2400
+mark end

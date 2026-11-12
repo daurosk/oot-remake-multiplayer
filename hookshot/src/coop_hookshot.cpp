@@ -44,7 +44,9 @@
 #include "coop_settings.h"
 #include "coop_svc.h"
 #include "core/core.h"
+#include "coop_host_menu.h"
 #include "hos_coop_api.h"
+#include "hos_coop_host.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -239,6 +241,32 @@ std::string Refusal() {
 }  // namespace CoopSvc
 
 namespace CoopHookshot {
+
+// Host and Join from the game's menu (hos_coop_host.h, coop_host_menu.h).
+CoopHostMenu::Menu& HostMenu() {
+    static CoopHostMenu::Menu menu([] {
+        CoopHostMenu::Hooks h;
+        h.connect = [](const CoopHostMenu::Target& t) {
+            const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
+            std::vector<std::string> errors;
+            CoopHook::Settings s = CoopHook::LoadSettings(ini, errors);  // the colour, as the player set it
+            s.server = t.server;
+            s.port = t.port;
+            s.name = t.name;
+            s.password = t.password;
+            return CoopHook::Begin(std::move(s));
+        };
+        h.disconnect = [] { CoopHook::End(); };
+        h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
+        h.default_name = [] {
+            const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
+            std::vector<std::string> errors;
+            return CoopHook::LoadSettings(ini, errors).name;
+        };
+        return h;
+    }());
+    return menu;
+}
 
 namespace {
 
@@ -563,7 +591,10 @@ bool Start(const HosCoopApi* api) {
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
-    if (!CoopHook::LoadSettings(ini, errors).enabled() || !errors.empty()) {
+    // HOS_COOP_MENU=1 (the title menu's Hookshot): the module stays loaded with co-op idle until the player
+    // hosts or joins from the menu (hos_coop_host.h).
+    const bool menu = EnvOn("HOS_COOP_MENU");
+    if (!menu && (!CoopHook::LoadSettings(ini, errors).enabled() || !errors.empty())) {
         CoopHook::Start();  // logs why co-op is off
         g_api = nullptr;
         return false;
@@ -619,6 +650,7 @@ std::uint32_t Hold(std::uint64_t component, std::uint32_t bits) {
 }
 
 void Stop() {
+    HostMenu().Leave();  // our own server goes after our own client
     if (g_on) {
         g_on = false;
         CoopHook::Shutdown();
@@ -660,6 +692,22 @@ COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
     CoopHookshot::Stop();
+}
+// Host and Join from the game's menu (hos_coop_host.h).
+COOP_HOOKSHOT_EXPORT int hos_coop_host_start(const HosCoopHostOptions* options) {
+    return CoopHookshot::HostMenu().HostStart(options);
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_join(const HosCoopJoinOptions* options) {
+    return CoopHookshot::HostMenu().Join(options);
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_host_answer(const char* answer_code) {
+    return CoopHookshot::HostMenu().Answer(answer_code);
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_leave(void) {
+    CoopHookshot::HostMenu().Leave();
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_status(HosCoopStatus* out) {
+    CoopHookshot::HostMenu().Status(out);
 }
 // Typing (hos_coop_api.h): the chat box.
 COOP_HOOKSHOT_EXPORT int hos_coop_key(uint32_t vk, int repeat) {

@@ -3638,7 +3638,7 @@ TEST_CASE("a gimmick event start goes to the others in the sender's scene only, 
   h.receive(3, sample_in("KokiriForest"), kChannelPlayerSamples);
   h.clear();
   DungeonEvent e;
-  e.player_number = 4;  // the server writes the sender
+  e.player_number = 0;  // ours: the server writes the sender
   e.scene = "InsideTheDekuTree";
   e.name = "InsideTheDekuTree_Gimmick_RoomD_PlatformUp";
   h.receive(1, e, kChannelSession);

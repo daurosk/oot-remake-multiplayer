@@ -1704,7 +1704,7 @@ TEST_CASE("dungeon event has its number, the session channel and checked strings
   CHECK(encode(DungeonEvent{0, "", "A"}, out) == Error::bad_value);       // no scene
   CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", ""}, out) == Error::bad_value);  // no name
   CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", std::string(kMaxEventNameChars + 1, 'a')}, out) ==
-        Error::bad_value);
+        Error::string_too_long);
   CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", std::string(kMaxEventNameChars, 'a')}, out) ==
         Error::none);
 }

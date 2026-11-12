@@ -1,0 +1,24 @@
+# hs-native-chat (Hookshot): chat as the game's own UI (hookshot/src/coop_native_ui.h, docs/native-ui.md).
+# A says a line, B answers, then B sends a burst of three; each shows in the game's in-game message window
+# (MessageInGame_00: the speaker's name over the line, the game's frame and font), one after the other.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-native-chat
+# Pass:
+# - both hookshot_log: "coop: native ui: chat through the game's message window (texts at 0x...)"
+#   and "coop: native ui: first chat line shown by the game (message window)".
+# - shots a-own / b-answer / burst-1..3: the game's message window with "you" / the other player's name over the
+#   line; NO drawn chat lines at the bottom left once the first line has shown.
+# - no "coop: no game function" and no crash. "is not free now; the line waits" only while the game shows a
+#   message of its own (none expected here).
+chat hello from A
+wait 45
+mark a-own
+wait 120
+mark b-answer
+wait 240
+mark burst-1
+wait 150
+mark burst-2
+wait 150
+mark burst-3
+wait 300
+mark end

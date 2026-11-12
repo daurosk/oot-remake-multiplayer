@@ -1,0 +1,13 @@
+# hs-native-chat (Hookshot): B answers A, then sends a burst of three (see hs-native-chat.A.txt).
+wait 120
+chat hi A, I see you
+wait 60
+mark b-chat
+wait 120
+chat one
+chat two
+chat three
+wait 30
+mark b-burst
+wait 600
+mark b-end

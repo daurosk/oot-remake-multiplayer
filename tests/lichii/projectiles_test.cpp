@@ -7,7 +7,9 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <ostream>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -636,10 +638,11 @@ TEST_CASE("shots: rapid hits keep at most kMaxImpacts impact actors, the newest 
 }
 
 TEST_CASE("shots: where a seed copy lands, its spark and sound are made once (issue 166)") {
-    CHECK(shots::ImpactActors(shots::Kind::seed) ==
-          std::vector<std::string_view>{"CoopHit_SeedSpark", "CoopHit_SeedSound"});
-    CHECK(shots::ImpactActors(shots::Kind::arrow) ==
-          std::vector<std::string_view>{"CoopHit_Arrow", "CoopHit_ArrowSound"});
+    // Double parentheses: compared as a bool, so doctest never prints the vectors.
+    CHECK((shots::ImpactActors(shots::Kind::seed) ==
+           std::vector<std::string_view>{"CoopHit_SeedSpark", "CoopHit_SeedSound"}));
+    CHECK((shots::ImpactActors(shots::Kind::arrow) ==
+           std::vector<std::string_view>{"CoopHit_Arrow", "CoopHit_ArrowSound"}));
     CHECK(shots::ImpactActors(shots::Kind::nut).empty());
     CHECK(shots::ImpactActors(shots::Kind::bomb).empty());
     CHECK(shots::IsImpact("CoopHit_ArrowSound"));

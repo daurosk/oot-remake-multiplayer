@@ -308,6 +308,10 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
     std::snprintf(wrap, sizeof wrap, "(%u, 0xb99980, (0xd503237f,", HOS_COOP_WRAP_FLAG_APPLY);
     CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
     CHECK(patch.find("+    coop_world_wraps.install(lifter, img, build_id)") != std::string::npos);
+    // The event request's wrap, although Hookshot edits that function's head: only a call looked for by name bars a wrap.
+    std::snprintf(wrap, sizeof wrap, "(%u, 0xd7a820, (0xb940b808,", HOS_COOP_WRAP_EVENT_REQUEST);
+    CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
+    CHECK(patch.find("(\"f_%08x(c)\", \"TAILCALL(f_%08x)\")") != std::string::npos);
     // The time set's wrap: the function every time change of the game goes through.
     std::snprintf(wrap, sizeof wrap, "(%u, 0xeee640, (0xd503237f,", HOS_COOP_WRAP_TIME_SET);
     CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);

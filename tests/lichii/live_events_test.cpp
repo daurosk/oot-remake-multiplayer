@@ -427,3 +427,104 @@ TEST_CASE("live events: a waiting request is dropped when we left its scene, it 
     r.Want("Again", "KokiriForest");
     CHECK(r.Waiting() == 1);
 }
+
+TEST_CASE("live events: the game's own requests reach every reader once, the newest kept") {
+    CoopLiveEvents::GameRequests requests;
+    std::uint64_t a = 0, b = 0;
+    CHECK_FALSE(requests.Live());
+    CHECK(requests.Since(a).empty());
+    requests.Push("Dm_DekuTree_Ladder", true);
+    requests.Push("Dm_SY_BancChangeGo", false);
+    CHECK(requests.Live());
+    auto got = requests.Since(a);
+    REQUIRE(got.size() == 2);
+    CHECK(std::string(got[0].name) == "Dm_DekuTree_Ladder");
+    CHECK(got[0].taken);
+    CHECK(std::string(got[1].name) == "Dm_SY_BancChangeGo");
+    CHECK_FALSE(got[1].taken);
+    CHECK(requests.Since(a).empty());  // each once
+    requests.Push("Third", true);
+    got = requests.Since(b);  // the second reader gets all three
+    REQUIRE(got.size() == 3);
+    CHECK(std::string(got[2].name) == "Third");
+    got = requests.Since(a);
+    REQUIRE(got.size() == 1);
+    CHECK(std::string(got[0].name) == "Third");
+
+    // A name longer than the buffer is cut, and still ends.
+    requests.Push(std::string(300, 'x'), true);
+    got = requests.Since(a);
+    REQUIRE(got.size() == 1);
+    CHECK(std::string(got[0].name).size() == sizeof got[0].name - 1);
+    // A reader far behind gets the newest kKept only.
+    for (int round = 0; round < 3; ++round) {
+        for (int i = 0; i < 50; ++i) requests.Push("n" + std::to_string(round * 50 + i), true);
+        requests.Since(a);
+    }
+    got = requests.Since(b);
+    REQUIRE(got.size() == CoopLiveEvents::GameRequests::kKept);
+    CHECK(std::string(got.back().name) == "n149");
+    CHECK(std::string(got.front().name) == "n" + std::to_string(150 - CoopLiveEvents::GameRequests::kKept));
+}
+
+TEST_CASE("live events: the request that the manager took and that is one of ours names the start") {
+    std::vector<CoopLiveEvents::GameRequest> requests(3);
+    std::memcpy(requests[0].name, "Dm_Door", sizeof "Dm_Door");
+    requests[0].taken = true;
+    std::memcpy(requests[1].name, "Dm_DekuTree_Ladder", sizeof "Dm_DekuTree_Ladder");
+    requests[1].taken = false;  // refused: an event was running
+    std::memcpy(requests[2].name, "Dm_DekuTree_Web", sizeof "Dm_DekuTree_Web");
+    requests[2].taken = true;
+    const std::vector<std::string_view> names{"Dm_DekuTree_Ladder", "Dm_DekuTree_Web"};
+    CHECK(CoopLiveEvents::RequestedOf(requests, names) == "Dm_DekuTree_Web");
+    requests[1].taken = true;
+    CHECK(CoopLiveEvents::RequestedOf(requests, names) == "Dm_DekuTree_Ladder");
+    CHECK_FALSE(CoopLiveEvents::RequestedOf(requests, {"Dm_Other"}));
+    CHECK_FALSE(CoopLiveEvents::RequestedOf({}, names));
+}
+
+TEST_CASE("live events: a start is given once, by the request when the wrap is there, else by the search") {
+    using CoopLiveEvents::StartSource;
+    int looked = 0;
+    std::optional<std::string> in_session;
+    const auto find = [&] {
+        ++looked;
+        return in_session;
+    };
+    // No wrap (the emulator, an older Hookshot): the search, as StartWatch alone.
+    StartSource plain;
+    CHECK_FALSE(plain.Frame(std::nullopt, false, false, find));
+    in_session = "Ladder";
+    CHECK(plain.Frame(std::nullopt, false, true, find) == "Ladder");
+    CHECK_FALSE(plain.Frame(std::nullopt, false, true, find));
+    CHECK(plain.ScanOnly() == 0);
+
+    // The wrap: the request names it before the event runs; the search finding it then adds nothing.
+    StartSource s;
+    looked = 0;
+    in_session.reset();
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    in_session = "Ladder";
+    for (int i = 0; i < 40; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(looked >= 1);
+    CHECK(s.ScanOnly() == 0);
+    // The event ends; the same event asked again later is a new start.
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    for (int i = 0; i < 5; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+
+    // An event that started some other way: no request, the search finds it; given, and counted.
+    in_session = "Web";
+    CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+
+    // A request whose event never runs is forgotten, so a later start found by the search is given.
+    CHECK(s.Frame(std::string("Web"), true, false, find) == "Web");
+    for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
+    CHECK(s.ScanOnly() == 2);
+}

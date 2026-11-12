@@ -2,53 +2,14 @@
 
 namespace coop::host {
 
-// A bounded queue after D. Vyukov's: each cell's sequence says whose turn it
-// is, so pushers on several threads and the one reader never wait on a lock.
-GameFlagEvents::GameFlagEvents() {
-  for (std::size_t i = 0; i < kSlots; ++i) cells_[i].seq.store(i, std::memory_order_relaxed);
-}
-
 bool GameFlagEvents::push(const GameFlagWrite& write) {
-  std::size_t pos = tail_.load(std::memory_order_relaxed);
-  for (;;) {
-    Cell& cell = cells_[pos & (kSlots - 1)];
-    const std::size_t seq = cell.seq.load(std::memory_order_acquire);
-    const auto ahead = static_cast<std::ptrdiff_t>(seq - pos);
-    if (ahead == 0) {
-      if (tail_.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed)) {
-        cell.value = write;
-        cell.seq.store(pos + 1, std::memory_order_release);
-        pushed_.fetch_add(1, std::memory_order_relaxed);
-        return true;
-      }
-    } else if (ahead < 0) {  // full
-      dropped_.fetch_add(1, std::memory_order_relaxed);
-      overflow_.store(true);
-      return false;
-    } else {
-      pos = tail_.load(std::memory_order_relaxed);
-    }
+  if (ring_.push(write)) {
+    pushed_.fetch_add(1, std::memory_order_relaxed);
+    return true;
   }
-}
-
-bool GameFlagEvents::pop(GameFlagWrite& out) {
-  std::size_t pos = head_.load(std::memory_order_relaxed);
-  for (;;) {
-    Cell& cell = cells_[pos & (kSlots - 1)];
-    const std::size_t seq = cell.seq.load(std::memory_order_acquire);
-    const auto ahead = static_cast<std::ptrdiff_t>(seq - (pos + 1));
-    if (ahead == 0) {
-      if (head_.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed)) {
-        out = cell.value;
-        cell.seq.store(pos + kSlots, std::memory_order_release);
-        return true;
-      }
-    } else if (ahead < 0) {  // empty
-      return false;
-    } else {
-      pos = head_.load(std::memory_order_relaxed);
-    }
-  }
+  dropped_.fetch_add(1, std::memory_order_relaxed);
+  overflow_.store(true);
+  return false;
 }
 
 void GameFlagEvents::clear() {

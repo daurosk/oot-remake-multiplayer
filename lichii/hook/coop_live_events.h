@@ -21,7 +21,9 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <optional>
 #include <set>
@@ -30,6 +32,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/host/bounded_queue.hpp"
 #include "coop_puppet.h"
 
 namespace CoopLiveEvents {
@@ -215,6 +218,130 @@ private:
     Next next_ = Next::none;  // the call made last, whose return comes next
     bool malloc_failed_ = false;
     std::vector<std::string> notes_;
+};
+
+// The game's own event requests, on Hookshot (docs/hookshot.md "World hooks", HOS_COOP_WRAP_EVENT_REQUEST): every
+// event the game asks for goes through main + kRequest (manager, arg), with the event's name in the arg (kArgName)
+// and x0 not 0 when the manager took it. The wrap hands each to Push on the game's thread; the hook's frame reads
+// them. So which event our game started is known at the request, by name, with no search of the event session.
+struct GameRequest {
+    char name[0x80] = {};  // 0-terminated (the arg's buffer is 0x80 bytes)
+    bool taken = false;    // the manager took the request
+};
+
+class GameRequests {
+public:
+    static constexpr std::size_t kKept = 64;  // the newest requests a reader can still get
+
+    // Any thread (the game's): no lock, nothing allocated.
+    void Push(std::string_view name, bool taken) {
+        GameRequest r;
+        const std::size_t n = (std::min)(name.size(), sizeof r.name - 1);
+        std::memcpy(r.name, name.data(), n);
+        r.taken = taken;
+        seen_.fetch_add(1, std::memory_order_relaxed);
+        if (!ring_.push(r)) {
+            dropped_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // True once any request came: the wrap is in this hookshot.exe and runs.
+    bool Live() const {
+        return seen_.load(std::memory_order_relaxed) != 0;
+    }
+    std::uint64_t Seen() const {
+        return seen_.load(std::memory_order_relaxed);
+    }
+    // One thread (the hook's frame). The requests after `cursor` (0 at first), oldest first; `cursor` moves past
+    // them. Each reader keeps its own cursor, so two readers both get every request (of the newest kKept).
+    std::vector<GameRequest> Since(std::uint64_t& cursor) {
+        GameRequest r;
+        while (ring_.pop(r)) {
+            kept_.push_back(r);
+            ++last_;
+            if (kept_.size() > kKept) {
+                kept_.pop_front();
+            }
+        }
+        std::vector<GameRequest> out;
+        const std::uint64_t first = last_ - kept_.size();  // the number before kept_.front()
+        for (std::uint64_t n = (std::max)(cursor, first); n < last_; ++n) {
+            out.push_back(kept_[static_cast<std::size_t>(n - first)]);
+        }
+        cursor = last_;
+        return out;
+    }
+
+private:
+    coop::host::BoundedQueue<GameRequest, 64> ring_;
+    std::atomic<std::uint64_t> seen_{0}, dropped_{0};
+    std::deque<GameRequest> kept_;  // the reader's side
+    std::uint64_t last_ = 0;        // requests taken out of the ring so far
+};
+
+inline GameRequests& TheGameRequests() {
+    static GameRequests requests;
+    return requests;
+}
+
+// The first of `requests` the manager took that is one of `names`.
+inline std::optional<std::string> RequestedOf(const std::vector<GameRequest>& requests,
+                                              const std::vector<std::string_view>& names) {
+    for (const GameRequest& r : requests) {
+        if (!r.taken) {
+            continue;
+        }
+        const std::string_view name(r.name);
+        for (const std::string_view n : names) {
+            if (n == name) {
+                return std::string(name);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// Which of `names` our game just started, once per start: by the game's own request when the wrap is there
+// (`requested`: RequestedOf this frame's requests), else by StartWatch's search of the running event. With the
+// wrap, the search still runs as a net: an event it finds that no request named is given as before and counted
+// (ScanOnly), and one the request already named is not given twice.
+class StartSource {
+public:
+    static constexpr int kForgetFrames = 1800;  // a request whose event never ran is forgotten after this
+
+    template <typename Find>
+    std::optional<std::string> Frame(std::optional<std::string> requested, bool wrap_live, bool running, Find&& find) {
+        if (!by_request_.empty()) {
+            ran_ = ran_ || running;
+            if ((ran_ && !running) || ++frames_ > kForgetFrames) {
+                by_request_.clear();  // its event is over
+            }
+        }
+        std::optional<std::string> found = watch_.Frame(running, std::forward<Find>(find));
+        if (requested) {
+            by_request_ = *requested;
+            ran_ = running;
+            frames_ = 0;
+            return requested;
+        }
+        if (found && *found == by_request_) {
+            return std::nullopt;  // the request said so already
+        }
+        if (found && wrap_live) {
+            ++scan_only_;
+        }
+        return found;
+    }
+    // Starts the search found that no request had named, while the wrap was there.
+    std::uint64_t ScanOnly() const {
+        return scan_only_;
+    }
+
+private:
+    StartWatch watch_;
+    std::string by_request_;  // the start the request named, until its event is over
+    bool ran_ = false;
+    int frames_ = 0;
+    std::uint64_t scan_only_ = 0;
 };
 
 } // namespace CoopLiveEvents

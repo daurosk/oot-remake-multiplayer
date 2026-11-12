@@ -536,3 +536,17 @@ TEST_CASE("teleport: no give-up in the middle of a load, and no old start put ba
     CHECK(a.cancel_scene);
     CHECK_FALSE(a.restore_start);
 }
+
+TEST_CASE("teleport: no teleport to a Link of the other age in a place of both ages") {
+    Trip trip;
+    const Local here = At("SpiritTemple", 0, 0, 0);  // our Link is a child (At)
+    REQUIRE(trip.Start(2, "Nabooru", here, 0).ask);
+    auto a = trip.Accepted(2, Target("SpiritTemple", 5, 1, 6), here, kS, proto::Age::adult);
+    CHECK_FALSE(a.move);
+    CHECK_FALSE(a.scene);
+    CHECK(Has(a.lines, "another age's Link"));
+    // The same age: allowed as before.
+    Trip same;
+    REQUIRE(same.Start(2, "Nabooru", here, 0).ask);
+    CHECK(same.Accepted(2, Target("SpiritTemple", 5, 1, 6), here, kS, proto::Age::child).move);
+}

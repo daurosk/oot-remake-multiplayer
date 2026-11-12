@@ -171,8 +171,9 @@ public:
     // The command: refused (a line, nothing to send) or asked (`ask` set).
     Actions Start(std::uint8_t number, std::string name, const Local& local, std::uint64_t now_us);
     // That player's answers. Answers from another player than ours are dropped.
+    // their_age: the partner's age (their samples), for a scene of both ages.
     Actions Accepted(std::uint8_t number, const coop::protocol::JoinTarget& target, const Local& local,
-                     std::uint64_t now_us);
+                     std::uint64_t now_us, std::optional<coop::protocol::Age> their_age = std::nullopt);
     Actions Refused(std::uint8_t number, coop::protocol::JoinRefuseReason reason);
     Actions TimedOut(std::uint8_t number);
     // That player left, or we lost the connection.

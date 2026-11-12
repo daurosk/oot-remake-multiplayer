@@ -289,7 +289,7 @@ Trip::Actions Trip::Start(std::uint8_t number, std::string name, const Local& lo
 }
 
 Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarget& target, const Local& local,
-                             std::uint64_t now_us) {
+                             std::uint64_t now_us, std::optional<coop::protocol::Age> their_age) {
     Actions a;
     if (number != player_ || (phase_ != Phase::asking && phase_ != Phase::asking_again)) {
         return a;
@@ -317,6 +317,13 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     if (theirs && local.age && *theirs != *local.age) {
         a.lines.push_back("teleport: " + name_ + " is in " + target.scene + ", a place for " + AgeName(*theirs) +
                           " Link; yours is " + AgeName(*local.age));
+        return a;
+    }
+    if (!theirs && their_age && local.age && *their_age != *local.age) {
+        // A place of both ages (a dungeon): its rooms are for one age's story
+        // (the Spirit Temple's crawl space, an adult temple for a child).
+        a.lines.push_back("teleport: " + name_ + " is " + AgeName(*their_age) + " Link and you are " +
+                          AgeName(*local.age) + ": no teleport to another age's Link");
         return a;
     }
     if (same) {

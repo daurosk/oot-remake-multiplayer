@@ -277,6 +277,16 @@ It refuses a kit in which any file names the build PC's user folder (`tools/rele
 
 To test a kit on the build PC, unzip it to two folders and run `make-puppet-pack.cmd` in each (or copy one filled folder to the other: `play.cmd` repoints the copy).
 
+### Signing the release
+
+The kit is signed in CI, with no key on the build PC and no secret in the repo ([#161](https://github.com/daurosk/oot-remake-multiplayer/issues/161)). When a release is published, `.github/workflows/release-attest.yml` downloads its `oot-coop-<tag>.zip` and `Update.bat`, checks the zip against the release's `.sha256`, and makes a GitHub artifact attestation for each: a statement about that exact file (its SHA-256), signed through Sigstore with this repository's workflow identity and logged publicly. The release step, after the assets are uploaded:
+
+1. Publish the release with the assets in place (`gh release create <tag> <zip> <zip>.sha256 Update.bat ...`: gh uploads them before it publishes). The "Release attest" run starts by itself; check once that it is green (`gh run list --workflow release-attest.yml --limit 1`; no watch loops). If it did not run (the release was published from a draft in the web page, or it failed), start it: `gh workflow run release-attest.yml -f tag=<tag>`.
+2. Check the files from the build PC: `powershell -ExecutionPolicy Bypass -File tools\release\verify_kit.ps1 -Zip <OutRoot>\oot-coop-<tag>.zip` and the same with `-Zip <OutRoot>\Update.bat`. Both must say `OK: signed by our release workflow`.
+
+What it proves: the file is the one the release had when it was published, checked by our workflow, and a file swapped in later has no attestation. What it does not prove: who uploaded it in the first place; anyone with write access to the repo could publish a release and get it attested. `Update.bat` still checks only the `.sha256`; players check the signature by hand ([setup.md, Check the download](setup.md#check-the-download)). The workflow also tests itself on a push that changes it or `verify_kit.ps1`: it attests a made-up zip, `verify_kit.ps1` accepts it, and refuses a changed copy and a wrong `.sha256`.
+
+
 ## Automatic tests
 
 `tools/autotest/run.ps1` runs a two-game test on one PC with no one playing: it plays scripted controller input into both games and keeps screenshots of both windows, so a check can be done and looked at later.

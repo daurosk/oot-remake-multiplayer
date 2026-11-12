@@ -91,6 +91,7 @@ class Store final : public coop::host::FlagStore {
     bool is_max(coop::host::FlagKey key) override;
     bool is_one_way(coop::host::FlagKey key) override { return inner_.is_one_way(key); }
     bool holds(coop::host::FlagKey key) override { return inner_.holds(key); }
+    bool busy(coop::host::FlagKey key) override { return inner_.busy(key); }
 
     // Steps moved since the last call (for the log).
     std::vector<Raised> take_raised();

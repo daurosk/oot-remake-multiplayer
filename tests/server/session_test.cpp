@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -51,6 +52,8 @@ struct Harness {
   Session session;
   std::vector<Sent> sent;
   std::vector<ConnectionId> dropped;
+  // The REJOIN_TOKEN each connection was sent last (right after WELCOME).
+  std::map<ConnectionId, RejoinTokenBytes> tokens;
   std::uint64_t now = 1'000'000;
 
   explicit Harness(SessionConfig config = {}) : session(std::move(config)) {}
@@ -62,6 +65,13 @@ struct Harness {
         REQUIRE(decode(s->bytes, m) == Error::none);
         // What the server sends must pass a client's own check.
         CHECK(check_received(m, Sender::server, s->channel) == Error::none);
+        // Kept apart, so the tests that count what a joiner is sent need not
+        // count it (see tokens).
+        if (const auto* token = std::get_if<RejoinToken>(&m)) {
+          CHECK(s->channel == kChannelSession);
+          tokens[s->to] = token->token;
+          continue;
+        }
         sent.push_back({s->to, s->channel, m});
       } else {
         dropped.push_back(std::get<DisconnectAction>(a).who);
@@ -1097,6 +1107,23 @@ std::vector<Sent> hello_on(Harness& h, ConnectionId id, const std::string& nickn
   return h.to(id);
 }
 
+// The same, but the connection first shows a REJOIN_CLAIM with that token.
+std::vector<Sent> rejoin_on(Harness& h, ConnectionId id, const std::string& nickname,
+                            std::optional<std::uint32_t> address, const RejoinTokenBytes& token) {
+  h.clear();
+  h.connect(id, address);
+  h.receive(id, RejoinClaim{token}, kChannelSession);
+  h.receive(id, hello_from(nickname), kChannelSession);
+  return h.to(id);
+}
+
+// The token connection `id` holds (REQUIREs one).
+RejoinTokenBytes token_of(const Harness& h, ConnectionId id) {
+  auto it = h.tokens.find(id);
+  REQUIRE(it != h.tokens.end());
+  return it->second;
+}
+
 RefuseReason refused_reason(const std::vector<Sent>& msgs) {
   REQUIRE(msgs.size() == 1);
   return std::get<Refused>(msgs[0].message).reason;
@@ -1113,7 +1140,7 @@ TEST_CASE("a killed build restarted on the same PC takes its old place after 1 s
   h.now += 1'000'000;
   h.receive(2, Ping{h.now}, kChannelSession);
 
-  auto msgs = hello_on(h, 9, "link", kHomePc);
+  auto msgs = rejoin_on(h, 9, "link", kHomePc, token_of(h, 1));
   REQUIRE(!msgs.empty());
   const auto* w = std::get_if<Welcome>(&msgs[0].message);
   REQUIRE(w != nullptr);
@@ -1148,7 +1175,7 @@ TEST_CASE("a rejoining host hands over as on any leave, alone it hosts again wit
   h.join(2, "Zelda", kOtherPc);
   h.receive(1, FlagState{0, {FlagEntry{0x1234, 0, FlagKind::boolean, 1}}}, kChannelProgress);
   h.now += 1'500'000;
-  auto msgs = hello_on(h, 9, "Link", kHomePc);
+  auto msgs = rejoin_on(h, 9, "Link", kHomePc, token_of(h, 1));
   CHECK(h.session.host() == std::optional<std::uint8_t>{2});
   CHECK(messages_of<Host>(h, 2) == std::vector<Host>{Host{2}});
   CHECK(messages_of<Host>(h, 9) == std::vector<Host>{Host{2}});
@@ -1159,7 +1186,7 @@ TEST_CASE("a rejoining host hands over as on any leave, alone it hosts again wit
   Harness solo;
   solo.join(1, "Link", kHomePc);
   solo.now += 1'000'000;
-  auto again = hello_on(solo, 9, "Link", kHomePc);
+  auto again = rejoin_on(solo, 9, "Link", kHomePc, token_of(solo, 1));
   REQUIRE(std::holds_alternative<Welcome>(again[0].message));
   CHECK(std::get<Welcome>(again[0].message).player_number == 1);
   CHECK(solo.session.host() == std::optional<std::uint8_t>{1});
@@ -1172,7 +1199,7 @@ TEST_CASE("a rejoin into a full session takes the old place instead of being ref
   h.join(3, "Saria", kOtherPc);
   h.join(4, "Darunia", kOtherPc);
   h.now += 1'000'000;
-  auto msgs = hello_on(h, 9, "Link", kHomePc);
+  auto msgs = rejoin_on(h, 9, "Link", kHomePc, token_of(h, 1));
   REQUIRE(std::holds_alternative<Welcome>(msgs[0].message));
   CHECK(h.session.player_count() == 4);
   // A fifth name is still refused as full.
@@ -1208,8 +1235,111 @@ TEST_CASE("rejoin_stale_us 0 turns the takeover off") {
   Harness h(config);
   h.join(1, "Link", kHomePc);
   h.now += 9'000'000;
-  CHECK(refused_reason(hello_on(h, 9, "Link", kHomePc)) == RefuseReason::name_taken);
+  CHECK(refused_reason(rejoin_on(h, 9, "Link", kHomePc, token_of(h, 1))) ==
+        RefuseReason::name_taken);
   CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
+}
+
+TEST_CASE("issue 163: without the rejoin token a quiet player's place is never taken") {
+  Harness h;
+  // Two players behind one router: the same public address.
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kHomePc);
+  h.now += 5'000'000;  // Link stalls for 5 s; Zelda talks
+  h.receive(2, Ping{h.now}, kChannelSession);
+
+  // Zelda's PC (or anyone there) asks for Link's name: no token, refused.
+  CHECK(refused_reason(hello_on(h, 9, "Link", kHomePc)) == RefuseReason::name_taken);
+  // With Zelda's own token, not Link's: refused too.
+  CHECK(refused_reason(rejoin_on(h, 10, "Link", kHomePc, token_of(h, 2))) ==
+        RefuseReason::name_taken);
+  // A made-up token: refused.
+  RejoinTokenBytes guess{};
+  guess.fill(0x5A);
+  CHECK(refused_reason(rejoin_on(h, 11, "Link", kHomePc, guess)) == RefuseReason::name_taken);
+  CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
+  CHECK(h.session.stats().rejoined == 0);
+  CHECK(h.session.stats().rejoin_no_token == 3);
+
+  // Link's own token from another address: still refused (the address rule stays).
+  CHECK(refused_reason(rejoin_on(h, 12, "Link", kOtherPc, token_of(h, 1))) ==
+        RefuseReason::name_taken);
+  // Link's own token while Link is live: refused.
+  h.receive(1, Ping{h.now}, kChannelSession);
+  CHECK(refused_reason(rejoin_on(h, 13, "Link", kHomePc, token_of(h, 1))) ==
+        RefuseReason::name_taken);
+  CHECK(h.session.player_number(1) == std::optional<std::uint8_t>{1});
+
+  // Link quiet again and its own build comes back with its token: it rejoins.
+  h.now += 1'000'000;
+  h.receive(2, Ping{h.now}, kChannelSession);
+  auto msgs = rejoin_on(h, 14, "Link", kHomePc, token_of(h, 1));
+  REQUIRE(!msgs.empty());
+  REQUIRE(std::holds_alternative<Welcome>(msgs[0].message));
+  CHECK(std::get<Welcome>(msgs[0].message).player_number == 1);
+  CHECK(h.session.stats().rejoined == 1);
+  CHECK(h.session.player_number(2) == std::optional<std::uint8_t>{2});
+}
+
+TEST_CASE("issue 163: every WELCOME comes with a fresh token, an old one is spent") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+  const RejoinTokenBytes first = token_of(h, 1);
+  CHECK(first != token_of(h, 2));
+  h.now += 1'000'000;
+  auto back = rejoin_on(h, 9, "Link", kHomePc, first);
+  REQUIRE(!back.empty());
+  REQUIRE(std::holds_alternative<Welcome>(back[0].message));
+  const RejoinTokenBytes second = token_of(h, 9);
+  CHECK(second != first);
+  // The first token no longer takes the place over.
+  h.now += 1'000'000;
+  CHECK(refused_reason(rejoin_on(h, 10, "Link", kHomePc, first)) == RefuseReason::name_taken);
+  CHECK(h.session.player_number(9) == std::optional<std::uint8_t>{1});
+}
+
+TEST_CASE("issue 163: a REJOIN_CLAIM after HELLO is dropped and never relayed") {
+  Harness h;
+  h.join(1, "Link", kHomePc);
+  h.join(2, "Zelda", kOtherPc);
+  h.clear();
+  h.receive(2, RejoinClaim{token_of(h, 1)}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().stray_rejoin_claim == 1);
+  // Who may send which, and on which channel.
+  CHECK_FALSE(may_send(Sender::client, MessageType::rejoin_token));
+  CHECK_FALSE(may_send(Sender::server, MessageType::rejoin_claim));
+  CHECK(allowed_on_channel(MessageType::rejoin_claim, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::rejoin_claim, kChannelProgress));
+}
+
+TEST_CASE("issue 163: a rejoin with a join password shows the token, then the proof") {
+  SessionConfig config;
+  config.join_password = "kokiri";
+  Harness h(config);
+  auto join_with_proof = [&](ConnectionId id, const std::string& name,
+                             std::optional<RejoinTokenBytes> token) {
+    h.clear();
+    h.connect(id, kHomePc);
+    if (token) h.receive(id, RejoinClaim{*token}, kChannelSession);
+    h.receive(id, hello_from(name), kChannelSession);
+    const auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge.has_value());
+    h.clear();
+    h.receive(id, JoinProof{join_proof("kokiri", challenge->nonce)}, kChannelSession);
+    return h.to(id);
+  };
+  auto first = join_with_proof(1, "Link", std::nullopt);
+  REQUIRE(!first.empty());
+  REQUIRE(std::holds_alternative<Welcome>(first[0].message));
+  h.now += 1'000'000;
+  // The password alone does not take the place over (a housemate knows it).
+  CHECK(refused_reason(join_with_proof(9, "Link", std::nullopt)) == RefuseReason::name_taken);
+  auto with_token = join_with_proof(10, "Link", token_of(h, 1));
+  REQUIRE(!with_token.empty());
+  REQUIRE(std::holds_alternative<Welcome>(with_token[0].message));
+  CHECK(h.session.stats().rejoined == 1);
 }
 
 // ---------------------------------------------------------------- objects

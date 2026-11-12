@@ -266,6 +266,16 @@ Error encode_body(const JoinProof& m, Writer& w) {
   return Error::none;
 }
 
+Error encode_body(const RejoinToken& m, Writer& w) {
+  w.bytes(m.token.data(), m.token.size());
+  return Error::none;
+}
+
+Error encode_body(const RejoinClaim& m, Writer& w) {
+  w.bytes(m.token.data(), m.token.size());
+  return Error::none;
+}
+
 Error encode_body(const PlayerJoined& m, Writer& w) {
   if (!valid_player(m.player_number)) return Error::bad_value;
   COOP_TRY(check_string(m.nickname, kMaxNicknameChars));
@@ -842,6 +852,10 @@ Error read_array(Reader& r, std::array<std::uint8_t, N>& out) {
 Error decode_body(Reader& r, JoinChallenge& m) { return read_array(r, m.nonce); }
 
 Error decode_body(Reader& r, JoinProof& m) { return read_array(r, m.proof); }
+
+Error decode_body(Reader& r, RejoinToken& m) { return read_array(r, m.token); }
+
+Error decode_body(Reader& r, RejoinClaim& m) { return read_array(r, m.token); }
 
 Error decode_body(Reader& r, PlayerJoined& m) {
   COOP_READ(r.u8(m.player_number));
@@ -1777,6 +1791,7 @@ MessageType type_of(const Message& message) {
       MessageType::boss_room, MessageType::sign_cut, MessageType::flag_reset,
       MessageType::flag_origin, MessageType::join_challenge, MessageType::join_proof,
       MessageType::save_ask,    MessageType::save_part,
+      MessageType::rejoin_token, MessageType::rejoin_claim,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1822,6 +1837,8 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::hello:
     case MessageType::join_challenge:
     case MessageType::join_proof:
+    case MessageType::rejoin_token:
+    case MessageType::rejoin_claim:
     case MessageType::welcome:
     case MessageType::refused:
     case MessageType::player_joined:
@@ -1877,11 +1894,13 @@ bool may_send(Sender from, MessageType type) {
   switch (type) {
     case MessageType::hello:
     case MessageType::join_proof:
+    case MessageType::rejoin_claim:
     case MessageType::object_group:
       return from == Sender::client;
     case MessageType::welcome:
     case MessageType::refused:
     case MessageType::join_challenge:
+    case MessageType::rejoin_token:
     case MessageType::player_joined:
     case MessageType::player_left:
     case MessageType::host:
@@ -2022,6 +2041,8 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::refused: return decode_as<Refused>(body, out);
     case MessageType::join_challenge: return decode_as<JoinChallenge>(body, out);
     case MessageType::join_proof: return decode_as<JoinProof>(body, out);
+    case MessageType::rejoin_token: return decode_as<RejoinToken>(body, out);
+    case MessageType::rejoin_claim: return decode_as<RejoinClaim>(body, out);
     case MessageType::player_joined: return decode_as<PlayerJoined>(body, out);
     case MessageType::player_left: return decode_as<PlayerLeft>(body, out);
     case MessageType::ping: return decode_as<Ping>(body, out);

@@ -69,10 +69,13 @@ The password never goes on the wire, and a proof is good for one nonce only, so 
 
 ### Rejoin after a crash
 
-A killed emulator stays in the session until the server times it out, so its restart would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when both hold:
+A dropped or killed emulator stays in the session until the server times it out, so its new connection would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when all three hold:
 
+- the new connection showed that player's rejoin token: after each `WELCOME` the server sends `REJOIN_TOKEN` (345), 32 fresh random bytes for that place; the client keeps it and sends `REJOIN_CLAIM` (346) with it before its `HELLO` on every later connection (the first claim on a connection counts; one after `HELLO` is dropped, stat `stray_rejoin_claim`). It works with a join password too: claim, `HELLO`, challenge, proof. The server compares in constant time, and each `WELCOME` brings a new token, so an old one is spent;
 - it comes from the same IP address as that player, and
 - the server has heard nothing from that player for 1 second (a server option; 0 turns the takeover off). Every build answers the server's `PING` every 250 ms, so a live player is never this quiet.
+
+Issue 163: before protocol 10 the token was not needed, so two players behind one router (one public address) could push each other out by name during a stall of over a second. A `HELLO` that is quiet and from the same address but shows no token, or a wrong one, is now refused as name taken (stat `rejoin_no_token`). The token lives in the client only, not on disk: a reconnect of a running game (connection lost) takes its place at once; a restarted emulator has no token and waits, through the name taken retries below, for the server to time the old player out (10 s).
 
 Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the host handed on as on any leave, and the new connection is welcomed with the old player's number. Otherwise the `HELLO` is refused as name taken as before: someone on another PC, or anyone while the player is still talking, cannot push a player out by using their name. A build restarted within that second is refused, so the client asks again: a `REFUSED` name taken is tried again every 1.5 s for 12 s (`name_taken_retry_ms`, `name_taken_retry_for_ms` in `ClientConfig`; either one 0 turns it off, and the interval is at least 100 ms) before it is reported. The 12 s count from the first name taken in a row: an attempt that ends any other way (timeout, lost connection) closes the window, so a later name taken gets the full 12 s again. That covers the second of silence on the same PC, and also a restart that comes from another address (the same PC joining by its LAN address after `127.0.0.1`), which waits for the server to time the old player out (10 s). Any other refusal is reported at once and not retried. While it retries the client is in `waiting_retry` and reports nothing (`retrying_name_taken()` is true, and the player list shows "name in use, asking again"); a name that someone else is really using is reported after the 12 s.
 
@@ -107,6 +110,8 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
 | 191 | `JOIN_CHALLENGE` | 0 | server | 32-byte nonce (protocol 9, "Join password"; 191 to 195 kept for it) |
 | 192 | `JOIN_PROOF` | 0 | client | 32-byte HMAC-SHA256(password, nonce) |
+| 345 | `REJOIN_TOKEN` | 0 | server | 32-byte random token, sent right after `WELCOME` (protocol 10, "Rejoin after a crash"; 345 to 349 kept for it) |
+| 346 | `REJOIN_CLAIM` | 0 | client | 32-byte token from the last `REJOIN_TOKEN`, sent before `HELLO` on a new connection |
 | 206 | `SAVE_ASK` | 0 | both | `u8` player field: a guest asks the host for its save (protocol 9; types 206 to 215 are for the save transfer, below) |
 | 207 | `SAVE_PART` | 0 | both | `u8` player field, `u8` to player (0 every guest), `u32` transfer id, `u8` reason (1 join, 2 host load), `u32` total size (1 to 1 MiB), `u32` CRC-32 of all of it, `u16` index, `u16` count, then the part's bytes (below) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
@@ -383,6 +388,7 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 7 (chunk 5): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
 - Version 7 also brings `FLAG_RESET` (135; 135 to 139 kept for saves, branch `host-save`): the host's save load sets every game's shared flags to the save's values. A version 6 server would not relay it.
 - Version 8: `FLAG_ORIGIN` (150; 150 to 154 kept), from the server only. A version 7 game would refuse it as unknown, so every game and the server must be 8.
+- Version 10 (host-fixes, issue 163): `REJOIN_TOKEN` (345) and `REJOIN_CLAIM` (346); 345 to 349 kept. A build without them is never given a takeover (it shows no token), which is only slower, so no bump of its own.
 - Version 9 (chunk 8) also brings `SAVE_ASK` (206) and `SAVE_PART` (207); 206 to 215 kept for the save transfer (branch `host-save-load`, issue 167). A version 8 server would not relay them.
 - Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").

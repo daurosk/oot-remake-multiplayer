@@ -105,6 +105,8 @@ enum class MessageType : std::uint16_t {
   join_proof = 192,
   save_ask = 206,   // 206 to 215: the host's save sent to guests (docs/protocol.md, "Save transfer")
   save_part = 207,
+  rejoin_token = 345,  // 345 to 349: rejoin after a crash or drop (docs/protocol.md, "Rejoin")
+  rejoin_claim = 346,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -204,6 +206,23 @@ struct JoinChallenge {
 struct JoinProof {
   JoinProofBytes proof{};
   bool operator==(const JoinProof&) const = default;
+};
+
+// REJOIN_TOKEN, server to client, right after WELCOME: a fresh random token
+// for this player's place. Only a connection that shows it (REJOIN_CLAIM)
+// may take that place over while the old connection is quiet, so two players
+// behind one address cannot push each other out by name.
+using RejoinTokenBytes = JoinNonce;
+struct RejoinToken {
+  RejoinTokenBytes token{};
+  bool operator==(const RejoinToken&) const = default;
+};
+
+// REJOIN_CLAIM, client to server, before its HELLO on a new connection: the
+// token its last WELCOME came with. Without one no takeover happens.
+struct RejoinClaim {
+  RejoinTokenBytes token{};
+  bool operator==(const RejoinClaim&) const = default;
 };
 
 struct PlayerJoined {
@@ -1025,7 +1044,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
-                             JoinChallenge, JoinProof, SaveAsk, SavePart>;
+                             JoinChallenge, JoinProof, SaveAsk, SavePart,
+                             RejoinToken, RejoinClaim>;
 
 MessageType type_of(const Message& message);
 

@@ -158,3 +158,18 @@ TEST_CASE("hookshot: co-op's per-frame work runs at each present, the game calls
     CHECK(patch.find("+    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);") !=
           std::string::npos);
 }
+
+TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat lines, name tags)") {
+    // The draw table in our patch is hookshot/src's.
+    const std::string patch = Patch();
+    CHECK(NewFile(patch, "gpu/vk/hos_coop_draw.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_draw.h"));
+    // The renderer finds the module's two exports and draws in the menu's ImGui frame.
+    const std::string vk = NewFile(patch, "gpu/vk/vk_coop.cpp");
+    CHECK(vk.find("\"hos_coop_draw_wanted\"") != std::string::npos);
+    CHECK(vk.find("\"hos_coop_draw\"") != std::string::npos);
+    CHECK(patch.find("+    if (coop) coop::draw(w, h);") != std::string::npos);
+    // The module has them.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void)") != std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d)") != std::string::npos);
+}

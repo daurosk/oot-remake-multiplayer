@@ -25,6 +25,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "coop_callers.h"
+#include "coop_draw.h"
 #include "coop_game_build.h"
 #include "coop_hold.h"
 #include "coop_hook.h"
@@ -253,5 +254,19 @@ COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
     CoopHookshot::Stop();
+}
+// Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
+COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
+    return g_on && CoopDraw::Wanted(CoopDraw::ShownChat(CoopHook::ChatLines()), CoopHook::CurrentMarkers()) ? 1 : 0;
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
+    if (g_on && d != nullptr) {
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",
+                     static_cast<int>(d->width), static_cast<int>(d->height));
+        }
+        CoopDraw::Draw(*d, CoopDraw::ShownChat(CoopHook::ChatLines()), CoopHook::CurrentMarkers());
+    }
 }
 }

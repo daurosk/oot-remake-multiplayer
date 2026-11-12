@@ -1,4 +1,4 @@
-From 7afe94bbe1473be5ff9b5d1ad3b197a14e752e78 Mon Sep 17 00:00:00 2001
+From f520e5d22c2a69615497b900b25a6cf7135b2307 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -34,9 +34,10 @@ key_down.
  host/nn_hid.c            |   8 +-
  host/nvn_native.c        |   2 +
  host/posix/display_sdl.c |  60 +++++++++++-
+ nx2/build.py             |   2 +-
  nx2/coop_hooks.py        |  61 ++++++++++++
  nx2/lift.py              |   2 +
- 14 files changed, 652 insertions(+), 7 deletions(-)
+ 15 files changed, 653 insertions(+), 8 deletions(-)
  create mode 100644 gpu/vk/hos_coop_draw.h
  create mode 100644 gpu/vk/vk_coop.cpp
  create mode 100644 gpu/vk/vk_coop.h
@@ -885,6 +886,19 @@ index f6da1cc2..a0e8949e 100644
                      if (mouse_captured) {   /* (SDL3's motion comes in fractions of a pixel: the remainders kept for the next) */
                          static float rx, ry;
                          rx += e.dx, ry += e.dy;
+diff --git a/nx2/build.py b/nx2/build.py
+index 92b97bfe..1253b776 100644
+--- a/nx2/build.py
++++ b/nx2/build.py
+@@ -1087,7 +1087,7 @@ def main():
+                        "-DIMGUI_DISABLE_WIN32_FUNCTIONS", "-DIMGUI_DISABLE_DEMO_WINDOWS", "-DIMGUI_DISABLE_DEBUG_TOOLS"]
+         imgui_deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (imgui, os.path.join(imgui, "backends"), zstd)
+                               for f in sorted(os.listdir(d)) if f.endswith(".h"))
+-        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp")
++        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp", "vk_coop.cpp")   # (oot-remake-multiplayer: co-op's drawing, vk_coop.cpp)
+         for f in ("imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", "backends/imgui_impl_vulkan.cpp"):
+             vk_jobs.append((cxx, os.path.join(imgui, *f.split("/")),
+                             os.path.join(obj_dir, "vk_imgui_" + os.path.basename(f)[:-4] + ".o"), vflags + imgui_flags, imgui_deps))
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 new file mode 100644
 index 00000000..a3aa4a38

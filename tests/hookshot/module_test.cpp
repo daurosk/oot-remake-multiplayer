@@ -223,6 +223,8 @@ TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat
     CHECK(vk.find("\"hos_coop_draw_wanted\"") != std::string::npos);
     CHECK(vk.find("\"hos_coop_draw\"") != std::string::npos);
     CHECK(patch.find("+    if (coop) coop::draw(w, h);") != std::string::npos);
+    // Hookshot's build gives the ImGui headers only to the files it lists: vk_coop.cpp is one (else it does not compile).
+    CHECK(patch.find("+        imgui_users = (\"vk_imgui.cpp\", \"vk_menu.cpp\", \"vk_coop.cpp\")") != std::string::npos);
     // The module has them.
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void)") != std::string::npos);

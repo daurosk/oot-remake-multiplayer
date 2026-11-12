@@ -95,7 +95,11 @@ bool IsLyingKey(std::string_view name);
 // lying key's, under TokenId(the Skulltula's placement hash): the token
 // that appears within kTokenNearM of a Gold Skulltula we saw, or where a
 // token of this scene was before (a room loaded again: its Skulltula is
-// gone, the game makes the token again).
+// gone, the game makes the token again), or, failing those, that appears
+// within kTokenAfterUs of a Gold Skulltula leaving our walk dead (last seen
+// with life 0) and within kTokenFarM of where it was, whose token is not
+// known yet (a Skulltula knocked away as it died, a token that fell:
+// items-sync).
 bool IsGoldToken(std::string_view name);
 std::uint64_t TokenId(std::uint64_t skulltula_hash);
 inline constexpr const char* kTokenCount = "PouchData.Item_Token_Gold.StockNum";
@@ -356,6 +360,8 @@ public:
     static constexpr float kLiftedM = 0.3f;      // a key this far from where it lay is being picked up
     static constexpr float kTokenNearM = 3.0f;    // a new token this near a Gold Skulltula is its
     static constexpr float kTokenSpotM = 1.5f;    // a token this near a known token spot is that one
+    static constexpr float kTokenFarM = 12.0f;    // a token this near a Skulltula that just left is its
+    static constexpr std::uint64_t kTokenAfterUs = 5'000'000;  // "just left": not in the walk this long
     static constexpr float kShiftTurnRad = 0.05f;  // a shifter turned this far from its rest: moved
     static constexpr int kFallerTries = 10;  // then one "did not fall" line, and no more writes
     static constexpr std::uint64_t kGoneHoldUs = 700'000;     // a gone-near-Link break waits this long
@@ -559,7 +565,7 @@ private:
     // A lying small key we took that has not gone out as our break yet.
     std::optional<std::string> TookKey(std::uint64_t hash) const;  // its count
     // A token's id (TokenId) from where it is, or 0: not known.
-    std::uint64_t IdentifyToken(const coop::protocol::Vec3& at);
+    std::uint64_t IdentifyToken(const coop::protocol::Vec3& at, std::uint64_t now_us);
     // Another player's break of a token we know: its spot is kept, and its
     // Skulltula's key is set here (Out::taken_keys).
     void Token(const coop::protocol::WorldBreak& b);
@@ -589,6 +595,8 @@ private:
     std::vector<std::uint64_t> taken_keys_;  // the same
     // Gold Skulltulas of this scene by placement hash: where we saw them last.
     std::map<std::uint64_t, coop::protocol::Vec3> skulltulas_;
+    std::map<std::uint64_t, std::uint64_t> skulltulas_seen_us_;  // and when, in the last walk it was in
+    std::set<std::uint64_t> skulltulas_dead_;  // last seen with life 0 (or none readable)
     // Tokens by scene, then id: where they were. Kept across scene changes,
     // so a token the game makes again on a reload is known.
     std::map<std::string, std::map<std::uint64_t, coop::protocol::Vec3>> token_spots_;

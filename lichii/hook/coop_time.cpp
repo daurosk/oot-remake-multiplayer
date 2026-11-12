@@ -122,6 +122,13 @@ struct Glue {
     std::optional<std::uint32_t> test_set;
     std::uint64_t test_delay_us = 5'000'000;
     std::uint64_t joined_at = 0;
+    // LICHII_COOP_TIME_TEST_DRIFT=<seconds>[@<delay s>] (tests only, issue
+    // 192): <delay> seconds (default 60) after joining, a guest moves its own
+    // seconds word <seconds> ahead (under kJumpSeconds, so it is no jump and
+    // is not sent), as a slow drift would; the nudges must bring it back.
+    // The host ignores it.
+    std::optional<std::uint32_t> test_drift;
+    std::uint64_t test_drift_delay_us = 60'000'000;
     bool nudges_off_logged = false;
     Sync sync;
     Setter setter;
@@ -138,6 +145,16 @@ struct Glue {
             }
             if (v < coop::protocol::kSecondsPerDay) {
                 test_set = static_cast<std::uint32_t>(v);
+            }
+        }
+        if (const auto t = Env("LICHII_COOP_TIME_TEST_DRIFT"); !t.empty()) {
+            char* rest = nullptr;
+            const unsigned long v = std::strtoul(t.c_str(), &rest, 10);
+            if (rest != nullptr && *rest == '@') {
+                test_drift_delay_us = std::strtoull(rest + 1, nullptr, 10) * 1'000'000;
+            }
+            if (v > 0 && v < Sync::kJumpSeconds) {
+                test_drift = static_cast<std::uint32_t>(v);
             }
         }
         if (on) {
@@ -188,15 +205,24 @@ struct Glue {
     // Issue 192: write our clock's seconds word directly (no time change, so
     // the world is not made again). Only when no time change or override
     // runs (flags 0), and only if the word still holds what Tick read.
-    void Nudge(Core::System& system, std::uint64_t main, std::uint32_t was, std::uint32_t to) {
-        auto& memory = system.ApplicationMemory();
+    // Our clock's seconds word (record + 8), only while no time change or
+    // override runs (flags 0); 0 otherwise.
+    static std::uint64_t QuietSecondsWord(Core::Memory::Memory& memory, std::uint64_t main) {
         const auto world = Get<std::uint64_t>(memory, main + kWorldMgrPtr);
         const auto time =
             world && *world != 0 ? Get<std::uint64_t>(memory, *world + kTimeObject) : std::nullopt;
-        const std::uint64_t word = time && *time != 0 ? *time + kTimeNow + 8 : 0;
-        const auto flags = word != 0 ? Get<std::uint32_t>(memory, *time + kTimeFlags) : std::nullopt;
+        if (!time || *time == 0) {
+            return 0;
+        }
+        const auto flags = Get<std::uint32_t>(memory, *time + kTimeFlags);
+        return flags && *flags == 0 ? *time + kTimeNow + 8 : 0;
+    }
+
+    void Nudge(Core::System& system, std::uint64_t main, std::uint32_t was, std::uint32_t to) {
+        auto& memory = system.ApplicationMemory();
+        const std::uint64_t word = QuietSecondsWord(memory, main);
         const auto current = word != 0 ? Get<std::uint32_t>(memory, word) : std::nullopt;
-        if (!flags || *flags != 0 || !current ||
+        if (!current ||
             static_cast<std::uint32_t>(std::abs(Ahead(was, *current))) > 60) {
             sync.NudgeNotWritten();
             return;
@@ -237,6 +263,20 @@ struct Glue {
                 setter.Want(main, *test_set);
             }
             test_set.reset();
+        }
+        if (test_drift && now && now_us - joined_at >= test_drift_delay_us) {
+            auto& memory = system.ApplicationMemory();
+            const std::uint64_t word = host ? 0 : QuietSecondsWord(memory, main);
+            if (host) {
+                test_drift.reset();
+            } else if (word != 0) {
+                const std::uint32_t value = (*now + *test_drift) % coop::protocol::kSecondsPerDay;
+                memory.Write32(word, value);
+                LOG_INFO(Core, "coop: time: test drift {} s -> {:02}:{:02}:{:02}", *test_drift,
+                         value / 3600, value / 60 % 60, value % 60);
+                test_drift.reset();
+                return;  // the next tick reads the moved clock
+            }
         }
         std::vector<coop::protocol::Message> send;
         if (const auto target = sync.Tick(now, host, now_us, send)) {

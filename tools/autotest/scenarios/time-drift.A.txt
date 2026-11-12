@@ -1,0 +1,27 @@
+# time-drift (#192): both games load into Kakariko (outdoors, clocks run) with the test-only warp.
+# 120 s after joining, the guest moves its own clock 25 in-game minutes ahead without sending it
+# (LICHII_COOP_TIME_TEST_DRIFT=1500@120; the host ignores it), as a slow drift would. Before #192
+# nothing pulled it back (only clocks over an hour off were set). Run with -NoLoad.
+# Pass: B log "time: test drift 1500 s", then 2-3 "time: nudged" lines within ~5 s, no
+# "nudges did not hold", no "time: set to" after the drift; A log no "time: set to" after joining;
+# shots "nudged" and "end": same sky in both games.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_TIME=1,LICHII_COOP_TIME_TEST_DRIFT=1500@120
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark day
+wait 3000               # the guest drifts 120 s after joining, then is nudged back
+mark nudged
+wait 600
+mark end

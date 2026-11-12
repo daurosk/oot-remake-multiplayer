@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 
@@ -149,6 +150,99 @@ void Track::Push(Pose pose, std::uint64_t now_ms) {
     }
     newest_ = std::move(pose);
     newest_ms_ = now_ms;
+}
+
+Pose Track::Fill(Pose pose) const {
+    if (!newest_ || newest_->skeleton != pose.skeleton) return pose;
+    std::vector<BonePose> merged;
+    merged.reserve(std::max(pose.bones.size(), newest_->bones.size()));
+    std::size_t i = 0, j = 0;
+    const auto& old = newest_->bones;
+    while (i < pose.bones.size() || j < old.size()) {
+        if (j == old.size() || (i < pose.bones.size() && pose.bones[i].bone <= old[j].bone)) {
+            if (j < old.size() && pose.bones[i].bone == old[j].bone) ++j;
+            merged.push_back(std::move(pose.bones[i++]));
+        } else {
+            merged.push_back(old[j++]);
+        }
+    }
+    pose.bones = std::move(merged);
+    return pose;
+}
+
+int BonePicker::Change(const proto::PoseBone& then, const proto::PoseBone& now) {
+    constexpr int kFar = 1 << 20;
+    int most = 0;
+    auto part = [&](const auto& a, const auto& b) {
+        if (a.has_value() != b.has_value()) {
+            most = kFar;
+            return;
+        }
+        if (!a) return;
+        for (std::size_t k = 0; k < a->size(); ++k) {
+            most = std::max(most, std::abs(int{(*a)[k]} - int{(*b)[k]}));
+        }
+    };
+    part(then.rotation, now.rotation);
+    part(then.translation, now.translation);
+    part(then.scale, now.scale);
+    if (then.flags != now.flags) most = std::max(most, kBoneStep + 1);
+    return most;
+}
+
+std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
+                                              const std::vector<proto::PoseBone>& full,
+                                              std::uint64_t now_ms, std::size_t budget) {
+    if (skeleton != skeleton_) {
+        skeleton_ = skeleton;
+        sent_.clear();
+    }
+    // Priority: the change in packed units plus a unit per millisecond of
+    // age, so a small change waits but is never starved; a bone never sent
+    // first. A bone unsent for kBoneRefreshMs goes even unchanged (a lost
+    // packet, a late joiner).
+    struct Wanted {
+        std::int64_t priority;
+        std::size_t index;
+    };
+    std::vector<Wanted> wanted;
+    wanted.reserve(full.size());
+    for (std::size_t i = 0; i < full.size(); ++i) {
+        const auto it = sent_.find(full[i].bone);
+        if (it == sent_.end()) {
+            wanted.push_back({std::int64_t{1} << 40, i});
+            continue;
+        }
+        const std::uint64_t age = now_ms - std::min(now_ms, it->second.ms);
+        const int change = Change(it->second.bone, full[i]);
+        if (age >= kBoneRefreshMs || change > kBoneStep) {
+            wanted.push_back({change + static_cast<std::int64_t>(age), i});
+        }
+    }
+    if (wanted.size() > budget) {
+        std::nth_element(wanted.begin(), wanted.begin() + static_cast<std::ptrdiff_t>(budget),
+                         wanted.end(), [](const Wanted& a, const Wanted& b) {
+                             return a.priority != b.priority ? a.priority > b.priority
+                                                             : a.index < b.index;
+                         });
+        wanted.resize(budget);
+    }
+    std::sort(wanted.begin(), wanted.end(),
+              [](const Wanted& a, const Wanted& b) { return a.index < b.index; });
+    std::vector<proto::PoseBone> out;
+    out.reserve(wanted.size());
+    for (const Wanted& w : wanted) {
+        out.push_back(full[w.index]);
+        sent_[full[w.index].bone] = {full[w.index], now_ms};
+    }
+    // Bones that stopped moving on our side are no longer in `full`: forget them.
+    std::erase_if(sent_, [&](const auto& kv) {
+        return !std::binary_search(full.begin(), full.end(), kv.second.bone,
+                                   [](const proto::PoseBone& a, const proto::PoseBone& b) {
+                                       return a.bone < b.bone;
+                                   });
+    });
+    return out;
 }
 
 std::optional<Pose> Track::At(std::uint64_t now_ms) const {
@@ -340,6 +434,8 @@ struct State {
         std::uint64_t ms = 0;
     };
     std::map<std::uint32_t, PieceSent> pieces_sent;
+    // Which of Link's bones go in the next pose (kMaxSendBones).
+    BonePicker picker;
     // Received, per player 1 to kMaxPlayers, one track per skeleton: Link's
     // body and each held piece arrive as poses of their own skeleton.
     std::array<std::map<std::uint32_t, Track>, std::size_t{proto::kMaxPlayers} + 1> tracks;
@@ -659,7 +755,9 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     proto::PlayerPose body;
     body.time = {server_now_us, ++s.sequence};
     body.skeleton = s.outbox->skeleton;
-    body.bones = Encode(*s.outbox);
+    // Sent even with no bone changed: the receiver keeps its puppet's pose
+    // fresh (Drives) and its blend interval right.
+    body.bones = s.picker.Pick(body.skeleton, Encode(*s.outbox), now_ms);
     out.push_back(std::move(body));
     ++s.sent;
     // Each piece in our hands as a pose of its own skeleton: when it changed,
@@ -713,7 +811,8 @@ void Receive(const proto::PlayerPose& m, std::uint64_t now_ms) {
     std::lock_guard lock(s.mutex);
     if (m.player_number == 0 || m.player_number >= s.tracks.size()) return;
     auto& tracks = s.tracks[m.player_number];
-    tracks[m.skeleton].Push(std::move(pose), now_ms);
+    auto& track = tracks[m.skeleton];
+    track.Push(track.Fill(std::move(pose)), now_ms);
     // Skeletons not heard from for a while (a piece put away, the other age).
     std::erase_if(tracks, [&](const auto& kv) {
         return now_ms - std::min(now_ms, kv.second.last_ms()) > kTrackForgetMs;

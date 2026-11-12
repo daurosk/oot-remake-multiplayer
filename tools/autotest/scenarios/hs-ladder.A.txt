@@ -15,6 +15,10 @@
 # - B's log: "coop: dungeon: starting the event InsideTheDekuTree_Gimmick_FallingLadder here (another player played
 #   it)" only AFTER A's shot (one before "mark placed" in B = the setup leak again: the run proves nothing).
 # - Shots: B's b-view the ladder up, b-ladder the ladder down; A's ladder: the ladder down.
+# AFTER the run: put both baselines back from <kit>utotest-save-backup (save_flags.py keeps a
+#   copy there), or later runs start with the ladder not played.
+# On Hookshot the "#! start" line below checks nothing (only the emulator's runner reads it); the
+#   scripts' own waits cover the load.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,LICHII_COOP_DEBUG_BOOL=0xb3a4fe84,A:LICHII_COOP_CHEATS=1

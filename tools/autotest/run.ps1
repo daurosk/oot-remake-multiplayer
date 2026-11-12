@@ -93,7 +93,12 @@ param(
     # puppet pack in mods\). Default: hookshot-A and hookshot-B in the coop-kit folder. A folder's
     # autotest-save\ (a copy of its user\save\) is put back over user\save\ before each run.
     [string]$HookshotA = "",
-    [string]$HookshotB = ""
+    [string]$HookshotB = "",
+    # Hookshot: the control pipes' name (\\.\pipe\<Pipe>-A and -B). Pairs that run at the same time
+    # (tools\autotest\groups.py) each need their own, as they need their own -Port.
+    [string]$Pipe = "coop-auto",
+    # Hookshot: print the hookshot.py command and stop (nothing started, no run folder made).
+    [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
 
@@ -147,7 +152,7 @@ if ($headSwitches.Count) {
 if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not (@($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() }) -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
 
 $Server = Resolve $Server
-if (-not $TakeBaseline -and -not $NoCoop -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+if (-not $TakeBaseline -and -not $NoCoop -and -not ($DryRun -and $Runtime -eq 'hookshot') -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
 
 # Hookshot: tools\autotest\hookshot.py runs the whole test (server, both games, load, scenario,
 # shots, logs) and leaves them in the run folder like the emulator run does.
@@ -161,7 +166,7 @@ if ($Runtime -eq 'hookshot') {
     if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
     if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
     $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
-    New-Item -ItemType Directory -Force $out | Out-Null
+    if (-not $DryRun) { New-Item -ItemType Directory -Force $out | Out-Null }
     $py = @()
     if ($Python) { $py = @($Python) } else {
         for ($d = Get-Item $here; $d; $d = $d.Parent) {
@@ -178,16 +183,19 @@ if ($Runtime -eq 'hookshot') {
     if ($NoRestore) { $a += '--no-restore' }
     if ($KeepOpen) { $a += '--keep-open' }
     if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
+    if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }
     foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
         $a += @('--env', $e)
     }
     Write-Host "hookshot: $($py[0]) $($a -join ' ')"
+    if ($DryRun) { Write-Host "hookshot: dry run, nothing started"; return }
     & $py[0] @a
     $code = $LASTEXITCODE
     $out
     if ($code) { exit $code }
     return
 }
+if ($DryRun -or $PSBoundParameters.ContainsKey('Pipe')) { throw "-DryRun and -Pipe are for -Runtime hookshot" }
 
 # The folders a kit's emulator really uses: qt-config.ini can point nand/sdmc/load/dump anywhere
 # (kits copied from another kit keep that kit's absolute paths).

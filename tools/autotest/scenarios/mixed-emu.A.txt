@@ -1,0 +1,12 @@
+# mixed (gate G8), emulator A once both Hookshot players are in its world (mixed-emu.steps.txt):
+# chat, an item for everyone (the Hookshot games log "coop: notice: A got the Bombs"), a short walk.
+mark sees-both
+wait 60
+chat hello from the emulator
+mark chat-sent
+give bombs
+mark gave
+stick 0 0.5 90
+mark walked
+wait 300
+mark after

@@ -97,6 +97,14 @@ param(
     # Hookshot: the control pipes' name (\\.\pipe\<Pipe>-A and -B). Pairs that run at the same time
     # (tools\autotest\groups.py) each need their own, as they need their own -Port.
     [string]$Pipe = "coop-auto",
+    # Start no server: the games join the one already listening on -Port (tools\autotest\mixed.ps1
+    # runs one server for an emulator game and a Hookshot pair). Steps `server stop/start` refused.
+    [switch]$NoServer,
+    # Emulator: how many more single A presses the load may give a game that is not at the start
+    # place (the `#! start` regex) after load.txt, 15 s apart. load.txt's four presses are blind: a
+    # slow boot (three games compiling shaders) or a restart left a game on the title or on the
+    # save's "Load" confirm (stray b-back, mixed proof 4). 0: none.
+    [int]$LoadRetries = 6,
     # Hookshot: print the hookshot.py command and stop (nothing started, no run folder made).
     [switch]$DryRun
 )
@@ -152,7 +160,8 @@ if ($headSwitches.Count) {
 if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not (@($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() }) -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
 
 $Server = Resolve $Server
-if (-not $TakeBaseline -and -not $NoCoop -and -not ($DryRun -and $Runtime -eq 'hookshot') -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+if ($NoServer -and $NoCoop) { throw "-NoServer is for a co-op run; not with -NoCoop" }
+if (-not $TakeBaseline -and -not $NoCoop -and -not $NoServer -and -not ($DryRun -and $Runtime -eq 'hookshot') -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
 
 # Hookshot: tools\autotest\hookshot.py runs the whole test (server, both games, load, scenario,
 # shots, logs) and leaves them in the run folder like the emulator run does.
@@ -182,7 +191,11 @@ if ($Runtime -eq 'hookshot') {
     if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
     if ($NoRestore) { $a += '--no-restore' }
     if ($KeepOpen) { $a += '--keep-open' }
-    if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
+    if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') }
+    elseif ($NoServer) {
+        # hookshot.py sets the server and names only when it starts the server itself.
+        $a += @('--port', "$Port", '--env', "LICHII_COOP_SERVER=127.0.0.1:$Port", '--env', 'A:LICHII_COOP_NAME=HookA', '--env', 'B:LICHII_COOP_NAME=HookB')
+    } else { $a += @('--server', $Server, '--port', "$Port") }
     if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }
     foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
         $a += @('--env', $e)
@@ -462,6 +475,7 @@ $switchEnv = [ordered]@{}
 # Starts the server (again); its output goes to server-out.txt, then server-out-2.txt, ...
 function Start-Server {
     if ($NoCoop) { return }
+    if ($NoServer) { Note "no server started (-NoServer): the games join 127.0.0.1:$Port"; return }
     $script:serverRuns++
     $sfx = if ($script:serverRuns -gt 1) { "-$($script:serverRuns)" } else { '' }
     $sargs = "--port $Port"
@@ -614,6 +628,28 @@ function Live-Actors([string]$x) {
     }
     $live
 }
+# load.txt in the games named, then up to -LoadRetries single A presses (15 s apart) for each game
+# that is not at the start place yet: the four blind presses of load.txt fall short when the title
+# comes late. Only a game whose log lacks the `#! start` regex is pressed, so a loaded game gets
+# nothing more. Each extra press is noted in steps.txt and load-retries.txt.
+function Load-Games([string[]]$names, [string]$phase) {
+    $f = @{}; foreach ($x in $names) { $f[$x] = "$here\scenarios\load.txt" }
+    Play $f $phase $Every
+    if (-not $headStart -or $LoadRetries -le 0) { return }
+    $more = "$here\scenarios\load-more.txt"
+    $left = @($names)
+    for ($try = 1; $left.Count -and $try -le $LoadRetries; $try++) {
+        $t0 = Get-Date
+        while ($left.Count -and ((Get-Date) - $t0).TotalSeconds -lt 15) {
+            $left = @($left | Where-Object { -not ((Read-Log $_) -match $headStart) })
+            if ($left.Count) { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $left.Count) { break }
+        $f = @{}; foreach ($x in $left) { $f[$x] = $more }
+        foreach ($x in $left) { Note "load: ${x} not at the start place: one more A ($try of $LoadRetries)"; Add-Content "$out\load-retries.txt" "${x}: press $try" }
+        Play $f "$phase-more$try" 0
+    }
+}
 # Did game x get to the scenario's start place (the `#! start` regex, default a Graveyard object
 # after load.txt)? Waits up to $wait s; writes start.txt beside the screenshots.
 function Check-Start([string]$x, [int]$wait) {
@@ -672,8 +708,7 @@ function Run-Steps([string]$file) {
                 Place-Windows
             }
             'load' {
-                $f = @{}; foreach ($x in $rest) { $f[$x] = "$here\scenarios\load.txt" }
-                Play $f "s$n-load" $Every
+                Load-Games $rest "s$n-load"
                 foreach ($x in $rest) { if (-not (Check-Start $x 15)) { $script:stepFails++ } }
             }
             'play' {
@@ -695,7 +730,7 @@ function Run-Steps([string]$file) {
                 }
             }
             'kill' { $expectedExit[$rest[0]] = $true; $p = $st[$rest[0]].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(15000) } }
-            'server' { if ($rest[0] -eq 'stop') { Stop-Server } else { Start-Server } }
+            'server' { if ($NoServer) { throw "step ${n}: 'server' with -NoServer (the server is not ours)" }; if ($rest[0] -eq 'stop') { Stop-Server } else { Start-Server } }
             'sleep' { Start-Sleep -Seconds ([double]$rest[0]) }
             'password' { $script:passwords[$rest[0]] = if ($rest[1] -eq '-') { '' } else { $rest[1] } }
             'try' {
@@ -835,8 +870,7 @@ try {
         Shot-Both 'joined'
 
         if (-not $NoLoad) {
-            $load = "$here\scenarios\load.txt"
-            Play @{ A = $load; B = $load } 'load' $Every
+            Load-Games @($kits.Keys) 'load'
             Shot-Both 'loaded'
             Write-Host "save loaded"
             foreach ($x in $kits.Keys) {

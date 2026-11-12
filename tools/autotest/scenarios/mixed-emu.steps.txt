@@ -1,0 +1,14 @@
+# mixed (gate G8): the emulator side of a mixed session, run by tools\autotest\mixed.ps1 with a
+# Hookshot pair (mixed-hs) on the same server. Only game A (the emulator kit, named A) is used.
+# The expect waits for both Hookshot players in A's world (mixed.ps1 passes -ExpectWait 600: a
+# Hookshot pair takes about 4 minutes to boot and load), so A acts only once they are there.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_SPAWN=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_FLAGS=1
+#! timeout 900
+start A
+load A
+expect hs-seen A=2
+play A mixed-emu.A.txt
+sleep 40
+lines a-chat-sent A min=1 coop: test chat 'hello from the emulator': sent
+lines a-got-hs-bow A min=1 coop: notice: HookA got
+lines a-crash A max=0 CRASH|Unhandled exception

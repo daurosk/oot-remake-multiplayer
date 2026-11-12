@@ -1,0 +1,4 @@
+# One more A for a game the runner found still on the title or the save's "Load" confirm after
+# load.txt (run.ps1 -LoadRetries). The runner checks again 15 s later.
+press A
+wait 120

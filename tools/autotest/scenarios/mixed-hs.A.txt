@@ -1,0 +1,15 @@
+# mixed (gate G8), Hookshot A with an emulator game on the same server (tools\autotest\mixed.ps1;
+# the emulator side is mixed-emu). Waits for the emulator's chat and item (it acts once it sees
+# both Hookshot players, right after this pair's load), then sends its own and walks.
+#! switches LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_FLAGS=1
+mark start
+wait 1200
+mark emu-acted
+chat hello from hookshot A
+mark chat-sent
+give bow
+mark gave
+stick 0 0.5 90
+mark walked
+wait 900
+mark after

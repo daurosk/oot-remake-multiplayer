@@ -1,0 +1,7 @@
+# mixed (gate G8), Hookshot B: watches; chat once after A (header in mixed-hs.A.txt).
+mark start
+wait 1500
+chat hello from hookshot B
+mark chat-sent
+wait 1200
+mark after

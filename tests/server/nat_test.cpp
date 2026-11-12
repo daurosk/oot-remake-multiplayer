@@ -400,6 +400,8 @@ TEST_CASE("host rendezvous: punches go only toward a signed answer code's addres
   CHECK(f.host.add_answer(make_answer(lan, "join-pw"), 0) == CodeError::kNotPublic);
   CHECK(f.host.add_answer("hello", 0) == CodeError::kNotACode);
   CHECK(f.host.answers() == 0);
+  f.host.service(800);  // the STUN retries go out first (to the STUN servers)
+  f.host.service(1700);
   f.sent.clear();
   REQUIRE(f.host.add_answer(make_answer(a, "join-pw"), 1000) == CodeError::kOk);
   f.host.service(1000);

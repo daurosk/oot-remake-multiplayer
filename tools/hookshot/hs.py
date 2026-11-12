@@ -116,7 +116,7 @@ def pin_of(stamp_text):
 
 
 def pin_dir(stamp_text):
-    """The shared folder of a pin: tools\ (Hookshot's tools and patched source) and work\ (its build files and object
+    """The shared folder of a pin: tools/ (Hookshot's tools and patched source) and work/ (its build files and object
     cache). Every build of that pin, whatever the patches, goes through it: Hookshot's own lift key and object cache
     decide what is done again. Not a cache entry (cache_prune leaves it)."""
     return os.path.join(cache_root(), "pins", pin_of(stamp_text))

@@ -26,6 +26,8 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "coop_callers.h"
+#include "coop_cheats.h"
+#include "coop_cheats_panel.h"
 #include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop_game_build.h"
@@ -203,6 +205,13 @@ CoopDraw::Keys g_keys;
 std::mutex g_box_mutex;
 CoopChatBox::Box g_box;
 unsigned g_box_lead = 0;  // a double-byte code page's lead byte, waiting for its second
+// The item cheats panel (coop_cheats_panel.h), under the same mutex.
+CoopCheatsPanel::Panel g_cheats;
+
+std::vector<CoopCheatsPanel::Row> CheatRows() {
+    static const std::vector<std::string> items = CoopCheats::Items();
+    return CoopCheatsPanel::Rows(g_cheats.filter(), items);
+}
 
 bool AsyncDown(int vk) {
 #ifdef _WIN32
@@ -244,6 +253,16 @@ CoopDraw::Scene DrawScene() {
         std::lock_guard lock(g_box_mutex);
         if (g_box.open()) {
             s.box = CoopDraw::ChatBoxView{g_box.text(), g_box.failed()};
+        }
+        if (g_cheats.open()) {
+            CoopDraw::CheatsView v;
+            v.filter = g_cheats.filter();
+            for (const auto& r : CheatRows()) {
+                v.rows.push_back(r.label);
+            }
+            v.selected = g_cheats.selected();
+            v.result = CoopCheats::LastResult();
+            s.cheats = std::move(v);
         }
     }
     s.chat = CoopDraw::ShownChat(CoopHook::ChatLines(), s.box.has_value());
@@ -292,6 +311,17 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
+    // The cheats panel (F8, LICHII_COOP_CHEATS=1) when it is open or the chat box is not.
+    if (g_cheats.open() || (!g_box.open() && CoopCheats::On())) {
+        const auto rows = CheatRows();
+        if (g_cheats.Key(vk, repeat, rows.size())) {
+            if (const auto i = g_cheats.TakeGive(); i && *i < rows.size()) {
+                CoopCheats::Give(rows[*i].flag);
+                LOG_INFO(Core, "coop: cheats: give {}", rows[*i].flag);
+            }
+            return true;
+        }
+    }
     const bool taken = g_box.Key(vk, repeat);
     if (auto text = g_box.TakeSend()) {
         const bool ok = CoopHook::SendChat(*text);
@@ -308,11 +338,17 @@ bool TypeChar(std::uint32_t byte) {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
-    if (!g_box.open()) {
+    if (!g_box.open() && !g_cheats.open()) {
         return false;
     }
     const std::uint32_t cp = FromCodePage(byte);
-    return cp == 0 ? true : g_box.Char(cp);
+    if (cp == 0) {
+        return true;
+    }
+    if (g_cheats.open()) {
+        return g_cheats.Char(cp, CoopChatBox::Utf8(cp));
+    }
+    return g_box.Char(cp);
 }
 
 bool KeysTaken() {
@@ -320,7 +356,10 @@ bool KeysTaken() {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
-    return g_box.KeysTaken(AsyncDown(0x0D) || AsyncDown(0x1B));
+    const bool closing = AsyncDown(0x0D) || AsyncDown(0x1B);
+    const bool box = g_box.KeysTaken(closing);
+    const bool cheats = g_cheats.KeysTaken(closing || AsyncDown(CoopCheatsPanel::kKeyToggle));
+    return box || cheats;
 }
 
 bool Start(const HosCoopApi* api) {

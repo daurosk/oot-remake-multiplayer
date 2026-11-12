@@ -263,6 +263,42 @@ void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks) {
     }
 }
 
+void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
+    const float px = std::clamp(d.height * 0.022f, 14.0f, 28.0f);
+    const float line = px + 6.0f;
+    const float width = std::min(560.0f * px / 14.0f, d.width - 2 * kMargin);
+    const float left = d.width - kMargin - width;
+    const std::size_t lines = 3 + std::max<std::size_t>(c.rows.size(), 1) + (c.result.empty() ? 0 : 1);
+    const float height = static_cast<float>(lines) * line + 2 * kPad;
+    d.rect(d.user, left, kMargin, left + width, kMargin + height, Rgba(0, 0, 0, 200), 8.0f);
+    const float x = left + kPad;
+    const float room = width - 2 * kPad;
+    float y = kMargin + kPad;
+    d.text(d.user, x, y, px, Rgba(255, 220, 120, 255),
+           Elided(d, px, "Co-op item cheats (debug): Enter gives, F8 or Esc closes", room).c_str());
+    y += line;
+    d.text(d.user, x, y, px, Rgba(255, 255, 255, 255),
+           Tail(d, px, "Find: " + c.filter + "_", room).c_str());
+    y += line;
+    d.text(d.user, x, y, px, Rgba(170, 170, 170, 255),
+           c.filter.empty() ? "Quick gifts (type to find any item flag):" : "Item flags with that in the name:");
+    y += line;
+    if (c.rows.empty()) {
+        d.text(d.user, x, y, px, Rgba(170, 170, 170, 255), "(none)");
+        y += line;
+    }
+    for (std::size_t i = 0; i < c.rows.size(); ++i) {
+        if (i == c.selected) {
+            d.rect(d.user, left + 4, y - 2, left + width - 4, y + px + 3, Rgba(90, 200, 255, 90), 4.0f);
+        }
+        d.text(d.user, x, y, px, Rgba(255, 255, 255, 255), Elided(d, px, c.rows[i], room).c_str());
+        y += line;
+    }
+    if (!c.result.empty()) {
+        d.text(d.user, x, y, px, Rgba(255, 220, 120, 255), Elided(d, px, c.result, room).c_str());
+    }
+}
+
 }  // namespace
 
 std::vector<std::vector<std::string>> PlayerCells(const std::vector<CoopHook::PlayerRow>& rows) {
@@ -293,7 +329,7 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, b
 }
 
 bool Wanted(const Scene& s) {
-    return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
+    return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
            (s.panel && !s.panel->empty());
 }
 
@@ -311,6 +347,9 @@ void Draw(const HosCoopDraw& d, const Scene& s) {
     DrawChat(d, s.chat, DrawBox(d, s.box));
     if (s.players) {
         DrawPlayers(d, *s.players);
+    }
+    if (s.cheats) {
+        DrawCheats(d, *s.cheats);
     }
 }
 

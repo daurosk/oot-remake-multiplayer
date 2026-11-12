@@ -253,3 +253,25 @@ TEST_CASE("hookshot draw: the chat box at the bottom left, the lines above it an
     CHECK(tail.substr(0, 3) == "...");               // the end shows, where the typing is
     CHECK(tail.substr(tail.size() - 2) == "y_");
 }
+
+TEST_CASE("hookshot draw: the item cheats panel at the top right, the chosen row marked") {
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    CoopDraw::CheatsView v;
+    v.filter = "boom";
+    v.rows = {"IsGet.Item_Boomerang", "PouchData.Item_Boomerang.StockNum"};
+    v.selected = 1;
+    v.result = "gave PouchData.Item_Boomerang.StockNum";
+    s.cheats = v;
+    CHECK(CoopDraw::Wanted(s));
+    CoopDraw::Draw(c.d, s);
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() == 6);  // title, find line, heading, two rows, result
+    CHECK(texts[1].text == "Find: boom_");
+    CHECK(texts[3].text == "IsGet.Item_Boomerang");
+    CHECK(texts[0].x > 1280.0f - 16.0f - 560.0f * 15.84f / 14.0f);  // right-aligned at the margin
+    CHECK(texts[0].x < 1280.0f - 600.0f);
+    const auto rects = c.Of("rect");
+    REQUIRE(rects.size() == 2);  // the panel and the chosen row
+    CHECK(rects[1].y > texts[3].y);  // the second row is the chosen one
+}

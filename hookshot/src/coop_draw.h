@@ -3,11 +3,13 @@
 // window draws with Qt (lichii/hook/coop_window.cpp, its plain look), drawn
 // here through Hookshot's Dear ImGui (hos_coop_draw.h): the chat lines, the
 // players' name tags, the player list (F6 held) and the panel (F7). The chat
-// box (T, coop_chatbox.h) too; the cheats window is not drawn on Hookshot yet. The HUD blocks
+// box (T, coop_chatbox.h) and, with LICHII_COOP_CHEATS=1, the item cheats (F8,
+// coop_cheats_panel.h) too. The HUD blocks
 // (the other players under your hearts) are drawn with shapes, not the
 // game's heart pictures.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -56,8 +58,17 @@ struct HudBlock {
     bool dim = false;         // not connected
 };
 
+// The item cheats panel, when it is open.
+struct CheatsView {
+    std::string filter;
+    std::vector<std::string> rows;  // labels
+    std::size_t selected = 0;
+    std::string result;             // CoopCheats::LastResult
+};
+
 // What to draw this present.
 struct Scene {
+    std::optional<CheatsView> cheats;
     std::vector<HudBlock> hud;
     std::optional<ChatBoxView> box;
     std::vector<ChatShown> chat;

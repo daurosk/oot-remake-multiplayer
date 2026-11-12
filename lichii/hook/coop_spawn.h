@@ -102,10 +102,13 @@ struct Copy {
     // The owner's animation where the copy is shown (the bomb's fuse): played
     // on the copy when its slot 0 shows another, its frame set when off.
     std::optional<coop::protocol::Animation> animation;
-    // Issue 166: not empty: a key of the copy's own ELink user (the
-    // shootable's, which an effect stand-in keeps) that the director emits
-    // once on the copy with the game's own search and emit, where it is.
+    // Issue 166: not empty: a key of the actor's own ELink user that the
+    // director emits once on it with the game's own search and emit, where
+    // it is.
     std::string effect;
+    // Always the game's own actor of that name, never the pack's stand-in:
+    // the shootable the game makes has the effect user the key belongs to.
+    bool real = false;
 };
 
 class Sync {
@@ -179,9 +182,11 @@ public:
     // a copy landed, as it reaches the spot. LICHII_COOP_SHOT_IMPACTS=0: none.
     void SetImpacts(bool on) { impacts_on_ = on; }
     std::size_t Impacts() const { return impacts_made_; }
-    // Issue 166, the native way (the default): where a copy lands, the copy
-    // itself plays the shootable's hit effect through the game's own emit
-    // (Copy::effect); no impact actor. LICHII_COOP_SHOT_EFFECTS=0: none.
+    // Issue 166, the native way (the default): where a copy lands, the game's
+    // own shootable of that name is made (not drawn: a shootable made with no
+    // shooter never is) and plays its own hit effect through the game's own
+    // emit (Copy::effect, Copy::real), then goes. Nothing from the puppet
+    // pack. LICHII_COOP_SHOT_EFFECTS=0: none.
     void SetHitEffects(bool on) { hit_effects_on_ = on; }
     std::size_t HitEffects() const { return hit_effects_; }
 
@@ -275,7 +280,7 @@ private:
         bool blasted = false;         // added to TheBlasts once
         bool landed = false;          // counted in landed_ once (issue 166)
         bool impacted = false;        // its impacts asked for once (issue 166)
-        std::string effect;           // the hit effect its copy plays from its landing on
+        bool effect_asked = false;    // its hit effect was asked for once (issue 166)
         bool live = false;            // the director had it on the list
         // Issue 169: in the owner's hands (shown as the held stand-in, along
         // `held_path` kHeldBehindUs late), and the owner's animation.
@@ -317,6 +322,21 @@ private:
         std::uint64_t until_us = 0;
     };
     std::vector<Impact> impacts_;
+    // Issue 166: the game's own shootables made where copies land, to play
+    // their hit effect. Asked for when the owner's remove comes (the copy is
+    // shown reaching the spot kBehindUs later, which gives the game time to
+    // make the actor); the effect is asked at `effect_us`, and the actor goes
+    // at `until_us`.
+    struct Carrier {
+        std::uint64_t key = 0;
+        std::string actor;
+        Vec3 position{};
+        std::string effect;
+        std::uint64_t effect_us = 0;
+        std::uint64_t until_us = 0;
+        std::uint64_t address = 0;  // once the director made it (never taken for a shot of ours)
+    };
+    std::vector<Carrier> carriers_;
     bool impacts_on_ = true;
     bool hit_effects_on_ = true;
     std::size_t hit_effects_ = 0;
@@ -357,12 +377,6 @@ private:
 // (no physics, sensor, attack or AI), so it is drawn wherever it is put, and
 // it can hit nothing. Empty when the actor has none.
 std::string_view StandIn(std::string_view actor);
-// Issue 166: the stand-in that also keeps the shootable's own xlink users
-// (its ELink and SLink params and names; still no AI, physics or attack), so
-// the game's own emit can play the shootable's effects on the copy. Asked
-// for first when the pack has it; after kStandInTries failures in a row the
-// plain stand-in is used again. Empty for an actor with none.
-std::string_view EffectStandIn(std::string_view actor);
 // Issue 151: shared actors whose copy is only ever the stand-in. A lure made
 // as the game's own Weapon_Lure would be a lure the fish here can bite, so
 // with no stand-in in the pack (or after it failed) no copy is made at all.
@@ -442,7 +456,6 @@ private:
         // Made from the stand-in pack (StandIn): placed as the puppet is
         // (place and the pending transform), with no setter call.
         bool stand_in = false;
-        bool effects = false;   // the EffectStandIn: it has the shootable's ELink user
         bool emitted = false;   // Copy::effect was played (or could not be) once
         std::string copy_of;  // the shared actor's name (Copy::actor)
     };
@@ -499,8 +512,6 @@ private:
     std::vector<std::size_t> plays_;    // slots with an animation this frame
     std::vector<std::size_t> emits_;    // slots with an effect to play this frame
     bool emit_found_ = false;           // the search found the key: emit next
-    std::map<std::string, int> effect_fails_;  // EffectStandIn failures in a row, by shared actor
-    std::set<std::string> no_effects_;         // ... kStandInTries times: the plain stand-in again
     std::size_t emits_done_ = 0;
     std::size_t emit_notes_ = 0;
     std::map<std::string, std::size_t> name_cells_;  // animation name to its cell

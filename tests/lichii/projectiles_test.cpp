@@ -500,20 +500,45 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     sync.Receive(Wire(remove, 1));
     copies.clear();
     sync.Tick(kScene, 2, now + 33 * kMs, {}, live, send, copies);
-    REQUIRE(copies.size() == 1);
+    // Issue 166: with the copy, the game's own arrow is asked for at the spot (not drawn: made
+    // with no shooter), to play the arrow's own hit effect there. Not yet: the copy is shown late.
+    REQUIRE(copies.size() == 2);
     CHECK(copies[0].act == Act::show);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
     CHECK(sync.Landed() == 1);
-    CHECK(copies[0].effect.empty());  // (not shown at the spot yet)
+    CHECK(copies[0].effect.empty());
+    CHECK_FALSE(copies[0].real);
+    CHECK(copies[1].actor == "NormalArrow");
+    CHECK(copies[1].real);  // never the pack's stand-in
+    CHECK_FALSE(copies[1].place);
+    CHECK(copies[1].position[0] == doctest::Approx(5.0f));
+    CHECK(copies[1].effect.empty());
+    CHECK(sync.HitEffects() == 1);
+    // The copy reaches the spot: the effect is asked for now (the director emits it once).
+    copies.clear();
+    sync.Tick(kScene, 2, now + 33 * kMs + shots::Track::kBehindUs, {}, live, send, copies);
+    REQUIRE(copies.size() == 2);
+    CHECK(copies[1].effect == "Hit_AdditionalAttacker");
+    // The game's arrow shows up on our own list at the spot: it is ours to make, never a new shot of this game's.
+    {
+        CoopSpawn::Seen made;
+        made.address = 0x9900;
+        made.name = "NormalArrow";
+        made.position = {5.0f, 4.8f, 0.0f};
+        const std::size_t before = send.size();
+        copies.clear();
+        sync.Tick(kScene, 2, now + 50 * kMs + shots::Track::kBehindUs, {made}, live, send, copies);
+        for (std::size_t i = before; i < send.size(); ++i) {
+            CHECK_FALSE(std::holds_alternative<proto::ObjectSpawn>(send[i]));
+        }
+    }
     // Held its full time after it is shown reaching the spot (100 ms late).
     copies.clear();
     const std::uint64_t got = now + 33 * kMs;
     const std::uint64_t hold = shots::LandHoldUs(shots::Kind::arrow) + shots::Track::kBehindUs;
     sync.Tick(kScene, 2, got + hold - kMs, {}, live, send, copies);
-    REQUIRE(copies.size() == 1);
+    REQUIRE(copies.size() == 1);  // (the effect's actor is long gone: kImpactLifeUs)
     CHECK(copies[0].act == Act::show);
-    // Issue 166: at the spot the copy itself plays the arrow's own hit effect (the director emits it once).
-    CHECK(copies[0].effect == "Hit_AdditionalAttacker");
     CHECK(sync.HitEffects() == 1);
     CHECK(shots::HitEffect(shots::Kind::seed) == "Hit_AdditionalAttacker");
     CHECK(shots::HitEffect(shots::Kind::bomb).empty());
@@ -591,6 +616,7 @@ TEST_CASE("shots: our seed's bounce is sent at once, and the log counts it") {
 
 TEST_CASE("shots: rapid hits keep at most kMaxImpacts impact actors, the newest (issue 166)") {
     CoopSpawn::Sync sync;
+    sync.SetHitEffects(false);  // (the earlier way alone: LICHII_COOP_SHOT_IMPACTS=1)
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;
@@ -657,6 +683,7 @@ TEST_CASE("shots: where a seed copy lands, its spark and sound are made once (is
     for (const bool on : {true, false}) {
         CoopSpawn::Sync sync;
         sync.SetImpacts(on);
+        sync.SetHitEffects(false);  // (the earlier way alone)
         std::vector<proto::Message> send;
         std::vector<Copy> copies;
         const std::map<std::uint64_t, std::uint64_t> live;

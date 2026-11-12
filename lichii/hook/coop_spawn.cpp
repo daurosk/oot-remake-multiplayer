@@ -134,6 +134,7 @@ void Sync::Reset() {
     copy_addresses_.clear();
     local_.clear();
     impacts_.clear();  // issue 166: the old scene's sparks
+    carriers_.clear();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -234,6 +235,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         link_before_.reset();
     }
 
+    for (Carrier& c : carriers_) {  // issue 166: ours too, never a new shot of this game's
+        if (const auto it = copies_live.find(c.key); it != copies_live.end() && it->second != 0) {
+            c.address = it->second;
+            copy_addresses_.insert(c.address);
+        }
+    }
     for (auto& [id, r] : copies_) {
         if (const auto it = copies_live.find(r.key); it != copies_live.end() && it->second != 0) {
             r.address = it->second;
@@ -378,6 +385,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 break;
             }
         }
+        for (Carrier& c : carriers_) {  // issue 166: made, not reported yet
+            if (!claimed && !enemy_shot && c.address == 0 && c.actor == s.name &&
+                Distance(c.position, s.position) < kClaimDistance) {
+                c.address = s.address;
+                copy_addresses_.insert(s.address);
+                claimed = true;
+            }
+        }
         if (claimed || self == 0) {
             continue;
         }
@@ -516,16 +531,23 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             r.landed = true;
             ++landed_;
         }
-        if (hit && landing && r.effect.empty() && hit_effects_on_ &&
-            now_us >= r.got_us + CoopProjectiles::Track::kBehindUs &&
+        if (hit && landing && !r.effect_asked && hit_effects_on_ &&
             !CoopProjectiles::HitEffect(info->kind).empty()) {
-            // Issue 166: the copy reaches the spot now (it is shown kBehindUs
-            // late): it plays the shootable's own hit effect there, through
-            // the game's own emit (the director; once for a copy).
-            r.effect = std::string(CoopProjectiles::HitEffect(info->kind));
+            // Issue 166: the owner's shot hit there. The game's own
+            // shootable is made at the spot now and plays its own hit
+            // effect when the copy is shown reaching it (kBehindUs late),
+            // through the game's own emit (the director); then it goes.
+            r.effect_asked = true;
             ++hit_effects_;
+            const std::uint64_t at_us = r.got_us + CoopProjectiles::Track::kBehindUs;
+            carriers_.push_back({next_key_++, r.actor, r.Position(), std::string(CoopProjectiles::HitEffect(info->kind)),
+                                 at_us, at_us + CoopProjectiles::kImpactLifeUs, 0});
+            if (carriers_.size() > CoopProjectiles::kMaxImpacts) {  // (never the shot copies' slots)
+                carriers_.erase(carriers_.begin(),
+                                carriers_.begin() + static_cast<std::ptrdiff_t>(carriers_.size() -
+                                                                                CoopProjectiles::kMaxImpacts));
+            }
         }
-        c.effect = r.effect;
         if (hit && landing && !r.impacted && impacts_on_ &&
             now_us >= r.got_us + CoopProjectiles::Track::kBehindUs) {
             // The earlier way (LICHII_COOP_SHOT_IMPACTS=1): impact actors of
@@ -557,6 +579,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
     // Issue 166: made where they are and left there (no place written); gone
     // from the list, the director deletes them.
+    std::erase_if(carriers_, [now_us](const Carrier& c) { return now_us >= c.until_us; });
+    for (const Carrier& carrier : carriers_) {
+        Copy c;
+        c.key = carrier.key;
+        c.actor = carrier.actor;
+        c.position = carrier.position;
+        c.place = false;
+        c.real = true;
+        if (now_us >= carrier.effect_us) {
+            c.effect = carrier.effect;
+        }
+        copies.push_back(std::move(c));
+    }
     std::erase_if(impacts_, [now_us](const Impact& i) { return now_us >= i.until_us; });
     for (const Impact& i : impacts_) {
         Copy c;
@@ -824,9 +859,6 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
             } else {
                 slot.taken = result;
                 slot.phase = Phase::live;
-                if (slot.effects) {
-                    effect_fails_[slot.copy_of] = 0;
-                }
                 if (slot.stand_in || CoopProjectiles::IsImpact(slot.copy_of)) {
                     stand_in_fails_[slot.copy_of] = 0;
                 }
@@ -906,16 +938,6 @@ std::string_view StandIn(std::string_view actor) {
     return {};
 }
 
-std::string_view EffectStandIn(std::string_view actor) {
-    if (actor == "Shootable_DekuSeed") {
-        return "CoopShotFx_Seed";
-    }
-    if (actor == "NormalArrow") {
-        return "CoopShotFx_Arrow";
-    }
-    return {};
-}
-
 bool StandInOnly(std::string_view actor) {
     // Issue 199: the game's own Epona made here would be a second horse with
     // her own AI (she runs off, or to us): only ever the stand-in.
@@ -939,12 +961,6 @@ std::set<std::string> StandInsIn(std::string_view manifest) {
     const std::string_view bomb = HeldStandIn("Item_Bomb");
     if (manifest.find("\"" + std::string(bomb) + "\"") != std::string_view::npos) {
         out.insert(std::string(bomb));
-    }
-    for (const std::string_view shared : {"Shootable_DekuSeed", "NormalArrow"}) {  // issue 166
-        const std::string name(EffectStandIn(shared));
-        if (manifest.find("\"" + name + "\"") != std::string_view::npos) {
-            out.insert(name);
-        }
     }
     // Issue 166: the impact actors (its "impacts").
     for (const auto kind : {CoopProjectiles::Kind::seed, CoopProjectiles::Kind::arrow}) {
@@ -1101,7 +1117,9 @@ std::uint64_t Director::NameCellOf(CoopPuppet::Guest& guest, const std::string& 
 //   kXLinkEmit(user, &locator, &handle, 0): plays it at the actor (the
 //     function itself checks that effects are on and the user may emit).
 // The locator (8 bytes) and the handle the emit fills (16 kept for it) live
-// in the slot's spare bytes after its name text.
+// in the slot's spare bytes after its name text. The actor is the game's own
+// shootable, made where the copy lands (Copy::real): it has the user the key
+// belongs to, and a shootable made with no shooter is not drawn.
 namespace {
 constexpr std::uint64_t kComponentXLink = 0x68;
 constexpr std::uint64_t kXLinkELinkUser = 0x70;
@@ -1225,8 +1243,6 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
         remade_.clear();
         slots_.assign(kSlots, Slot{});
         name_cells_.clear();
-        effect_fails_.clear();
-        no_effects_.clear();
     }
     std::erase_if(remade_, [this](const auto& e) { return Wanted(e.first) == nullptr; });
     std::map<std::uint64_t, std::uint64_t> live;
@@ -1322,18 +1338,7 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
             }
         }
         if (slot.phase == Phase::done) {
-            if (slot.effects && slot.taken == 0) {
-                // Issue 166: the stand-in with the shootable's effect users
-                // never became an actor: made again, and after kStandInTries
-                // in a row as the plain stand-in (seen, with no hit effect).
-                started_.erase(slot.key);
-                if (++effect_fails_[slot.copy_of] >= kStandInTries &&
-                    no_effects_.insert(slot.copy_of).second) {
-                    Say(slot.copy_of + ": " + slot.actor + " could not be made " +
-                        std::to_string(kStandInTries) +
-                        " times in a row; the plain stand-in is used (no hit effect this session)");
-                }
-            } else if (slot.stand_in && slot.taken == 0) {
+            if (slot.stand_in && slot.taken == 0) {
                 // A stand-in that never became an actor (create failed,
                 // timed out or dropped, or the take gave none): the copy is
                 // made again; after kStandInTries in a row, as the game's
@@ -1489,24 +1494,14 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         std::memcpy(arg.data() + 0x30, scale.data(), 12);
         std::memcpy(arg.data() + 0x40, &create_default, 8);
         arg[0x98] = 1;
-        std::string_view stand_in = no_stand_in_.count(copy.actor) != 0 ? std::string_view{}
+        // (issue 166: Copy::real is the game's own actor whatever the pack has)
+        std::string_view stand_in = copy.real || no_stand_in_.count(copy.actor) != 0 ? std::string_view{}
                                     : copy.held ? HeldStandIn(copy.actor)
                                                 : StandIn(copy.actor);
         if (!stand_in.empty()) {
             std::lock_guard lock(mutex_);
             if (stand_ins_.count(std::string(stand_in)) == 0) {
                 stand_in = {};  // the pack has none: never ask for an unknown actor
-            }
-        }
-        // Issue 166: the stand-in that keeps the shootable's effect users,
-        // when the pack has it and the game made it so far.
-        bool effects = false;
-        if (!stand_in.empty() && !copy.held && no_effects_.count(copy.actor) == 0) {
-            const std::string_view with_effects = EffectStandIn(copy.actor);
-            std::lock_guard lock(mutex_);
-            if (!with_effects.empty() && stand_ins_.count(std::string(with_effects)) != 0) {
-                stand_in = with_effects;
-                effects = true;
             }
         }
         const std::string name = stand_in.empty() ? copy.actor : std::string(stand_in);
@@ -1525,7 +1520,6 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         free->actor = name;
         free->copy_of = copy.actor;
         free->stand_in = !stand_in.empty();
-        free->effects = effects;
         free->phase = Phase::creating;
         free->since_ms = now_ms;
         CoopPuppet::Call c;
@@ -1678,7 +1672,7 @@ public:
         }
         if (sync_.HitEffects() != logged_hit_effects_) {
             logged_hit_effects_ = sync_.HitEffects();
-            LOG_INFO(Core, "coop: shots: copies that landed and were asked to play their own hit effect ({} so far)",
+            LOG_INFO(Core, "coop: shots: the game's own hit effect asked for where copies landed ({} so far)",
                      logged_hit_effects_);
         }
         if (sync_.Impacts() != logged_impacts_) {

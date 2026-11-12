@@ -929,9 +929,9 @@ TEST_CASE("spawn: a lure copy is only ever its stand-in") {
     }
 }
 
-// Issue 166, the native way: a seed copy is the stand-in that keeps the seed's own
-// effect user, and where it lands the game's own search and emit play the seed's
-// hit effect on it. No actor of ours is made for the effect.
+// Issue 166, the native way: where a seed copy lands, the game's own seed is made there
+// (Copy::real: never the pack's stand-in) and the game's own search and emit play the
+// seed's hit effect on it. Nothing from the puppet pack.
 namespace {
 struct EffectRig : StandInRig {
     static constexpr std::uint64_t table = 0x41000000;
@@ -954,15 +954,24 @@ struct EffectRig : StandInRig {
         guest.Set(user + 0x58, resource);
         guest.Set(resource + 0x18, accessor);
     }
-    // A seed copy with the effect stand-in, made and live as R::actor.
-    void MakeLive(CoopSpawn::Director& d, Copy& copy) {
+    static Copy Carrier() {
+        Copy copy;
+        copy.key = 7;
+        copy.actor = "Shootable_DekuSeed";
+        copy.position = {1.0f, 2.0f, 3.0f};
+        copy.place = false;
+        copy.real = true;
+        return copy;
+    }
+    // The game's own seed for the effect, made and live as R::actor.
+    void MakeLive(CoopSpawn::Director& d, const Copy& copy) {
         namespace addr = CoopPuppet::addr;
         d.SetInput(base, {copy});
         REQUIRE(d.Step(guest, false, 0, 0));  // malloc
         auto c = d.Step(guest, true, block, 0);
         REQUIRE(c);
         REQUIRE(c->function == base + addr::kCreate);
-        CHECK(Name(*c) == "CoopShotFx_Seed");
+        CHECK(Name(*c) == "Shootable_DekuSeed");  // the game's own, though the pack has a stand-in
         const std::uint64_t handle = c->x[3];
         d.Step(guest, true, 0, 0);
         guest.Set(handle, request);
@@ -973,28 +982,19 @@ struct EffectRig : StandInRig {
 };
 } // namespace
 
-TEST_CASE("spawn: a landed seed copy plays its hit effect through the game's own search and emit") {
+TEST_CASE("spawn: the game's own seed made where a copy landed plays its hit effect through the game's search and emit") {
     using R = EffectRig;
-    CHECK(std::string(CoopSpawn::EffectStandIn("Shootable_DekuSeed")) == "CoopShotFx_Seed");
-    CHECK(std::string(CoopSpawn::EffectStandIn("NormalArrow")) == "CoopShotFx_Arrow");
-    CHECK(CoopSpawn::EffectStandIn("Shootable_Hook").empty());
-    CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Seed\"}, {\"actor\": \"CoopShotFx_Seed\"}]}")
-              .count("CoopShotFx_Seed") == 1);
-
     EffectRig rig;
     std::vector<std::string> said;
     CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
-    d.SetStandIns({"CoopShot_Seed", "CoopShotFx_Seed"});
-    Copy copy;
-    copy.key = 7;
-    copy.actor = "Shootable_DekuSeed";
-    copy.position = {1.0f, 2.0f, 3.0f};
+    d.SetStandIns({"CoopShot_Seed"});
+    Copy copy = R::Carrier();
     rig.MakeLive(d, copy);
 
-    // Flying: nothing is asked of the effect system.
+    // Made ahead of the moment: nothing is asked of the effect system, and it is left where it was made.
     d.SetInput(R::base, {copy});
     CHECK_FALSE(d.Step(rig.guest, false, 0, 33));
-    // Landed: the search for the key in the seed's own table, then the emit with what it named.
+    // The moment: the search for the key in the seed's own table, then the emit with what it named.
     copy.effect = "Hit_AdditionalAttacker";
     d.SetInput(R::base, {copy});
     auto c = d.Step(rig.guest, false, 0, 50);
@@ -1016,7 +1016,7 @@ TEST_CASE("spawn: a landed seed copy plays its hit effect through the game's own
     CHECK(c->x[2] != locator);
     CHECK(c->x[3] == 0);
     CHECK_FALSE(d.Step(rig.guest, true, 0, 50));
-    // Once for a copy.
+    // Once for it.
     for (std::uint64_t ms = 66; ms < 200; ms += 16) {
         d.SetInput(R::base, {copy});
         CHECK_FALSE(d.Step(rig.guest, false, 0, ms));
@@ -1024,17 +1024,20 @@ TEST_CASE("spawn: a landed seed copy plays its hit effect through the game's own
     CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
         return s.find("played its hit effect through the game's own emit") != std::string::npos;
     }));
+    // Its short life over: deleted with the game's delete request.
+    d.SetInput(R::base, {});
+    c = d.Step(rig.guest, false, 0, 800);
+    REQUIRE(c);
+    CHECK(c->function == R::base + CoopPuppet::addr::kRequestDelete);
+    CHECK(c->x[0] == R::actor);
 }
 
-TEST_CASE("spawn: no emit when the game's search does not know the key, or the copy has no effect user") {
+TEST_CASE("spawn: no emit when the game's search does not know the key, or the actor has no effect user") {
     using R = EffectRig;
     {
         EffectRig rig;
         CoopSpawn::Director d;
-        d.SetStandIns({"CoopShot_Seed", "CoopShotFx_Seed"});
-        Copy copy;
-        copy.key = 7;
-        copy.actor = "Shootable_DekuSeed";
+        Copy copy = R::Carrier();
         rig.MakeLive(d, copy);
         copy.effect = "Hit_AdditionalAttacker";
         d.SetInput(R::base, {copy});
@@ -1047,13 +1050,26 @@ TEST_CASE("spawn: no emit when the game's search does not know the key, or the c
     }
     {
         EffectRig rig;
-        rig.guest.Set(R::xlink + 0x70, std::uint64_t{0});  // a plain stand-in: no ELink user
         std::vector<std::string> said;
         CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
-        d.SetStandIns({"CoopShot_Seed", "CoopShotFx_Seed"});
-        Copy copy;
-        copy.key = 7;
-        copy.actor = "Shootable_DekuSeed";
+        Copy copy = R::Carrier();
+        rig.MakeLive(d, copy);
+        copy.effect = "Hit_AdditionalAttacker";
+        d.SetInput(R::base, {copy});
+        auto c = d.Step(rig.guest, false, 0, 50);
+        REQUIRE(c);
+        REQUIRE(c->function == R::base + R::kSearch);
+        CHECK_FALSE(d.Step(rig.guest, true, 1, 50));  // true, but the locator stayed empty: said, no emit
+        CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+            return s.find("named nothing") != std::string::npos;
+        }));
+    }
+    {
+        EffectRig rig;
+        rig.guest.Set(R::xlink + 0x70, std::uint64_t{0});  // no ELink user
+        std::vector<std::string> said;
+        CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
+        Copy copy = R::Carrier();
         rig.MakeLive(d, copy);
         copy.effect = "Hit_AdditionalAttacker";
         d.SetInput(R::base, {copy});
@@ -1062,43 +1078,6 @@ TEST_CASE("spawn: no emit when the game's search does not know the key, or the c
             return s.find("has no effect user") != std::string::npos;
         }));
     }
-}
-
-TEST_CASE("spawn: an effect stand-in the game will not make gives way to the plain stand-in") {
-    using R = StandInRig;
-    namespace addr = CoopPuppet::addr;
-    StandInRig rig;
-    constexpr std::uint64_t failed = 0x51000000;
-    rig.guest.Map(failed, 0x10);
-    rig.guest.Set(failed, std::uint32_t{5});
-    std::vector<std::string> said;
-    CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
-    d.SetStandIns({"CoopShot_Seed", "CoopShotFx_Seed"});
-    Copy copy;
-    copy.key = 1;
-    copy.actor = "Shootable_DekuSeed";
-    d.SetInput(R::base, {copy});
-    REQUIRE(d.Step(rig.guest, false, 0, 0));  // malloc
-    auto c = d.Step(rig.guest, true, R::block, 0);
-    std::uint64_t now = 0;
-    std::vector<std::string> asked;
-    for (int round = 0; round < 4 && c && c->function == R::base + addr::kCreate; ++round) {
-        asked.push_back(rig.Name(*c));
-        const std::uint64_t handle = c->x[3];
-        d.Step(rig.guest, true, 0, now);
-        now += 16;
-        rig.guest.Set(handle, failed);         // create failed (state 5)
-        c = d.Step(rig.guest, false, 0, now);  // seen, made again at once
-        now += 16;
-    }
-    REQUIRE(asked.size() == 4);
-    CHECK(asked[0] == "CoopShotFx_Seed");
-    CHECK(asked[1] == "CoopShotFx_Seed");
-    CHECK(asked[2] == "CoopShotFx_Seed");
-    CHECK(asked[3] == "CoopShot_Seed");  // seen as before, with no hit effect
-    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
-        return s.find("the plain stand-in is used") != std::string::npos;
-    }));
 }
 
 // Issue 166: an impact actor (the spark or sound where a copy landed) is made

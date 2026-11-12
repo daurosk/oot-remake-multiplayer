@@ -506,51 +506,7 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual([n for _, n in build.STAND_INS],
                          ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong",
                           "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb",
-                          "CoopShot_Boomerang", "CoopRide_Epona", "CoopShotFx_Seed", "CoopShotFx_Arrow"])
-
-    def test_effect_stand_in_keeps_the_shootables_xlink_users(self):
-        # Issue 166: the hook plays the shootable's hit effect on this copy with the game's own
-        # emit, so the copy keeps the shootable's ELink/SLink/XLink params and user names. No AI.
-        seed = {"Components": {
-            "ModelInfoRef": "?Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml",
-            "PhysicsRef": "?Component/Physics/Seed.engine__component__PhysicsParam.bgyml",
-            "ELinkRef": "?Component/ELink/Seed.engine__component__ELinkParam.bgyml",
-            "SLinkRef": "?Component/SLink/Seed.engine__component__SLinkParam.bgyml",
-            "XLinkRef": "?Component/XLink/Seed.engine__component__XLinkParam.bgyml",
-            "AIInfoRef": "?AI/AIInfo/Seed.engine__actor__AIInfo.bgyml",
-        }}
-        members = {
-            "Actor/Shootable_DekuSeed.engine__actor__ActorParam.bgyml": byml.dumps(seed),
-            "Component/ModelInfo/Seed.engine__component__ModelInfo.bgyml": byml.dumps({"FmdbName": "Seed"}),
-            "Component/Physics/Seed.engine__component__PhysicsParam.bgyml": byml.dumps({}),
-            "Component/ELink/Seed.engine__component__ELinkParam.bgyml": byml.dumps({"UserName": "Shootable_DekuSeed"}),
-            "Component/SLink/Seed.engine__component__SLinkParam.bgyml": byml.dumps({"UserName": "Shootable_DekuSeed"}),
-            "Component/XLink/Seed.engine__component__XLinkParam.bgyml": byml.dumps({}),
-        }
-        self.assertEqual(build.STAND_IN_XLINK, ("CoopShotFx_Seed", "CoopShotFx_Arrow"))
-        pack, ap, names = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShotFx_Seed")
-        comps = byml.loads(ap)["Components"]
-        for k in ("ModelInfoRef", "ELinkRef", "SLinkRef", "XLinkRef"):
-            self.assertEqual(comps[k], seed["Components"][k])
-        for k in ("PhysicsRef", "AIInfoRef"):
-            self.assertNotIn(k, comps)
-        files = sarc.read(pack)
-        self.assertIn("Component/ELink/Seed.engine__component__ELinkParam.bgyml", files)
-        self.assertIn("Component/XLink/Seed.engine__component__XLinkParam.bgyml", files)
-        self.assertFalse([n for n in names if n.startswith("AI/")])
-        # The plain stand-in of the same shootable is unchanged: the shared XLink param, no users.
-        _, plain, _ = build.build_stand_in(members, "Shootable_DekuSeed", "CoopShot_Seed")
-        plain = byml.loads(plain)["Components"]
-        self.assertEqual(plain["XLinkRef"], build.FIXED_COMPONENTS["XLinkRef"])
-        self.assertNotIn("ELinkRef", plain)
-        source_row = {"__RowId": "Shootable_DekuSeed", "ActorName": "Item_DekuSeed",
-                      "ELinkUserName": "Shootable_DekuSeed", "SLinkUserName": "Shootable_DekuSeed"}
-        row = build.stand_in_row(source_row, "CoopShotFx_Seed")
-        self.assertEqual(row["ELinkUserName"], "Shootable_DekuSeed")
-        self.assertEqual(row["SLinkUserName"], "Shootable_DekuSeed")
-        self.assertNotIn("ActorName", row)
-        self.assertEqual(row["__RowId"], "CoopShotFx_Seed")
-        self.assertNotIn("ELinkUserName", build.stand_in_row(source_row, "CoopShot_Seed"))
+                          "CoopShot_Boomerang", "CoopRide_Epona"])
 
     def test_seed_stand_in_plays_its_tail(self):
         # Issue 198: with the impacts' AI template the seed stand-in also plays the seed's Tail.

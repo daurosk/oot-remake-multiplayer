@@ -136,6 +136,12 @@ TEST_CASE("drops: which actors are drops") {
     CHECK_FALSE(CoopDrops::IsDrop("Obj_FairySpirit"));
     CHECK_FALSE(CoopDrops::IsDrop("Enemy_ReDead"));
     CHECK_FALSE(CoopDrops::IsDrop("Item_Bomb"));
+    // Placed ones: bush and grass loot is shared, a placed silver rupee is
+    // the dungeon key path's.
+    CHECK(CoopDrops::SharesPlacedPickup("Obj_Heart"));
+    CHECK(CoopDrops::SharesPlacedPickup("Obj_Rupee_Green"));
+    CHECK_FALSE(CoopDrops::SharesPlacedPickup("Obj_Rupee_Silver"));
+    CHECK_FALSE(CoopDrops::SharesPlacedPickup("Enemy_ReDead"));
 }
 
 TEST_CASE("drops: a new scene asks, our game's drop is told once") {

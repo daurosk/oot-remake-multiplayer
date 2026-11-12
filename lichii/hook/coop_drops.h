@@ -62,6 +62,10 @@ using coop::protocol::Vec3;
 // their pickup is shared.
 bool IsDrop(std::string_view name);
 
+// A placed drop whose pickup this file shares (bush and grass loot). Not a
+// placed silver rupee: the dungeon key path removes that one (docs/items.md).
+bool SharesPlacedPickup(std::string_view name);
+
 // One drop actor of one walk.
 struct Seen {
     std::uint64_t address = 0;

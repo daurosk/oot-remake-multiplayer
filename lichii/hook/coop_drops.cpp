@@ -82,6 +82,12 @@ bool IsDrop(std::string_view name) {
     return std::find(kDrops.begin(), kDrops.end(), name) != kDrops.end();
 }
 
+bool SharesPlacedPickup(std::string_view name) {
+    // A placed silver rupee is a one-time pickup with its own path (dungeon
+    // keys, RemovedWhenTaken; docs/items.md), never a bush's or grass loot.
+    return IsDrop(name) && name != "Obj_Rupee_Silver";
+}
+
 // ---------------------------------------------------------------- Sync
 
 void Sync::Receive(const proto::Message& message) {
@@ -1021,21 +1027,30 @@ private:
                         const u64 hash = placement && *placement != 0
                                              ? Get<u64>(memory, *placement + kPlacementHash).value_or(0)
                                              : 0;
-                        entry.what = What::drop;
-                        if (hash != 0 && hash != ~u64{0} && !placed_) {
-                            // Bush and grass loot (#102): every game has
-                            // its own with this hash; only pickups are shared.
-                            entry.hash = hash;
-                            if (!first_ && placed_logged_ < 256) {
-                                ++placed_logged_;
-                                const Vec3 at = Place(memory, a);
-                                LOG_INFO(Core,
-                                         "coop: drops: {} {:#x} is placed (hash {:#x}) at {:.1f} {:.1f} "
-                                         "{:.1f}: pickup shared",
-                                         name, a, hash, at[0], at[1], at[2]);
+                        const bool has_hash = hash != 0 && hash != ~u64{0} && !placed_;
+                        if (has_hash && !SharesPlacedPickup(name)) {
+                            // A placed silver rupee: the dungeon key path's.
+                            if (!first_) {
+                                LOG_INFO(Core, "coop: drops: {} {:#x} is placed (hash {:#x}): not shared",
+                                         name, a, hash);
                             }
+                        } else {
+                            entry.what = What::drop;
+                            if (has_hash) {
+                                // Bush and grass loot (#102): every game has
+                                // its own with this hash; only pickups are shared.
+                                entry.hash = hash;
+                                if (!first_ && placed_logged_ < 256) {
+                                    ++placed_logged_;
+                                    const Vec3 at = Place(memory, a);
+                                    LOG_INFO(Core,
+                                             "coop: drops: {} {:#x} is placed (hash {:#x}) at {:.1f} "
+                                             "{:.1f} {:.1f}: pickup shared",
+                                             name, a, hash, at[0], at[1], at[2]);
+                                }
+                            }
+                            entry.name = std::move(name);
                         }
-                        entry.name = std::move(name);
                     }
                 }
                 if (entry.what == What::drop) {

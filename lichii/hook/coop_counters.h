@@ -31,6 +31,8 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
+#include <unordered_map>
 #include <map>
 #include <optional>
 #include <set>
@@ -82,6 +84,28 @@ std::uint64_t KeyOf(std::uint64_t placement_hash, float duration_frames, std::ui
 
 // The pause counters' owners worth following.
 bool IsPlatformOwner(std::string_view name);
+
+// The nodes the ring named whose actor is not a platform (an enemy's, an
+// NPC's, Link's), so they are not read every look. Each is kept with its
+// actor: it is looked at again when the node now belongs to another actor
+// (the heap gave its memory to a new node), when its actor left the walk,
+// and after a scene change.
+class OtherNodes {
+public:
+    static constexpr std::size_t kMax = 4096;  // then all are forgotten
+    void Add(std::uint64_t node, std::uint64_t actor);
+    // A node the ring named again, with the actor it belongs to now:
+    // true to skip it. Another actor than the one kept: forgotten, false.
+    bool Skip(std::uint64_t node, std::uint64_t actor_now);
+    // Forgets the nodes whose actor is not alive (not in the walk).
+    void Keep(const std::function<bool(std::uint64_t actor)>& alive);
+    void Clear() { nodes_.clear(); }
+    std::size_t Size() const { return nodes_.size(); }
+    bool Contains(std::uint64_t node) const { return nodes_.contains(node); }
+
+private:
+    std::unordered_map<std::uint64_t, std::uint64_t> nodes_;  // node -> actor
+};
 
 // One look at a node, from the hook's read of the game.
 struct Seen {

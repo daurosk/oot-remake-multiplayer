@@ -278,3 +278,28 @@ TEST_CASE("counters: probe mode says what it would write, writes nothing, keeps 
     CHECK(said >= 2);  // once a pause, every pause: its loop is still seen
     CHECK(b.sync.Looping(KeyOf(kHash, 60.0f, b.node, b.graph)));
 }
+
+TEST_CASE("counters: other actors' nodes are skipped only while they are still theirs (review)") {
+    OtherNodes o;
+    o.Add(0x100, 0xa0);  // an enemy's counter
+    o.Add(0x200, 0xb0);  // an NPC's
+    CHECK(o.Skip(0x100, 0xa0));
+    CHECK_FALSE(o.Skip(0x300, 0xa0));  // never kept
+    // The heap gave the enemy's node memory to a lift's node: read again.
+    CHECK_FALSE(o.Skip(0x100, 0xc0));
+    CHECK_FALSE(o.Contains(0x100));
+    CHECK_FALSE(o.Skip(0x100, 0xa0));  // and forgotten for good
+    // The NPC leaves the walk: forgotten.
+    o.Keep([](std::uint64_t actor) { return actor != 0xb0; });
+    CHECK_FALSE(o.Contains(0x200));
+    // A scene change clears all; a full set starts again.
+    o.Add(0x400, 0xd0);
+    o.Clear();
+    CHECK(o.Size() == 0);
+    for (std::uint64_t i = 0; i < OtherNodes::kMax; ++i) {
+        o.Add(0x1000 + 8 * i, 0xe0);
+    }
+    CHECK(o.Size() == OtherNodes::kMax);
+    o.Add(0x9, 0xe0);
+    CHECK(o.Size() == 1);
+}

@@ -1689,7 +1689,8 @@ public:
     std::vector<coop::protocol::PlatformCounter> counters_in_;  // under platforms_mutex_
     CoopCounters::CounterSync counters_;
     std::set<u64> counter_nodes_;  // the platform nodes the ring named, while their actor is here
-    std::set<u64> counter_others_;  // nodes of other actors (not Obj_), not read again
+    CoopCounters::OtherNodes counter_others_;  // nodes of other actors (not Obj_), not read every look
+    std::string counter_scene_;
     std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
@@ -1861,7 +1862,7 @@ private:
                 box.asked = false;
                 box.allocating = false;
                 counter_nodes_.clear();
-                counter_others_.clear();
+                counter_others_.Clear();
             }
             box.main = main_;
             ring = box.ring;
@@ -1876,13 +1877,31 @@ private:
                 counters_.Receive(m);
             }
         }
+        if (scene != counter_scene_) {
+            counter_scene_ = scene;  // a new scene: its actors are new
+            counter_nodes_.clear();
+            counter_others_.Clear();
+        }
+        counter_others_.Keep([this](std::uint64_t actor) { return names_.contains(actor); });
+        const auto actor_of = [&](u64 node, u64* graph_out) -> u64 {
+            const u64 vtable = r.Get<u64>(node).value_or(0);
+            const u64 graph = vtable == main_ + CoopCounters::kNodeVtable
+                                  ? r.Get<u64>(node + CoopCounters::kNodeGraph).value_or(0)
+                                  : 0;
+            const u64 mid = graph ? r.Get<u64>(graph + CoopCounters::kGraphOwner).value_or(0) : 0;
+            if (graph_out != nullptr) {
+                *graph_out = graph;
+            }
+            return mid ? r.Get<u64>(mid + CoopCounters::kOwnerActor).value_or(0) : 0;
+        };
         if (ring != 0) {
             std::array<u64, CoopCounters::kRingNodes> entries{};
             for (std::size_t i = 0; i < entries.size(); ++i) {
                 entries[i] = r.Get<u64>(ring + 8 + 8 * i).value_or(0);
             }
             for (const u64 node : CoopCounters::RingNodes(entries)) {
-                if (counter_nodes_.size() < 512 && !counter_others_.contains(node)) {
+                if (counter_nodes_.size() < 512 && !counter_nodes_.contains(node) &&
+                    !(counter_others_.Contains(node) && counter_others_.Skip(node, actor_of(node, nullptr)))) {
                     counter_nodes_.insert(node);
                 }
             }
@@ -1890,23 +1909,17 @@ private:
         std::vector<CoopCounters::Seen> seen;
         for (auto it = counter_nodes_.begin(); it != counter_nodes_.end();) {
             const u64 node = *it;
-            const u64 vtable = r.Get<u64>(node).value_or(0);
-            const u64 graph = vtable == main_ + CoopCounters::kNodeVtable
-                                  ? r.Get<u64>(node + CoopCounters::kNodeGraph).value_or(0)
-                                  : 0;
-            const u64 mid = graph ? r.Get<u64>(graph + CoopCounters::kGraphOwner).value_or(0) : 0;
-            const u64 actor = mid ? r.Get<u64>(mid + CoopCounters::kOwnerActor).value_or(0) : 0;
+            u64 graph = 0;
+            const u64 actor = actor_of(node, &graph);
             const auto known = actor ? names_.find(actor) : names_.end();
             if (known == names_.end()) {
                 it = counter_nodes_.erase(it);  // gone, reused, or its actor left the walk
                 continue;
             }
             if (!CoopCounters::IsPlatformOwner(known->second.first)) {
-                // An enemy's, an NPC's, Link's: never looked at again (review).
-                if (counter_others_.size() >= 4096) {
-                    counter_others_.clear();
-                }
-                counter_others_.insert(node);
+                // An enemy's, an NPC's, Link's: not read again while it is
+                // that actor's (CoopCounters::OtherNodes).
+                counter_others_.Add(node, actor);
                 it = counter_nodes_.erase(it);
                 continue;
             }

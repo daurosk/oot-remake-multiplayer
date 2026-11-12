@@ -52,6 +52,29 @@ bool IsPlatformOwner(std::string_view name) {
     return name.starts_with("Obj_");  // not enemies, NPCs, items or Link (Hot Onion)
 }
 
+void OtherNodes::Add(std::uint64_t node, std::uint64_t actor) {
+    if (nodes_.size() >= kMax) {
+        nodes_.clear();
+    }
+    nodes_[node] = actor;
+}
+
+bool OtherNodes::Skip(std::uint64_t node, std::uint64_t actor_now) {
+    const auto it = nodes_.find(node);
+    if (it == nodes_.end()) {
+        return false;
+    }
+    if (it->second != actor_now) {
+        nodes_.erase(it);  // reused: someone else's node now
+        return false;
+    }
+    return true;
+}
+
+void OtherNodes::Keep(const std::function<bool(std::uint64_t actor)>& alive) {
+    std::erase_if(nodes_, [&](const auto& p) { return !alive(p.second); });
+}
+
 float PhaseGap(std::uint64_t ours_us, std::uint64_t theirs_us, std::uint64_t period_us) {
     if (period_us == 0) {
         return 0.0f;

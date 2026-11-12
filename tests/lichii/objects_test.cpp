@@ -2935,6 +2935,42 @@ TEST_CASE("objects: a larva matched to its sibling egg still ends the egg it cam
     CHECK(removes[0].epoch == 5);
 }
 
+TEST_CASE("objects: two eggs hatch one after the other, the second leaving first: both end, both larvae shared (gohma-sync review)") {
+    Sync a;
+    const Seen e1 = Enemy(0x100, 0, 1, 0.0f, kEgg);
+    const Seen e2 = Enemy(0x101, 0, 1, 2.5f, kEgg);
+    Tick(a, 0, {e1, e2}, 1, kDeku);
+    const proto::ObjectId first = *a.IdOf(0x100);
+    const proto::ObjectId second = *a.IdOf(0x101);
+    Own(a, first, 1, 3);
+    Own(a, second, 1, 5);
+    Tick(a, 100 * kMs, {e1, e2}, 1, kDeku);
+    // E1's larva comes beside E1: matched to it, rightly.
+    const Seen l1 = Enemy(0x200, 0, 1, -0.5f, kLarva);
+    REQUIRE(All<proto::ObjectSpawn>(Tick(a, 200 * kMs, {e1, e2, l1}, 1, kDeku)).size() == 1);
+    // E2 leaves (hatching) while E1 is still listed: ended at once, E1 unmatched.
+    std::vector<proto::ObjectRemove> removes;
+    std::vector<proto::ObjectSpawn> spawns;
+    const auto step = [&](std::uint64_t t, const std::vector<Seen>& seen) {
+        const auto out = Tick(a, t * kMs, seen, 1, kDeku);
+        for (const auto& r : All<proto::ObjectRemove>(out)) removes.push_back(r);
+        for (const auto& sp : All<proto::ObjectSpawn>(out)) spawns.push_back(sp);
+    };
+    for (std::uint64_t t = 300; t <= 500; t += 100) step(t, {e1, l1});
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == second);
+    // E1 leaves, then E2's larva comes out where E2 was: it matches E1 (gone
+    // alive within 2 s), which ends E1. Both eggs ended once, both larvae shared.
+    for (std::uint64_t t = 600; t <= 800; t += 100) step(t, {l1});
+    const Seen l2 = Enemy(0x201, 0, 1, 2.0f, kLarva);
+    for (std::uint64_t t = 900; t <= 1100; t += 100) step(t, {l1, l2});
+    REQUIRE(removes.size() == 2);
+    CHECK(removes[1].id == first);
+    CHECK(removes[1].epoch == 3);
+    CHECK(spawns.size() == 1);  // l2 (l1 was shared at 200 ms)
+    CHECK(a.Hatched() == 2);
+}
+
 TEST_CASE("objects: no larva, a dead egg, or another game's egg: nothing hatched here (gohma-larva)") {
     // Gone and no larva within 2 s: no remove, and it leaves the list.
     Sync a;

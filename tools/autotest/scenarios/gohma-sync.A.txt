@@ -3,14 +3,19 @@
 # rush's Gohma room: scene GohmaStage (Banc/DreamWorld), start point GohmaStage (6.7 47.0 67.6,
 # the same place as the Deku Tree's boss room). The boss rush places its own
 # Enemy_DungeonBoss_Gohma there (with Enemy_DungeonBoss_Gohma_Prefab), so no defeat flag matters.
-# Inconclusive if "+ Enemy_DungeonBoss_Gohma" is in neither log (the warp gave no boss).
+# Inconclusive if "+ Enemy_DungeonBoss_Gohma" is in neither log (the warp gave no boss). Then the
+# fallback: gohma-door (corridor `place` + walk through the door) with a kit save from before
+# Gohma, or Caleb's own pre-Gohma save as a CALEB TEST with the same checks; the boss rush warp is
+# unproven, and gohma-door found the trigger never fired with the kit saves.
+# Timing is loose (B boots 5 s after A, its walks vary): a swing whose b-hitN shot shows Gohma not
+# stunned on A's screen is INCONCLUSIVE for check 3, not a FAIL; the run needs one swing in a stun.
 # A (P1) comes first, so owns Gohma. A shoots seeds into the eye (the owner's stun); B (P2)
 # stands near Gohma and swings the sword after each of A's shots.
 # Expect:
 #  - B's log: "copy ... plays '<name>' ... on slot N" for Enemy_DungeonBoss_Gohma's address
 #    (the eye guard/eyelid slots copied from A); shots "a-stun1".."a-stun3": the eye the same
 #    (open or guarded) on both screens;
-#  - B's sword on the stunned copy: "share damage" lines in B's log, A's Gohma life falls
+#  - B (locked on, walked up) swings the sword (ZL+Y) on the stunned copy: "share damage" lines in B's log, A's Gohma life falls
 #    (A's "life Enemy_DungeonBoss_Gohma" lines) with no hand-over: server boss_to_hitter 0
 #    while only positive hits came, no "share owner ... is player 2" for Gohma until B's seed;
 #  - B's seed at "b-seed" (B's copy stunned alone): "stunned here" + "share damage 0", then one
@@ -40,7 +45,7 @@ assign SlingShot
 wait 120
 mark a-ready
 wait 1800               # Gohma comes down; B arrives
-goto 0.0 67.5 1.5 600   # 7 m from the room's centre
+goto 0.0 67.5 1.5 600   # 7.5 m west of the room's centre (7.5 67.2), facing in
 mark a-placed
 wait 600
 hold ZL 30

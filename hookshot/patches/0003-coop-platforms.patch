@@ -1,4 +1,4 @@
-From 09f2e64192751ebdbaff2242c5b6ca3e51f4ed7a Mon Sep 17 00:00:00 2001
+From e715e0044476f5c2275dc09b950b93bf41a39254 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 08:35:18 -0900
 Subject: [PATCH] Co-op platforms: started AI pause counters go into co-op's
@@ -107,6 +107,3 @@ index 00000000..9c9944b6
 +    lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT
 +    print("co-op platforms: pause counter hook at main+%#x" % SITE)
 +    return 1
--- 
-2.56.0.windows.4
-

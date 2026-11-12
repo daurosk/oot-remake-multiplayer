@@ -976,7 +976,6 @@ TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hi
     held.show = CoopPuppet::Show::show;
     held.position = {40, 5, 6};
     d.SetInput(Wants({held}));
-    held.position = {40, 5, 6};
     auto calls = Frame(d, g, 410);
     REQUIRE(calls.size() == 2);
     CHECK(calls[0].function == kBase + addr::kPlayAs);

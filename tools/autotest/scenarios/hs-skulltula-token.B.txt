@@ -1,0 +1,16 @@
+# hs-skulltula-token, B: skulltula-kill.B unchanged (see hs-skulltula-token.A.txt).
+mark start
+wait 2700               # a little after A, so the two do not meet in the gate
+stick 0 -1 120
+wait 480
+mark kakariko
+stick 0 -1 150
+wait 480
+mark graveyard
+goto -24.0 16.0 1.0 900
+goto -25.0 20.5 0.8 900
+goto -24.6 23.6 0.5 600 # about 5 m from the Skulltula, 2.5 m from A
+toward -20.20 26.40 20
+mark watching
+wait 1800
+mark end

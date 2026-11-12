@@ -1,0 +1,21 @@
+# hs-fishing, B: loads at the pond and watches A from the start point (see hs-fishing.A.txt). B's log
+# carries the rod check (A's PLAYER_EQUIP) and the shared-fish lines.
+mark start
+warp HyruleField_Child MiniGame_Fishing_PlayerStart
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+stick 1 0 30            # a step aside, out of A's way
+press ZL 10
+wait 3600
+mark b-watch
+wait 1800
+mark b-end

@@ -1,0 +1,77 @@
+# pvp-lag (emulator, under net-sim; no issue): pvp's sword hits under 150 ms lag and 2% loss.
+#   tools\autotest\run.ps1 -Scenario pvp-lag -Lag 150 -Loss 2
+# (Hookshot runs have no net-sim: run.ps1 refuses -Lag with -Runtime hookshot. Without -Lag this is a
+# plain pvp run on either runtime.)
+# Why a new file: in bigrun 2026-11-12 the lag runs showed only the /pvp toggle. First A was still on
+# the loading screen when it swung (pvp\20261112-001013); then a copy with doubled waits sent A into
+# Kakariko and swung at nothing. pvp itself only passed by luck: its `goto 213 14` is past the
+# Kakariko gate from the field start (pvp\20261112-000323: both "mark field" at about 200.4 159.6 19.3,
+# then A at -98 97.8 55 and B at -117 97.0 58 in Kakariko). Here both are PUT in Hyrule Field beside the
+# start point with `place`, after a long load wait, and put again once more later (a slow load under
+# lag must not make the first place miss: its log says "failed" then). No walking, so no gate.
+# Pass (as pvp):
+# - off1..off3: no "coop: pvp:" hit lines; B's life unchanged.
+# - after "chat /pvp on": both "coop: pvp: on (set by 1)"; A "coop: pvp: our sword reached P2" for the
+#   swings on1..on3; B "coop: pvp: hit from P1 (2 quarter hearts): taken" and "the game took the hit" or
+#   "our Link's life N -> N-2", at most one taken per 0.8 s, under the lag.
+# - off-again: no hit after "/pvp off".
+# Check first: both "mark placed2 (Link at ~201 159.6 ~21)" (in the field, about 1.2 m apart).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 3600               # a load under lag takes longer
+mark field
+place 201.4 159.8 21.0  # 1.2 m east of B's spot
+wait 600
+place 201.4 159.8 21.0  # once more, in case the load was still running at the first
+wait 120
+toward 200.2 21.0 10    # face B
+mark placed2
+wait 60
+mark off-ready
+hold Y 8
+wait 60
+mark off1
+hold Y 8
+wait 60
+mark off2
+hold Y 8
+wait 90
+mark off3
+chat /pvp on
+wait 240                # the toggle crosses the lag
+mark on-ready
+toward 200.2 21.0 6
+hold Y 8
+wait 30
+mark on1
+wait 30                 # more than the 0.8 s mercy
+toward 200.2 21.0 6
+hold Y 8
+wait 30
+mark on2
+wait 30
+toward 200.2 21.0 6
+hold Y 8
+wait 30
+mark on3
+wait 120
+chat /pvp off
+wait 240
+hold Y 8
+wait 60
+mark off-again          # no hit after /pvp off
+wait 120
+mark end

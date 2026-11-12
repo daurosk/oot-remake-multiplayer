@@ -29,6 +29,8 @@ jobs:
         run: python tools/puppet_pack/tests/test_puppet_pack.py -v
       - name: Save flags tests
         run: python tools/autotest/tests/test_save_flags.py -v
+      - name: Hookshot autotest driver tests
+        run: python tools/autotest/tests/test_hookshot.py -v
       - name: Bad-connection relay tests
         run: python tools/netsim/tests/test_netsim.py -v
       - name: Puppet pack command lines

@@ -12,9 +12,9 @@
 // three looks in a row) is the clock. Its rate is measured too, so seconds,
 // frames and angles all work.
 //
-// One game in a scene owns each platform: the lowest player number that
-// sends it (a game hears the others' PLATFORM_CLOCK; a lower number heard in
-// the last kOwnerQuietUs wins). The owner sends its word every kSendEveryUs,
+// One game in a scene owns each platform: the one that has sent it the
+// longest without a kOwnerQuietUs break (a game that comes later follows;
+// two that began together: the lower player number). The owner sends its word every kSendEveryUs,
 // and at once when it jumped (a switch started it, it looped). The others
 // put value + rate x (server now - sent server time) into their own word,
 // wrapped by the cycle when one was seen, and only when theirs is more than
@@ -70,6 +70,7 @@ public:
     static constexpr float kMaxValue = 1.0e6f;
     static constexpr int kKeepAfter = 3;            // agreeing checks before a word is the clock
     static constexpr int kDropAfter = 6;            // failed checks in a row before it is let go
+    static constexpr int kMaxStalled = 40;          // looks standing still (a pause: 10 s) before it is let go
 
     struct Clock {
         std::uint64_t key = 0;
@@ -81,7 +82,8 @@ public:
 
     // One look at the driver; `now_us` is our own clock (steady), not the server's.
     void Add(std::uint64_t now_us, const Floats& floats);
-    // The clock, once one word kept its rate for kKeepAfter looks.
+    // The clock, once one word kept its rate for kKeepAfter looks; nothing
+    // while it stands still (the game paused or hitched).
     std::optional<Clock> Found() const;
     // The clock jumped in the last look (looped or a switch reset it).
     bool Jumped() const { return jumped_; }
@@ -91,6 +93,7 @@ private:
     struct Candidate {
         int good = 0;
         int bad = 0;
+        int stalled = 0;     // looks in a row it stood still (the game paused)
         float rate = 0.0f;
         float top = 0.0f;    // the highest value seen
         float cycle = 0.0f;

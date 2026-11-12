@@ -412,3 +412,48 @@ TEST_CASE("platforms: a new scene forgets the clocks and owners") {
     b.Tick(time + 50 * kMs, "KokiriForest");
     CHECK(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 2);
 }
+
+TEST_CASE("platforms: a stall right after a loop is no cycle and no jump (review)") {
+    ClockFinder f;
+    float clock = 0.0f;
+    std::uint64_t t = 1'000'000;
+    const auto look = [&] {
+        f.Add(t, Floats{{Key(0, 0x40), clock}});
+        t += 250'000;
+    };
+    // Steps at 1 a second and loops at 3: the cycle is learned.
+    for (int i = 0; i < 14; ++i) {
+        look();
+        clock += 0.25f;
+        if (clock >= 3.0f) {
+            clock -= 3.0f;
+        }
+    }
+    REQUIRE(f.Found());
+    REQUIRE(f.Found()->cycle == doctest::Approx(3.0f).epsilon(0.01));
+    // Loop again, then the game stalls (a pause) just after it.
+    while (clock > 0.3f) {
+        look();
+        clock += 0.25f;
+        if (clock >= 3.0f) {
+            clock -= 3.0f;
+        }
+    }
+    look();  // just past the loop
+    clock += 0.25f;
+    look();  // one step on, then it stands still
+    bool jumped = false;
+    for (int i = 0; i < 3; ++i) {  // three looks with the clock standing still
+        look();
+        jumped = jumped || f.Jumped();
+        CHECK_FALSE(f.Found());  // standing still: nothing frozen to send
+    }
+    CHECK_FALSE(jumped);
+    // It goes on: found again with the same cycle.
+    for (int i = 0; i < 8; ++i) {
+        clock += 0.25f;
+        look();
+    }
+    REQUIRE(f.Found());
+    CHECK(f.Found()->cycle == doctest::Approx(3.0f).epsilon(0.01));
+}

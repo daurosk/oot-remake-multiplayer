@@ -145,6 +145,7 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
             cand.rate = r2;
             cand.good = std::min(cand.good + 1, 1000);
             cand.bad = 0;
+            cand.stalled = 0;
             cand.top = std::max(cand.top, std::max(v1, v2));
             next[key] = cand;
             continue;
@@ -152,10 +153,23 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         if (!known || cand.good < kKeepAfter) {
             continue;  // a word that does not step steadily: not a clock (yet)
         }
-        // A kept clock that did not step at its rate this time: it looped
-        // (or a switch reset it). Where it loops: the value it would have
-        // had, less the value it has.
-        if (in_range(r1) && std::fabs(r1 - cand.rate) <= kRateSlack * std::fabs(cand.rate)) {
+        // A kept clock that did not step at its rate this time. Gone back
+        // past where it was: it looped (or a switch reset it), and where it
+        // loops is the value it would have had, less the value it has. A
+        // stall (a pause, a hitch: about no step) is neither a loop nor a
+        // jump to send; the finder lets go of it if it lasts.
+        const bool backwards = cand.rate > 0 ? v2 < v1 : v2 > v1;
+        const bool stalled = std::fabs(r2) < kMinRate;
+        if (stalled) {
+            // Held as it is (not a bad step) while the game stands still,
+            // but not Found(): nothing frozen is sent.
+            if (++cand.stalled <= kMaxStalled) {
+                next[key] = cand;
+            }
+            continue;
+        }
+        if (backwards && in_range(r1) &&
+            std::fabs(r1 - cand.rate) <= kRateSlack * std::fabs(cand.rate)) {
             const float would = v1 + cand.rate * dt2;
             const float cycle = cand.rate > 0 ? would - v2 : v2 - would;
             if (cycle > 0.0f && cycle >= std::fabs(v1) * 0.5f) {
@@ -207,7 +221,7 @@ std::optional<ClockFinder::Clock> ClockFinder::Found() const {
     }
     const auto it = candidates_.find(*chosen_);
     const auto v = looks_.back().floats.find(*chosen_);
-    if (it == candidates_.end() || v == looks_.back().floats.end()) {
+    if (it == candidates_.end() || v == looks_.back().floats.end() || it->second.stalled != 0) {
         return std::nullopt;
     }
     Clock c;

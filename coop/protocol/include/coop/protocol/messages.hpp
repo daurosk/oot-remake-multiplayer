@@ -1233,7 +1233,7 @@ inline constexpr std::size_t kMaxEventNameChars = 96;
 // clock word of each moving platform's driver the sender owns, read at
 // `server_time_us` (server time). The others put value + rate x (their
 // server time now - server_time_us) into their own word, looped by `cycle`
-// when it is over 0 (docs/objects.md, "Moving platforms"). On channel 2 like
+// when it is over 0 (docs/objects.md, "Moving platforms"). On channel 4 like
 // WORLD_MOVE, unreliable: the next one comes a second later. Relayed to the
 // sender's scene, never kept.
 inline constexpr std::size_t kMaxPlatformTicks = 16;

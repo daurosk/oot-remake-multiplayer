@@ -15,7 +15,6 @@ body:
       options:
         - The kit's emulator (Lichii / Fritchii)
         - Hookshot (experimental)
-        # DROP the next option if linux-2 is not in the release
         - The Linux kit (experimental)
         - Not sure
     validations:

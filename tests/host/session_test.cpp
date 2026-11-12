@@ -59,8 +59,10 @@ struct EnetLife {
   ~EnetLife() { enet_deinitialize(); }
 };
 
-net::ClientConfig config_for(std::uint16_t port, const std::string& name) {
+net::ClientConfig config_for(std::uint16_t port, const std::string& name,
+                             std::uint32_t timeout_ms = 10000) {
   net::ClientConfig c;
+  c.timeout_ms = timeout_ms;
   c.host = "127.0.0.1";
   c.port = port;
   c.hello.build_id = "coop-tests 0";
@@ -81,8 +83,9 @@ SessionSettings with_flags() {
 
 // One player: a client, its session, and its game.
 struct Peer {
-  Peer(std::uint16_t port, const std::string& name, SessionSettings settings = with_flags())
-      : client(config_for(port, name)), session(client, std::move(settings)) {
+  Peer(std::uint16_t port, const std::string& name, SessionSettings settings = with_flags(),
+       std::uint32_t timeout_ms = 10000)
+      : client(config_for(port, name, timeout_ms)), session(client, std::move(settings)) {
     test::make_game(memory);
     REQUIRE(client.start());
   }
@@ -325,4 +328,73 @@ TEST_CASE("session: reset sends the status again on the next connected frame") {
   CHECK(again.queued == 2);
   CHECK(a.session.sampler().last_sample().has_value());
   CHECK(a.session.with_client([](net::Client& c) { return c.state() == net::State::connected; }));
+}
+
+// Issue 175 (stray, server-back): the server is stopped and started again
+// on the same port while both games run. Both reconnect, and each must show
+// the other again (a pose with fade > 0 at its own server time), and keep
+// showing it, not only for the first sample.
+TEST_CASE("session: after a server restart both players show each other again (issue 175)") {
+  EnetLife enet;
+  auto options = any_port();
+  auto server = std::make_unique<coop::server::EnetServer>(options);
+  REQUIRE(server->start());
+  const std::uint16_t port = server->port();
+  options.port = port;
+
+  // Lost after 1 s of nothing, not the game's 10 s.
+  Peer a(port, "Link", SessionSettings{}, 1000);
+  Peer b(port, "Zelda", SessionSettings{}, 1000);
+  std::vector<Peer*> peers;
+  join(*server, peers, a);
+  join(*server, peers, b);
+
+  // Whether `viewer` shows `number` now, faded in.
+  auto shows = [](Peer& viewer, std::uint8_t number) {
+    const std::uint64_t now =
+        viewer.session.with_client([](net::Client& c) { return c.server_now_us(); });
+    return viewer.session.with_presence([&](coop::presence::Presence& p) {
+      const auto pose = p.shown(number, now);
+      return pose && pose->fade > 0.0f;
+    });
+  };
+  // `done` true on every round for `ms`.
+  auto holds = [&](coop::server::EnetServer& s, const std::function<bool()>& done, int ms) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+      s.service(1);
+      for (Peer* p : peers) p->step();
+      if (!done()) return false;
+    }
+    return true;
+  };
+  const std::uint8_t na = a.number();
+  const std::uint8_t nb = b.number();
+  REQUIRE(pump(*server, peers, [&] { return shows(a, nb) && shows(b, na); }));
+  CHECK(holds(*server, [&] { return shows(a, nb) && shows(b, na); }, 1000));
+
+  // The server goes away for a while; its clock starts again from 0.
+  server.reset();
+  {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    while (std::chrono::steady_clock::now() < end) {
+      for (Peer* p : peers) p->step();
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+  server = std::make_unique<coop::server::EnetServer>(options);
+  REQUIRE(server->start());
+
+  // Both lose the old connection (timeout_ms) and join the new server.
+  REQUIRE(pump(*server, peers, [&] {
+    return a.number() != 0 && b.number() != 0 &&
+           a.session.with_client([](net::Client& c) { return c.state() == net::State::connected; }) &&
+           b.session.with_client([](net::Client& c) { return c.state() == net::State::connected; }) &&
+           a.session.with_client([](net::Client& c) { return c.players().size(); }) == 2 &&
+           b.session.with_client([](net::Client& c) { return c.players().size(); }) == 2;
+  }, 20000));
+  const std::uint8_t na2 = a.number();
+  const std::uint8_t nb2 = b.number();
+  REQUIRE(pump(*server, peers, [&] { return shows(a, nb2) && shows(b, na2); }, 3000));
+  CHECK(holds(*server, [&] { return shows(a, nb2) && shows(b, na2); }, 2000));
 }

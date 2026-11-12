@@ -121,6 +121,8 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 
 Type numbers are never reused or renumbered; new types are added at the end.
 
+Protocol 10 also keeps 360 to 364 for `cutscene-snap` (issue 194); none is used yet (the fix needs no message).
+
 `PLAYER_SAMPLE` components:
 
 | Id | Name | Data | Length |

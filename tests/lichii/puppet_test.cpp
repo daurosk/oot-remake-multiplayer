@@ -328,11 +328,12 @@ TEST_CASE("puppet: malloc, create, live, follow, delete") {
     CHECK(d.Slots()[0].actor == kActor);
 
     // It follows: the pose is written every frame.
-    Target moved = At(2, 12, 1.5f, -6);
+    // (A step under CoopSnap::kSnapM: drawn as given, not eased; issue 194.)
+    Target moved = At(2, 10.5f, 1.25f, -5.25f);
     moved.rotation = CoopPuppet::QuatToMatrix({0, std::sqrt(0.5f), 0, std::sqrt(0.5f)});
     d.SetInput(Wants({moved}));
     CHECK(Frame(d, g, 400).empty());
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 12, 1.5f, -6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 10.5f, 1.25f, -5.25f);
     CHECK(g.guest.Get<float>(kActor + addr::kActorRotation + 4 * 2) ==
           doctest::Approx(moved.rotation[2]));
 
@@ -931,7 +932,7 @@ TEST_CASE("puppet move: the game's setter once a frame when asked for") {
     CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
 }
 
-TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
+TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hide parks it") {
     Game g;
     Director d;
     MakeLive(d, g);
@@ -941,9 +942,10 @@ TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor")
     Frame(d, g, 30);
     CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
 
-    // Hold: not moved, and its frame set back to where it was every frame.
+    // Hold: its frame set back to where it was every frame, and (issue 194) it follows their
+    // place: the 2 m their cutscene moved them (a door) is eased, not left for a snap at the end.
     Target held = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hold);
-    held.position = {40, 5, 6};
+    held.position = {6, 5, 6};
     d.SetInput(Wants({held}));
     g.guest.Set(kSlot0 + addr::kSlotFrame, 11.0f);
     for (std::uint64_t now : {40, 50}) {
@@ -953,24 +955,31 @@ TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor")
         CHECK(calls[0].s0 == 11.0f);
         g.guest.Set(kSlot0 + addr::kSlotFrame, 12.0f);
     }
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
+    const float x = g.guest.Get<float>(kActor + addr::kActorPosition);
+    CHECK(x > 4.0f);
+    CHECK(x < 6.0f);
     CHECK(d.Slots()[0].anim_name == "Wait");
+    for (std::uint64_t now : {100, 150, 200, 250, 300, 350}) {
+        Frame(d, g, now);
+    }
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 6, 5, 6);
 
     // Hide: parked below its spot, no animation calls, not deleted.
     Target hidden = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hide);
     hidden.position = {40, 5, 6};
     d.SetInput(Wants({hidden}));
-    CHECK(Frame(d, g, 60).empty());
+    CHECK(Frame(d, g, 400).empty());
     CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
     CHECK(d.Slots()[0].phase == Phase::live);
 
     // Shown again: moves, and plays what it missed.
     held.show = CoopPuppet::Show::show;
     d.SetInput(Wants({held}));
-    auto calls = Frame(d, g, 70);
+    held.position = {40, 5, 6};
+    auto calls = Frame(d, g, 410);
     REQUIRE(calls.size() == 2);
     CHECK(calls[0].function == kBase + addr::kPlayAs);
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);  // where it was hidden: no ease
 }
 
 TEST_CASE("puppet: LiveMask has a live puppet shown or held, not one parked or gone (issue 145)") {

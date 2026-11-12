@@ -23,6 +23,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop_snap.h"
+
 namespace coop::protocol {
 struct Equipment;
 }
@@ -381,6 +383,9 @@ private:
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
+        CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
+        CoopSnap::Meter meter;              // issue 194: drawn steps, snaps logged
+        std::uint64_t jump_log_ms = 0;      // last "eased a jump" line
         Show shown = Show::show;            // the last `show` acted on (log on change)
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made
@@ -432,6 +437,7 @@ private:
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
               std::uint64_t now_ms);
+    void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
     bool Drawn(const Slot& slot, std::uint64_t now_ms) const;

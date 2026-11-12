@@ -422,7 +422,7 @@ What each case does now. "Handled" is by code and unit tests; none of these is p
 | Case | Whose | What happens | Status | Scenario |
 |---|---|---|---|---|
 | Cutscene (event running) | ours | Every puppet and Navi parked, no markers | Handled | `cutscene` (A talks to a sign, B watches) |
-| Cutscene | theirs | Their puppet held frozen | Handled | `cutscene` (reverse) |
+| Cutscene | theirs | Their puppet's animation held frozen; it follows their place (issue 194, below) | Handled | `cutscene` (reverse), `cutscene-snap` |
 | Title screen, file select | ours | No player actor, so no reading and no scene: nothing planned, puppets deleted | Handled if the title has no player actor (unknown: the title demo may have one) | `screens` |
 | Title screen, file select | theirs | They send no samples (no reading): their pose fades in 0.4 s and the puppet is deleted after the 2 s grace | Handled | `screens` |
 | Pause menu, item menu | ours | Nothing changes: puppets stay; whether the game draws them behind the menu, and whether our pose writes run while paused, is not known | Unknown | `screens` (B pauses) |
@@ -436,6 +436,16 @@ What each case does now. "Handled" is by code and unit tests; none of these is p
 | Song taught, warp song, Song of Time block | either | `DemoOcarina...` and what follows are cutscenes: as a cutscene | Handled as a cutscene | `ocarina` (log only) |
 | Time travel (Master Sword) | either | A cutscene, then the age changes: the puppet is made again as the other age (settle 1 s) | Handled (the age swap is proven, `stray-adult`) | none new |
 | Crawlspace | either | Unknown: the AS tables have no crawl command name (`Crouch...` is crouching); if the game runs it as an event, ours hides puppets and theirs holds them at the entrance | Unknown | `crawl` (logs the commands and event bit; needs a save by a crawlspace) |
+
+### Cutscenes without snaps (issue 194, branch `cutscene-snap`)
+
+Player test 2026-11-12: after cutscenes (a door opening, the Deku Tree ladder falling, the timed-platform switch) the other player's Link snapped or rubber-banded, and the switch's result came late.
+- **Their cutscene.** The puppet was held (frame and place) where the event began. An event moves Link (through a door, a few metres), so when it ended the puppet jumped to where they were. Now a held puppet keeps its frozen frame but follows their place and turn, as their samples go on during events (`sampler.cpp` sends them as always).
+- **Any jump.** A drawn place that steps more than 0.75 m in one frame and less than 20 m (`CoopSnap::kSnapM`, `kWarpM`, `lichii/hook/coop_snap.h`) is eased: the puppet stays where it was that frame and closes the gap over 250 ms or at 15 m/s for longer gaps, while it follows their new place. A step of 20 m or more is a warp, drawn at once. While hidden (our cutscene) the drawn place is set to theirs, so it shows again where they are, with no ease from the parked spot.
+- **World objects during our event.** The issue 144 rule left every shared change within 8 m of our Link waiting while our event ran. A world object another game moves (`CoopWorld::WorldSync::Places`: the falling ladder, the falling floors, blocks) is no event's partner: its place and played animation now go on during our event (`CoopGuard::Skip`'s `never_waits`), so the ladder no longer stays up during our live-event cutscene and jumps after it. Kills and removes still wait.
+- **Logs** (`coop: puppet: ...`, also `fairy coop: puppet: ...` for Navi): `P<n> eased a jump of <m> m (show|hold)` (once a second at most), and `P<n> snap <m> m (show|hold|warp)` for every drawn step past 0.75 m. A run with no `snap ... (show)` or `(hold)` line had no visible snap.
+- **Not changed:** a live event (a switch another player pressed) is still not started while our own event runs (the game runs one event at a time), so it starts when ours ends; the timed platforms then run on our own timer from that moment. Sharing the timer is dungeon object state (deku-dungeon-2).
+- Scenario `cutscene-snap` (steps file): the ladder falls (A shoots the eye, a cutscene for both), then B walks through the slingshot room's door (a door cutscene) while A watches; its `lines` checks count snap lines in both logs.
 
 ### The first run
 

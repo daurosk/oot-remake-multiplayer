@@ -193,15 +193,18 @@ if ($crt) {
     }
 }
 
-foreach ($f in 'Host.bat', 'Join.bat', 'start-server.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'check-hosting.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
-foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1', 'update.ps1', 'hosting.ps1', 'check-hosting.ps1', 'log-mask.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+foreach ($f in 'Host.bat', 'Join.bat', 'start-server.cmd', 'start-join.cmd', 'start-relay.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'check-hosting.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
+foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1', 'update.ps1', 'hosting.ps1', 'check-hosting.ps1', 'log-mask.ps1', 'relay-join.ps1', 'invite.ps1', 'start-join.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+# The updater's signature check (update.ps1, Test-KitSignature) runs the installed kit's own copy.
+$verifyKit = Join-Path $here 'verify_kit.ps1'
+Copy-Text $verifyKit (Join-Path $kit 'scripts\verify_kit.ps1')
 # Update.bat: the updater in one file (the same file is attached to each release for old kits).
 & (Join-Path $here 'make_update_bat.ps1') -Out (Join-Path $kit 'Update.bat')
 
 # The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
 # scene-placing test helper stay out.
 $packTool = Join-Path $repo 'tools\puppet_pack'
-foreach ($f in 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'nup.py', 'rstb.py', 'sarc.py', 'zs.py') {
+foreach ($f in 'ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'dungeon_rooms.py', 'hud.py', 'nup.py', 'rstb.py', 'sarc.py', 'texture.py', 'zs.py') {
     Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
 }
 

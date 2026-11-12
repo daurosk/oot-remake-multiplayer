@@ -95,7 +95,11 @@ bool IsLyingKey(std::string_view name);
 // lying key's, under TokenId(the Skulltula's placement hash): the token
 // that appears within kTokenNearM of a Gold Skulltula we saw, or where a
 // token of this scene was before (a room loaded again: its Skulltula is
-// gone, the game makes the token again).
+// gone, the game makes the token again), or, failing those, that appears
+// within kTokenAfterUs of a Gold Skulltula leaving our walk dead (last seen
+// with life 0) and within kTokenFarM of where it was, whose token is not
+// known yet (a Skulltula knocked away as it died, a token that fell:
+// items-sync).
 bool IsGoldToken(std::string_view name);
 std::uint64_t TokenId(std::uint64_t skulltula_hash);
 inline constexpr const char* kTokenCount = "PouchData.Item_Token_Gold.StockNum";
@@ -112,6 +116,11 @@ bool IsShifter(std::string_view name);
 // A keyed piece taken by another game's key whose fall or break should
 // show here before it is removed: falling floors and web parts.
 bool IsFallTaken(std::string_view name);
+// deku-dungeon-2 (issue 196): a floor the room moves by its actor place (the
+// Deku Tree basement's Obj_Deku_MoveFloor_*): the game that shows it moved
+// from where it started sends it (from up to kShifterReachM), and the others
+// hold it at that place until it is back home.
+bool IsGimmickMover(std::string_view name);
 // A shifter held for good at a place another game gave (its AI would put it
 // back); the rest settle as blocks do.
 bool HoldsPlace(std::string_view name);
@@ -325,12 +334,57 @@ struct RestScan {
     std::vector<RestWrite> writes;
     std::vector<std::string> where;  // per place found: actor+0x.., c+0x50+0x.., physics root+0x.. (matrix)
     bool too_many = false;
+    bool busy = false;  // NodeRestWords: only one of the push node's places is the old one
 };
 inline constexpr std::size_t kMaxRestTriplets = 12;
 inline constexpr float kRestMatchM = 0.02f;
 RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
                    std::uint64_t actor, const coop::protocol::Vec3& from,
                    const coop::protocol::Vec3& to);
+
+// Issue 147, world-objects-2: the push block's own AI node, the AINB node
+// ExecuteMovableBoxControl (main of build e0f3ccfaf50065ae, read from the
+// code; docs/world.md "The block's push node"):
+//   [node] = main + kVtable, [node + 0x20] = main + kVtable2 (its constructor
+//   0xe5a870 and destructor 0x275ac10 store both);
+//   its actor = [[[node + 8] + 8] + 0x1f0] (enter 0x2751790 reads the
+//   actor's place +0x31c through that chain);
+//   +0x40 the grid base (from the link MovableBox_BasePosAnchor, else the
+//   actor's place), +0x4c the goal (link Gimmick_AnswerPosAnchor), both NaN
+//   when unset; +0xfc the place the push goes to and +0x108 the place it
+//   starts from, both copies of the actor's place when the node starts;
+//   the next step's target is figured from them (0xd6ef80, PushPerBlock).
+// A follower's block is warped by the setter, but its node keeps +0xfc and
+// +0x108 at the old rest place, so its player's next push starts there and
+// the block and its pusher snap back. FindBlockNode finds the node by
+// following heap pointers from the actor's components (at most kNodeDepth
+// steps, kNodeLooks objects, each object's first kNodeBytes), and takes it
+// only when both vtables and the actor chain match. NodeRestWords then gives
+// the writes that put the new place in +0xfc and +0x108 when both hold the
+// old one (each axis within kRestMatchM); only one of them: the node is
+// mid-push here, nothing is written and `busy` is set. The base and goal are
+// left alone (the grid and the answer do not move). Open (no run yet): if
+// the node's start runs at every push, and not once when the block's AI
+// starts, these are fresh anyway and the write changes nothing (harmless).
+namespace BlockNode {
+inline constexpr std::uint64_t kVtable = 0x49ae6f8;
+inline constexpr std::uint64_t kVtable2 = 0x49ae8b8;
+inline constexpr std::uint64_t kOwner = 0x8;          // [node + 8] -> [+8] -> [+0x1f0] = actor
+inline constexpr std::uint64_t kOwnerActor = 0x1f0;
+inline constexpr std::uint64_t kBase = 0x40;
+inline constexpr std::uint64_t kGoal = 0x4c;
+inline constexpr std::uint64_t kTarget = 0xfc;
+inline constexpr std::uint64_t kStart = 0x108;
+inline constexpr int kNodeDepth = 3;
+inline constexpr std::size_t kNodeLooks = 2048;
+inline constexpr std::size_t kNodeBytes = 0x200;
+} // namespace BlockNode
+std::optional<std::uint64_t> FindBlockNode(
+    const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read, std::uint64_t actor,
+    std::uint64_t main);
+RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                       std::uint64_t node, const coop::protocol::Vec3& from,
+                       const coop::protocol::Vec3& to);
 
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the
@@ -356,6 +410,8 @@ public:
     static constexpr float kLiftedM = 0.3f;      // a key this far from where it lay is being picked up
     static constexpr float kTokenNearM = 3.0f;    // a new token this near a Gold Skulltula is its
     static constexpr float kTokenSpotM = 1.5f;    // a token this near a known token spot is that one
+    static constexpr float kTokenFarM = 12.0f;    // a token this near a Skulltula that just left is its
+    static constexpr std::uint64_t kTokenAfterUs = 5'000'000;  // "just left": not in the walk this long
     static constexpr float kShiftTurnRad = 0.05f;  // a shifter turned this far from its rest: moved
     static constexpr int kFallerTries = 10;  // then one "did not fall" line, and no more writes
     static constexpr std::uint64_t kGoneHoldUs = 700'000;     // a gone-near-Link break waits this long
@@ -370,6 +426,7 @@ public:
     static constexpr float kMoverReachM = 15.0f; // only an object this near our Link is ours to move
     static constexpr float kShifterReachM = 40.0f; // a shifter (moved by its AI when hit): a room across
     static constexpr float kBlockStartM = 0.05f; // moved this far from where it rested: being moved
+    static constexpr float kMoverAwayM = 0.5f;   // a gimmick mover this far from its start: moved (not bobbing)
     static constexpr float kLooseStartM = 0.15f; // the same for pots and rocks (they settle a little)
     static constexpr std::uint64_t kMoveEveryUs = 50'000;
     static constexpr std::uint64_t kRestUs = 400'000;        // still this long: at rest
@@ -460,6 +517,11 @@ public:
     void Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const;
     // This actor's place is ours to decide: the enemy sharing must not place it.
     bool Places(std::uint64_t address) const { return objects_.contains(address); }
+    // Issue 194: Poses moves this actor (a world object, or a moved block's base anchor):
+    // no event's partner, so its pose goes on while our Link is in an event.
+    bool Follows(std::uint64_t address) const {
+        return objects_.contains(address) || anchor_holds_.contains(address);
+    }
     // The copies to delete (broken elsewhere).
     std::vector<std::uint64_t> Removes() const;
 
@@ -473,8 +535,11 @@ public:
     // just before the write: nothing unless the actor is still that sign,
     // its table and component are the ones the probe saw (pointers), the
     // key is on the list and the word may be written (SignWordWritable).
+    // `why` (if given) says which check failed, for the log (issue 90: in
+    // the run of 2026-11-10 two of the cut words were refused unexplained).
     std::optional<std::uint64_t> SignWordTarget(const SignProbe::ReadWord& read,
-                                                const Out::Word& w) const;
+                                                const Out::Word& w,
+                                                std::string* why = nullptr) const;
 
     // For tests and logs.
     std::size_t Count() const { return objects_.size(); }
@@ -541,6 +606,7 @@ private:
         bool following = false;            // another game's moves are placed
         bool stirred = false;              // moved since the walk before
         bool roller = false;               // IsRoller: rolls on its own
+        bool mover = false;                // IsGimmickMover (home: first_position)
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it
@@ -556,7 +622,7 @@ private:
     // A lying small key we took that has not gone out as our break yet.
     std::optional<std::string> TookKey(std::uint64_t hash) const;  // its count
     // A token's id (TokenId) from where it is, or 0: not known.
-    std::uint64_t IdentifyToken(const coop::protocol::Vec3& at);
+    std::uint64_t IdentifyToken(const coop::protocol::Vec3& at, std::uint64_t now_us);
     // Another player's break of a token we know: its spot is kept, and its
     // Skulltula's key is set here (Out::taken_keys).
     void Token(const coop::protocol::WorldBreak& b);
@@ -586,6 +652,8 @@ private:
     std::vector<std::uint64_t> taken_keys_;  // the same
     // Gold Skulltulas of this scene by placement hash: where we saw them last.
     std::map<std::uint64_t, coop::protocol::Vec3> skulltulas_;
+    std::map<std::uint64_t, std::uint64_t> skulltulas_seen_us_;  // and when, in the last walk it was in
+    std::set<std::uint64_t> skulltulas_dead_;  // last seen with life 0 (or none readable)
     // Tokens by scene, then id: where they were. Kept across scene changes,
     // so a token the game makes again on a reload is known.
     std::map<std::string, std::map<std::uint64_t, coop::protocol::Vec3>> token_spots_;

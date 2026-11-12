@@ -1,0 +1,48 @@
+# skull-sling, B: put by the slingshot room's door (as deku-ladder B), gets the slingshot, locks on
+# to the wall Skulltula (ZL) and shoots it (ZR held to aim, let go to fire) up to four times.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -33.2 110.3 10.4
+wait 240
+mark placed
+toward -47.58 16.84 10
+hold ZL 30
+mark targeted
+hold ZL+ZR 50            # aim
+hold ZL 20               # let go: fire
+wait 30
+mark shot1
+hold ZL 10
+hold ZL+ZR 50
+hold ZL 20
+wait 30
+mark shot2
+hold ZL 10
+hold ZL+ZR 50
+hold ZL 20
+wait 30
+hold ZL 10
+hold ZL+ZR 50
+hold ZL 20
+wait 60
+mark shot4
+press B 10
+wait 900
+mark after-shot
+wait 600
+mark late

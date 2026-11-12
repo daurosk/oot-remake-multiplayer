@@ -6,7 +6,9 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "coop/net/enet_path.hpp"
 #include "coop/net/enet_waiting.hpp"
 
 namespace coop::server {
@@ -22,6 +24,23 @@ constexpr enet_uint32 kPeerTimeoutMs = 10'000;
 constexpr std::size_t kMaxPacketBytes = protocol::kHeaderSize + 0xFFFF;
 // And at most this much a peer's received data may wait to be handled.
 constexpr std::size_t kMaxWaitingBytes = 1 << 20;
+
+// The server whose service() is running: ENet's intercept callback has no
+// pointer of its own, and only runs inside enet_host_service.
+thread_local const EnetServer* t_serving = nullptr;
+
+int ENET_CALLBACK intercept(ENetHost* host, ENetEvent*) {
+  if (t_serving == nullptr || host->receivedData == nullptr) return 0;
+  const std::span<const std::uint8_t> data(host->receivedData, host->receivedDataLength);
+  return t_serving->handle_raw(host->receivedAddress, data) ? 1 : 0;
+}
+
+struct Serving {
+  explicit Serving(const EnetServer* s) { t_serving = s; }
+  ~Serving() { t_serving = nullptr; }
+  Serving(const Serving&) = delete;
+  Serving& operator=(const Serving&) = delete;
+};
 
 ConnectionId id_of(const ENetPeer* peer) {
   return static_cast<ConnectionId>(reinterpret_cast<std::uintptr_t>(peer->data));
@@ -55,7 +74,16 @@ bool EnetServer::start() {
   host_->maximumPacketSize = kMaxPacketBytes;
   host_->maximumWaitingData = kMaxWaitingBytes;
   host_->mtu = protocol::kDatagramBytes;  // VPN-safe datagrams (issue 143)
+  host_->intercept = intercept;
   return true;
+}
+
+bool EnetServer::send_raw(const ENetAddress& to, std::span<const std::uint8_t> data) {
+  if (host_ == nullptr || data.empty()) return false;
+  ENetBuffer buffer;
+  buffer.data = const_cast<std::uint8_t*>(data.data());
+  buffer.dataLength = data.size();
+  return enet_socket_send(host_->socket, &to, &buffer, 1) > 0;
 }
 
 std::uint16_t EnetServer::port() const {
@@ -73,6 +101,7 @@ std::uint64_t EnetServer::now_us() const {
 
 void EnetServer::service(std::uint32_t timeout_ms) {
   if (host_ == nullptr) return;
+  Serving serving(this);
   ENetEvent event;
   int result = enet_host_service(host_, &event, timeout_ms);
   while (result > 0) {
@@ -84,19 +113,60 @@ void EnetServer::service(std::uint32_t timeout_ms) {
   apply_actions();
   // ENet forgets to take a player's lost fragments off its count; past
   // kMaxWaitingBytes it would refuse (and never acknowledge) all they send.
+  std::vector<ENetPeer*> lost_full;
   for (auto& [id, peer] : peers_) {
+    if (net::full_datagrams_lost(path_marks_[id], *peer, host_->serviceTime)) lost_full.push_back(peer);
     mended_bytes_ += net::mend_waiting_data(*peer);
     links_[id] = LinkSeen{peer->roundTripTime,
                           static_cast<enet_uint32>(static_cast<std::uint64_t>(peer->packetLoss) * 100 /
                                                    ENET_PEER_PACKET_LOSS_SCALE),
                           peer->totalWaitingData};
   }
+  for (ENetPeer* peer : lost_full) {
+    const std::uint64_t now = now_us();
+    std::erase_if(small_hosts_, [now](const auto& entry) { return entry.second <= now; });
+    small_hosts_[peer->address.host] = now + std::uint64_t{net::kRememberMs} * 1000;
+    send_small(peer, "its path lost our " + std::to_string(peer->mtu) +
+                         "-byte datagrams while small ones got through; told it to connect again with " +
+                         std::to_string(net::kSmallDatagramBytes) + "-byte ones");
+  }
   enet_host_flush(host_);
+}
+
+void EnetServer::send_small(ENetPeer* peer, const std::string& why) {
+  const ConnectionId id = id_of(peer);
+  ++small_path_drops_;
+  std::string link = why;
+  if (auto seen = links_.find(id); seen != links_.end()) {
+    link += "; round trip " + std::to_string(seen->second.round_trip_ms) + " ms, loss " +
+            std::to_string(seen->second.loss_percent) + "%";
+    links_.erase(seen);
+  }
+  peers_.erase(id);
+  path_marks_.erase(id);
+  peer->data = nullptr;
+  enet_peer_disconnect_now(peer, net::kDisconnectSmallDatagrams);
+  session_.disconnected(id, now_us(), link);
+  apply_actions();
 }
 
 void EnetServer::handle(const ENetEvent& event) {
   switch (event.type) {
     case ENET_EVENT_TYPE_CONNECT: {
+      bool tell_again = false;
+      if (auto known = small_hosts_.find(event.peer->address.host);
+          known != small_hosts_.end() && event.peer->mtu > net::kSmallDatagramBytes) {
+        tell_again = now_us() < known->second;
+        small_hosts_.erase(known);  // told at most once more
+      }
+      if (tell_again) {
+        // Its path lost full datagrams a moment ago and it missed our note:
+        // tell it again before it costs a 10 s timeout.
+        ++small_path_drops_;
+        event.peer->data = nullptr;
+        enet_peer_disconnect_now(event.peer, net::kDisconnectSmallDatagrams);
+        break;
+      }
       ConnectionId id = next_id_++;
       if (!session_.connected(id, now_us(), event.peer->address.host)) {
         // Too many connections from this address without HELLO: drop it at
@@ -119,6 +189,7 @@ void EnetServer::handle(const ENetEvent& event) {
     case ENET_EVENT_TYPE_DISCONNECT: {
       ConnectionId id = id_of(event.peer);
       peers_.erase(id);
+      path_marks_.erase(id);
       // As seen at the end of the last round: ENet has reset the peer by now.
       std::string link;
       if (auto seen = links_.find(id); seen != links_.end()) {

@@ -16,7 +16,11 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, nup, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, nup, rstb, sarc  # noqa: E402
+
+# The co-op HUD's tests run with these (CI runs this file).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_hud import *  # noqa: E402,F401,F403
 
 try:
     import zstandard
@@ -239,6 +243,62 @@ def fake_player_pack(variant):
     return files
 
 
+def fake_emit_ainb():
+    """An AI file laid out as the Business Scrub seed's PostUpdateMatrix root (version 0x408): one
+    command whose root is a selector (node 0), a query, the emit node and a do-nothing node, the
+    emit node's three immediate parameters, then the string pool."""
+    names = ["Shootable_ScrubBusinessSees_PostUpdateMatrix.root", "Root", "", "QueryShootableGetState",
+             "OneShotXLinkSearchAndEmit", "OneshotDoNothing", "ELinkCall", "SLinkCall", "XLinkKeyName",
+             "ScrubBusinessSeed_HitGround"]
+    pool, offs = b"", {}
+    for n in names:
+        offs[n] = len(pool)
+        pool += n.encode() + b"\0"
+    nodes = ["", "QueryShootableGetState", "OneShotXLinkSearchAndEmit", "OneshotDoNothing"]
+    body = bytearray(0x74)
+    body[0:4] = b"AIB "
+    struct.pack_into("<IIII", body, 4, 0x408, offs[names[0]], 1, len(nodes))
+    body += struct.pack("<I", offs["Root"]) + bytes(16) + struct.pack("<hh", 0, -1)
+    for i, n in enumerate(nodes):
+        node = bytearray(0x3C)
+        struct.pack_into("<HHHBBI", node, 0, 1 if i == 0 else 0, i, 0, 4 if i == 0 else 0, 0, offs[n])
+        body += node
+    for name, value in (("ELinkCall", 1), ("SLinkCall", 1),
+                        ("XLinkKeyName", offs["ScrubBusinessSeed_HitGround"])):
+        body += struct.pack("<IIII", offs[name], 0xFFFF, 0x01800000, value)
+    struct.pack_into("<I", body, 0x24, len(body))
+    return bytes(body) + pool
+
+
+class AinbTest(unittest.TestCase):
+    def test_oneshot_root(self):
+        from puppet_pack import ainb
+        t = fake_emit_ainb()
+        self.assertEqual(ainb.describe(t), ("", "ScrubBusinessSeed_HitGround", True, True,
+                                            "Shootable_ScrubBusinessSees_PostUpdateMatrix.root"))
+        n = ainb.oneshot_root(t, "CoopHit_SeedSpark.root", "Hit_AdditionalAttacker", elink=True, slink=False)
+        self.assertEqual(ainb.describe(n), ("OneShotXLinkSearchAndEmit", "Hit_AdditionalAttacker", True,
+                                            False, "CoopHit_SeedSpark.root"))
+        self.assertEqual(n[0x8C:0x8C + 4 * 0x3C], t[0x8C:0x8C + 4 * 0x3C])  # the nodes stay
+        self.assertEqual(n[:len(t)][len(t) - 40:], t[len(t) - 40:])        # the old pool stays
+        self.assertTrue(n.endswith(b"CoopHit_SeedSpark.root\0"))
+        # A key already in the pool is not added twice.
+        same = ainb.oneshot_root(t, "Shootable_ScrubBusinessSees_PostUpdateMatrix.root",
+                                 "ScrubBusinessSeed_HitGround")
+        self.assertEqual(len(same), len(t))
+
+    def test_refuses_other_files(self):
+        from puppet_pack import ainb
+        t = fake_emit_ainb()
+        with self.assertRaises(ainb.AinbError):
+            ainb.oneshot_root(b"XXXX" + t[4:], "a", "b")
+        with self.assertRaises(ainb.AinbError):
+            ainb.oneshot_root(t[:4] + struct.pack("<I", 0x407) + t[8:], "a", "b")
+        no_emit = t.replace(b"OneShotXLinkSearchAndEmit", b"OneShotXLinkSearchAndFade")
+        with self.assertRaises(ainb.AinbError):
+            ainb.oneshot_root(no_emit, "a", "b")
+
+
 class BuildPackTest(unittest.TestCase):
     def test_pack_contents(self):
         members = fake_player_pack("Child")
@@ -436,7 +496,46 @@ class BuildPackTest(unittest.TestCase):
         # The hook's CoopSpawn::StandIn makes these same ones.
         self.assertEqual([n for _, n in build.STAND_INS],
                          ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong",
-                          "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb"])
+                          "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb",
+                          "CoopShot_Boomerang", "CoopRide_Epona"])
+
+    def test_impact(self):
+        # Issue 166: an impact actor plays one xlink key where a copy lands.
+        from puppet_pack import ainb
+        files = build.impact_files(fake_emit_ainb(), "CoopHit_SeedSpark", "Shootable_DekuSeed", None,
+                                   "Hit_AdditionalAttacker")
+        comps = byml.loads(files["Actor/CoopHit_SeedSpark.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertEqual(comps["ELinkRef"],
+                         "?Component/ELink/CoopHit_SeedSpark.engine__component__ELinkParam.bgyml")
+        self.assertNotIn("SLinkRef", comps)
+        self.assertNotIn("ModelInfoRef", comps)
+        self.assertEqual(comps["ActorLogicNodeRef"], build.FIXED_COMPONENTS["ActorLogicNodeRef"])
+        self.assertEqual(byml.loads(files[comps["ELinkRef"][1:]]), {"UserName": "Shootable_DekuSeed"})
+        info = byml.loads(files[comps["AIInfoRef"][1:]])
+        self.assertEqual(info, {"RootAIRef": "Work/AI/Root/CoopHit_SeedSpark.root.ain"})
+        self.assertIn("AI/CoopHit_SeedSpark.root.ainb", files)
+        self.assertEqual(ainb.describe(files["AI/CoopHit_SeedSpark.root.ainb"]),
+                         ("OneShotXLinkSearchAndEmit", "Hit_AdditionalAttacker", True, False,
+                          "CoopHit_SeedSpark.root"))
+        sound = build.impact_files(fake_emit_ainb(), "CoopHit_SeedSound", None, "ReactionHit",
+                                   "Hit_SlingShot_Bullet")
+        comps = byml.loads(sound["Actor/CoopHit_SeedSound.engine__actor__ActorParam.bgyml"])["Components"]
+        self.assertNotIn("ELinkRef", comps)
+        self.assertEqual(byml.loads(sound[comps["SLinkRef"][1:]]), {"UserName": "ReactionHit"})
+        self.assertEqual(ainb.describe(sound["AI/CoopHit_SeedSound.root.ainb"])[1:4],
+                         ("Hit_SlingShot_Bullet", False, True))
+        row = build.impact_row({"__RowId": "Shootable_ScrubBusinessSees", "ActorName": "Item_DekuNut",
+                                "ELinkUserName": "Shootable_ScrubBusinessSees", "SLinkUserName": "Item_DekuNut",
+                                "FmdbName": "Item_ScrubBusinessSeed",
+                                "ModelProjectName": "Item_ScrubBusinessSeed",
+                                "InstanceHeapSize": 129832, "PreActorRenderInfoHeapSize": 7384},
+                               "CoopHit_SeedSound", None, "ReactionHit")
+        self.assertEqual(row, {"__RowId": "CoopHit_SeedSound", "SLinkUserName": "ReactionHit",
+                               "InstanceHeapSize": 129832, "PreActorRenderInfoHeapSize": 0,
+                               "CalcRadius": 100000.0, "CoreUsedLevel": byml.UInt(0)})
+        # The hook's CoopProjectiles::ImpactActors asks for these.
+        self.assertEqual([i[0] for i in build.IMPACTS],
+                         ["CoopHit_SeedSpark", "CoopHit_SeedSound", "CoopHit_Arrow", "CoopHit_ArrowSound"])
 
     def test_bomb_stand_in_keeps_its_animations(self):
         # Issue 169: the held bomb's stand-in has the model and the animation set (its fuse can
@@ -471,6 +570,32 @@ class BuildPackTest(unittest.TestCase):
             {"Actor/Shootable_DekuSeed.engine__actor__ActorParam.bgyml": byml.dumps(bomb)},
             "Shootable_DekuSeed", "CoopShot_Seed")
         self.assertNotIn("ASRef", byml.loads(seed_ap)["Components"])
+        # Issue 85: the hookshot tip keeps its animations (the chain), the boomerang does not.
+        for src, name in (("Shootable_Hook", "CoopShot_Hook"),
+                          ("Shootable_HookLong", "CoopShot_HookLong")):
+            _, hook_ap, _ = build.build_stand_in(
+                {f"Actor/{src}.engine__actor__ActorParam.bgyml": byml.dumps(bomb)}, src, name)
+            hook = byml.loads(hook_ap)["Components"]
+            self.assertEqual(hook["ASRef"], bomb["Components"]["ASRef"])
+            self.assertNotIn("AIInfoRef", hook)
+        _, boom_ap, _ = build.build_stand_in(
+            {"Actor/Weapon_Boomerang.engine__actor__ActorParam.bgyml": byml.dumps(bomb)},
+            "Weapon_Boomerang", "CoopShot_Boomerang")
+        boom = byml.loads(boom_ap)["Components"]
+        self.assertNotIn("ASRef", boom)
+        self.assertNotIn("PhysicsRef", boom)
+        self.assertIn("ModelInfoRef", boom)
+        # Issue 199: the ridden horse keeps her animations (the hook plays the rider's horse's), and
+        # none of her AI, physics or riding.
+        horse_src = dict(bomb, Components=dict(bomb["Components"], AIScheduleRef="x", RidableRef="y",
+                                               HorseRef="z"))
+        _, horse_ap, _ = build.build_stand_in(
+            {"Actor/Animal_Epona_Adult.engine__actor__ActorParam.bgyml": byml.dumps(horse_src)},
+            "Animal_Epona_Adult", "CoopRide_Epona")
+        horse = byml.loads(horse_ap)["Components"]
+        self.assertEqual(horse["ASRef"], bomb["Components"]["ASRef"])
+        for k in ("AIScheduleRef", "RidableRef", "HorseRef", "PhysicsRef"):
+            self.assertNotIn(k, horse)
 
     def test_actor_param_chain(self):
         members = fake_player_pack("Adult")
@@ -600,6 +725,7 @@ class FullBuildTest(unittest.TestCase):
             self.assertEqual(t.get(fs["param"]), fs["size"])
             self.assertGreater(fs["size"], build.PACK_SIZE_MARGIN)
         self.assertEqual(man["shots"], [])  # the made-up romfs has no shootables
+        self.assertEqual(man["impacts"], [])  # nor the Business Scrub's seed
         self.assertEqual([a["instance_heap"] for a in man["actors"]], [5692448, 10245064])
         self.assertEqual([a["param_size"] for a in man["actors"]], [21336, 21336])
         for a in man["actors"]:
@@ -612,6 +738,37 @@ class FullBuildTest(unittest.TestCase):
         build.build(self.romfs, mod, log=lambda *_: None)
         for r, b in first.items():
             self.assertEqual(build.read(os.path.join(out, r)), b)
+
+    def test_build_impacts(self):
+        # Issue 166: with the Business Scrub seed's pack in the romfs, the impacts are made.
+        from puppet_pack import zs
+        d = zs.Dicts.from_romfs(self.romfs)
+        scrub = {"Actor/Shootable_ScrubBusinessSees.engine__actor__ActorParam.bgyml":
+                 byml.dumps({"Components": {}}), build.IMPACT_TEMPLATE: fake_emit_ainb()}
+        self.write("Pack/Actor/Shootable_ScrubBusinessSees.pack.zs", d.compress(sarc.write(scrub), "pack.zsdic"))
+        ai = byml.loads(self.ai_bytes) + [{"__RowId": "Shootable_ScrubBusinessSees", "InstanceHeapSize": 129832,
+                                           "ELinkUserName": "Shootable_ScrubBusinessSees"}]
+        ai.sort(key=lambda r: r["__RowId"])
+        self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", zstandard.ZstdCompressor().compress(byml.dumps(ai)))
+        mod = os.path.join(self.dir, "mod")
+        build.build(self.romfs, mod, log=lambda *_: None)
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        self.assertEqual([(i["actor"], i["elink"], i["slink"], i["key"]) for i in man["impacts"]],
+                         [tuple(i) for i in build.IMPACTS])
+        out = os.path.join(mod, "romfs")
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(rows["CoopHit_Arrow"]["ELinkUserName"], "NormalArrow")
+        self.assertEqual(rows["CoopHit_Arrow"]["SLinkUserName"], "NormalArrow")
+        self.assertNotIn("ELinkUserName", rows["CoopHit_ArrowSound"])
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        for i in man["impacts"]:
+            files = sarc.read(d.decompress(build.read(os.path.join(out, i["pack"]))))
+            self.assertEqual(sorted(files), i["members"])
+            for m in i["members"]:
+                self.assertGreater(t.get(m), len(files[m]))
+            self.assertGreater(t.get(i["pack"][:-3]), 0)
 
     def test_build_heap_switch(self):
         from puppet_pack import zs
@@ -703,6 +860,18 @@ class FullBuildTest(unittest.TestCase):
         self.assertNotIn("SLinkUserName", rows["CoopPuppet_Adult"])
         files = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/CoopPuppet_Adult.pack.zs"))))
         self.assertFalse([n for n in files if "SLink" in n or "SoundFootStep" in n])
+
+    def test_build_writes_the_room_table(self):
+        mod = os.path.join(self.dir, "mod_rooms")
+        self.write("Banc/Dun/Dun_Static.bcett.byml.zs", zstandard.ZstdCompressor().compress(byml.dumps(
+            {"Actors": [{"Gyaml": "A", "Hash": byml.UInt64(1), "Translate": [1.0, 2.0, 3.0],
+                         "Dynamic": {"DefaultDungeonRoomIndex": 4}},
+                        {"Gyaml": "B", "Hash": byml.UInt64(2), "Translate": [9.0, 9.0, 9.0]}],
+             "FilePath": "x"})))
+        m = build.build(self.romfs, mod, log=lambda *_: None)
+        text = build.read(os.path.join(mod, "coop_rooms.txt")).decode()
+        self.assertEqual([line for line in text.splitlines() if not line.startswith("#")], ["Dun 4 1.00 2.00 3.00"])
+        self.assertEqual(m["rooms"], {"scenes": 1, "rooms": 1, "placements": 1})
 
     def test_place_test(self):
         from puppet_pack import place_test, zs
@@ -831,7 +1000,8 @@ class NupTest(unittest.TestCase):
     def test_nup_files_has_the_stand_in_sources(self):
         # The pack built from a .nup (before this fix) had "shots": []: only REQUIRED was extracted, so
         # every STAND_INS source was "left out". They are read from the .nup when it has them.
-        self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS},
+        self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS} |
+                         {f"Pack/Actor/{build.IMPACT_SOURCE}.pack.zs"},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"
         nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, dict(self.base, **{seed: (b"seed", nup.CODEC_RAW)}))])
@@ -1080,6 +1250,29 @@ class DumpCheckTest(unittest.TestCase):
             code = build.main(["--romfs", self.romfs, "--mod-dir", os.path.join(self.dir, "mod")])
         self.assertEqual(code, 1)
         self.assertIn("Skeleton", err.getvalue())
+
+
+class DungeonRoomsTest(unittest.TestCase):
+    def test_thin_keeps_points_a_step_apart_in_order(self):
+        pts = [[0, 0, 0], [0.5, 0, 0], [1.0, 0, 0], [3, 0, 0], [3, 0.2, 0]]
+        self.assertEqual(dungeon_rooms.thin(pts), [[0, 0, 0], [1.0, 0, 0], [3, 0, 0]])
+
+    def test_render_sorted_rows(self):
+        text = dungeon_rooms.render({"B": {2: [[1, 2, 3]]}, "A": {1: [[0, 0, 0], [0.1, 0, 0]], 0: [[-1.234, 5, 6]]}})
+        rows = [line for line in text.splitlines() if not line.startswith("#")]
+        self.assertEqual(rows, ["A 0 -1.23 5.00 6.00", "A 1 0.00 0.00 0.00", "B 2 1.00 2.00 3.00"])
+
+    @unittest.skipUnless(os.environ.get("COOP_TEST_ROMFS"), "set COOP_TEST_ROMFS to the game's romfs")
+    def test_real_romfs_each_placement_in_its_own_room(self):
+        # Only with the player's own game; nothing of it is kept in the repo.
+        rooms = dungeon_rooms.scene_rooms(os.environ["COOP_TEST_ROMFS"])
+        self.assertTrue(rooms)
+        for scene, by_room in rooms.items():
+            pts = [(r, p) for r, ps in by_room.items() for p in dungeon_rooms.thin(ps)]
+            for room, p in pts:
+                best = min(pts, key=lambda q: (q[1][0] - p[0]) ** 2 + (2 * (q[1][1] - p[1])) ** 2
+                           + (q[1][2] - p[2]) ** 2)
+                self.assertEqual(best[0], room, f"{scene} {p}")
 
 
 if __name__ == "__main__":

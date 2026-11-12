@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop/net/enet_path.hpp"
 #include "coop/net/enet_waiting.hpp"
 #include "coop/protocol/codec.hpp"
 
@@ -195,6 +196,7 @@ void Client::stop() {
 
 void Client::begin_attempt() {
   attempt_started_us_ = now_us();
+  path_mark_ = PathMark{};
   last_receive_us_ = 0;
   link_ = LinkInfo{};
   ENetAddress address{};
@@ -249,6 +251,8 @@ void Client::end_attempt(DropReason reason) {
     retry_delay_ms_ = static_cast<std::uint32_t>(std::min<std::uint64_t>(
         static_cast<std::uint64_t>(retry_delay_ms_) * 2, config_.retry_max_ms));
   }
+  // Not a failure of the server: try again at once with small datagrams.
+  if (reason == DropReason::small_path) retry_delay_ms_ = config_.retry_first_ms;
   retry_at_us_ = now_us() + ms_to_us(retry_delay_ms_);
   state_ = State::waiting_retry;
 }
@@ -271,7 +275,13 @@ void Client::service(std::uint32_t wait_ms) {
         if (event.peer == peer_ && state_ == State::connecting) {
           proto::Hello hello = config_.hello;
           last_receive_us_ = now_us();  // the server answered the connect
-          if (send_raw(hello, proto::channel_of(hello))) {
+          // The token of our last place, shown before HELLO: with it the
+          // server lets this connection take over our own quiet place.
+          bool claimed = true;
+          if (rejoin_token_) {
+            claimed = send_raw(proto::RejoinClaim{*rejoin_token_}, proto::kChannelSession);
+          }
+          if (claimed && send_raw(hello, proto::channel_of(hello))) {
             hello_sent_us_ = now_us();
             challenge_answered_ = false;
             state_ = State::handshaking;
@@ -291,9 +301,11 @@ void Client::service(std::uint32_t wait_ms) {
       case ENET_EVENT_TYPE_DISCONNECT:
         if (event.peer == peer_) {
           peer_ = nullptr;  // ENet has already reset it
+          const bool to_small = event.data == kDisconnectSmallDatagrams;
+          if (to_small) use_small_datagrams();
           if (state_ == State::connecting || state_ == State::handshaking ||
               state_ == State::connected) {
-            end_attempt(DropReason::connection_lost);
+            end_attempt(to_small ? DropReason::small_path : DropReason::connection_lost);
           }
         }
         break;
@@ -336,8 +348,18 @@ void Client::service(std::uint32_t wait_ms) {
     link_.loss_percent = static_cast<std::uint32_t>(
         static_cast<std::uint64_t>(peer_->packetLoss) * 100 / ENET_PEER_PACKET_LOSS_SCALE);
     link_.mtu = peer_->mtu;
+    if ((state_ == State::handshaking || state_ == State::connected) &&
+        full_datagrams_lost(path_mark_, *peer_, host_->serviceTime)) {
+      use_small_datagrams();
+      end_attempt(DropReason::small_path);
+    }
   }
   enet_host_flush(host_);
+}
+
+void Client::use_small_datagrams() {
+  small_datagrams_ = true;
+  if (host_ != nullptr && host_->mtu > kSmallDatagramBytes) host_->mtu = kSmallDatagramBytes;
 }
 
 LinkInfo Client::link() const {
@@ -446,6 +468,11 @@ void Client::on_connected_message(proto::Message message, std::uint8_t channel) 
     } else {
       ++rejected_;
     }
+    return;
+  }
+
+  if (const auto* token = std::get_if<proto::RejoinToken>(&message)) {
+    rejoin_token_ = token->token;  // kept for the next connection
     return;
   }
 

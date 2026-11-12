@@ -38,6 +38,11 @@
 //                          CoopBoss::MoveLink; needs LICHII_COOP_BOSS on, the
 //                          default), so a scenario reaches a room no walk
 //                          can; logs "coop: test place ...: done" or "failed"
+//   kill Enemy_Skulltula_Gold test only: the nearest actor of that name to
+//                          Link takes a hit from Link through the game's own
+//                          damage (as a real kill, so it drops what it
+//                          drops); needs LICHII_COOP_OBJECTS on; logs
+//                          "coop: test kill NAME ...: hit" or "none here"
 //   give bombs             test only: gives an item through coop_cheats
 //                          (needs LICHII_COOP_CHEATS=1): bombs, bow, hookshot,
 //                          or any item flag name coop_cheats knows
@@ -110,6 +115,9 @@ enum class Kind {
     assign,  // test only: the item on ZR (PlayerStatus.AssignableItem.Child and .Adult)
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
+    kill,    // test only: the nearest actor of that name hit by our Link for all its life
+    setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)
+    setenum, // test only: an Enum flag (name or 0x hash) set to a value's name (issue 193: quests)
 };
 
 struct Step {

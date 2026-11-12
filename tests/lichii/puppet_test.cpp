@@ -328,11 +328,12 @@ TEST_CASE("puppet: malloc, create, live, follow, delete") {
     CHECK(d.Slots()[0].actor == kActor);
 
     // It follows: the pose is written every frame.
-    Target moved = At(2, 12, 1.5f, -6);
+    // (A step under CoopSnap::kSnapM: drawn as given, not eased; issue 194.)
+    Target moved = At(2, 10.5f, 1.25f, -5.25f);
     moved.rotation = CoopPuppet::QuatToMatrix({0, std::sqrt(0.5f), 0, std::sqrt(0.5f)});
     d.SetInput(Wants({moved}));
     CHECK(Frame(d, g, 400).empty());
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 12, 1.5f, -6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 10.5f, 1.25f, -5.25f);
     CHECK(g.guest.Get<float>(kActor + addr::kActorRotation + 4 * 2) ==
           doctest::Approx(moved.rotation[2]));
 
@@ -931,7 +932,7 @@ TEST_CASE("puppet move: the game's setter once a frame when asked for") {
     CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
 }
 
-TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor") {
+TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hide parks it") {
     Game g;
     Director d;
     MakeLive(d, g);
@@ -941,9 +942,11 @@ TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor")
     Frame(d, g, 30);
     CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
 
-    // Hold: not moved, and its frame set back to where it was every frame.
+    // Hold: its frame set back to where it was every frame, and (issue 194) it follows their
+    // place, so it is not left behind for a snap at the end. A jump while held is a real
+    // teleport (their samples move smoothly in a cutscene): drawn at once, not eased.
     Target held = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hold);
-    held.position = {40, 5, 6};
+    held.position = {6, 5, 6};
     d.SetInput(Wants({held}));
     g.guest.Set(kSlot0 + addr::kSlotFrame, 11.0f);
     for (std::uint64_t now : {40, 50}) {
@@ -953,24 +956,30 @@ TEST_CASE("puppet scene filter: hold freezes it, hide parks it under the floor")
         CHECK(calls[0].s0 == 11.0f);
         g.guest.Set(kSlot0 + addr::kSlotFrame, 12.0f);
     }
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 6, 5, 6);
     CHECK(d.Slots()[0].anim_name == "Wait");
+    // Their event walks them on: followed.
+    held.position = {6.2f, 5, 6};
+    d.SetInput(Wants({held}));
+    Frame(d, g, 100);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 6.2f, 5, 6);
 
     // Hide: parked below its spot, no animation calls, not deleted.
     Target hidden = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hide);
     hidden.position = {40, 5, 6};
     d.SetInput(Wants({hidden}));
-    CHECK(Frame(d, g, 60).empty());
+    CHECK(Frame(d, g, 400).empty());
     CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
     CHECK(d.Slots()[0].phase == Phase::live);
 
     // Shown again: moves, and plays what it missed.
     held.show = CoopPuppet::Show::show;
+    held.position = {40, 5, 6};
     d.SetInput(Wants({held}));
-    auto calls = Frame(d, g, 70);
+    auto calls = Frame(d, g, 410);
     REQUIRE(calls.size() == 2);
     CHECK(calls[0].function == kBase + addr::kPlayAs);
-    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);  // where it was hidden: no ease
 }
 
 TEST_CASE("puppet: LiveMask has a live puppet shown or held, not one parked or gone (issue 145)") {
@@ -1043,7 +1052,7 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     CHECK(in.targets[1].actor == "Animal_Cow_LinkHouse");
 }
 
-TEST_CASE("puppet planner: riding parks, the Ocarina plays through their cutscene") {
+TEST_CASE("puppet planner: riding shows (issue 199), the Ocarina plays through their cutscene") {
     CoopPuppet::Planner p;
     std::vector<CoopPuppet::Remote> remotes(3);
     remotes[0].number = 1;
@@ -1061,7 +1070,7 @@ TEST_CASE("puppet planner: riding parks, the Ocarina plays through their cutscen
 
     auto in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 3);
-    CHECK(in.targets[0].show == CoopPuppet::Show::hide);  // kept, parked
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);  // on its horse copy, never parked
     CHECK(std::string(in.targets[0].why) == "riding");
     CHECK(in.targets[1].show == CoopPuppet::Show::show);
     CHECK(std::string(in.targets[1].why) == "ocarina");

@@ -18,6 +18,7 @@ add_executable(coop_tests
   protocol/join_password_test.cpp
   net/clock_test.cpp
   net/client_test.cpp
+  net/small_path_test.cpp
   presence/presence_test.cpp
   host/reader_test.cpp
   host/sampler_test.cpp
@@ -35,14 +36,21 @@ add_executable(coop_tests
   lichii/puppet_test.cpp
   lichii/callers_test.cpp
   lichii/fairy_test.cpp
+  lichii/rooms_test.cpp
   lichii/objects_test.cpp
   lichii/spawn_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_spawn.cpp
+  lichii/ride_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ride.cpp
   lichii/projectiles_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_projectiles.cpp
+  lichii/enemy_shots_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_enemy_shots.cpp
   lichii/drops_test.cpp
   lichii/guard_test.cpp
+  lichii/snap_test.cpp
+  lichii/scrub_talk_test.cpp
   lichii/chests_test.cpp
   lichii/dungeon_test.cpp
+  lichii/quest_test.cpp
   lichii/story_test.cpp
+  lichii/quests_test.cpp
   lichii/pose_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
@@ -50,10 +58,14 @@ add_executable(coop_tests
   lichii/testinput_test.cpp
   lichii/time_test.cpp
   lichii/every_test.cpp
+  lichii/hud_test.cpp
   lichii/game_build_test.cpp
   lichii/boss_test.cpp
   lichii/teleport_test.cpp
+  lichii/pvp_test.cpp
   lichii/live_events_test.cpp
+  lichii/shared_scenes_test.cpp
+  lichii/scrubs_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_scrubs.cpp
   lichii/cheat_items_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_cheat_items.cpp
   # These hook files have no emulator code, so they are tested on their own.
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss.cpp
@@ -62,10 +74,14 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_drops.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_chests.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dungeon.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_quest.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_story.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_quests.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_events.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_places.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_shared_scenes.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pose.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet.cpp
@@ -75,6 +91,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pickups.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_testinput.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_teleport.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pvp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_time_sync.cpp
 )
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook)

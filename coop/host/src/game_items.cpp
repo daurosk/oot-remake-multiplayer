@@ -112,7 +112,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_Arrow_Normal.StockNum", 0x518ec74b, K::int32, R::per_player, true},
   {"PouchData.Item_CojiroCucco.StockNum", 0x51d89ef0, K::int32, R::mirror, true},
   {"PouchData.Obj_Heart_Piece.StockNum", 0x51ec97b3, K::int32, R::count, true},
-  {"IsGet.Weapon_Shield_Deku", 0x5217da1e, K::boolean, R::per_player, true},  // issue 130
+  {"IsGet.Weapon_Shield_Deku", 0x5217da1e, K::boolean, R::any, true},  // issue 130: shared again
   {"PouchData.BottleD.StockNum", 0x5324f9d3, K::int32, R::any, true},
   {"PouchData.Item_Ocarina_Time.StockNum", 0x54e2a3d1, K::int32, R::max, true},
   {"PouchData.Item_NormalBoot.StockNum", 0x55e804de, K::int32, R::max, true},
@@ -155,7 +155,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.SpiritTemple.SmallKeyNum", 0x79eeec8e, K::int32, R::count, true},
   {"IsGet.Weapon_Sword_Master", 0x7ae38e5b, K::boolean, R::any, true},
   {"PouchData.Item_BulletBag_Large.StockNum", 0x7b9673f5, K::int32, R::max, true},
-  {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::per_player, true},  // issue 130
+  {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::max, true},  // issue 130: shared again
   {"PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem", 0x7d48df76, K::uint32, R::per_player, true},
   {"PouchData.Item_Stone_Fire.StockNum", 0x7d69ad47, K::int32, R::max, true},
   {"DungeonInfo.BottomOfTheWell.SmallKeyNum", 0x7dd79d10, K::int32, R::count, true},
@@ -591,6 +591,17 @@ std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t s
   const int want = gold >= 1 ? 3 : silver >= 1 ? 2 : goron >= 1 ? 1 : 0;
   if (want <= have) return std::nullopt;  // never lowered
   return kOrder[want];
+}
+
+std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
+                                                   std::string_view current) {
+  const std::string_view want =
+      time >= 1 ? ocarina::kTimeName : fairy >= 1 ? ocarina::kFairyName : std::string_view{};
+  if (want.empty() || current == want) return std::nullopt;
+  if (current.empty() || (current == ocarina::kFairyName && want == ocarina::kTimeName)) {
+    return want;
+  }
+  return std::nullopt;  // the better one already, or a name we do not know
 }
 
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {

@@ -21,6 +21,7 @@
 #include "coop/host/save_transfer.hpp"
 #include "coop/net/client.hpp"
 #include "coop/protocol/messages.hpp"
+#include "coop_every.h"
 #include "coop_settings.h"
 
 namespace CoopSave {
@@ -44,8 +45,10 @@ std::deque<proto::SavePart> g_outbox;       // the host's parts, a frame each
 std::uint32_t g_next_id = 0;
 bool g_asked = false;  // this run's ask went out (once a run: later saves come as host_load)
 bool g_said_own = false;
-unsigned g_frames = 0;
-unsigned g_last_part_frame = 0;  // a guest's last SAVE_PART
+// Issue 106: on the clock, not presented frames (high refresh presents up to
+// 2.75 times as many).
+std::uint64_t g_last_part_us = 0;  // a guest's last SAVE_PART
+CoopEvery::Every g_folder_every{CoopEvery::kHalfSecondUs};
 bool g_said_stuck = false;
 std::string g_notice;
 
@@ -185,7 +188,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     if (part == nullptr) {
         return;
     }
-    g_last_part_frame = g_frames;
+    g_last_part_us = CoopEvery::NowUs();
     g_said_stuck = false;
     switch (g_assembler.add(*part, client.host_number())) {
     case save::Assembler::Result::partial:
@@ -220,7 +223,6 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
 
 void OnFrame(coop::net::Client& client, bool host_reset) {
     std::lock_guard lock(g_mutex);
-    ++g_frames;
     if (client.state() != coop::net::State::connected || client.host_number() == 0) {
         g_outbox.clear();
         return;
@@ -230,7 +232,8 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
         // A transfer that stopped part way (a part lost): said once; the next
         // save the host sends starts again.
         if (!g_said_stuck && g_assembler.received() != 0 &&
-            g_assembler.received() < g_assembler.count() && g_frames - g_last_part_frame > 600) {
+            g_assembler.received() < g_assembler.count() &&
+            CoopEvery::NowUs() - g_last_part_us > CoopEvery::kSaveStuckUs) {
             g_said_stuck = true;
             LOG_WARNING(Core, "coop: save: the host's save (transfer {}) stopped at part {} of {} "
                               "for 10 s; waiting for the next one",
@@ -250,7 +253,7 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
                        "(a door or a save point)");
     }
     // Twice a second: what the host owes (it reads the folder's file times).
-    if (!g_dir.empty() && !g_planner.idle() && g_frames % 30 == 0) {
+    if (!g_dir.empty() && !g_planner.idle() && g_folder_every.Due(CoopEvery::NowUs())) {
         for (const auto& send : g_planner.due(save::newest_write(g_dir))) {
             const auto slot_dir = save::newest_slot(g_dir);
             const auto slot = slot_dir ? save::read_slot(*slot_dir) : std::nullopt;

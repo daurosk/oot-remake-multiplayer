@@ -89,6 +89,10 @@ std::span<const std::string_view> Bodies(const Room& room) {
     return {&room.boss, 1};
 }
 
+std::string_view ShutInFlag(const Room& room) {
+    return room.index == 0 ? std::string_view("InsideTheDekuTree_BossArea_ShutIn") : std::string_view();
+}
+
 const Room* RoomOfScene(std::string_view scene) {
     for (const Room& r : kRooms) {
         if (r.scene == scene) {
@@ -239,6 +243,16 @@ void Sync::Defeat(Actions& out) {
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
 }
 
+void Sync::Commit(Actions& out, const char* why) {
+    if (committed_ || here_ == nullptr) {
+        return;
+    }
+    committed_ = true;
+    const bool fight = phase_ == Phase::fight || phase_ == Phase::outro;
+    Say(out, *here_, fight ? proto::BossState::intro_end : proto::BossState::intro_start);
+    out.log.push_back(std::string("past the door (") + why + "): the others are moved in");
+}
+
 void Sync::Say(Actions& out, const Room& room, proto::BossState state) {
     proto::BossRoom m;
     m.scene = std::string(room.scene);
@@ -304,7 +318,10 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
 
     // In or out of a boss room.
     const Room* room = RoomAt(*local.scene, *local.position);
+    const bool shut_in = local.shut_in.value_or(false);
     if (room != here_) {
+        // Put there by our own pull a moment ago: inside, not on the way.
+        const bool moved_in = pulls_ > 0 && now_us - pulled_at_ < kPullEveryUs;
         if (here_ != nullptr) {
             Say(out, *here_, proto::BossState::left);
             out.log.push_back("left the boss room of " + std::string(here_->scene));
@@ -331,9 +348,10 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 if (local.event) {  // came in with an event running: that is the intro
                     phase_ = Phase::intro;
                     intro_at_ = now_us;
-                    committed_ = true;
-                    Say(out, *here_, proto::BossState::intro_start);
                     out.log.push_back("intro started (" + std::string(here_->intro) + ")");
+                    if (moved_in) {
+                        Commit(out, "moved in");
+                    }
                 }
             }
         }
@@ -341,10 +359,10 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         switch (phase_) {
         case Phase::waiting:
             if (rose) {
+                // Not yet past the door: a door opening or a text on the way
+                // is an event too (issue 148). Commit() below says when.
                 phase_ = Phase::intro;
                 intro_at_ = now_us;
-                committed_ = true;
-                Say(out, *here_, proto::BossState::intro_start);
                 out.log.push_back("intro started (" + std::string(here_->intro) + ")");
             } else if (now_us - entered_at_ >= kNoIntroUs) {
                 // No event said we are past the door (we may stand on the way
@@ -356,14 +374,40 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             break;
         case Phase::intro:
             if (fell) {
+                // Past the door? The game's shut-in flag where the room has
+                // one; else an intro long enough (or skipped to follow).
+                const bool past = committed_ || (local.shut_in.has_value()
+                                                     ? *local.shut_in
+                                                     : now_us - intro_at_ >= kMinIntroUs || skip_asked_);
+                if (!past) {
+                    phase_ = Phase::waiting;
+                    entered_at_ = now_us;  // the wait for the intro starts again
+                    intro_at_ = 0;
+                    skip_asked_ = false;
+                    out.log.push_back("that event was not the intro (not shut in the room): nobody is moved in");
+                    break;
+                }
                 phase_ = Phase::fight;
                 fight_at_ = now_us;
-                Say(out, *here_, proto::BossState::intro_end);
+                if (committed_) {
+                    Say(out, *here_, proto::BossState::intro_end);
+                }
                 out.log.push_back(skip_asked_ ? "intro ended (skipped to follow the others)" : "intro ended");
+                Commit(out, local.shut_in.has_value() ? "shut in" : "the intro is over");
             }
             break;
         case Phase::fight:
-            if (rose && now_us - fight_at_ < kMinFightUs) {
+            if (rose && !committed_ && local.boss_alive.value_or(true)) {
+                // The fight began here with no intro and nobody past the door
+                // (no event yet, or one that was not the intro): this event
+                // may be the real intro, not the boss's death (review of
+                // issue 148: a real intro 10 s after a door event was taken
+                // for an outro, so nobody was pulled, and a 15 s one for the
+                // boss's death).
+                phase_ = Phase::intro;
+                intro_at_ = now_us;
+                out.log.push_back("intro started (" + std::string(here_->intro) + ", after the wait)");
+            } else if (rose && now_us - fight_at_ < kMinFightUs) {
                 out.log.push_back("an event right after the intro: the rest of it, not the boss's death");
             } else if (rose) {
                 phase_ = Phase::outro;
@@ -404,6 +448,10 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         case Phase::done:
             break;
         }
+        // The game says the door has shut behind us (issue 148).
+        if (shut_in && phase_ != Phase::done && !(phase_ == Phase::outro && !provisional_)) {
+            Commit(out, "shut in");
+        }
         // A defeat heard from another game while we fight: stop the heartbeat.
         if ((phase_ == Phase::waiting || phase_ == Phase::fight) && beaten(*here_)) {
             phase_ = Phase::done;
@@ -432,8 +480,8 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
             // The heartbeat says how far we are, so a game that joins late
             // knows whether to move in (issue 148).
             const auto state = !committed_ ? proto::BossState::in_room
-                               : phase_ == Phase::intro ? proto::BossState::intro_start
-                                                        : proto::BossState::intro_end;
+                               : phase_ == Phase::intro || phase_ == Phase::waiting ? proto::BossState::intro_start
+                                                                                    : proto::BossState::intro_end;
             Say(out, *here_, state);
             sent_at_ = now_us;
         }

@@ -74,6 +74,27 @@ class SaveFlagsTest(unittest.TestCase):
         sf.set_values(data, changes)
         self.assertEqual(sf.get(data, 6, sf.LIFT_GRADE), high)
 
+    def test_no_ocarina_takes_the_ocarina_away(self):
+        # Issue 190: a Saria save, the equipped name in the pool.
+        name = b"Item_Ocarina_Fairy".ljust(64, b"\x00")
+        data = make_save({
+            0: [(h, 1) for k, h, _ in sf.NO_OCARINA if k == "bool"],
+            2: [(h, 1) for k, h, _ in sf.NO_OCARINA if k == "int"],
+            16: [(sf.EQUIP_OCARINA, 0)],  # offset set below
+        }, pool_extra=name)
+        text = struct.unpack_from("<I", data, 8)[0]
+        struct.pack_into("<I", data, sf.index(data)[(16, sf.EQUIP_OCARINA)], text)
+        done = sf.no_ocarina(data)
+        self.assertEqual(len(done), len(sf.NO_OCARINA) + 1)
+        for k, h, _ in sf.NO_OCARINA:
+            self.assertEqual(sf.get(data, sf.TYPES[k], h), 0)
+        self.assertEqual(bytes(data[text:text + 64]), bytes(64))
+        self.assertEqual(sf.no_ocarina(data), [])  # twice: nothing more
+
+    def test_no_ocarina_needs_the_equipped_name(self):
+        with self.assertRaises(sf.SaveError):
+            sf.no_ocarina(autotest_like())
+
     def test_missing_flag_changes_nothing(self):
         data = make_save({2: [(0xdb1bcd4f, 0)]})
         before = bytes(data)

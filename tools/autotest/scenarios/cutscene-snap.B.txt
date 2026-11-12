@@ -1,0 +1,37 @@
+# cutscene-snap, B (see cutscene-snap.steps.txt): as deku-ladder.B.txt (put by the slingshot
+# room's door, watches the ladder fall), then walks through the door (ShutterFrame at -30.5 109.8
+# 10.2), a door cutscene, while A watches.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -33.2 110.3 10.4
+wait 240
+mark placed
+toward -45.0 11.0 10     # face into the room: ladder, pillar, trap floor
+press ZL 10
+wait 1200
+toward -45.0 11.0 6
+press ZL 10
+mark b-view
+wait 1500                # the ladder falls (A's eye shot) and B's live event plays
+mark b-ladder
+toward -30.5 10.2 10     # to the door
+stick 0 1 45
+press A 12               # in case the door asks for A
+stick 0 1 60
+wait 600                 # the door's cutscene
+mark b-door
+stick 0 -1 60            # back into the room, if the door let B through
+wait 600
+mark b-end

@@ -47,7 +47,7 @@ jobs:
       bump: ${{ steps.decide.outputs.bump }}
       dry_run: ${{ steps.decide.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Compare Fritchii's newest release with lichii/PIN
         id: decide
         env:
@@ -131,13 +131,13 @@ jobs:
       COMMIT: ${{ needs.check.outputs.commit }}
     steps:
       # The fetched source runs its own scripts (Vulkan SDK, CMake): no token is left behind for them.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           path: coop
           persist-credentials: false
 
       - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1.13.0
 
       - name: Unit tests
         run: |
@@ -159,7 +159,7 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06  # v4
+        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06  # v4.5.0
         with:
           version: "6.8.3"
           host: windows
@@ -178,7 +178,7 @@ jobs:
       # Keyed by the exact commit and never shared with another one, so one release's
       # downloads are never handed to the build of another.
       - name: Restore CPM downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: fritchii-src/.cache/cpm
           key: coop-cpm-windows-${{ needs.check.outputs.commit }}
@@ -212,7 +212,7 @@ jobs:
             "run=$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID")
 
       - name: Upload the emulator
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: lichii-coop-${{ needs.check.outputs.tag }}-windows
           path: fritchii-src/build/coop/bin
@@ -234,7 +234,7 @@ jobs:
       VER: ${{ needs.check.outputs.ver }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Push fritchii-bump branch and open the pull request
         run: |
           set -euo pipefail

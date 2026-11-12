@@ -1,0 +1,28 @@
+# deku-platforms, B: put on the compass room's plate (see deku-platforms.A.txt) after A is in place.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 1100
+place -17.5 120.2 -4.9
+wait 60
+mark pressed
+wait 240
+mark up1
+wait 300
+mark up2
+wait 900
+mark mid
+wait 1500
+mark down
+wait 600
+mark late

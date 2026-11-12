@@ -18,6 +18,9 @@ in the table are changed; nothing is added or moved.
   save_flags.py set SAVE int:0xdb1bcd4f=20 [bool:0x2bb00768=1 ...]
   save_flags.py bombs SAVE [SAVE ...]     what a real small bomb bag sets, with the
                                           Goron's Bracelet and its lift grade
+  save_flags.py no-ocarina SAVE [SAVE ...]
+                                          takes both ocarinas away, as for a player
+                                          who never met Saria (issue 190)
 
 SAVE may be a pattern (slot_0*/progress.sav); it is expanded here, as the
 Windows shells do not. Only saves in a kit's baseline are touched: a path
@@ -41,6 +44,7 @@ MAGIC = 0x01020304
 TABLE = 0x20
 TYPES = {"bool": 0, "int": 2, "enum": 6, "uint": 20}
 END = 0x20
+STRING64 = 16  # pool entries: the table's value word is the text's offset, 64 bytes
 
 # What a save of a player who got the small bomb bag in the game holds that a
 # save without it does not (docs/items.md, "Bombs from the cheat"). The get
@@ -108,7 +112,7 @@ def index(data):
             kind = second
         elif kind is None:
             raise SaveError("an entry before the first type")
-        elif kind in TYPES.values():
+        elif kind in TYPES.values() or kind == STRING64:
             if (kind, first) in out:
                 raise SaveError(f"{first:#x} twice in type {kind}")
             out[(kind, first)] = at + 4
@@ -246,6 +250,41 @@ def bomb_changes(data):
     return changes
 
 
+# Issue 190: what a save holds once Link got an ocarina himself (docs/items.md,
+# "The ocarina"), all set back to the default: no ocarina, none equipped.
+NO_OCARINA = [
+    ("int", 0xb7df60f1, 0),   # PouchData.Item_Ocarina_Fairy.StockNum
+    ("int", 0x54e2a3d1, 0),   # PouchData.Item_Ocarina_Time.StockNum
+    ("bool", 0x42bd296f, 0),  # IsGet.Item_Ocarina_Fairy
+    ("bool", 0x1da2c511, 0),  # IsGet.Item_Ocarina_Time
+    ("bool", 0xaacdef1f, 0),  # 0x541947d0.Ocarina
+    ("bool", 0xda41879d, 0),  # 0x57f52eb8.Ocarina
+    ("bool", 0x137df1ac, 0),  # 0x41f3e410.Item_Ocarina_Fairy
+    ("bool", 0xac6a85e3, 0),  # 0x41f3e410.Item_Ocarina_Time
+]
+EQUIP_OCARINA = 0xb72cd3fc  # String64 PlayerStatus.EquipOcarina, "Item_Ocarina_Fairy" once got
+
+
+def no_ocarina(data):
+    """Takes the ocarinas out of a bytearray save. Returns [(hash, old, new)];
+    the equipped name is reported as its first 4 bytes before and after."""
+    idx = index(data)
+    at = idx.get((STRING64, EQUIP_OCARINA))
+    if at is None:
+        raise SaveError(f"not in this save: {EQUIP_OCARINA:#x}")
+    text = struct.unpack_from("<I", data, at)[0]
+    if text + 64 > len(data):
+        raise SaveError("the equipped ocarina's text is past the end of the save")
+    changes = [(TYPES[k], h, v) for k, h, v in NO_OCARINA
+               if get(data, TYPES[k], h) not in (None, v)]
+    done = set_values(data, changes)
+    old = struct.unpack_from("<I", data, text)[0]
+    if any(data[text:text + 64]):
+        data[text:text + 64] = bytes(64)
+        done.append((EQUIP_OCARINA, old, 0))
+    return done
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -259,6 +298,8 @@ def main(argv=None):
     s.add_argument("flags", nargs="+")
     b = sub.add_parser("bombs")
     b.add_argument("saves", nargs="+")
+    o = sub.add_parser("no-ocarina")
+    o.add_argument("saves", nargs="+")
     a = p.parse_args(argv)
     try:
         if a.cmd == "list":
@@ -286,7 +327,10 @@ def main(argv=None):
         for path in expand([a.save] if a.cmd == "set" else a.saves):
             old = read_file(path)
             data = bytearray(old)
-            done = set_values(data, changes if a.cmd == "set" else bomb_changes(data))
+            if a.cmd == "no-ocarina":
+                done = no_ocarina(data)
+            else:
+                done = set_values(data, changes if a.cmd == "set" else bomb_changes(data))
             if bytes(data) == old:
                 print(f"{path}: nothing to change")
                 continue

@@ -1,21 +1,45 @@
-# epona (issue 86): A rides Epona; B watches A's puppet. NOT runnable on the kits' saves as
-# they are: needs A's save adult, at Lon Lon Ranch or in Hyrule Field, standing by Epona
-# (facing her), and B in the same place (child or adult; either era counts). Run with -NoLoad
-# after loading those saves by hand, or give A such a save.
-# Expect in B's log: "coop: puppet: P1 show -> hide (riding)" once A is on the horse (A's
-# command names a horse: with LICHII_COOP_DEBUG_ANIM=1 "P1 plays 'HorseRideOn...'",
-# "'HorseMove...'"), then "P1 hide -> show" after A gets off ("'DismountHorse'"). Screenshots
-# at "riding": B's window has no puppet of A (and no Navi) but A's marker; A's own window shows
-# A on Epona. If B's log shows A's riding commands under other names, add them to
-# coop::host::activity_of.
+# epona (issue 199), A: the watcher. Loads into Hyrule Field as adult like B (epona.B.txt) and
+# stands 10 m south of Epona, facing her, while B gets on, rides and gets off.
+# Before issue 199 B's puppet vanished here ("P2 show -> hide (riding)"). Now:
+# - A's log: "coop: ride: P2 rides Animal_Epona_Adult (horse copy CoopRide_Epona)" and the spawn
+#   director's "CoopRide_Epona: create copy" once B is on; "P2 off the horse (copy deleted)" after
+#   B gets off; no "P2 show -> hide (riding)". With LICHII_COOP_DEBUG_ANIM=1: "P2 plays 'Horse..."
+# - Shots: "mounted", "riding", "riding2": B's puppet on a horse in A's window, moving between
+#   riding and riding2 (two horses near the spot only before B rides off: the field's own Epona
+#   in A's game stays where she is). "dismounted", "walking": B's puppet on foot, no copy horse.
+# The kits' puppet pack must be made again (make-puppet-pack.cmd) to have CoopRide_Epona; an old
+# pack logs no create and shows B in the riding pose without a horse (the fallback).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_ANIM=1
 mark start
-wait 60
-press A                 # get on
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1200               # the title screen
+mark title
+press A
 wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark field
+place -100.5 151.0 254.5 # 10 m south of Epona
+wait 240
+toward -100.47 264.55 6  # face her (and B)
+press ZL                 # camera behind A
+wait 120
+mark watching
+wait 300                 # B gets on
 mark mounted
-stick 0 0.8 180         # ride forward
+wait 120
 mark riding
-wait 60
-press A                 # get off (A by the horse's side; X if that is the game's button)
-wait 180
+wait 120
+mark riding2
+wait 480                 # B stops and gets off
 mark dismounted
+wait 60
+mark walking
+wait 300
+mark end

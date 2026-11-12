@@ -13,7 +13,7 @@
 # --appimage  the co-op emulator's AppImage (lichii/README.md, "Linux")
 # --server    the Linux coop_server (cmake --build build --target coop_server)
 # --out       where the kit folder goes (default ../coop-kit beside the repo)
-# --release   a release name such as v0.1.0-test7: the kit is oot-coop-<release>-linux and
+# --release   a release name such as v0.1.0-beta7: the kit is oot-coop-<release>-linux and
 #             VERSION.txt names the release (update.sh compares it)
 # --port      the default server port written into the kit (27510)
 # --emu-source  the emulator's source checkout, for SOURCE.txt and its licence texts

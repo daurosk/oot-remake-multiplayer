@@ -328,7 +328,7 @@ kit_mods() {
 
 # --- Versions (update.sh) ----------------------------------------------------------------
 
-# kit_version_compare A B: prints -1, 0 or 1. v0.1.0 > v0.1.0-test2; test2 < test10.
+# kit_version_compare A B: prints -1, 0 or 1. v0.1.0 > v0.1.0-beta2; beta2 < beta10.
 # Something that is not a version counts as the oldest.
 kit_version_compare() {
     local a=$1 b=$2 re='^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-([A-Za-z0-9.]+))?$'
@@ -346,7 +346,7 @@ kit_version_compare() {
     [[ -z $pa && -z $pb ]] && { echo 0; return; }
     [[ -z $pa ]] && { echo 1; return; }
     [[ -z $pb ]] && { echo -1; return; }
-    # Runs of digits compare as numbers, the rest as text: test2 < test10 < testb.
+    # Runs of digits compare as numbers, the rest as text: beta2 < beta10 < betab.
     awk -v a="$pa" -v b="$pb" '
         function run(s, i,   c) { c = substr(s, i, 1); return c ~ /[0-9]/ }
         BEGIN {
@@ -366,7 +366,7 @@ kit_version_compare() {
 }
 
 # The release this kit was made from: the first line of VERSION.txt
-# ("kit: oot-coop-v0.1.0-test7-linux (release v0.1.0-test7)"); empty when none.
+# ("kit: oot-coop-v0.1.0-beta7-linux (release v0.1.0-beta7)"); empty when none.
 kit_version() {
     local first
     [[ -f $1/VERSION.txt ]] || return 0

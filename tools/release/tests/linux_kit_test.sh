@@ -30,7 +30,7 @@ check 'an empty server or name stays a comment' bash -c 'grep -q "^# server =$" 
 printf 'auto_update = yes\nLICHII_COOP_PUPPET=1\n# EDEN_NX2_GPL=1\nEDEN_NX2_GPL = 1\nEDEN_OTHER=1\n' >"$tmp/options.ini"
 check 'coop-options.ini: LICHII_COOP_ and EDEN_NX2_ lines only' [ "$(kit_read_options "$tmp/options.ini" 2>/dev/null | tr '\n' ,)" = 'LICHII_COOP_PUPPET=1,EDEN_NX2_GPL=1,' ]
 check 'auto_update is read' [ "$(kit_auto_update "$tmp/options.ini")" = yes ]
-check 'versions: test2 < test10 < release, numbers win' bash -c '. "$1"; [ "$(kit_version_compare v0.1.0-test2 v0.1.0-test10)" = -1 ] && [ "$(kit_version_compare v0.1.0 v0.1.0-test9)" = 1 ] && [ "$(kit_version_compare v0.2.0-test1 v0.1.9)" = 1 ] && [ "$(kit_version_compare v0.1.0-test7 v0.1.0-test7)" = 0 ] && [ "$(kit_version_compare junk v0.0.1)" = -1 ]' _ "$release/kit/linux/kit-lib.sh"
+check 'versions: beta2 < beta10 < release, numbers win' bash -c '. "$1"; [ "$(kit_version_compare v0.1.0-beta2 v0.1.0-beta10)" = -1 ] && [ "$(kit_version_compare v0.1.0 v0.1.0-beta9)" = 1 ] && [ "$(kit_version_compare v0.2.0-beta1 v0.1.9)" = 1 ] && [ "$(kit_version_compare v0.1.0-beta7 v0.1.0-beta7)" = 0 ] && [ "$(kit_version_compare junk v0.0.1)" = -1 ]' _ "$release/kit/linux/kit-lib.sh"
 
 # --- Mods (issue 136) -----------------------------------------------------------------------
 u=$tmp/mods/emulator/user
@@ -97,14 +97,14 @@ exit 0
 EOF
 chmod +x "$stub/lichii.AppImage" "$stub/coop_server"
 mk() { bash "$release/make_kit.sh" --appimage "$stub/lichii.AppImage" --server "$stub/coop_server" --out "$tmp/out" "$@" >/dev/null 2>"$tmp/mk.err"; }
-check 'make_kit.sh builds v0.1.0-test6' mk --release v0.1.0-test6
-kit6=$tmp/out/oot-coop-v0.1.0-test6-linux
+check 'make_kit.sh builds v0.1.0-beta6' mk --release v0.1.0-beta6
+kit6=$tmp/out/oot-coop-v0.1.0-beta6-linux
 arch=$(uname -m)
 check 'the kit has its scripts, emulator, server, tool and docs' bash -c 'cd "$1" && for f in Host.sh Join.sh play.sh start-server.sh collect-logs.sh update.sh make-puppet-pack.sh scripts/kit-lib.sh scripts/coop.ini.template emulator/lichii.AppImage server/coop_server tools/puppet_pack/build.py SETUP.md KNOWN-ISSUES.md SOURCE.txt VERSION.txt MANIFEST.txt coop-options.ini emulator/user/config/coop.ini LICENSE.txt; do [ -f "$f" ] || { echo "missing $f"; exit 1; }; done; [ -x play.sh ] && [ -x emulator/lichii.AppImage ] && [ -d emulator/user/keys ]' _ "$kit6"
-check 'VERSION.txt names the release' has "$kit6/VERSION.txt" 'kit: oot-coop-v0.1.0-test6-linux (release v0.1.0-test6)'
+check 'VERSION.txt names the release' has "$kit6/VERSION.txt" 'kit: oot-coop-v0.1.0-beta6-linux (release v0.1.0-beta6)'
 check 'the port is filled in, no @PORT@ left' bash -c '! grep -rl "@PORT@" "$1" --include=*.sh --include=*.template && grep -q "^port = 27510$" "$1/emulator/user/config/coop.ini"' _ "$kit6"
 check 'MANIFEST.txt lists the kit'"'"'s files, never user/' bash -c 'grep -qx play.sh "$1/MANIFEST.txt" && grep -qx emulator/lichii.AppImage "$1/MANIFEST.txt" && ! grep -q "^emulator/user" "$1/MANIFEST.txt"' _ "$kit6"
-check 'the tarball and its sha256 match' bash -c 'cd "$1" && sha256sum -c "oot-coop-v0.1.0-test6-linux-$2.tar.gz.sha256" >/dev/null' _ "$tmp/out" "$arch"
+check 'the tarball and its sha256 match' bash -c 'cd "$1" && sha256sum -c "oot-coop-v0.1.0-beta6-linux-$2.tar.gz.sha256" >/dev/null' _ "$tmp/out" "$arch"
 
 # --- play.sh -----------------------------------------------------------------------------------
 waitfor() { for _ in $(seq 50); do [[ -f $1 ]] && return 0; sleep 0.1; done; return 1; }
@@ -127,7 +127,7 @@ check 'a bad address is refused' has "$tmp/play3.out" 'Bad server address: my pc
 (cd "$kit6" && bash ./start-server.sh 27600 >"$tmp/server.out" 2>&1)
 log=$(ls "$kit6"/logs/server-*.log 2>/dev/null | head -n1)
 check 'start-server.sh runs the server on the port and logs it' bash -c '[ -n "$1" ] && grep -q "coop_server on port 27600" "$1" && grep -q "server exited with code 0" "$1"' _ "$log"
-check 'a refused older game is told which release to update to' has "$log" 'every player needs v0.1.0-test6'
+check 'a refused older game is told which release to update to' has "$log" 'every player needs v0.1.0-beta6'
 
 # --- collect-logs.sh -------------------------------------------------------------------------
 echo 'a log line' >"$kit6/emulator/user/log/eden_log.txt"
@@ -140,42 +140,42 @@ echo 'my keys' >"$kit6/emulator/user/keys/prod.keys"
 mkdir -p "$kit6/emulator/user/cache/shader" && echo old >"$kit6/emulator/user/cache/shader/a.bin"
 sed -i 's/^#*[[:space:]]*auto_update.*/auto_update = no/' "$kit6/coop-options.ini"
 echo 'v7 emulator' >>"$stub/lichii.AppImage"
-check 'make_kit.sh builds v0.1.0-test7' mk --release v0.1.0-test7
-printf '\n# A new switch in test7.\n# LICHII_COOP_NEW_THING=1\n' >>"$tmp/out/oot-coop-v0.1.0-test7-linux/coop-options.ini"
+check 'make_kit.sh builds v0.1.0-beta7' mk --release v0.1.0-beta7
+printf '\n# A new switch in beta7.\n# LICHII_COOP_NEW_THING=1\n' >>"$tmp/out/oot-coop-v0.1.0-beta7-linux/coop-options.ini"
 # (the new switch must be in the tarball too: rebuild it from the folder)
-(cd "$tmp/out" && tar -czf "oot-coop-v0.1.0-test7-linux-$arch.tar.gz" oot-coop-v0.1.0-test7-linux && sha256sum "oot-coop-v0.1.0-test7-linux-$arch.tar.gz" >"oot-coop-v0.1.0-test7-linux-$arch.tar.gz.sha256")
+(cd "$tmp/out" && tar -czf "oot-coop-v0.1.0-beta7-linux-$arch.tar.gz" oot-coop-v0.1.0-beta7-linux && sha256sum "oot-coop-v0.1.0-beta7-linux-$arch.tar.gz" >"oot-coop-v0.1.0-beta7-linux-$arch.tar.gz.sha256")
 cat >"$tmp/releases.json" <<EOF
-[{"tag_name": "v0.1.0-test7", "draft": false, "assets": [
-  {"name": "oot-coop-v0.1.0-test7-linux-$arch.tar.gz", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-test7-linux-$arch.tar.gz"},
-  {"name": "oot-coop-v0.1.0-test7-linux-$arch.tar.gz.sha256", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-test7-linux-$arch.tar.gz.sha256"},
-  {"name": "oot-coop-v0.1.0-test7.zip", "browser_download_url": "$tmp/out/windows.zip"}]},
- {"tag_name": "v0.1.0-test6", "draft": false, "assets": [
-  {"name": "oot-coop-v0.1.0-test6-linux-$arch.tar.gz", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-test6-linux-$arch.tar.gz"},
-  {"name": "oot-coop-v0.1.0-test6-linux-$arch.tar.gz.sha256", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-test6-linux-$arch.tar.gz.sha256"}]}]
+[{"tag_name": "v0.1.0-beta7", "draft": false, "assets": [
+  {"name": "oot-coop-v0.1.0-beta7-linux-$arch.tar.gz", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-beta7-linux-$arch.tar.gz"},
+  {"name": "oot-coop-v0.1.0-beta7-linux-$arch.tar.gz.sha256", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-beta7-linux-$arch.tar.gz.sha256"},
+  {"name": "oot-coop-v0.1.0-beta7.zip", "browser_download_url": "$tmp/out/windows.zip"}]},
+ {"tag_name": "v0.1.0-beta6", "draft": false, "assets": [
+  {"name": "oot-coop-v0.1.0-beta6-linux-$arch.tar.gz", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-beta6-linux-$arch.tar.gz"},
+  {"name": "oot-coop-v0.1.0-beta6-linux-$arch.tar.gz.sha256", "browser_download_url": "$tmp/out/oot-coop-v0.1.0-beta6-linux-$arch.tar.gz.sha256"}]}]
 EOF
 export OOT_COOP_UPDATE_API=$tmp/releases.json
-check 'update.sh --status names the newer release' [ "$(bash "$kit6/update.sh" --status)" = 'newer v0.1.0-test7' ]
+check 'update.sh --status names the newer release' [ "$(bash "$kit6/update.sh" --status)" = 'newer v0.1.0-beta7' ]
 (cd "$kit6" && bash ./play.sh --server 127.0.0.1 --name Saria </dev/null >"$tmp/play4.out" 2>&1)
-check 'auto_update = no: play.sh says one is out and starts this kit' bash -c 'grep -q "Co-op v0.1.0-test7 is out. Close the games and run ./update.sh" "$1" && grep -q "Emulator started" "$1"' _ "$tmp/play4.out"
+check 'auto_update = no: play.sh says one is out and starts this kit' bash -c 'grep -q "Co-op v0.1.0-beta7 is out. Close the games and run ./update.sh" "$1" && grep -q "Emulator started" "$1"' _ "$tmp/play4.out"
 sleep 0.5
 bash "$kit6/update.sh" --yes >"$tmp/update.out" 2>&1
-check 'update.sh --yes updates the kit' bash -c 'head -n1 "$1/VERSION.txt" | grep -q "release v0.1.0-test7" && cmp -s "$1/emulator/lichii.AppImage" "$2"' _ "$kit6" "$stub/lichii.AppImage"
+check 'update.sh --yes updates the kit' bash -c 'head -n1 "$1/VERSION.txt" | grep -q "release v0.1.0-beta7" && cmp -s "$1/emulator/lichii.AppImage" "$2"' _ "$kit6" "$stub/lichii.AppImage"
 check 'the keys, coop.ini and logs are kept' bash -c '[ "$(cat "$1/emulator/user/keys/prod.keys")" = "my keys" ] && grep -qx "name = Saria" "$1/emulator/user/config/coop.ini" && ls "$1"/logs/server-*.log >/dev/null' _ "$kit6"
 check 'coop-options.ini keeps auto_update = no and gains the new switch behind #' bash -c 'grep -qx "auto_update = no" "$1" && grep -qx "# LICHII_COOP_NEW_THING=1" "$1"' _ "$kit6/coop-options.ini"
-check 'a new emulator: the shader cache went to the backup' bash -c '[ ! -e "$1/emulator/user/cache/shader" ] && [ -f "$1/backup-v0.1.0-test6/emulator-user-cache/shader/a.bin" ] && [ -f "$1/backup-v0.1.0-test6/VERSION.txt" ]' _ "$kit6"
+check 'a new emulator: the shader cache went to the backup' bash -c '[ ! -e "$1/emulator/user/cache/shader" ] && [ -f "$1/backup-v0.1.0-beta6/emulator-user-cache/shader/a.bin" ] && [ -f "$1/backup-v0.1.0-beta6/VERSION.txt" ]' _ "$kit6"
 check 'nothing newer now' bash -c '[ -z "$(bash "$1/update.sh" --status)" ]' _ "$kit6"
 # A damaged download changes nothing.
-mk --release v0.1.0-test8 || true
-t8=oot-coop-v0.1.0-test8-linux-$arch.tar.gz
+mk --release v0.1.0-beta8 || true
+t8=oot-coop-v0.1.0-beta8-linux-$arch.tar.gz
 mkdir -p "$tmp/bad"
 echo "0000000000000000000000000000000000000000000000000000000000000000  $t8" >"$tmp/bad/$t8.sha256"
 cat >"$tmp/bad.json" <<EOF
-[{"tag_name": "v0.1.0-test8", "draft": false, "assets": [
+[{"tag_name": "v0.1.0-beta8", "draft": false, "assets": [
   {"name": "$t8", "browser_download_url": "$tmp/out/$t8"},
   {"name": "$t8.sha256", "browser_download_url": "$tmp/bad/$t8.sha256"}]}]
 EOF
 OOT_COOP_UPDATE_API=$tmp/bad.json bash "$kit6/update.sh" --yes >"$tmp/update2.out" 2>&1
-check 'a damaged download: said, the kit unchanged' bash -c 'grep -q "damaged" "$1" && head -n1 "$2/VERSION.txt" | grep -q "release v0.1.0-test7"' _ "$tmp/update2.out" "$kit6"
+check 'a damaged download: said, the kit unchanged' bash -c 'grep -q "damaged" "$1" && head -n1 "$2/VERSION.txt" | grep -q "release v0.1.0-beta7"' _ "$tmp/update2.out" "$kit6"
 unset OOT_COOP_UPDATE_API
 
 # --- The scripts parse ---------------------------------------------------------------------

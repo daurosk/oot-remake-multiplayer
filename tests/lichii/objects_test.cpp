@@ -2537,7 +2537,7 @@ TEST_CASE("objects: a guard copy that notices our Link is flagged targeting, its
     CHECK_FALSE(run(5.0f, "Notice", "Notice", false)); // the owner's guard does it too
 }
 
-TEST_CASE("objects: a guard of ours noticing our Link stays ours; walking near us does not hold it (issue 191)") {
+TEST_CASE("objects: a guard of ours noticing our Link stays ours, walking near us does not hold it (issue 191)") {
     auto run = [](float x, const std::string& now) {
         Sync sync;
         sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});

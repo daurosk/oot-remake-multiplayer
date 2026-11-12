@@ -37,6 +37,7 @@
 #include "coop_hold.h"
 #include "coop_counters.h"
 #include "coop_actor_events.h"
+#include "coop_enemy_shots.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
@@ -167,6 +168,17 @@ bool Refused(const CoopPuppet::Call& c) {
     return true;
 }
 
+// True while this thread runs one of the module's own game calls: a create
+// or a delete the game asks for inside it is ours (a copy, a remove), not
+// the game's own doing.
+thread_local bool t_own_call = false;
+struct OwnCall {
+    OwnCall() { t_own_call = true; }
+    ~OwnCall() { t_own_call = false; }
+    OwnCall(const OwnCall&) = delete;
+    OwnCall& operator=(const OwnCall&) = delete;
+};
+
 void RunCalls(void* ctx) {
     BridgeGuest guest;
     CoopCallers::RunFrame(guest, SteadyMs(), CoopSvc::kCallsPerFrame, [ctx](const CoopPuppet::Call& c) {
@@ -179,6 +191,7 @@ void RunCalls(void* ctx) {
         std::memcpy(k.stack, c.stack.data(), sizeof k.stack);
         k.s0 = c.s0;
         std::uint64_t x0 = 0;
+        const OwnCall own;  // (what the game asks inside it is our own asking: World())
         if (!g_api->call(ctx, &k, &x0)) {
             LOG_WARNING(Core, "coop: no game function at {:#x}", c.function);
             return std::optional<std::uint64_t>();
@@ -613,6 +626,8 @@ void Frame(void* ctx, int site) {
 // (CREATE_FROM's caller and create argument until that thread's CREATE_REQUEST)
 thread_local std::uint64_t t_create_from = 0;
 thread_local std::uint64_t t_create_arg = 0;
+// (CREATE_REQUEST's verdict until that thread's CREATE_STOP)
+thread_local bool t_create_stop = false;
 
 // The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
 int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
@@ -649,6 +664,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
     case HOS_COOP_WORLD_CREATE_REQUEST: {
         CoopActorEvents::Event e;
         e.kind = CoopActorEvents::Kind::Create;
+        e.flags = t_own_call ? CoopActorEvents::kOwn : 0;
         e.a = a;
         e.b = b;
         e.from = std::exchange(t_create_from, 0);
@@ -665,12 +681,28 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                 std::memcpy(&e.place[i], &place[i], 4);
             }
         }
+        // A copy enemy's own shot is not made at all (coop_enemy_shots.h):
+        // the owner's game fires, and its shot comes as a copy, which is
+        // one of our own creates and never stopped.
+        t_create_stop = !t_own_call && name[0] != 0 &&
+                        CoopEnemyShots::StopAtCreate(name, {place[0], place[1], place[2]});
+        if (t_create_stop) {
+            e.flags |= CoopActorEvents::kStopped;
+        }
         CoopActorEvents::TheRing().Push(e);
+        return 1;
+    }
+    case HOS_COOP_WORLD_CREATE_STOP: {  // (a: our C's uint32, in hookshot.exe's memory)
+        auto* stop = reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(a));
+        if (stop != nullptr && std::exchange(t_create_stop, false)) {
+            *stop = 1;
+        }
         return 1;
     }
     case HOS_COOP_WORLD_DELETE_REQUEST: {
         CoopActorEvents::Event e;
         e.kind = CoopActorEvents::Kind::Delete;
+        e.flags = t_own_call ? CoopActorEvents::kOwn : 0;
         e.a = a;
         e.b = b;
         CoopActorEvents::TheRing().Push(e);

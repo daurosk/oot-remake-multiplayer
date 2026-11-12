@@ -8,7 +8,8 @@ nx2/coop_actor_lift.py adds three lift-time hooks that hand actor
 events to the co-op module through host/coop_world.c (patch 0005):
 the create request (main+0x372a94: CREATE_FROM with the caller and the
 create argument, then CREATE_REQUEST with the name and the handle
-slot), the delete request once it is accepted (main+0xa65d0:
+slot, then CREATE_STOP, with which the module may have the request
+leave through the game's own "no creates now" exit), the delete request once it is accepted (main+0xa65d0:
 DELETE_REQUEST with the actor and the reason, once for an actor) and
 the Life component's step (main+0x49dcb0: LIFE_STEP with the component
 and this frame's damage sum, which the module may change, so another
@@ -16,17 +17,17 @@ player's hit goes in through the game's own step). The words and the
 build id are checked; a hook whose words differ is left out. They go
 in before the wrapped functions of patch 0005.
 ---
- nx2/coop_actor_lift.py | 79 ++++++++++++++++++++++++++++++++++++++++++
- nx2/coop_hooks.py      |  2 ++
- 2 files changed, 81 insertions(+)
+ nx2/coop_actor_lift.py | 89 ++++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_hooks.py      |  2 +
+ 2 files changed, 91 insertions(+)
  create mode 100644 nx2/coop_actor_lift.py
 
 diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
 new file mode 100644
-index 0000000..7967abb
+index 0000000..32219b9
 --- /dev/null
 +++ b/nx2/coop_actor_lift.py
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,89 @@
 +"""Co-op's actor events (oot-remake-multiplayer's patch 0007, its docs/hookshot.md "World hooks": enemies, breakables,
 +drops and projectiles straight from the game's C).
 +
@@ -36,7 +37,11 @@ index 0000000..7967abb
 +
 +- main+0x372a70 requestCreateActorAsync: after `ldr x23, [x29, #0x68]` (main+0x372a94, the end of the prologue; the
 +  arguments and the return address are still the caller's): 5 = CREATE_FROM (a = the return address, b = x2, the
-+  create argument), then 2 = CREATE_REQUEST (a = x1, the name, b = x3, the handle slot the manager fills).
++  create argument), then 2 = CREATE_REQUEST (a = x1, the name, b = x3, the handle slot the manager fills), then
++  6 = CREATE_STOP (a = the address of a uint32 in our C, 0). A module that sets it has the request leave through the
++  game's own "the manager takes no creates now" exit (main+0x372c88, where the function's first test goes when bit 1
++  of manager+0x109 is set: status 1 into the caller's word, returns 0), so the actor is never made: a copy enemy's
++  own shot, which only the enemy's owner fires.
 +- main+0xa6490 the delete request: after `ldr x0, [x22]` (main+0xa65d0, reached once for an actor, when the request
 +  is accepted: the function has just set bit 16 of actor+0x30 and found it clear; a request for an actor already
 +  being deleted, a refused one and a repeated one never get there): 3 = DELETE_REQUEST (a = x19, the actor,
@@ -46,7 +51,7 @@ index 0000000..7967abb
 +  (a = the Life component, b = the address of an int32 holding w9 in our C). The module may change that number: a hit
 +  from another player goes in through the game's own step (its clamp, its death, its drop), and w9 takes the result.
 +
-+The module only reads in them (no game call, no lock), besides that one number. The words are checked and the build id; another game version, or
++The module only reads in them (no game call, no lock), besides that one number and the create's stop. The words are checked and the build id; another game version, or
 +a word that differs, leaves that hook out.
 +"""
 +
@@ -58,9 +63,15 @@ index 0000000..7967abb
 +     ((0x372a70, 0xd503237f),   # pacibsp
 +      (0x372a90, 0xd11383ff),   # sub sp, sp, #0x4e0
 +      (0x372a94, 0xf94037b7),   # ldr x23, [x29, #0x68]
-+      (0x372a98, 0x39442408)),  # ldrb w8, [x0, #0x109]: the manager's "no creates" bit
-+     "{ " + EVENT + "hos_coop_world_event(5u, c->x[30], c->x[2]); hos_coop_world_event(2u, c->x[1], c->x[3]); }   "
-+     "/* (nx2/coop_actor_lift.py: co-op's actor events, 5 = CREATE_FROM, 2 = CREATE_REQUEST) */"),
++      (0x372a98, 0x39442408),   # ldrb w8, [x0, #0x109]: the manager's "no creates" bit
++      (0x372a9c, 0x37080f68),   # tbnz w8, #1, main+0x372c88: set, so no create
++      (0x372c88, 0xb4000137),   # cbz x23, main+0x372cac: no status word
++      (0x372c8c, 0x52800028),   # mov w8, #1: the status
++      (0x372c90, 0x2a1f03e0)),  # mov w0, wzr
++     "{ uint32_t coop_stop = 0; " + EVENT +
++     "hos_coop_world_event(5u, c->x[30], c->x[2]); hos_coop_world_event(2u, c->x[1], c->x[3]); "
++     "hos_coop_world_event(6u, (uint64_t)(uintptr_t)&coop_stop, 0); if (coop_stop) goto L_80392c88; }   "
++     "/* (nx2/coop_actor_lift.py: co-op's actor events, 5 = CREATE_FROM, 2 = CREATE_REQUEST, 6 = CREATE_STOP) */"),
 +    ("delete request", 0xa65d0,
 +     ((0xa64a0, 0xd503237f),    # pacibsp
 +      (0xa64bc, 0xaa0003f3),    # mov x19, x0

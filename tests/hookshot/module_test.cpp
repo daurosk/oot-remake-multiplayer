@@ -319,6 +319,14 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[30], c->x[2]); hos_coop_world_event(%uu, c->x[1], c->x[3])",
                   HOS_COOP_WORLD_CREATE_FROM, HOS_COOP_WORLD_CREATE_REQUEST);
     CHECK(lift.find(call) != std::string::npos);
+    // A refused create leaves through the game's own "no creates now" exit, whose words are checked too.
+    std::snprintf(call, sizeof call,
+                  "hos_coop_world_event(%uu, (uint64_t)(uintptr_t)&coop_stop, 0); if (coop_stop) goto L_80392c88;",
+                  HOS_COOP_WORLD_CREATE_STOP);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(lift.find("(0x372a9c, 0x37080f68)") != std::string::npos);  // tbnz w8, #1, main+0x372c88
+    CHECK(lift.find("(0x372c88, 0xb4000137)") != std::string::npos);
+    CHECK(HOS_COOP_WORLD_CREATE_STOP <= HOS_COOP_ACTOR_EVENT_LAST);
     std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[19], c->x[20])", HOS_COOP_WORLD_DELETE_REQUEST);
     CHECK(lift.find(call) != std::string::npos);
     std::snprintf(call, sizeof call,

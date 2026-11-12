@@ -1889,7 +1889,15 @@ private:
             switch (e.kind) {
             case CoopActorEvents::Kind::Create:
                 ++actor_creates_;
-                if (actor_event_lines_ < 40) {
+                if ((e.flags & CoopActorEvents::kStopped) != 0) {
+                    ++actor_stops_;
+                    if (actor_stop_lines_ < 10) {
+                        ++actor_stop_lines_;
+                        LOG_INFO(Core, "coop: actors: '{}' not made: a copy enemy's own shot, refused at the game's create "
+                                       "request (the owner's comes as a copy)", e.Name());
+                    }
+                }
+                if (actor_event_lines_ < 40 && (e.flags & CoopActorEvents::kOwn) == 0) {
                     ++actor_event_lines_;
                     float place[3] = {};
                     for (int i = 0; i < 3; ++i) {
@@ -1906,8 +1914,9 @@ private:
                 const auto known = names_.find(e.a);
                 if (actor_event_lines_ < 40 && known != names_.end()) {
                     ++actor_event_lines_;
-                    LOG_INFO(Core, "coop: actors: the game deletes {:#x} '{}' (reason {})", e.a, known->second.first,
-                             e.b);
+                    LOG_INFO(Core, "coop: actors: {} {:#x} '{}' (reason {})",
+                             (e.flags & CoopActorEvents::kOwn) != 0 ? "co-op deletes" : "the game deletes", e.a,
+                             known->second.first, e.b);
                 }
                 break;
             }
@@ -1927,9 +1936,10 @@ private:
         } else if (server_now_us >= actor_events_said_us_ + 10'000'000 &&
                    (actor_creates_ | actor_deletes_ | actor_hits_ | actor_events_lost_) != 0) {
             actor_events_said_us_ = server_now_us;
-            LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates, {} deletes, {} hits (life {}), {} lost",
-                     actor_creates_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_);
-            actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = 0;
+            LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates ({} copies' shots refused), {} deletes, "
+                           "{} hits (life {}), {} lost",
+                     actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_);
+            actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = actor_stops_ = 0;
             actor_hit_sum_ = 0;
         }
     }
@@ -1995,6 +2005,8 @@ private:
     std::vector<LifeGiven> life_given_;
     std::size_t loose_said_ = 0;
     std::size_t actor_creates_ = 0;
+    std::size_t actor_stops_ = 0;
+    std::size_t actor_stop_lines_ = 0;
     std::size_t actor_deletes_ = 0;
     std::size_t actor_hits_ = 0;
     std::size_t actor_events_lost_ = 0;

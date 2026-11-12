@@ -119,3 +119,19 @@ TEST_CASE("actor events: a create keeps its name") {
     e.SetName(std::string(40, 'x'));
     CHECK(e.Name().size() == 31);
 }
+
+TEST_CASE("actor events: a create's flags (our own call, refused) come through the ring") {
+    CoopActorEvents::Ring ring;
+    Event e;
+    e.kind = CoopActorEvents::Kind::Create;
+    e.flags = CoopActorEvents::kOwn;
+    ring.Push(e);
+    e.flags = CoopActorEvents::kStopped;
+    e.SetName("Octorok_Bullet");
+    ring.Push(e);
+    const auto out = ring.Drain();
+    REQUIRE(out.size() == 2);
+    CHECK(out[0].flags == CoopActorEvents::kOwn);
+    CHECK(out[1].flags == CoopActorEvents::kStopped);
+    CHECK(out[1].Name() == "Octorok_Bullet");
+}

@@ -140,6 +140,23 @@ TEST_CASE("enemy shots: the shooters noted by the objects sync go stale") {
     es::NoteShooters({}, 0);
 }
 
+TEST_CASE("enemy shots: a copy enemy's own shot is stopped at the game's create request (Hookshot)") {
+    const std::uint64_t before = es::StoppedAtCreate();
+    es::NoteShooters({{"Enemy_Octorok", {10.0f, 0.0f, 0.0f}, Owner::theirs},
+                      {"Enemy_Octorok", {60.0f, 0.0f, 0.0f}, Owner::ours},
+                      {"Enemy_Octorok", {120.0f, 0.0f, 0.0f}, Owner::unknown}},
+                     5'000'000);
+    CHECK(es::StopAtCreate("Octorok_Bullet", {11.0f, 0.0f, 0.5f}));        // the copy's: never made here
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {61.0f, 0.0f, 0.0f}));  // ours: made and sent
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {121.0f, 0.0f, 0.0f})); // no owner known: left alone
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {300.0f, 0.0f, 0.0f})); // no maker near
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {0.0f, 0.0f, 0.0f}));   // the place was not read
+    CHECK_FALSE(es::StopAtCreate("Item_Bomb", {11.0f, 0.0f, 0.5f}));       // no enemy shot
+    CHECK(es::StoppedAtCreate() == before + 1);
+    es::NoteShooters({}, 6'000'000);  // (a new scene's walk: nobody)
+    CHECK_FALSE(es::StopAtCreate("Octorok_Bullet", {11.0f, 0.0f, 0.5f}));
+}
+
 TEST_CASE("enemy shots: the owner's game sends its enemy's shot") {
     CoopSpawn::Sync sync;
     sync.SetShooters({{"Enemy_Octorok", {0.0f, 1.0f, 2.0f}, Owner::ours}});

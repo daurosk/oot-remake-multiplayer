@@ -26,8 +26,13 @@ enum class Kind : std::uint32_t {
     Damage = 3,  // a Life step's frame damage (not 0): Life component, amount
 };
 
+// Event::flags.
+inline constexpr std::uint32_t kOwn = 1;      // asked inside one of the module's own game calls (a copy, a remove)
+inline constexpr std::uint32_t kStopped = 2;  // Create: the module had the game refuse it (a copy enemy's own shot)
+
 struct Event {
     Kind kind = Kind::None;
+    std::uint32_t flags = 0;
     std::uint64_t a = 0;       // Create: the name object; Delete: the actor; Damage: the Life component
     std::uint64_t b = 0;       // Create: the handle slot; Delete: the reason; Damage: the amount (int32)
     std::uint64_t from = 0;    // Create: the caller (guest return address)
@@ -59,6 +64,7 @@ public:
         s.seq.store(0, std::memory_order_relaxed);  // (being written)
         std::atomic_thread_fence(std::memory_order_release);
         s.kind.store(static_cast<std::uint32_t>(e.kind), std::memory_order_relaxed);
+        s.flags.store(e.flags, std::memory_order_relaxed);
         s.a.store(e.a, std::memory_order_relaxed);
         s.b.store(e.b, std::memory_order_relaxed);
         s.from.store(e.from, std::memory_order_relaxed);
@@ -89,6 +95,7 @@ public:
             }
             Event e;
             e.kind = static_cast<Kind>(s.kind.load(std::memory_order_relaxed));
+            e.flags = s.flags.load(std::memory_order_relaxed);
             e.a = s.a.load(std::memory_order_relaxed);
             e.b = s.b.load(std::memory_order_relaxed);
             e.from = s.from.load(std::memory_order_relaxed);
@@ -120,6 +127,7 @@ private:
     struct Slot {
         std::atomic<std::uint64_t> seq{0};
         std::atomic<std::uint32_t> kind{0};
+        std::atomic<std::uint32_t> flags{0};
         std::atomic<std::uint64_t> a{0}, b{0}, from{0};
         std::atomic<std::uint64_t> place[3]{};
         std::atomic<std::uint64_t> name[4]{};

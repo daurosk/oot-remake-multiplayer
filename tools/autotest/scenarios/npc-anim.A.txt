@@ -1,0 +1,49 @@
+#! switches LICHII_COOP_DEBUG_NPC=1
+# npc-anim (issue 200): A talks to Dampe in the Graveyard while B, who owns him, stands by outside
+# the talk. Dampe (Npc_Hylia_Dampe_001, placed at -12.55 100.80 20.01) walks his rounds
+# ('Walk_Slowly'); in a talk he stops, turns to A and plays his talk animations. Both saves load at
+# about -35.7 8.5, 26 m from him. Run: tools\autotest\run.ps1 -Scenario npc-anim.
+# Why this tells the feature from no feature: B walks to Dampe first and stays within 5 m of him,
+# so B (P2) owns him by the distance rule even if A reported him first: A waits at the load
+# spot, about 25 m from him, so B is about 20 m nearer (over the 10 m margin) for well over 3 s.
+# A then walks up and talks; A is never 10 m nearer than B, so the distance rule alone never moves him to A. Only the
+# event claim (this branch) does: B's owner of Dampe goes P2 -> P1 within about 1 s of A's "talk"
+# mark and stays P1 until about 2 s after "closed"; without the branch it stays P2 and B sees his
+# walk go on while A's Dampe stands and talks.
+# Expect, A's log: "test mark talk", then "npc-anim: our Link is in an event: N NPCs near it
+# claimed" and "npc-anim: 1 of the N claimed NPCs are ours now" (or more) within about 1 s; after
+# "closed": "the event's NPCs are free again".
+# Expect, B's log: no "npc-anim: Npc_Hylia_Dampe_001 copied from" line in the 5 s before A's
+# "talk" (B owns him then; a "copied from P1" line there means A still owned him and the run is
+# INCONCLUSIVE), then "npc-anim: Npc_Hylia_Dampe_001 copied from P1 at x y z plays '<anim>'" once
+# a second from "talk" to "closed", with his place not walking off and A's talk animations (not
+# 'Walk_Slowly'). The "objects: share owner <id> is player 1" line for him comes after A's mark.
+# Shots: "talk" and "talk-2": Dampe faces A in both windows (B's camera is locked on him).
+# No talk (A's log has no "our Link is in an event" line: Dampe walked out of the ZL reach, or he
+# does not talk by day): FAIL of the route, not of the feature; say so and widen the follow below.
+mark start
+wait 120
+# A stays at the load spot, about 25 m from Dampe, while B (about 4 m from him) takes him.
+wait 960
+mark before-talk
+goto -16.5 19.0 1.5 900  # next to B, near where he walks
+hold ZL+LSTICK_UP 90     # lock on him and walk up to him
+mark at-dampe
+press ZL+A 12            # talk: the event starts
+wait 60
+mark talk
+wait 300
+mark talk-2
+press A 12               # through his lines
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press B 12
+wait 60
+press B 12
+wait 180
+mark closed
+wait 300                 # the claim drops 2 s after the event
+mark after

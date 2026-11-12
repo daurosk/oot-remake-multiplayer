@@ -732,6 +732,31 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
     }
 }
 
+bool Sync::EventNpc(std::uint64_t address, std::uint64_t now_us) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && it->second.npc && it->second.event_until > now_us;
+}
+
+std::uint8_t Sync::OwnerAt(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    return it == objects_.end() ? 0 : OwnerOf(it->second.id);
+}
+
+std::size_t Sync::EventNpcs(std::uint64_t now_us) const {
+    return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [now_us](const auto& e) {
+        return e.second.npc && e.second.event_until > now_us;
+    }));
+}
+
+std::size_t Sync::EventNpcsOurs(std::uint64_t now_us) const {
+    if (self_ == 0) {
+        return 0;
+    }
+    return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [&](const auto& e) {
+        return e.second.npc && e.second.event_until > now_us && OwnerOf(e.second.id) == self_;
+    }));
+}
+
 void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
     const auto it = objects_.find(address);
     if (it == objects_.end()) {
@@ -1190,6 +1215,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.reacts = s->name.starts_with("Enemy_");
         o.fish = IsFish(s->name);
         o.guard = IsGuard(s->name);
+        o.npc = s->name.starts_with("Npc_");
         o.first_position = s->position;
         if (s->animation) {
             o.rest_animation = s->animation->name;
@@ -1459,6 +1485,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // holds it in the wrong game.
         if (o.fish) {
             fish.push_back(FishClaim(o, self, now_us));
+        }
+        // Issue 200: our cutscene's (or talk's) townspeople are ours while it
+        // runs, so the other games see them move as they do here.
+        if (o.npc && in_event_ && player_ && Distance(o.position, *player_) <= kEventNpcM) {
+            o.event_until = now_us + kEventNpcKeepUs;
+            o.chase_until = std::max(o.chase_until, o.event_until);
         }
         if (o.chase_until > now_us && !o.fish) {
             flags |= proto::object_presence::targeting;

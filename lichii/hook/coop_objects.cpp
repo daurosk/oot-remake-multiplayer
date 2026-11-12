@@ -1813,6 +1813,7 @@ private:
         }
         names_ = std::move(names);
         sync_.SetPlayer(player);
+        sync_.SetEvent(TheLocalEvent().load());  // issue 200: our cutscene's NPCs become ours
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
         if (debug_) {  // research: the field grass that is no actor (world.md)
@@ -2130,6 +2131,60 @@ private:
         }
     }
 
+    // Issue 200 (npc-anim). The townspeople our event claimed (Sync::EventNpc)
+    // keep this game's cutscene motion while the server hands them to us: the
+    // owner's routine is not put on them. Logs the claim (our side) and, on the
+    // other games, each NPC copy that moves to another owner; with
+    // LICHII_COOP_DEBUG_NPC=1 every NPC copy's place and animation once a second.
+    void NpcAnim(u64 now_us, std::vector<u64>& removes, std::vector<Mover::Pose>& wish,
+                 std::vector<PlayWish>& plays) {
+        std::erase_if(removes, [&](u64 a) { return sync_.EventNpc(a, now_us); });
+        std::erase_if(wish, [&](const Mover::Pose& p) { return sync_.EventNpc(p.actor, now_us); });
+        std::erase_if(plays, [&](const PlayWish& p) { return sync_.EventNpc(p.address, now_us); });
+        const std::size_t claimed = sync_.EventNpcs(now_us);
+        if ((claimed == 0) != (npc_claimed_ == 0)) {
+            if (claimed != 0) {
+                LOG_INFO(Core, "coop: npc-anim: our Link is in an event: {} NPCs near it claimed", claimed);
+            } else {
+                LOG_INFO(Core, "coop: npc-anim: the event's NPCs are free again");
+            }
+        }
+        // The hand-over itself (the server may give them 0.5 s later, or
+        // keep one in another game's fight lock): log each change of how
+        // many of the claimed ones are ours.
+        const std::size_t ours = claimed == 0 ? 0 : sync_.EventNpcsOurs(now_us);
+        if (ours != npc_ours_ && claimed != 0) {  // the end has its own line
+            LOG_INFO(Core, "coop: npc-anim: {} of the {} claimed NPCs are ours now", ours, claimed);
+        }
+        npc_ours_ = ours;
+        npc_claimed_ = claimed;
+        static const bool debug_npc = EnvOn("LICHII_COOP_DEBUG_NPC");
+        const bool every = debug_npc && now_us - npc_log_at_ >= 1'000'000;
+        if (every) {
+            npc_log_at_ = now_us;
+        }
+        for (const Mover::Pose& p : wish) {
+            const auto name = names_.find(p.actor);
+            if (name == names_.end() || !name->second.first.starts_with("Npc_")) {
+                continue;
+            }
+            const u8 owner = sync_.OwnerAt(p.actor);
+            auto& last = npc_owner_[p.actor];
+            if (!every && last == owner) {
+                continue;
+            }
+            const auto play = std::find_if(plays.begin(), plays.end(),
+                                           [&p](const PlayWish& w) { return w.address == p.actor; });
+            LOG_INFO(Core, "coop: npc-anim: {} copied from P{} at {:.2f} {:.2f} {:.2f} plays '{}' frame {:.1f}",
+                     name->second.first, owner, p.transform[0], p.transform[1], p.transform[2],
+                     play != plays.end() ? play->name : std::string(), play != plays.end() ? play->frame : 0.0f);
+            last = owner;
+        }
+        if (npc_owner_.size() > 512) {
+            npc_owner_.clear();
+        }
+    }
+
     // Every frame: each copy we do not own goes where the owner's enemy was.
     // How far the game moved it since our last write is logged every 5 s: if
     // its AI or physics fight the write, that shows here.
@@ -2220,6 +2275,7 @@ private:
             CoopGuard::Skip(wish, local, where, [](const Mover::Pose& p) { return p.actor; }, world);
             CoopGuard::Skip(plays, local, where, [](const PlayWish& p) { return p.address; }, world);
         }
+        NpcAnim(now_us, removes, wish, plays);
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
@@ -2412,6 +2468,11 @@ private:
     std::unordered_map<u64, std::string> anim_logged_;
     unsigned anim_lines_ = 0;
     std::optional<Mover::Pose> drive_pose_;
+    // Issue 200 (npc-anim): the log of our event's claim and of NPC copies.
+    std::size_t npc_claimed_ = 0;
+    std::size_t npc_ours_ = 0;     // how many of them the server gave us (log)
+    u64 npc_log_at_ = 0;
+    std::unordered_map<u64, u8> npc_owner_;  // the owner each NPC copy was last logged with
     u64 drive_enemy_ = 0;
     u64 drive_log_at_ = 0;
     u64 drive_hurt_at_ = 0;

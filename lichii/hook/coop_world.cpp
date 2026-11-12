@@ -382,6 +382,7 @@ void WorldSync::Reset() {
     cuts_.clear();
     skulltulas_.clear();
     skulltulas_seen_us_.clear();
+    skulltulas_dead_.clear();
     token_spots_.clear();
     early_.clear();
     anchors_.clear();
@@ -459,8 +460,10 @@ std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at, std::uint64_t now_
         }
     }
     if (best == 0) {
-        // A Skulltula that left our walk a moment ago, farther off: the one
-        // that left last (it died last), the nearer one on a tie.
+        // A Skulltula that died and left our walk a moment ago, farther off:
+        // the one that left last, the nearer one on a tie. Never one whose
+        // token is known already (a token of a Skulltula with no placement
+        // must not take its id), nor one that left alive (its room unloaded).
         std::uint64_t latest = 0;
         best_m = kTokenFarM;
         for (const auto& [hash, where] : skulltulas_) {
@@ -468,6 +471,9 @@ std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at, std::uint64_t now_
             if (seen == skulltulas_seen_us_.end() || seen->second >= now_us ||
                 now_us - seen->second > kTokenAfterUs) {
                 continue;  // still in this walk, or gone too long ago
+            }
+            if (!skulltulas_dead_.contains(hash) || spots.contains(TokenId(hash))) {
+                continue;
             }
             const float m = Distance(where, at);
             if (m <= kTokenFarM && (seen->second > latest || (seen->second == latest && m < best_m))) {
@@ -1003,6 +1009,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         cuts_.clear();
         skulltulas_.clear();  // token_spots_ stay: a room loaded again
         skulltulas_seen_us_.clear();
+        skulltulas_dead_.clear();
         anchor_holds_.clear();
         std::lock_guard lock(inbox_mutex_);
         for (proto::Message& m : early_) {
@@ -1017,6 +1024,11 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             Finite(s.position)) {
             skulltulas_[s.hash] = s.position;
             skulltulas_seen_us_[s.hash] = now_us;
+            if (!s.life || s.life->life <= 0) {
+                skulltulas_dead_.insert(s.hash);  // life 0, or its life can no longer be read
+            } else {
+                skulltulas_dead_.erase(s.hash);
+            }
         }
     }
     Drain(now_us);

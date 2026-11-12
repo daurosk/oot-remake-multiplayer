@@ -96,9 +96,10 @@ bool IsLyingKey(std::string_view name);
 // that appears within kTokenNearM of a Gold Skulltula we saw, or where a
 // token of this scene was before (a room loaded again: its Skulltula is
 // gone, the game makes the token again), or, failing those, that appears
-// within kTokenAfterUs of a Gold Skulltula leaving our walk and within
-// kTokenFarM of where it was (a Skulltula knocked away as it died, or seen
-// last a while before it died: items-sync).
+// within kTokenAfterUs of a Gold Skulltula leaving our walk dead (last seen
+// with life 0) and within kTokenFarM of where it was, whose token is not
+// known yet (a Skulltula knocked away as it died, a token that fell:
+// items-sync).
 bool IsGoldToken(std::string_view name);
 std::uint64_t TokenId(std::uint64_t skulltula_hash);
 inline constexpr const char* kTokenCount = "PouchData.Item_Token_Gold.StockNum";
@@ -592,6 +593,7 @@ private:
     // Gold Skulltulas of this scene by placement hash: where we saw them last.
     std::map<std::uint64_t, coop::protocol::Vec3> skulltulas_;
     std::map<std::uint64_t, std::uint64_t> skulltulas_seen_us_;  // and when, in the last walk it was in
+    std::set<std::uint64_t> skulltulas_dead_;  // last seen with life 0 (or none readable)
     // Tokens by scene, then id: where they were. Kept across scene changes,
     // so a token the game makes again on a reload is known.
     std::map<std::string, std::map<std::uint64_t, coop::protocol::Vec3>> token_spots_;

@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -302,12 +304,40 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             const auto from = static_cast<std::size_t>(w[1].data() - line.data());
             const auto to = static_cast<std::size_t>(w.back().data() + w.back().size() - line.data());
             step.mark = std::string(line.substr(from, to - from));
+        } else if (cmd == "KILL") {
+            if (w.size() != 2) {
+                return fail("want: kill ACTOR");
+            }
+            step.kind = Kind::kill;
+            step.mark = std::string(w[1]);
         } else if (cmd == "GIVE") {
             if (w.size() != 2) {
                 return fail("want: give ITEM");
             }
             step.kind = Kind::give;
             step.mark = std::string(w[1]);
+        } else if (cmd == "SETFLAG") {
+            // setflag NAME VALUE: this game's Int or Bool flag NAME (a GameDataList
+            // name) to VALUE, through the game's queue. Test only.
+            int value = 0;
+            const auto* end = w.size() == 3 ? w[2].data() + w[2].size() : nullptr;
+            if (w.size() != 3 || std::from_chars(w[2].data(), end, value).ptr != end) {
+                return fail("want: setflag NAME VALUE (an Int or Bool flag, a whole number)");
+            }
+            step.kind = Kind::setflag;
+            step.mark = std::string(w[1]);
+            step.start = std::string(w[2]);
+        } else if (cmd == "SETENUM") {
+            // setenum NAME VALUE: this game's Enum flag NAME (a GameDataList name,
+            // or 0x and its hash: a Threads of Time quest's name is not in the
+            // romfs) to the value named VALUE (flag_hash), through the game's
+            // queue. Test only (issue 193).
+            if (w.size() != 3) {
+                return fail("want: setenum NAME VALUE (an Enum flag, or 0xHASH, and a value's name)");
+            }
+            step.kind = Kind::setenum;
+            step.mark = std::string(w[1]);
+            step.start = std::string(w[2]);
         } else if (cmd == "WEAR") {
             if (w.size() != 3 || !WearFlag(w[1])) {
                 return fail("want: wear weapon|shield|head|armor|boots|hand NAME");
@@ -417,7 +447,8 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             continue;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign || s.kind == Kind::chat) {
+            s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill ||
+            s.kind == Kind::setflag || s.kind == Kind::setenum) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
             continue;
@@ -561,14 +592,17 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 #include "coop_camera.h"
 #include "coop_flags.h"
 #include "coop_hook.h"
+#include "coop_objects.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/loader/loader.h"
 #include "core/memory.h"
+#ifndef COOP_HOOKSHOT
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
 #include "hid_core/hid_types.h"
+#endif
 
 namespace CoopTestInput {
 
@@ -588,11 +622,14 @@ struct Running {
     std::unique_ptr<Runner> runner;
     std::shared_ptr<Shared> shared;
     Clock::time_point start;
+#ifndef COOP_HOOKSHOT
     Core::HID::EmulatedController* controller = nullptr;
+#endif
 };
 
 struct State {
     bool checked_env = false;
+    std::optional<std::array<float, 3>> link;  // our Link's place this frame (x, height, z)
     std::filesystem::path path;  // empty: off
     std::filesystem::file_time_type seen_time{};
     std::uintmax_t seen_size = 0;
@@ -611,22 +648,37 @@ struct State {
     std::optional<PendingWarp> warp;
 } g_state;  // only touched on the present thread
 
+// The emulator plays LICHII_COOP_TEST_SCRIPT whole, input and all. Hookshot's
+// driver (tools/autotest/hookshot.py) gives the input through Hookshot's
+// control bridge and writes only the steps that need the game's inside (place,
+// give, assign, chat, setflag, setenum, wear, kill) to LICHII_COOP_TEST_COMMANDS,
+// a few lines at a time; the module plays them at once and empties the file,
+// so the driver knows they were taken.
+#ifdef COOP_HOOKSHOT
+#define COOP_TEST_ENV "LICHII_COOP_TEST_COMMANDS"
+#else
+#define COOP_TEST_ENV "LICHII_COOP_TEST_SCRIPT"
+#endif
+#define COOP_WIDEN2(x) L##x
+#define COOP_WIDEN(x) COOP_WIDEN2(x)
+
 std::filesystem::path EnvPath() {
 #ifdef _MSC_VER
     wchar_t* value = nullptr;
     std::size_t size = 0;
-    if (_wdupenv_s(&value, &size, L"LICHII_COOP_TEST_SCRIPT") != 0 || value == nullptr) {
+    if (_wdupenv_s(&value, &size, COOP_WIDEN(COOP_TEST_ENV)) != 0 || value == nullptr) {
         return {};
     }
     std::filesystem::path p(value);
     std::free(value);
     return p;
 #else
-    const char* value = std::getenv("LICHII_COOP_TEST_SCRIPT");
+    const char* value = std::getenv(COOP_TEST_ENV);
     return value ? std::filesystem::path(value) : std::filesystem::path{};
 #endif
 }
 
+#ifndef COOP_HOOKSHOT
 Core::HID::EmulatedController* PickController(Core::System& system) {
     auto& hid = system.HIDCore();
     auto* player1 = hid.GetEmulatedController(Core::HID::NpadIdType::Player1);
@@ -639,6 +691,7 @@ Core::HID::EmulatedController* PickController(Core::System& system) {
     }
     return nullptr;
 }
+#endif
 
 // Link's position (x, z), for goto and toward.
 std::optional<std::array<float, 2>> PlayerXZ(Core::System& system) {
@@ -667,8 +720,10 @@ std::optional<std::array<float, 2>> PlayerXZ(Core::System& system) {
     coop::host::PlayerReader reader(memory);
     const auto p = reader.read_position();
     if (!p) {
+        g_state.link.reset();
         return std::nullopt;
     }
+    g_state.link = std::array<float, 3>{(*p)[0], (*p)[1], (*p)[2]};
     return std::array<float, 2>{(*p)[0], (*p)[2]};
 }
 
@@ -756,6 +811,43 @@ void Assign(Core::System& system, const std::string& item) {
     LOG_INFO(Core, "coop: test assign {}: {}", item, all ? "set" : "NOT set");
 }
 
+// setflag: this game's Int flag, or else its Bool flag, of that name to the
+// value, through the game's own queue (issue 130: shop-buy empties the kit
+// saves' Deku Shield and fills the wallet). A max-rule item lowered so stays
+// in this game (FlagWatcher max_drops_kept). Test only.
+void SetFlag(Core::System& system, const std::string& name, int value) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    const std::uint32_t hash = coop::host::flag_hash(name);
+    coop::host::GameFlags flags(memory);
+    bool ok = false;
+    const char* type = "unknown";
+    if (flags.get_int(hash)) {
+        type = "int";
+        ok = coop::host::GameFlags::set_int(memory, hash, value);
+    } else if (flags.get_bool(hash)) {
+        type = "bool";
+        ok = coop::host::GameFlags::set_bool(memory, hash, value != 0);
+    }
+    LOG_INFO(Core, "coop: test setflag {} ({}) {}: {}", name, type, value, ok ? "set" : "NOT set");
+}
+
+// setenum: this game's Enum flag (a name, or 0x and its hash) to the value of
+// that name, through the game's own queue (issue 193: a Threads of Time
+// quest's step). Test only.
+void SetEnum(Core::System& system, const std::string& name, const std::string& value) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    std::uint32_t hash = 0;
+    if (name.size() > 2 && name[0] == '0' && (name[1] == 'x' || name[1] == 'X')) {
+        const char* end = name.data() + name.size();
+        if (std::from_chars(name.data() + 2, end, hash, 16).ptr != end) hash = 0;
+    } else {
+        hash = coop::host::flag_hash(name);
+    }
+    const bool known = hash != 0 && coop::host::GameFlags(memory).get_enum(hash).has_value();
+    const bool ok = known && coop::host::GameFlags::set_enum(memory, hash, coop::host::flag_hash(value));
+    LOG_INFO(Core, "coop: test setenum {} {}: {}", name, value, ok ? "set" : known ? "NOT set" : "unknown");
+}
+
 // give: bombs, bow and hookshot are the item flags of each; any other name is
 // given as it is. Needs LICHII_COOP_CHEATS=1 (applied on the co-op frame).
 void Give(const std::string& item) {
@@ -784,12 +876,27 @@ void Give(const std::string& item) {
 }
 
 void StopRunning() {
+#ifndef COOP_HOOKSHOT
     if (g_state.running && g_state.running->controller) {
         g_state.running->controller->SetInputInjector({});
     }
+#endif
     g_state.running.reset();
 }
 
+#ifdef COOP_HOOKSHOT
+// Hookshot: no pad here (the driver holds the buttons through the bridge);
+// the steps are the driver's test commands, played from this frame.
+void Begin(Core::System&, Script script) {
+    StopRunning();
+    Running r;
+    r.runner = std::make_unique<Runner>(std::move(script));
+    r.shared = std::make_shared<Shared>();
+    r.start = Clock::now();
+    LOG_INFO(Core, "coop: test commands started: {} steps", r.runner->StepCount());
+    g_state.running = std::move(r);
+}
+#else
 void Begin(Core::System& system, Script script) {
     StopRunning();
     auto* controller = PickController(system);
@@ -822,6 +929,7 @@ void Begin(Core::System& system, Script script) {
     LOG_INFO(Core, "coop: test script started: {} steps", r.runner->StepCount());
     g_state.running = std::move(r);
 }
+#endif
 
 void CheckFile(Core::System& system) {
     std::error_code ec;
@@ -839,9 +947,16 @@ void CheckFile(Core::System& system) {
     if (size == 0) {
         return;
     }
-    std::ifstream in(g_state.path, std::ios::binary);
     std::stringstream text;
-    text << in.rdbuf();
+    {
+        std::ifstream in(g_state.path, std::ios::binary);
+        text << in.rdbuf();
+    }
+#ifdef COOP_HOOKSHOT
+    // Taken: emptied, so the driver writes the next ones (an empty file is
+    // not played).
+    std::ofstream(g_state.path, std::ios::binary | std::ios::trunc);
+#endif
     std::string error;
     auto script = Parse(text.str(), error);
     if (!script) {
@@ -858,7 +973,12 @@ void OnFrame(Core::System& system) {
         g_state.checked_env = true;
         g_state.path = EnvPath();
         if (!g_state.path.empty()) {
-            LOG_INFO(Core, "coop: test script file {}", g_state.path.string());
+#ifdef COOP_HOOKSHOT
+            constexpr const char* kWhat = "commands";
+#else
+            constexpr const char* kWhat = "script";
+#endif
+            LOG_INFO(Core, "coop: test {} file {}", kWhat, g_state.path.string());
         }
     }
     if (g_state.path.empty()) {
@@ -888,7 +1008,13 @@ void OnFrame(Core::System& system) {
                  out.left ? out.left->x : 0, out.left ? out.left->y : 0);
     }
     for (const auto& line : log) {
-        LOG_INFO(Core, "coop: test {}", line);
+        if (line.starts_with("mark ") && g_state.link) {
+            // With the height, so a scenario can tell a rider fell off (deku-water-floor).
+            LOG_INFO(Core, "coop: test {} (Link at {:.2f} {:.2f} {:.2f})", line, (*g_state.link)[0],
+                     (*g_state.link)[1], (*g_state.link)[2]);
+        } else {
+            LOG_INFO(Core, "coop: test {}", line);
+        }
     }
     for (const auto& request : r.runner->TakeRequests()) {
         if (request.kind == Kind::warp) {
@@ -898,11 +1024,17 @@ void OnFrame(Core::System& system) {
             Wear(system, request.start, request.name);
         } else if (request.kind == Kind::assign) {
             Assign(system, request.name);
+        } else if (request.kind == Kind::setflag) {
+            SetFlag(system, request.name, std::stoi(request.start));
+        } else if (request.kind == Kind::setenum) {
+            SetEnum(system, request.name, request.start);
         } else if (request.kind == Kind::place) {
             const bool ok = CoopBoss::MoveLink(system, g_state.main,
                                                CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});
             LOG_INFO(Core, "coop: test place {:.2f} {:.2f} {:.2f}: {}", request.at[0], request.at[1],
                      request.at[2], ok ? "done" : "failed");
+        } else if (request.kind == Kind::kill) {
+            CoopObjects::QueueTestKill(request.name);  // logged where it is done
         } else if (request.kind == Kind::chat) {
             const bool sent = CoopHook::SendChat(request.name);
             LOG_INFO(Core, "coop: test chat '{}': {}", request.name, sent ? "sent" : "NOT sent");
@@ -937,7 +1069,11 @@ void OnFrame(Core::System& system) {
         r.shared->out = out;
     }
     if (r.runner->Done()) {
+#ifdef COOP_HOOKSHOT
+        LOG_INFO(Core, "coop: test commands done");  // the driver writes "test script done"
+#else
         LOG_INFO(Core, "coop: test script done");
+#endif
         StopRunning();
     }
 }

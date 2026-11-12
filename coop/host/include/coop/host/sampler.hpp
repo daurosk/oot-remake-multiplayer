@@ -37,6 +37,10 @@ struct SamplerSettings {
   std::uint64_t max_velocity_gap_us = 250'000;
   // Faster than this, in metres a second, is a warp: no velocity is sent.
   float max_speed = 200.0f;
+  // The player's colour, 0xRRGGBB (coop-options.ini `color`), sent in
+  // PLAYER_EQUIP with the equipment. Unset: none is sent, and the others use
+  // this player's slot colour (protocol::slot_color).
+  std::optional<std::uint32_t> color;
 };
 
 class Sampler {

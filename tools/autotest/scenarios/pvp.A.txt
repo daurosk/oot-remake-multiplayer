@@ -1,0 +1,64 @@
+# pvp (branch pvp): A swings its sword at B's Link with PvP off, then turns PvP on
+# (A hosts: it joins first) and swings again. Hyrule Field in front of Kakariko, by day (the
+# sword is read from the foliage cut, so the area needs the game's grass). B stands still at
+# 213 14 (pvp.B.txt); A stands 1.2 m east of it, faces it and swings.
+# Expect, PvP off (marks "off1" to "off3"): no "coop: pvp:" hit lines in either log; B's life
+# unchanged ("coop: objects: our Link's life" with LICHII_COOP_DEBUG_OBJECTS=1).
+# Expect, after "chat /pvp on": both logs "coop: pvp: on (set by 1)", the chat "PvP is on";
+# A's log "coop: pvp: our sword reached P2" for the swings; B's log "coop: pvp: hit from P1
+# (2 quarter hearts): taken" and "our Link hurt by 2", then "the game took the hit" or "our
+# Link's life N -> N-2"; at most one taken per 0.8 s. A's shots at "on1" to "on3": B's puppet
+# flinches (the hurt pose); B's shots: B's hearts drop by half a heart a hit.
+#! noload
+#! start coop: test warp done
+#! timeout 300
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark field
+wait 600                # B walks to 213 14 first
+goto 214.2 14.0 0.4 900
+toward 213.0 14.0 10    # face B
+wait 60
+mark off-ready
+hold Y 8
+wait 60
+mark off1
+hold Y 8
+wait 60
+mark off2
+hold Y 8
+wait 90
+mark off3
+chat /pvp on
+wait 180
+mark on-ready
+toward 213.0 14.0 6
+hold Y 8
+wait 30
+mark on1
+wait 30                 # more than the 0.8 s mercy
+hold Y 8
+wait 30
+mark on2
+wait 30
+hold Y 8
+wait 30
+mark on3
+wait 120
+chat /pvp off
+wait 120
+hold Y 8
+wait 60
+mark off-again          # no hit after /pvp off
+wait 120
+mark end

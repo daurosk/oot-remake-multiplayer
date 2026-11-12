@@ -2,6 +2,7 @@
 #include "coop_puppet.h"
 
 #include "coop_camera.h"
+#include "coop_colors.h"
 #include "coop_pose.h"
 
 #include <algorithm>
@@ -9,8 +10,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string_view>
 
 #include "coop/host/scene.hpp"
 #include "coop/host/session.hpp"
@@ -19,6 +22,18 @@
 
 namespace CoopPuppet {
 namespace {
+
+// The puppet plays the other player's Ocarina notes (issue 152) only with
+// LICHII_COOP_OCARINA_SOUND=1: off by default until the game's own note player
+// is found (the notes are in the Ocarina.bars bank, not an SLink user, 2026-11-12).
+bool OcarinaSoundOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_OCARINA_SOUND");
+        return v != nullptr && std::string_view(v) == "1";
+    }();
+    return on;
+}
+
 
 template <typename T>
 bool ReadValue(Guest& guest, std::uint64_t address, T& out) {
@@ -230,29 +245,62 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 slot.phase = Phase::live;
                 slot.since_ms = now_ms;
                 slot.shown = Show::show;  // a new actor stands where it was made
+                slot.model_checked = !IsTunicActor(slot.actor_name);
             } else if (now_ms - slot.since_ms > kCreateTimeoutMs) {
                 Say("P" + std::to_string(slot.number) + " " + slot.actor_name +
                     " not spawned after " + std::to_string(kCreateTimeoutMs) + " ms (actor " +
                     Hex(slot.actor) + ", state " + (have_state ? std::to_string(state) : "-") +
                     "); trying again in 5 s");
+                // Twice for the same actor, and only while no tunic puppet has
+                // spawned yet: slow loads in a heavy scene must not cost a
+                // working pack its colours.
+                if (IsTunicActor(slot.actor_name) && !tunic_proven_ &&
+                    ++tunic_timeouts_[slot.actor_name] == 2) {
+                    TunicFails(slot.actor_name, "not made twice: the puppet pack has no tunic "
+                                                "colours (an older pack? run make-puppet-pack again)");
+                }
                 slot.phase = Phase::idle;
                 slot.retry_ms = now_ms + 5000;
                 slot.take = slot.drop = false;
             }
             break;
         case Phase::live:
+            if (!slot.model_checked && have_state && state == addr::kStatePresent &&
+                now_ms - slot.since_ms >= kTunicModelCheckMs) {
+                // A tunic puppet is the player's model under another project
+                // name (tools/puppet_pack/tunic.py): if the engine did not load
+                // it, the actor stands without a Player_ model. Plain then.
+                slot.model_checked = true;
+                // The name comes through the skeleton path (checked on the child),
+                // the model object through +0x260 (seen on the adult too): only
+                // neither, or a name other than Player_, counts as a failure.
+                const auto model = CoopPose::ModelNameOf(guest, slot.actor);
+                const std::uint64_t object = CoopColors::ModelOf(guest, slot.actor);
+                if (model ? model->rfind("Player_", 0) == 0 : object != 0) {
+                    tunic_proven_ = true;
+                    Say("P" + std::to_string(slot.number) + " " + slot.actor_name + ": model " +
+                        (model ? *model : "object " + Hex(object) + " (name not read)"));
+                } else {
+                    TunicFails(slot.actor_name, "spawned with " +
+                                                    (model ? "model " + *model : std::string("no model")));
+                }
+            }
             if (!have_state || Gone(state)) {
                 Say("P" + std::to_string(slot.number) + " gone (" +
                     (have_state ? "state " + std::to_string(state) : std::string("no actor")) +
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
                 slot.lost_ms = now_ms;  // a load deletes it before the camera goes
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
                 if (t->show != slot.shown) {
+                    if (slot.shown == Show::hide) {
+                        slot.meter_skip = true;  // issue 194: it was parked, not drawn
+                    }
                     Say("P" + std::to_string(slot.number) + " " + ShowText(slot.shown) + " -> " +
                         ShowText(t->show) + (*t->why ? std::string(" (") + t->why + ")" : std::string()));
                     slot.shown = t->show;
@@ -260,13 +308,41 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 if (t->show != Show::hide && slot.number < 32) {
                     live |= 1u << slot.number;
                 }
-                if (t->show == Show::show) {
-                    Pose(slot, guest, t->position, &t->rotation, now_ms);
+                // Issue 194 (coop_snap.h): a held puppet (their cutscene) follows their
+                // place with its frame frozen, so it is not left behind and does not jump
+                // when the cutscene ends; any jump is eased, a snap is logged.
+                if (t->color && tint_ > 0.0f) {
+                    Tint(slot, guest, *t->color);  // LICHII_COOP_PUPPET_TINT only
+                }
+                if (t->show == Show::show || t->show == Show::hold) {
+                    DrawAt(slot, guest, *t, now_ms);
                 } else if (t->show == Show::hide) {
+                    slot.smooth.Set(t->position);  // out of sight: comes back where they are
+                    slot.meter.Reset();
                     Vec3 parked = t->position;
                     parked[1] -= kHideDrop;
                     Pose(slot, guest, parked, nullptr, now_ms);
-                }  // hold: left where it is
+                }
+                // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
+                // by their own command: while held for their cutscene (free play
+                // is DemoOcarina) nothing new is played on the puppet.
+                const std::string their = t->anim ? t->anim->name : std::string();
+                if (anim_ && their != slot.their_anim) {
+                    Say("P" + std::to_string(slot.number) + " their command '" + their + "'");
+                }
+                slot.their_anim = their;
+                const std::string hand = slot.ocarina_hand.Step(
+                    [&guest](std::uint64_t a) -> std::optional<std::uint64_t> {
+                        std::uint64_t w = 0;
+                        return guest.Read(a, &w, 8) ? std::optional<std::uint64_t>(w) : std::nullopt;
+                    },
+                    [&guest](std::uint64_t a, std::uint64_t w) { return guest.Write(a, &w, 8); },
+                    slot.actor,
+                    t->show != Show::hide &&
+                        CoopOcarina::HandBind::Playing(their.empty() ? slot.anim_name : their));
+                if (!hand.empty()) {
+                    Say("P" + std::to_string(slot.number) + " " + hand + " ('" + their + "')");
+                }
             }
             break;
         case Phase::deleting:
@@ -276,6 +352,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
             }
             break;
@@ -430,6 +507,9 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     }
     case Pending::move:
         break;
+    case Pending::sound:
+        CoopPuppetSound::Finish(slot.sound, result, who, [this](const std::string& line) { Say(line); });
+        break;
     case Pending::none:
         break;
     }
@@ -518,6 +598,25 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             slot.since_ms = now_ms;
             pending_ = Pending::remove;
             return c;
+        }
+        // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
+        // what the puppet's sound user plays (issue 131).
+        // Not only in show: A playing is an event on A, so B holds the puppet (still,
+        // seen) the whole song; the notes must sound then too.
+        if (t->show != Show::hide) {
+            const std::string who = "P" + std::to_string(slot.number);
+            const auto say = [this](const std::string& line) { Say(line); };
+            if (anim_) {
+                CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
+            }
+            if (!OcarinaSoundOn()) {
+                // notes are received and logged by the receiver, not played
+            } else if (auto c = CoopPuppetSound::Next(slot.sound, t->ocarina, guest,
+                                                      input_.main_base, slot.actor, slot.block,
+                                                      now_ms, who, say)) {
+                pending_ = Pending::sound;
+                return c;
+            }
         }
         if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
@@ -608,9 +707,14 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.vtable = 0;
     slot.take = slot.drop = false;
     slot.anim_name.clear();
+    slot.ocarina_hand = {};  // a new puppet may reuse the old address
+    slot.their_anim.clear();
     slot.anim_serial = 0;
     slot.frame_to_set.reset();
     slot.held_frame.reset();
+    slot.smooth.Reset();
+    slot.meter.Reset();
+    slot.meter_skip = false;
     slot.sync_next = 0;
     slot.worn = {};
     slot.in_hand = 0;
@@ -627,6 +731,20 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
 }
 
 namespace {
+// The state the equip call is given (issue 91, puppet-looks): 2 (worn put
+// away, as the GameData path wears a sword or a tunic) for every piece but
+// the mask, which gets 1. Through the GameData path (state 2) the game drew
+// no mask even on the player's own Link (wear-masks 20261110-155536), and the
+// call keeps the state per kind (eu + 0x12d4 + 8 * kind: {1, state}) for
+// when the piece is made. LICHII_COOP_HEAD_STATE=2 goes back to 2.
+std::uint64_t EquipState(std::uint32_t kind) {
+    static const std::uint64_t head = [] {
+        const char* v = std::getenv("LICHII_COOP_HEAD_STATE");
+        return v != nullptr && std::string_view(v) == "2" ? std::uint64_t{2} : std::uint64_t{1};
+    }();
+    return kind == addr::kArmorKindFirst ? head : std::uint64_t{2};
+}
+
 // The eight equipment slots of an actor's EquipmentUser, for the debug log:
 // for each slot that holds a piece its id, actor, state, place (height over
 // the wearer and distance on the ground), the request byte, and the slot
@@ -703,6 +821,16 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
                       static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
         text += "; armor " + std::to_string(a) + ": id " + Hex(id) + " actor " + Hex(piece) +
                 " state " + std::to_string(state) + " " + place;
+    }
+    // Issue 91 (puppet-looks): the equip call's per-kind words (eu + 0x12d4 +
+    // 8 * kind, two u32), to tell how the game wears a real mask from the
+    // puppet's (the GameData path asks state 1 or 2 per piece).
+    text += "; kinds";
+    for (std::uint32_t k = 0; k < 18; ++k) {
+        std::array<std::uint32_t, 2> words{};
+        if (ReadValue(guest, eu + 0x12d4 + 8 * k, words) && (words[0] != 0 || words[1] != 0)) {
+            text += " " + std::to_string(k) + ":" + Hex(words[0]) + "/" + Hex(words[1]);
+        }
     }
     return text;
 }
@@ -804,7 +932,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
         c.x[0] = eu;
         c.x[1] = kGearKinds[i];
         c.x[2] = cell;
-        c.x[3] = 2;
+        c.x[3] = EquipState(kGearKinds[i]);
         c.x[4] = 0xFFFFFFFF;
         c.x[5] = 1;
         c.x[6] = 0;
@@ -1102,10 +1230,53 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
     return std::nullopt;
 }
 
+// Issue 194 (coop_snap.h): a shown or held puppet drawn where its player is. Every jump of
+// the place we are handed is logged ("target jump"; eased while shown, at once while held:
+// their cutscene's samples move smoothly, so a jump then is a real teleport). The meter reads
+// the puppet's place back from the game (what it drew since our last write) and logs each step
+// past CoopSnap::kSnapM as a snap ("warp" past kWarpM).
+void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {
+    const std::string who = "P" + std::to_string(slot.number);
+    const bool held = target.show == Show::hold;
+    Vec3 at{};
+    if (slot.meter_skip) {
+        slot.meter_skip = false;  // still the parked spot: start again from the next frame
+        slot.meter.Reset();
+    } else if (ReadValue(guest, slot.actor + addr::kActorPosition, at)) {
+        if (const auto snap = slot.meter.Step(at)) {
+            Say(who + " snap " + std::to_string(*snap).substr(0, 5) + " m (" +
+                (*snap >= CoopSnap::kWarpM ? std::string("warp") : ShowText(target.show)) + ")");
+        }
+    }
+    float jump = 0.0f;
+    const Vec3 drawn = slot.smooth.Step(target.position, now_ms, !held, &jump);
+    if (jump > 0.0f) {
+        Say(who + " target jump " + std::to_string(jump).substr(0, 5) + " m (" + ShowText(target.show) +
+            (jump >= CoopSnap::kWarpM ? ", warp" : held ? ", at once" : ", eased") + ")");
+    }
+    Pose(slot, guest, drawn, &target.rotation, now_ms);
+}
+
 // The puppet's pose: +0x31c/+0x328 and the engine's pending transform
 // (+0x358/+0x364), which the actor's calc applies over +0x31c. With the
 // debug anim log, once a second, what the game left there since the last
 // write, so a writer that undoes ours shows up.
+void Director::Tint(Slot& slot, Guest& guest, std::uint32_t color) {
+    const auto result = CoopColors::Apply(guest, slot.actor, CoopColors::TintOf(color, tint_));
+    if (result == CoopColors::Applied::no_model) {
+        return;  // not made yet; asked again next frame
+    }
+    if (slot.tint_actor != slot.actor || slot.tint_color != color) {
+        slot.tint_actor = slot.actor;
+        slot.tint_color = color;
+        char strength[16];
+        std::snprintf(strength, sizeof(strength), "%.2f", tint_);
+        Say("P" + std::to_string(slot.number) + " colour " + CoopColors::Text(color) +
+            " (strength " + strength + ") on model " +
+            Hex(CoopColors::ModelOf(guest, slot.actor)) + " of " + Hex(slot.actor));
+    }
+}
+
 void Director::Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
                     std::uint64_t now_ms) {
     if (anim_ && now_ms - slot.pose_log_ms >= 1000) {
@@ -1235,7 +1406,8 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
                     const std::optional<Vec3>& position, bool local_event,
                     const std::vector<Remote>& remotes, std::uint64_t now_ms,
                     const Gear& own_gear,
-                    std::optional<std::uint8_t> own_drawn) {
+                    std::optional<std::uint8_t> own_drawn,
+                    std::optional<std::uint32_t> own_color) {
     Input in;
     if (main_base == 0) {
         return in;
@@ -1268,8 +1440,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
             show = Show::hide;  // our cutscene: kept, out of sight
             why = "our cutscene";
             break;
-        case coop::host::Visibility::park:
-            show = Show::hide;  // riding: kept, out of sight
+        case coop::host::Visibility::ride:
+            // Issue 199: shown in its riding animation; CoopRide draws a
+            // copy of the horse under it.
             why = "riding";
             break;
         case coop::host::Visibility::hold:
@@ -1284,7 +1457,8 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         }
         Target t;
         t.number = r.number;
-        t.actor = ActorFor(r.adult);
+        t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
+        t.actor = ActorFor(r.adult, t.color);
         t.position = r.position;
         if (r.rotation) {
             t.rotation = QuatToMatrix(*r.rotation);
@@ -1295,6 +1469,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
         t.drawn = r.drawn;
+        t.ocarina = r.ocarina;
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -1305,20 +1480,46 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         }
         Target t;
         t.number = 0;
-        t.actor = ActorFor(false);
+        t.actor = ActorFor(false, own_color);
         t.position = *debug_spot_;
         t.gear = own_gear;
         t.drawn = own_drawn;
+        t.color = own_color;  // the test puppet wears your own colour, if you chose one
         in.targets.push_back(std::move(t));
     }
     return in;
 }
 
-std::string Planner::ActorFor(bool adult) const {
+bool PackHasGreenPuppets(std::string_view manifest) {
+    return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
+           manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
+}
+
+std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
-    return adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
+    const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
+    if (settings_.tunics && color) {
+        std::string_view tunic = CoopColors::TunicOf(*color);
+        if (tunic.empty() && settings_.green_puppet) {
+            tunic = "Green";  // the plain puppet wears your own colour (PlannerSettings)
+        }
+        if (!tunic.empty()) {
+            std::string name = plain + '_' + std::string(tunic);
+            if (std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end()) {
+                return name;
+            }
+        }
+    }
+    return plain;
+}
+
+void Director::TunicFails(const std::string& actor, const std::string& why) {
+    std::lock_guard lock(tunic_mutex_);
+    if (tunic_failed_.insert(actor).second) {
+        Say(actor + " " + why + "; that colour shows as the plain puppet from now on");
+    }
 }
 
 namespace {
@@ -1337,8 +1538,31 @@ std::mutex g_anim_mutex;
 std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
 std::array<Gear, 5> g_gear;  // the same; guarded
 std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
+std::array<std::optional<std::uint32_t>, 5> g_color;               // the same; guarded
+std::optional<std::uint32_t> g_own_color;                          // ours; guarded
+std::array<CoopPuppetSound::Wanted, 5> g_ocarina;  // the same; guarded (issue 152)
 
 } // namespace
+
+std::optional<std::uint32_t> PlayerColor(std::uint8_t number) {
+    std::lock_guard lock(g_anim_mutex);
+    return number < g_color.size() ? g_color[number] : std::nullopt;
+}
+
+void SetOwnColor(std::optional<std::uint32_t> rgb) {
+    std::lock_guard lock(g_anim_mutex);
+    g_own_color = rgb;
+}
+
+std::optional<std::uint32_t> OwnColor() {
+    std::lock_guard lock(g_anim_mutex);
+    return g_own_color;
+}
+
+std::uint32_t NameColor(std::uint8_t number, std::uint8_t self) {
+    return (number == self ? OwnColor() : PlayerColor(number))
+        .value_or(coop::protocol::slot_color(number));
+}
 
 void OnEvent(const coop::net::Event& event) {
     if (!g_configured) {
@@ -1350,11 +1574,15 @@ void OnEvent(const coop::net::Event& event) {
         g_anims = {};
         g_gear = {};
         g_drawn = {};
+        g_color = {};
+        g_ocarina = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
         g_gear[event.player] = {};
         g_drawn[event.player].reset();
+        g_color[event.player].reset();
+        g_ocarina[event.player] = {};
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -1367,6 +1595,19 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;
+        g_color[event.player] = e.color;
+    } else if (const auto* note = std::get_if<coop::protocol::OcarinaNote>(&event.message);
+               event.kind == EventKind::message && note != nullptr) {
+        if (note->player_number == 0 || note->player_number >= g_ocarina.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        std::lock_guard lock(g_anim_mutex);
+        auto& w = g_ocarina[note->player_number];
+        w = CoopPuppetSound::Wanted{note->note, w.serial + 1, now_ms};
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -1386,6 +1627,11 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
+        // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
+        // The model tint darkens the whole Link (reports puppet-colors-2): off
+        // unless asked for; the colour is the tunic (PlannerSettings::tunics).
+        const char* tint = std::getenv("LICHII_COOP_PUPPET_TINT");
+        g_director->SetTint(tint != nullptr ? CoopColors::StrengthFrom(tint) : 0.0f);
         g_planner = std::make_unique<Planner>(std::move(settings));
         g_configured = true;
     });
@@ -1432,6 +1678,8 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
+                r.color = g_color[r.number];
+                r.ocarina = g_ocarina[r.number];
             }
         }
     }
@@ -1447,17 +1695,20 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     std::vector<Remote> remotes = Collect(session, server_now_us);
     Gear own_gear;
     std::optional<std::uint8_t> own_drawn;
+    std::optional<std::uint32_t> own_color;
     if (session != nullptr) {
         if (const auto& e = session->sampler().last_equipment()) {
             own_gear = GearOf(*e);
             own_drawn = e->drawn;
+            own_color = e->color;
         }
     }
     const auto now_ms = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn);
+    g_planner->SetFailedTunics(g_director->FailedTunics());
+    auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));
 }

@@ -1,0 +1,42 @@
+# skull-sling (enemy-sync-3, #133): a wall Skulltula shot with the slingshot by the player who does
+# not own it must die in both games. Both load into the Deku Tree and are put in the slingshot room
+# (room C, the `place` step as deku-ladder). Its Enemy_Skullwalltula 0x282f9be0f907855f (the one in
+# Lixyas's log) is at -47.58 114.51 16.84, 1 life. A stands on the chest ledge 6 m from it (so A
+# owns it by distance) and only watches; B shoots it from the door, 15 m away (deku-ladder's spot).
+# Expect:
+#  - B: "share damage 1 to 0x282f9be0f907855f" (B's copy hit by B's seed), or A owning nothing
+#    and B the owner: then B "dead, said to the others: Enemy_Skullwalltula" (still a PASS: note it).
+#  - A: "share got damage 1 for 0x282f9be0f907855f", then its Skulltula dies in A's game ("life
+#    Enemy_Skullwalltula ... 1 -> 0") and "- Enemy_Skullwalltula ... hash 0x282f9be0f907855f"; if
+#    A's game would not take the hit: "dead by a hit our game did not take, said to the others".
+#  - B: "- Enemy_Skullwalltula ... hash 0x282f9be0f907855f" (gone in B), no "killed here, owner
+#    still shows life" more than twice.
+#  - Server: "coop_server: enemies: ... damage relayed N" with N >= 1, "dropped" not rising.
+#  - Shots "after-shot" and "late": no Skulltula on the wall in either game.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 360
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -51.8 112.6 12.2
+wait 240
+mark placed
+toward -47.58 16.84 10   # face the Skulltula on the wall
+wait 600                 # B lines up and shoots
+mark watch
+wait 900
+mark after-shot
+wait 600
+mark late

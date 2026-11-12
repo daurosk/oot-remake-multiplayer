@@ -69,7 +69,31 @@ param(
     [switch]$Fps30,
     # A join password for the server (passed through an environment variable, not the command
     # line). The games send none unless a steps file says `password A TEXT`.
-    [string]$ServerPassword = ""
+    [string]$ServerPassword = "",
+    # A bad connection (docs/testing.md, "Bad connections"): tools\netsim\netsim.py relays each game
+    # in -NetSimFor to the server, on port -Port+1 (A) or -Port+2 (B). -Lag is added round trip in
+    # ms (half each way), -Jitter +- ms each way, -Loss % each way, -Spike "<ms>/<every s>" a stall
+    # of both directions (rubber-banding). Off when all are 0/empty.
+    [double]$Lag = 0,
+    [double]$Jitter = 0,
+    [double]$Loss = 0,
+    [string]$Spike = "",
+    # The games that go through the relay: A, B or both ("A,B"); the others connect straight.
+    [string[]]$NetSimFor = @("A", "B"),
+    # More relay options, as for netsim.py (for example "--dup 1", "--down loss=5" or "--seed 3");
+    # "A:--rate 256" gives one to that game's relay only. Also turns the relay on alone.
+    [string[]]$NetSimArgs = @(),
+    # Python 3.8+ for the relay. Default: the recomp's .venv beside the repo, else py -3 / python.
+    [string]$Python = "",
+    # What runs the games: the patched emulator (kits A and B), or Hookshot, the static recomp
+    # (docs/hookshot.md). Hookshot games are played through Hookshot's control bridge by
+    # tools\autotest\hookshot.py: the same A/B scripts, shots and logs in the run folder.
+    [ValidateSet('emulator', 'hookshot')][string]$Runtime = 'emulator',
+    # Hookshot game folders (hookshot.exe, or bin\hookshot.exe, with hookshot_coop.dll and the
+    # puppet pack in mods\). Default: hookshot-A and hookshot-B in the coop-kit folder. A folder's
+    # autotest-save\ (a copy of its user\save\) is put back over user\save\ before each run.
+    [string]$HookshotA = "",
+    [string]$HookshotB = ""
 )
 $ErrorActionPreference = 'Stop'
 
@@ -86,7 +110,7 @@ if (-not $Game) {
     $Game = Get-ChildItem (Split-Path (Split-Path $KitA)) -Filter *.nup -File -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
 }
-if (-not $TakeBaseline -and (-not $Game -or -not (Test-Path -LiteralPath $Game))) { throw "no game file; pass -Game" }
+if ($Runtime -eq 'emulator' -and -not $TakeBaseline -and (-not $Game -or -not (Test-Path -LiteralPath $Game))) { throw "no game file; pass -Game" }
 if (-not $Shots) { $Shots = Resolve "$(Split-Path $KitA)\shots" }
 $scA = "$here\scenarios\$Scenario.A.txt"
 $scB = "$here\scenarios\$Scenario.B.txt"
@@ -124,6 +148,46 @@ if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Grav
 
 $Server = Resolve $Server
 if (-not $TakeBaseline -and -not $NoCoop -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+
+# Hookshot: tools\autotest\hookshot.py runs the whole test (server, both games, load, scenario,
+# shots, logs) and leaves them in the run folder like the emulator run does.
+if ($Runtime -eq 'hookshot') {
+    if ($steps) { throw "-Runtime hookshot plays A/B scripts only; steps files ($Scenario.steps.txt) read the emulator's logs" }
+    if ($TakeBaseline) { throw "-Runtime hookshot: copy <game>\user\save to <game>\autotest-save for a baseline" }
+    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'ServerPassword', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
+        if ($PSBoundParameters.ContainsKey($o)) { throw "-$o is for the emulator; not with -Runtime hookshot" }
+    }
+    if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
+    if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
+    if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
+    $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
+    New-Item -ItemType Directory -Force $out | Out-Null
+    $py = @()
+    if ($Python) { $py = @($Python) } else {
+        for ($d = Get-Item $here; $d; $d = $d.Parent) {
+            $v = Join-Path $d.FullName 'oot-remake-recomp\.venv\Scripts\python.exe'
+            if (Test-Path $v) { $py = @($v); break }
+        }
+        if (-not $py.Count) { if (Get-Command py -ErrorAction SilentlyContinue) { $py = @('py', '-3') } else { $py = @('python') } }
+    }
+    $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
+        '--game-b', (Resolve $HookshotB), '--out', $out, '--name', $Scenario, '--script-a', $scA, '--every', "$Every",
+        '--timeout', "$([Math]::Max($Timeout, 900))", '--scenario-timeout', "$([Math]::Max($Timeout, 600))")
+    if (Test-Path $scB) { $a += @('--script-b', $scB) }
+    if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
+    if ($NoRestore) { $a += '--no-restore' }
+    if ($KeepOpen) { $a += '--keep-open' }
+    if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
+    foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
+        $a += @('--env', $e)
+    }
+    Write-Host "hookshot: $($py[0]) $($a -join ' ')"
+    & $py[0] @a
+    $code = $LASTEXITCODE
+    $out
+    if ($code) { exit $code }
+    return
+}
 
 # The folders a kit's emulator really uses: qt-config.ini can point nand/sdmc/load/dump anywhere
 # (kits copied from another kit keep that kit's absolute paths).
@@ -465,7 +529,7 @@ function Start-Game([string]$x) {
         }
         Write-Host "game ${x}: saves restored from $(Baseline-Dir $kits[$x])"
     }
-    $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $Port`r`nname = $x" }
+    $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $($netPort[$x])`r`nname = $x" }
     if (-not $NoCoop -and $script:passwords[$x]) { $ini += "`r`npassword = $($script:passwords[$x])" }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') $ini
     Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
@@ -580,7 +644,8 @@ function Puppet-Count([string]$x) {
 #                         welcomed (its log), refused (a new "refused a connection" line in the
 #                         server log) or none (neither: turned away at connect); then end B
 #   lines NAME B max=N REGEX  game B's log has at most N lines matching REGEX (the rest of the
-#                         line, spaces kept); PASS or FAIL with the count (a loop, a repeat)
+#                         line, spaces kept); PASS or FAIL with the count (a loop, a repeat);
+#                         min=N instead: at least N (the case really happened)
 # Results go to counts.txt beside the screenshots.
 function Run-Steps([string]$file) {
     $n = 0
@@ -647,15 +712,17 @@ function Run-Steps([string]$file) {
             }
             'shot' { Shot-Both "s$n-$($rest[0])" }
             'lines' {
-                if ($rest.Count -lt 4 -or $rest[2] -notmatch '^max=(\d+)$') { throw "steps line ${n}: want lines NAME B max=N REGEX" }
-                $most = [int]$Matches[1]
+                if ($rest.Count -lt 4 -or $rest[2] -notmatch '^(max|min)=(\d+)$') { throw "steps line ${n}: want lines NAME B max=N|min=N REGEX" }
+                $atLeast = $Matches[1] -eq 'min'
+                $bound = [int]$Matches[2]
                 $pattern = ($line -split '\s+', 5)[4]
                 $got = Count (Read-Log $rest[1]) "(?m)^.*$pattern"
-                $res = '{0} {1} ({2}: {3} lines match ''{4}'', at most {5})' -f $(if ($got -le $most) { 'PASS' } else { 'FAIL' }),
-                    $rest[0], $rest[1], $got, $pattern, $most
+                $ok = if ($atLeast) { $got -ge $bound } else { $got -le $bound }
+                $res = '{0} {1} ({2}: {3} lines match ''{4}'', {5} {6})' -f $(if ($ok) { 'PASS' } else { 'FAIL' }),
+                    $rest[0], $rest[1], $got, $pattern, $(if ($atLeast) { 'at least' } else { 'at most' }), $bound
                 Write-Host $res
                 Add-Content "$out\counts.txt" $res
-                if ($got -gt $most) { $script:stepFails++ }
+                if (-not $ok) { $script:stepFails++ }
             }
             'expect' {
                 $name = $rest[0]
@@ -687,10 +754,60 @@ function Run-Steps([string]$file) {
     }
 }
 
+# The bad-connection relays (one per game in -NetSimFor), started once with the first server and
+# kept through server restarts. $netPort[x] is the port that game's coop.ini names.
+$netProcs = @{}
+$netPort = @{ A = $Port; B = $Port }
+$NetSimFor = @($NetSimFor | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ })
+$NetSimArgs = @($NetSimArgs | Where-Object { $_ })
+$netOn = (-not $NoCoop) -and ($Lag -or $Jitter -or $Loss -or $Spike -or $NetSimArgs.Count) -and $NetSimFor.Count
+function Find-Python {
+    if ($Python) { return @($Python) }
+    for ($d = Get-Item $here; $d; $d = $d.Parent) {
+        $v = Join-Path $d.FullName 'oot-remake-recomp\.venv\Scripts\python.exe'
+        if (Test-Path $v) { return @($v) }
+    }
+    if (Get-Command py -ErrorAction SilentlyContinue) { return @('py', '-3') }
+    if (Get-Command python -ErrorAction SilentlyContinue) { return @('python') }
+    throw "no Python for the relay (tools\netsim\netsim.py); pass -Python"
+}
+function Start-NetSim {
+    if (-not $netOn) { return }
+    $py = @(Find-Python)
+    $relay = Resolve "$here\..\netsim\netsim.py"
+    $lines = @("netsim: lag $Lag ms (round trip), jitter +-$Jitter ms, loss $Loss %, spike '$Spike', for $($NetSimFor -join ','), extra '$($NetSimArgs -join ' ')'")
+    foreach ($x in $NetSimFor) {
+        if ($x -notin @('A', 'B')) { throw "-NetSimFor: '$x' is not A or B" }
+        $p = if ($x -eq 'A') { $Port + 1 } else { $Port + 2 }
+        $a = @($py | Select-Object -Skip 1) + @("`"$relay`"", '--listen', "127.0.0.1:$p", '--server', "127.0.0.1:$Port",
+            '--name', $x, '--report-every', '10',
+            '--lag', "$Lag", '--jitter', "$Jitter", '--loss', "$Loss")
+        if ($Spike) { $a += @('--spike', $Spike) }
+        foreach ($e in $NetSimArgs) {
+            if ($e -match '^([AB]):(.*)$') { if ($Matches[1] -eq $x) { $a += $Matches[2] } } else { $a += $e }
+        }
+        $proc = Start-Process $py[0] -ArgumentList ($a -join ' ') -PassThru -WindowStyle Minimized `
+            -RedirectStandardOutput "$out\netsim-$x.txt" -RedirectStandardError "$out\netsim-err-$x.txt"
+        $script:netProcs[$x] = $proc
+        $script:netPort[$x] = $p
+        $lines += "game ${x}: relay 127.0.0.1:$p -> server 127.0.0.1:$Port ($($a -join ' '))"
+    }
+    Start-Sleep 1
+    foreach ($x in $netProcs.Keys) {
+        if ($netProcs[$x].HasExited) { throw "the relay for $x stopped: $(Get-Content "$out\netsim-err-$x.txt" -Raw)" }
+    }
+    $lines | ForEach-Object { Write-Host $_ }
+    Set-Content -Encoding utf8 "$out\netsim.txt" $lines
+}
+function Stop-NetSim {
+    foreach ($p in $script:netProcs.Values) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+}
+
 $failed = $null
 $stepFails = 0
 try {
     Start-Server
+    Start-NetSim
 
     # powershell -File passes -Switches "A=1","B=1" as one string "A=1,B=1": split on commas.
     $Switches = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
@@ -735,6 +852,7 @@ try {
     if (-not $KeepOpen) {
         foreach ($x in $kits.Keys) { $expectedExit[$x] = $true; $p = $st[$x].Proc; if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
         Stop-Server
+        Stop-NetSim
     }
     foreach ($x in $kits.Keys) { if (Test-Path $st[$x].Log) { Copy-Item $st[$x].Log "$out\eden_log-$x.txt" } }
     if (-not $KeepOpen) {

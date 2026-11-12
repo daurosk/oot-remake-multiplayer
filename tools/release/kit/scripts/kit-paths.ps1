@@ -206,13 +206,24 @@ function Get-KitMods([string]$User) {
 
 # Reads coop-options.ini: NAME=value lines for LICHII_COOP_* switches and the emulator's
 # own EDEN_NX2_* switches. Blank lines and lines starting with # or ; are skipped, and so
-# is auto_update (play.ps1 reads it, the emulator does not). Returns an ordered table.
+# are auto_update and verify_signature (the updater reads them, the emulator does not). 'color = <colour>'
+# is passed as LICHII_COOP_COLOR when Test-CoopColor (coop-ini.ps1) takes it. Returns an ordered table.
 function Read-KitOptions([string]$Path) {
     $values = [ordered]@{}
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
-        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|server_allow|server_bind|server_password|public_address_lookup)\s*=') { continue }
+        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_password|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|pvp)\s*=') { continue }
+        if ($t -match '^color\s*=\s*(.*?)\s*$') {
+            $c = $Matches[1] -replace '\s+[#;].*$', ''  # a comment after it: 'color = blue  # mine'
+            if (-not $c) { continue }  # none chosen: the player number's colour
+            if ((Get-Command Test-CoopColor -ErrorAction SilentlyContinue) -and -not (Test-CoopColor $c)) {
+                Write-Host "coop-options.ini: color '$c' is not a colour (red, blue, ... or #RRGGBB); your player number's colour is used"
+                continue
+            }
+            $values['LICHII_COOP_COLOR'] = $c
+            continue
+        }
         if ($t -match '^((LICHII_COOP|EDEN_NX2)_[A-Z0-9_]+)\s*=\s*(.*)$') { $values[$Matches[1]] = $Matches[3] }
         else { Write-Host "coop-options.ini: skipped '$t' (only LICHII_COOP_NAME=value or EDEN_NX2_NAME=value lines)" }
     }
@@ -222,14 +233,23 @@ function Read-KitOptions([string]$Path) {
 # coop-options.ini's server_allow and server_bind (the host's server only; start-server.ps1
 # checks them): an ordered table with Allow and Bind, '' when not set. Password is the join
 # password (server_password): $null when no line without a '#' sets it (Host.bat then asks
-# once), '' when the host chose none.
+# once), '' when the host chose none. Upnp (on unless upnp = no), Invite (on unless invite =
+# no), Stun (stun_servers), Relay (relay = address[:port]) and RelayKey (relay_key) are the
+# router forward, the invite code and the relay (docs/play-online.md). Pvp: $true
+# only for 'pvp = on' (or yes, 1, true); anything else, or no line, is off.
 function Read-KitServerAccess([string]$Path) {
-    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null }
+    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $true; Invite = $true; Stun = ''; Relay = ''; RelayKey = ''; Pvp = $false }
     if (-not (Test-Path -LiteralPath $Path)) { return $access }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         if ($line -match '^\s*server_allow\s*=\s*(.*?)\s*$') { $access.Allow = $Matches[1] }
         elseif ($line -match '^\s*server_bind\s*=\s*(.*?)\s*$') { $access.Bind = $Matches[1] }
         elseif ($line -match '^\s*server_password\s*=\s*(.*?)\s*$') { $access.Password = $Matches[1] }
+        elseif ($line -match '^\s*upnp\s*=\s*(.*?)\s*$') { $access.Upnp = $Matches[1] -notmatch '^(no|off|false|0)$' }
+        elseif ($line -match '^\s*invite\s*=\s*(.*?)\s*$') { $access.Invite = $Matches[1] -notmatch '^(no|off|false|0)$' }
+        elseif ($line -match '^\s*stun_servers\s*=\s*(.*?)\s*$') { $access.Stun = $Matches[1] }
+        elseif ($line -match '^\s*relay\s*=\s*(.*?)\s*$') { $access.Relay = $Matches[1] }
+        elseif ($line -match '^\s*relay_key\s*=\s*(.*?)\s*$') { $access.RelayKey = $Matches[1] }
+        elseif ($line -match '^\s*pvp\s*=\s*(.*?)\s*$') { $access.Pvp = $Matches[1] -match '^(on|yes|1|true)$' }
     }
     return $access
 }
@@ -329,11 +349,107 @@ function Get-PuppetToolHash([string]$ToolDir) {
 # made before issue 131 has no "sound": true, so the other players' Links make no sound; a pack
 # whose tool_sha256 is not the kit's tool hash was made by another version of the tool (a hash,
 # not file times: a kit zip's times are the builder's local time). Never throws: the start goes on.
+# Your own Link in your colour (#202). The tunic preset nearest a colour (a name or #RRGGBB), as
+# the emulator picks the other players' puppets (lichii/hook/coop_colors.cpp TunicOf; keep the
+# colours the same): luma and chroma apart, chroma counted double. '' when it is not a colour.
+$KitTunicColors = [ordered]@{ red = 0xFF3030; orange = 0xFF8020; yellow = 0xFFC020; green = 0x30D040; cyan = 0x20D0E0
+    blue = 0x3070FF; purple = 0xA040FF; pink = 0xFF60C0; white = 0xFFFFFF; black = 0x202020 }
+function Get-KitTunic([string]$Color) {
+    if (-not $Color) { return '' }
+    $c = $Color.Trim().ToLowerInvariant()
+    $named = @{ brown = 0x8B5A2B; gray = 0xA0A0A0; grey = 0xA0A0A0 }
+    if ($KitTunicColors.Contains($c)) { $rgb = $KitTunicColors[$c] }
+    elseif ($named.ContainsKey($c)) { $rgb = $named[$c] }
+    elseif ($c -match '^#?([0-9a-f]{6})$') { $rgb = [Convert]::ToInt32($Matches[1], 16) }
+    else { return '' }
+    $ycc = {
+        param($v)
+        $r = ($v -shr 16) -band 0xFF; $g = ($v -shr 8) -band 0xFF; $b = $v -band 0xFF
+        $y = 0.299 * $r + 0.587 * $g + 0.114 * $b
+        , @($y, (0.564 * ($b - $y)), (0.713 * ($r - $y)))
+    }
+    $want = & $ycc $rgb
+    $best = ''; $bestD = -1.0
+    foreach ($name in $KitTunicColors.Keys) {
+        $have = & $ycc $KitTunicColors[$name]
+        $dy = $want[0] - $have[0]; $db = $want[1] - $have[1]; $dr = $want[2] - $have[2]
+        $d = $dy * $dy + 2.0 * ($db * $db + $dr * $dr)
+        if ($bestD -lt 0 -or $d -lt $bestD) { $bestD = $d; $best = $name }
+    }
+    return $best
+}
+
+# Puts your colour's tunic textures over the game's in the pack's romfs, so your own Link wears
+# your colour: the pack tool's coop_self/ files, listed in coop_puppet.json as self_files
+# ({colour: {romfs path: file}}: the tile, the child's dark tile, the adult's other tunic
+# textures and the adult's model copy that names the colour's textures, #202); a pack from before that: self_tiles / self_dark_tiles. Green, no colour or a
+# pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
+# Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
+function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
+    $romfs = Join-Path $PackDir 'romfs'
+    $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
+    $dark = 'Tex/Angin_Tile_A_Dark_Alb.bntx.zs'
+    $tunic = Get-KitTunic $Color
+    $json = $null
+    try {
+        $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
+    } catch { }
+    $ok = { param($rel) $rel -is [string] -and ($rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' -or
+            $rel -match '^Model/Player_(Adult|Child)\.Player_(Adult|Child)\.bfres\.zs$') }
+    # Every file a colour may put in, taken away first: no copy stays after a change of colour.
+    # The fixed list also covers a pack without self_files (made again older): no stale copy.
+    $targets = @($tile, $dark, 'Tex/Mt_Vest_Player_Adult_Alb.bntx.zs', 'Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs',
+        'Model/Player_Adult.Player_Adult.bfres.zs')
+    $put = [ordered]@{}
+    try {
+        if ($json -and $json.self_files) {
+            foreach ($c in $json.self_files.PSObject.Properties) {
+                foreach ($f in $c.Value.PSObject.Properties) { if (& $ok $f.Name) { $targets += $f.Name } }
+            }
+        }
+        if ($json -and $tunic -and $tunic -ne 'green' -and $json.tunics -and $json.tunics.green) {
+            if ($json.self_files -and $json.self_files.$tunic) {
+                foreach ($f in $json.self_files.$tunic.PSObject.Properties) {
+                    if ((& $ok $f.Name) -and $f.Value) { $put[$f.Name] = Join-Path $PackDir $f.Value }
+                }
+            } else {
+                $rel = if ($json.self_tiles) { $json.self_tiles.$tunic } else { $null }
+                $relDark = if ($json.self_dark_tiles) { $json.self_dark_tiles.$tunic } else { $null }
+                if ($rel) { $put[$tile] = Join-Path $PackDir $rel }
+                if ($rel -and $relDark) { $put[$dark] = Join-Path $PackDir $relDark }
+            }
+        }
+    } catch { $put = [ordered]@{} }
+    # The tile is the one that must be there; a missing other file is left to the game's.
+    if (-not $put.Contains($tile) -or -not (Test-Path -LiteralPath $put[$tile] -PathType Leaf)) { $put = [ordered]@{} }
+    try {
+        foreach ($t in ($targets | Select-Object -Unique)) {
+            $dst = Join-Path $romfs $t
+            if (-not $put.Contains($t) -and (Test-Path -LiteralPath $dst)) { Remove-Item -LiteralPath $dst -Force }
+        }
+        foreach ($t in @($put.Keys)) {
+            $dst = Join-Path $romfs $t
+            if (Test-Path -LiteralPath $put[$t] -PathType Leaf) {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+                Copy-Item -LiteralPath $put[$t] -Destination $dst -Force
+            } elseif (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force }
+        }
+        if ($put.Count) { return $tunic }
+    } catch { }
+    return ''
+}
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop
         if ($json.sound -ne $true) {
             return 'Puppet pack: made without the other players'' sounds. Run make-puppet-pack.cmd again to hear their footsteps, sword and voice.'
+        }
+        # No tunic models (a pack from before the colours, or a game without the
+        # tunic textures): every other player shows in the green tunic (#202).
+        $tunics = $json.tunics
+        if ($json.tunics_off -ne $true -and (-not $tunics -or @($tunics.PSObject.Properties).Count -eq 0)) {
+            return 'Puppet pack: made without the tunic colours, so the other players show in green. Run make-puppet-pack.cmd again.'
         }
         $tool = Get-PuppetToolHash $ToolDir
         if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {

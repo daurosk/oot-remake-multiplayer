@@ -369,3 +369,32 @@ TEST_CASE("host sampler: equipment on every change, not every frame") {
   now += kFrameUs;
   CHECK(decode(sampler.frame(r, now)).equips.size() == 1);
 }
+
+TEST_CASE("host sampler: the colour goes out with the equipment") {
+  SamplerSettings settings;
+  settings.color = 0x40C0FFu;
+  Sampler sampler(settings);
+  std::uint64_t now = kStart;
+  // No equipment read yet: the colour goes alone.
+  PlayerReading r = at(0.0f);
+  auto d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.color == 0x40C0FFu);
+  CHECK_FALSE(d.equips[0].equipment.weapon);
+  // The equipment joins it, and it stays in every later one.
+  r.equipment.emplace();
+  r.equipment->weapon = "Weapon_Sword_Kokiri";
+  now += kFrameUs;
+  d = decode(sampler.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK(d.equips[0].equipment.color == 0x40C0FFu);
+  CHECK(d.equips[0].equipment.weapon == "Weapon_Sword_Kokiri");
+  now += kFrameUs;
+  CHECK(decode(sampler.frame(r, now)).equips.empty());
+
+  // Without a colour setting none is sent.
+  Sampler plain;
+  d = decode(plain.frame(r, now));
+  REQUIRE(d.equips.size() == 1);
+  CHECK_FALSE(d.equips[0].equipment.color);
+}

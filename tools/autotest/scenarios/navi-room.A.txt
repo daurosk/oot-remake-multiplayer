@@ -1,0 +1,47 @@
+# navi-room (#145, navi-room-2): another player's Navi only in our dungeon room.
+# Needs a puppet pack made by this branch's tool (coop_rooms.txt beside coop_puppet.json); at start
+# each log says "coop: room table: N placements" (else "coop: no room table": remake the pack).
+# Both load into the Deku Tree entrance (room 0, the main room's first floor). A is put up in
+# room 3 (west, third floor, about 40 units from B: the testers' case), then back by B; then both
+# go to room 3, 14 units apart (more than room_near 8, so the same-room rule itself is tested).
+# Expect in B's log (LICHII_COOP_DEBUG_PUPPET=1):
+#  - "a-far": "fairy coop: rooms: P1 in room 3, we in room 0: Navi parked" and
+#    "fairy coop: puppet: P1 show -> hide (her player is in another room)" within about 1 s of
+#    A's "coop: test place -29 117.6 0: done"; B's shot "b-far" has no Navi glow.
+#  - "a-back": "rooms: P1 in room 0, we in room 0: no longer parked for the room" and
+#    "P1 hide -> show"; B's shot "b-back" shows A's puppet with Navi at its shoulder.
+#  - "together"/"b-together": no new "Navi parked" line after B's "test place -36 118.5 0: done";
+#    B's shot shows A's Navi. If a "rooms:" line names other rooms than 0 and 3, the room guess
+#    is wrong (not the rule).
+# If "placed" shows Link in a wall or falling, change the y (room 3's floor is about 117.3).
+# Timing: A and B run the same waits; every phase is 600 ticks (10 s) so the marks line up.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_PUPPET=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+mark near
+place -29 117.6 0        # room 3
+wait 600
+mark a-far
+place 1.5 101.0 12.0     # back beside B in room 0
+wait 600
+mark a-back
+place -22 117.6 3        # room 3's east side; B comes to its west side
+wait 600
+mark together
+wait 600
+mark a-end

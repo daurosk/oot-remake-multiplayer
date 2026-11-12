@@ -25,8 +25,10 @@
 #include <mutex>
 #include <optional>
 #include <utility>
+#include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -50,26 +52,36 @@
 #include "coop/version.hpp"
 #include "coop_boss.h"
 #include "coop_teleport_game.h"
+#include "coop_pvp_game.h"
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
+#include "coop_colors.h"
 #include "coop_chat.h"
+#include "coop_hud.h"  // the HUD's hearts (PLAYER_LIFE), docs/overlay.md
 #include "coop_cheats.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
 #include "coop_save.h"
 #include "coop_game_build.h"
+#include "coop_game_scan.h"
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_dungeon.h"
+#include "coop_quest.h"
 #include "coop_story.h"
+#include "coop_quests.h"
 #include "coop_live_events.h"
+#include "coop_shared_scenes.h"
 #include "coop_objects.h"
+#include "coop_ocarina_sound.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
+#include "coop_ride.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_scrub_talk.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -213,6 +225,7 @@ struct RoomView {
     std::optional<std::uint64_t> round_trip_us;
     std::vector<coop::net::Player> players;
     std::string note;  // the last refusal or error
+    bool encrypted = false;  // docs/protocol.md "Encrypted traffic"
 };
 
 class Coop {
@@ -243,10 +256,16 @@ public:
             return false;
         }
         coop::host::SessionSettings session;
+        // The player's colour goes out in PLAYER_EQUIP (docs/puppet.md, "Colour").
+        session.sampler.color = settings_.color;
+        CoopPuppet::SetOwnColor(settings_.color);
+        LOG_INFO(Core, "coop: colour {}", settings_.color ? CoopColors::Text(*settings_.color)
+                                                          : std::string("none chosen (slot colour)"));
         std::string flag_error;
         session.shared = LoadShared(flag_error);
         if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
         if (flag_error.empty()) CoopStory::AddShared(session.shared);  // docs/flags.md, "Story and cutscenes"
+        if (flag_error.empty()) CoopQuests::AddShared(session.shared);  // docs/flags.md, "Threads of Time"
         if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
@@ -274,7 +293,20 @@ public:
             CoopTime::OnEvent(event);
             CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
             CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
+            CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
+            CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
+            if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
+                if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
+                    std::lock_guard lock(dungeon_events_mutex_);
+                    // A story cutscene's start (coop_shared_scenes.h) has its own queue.
+                    auto& in = CoopSharedScenes::IsShared(e->name) ? story_events_in_ : dungeon_events_in_;
+                    if (in.size() < 16) {
+                        in.push_back(*e);
+                    }
+                }
+            }
+            CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -312,6 +344,10 @@ public:
             });
             LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
         }
+        // Shared story cutscenes: they start by the live-event requester.
+        shared_scenes_ = live_events_ && CoopSharedScenes::OnFromEnv(EnvString("LICHII_COOP_SHARED_CUTSCENES"));
+        LOG_INFO(Core, "coop: cutscene: shared story cutscenes {}",
+                 shared_scenes_ ? "on (off with LICHII_COOP_SHARED_CUTSCENES=0)" : "off");
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
                 session_->share_one_way(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
@@ -370,6 +406,10 @@ public:
             if (cheats_) {
                 CoopCheats::Frame(*game_store);
             }
+            if (sharing_ && load_mend_.ready() && CoopStory::On() &&
+                quest_catch_up_.Due(CoopEvery::NowUs())) {
+                CatchUpQuests(*memory);  // issue 173: Impa comes for every player
+            }
             if (sharing_) {
                 // A small key or token we and another player took at once: ours
                 // goes back. A token taken elsewhere: its Skulltula's key here
@@ -395,6 +435,12 @@ public:
                 // grade too, or every pulled bomb is deleted at once.
                 if (load_mend_.ready()) {
                     MendLiftGrade(*memory);
+                    // Issue 190: a shared ocarina is equipped too, or D-pad
+                    // Left takes nothing out.
+                    MendOcarina(*memory);
+                    if (CoopStory::On()) {
+                        CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
+                    }
                 }
             }
         }
@@ -410,7 +456,15 @@ public:
         // gimmick's played event, or the Forest Temple corridor, waits while
         // our Link is in that dungeon; written when we are out or loading.
         std::optional<coop::host::HoldFlagStore> hold;
+        // Issue 193: the Threads of Time quests, ordered (coop_quests.h).
+        std::optional<CoopQuests::Store> quests;
         if (store) {
+            quests.emplace(
+                *store,
+                [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_enum(hash); },
+                [&memory](std::uint32_t hash, std::uint32_t value) {
+                    return coop::host::GameFlags::set_enum(*memory, hash, value);
+                });
             // Released only after a real load (0.5 s without Link), not on one
             // frame the reader missed; the scene as last read. Timed, not
             // counted in presents: high refresh (Ctrl+U) presents up to 2.75
@@ -426,9 +480,27 @@ public:
             const bool link = !no_link_since_ || view.at - *no_link_since_ < kHoldRelease;
             const std::optional<std::string> scene =
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
-            hold.emplace(*store, [link, scene](coop::protocol::FlagKey key) {
-                if (!link || !scene || key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
+            // Issue 144 (coop_scrub_talk.h): a scrub's destroy flag waits while our
+            // Link is in an event (its talk), or the room graph deletes the scrub mid-talk.
+            if (scrub_talk_on_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
+                                  CoopEvery::NowUs())) {
+                LOG_INFO(Core, "coop: dungeon: {}", scrub_talk_.Holding()
+                             ? "our Link is in an event: Deku Scrub destroy flags from others wait"
+                             : "the event ended: Deku Scrub destroy flags from others go through");
+            }
+            const CoopScrubTalk::Hold talk = scrub_talk_;
+            hold.emplace(*quests, [link, scene, talk](coop::protocol::FlagKey key) {
+                if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
+                }
+                if (talk.Holds(key.hash)) {
+                    return true;
+                }
+                if (!link || !scene) {
+                    return false;
+                }
+                if (CoopQuests::Find(key.hash) != nullptr) {
+                    return CoopDungeon::IsDungeonScene(*scene);  // a quest step waits outside dungeons
                 }
                 const auto in = CoopDungeon::HeldIn(key.hash);
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);
@@ -438,6 +510,12 @@ public:
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (quests) {
+            for (const auto& r : quests->take_raised()) {
+                LOG_INFO(Core, "coop: quests: {} {} -> {} (shared Threads of Time; issue 193)", r.quest,
+                         r.from, r.to);
+            }
+        }
         // Issue 106, LICHII_COOP_DEBUG_SAMPLES=1: samples sent a second (at most
         // about 60, with high refresh too) and presents a second.
         if (debug_samples_) {
@@ -459,6 +537,72 @@ public:
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
+            CoopTime::SaveLoaded(report.server_now_us);  // issue 159
+        }
+        // deku-dungeon-2 (DUNGEON_EVENT, issues 176 and 196): a gimmick event
+        // our game starts goes out at once, and another player's start is
+        // offered like a held flag, so the event runs in both games together
+        // instead of here only after their cutscene ended.
+        if (hold && live_events_) {
+            std::vector<coop::protocol::DungeonEvent> got;
+            {
+                std::lock_guard lock(dungeon_events_mutex_);
+                got.swap(dungeon_events_in_);
+            }
+            for (const auto& e : got) {
+                if (e.scene == hold_scene_ &&
+                    CoopDungeon::HeldIn(coop::host::flag_hash("HavePlayedEvent." + e.name))) {
+                    LOG_INFO(Core, "coop: dungeon: player {} started the event {} in this scene", e.player_number,
+                             e.name);
+                    live_decider_.Started(e.name, e.scene);
+                }
+            }
+            const bool running_now = reading && reading->event_running.value_or(false);
+            if (memory && !hold_scene_.empty()) {
+                // Only the held gimmick events (their result comes no other way);
+                // the ones whose room flags already carry the result (the
+                // basement water, the torch room) would only add a cutscene.
+                std::vector<std::string_view> names;
+                for (const std::string_view e : CoopLiveEvents::EventsIn(hold_scene_)) {
+                    if (CoopDungeon::HeldIn(coop::host::flag_hash("HavePlayedEvent." + std::string(e)))) {
+                        names.push_back(e);
+                    }
+                }
+                const auto found = start_watch_.Frame(running_now, [&] {
+                    return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
+                });
+                if (found) {
+                    live_decider_.Ours(*found, hold_scene_);
+                    coop::protocol::DungeonEvent e;
+                    e.scene = hold_scene_;
+                    e.name = *found;
+                    session_->with_client([&](coop::net::Client& c) {
+                        const bool sent = c.send(coop::protocol::Message{e});
+                        LOG_INFO(Core, "coop: dungeon: our game started the event {}: {}", *found,
+                                 sent ? "sent to the others" : "not sent");
+                        return 0;
+                    });
+                }
+            }
+        }
+        if (!(hold && live_events_)) {
+            std::lock_guard lock(dungeon_events_mutex_);
+            dungeon_events_in_.clear();  // nothing takes them now: none applied late
+        }
+        if (shared_scenes_) {
+            SharedScenes(view, reading, memory, report.server_now_us);
+        }
+        // review-p11-interactions: a gimmick or story event still waiting in
+        // the requester is dropped when we left its scene, when it waited too
+        // long (story cutscenes: kJoinUs) or when our game has it played.
+        if (live_events_ && memory) {
+            std::lock_guard lock(live_mutex_);
+            live_requester_.Expire(view.scene.value_or(std::string()), CoopEvery::NowUs(),
+                                   [&](const std::string& n) {
+                                       return coop::host::GameFlags(*memory)
+                                           .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                                           .value_or(false);
+                                   });
         }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
@@ -478,11 +622,15 @@ public:
             if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
-                live_requester_.Want(*name);
+                live_requester_.Want(*name, hold_scene_);  // no age limit: started when near, as before
             }
         }
-        if (hold && (hold->held() != 0) != holding_logged_) {
-            holding_logged_ = hold->held() != 0;
+        // The scrub flags of issue 144 have their own log line (above).
+        const bool gimmick_held =
+            hold && std::any_of(hold->held_keys().begin(), hold->held_keys().end(),
+                                [](const coop::protocol::FlagKey& k) { return !CoopScrubTalk::IsTalkFlag(k.hash); });
+        if (hold && gimmick_held != holding_logged_) {
+            holding_logged_ = gimmick_held;
             LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");
@@ -537,6 +685,26 @@ public:
                      "coop: flags: count {:#010x} +{} here was a pickup another player had taken: "
                      "put back, not sent",
                      g.count.hash, g.amount);
+        }
+        {  // issue 195: a chest another player had opened, opened again here
+            const bool in_event = reading && reading->event_running.value_or(false);
+            for (unsigned n = CoopObjects::TakeChestsOpenedTwice(); n > 0; --n) {
+                if (session_->expect_doubled_gain()) {
+                    LOG_INFO(Core, "coop: flags: a chest another player had opened was opened here too: "
+                                   "this game's count gain in its get scene is taken back");
+                    doubled_since_ms_ = SteadyMs();
+                    doubled_event_seen_ = in_event;
+                }
+            }
+            if (doubled_since_ms_ != 0) {
+                // Only its own get scene: over when our Link's event ends, or
+                // when none started (the opening was not ours after all).
+                doubled_event_seen_ = doubled_event_seen_ || in_event;
+                if (!in_event && (doubled_event_seen_ || SteadyMs() - doubled_since_ms_ > kDoubledNoEventMs)) {
+                    session_->end_doubled_gain();
+                    doubled_since_ms_ = 0;
+                }
+            }
         }
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
             std::vector<std::uint64_t> keys;
@@ -630,17 +798,47 @@ public:
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Our Ocarina's notes for the other games (issue 152, coop_ocarina_sound.h).
+        CoopOcarinaSound::Frame(system,
+                                reading && reading->animation
+                                    ? std::optional<std::string>(reading->animation->name)
+                                    : std::nullopt,
+                                report.connected ? session_.get() : nullptr);
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Issue 199: our horse sent while we ride; a copy of theirs under each
+        // riding puppet (coop_ride.h).
+        CoopRide::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
+                        view.scene, event, view.position,
+                        reading ? reading->rotation : std::nullopt,
+                        reading ? reading->animation : std::nullopt, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
+        CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)
         CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
+        if (!reading) CoopTime::Loading(report.server_now_us);  // issue 159: a reload, a death
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
-                        report.server_now_us);
-        // Boss rooms together (docs/dungeons-boss.md).
+                        report.server_now_us,
+                        reading && reading->event_running.value_or(false));  // issue 192: no nudge in a cutscene
+        // Boss rooms together (docs/dungeons-boss.md). Issue 148: the room's
+        // "shut in" flag says when we are past its door.
+        std::optional<bool> boss_shut_in;
+        if (memory && view.scene) {
+            if (const CoopBoss::Room* room = CoopBoss::RoomOfScene(*view.scene)) {
+                if (const std::string_view flag = CoopBoss::ShutInFlag(*room); !flag.empty()) {
+                    if (flag != boss_shut_in_name_) {  // hashed once, not every frame
+                        boss_shut_in_name_ = flag;
+                        boss_shut_in_hash_ = coop::host::flag_hash(std::string(flag));
+                    }
+                    coop::host::GameFlagStore flags(*memory);
+                    const auto v = flags.read(coop::protocol::FlagKey{boss_shut_in_hash_, 0});
+                    if (v) boss_shut_in = v->value != 0;
+                }
+            }
+        }
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
-                        reading && reading->event_running.value_or(false),
+                        reading && reading->event_running.value_or(false), boss_shut_in,
                         report.connected ? session_.get() : nullptr, report.server_now_us);
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
@@ -648,6 +846,13 @@ public:
         // LICHII_COOP_SCENE_PROBE=1 only (docs/scenes.md "Free-play scene change").
         CoopSceneProbe::Frame(system, view.game ? base_ : 0, reading);
         for (auto& line : CoopTeleport::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // PvP (docs/play-online.md "PvP"), after the objects and spawn syncs:
+        // their swings and shots of this frame, and our Link's life.
+        CoopPvp::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                       report.server_now_us);
+        for (auto& line : CoopPvp::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
         Place(view);
@@ -679,6 +884,9 @@ public:
     bool SendChat(const std::string& text) {
         if (CoopTeleport::OnChat(text, *session_)) {
             return true;  // a command: done here, its answer shows as a notice
+        }
+        if (CoopPvp::OnChat(text, *session_)) {
+            return true;  // /pvp: the same
         }
         const bool sent =
             session_->with_client([&](coop::net::Client& c) { return c.send_chat(text); });
@@ -906,6 +1114,7 @@ private:
         if (process == nullptr) {
             view.game_note = "no game";
             build_warned_ = nullptr;  // the next game start warns again
+            scanned_ = nullptr;       // and is scanned again
             return std::nullopt;
         }
         if (system.GetApplicationProcessProgramID() != kOcarinaProgramId) {
@@ -913,7 +1122,12 @@ private:
             return std::nullopt;
         }
         const auto build = Hex(system.GetApplicationProcessBuildID(), 8);
-        if (CoopGameBuild::Find(build) == nullptr) {
+        // Issue 97: the signature scan, once per game start (coop_game_scan.h).
+        if (scanned_ != process) {
+            scanned_ = process;
+            scan_runs_ = ScanBuild(system, process, build);
+        }
+        if (CoopGameBuild::Find(build) == nullptr && !scan_runs_) {
             view.game_note = CoopGameBuild::PanelRefusal(build);
             if (build_warned_ != process) {
                 build_warned_ = process;  // once per game start
@@ -960,6 +1174,95 @@ private:
         return modules;
     }
 
+    // Issue 97: scans main for the offsets (coop_game_scan.h) and logs what it
+    // found. True when co-op may run on a build the table does not know:
+    // every offset found once and equal to the 1.1.1 ones, since the readers
+    // still use those (docs/game-builds.md). A known build runs on its table
+    // whatever the scan says; the log then shows whether the scan agrees.
+    static std::string Join(const std::vector<std::string>& parts) {
+        std::string out;
+        for (const auto& part : parts) {
+            out += (out.empty() ? "" : ", ") + part;
+        }
+        return out;
+    }
+
+    static bool ScanBuild(Core::System& system, Kernel::KProcess* process,
+                          const std::string& build) {
+        const auto* known = CoopGameBuild::Find(build);
+        // A known build runs on its table; the scan there only checks itself.
+        // LICHII_COOP_SCAN=0 leaves that check out (unknown builds still scan).
+        if (const char* env = std::getenv("LICHII_COOP_SCAN");
+            known != nullptr && env != nullptr && std::string_view(env) == "0") {
+            return false;
+        }
+        const u64 base = FindMain(system, process);
+        auto& memory = system.ApplicationMemory();
+        u32 mod0 = 0;
+        if (base == 0 || !memory.ReadBlockUnsafe(base + 4, &mod0, sizeof(mod0))) {
+            LOG_WARNING(Core, "coop: build {}: scan skipped, main not readable", build);
+            return false;
+        }
+        const u64 rodata = CoopGameScan::RodataStart(mod0);
+        // Range first: a bad MOD0 word must not size a 4 GB buffer.
+        if (rodata == 0 || rodata > 0x10000000) {
+            LOG_WARNING(Core, "coop: build {}: scan skipped, rodata at {:#x} is not sensible",
+                        build, rodata);
+            return false;
+        }
+        std::vector<u32> text(rodata / 4);
+        if (!memory.ReadBlockUnsafe(base, text.data(), text.size() * 4)) {
+            LOG_WARNING(Core, "coop: build {}: scan skipped, main's code ({:#x} bytes) not readable",
+                        build, rodata);
+            return false;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        const auto result = CoopGameScan::Scan(
+            text.data(), text.size(), rodata, [&](u64 slot) -> std::optional<u64> {
+                u64 value = 0;
+                if (!memory.ReadBlockUnsafe(base + slot, &value, sizeof(value)) || value < base) {
+                    return std::nullopt;
+                }
+                return value - base;
+            });
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+        if (!result.Complete()) {
+            LOG_WARNING(Core, "coop: build {}: scan did not find {} of {} offsets: {} ({} ms)", build,
+                        result.missing.size(), std::size(CoopGameScan::kPatterns),
+                        CoopGameScan::MissingText(result.missing), ms);
+            return false;
+        }
+        const auto diff = CoopGameScan::Differences(result.main, CoopGameBuild::kPrimary.main);
+        if (known != nullptr) {
+            const auto own = CoopGameScan::Differences(result.main, known->main);
+            if (own.empty()) {
+                LOG_INFO(Core, "coop: build {}: offsets by scan match the table ({} patterns, {} ms)",
+                         build, std::size(CoopGameScan::kPatterns), ms);
+            } else {
+                LOG_WARNING(Core, "coop: build {}: scan differs from the table, the table is used: {}",
+                            build, Join(own));
+            }
+            return false;
+        }
+        if (diff.empty()) {
+            // Partial: the loader patch (puppets, svc hooks) and the object,
+            // drop and spawn readers still want build 1.1.1 by id, and HELLO
+            // names 1.1.1 (docs/game-builds.md).
+            LOG_INFO(Core,
+                     "coop: build {}: offsets by scan ({} ms); partial co-op: position, scene and "
+                     "flags only, no puppets, objects, drops or spawns on this build",
+                     build, ms);
+            return true;
+        }
+        // Found, but elsewhere than in 1.1.1: log them so a table entry can be
+        // made (docs/game-builds.md, steps for one new build).
+        LOG_WARNING(Core, "coop: build {}: offsets by scan differ from 1.1.1, co-op stays off until "
+                          "the readers use them: {}",
+                    build, Join(diff));
+        return false;
+    }
+
     static u64 FindMain(Core::System& system, Kernel::KProcess* process) {
         for (const auto& [address, name] : Modules(system, process)) {
             if (name == "main" || name.starts_with("main.")) {
@@ -976,11 +1279,16 @@ private:
             session_->with_client([](coop::net::Client& c) { CoopPose::Send(c, SteadyMs()); });
             RoomView room = session_->with_client([&](coop::net::Client& c) {
                 return RoomView{c.state(), c.player_number(), c.round_trip_us(), c.players(),
-                                note_};
+                                note_, c.encrypted()};
             });
             if (room.state != last_state) {
                 last_state = room.state;
                 LOG_INFO(Core, "coop: {}", coop::net::to_string(last_state));
+                if (last_state == coop::net::State::connected) {
+                    LOG_INFO(Core, "coop: traffic {}", room.encrypted
+                                                           ? "encrypted"
+                                                           : "not encrypted (the host set no join password)");
+                }
             }
             // Issue 108: each REFUSED name taken asked again, so a log shows
             // the retries (every name_taken_retry_ms, at least 100 ms apart)
@@ -1121,6 +1429,11 @@ private:
                               static_cast<unsigned long long>(*room.round_trip_us / 1000));
                 head += buf;
             }
+            if (CoopPvp::On()) {
+                head += ", PvP on";
+            }
+            // Plain only on a server without a join password: say so.
+            head += room.encrypted ? ", encrypted" : ", not encrypted (no join password)";
             lines.push_back({head});
         } else {
             std::string head = "Co-op: " + std::string(coop::net::to_string(room.state));
@@ -1186,15 +1499,24 @@ private:
     CoopEvery::Every debug_log_{kDebugLogUs};
     Kernel::KProcess* process_ = nullptr;
     u64 base_ = 0;
+    Kernel::KProcess* scanned_ = nullptr;  // issue 97: the process last scanned
+    bool scan_runs_ = false;               // its scan lets an unknown build run
     Kernel::KProcess* build_warned_ = nullptr;  // the process last warned about
     FlagDebug flag_debug_;  // LICHII_COOP_DEBUG_FLAGS and the other flag settings
     // Kept across frames: a drawn sword shows in the game's memory for a moment only.
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
+    std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
+    std::uint64_t doubled_since_ms_ = 0;  // issue 195: a reopened chest's take-back is armed
+    bool doubled_event_seen_ = false;     // its get scene (our Link's event) began
+    static constexpr std::uint64_t kDoubledNoEventMs = 1000;
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+    CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
@@ -1237,12 +1559,116 @@ private:
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
+    CoopLiveEvents::StartWatch start_watch_;
+    // Shared story cutscenes (coop_shared_scenes.h).
+    bool shared_scenes_ = false;  // LICHII_COOP_SHARED_CUTSCENES, needs live events
+    CoopSharedScenes::Joiner shared_joiner_;
+    CoopLiveEvents::StartWatch story_watch_;  // our own story cutscene starts
+    std::vector<coop::protocol::DungeonEvent> story_events_in_;  // under dungeon_events_mutex_  // deku-dungeon-2: our own gimmick event starts
+    std::mutex dungeon_events_mutex_;         // DUNGEON_EVENT from the network thread
+    std::vector<coop::protocol::DungeonEvent> dungeon_events_in_;
+    static bool ReadGuest(void* context, std::uint64_t address, void* out, std::size_t size) {
+        return static_cast<EmulatorMemory*>(context)->read(
+            address, std::span<std::uint8_t>(static_cast<std::uint8_t*>(out), size));
+    }
     const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106
     CoopEvery::Every samples_log_{5 * CoopEvery::kSecondUs};
     std::uint64_t samples_log_at_ = 0;
     std::uint32_t samples_seq_ = 0;
     std::uint64_t presents_ = 0;
     coop::host::LoadMend load_mend_;  // issue 138: when ItemFlagStore grants and mends
+
+    // Shared story cutscenes (coop_shared_scenes.h): a story cutscene
+    // our game starts goes to the others in our scene (DUNGEON_EVENT, as a
+    // gimmick event's start); one another player started near us plays here
+    // too, through the live-event requester. Once a frame.
+    void SharedScenes(const FrameView& view, const std::optional<coop::host::PlayerReading>& reading,
+                      std::optional<EmulatorMemory>& memory, std::uint64_t server_now_us) {
+        namespace proto = coop::protocol;
+        std::vector<proto::DungeonEvent> got;
+        {
+            std::lock_guard lock(dungeon_events_mutex_);
+            got.swap(story_events_in_);
+        }
+        const std::uint64_t now_us = CoopEvery::NowUs();
+        if (!got.empty()) {
+            const auto remotes = CoopPuppet::Collect(session_.get(), server_now_us);
+            for (const auto& e : got) {
+                std::optional<CoopSharedScenes::Vec3> starter;
+                for (const auto& r : remotes) {
+                    if (r.number == e.player_number && r.scene == e.scene) {
+                        starter = r.position;
+                    }
+                }
+                shared_joiner_.Started(e.player_number, e.name, e.scene, starter, now_us);
+            }
+        }
+        const bool running = reading && reading->event_running.value_or(false);
+        std::uint8_t status = 0;
+        session_->with_client([&](coop::net::Client& c) {
+            if (const auto* me = c.find_player(c.player_number())) {
+                status = me->status.value_or(0);
+            }
+            return 0;
+        });
+        CoopSharedScenes::Here here;
+        here.scene = view.scene.value_or(std::string());
+        here.link = view.position;
+        here.can_start = reading && !running &&
+                         (status & (proto::status::paused | proto::status::in_menu | proto::status::loading)) == 0;
+        here.now_us = now_us;
+        // Our own start: found in the event session on a few early frames.
+        if (memory && !here.scene.empty()) {
+            static const std::vector<std::string_view> names = [] {
+                const auto all = CoopSharedScenes::Names();
+                return std::vector<std::string_view>(all.begin(), all.end());
+            }();
+            const auto found = story_watch_.Frame(running, [&] {
+                return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
+            });
+            if (found && shared_joiner_.Ours(*found, here.scene)) {
+                proto::DungeonEvent e;
+                e.scene = here.scene;
+                e.name = *found;
+                session_->with_client([&](coop::net::Client& c) {
+                    const bool sent = c.send(proto::Message{e});
+                    LOG_INFO(Core, "coop: cutscene: our game started the story cutscene {}: {}", *found,
+                             sent ? "sent to the others in this scene" : "not sent");
+                    return 0;
+                });
+            }
+        }
+        const auto name = shared_joiner_.Next(here, [&](const std::string& n) {
+            return memory && coop::host::GameFlags(*memory)
+                                 .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                                 .value_or(false);
+        });
+        for (const auto& line : shared_joiner_.TakeNotes()) {
+            LOG_INFO(Core, "coop: cutscene: {}", line);
+        }
+        if (name) {
+            std::lock_guard lock(live_mutex_);
+            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs);
+        }
+    }
+
+    // Issue 173 (coop_quest.h): raises our own quests (Goto_HyruleCastle,
+    // DoorOfTime) to what the shared story scenes say, so a scene another
+    // player played does not leave our quest behind. Only ever raised.
+    CoopEvery::Every quest_catch_up_{CoopEvery::kSecondUs};
+    void CatchUpQuests(EmulatorMemory& memory) {
+        coop::host::GameFlags flags(memory);
+        const CoopQuest::ReadBool flag = [&](std::uint32_t h) { return flags.get_bool(h); };
+        const CoopQuest::ReadEnum value = [&](std::uint32_t h) { return flags.get_enum(h); };
+        for (const auto& quest : CoopQuest::Quests()) {
+            const auto was = flags.get_enum(quest.hash);
+            const auto raise = CoopQuest::CatchUp(quest, flag, value);
+            if (raise && was && coop::host::GameFlags::set_enum(memory, quest.hash, *raise)) {
+                LOG_INFO(Core, "coop: story: quest {} {:#x} -> {:#x} (shared story; issue 173)",
+                         quest.name, *was, *raise);
+            }
+        }
+    }
 
     // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to
     // what the held bracelet or gauntlets give. Only ever raised; an unknown
@@ -1260,6 +1686,48 @@ private:
         if (raise && coop::host::GameFlags::set_enum(memory, lift::kGrade, *raise)) {
             LOG_INFO(Core, "coop: items: lift grade {:#x} -> {:#x} for the held strength item",
                      *grade, *raise);
+        }
+    }
+
+    // Issue 190 (docs/items.md, "The ocarina"): equips the best held ocarina
+    // when PlayerStatus.EquipOcarina is "" (an ocarina from another player)
+    // or the Fairy Ocarina while the Ocarina of Time is held. The String64 is
+    // written straight into its buffer (the game has no queue for it), as the
+    // teleport does. A flag that cannot be read is left alone.
+    void MendOcarina(EmulatorMemory& memory) {
+        namespace oc = coop::host::ocarina;
+        coop::host::GameFlags flags(memory);
+        const auto current = flags.get_string64(oc::kEquip);
+        if (!current) {
+            return;
+        }
+        const auto want = coop::host::ocarina_equip_mend(flags.get_int(oc::kFairy).value_or(0),
+                                                         flags.get_int(oc::kTime).value_or(0), *current);
+        if (!want) {
+            return;
+        }
+        if (coop::host::GameFlags::set_string64_now(memory, oc::kEquip, *want)) {
+            LOG_INFO(Core, "coop: items: ocarina '{}' -> '{}' for the held ocarina", *current, *want);
+        } else if (!ocarina_mend_failed_logged_) {
+            ocarina_mend_failed_logged_ = true;
+            LOG_WARNING(Core, "coop: items: could not equip the held ocarina '{}'", *want);
+        }
+    }
+    bool ocarina_mend_failed_logged_ = false;
+
+    // Issue 130 (docs/flags.md, "Story and cutscenes"): raises our own
+    // Meet_DekuTree quest to what the shared story says (Mido let someone by:
+    // Step03; the Deku Tree scene played: Complete), so the Kokiri Shop sells
+    // here too. Only ever raised; anything unread is left alone.
+    void CatchUpQuest(EmulatorMemory& memory) {
+        namespace quest = CoopStory::quest;
+        coop::host::GameFlags flags(memory);
+        const auto step = flags.get_enum(quest::kMeetDekuTree);
+        const auto raise = CoopStory::QuestCatchUp(step, flags.get_bool(quest::kMidoBlocker),
+                                                   flags.get_bool(quest::kMetDekuTree));
+        if (raise && coop::host::GameFlags::set_enum(memory, quest::kMeetDekuTree, *raise)) {
+            LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
+                     *step, *raise);
         }
     }
 

@@ -1,0 +1,14 @@
+# color: B faces right, towards where A stands after stepping off the cow, puts
+# the camera behind and takes screenshots of A's puppet (orange) while A
+# stands and after A walks.
+wait 120
+stick 1 0 8             # face right
+press ZL                # camera behind B
+wait 170
+mark b-sees-a
+wait 60
+mark b-sees-a-2
+wait 120
+mark b-after-walk
+wait 120
+mark b-end

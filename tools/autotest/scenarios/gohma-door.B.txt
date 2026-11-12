@@ -1,0 +1,62 @@
+# gohma-door: B (P2) loads, waits in the corridor 10 s after A, walks in, stays near Gohma and
+# shoots the slingshot at it three times (ZL lock-on, ZR held to aim, let go to shoot).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+# The kit saves have the Deku Tree beaten (issue 178, gohma-door-b): Gohma_DefeatBoss and
+# Dm_Deku_BossOut were cleared, but the trap event, the intro and the room's battle state were
+# still marked as played, so the boss room's one-shot trigger (Area_6c3c -> EventRequestActor
+# InsideTheDekuTree_BossArea_ShutIn -> EntryBossRoom) never fired. Clear them in this game only
+# (none is shared) while still in the entrance room, before the boss room loads.
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -10.0 48.5 64.0
+wait 600
+mark b-placed
+goto -4.0 67.5 1.0 600
+goto 6.0 67.6 1.5 600
+mark b-door
+wait 1500
+mark b-intro
+goto 12.0 67.6 1.5 600  # near Gohma
+mark b-near
+wait 1800
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark shot1
+wait 240
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark shot2
+wait 240
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark shot3
+wait 600
+mark b-after
+wait 2400
+mark end

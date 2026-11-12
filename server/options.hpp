@@ -27,6 +27,32 @@ struct CommandLine {
   // line (where other programs can read it); main() reads that variable.
   std::string password;
   std::string password_env;
+  bool port_given = false;  // --port was on the command line
+  // --upnp: ask the router to forward the port while the server runs (upnp.hpp).
+  bool upnp = false;
+  // --relay: run as a relay (relay.hpp) instead of a game server; its port is
+  // 27530 unless --port says otherwise.
+  bool relay = false;
+  // --relay-via ADDRESS[:PORT]: host through that relay and get a join code.
+  std::string relay_via;
+  // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
+  // hosts must give; with --relay-via: the one to give).
+  std::string relay_key;
+  std::string relay_key_env;
+  // --invite: learn this PC's internet address with STUN from the game port,
+  // print an invite code (address + join password) and take answer codes
+  // typed into the window (punch.hpp). Needs a join password.
+  bool invite = false;
+  // --stun NAME:PORT (more than once): the STUN servers; none given: the
+  // free public ones (nat_net.hpp).
+  std::vector<std::string> stun;
+  // --join ADDRESS:PORT: run as Join.bat's helper for an invite code
+  // (join_helper.hpp) instead of a server; the game connects to 127.0.0.1
+  // on --game-port (27512 unless given).
+  std::string join;
+  std::uint16_t game_port = 27512;
+  // --pvp on|off: players hurt each other (docs/play-online.md, "PvP").
+  bool pvp = false;
   bool help = false;
 };
 

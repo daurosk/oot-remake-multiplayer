@@ -80,12 +80,25 @@ public:
     float Gravity() const { return gravity_; }
     // Where it is at `now_us` (server clock). `ballistic` adds the fall.
     Vec3 At(std::uint64_t now_us, bool ballistic) const;
-    // Held still at `at` (the owner's remove): no more carrying on.
+    // Smooth shots: where a copy is shown at `now_us`. The owner's
+    // path kBehindUs late (as late as the puppet that shot it), between the
+    // two samples around that time, so the copy moves in even steps every
+    // frame. Carried on as At() only when the samples are later than that.
+    // Before, a copy was carried on from the latest sample by its velocity
+    // (measured between two walks, so noisy) and snapped at each sample.
+    static constexpr std::uint64_t kBehindUs = 100'000;
+    static constexpr std::size_t kKeep = 16;
+    Vec3 Shown(std::uint64_t now_us, bool ballistic) const;
+    // Held still at `at` (the owner's remove): no more carrying on. A shown
+    // copy goes on to `at` (taken as kStopAfterUs after the last sample, a
+    // walk later) and stays there.
+    static constexpr std::uint64_t kStopAfterUs = 33'000;
     void Stop(const Vec3& at);
     bool Stopped() const { return stopped_; }
 
 private:
     std::optional<Point> last_;
+    std::deque<Point> points_;  // the newest kKeep, oldest first (and the stop)
     float gravity_ = 0.0f;
     bool stopped_ = false;
 };
@@ -179,6 +192,19 @@ bool Bounced(const Vec3& before, const Vec3& after);
 // where the owner's shot struck before it goes: a seed lands, an arrow
 // sticks. 0: it goes at once.
 std::uint64_t LandHoldUs(Kind kind);
+// Issue 166: the actors made where another player's shot of this kind
+// landed (tools/puppet_pack IMPACTS, made only from a pack that lists them).
+// Each plays the spark or the sound the owner's game played there, once, as
+// it is made (an AI root of one OneShotXLinkSearchAndEmit). None for kinds
+// without.
+std::vector<std::string_view> ImpactActors(Kind kind);
+bool IsImpact(std::string_view actor);
+// How long an impact actor is kept before it is deleted: its effect and
+// sound are one-shots, over by then. Short, and at most kMaxImpacts live at
+// once (the oldest goes first), so impacts never hold the spawn director's
+// slots that shot, bomb and lure copies need (rapid slingshot fire).
+inline constexpr std::uint64_t kImpactLifeUs = 750'000;
+inline constexpr std::size_t kMaxImpacts = 4;
 // A bomb gone sooner than this did not explode: taking one out the first
 // time makes a bomb that lasts about 0.1 s while the game shows its help.
 inline constexpr std::uint64_t kExplodeMinUs = 1'000'000;

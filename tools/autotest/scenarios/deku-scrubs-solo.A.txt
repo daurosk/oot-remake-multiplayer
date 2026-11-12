@@ -1,0 +1,117 @@
+# deku-scrubs-solo (#149): the reference for deku-scrubs. A alone hits the Scrub Brothers in the
+# right order with the slingshot (Two, Three, then One, shooting One again while it runs); B
+# stands in the room and only gets A's hits. Shows the game's own flow of a solo solve (which
+# animations, the talk, the flags) and whether B's manager, given A's three hits, solves too.
+# Positions and the save flags to clear: see deku-scrubs.A.txt.
+# Expect: A "hit here" for Two (1), Three (2), One (3); A's solve: bool 0xd2f46f66 and 0x60c22ed7
+# 0 -> 1; B "given to our manager" three times; what B's brothers do then.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -29.5 53.2 29.0
+wait 240
+mark placed
+toward -29.0 41.2 10     # face Two
+wait 240
+mark aim-two
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark two
+toward -34.0 39.6 10     # face Three
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark three
+goto -24.0 29.5 0.6 240
+toward -23.7 40.0 10     # face One
+wait 60
+mark aim-one
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark one
+wait 300
+goto -23.1 35.5 1.0 600  # to One: the talk comes when Link is near
+mark at-one
+mark talk
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
+mark end

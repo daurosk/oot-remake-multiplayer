@@ -2,6 +2,11 @@
 // coop_hud_hearts.h).
 #include <doctest/doctest.h>
 
+#include <ostream>  // doctest prints string_view (MSVC needs it here)
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include "coop_hud_hearts.h"
 #include "coop_hud_places.h"
 

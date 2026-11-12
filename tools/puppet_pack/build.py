@@ -486,6 +486,16 @@ def strip_zs(path):
     return path[:-3] if path.endswith(".zs") else path
 
 
+def nup_scene_files(n):
+    """RomFS paths of the scene files (Banc/<scene>/*.bcett.byml.zs) in an open Nup, the ones
+    dungeon_rooms.scene_rooms reads from a RomFS folder."""
+    out = []
+    for scene, (kind, _i) in sorted(n.listdir("Banc").items()):
+        if kind == "d":
+            out += n.glob(f"Banc/{scene}/*.bcett.byml.zs")
+    return out
+
+
 def read(path):
     with open(path, "rb") as f:
         return f.read()
@@ -718,11 +728,13 @@ def main(argv=None):
             print(f"error: {p}", file=sys.stderr)
         return 1
     if from_nup:
-        # Only the files the build reads, into a temporary RomFS folder.
+        # Only the files the build reads, into a temporary RomFS folder: the pack's sources, and
+        # the scene files dungeon_rooms reads for coop_rooms.txt (Banc/<scene>/*.bcett.byml.zs;
+        # without them a .nup gave an empty room table).
         tmp = tempfile.mkdtemp(prefix="coop-puppet-")
         try:
             with nup.Nup(a.romfs) as n:
-                for rel in dumpcheck.nup_files(n).values():
+                for rel in list(dumpcheck.nup_files(n).values()) + nup_scene_files(n):
                     nup.write_under(tmp, rel, n.read(rel))
             print(f"read the game files from {a.romfs}")
             with nup.Nup(a.romfs) as n:

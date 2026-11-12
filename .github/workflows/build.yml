@@ -31,6 +31,10 @@ jobs:
         run: python tools/autotest/tests/test_save_flags.py -v
       - name: Bad-connection relay tests
         run: python tools/netsim/tests/test_netsim.py -v
+      # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.
+      - name: Kit patch applier tests
+        if: hashFiles('tools/release/tests/test_apply_patch.py') != ''
+        run: python tools/release/tests/test_apply_patch.py -v
       - name: Puppet pack command lines
         run: |
           python tools/puppet_pack/build.py --help

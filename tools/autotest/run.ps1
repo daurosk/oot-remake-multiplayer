@@ -157,11 +157,16 @@ if (-not $TakeBaseline -and -not $NoCoop -and -not ($DryRun -and $Runtime -eq 'h
 # Hookshot: tools\autotest\hookshot.py runs the whole test (server, both games, load, scenario,
 # shots, logs) and leaves them in the run folder like the emulator run does.
 if ($Runtime -eq 'hookshot') {
-    if ($steps) { throw "-Runtime hookshot plays A/B scripts only; steps files ($Scenario.steps.txt) read the emulator's logs" }
+    # A steps file ($Scenario.steps.txt) is played by tools\autotest\hs_steps.py: the same verbs as
+    # Run-Steps below (start, load, play, close, kill, server stop/start, password, try, expect, lines, shot).
     if ($TakeBaseline) { throw "-Runtime hookshot: copy <game>\user\save to <game>\autotest-save for a baseline" }
-    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'ServerPassword', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
+    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
         if ($PSBoundParameters.ContainsKey($o)) { throw "-$o is for the emulator; not with -Runtime hookshot" }
     }
+    # The server's join password: always through the environment for the server (OOT_COOP_TEST_PASSWORD);
+    # hs_steps.py gives it to every game without a 'password' line, and a hookshot.py that knows
+    # --password (every session has one) gets it there.
+    if ($ServerPassword) { $env:OOT_COOP_TEST_PASSWORD = $ServerPassword }
     if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
     if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
     if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
@@ -175,19 +180,32 @@ if ($Runtime -eq 'hookshot') {
         }
         if (-not $py.Count) { if (Get-Command py -ErrorAction SilentlyContinue) { $py = @('py', '-3') } else { $py = @('python') } }
     }
-    $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
-        '--game-b', (Resolve $HookshotB), '--out', $out, '--name', $Scenario, '--script-a', $scA, '--every', "$Every",
-        '--timeout', "$([Math]::Max($Timeout, 900))", '--scenario-timeout', "$([Math]::Max($Timeout, 600))")
-    if (Test-Path $scB) { $a += @('--script-b', $scB) }
-    if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
-    if ($NoRestore) { $a += '--no-restore' }
-    if ($KeepOpen) { $a += '--keep-open' }
+    if ($steps) {
+        if ($NoCoop) { throw "-NoCoop: a steps file needs the server" }
+        $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hs_steps.py", 'run', '--steps', $steps,
+            '--game-a', (Resolve $HookshotA), '--game-b', (Resolve $HookshotB), '--out', $out,
+            '--timeout', "$([Math]::Max($Timeout, 900))", '--expect-wait', "$ExpectWait")
+        if ($NoRestore) { $a += '--no-restore' }
+        if ($DryRun) { $a += '--dry-run' }
+    } else {
+        $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
+            '--game-b', (Resolve $HookshotB), '--out', $out, '--name', $Scenario, '--script-a', $scA, '--every', "$Every",
+            '--timeout', "$([Math]::Max($Timeout, 900))", '--scenario-timeout', "$([Math]::Max($Timeout, 600))")
+        if (Test-Path $scB) { $a += @('--script-b', $scB) }
+        if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
+        if ($NoRestore) { $a += '--no-restore' }
+        if ($KeepOpen) { $a += '--keep-open' }
+        if ($ServerPassword -and (Select-String -Quiet -SimpleMatch -Path "$here\hookshot.py" -Pattern '"--password"')) {
+            $a += @('--password', $ServerPassword)
+        }
+    }
     if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
     if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }
     foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
         $a += @('--env', $e)
     }
     Write-Host "hookshot: $($py[0]) $($a -join ' ')"
+    if ($DryRun -and $steps) { & $py[0] @a; return }   # hs_steps.py --dry-run prints the plan
     if ($DryRun) { Write-Host "hookshot: dry run, nothing started"; return }
     & $py[0] @a
     $code = $LASTEXITCODE

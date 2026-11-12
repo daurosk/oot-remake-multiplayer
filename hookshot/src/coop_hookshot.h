@@ -77,14 +77,15 @@ inline bool BuildSupported(const std::string& build_id_hex) {
 
 // Hookshot crashes when the game makes a second Link model (any
 // CoopPuppet_<Age>[_<Colour>], plain or coloured; the emulator does not).
-// The game's create thread sets ns_tex_mtx0 on the model's Mt_Hairs
-// (main+0x4b8240, from main+0x10aceb0, the call at main+0x4b8334). On
-// Hookshot a new Link model's material has no parameter table yet there, and
-// the setter (main+0x3596870) read guest 0x20: "CRASH ... guest 0x20" in
-// BaseProcCreateAndDeleteThread (reports/hs-crash-b.md). Our Hookshot patch
-// 0002 (nx2/coop_puppet_guard.py) makes the setter skip that parameter.
-// AllowLinkPuppets: LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 / 0 force it; unset,
-// Link puppets are made only when the guard is in this hookshot.exe.
+// A co-op puppet is a stripped copy of Link. In its create, main+0x4b8240
+// (the hair's setup) reads [[actor+0x270]+0x50]+0x20: component slot 10,
+// which the puppet does not have, and more such null reads follow in its
+// update. The emulator reads them as 0; Hookshot crashed ("CRASH ... guest
+// 0x20" in BaseProcCreateAndDeleteThread, reports/hs-puppets-b.md). Our
+// Hookshot patch 0002 (nx2/coop_puppet_guard.py, host/coop_null_page.c) makes
+// them read 0 there too. AllowLinkPuppets: LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1
+// / 0 force it; unset, Link puppets are made when the guard is in this
+// hookshot.exe (always on Linux, where the guest window is readable whole).
 inline bool AllowLinkPuppets(const std::string& env, bool guard_in_exe) {
     if (!env.empty()) {
         return env != "0";

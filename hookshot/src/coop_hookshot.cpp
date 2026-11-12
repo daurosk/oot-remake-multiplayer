@@ -103,6 +103,7 @@ std::string CreateName(const CoopPuppet::Call& c) {
 }
 
 // Our patch 0002 (nx2/coop_puppet_guard.py) is in this hookshot.exe: its log text is in the exe's read-only data.
+// (Linux: always true, see the end.)
 bool PuppetGuardInExe() {
 #ifdef _WIN32
     static const char kMark[] = "coop: puppet guard: actor";
@@ -125,7 +126,8 @@ bool PuppetGuardInExe() {
     }
     return false;
 #else
-    return false;  // (Linux: the module's loader does not say yet; LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 turns them on)
+    return true;  // (Linux: Hookshot maps the whole guest window readable, so a puppet's null reads give 0 there
+                  //  as on the emulator, with or without patch 0002; untested on Linux)
 #endif
 }
 

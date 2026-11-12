@@ -68,7 +68,7 @@ These are fixed or built in, but no two-game test has reached them yet, or reach
 - It needs Vulkan 1.3 with mesh shaders: NVIDIA RTX 20 or newer, AMD RX 6000 or newer; Intel is mostly untested.
 - Checked by hand on two Hookshot games: the other players as Link in their tunic colours, shots in flight, your own Link in your colour. Not yet on Hookshot: **name tags** over the other players do not show on Hookshot yet (the module gets no camera there; fix planned for the next test).
 - **On Hookshot you see the other players as Link** (child and adult, in their colours) once Build-Hookshot-Coop has built Hookshot with co-op's patches of this release; a Hookshot built before shows them as their fairy only (run Build-Hookshot-Coop again). Checked with two Hookshot games; with an emulator player in the same room, not yet.
-- On Hookshot as on the emulator: chat (T), player list (F6), panel (F7), HUD, item cheats (F8), your own tunic colour, your own ocarina notes, the puppet pack hints ([setup.md, Co-op on Hookshot](setup.md#co-op-on-hookshot)); built in, not each one checked on Hookshot yet.
+- On Hookshot as on the emulator: chat (T), player list (F6), panel (F7), HUD, item cheats (F8, off unless `LICHII_COOP_CHEATS=1`), your own tunic colour, your own ocarina notes, the puppet pack hints ([setup.md, Co-op on Hookshot](setup.md#co-op-on-hookshot)); built in, not each one checked on Hookshot yet.
 - Not on Hookshot yet: `collect-logs.cmd` does not pick up `hookshot_log.txt`; invite codes are not yet tested there; the keys of Hookshot on Linux are not tested.
 - Hookshot itself is young: it can crash outside Kokiri Forest, lose the graphics device early on, or crash on some AMD cards (Hookshot's own issues). Use the emulator kit for longer sessions.
 

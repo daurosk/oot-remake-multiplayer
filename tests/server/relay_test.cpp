@@ -122,7 +122,7 @@ TEST_CASE("relay wire: join codes are typed loosely and shown in two halves") {
   CHECK(make_code(1) != make_code(2));
 }
 
-TEST_CASE("relay: a host gets a code; a guest with it reaches the host and back") {
+TEST_CASE("relay: a host gets a code, and a guest with it reaches the host and back") {
   Fixture f;
   const std::string code = f.register_host(77);
   CHECK(f.relay.sessions() == 1);
@@ -184,7 +184,7 @@ TEST_CASE("relay: wrong codes are counted and then refused for a while") {
   CHECK(f.lookup(code, kGuest, 100 + 10 * 60'000) == LookupResult::kOk);
 }
 
-TEST_CASE("relay: a quiet host's code ends; keepalives keep it and follow a new address") {
+TEST_CASE("relay: a quiet host's code ends, and keepalives keep it and follow a new address") {
   Fixture f;
   const std::string code = f.register_host(5);
   CHECK(f.lookup(code) == LookupResult::kOk);

@@ -21,9 +21,9 @@ namespace coop::protocol {
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
 // (types 28 to 39) and the server sending HANDOVER_ASK; 9: the join password
 // (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
-inline constexpr std::uint16_t kProtocolVersion = 12;
+inline constexpr std::uint16_t kProtocolVersion = 11;
 inline constexpr std::uint16_t kDefaultPort = 27510;
-inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 12; 4 before
+inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
 // Size of the message header: u16 type, u16 length.
 inline constexpr std::size_t kHeaderSize = 4;
@@ -178,7 +178,7 @@ struct Hello {
   // 32 bytes after the nickname. Sent by every game since protocol 10; a
   // server with a join password refuses a HELLO without it.
   std::optional<KeyShare> key_share{};
-  // Since protocol 11: the player number this game had in its last session
+  // Since protocol 10 (this release's): the player number this game had in its last session
   // (1 to 4), one byte after the key share (or after the nickname without
   // one). The server gives it back when it is free, so a server restart
   // does not swap the players' numbers (and with them their colours and
@@ -666,7 +666,7 @@ inline constexpr std::uint32_t slot_color(std::uint8_t player_number) {
     case 2: return 0xFF3030;  // red
     case 3: return 0x30D040;  // green
     case 4: return 0xFFC020;  // yellow
-    // Protocol 12: up to 16 players, each its own colour.
+    // Protocol 11: up to 16 players, each its own colour.
     case 5: return 0xA040FF;   // purple
     case 6: return 0xFF7A20;   // orange
     case 7: return 0x20D0E0;   // cyan
@@ -1243,7 +1243,7 @@ struct PvpHurt {
 // never kept.
 inline constexpr std::size_t kMaxEventNameChars = 96;
 
-// PLATFORM_CLOCK (protocol 11, branch platforms-b, issues 196 and 194): the
+// PLATFORM_CLOCK (protocol 10, branch platforms-b, issues 196 and 194): the
 // clock word of each moving platform's driver the sender owns, read at
 // `server_time_us` (server time). The others put value + rate x (their
 // server time now - server_time_us) into their own word, looped by `cycle`
@@ -1278,7 +1278,7 @@ struct PlatformClock {
   bool operator==(const PlatformClock&) const = default;
 };
 
-// PLATFORM_COUNTER (protocol 11, branch platforms-b2): the looping pause
+// PLATFORM_COUNTER (protocol 10, branch platforms-b2): the looping pause
 // counters (AI ExecuteGenericCounter nodes) of the platforms near the
 // sender, each with the time since its last pause began, read at
 // `server_time_us`. A game that has seen fewer starts of the same key

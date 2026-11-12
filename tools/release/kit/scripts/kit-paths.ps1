@@ -218,7 +218,7 @@ function Read-KitOptions([string]$Path) {
             $c = $Matches[1] -replace '\s+[#;].*$', ''  # a comment after it: 'color = blue  # mine'
             if (-not $c) { continue }  # none chosen: the player number's colour
             if ((Get-Command Test-CoopColor -ErrorAction SilentlyContinue) -and -not (Test-CoopColor $c)) {
-                Write-Host "coop-options.ini: color '$c' is not a colour (red, blue, ... or #RRGGBB); your player number's colour is used"
+                Write-Host "coop-options.ini: color '$c' is not a colour (red, blue, ... or #RRGGBB); the host's blue or the joiners' red is used"
                 continue
             }
             $values['LICHII_COOP_COLOR'] = $c
@@ -400,6 +400,7 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     # Every file a colour may put in, taken away first: no copy stays after a change of colour.
     # The fixed list also covers a pack without self_files (made again older): no stale copy.
     $targets = @($tile, $dark, 'Tex/Mt_Vest_Player_Adult_Alb.bntx.zs', 'Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs',
+        'Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs', 'Tex/Mt_Vest_Player_Child_Alb.bntx.zs',
         'Model/Player_Adult.Player_Adult.bfres.zs')
     $put = [ordered]@{}
     try {
@@ -438,6 +439,25 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
         if ($put.Count) { return $tunic }
     } catch { }
     return ''
+}
+
+# With no colour chosen (coop-options.ini's color behind its '#'), the others see you in your player
+# number's colour (1 blue, 2 red), which is known only once the game has joined. Your own Link wears
+# the tunic put in before the game starts, so it stayed green (the hand test of a768c36). The colour of
+# the number you will most likely get is taken now, for both: the one who hosts (Host.bat,
+# Host-Hookshot.bat) joins first, player 1, blue; the others red (a relay join also goes to 127.0.0.1:
+# that is no host). It is passed as LICHII_COOP_COLOR, so the others see the same colour your Link wears
+# even when the number turns out another. Nothing with a colour chosen, with LICHII_COOP_TUNICS=0, or
+# with no server (alone). Returns the colour taken, or ''.
+function Set-KitDefaultColor([string]$Mode, [string]$Server) {
+    if ($env:LICHII_COOP_COLOR -or $env:LICHII_COOP_TUNICS -match '^(0|off)$') { return '' }
+    if ($Mode -ne 'host' -and -not $Server) { return '' }
+    $local = $Mode -eq 'host'
+    $color = if ($local) { 'blue' } else { 'red' }
+    $env:LICHII_COOP_COLOR = $color
+    $who = if ($local) { 'you host, so you join first: player 1' } else { 'player 2, the first to join a host' }
+    Write-Host "Your colour: $color (none chosen in coop-options.ini; $who). Pick one with color = ... there."
+    return $color
 }
 
 # The puppet pack before the game starts, the same for the emulator and Hookshot (play.ps1): the pack

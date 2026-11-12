@@ -260,6 +260,25 @@ try {
         Write-File (Join-Path $sp 'coop_puppet.json') '{"sound": true, "tunics": {}}'
         $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
         Check ((($said -join '|') -match 'without the tunic colours') -and (($said -join '|') -match 'Your Link stays green') -and -not $env:LICHII_COOP_SELF_TUNIC) "pack step: an old pack: the hint and 'stays green' [$($said -join '|')]"
+        # Set-KitDefaultColor: no colour chosen = the colour of the likely player number, own Link included
+        $env:LICHII_COOP_COLOR = $null
+        $said = @(Set-KitDefaultColor 'host' '127.0.0.1' 6>&1)
+        Check ($said[-1] -eq 'blue' -and $env:LICHII_COOP_COLOR -eq 'blue' -and (($said -join '|') -match 'player 1')) "default colour: the host is blue [$($said -join '|')]"
+        Write-File (Join-Path $sp 'coop_puppet.json') '{"sound": true, "tunics": {"blue": ["x"], "green": ["y"]}, "self_tiles": {"blue": "coop_self/blue.bntx.zs"}}'
+        Write-File (Join-Path $sp 'coop_self\blue.bntx.zs') 'BLUE'
+        [void](Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check ($env:LICHII_COOP_SELF_TUNIC -eq 'blue' -and [System.IO.File]::ReadAllText($tile) -eq 'BLUE') 'default colour: the host''s own Link wears the blue tile'
+        $env:LICHII_COOP_COLOR = $null
+        Check ((Set-KitDefaultColor 'join' '203.0.113.7:27510' 6>$null) -eq 'red' -and $env:LICHII_COOP_COLOR -eq 'red') 'default colour: a joiner is red'
+        $env:LICHII_COOP_COLOR = $null
+        Check ((Set-KitDefaultColor 'join' '127.0.0.1' 6>$null) -eq 'red') 'default colour: a relay join (127.0.0.1) is no host: red'
+        Check ((Set-KitDefaultColor 'join' '10.0.0.2' 6>$null) -eq '' -and $env:LICHII_COOP_COLOR -eq 'red') 'default colour: one already set is kept'
+        $env:LICHII_COOP_COLOR = 'purple'
+        Check ((Set-KitDefaultColor 'host' '' 6>$null) -eq '' -and $env:LICHII_COOP_COLOR -eq 'purple') 'default colour: a chosen colour is kept'
+        $env:LICHII_COOP_COLOR = $null; $env:LICHII_COOP_TUNICS = 'off'
+        Check ((Set-KitDefaultColor 'host' '' 6>$null) -eq '' -and -not $env:LICHII_COOP_COLOR) 'default colour: LICHII_COOP_TUNICS=off: none'
+        $env:LICHII_COOP_TUNICS = $null
+        Check ((Set-KitDefaultColor '' '' 6>$null) -eq '' -and -not $env:LICHII_COOP_COLOR) 'default colour: alone (no server): none'
         $env:LICHII_COOP_SELF_TUNIC = 'red'
         $said = @(Use-KitPuppetPack (Join-Path $ph 'no-pack\coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING 1', 'MISSING 2') 6>&1)
         Check ($said[-1] -eq $false -and (($said -join '|') -match 'MISSING 1\|MISSING 2') -and -not $env:LICHII_COOP_PUPPET -and -not $env:LICHII_COOP_SELF_TUNIC) "pack step: no pack: the given lines, puppets and own colour off [$($said -join '|')]"

@@ -562,7 +562,7 @@ TEST_CASE("presence: unknown player numbers are ignored") {
   CHECK(p.on_sample(sample(1, 0, 1, {0, 0, 0})) == SampleResult::self);
 }
 
-TEST_CASE("presence holds 16 players (protocol 12): a WELCOME of 15 and joins up to 16") {
+TEST_CASE("presence holds 16 players (protocol 11): a WELCOME of 15 and joins up to 16") {
   Presence p;
   proto::Welcome w;
   w.player_number = 16;

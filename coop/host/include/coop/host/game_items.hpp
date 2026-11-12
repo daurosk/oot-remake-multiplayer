@@ -228,6 +228,7 @@ class ItemFlagStore final : public FlagStore {
   bool is_max(FlagKey key) override;
   // DungeonInfo.<dungeon>.IsGetMap and .IsGetCompass (issue 146).
   bool is_one_way(FlagKey key) override;
+  bool busy(FlagKey key) override { return inner_.busy(key); }
   // The value as it is (no max, OR or mirror merging; per-player flags still
   // refused): the host's save decides (docs/flags.md, "Saves").
   bool write_exact(const protocol::FlagEntry& entry) override;

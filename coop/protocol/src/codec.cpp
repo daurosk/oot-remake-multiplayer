@@ -933,7 +933,7 @@ Error decode_body(Reader& r, Hello& m) {
   COOP_TRY(r.str(m.game_version, kMaxGameVersionChars));
   COOP_TRY(r.str(m.nickname, kMaxNicknameChars));
   if (m.nickname.empty()) return Error::bad_value;
-  // Nothing more, the key share, the previous number (protocol 11), or both
+  // Nothing more, the key share, the previous number (protocol 10), or both
   // in that order; anything else is trailing bytes.
   if (r.left() == kKeyShareBytes || r.left() == kKeyShareBytes + 1) {
     COOP_TRY(read_array(r, m.key_share.emplace()));

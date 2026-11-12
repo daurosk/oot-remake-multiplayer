@@ -39,6 +39,16 @@ CoopHostMenu::Menu& HostMenu();
 // built from an older patch gives this much, and co-op still runs on it.
 inline constexpr std::size_t kFirstApiSize = offsetof(HosCoopApi, pad_buttons);
 
+// The game's camera block from Hookshot (hos_coop_camera: a scene draw's vertex-stage uniform buffer 3, 0x130 bytes):
+// the block the emulator's renderer reads for the markers (lichii/hook/coop_camera_track.h): the draw's target size at
+// 0x120, a perspective projection's w row ending (-1, 0) at 0xa8. Then the world-to-clip matrix is the 16 floats at
+// 0x30 (kCameraMatrix), row-major.
+inline constexpr std::size_t kCameraMatrix = 0x30 / sizeof(float);
+inline bool CameraBlockOk(const float* block, float width, float height) {
+    return block != nullptr && width > 0 && height > 0 && block[0x120 / 4] == width && block[0x124 / 4] == height &&
+           block[0xa8 / 4] == -1.0f && block[0xac / 4] == 0.0f;
+}
+
 // The table has key_down (keys held, read on Linux: F6, F7 and the closing
 // keys' release; Windows asks its own GetAsyncKeyState).
 inline bool HasKeyDown(const HosCoopApi* api) {

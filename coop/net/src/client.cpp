@@ -294,7 +294,7 @@ void Client::service(std::uint32_t wait_ms) {
           key_pair_.emplace(proto::KeyPair::generate());
           hello.key_share = key_pair_->share();
           // Our number of the last session, so a restarted server gives it
-          // back (protocol 11); none on the first join.
+          // back (protocol 10); none on the first join.
           if (player_number_ != 0) hello.previous_number = player_number_;
           hello_packet_.clear();
           if (claimed && proto::encode(hello, hello_packet_) == proto::Error::none &&

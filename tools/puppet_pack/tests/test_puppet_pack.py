@@ -908,8 +908,15 @@ class FullBuildTest(unittest.TestCase):
         self.write("Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
                    plain.compress(fake_bntx("Mt_Angin_Acs_Player_Adult_Alb",
                                             blocks=[struct.pack("<HHI", 0x3A25, 0x2A05, 0)] * 2, fmt=0x1A)))
+        # The child's cap knot, headband, collar and back string (hand test of a768c36).
+        self.write("Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs",
+                   plain.compress(fake_bntx("Mt_Cloth_Parts_Player_Child_Alb", blocks=[void_block(55, 66, 47)] * 2,
+                                            fmt=0x34)))
+        self.write("Tex/Mt_Vest_Player_Child_Alb.bntx.zs",
+                   plain.compress(fake_bntx("Mt_Vest_Player_Child_Alb", blocks=[void_block(55, 66, 47)] * 2, fmt=0x34)))
         for v in ("Child", "Adult"):
-            dark = b"\x15\x00Angin_Tile_A_Dark_Alb\x00" if v == "Child" else \
+            dark = (b"\x15\x00Angin_Tile_A_Dark_Alb\x00\x1f\x00Mt_Cloth_Parts_Player_Child_Alb\x00"
+                    b"\x18\x00Mt_Vest_Player_Child_Alb\x00") if v == "Child" else \
                 b"\x18\x00Mt_Vest_Player_Adult_Alb\x00\x1d\x00Mt_Angin_Acs_Player_Adult_Alb\x00"
             self.write(f"Model/Player_{v}.Player_{v}.bfres.zs",
                        plain.compress(b"FRES" + bytes(12) + b"\x10\x00Angin_Tile_A_Alb\x00" + dark
@@ -1259,9 +1266,19 @@ class FullBuildTest(unittest.TestCase):
             self.assertIn(f"{n}_Coop_R_Adult_Alb\x00".encode(), adult)
             self.assertNotIn(f"{n}_Player_Adult_Alb\x00".encode(), adult)
             self.assertTrue(os.path.isfile(os.path.join(out, f"Tex/{n}_Coop_G_Adult_Alb.bntx.zs")))
+        # the child's cap knot / headband / collar and back string: the same, in the child copies
+        child_red = d.decompress(build.read(os.path.join(out, "Model/CoopTunic_Child_Red.Player_Child.bfres.zs")))
+        for n in ("Mt_Cloth_Parts", "Mt_Vest"):
+            self.assertIn(f"{n}_Coop_R_Child_Alb\x00".encode(), child_red)
+            self.assertNotIn(f"{n}_Player_Child_Alb\x00".encode(), child_red)
+            self.assertTrue(os.path.isfile(os.path.join(out, f"Tex/{n}_Coop_R_Child_Alb.bntx.zs")))
+        self.assertNotIn(b"Mt_Vest_Coop_R_Adult_Alb\x00", child_red)
+        self.assertNotIn(b"_Child_Alb\x00", adult)
         self.assertEqual(m["self_files"]["red"], {
             "Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs",
             "Tex/Angin_Tile_A_Dark_Alb.bntx.zs": "coop_self/red.dark.bntx.zs",
+            "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs": "coop_self/red.Mt_Cloth_Parts_Player_Child_Alb.bntx.zs",
+            "Tex/Mt_Vest_Player_Child_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Child_Alb.bntx.zs",
             "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Adult_Alb.bntx.zs",
             "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
             # your own adult Link wears the puppet's model copy (bigrun5): the pack's own file
@@ -1381,7 +1398,8 @@ class NupTest(unittest.TestCase):
         self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS} |
                          {f"Pack/Actor/{build.IMPACT_SOURCE}.pack.zs"} |
                          {"Tex/Angin_Tile_A_Alb.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
-                          "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs", "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs"} |
+                          "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs", "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
+                          "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs", "Tex/Mt_Vest_Player_Child_Alb.bntx.zs"} |
                          {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"

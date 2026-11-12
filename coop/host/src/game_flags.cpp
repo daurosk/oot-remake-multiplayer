@@ -119,6 +119,21 @@ std::optional<std::uint32_t> queued(GameMemory& m, std::uint64_t mgr, std::uint6
   return std::nullopt;
 }
 
+// Half the queue stays free for the game. Its own setters (0x608a10, a Bool
+// set an actor makes every frame) abort the game when they find the queue
+// full (0x34fc280), and enqueue runs on another thread at any point of the
+// frame. Issue 175: a whole join snapshot written at once filled it. What
+// is refused for that is written again on a later frame (FlagWatcher,
+// FlagStore::busy).
+std::uint32_t ours(std::uint32_t cap) { return cap / 2; }
+
+// The queue at `word_at` has no room for us now.
+bool no_room(GameMemory& m, std::uint64_t mgr, std::uint64_t cap_at, std::uint64_t word_at) {
+  const auto cap = read_u32(m, mgr + cap_at);
+  const auto word = read_u32(m, mgr + word_at);
+  return cap && word && (*word & kTakenMask) >= ours(*cap);
+}
+
 // Takes a slot, writes it, marks it finished: the game's setter (0x682b20).
 // `word8`: a u32 the setter also stores at slot + 8 (the UInt setter stores 1).
 bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
@@ -132,7 +147,7 @@ bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
   std::optional<std::uint32_t> taken_word;
   for (int t = 0; t < kCasTries && !taken_word; ++t) {
     const auto w = read_u32(m, word_addr);
-    if (!w || (*w & kTakenMask) >= *cap) return false;
+    if (!w || (*w & kTakenMask) >= ours(*cap)) return false;
     if (m.compare_exchange_u32(word_addr, *w, *w + 1) == w) taken_word = *w;
   }
   if (!taken_word) return false;
@@ -292,6 +307,18 @@ bool GameFlags::set_string64_now(WritableGameMemory& m, std::uint32_t hash,
   return m.write(*buffer, std::span<const std::uint8_t>(bytes.data(), text.size() + 1));
 }
 
+std::optional<GameFlags::QueueSizes> GameFlags::queue_sizes() {
+  const auto mgr = manager(memory_);
+  if (!mgr) return std::nullopt;
+  const auto b = read_u32(memory_, *mgr + kBool.queue_cap);
+  const auto i = read_u32(memory_, *mgr + kInt.queue_cap);
+  const auto u = read_u32(memory_, *mgr + kUInt.queue_cap);
+  const auto e = read_u32(memory_, *mgr + kEnum.queue_cap);
+  const auto k = read_u32(memory_, *mgr + kKeyQueueCap);
+  if (!b || !i || !u || !e || !k || *b == 0) return std::nullopt;  // 0: the tables are not made yet
+  return QueueSizes{*b, *i, *u, *e, *k};
+}
+
 std::optional<int> GameFlags::find_type(std::uint32_t hash) {
   const auto mgr = manager(memory_);
   if (!mgr) return std::nullopt;
@@ -369,8 +396,27 @@ std::optional<protocol::FlagEntry> GameFlagStore::read(FlagKey key) {
   return std::nullopt;
 }
 
+bool GameFlagStore::busy(FlagKey key) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return false;
+  if (key.kind == FlagKeyKind::key64) return no_room(memory_, *mgr, kKeyQueueCap, kKeyQueueWord);
+  if (key.kind != FlagKeyKind::named || key.index != 0) return false;
+  if (find(memory_, *mgr, kBool, key.hash)) return no_room(memory_, *mgr, kBool.queue_cap, kBool.queue_word);
+  if (find(memory_, *mgr, kInt, key.hash)) return no_room(memory_, *mgr, kInt.queue_cap, kInt.queue_word);
+  return false;
+}
+
 bool GameFlagStore::write(const protocol::FlagEntry& entry) {
   const FlagKey& key = entry.key;
+  // A value the game already holds (or has queued) takes no queue slot: a join
+  // snapshot is mostly such values (issue 175). Only for what this store
+  // writes: a BoolArray element is refused below whatever it holds.
+  const bool writable = key.kind == FlagKeyKind::key64 ? key.table == 0
+                                                       : key.kind == FlagKeyKind::named && key.index == 0;
+  if (const auto now = writable ? read(key) : std::nullopt;
+      now && now->kind == entry.kind && now->value == entry.value) {
+    return true;
+  }
   if (key.kind == FlagKeyKind::key64) {
     if (key.table != 0 || entry.kind != protocol::FlagKind::boolean || entry.value > 1) {
       return false;

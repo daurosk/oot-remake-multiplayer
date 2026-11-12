@@ -31,7 +31,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, tunic, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -571,7 +571,7 @@ def recompress(dicts, original_raw, data, level=16):
 
 
 def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None,
-                 self_dark_tiles=None):
+                 self_dark_tiles=None, self_files=None):
     """The recoloured tiles and the model copies that name them (puppet_pack.tunic), with their
     size-table entries (the game's own file's). Returns {colour: [paths]}. With `self_dir`, also
     the game's tile recoloured under its own name per colour (not green) into it, listed in
@@ -579,6 +579,8 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
     tunic body, tunic.DARK) the same way in `self_dark_tiles`."""
     if self_dark_tiles is None:
         self_dark_tiles = {}
+    if self_files is None:
+        self_files = {}  # {colour: {romfs path: file beside the pack}}: every file of your own colour
     out = {}
     tile_rel = f"Tex/{tunic.TILE}.bntx.zs"
     tile_src = os.path.join(romfs, tile_rel)
@@ -600,6 +602,16 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         log(f"tunics: no {dark_rel} in this romfs, the child's tunic body stays green")
     tile_size = table.get(strip_zs(tile_rel))
     dark_size = table.get(strip_zs(dark_rel))
+    # The adult's other tunic textures (puppet_pack.tunic_extra): only their green parts change.
+    extras = {}
+    for name in tunic_extra.EXTRA:
+        rel_ = f"Tex/{name}.bntx.zs"
+        if os.path.isfile(os.path.join(romfs, rel_)):
+            raw_ = read(os.path.join(romfs, rel_))
+            extras[name] = (rel_, raw_, dicts.decompress(raw_))
+        else:
+            log(f"tunics: no {rel_} in this romfs, that part of the adult's tunic stays green")
+    base = tunic.average_luma(tile)
     models = {}
     for v in VARIANTS:
         m_rel = f"Model/Player_{v}.Player_{v}.bfres.zs"
@@ -618,6 +630,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             fname = f"{c}.bntx.zs"
             write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own))
             self_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
+            self_files.setdefault(c, {})[tile_rel] = self_tiles[c]
         dst = f"Tex/{name}.bntx.zs"
         write(os.path.join(out_romfs, dst), recompress(dicts, tile_raw, data))
         table.add_new(strip_zs(dst), tile_size or len(data) + PACK_SIZE_MARGIN)
@@ -634,14 +647,31 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 fname = f"{c}.dark.bntx.zs"
                 write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own_dark))
                 self_dark_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
+                self_files.setdefault(c, {})[dark_rel] = self_dark_tiles[c]
             ddst = f"Tex/{tunic.dark_name(c)}.bntx.zs"
             write(os.path.join(out_romfs, ddst),
                   recompress(dicts, dark_raw if c == "green" else tile_raw, ddata))
             table.add_new(strip_zs(ddst), size or len(ddata) + PACK_SIZE_MARGIN)
             paths.append(ddst)
+        for name, (e_rel, e_raw, e_data) in extras.items():
+            try:
+                e_own = None if c == "green" else tunic_extra.recolor(e_data, c, base)
+                e_pup = tunic_extra.for_puppet(e_data, e_own, name, c)
+            except tunic.TunicError as e:
+                raise BuildError(f"{e_rel}: {e}")
+            if e_own is not None and self_dir:
+                # Same size and layout as the game's file: its size-table entry stands.
+                fname = f"{c}.{name}.bntx.zs"
+                write(os.path.join(self_dir, fname), recompress(dicts, e_raw, e_own))
+                self_files.setdefault(c, {})[e_rel] = f"{tunic.SELF_DIR}/{fname}"
+            edst = f"Tex/{tunic_extra.extra_name(name, c)}.bntx.zs"
+            write(os.path.join(out_romfs, edst), recompress(dicts, e_raw, e_pup))
+            table.add_new(strip_zs(edst), table.get(strip_zs(e_rel)) or len(e_pup) + PACK_SIZE_MARGIN)
+            paths.append(edst)
         for v, (m_rel, m_raw) in models.items():
             try:
                 data = tunic.model_for(dicts.decompress(m_raw), c, dark=dark is not None)
+                data = tunic_extra.model_names(data, c, [n for n in extras if v in tunic_extra.EXTRA[n]])
             except tunic.TunicError as e:
                 raise BuildError(f"{m_rel}: {e}")
             dst = f"Model/{tunic.project_name(v, c)}.Player_{v}.bfres.zs"
@@ -697,10 +727,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     tunics = list(dict.fromkeys(list(tunics) + ([test_tunic] if test_tunic else [])))
     self_tiles = {}
     self_dark_tiles = {}
+    self_files = {}
     tunics_off = not tunics  # --tunics none: on purpose, the kit says nothing (kit-paths.ps1)
     tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log,
                                self_dir=os.path.join(mod_dir, tunic.SELF_DIR), self_tiles=self_tiles,
-                               self_dark_tiles=self_dark_tiles) if tunics else {}
+                               self_dark_tiles=self_dark_tiles, self_files=self_files) if tunics else {}
     tunics = [c for c in tunics if c in tunic_files]
     test_tunic = test_tunic if test_tunic in tunic_files else None
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
@@ -834,6 +865,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "tunics": tunic_files,
         "self_tiles": self_tiles,
         "self_dark_tiles": self_dark_tiles,
+        "self_files": self_files,
         "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,

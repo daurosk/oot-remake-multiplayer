@@ -686,6 +686,96 @@ def fake_bntx(name, blocks=None, fmt=0x1C):
     return head + brti + brtd
 
 
+def void_block(r, g, b, a=255):
+    """A one-colour ASTC block (void extent, RGBA16)."""
+    v = 0x1FC | (3 << 10) | (((1 << 52) - 1) << 12)
+    for k, c in enumerate((r, g, b, a)):
+        v |= (c << 8 | c) << (64 + 16 * k)
+    return v.to_bytes(16, "little")
+
+
+def bc1_block(c0, c1, idx=0xE4E4E4E4):
+    return struct.pack("<HHI", c0, c1, idx)
+
+
+class TunicExtraTest(unittest.TestCase):
+    """The adult's other tunic textures (#202): only green parts change, in place."""
+
+    def test_names(self):
+        from puppet_pack import tunic_extra as te
+        for n in te.EXTRA:
+            self.assertEqual(len(te.extra_name(n, "red")), len(n))
+        self.assertEqual(te.extra_name("Mt_Vest_Player_Adult_Alb", "red"), "Mt_Vest_Coop_R_Adult_Alb")
+
+    def test_is_green(self):
+        from puppet_pack import tunic_extra as te
+        for c in ((55, 66, 47), (65, 83, 43), (67, 65, 42)):  # tunic greens, olive
+            self.assertTrue(te.is_green(c), c)
+        for c in ((120, 96, 72), (146, 134, 114), (200, 200, 200), (0, 0, 0), (208, 32, 32)):
+            self.assertFalse(te.is_green(c), c)  # leather, cloth, grey, black, red
+
+    def test_ise_round_trip(self):
+        # every colour range, every value count of a block: encode, read back the same
+        from puppet_pack import texture as tx, tunic_extra as te
+        import random
+        rnd = random.Random(7)
+        for rng in tx._COLOUR_RANGES:
+            t, q, b = tx._ISE[rng]
+            for count in range(2, 19, 2):
+                vals = [(rnd.randrange(3) if t else rnd.randrange(5) if q else None, rnd.randrange(1 << b))
+                        for _ in range(count)]
+                bits, length = te._ise_encode(vals, rng)
+                self.assertEqual(length, tx._ise_bits(count, rng))
+                self.assertLess(bits, 1 << length)
+                self.assertEqual(te._ise_read(bits << 17, 17, count, rng), vals, (rng, count))
+
+    def test_quant(self):
+        from puppet_pack import texture as tx, tunic_extra as te
+        for rng in (256, 192, 80, 24, 12):
+            b = tx._ISE[rng][2]
+            for v in (0, 37, 128, 255):
+                d, m = te._quant(rng)[v]
+                got = tx._unq_colour(d or 0, m, b, rng)
+                self.assertLessEqual(abs(got - v), 256 // rng + 2, (rng, v, got))
+
+    def test_astc_void_extent(self):
+        from puppet_pack import tunic_extra as te
+        src = fake_bntx("Mt_Vest_Player_Adult_Alb", blocks=[void_block(55, 66, 47), void_block(146, 134, 114)],
+                        fmt=0x34)
+        out = te.recolor(src, "red")
+        self.assertEqual(len(out), len(src))
+        start = out.find(b"BRTD") + 0x10
+        v = int.from_bytes(out[start:start + 16], "little")
+        r, g, b = ((v >> (64 + 16 * k)) & 0xFF for k in range(3))
+        self.assertGreater(r, g)
+        self.assertGreater(r, b)
+        self.assertEqual(out[start + 16:start + 32], src[start + 16:start + 32])  # not green: kept
+
+    def test_bc1_only_green(self):
+        from puppet_pack import tunic, tunic_extra as te
+        green = tunic.pack565((55, 66, 47))
+        brown = tunic.pack565((120, 96, 72))
+        src = fake_bntx("Mt_Angin_Acs_Player_Adult_Alb", blocks=[bc1_block(green, green - 1), bc1_block(brown, brown - 1)],
+                        fmt=0x1A)
+        out = te.recolor(src, "blue")
+        start = out.find(b"BRTD") + 0x10
+        c0 = tunic.unpack565(struct.unpack_from("<H", out, start)[0])
+        self.assertGreater(c0[2], c0[1])  # blue now
+        self.assertEqual(out[start + 8:start + 16], src[start + 8:start + 16])  # brown kept
+        self.assertEqual(te.for_puppet(src, out, "Mt_Angin_Acs_Player_Adult_Alb", "green"),
+                         src.replace(b"Mt_Angin_Acs_Player_Adult_Alb\x00", b"Mt_Angin_Acs_Coop_G_Adult_Alb\x00"))
+
+    def test_direct_never_swaps(self):
+        # a bright red first end over a darker second: plain values would swap them, blue
+        # contraction cannot hold the red; the candidates still decode in order
+        from puppet_pack import texture as tx, tunic_extra as te
+        ok = []
+        for cand in te._direct((188, 28, 28), (120, 20, 20), 255, 255, False):
+            e0, e1 = tx._endpoints(8, cand)
+            ok.append(e0[0] > 100 and e1[0] > 100 and e0[0] > 2 * e0[1] and e1[0] > 2 * e1[1])
+        self.assertTrue(any(ok[2:]))  # the fallbacks hold a red pair
+
+
 class TunicTest(unittest.TestCase):
     def test_dark_tile(self):
         # #202: the child's tunic body is the dark tile (ASTC in the game): your colour's copy is
@@ -813,8 +903,14 @@ class FullBuildTest(unittest.TestCase):
         self.write("Tex/Angin_Tile_A_Alb.bntx.zs", plain.compress(fake_bntx("Angin_Tile_A_Alb")))
         self.write("Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
                    plain.compress(fake_bntx("Angin_Tile_A_Dark_Alb", blocks=[b"\x77" * 16] * 4, fmt=0x2E)))
+        self.write("Tex/Mt_Vest_Player_Adult_Alb.bntx.zs",
+                   plain.compress(fake_bntx("Mt_Vest_Player_Adult_Alb", blocks=[void_block(55, 66, 47)] * 2, fmt=0x34)))
+        self.write("Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
+                   plain.compress(fake_bntx("Mt_Angin_Acs_Player_Adult_Alb",
+                                            blocks=[struct.pack("<HHI", 0x3A25, 0x2A05, 0)] * 2, fmt=0x1A)))
         for v in ("Child", "Adult"):
-            dark = b"\x15\x00Angin_Tile_A_Dark_Alb\x00" if v == "Child" else b""
+            dark = b"\x15\x00Angin_Tile_A_Dark_Alb\x00" if v == "Child" else \
+                b"\x18\x00Mt_Vest_Player_Adult_Alb\x00\x1d\x00Mt_Angin_Acs_Player_Adult_Alb\x00"
             self.write(f"Model/Player_{v}.Player_{v}.bfres.zs",
                        plain.compress(b"FRES" + bytes(12) + b"\x10\x00Angin_Tile_A_Alb\x00" + dark
                                       + f"Player_{v}\x00".encode()))
@@ -1154,6 +1250,23 @@ class FullBuildTest(unittest.TestCase):
         child = d.decompress(build.read(os.path.join(out, "Model/CoopTunic_Child_Blue.Player_Child.bfres.zs")))
         self.assertIn(b"Angin_Tile_B_Dark_Alb\x00", child)
         self.assertNotIn(b"Angin_Tile_A_Dark_Alb\x00", child)
+        # the adult's other tunic textures (#202): per colour for the puppets, the adult model
+        # copies name them, and your own in self_files with the tiles
+        adult = d.decompress(build.read(os.path.join(out, "Model/CoopTunic_Adult_Red.Player_Adult.bfres.zs")))
+        for n in ("Mt_Vest", "Mt_Angin_Acs"):
+            self.assertIn(f"{n}_Coop_R_Adult_Alb\x00".encode(), adult)
+            self.assertNotIn(f"{n}_Player_Adult_Alb\x00".encode(), adult)
+            self.assertTrue(os.path.isfile(os.path.join(out, f"Tex/{n}_Coop_G_Adult_Alb.bntx.zs")))
+        self.assertEqual(m["self_files"]["red"], {
+            "Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs",
+            "Tex/Angin_Tile_A_Dark_Alb.bntx.zs": "coop_self/red.dark.bntx.zs",
+            "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Adult_Alb.bntx.zs",
+            "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Angin_Acs_Player_Adult_Alb.bntx.zs"})
+        self.assertNotIn("green", m["self_files"])
+        vest = d.decompress(build.read(os.path.join(mod, m["self_files"]["red"]["Tex/Mt_Vest_Player_Adult_Alb.bntx.zs"])))
+        game_vest = d.decompress(build.read(os.path.join(self.romfs, "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs")))
+        self.assertEqual(len(vest), len(game_vest))
+        self.assertNotEqual(vest, game_vest)
         # the game's dark tile's entry holds the BC3 copy the kit puts in its place
         self.assertGreaterEqual(t.get("Tex/Angin_Tile_A_Dark_Alb.bntx"), len(game_tile))
 
@@ -1262,7 +1375,8 @@ class NupTest(unittest.TestCase):
         # every STAND_INS source was "left out". They are read from the .nup when it has them.
         self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS} |
                          {f"Pack/Actor/{build.IMPACT_SOURCE}.pack.zs"} |
-                         {"Tex/Angin_Tile_A_Alb.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs"} |
+                         {"Tex/Angin_Tile_A_Alb.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
+                          "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs", "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs"} |
                          {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"

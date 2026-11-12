@@ -4,8 +4,6 @@
 #        play.cmd -Server 192.168.1.20 -Name Saria [-Port 27510]   no questions
 #        Host.bat (play.ps1 host)  starts this kit's server too and plays on it (127.0.0.1)
 #        Join.bat (play.ps1 join)  asks for the host's address each time
-#        Host-Hookshot.bat, Join-Hookshot.bat (-Hookshot)  the same with Hookshot, built by
-#                                  make-hookshot.cmd into the hookshot folder (experimental)
 # On every start it looks for a newer co-op release and, as auto_update in coop-options.ini
 # says, updates the kit (emulator included) and starts the new kit's play.ps1 with -NoUpdate.
 # Every later play.ps1 must accept -NoUpdate.
@@ -14,8 +12,7 @@ param(
     [string]$Server = '',
     [string]$Name = '',
     [string]$Port = '',
-    [switch]$NoUpdate,
-    [switch]$Hookshot
+    [switch]$NoUpdate
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
@@ -27,28 +24,6 @@ $kit = Split-Path -Parent $PSScriptRoot
 $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
 $ini = Join-Path $emu 'user\config\coop.ini'
-if ($Hookshot) {
-    # Hookshot (docs/hookshot.md): its game folder, coop.ini beside hookshot.exe.
-    $emu = Join-Path $kit 'hookshot'
-    if (Test-Path -LiteralPath (Join-Path $emu 'bin\hookshot.exe')) { $emu = Join-Path $emu 'bin' }
-    $exe = Join-Path $emu 'hookshot.exe'
-    $ini = Join-Path $emu 'coop.ini'
-    if (-not (Test-Path $exe)) { Write-Host "Not found: $exe. Make it first with make-hookshot.cmd (SETUP.md, ""On Hookshot"")."; exit 1 }
-    # After a kit update: the new module beside the game; a new Hookshot pin or patch needs a new build.
-    $pieces = Join-Path $kit 'hookshot-kit'
-    $stamp = Join-Path $kit 'hookshot-build\built-with.txt'
-    if ((Test-Path -LiteralPath $stamp) -and (Get-Content -LiteralPath $stamp -Raw).Trim() -ne (Get-HookshotStamp $pieces)) {
-        Write-Host 'This kit has a newer Hookshot patch than the one your Hookshot was built with: run make-hookshot.cmd again.'
-        exit 1
-    }
-    Get-ChildItem -LiteralPath $pieces -Filter '*.dll' -File -ErrorAction SilentlyContinue | ForEach-Object {
-        $there = Join-Path $emu $_.Name
-        if (-not (Test-Path -LiteralPath $there) -or (Get-FileHash -LiteralPath $there).Hash -ne (Get-FileHash -LiteralPath $_.FullName).Hash) {
-            Copy-Item -LiteralPath $_.FullName -Destination $emu -Force
-        }
-    }
-    if (-not (Test-Path (Join-Path $emu 'hookshot_coop.dll'))) { Write-Host "Not found: $emu\hookshot_coop.dll. Run make-hookshot.cmd again."; exit 1 }
-}
 $template = Join-Path $PSScriptRoot 'coop.ini.template'
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe"; exit 1 }
 
@@ -136,7 +111,6 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
                 foreach ($pair in @(@('-Mode', $Mode), @('-Server', $Server), @('-Name', $Name), @('-Port', $Port))) {
                     if ($pair[1]) { $next += $pair }
                 }
-                if ($Hookshot) { $next += '-Hookshot' }
                 & $ps @next -NoUpdate
                 exit $LASTEXITCODE
             }
@@ -271,20 +245,18 @@ Write-CoopIni $template $ini $Server $Port $Name $Password
 Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'none' })   (play.cmd change to change the name)"
 
 $user = Join-Path $emu 'user'
-if (-not $Hookshot -and -not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
+if (-not (Get-ChildItem (Join-Path $user 'keys') -Filter '*.keys' -ErrorAction SilentlyContinue)) {
     Write-Host "No keys in $user\keys yet. SETUP.md says what goes where."
 }
-$running = Get-Process ($(if ($Hookshot) { 'hookshot' } else { 'lichii' })) -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
-if ($running) { Write-Host 'This game is already running; close it first to use new settings.'; exit 1 }
+$running = Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+if ($running) { Write-Host 'This emulator is already running; close it first to use new settings.'; exit 1 }
 
 # A copied kit: point the emulator's saved folders at this copy (kit-paths.ps1).
-if (-not $Hookshot) {
-    $fixed = Repair-KitPaths $user
-    if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
-}
+$fixed = Repair-KitPaths $user
+if ($fixed) { Write-Host "This kit was copied: pointed $($fixed -join ', ') at $user" }
 # No code or cheat mods with co-op (issue 136): stop before anything starts, and say where they are. After the
-# copied-kit fix above, so this kit's own load and SD folders are read. (Hookshot applies no code mods.)
-$mods = @(if (-not $Hookshot) { Get-KitMods $user })
+# copied-kit fix above, so this kit's own load and SD folders are read.
+$mods = @(Get-KitMods $user)
 if ($mods.Count -gt 0) {
     Write-Host ''
     Write-Host 'These mods for Ocarina of Time change the game''s code or are cheats:'
@@ -345,15 +317,12 @@ foreach ($key in $options.Keys) {
 $cardList = $null
 try { $cardList = @(Get-CimInstance Win32_VideoController -OperationTimeoutSec 5 -ErrorAction Stop) } catch { }
 $cardQuery = if ($null -ne $cardList) { { $cardList }.GetNewClosure() } else { { throw 'no card list' } }
-if (-not $Hookshot) {
-    $gpl = Set-AmdGplDefault $cardQuery
-    if ($gpl) { Write-Host $gpl }
-}
+$gpl = Set-AmdGplDefault $cardQuery
+if ($gpl) { Write-Host $gpl }
 # Built-in graphics only: point to the 30 FPS button (docs/setup.md, "Low frame rate").
 $speed = Get-GpuSpeedHint $cardQuery
 if ($speed) { Write-Host $speed }
-$pack = if ($Hookshot) { Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json' }
-        else { Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json' }
+$pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
 if (Test-Path -LiteralPath $pack) {
     Write-Host 'Puppet pack: found.'
     # Made before sound or before the kit's pack tool changed (kit-paths.ps1): say so, start anyway.
@@ -368,14 +337,13 @@ else {
 
 $started = Get-Date
 $game = Start-Process -FilePath $exe -WorkingDirectory $emu -PassThru
-if ($Hookshot) { Write-Host 'Hookshot started (experimental). Load your save; co-op''s lines are in hookshot_log.txt beside hookshot.exe.' }
-else { Write-Host 'Emulator started. Load the game; the co-op panel is in the top-left corner of the game.' }
+Write-Host 'Emulator started. Load the game; the co-op panel is in the top-left corner of the game.'
 
 # Join.bat: watch the emulator's log until the join worked or clearly did not, and then say
 # so in plain words (hosting.ps1 has the three likely causes). Ends when the emulator closes,
 # after 15 minutes, or once connected; closing this window does not touch the game.
 if ($Mode -eq 'join' -and $game) {
-    $logFile = if ($Hookshot) { Join-Path $emu 'hookshot_log.txt' } else { Join-Path $user 'log\eden_log.txt' }
+    $logFile = Join-Path $user 'log\eden_log.txt'
     $shown = if ($inviteJoin) { 'the host (through the join helper window)' } else { Format-JoinAddress $Server ([int]$Port) }
     Write-Host "This window says when you are connected to $shown (you may also close it)."
     $trying = $null; $helped = $false; $state = ''

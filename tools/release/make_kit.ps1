@@ -208,27 +208,6 @@ foreach ($f in 'ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 
     Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
 }
 
-# Hookshot (experimental, docs/hookshot.md): what make-hookshot.cmd needs to build Hookshot with co-op on the
-# player's PC from their own game file: the pin, the builder parts' list, our patch and its applier, and the
-# co-op module (with the C++ runtime beside it: Hookshot itself is built with another compiler). No Hookshot
-# build and nothing from the game is in the kit.
-$hookshotModule = @('hookshot\hookshot_coop.dll', 'hookshot\Release\hookshot_coop.dll') |
-    ForEach-Object { Join-Path $BuildDir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
-$hookshotNote = 'not included (no hookshot_coop.dll in the build folder)'
-if ($hookshotModule) {
-    if (Test-BinaryHas $hookshotModule 'VCRUNTIME140D.dll') { throw "$hookshotModule is a Debug build; build Release." }
-    $hk = Join-Path $kit 'hookshot-kit'
-    New-Item -ItemType Directory -Force -Path (Join-Path $hk 'patches') | Out-Null
-    foreach ($f in 'PIN', 'TOOLS', 'apply_patch.py') { Copy-Text (Join-Path $repo "hookshot\$f") (Join-Path $hk $f) }
-    Get-ChildItem (Join-Path $repo 'hookshot\patches') -Filter '*.patch' | ForEach-Object { Copy-Text $_.FullName (Join-Path $hk "patches\$($_.Name)") }
-    Copy-Item $hookshotModule $hk
-    if ($crt) { Get-ChildItem $crt.FullName -Filter '*.dll' | Copy-Item -Destination $hk }
-    foreach ($f in 'make-hookshot.cmd', 'Host-Hookshot.bat', 'Join-Hookshot.bat') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
-    Copy-Text (Join-Path $here 'kit\scripts\hookshot-build.ps1') (Join-Path $kit 'scripts\hookshot-build.ps1')
-    $hookshotNote = "hookshot-kit\hookshot_coop.dll $((Get-FileHash $hookshotModule -Algorithm SHA256).Hash.Substring(0, 16)) (sha256, first 16), Hookshot pin $((Get-Content (Join-Path $repo 'hookshot\PIN') | Where-Object { $_ -like 'commit=*' }) -replace 'commit=', '')"
-}
-else { Write-Warning "No hookshot_coop.dll in $BuildDir\hookshot: the kit has no Hookshot part. Build it: cmake --build build --config Release --target hookshot_coop" }
-
 # Optionally a Python for it.
 $pythonNote = 'not included (each PC needs Python 3 and zstandard)'
 if ($Python) {
@@ -335,7 +314,6 @@ $version = @(
     "visual c++ runtime: $(if ($crt) { "$($crt.Name) $(Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent $crt.FullName)))" } else { 'not included' })",
     "puppet pack tool: tools\puppet_pack from the co-op repo above; packs are built on each PC",
     "python: $pythonNote",
-    "hookshot (experimental): $hookshotNote",
     "default port: $Port"
 )
 [System.IO.File]::WriteAllLines((Join-Path $kit 'VERSION.txt'), [string[]]$version)

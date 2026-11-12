@@ -42,14 +42,9 @@ A DLL keeps the patch to Hookshot small (it changes only when Hookshot moves) an
 
 ## For players: the kit
 
-Nothing of Hookshot or the game is in the kit. `make-hookshot.cmd` (`tools/release/kit/scripts/hookshot-build.ps1`) on the player's PC:
+Nothing of Hookshot or the game is in the kit. The kit's `Build-Hookshot-Coop.bat` (branch hookshot-kit, its own docs in play-online.md "On Hookshot") downloads Hookshot's builder parts and source for `hookshot/PIN` (each checked against its SHA-256), applies `hookshot/patches` without git, runs Hookshot's own `nx2/make_game.py` on the player's game file, and installs `hookshot_coop.dll`, `coop.ini` (beside `hookshot.exe`) and the puppet pack. `Host-Hookshot.bat` and `Join-Hookshot.bat` start it as `Host.bat` and `Join.bat` start the emulator.
 
-1. downloads the builder parts in `hookshot/TOOLS`, each checked against its SHA-256: Hookshot's own builder parts for the pinned commit (the "app" and "third_party" parts are its source tree, so no git is needed; the others its Python, Vulkan headers and FFmpeg, wgpu-native) and llvm-mingw;
-2. applies our patch with `hookshot/apply_patch.py`;
-3. runs Hookshot's `nx2/make_game.py` on the player's `.nup` into the kit's `hookshot` folder, and checks the log for `co-op hooks: frame hook`;
-4. puts `hookshot_coop.dll` (and the C++ runtime) beside `hookshot.exe` and builds the puppet pack into `mods\contents\0400486024DEC000\coop-puppet`.
-
-`Host-Hookshot.bat` and `Join-Hookshot.bat` run `play.ps1 -Hookshot`: the same questions, invite codes and `coop-options.ini` switches as the emulator's, `coop.ini` beside `hookshot.exe`. After a kit update the new module is copied beside the game; a new pin or patch asks for `make-hookshot.cmd` again. Player guide: [play-online.md, "On Hookshot"](play-online.md#on-hookshot-experimental).
+What the module expects from that install (`hookshot/compat`): `coop.ini` beside `hookshot.exe`; the puppet pack at `<exe folder>\mods\contents\0400486024DEC000\coop-puppet` (the hook finds packs under `<load folder>\0400486024DEC000\<mod>`, and Hookshot's `host/mods.c` loads that layout as a mod); the `LICHII_COOP_*` switches from `coop-options.ini` in the environment.
 
 ## Size
 
@@ -61,7 +56,7 @@ Nothing of Hookshot or the game is in the kit. `make-hookshot.cmd` (`tools/relea
 
 - **Memory.** A Hookshot game takes about 10 GB of RAM; 8 GB of VRAM is recommended. Two games on one PC are fine on the test PC (128 GB of RAM) at the normal preset; players with 16 to 32 GB of RAM should run one game each.
 - **Open crashes and GPU limits.** Hookshot needs Vulkan 1.3 with mesh shaders (RTX 20 or newer, RX 6000 or newer); Intel is mostly untested. Open issues there: an intermittent device loss after the first gameplay frames (its design.md, S4), crashes outside Kokiri Forest (Hookshot issues 317, 648), AMD crashes (708, 614).
-- **Patch upkeep.** Hookshot moves fast. Our patch touches three new files and two lines of `nx2/lift.py`; moving `hookshot/PIN` (and `TOOLS` to that commit's builder parts) is a test like moving the Fritchii pin.
+- **Patch upkeep.** Hookshot moves fast. Our patch touches three new files and two lines of `nx2/lift.py`; moving `hookshot/PIN` (and the kit's list of builder parts with it) is a test like moving the Fritchii pin.
 - **Frame timing.** Hookshot runs at its own speed (30 to 60 fps, a high-fps option). The co-op sampler and puppets work from time, not frames; to check with a puppet in view.
 - **Addresses.** Code offsets are checked (`set_time`); the data slots are read through the same `CoopGameBuild` offsets from main's base, and the first runs check them (the scene and Link read, puppets made).
 - **No co-op window yet.** The emulator's Qt window (panel, chat box, player list, hearts) is not on Hookshot; an ImGui panel in Hookshot's menu is later work.
@@ -87,8 +82,8 @@ Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-reco
 
 | Step | State |
 |---|---|
-| The patch (bridge, hooks, API header), `PIN`, `TOOLS`, `fetch.ps1`, `apply_patch.py` | Done. `fetch.ps1` and `apply_patch.py` both apply it to the pinned source (the applier checked against the patched clone, file for file); `coop_bridge.c` passes a compiler's syntax check |
+| The patch (bridge, hooks, API header), `PIN`, `fetch.ps1` | Done; `fetch.ps1` applies it to the pinned source; `coop_bridge.c` passes a compiler's syntax check |
 | The module: all of `lichii/hook` through `hookshot/compat` | Written; all 42 hook files and the module pass a syntax check; CI builds it on Windows; `tests/hookshot/module_test.cpp` (the header in the patch is ours, the hook sites are the emulator cave's, the build list) |
 | Callers shared by both builds (`coop_callers`) | Done (`tests/lichii/callers_test.cpp`) |
-| Kit: `make-hookshot.cmd`, `Host-Hookshot.bat`, `Join-Hookshot.bat`, `make_kit.ps1` | Written; `launch_test.ps1` covers the Hookshot start; the build script not yet run end to end |
+| Kit (`Build-Hookshot-Coop.bat`, `Host-/Join-Hookshot.bat`) | Branch hookshot-kit |
 | Proofs 1 to 5 | Not yet (waiting for a build turn) |

@@ -146,31 +146,6 @@ A virtual LAN adds a little delay when it cannot connect the PCs directly; the p
 
 **Dropped every 15-20 seconds?** Older kits sent packets too big for some VPNs and tunnels (Hamachi, Tailscale, DS-Lite internet lines, a VPN inside another VPN): small things got through, but the big ones (the shared flags sent when you join) were lost, and the game was cut after 10 s and joined again, over and over. The packets now fit Hamachi and lines down to 1200 bytes, and a game whose line still loses them switches by itself to the smallest size once (the host's server window shows `its path lost our 1100-byte datagrams ...; told it to connect again with 576-byte ones`, one short reconnect) and then stays in. Both players need the same, current kit. Still dropped? Run `collect-logs.cmd` on both PCs and send the zips.
 
-## On Hookshot (experimental)
-
-[Hookshot](https://github.com/NotRexed/Hookshot) is a PC port of the same game (version 1.1.1), made by NotRexed and contributors (GPL-3.0): the game's code translated to run natively, no emulator. The kit can build it with co-op on your PC, from your own game file. It is the same co-op as the emulator's (the same code, the same server), so **Hookshot players and emulator players can be in one room**: one host, any mix.
-
-What you need on top of the emulator kit's needs:
-
-- A graphics card with Vulkan 1.3 and mesh shaders: NVIDIA GeForce RTX 20 or newer, AMD Radeon RX 6000 or newer (Intel Arc: few reports). Older cards cannot run Hookshot at all; use the emulator.
-- About 60 GB free on the kit's drive for the build, and 16 GB of RAM (a game takes about 10 GB). A PC with 16 to 32 GB of RAM should not run two games at once.
-- Your game as a `.nup` file (the one `make-puppet-pack.cmd` takes).
-
-Steps, once:
-
-1. `make-hookshot.cmd`. It finds a `.nup` in the kit folder or asks for its path, downloads Hookshot's build tools (about 300 MB, each file checked against its published SHA-256), puts co-op's patch on Hookshot's source, and builds the game into the kit's `hookshot` folder with Hookshot's own builder. The first build takes 25 to 60 minutes. It also makes the puppet pack for Hookshot.
-2. Then play with **`Host-Hookshot.bat`** or **`Join-Hookshot.bat`**, exactly as `Host.bat` and `Join.bat` (the same questions, invite codes, passwords and `coop-options.ini` switches).
-
-After a kit update, `Host-Hookshot.bat` puts the new co-op module beside the game by itself. When an update changes co-op's patch to Hookshot, it says so: run `make-hookshot.cmd` again (a few minutes; the slow part is not repeated).
-
-What is different on Hookshot today (more in [KNOWN-ISSUES.md](known-issues.md)):
-
-- No co-op window: no chat box (Enter), player list (Tab), panel or hearts HUD yet. The co-op lines are in `hookshot_log.txt` beside `hookshot.exe`.
-- Hookshot's own options (graphics, frame rate) are in its in-game menu (Insert). Its saves are in `hookshot\user\save\`, the same files as the emulator's (Hookshot's [docs/saves.md](https://github.com/NotRexed/Hookshot/blob/main/docs/saves.md) shows how to carry a save across).
-- Hookshot's own open issues apply (crashes on some AMD drivers, places outside Kokiri Forest less tested).
-
-Nothing from the game is in the kit or sent anywhere: Hookshot is built on your PC from your file and stays there.
-
 ## Who can join
 
 By default anyone who can reach the server's port may join. Three lines in the host's `coop-options.ini` (beside `Host.bat`) narrow that:

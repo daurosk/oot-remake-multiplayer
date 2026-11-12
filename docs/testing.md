@@ -425,6 +425,16 @@ Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at th
 
 Scenarios (checked 2026-11-09 unless said): `walk` (A walks, dashes, turns; B sees it move), `slingshot` (aims and fires a seed), `menu-gear` (equips the Deku Shield in the menu), `sword` (target and swing; no enemy at the save point, so no hit seen yet), `bomb` (not checked: the auto kits' save has no bombs), `buttons` (presses each button with a screenshot after it). The bindings are the game's own (pause menu > System > Basic Controls): ZL target, ZR use item, L/R quick select, MINUS map, PLUS menu (L/R change page), A actions and dash (hold), B put away, X jump, Y attack. Screenshots are the screen under each game's client area: the runner keeps both windows on top, side by side, at real pixels (DPI-aware).
 
+## CI
+
+GitHub Actions runs `Build` in two tiers (`.github/workflows/build.yml`), so work branches do not fill the free runners' queue:
+
+- Fast tier, on a push to any branch: `linux (gcc)` (unit tests, `-Werror`) and `python-tools (ubuntu-latest, 3.12)`. About 2 jobs.
+- Full tier, on a push to `main` or `integrate-*`, on a tag, on a pull request into `main`, and on a manual run: the fast tier plus Windows (MSVC, unit and kit script tests), linux clang, ASan + UBSan, TSan and python-tools on Windows and Python 3.10. To get the full proof for a branch before integration: Actions, Build, Run workflow, pick the branch (or `gh workflow run build.yml --ref <branch>`).
+- A pull request from a branch of this repo into anything but `main` runs nothing (its push already did); a pull request from a fork runs the fast tier.
+- A newer push cancels the branch's older run (not on `main` or tags). Docs-only changes (`docs/`, `*.md`, issue templates) skip `Build`; `Content guard` runs on every push.
+- Caches: ccache on linux, sccache on Windows, and the fetched libraries (ENet, doctest, Monocypher) at their pinned commits. `linux-emulator` (the hook compile) is full tier too, and also runs on pushes to `linux-build` and `linux-2`.
+
 ## Bad connections
 
 Two games on one PC talk over a perfect network: no delay, nothing lost. `tools/netsim/netsim.py` is a small UDP relay that sits between a game and the server and makes the connection bad on purpose, so sync can be watched under lag, loss and stalls without a second PC. Nothing in the game or the server changes; the game's `coop.ini` names the relay's port instead of the server's. It needs Python 3.8 or newer and nothing else.

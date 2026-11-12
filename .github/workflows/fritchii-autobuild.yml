@@ -29,9 +29,11 @@ on:
 permissions:
   contents: read
 
+# Scheduled and manual runs share one group and never cancel each other (they push a branch
+# and open a pull request). A push that changes this file is a dry run: a newer push cancels it.
 concurrency:
-  group: fritchii-autobuild
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || 'bump' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   check:

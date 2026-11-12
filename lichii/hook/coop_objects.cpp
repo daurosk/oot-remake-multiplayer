@@ -1691,6 +1691,11 @@ public:
     std::set<u64> counter_nodes_;  // the platform nodes the ring named, while their actor is here
     CoopCounters::OtherNodes counter_others_;  // nodes of other actors (not Obj_), not read every look
     std::string counter_scene_;
+    u32 ring_count_seen_ = 0;      // the ring's count at the last look
+    u64 ring_starts_ = 0;          // counter starts since the last line
+    u64 ring_overruns_ = 0;        // looks that found more starts than the ring holds
+    u64 counter_said_us_ = 0;
+    int counter_lines_ = 0;
     std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
@@ -1810,7 +1815,7 @@ private:
         // Looping platforms' pause counters first (coop_counters.h): the
         // clock-word path below leaves their actors alone.
         Counters(r, scene, self, server_now_us, send);
-        if (const auto looping = counters_.LoopingOwners(); !looping.empty()) {
+        if (const auto& looping = counters_.CounterOwners(); !looping.empty()) {
             std::erase_if(platform_drivers_, [&](const auto& d) { return looping.contains(d.hash); });
         }
         const auto read = [&r](const CoopPlatforms::PlatformSync::Driver& d) {
@@ -1863,6 +1868,7 @@ private:
                 box.allocating = false;
                 counter_nodes_.clear();
                 counter_others_.Clear();
+                ring_count_seen_ = 0;
             }
             box.main = main_;
             ring = box.ring;
@@ -1894,15 +1900,25 @@ private:
             }
             return mid ? r.Get<u64>(mid + CoopCounters::kOwnerActor).value_or(0) : 0;
         };
+        std::size_t named_new = 0;
         if (ring != 0) {
             std::array<u64, CoopCounters::kRingNodes> entries{};
             for (std::size_t i = 0; i < entries.size(); ++i) {
                 entries[i] = r.Get<u64>(ring + 8 + 8 * i).value_or(0);
             }
+            // Starts since the last look: more than the ring holds and some were lost.
+            const u32 count = r.Get<u32>(ring).value_or(0);
+            const u32 since = count - ring_count_seen_;
+            ring_count_seen_ = count;
+            ring_starts_ += since;
+            if (since > CoopCounters::kRingNodes) {
+                ++ring_overruns_;
+            }
             for (const u64 node : CoopCounters::RingNodes(entries)) {
                 if (counter_nodes_.size() < 512 && !counter_nodes_.contains(node) &&
                     !(counter_others_.Contains(node) && counter_others_.Skip(node, actor_of(node, nullptr)))) {
                     counter_nodes_.insert(node);
+                    ++named_new;
                 }
             }
         }
@@ -1932,6 +1948,25 @@ private:
             s.duration = r.Get<float>(node + CoopCounters::kNodeDuration).value_or(0.0f);
             s.key = CoopCounters::KeyOf(s.owner_hash, s.duration, node, graph);
             seen.push_back(std::move(s));
+        }
+        // What the ring caught, every 10 s while a platform counter is near
+        // (the 2026-11-12 run had no counter line at all; this says why).
+        if (ring != 0 && counter_lines_ < 60 &&
+            (counter_said_us_ == 0 || server_now_us >= counter_said_us_ + 10'000'000)) {
+            counter_said_us_ = server_now_us;
+            ++counter_lines_;
+            std::string platforms;
+            for (std::size_t i = 0; i < seen.size() && i < 6; ++i) {
+                platforms += fmt::format(" {} {:.1f}/{:.1f}", seen[i].owner_name, seen[i].remaining,
+                                         seen[i].duration);
+            }
+            LOG_INFO(Core,
+                     "coop: platforms: pause counters: {} starts in 10 s ({} looks overran the ring), "
+                     "{} new nodes now, {} platform nodes, {} other actors' nodes, {} looping:{}",
+                     ring_starts_, ring_overruns_, named_new, seen.size(), counter_others_.Size(),
+                     counters_.LoopingOwners().size(), platforms);
+            ring_starts_ = 0;
+            ring_overruns_ = 0;
         }
         CoopCounters::CounterSync::Out out;
         counters_.Tick(scene, self, server_now_us, seen, platforms_mode_ == 2, out);

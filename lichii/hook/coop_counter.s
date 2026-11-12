@@ -11,7 +11,7 @@
 // its address is the u64 at main+0x3c46780, 0 until it is made (then this
 // only does the `pacibsp`). Code pages cannot be written by the game.
 //   ring +0x00  u32 count of nodes kept (wraps)
-//        +0x08  u64 node, 64 of them, at (count - 1) % 64 after the add
+//        +0x08  u64 node, 256 of them, at count % 256 after the add
 // x16 and x17 are free at a function's start (AAPCS64 IP0/IP1).
 //
 // Bytes: coop_counter.h (kCave). To rebuild them (LLVM on Windows):
@@ -28,7 +28,7 @@ _start:
     ldr   w17, [x16]
     add   w17, w17, #1
     str   w17, [x16]
-    and   w17, w17, #63
+    and   w17, w17, #255
     add   x16, x16, #8
     str   x0, [x16, w17, uxtw #3]
 1:

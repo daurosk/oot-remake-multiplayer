@@ -3630,3 +3630,31 @@ TEST_CASE("issue 151: a hooked fish waits for its owner: a late list, a pause") 
   REQUIRE(h.asks() == 1);
   CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
 }
+
+TEST_CASE("a gimmick event start goes to the others in the sender's scene only, never kept (deku-dungeon-2)") {
+  ObjectHarness h;
+  h.receive(1, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
+  h.receive(2, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
+  h.receive(3, sample_in("KokiriForest"), kChannelPlayerSamples);
+  h.clear();
+  DungeonEvent e;
+  e.player_number = 4;  // the server writes the sender
+  e.scene = "InsideTheDekuTree";
+  e.name = "InsideTheDekuTree_Gimmick_RoomD_PlatformUp";
+  h.receive(1, e, kChannelSession);
+  const auto got = messages_to<DungeonEvent>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().player_number == 1);
+  CHECK(got.front().name == e.name);
+  CHECK(messages_to<DungeonEvent>(h, 1).empty());
+  CHECK(messages_to<DungeonEvent>(h, 3).empty());
+  // From a scene the sender is not in (late): dropped.
+  h.clear();
+  e.scene = "KokiriForest";
+  h.receive(1, e, kChannelSession);
+  CHECK(messages_to<DungeonEvent>(h, 3).empty());
+  // Not kept: a player entering later gets nothing.
+  h.clear();
+  h.receive(3, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
+  CHECK(messages_to<DungeonEvent>(h, 3).empty());
+}

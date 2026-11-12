@@ -1,0 +1,40 @@
+# deku-water-floor (deku-dungeon-2, #196: the water-level switch syncs, the moving platform does not).
+# Basement (InsideTheDekuTree room G): dive switch Obj_DiveSwitch_A_01 5fc823393e3eed90 at -25.6 74.2
+# 40.6, moving floors Obj_Deku_MoveFloor_A_01 bc566175e558d7f5 at -30.2 75.4 37.0 and _A_02
+# 4d4f51fac8cc023e at -27.9 74.0 36.3 (GroundControlActor_ResidentMoveTo moves their actor place),
+# water gate Obj_InsideTheDekuTree_WaterGate_A_01 at -24.8 75.6 43.0.
+# A is put on the dive switch (a guess: if A's log shows no "InsideTheDekuTree_RoomG_WaterLevel" flag
+# line, press it by hand); B stands at the room's edge and watches the floors.
+# Expect:
+#  - A "bool ... InsideTheDekuTree_RoomG_WaterLevel 0 -> 1" (DEBUG_FLAGS), B the same.
+#  - A "world: bc566175e558d7f5 Obj_Deku_MoveFloor_A_01 moved here: sending" (or _A_02), then
+#    "... at rest: place sent"; B "... moved by another player", "put where another player left it".
+#  - Shots "moving"/"moved"/"late": the floor at the same place in both games, and it stays there in B
+#    (held while A's place is away from where it starts). A floor that only bobs sends nothing.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -25.6 74.6 40.6
+wait 120
+mark placed
+wait 600
+mark moving
+wait 900
+mark moved
+wait 1800
+mark late

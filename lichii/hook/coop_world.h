@@ -116,6 +116,11 @@ bool IsShifter(std::string_view name);
 // A keyed piece taken by another game's key whose fall or break should
 // show here before it is removed: falling floors and web parts.
 bool IsFallTaken(std::string_view name);
+// deku-dungeon-2 (issue 196): a floor the room moves by its actor place (the
+// Deku Tree basement's Obj_Deku_MoveFloor_*): the game that shows it moved
+// from where it started sends it (from up to kShifterReachM), and the others
+// hold it at that place until it is back home.
+bool IsGimmickMover(std::string_view name);
 // A shifter held for good at a place another game gave (its AI would put it
 // back); the rest settle as blocks do.
 bool HoldsPlace(std::string_view name);
@@ -421,6 +426,7 @@ public:
     static constexpr float kMoverReachM = 15.0f; // only an object this near our Link is ours to move
     static constexpr float kShifterReachM = 40.0f; // a shifter (moved by its AI when hit): a room across
     static constexpr float kBlockStartM = 0.05f; // moved this far from where it rested: being moved
+    static constexpr float kMoverAwayM = 0.5f;   // a gimmick mover this far from its start: moved (not bobbing)
     static constexpr float kLooseStartM = 0.15f; // the same for pots and rocks (they settle a little)
     static constexpr std::uint64_t kMoveEveryUs = 50'000;
     static constexpr std::uint64_t kRestUs = 400'000;        // still this long: at rest
@@ -595,6 +601,7 @@ private:
         bool following = false;            // another game's moves are placed
         bool stirred = false;              // moved since the walk before
         bool roller = false;               // IsRoller: rolls on its own
+        bool mover = false;                // IsGimmickMover (home: first_position)
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it

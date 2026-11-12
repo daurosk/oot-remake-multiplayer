@@ -1,0 +1,26 @@
+# deku-water-floor, B: at the basement room's edge, facing the moving floors (see deku-water-floor.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -36.0 79.5 30.0
+wait 120
+mark placed
+toward -30.2 37.0 6
+press ZL 10
+wait 600
+mark moving
+wait 900
+mark moved
+wait 1800
+mark late

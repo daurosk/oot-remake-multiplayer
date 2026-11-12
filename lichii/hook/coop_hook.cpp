@@ -280,6 +280,14 @@ public:
             CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
             CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
+            if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
+                if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
+                    std::lock_guard lock(dungeon_events_mutex_);
+                    if (dungeon_events_in_.size() < 16) {
+                        dungeon_events_in_.push_back(*e);
+                    }
+                }
+            }
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -486,6 +494,52 @@ public:
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
+        }
+        // deku-dungeon-2 (DUNGEON_EVENT, issues 176 and 196): a gimmick event
+        // our game starts goes out at once, and another player's start is
+        // offered like a held flag, so the event runs in both games together
+        // instead of here only after their cutscene ended.
+        if (hold && live_events_) {
+            std::vector<coop::protocol::DungeonEvent> got;
+            {
+                std::lock_guard lock(dungeon_events_mutex_);
+                got.swap(dungeon_events_in_);
+            }
+            for (const auto& e : got) {
+                if (e.scene == hold_scene_ &&
+                    CoopDungeon::HeldIn(coop::host::flag_hash("HavePlayedEvent." + e.name))) {
+                    LOG_INFO(Core, "coop: dungeon: player {} started the event {} in this scene", e.player_number,
+                             e.name);
+                    live_decider_.Started(e.name, e.scene);
+                }
+            }
+            const bool running_now = reading && reading->event_running.value_or(false);
+            if (memory && !hold_scene_.empty()) {
+                // Only the held gimmick events (their result comes no other way);
+                // the ones whose room flags already carry the result (the
+                // basement water, the torch room) would only add a cutscene.
+                std::vector<std::string_view> names;
+                for (const std::string_view e : CoopLiveEvents::EventsIn(hold_scene_)) {
+                    if (CoopDungeon::HeldIn(coop::host::flag_hash("HavePlayedEvent." + std::string(e)))) {
+                        names.push_back(e);
+                    }
+                }
+                const auto found = start_watch_.Frame(running_now, [&] {
+                    return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names);
+                });
+                if (found) {
+                    live_decider_.Ours(*found, hold_scene_);
+                    coop::protocol::DungeonEvent e;
+                    e.scene = hold_scene_;
+                    e.name = *found;
+                    session_->with_client([&](coop::net::Client& c) {
+                        const bool sent = c.send(coop::protocol::Message{e});
+                        LOG_INFO(Core, "coop: dungeon: our game started the event {}: {}", *found,
+                                 sent ? "sent to the others" : "not sent");
+                        return 0;
+                    });
+                }
+            }
         }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
@@ -1302,6 +1356,13 @@ private:
     CoopLiveEvents::Decider live_decider_;
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
+    CoopLiveEvents::StartWatch start_watch_;  // deku-dungeon-2: our own gimmick event starts
+    std::mutex dungeon_events_mutex_;         // DUNGEON_EVENT from the network thread
+    std::vector<coop::protocol::DungeonEvent> dungeon_events_in_;
+    static bool ReadGuest(void* context, std::uint64_t address, void* out, std::size_t size) {
+        return static_cast<EmulatorMemory*>(context)->read(
+            address, std::span<std::uint8_t>(static_cast<std::uint8_t*>(out), size));
+    }
     const bool debug_samples_ = EnvFlag("LICHII_COOP_DEBUG_SAMPLES");  // issue 106
     CoopEvery::Every samples_log_{5 * CoopEvery::kSecondUs};
     std::uint64_t samples_log_at_ = 0;

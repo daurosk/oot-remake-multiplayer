@@ -93,7 +93,7 @@ TEST_CASE("quests: the table is sorted by hash, once, each from NotReady to Comp
         std::set<std::uint32_t> seen;
         for (const char* s : q.steps) CHECK_MESSAGE(seen.insert(host::flag_hash(s)).second, q.name);
     }
-    CHECK(CoopQuests::Quests().size() == 15);
+    CHECK(CoopQuests::Quests().size() == 11);
     CHECK(CoopQuests::Find(0x12345678u) == nullptr);
 }
 
@@ -125,7 +125,7 @@ TEST_CASE("quests: Merge adds every quest, or none when off") {
     CHECK(CoopQuests::Merge(list, true) == 0);  // repeats dropped
 }
 
-TEST_CASE("quests: a quest reads as its step's place; a value not in the list is not read") {
+TEST_CASE("quests: a quest reads as its step's place, a value not in the list is not read") {
     Game g;
     g.step(kGotoCastle, "Step02");
     const auto e = g.store.read(Key(kGotoCastle));
@@ -138,7 +138,7 @@ TEST_CASE("quests: a quest reads as its step's place; a value not in the list is
     CHECK_FALSE(g.store.read(Key(kFairy)).has_value());  // no such Enum in this game
 }
 
-TEST_CASE("quests: a write raises, never lowers; write_exact sets; bad writes are refused") {
+TEST_CASE("quests: a write raises, never lowers, write_exact sets, bad writes are refused") {
     Game g;
     g.step(kGotoCastle, "Step03");
     const auto key = Key(kGotoCastle);
@@ -166,6 +166,49 @@ TEST_CASE("quests: a write raises, never lowers; write_exact sets; bad writes ar
     CHECK(g.at(kGotoCastle, "Ready"));
 }
 
+TEST_CASE("quests: a value not in the list, or unread, is not written over (review must-fix 2)") {
+    Game g;
+    const auto key = Key(kFairy);
+    g.enums[kFairy] = 0xdeadbeefu;
+    CHECK(g.store.write({key, proto::FlagKind::int32, 0}));  // left alone
+    CHECK(g.store.write({key, proto::FlagKind::int32, 3}));
+    CHECK(g.enums[kFairy] == 0xdeadbeefu);
+    CHECK(g.enum_writes == 0);
+    // No such Enum readable: not written blind, the watcher tries again.
+    CHECK_FALSE(g.store.write({Key(kGotoCastle), proto::FlagKind::int32, 3}));
+    CHECK(g.enum_writes == 0);
+    // The host's save load still sets an off-list value.
+    CHECK(g.store.write_exact({key, proto::FlagKind::int32, 2}));
+    CHECK(g.at(kFairy, "GoToTopOfMountain"));
+}
+
+TEST_CASE("quests: Goto_HyruleCastle moves a player on only from Step01 (still in the opening: left alone)") {
+    Game g;
+    const auto key = Key(kGotoCastle);
+    const auto entry = [&](const char* step) {
+        return proto::FlagEntry{key, proto::FlagKind::int32,
+                                static_cast<std::uint32_t>(RankOf(kGotoCastle, step))};
+    };
+    CHECK(Q(kGotoCastle).floor == RankOf(kGotoCastle, "Step01"));
+    for (const char* below : {"NotReady", "Ready"}) {
+        g.step(kGotoCastle, below);
+        CHECK(g.store.write(entry("Complete")));
+        CHECK(g.at(kGotoCastle, below));
+    }
+    CHECK(g.enum_writes == 0);
+    g.step(kGotoCastle, "Step01");
+    CHECK(g.store.write(entry("Complete")));
+    CHECK(g.at(kGotoCastle, "Complete"));
+    // The host's save load is not held by the floor.
+    g.step(kGotoCastle, "NotReady");
+    CHECK(g.store.write_exact(entry("Step03")));
+    CHECK(g.at(kGotoCastle, "Step03"));
+    // Other quests have no floor.
+    g.step(kFairy, "NotReady");
+    CHECK(g.store.write({Key(kFairy), proto::FlagKind::int32, 3}));
+    CHECK(g.at(kFairy, "GoToFountain"));
+}
+
 TEST_CASE("quests: other flags pass to the store below") {
     Game g;
     const auto other = host::FlagKey(host::flag_hash("SomeBool"), std::uint16_t{0});
@@ -182,6 +225,7 @@ TEST_CASE("quests: A's progress reaches B, B's progress reaches A (issue 193 sce
     Game b;
     for (Game* g : {&a, &b}) {
         for (const auto& q : CoopQuests::Quests()) g->step(q.hash, "NotReady");
+        g->step(kGotoCastle, "Step01");
     }
     host::FlagWatcher wa(*list, host::FlagRole::player);
     host::FlagWatcher wb(*list, host::FlagRole::player);
@@ -199,17 +243,17 @@ TEST_CASE("quests: A's progress reaches B, B's progress reaches A (issue 193 sce
         to.frame(to_game.store);
     };
 
-    // A meets the owl: the quest starts.
-    a.step(kGotoCastle, "Step01");
+    // Both are out of the Deku Tree (Goto Step01, its floor). A meets the owl.
+    a.step(kGotoCastle, "Step02");
     relay(wa, a, wb, b);
-    CHECK(b.at(kGotoCastle, "Step01"));
+    CHECK(b.at(kGotoCastle, "Step02"));
     CHECK(wb.frame(b.store).empty());  // no echo back
 
     // B goes on with another quest; A gets it.
     b.step(kFairy, "GoToFountain");
     relay(wb, b, wa, a);
     CHECK(a.at(kFairy, "GoToFountain"));
-    CHECK(a.at(kGotoCastle, "Step01"));
+    CHECK(a.at(kGotoCastle, "Step02"));
 }
 
 TEST_CASE("quests: a guest who joins later gets the group's steps") {
@@ -217,6 +261,7 @@ TEST_CASE("quests: a guest who joins later gets the group's steps") {
     CoopQuests::Merge(list, true);
     Game guest;
     for (const auto& q : CoopQuests::Quests()) guest.step(q.hash, "NotReady");
+    guest.step(kGotoCastle, "Step01");
     host::FlagWatcher wg(*list, host::FlagRole::player);
     wg.frame(guest.store);
     proto::FlagSnapshot snap;

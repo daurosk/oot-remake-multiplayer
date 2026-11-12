@@ -34,6 +34,12 @@ struct Quest {
     std::uint32_t hash;
     const char* name;
     std::vector<const char*> steps;  // NotReady, ..., Complete
+    // A game whose quest is below this step takes no other player's step (a
+    // normal write; the host's save load still sets it). Goto_HyruleCastle:
+    // Step01 (2), set when Link leaves the Deku Tree, so a player still in the
+    // opening is not moved on (time-story's CoopQuest DoorOfTime rule reads
+    // our Goto, reports/review-time-story.md).
+    std::int32_t floor = 0;
 };
 
 // Every shared quest, sorted by hash.
@@ -67,7 +73,9 @@ struct Raised {
 
 // The flag store the watcher sees: a shared quest reads as an Int (its step's
 // place) and is written back as the step's hash, never lowered except by
-// write_exact (the host's save load). Everything else goes to `inner`.
+// write_exact (the host's save load). A write is not taken while our game's
+// value is unread (false: tried again) or not in the list (left alone), or
+// while our quest is below its floor. Everything else goes to `inner`.
 class Store final : public coop::host::FlagStore {
  public:
     using GetEnum = std::function<std::optional<std::uint32_t>(std::uint32_t hash)>;

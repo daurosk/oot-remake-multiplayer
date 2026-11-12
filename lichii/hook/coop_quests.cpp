@@ -30,23 +30,18 @@ namespace {
 //   - DoorOfTime (time travel stays each game's own, docs/flags.md), AllSage
 //     (the Chamber of Sages; its Step01_00_01 to _03 are not in an order),
 //     Defeat_Ganon and EscapeFromCrumblingGanonCastle (the final battle).
+//   - for now, Get_StoneOfFire, SageOfShadow, SageOfSpirit and SageOfWater:
+//     their RawValues look out of order or branched (KokiriForestFire before
+//     KokiriForestIn, GotGlassTruth before GetGlassTruth, Step07 before
+//     Step07_pre00, Step07_1_Safety), and with the max rule a wrong order skips
+//     a step. Back in once checked against their event flows.
+//
+// Also writing quest Enums: CoopQuest (coop_quest.cpp, time-story, issue 173)
+// raises DoorOfTime from our Goto_HyruleCastle; both only raise.
 const std::vector<Quest>& Table() {
     static const std::vector<Quest> kQuests = {
-        {0x1002b466u, "Get_StoneOfFire",
-         {"NotReady", "Ready", "KakarikoVillageNpc", "KakarikoVillageLetter", "DeathMtTrailIn",
-          "DeathMtTrailNpc", "GoronCityIn", "GoronCityDarniaroomNpcTalk01", "GoronCityDarniaroomOpen",
-          "GoronCityDarniaTalk", "DarniaRoomKokiriTalk", "KokiriForestNPCTalk", "KokiriForestFire",
-          "KokiriForestIn", "SariaMelodyGet", "SariaMelodyPlay", "DodongoCavernOpne", "DungeonStart",
-          "BossBattle", "EscapeDungeon", "Complete"}},
-        {0x19189e9du, "SageOfSpirit",
-         {"NotReady", "Ready", "Step01", "Step02", "Step03", "Step04", "Step05", "Step05_01",
-          "Step05_02", "Step05_03", "Step06", "Step07", "Step07_pre00", "Step07_00", "Step08",
-          "Step08_01", "Step09", "Step09_01", "Step10", "Complete"}},
         {0x3372689bu, "Meet_DekuTree", {"NotReady", "Ready", "Step01", "Step02", "Step03", "Complete"}},
         {0x44063c4eu, "SubEvent_GetMelodySun", {"NotReady", "Ready", "GetMelodySun", "Complete"}},
-        {0x560a64afu, "SageOfWater",
-         {"NotReady", "Ready", "Step00", "Step01", "Step03", "Step04", "Step05", "Step06", "Step07",
-          "Step07_00", "Step07_1", "Step07_1_Safety", "Step07_2", "Step08", "Complete"}},
         {0x5bca02a6u, "Get_StoneOfWater",
          {"NotReady", "Ready", "Step01", "Step02", "Step03", "Step03_Impa", "Step04", "Step05",
           "Step05_01", "Step06", "Step07", "Step08", "Step09", "Step10", "Step11", "Step12", "Step13",
@@ -58,9 +53,6 @@ const std::vector<Quest>& Table() {
         {0x7a5b9537u, "SubEvent_GetStormSong",
          {"NotReady", "Ready", "ReadyForGetStormSong", "step02", "step03", "BeforeBossRoom", "step04",
           "step05", "Complete"}},
-        {0x7a91dbd5u, "SageOfShadow",
-         {"NotReady", "Ready", "GoToDungeon", "GotGlassTruth", "GetGlassTruth", "MeetBoss", "BattleOnShip",
-          "BeforeBossRoom", "DefeatBoss", "GoToWarpPoint", "Complete"}},
         {0x7d776b61u, "Get_StoneOfForest",
          {"NotReady", "Ready", "GoInside", "MeetBoss", "GoToBossRoom", "DefeatBoss", "GoToWarpPoint",
           "Complete"}},
@@ -72,7 +64,8 @@ const std::vector<Quest>& Table() {
           "Step06_1_1", "Step06_1_2", "Step06_2", "Step07", "Step08", "Step09", "Complete"}},
         {0xdb89c1a9u, "Goto_HyruleCastle",
          {"NotReady", "Ready", "Step01", "Step02", "Step02_01", "Step03", "Step03_01", "Step03_02",
-          "Step04", "Complete"}},
+          "Step04", "Complete"}
+         2},  // floor: Step01 (Dm_SY_BancChange_EscapeDungeon sets it as Link leaves the Deku Tree)
         {0xeea87aecu, "SageOfFire",
          {"NotReady", "Ready", "StopDaruniaJr", "TalkDaruniaJr", "MoveStatue", "EnterCrater", "MeetSheik",
           "EnterTemple", "MeetDarunia", "GetBossKey", "MeetBoss", "DefeatBoss", "GoToWarpPoint",
@@ -191,8 +184,22 @@ bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool
     }
     const auto now_value = get_(quest.hash);
     const auto now = now_value ? Rank(quest, *now_value) : std::nullopt;
-    if (now && !exact && *now >= want) {
-        return true;  // ours is as far or further: kept
+    if (!exact) {
+        if (!now_value) {
+            return false;  // unread (memory, GameData not up): not written blind
+        }
+        if (!now) {
+            return true;  // a value not in the list: left alone, like read()
+        }
+        if (*now >= want) {
+            return true;  // ours is as far or further: kept
+        }
+        if (*now < quest.floor) {
+            // Before the quest's floor (Goto_HyruleCastle before Step01: still
+            // in the opening): ours, left alone. Once our game reaches the
+            // floor and sends it, the host's higher value comes back.
+            return true;
+        }
     }
     if (now && *now == want) {
         return true;

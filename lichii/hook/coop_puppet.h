@@ -610,4 +610,11 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
 // animation from PLAYER_SAMPLE field 7 and gear from PLAYER_EQUIP.
 void OnEvent(const coop::net::Event& event);
 
+// The colour another player chose (their PLAYER_EQUIP), unset when they chose
+// none or are not known; and ours (SetOwnColor, from the settings). For the
+// co-op window's names (coop_window.cpp). Any thread.
+std::optional<std::uint32_t> PlayerColor(std::uint8_t number);
+void SetOwnColor(std::optional<std::uint32_t> rgb);
+std::optional<std::uint32_t> OwnColor();
+
 } // namespace CoopPuppet

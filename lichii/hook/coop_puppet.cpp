@@ -1530,9 +1530,25 @@ std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
 std::array<Gear, 5> g_gear;  // the same; guarded
 std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
 std::array<std::optional<std::uint32_t>, 5> g_color;               // the same; guarded
+std::optional<std::uint32_t> g_own_color;                          // ours; guarded
 std::array<CoopPuppetSound::Wanted, 5> g_ocarina;  // the same; guarded (issue 152)
 
 } // namespace
+
+std::optional<std::uint32_t> PlayerColor(std::uint8_t number) {
+    std::lock_guard lock(g_anim_mutex);
+    return number < g_color.size() ? g_color[number] : std::nullopt;
+}
+
+void SetOwnColor(std::optional<std::uint32_t> rgb) {
+    std::lock_guard lock(g_anim_mutex);
+    g_own_color = rgb;
+}
+
+std::optional<std::uint32_t> OwnColor() {
+    std::lock_guard lock(g_anim_mutex);
+    return g_own_color;
+}
 
 void OnEvent(const coop::net::Event& event) {
     if (!g_configured) {

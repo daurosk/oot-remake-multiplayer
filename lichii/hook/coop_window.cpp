@@ -33,7 +33,9 @@
 #include "coop_hud_hearts.h"
 #include "coop_hud_layout.h"
 #if __has_include("coop_colors.h")
+#include "coop/protocol/messages.hpp"  // slot_color
 #include "coop_colors.h"  // each player's colour (branch puppet-colors)
+#include "coop_puppet.h"  // PlayerColor, OwnColor
 #define COOP_WINDOW_HAS_COLORS 1
 #endif
 
@@ -161,7 +163,10 @@ void DrawGameText(QPainter& p, const QPointF& at, const QString& text, const QFo
 QColor PlayerColour(std::uint8_t number, std::uint8_t self) {
 #ifdef COOP_WINDOW_HAS_COLORS
     if (number != 0) {
-        const std::uint32_t rgb = CoopColors::ForPlayer(number, self);
+        // Their PLAYER_EQUIP colour (ours from the settings), else the slot's.
+        const std::uint32_t rgb =
+            (number == self ? CoopPuppet::OwnColor() : CoopPuppet::PlayerColor(number))
+                .value_or(coop::protocol::slot_color(number));
         const auto lift = [](std::uint32_t c) { return static_cast<int>(c + (255 - c) * 35 / 100); };
         return QColor(lift((rgb >> 16) & 0xFF), lift((rgb >> 8) & 0xFF), lift(rgb & 0xFF));
     }

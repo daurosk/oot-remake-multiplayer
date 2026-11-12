@@ -28,10 +28,10 @@ Code copied in from other projects gets an entry here, with its copyright line a
 | ENet 1.3.18 | `server\coop_server.exe`, `emulator\lichii.exe`, `hookshot\hookshot_coop.dll` | MIT | `ENet-MIT.txt` |
 | fmt 12.1.0 (Victor Zverovich and contributors) (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` | MIT | `fmt-MIT.txt` |
 | Microsoft Visual C++ runtime | `emulator\*140*.dll`, `server\*140*.dll`, `hookshot\*140*.dll` | Microsoft Visual C++ redistributable licence | (redistributable files) |
-| Monocypher 4.0.2 | `server\coop_server.exe`, `emulator\lichii.exe` | CC0-1.0 (used under it; also offered under BSD-2-Clause) | none needed under CC0-1.0; source at https://github.com/LoupVaillant/Monocypher |
+| Monocypher 4.0.2 | `server\coop_server.exe`, `emulator\lichii.exe`, `hookshot\hookshot_coop.dll` | CC0-1.0 (used under it; also offered under BSD-2-Clause) | none needed under CC0-1.0; source at https://github.com/LoupVaillant/Monocypher |
 | Python (only in kits made with `-Python`) | `python\` | PSF License | `python\LICENSE.txt` |
 | python-zstandard (only with `-Python`) | `python\Lib\site-packages\zstandard\` | BSD-3-Clause | its `zstandard-*.dist-info` folder |
-| This repository's Hookshot module and patches (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` (with ENet and fmt built in), `hookshot\patches\`, `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat` | GPL-3.0; the patches change, and hold a few context lines of, Hookshot (NotRexed and contributors, GPL-3.0, https://github.com/NotRexed/Hookshot) | `oot-remake-multiplayer-GPL-3.0.txt` |
+| This repository's Hookshot module and patches (only in kits with the Hookshot part) | `hookshot\hookshot_coop.dll` (with ENet, Monocypher and fmt built in), `hookshot\patches\`, `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat` | GPL-3.0; the patches change, and hold a few context lines of, Hookshot (NotRexed and contributors, GPL-3.0, https://github.com/NotRexed/Hookshot) | `oot-remake-multiplayer-GPL-3.0.txt` |
 
 ## Downloaded on the player's PC by Build-Hookshot-Coop (not in the kit)
 

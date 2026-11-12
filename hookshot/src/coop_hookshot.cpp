@@ -205,7 +205,8 @@ namespace CoopHookshot {
 namespace {
 
 // F6 and F7 (CoopDraw::Keys), only while one of this process's windows has
-// the keyboard. Windows only: on Linux the list and panel stay hidden.
+// the keyboard. On Linux through the table's key_down (the SDL window's
+// keys, none while it does not have the keyboard).
 bool KeyDown(int vk) {
 #ifdef _WIN32
     DWORD pid = 0;
@@ -215,8 +216,7 @@ bool KeyDown(int vk) {
     }
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #else
-    (void)vk;
-    return false;
+    return HasKeyDown(g_api) && g_api->key_down(static_cast<std::uint32_t>(vk)) != 0;
 #endif
 }
 
@@ -301,12 +301,12 @@ bool AsyncDown(int vk) {
 #ifdef _WIN32
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #else
-    (void)vk;
-    return false;
+    return HasKeyDown(g_api) && g_api->key_down(static_cast<std::uint32_t>(vk)) != 0;
 #endif
 }
 
 // A WM_CHAR byte of the ANSI window as Unicode; 0 while a lead byte waits.
+// On Linux the window hands code points already (SDL's typed text).
 std::uint32_t FromCodePage(unsigned byte) {
 #ifdef _WIN32
     char b[2];
@@ -325,7 +325,7 @@ std::uint32_t FromCodePage(unsigned byte) {
     }
     return w[0];
 #else
-    return byte < 0x80 ? byte : 0xFFFD;
+    return byte <= 0x10FFFF && (byte < 0xD800 || byte > 0xDFFF) ? byte : 0xFFFD;
 #endif
 }
 

@@ -33,6 +33,13 @@ void Stop();
 // built from an older patch gives this much, and co-op still runs on it.
 inline constexpr std::size_t kFirstApiSize = offsetof(HosCoopApi, pad_buttons);
 
+// The table has key_down (keys held, read on Linux: F6, F7 and the closing
+// keys' release; Windows asks its own GetAsyncKeyState).
+inline bool HasKeyDown(const HosCoopApi* api) {
+    return api != nullptr && api->size >= offsetof(HosCoopApi, key_down) + sizeof(api->key_down) &&
+           api->key_down != nullptr;
+}
+
 // The table has pad_buttons (player 1's buttons word, Ocarina notes sent).
 inline bool HasPadButtons(const HosCoopApi* api) {
     return api != nullptr &&

@@ -1,4 +1,4 @@
-From 5ea4ed5d6c965630aa713b540b32b026438c84c3 Mon Sep 17 00:00:00 2001
+From 7afe94bbe1473be5ff9b5d1ad3b197a14e752e78 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -15,19 +15,28 @@ the menu's Dear ImGui frame (hos_coop_draw.h). host/display.c offers key
 presses and characters to the module first (its chat box) and host/nn_hid.c
 reads no keys while the module has the keyboard. From oot-remake-multiplayer
 (GPL-3.0), docs/hookshot.md.
+
+host/display.c also offers the mouse to the module first (its cheats panel),
+and host/posix/display_sdl.c does all of it on Linux: SDL's key presses as
+virtual-key codes, its typed text as code points (host/hos_sdl.c reads SDL's
+text events) and the mouse; the module reads held keys through the table's
+key_down.
 ---
- gpu/vk/hos_coop_draw.h |  36 ++++++++
- gpu/vk/vk_coop.cpp     | 137 ++++++++++++++++++++++++++++
- gpu/vk/vk_coop.h       |  13 +++
- gpu/vk/vk_menu.cpp     |   9 +-
- host/coop_bridge.c     | 201 +++++++++++++++++++++++++++++++++++++++++
- host/display.c         |  28 +++++-
- host/hos_coop_api.h    |  71 +++++++++++++++
- host/nn_hid.c          |   8 +-
- host/nvn_native.c      |   2 +
- nx2/coop_hooks.py      |  61 +++++++++++++
- nx2/lift.py            |   2 +
- 11 files changed, 563 insertions(+), 5 deletions(-)
+ gpu/vk/hos_coop_draw.h   |  36 +++++++
+ gpu/vk/vk_coop.cpp       | 137 ++++++++++++++++++++++++++
+ gpu/vk/vk_coop.h         |  13 +++
+ gpu/vk/vk_menu.cpp       |   9 +-
+ host/coop_bridge.c       | 204 +++++++++++++++++++++++++++++++++++++++
+ host/display.c           |  28 +++++-
+ host/hos_coop_api.h      |  76 +++++++++++++++
+ host/hos_sdl.c           |  18 ++++
+ host/hos_sdl.h           |   5 +-
+ host/nn_hid.c            |   8 +-
+ host/nvn_native.c        |   2 +
+ host/posix/display_sdl.c |  60 +++++++++++-
+ nx2/coop_hooks.py        |  61 ++++++++++++
+ nx2/lift.py              |   2 +
+ 14 files changed, 652 insertions(+), 7 deletions(-)
  create mode 100644 gpu/vk/hos_coop_draw.h
  create mode 100644 gpu/vk/vk_coop.cpp
  create mode 100644 gpu/vk/vk_coop.h
@@ -284,10 +293,10 @@ index 872c3f6b..f0a11d39 100644
      ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
 new file mode 100644
-index 00000000..bbf52798
+index 00000000..63de418a
 --- /dev/null
 +++ b/host/coop_bridge.c
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,204 @@
 +/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md): the bridge between the game and the co-op module.
 +
 +   nx2/coop_hooks.py puts two calls into the lifted game: hos_coop_frame at the frame function's two calls in moduleCalc_,
@@ -372,6 +381,8 @@ index 00000000..bbf52798
 +static hos_coop_mouse_fn coop_mouse;   /* (optional: the cheats panel's clicks, display.c) */
 +extern volatile uint64_t hos_coop_pad;   /* nn_hid.c: the word npad_states gave the game */
 +static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED); }
++/* (a key held now, by virtual-key code: Windows' own, or the SDL window's keys on Linux, host/posix/display_sdl.c) */
++static int bridge_key_down(uint32_t vk) { return vk < 256 && (GetAsyncKeyState((int)vk) & 0x8000) != 0; }
 +
 +static void at_exit(void) {
 +    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_stop) coop_stop();
@@ -444,6 +455,7 @@ index 00000000..bbf52798
 +    api.game_dir = game_dir;
 +    api.read = bridge_read, api.write = bridge_write, api.cas32 = bridge_cas32, api.call = bridge_call, api.log = bridge_log;
 +    api.pad_buttons = bridge_pad_buttons;
++    api.key_down = bridge_key_down;
 +    if (!start(&api)) {
 +        hos_log("coop: the module stays off");
 +        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
@@ -554,10 +566,10 @@ index 33910607..8f58c150 100644
          if (wp == VK_ESCAPE) {   /* (it may open the Insert menu too: a capture let go here comes back) */
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
 new file mode 100644
-index 00000000..bb5c6984
+index 00000000..9e2075c4
 --- /dev/null
 +++ b/host/hos_coop_api.h
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,76 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   The co-op module's interface to Hookshot (oot-remake-multiplayer, docs/hookshot.md).
 +
@@ -607,6 +619,10 @@ index 00000000..bb5c6984
 +       (Switch NpadButton bits, as nn::hid::GetNpadStates hands them, note keys included while the game waits for a
 +       note), any thread. */
 +    uint64_t (*pad_buttons)(void);
++    /* Added with Linux's keys (check size covers it): 1 while the key (a Windows virtual-key code) is held in the
++       game's window, any thread: GetAsyncKeyState's on Windows, the SDL window's keys on Linux (as nn_hid.c reads
++       them: nothing while the window does not have the keyboard). */
++    int (*key_down)(uint32_t vk);
 +} HosCoopApi;
 +
 +/* The module's exports (extern "C"). */
@@ -617,7 +633,8 @@ index 00000000..bb5c6984
 +typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
 +/* Typing, added after the first version (optional exports; an older module has none): Hookshot's window (display.c)
 +   offers each key press (virtual-key code, repeat 1 for an auto-repeat) and each character (WM_CHAR of the ANSI window:
-+   a byte of the active code page) to the module first; 1 = taken, Hookshot does nothing more with it. While
++   a byte of the active code page; on Linux, host/posix/display_sdl.c: SDL's typed text as Unicode code points) to the
++   module first; 1 = taken, Hookshot does nothing more with it. While
 +   hos_coop_keys_taken says 1, the game reads no keys or mouse buttons (nn_hid.c key), as while the Insert menu is open. */
 +typedef int (*hos_coop_key_fn)(uint32_t vk, int repeat);   /* the window's thread */
 +typedef int (*hos_coop_char_fn)(uint32_t ch);              /* the window's thread */
@@ -629,6 +646,87 @@ index 00000000..bb5c6984
 +typedef int (*hos_coop_mouse_fn)(float fx, float fy, int event);   /* the window's thread */
 +
 +#endif
+diff --git a/host/hos_sdl.c b/host/hos_sdl.c
+index 4a6296a7..152570e9 100644
+--- a/host/hos_sdl.c
++++ b/host/hos_sdl.c
+@@ -24,6 +24,7 @@ static struct {
+     void *PadHasSensor, *PadSensorEnable, *PadSensorData;   /* (motion: optional, NULL in an SDL without them) */
+     void *PadVendor, *PadSteamHandle, *SetHintPriority;   /* (Steam's stand-in pads: optional, host/steam_pads.h) */
+     void *GetGamepads, *GetGamepadID, *Free;   /* (SDL3) */
++    void *StartTextInput;   /* (optional: co-op's chat box, hos_sdl_text_input) */
+     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2) */
+ } f;
+ #define CALL(type, fn) ((type)f.fn)
+@@ -77,6 +78,7 @@ static int get_all(HMODULE m, int three) {
+     *(FARPROC *)&f.PadVendor = GetProcAddress(m, three ? "SDL_GetGamepadVendor" : "SDL_GameControllerGetVendor");
+     *(FARPROC *)&f.PadSteamHandle = GetProcAddress(m, three ? "SDL_GetGamepadSteamHandle" : "SDL_GameControllerGetSteamHandle");
+     *(FARPROC *)&f.SetHintPriority = GetProcAddress(m, "SDL_SetHintWithPriority");
++    *(FARPROC *)&f.StartTextInput = GetProcAddress(m, "SDL_StartTextInput");
+     if (three) {
+         GET(SetWindowPosition, "SDL_SetWindowPosition");
+         GET(GetPrimaryDisplay, "SDL_GetPrimaryDisplay");
+@@ -236,6 +238,11 @@ void hos_sdl_mouse_position(float *x, float *y) {
+         *x = (float)ix, *y = (float)iy;
+     }
+ }
++void hos_sdl_text_input(void *window) {
++    if (!f.StartTextInput) return;
++    if (version == 3) CALL(_Bool (*)(void *), StartTextInput)(window);
++    else CALL(void (*)(void), StartTextInput)();
++}
+ void hos_sdl_window_size(void *window, int *width, int *height) {
+     if (version == 3) CALL(_Bool (*)(void *, int *, int *), GetWindowSize)(window, width, height);
+     else CALL(void (*)(void *, int *, int *), GetWindowSize)(window, width, height);
+@@ -279,6 +286,13 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
+             if (dir == 1) e->wheel = -e->wheel;
+             break;
+         }
++        case 0x303: {   /* (SDL_TextInputEvent: the text's pointer at 24, SDL's until the next poll: copied) */
++            const char *t;
++            memcpy(&t, raw + 24, sizeof t);
++            e->type = HOS_SDL_EV_TEXT;
++            if (t) snprintf(e->text, sizeof e->text, "%s", t);
++            break;
++        }
+         }
+         return;
+     }
+@@ -312,6 +326,10 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
+         e->wheel = (float)(dir == 1 ? -i[0] : i[0]);
+         break;
+     }
++    case 0x303:   /* (SDL_TextInputEvent: the text at 12, 32 bytes) */
++        e->type = HOS_SDL_EV_TEXT;
++        memcpy(e->text, raw + 12, sizeof e->text - 1);
++        break;
+     }
+ }
+ int hos_sdl_wait_event(HosSdlEvent *e, int timeout_ms) {
+diff --git a/host/hos_sdl.h b/host/hos_sdl.h
+index a04c061a..df7deee0 100644
+--- a/host/hos_sdl.h
++++ b/host/hos_sdl.h
+@@ -35,7 +35,8 @@ void hos_sdl_icon(void *window, const char *png);   /* (SDL 3.4's PNG loader: no
+ enum {
+     HOS_SDL_EV_OTHER, HOS_SDL_EV_QUIT, HOS_SDL_EV_CLOSE, HOS_SDL_EV_RESIZED, HOS_SDL_EV_FOCUS_GAINED,
+     HOS_SDL_EV_FOCUS_LOST, HOS_SDL_EV_MOUSE_LEAVE, HOS_SDL_EV_KEY_DOWN, HOS_SDL_EV_MOUSE_DOWN, HOS_SDL_EV_MOUSE_MOTION,
+-    HOS_SDL_EV_MOUSE_UP, HOS_SDL_EV_MOUSE_WHEEL, HOS_SDL_EV_MOUSE_ENTER
++    HOS_SDL_EV_MOUSE_UP, HOS_SDL_EV_MOUSE_WHEEL, HOS_SDL_EV_MOUSE_ENTER,
++    HOS_SDL_EV_TEXT   /* (oot-remake-multiplayer: typed text, for co-op's chat box) */
+ };
+ typedef struct {
+     int type;
+@@ -45,7 +46,9 @@ typedef struct {
+     float x, y;             /* (mouse motion, down and up: the cursor in the window, hos_sdl_window_size's units) */
+     int button;             /* (mouse down and up: 1 left, 2 middle, 3 right, as SDL numbers them) */
+     float wheel;            /* (mouse wheel: notches, up or away from the player positive) */
++    char text[32];          /* (text: UTF-8, NUL-terminated) */
+ } HosSdlEvent;
++void hos_sdl_text_input(void *window);   /* text events on (SDL3 starts with them off; SDL2 has them on) */
+ int hos_sdl_wait_event(HosSdlEvent *e, int timeout_ms);   /* 1 when there was one */
+ int hos_sdl_poll_event(HosSdlEvent *e);
+ 
 diff --git a/host/nn_hid.c b/host/nn_hid.c
 index 43e312d2..7f34e061 100644
 --- a/host/nn_hid.c
@@ -679,6 +777,114 @@ index a125386f..24cc4e15 100644
  }
  
  /* ---- NVN2 (mkw-recomp): what the Switch 2's NVN adds, as MKW uses it ---- */
+diff --git a/host/posix/display_sdl.c b/host/posix/display_sdl.c
+index f6da1cc2..a0e8949e 100644
+--- a/host/posix/display_sdl.c
++++ b/host/posix/display_sdl.c
+@@ -81,6 +81,43 @@ static void pointer_update(uint32_t pressed, int wheel) {
+ static uint32_t sdl_button_bit(int b) { return b == 1 ? HOS_MOUSE_LEFT : b == 3 ? HOS_MOUSE_RIGHT : b == 2 ? HOS_MOUSE_MIDDLE : 0; }
+ 
+ /* ---- keys: SDL's scancodes (USB HID usages) as Windows' virtual keys ---- */
++/* (oot-remake-multiplayer) co-op's chat box, cheats panel and their mouse first (host/coop_bridge.c), as host/display.c
++   does on Windows: a key press by virtual-key code, typed text as code points, the cursor as a fraction of the window */
++int hos_coop_key(unsigned vk, int repeat);
++int hos_coop_char(unsigned ch);
++int hos_coop_keys_taken(void);
++int hos_coop_mouse(float fx, float fy, int event);
++static unsigned coop_vk(int sc) {   /* (the keys the chat box and the panel use, as keys_update maps them) */
++    if (sc >= 4 && sc <= 29) return 'A' + (unsigned)(sc - 4);
++    if (sc >= 30 && sc <= 38) return '1' + (unsigned)(sc - 30);
++    if (sc >= 58 && sc <= 69) return VK_F1 + (unsigned)(sc - 58);
++    switch (sc) {
++    case 39: return '0';
++    case 40: case 88: return VK_RETURN;
++    case 41: return VK_ESCAPE;
++    case 42: return VK_BACK;
++    case 43: return VK_TAB;
++    case 44: return VK_SPACE;
++    case 74: return VK_HOME;
++    case 76: return VK_DELETE;
++    case 77: return VK_END;
++    case 79: return VK_RIGHT;
++    case 80: return VK_LEFT;
++    case 81: return VK_DOWN;
++    case 82: return VK_UP;
++    }
++    return 0;
++}
++static void coop_text(const char *s) {   /* (UTF-8 to code points) */
++    for (const unsigned char *t = (const unsigned char *)s; *t;) {
++        unsigned cp = *t++;
++        int more = cp >= 0xF0 ? 3 : cp >= 0xE0 ? 2 : cp >= 0xC0 ? 1 : 0;
++        cp &= more == 3 ? 0x07 : more == 2 ? 0x0F : more == 1 ? 0x1F : 0x7F;
++        for (; more > 0 && (*t & 0xC0) == 0x80; more--) cp = cp << 6 | (*t++ & 0x3F);
++        hos_coop_char(more ? 0xFFFD : cp);
++    }
++}
++
+ static void keys_update(void) {
+     int n = 0;
+     const uint8_t *k = hos_sdl_keys(&n);
+@@ -114,6 +151,12 @@ static void keys_update(void) {
+ }
+ 
+ /* ---- the window ---- */
++static int coop_mouse(float x, float y, int event) {   /* (oot-remake-multiplayer: co-op's panel; 1 = taken) */
++    int w = 0, h = 0;
++    if (menu_open || !window) return 0;
++    hos_sdl_window_size(window, &w, &h);
++    return w > 0 && h > 0 ? hos_coop_mouse(x / (float)w, y / (float)h, event) : 0;
++}
+ static volatile int renderer;   /* the renderer presents into the window */
+ static HANDLE renderer_up;   /* (set once rx_start has returned, ready or not: hos_renderer_wait) */
+ static int fullscreen;
+@@ -280,6 +323,7 @@ void hos_display_loop(void) {
+         ExitProcess(1);
+     }
+     vk_window.window = window;
++    hos_sdl_text_input(window);   /* (oot-remake-multiplayer: co-op's chat box gets typed text) */
+     hos_posix_window[0] = 1;
+     {   /* the window's icon: hookshot.png beside the game (make_game.py puts it there), for X11 and the compositors that
+            take one from the window; the others find it through the menu entry */
+@@ -335,6 +379,11 @@ void hos_display_loop(void) {
+                     ptr_in = 1;
+                     break;
+                 case HOS_SDL_EV_KEY_DOWN: {
++                    const unsigned cvk = coop_vk(e.scancode);   /* (oot-remake-multiplayer: co-op's keys first) */
++                    if (cvk && hos_coop_key(cvk, e.repeat)) {
++                        if (mouse_captured && hos_coop_keys_taken()) mouse_capture(0);   /* (the cursor back, for clicks) */
++                        break;
++                    }
+                     const int scancode = e.scancode, mod = e.mod;
+                     if (e.scancode == 41) {   /* Esc (it may open the Insert menu too: the capture comes back) */
+                         if (!menu_open && mouse_captured) esc_had_capture = 1;
+@@ -347,6 +396,7 @@ void hos_display_loop(void) {
+                     ptr_in = 1;
+                     ptr_held |= sdl_button_bit(e.button);
+                     if (menu_open) pointer_publish_at(e.x, e.y, sdl_button_bit(e.button), 0);   /* (the menu's click) */
++                    else if (e.button == 1 && !mouse_captured && coop_mouse(e.x, e.y, 1)) {}   /* (taken by co-op's panel) */
+                     else if (renderer && !mouse_captured) mouse_capture(1);
+                     break;
+                 case HOS_SDL_EV_MOUSE_UP:
+@@ -354,9 +404,17 @@ void hos_display_loop(void) {
+                     break;
+                 case HOS_SDL_EV_MOUSE_WHEEL:
+                     if (menu_open) pointer_update(0, (int)(e.wheel * 120));
++                    else if (!mouse_captured && e.wheel != 0) {   /* (oot-remake-multiplayer: co-op's panel) */
++                        float x = 0, y = 0;
++                        hos_sdl_mouse_position(&x, &y);
++                        coop_mouse(x, y, e.wheel > 0 ? 2 : 3);
++                    }
++                    break;
++                case HOS_SDL_EV_TEXT:   /* (oot-remake-multiplayer: typed text for co-op's chat box and panel) */
++                    coop_text(e.text);
+                     break;
+                 case HOS_SDL_EV_MOUSE_MOTION:
+-                    if (!mouse_captured) ptr_in = 1;
++                    if (!mouse_captured) ptr_in = 1, coop_mouse(e.x, e.y, 0);   /* (co-op: the row under the cursor) */
+                     if (mouse_captured) {   /* (SDL3's motion comes in fractions of a pixel: the remainders kept for the next) */
+                         static float rx, ry;
+                         rx += e.dx, ry += e.dy;
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 new file mode 100644
 index 00000000..a3aa4a38

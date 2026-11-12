@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <set>
 
 #include <enet/enet.h>
 
@@ -56,10 +57,19 @@ class EnetServer {
   // (coop/net/enet_waiting.hpp): above 0 means the line loses packets.
   std::uint64_t mended_bytes() const { return mended_bytes_; }
 
+  // Players sent away to connect again with small datagrams because their
+  // path lost full ones (coop/net/enet_path.hpp, issue 143), and the
+  // addresses remembered for that.
+  std::uint64_t small_path_drops() const { return small_path_drops_; }
+  bool small_path(enet_uint32 host) const { return small_hosts_.count(host) != 0; }
+
  private:
   std::uint64_t now_us() const;
   void handle(const ENetEvent& event);
   void apply_actions();
+  // Ends `peer`'s connection with kDisconnectSmallDatagrams (no DISCONNECT
+  // event follows) and tells the session; `why` goes into its drop line.
+  void send_small(ENetPeer* peer, const std::string& why);
 
   ServerOptions options_;
   Session session_;
@@ -75,6 +85,8 @@ class EnetServer {
   std::map<ConnectionId, LinkSeen> links_;
   ConnectionId next_id_ = 1;
   std::uint64_t mended_bytes_ = 0;
+  std::uint64_t small_path_drops_ = 0;
+  std::set<enet_uint32> small_hosts_;  // ENet's form of the address
   std::chrono::steady_clock::time_point start_;
 };
 

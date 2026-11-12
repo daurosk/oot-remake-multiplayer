@@ -6,7 +6,9 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "coop/net/enet_path.hpp"
 #include "coop/net/enet_waiting.hpp"
 
 namespace coop::server {
@@ -84,19 +86,52 @@ void EnetServer::service(std::uint32_t timeout_ms) {
   apply_actions();
   // ENet forgets to take a player's lost fragments off its count; past
   // kMaxWaitingBytes it would refuse (and never acknowledge) all they send.
+  std::vector<ENetPeer*> lost_full;
   for (auto& [id, peer] : peers_) {
+    if (net::full_datagrams_lost(*peer, host_->serviceTime)) lost_full.push_back(peer);
     mended_bytes_ += net::mend_waiting_data(*peer);
     links_[id] = LinkSeen{peer->roundTripTime,
                           static_cast<enet_uint32>(static_cast<std::uint64_t>(peer->packetLoss) * 100 /
                                                    ENET_PEER_PACKET_LOSS_SCALE),
                           peer->totalWaitingData};
   }
+  for (ENetPeer* peer : lost_full) {
+    small_hosts_.insert(peer->address.host);
+    send_small(peer, "its path lost our " + std::to_string(peer->mtu) +
+                         "-byte datagrams while small ones got through; told it to connect again with " +
+                         std::to_string(net::kSmallDatagramBytes) + "-byte ones");
+  }
   enet_host_flush(host_);
+}
+
+void EnetServer::send_small(ENetPeer* peer, const std::string& why) {
+  const ConnectionId id = id_of(peer);
+  ++small_path_drops_;
+  std::string link = why;
+  if (auto seen = links_.find(id); seen != links_.end()) {
+    link += "; round trip " + std::to_string(seen->second.round_trip_ms) + " ms, loss " +
+            std::to_string(seen->second.loss_percent) + "%";
+    links_.erase(seen);
+  }
+  peers_.erase(id);
+  peer->data = nullptr;
+  enet_peer_disconnect_now(peer, net::kDisconnectSmallDatagrams);
+  session_.disconnected(id, now_us(), link);
+  apply_actions();
 }
 
 void EnetServer::handle(const ENetEvent& event) {
   switch (event.type) {
     case ENET_EVENT_TYPE_CONNECT: {
+      if (small_hosts_.count(event.peer->address.host) != 0 &&
+          event.peer->mtu > net::kSmallDatagramBytes) {
+        // Its path lost full datagrams before and it missed our note (or
+        // restarted): tell it again before it costs a 10 s timeout.
+        ++small_path_drops_;
+        event.peer->data = nullptr;
+        enet_peer_disconnect_now(event.peer, net::kDisconnectSmallDatagrams);
+        break;
+      }
       ConnectionId id = next_id_++;
       if (!session_.connected(id, now_us(), event.peer->address.host)) {
         // Too many connections from this address without HELLO: drop it at

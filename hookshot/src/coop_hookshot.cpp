@@ -34,6 +34,7 @@
 #include "coop_draw.h"
 #include "coop_game_build.h"
 #include "coop_hold.h"
+#include "coop_counters.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
@@ -45,6 +46,7 @@
 #include "coop_svc.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
+#include "hos_coop_world.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -594,6 +596,27 @@ void Frame(void* ctx, int site) {
     }
 }
 
+// The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
+int World(std::uint32_t event, std::uint64_t a, std::uint64_t /*b*/) {
+    if (!g_on) {
+        return 0;
+    }
+    switch (event) {
+    case HOS_COOP_WORLD_HELLO:
+        return 1;
+    case HOS_COOP_WORLD_COUNTER_START: {  // (coop_counters.h: the Objects walk reads the ring)
+        CoopCounters::TheHostRing().Push(a);
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: world hooks: first pause counter start from hookshot.exe (node {:#x})", a);
+        }
+        return 1;
+    }
+    default:
+        return 0;  // (a newer Hookshot's event this module does not know)
+    }
+}
+
 // coop_hold.s: a held component's calc bits become (bits & and) | or.
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits) {
     if (!g_hold || component == 0) {
@@ -657,6 +680,10 @@ COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {
 }
 COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
     return CoopHookshot::Hold(component, bits);
+}
+// The world hooks (hos_coop_world.h): Hookshot's host/coop_world.c, on the game's threads.
+COOP_HOOKSHOT_EXPORT int hos_coop_world(uint32_t event, uint64_t a, uint64_t b) {
+    return CoopHookshot::World(event, a, b);
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
     CoopHookshot::Stop();

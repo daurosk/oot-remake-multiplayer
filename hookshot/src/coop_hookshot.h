@@ -26,6 +26,9 @@ bool Start(const HosCoopApi* api);
 void Frame(void* ctx, int site);
 // hos_coop_hold: a BSA component's calc bits (the emulator's hold cave's rule).
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits);
+// The world hooks (hos_coop_world.h, patch 0005): an event from the game's C, on whichever game thread ran it.
+// 1 when taken; HOS_COOP_WORLD_HELLO: 1 once the module is on. Nothing while off.
+int World(std::uint32_t event, std::uint64_t a, std::uint64_t b);
 // hos_coop_stop: CoopHook::Shutdown.
 void Stop();
 

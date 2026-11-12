@@ -144,7 +144,8 @@ def main(argv):
     for name, value in staged.items():
         target = os.path.join(root, *name.split("/"))
         if value is None:
-            os.remove(target)
+            if os.path.exists(target):   # (a file an earlier patch of this run added was never written)
+                os.remove(target)
             continue
         lines, eol, final_newline = value
         os.makedirs(os.path.dirname(target) or ".", exist_ok=True)

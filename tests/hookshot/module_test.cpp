@@ -10,8 +10,10 @@
 #include <string>
 #include <vector>
 
+#include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
+#include "hos_coop_world.h"
 #include "coop_svc.h"
 
 namespace {
@@ -274,3 +276,20 @@ TEST_CASE("hookshot: on Linux the window's keys, typed text and mouse reach co-o
     CHECK(patch.find("+    api.key_down = bridge_key_down;") != std::string::npos);
 }
 
+TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts to the module") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0005-coop-world-hooks.patch");
+    CHECK(NewFile(patch, "host/hos_coop_world.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_world.h"));
+    // The lift hook calls the world hook with the counter start's number, at the start function the cave patches.
+    char call[64];
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[0], 0)", HOS_COOP_WORLD_COUNTER_START);
+    CHECK(patch.find(call) != std::string::npos);
+    const std::string lift = ReadFile(kRepo / "hookshot" / "patches" / "0003-coop-platforms.patch");
+    char word[48];
+    std::snprintf(word, sizeof word, "((0x%llx, 0x%08x),", static_cast<unsigned long long>(CoopCounters::kStartOffset),
+                  CoopCounters::kStartOriginal);
+    CHECK(lift.find(word) != std::string::npos);
+    // The guest ring is gone on Hookshot; the bridge keeps the export only once the module says it is on.
+    CHECK(patch.find("deleted file mode 100644") != std::string::npos);
+    CHECK(patch.find("--- a/host/coop_platform_ring.c") != std::string::npos);
+    CHECK(patch.find("f(HOS_COOP_WORLD_HELLO, 0, 0) != 1") != std::string::npos);
+}

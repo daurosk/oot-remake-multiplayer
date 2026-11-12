@@ -1,0 +1,13 @@
+# color-field-hand: only loads the save and warps to Hyrule Field (adult, daylight); then
+# the player plays by hand (run with -NoLoad -KeepOpen).
+warp HyruleField_Adult HyruleField_FrontOfKakarikoVillage
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after

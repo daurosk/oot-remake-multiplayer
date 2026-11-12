@@ -1,0 +1,44 @@
+# color-field (puppet-colors): color-adult in daylight. Both games load as adult and warp to
+# Hyrule Field in front of Kakariko (open sky, no room lighting), A turns round to face B,
+# B backs off about 3 m and looks at A, so B's shots show A's whole adult puppet in clear
+# light (color-field.B.txt). Settles whether the dark look of the model tint in color-adult
+# came from the tunnel's lighting.
+# Run: tools\autotest\run.ps1 -Scenario color-field -NoLoad -ScreenCopy
+#   -Switches LICHII_COOP_PUPPET=1,A:LICHII_COOP_COLOR=<colour>[,LICHII_COOP_PUPPET_TINT=1]
+#   [,LICHII_COOP_COLOR_SWEEP=1 for the colour parameter sweep, about 30 s]
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PUPPET=1
+mark start
+warp HyruleField_Adult HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 400
+stick 0 -0.3 6          # turn round toward the camera, where B will stand
+wait 60
+mark a-still
+wait 600
+mark s1
+wait 300
+mark s2
+wait 300
+mark s3
+wait 300
+mark s4
+wait 300
+mark s5
+wait 300
+mark s6
+wait 300
+mark s7
+wait 300
+mark end

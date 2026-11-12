@@ -1,0 +1,23 @@
+# color-field: B is adult in Hyrule Field too, backs off about 3 m, turns to face A and
+# watches A's puppet in daylight (color-field.A.txt).
+mark start
+warp HyruleField_Adult HyruleField_FrontOfKakarikoVillage
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark after
+wait 200
+stick 0 -0.6 40         # walk back toward the camera, away from A
+stick 0 0.3 8           # turn to face A again
+press ZL                # camera behind B, looking at A
+wait 60
+mark ready
+wait 2700               # long enough for a colour sweep (LICHII_COOP_COLOR_SWEEP, 5 s a step)
+mark end

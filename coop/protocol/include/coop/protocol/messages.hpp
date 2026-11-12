@@ -644,6 +644,7 @@ enum class ObjectComponent : std::uint16_t {
   life = 16,
   fuse = 17,
   state = 18,
+  slots = 19,  // protocol 10, issue 150: a boss's other AS slots (below)
 };
 
 struct ObjectLife {
@@ -658,6 +659,17 @@ inline constexpr std::uint8_t held = 1u << 1;
 inline constexpr std::uint8_t asleep = 1u << 2;
 }  // namespace object_state
 
+// Issue 150 (protocol 10): one more AS slot of the owner's actor than slot 0
+// (Gohma's eye guard and eyelids play on their own slots). slot is 1 or more
+// and below 32; no slot twice. An empty name: the slot plays nothing.
+struct SlotAnimation {
+  std::uint8_t slot = 1;
+  Animation animation;
+  bool operator==(const SlotAnimation&) const = default;
+};
+inline constexpr std::size_t kMaxObjectSlots = 8;
+inline constexpr std::uint8_t kMaxSlotIndex = 31;
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -669,6 +681,7 @@ struct ObjectState {
   std::optional<ObjectLife> life;
   std::optional<float> fuse;          // seconds left
   std::optional<std::uint8_t> state;  // object_state bits
+  std::optional<std::vector<SlotAnimation>> slots;  // issue 150: bosses only
   bool operator==(const ObjectState&) const = default;
 };
 

@@ -1,0 +1,62 @@
+# gohma-sync: B (P2) warps in after A, stands at Gohma and swings the sword after each of A's
+# seeds (A owns Gohma), then shoots a seed itself (the stun hand-over), then watches.
+mark start
+warp GohmaStage GohmaStage
+wait 1500
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+mark b-ready
+wait 1500
+goto 10.0 67.5 1.5 600  # near the room's centre, where Gohma comes down
+mark b-near
+wait 600
+wait 150                # A's first seed
+hold ZL 20
+press B
+wait 20
+press B
+wait 20
+press B
+hold ZL 10
+mark b-hit1
+wait 750
+hold ZL 20
+press B
+wait 20
+press B
+wait 20
+press B
+hold ZL 10
+mark b-hit2
+wait 750
+hold ZL 20
+press B
+wait 20
+press B
+wait 20
+press B
+hold ZL 10
+mark b-hit3
+wait 600
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+mark b-seed
+wait 900
+mark b-after
+wait 1800
+mark eggs
+wait 2400
+mark end

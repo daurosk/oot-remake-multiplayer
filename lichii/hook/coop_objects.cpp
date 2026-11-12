@@ -187,6 +187,7 @@ constexpr u64 kAsInner = 0x18;
 constexpr u64 kAsController = 0x18;
 constexpr u64 kAsSlotCount = 0x18;
 constexpr u64 kAsSlotArray = 0x20;
+constexpr u64 kAsSlotEntry = 0x48;  // array entries; the first 8 bytes point to the slot (docs/puppet.md)
 constexpr u64 kAsSlotName = 0x10;
 constexpr u64 kAsSlotRate = 0xd4;
 constexpr u64 kAsSlotFrame = 0xe8;
@@ -507,10 +508,10 @@ public:
         }
         if (after_call && frame_after_) {
             // The play just made: start it at the owner's frame, not at 0.
-            const auto [actor, frame] = *frame_after_;
+            const auto [actor, index, frame] = *frame_after_;
             frame_after_.reset();
             if (const u64 controller = Controller(guest, actor); controller != 0) {
-                return SetFrame(controller, frame);
+                return SetFrame(controller, frame, index);
             }
         }
         if (!after_call) {
@@ -610,29 +611,32 @@ public:
                 continue;
             }
             const u64 controller = Controller(guest, p.address);
-            if (controller == 0) {
+            if (controller == 0 || (p.slot != 0 && !HasSlot(guest, controller, p.slot))) {
                 continue;
             }
+            // Issue 150: a boss's other slots keep their own entries; only
+            // slot 0 can be the copy's own AI taking over.
+            const u64 key = p.slot == 0 ? p.address : p.address ^ (static_cast<u64>(p.slot) << 56);
             // Checked every game frame: the copy's own AI may have put its
             // own animation back since the last one.
             const float rate = p.rate;
             const u64 since = now_ms >= want_ms_ ? std::min<u64>(now_ms - want_ms_, 100) : 0;
             const float frame =
                 FrameAfter(p.frame, rate, static_cast<std::int64_t>(since) * 1000);
-            const std::string slot_name = SlotName(guest, controller);
+            const std::string slot_name = SlotName(guest, controller, p.slot);
             if (slot_name == p.name) {
-                auto& checked = checked_sample_[p.address];
+                auto& checked = checked_sample_[key];
                 if (checked == p.sample) {
                     continue;
                 }
                 checked = p.sample;
                 float now_frame = 0.0f;
-                if (SlotFrame(guest, controller, now_frame) &&
+                if (SlotFrame(guest, controller, now_frame, p.slot) &&
                     std::fabs(now_frame - frame) <= kFrameSlack) {
                     continue;
                 }
                 ++framed_;
-                return SetFrame(controller, frame);
+                return SetFrame(controller, frame, p.slot);
             }
             // Issue 157: the name we played last is gone from slot 0, so the
             // copy's own AI chose another one (a Peahat rising for our Link).
@@ -641,7 +645,8 @@ public:
             // is not the AI's.
             std::string took_over;
             if (const auto last = played_at_.find(p.address);
-                last != played_at_.end() && last->second.first == p.name && !slot_name.empty() &&
+                p.slot == 0 && last != played_at_.end() && last->second.first == p.name &&
+                !slot_name.empty() &&
                 AnimationBase(slot_name) != AnimationBase(p.name)) {
                 took_over = slot_name;
                 if (took_over_.size() < 256) {
@@ -651,7 +656,8 @@ public:
             // Remembered even on the first play we make on this copy (the
             // peahat rerun: its rise was the first thing the Mover put back,
             // so the check above had nothing to compare with).
-            if (!slot_name.empty() && AnimationBase(slot_name) != AnimationBase(p.name)) {
+            if (p.slot == 0 && !slot_name.empty() &&
+                AnimationBase(slot_name) != AnimationBase(p.name)) {
                 if (wanted_.size() >= 256) {
                     std::erase_if(wanted_, [now_ms](const auto& e) {
                         return now_ms - e.second.second > kWakeReplayMs;
@@ -667,7 +673,7 @@ public:
             }
             std::array<std::uint8_t, 0x30> request{};
             const float unset = -1.0f;
-            const std::int32_t index = 0;
+            const std::int32_t index = p.slot;
             std::memcpy(request.data() + 0x00, &p.address, 8);
             std::memcpy(request.data() + 0x08, &text, 8);
             std::memcpy(request.data() + 0x10, &index, 4);
@@ -678,15 +684,17 @@ public:
                 continue;
             }
             ++played_;
-            auto& last = played_at_[p.address];
+            auto& last = played_at_[key];
             if (last.first != p.name || now_ms - last.second >= kPlayLogMs) {
-                LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}' at frame {:.1f}{}{}{}",
-                         p.address, p.name, frame, took_over.empty() ? "" : " (its own AI: '",
-                         took_over, took_over.empty() ? "" : "')");
+                LOG_INFO(Core, "coop: objects: copy {:#x} plays '{}' at frame {:.1f}{}{}{}{}",
+                         p.address, p.name, frame,
+                         p.slot == 0 ? std::string() : fmt::format(" on slot {}", p.slot),
+                         took_over.empty() ? "" : " (its own AI: '", took_over,
+                         took_over.empty() ? "" : "')");
                 last = {p.name, now_ms};
             }
-            checked_sample_[p.address] = p.sample;
-            frame_after_ = std::make_pair(p.address, frame);
+            checked_sample_[key] = p.sample;
+            frame_after_ = std::make_tuple(p.address, p.slot, frame);
             CoopPuppet::Call c;
             c.function = main_ + kPlayAs;
             c.x[0] = block_ + kBlockRequest;
@@ -790,11 +798,11 @@ private:
                                     .count());
     }
 
-    CoopPuppet::Call SetFrame(u64 controller, float frame) {
+    CoopPuppet::Call SetFrame(u64 controller, float frame, std::int32_t index = 0) {
         CoopPuppet::Call c;
         c.function = main_ + kSetAsFrame;
         c.x[0] = controller;
-        c.x[1] = 0;  // slot 0
+        c.x[1] = static_cast<u64>(index);
         c.s0 = frame;
         return c;
     }
@@ -816,19 +824,26 @@ private:
         return controller;
     }
 
-    u64 Slot0(CoopPuppet::Guest& guest, u64 controller) {
+    // Whether the controller has that many slots (issue 150: a boss's).
+    bool HasSlot(CoopPuppet::Guest& guest, u64 controller, std::int32_t index) {
+        s32 count = 0;
+        return index >= 0 && guest.Read(controller + kAsSlotCount, &count, 4) && index < count &&
+               count <= 64;
+    }
+
+    u64 Slot0(CoopPuppet::Guest& guest, u64 controller, std::int32_t index = 0) {
         u64 array = 0;
         u64 slot = 0;
         if (!guest.Read(controller + kAsSlotArray, &array, 8) || array == 0 ||
-            !guest.Read(array, &slot, 8)) {
+            !guest.Read(array + kAsSlotEntry * static_cast<u64>(index), &slot, 8)) {
             return 0;
         }
         return slot;
     }
 
-    // Slot 0's command name ("" when unreadable).
-    std::string SlotName(CoopPuppet::Guest& guest, u64 controller) {
-        const u64 slot = Slot0(guest, controller);
+    // A slot's command name, slot 0 unless told ("" when unreadable).
+    std::string SlotName(CoopPuppet::Guest& guest, u64 controller, std::int32_t index = 0) {
+        const u64 slot = Slot0(guest, controller, index);
         u64 at = 0;
         std::array<char, 64> text{};
         if (slot == 0 || !guest.Read(slot + kAsSlotName, &at, 8) || at == 0 ||
@@ -838,8 +853,8 @@ private:
         return std::string(text.data(), strnlen(text.data(), text.size()));
     }
 
-    bool SlotFrame(CoopPuppet::Guest& guest, u64 controller, float& frame) {
-        const u64 slot = Slot0(guest, controller);
+    bool SlotFrame(CoopPuppet::Guest& guest, u64 controller, float& frame, std::int32_t index = 0) {
+        const u64 slot = Slot0(guest, controller, index);
         return slot != 0 && guest.Read(slot + kAsSlotFrame, &frame, 4) && std::isfinite(frame);
     }
 
@@ -921,7 +936,7 @@ private:
     std::size_t played_ = 0;
     std::size_t framed_ = 0;  // frames set on a copy already showing the name
     u64 want_ms_ = 0;
-    std::optional<std::pair<u64, float>> frame_after_;  // actor, frame: set after the play
+    std::optional<std::tuple<u64, std::int32_t, float>> frame_after_;  // actor, slot, frame: set after the play
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
     std::vector<std::pair<u64, std::string>> took_over_;  // copies whose own AI changed slot 0, and to what
@@ -1776,6 +1791,9 @@ private:
                     s.rotation = *m;
                 }
                 s.animation = Animation(r, a);
+                if (IsBoss(s.name)) {
+                    s.slots = OtherSlots(r, a);  // issue 150
+                }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);
                     const auto max = r.Get<s32>(value->second + 8);
@@ -1802,15 +1820,53 @@ private:
 
     // AS slot 0 of an actor: command name, frame, rate (as PlayerReader).
     std::optional<coop::protocol::Animation> Animation(Reader& r, u64 a) {
+        return AnimationAt(r, a, 0, false);
+    }
+
+    // The AS controller of an actor and its slot count.
+    std::optional<std::pair<u64, s32>> AsController(Reader& r, u64 a) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto as = table ? r.Ptr(*table + kComponentsAs) : std::nullopt;
         const auto inner = as ? r.Ptr(*as + kAsInner) : std::nullopt;
         const auto controller = inner ? r.Ptr(*inner + kAsController) : std::nullopt;
-        if (!controller || static_cast<s32>(r.Get<u32>(*controller + kAsSlotCount).value_or(0)) < 1) {
+        if (!controller) {
             return std::nullopt;
         }
-        const auto array = r.Ptr(*controller + kAsSlotArray);
-        const auto slot = array ? r.Ptr(*array) : std::nullopt;
+        const s32 count = static_cast<s32>(r.Get<u32>(*controller + kAsSlotCount).value_or(0));
+        if (count < 1 || count > 64) {
+            return std::nullopt;
+        }
+        return std::make_pair(*controller, count);
+    }
+
+    // Issue 150: a boss's AS slots after slot 0 (Gohma's eye guard and
+    // eyelids), up to kMaxObjectSlots. A slot that plays nothing is sent with
+    // an empty name (the copy leaves its own slot alone then).
+    std::vector<coop::protocol::SlotAnimation> OtherSlots(Reader& r, u64 a) {
+        std::vector<coop::protocol::SlotAnimation> out;
+        const auto c = AsController(r, a);
+        if (!c) {
+            return out;
+        }
+        const s32 last = std::min<s32>(c->second - 1, static_cast<s32>(coop::protocol::kMaxObjectSlots));
+        for (s32 i = 1; i <= last && i <= coop::protocol::kMaxSlotIndex; ++i) {
+            if (auto anim = AnimationAt(r, a, i, true)) {
+                out.push_back({static_cast<std::uint8_t>(i), std::move(*anim)});
+            }
+        }
+        return out;
+    }
+
+    // AS slot `index` of an actor. empty_ok: a slot that plays nothing gives
+    // an empty name (slot 0 gives nothing then).
+    std::optional<coop::protocol::Animation> AnimationAt(Reader& r, u64 a, s32 index,
+                                                         bool empty_ok) {
+        const auto c = AsController(r, a);
+        if (!c || index >= c->second) {
+            return std::nullopt;
+        }
+        const auto array = r.Ptr(c->first + kAsSlotArray);
+        const auto slot = array ? r.Ptr(*array + kAsSlotEntry * static_cast<u64>(index)) : std::nullopt;
         const auto name_at = slot ? r.Ptr(*slot + kAsSlotName) : std::nullopt;
         if (!name_at) {
             return std::nullopt;
@@ -1820,6 +1876,9 @@ private:
             return std::nullopt;
         }
         const std::size_t n = strnlen(chunk->data(), chunk->size());
+        if (n == 0 && empty_ok) {
+            return coop::protocol::Animation{std::string(), 0.0f, 0.0f};
+        }
         if (n == 0 || n >= chunk->size()) {
             return std::nullopt;
         }

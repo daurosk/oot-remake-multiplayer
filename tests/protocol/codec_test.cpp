@@ -1081,6 +1081,34 @@ TEST_CASE("an object sample needs its time component, and skips unknown ones") {
   CHECK(decode_bytes(no_time) == Error::missing_component);
 }
 
+TEST_CASE("issue 150: an object sample carries a boss's other AS slots") {
+  ObjectSample s{0, test::kPlacedId, 3, {}};
+  s.state.time = {5, 1};
+  s.state.animation = Animation{"Stun_Lp", 4.0f, 1.0f};
+  s.state.slots = std::vector<SlotAnimation>{{1, {"GuardArm", 2.5f, 1.0f}}, {3, {"", 0.0f, 0.0f}}};
+  Bytes b = must_encode(s);
+  Message m;
+  REQUIRE(decode(b, m) == Error::none);
+  CHECK(std::get<ObjectSample>(m) == s);
+  // No slots component: none after decoding (older senders).
+  Message plain;
+  REQUIRE(decode(must_encode(ObjectSample{0, test::kPlacedId, 3, {}}), plain) == Error::none);
+  CHECK_FALSE(std::get<ObjectSample>(plain).state.slots);
+  // Refused: slot 0 (that is the animation component), a slot twice, too many.
+  Bytes out;
+  ObjectSample bad = s;
+  bad.state.slots = std::vector<SlotAnimation>{{0, {"Wait", 0.0f, 1.0f}}};
+  CHECK(encode(bad, out) == Error::bad_value);
+  bad.state.slots = std::vector<SlotAnimation>{{2, {"A", 0.0f, 1.0f}}, {2, {"B", 0.0f, 1.0f}}};
+  CHECK(encode(bad, out) == Error::bad_value);
+  bad.state.slots = std::vector<SlotAnimation>{};
+  for (std::uint8_t i = 1; i <= kMaxObjectSlots + 1; ++i) bad.state.slots->push_back({i, {"A", 0.0f, 1.0f}});
+  CHECK(encode(bad, out) == Error::bad_value);
+  bad.state.slots = std::vector<SlotAnimation>{{static_cast<std::uint8_t>(kMaxSlotIndex + 1), {"A", 0.0f, 1.0f}}};
+  CHECK(encode(bad, out) == Error::bad_value);
+  CHECK(out.empty());
+}
+
 TEST_CASE("player pose has its number, channel and layout") {
   CHECK(static_cast<int>(MessageType::player_pose) == 26);
   CHECK(channel_of(MessageType::player_pose) == kChannelPlayerSamples);

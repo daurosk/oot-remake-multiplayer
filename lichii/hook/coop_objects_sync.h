@@ -51,6 +51,9 @@ struct Seen {
     coop::protocol::Vec3 position{};
     std::optional<std::array<float, 9>> rotation;  // actor +0x328, rows of 3
     std::optional<coop::protocol::Animation> animation;  // AS slot 0
+    // Issue 150: a boss's other AS slots (Gohma's eye guard, eyelids),
+    // read only for bosses (IsBoss); empty otherwise.
+    std::vector<coop::protocol::SlotAnimation> slots;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -66,6 +69,10 @@ struct PlayWish {
     // latest sample: its frame plus rate * 30 a second since it was taken.
     float frame = 0.0f;
     std::uint64_t sample = 0;  // the sample's time: a new one checks the frame
+    // Issue 150: the AS slot (0: the whole body). Other slots are a boss's
+    // (Gohma's eye guard): played and framed the same way, never counted
+    // as the copy's own AI taking over.
+    std::int32_t slot = 0;
 };
 
 // The frame of an animation `age_us` after it showed `frame` at `rate`
@@ -527,6 +534,7 @@ private:
         std::optional<coop::protocol::Quat> rotation;
         std::optional<coop::protocol::Vec3> velocity;
         std::optional<coop::protocol::Animation> animation;
+        std::vector<coop::protocol::SlotAnimation> slots;  // issue 150
     };
     struct Object {
         coop::protocol::ObjectId id;
@@ -536,6 +544,7 @@ private:
         coop::protocol::Vec3 position{};
         std::optional<Mat3> rotation;
         std::optional<coop::protocol::Animation> animation;
+        std::vector<coop::protocol::SlotAnimation> slots;  // issue 150: a boss's, as last read
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
         std::string name;
@@ -549,6 +558,7 @@ private:
         coop::protocol::Vec3 sent_position{};
         std::optional<coop::protocol::Quat> sent_rotation;
         std::string sent_animation;
+        std::string sent_slots;  // issue 150: the slot names last sent
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
@@ -631,6 +641,8 @@ private:
     // when it already left. True: the hatchling is ours to share.
     bool Hatch(std::uint8_t self, const Seen& s,
                std::vector<coop::protocol::Message>& send);
+    // gohma-sync: an egg of ours still on the walk, marked hatched, near `at`.
+    Object* HatchedSibling(std::uint8_t self, const coop::protocol::Vec3& at);
 
     // A rolled enemy another game decided, from its OBJECT_SPAWN.
     struct Decided {

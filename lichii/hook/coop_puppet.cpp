@@ -397,6 +397,20 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         }
         ++slot.refused;
         slot.phase = Phase::idle;
+        // A tunic actor the game keeps refusing is not in its ActorInfo: an
+        // older puppet pack without the colours (Hookshot proof 3: the pairs
+        // had the pack from before the tunics, CoopPuppet_Child_Blue refused
+        // for good, so no puppet at all). The plain puppet then, as after two
+        // create timeouts. Only while no tunic puppet has spawned: refusals
+        // during a load must not cost a working pack its colours.
+        if (IsTunicActor(slot.actor_name) && !tunic_proven_ && slot.refused == kRefusedTunicFallback) {
+            TunicFails(slot.actor_name, "refused " + std::to_string(kRefusedTunicFallback) +
+                                            " times: the puppet pack has no tunic colours (an older pack? run "
+                                            "make-puppet-pack again)");
+            slot.refused = 0;
+            slot.retry_ms = now_ms;  // the plain puppet at once
+            break;
+        }
         if (slot.refused < kRefusedFast) {
             slot.retry_ms = now_ms + kRefusedRetryMs;
             if (slot.refused == 1) {
@@ -1493,6 +1507,11 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
 bool PackHasGreenPuppets(std::string_view manifest) {
     return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
            manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
+}
+
+bool PackHasTunicPuppets(std::string_view manifest) {
+    return manifest.find("\"CoopPuppet_Child_") != std::string_view::npos ||
+           manifest.find("\"CoopPuppet_Adult_") != std::string_view::npos;
 }
 
 std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {

@@ -13,7 +13,7 @@ bool On(const std::string& v) {
 }  // namespace
 
 CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool()>& pack_green,
-                                     std::vector<std::string>* log) {
+                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics) {
     CoopPuppet::PlannerSettings settings;
     // The test puppet has its own switch: the logs alone must not put a
     // second Link in the game (Caleb's run of 2026-11-09 with the logs on).
@@ -22,8 +22,20 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
     if (auto actor = env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = std::move(actor);
     }
+    bool pack_plain = false;
     if (const auto tunics = env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
         settings.tunics = false;
+    } else if (pack_tunics) {
+        // A pack without the tunic puppets: the game refuses CoopPuppet_<Age>_<Colour>
+        // (not in its ActorInfo), so every puppet is the plain one it has.
+        if (const auto has = pack_tunics(); has && !*has) {
+            settings.tunics = false;
+            pack_plain = true;
+            if (log != nullptr) {
+                log->push_back("coop: the puppet pack has no tunic colours (made before them): every puppet is "
+                               "the plain one; run make-puppet-pack again for the colours");
+            }
+        }
     }
     // The kit's tools/release/kit/scripts/kit-paths.ps1 Set-KitSelfTunic. Only
     // with a pack that has the green puppets (a hand-set switch and an older
@@ -40,7 +52,9 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
     if (log != nullptr) {
         log->push_back(std::string("coop: puppets on, actor ") +
                        (settings.actor.empty() ? "by age" : settings.actor) +
-                       (settings.tunics ? "" : ", tunics off (LICHII_COOP_TUNICS=0)") +
+                       (settings.tunics  ? ""
+                        : pack_plain     ? ", tunics off (the pack has none)"
+                                         : ", tunics off (LICHII_COOP_TUNICS=0)") +
                        (settings.debug ? ", test puppet beside you" : ""));
     }
     return settings;
@@ -77,11 +91,11 @@ std::string Env(const char* name) {
 #endif
 }
 
-// Any mod folder's coop_puppet.json under LoadDir/<title id> with both green
-// puppets (CoopPuppet::PackHasGreenPuppets), as coop_spawn's PackStandIns
-// looks. LoadDir is the emulator's load/ or Hookshot's mods\contents
-// (hookshot/compat/common/fs/path_util.h).
-bool PackGreenPuppets() {
+// Every mod folder's coop_puppet.json under LoadDir/<title id>, as
+// coop_spawn's PackStandIns looks. LoadDir is the emulator's load/ or
+// Hookshot's mods\contents (hookshot/compat/common/fs/path_util.h).
+std::vector<std::string> PackManifests() {
+    std::vector<std::string> out;
     std::error_code ec;
     const auto title = Common::FS::GetEdenPath(Common::FS::EdenPath::LoadDir) / "0400486024DEC000";
     for (const auto& mod : std::filesystem::directory_iterator(title, ec)) {
@@ -89,8 +103,28 @@ bool PackGreenPuppets() {
         if (!in) {
             continue;
         }
-        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        out.emplace_back((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return out;
+}
+
+bool PackGreenPuppets() {
+    for (const auto& text : PackManifests()) {
         if (CoopPuppet::PackHasGreenPuppets(text)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Any manifest with tunic puppets; std::nullopt with no manifest at all.
+std::optional<bool> PackTunicPuppets() {
+    const auto manifests = PackManifests();
+    if (manifests.empty()) {
+        return std::nullopt;
+    }
+    for (const auto& text : manifests) {
+        if (CoopPuppet::PackHasTunicPuppets(text)) {
             return true;
         }
     }
@@ -101,7 +135,7 @@ bool PackGreenPuppets() {
 
 void Configure() {
     std::vector<std::string> lines;
-    auto settings = Settings(Env, PackGreenPuppets, &lines);
+    auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets);
     for (const auto& line : lines) {
         LOG_INFO(Core, "{}", line);
     }

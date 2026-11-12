@@ -1,7 +1,9 @@
 // Tests for looping platforms' pause counters (lichii/hook/coop_counters.cpp).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <string>
 #include <vector>
@@ -439,4 +441,121 @@ TEST_CASE("counters: one odd period does not stop a loop (hysteresis)") {
         a.Tick(time);
         CHECK(a.sync.Looping(key));
     }
+}
+
+namespace {
+
+// One game's lift node as the 2026-11-12 10:50 run logged it
+// (coop-kit/shots/platforms-dodongo/20261112-105044, the first 180-frame
+// Obj_DodongoCave_MoveFloor_A_01 node of each game): its starts (seconds,
+// from the 10 s "pause counters:" lines: time - (180 - left) / 60), and
+// below zero (-0.6) between pauses, as the game leaves it.
+struct LogLift {
+    std::uint8_t self = 1;
+    std::vector<double> starts;
+    double shift = 0.0;  // our writes: the pause ends this much sooner (s)
+    float remaining = -0.6f;
+    std::uint64_t node = 0x2140001000;
+    std::uint64_t graph = 0x2140000f00;
+    CounterSync sync;
+    std::vector<proto::PlatformCounter> sent;
+    std::vector<std::string> notes;
+
+    void At(double t) {
+        remaining = -0.6f;
+        for (const double s : starts) {
+            const double into = t - (s - shift);
+            if (into >= 0.0 && into * 60.0 < 180.0) {
+                remaining = 180.0f - static_cast<float>(into * 60.0);
+            }
+        }
+    }
+    void Tick(double t) {
+        Seen s;
+        s.node = node;
+        s.owner_hash = kHash;
+        s.owner_name = "Obj_DodongoCave_MoveFloor_A_01";
+        s.remaining = remaining;
+        s.duration = 180.0f;
+        s.key = KeyOf(kHash, 180.0f, node, graph);
+        CounterSync::Out out;
+        sync.Tick("DodongoCavern", self, static_cast<std::uint64_t>(t * 1e6), {s}, false, out);
+        for (auto& m : out.send) {
+            auto pc = std::get<proto::PlatformCounter>(m);
+            pc.player_number = self;
+            sent.push_back(pc);
+        }
+        for (const auto& w : out.writes) {
+            shift += static_cast<double>(w.was - w.remaining) / 60.0;
+            remaining = w.remaining;
+        }
+        notes.insert(notes.end(), out.notes.begin(), out.notes.end());
+    }
+    // Our next start after t (s), with our writes.
+    double NextStart(double t) const {
+        for (const double s : starts) {
+            if (s - shift > t) {
+                return s - shift;
+            }
+        }
+        return 0.0;
+    }
+};
+
+bool Said(const std::vector<std::string>& notes, const char* what) {
+    return std::any_of(notes.begin(), notes.end(),
+                       [&](const std::string& n) { return n.find(what) != std::string::npos; });
+}
+
+}  // namespace
+
+TEST_CASE("counters: the Dodongo lift starts of the 2026-11-12 run loop, though the counter goes below zero") {
+    LogLift a;
+    LogLift b;
+    a.self = 1;
+    b.self = 2;
+    // From the log (A at 79.85 10.7 left, 99.92 65.9, 119.99 117.0, 140.01
+    // 172.6; B at 79.17 9.6, 99.21 67.6, 119.24 122.9, 139.29 177.3), then
+    // on at the same period so the test can see that it stays in phase.
+    a.starts = {77.03, 98.02, 118.94, 139.88, 160.81, 181.74, 202.67};
+    b.starts = {76.33, 97.34, 118.29, 139.24, 160.17, 181.10, 202.03};
+    struct InFlight {
+        double at;
+        proto::PlatformCounter m;
+        bool to_b;
+    };
+    std::vector<InFlight> flight;
+    for (double t = 70.0; t < 215.0; t += 0.033) {
+        a.At(t);
+        b.At(t);
+        a.Tick(t);
+        b.Tick(t);
+        for (auto& m : a.sent) {
+            flight.push_back({t + 0.08, m, true});
+        }
+        for (auto& m : b.sent) {
+            flight.push_back({t + 0.08, m, false});
+        }
+        a.sent.clear();
+        b.sent.clear();
+        for (auto it = flight.begin(); it != flight.end();) {
+            if (it->at <= t) {
+                (it->to_b ? b : a).sync.Receive(it->m);
+                it = flight.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    const auto key = KeyOf(kHash, 180.0f, a.node, a.graph);
+    CHECK(a.sync.Looping(key));  // the old code: "0 looping" the whole run
+    CHECK(b.sync.Looping(key));
+    CHECK(std::llabs(static_cast<long long>(a.sync.CycleOf(key)) - 20'930'000) < 100'000);
+    CHECK(Said(a.notes, "loops every 20.9"));
+    CHECK(Said(b.notes, "loops every 20.9"));
+    CHECK(a.sync.Writes() + b.sync.Writes() == 1);  // one write, by one game
+    CHECK(b.sync.Writes() == 1);                     // a tie of starts: the higher number moves
+    CHECK(Said(b.notes, "s off player 1's: frames left"));
+    // In phase from then on: the next starts within 0.3 s of each other.
+    CHECK(std::fabs(a.NextStart(185.0) - b.NextStart(185.0)) < 0.3);
 }

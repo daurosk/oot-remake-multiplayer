@@ -156,7 +156,8 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
             const auto back = static_cast<std::uint64_t>(elapsed_frames / kFramesPerSecond * 1e6f);
             return server_us > back ? server_us - back : 0;
         };
-        if (n.last_remaining < 0.0f) {
+        if (!n.looked) {
+            n.looked = true;
             if (s.remaining > 0.0f) {
                 n.start_us = began();  // seen in the middle of a pause
                 n.starts = 1;

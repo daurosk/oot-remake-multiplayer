@@ -82,6 +82,8 @@ Anyone can contribute: fork, branch, pull request. Every pull request is reviewe
 - [Hookshot](https://github.com/NotRexed/Hookshot) by NotRexed and contributors (GPL-3.0): the native PC build co-op also runs on ([docs/hookshot.md](docs/hookshot.md)).
 - Other code and libraries we use, and their licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+Thanks to zizerak and hotonion for development tips, and to everyone who play-tested.
+
 ## Licence
 
 GPL-3.0, see [LICENSE](LICENSE). This keeps the project compatible with Lichii and Eden, which are GPL-3.0.

@@ -277,8 +277,13 @@ public:
         std::memcpy(r.name, name.data(), n);
         r.taken = taken;
         seen_.fetch_add(1, std::memory_order_relaxed);
-        if (!ring_.push(r)) {
-            dropped_.fetch_add(1, std::memory_order_relaxed);
+        // Full (no reader took any for a while: flags not shared, a long load): the oldest goes, so the ring always
+        // holds the newest and never stays full.
+        while (!ring_.push(r)) {
+            GameRequest oldest;
+            if (ring_.pop(oldest)) {
+                dropped_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // True once any request came: the wrap is in this hookshot.exe and runs.
@@ -287,6 +292,10 @@ public:
     }
     std::uint64_t Seen() const {
         return seen_.load(std::memory_order_relaxed);
+    }
+    // Requests that left the ring unread (it was full).
+    std::uint64_t Dropped() const {
+        return dropped_.load(std::memory_order_relaxed);
     }
     // One thread (the hook's frame). The requests after `cursor` (0 at first), oldest first; `cursor` moves past
     // them. Each reader keeps its own cursor, so two readers both get every request (of the newest kKept).

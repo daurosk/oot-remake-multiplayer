@@ -24,11 +24,11 @@ The exports are kept once the module answers HOS_COOP_WORLD_HELLO.
  host/coop_world.c                    | 62 ++++++++++++++++++++++
  host/hos_coop_world.h                | 49 ++++++++++++++++++
  nx2/chunks.py                        |  3 +-
- nx2/coop_hooks.py                    |  3 ++
+ nx2/coop_hooks.py                    |  5 ++
  nx2/coop_platform_lift.py            | 15 +++---
  nx2/coop_world_wraps.py              | 77 ++++++++++++++++++++++++++++
  third_party/a64-kit/lift/a64_lift.py | 26 +++++++++-
- 8 files changed, 226 insertions(+), 28 deletions(-)
+ 8 files changed, 228 insertions(+), 28 deletions(-)
  delete mode 100644 host/coop_platform_ring.c
  create mode 100644 host/coop_world.c
  create mode 100644 host/hos_coop_world.h
@@ -197,17 +197,21 @@ index de52777..d9ca299 100644
  
  
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index 52a19bc..d8870f0 100644
+index 52a19bc..a866e76 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
-@@ -62,4 +62,7 @@ def install(lifter, img, build_id):
-     coop_puppet_guard.install(lifter, img, build_id)
-     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
-     coop_platform_lift.install(lifter, img, build_id)
-+    # (patch 0005: wrapped game functions, host/coop_world.c. Kept last: it leaves out what the hooks above took)
+@@ -58,6 +58,11 @@ def install(lifter, img, build_id):
+     _add(lifter, MAIN + HOLD_CALL + 4, HOLD_TEXT)
+     print("co-op hooks: frame hook at main+%#x and main+%#x, AI hold at main+%#x" % (
+         FRAME_SITES[0][0], FRAME_SITES[1][0], HOLD_CALL + 4))
++    # (patch 0005: wrapped game functions, host/coop_world.c. Here and not at the end, where each later patch adds
++    # its line: a wrap is left out for what the game image hooks and what nx2/oot_*.py edit, not for what the
++    # installs below add, so its place among them does not matter)
 +    import coop_world_wraps
 +    coop_world_wraps.install(lifter, img, build_id)
-     return len(FRAME_SITES) + 1
+     import coop_puppet_guard   # (patch 0002: the other players' Link)
+     coop_puppet_guard.install(lifter, img, build_id)
+     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
 diff --git a/nx2/coop_platform_lift.py b/nx2/coop_platform_lift.py
 index 9c9944b..4d5c73f 100644
 --- a/nx2/coop_platform_lift.py

@@ -654,3 +654,19 @@ TEST_CASE("live events: arguments that do not fit the request are not asked, and
         CHECK(said);
     }
 }
+
+TEST_CASE("live events: with no reader the ring keeps the newest requests and never stays full") {
+    CoopLiveEvents::GameRequests requests;
+    for (int i = 0; i < 1000; ++i) requests.Push("e" + std::to_string(i), true);  // nobody calls Since
+    CHECK(requests.Seen() == 1000);
+    CHECK(requests.Dropped() == 1000 - 64);
+    std::uint64_t cursor = 0;
+    const auto got = requests.Since(cursor);
+    REQUIRE(got.size() == 64);
+    CHECK(std::string(got.front().name) == "e936");
+    CHECK(std::string(got.back().name) == "e999");
+    requests.Push("after", true);
+    const auto more = requests.Since(cursor);
+    REQUIRE(more.size() == 1);
+    CHECK(std::string(more[0].name) == "after");
+}

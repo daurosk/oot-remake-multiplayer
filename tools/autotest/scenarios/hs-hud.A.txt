@@ -1,9 +1,8 @@
-# hs-hud (Hookshot): the other player under your hearts. A walks off the cow, B waits; then A takes
-# a hit-free step away so its place stays the same.
+# hs-hud (Hookshot): the other player under your hearts. A walks off the cow, B waits.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-hud (Hookshot built with hs-panel's patch)
 # Pass: shots a-hud / b-hud: below the game's own hearts at the left, the other player's name, a row of
-# red hearts as many as that player's (from the save: 3 full at the save spot), and the place name
-# ("Kokiri Forest"). With LICHII_COOP_HUD=0 (second run): no block.
+# red hearts, as many as that player has in the save (full ones red, empty ones dark), and the place
+# name. With LICHII_COOP_HUD=0 (second run): no block.
 #! switches LICHII_COOP_PUPPET=1
 stick 1 0 50            # off the cow at the save spot
 wait 240

@@ -172,7 +172,7 @@ TEST_CASE("traffic crypto: any changed byte, another channel or another key does
   }
 }
 
-TEST_CASE("traffic crypto: a packet sent again is dropped; late ones within the window open") {
+TEST_CASE("traffic crypto: a packet sent again is dropped, late ones within the window open") {
   const Pair p = keys_for("pw", "pw");
   TrafficCipher game(p.client);
   TrafficCipher host(p.server);

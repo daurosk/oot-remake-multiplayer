@@ -1,0 +1,26 @@
+# hs-ocarina-given (Hookshot and emulator, issue 190): ocarina-given with the D-pad working. In the
+# bigrun (2026-11-12) B, who never had the ocarina, got A's through the item sync
+# ("PouchData.Item_Ocarina_Fairy.StockNum 0 -> 1" and "ocarina '' -> 'Item_Ocarina_Fairy'"), but D-pad
+# Left took nothing out: none of the Bools a real get sets (IsGet.Item_Ocarina_Fairy 0x42bd296f,
+# 0x41f3e410.Item_Ocarina_Fairy 0x137df1ac, 0x541947d0.Ocarina 0xaacdef1f, 0x57f52eb8.Ocarina 0xda41879d)
+# changed in B. Since ocarina-given the hook raises them for a held ocarina.
+# BEFORE the run: take the ocarinas out of B's baseline (save_flags.py no-ocarina <B pair>\autotest-save\slot_0*\progress.sav,
+# needs save-flags-hookshot on Hookshot; emulator: <kit>\autotest-save\*\0400486024DEC000\slot_0*\progress.sav),
+# put it back from autotest-save-backup afterwards.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ocarina-given (emulator: -Scenario ocarina-given)
+# Pass, B's log: "coop: items: ocarina bool 0x... 0 -> 1 for the held ocarina" (up to four), then after B's DLEFT
+# "ocarina probe: our Link plays the ocarina"; shots out / note-*: the ocarina in B's hands.
+# ocarina-given (#190): B never got the ocarina; A has it (from Saria). B gets it through item
+# sharing, takes it out (DLEFT), plays the five notes, then Saria's Song. Before the run, take the
+# ocarinas out of B's baseline save (the old file is kept beside it, in autotest-save-backup):
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py no-ocarina <auto-B>\autotest-save\*\*\slot_00\progress.sav
+# and copy the backup back afterwards. Pass: B's log has
+# "coop: items: ocarina '' -> 'Item_Ocarina_Fairy' for the held ocarina" after the load, and the
+# shots out / note-* / saria show the ocarina in Link's hands (LICHII_COOP_OCARINA_PROBE=1 also
+# logs "our Link plays the ocarina"). Fail as before the fix: no log line and nothing out at DLEFT.
+# Notes assumed as in ocarina-probe: A = A, L = Down, R = Right, Y = Left, X = Up.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1
+# A (who has the ocarina from Saria) only waits.
+mark start
+wait 2400
+mark end

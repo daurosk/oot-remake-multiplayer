@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <functional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -127,6 +128,16 @@ constexpr std::uint32_t kFairy = 0xb7df60f1;  // PouchData.Item_Ocarina_Fairy.St
 constexpr std::uint32_t kTime = 0x54e2a3d1;   // PouchData.Item_Ocarina_Time.StockNum
 constexpr std::string_view kFairyName = "Item_Ocarina_Fairy";
 constexpr std::string_view kTimeName = "Item_Ocarina_Time";
+// The Bools a real get sets beside the count (tools/autotest/save_flags.py
+// NO_OCARINA clears the same ones for a player who never met Saria). A
+// shared ocarina brought only the count (ocarina-given, bigrun 2026-11-12:
+// B's EquipOcarina was mended, but D-pad Left still took nothing out).
+constexpr std::uint32_t kIsGetFairy = 0x42bd296f;   // IsGet.Item_Ocarina_Fairy
+constexpr std::uint32_t kIsGetTime = 0x1da2c511;    // IsGet.Item_Ocarina_Time
+constexpr std::uint32_t kSlotA = 0xaacdef1f;        // 0x541947d0.Ocarina
+constexpr std::uint32_t kSlotB = 0xda41879d;        // 0x57f52eb8.Ocarina
+constexpr std::uint32_t kGotFairy = 0x137df1ac;     // 0x41f3e410.Item_Ocarina_Fairy
+constexpr std::uint32_t kGotTime = 0xac6a85e3;      // 0x41f3e410.Item_Ocarina_Time
 }  // namespace ocarina
 
 // The ocarina to equip for the held ones (Ocarina of Time over the Fairy
@@ -135,6 +146,12 @@ constexpr std::string_view kTimeName = "Item_Ocarina_Time";
 // alone.
 std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
                                                    std::string_view current);
+
+// The ocarina Bools to raise for the held ones (ocarina::kIsGet*, kSlot*,
+// kGot*): those `get` reads as false (not true, not unreadable). Only ever
+// raised; nothing for an ocarina not held.
+std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t time,
+                                              const std::function<std::optional<bool>(std::uint32_t)>& get);
 
 // When to mend (ItemFlagStore::mend), kept by the hook across frames: for
 // the first frames after Link comes into the game (a save or a scene

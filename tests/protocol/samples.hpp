@@ -105,6 +105,13 @@ inline std::vector<Message> object_messages() {
   all.push_back(DropAsk{0, "Graveyard"});
   all.push_back(BossRoom{0, "InsideTheDekuTree", 0, BossState::in_room});
   all.push_back(BossRoom{4, "SpiritTemple", 7, BossState::defeated});
+  all.push_back(PvpMode{0, true});
+  all.push_back(PvpMode{2, false});
+  all.push_back(PvpHit{0, 2, static_cast<std::uint8_t>(DamageCause::sword), 4, {1.0f, 2.0f, 3.0f}, {0.5f, 2.0f, 3.5f}});
+  all.push_back(PvpHit{3, 1, 200, kMaxPvpLife, {0.0f, 0.0f, 0.0f}, {-1.0f, -2.0f, -3.0f}});
+  all.push_back(PvpHurt{0, 1, 4, 8, 0});
+  all.push_back(PvpHurt{2, 4, 0, 12, pvp_hurt::guarded});
+  all.push_back(PvpHurt{1, 3, 6, 0, pvp_hurt::died});
   return all;
 }
 
@@ -117,6 +124,11 @@ inline std::vector<Message> every_message() {
   for (std::size_t i = 0; i < nonce.size(); ++i) nonce[i] = static_cast<std::uint8_t>(255 - i);
   all.push_back(JoinChallenge{nonce});
   all.push_back(JoinProof{join_proof("hunter2", nonce)});
+  all.push_back(RejoinToken{nonce});
+  RejoinTokenBytes claim = nonce;
+  claim[0] ^= 0x5A;
+  all.push_back(RejoinClaim{claim});
+  all.push_back(DungeonEvent{1, "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"});
   all.push_back(PlayerJoined{4, "Darunia"});
   all.push_back(PlayerLeft{1, LeaveReason::timed_out});
   all.push_back(Ping{0xFFFF'FFFF'FFFF'FFFEull});
@@ -136,6 +148,10 @@ inline std::vector<Message> every_message() {
   all.push_back(Host{2});
   all.push_back(equip_message());
   all.push_back(PlayerEquip{3, {}});
+  all.push_back(PlayerLife{0, 11, 12});
+  all.push_back(PlayerLife{4, 0, 0});
+  all.push_back(PlayerRide{0, kRideRiding, "Animal_Epona_Adult", {0.1f, -1.2f, 0.3f}, {0, 0.7f, 0, 0.7f}, Animation{"Run", 4.5f, 1.0f}});
+  all.push_back(PlayerRide{2, 0, "", {}, {0, 0, 0, 1}, std::nullopt});
   for (Message& m : object_messages()) all.push_back(std::move(m));
   return all;
 }

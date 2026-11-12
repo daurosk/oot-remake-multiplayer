@@ -184,14 +184,24 @@ private:
 
 // Changes the sync makes again every frame (a remove, a place, a played animation): the ones
 // that wait are only left out; they come again once the event is over. Returns how many waited.
+// `never_waits` (issue 194), when given, names actors that are no one's event partner (a world
+// object another game moves: a falling ladder, a block): they follow at once, or they were
+// left where the event began and jumped when it ended.
 template <typename Change, typename AddressOf>
 std::size_t Skip(std::vector<Change>& changes, const Local& local,
-                 const std::function<std::optional<Vec3>(std::uint64_t)>& where, AddressOf address_of) {
+                 const std::function<std::optional<Vec3>(std::uint64_t)>& where, AddressOf address_of,
+                 const std::function<bool(std::uint64_t)>& never_waits = {}) {
     if (!local.in_event) {
         return 0;
     }
     const auto before = changes.size();
-    std::erase_if(changes, [&](const Change& c) { return Waits(local, where(address_of(c))); });
+    std::erase_if(changes, [&](const Change& c) {
+        const std::uint64_t a = address_of(c);
+        if (never_waits && never_waits(a)) {
+            return false;
+        }
+        return Waits(local, where(a));
+    });
     return before - changes.size();
 }
 

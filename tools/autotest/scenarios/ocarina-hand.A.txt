@@ -1,0 +1,33 @@
+# ocarina-hand (issue 152): A walks ahead, turns to face B, takes out the Ocarina (DLEFT), plays a
+# few notes, holds it out for a while and puts it away (B). B watches A's puppet from the front.
+# Expect (child save): B's log has "P1 ocarina to the hand ('DemoOcarina')" while A plays and
+# "P1 ocarina back on the belt" after; B's shots at "playing"/"playing2" show the Ocarina in the
+# puppet's right hand, "before"/"away" empty hands. A's log (LICHII_COOP_OCARINA_PROBE=1) has the
+# "ocarina hold probe:" lines (the bind words of A's own Ocarina, "during bone 'Weapon_R'").
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+stick 0 0.6 100
+stick 0.7 0 30
+# turn round to face B
+stick 0 -0.4 14
+wait 90
+mark before
+press DLEFT 12
+wait 240
+mark out
+press A 12
+wait 60
+press X 12
+wait 60
+mark playing
+press R 12
+wait 60
+press Y 12
+wait 120
+mark playing2
+wait 180
+press B 12
+wait 240
+mark away
+wait 180
+mark away2

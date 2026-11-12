@@ -56,13 +56,13 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 
 1. Double-click `make-puppet-pack.cmd` in the kit folder.
 2. It finds the `.nup` in the emulator's game list folders (step 3). If it asks for it, type its path or drag the file into the window.
-3. Wait for it to finish: it reads the game files straight from the `.nup` and builds the pack in under a minute.
+3. Wait for it to finish: it reads the game files straight from the `.nup` and builds the pack in about a minute. It also makes the co-op HUD's look from the same files (the game's font, heart pictures and place names, for the other players' names, hearts and places under your hearts): it prints `co-op HUD: font, 5 hearts and ... place names`. If that part fails it prints a note and co-op still works, with plain text.
 
 Do not use the emulator's **Dump RomFS** for a `.nup`: you do not need it, and it often fails with "RomFS Extraction Failed" (for example when your keys are older than the game's update).
 
 **Which file do you have?** Look at the file you added to the emulator's game list in step 3: its name ends in `.nup`, `.nsp` or `.xci` (the game list also shows it in its **File type** column: NUP, NSP or XCI). `.nup`: the steps above are all you need. `.nsp` or `.xci`: see below.
 
-The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed). Without the pack, co-op still works, but the other players show only as a name and a dot.
+The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed). Without the pack, co-op still works, but the other players show only as a name and a dot, and co-op's text is plain (no game font or hearts).
 
 ### Only if your game is an `.nsp` or `.xci`: dump the RomFS first
 
@@ -104,9 +104,9 @@ Press Enter in the game to open the chat box. A line that starts with `/teleport
 
 Every player needs the same version: a game of one version cannot join a server of another.
 
-**On every start** (a kit whose `coop-options.ini` has `auto_update`): when `Host.bat`, `Join.bat` or `play.cmd` start and a newer co-op release is out, they ask "Update now? [Y/n]" (yes after 10 s with no key, so an unattended start updates too). Yes updates the whole kit, the emulator included, then starts the new version. No, no network, or GitHub down: this version starts as it is, after at most 6 s. If the update fails, the old files are put back and this version starts. `auto_update` in `coop-options.ini` sets it: `ask` (the default), `yes` (update without asking) or `no` (only say that one is out). An update stops this kit's server if it is still running, so a host should update when nobody is playing: guests on it are dropped (and need the same update anyway).
+**On every start** (a kit whose `coop-options.ini` has `auto_update`): when `Host.bat`, `Join.bat` or `play.cmd` start and a newer co-op release is out, they ask "Update now? [Y/n]" (yes after 10 s with no key, so an unattended start updates too). Yes updates the whole kit, the emulator included, then starts the new version. No, no network, or GitHub down: this version starts as it is, after at most 15 s, with a line saying why it could not check. If the update fails, the old files are put back and this version starts. `auto_update` in `coop-options.ini` sets it: `ask` (the default), `yes` (update without asking) or `no` (only say that one is out). An update stops this kit's server if it is still running, so a host should update when nobody is playing: guests on it are dropped (and need the same update anyway).
 
-**By hand:** close the emulator and the server, then double-click `Update.bat` in the kit folder. It looks for the newest release on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page, says which one, and asks before it changes anything. Then it downloads the zip, checks it against the SHA-256 published with the release, and replaces the kit's own files.
+**By hand:** close the emulator and the server, then double-click `Update.bat` in the kit folder. It looks for the newest release on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page, says which one, and asks before it changes anything. Then it downloads the zip, checks it against the SHA-256 published with the release and, when the GitHub CLI (`gh`) is installed and logged in, against the release's signature (its attestation, made by our release workflow; a zip that fails it is refused, `verify_signature = no` in `coop-options.ini` skips that check). Then it replaces the kit's own files, the emulator included. It needs no admin rights: it writes only in the kit folder and your temp folder.
 
 The emulator is updated only this way, with the co-op build from our release. Fritchii's own updater is switched off in our builds and never used: it would put a plain Fritchii without co-op over the kit's. When Frizti publishes a newer Fritchii, the next co-op release moves to it.
 
@@ -117,6 +117,16 @@ What it keeps: everything in `emulator\user\` (keys, firmware, saves, settings, 
 If it cannot update, it says why and how to update by hand: download the newest `oot-coop-....zip` from the [releases](https://github.com/daurosk/oot-remake-multiplayer/releases), unzip it to a new short folder, copy `emulator\user` and `coop-options.ini` from your old kit into it, and play from there. `Host.bat` and `Join.bat` also say when they could not check for a new version (no network, or GitHub turned the check away); `Update.bat` checks again. A co-op server window still open from your last game is closed by the update started from `Host.bat` or `Join.bat` (`Host.bat` starts the new one); close the emulator yourself first.
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
+
+## Check the download
+
+Optional. `Update.bat` checks every download against the SHA-256 published with the release, which proves the file arrived whole. Each release's zip and `Update.bat` are also signed: when the release is published, our release workflow on GitHub makes a signed record (an artifact attestation) of those exact files. To check that a zip you downloaded is the one the release published, install the [GitHub CLI](https://cli.github.com), run `gh auth login` once, and in the folder with the zip:
+
+```
+gh attestation verify oot-coop-<version>.zip --repo daurosk/oot-remake-multiplayer --signer-workflow daurosk/oot-remake-multiplayer/.github/workflows/release-attest.yml
+```
+
+It must say the verification succeeded. If it fails, do not use the zip, and tell us ([Reporting a problem](#reporting-a-problem)). From a copy of this repository, `tools\release\verify_kit.ps1 -Zip <zip>` does the same and also checks the `.sha256` beside it.
 
 ## Chat notices
 

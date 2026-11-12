@@ -158,6 +158,20 @@ TEST_CASE("guard: removes, places and plays near our Link are left out while the
     CHECK(plays.empty());
 }
 
+TEST_CASE("guard: a world object another game moves follows during our event (#194)") {
+    // 0x100 is near our Link (as above): it waits, unless it is a world object.
+    const auto where = [](std::uint64_t a) { return Where(a); };
+    const auto world = [](std::uint64_t a) { return a == 0x100; };
+    std::vector<std::uint64_t> poses{0x100, 0x200};
+    CHECK(CoopGuard::Skip(poses, Local{true, Vec3{0, 0, 0}}, where, [](std::uint64_t a) { return a; }, world) == 0);
+    CHECK(poses.size() == 2);
+    // Something else near (not a world object) still waits.
+    const auto none = [](std::uint64_t) { return false; };
+    poses = {0x100, 0x200};
+    CHECK(CoopGuard::Skip(poses, Local{true, Vec3{0, 0, 0}}, where, [](std::uint64_t a) { return a; }, none) == 1);
+    CHECK(poses == std::vector<std::uint64_t>{0x200});
+}
+
 TEST_CASE("guard: who is at an address tells apart same-named game-made copies by object id") {
     constexpr std::uint64_t kNoHash = ~std::uint64_t{0};
     const auto keese1 = CoopGuard::Who(kNoHash, "Enemy_Keese", 7);

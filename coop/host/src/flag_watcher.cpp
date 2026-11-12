@@ -44,6 +44,13 @@ bool backwards(const FlagEntry& group, const FlagEntry* before, const FlagEntry&
 
 std::int64_t as_int(std::uint32_t bits) { return static_cast<std::int32_t>(bits); }
 
+// A max-rule value not written yet (held, or refused) that is above the
+// game's own new value: the game's change does not replace it (issue 193).
+bool held_is_higher(FlagStore& store, const protocol::FlagEntry& held, const protocol::FlagEntry& now) {
+  return held.kind == protocol::FlagKind::int32 && now.kind == protocol::FlagKind::int32 &&
+         store.is_max(held.key) && as_int(held.value) > as_int(now.value);
+}
+
 std::uint32_t as_bits(std::int64_t v) {
   v = std::clamp<std::int64_t>(v, std::numeric_limits<std::int32_t>::min(),
                                std::numeric_limits<std::int32_t>::max());
@@ -123,6 +130,12 @@ void FlagWatcher::guard_count(FlagKey count, std::span<const FlagKey> sources) {
     share_pickup(source);
     guard_source_[source] = count;
   }
+}
+
+void FlagWatcher::expect_doubled_gain() {
+  if (doubled_ == 0 || frames_ > doubled_until_) doubled_ = 0;
+  doubled_ = std::min(doubled_ + 1, kMaxDoubledGains);
+  doubled_until_ = frames_ + kDoubledGainFrames;
 }
 
 bool FlagWatcher::share_pickup_named(FlagKey key) {
@@ -235,7 +248,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
       std::optional<FlagEntry> now = store.read(key);
       if (now) {
         now->key = key;
-        if (*now != known->second) {
+        if (*now != known->second && !held_is_higher(store, entry, *now)) {
           unwritten_.erase(key);
           continue;
         }
@@ -757,6 +770,25 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       pending_.erase(key);
       continue;
     }
+    if (doubled_ > 0 && frames_ > doubled_until_) doubled_ = 0;  // lapsed
+    if (doubled_ > 0 && !restate_.contains(key) && store.is_count(key) && !guards_.contains(key) &&
+        before.kind == protocol::FlagKind::int32 && now->kind == protocol::FlagKind::int32 &&
+        as_int(now->value) > as_int(before.value)) {
+      // A chest another player had opened, opened again here (issue 195):
+      // its content counts once for the group. Put back, not sent.
+      FlagEntry back = before;
+      back.key = key;
+      if (store.write(back)) {
+        --doubled_;
+        ++stats_.doubled_gains;
+        ++stats_.applied;
+        counts_guarded_.push_back(
+            CountGuarded{key, static_cast<std::int32_t>(as_int(now->value) - as_int(before.value))});
+        it->second = back;
+        continue;
+      }
+      ++stats_.write_failures;  // sent as any gain
+    }
     if (const auto g = guards_.find(key); g != guards_.end() &&
                                           before.kind == protocol::FlagKind::int32 &&
                                           now->kind == protocol::FlagKind::int32) {
@@ -789,7 +821,12 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     }
     changes[key] = *now;
     if (!store.is_count(key)) note_group(*now, &before);  // sent: the group's value now
-    unwritten_.erase(key);  // the game's own change is newer
+    // The game's own change is newer, except a max-rule value it is still
+    // below (issue 193: a quest step held in a dungeon while our game takes
+    // a lower step of its own): that one is still written later.
+    if (const auto u = unwritten_.find(key); u != unwritten_.end() && !held_is_higher(store, u->second, *now)) {
+      unwritten_.erase(u);
+    }
     if (role_ == FlagRole::player) pending_[key] = *now;
   }
   settle_guards(store, changes);

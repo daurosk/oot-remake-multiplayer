@@ -1,0 +1,46 @@
+# gohma-door (#150, #178): Gohma made by the game's own trigger. A warp straight into the boss
+# room skips EntryBossRoom (Logic/Enemy_DungeonBoss_Gohma_Prefab), so the gohma scenario never
+# had a boss. Here both load at the Deku Tree entrance and are put in the corridor before the
+# boss door (floor about y 47.5 at x -12..-4, z 62..71; the door InsideTheDekuTree SwitchShutter
+# at -1.0 52.4 67.5, Gohma placed at 18.5 60.0 67.8), then walk in through the door.
+# The kit saves need Gohma_DefeatBoss 0x6b093b51 = 0 and HavePlayedEvent.Dm_Deku_BossOut
+# 0x5882768c = 0 (set in auto-A/auto-B since integrate-p9).
+# A (P1) goes in first and then stands at the room's edge, never hitting; B (P2) comes in 10 s
+# later, stays near Gohma and shoots the slingshot at it three times.
+# Expect: "+ Enemy_DungeonBoss_Gohma" in both logs (the boss exists at all); boss lines "intro
+# started"/"intro ended" in both; the owner moves to P2 (server "boss_to_near" or a "share owner
+# ... is player 2" line for Enemy_DungeonBoss_Gohma) once B is near and A far; B's seed:
+# "stunned here ..." and "share damage 0", or a DAMAGE hand-over; eggs/larvae: "share hatched".
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 480
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+place -12.0 48.5 66.5   # the corridor, 11 m before the door
+wait 240
+mark placed
+goto -4.0 67.5 1.0 600
+goto 6.0 67.6 1.5 600   # through the door: the game's own boss trigger
+mark door
+wait 1800               # the intro
+mark intro
+goto 7.5 95 1.5 900     # the edge, about 28 m from the room's centre and from Gohma
+mark a-at-edge
+wait 1800
+mark handover
+wait 3600
+mark stun
+wait 2400
+mark end

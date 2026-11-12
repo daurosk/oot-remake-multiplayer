@@ -1,0 +1,7 @@
+# threads-of-time, A step 1: the tab shut for the group, our scarecrow quest at NotReady.
+mark start
+wait 120
+setflag UI_IsFinishChallengeMenuOpenEvent 0
+setenum 0x9472302b NotReady
+wait 300
+mark shut

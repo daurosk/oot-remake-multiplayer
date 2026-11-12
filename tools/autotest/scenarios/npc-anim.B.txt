@@ -1,0 +1,15 @@
+# npc-anim, B: walks to Dampe in the Graveyard first and stays within about 5 m of him, so it owns
+# him (distance rule) before A comes to talk to him (npc-anim.A.txt has the checks). B never talks:
+# it is outside A's event. It locks the camera on him (ZL, no A) so its shots show him.
+mark start
+wait 120
+goto -16.0 17.5 1.0 900  # about 4 m from his placed spot
+hold ZL+LSTICK_UP 40     # follow him a little if he walked on
+mark near-dampe
+wait 300
+hold ZL+LSTICK_UP 40
+wait 300
+hold ZL+LSTICK_UP 40     # still near him when A comes (about 20 s in)
+mark watching
+hold ZL 1800             # stand, camera on him, through A's talk
+mark end

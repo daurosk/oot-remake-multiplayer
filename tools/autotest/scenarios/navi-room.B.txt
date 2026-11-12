@@ -1,0 +1,32 @@
+# navi-room, B: stays in the Deku Tree entrance and watches A's Navi while A is put in room 3
+# and back, then goes to room 3's west side, 14 units from A (see navi-room.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+mark b-near
+wait 300                 # A is put in room 3 now
+toward -29 0 10          # look toward room 3's side
+wait 290
+mark b-far
+wait 300                 # A comes back beside us
+toward 1.5 12.0 10
+wait 290
+mark b-back
+place -36 118.5 0        # room 3's west side (A comes to its east side)
+wait 300
+toward -22 3 10
+wait 290
+mark b-together
+wait 600
+mark b-end

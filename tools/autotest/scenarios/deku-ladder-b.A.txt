@@ -1,0 +1,48 @@
+# deku-ladder-b (deku-dungeon-2, #129 with the roles swapped: B shoots the eye, A watches). The steps
+# are deku-ladder's (see deku-ladder.A.txt for the places and the expected lines, with A and B swapped).
+# Expect also: B "our game started the event InsideTheDekuTree_Gimmick_FallingLadder: sent to the others",
+# A "player 2 started the event ... in this scene" and A's ladder falling while B's cutscene runs (shot
+# "ladder"), not only after it. A shoots every 2.5 s (cut1..cut5, ladder) from just before B's first
+# shot through B's cutscene: the first of them showing A's ladder down should come within ~1 s of the
+# B shot that hit (B's "starting"/"our game started" log time), not after B's cutscene ended (b-end).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,LICHII_COOP_GIMMICK_PROBE=1,B:LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -33.2 110.3 10.4
+wait 240
+mark placed
+toward -45.0 11.0 10     # face into the room: ladder, pillar, trap floor, the ledge beyond
+press ZL 10              # the camera behind Link
+wait 1200
+toward -45.0 11.0 6
+press ZL 10
+mark b-view
+wait 150
+mark cut1                # B's shots start about here (B: shot1 ~1840 frames after "after")
+wait 150
+mark cut2
+wait 150
+mark cut3
+wait 150
+mark ladder              # B's "ladder" mark (~2290): A's ladder must be falling or down already
+wait 150
+mark cut4
+wait 150
+mark cut5
+wait 1500
+mark b-end

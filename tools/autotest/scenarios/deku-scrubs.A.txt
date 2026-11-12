@@ -1,0 +1,85 @@
+# deku-scrubs (#149): the Scrub Brothers 2-3-1 split between two players. Both load into the
+# Deku Tree entrance, are put in the brothers' room (InsideTheDekuTree room index 9) with the
+# test-only `place` step, and shoot with the slingshot, locked on (ZL+ZR, fired on release).
+# Banc (InsideTheDekuTree_Static): Two (DefeatedOrder 1) 927ab536d2e86500 at -29.0 53.0 41.2,
+# Three (2) 079a5f22c7ad91c1 at -34.0 53.0 39.6, One (3) 9b04ae25f50c7fca at -23.7 53.0 40.0,
+# manager eb15dea71838d33d at -27.5 56.4 37.1; the boss shutter behind them at z 46.6, the room
+# centre at -27.8 52.8 20.3. The kit saves have the puzzle solved: clear bool 0xd2f46f66
+# (InsideTheDekuTree_RoomK_Cleared) and bool 0x60c22ed7 (..._EnemyScrubDekuDestroy_003) in both
+# autotest-save baselines first (tools/autotest/save_flags.py set), and put them back after.
+# A hits Two (order 1, ~5-15 s after placing) and Three (order 2, ~20-30 s); B makes the last hit,
+# on One (order 3, ~40-50 s): B's manager solves only if A's two hits were counted there.
+# The brothers come up one at a time (about 4 s each, One, Two, Three in turn), so each hit is
+# three shots spread over a turn; a second shot on a brother already stunned is logged as such.
+# Expect (coop_scrubs.h, lines "coop: scrubs: ..."):
+#  - both: "brother Two/Three/One ... anim '...'" lines (the brothers are there; the hit's AS).
+#  - A "brother Two ... hit here (order 1): sending", then Three (order 2); B "P1's hit on brother
+#    Two/Three ... given to our manager (order N, send gave M)". B's own Two and Three keep
+#    their cycle (the stun is each brother's own; the manager only counts).
+#  - B "brother One ... anim 'SmallHit'" + "hit here (order 3): sending" (the last right hit:
+#    SmallHit, Escape, then Damage and Stop on a second seed); A's One escapes too ("not sent
+#    back"). B walks to One and presses A: One's talk (Talk_Deku_03_Attacked) and B's solve,
+#    flags bool 0xd2f46f66 (RoomK_Cleared) and 0x60c22ed7 (_003) 0 -> 1 in B (shared to A).
+#  - Reference: deku-scrubs-solo (A alone; B's Two and Three go to Paralysis from A's hits).
+#  - First run (20261111-172748): A's Two and One hits went out and were given in B; B's shot
+#    missed Three (it was underground).
+#  - If no "hit here" line comes, the hit AS is another name: read the anim lines and run again
+#    with LICHII_COOP_SCRUB_HIT_ANIMS=<name>.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1,LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -29.5 53.2 29.0
+wait 240
+mark placed
+toward -29.0 41.2 10     # face Two
+wait 240
+mark aim-two
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark two
+toward -34.0 39.6 10     # face Three
+wait 120
+mark aim-three
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 60
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 60
+mark three
+wait 4200                # B hits One and talks to it
+mark end

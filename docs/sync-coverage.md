@@ -93,7 +93,7 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 | Moving and rising floors | `Obj_*_MoveFloor_*`, `Obj_FireTemple_RiseFloor_*`, `Obj_FireTemple_SinkFloor_*`, `Obj_ShadowTemple_GimmickFloor`, `Obj_WaterTemple_FloatFloor*` | flags where switch-driven; positions none | ? | - | Driven by a shared switch flag; if live, fine | P2 |
 | Spinning rooms, Forest Temple corridor | `Obj_ForestTemple_TwistedCorridor_*`, `Obj_ShadowTemple_RotateFloor` | the start events are left out (one-way, review of 41d5b76), BUT the corridor's own state flags **are shared** (in the scan list): `ForestTemple_TwistCorridor_IsReverse`, `ForestTemple_TwistCorridor01_IsConstraint`, `…02_IsConstraint`, and `ForestTemple_SageOfForest_TwistedCorridor_A_01` to `_04` | ? | - | If B's loaded corridor follows `IsReverse` live, it turns under B while B is in it or on the far side. If it follows only on a reload, B's corridor is in the other state from what B's room logic expects. Decided (dungeon-live): shared, but held while the player is in the Forest Temple and written on their next load or scene entry (docs/dungeon.md, "Held until the room loads"), so the corridor never turns under anyone | done (unit tests) |
 | Shadow Temple boat | `Obj_ShadowTemple_PaddleShip_*` | event left out | - | - | Each player rides their own boat | P2 |
-| Chests | `Obj_TBox_*` | *keys* + *take* (removed in B unless B's Link is within 3 m) | live | game (deku-map, 2026-11-10: removed in B 37 ms after the key) | Near rule: B can open it again (double small key) | P2 |
+| Chests | `Obj_TBox_*` | *keys* + opened flags + *take*: shown open in B (`OpenWait` played), removed only if that never takes (issue 195) | live | unit (chest-sync-2); game: chest-other to run | B may still open a shown-open chest (double small key) | P2 |
 | Chests that appear (switch, enemies) | `Obj_TBox_*` with `…_TBoxAppear`, `…TreasureBoxAppear` events | flags + played events | ? | unit | Chest missing in B: if it holds a needed item, the item is shared anyway | P2 |
 | Song of Time blocks | `Obj_SongOfTimeBlock` | none known | - | - | A plays, B's block stays (Spirit Temple, Temple of Time) | **P1** to check |
 | Hookshot targets, crumbling platforms, spikes, blades, guillotines, fire walls | `Obj_*HookShotTarget*`, `Obj_CrumblingGanonCastle_*`, `Obj_MoveSpike_*`, `Obj_ShadowTemple_*Blade*`, `Obj_FireWall*` | none (each game runs its own) | - | - | - | P3 |
@@ -106,9 +106,10 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 |---|---|---|---|---|---|
 | Overworld doors, gates (Kakariko, Lon Lon, Gerudo, castle gate) | named flags where story, else none | ? | - | A gate opened by story in A, shut in B | **P1** to check |
 | Story events, cutscenes, medals and stones | items (medals and stones are items) + the overworld's story scenes and story gates (`CoopStory::Flags()`, [flags.md](flags.md#story-and-cutscenes-issue-173)); dungeon scenes, time travel and bosses not shared | live; late joiner by the host's table | unit | Before (issue 173): each player watched Saria and the owl; a guest behind the host kept the forest-exit wall | **P1** to check in game |
+| Threads of Time (pause menu quest log) | the unlock flag `UI_IsFinishChallengeMenuOpenEvent` in `CoopStory::Flags()`; 11 listed quests' saved Enums by step order, highest wins (`CoopQuests`, [flags.md](flags.md#threads-of-time-issue-193)) | live; late joiner by the host's table | unit | Before (issue 193): the second player never saw the owl, so the tab stayed shut; quests were each game's own | **P1** to check in game |
 | Time of day | `TIME_OF_DAY` (host's clock) | live | game | - | P3 |
 | Song events (Zelda's Lullaby doors, Sun's Song, Song of Storms well) | none, unless the result is a flag | ? | - | The door a song opened in A stays in B | P2 |
-| Shops (stock sold out) | none; the Deku Shield is per player (issue 130), so each buys their own | - | - | - | P2 |
+| Shops (stock sold out) | none; a bought Deku Shield reaches everyone (max, issue 130), a lost one is bought again by that player | - | - | - | P2 |
 
 ## Per-player state (not shared on purpose)
 
@@ -168,7 +169,7 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 | I2 | Fish, Blue Fire, bugs and other bottle contents needed to go on (Jabu-Jabu, Zora's Domain ice, the Ice Cavern) | **OK** | Per player, and every source can be used again. |
 | I3 | Trade sequence items (mirror rule): one player hands an item over and it is gone for everyone | **P2** | Optional quests (Biggoron's Sword, masks). A player halfway through loses their step. Later: share the trade step too, or make the trade items per player. |
 | I4 | Zelda's Letter, Ocarina of Time, songs, stones and medallions | **OK** | Shared items let the other player do the per-game event themselves (Kakariko gate, Temple of Time door) or skip it. |
-| I5 | Deku Shield bought once for everyone (#130) | **P2** | Per player (branch items-progress): each player buys their own; not checked in game. |
+| I5 | Deku Shield bought once for everyone (#130) | **P2** | Shared again (max, branch shop-shield-2; items-progress had made it per player); the shop opens for every player (quest catch-up); autotest `shop-buy`. |
 | I6 | Keys and dungeon items with a join at another save point | **P2** | A late joiner takes the host's totals. A key the joiner's save had in hand but the host's did not is lost to the joiner; the chest it came from stays open in the joiner's game but closed in the host's, so the host player can take it again for both. Advice: join with saves from the same point. |
 
 ### Story, time travel, saves

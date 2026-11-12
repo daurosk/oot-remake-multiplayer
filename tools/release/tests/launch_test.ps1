@@ -109,6 +109,19 @@ try {
     [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`n")
     $a = Read-KitServerAccess $opt
     Check ($a.Allow -eq '' -and $a.Bind -eq '') 'server_allow behind # is off'
+    Check (-not $a.Pvp) 'no pvp line: PvP is off'
+    # pvp (the host's server only): read for the server, never set for the emulator.
+    [System.IO.File]::WriteAllText($opt, "pvp = on`r`nLICHII_COOP_PUPPET=1`r`n")
+    $said = Read-KitOptions $opt 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }
+    $o = Read-KitOptions $opt 6>$null
+    Check ((($o.Keys) -join ',') -eq 'LICHII_COOP_PUPPET' -and -not $said) 'pvp is not an emulator switch and is not warned about'
+    Check ((Read-KitServerAccess $opt).Pvp) 'pvp = on is read'
+    foreach ($off in 'pvp = off', '# pvp = on', 'pvp = maybe', 'pvp =') {
+        [System.IO.File]::WriteAllText($opt, "$off`r`n")
+        Check (-not (Read-KitServerAccess $opt).Pvp) "'$off': PvP is off"
+    }
+    [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`n")
+    $a = Read-KitServerAccess $opt
     # server_password (join-password): $null when no line sets it (Host.bat asks), '' for none.
     Check ($null -eq $a.Password) 'no server_password line: Password is $null (Host.bat asks once)'
     [System.IO.File]::WriteAllText($opt, "# --- Who may join ---`r`n# server_password = `r`nLICHII_COOP_PUPPET=1`r`n")

@@ -1,0 +1,28 @@
+# kak-gate: B, the same warp as A; B watches 0x19898d14 and walks through the gate (header in A).
+mark start
+warp KakarikoVillage_Child Kakariko_MountainTrailSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+mark b-before
+goto -42.4 2.0 1.5 300    # into the village before the flag: the gate should stop B
+mark b-stopped
+goto -41.2 -16.0 1.5 300  # back to the start
+wait 4200                  # A sets the flag (150 s from boot)
+toward -42.36 -13.02 10
+press ZL 10
+mark open
+wait 300
+mark b-walk
+goto -42.4 2.0 1.5 600    # through the gate now
+mark b-through
+wait 600
+mark end

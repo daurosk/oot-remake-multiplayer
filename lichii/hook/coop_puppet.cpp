@@ -261,12 +261,16 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
                 slot.lost_ms = now_ms;  // a load deletes it before the camera goes
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
                 if (t->show != slot.shown) {
+                    if (slot.shown == Show::hide) {
+                        slot.meter_skip = true;  // issue 194: it was parked, not drawn
+                    }
                     Say("P" + std::to_string(slot.number) + " " + ShowText(slot.shown) + " -> " +
                         ShowText(t->show) + (*t->why ? std::string(" (") + t->why + ")" : std::string()));
                     slot.shown = t->show;
@@ -274,13 +278,38 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 if (t->show != Show::hide && slot.number < 32) {
                     live |= 1u << slot.number;
                 }
-                if (t->show == Show::show) {
-                    Pose(slot, guest, t->position, &t->rotation, now_ms);
+                // Issue 194 (coop_snap.h): a held puppet (their cutscene) follows their
+                // place with its frame frozen, so it is not left behind and does not jump
+                // when the cutscene ends; any jump is eased, a snap is logged.
+                if (t->show == Show::show || t->show == Show::hold) {
+                    DrawAt(slot, guest, *t, now_ms);
                 } else if (t->show == Show::hide) {
+                    slot.smooth.Set(t->position);  // out of sight: comes back where they are
+                    slot.meter.Reset();
                     Vec3 parked = t->position;
                     parked[1] -= kHideDrop;
                     Pose(slot, guest, parked, nullptr, now_ms);
-                }  // hold: left where it is
+                }
+                // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
+                // by their own command: while held for their cutscene (free play
+                // is DemoOcarina) nothing new is played on the puppet.
+                const std::string their = t->anim ? t->anim->name : std::string();
+                if (anim_ && their != slot.their_anim) {
+                    Say("P" + std::to_string(slot.number) + " their command '" + their + "'");
+                }
+                slot.their_anim = their;
+                const std::string hand = slot.ocarina_hand.Step(
+                    [&guest](std::uint64_t a) -> std::optional<std::uint64_t> {
+                        std::uint64_t w = 0;
+                        return guest.Read(a, &w, 8) ? std::optional<std::uint64_t>(w) : std::nullopt;
+                    },
+                    [&guest](std::uint64_t a, std::uint64_t w) { return guest.Write(a, &w, 8); },
+                    slot.actor,
+                    t->show != Show::hide &&
+                        CoopOcarina::HandBind::Playing(their.empty() ? slot.anim_name : their));
+                if (!hand.empty()) {
+                    Say("P" + std::to_string(slot.number) + " " + hand + " ('" + their + "')");
+                }
             }
             break;
         case Phase::deleting:
@@ -290,6 +319,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     ")");
                 slot.phase = Phase::idle;
                 slot.actor = 0;
+                slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
             }
             break;
@@ -644,9 +674,14 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.vtable = 0;
     slot.take = slot.drop = false;
     slot.anim_name.clear();
+    slot.ocarina_hand = {};  // a new puppet may reuse the old address
+    slot.their_anim.clear();
     slot.anim_serial = 0;
     slot.frame_to_set.reset();
     slot.held_frame.reset();
+    slot.smooth.Reset();
+    slot.meter.Reset();
+    slot.meter_skip = false;
     slot.sync_next = 0;
     slot.worn = {};
     slot.in_hand = 0;
@@ -1162,6 +1197,33 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
     return std::nullopt;
 }
 
+// Issue 194 (coop_snap.h): a shown or held puppet drawn where its player is. Every jump of
+// the place we are handed is logged ("target jump"; eased while shown, at once while held:
+// their cutscene's samples move smoothly, so a jump then is a real teleport). The meter reads
+// the puppet's place back from the game (what it drew since our last write) and logs each step
+// past CoopSnap::kSnapM as a snap ("warp" past kWarpM).
+void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {
+    const std::string who = "P" + std::to_string(slot.number);
+    const bool held = target.show == Show::hold;
+    Vec3 at{};
+    if (slot.meter_skip) {
+        slot.meter_skip = false;  // still the parked spot: start again from the next frame
+        slot.meter.Reset();
+    } else if (ReadValue(guest, slot.actor + addr::kActorPosition, at)) {
+        if (const auto snap = slot.meter.Step(at)) {
+            Say(who + " snap " + std::to_string(*snap).substr(0, 5) + " m (" +
+                (*snap >= CoopSnap::kWarpM ? std::string("warp") : ShowText(target.show)) + ")");
+        }
+    }
+    float jump = 0.0f;
+    const Vec3 drawn = slot.smooth.Step(target.position, now_ms, !held, &jump);
+    if (jump > 0.0f) {
+        Say(who + " target jump " + std::to_string(jump).substr(0, 5) + " m (" + ShowText(target.show) +
+            (jump >= CoopSnap::kWarpM ? ", warp" : held ? ", at once" : ", eased") + ")");
+    }
+    Pose(slot, guest, drawn, &target.rotation, now_ms);
+}
+
 // The puppet's pose: +0x31c/+0x328 and the engine's pending transform
 // (+0x358/+0x364), which the actor's calc applies over +0x31c. With the
 // debug anim log, once a second, what the game left there since the last
@@ -1328,8 +1390,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
             show = Show::hide;  // our cutscene: kept, out of sight
             why = "our cutscene";
             break;
-        case coop::host::Visibility::park:
-            show = Show::hide;  // riding: kept, out of sight
+        case coop::host::Visibility::ride:
+            // Issue 199: shown in its riding animation; CoopRide draws a
+            // copy of the horse under it.
             why = "riding";
             break;
         case coop::host::Visibility::hold:

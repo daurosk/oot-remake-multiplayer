@@ -129,9 +129,40 @@ bool Track::Add(const Point& p) {
         const float g = (last_->velocity[1] - p.velocity[1]) / dt;
         gravity_ = std::clamp(g, 0.0f, kGravityMax);
     }
+    if (stopped_ && !points_.empty()) {
+        points_.pop_back();  // the stop's made-up point: a newer sample came
+    }
     last_ = p;
     stopped_ = false;
+    points_.push_back(p);
+    while (points_.size() > kKeep) {
+        points_.pop_front();
+    }
     return true;
+}
+
+Vec3 Track::Shown(std::uint64_t now_us, bool ballistic) const {
+    if (!last_) {
+        return {};
+    }
+    const std::uint64_t t = now_us - std::min(now_us, kBehindUs);
+    if (points_.empty() || t <= points_.front().time_us) {
+        return points_.empty() ? last_->position : points_.front().position;
+    }
+    for (std::size_t i = 1; i < points_.size(); ++i) {
+        const Point& b = points_[i];
+        if (t <= b.time_us) {
+            const Point& a = points_[i - 1];
+            const float k = float(t - a.time_us) / float(b.time_us - a.time_us);
+            Vec3 at{};
+            for (int n = 0; n < 3; ++n) {
+                at[n] = a.position[n] + (b.position[n] - a.position[n]) * k;
+            }
+            return at;
+        }
+    }
+    // Past the newest: held at the stop, or carried on as At() does.
+    return At(t, ballistic);
 }
 
 Vec3 Track::At(std::uint64_t now_us, bool ballistic) const {
@@ -159,8 +190,16 @@ void Track::Stop(const Vec3& at) {
     if (!last_) {
         last_ = Point{};
     }
+    if (stopped_ && !points_.empty()) {
+        points_.pop_back();  // a second stop moves the first
+    }
     last_->position = at;
     last_->velocity = {};
+    if (!points_.empty()) {
+        points_.push_back({points_.back().time_us + kStopAfterUs, at, {}});
+    } else {
+        points_.push_back({last_->time_us, at, {}});
+    }
     stopped_ = true;
 }
 
@@ -306,6 +345,30 @@ std::uint64_t LandHoldUs(Kind kind) {
     default:
         return 0;          // a nut flashes by its own AI; the rest go at once
     }
+}
+
+std::vector<std::string_view> ImpactActors(Kind kind) {
+    switch (kind) {
+    case Kind::seed:
+        // The seed's ELink Hit_AdditionalAttacker; ReactionHit's Hit_SlingShot_Bullet.
+        return {"CoopHit_SeedSpark", "CoopHit_SeedSound"};
+    case Kind::arrow:
+        // The arrow's ELink and SLink Hit_AdditionalAttacker; ReactionHit's Hit_Bow_Arrow.
+        return {"CoopHit_Arrow", "CoopHit_ArrowSound"};
+    default:
+        return {};
+    }
+}
+
+bool IsImpact(std::string_view actor) {
+    for (const Kind kind : {Kind::seed, Kind::arrow}) {
+        for (const std::string_view name : ImpactActors(kind)) {
+            if (name == actor) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 proto::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, float speed) {

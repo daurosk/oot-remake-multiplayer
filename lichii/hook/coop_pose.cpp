@@ -340,9 +340,9 @@ struct State {
         std::uint64_t ms = 0;
     };
     std::map<std::uint32_t, PieceSent> pieces_sent;
-    // Received, per player 1 to 4, one track per skeleton: Link's body and
-    // each held piece arrive as poses of their own skeleton.
-    std::array<std::map<std::uint32_t, Track>, 5> tracks;
+    // Received, per player 1 to kMaxPlayers, one track per skeleton: Link's
+    // body and each held piece arrive as poses of their own skeleton.
+    std::array<std::map<std::uint32_t, Track>, std::size_t{proto::kMaxPlayers} + 1> tracks;
     // What was last written to each puppet, to see whether the game keeps it.
     std::vector<Written> written_last;
     // Counters for the debug line.

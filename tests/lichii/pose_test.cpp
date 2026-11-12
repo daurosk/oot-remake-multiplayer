@@ -360,3 +360,16 @@ TEST_CASE("pose: the piece in a hand goes as a pose of its own skeleton (issue 1
     // Poses still came lately: the puppet plays no AS command of its own.
     CHECK(CoopPose::Drives(3, 101'016));
 }
+
+TEST_CASE("pose: poses of the highest player number are kept (16 players); one past it is not") {
+    CoopPose::SetLog({}, false);
+    const std::uint8_t top = coop::protocol::kMaxPlayers;
+    for (const std::uint8_t n : {top, static_cast<std::uint8_t>(top + 1)}) {
+        coop::protocol::PlayerPose m;
+        m.player_number = n;
+        m.skeleton = 0x16161616;
+        m.bones.push_back(coop::protocol::PoseBone{1, 0, std::array<std::int16_t, 4>{0, 0, 0, 32767}});
+        CoopPose::Receive(m, 900'000);
+        CHECK(CoopPose::Drives(n, 900'010) == (n == top));
+    }
+}

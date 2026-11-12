@@ -68,7 +68,7 @@ TEST_CASE("another player's story cutscene near us plays here once, at once") {
     CHECK(j.TakeNotes()[0].find("played here already") != std::string::npos);
 }
 
-TEST_CASE("a story cutscene our game starts goes out once; a later start from another player is not replayed") {
+TEST_CASE("a story cutscene our game starts goes out once, a later start from another player is not replayed") {
     Joiner j;
     CHECK(j.Ours("Meet_DekuTree", "KokiriForest"));
     CHECK_FALSE(j.Ours("Meet_DekuTree", "KokiriForest"));  // the watch finds it again: sent once

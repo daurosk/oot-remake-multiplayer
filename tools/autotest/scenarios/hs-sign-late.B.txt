@@ -1,0 +1,28 @@
+# hs-sign-late, B: sign-late.B unchanged (see hs-sign-late.A.txt): in the Graveyard while A cuts, then
+# walks down into Kakariko.
+mark start
+warp Graveyard_Child GraveYard_KakarikoSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 900                # A cuts meanwhile
+mark b-graveyard
+stick 0 -1 300          # back down the path, out of the Graveyard (Kakariko_GraveYardSide)
+wait 600                # Kakariko loads; the title card shows
+mark b-in
+toward -7.46 71.12 10
+press ZL 10
+mark b-facing
+wait 300
+toward -7.46 71.12 6
+press ZL 10
+mark b-end
+wait 300

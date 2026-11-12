@@ -1,0 +1,50 @@
+#! switches LICHII_COOP_DEBUG_NPC=1,LICHII_COOP_DEBUG_OBJECTS=1
+# hs-npc-anim (Hookshot and emulator; #200): npc-anim with a route that reaches Dampe, and grading lines.
+# npc-anim's bigrun (2026-11-12 02:21, shots\npc-anim\20261112-022149), graded here: FAIL OF THE ROUTE,
+# not of the feature. A never talked: "goto timed out at line 30", A stopped at -22.39 19.81, 9.8 m from
+# Dampe (Npc_Hylia_Dampe_001, hash 0xa902e1bb9d91c6c5, who stayed at his placed spot -12.55 100.80 20.01
+# playing 'Act_Care'); B also stopped at x -22.4 (something blocks that line). A's only "our Link is in
+# an event: 1 NPCs near it claimed" was the arrival at 58.5 s, before any talk. Noted for npc-anim:
+# B took Dampe ("share owner ... is player 2 epoch 1" at B 72.2 s) and A took him back 2 s later from
+# about 25 m, with B about 15 m nearer than A (over the 10 m margin).
+# Here both are PUT near him (no walk): B first (2.9 m), A 15 s later (2.5 m, not nearer than B by 10 m),
+# A faces him and talks (A), B stays locked on him. B's mark b-a-talks comes about 2 s after A's talk.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-npc-anim   (emulator: the same name)
+# Grading lines (tools\autotest\groups.py expect=; the B ones are read after B's own marks):
+#   expect="B:share owner 0xa902e1bb9d91c6c5 is player 2"                        B took him first
+#   expect="A:(?s)test mark talk.*npc-anim: our Link is in an event: \d+ NPCs near it claimed"
+#   expect="A:(?s)test mark talk.*npc-anim: \d+ of the \d+ claimed NPCs are ours now"
+#   expect="A:(?s)test mark closed.*npc-anim: the event's NPCs are free again"
+#   expect="B:(?s)test mark b-a-talks.*npc-anim: Npc_Hylia_Dampe_001 copied from P1 at \S+ \S+ \S+ plays '(?!Walk_Slowly|Act_Care)"
+#                                                                               his TALK animation copied to B
+#   and by eye: no "Npc_Hylia_Dampe_001 copied from P1" in B between "b-owns" and "b-a-talks" (B owned him;
+#   one there = A still owned him: INCONCLUSIVE). Shots talk / talk-2: Dampe faces A in both windows.
+# INCONCLUSIVE: no "our Link is in an event" after A's "mark talk" (no talk started: look at a-near's shot).
+mark start
+wait 120
+place -35.70 98.10 8.50  # stay at the load spot, about 25 m away, while B takes him
+wait 900                 # B is put near him and owns him for well over 3 s
+mark before-talk
+place -14.80 100.90 21.20 # 2.5 m from his placed spot (B is 2.9 m: never 10 m nearer)
+wait 60
+toward -12.55 20.01 10
+mark a-near
+press ZL 10              # lock on him
+press A 12               # talk: the event starts
+wait 60
+mark talk
+wait 300
+mark talk-2
+press A 12               # through his lines
+wait 90
+press A 12
+wait 90
+press A 12
+wait 90
+press B 12
+wait 60
+press B 12
+wait 180
+mark closed
+wait 300                 # the claim drops 2 s after the event
+mark after

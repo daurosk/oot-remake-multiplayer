@@ -1,0 +1,22 @@
+# pvp-lag, B: put in Hyrule Field beside the start point and stands still, facing A (see pvp-lag.A.txt).
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 3600
+mark field
+place 200.2 159.8 21.0
+wait 600
+place 200.2 159.8 21.0
+wait 60
+toward 201.4 21.0 6     # face A
+mark placed2
+wait 2400
+mark end

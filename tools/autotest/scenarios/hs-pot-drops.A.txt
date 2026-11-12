@@ -1,0 +1,71 @@
+# hs-pot-drops (Hookshot and emulator; #101 #102): a broken pot's drop is the same in both games, and
+# picking it up takes it from both. pot-drops never reached a pot (bigrun 2026-11-12 00:32: "goto timed
+# out" at lines 29-30, A stuck at x -47.8 against the wall between the trail start and the pot at
+# -56.92). Here A is put by the four pots up the Kakariko hill with `place` (as pots-place) and CUTS
+# them with the sword, so each breaks where it stands and its drop lies on the pot's own spot; A then
+# walks onto that spot to pick it up. Pots (Banc KakarikoVillage_Child_Static, x height z):
+# 2d244b2f4cfdaf71 -47.65 108.67 90.11, fae259a19182de39 -52.5 108.67 92.9, 09b8f3de8fb3974d -46.74 . 89.55,
+# c3fc9aa5508fc810 -53.41 . 93.47. A drop is a roll: a pot may give nothing (then the next pot counts).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-pot-drops   (emulator: -Scenario hs-pot-drops)
+# Pass (per pot with a drop; at least one of the four):
+# - the break shared: A "... Obj_Pot_A_08 ... broken" (world line), B "... broken by another player".
+# - the drop: A "coop: drops: sent <Item> #<id> at <x> <y> <z>" near the pot, B "coop: drops: got <Item>
+#   P1#<id> from P1" with the same <id>; B's shot at "cutN" shows the drop where A's shows it.
+# - the pickup: A "coop: drops: sent take P1#<id> reason ..." after "mark pickN", B "coop: drops: got take
+#   P1#<id> from P1" and the drop gone in B's "pickN" shot.
+# - never two drops for one pot in B (B's own roll for A's pot: "another game's roll stays", no second item).
+# INCONCLUSIVE (not FAIL): no "drops: sent" for any pot (all four rolled nothing) or no break line.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark after
+place -50.0 109.2 91.0
+wait 240
+mark placed
+goto -48.6 90.4 0.4 300  # 1 m west of pot 1
+toward -47.65 90.11 20
+press Y                  # cut: it breaks in place
+wait 60
+mark cut1
+goto -47.65 90.11 0.3 240 # onto its spot: the drop is picked up
+wait 90
+mark pick1
+goto -51.6 92.6 0.4 300  # 1 m east of pot 2
+toward -52.5 92.9 20
+press Y
+wait 60
+mark cut2
+goto -52.5 92.9 0.3 240
+wait 90
+mark pick2
+goto -47.6 89.4 0.4 300  # pot 3
+toward -46.74 89.55 20
+press Y
+wait 60
+mark cut3
+goto -46.74 89.55 0.3 240
+wait 90
+mark pick3
+goto -52.5 93.6 0.4 300  # pot 4
+toward -53.41 93.47 20
+press Y
+wait 60
+mark cut4
+goto -53.41 93.47 0.3 240
+wait 90
+mark pick4
+wait 600                 # anything not picked up blinks out in both
+mark end

@@ -1,0 +1,52 @@
+# hs-sign-late (Hookshot and emulator; #90, a player who enters later): sign-late's steps with the pass
+# rule fixed. A is put at the Kakariko signpost and cuts it; B waits in the Graveyard and walks down
+# into Kakariko only after A's cut, so B loads the post already cut.
+# Why a new file: sign-late's bigrun (2026-11-12 00:41, shots\sign-late\20261112-004120) was graded
+# "B was not late (a hit line before the cut)", but B WAS late: A's "cut here: 11 words sent" at A 87.3 s
+# = 00:42:49.5 (A started 00:41:22.2), B's Kakariko load ("objects: + Obj_GuidePost_A_02") at B 108.3 s =
+# 00:43:13.7 (B started 00:41:25.4), 24 s later. The late loader's catch-up itself logs "hit by another
+# player's sword" 0.3 s after the load, then "cut by another player: 11 of 11 words to write": the hit
+# line is part of the catch-up, not a live hit. (That run is worth a re-grade on its shots.)
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-sign-late   (emulator: -Scenario hs-sign-late)
+# Pass:
+# - A: "world: a4bc132d2b5d7eae Obj_GuidePost_A_02 cut here: N words sent" before "mark cut3".
+# - B was late: B's first "objects: + Obj_GuidePost_A_02" comes after B's "mark b-graveyard", and B's
+#   "mark b-graveyard" is after A's "mark cut3" (Hookshot: compare the wall times in player-A.txt and
+#   player-B.txt; emulator: each log's seconds plus its "started" time in steps.txt).
+# - B, within about 1 s after that load line: "world: a4bc132d2b5d7eae Obj_GuidePost_A_02 cut by another
+#   player: N of N words to write" (a "hit by another player's sword" just before it is the catch-up).
+# - Shots b-in / b-end: B's post in pieces.
+# FAIL: B's load line comes before A's cut (not late: the run proves the live path, not this one), or
+# B's post whole in b-end.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 420
+mark start
+warp KakarikoVillage_Child Kakariko_GraveYardSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -5.9 101.6 70.5
+wait 120
+toward -7.46 71.12 8
+press Y
+wait 30
+toward -7.46 71.12 8
+press Y
+wait 30
+toward -7.46 71.12 8
+press Y
+wait 60
+mark cut3
+goto -3.5 66.5 0.8 300  # out of B's view
+wait 2400               # B walks in meanwhile
+mark end

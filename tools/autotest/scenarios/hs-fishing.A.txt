@@ -1,0 +1,70 @@
+# hs-fishing (Hookshot and emulator; #151): A rents a rod and casts; the fish near A's lure are A's in
+# both games (FishLure), a hooked fish is never handed over, a landed fish counts in the catcher's game.
+# fishing3 never reached the water (bigrun 2026-11-12 01:46, shots\fishing3\20261112-014622): 0
+# "share fish lure" lines in either log, and B's view of A never held a rod (P1 PLAYER_EQUIP held stayed
+# 'Weapon_Range_SlingShot'): the blind talk with the pond owner (Npc_Hylia_Fishman_001_Child, pond in the
+# Hyrule Field Banc) did not rent one. Here A talks longer (eight A presses, longer waits), B is only a
+# watcher (one rod at a time is enough for #151's sharing rules), and the cast is tried with B, then ZR.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-fishing   (emulator: -Scenario hs-fishing)
+# Check first (else INCONCLUSIVE, and the talk needs a hand run, reports/fishing-3.md checks 3-5):
+# - B's log after A's "mark a-rod": "puppet: P1 PLAYER_EQUIP: ... held 'Weapon_FishingRod'" (A holds the
+#   rod), and A's shot a-rod shows it.
+# Pass (A's log, LICHII_COOP_DEBUG_OBJECTS=1):
+# - after "mark a-cast-b" or "mark a-cast-zr": "objects: share fish lure N fish, M near our lure" with M > 0
+#   (the lure is in the water).
+# - "share owner <fish> is player 1" for fish near A's lure, in both logs; no fish with more than 2
+#   "share owner" changes (no ping-pong).
+# - a bite: "<fish> ... hooked" in A only; no "share owner" for that fish in either log while hooked.
+# - a landed fish: A "share caught here:", B "share caught in its owner's game:" for the same fish.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_OBJECTS_RELEASE=1
+#! timeout 480
+mark start
+warp HyruleField_Child MiniGame_Fishing_PlayerStart
+wait 1200               # the title screen
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+stick 0 1 60            # to the owner's counter
+wait 60
+press A 12              # talk
+wait 300
+press A 12
+wait 300
+press A 12              # yes: pay
+wait 300
+press A 12
+wait 300
+press A 12
+wait 300
+press A 12
+wait 300
+press A 12
+wait 300
+press A 12
+wait 360
+mark a-rod
+stick 0 -1 90           # back out to the water
+wait 90
+press B 12              # cast (the original game's button)
+wait 600
+mark a-cast-b
+press ZR 12             # cast (an item button), if B did not
+wait 600
+mark a-cast-zr
+hold A 300              # reel in
+mark a-reel
+wait 600
+press B 12              # cast again
+wait 900
+hold A 600
+mark a-end
+wait 600
+mark end

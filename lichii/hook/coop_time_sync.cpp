@@ -42,6 +42,10 @@ void Sync::Reset() {
     host_last_.reset();
     host_running_ = false;
     joined_ = false;
+    nudge_.reset();
+    nudge_at_ = 0;
+    nudge_tries_ = 0;
+    nudges_off_ = false;
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -84,6 +88,7 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
 
     // What the others say: a jump at once; the host's clock when we drift.
     std::optional<std::uint32_t> target;
+    std::optional<std::uint32_t> host_word;  // the host's latest plain word this tick
     for (const auto& t : inbox) {
         const auto off = static_cast<std::uint32_t>(std::abs(Ahead(*now, t.seconds)));
         if ((t.flags & proto::time_of_day::jump) != 0) {
@@ -97,6 +102,7 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
         // stands (indoors, a dungeon) is no reason to move ours.
         host_running_ = host_last_ && Ahead(*host_last_, t.seconds) > 0;
         host_last_ = t.seconds;
+        host_word = t.seconds;
         if (!joined_ && !set_once_) {
             // Joining: take the host's clock once (only its first word).
             joined_ = true;
@@ -106,6 +112,29 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
             // Playing: only a large drift, never while our clock stands
             // (the last set's time change still runs, or we are indoors).
             target = t.seconds;
+        }
+    }
+
+    // Issue 192: a smaller drift is nudged, not set (no time change).
+    if (!host && !target && host_word && joined_) {
+        const std::int32_t ahead = Ahead(*now, *host_word);
+        const auto off = static_cast<std::uint32_t>(std::abs(ahead));
+        if (off <= kNudgeSeconds) {
+            nudge_tries_ = 0;
+        } else if (!nudges_off_ && off <= kResyncSeconds && running && host_running_ &&
+                   now_us - nudge_at_ >= kNudgeEveryUs) {
+            if (nudge_tries_ >= kNudgeTries) {
+                nudges_off_ = true;  // the game does not keep our write: stop
+            } else {
+                const auto step = static_cast<std::int32_t>(kNudgeStepSeconds);
+                const std::int32_t move = ahead > step ? step : (ahead < -step ? -step : ahead);
+                const auto day = static_cast<std::int32_t>(proto::kSecondsPerDay);
+                nudge_ = static_cast<std::uint32_t>(
+                    (static_cast<std::int32_t>(*now) + move + day) % day);
+                nudge_at_ = now_us;
+                ++nudge_tries_;
+                last_ = nudge_;  // our own move is no jump and does not stop "running"
+            }
         }
     }
 
@@ -124,6 +153,19 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
         last_ = target;
     }
     return target;
+}
+
+std::optional<std::uint32_t> Sync::TakeNudge() {
+    auto n = nudge_;
+    nudge_.reset();
+    return n;
+}
+
+void Sync::NudgeNotWritten() {
+    if (nudge_tries_ > 0) --nudge_tries_;
+    nudge_at_ = 0;
+    last_.reset();  // re-read our clock as it is
+    running_since_.reset();
 }
 
 } // namespace CoopTime

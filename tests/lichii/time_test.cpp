@@ -1,6 +1,7 @@
 // Tests for the shared time of day (lichii/hook/coop_time_sync.cpp).
 #include <doctest/doctest.h>
 
+#include <cstdlib>
 #include <variant>
 #include <vector>
 
@@ -190,4 +191,102 @@ TEST_CASE("time: no clock (a load) sends nothing, and the next read is no jump")
     CHECK(send.empty());
     a.Tick(70'000, false, 200 * kMs, send);
     CHECK(send.empty());
+}
+
+// Issue 192: drift under an hour is nudged (the seconds word written), not set.
+namespace {
+
+// Guest and host both running at 30 in-game seconds per quarter second; the
+// guest `behind` seconds behind. Ticks every 250 ms, the host's word every
+// second. Returns the guest's sync after `seconds` real seconds; `nudges`
+// counts the nudges taken; `hold` = whether the game keeps our write.
+struct Run {
+    Sync guest;
+    std::uint32_t host_clock = 40'000;
+    std::uint32_t clock = 0;
+    std::uint64_t at = 0;
+    int nudges = 0;
+    int sets = 0;
+    std::vector<proto::Message> send;
+
+    explicit Run(int behind) : clock(static_cast<std::uint32_t>(40'000 - behind)) {
+        guest.Tick(clock, false, at, send);
+        guest.Receive(From(1, clock));  // the join word: ours, so no join set
+        guest.Tick(clock, false, at, send);
+    }
+    void For(int seconds, bool hold = true, std::uint32_t guest_step = 30) {
+        for (int i = 0; i < seconds * 4; ++i) {
+            at += 250 * kMs;
+            host_clock += 30;
+            clock += guest_step;
+            if (i % 4 == 3) guest.Receive(From(1, host_clock));
+            if (guest.Tick(clock, false, at, send)) ++sets;
+            if (const auto n = guest.TakeNudge()) {
+                ++nudges;
+                if (hold) clock = *n;
+            }
+        }
+    }
+};
+
+} // namespace
+
+TEST_CASE("time: a guest a few minutes behind is nudged, never set (issue 192)") {
+    Run r(5 * 60);
+    r.For(1);  // the guest's own clock must run 2 s first
+    CHECK(r.nudges == 0);
+    r.For(5);
+    CHECK(r.sets == 0);
+    CHECK(r.nudges == 1);  // 300 s in one step
+    CHECK(std::abs(CoopTime::Ahead(r.clock, r.host_clock)) <= 60);
+    r.For(30);
+    CHECK(r.nudges == 1);  // in sync: nothing more
+    CHECK(r.sets == 0);
+}
+
+TEST_CASE("time: forty minutes off closes in ten-minute nudges, ahead too") {
+    Run behind(40 * 60);
+    behind.For(12);
+    CHECK(behind.sets == 0);
+    CHECK(behind.nudges == 4);
+    CHECK(std::abs(CoopTime::Ahead(behind.clock, behind.host_clock)) <= 60);
+
+    Run ahead(-25 * 60);
+    ahead.For(20);
+    CHECK(ahead.sets == 0);
+    CHECK(ahead.nudges == 3);
+    CHECK(std::abs(CoopTime::Ahead(ahead.clock, ahead.host_clock)) <= 60);
+}
+
+TEST_CASE("time: a slow guest is kept close by a nudge now and then") {
+    Run r(0);
+    r.For(120, true, 27);  // 10% slow: 3 s behind per tick
+    CHECK(r.sets == 0);
+    CHECK(r.nudges >= 10);
+    CHECK(std::abs(CoopTime::Ahead(r.clock, r.host_clock)) <= 72);
+    CHECK_FALSE(r.guest.NudgesOff());
+}
+
+TEST_CASE("time: nudges that do not hold stop; the hourly set is left") {
+    Run r(20 * 60);
+    r.For(60, false);
+    CHECK(r.guest.NudgesOff());
+    CHECK(r.nudges == Sync::kNudgeTries);
+    CHECK(r.sets == 0);  // still under the hour
+    // Reset (a new session) turns them on again.
+    r.guest.Reset();
+    CHECK_FALSE(r.guest.NudgesOff());
+}
+
+TEST_CASE("time: no nudge while either clock stands, nor for the host") {
+    Run r(10 * 60);
+    r.For(3, true, 0);  // our clock stands (indoors)
+    CHECK(r.nudges == 0);
+
+    Sync host;
+    std::vector<proto::Message> send;
+    host.Tick(40'000, true, 0, send);
+    host.Receive(From(2, 41'000));
+    host.Tick(40'030, true, 3000 * kMs, send);
+    CHECK_FALSE(host.TakeNudge());
 }

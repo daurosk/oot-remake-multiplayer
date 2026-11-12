@@ -122,6 +122,7 @@ struct Glue {
     std::optional<std::uint32_t> test_set;
     std::uint64_t test_delay_us = 5'000'000;
     std::uint64_t joined_at = 0;
+    bool nudges_off_logged = false;
     Sync sync;
     Setter setter;
 
@@ -184,6 +185,30 @@ struct Glue {
         return seconds;
     }
 
+    // Issue 192: write our clock's seconds word directly (no time change, so
+    // the world is not made again). Only when no time change or override
+    // runs (flags 0), and only if the word still holds what Tick read.
+    void Nudge(Core::System& system, std::uint64_t main, std::uint32_t was, std::uint32_t to) {
+        auto& memory = system.ApplicationMemory();
+        const auto world = Get<std::uint64_t>(memory, main + kWorldMgrPtr);
+        const auto time =
+            world && *world != 0 ? Get<std::uint64_t>(memory, *world + kTimeObject) : std::nullopt;
+        const std::uint64_t word = time && *time != 0 ? *time + kTimeNow + 8 : 0;
+        const auto flags = word != 0 ? Get<std::uint32_t>(memory, *time + kTimeFlags) : std::nullopt;
+        const auto current = word != 0 ? Get<std::uint32_t>(memory, word) : std::nullopt;
+        if (!flags || *flags != 0 || !current ||
+            static_cast<std::uint32_t>(std::abs(Ahead(was, *current))) > 60) {
+            sync.NudgeNotWritten();
+            return;
+        }
+        const std::uint32_t value = static_cast<std::uint32_t>(
+            (static_cast<std::int64_t>(to) + Ahead(was, *current) +
+             coop::protocol::kSecondsPerDay) % coop::protocol::kSecondsPerDay);
+        memory.Write32(word, value);
+        LOG_INFO(Core, "coop: time: nudged {:02}:{:02}:{:02} -> {:02}:{:02}:{:02}", *current / 3600,
+                 *current / 60 % 60, *current % 60, value / 3600, value / 60 % 60, value % 60);
+    }
+
     void Frame(Core::System& system, std::uint64_t main, coop::host::Session* session,
                std::uint64_t now_us) {
         if (!on || !every.Due(CoopEvery::NowUs())) {
@@ -192,6 +217,7 @@ struct Glue {
         if (main == 0 || now_us == 0 || session == nullptr) {
             if (connected) {
                 sync.Reset();
+                nudges_off_logged = false;
                 connected = false;
             }
             if (main != 0 && debug) {
@@ -215,6 +241,13 @@ struct Glue {
         std::vector<coop::protocol::Message> send;
         if (const auto target = sync.Tick(now, host, now_us, send)) {
             setter.Want(main, *target);
+        }
+        if (const auto nudge = sync.TakeNudge()) {
+            Nudge(system, main, *now, *nudge);
+        }
+        if (sync.NudgesOff() && !nudges_off_logged) {
+            nudges_off_logged = true;
+            LOG_INFO(Core, "coop: time: nudges did not hold; only the hourly set is left (issue 192)");
         }
         if (send.empty()) {
             return;

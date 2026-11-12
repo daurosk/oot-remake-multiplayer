@@ -17,6 +17,13 @@
 // - A game whose clock jumped by itself (the Sun's Song, a night's sleep, an
 //   event) sends TIME_OF_DAY with the jump bit at once; every other game, the
 //   host's too, takes it. A jump we caused by setting the clock is not sent.
+// - Between the two (issue 192): a guest whose running clock is more than
+//   kNudgeSeconds and at most kResyncSeconds off the host's running clock is
+//   nudged: the clock's seconds word is written directly (no time change, so
+//   no world remake), at most kNudgeStepSeconds at a time and once per
+//   kNudgeEveryUs. If kNudgeTries nudges in a row do not bring the clocks
+//   within kNudgeSeconds, the game keeps its own clock elsewhere and nudges
+//   stop for the session (the hourly set still works).
 #pragma once
 
 #include <cstdint>
@@ -40,6 +47,10 @@ public:
     static constexpr std::uint64_t kSetEveryUs = 60'000'000;
     static constexpr std::uint64_t kRunningForUs = 2'000'000;  // our clock runs: no change, not indoors
     static constexpr std::uint64_t kQuietAfterSetUs = 3'000'000;  // our own set is no jump
+    static constexpr std::uint32_t kNudgeSeconds = 60;  // half a real second: closer is in sync
+    static constexpr std::uint32_t kNudgeStepSeconds = 600;  // ten in-game minutes per nudge at most
+    static constexpr std::uint64_t kNudgeEveryUs = 1'000'000;
+    static constexpr int kNudgeTries = 8;
 
     // Network thread: TIME_OF_DAY from the others. Applied on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -50,6 +61,14 @@ public:
     std::optional<std::uint32_t> Tick(std::optional<std::uint32_t> now, bool host,
                                       std::uint64_t now_us,
                                       std::vector<coop::protocol::Message>& send);
+
+    // Present thread, after Tick: the value to write into our clock's
+    // seconds word (a nudge, issue 192), if any. Taken once.
+    std::optional<std::uint32_t> TakeNudge();
+    // A nudge could not be written (the clock is in a time change): forget it.
+    void NudgeNotWritten();
+    // Nudges stopped for this session (they did not hold).
+    bool NudgesOff() const { return nudges_off_; }
 
     void Reset();
 
@@ -64,6 +83,11 @@ private:
     std::optional<std::uint32_t> host_last_;  // the host's last plain TIME_OF_DAY
     bool host_running_ = false;
     bool joined_ = false;  // the host's first plain TIME_OF_DAY was taken (or kept)  // its last two moved forward (not indoors, no time change)
+
+    std::optional<std::uint32_t> nudge_;  // to write, taken by TakeNudge
+    std::uint64_t nudge_at_ = 0;
+    int nudge_tries_ = 0;  // nudges in a row without getting within kNudgeSeconds
+    bool nudges_off_ = false;
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::TimeOfDay> inbox_;

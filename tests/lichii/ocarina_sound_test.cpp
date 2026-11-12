@@ -148,7 +148,7 @@ TEST_CASE("a newer press wins and letting it go goes back to the one held") {
     CHECK(s.Update(true, 0) == std::optional<std::uint8_t>(0));
 }
 
-TEST_CASE("no notes unless the Ocarina is played; stopping lets the note go") {
+TEST_CASE("no notes unless the Ocarina is played, and stopping lets the note go") {
     NoteSender s;
     CHECK_FALSE(s.Update(false, kButtonA).has_value());
     CHECK(s.Update(true, kButtonA) == std::optional<std::uint8_t>(16));

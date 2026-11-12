@@ -528,3 +528,129 @@ TEST_CASE("live events: a start is given once, by the request when the wrap is t
     CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
     CHECK(s.ScanOnly() == 2);
 }
+
+namespace {
+
+constexpr std::uint64_t kEntries = 0x9300000000;
+constexpr std::uint64_t kNames = 0x9400000000;
+
+// The build, with room for `capacity` arguments as the game's makes it: each entry's name buffer of 0x40 bytes.
+std::uint64_t RunWithArgs(Mem& m, const CoopPuppet::Call& c, std::uint32_t capacity) {
+    const std::uint64_t result = Run(m, c);
+    if (c.function == kMain + addr::kArgBuild) {
+        m.Put32(c.x[0] + addr::kArgCapacity, capacity);
+        m.Put64(c.x[0] + addr::kArgEntries, kEntries);
+        m.Put32(c.x[0] + addr::kArgCount, 0);
+        for (std::uint32_t i = 0; i < capacity; ++i) {
+            const std::uint64_t entry = kEntries + addr::kArgEntrySize * i;
+            for (std::uint64_t b = 0; b < addr::kArgEntrySize; ++b) m.bytes[entry + b] = 0;
+            for (std::uint64_t b = 0; b < 0x40; ++b) m.bytes[kNames + 0x40 * i + b] = 0;
+            m.Put64(entry + addr::kEntryName, kNames + 0x40 * i);
+            m.Put32(entry + addr::kEntryNameCap, 0x40);
+        }
+    }
+    return result;
+}
+
+std::uint32_t Get32(Mem& m, std::uint64_t a) {
+    std::uint32_t v = 0;
+    m.Read(a, &v, 4);
+    return v;
+}
+
+} // namespace
+
+TEST_CASE("live events: an event with arguments and a starter, as the game's map change is asked") {
+    using Arg = CoopLiveEvents::Requester::Arg;
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    constexpr std::uint64_t kLink = 0x9500000000;
+    r.WantWith("Dm_SY_BancChangeGo",
+               {Arg{"NextBanc", std::string("HyruleField_Child"), false},
+                Arg{"NextStartPos", std::string("HyruleField_FrontOfLostWoodBridge"), false},
+                Arg{"BootEventName", std::string("Dm_SY_BancChangeArrive"), false},
+                Arg{"IsCheckAir", std::nullopt, false}},
+               kLink);
+    // Asked again before it ran: one request, with the newer arguments.
+    r.WantWith("Dm_SY_BancChangeGo",
+               {Arg{"NextBanc", std::string("KokiriForest_Child"), false},
+                Arg{"NextStartPos", std::string("LostWoodBridge_FrontOfHyruleField"), false},
+                Arg{"BootEventName", std::string("Dm_SY_BancChangeArrive"), false},
+                Arg{"IsCheckAir", std::nullopt, true}},
+               kLink);
+    CHECK(r.Waiting() == 1);
+
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kMalloc) {
+            CHECK(call->x[0] == addr::kArgSize + addr::kStringsSize);  // room for the strings after the arg
+        }
+        if (call->function == kMain + addr::kSetLink) {
+            CHECK(call->x[0] == kBlock + addr::kArgMember2);
+            CHECK(call->x[1] == kLink);
+            CHECK(call->x[2] == 0);
+        }
+        if (call->function == kMain + addr::kRequest) {
+            CHECK(m.Str(m.Get64(kBlock + addr::kArgName)) == "Dm_SY_BancChangeGo");
+            REQUIRE(Get32(m, kBlock + addr::kArgCount) == 4);
+            const char* names[] = {"NextBanc", "NextStartPos", "BootEventName", "IsCheckAir"};
+            const char* texts[] = {"KokiriForest_Child", "LostWoodBridge_FrontOfHyruleField", "Dm_SY_BancChangeArrive"};
+            for (std::uint32_t i = 0; i < 4; ++i) {
+                const std::uint64_t entry = kEntries + addr::kArgEntrySize * i;
+                CHECK(m.Str(kNames + 0x40 * i) == names[i]);
+                if (i < 3) {
+                    CHECK(Get32(m, entry + addr::kEntryType) == addr::kTypeString);
+                    const std::uint64_t text = m.Get64(entry + addr::kEntryValue);
+                    CHECK(text >= kBlock + addr::kArgStrings);  // in our block, after the arg: it stays
+                    CHECK(text < kBlock + addr::kArgStrings + addr::kStringsSize);
+                    CHECK(m.Str(text) == texts[i]);
+                } else {
+                    CHECK(Get32(m, entry + addr::kEntryType) == addr::kTypeBool);
+                    CHECK(m.bytes[entry + addr::kEntryValue] == 1);
+                }
+            }
+        }
+        call = r.Step(m, true, RunWithArgs(m, *call, 8), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kSetLink, addr::kRequest,
+                                              addr::kStringFree, addr::kStringFree});
+
+    // The next plain event carries nothing over: no link, no arguments.
+    r.Want("InsideTheDekuTree_Gimmick_FallingLadder");
+    order.clear();
+    call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kRequest) CHECK(Get32(m, kBlock + addr::kArgCount) == 0);
+        call = r.Step(m, true, RunWithArgs(m, *call, 8), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+}
+
+TEST_CASE("live events: arguments that do not fit the request are not asked, and what was built is freed") {
+    using Arg = CoopLiveEvents::Requester::Arg;
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    for (int which = 0; which < 3; ++which) {
+        CoopLiveEvents::Requester r;
+        std::vector<Arg> args{Arg{"NextBanc", std::string("A"), false}, Arg{"NextStartPos", std::string("B"), false}};
+        if (which == 1) args[0].name = std::string(0x40, 'n');                 // a name past the entry's buffer
+        if (which == 2) args[1].text = std::string(addr::kStringsSize, 't');   // a text past our strings' room
+        r.WantWith("Dm_SY_BancChangeGo", args, 0);
+        std::vector<std::uint64_t> order;
+        auto call = r.Step(m, false, 0, kMain);
+        while (call) {
+            order.push_back(call->function - kMain);
+            call = r.Step(m, true, RunWithArgs(m, *call, which == 0 ? 1 : 8), kMain);  // 0: room for one argument only
+        }
+        CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kStringFree, addr::kStringFree});
+        bool said = false;
+        for (const auto& n : r.TakeNotes()) said |= n.find("do not fit") != std::string::npos;
+        CHECK(said);
+    }
+}

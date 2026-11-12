@@ -49,6 +49,25 @@ inline constexpr std::uint64_t kArgName = 0x1a90;          // char* (inline buff
 inline constexpr std::uint64_t kArgNameCap = 0x1a98;       // u32
 inline constexpr std::uint64_t kArgMember1 = 0x1968;       // freed first, as the node does
 inline constexpr std::uint64_t kArgMember2 = 0x1950;
+// An event's arguments, as the game's QueryBancChangeEventRequestArg (0x29bf380) fills them for a map change: an
+// array of 200-byte entries at +kArgEntries (capacity u32 at +0, count u32 at +kArgCount). Entry: +0 its type (1 a
+// string pointer, 4 a bool), +8 its name's buffer, +16 that buffer's size, +152 the value. A string value is a
+// pointer the request does not copy, so ours live after the arg in our own block (kArgStrings).
+inline constexpr std::uint64_t kArgCapacity = 0x0;         // u32
+inline constexpr std::uint64_t kArgEntries = 0x8;          // -> entries
+inline constexpr std::uint64_t kArgCount = 0x10;           // u32
+inline constexpr std::uint64_t kArgEntrySize = 200;
+inline constexpr std::uint64_t kEntryType = 0;             // u32
+inline constexpr std::uint64_t kEntryName = 8;             // char*
+inline constexpr std::uint64_t kEntryNameCap = 16;         // u32
+inline constexpr std::uint64_t kEntryValue = 152;
+inline constexpr std::uint32_t kTypeString = 1;
+inline constexpr std::uint32_t kTypeBool = 4;
+inline constexpr std::uint64_t kArgStrings = kArgSize;     // our strings, in the block after the arg
+inline constexpr std::uint64_t kStringsSize = 0x200;
+// The event's starter actor: 0x2bc440(arg + kArgMember2, actor, 0) links it, as the game's
+// OneShotEventMemberRequestEventByEventName does; the frees after the request let it go again.
+inline constexpr std::uint64_t kSetLink = 0x2bc440;
 inline constexpr std::uint64_t kEventStatePtr = 0x4e94840;  // as coop_boss_game.cpp
 inline constexpr std::uint64_t kEventSession = 0x68;        // set while an event runs
 inline constexpr std::uint64_t kSessionCount = 0xeb0;       // u32, as coop_boss_game.cpp
@@ -162,6 +181,16 @@ public:
     // `scene`: where it was decided (empty: any); `at_us` when; `max_age_us`
     // how long it may wait for a free moment (0: no limit). See Expire.
     void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0);
+    // One argument of an event: a string (text) or a bool.
+    struct Arg {
+        std::string name;
+        std::optional<std::string> text;  // a string argument; none: a bool
+        bool flag = false;
+    };
+    // As Want, for an event that takes arguments and a starter actor (0: none): the game's map change is the
+    // event Dm_SY_BancChangeGo with NextBanc, NextStartPos, BootEventName and IsCheckAir, started by Link
+    // (coop_teleport_game.cpp). The arguments are written into the request after the game built it.
+    void WantWith(std::string name, std::vector<Arg> args, std::uint64_t starter);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
     // lock as Step: drops each name still waiting (not one being asked now)
@@ -200,7 +229,11 @@ public:
     std::uint64_t Block() const { return block_; }
 
 private:
-    enum class Next { none, malloc, build, request, free1, free2 };
+    enum class Next { none, malloc, build, link, request, free1, free2 };
+    // The current event's arguments into the built request; false when one does not fit.
+    bool WriteArgs(CoopPuppet::Guest& guest);
+    // The request call itself (after the build, and the starter's link if any); the frees when there is no manager.
+    std::optional<CoopPuppet::Call> Ask(CoopPuppet::Guest& guest, std::uint64_t main);
     // The two string members' frees, as the node does them; every path after
     // a build goes through them, so the reused block is never built over
     // live members.
@@ -211,9 +244,13 @@ private:
         std::string scene;
         std::uint64_t at_us = 0;
         std::uint64_t max_age_us = 0;
+        std::vector<Arg> args;
+        std::uint64_t starter = 0;
     };
     std::deque<Wanted> wanted_;
     std::string current_;
+    std::vector<Arg> current_args_;
+    std::uint64_t current_starter_ = 0;
     std::uint64_t block_ = 0;
     Next next_ = Next::none;  // the call made last, whose return comes next
     bool malloc_failed_ = false;

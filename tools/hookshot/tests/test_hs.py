@@ -131,29 +131,40 @@ class CacheTest(Fixture):
         self.assertFalse(os.path.exists(self.cache))
 
     def test_half_stored_entry_is_ignored_and_pruned(self):
-        os.makedirs(os.path.join(self.cache, "deadbeef.part", "game"))
+        os.makedirs(os.path.join(self.cache, "deadbeefdeadbeefdead.part", "game"))
         self.assertEqual(hs.entries(), [])
         k = hs.cache_store(self.game(), self.repo, say=self.say)
         gone = hs.cache_prune(3, self.repo, say=self.say)
-        self.assertEqual(gone, ["deadbeef.part"])
+        self.assertEqual(gone, ["deadbeefdeadbeefdead.part"])
         self.assertEqual([e[0] for e in hs.entries()], [k])
+
+    def test_prune_touches_only_cache_entries(self):
+        # Review must-fix 2: anything else in the cache root stays (and a plain file does not crash prune).
+        k = hs.cache_store(self.game(), self.repo, say=self.say)
+        write(os.path.join(self.cache, "notes.txt"), "mine")
+        write(os.path.join(self.cache, "my-folder", "x.txt"), "mine")
+        write(os.path.join(self.cache, "0123456789abcdef0123"), "a file with a key's name")
+        os.makedirs(os.path.join(self.cache, "fedcba9876543210fedc.part"))
+        gone = hs.cache_prune(1, self.repo, say=self.say)
+        self.assertEqual(gone, ["fedcba9876543210fedc.part"])
+        self.assertEqual(sorted(os.listdir(self.cache)), sorted([k, "notes.txt", "my-folder", "0123456789abcdef0123"]))
 
     def test_prune_keeps_the_newest_and_the_current(self):
         cur = hs.cache_store(self.game(), self.repo, say=self.say)
         old = []
         for i in range(4):
-            d = os.path.join(self.cache, "old%d" % i)
+            d = os.path.join(self.cache, "%020x" % (0xa0 + i))
             write(os.path.join(d, "game", "hookshot.exe"), "x")
             write(os.path.join(d, "stamp.txt"), "s%d" % i)
             write(os.path.join(d, "used.txt"), "t")
             t = time.time() - 1000 + i * 10   # old3 newest of the old ones
             os.utime(os.path.join(d, "used.txt"), (t, t))
-            old.append("old%d" % i)
+            old.append("%020x" % (0xa0 + i))
         t = time.time() - 5000   # the current one is the least recently used, and still kept
         os.utime(os.path.join(self.cache, cur, "used.txt"), (t, t))
         gone = hs.cache_prune(2, self.repo, say=self.say)
-        self.assertEqual(sorted(gone), ["old0", "old1", "old2"])
-        self.assertEqual(sorted(os.listdir(self.cache)), sorted([cur, "old3"]))
+        self.assertEqual(sorted(gone), ["%020x" % (0xa0 + i) for i in range(3)])
+        self.assertEqual(sorted(os.listdir(self.cache)), sorted([cur, "%020x" % 0xa3]))
 
     @unittest.skipUnless(hs.WINDOWS, "junctions are Windows")
     def test_links_are_kept_as_links(self):
@@ -235,6 +246,25 @@ class LockTest(unittest.TestCase):
         self.assertFalse(self.take("hs", "b", wait=25))
         self.assertGreaterEqual(sum(self.slept), 25)
         self.assertIn("held by a", self.msgs[-1])
+
+    def test_a_shell_lock_has_no_pid_and_goes_stale_by_age_only(self):
+        # `hs.py lock acquire` ends at once: its own pid must not make the lock stale (review must-fix 1).
+        self.assertTrue(hs.lock_acquire(self.root, "emu", "integrator", 0, 4.0, lambda pid: False, self.sleep,
+                                        self.clock, self.say, pid=0))
+        self.assertIsNone(self.owner("build-emu.lock")["pid"])
+        self.assertFalse(self.take("emu", "other", alive=lambda pid: False))
+        self.assertEqual(self.owner("build-emu.lock")["owner"], "integrator")
+        self.t[0] += 4 * 3600 + 1
+        self.assertTrue(self.take("emu", "other", alive=lambda pid: False))
+
+    def test_cli_acquire_twice(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(hs.main(["lock", "acquire", "--name", "hs", "--owner", "a", "--root", self.root]), 0)
+            self.assertEqual(hs.main(["lock", "acquire", "--name", "hs", "--owner", "b", "--root", self.root]), 1)
+            self.assertEqual(hs.main(["lock", "release", "--name", "hs", "--owner", "b", "--root", self.root]), 1)
+            self.assertEqual(hs.main(["lock", "release", "--name", "hs", "--owner", "a", "--root", self.root]), 0)
+        self.assertNotIn("stale", out.getvalue())
 
     def test_status(self):
         self.take("emu", "me")

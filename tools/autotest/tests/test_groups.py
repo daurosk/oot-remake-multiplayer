@@ -131,6 +131,39 @@ class RunTest(unittest.TestCase):
         self.assertIsNone(res[0][2])
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "R", "g1", "walk-no-folder.txt")))
 
+    def test_runs_without_folder_or_that_raise_are_fail_rows(self):
+        # Review must-fix 3: a run that left no run folder, or broke inside the group thread, is FAIL in the table.
+        root = os.path.join(self.tmp, "R")
+        planned = g.plan(g.parse_groups("[g1]\nwalk\nturn\n[g2]\ntime\n"), self.tmp, root, "S.exe")
+
+        def runner(cmd):
+            name = cmd[cmd.index("-Scenario") + 1]
+            if name == "walk":
+                return types.SimpleNamespace(returncode=1, stdout="no server at S.exe\n", stderr="")
+            if name == "turn":
+                raise OSError("powershell not found")
+            folder = os.path.join(cmd[cmd.index("-Shots") + 1], name, "t")
+            write(os.path.join(folder, "steps.txt"), "scenario played\n")
+            return types.SimpleNamespace(returncode=0, stdout=folder + "\n", stderr="")
+
+        res = g.run_groups(planned, say=lambda *_: None, runner=runner)
+        self.assertEqual(len(res), 3)   # the raise did not end g1
+        table = g.merge([root], rel_to=root, expected=3)
+        self.assertIn("| g1 walk | FAIL | g1/walk-no-folder.txt: no run folder (exit 1) |", table)
+        self.assertIn("| g1 turn | FAIL |", table)
+        self.assertIn("error: OSError: powershell not found", table)
+        self.assertIn("| g2 time | PLAYED |", table)
+        self.assertTrue(table.endswith("3 run(s): 1 PLAYED, 2 FAIL -> FAIL"))
+
+    def test_planned_runs_with_no_trace_count_as_fail(self):
+        root = os.path.join(self.tmp, "R")
+        f = os.path.join(root, "g1", "walk", "t")
+        write(os.path.join(f, "steps.txt"), "scenario played\n")
+        self.assertTrue(g.merge([root], expected=1).endswith("-> PASS"))
+        table = g.merge([root], expected=3)
+        self.assertIn("| (2 planned run(s)) | FAIL |", table)
+        self.assertTrue(table.endswith("3 run(s): 1 PLAYED, 2 FAIL -> FAIL"))
+
     def test_prepare_copies_the_base_pairs_files_once(self):
         planned = g.plan(g.parse_groups("[g1]\nwalk\n[g2]\nwalk\n"), self.tmp, os.path.join(self.tmp, "R"), "S")
         write(os.path.join(self.tmp, "hookshot-A", "autotest-save", "slot_00", "progress.sav"), "a")

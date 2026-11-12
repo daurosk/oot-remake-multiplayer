@@ -203,24 +203,39 @@ def run_groups(planned, dry=False, say=print, runner=None):
     runner = runner or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, errors="replace"))
     results, lock = [], threading.Lock()
 
-    def one_group(s, runs, cmds):
-        os.makedirs(s["shots"], exist_ok=True)
-        for r, cmd in zip(runs, cmds):
-            with lock:
-                say("[%s] %s: start" % (s["name"], r["scenario"]))
+    def one_run(s, r, cmd):
+        """(folder or None, exit code). A run that leaves no folder, or fails here, leaves <scenario>-no-folder.txt,
+        which merge counts as a FAIL row."""
+        code = -1
+        try:
             p = runner(cmd)
+            code = p.returncode
             lines = [line.strip() for line in (p.stdout or "").splitlines() if line.strip()]
             folder = next((line for line in reversed(lines) if os.path.isdir(line)), None)
             if folder:
                 with open(os.path.join(folder, "run.json"), "w", encoding="utf-8") as f:
                     json.dump({"group": s["name"], "scenario": r["scenario"], "label": r["label"],
-                               "expects": r["expects"], "exit": p.returncode, "port": s["port"]}, f, indent=1)
-            else:
-                with open(os.path.join(s["shots"], "%s-no-folder.txt" % r["scenario"]), "w", encoding="utf-8") as f:
-                    f.write("exit %d\n%s\n%s" % (p.returncode, p.stdout or "", p.stderr or ""))
+                               "expects": r["expects"], "exit": code, "port": s["port"]}, f, indent=1)
+                return folder, code
+            note = "exit %d\n%s\n%s" % (code, p.stdout or "", p.stderr or "")
+        except Exception as e:   # one broken run must not end its group or vanish from the table
+            note = "error: %s: %s\n" % (e.__class__.__name__, e)
+        try:
+            os.makedirs(s["shots"], exist_ok=True)
+            with open(os.path.join(s["shots"], "%s-no-folder.txt" % r["scenario"]), "w", encoding="utf-8") as f:
+                f.write(note)
+        except OSError:
+            pass   # merge's expected count still makes it a FAIL row
+        return None, code
+
+    def one_group(s, runs, cmds):
+        for r, cmd in zip(runs, cmds):
             with lock:
-                results.append((s["name"], r, folder, p.returncode))
-                say("[%s] %s: exit %d %s" % (s["name"], r["scenario"], p.returncode, folder or "(no run folder)"))
+                say("[%s] %s: start" % (s["name"], r["scenario"]))
+            folder, code = one_run(s, r, cmd)
+            with lock:
+                results.append((s["name"], r, folder, code))
+                say("[%s] %s: exit %d %s" % (s["name"], r["scenario"], code, folder or "(no run folder)"))
 
     if dry:
         print_plan(planned, say)
@@ -291,9 +306,27 @@ def run_folders(paths):
     return sorted(set(out))
 
 
-def merge(paths, rel_to=None):
-    """The markdown table of every run folder under paths and a summary line."""
+def no_folder_notes(paths):
+    """<group folder>/<scenario>-no-folder.txt files: runs that left no run folder."""
+    out = []
+    for p in paths:
+        for d, dirs, files in os.walk(p):
+            dirs.sort()
+            out += [os.path.join(d, f) for f in sorted(files) if f.endswith("-no-folder.txt")]
+    return out
+
+
+def merge(paths, rel_to=None, expected=None):
+    """The markdown table of every run under paths and a summary line. A run with no run folder is a FAIL row; with
+    `expected` (the number of planned runs), each planned run that left nothing at all is counted as FAIL too."""
     rows, tally = [], {}
+    for n in no_folder_notes(paths):
+        note = (read_text(n) or "").strip().splitlines()
+        tally["FAIL"] = tally.get("FAIL", 0) + 1
+        where = os.path.relpath(n, rel_to) if rel_to else n
+        rows.append("| %s %s | FAIL | %s: no run folder (%s) |" % (
+            os.path.basename(os.path.dirname(n)), os.path.basename(n)[:-len("-no-folder.txt")],
+            where.replace("\\", "/"), (note[0] if note else "no note")[:140].replace("|", "/")))
     for f in run_folders(paths):
         meta = json.loads(read_text(os.path.join(f, "run.json")) or "{}")
         result, evidence = judge(f, meta)
@@ -305,6 +338,10 @@ def merge(paths, rel_to=None):
         where = os.path.relpath(f, rel_to) if rel_to else f
         rows.append("| %s | %s | %s: %s |" % (run.replace("|", "/"), result, where.replace("\\", "/"),
                                               evidence.replace("|", "/")))
+    if expected is not None and sum(tally.values()) < expected:
+        lost = expected - sum(tally.values())
+        tally["FAIL"] = tally.get("FAIL", 0) + lost
+        rows.append("| (%d planned run(s)) | FAIL | no result at all: no run folder and no note |" % lost)
     total = sum(tally.values())
     summary = "%d run(s): %s" % (total, ", ".join("%d %s" % (tally[k], k) for k in ("PASS", "PLAYED", "FAIL")
                                                  if k in tally) or "none")
@@ -369,7 +406,7 @@ def main(argv=None):
         if not os.path.isfile(server):
             raise Fail("no server at %s" % server)
         run_groups(planned)
-        table = merge([run_root], rel_to=run_root)
+        table = merge([run_root], rel_to=run_root, expected=sum(len(runs) for _, runs, _ in planned))
         with open(os.path.join(run_root, "results.md"), "w", encoding="utf-8") as f:
             f.write(table + "\n")
         print(table)

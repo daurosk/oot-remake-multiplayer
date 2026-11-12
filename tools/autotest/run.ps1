@@ -94,8 +94,8 @@ param(
     # autotest-save\ (a copy of its user\save\) is put back over user\save\ before each run.
     [string]$HookshotA = "",
     [string]$HookshotB = "",
-    # Hookshot: the control pipes' name (\.\pipe\<Pipe>-A and -B). Pairs that run at the same time
-    # (toolsutotest\groups.py) each need their own, as they need their own -Port.
+    # Hookshot: the control pipes' name (\\.\pipe\<Pipe>-A and -B). Pairs that run at the same time
+    # (tools\autotest\groups.py) each need their own, as they need their own -Port.
     [string]$Pipe = "coop-auto",
     # Hookshot: print the hookshot.py command and stop (nothing started, no run folder made).
     [switch]$DryRun

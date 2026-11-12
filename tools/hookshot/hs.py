@@ -45,6 +45,7 @@ OLD_LOCK = "build.lock"
 PER_PLAYER = {"hookshot_coop.dll", "coop.ini", "coop-options.ini", "user", "save", "autotest-save", "mods",
               "hookshot_log.txt", "hookshot_log.old.txt", "control.json"}
 CACHE_GAME = "game"
+CACHE_NAME = re.compile(r"^[0-9a-f]{20}(\.part|\.build)?$")
 # Caches the game writes while it runs (shaders, pipelines): copied into a pair that has none, never overwritten.
 RUNTIME_CACHE = re.compile(r"^(hookshot_(pipelines|pipeline_states|programs|shaders)\.(bin|idx)"
                            r"|hookshot_damaged_files\.txt|mkw_vk_pipelines\.bin)$", re.I)
@@ -257,7 +258,9 @@ def cache_prune(keep=3, repo=REPO, dry=False, say=print):
     kept = {e[0] for e in kept[:max(keep, 1)]}
     gone = []
     for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
-        if name in kept:
+        # Only our own entries: a key or a half-stored key.part, as folders. Anything else in the root stays.
+        p = os.path.join(root, name)
+        if name in kept or not CACHE_NAME.match(name) or is_link(p) or not os.path.isdir(p):
             continue
         gone.append(name)
         say("cache: prune %s" % name)
@@ -339,8 +342,11 @@ def lock_status(root, max_age_h=4.0, alive=pid_alive):
 
 
 def lock_acquire(root, which, owner, wait=0.0, max_age_h=4.0, alive=pid_alive, sleep=time.sleep, clock=time.time,
-                 say=print):
-    """Takes build-<which>.lock. Waits up to `wait` s while it or a live build.lock is held; breaks stale ones."""
+                 say=print, pid=None):
+    """Takes build-<which>.lock. Waits up to `wait` s while it or a live build.lock is held; breaks stale ones.
+    pid: the process that holds it (default this one, for compile-all and build, which hold it while they run).
+    0 = none: the lock goes stale by age only (`hs.py lock acquire` from a shell, whose own process ends at once)."""
+    pid = os.getpid() if pid is None else pid
     name = LOCK_NAMES[which]
     path = os.path.join(root, name)
     old = os.path.join(root, OLD_LOCK)
@@ -357,7 +363,7 @@ def lock_acquire(root, which, owner, wait=0.0, max_age_h=4.0, alive=pid_alive, s
             try:
                 os.mkdir(path)
                 with open(os.path.join(path, "owner.txt"), "w", encoding="utf-8") as f:
-                    json.dump({"owner": owner, "pid": os.getpid(), "host": socket.gethostname(), "time": clock()}, f)
+                    json.dump({"owner": owner, "pid": pid or None, "host": socket.gethostname(), "time": clock()}, f)
                 say("lock: %s taken by %s" % (name, owner))
                 return True
             except FileExistsError:
@@ -573,6 +579,8 @@ def main(argv=None):
     lk.add_argument("--owner", default=os.environ.get("USERNAME", "someone"))
     lk.add_argument("--wait", type=float, default=0)
     lk.add_argument("--max-age", type=float, default=4.0, help="hours before a lock is stale")
+    lk.add_argument("--pid", type=int, default=0,
+                    help="acquire: the process that holds the lock (stale when it is gone); default none: by age only")
     lk.add_argument("--root", help="folder of the lock folders (default: the main checkout's root)")
     ca = sub.add_parser("compile-all")
     ca.add_argument("--build", help="unit build folder (default: <repo>/build)")
@@ -629,7 +637,7 @@ def main(argv=None):
             if not a.name:
                 raise Fail("--name emu|hs")
             if a.action == "acquire":
-                return 0 if lock_acquire(root, a.name, a.owner, a.wait, a.max_age) else 1
+                return 0 if lock_acquire(root, a.name, a.owner, a.wait, a.max_age, pid=a.pid) else 1
             return 0 if lock_release(root, a.name, a.owner) else 1
         bdir = os.path.abspath(a.build) if a.build else os.path.join(repo, "build")
         if a.cmd == "compile-all":

@@ -427,7 +427,7 @@ Both: on channel 4 like `WORLD_MOVE`, not reliable: the next one comes a second 
 
 ### Voice (`VOICE_FRAME`, protocol 11)
 
-Type 420 (420 to 424 kept; branch `proximity-voip`). Proximity voice chat: each game sends its microphone as Opus, 48 kHz mono, one 20 ms frame per message, while its player talks (push-to-talk or open mic). Both sides, on channel 5, unreliable. It comes with protocol 11 (not released yet: test10 is 10; the 16 players of branch `native-host-b` bring the same number) and needs no bump of its own: a version 10 server would refuse the channel and the type.
+Type 420 (420 to 424 kept; branch `proximity-voip`). Proximity voice chat: each game sends its microphone as Opus, 48 kHz mono, one 20 ms frame per message, while its player talks (push-to-talk or open mic). Both sides, on channel 5, unreliable. It comes with protocol 11 (not released yet; the 16 players of branch `native-host-b` bring the same number) and needs no bump of its own: a version 10 server would refuse the channel and the type.
 
 | Field | Type | |
 |---|---|---|

@@ -35,9 +35,10 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
 
 ### What is not on Hookshot yet
 
-- **No co-op window:** no status panel, no chat box (Enter) and no player list (Tab), so no chat commands such as `/teleport`. The log says what the panel would.
+- **No co-op window:** no status panel, no chat box (Enter) or chat lines, no player list (Tab), no markers, no co-op HUD (the other players' hearts under yours) and no cheats window, so no chat commands such as `/teleport`. The log says what the panel would.
 - **Your own ocarina notes are not sent:** the others do not hear a Hookshot player's ocarina.
-- **Your own Link stays green:** your colour from `coop-options.ini` is not put on your own Link on Hookshot (the emulator kit does it).
+- **Tunic colours only partly:** your own Link stays green (your colour is not put on it), players whose colour is green show as the plain puppet, and `LICHII_COOP_TUNICS=0` does nothing on Hookshot (#202; the emulator kit does all of these).
+- **No puppet pack hints:** `Host-Hookshot.bat` and `Join-Hookshot.bat` do not warn about an old or missing puppet pack; rerun `Build-Hookshot-Coop.bat` after an update.
 - What has been checked on Hookshot in our two-game tests: <!-- FILL from the integrator's Hookshot proofs 3-5 (reports/integrate-p11.md) --> the rest of co-op is the same code as on the emulator but not yet checked there.
 
 ### Hookshot troubleshooting

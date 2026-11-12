@@ -25,7 +25,6 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Known issues
 
-- **Player colours**: other players' tunic still shows green, not their own colour, and every name is white ([#202](https://github.com/daurosk/oot-remake-multiplayer/issues/202)). A fix is planned.
 - **Bosses**: Gohma is built to fight both players with its stun and larvae in step, but our tests have no save from just before Gohma, so it is unchecked; if it still targets one player or turns wrong, tell us ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)).
 - **The Kakariko gate** opened for only one player, and Zelda's letter was gone from both; a fix is built in, not yet checked ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)).
 - **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)).

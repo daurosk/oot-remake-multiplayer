@@ -138,8 +138,7 @@ int main(int argc, char** argv) {
           shown_enemies = enemies;
           enemies_at = std::chrono::steady_clock::now();
           std::printf("coop_server: enemies: group entries taken %llu, refused %llu; "
-                      "damage relayed %llu, dropped %llu; kills told late %llu
-",
+                      "damage relayed %llu, dropped %llu; kills told late %llu\n",
                       static_cast<unsigned long long>(now.group_links),
                       static_cast<unsigned long long>(now.group_refused),
                       static_cast<unsigned long long>(now.damage_relayed),

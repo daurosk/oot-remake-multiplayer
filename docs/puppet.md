@@ -418,7 +418,7 @@ Every change is logged once: `coop: puppet: P<n> show -> hide (our cutscene)`, `
 
 ### Cases (issue 86)
 
-What each case does now. "Handled" is by code and unit tests; none of these is proven in the game yet. Each scenario named has a steps file (`toolsutotestun.ps1 -Scenario <name>`) whose `counts.txt` lines check its case; its header says which shots to look at and when a run is inconclusive.
+What each case does now. "Handled" is by code and unit tests; none of these is proven in the game yet. Each scenario named has a steps file (`tools\autotest\run.ps1 -Scenario <name>`) whose `counts.txt` lines check its case; its header says which shots to look at and when a run is inconclusive.
 
 | Case | Whose | What happens | Status | Scenario |
 |---|---|---|---|---|

@@ -2482,6 +2482,98 @@ TEST_CASE("objects: a copy that becomes ours is listed once for the release (iss
     CHECK(sync.TakeOursNow().empty());
 }
 
+// Issue 191: guards. A copy that reacts to our Link goes to us; its patrol never does.
+TEST_CASE("objects: guard names and their reactions (issue 191)") {
+    CHECK(CoopObjects::IsGuard("Npc_Hylia_Soldier_SecurityGuard"));
+    CHECK(CoopObjects::IsGuard("Npc_Hylia_Soldier_004_Child"));
+    CHECK(CoopObjects::IsGuard("Npc_Hylia_ImperialSoldier_001_Child"));
+    CHECK(CoopObjects::IsGuard("Npc_Gerudo_GEN_SecurityGuard"));
+    CHECK(CoopObjects::IsGuard("Npc_Gerudo_FortressGuard"));
+    CHECK_FALSE(CoopObjects::IsGuard("Npc_Gerudo_001"));
+    CHECK_FALSE(CoopObjects::IsGuard("Npc_Hylia_Fishman_001_Child"));
+    CHECK_FALSE(CoopObjects::IsGuard("Enemy_Dekubaba"));
+    CHECK(CoopObjects::IsShared("Npc_Hylia_Soldier_SecurityGuard"));
+    CHECK(CoopObjects::IsGuardReaction("Notice"));
+    CHECK(CoopObjects::IsGuardReaction("NoticeTurn_Quick"));
+    CHECK(CoopObjects::IsGuardReaction("Discover"));
+    CHECK(CoopObjects::IsGuardReaction("Surprise"));
+    CHECK(CoopObjects::IsGuardReaction("Salute"));
+    CHECK_FALSE(CoopObjects::IsGuardReaction("Walk"));
+    CHECK_FALSE(CoopObjects::IsGuardReaction("Wait"));
+    CHECK_FALSE(CoopObjects::IsGuardReaction("Turn"));
+}
+
+TEST_CASE("objects: a guard copy that notices our Link is flagged targeting, its patrol is not (issue 191)") {
+    constexpr const char* kGuard = "Npc_Hylia_Soldier_SecurityGuard";
+    // A guard copy at x owned by player 2, whose game plays `owners`; our
+    // game's own AI plays `ours` (seen by the walk) or, with put_back, asks
+    // for it once and the Mover puts the owner's back (NoteTakeover).
+    auto run = [&](float x, const std::string& ours, const std::string& owners, bool put_back) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 100, x, owners, kGuard)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            if (put_back && t <= 100 && 100 < t + 66) {
+                sync.NoteTakeover(0x100, t * kMs, ours);
+            }
+            sync.Receive(OwnerSample(id, 2, t * kMs, x, 100, owners));
+            const std::string seen = put_back ? owners : ours;
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x100, 0x11, 100, x, seen, kGuard)}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, "Notice", "Walk", false));
+    CHECK(run(20.0f, "Discover", "Walk", false));    // a guard sees further than 10 m
+    CHECK(run(20.0f, "Discover", "Walk", true));     // put back by the Mover once
+    CHECK_FALSE(run(5.0f, "Wait", "Walk", false));   // only the patrol's timing differs
+    CHECK_FALSE(run(5.0f, "Wait", "Walk", true));
+    CHECK_FALSE(run(30.0f, "Notice", "Walk", false)); // over 25 m
+    CHECK_FALSE(run(5.0f, "Notice", "Notice", false)); // the owner's guard does it too
+}
+
+TEST_CASE("objects: a guard of ours noticing our Link stays ours; walking near us does not hold it (issue 191)") {
+    auto run = [](float x, const std::string& now) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 100, x, "Walk", "Npc_Hylia_Soldier_SecurityGuard")});
+        Own(sync, *sync.IdOf(0x100), 1);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 66; t <= 1500; t += 66) {
+            for (const auto& p : All<proto::ObjectPresent>(Tick(
+                     sync, t * kMs, {Acting(0x100, 0x11, 100, x, now, "Npc_Hylia_Soldier_SecurityGuard")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(15.0f, "Discover"));
+    CHECK_FALSE(run(15.0f, "Wait"));      // another patrol animation: no fight
+    CHECK_FALSE(run(30.0f, "Discover"));  // over 25 m: noticing someone else
+}
+
+TEST_CASE("objects: a guard copy that becomes ours is listed for the release and its replay (issue 191)") {
+    Sync sync;
+    Tick(sync, 0, {Acting(0x100, 0x11, 100, 0.0f, "Walk", "Npc_Hylia_Soldier_SecurityGuard"),
+                   Acting(0x200, 0x22, 100, 0.0f, "Walk", "Npc_Gerudo_001")});
+    const proto::ObjectId guard = *sync.IdOf(0x100);
+    const proto::ObjectId other = *sync.IdOf(0x200);
+    Own(sync, guard, 2, 1);
+    Own(sync, other, 2, 1);
+    Tick(sync, 10 * kMs, {Acting(0x100, 0x11, 100, 0.0f, "Walk", "Npc_Hylia_Soldier_SecurityGuard"),
+                          Acting(0x200, 0x22, 100, 0.0f, "Walk", "Npc_Gerudo_001")});
+    Own(sync, guard, 1, 2);
+    Own(sync, other, 1, 2);
+    Tick(sync, 20 * kMs, {Acting(0x100, 0x11, 100, 0.0f, "Walk", "Npc_Hylia_Soldier_SecurityGuard"),
+                          Acting(0x200, 0x22, 100, 0.0f, "Walk", "Npc_Gerudo_001")});
+    CHECK(sync.TakeOursNow() == std::vector<std::uint64_t>{0x100});
+}
+
 // Issue 151 (fishing-2): every fish shared, any player's lure works on it.
 namespace {
 

@@ -170,6 +170,21 @@ bool IsFish(std::string_view name) {
     return name.starts_with("Animal_Fish_");
 }
 
+bool IsGuard(std::string_view name) {
+    return name.starts_with("Npc_Hylia_Soldier") || name.starts_with("Npc_Hylia_ImperialSoldier") ||
+           name.starts_with("Npc_Gerudo_GEN_SecurityGuard") ||
+           name.starts_with("Npc_Gerudo_FortressGuard");
+}
+
+bool IsGuardReaction(std::string_view name) {
+    constexpr std::string_view kWords[] = {"Notice", "Discover", "Surprise", "Alert",
+                                           "Found",  "Salute",   "Greeting", "Talk"};
+    for (const std::string_view w : kWords) {
+        if (name.find(w) != std::string_view::npos) return true;
+    }
+    return false;
+}
+
 bool IsRolled(std::string_view name) {
     // Enemy_Stalchild and Enemy_Stalchild_Big; not the picture book's
     // Enemy_Stalchild_Dictionary actors.
@@ -690,10 +705,15 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
     }
 }
 
-void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us) {
+void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
     const auto it = objects_.find(address);
-    if (it != objects_.end() && it->second.reacts) {
-        it->second.took_over_at = now_us;
+    if (it == objects_.end()) {
+        return;
+    }
+    Object& o = it->second;
+    if (o.reacts || (o.guard && IsGuardReaction(name))) {
+        o.took_over_at = now_us;
+        o.took_over_name = std::string(name);
     }
 }
 
@@ -1126,6 +1146,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.breakable = CoopWorld::IsBreakable(s->name);
         o.reacts = s->name.starts_with("Enemy_");
         o.fish = IsFish(s->name);
+        o.guard = IsGuard(s->name);
         o.first_position = s->position;
         if (s->animation) {
             o.rest_animation = s->animation->name;
@@ -1323,7 +1344,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         // An enemy of ours coming at our Link (NoteDrift): a fight to the
         // server, so it stays with us.
-        if (o.reacts && player_) {
+        // Issue 191: a guard too, but only for a reaction to our Link
+        // (IsGuardReaction), never its patrol, and from further.
+        if ((o.reacts || o.guard) && player_) {
+            const float wake_m = o.reacts ? kWakeM : kGuardWakeM;
             const auto owner = owners_.find(o.id);
             if (owner != owners_.end() && owner->second.player == self) {
                 proto::Vec3 to{};
@@ -1339,7 +1363,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         speed += o.velocity[i] * to[i] / d;
                     }
                 }
-                if (d <= kChaseReachM && speed >= kChaseSpeed) {
+                if (o.reacts && d <= kChaseReachM && speed >= kChaseSpeed) {
                     ChaseStep(o, now_us);
                 }
                 // Woken by our Link (issue 132): out of the animation it
@@ -1348,18 +1372,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // flies near us is not held in a fight for good.
                 const std::string_view now_playing =
                     o.animation ? AnimationBase(o.animation->name) : std::string_view();
-                const bool resting = now_playing.empty() || o.rest_animation.empty() ||
-                                     now_playing == AnimationBase(o.rest_animation);
+                const bool resting =
+                    o.reacts ? now_playing.empty() || o.rest_animation.empty() ||
+                                   now_playing == AnimationBase(o.rest_animation)
+                             : !IsGuardReaction(now_playing);
                 if (resting) {
                     o.woke_at = 0;
                 } else if (o.woke_at == 0) {
                     o.woke_at = now_us;
                 }
-                if (wake_ && d <= kWakeM && o.woke_at != 0 && now_us - o.woke_at < kWakeOwnUs) {
+                if (wake_ && d <= wake_m && o.woke_at != 0 && now_us - o.woke_at < kWakeOwnUs) {
                     ChaseStep(o, now_us);
                 }
             } else if (wake_ && owner != owners_.end() && owner->second.player != 0 &&
-                       now_seen.contains(address) && Distance(o.position, *player_) <= kWakeM &&
+                       now_seen.contains(address) && Distance(o.position, *player_) <= wake_m &&
                        !o.received.empty() && now_us >= o.received.back().time &&
                        now_us - o.received.back().time <= kPoseStaleUs &&
                        !(o.react_at != 0 && now_us < o.react_at + kReactHoldUs)) {
@@ -1368,7 +1394,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 const auto& wanted = o.received.back().animation;
                 const bool differs = o.animation && !o.animation->name.empty() && wanted &&
                                      !wanted->name.empty() &&
-                                     AnimationBase(o.animation->name) != AnimationBase(wanted->name);
+                                     AnimationBase(o.animation->name) != AnimationBase(wanted->name) &&
+                                     (o.reacts || IsGuardReaction(o.animation->name));
                 // Or the Mover had to put the owner's one back lately (issue 157).
                 const bool put_back = o.took_over_at != 0 && now_us >= o.took_over_at &&
                                       now_us - o.took_over_at <= kWakeLatchUs;
@@ -1696,7 +1723,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_at = 0;
                 o->react_at = 0;
                 o->sent_once = false;
-                if (before != 0 && o->reacts && ours_now_.size() < 64) {
+                if (before != 0 && (o->reacts || o->guard) && ours_now_.size() < 64) {
                     ours_now_.push_back(o->address);  // was a copy: its hold ends
                 }
             } else if (before == self) {

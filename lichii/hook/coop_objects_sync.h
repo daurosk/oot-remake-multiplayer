@@ -118,6 +118,21 @@ bool IsOwnPuzzle(std::string_view name);
 // whose lure it goes for, and a fish its owner catches is gone for everyone.
 bool IsFish(std::string_view name);
 
+// Issue 191: guards (docs/objects.md, "Guards"). The stealth guards that throw
+// a child out when they spot him (Npc_Hylia_Soldier_SecurityGuard in the
+// castle garden, Npc_Gerudo_GEN_SecurityGuard and Npc_Gerudo_FortressGuard),
+// and the town soldiers (Npc_Hylia_Soldier_*, Npc_Hylia_ImperialSoldier_*),
+// who salute, greet and turn to Link. Shared like any townsperson, with one
+// owner; a copy that reacts to our Link (IsGuardReaction) is handed to us.
+bool IsGuard(std::string_view name);
+
+// A guard animation that answers this game's Link and no other: noticing,
+// discovering, surprise, alert, found (the stealth guards' 'Notice',
+// 'NoticeTurn_Quick', 'Discover', 'Surprise'), and the town soldiers'
+// 'Salute', greeting and talk. Not walking, waiting or turning on a patrol,
+// which differ between games only by timing.
+bool IsGuardReaction(std::string_view name);
+
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver
 // rupees, Gold Skulltulas and tokens), spider webs, red and blue ice,
@@ -396,12 +411,17 @@ public:
     // Peahat rising out of the ground) is rarely seen in it by the walk.
     // The Mover tells each such put-back (NoteTakeover, present thread); the
     // copy then counts as playing its own animation for kWakeLatchUs.
-    void NoteTakeover(std::uint64_t address, std::uint64_t now_us);
+    // `name` is what the copy's own AI played (a guard is taken only for an
+    // IsGuardReaction one).
+    void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
     static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
     static constexpr std::uint64_t kWakeOwnUs = 4'000'000;
+    // Issue 191: a guard sees further than an enemy wakes; its reaction to
+    // our Link (IsGuardReaction) counts within this, the patrol never does.
+    static constexpr float kGuardWakeM = 25.0f;
     // A copy's kill counts for a resend this long after our hit took it to 0.
     static constexpr std::uint64_t kKilledKeepUs = 5'000'000;
 
@@ -549,6 +569,7 @@ private:
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
         bool fish = false;                      // IsFish: the lure rules
+        bool guard = false;                     // IsGuard: handed over on a reaction
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         // Chasing our Link (NoteDrift): the run of steps towards it.
@@ -559,6 +580,7 @@ private:
         std::string rest_animation;
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
         std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
+        std::string took_over_name;      // ... and what it was (a guard's, issue 191)
         // Our own hit took its life to 0 here (the DAMAGE resend's mark).
         std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when

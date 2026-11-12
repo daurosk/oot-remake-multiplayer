@@ -607,6 +607,18 @@ Error check_object_state(const ObjectState& s) {
       return Error::bad_value;
     }
   }
+  if (s.slots) {
+    if (s.slots->size() > kMaxObjectSlots) return Error::bad_value;
+    std::uint32_t seen = 0;
+    for (const SlotAnimation& a : *s.slots) {
+      if (a.slot < 1 || a.slot > kMaxSlotIndex || (seen & (1u << a.slot))) return Error::bad_value;
+      seen |= 1u << a.slot;
+      COOP_TRY(check_string(a.animation.name, kMaxAnimationChars));
+      if (!std::isfinite(a.animation.frame) || !std::isfinite(a.animation.rate)) {
+        return Error::bad_value;
+      }
+    }
+  }
   return Error::none;
 }
 
@@ -639,6 +651,17 @@ void write_object_state(const ObjectState& s, Writer& w) {
   }
   if (s.fuse) component(ObjectComponent::fuse, [&] { w.f32(*s.fuse); });
   if (s.state) component(ObjectComponent::state, [&] { w.u8(*s.state); });
+  if (s.slots) {
+    component(ObjectComponent::slots, [&] {
+      w.u8(static_cast<std::uint8_t>(s.slots->size()));
+      for (const SlotAnimation& a : *s.slots) {
+        w.u8(a.slot);
+        w.str(a.animation.name);
+        w.f32(a.animation.frame);
+        w.f32(a.animation.rate);
+      }
+    });
+  }
 }
 
 bool has_duplicate_id(const std::vector<ObjectPresence>& objects) {
@@ -1252,6 +1275,26 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
     case ObjectComponent::state:
       COOP_READ(c.u8(s.state.emplace()));
       return Error::none;
+    case ObjectComponent::slots: {
+      std::uint8_t count = 0;
+      COOP_READ(c.u8(count));
+      if (count > kMaxObjectSlots) return Error::bad_value;
+      auto& slots = s.slots.emplace();
+      slots.resize(count);
+      std::uint32_t seen = 0;
+      for (SlotAnimation& a : slots) {
+        COOP_READ(c.u8(a.slot));
+        if (a.slot < 1 || a.slot > kMaxSlotIndex || (seen & (1u << a.slot))) return Error::bad_value;
+        seen |= 1u << a.slot;
+        COOP_TRY(c.str(a.animation.name, kMaxAnimationChars));
+        COOP_READ(c.f32(a.animation.frame));
+        COOP_READ(c.f32(a.animation.rate));
+        if (!std::isfinite(a.animation.frame) || !std::isfinite(a.animation.rate)) {
+          return Error::bad_value;
+        }
+      }
+      return Error::none;
+    }
   }
   known = false;
   return Error::none;

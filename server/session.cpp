@@ -998,7 +998,9 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     }
   }
   if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
-    if (root->owner && *root->owner != id && !root->ask && !(c.status & kBusy) &&
+    // A hit that takes life stays with the owner (gohma-sync): only a stun.
+    if ((d.amount == 0 || config_.boss_hit_handover) && root->owner && *root->owner != id &&
+        !root->ask && !(c.status & kBusy) &&
         has_loaded(id, *root) &&
         (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
         !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {

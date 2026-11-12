@@ -65,8 +65,16 @@ set_property(SOURCE "${_coop_hook}/coop_hook.cpp" APPEND PROPERTY
 # hook is built with MSVC on Windows, which never sees them, so here they stay warnings for
 # the hook's own files (they still show in the build log). Fritchii's code is unchanged.
 if(NOT MSVC)
-    get_target_property(_coop_core_sources core SOURCES)
-    list(FILTER _coop_core_sources INCLUDE REGEX "^${_coop_hook}/")
+    # The hook's own files: those under _coop_hook (a plain prefix test, so a path with
+    # regex characters such as + or ( still matches).
+    get_target_property(_coop_all_sources core SOURCES)
+    set(_coop_core_sources "")
+    foreach(_coop_src IN LISTS _coop_all_sources)
+        string(FIND "${_coop_src}" "${_coop_hook}/" _coop_at)
+        if(_coop_at EQUAL 0)
+            list(APPEND _coop_core_sources "${_coop_src}")
+        endif()
+    endforeach()
     set_property(SOURCE ${_coop_core_sources} APPEND PROPERTY COMPILE_OPTIONS
         -Wno-error=all -Wno-error=extra -Wno-error=missing-declarations -Wno-error=shadow
         -Wno-error=unused -Wno-error=range-loop-construct

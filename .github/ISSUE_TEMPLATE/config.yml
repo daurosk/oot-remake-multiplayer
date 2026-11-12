@@ -6,3 +6,9 @@ contact_links:
   - name: Discord
     url: https://discord.gg/GwtRKAqng5
     about: Talk with players, testers and contributors, and get help setting up.
+  - name: Setup help
+    url: https://github.com/daurosk/oot-remake-multiplayer/blob/main/docs/setup.md
+    about: Keys, firmware, the puppet pack and the first start, step by step (and its troubleshooting list).
+  - name: Security problem
+    url: https://github.com/daurosk/oot-remake-multiplayer/security/policy
+    about: Report it privately, not in a public issue.

@@ -4,7 +4,8 @@
 # on hookshot-A, 2026-11-12: all 1): HavePlayedEvent.InsideTheDekuTree_Gimmick_RoomD_PlatformUp (0x50cbaf1b).
 # BEFORE the run (games closed; a Hookshot pair needs save_flags.py from save-flags-hookshot), for both
 # games of the pair (emulator kits: <kit>\autotest-save\*\*\slot_0*\progress.sav), and put them back
-# from <pair>\autotest-save-backup afterwards:
+# from <pair>\autotest-save-backup afterwards (all three hs-deku-* in one run: clear once with
+# bool:0x50cbaf1b=0 bool:0x429126ef=0 bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0, restore once):
 #   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-deku-platforms (emulator: -Scenario deku-platforms)
 # Pass: B "our game started the event InsideTheDekuTree_Gimmick_RoomD_PlatformUp: sent to the others"; A "player 2

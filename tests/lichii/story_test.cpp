@@ -224,3 +224,48 @@ TEST_CASE("story: the host's save load decides, also back to a wall (FLAG_RESET)
     CHECK(guest.get(wall) == 1);
     CHECK(guest.get(saria) == 0);
 }
+
+TEST_CASE("story: the Meet_DekuTree quest's hashes are its step names and shared story flags (issue 130)") {
+    namespace q = CoopStory::quest;
+    CHECK(host::flag_hash("NotReady") == q::kNotReady);
+    CHECK(host::flag_hash("Ready") == q::kReady);
+    CHECK(host::flag_hash("Step01") == q::kStep01);
+    CHECK(host::flag_hash("Step02") == q::kStep02);
+    CHECK(host::flag_hash("Step03") == q::kStep03);
+    CHECK(host::flag_hash("Complete") == q::kComplete);
+    CHECK(host::flag_hash("KokiriForest_Npc_Kokiri_Mido_Child_Blocker") == q::kMidoBlocker);
+    CHECK(host::flag_hash("HavePlayedEvent.Dm_Kokiri_0075") == q::kMetDekuTree);
+    // Both inputs are shared story flags, so every game sees the same story.
+    CHECK(CoopStory::Find(q::kMidoBlocker) != nullptr);
+    CHECK(CoopStory::Find(q::kMetDekuTree) != nullptr);
+}
+
+TEST_CASE("story: a player whose Mido was moved by another player gets the shop's quest step (issue 130)") {
+    namespace q = CoopStory::quest;
+    using CoopStory::QuestCatchUp;
+    // Another player got past Mido: ours never talked to him (Step01) or only
+    // heard him out (Step02). Raised to Step03, so the shop sells (>= Step02).
+    CHECK(QuestCatchUp(q::kStep01, false, false) == q::kStep03);
+    CHECK(QuestCatchUp(q::kStep02, false, false) == q::kStep03);
+    CHECK(QuestCatchUp(q::kReady, false, false) == q::kStep03);
+    // The Deku Tree scene played (shared): the quest is complete here too.
+    CHECK(QuestCatchUp(q::kStep01, false, true) == q::kComplete);
+    CHECK(QuestCatchUp(q::kStep03, false, true) == q::kComplete);
+    // Mido still blocks everyone: each player talks to him, as in one game.
+    CHECK_FALSE(QuestCatchUp(q::kStep01, true, false));
+    CHECK_FALSE(QuestCatchUp(q::kStep01, std::nullopt, std::nullopt));
+}
+
+TEST_CASE("story: the Meet_DekuTree catch-up never lowers the quest nor runs before the opening (issue 130)") {
+    namespace q = CoopStory::quest;
+    using CoopStory::QuestCatchUp;
+    CHECK_FALSE(QuestCatchUp(q::kStep03, false, false));
+    CHECK_FALSE(QuestCatchUp(q::kComplete, false, false));
+    CHECK_FALSE(QuestCatchUp(q::kComplete, false, true));
+    // A host save load that puts Mido back (blocker 1) leaves our step as it is.
+    CHECK_FALSE(QuestCatchUp(q::kStep03, true, false));
+    // A new game before Navi woke Link, an unknown value, or no read: left alone.
+    CHECK_FALSE(QuestCatchUp(q::kNotReady, false, true));
+    CHECK_FALSE(QuestCatchUp(0x12345678u, false, true));
+    CHECK_FALSE(QuestCatchUp(std::nullopt, false, true));
+}

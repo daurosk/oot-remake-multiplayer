@@ -399,6 +399,9 @@ public:
                 // grade too, or every pulled bomb is deleted at once.
                 if (load_mend_.ready()) {
                     MendLiftGrade(*memory);
+                    if (CoopStory::On()) {
+                        CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
+                    }
                 }
             }
         }
@@ -1278,6 +1281,22 @@ private:
         if (raise && coop::host::GameFlags::set_enum(memory, lift::kGrade, *raise)) {
             LOG_INFO(Core, "coop: items: lift grade {:#x} -> {:#x} for the held strength item",
                      *grade, *raise);
+        }
+    }
+
+    // Issue 130 (docs/flags.md, "Story and cutscenes"): raises our own
+    // Meet_DekuTree quest to what the shared story says (Mido let someone by:
+    // Step03; the Deku Tree scene played: Complete), so the Kokiri Shop sells
+    // here too. Only ever raised; anything unread is left alone.
+    void CatchUpQuest(EmulatorMemory& memory) {
+        namespace quest = CoopStory::quest;
+        coop::host::GameFlags flags(memory);
+        const auto step = flags.get_enum(quest::kMeetDekuTree);
+        const auto raise = CoopStory::QuestCatchUp(step, flags.get_bool(quest::kMidoBlocker),
+                                                   flags.get_bool(quest::kMetDekuTree));
+        if (raise && coop::host::GameFlags::set_enum(memory, quest::kMeetDekuTree, *raise)) {
+            LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
+                     *step, *raise);
         }
     }
 

@@ -16,7 +16,12 @@
 // - Where a node's pause began is (its length - frames left) / 60 s ago; the
 //   time between two starts of one node is its period. Two periods in a row
 //   within kPeriodSlack: the node loops (a platform moved once by a switch
-//   never does, and is left to the switch's flag).
+//   never does, and is left to the switch's flag). One node may time both
+//   waits of a lift whose way up and way down take different times: the
+//   periods then go A, B, A, B, and the loop is A + B (the 2026-11-12 run:
+//   the Dodongo lifts never looped by the first rule); the games then
+//   compare the start that ends the longer period. Once looping, it
+//   stays so until kLoopMisses starts in a row fit neither.
 // - Every kSendEveryUs each game sends its looping nodes (PLATFORM_COUNTER):
 //   key, period, time since the last start, starts seen, with the server time.
 // - A game whose node started more than kOffS from another game's start of
@@ -59,11 +64,11 @@ inline constexpr float kFramesPerSecond = 60.0f;
 // The cave (coop_counter.s) and the u64 that holds the ring's address.
 inline constexpr std::uint64_t kCaveOffset = 0x3c46700;
 inline constexpr std::uint64_t kRingPointer = 0x3c46780;
-inline constexpr std::size_t kRingNodes = 64;
+inline constexpr std::size_t kRingNodes = 256;  // every AI counter of the scene goes through it
 inline constexpr std::size_t kRingBytes = 8 + 8 * kRingNodes;
 inline constexpr std::array<std::uint8_t, 40> kCave{
     0x7f, 0x23, 0x03, 0xd5, 0xf0, 0x03, 0x00, 0x58, 0xf0, 0x00, 0x00, 0xb4, 0x11, 0x02,
-    0x40, 0xb9, 0x31, 0x06, 0x00, 0x11, 0x11, 0x02, 0x00, 0xb9, 0x31, 0x16, 0x00, 0x12,
+    0x40, 0xb9, 0x31, 0x06, 0x00, 0x11, 0x11, 0x02, 0x00, 0xb9, 0x31, 0x1e, 0x00, 0x12,
     0x10, 0x22, 0x00, 0x91, 0x00, 0x5a, 0x31, 0xf8, 0x10, 0x80, 0x26, 0x17,
 };
 
@@ -126,6 +131,7 @@ public:
     static constexpr std::uint64_t kMinPeriodUs = 300'000;
     static constexpr std::uint64_t kMaxPeriodUs = 120'000'000;
     static constexpr std::size_t kMaxLooping = 64;              // per scene
+    static constexpr int kLoopMisses = 3;
 
     struct Write {
         std::uint64_t node = 0;
@@ -150,9 +156,16 @@ public:
 
     void Reset();
 
-    // Placement hashes of the actors with a looping counter: the clock-word
-    // path (coop_platforms.h) leaves them alone.
+    // Placement hashes of the actors with a looping counter.
     std::set<std::uint64_t> LoopingOwners() const;
+    // Placement hashes of every platform actor whose pause counter was seen
+    // in this scene, looping yet or not: the clock-word path
+    // (coop_platforms.h) leaves them alone, so the two never fight (the
+    // 2026-11-12 run: it took a physics place of the Dodongo lifts, and
+    // the game put it back).
+    const std::set<std::uint64_t>& CounterOwners() const { return counter_owners_; }
+    // The node's loop (microseconds; 0: not looping), for tests and logs.
+    std::uint64_t CycleOf(std::uint64_t key) const;
     std::size_t Writes() const { return writes_; }
     bool Looping(std::uint64_t key) const;
 
@@ -163,7 +176,13 @@ private:
         std::string owner_name;
         float last_remaining = -1.0f;
         std::uint64_t start_us = 0;           // server time of the last start
-        std::deque<std::uint64_t> periods;    // the last two
+        std::deque<std::uint64_t> periods;    // the last four
+        std::uint64_t cycle_us = 0;           // the loop: one period, or two that alternate
+        // The start every game compares (server time): the last start, or
+        // with two waits the last one that ended the longer period, so two
+        // games never line up one's top wait with the other's bottom wait.
+        std::uint64_t ref_us = 0;
+        int misses = 0;                       // starts in a row that fit no loop
         std::uint32_t starts = 0;
         std::uint64_t written_start_us = 0;   // the start we moved already
         bool looping = false;
@@ -181,7 +200,13 @@ private:
     std::map<std::uint64_t, std::map<std::uint8_t, Theirs>> theirs_;    // by key, then player
     std::uint64_t last_send_us_ = 0;
     std::size_t writes_ = 0;
+    std::set<std::uint64_t> counter_owners_;
 };
+
+// The loop of a node from its last periods between starts (oldest first;
+// microseconds): the last period when the last two agree, the last two
+// added when the last four alternate (A, B, A, B), else 0.
+std::uint64_t LoopOf(const std::deque<std::uint64_t>& periods, float slack);
 
 // The gap (seconds) from their start to ours, the short way round the
 // period: positive when ours began later.

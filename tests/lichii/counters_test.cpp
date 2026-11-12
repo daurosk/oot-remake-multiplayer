@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -302,4 +303,140 @@ TEST_CASE("counters: other actors' nodes are skipped only while they are still t
     CHECK(o.Size() == OtherNodes::kMax);
     o.Add(0x9, 0xe0);
     CHECK(o.Size() == 1);
+}
+
+TEST_CASE("counters: the loop from the periods: one, or two that alternate (2026-11-12 run)") {
+    using D = std::deque<std::uint64_t>;
+    CHECK(LoopOf(D{3'000'000, 3'050'000}, 0.08f) == 3'050'000);
+    CHECK(LoopOf(D{3'000'000}, 0.08f) == 0);
+    // One node times both waits; up 2 s, down 4 s, 1 s waits: 3 s, 5 s, 3 s, 5 s.
+    CHECK(LoopOf(D{3'000'000, 5'000'000, 3'000'000, 5'000'000}, 0.08f) == 8'000'000);
+    CHECK(LoopOf(D{5'000'000, 3'000'000, 5'000'000, 3'000'000}, 0.08f) == 8'000'000);
+    CHECK(LoopOf(D{3'000'000, 5'000'000, 3'000'000}, 0.08f) == 0);  // not yet
+    CHECK(LoopOf(D{3'000'000, 5'000'000, 4'000'000, 6'500'000}, 0.08f) == 0);
+}
+
+namespace {
+
+// A lift whose one counter times both of its waits: wait, up, wait, down.
+struct TwoWaitLift {
+    std::uint8_t self = 1;
+    float pause = 60.0f;   // frames, both waits
+    double up = 2.0;       // seconds
+    double down = 4.0;
+    double t_in = 0.0;
+    float remaining = 0.0f;
+    std::uint64_t node = 0x2140002000;
+    std::uint64_t graph = 0x2140001f00;
+    CounterSync sync;
+    std::vector<proto::PlatformCounter> sent;
+    std::vector<std::string> notes;
+
+    double Cycle() const { return 2 * pause / 60.0 + up + down; }
+    void Step(double dt) {
+        t_in += dt;
+        const double into = std::fmod(t_in, Cycle());
+        const double w = pause / 60.0;
+        if (into < w) {
+            remaining = pause - static_cast<float>(into * 60.0);
+        } else if (into >= w + up && into < 2 * w + up) {
+            remaining = pause - static_cast<float>((into - w - up) * 60.0);
+        } else {
+            remaining = 0.0f;
+        }
+    }
+    void Tick(std::uint64_t time_us) {
+        Seen s{node, KeyOf(kHash, pause, node, graph), kHash, "Obj_DodongoCave_MoveFloor_A_01", remaining, pause};
+        CounterSync::Out out;
+        sync.Tick("DodongoCavern", self, time_us + 50'000'000, {s}, false, out);
+        for (auto& m : out.send) {
+            sent.push_back(std::get<proto::PlatformCounter>(m));
+        }
+        for (const auto& w : out.writes) {
+            t_in += static_cast<double>(w.was - w.remaining) / 60.0;
+            remaining = w.remaining;
+        }
+        notes.insert(notes.end(), out.notes.begin(), out.notes.end());
+    }
+    double Apart(const TwoWaitLift& o) const {
+        double d = std::fabs(std::fmod(t_in, Cycle()) - std::fmod(o.t_in, Cycle()));
+        return std::min(d, Cycle() - d);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("counters: a lift timing both waits with one counter loops, and comes into phase") {
+  for (const double offset : {0.5, 1.5, 3.3, 4.2, 5.0, 7.2}) {
+    CAPTURE(offset);
+    TwoWaitLift a;
+    TwoWaitLift b;
+    a.self = 1;
+    b.self = 2;
+    b.t_in = offset;  // seconds into its 8 s loop
+    std::uint64_t time = 0;
+    std::vector<std::pair<std::uint64_t, proto::PlatformCounter>> to_a, to_b;
+    for (int i = 0; i < 1500; ++i) {  // 50 s
+        time += 33 * kMs;
+        a.Step(0.033);
+        b.Step(0.033);
+        a.Tick(time);
+        b.Tick(time);
+        for (auto& m : a.sent) {
+            m.player_number = 1;
+            b.sync.Receive(m);
+        }
+        for (auto& m : b.sent) {
+            m.player_number = 2;
+            a.sync.Receive(m);
+        }
+        a.sent.clear();
+        b.sent.clear();
+    }
+    const auto key = KeyOf(kHash, 60.0f, a.node, a.graph);
+    CHECK(a.sync.CycleOf(key) == doctest::Approx(8'000'000).epsilon(0.02));
+    CHECK(a.Apart(b) < 0.1);
+    CHECK(a.sync.Writes() + b.sync.Writes() <= 1);
+    bool two = false;
+    for (const auto& n : a.notes) {
+        two = two || n.find("(two waits)") != std::string::npos;
+    }
+    CHECK(two);
+  }
+}
+
+TEST_CASE("counters: every platform actor with a counter leaves the clock path at once, looping or not") {
+    CounterSync s;
+    CounterSync::Out out;
+    Seen x{0x10, 7, kHash, "Obj_DodongoCave_MoveFloor_A_01", 40.0f, 60.0f};
+    Seen enemy{0x20, 8, 0x99, "Enemy_Dodongo", 40.0f, 60.0f};
+    s.Tick("DodongoCavern", 1, 1'000'000, {x, enemy}, false, out);
+    CHECK(s.CounterOwners().contains(kHash));
+    CHECK_FALSE(s.CounterOwners().contains(0x99));
+    CHECK(s.LoopingOwners().empty());
+    // Still kept when its node is out of sight a while (the walk lost it), until the scene changes.
+    s.Tick("DodongoCavern", 1, 2'000'000, {}, false, out);
+    CHECK(s.CounterOwners().contains(kHash));
+    s.Tick("KokiriForest", 1, 3'000'000, {}, false, out);
+    CHECK(s.CounterOwners().empty());
+}
+
+TEST_CASE("counters: one odd period does not stop a loop (hysteresis)") {
+    Lift a;
+    a.self = 1;
+    std::uint64_t time = 0;
+    for (int i = 0; i < 400; ++i) {
+        time += 33 * kMs;
+        a.Step(0.033);
+        a.Tick(time);
+    }
+    const auto key = KeyOf(kHash, 60.0f, a.node, a.graph);
+    REQUIRE(a.sync.Looping(key));
+    a.t_in += 0.7;  // a hitch: one period 0.7 s short
+    for (int i = 0; i < 120; ++i) {
+        time += 33 * kMs;
+        a.Step(0.033);
+        a.Tick(time);
+        CHECK(a.sync.Looping(key));
+    }
 }

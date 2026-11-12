@@ -75,6 +75,18 @@ void OtherNodes::Keep(const std::function<bool(std::uint64_t actor)>& alive) {
     std::erase_if(nodes_, [&](const auto& p) { return !alive(p.second); });
 }
 
+std::uint64_t LoopOf(const std::deque<std::uint64_t>& periods, float slack) {
+    const std::size_t n = periods.size();
+    if (n >= 2 && Close(periods[n - 1], periods[n - 2], slack)) {
+        return periods[n - 1];
+    }
+    if (n >= 4 && Close(periods[n - 1], periods[n - 3], slack) &&
+        Close(periods[n - 2], periods[n - 4], slack)) {
+        return periods[n - 1] + periods[n - 2];
+    }
+    return 0;
+}
+
 float PhaseGap(std::uint64_t ours_us, std::uint64_t theirs_us, std::uint64_t period_us) {
     if (period_us == 0) {
         return 0.0f;
@@ -129,6 +141,9 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
             continue;
         }
         here.insert(s.node);
+        if (s.owner_hash != 0) {
+            counter_owners_.insert(s.owner_hash);  // the clock-word path leaves it alone
+        }
         Node& n = nodes_[s.node];
         if (n.key != s.key) {
             n = Node{};  // a new node at that address
@@ -152,7 +167,7 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
                 const std::uint64_t period = start - n.start_us;
                 if (period >= kMinPeriodUs && period <= kMaxPeriodUs) {
                     n.periods.push_back(period);
-                    while (n.periods.size() > 2) {
+                    while (n.periods.size() > 4) {
                         n.periods.pop_front();
                     }
                 } else {
@@ -162,19 +177,35 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
             n.start_us = start;
             ++n.starts;
             const bool was = n.looping;
-            n.looping = n.periods.size() == 2 && Close(n.periods[0], n.periods[1], kPeriodSlack);
+            const std::uint64_t loop = LoopOf(n.periods, kPeriodSlack);
+            if (loop != 0) {
+                n.cycle_us = loop;
+                n.looping = true;
+                n.misses = 0;
+                const std::size_t np = n.periods.size();
+                const bool two = loop != n.periods.back();
+                if (!two || n.periods[np - 1] >= n.periods[np - 2]) {
+                    n.ref_us = start;  // ends the longer period (or the only one)
+                }
+            } else if (n.looping && ++n.misses >= kLoopMisses) {
+                n.looping = false;  // it stopped looping (a switch, a broken lift)
+                n.cycle_us = 0;
+                n.ref_us = 0;
+            }
             if (n.looping && !was && !n.logged) {
                 n.logged = true;
                 char text[200];
-                std::snprintf(text, sizeof text, "%016llx %s: pause counter %016llx loops every %.2f s",
+                std::snprintf(text, sizeof text, "%016llx %s: pause counter %016llx loops every %.2f s%s",
                               static_cast<unsigned long long>(n.owner_hash), n.owner_name.c_str(),
                               static_cast<unsigned long long>(n.key),
-                              static_cast<double>(n.periods.back()) / 1e6);
+                              static_cast<double>(n.cycle_us) / 1e6,
+                              n.cycle_us != n.periods.back() ? " (two waits)" : "");
                 out.notes.emplace_back(text);
             }
         }
         n.last_remaining = s.remaining;
-        if (!n.looping || per_key[n.key] != 1 || s.remaining <= 0.0f || n.written_start_us == n.start_us) {
+        if (!n.looping || n.ref_us == 0 || per_key[n.key] != 1 || s.remaining <= 0.0f ||
+            n.written_start_us == n.start_us) {
             continue;
         }
         // The one to follow: the game that has seen the most starts (then
@@ -183,7 +214,7 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
         if (tk == theirs_.end()) {
             continue;
         }
-        const std::uint64_t period = n.periods.back();
+        const std::uint64_t period = n.cycle_us;
         const Theirs* best = nullptr;
         std::uint8_t best_player = 0;
         for (const auto& [player, th] : tk->second) {
@@ -198,7 +229,7 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
         if (best == nullptr) {
             continue;
         }
-        const float gap = PhaseGap(n.start_us, best->start_us, period);
+        const float gap = PhaseGap(n.ref_us, best->start_us, period);
         if (std::fabs(gap) <= kOffS) {
             continue;  // in phase: nothing to write
         }
@@ -222,6 +253,7 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
             const auto shift = static_cast<std::int64_t>(static_cast<double>(s.remaining - target) /
                                                          kFramesPerSecond * 1e6);
             n.start_us = static_cast<std::uint64_t>(static_cast<std::int64_t>(n.start_us) - shift);
+            n.ref_us = static_cast<std::uint64_t>(static_cast<std::int64_t>(n.ref_us) - shift);
             n.written_start_us = n.start_us;
             n.last_remaining = target;
         }
@@ -243,15 +275,15 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
     m.server_time_us = server_us;
     std::set<std::uint64_t> sent_keys;
     for (const auto& [address, n] : nodes_) {
-        if (!n.looping || per_key[n.key] != 1 || n.start_us == 0 || n.start_us > server_us ||
+        if (!n.looping || per_key[n.key] != 1 || n.ref_us == 0 || n.ref_us > server_us ||
             !sent_keys.insert(n.key).second || m.ticks.size() >= coop::protocol::kMaxPlatformCounters) {
             continue;
         }
-        const std::uint64_t since = server_us - n.start_us;
-        if (since > 0xffffffffull || n.periods.back() > 0xffffffffull) {
+        const std::uint64_t since = server_us - n.ref_us;  // since the start every game compares
+        if (since > 0xffffffffull || n.cycle_us > 0xffffffffull || n.cycle_us == 0) {
             continue;
         }
-        m.ticks.push_back({n.key, static_cast<std::uint32_t>(n.periods.back()),
+        m.ticks.push_back({n.key, static_cast<std::uint32_t>(n.cycle_us),
                            static_cast<std::uint32_t>(since), n.starts});
     }
     last_send_us_ = server_us;
@@ -265,6 +297,7 @@ void CounterSync::Reset() {
     nodes_.clear();
     theirs_.clear();
     last_send_us_ = 0;
+    counter_owners_.clear();
 }
 
 std::set<std::uint64_t> CounterSync::LoopingOwners() const {
@@ -275,6 +308,15 @@ std::set<std::uint64_t> CounterSync::LoopingOwners() const {
         }
     }
     return out;
+}
+
+std::uint64_t CounterSync::CycleOf(std::uint64_t key) const {
+    for (const auto& [address, n] : nodes_) {
+        if (n.key == key && n.looping) {
+            return n.cycle_us;
+        }
+    }
+    return 0;
 }
 
 bool CounterSync::Looping(std::uint64_t key) const {

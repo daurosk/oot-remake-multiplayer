@@ -6,7 +6,7 @@ This page goes: [Hookshot](#play-on-hookshot-experimental) (new and experimental
 
 ## Play on Hookshot (experimental)
 
-Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), a native PC version of the game that the kit builds on your PC from your own copy. No emulator: the game runs as a normal Windows program. It is **experimental**: it is newer than the emulator kit, fewer players have tried it, and parts of co-op are not on it yet (see [What is not on Hookshot yet](#what-is-not-on-hookshot-yet)). Hookshot players and emulator players can join the same session, on the same server; Hookshot players don't see the others yet. If you are not sure, play on the emulator ([Emulator setup for new players](#emulator-setup-for-new-players)). **The test releases after this one are Hookshot only**: this release still ships the emulator kit, and this page still documents it.
+Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), a native PC version of the game that the kit builds on your PC from your own copy. No emulator: the game runs as a normal Windows program. It is **experimental**: it is newer than the emulator kit and fewer players have tried it. It has the emulator kit's co-op features: the other players as Link, chat, the player list, the HUD, the item cheats, your own tunic colour and your own ocarina notes (see [Co-op on Hookshot](#co-op-on-hookshot)). <!-- TBC big run: Hookshot rows of A's big run (puppets, overlay, chat, HUD, cheats, own tunic, own notes) -->Hookshot players and emulator players can join the same session, on the same server, and see each other as Link (a mixed session). <!-- TBC big run: mixed run (tools/autotest/mixed.ps1); needs hs-puppets-b (else "others show as Navi only") --> If you are not sure, play on the emulator ([Emulator setup for new players](#emulator-setup-for-new-players)). **The test releases after this one are Hookshot only**: this release still ships the emulator kit, and this page still documents it.
 
 ### What you need for Hookshot
 
@@ -26,21 +26,33 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
    - puts co-op in it: `hookshot_coop.dll`, the co-op settings (`coop.ini` beside `hookshot.exe`) and the puppet pack (the other players' Link and the tunic colours), made from your own game files as `make-puppet-pack.cmd` makes them for the emulator.
    It ends with "Done." and the game's path, in the kit's `hookshot\game` folder (`-Out <folder>` puts it elsewhere).
 4. **First start, as the host.** Double-click `Host-Hookshot.bat`. It works like `Host.bat`: it asks for your player name, starts the co-op server, makes a new random join password, asks your router to open the port and copies an **invite code** for your friends (see [Playing over the internet](play-online.md#the-easy-way-hostbat-and-an-invite-code)). Then it starts the Hookshot game instead of the emulator.
-5. **Joining.** Your friends double-click `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator) and paste the invite code. Invite codes have not been tested on Hookshot yet; joining by address on the same network or a VPN works the same as on the emulator ([play-lan.md](play-lan.md)).
-6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. **On Hookshot you don't see the other players yet** (see below).
+5. **Joining.** Your friends double-click `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator) and paste the invite code. Invite codes have not been tested on Hookshot yet <!-- TBC big run: invite code on Hookshot -->; joining by address on the same network or a VPN works the same as on the emulator ([play-lan.md](play-lan.md)).
+6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. In the game the other players show as Link with their name tags, and **T** opens the chat box (see [Co-op on Hookshot](#co-op-on-hookshot)). <!-- TBC big run: chat; Link puppets need hs-puppets-b (else "others show as Navi only") -->
 
 **After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files and puppet pack into the game in a few minutes, and builds the whole game again only when the update moved to a newer Hookshot.
 
 **Where it keeps things:** the kit's `hookshot\` folder holds `tools\` (Hookshot's build tools and source with our patch), `downloads\`, `work\` (the unpacked game, kept so the next build is quick; delete it to get the space back, and the next build takes the full time again) and `game\`. None of these are part of the kit, so `Update.bat` keeps them. Like the puppet pack, the built game is made from your game files: never share it or upload it.
 
-### What is not on Hookshot yet
+### Co-op on Hookshot
 
-- **You don't see the other players yet:** showing them as Link crashes Hookshot in this version, so it is switched off (a fix is planned). Emulator players do see Hookshot players as Link (seen in our logs). (`LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns the Links back on, but the game then crashes.)
-- **No co-op window:** no status panel, no chat box (Enter) or chat lines, no player list (Tab), no markers, no co-op HUD (the other players' hearts under yours) and no cheats window, so no chat commands such as `/teleport`. The log says what the panel would.
-- **Your own ocarina notes are not sent:** the others do not hear a Hookshot player's ocarina.
-- **Tunic colours only partly:** your own Link stays green (your colour is not put on it), players whose colour is green show as the plain puppet, and `LICHII_COOP_TUNICS=0` does nothing on Hookshot (#202; the emulator kit does all of these).
-- **No old-pack hint:** `Host-Hookshot.bat` and `Join-Hookshot.bat` say when the game has no puppet pack, but not when it is an old one made before the tunic colours; rerun `Build-Hookshot-Coop.bat` after an update.
-- What has been checked on Hookshot in our two-game tests: the co-op module loads and the games connect to the server, with no crash; the rest of co-op is the same code as on the emulator but not yet checked there.
+<!-- TBC big run: each row below; move what failed to "Not on Hookshot yet"; the puppets row needs hs-puppets-b (else "others show as Navi only") -->
+The same co-op code runs on Hookshot as in the emulator, drawn over the game's picture instead of in the emulator's window. Some keys differ, because Enter and Tab are the game's Plus button on Hookshot:
+
+| What | On Hookshot |
+|---|---|
+| The other players | As Link, with Navi, a name tag and edge arrows, in their tunic colours (emulator and Hookshot players alike) |
+| Chat | **T** opens the chat box, Enter sends, Esc closes; chat lines show for 8 seconds. Chat commands such as `/teleport` work as on the emulator. `LICHII_COOP_CHAT_KEY` in `coop-options.ini` picks another key (a letter, a digit, F1 to F12, or `off`) if T is one of your game buttons |
+| Player list | Hold **F6** |
+| Co-op panel (ping, distances) | **F7** |
+| HUD | The other players' names, hearts and place under your hearts, in the game's font |
+| Item cheats | **F8** (with `LICHII_COOP_CHEATS=1`): type to find an item, Up/Down or the mouse to choose, Enter or a click to give it |
+| Your tunic colour | Your own Link in your colour too, as on the emulator; `LICHII_COOP_TUNICS=0` works |
+| Your ocarina | Your notes are sent, so the others hear your songs |
+| Puppet pack hints | `Host-Hookshot.bat` and `Join-Hookshot.bat` say when the pack is missing or old: then run `Build-Hookshot-Coop.bat` again |
+
+While the chat box or the cheats panel is open, the game reads no keys. Hookshot on Linux takes the same keys, but that is not tested yet.
+
+**Not on Hookshot yet:** `collect-logs.cmd` does not pick up `hookshot_log.txt` (send it by hand); `Join-Hookshot.bat` does not watch for the connection.
 
 ### Hookshot troubleshooting
 
@@ -144,7 +156,7 @@ Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
 
 Every player needs the same version: a game of one version cannot join a server of another.
 
-**This release is protocol 10: everyone updates.** A game of it refuses a server of an older release, and the other way round, so the host and every guest update before playing. In short:
+**This release is protocol 11: everyone updates.** A game of it refuses a server of an older release, and the other way round, so the host and every guest update before playing. In short:
 
 1. Close the games and the server window.
 2. Double-click `Update.bat` (or answer **Y** when `Host.bat` or `Join.bat` asks).

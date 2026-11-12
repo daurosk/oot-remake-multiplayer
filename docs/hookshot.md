@@ -12,7 +12,7 @@ Hookshot's own repository is never forked or committed to from here. Our reposit
 - Hookshot already does, for its own menu, much of what we need: a hook on Link's update (`hos_oot_is_player`), game function calls by address (`oot_teleport`, the GameDataMgr getters), the current map, cross-map teleports, and a local control socket for tests.
 - Addresses: Hookshot loads main at **`0x80020000`** (Eden's layout: rtld at `0x80000000`, then main). Every offset in `CoopGameBuild::MainOffsets` becomes `0x80020000 + offset`. Checked on one function: our `set_time` `0x34522d0` is Hookshot's `0x834722d0` (`hos_main.c` `oot_set_time`). Data slots go through the same offsets; the first runs check them.
 - Emulator and Hookshot players can join the same game: same game build, same coordinates and data, same protocol, same server. Nothing on the wire says which runs the game. (A Hookshot game shows the others as Link with our Hookshot patch 0002; see Status.)
-- One copy of co-op for both: the module builds every `lichii/hook` file unchanged, with stand-ins for the emulator API they use (`hookshot/compat`). Our patch to Hookshot is about 270 lines in one file.
+- One copy of co-op for both: the module builds every `lichii/hook` file unchanged, with stand-ins for the emulator API they use (`hookshot/compat`). Our patches to Hookshot are small: the co-op bridge (`hookshot/patches/0001-coop-bridge.patch`) and the puppet guard (`0002-coop-puppets.patch`).
 
 ## How co-op maps onto Hookshot
 
@@ -63,7 +63,7 @@ What the module expects from that install (`hookshot/compat`): `coop.ini` beside
 - **Patch upkeep.** Hookshot moves fast. Our patch touches three new files and two lines of `nx2/lift.py`; moving `hookshot/PIN` (and the kit's list of builder parts with it) is a test like moving the Fritchii pin.
 - **Frame timing.** Hookshot runs at its own speed (30 to 60 fps, a high-fps option). The co-op sampler and puppets work from time, not frames; to check with a puppet in view.
 - **Addresses.** Code offsets are checked (`set_time`); the data slots are read through the same `CoopGameBuild` offsets from main's base, and the first runs check them (the scene and Link read, puppets made).
-- **No co-op window yet.** The emulator's Qt window (panel, chat box, player list, hearts) is not on Hookshot; an ImGui panel in Hookshot's menu is later work.
+- **The co-op window.** The emulator's Qt window is not on Hookshot; the chat, name tags, player list, panel, HUD and cheats are drawn in Hookshot's ImGui frame instead ("Where the co-op module lives" above).
 - **Licences.** Hookshot is GPL-3.0, as we are. Its lifted C contains the game and is never shared; we ship our module, our patch and our scripts, and each player builds Hookshot from their own game.
 
 ## Emulator and Hookshot players together
@@ -96,9 +96,9 @@ Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-reco
 
 | Feature | On Hookshot |
 |---|---|
-| Puppet settings: `LICHII_COOP_TUNICS=0`, `LICHII_COOP_SELF_TUNIC` (green players get the green puppet, issue 202) | Same code as the emulator (`lichii/hook/coop_puppet_config.cpp`; the module had a shortened copy). The kit's Hookshot launcher still has to set `LICHII_COOP_SELF_TUNIC` and recolour the pack in `mods\contents` (tools/release follow-up) |
+| Puppet settings: `LICHII_COOP_TUNICS=0`, `LICHII_COOP_SELF_TUNIC` (green players get the green puppet, issue 202) | Same code as the emulator (`lichii/hook/coop_puppet_config.cpp`; the module had a shortened copy). The kit's Hookshot launcher sets `LICHII_COOP_SELF_TUNIC` and recolours your own tile in the pack in `mods\contents` before the game starts (`play.ps1 -Hookshot`, as for the emulator) <!-- TBC big run: own tunic on Hookshot --> |
 | Your own Ocarina notes sent to the others (issue 152) | The module reads the buttons word Hookshot's `nn_hid.c` gave the game (`HosCoopApi::pad_buttons`); a Hookshot built from an older patch sends no notes and says so at start |
 | Co-op window: chat, player list, markers, HUD hearts, cheats | Drawn in Hookshot's ImGui frame (see the table above, "Co-op window, chat, player list, markers"): chat lines, name tags, player list (F6), panel (F7), HUD blocks, chat box (T), item cheats (F8). Keys differ from the emulator's: Enter and Tab are the game's Plus on Hookshot. With the HUD pack in the game look (the game's font, heart pictures, players' colours); the cheats take the mouse; on Linux too |
 | Co-op's per-frame work during loads and pause | Once per present, as the emulator's composite |
-| Pack hints (old pack, no pack) at start | Not yet (kit launcher) |
+| Pack hints (old pack, no pack) at start | `Host-Hookshot.bat` and `Join-Hookshot.bat` give the same hints as the emulator's (`play.ps1 -Hookshot`, `Use-KitPuppetPack`); without a pack the puppets are off and a line says so |
 | Other players' Link (puppets) | Shown, child and adult, with patch 0002 in hookshot.exe (proof 3 above; scenarios hs-puppets, hs-adult). A hookshot.exe built without 0002 refuses them (they show as their fairy, with a log line to build again); `LICHII_COOP_HOOKSHOT_LINK_PUPPETS=0` / `1` forces it, `HOS_COOP_NULL_READS=0` turns the null reads off (the puppet's update then crashes). Linux: on, untested |

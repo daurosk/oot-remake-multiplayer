@@ -44,6 +44,7 @@ add_executable(coop_tests
   lichii/chests_test.cpp
   lichii/dungeon_test.cpp
   lichii/story_test.cpp
+  lichii/quests_test.cpp
   lichii/pose_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp

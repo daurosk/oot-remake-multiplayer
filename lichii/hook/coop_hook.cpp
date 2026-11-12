@@ -458,6 +458,12 @@ public:
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (quests) {
+            for (const auto& r : quests->take_raised()) {
+                LOG_INFO(Core, "coop: quests: {} {} -> {} (shared Threads of Time; issue 193)", r.quest,
+                         r.from, r.to);
+            }
+        }
         // Issue 106, LICHII_COOP_DEBUG_SAMPLES=1: samples sent a second (at most
         // about 60, with high refresh too) and presents a second.
         if (debug_samples_) {

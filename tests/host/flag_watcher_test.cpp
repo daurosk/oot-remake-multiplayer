@@ -1469,7 +1469,7 @@ TEST_CASE("doubled chest: the next count gain is put back, not sent") {
   CHECK(store.tokens() == 6);
 }
 
-TEST_CASE("doubled chest: unused, it lapses; a drop is never taken back") {
+TEST_CASE("doubled chest: unused, it lapses, and a drop is never taken back") {
   TokenStore store = token_game();
   FlagWatcher w(token_shared(), FlagRole::player);
   w.frame(store);

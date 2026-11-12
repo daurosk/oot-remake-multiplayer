@@ -50,7 +50,7 @@ Checked at 0x838960 (binary search, value at +0xc) and 0xba24b0 (applier). The s
 
 ### The queue word
 
-Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back to 0 after 255), bits 28–31 are a round number that the applier moves on (wrapping after 14) each time it empties the queue. A setter takes a slot with compare-and-swap on the word, writes the slot, then counts it finished with a second compare-and-swap. When the round changed between the two, or the queue was full, it calls 0x34fc280 (not read). Checked at 0x682b20.
+Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back to 0 after 255), bits 28–31 are a round number that the applier moves on (wrapping after 14) each time it empties the queue. A setter takes a slot with compare-and-swap on the word, writes the slot, then counts it finished with a second compare-and-swap. When the round changed between the two, or the queue was full, it calls 0x34fc280, which ends the game (result 2162-0001). Checked at 0x682b20 and 0x608a10 (a second Bool setter, table at x0). Our writes therefore take a slot only while fewer than half the queue's slots are taken, and never write a value the game already holds (issue 175: a join snapshot written at once filled the Bool queue, and an actor's own set in Graveyard_Child ended the game).
 
 ## Functions
 
@@ -167,8 +167,21 @@ A tester (2026-11-11): every player loaded a save by hand, and a guest whose own
 - Log lines: `coop: save: asked the host (player N) for its save`, `coop: save: player N asked for our save`, `coop: save: we loaded a save: the guests get it after the game's next save`, `coop: save: sending slot_NN (B bytes, P parts) to player N|every guest`, `coop: save: the host's save is in (B bytes, ...)`, `coop: save: the host's save written to <folder>`, `coop: save: the game's save folder is <folder>`.
 - Tests: `tests/host/save_transfer_test.cpp` (packing, parts and CRC, refusals, the host's wait after its load, the newest slot, never over the player's own saves), `tests/server/session_test.cpp` ("the host's save: ..."), `tests/protocol/codec_test.cpp` ("save ask and save part ...").
 
+## Through the game's own functions (Hookshot)
+
+On the emulator the flag watcher reads every shared flag every frame and compares (a diff of the tables), and co-op's writes go into the game's write queues from outside, as the setters would. On Hookshot the game is C, so both halves use the game's own code (`coop/host/include/coop/host/game_flag_events.hpp`, `lichii/hook/coop_flag_native.h`, [hookshot.md](hookshot.md) "World hooks").
+
+- **What the game writes, as events.** Every flag write of the game waits in a queue until the applier (0xb99980) takes it. Patch 0005 wraps the applier; just before the game's own function runs, the module reads the queues (Bool, Int, Enum, UInt, 64-bit keys: `queued_flag_writes`) on that game thread and puts each write into a ring (`GameFlagEvents`, no lock). The hook's frame hands them to the watcher (`FlagWatcher::game_wrote`), which then reads **only those flags**, not the whole list.
+- **The whole list is still read** on the first frame (the baseline), in every load window (no Link, and the settle time after: a save load or a room load moves many flags and the window's rules look at each), when a flag joins the list, and when the ring overflowed.
+- **The audit.** Each frame the watcher also reads a small slice of the list (the whole list about every 240 frames). A change found there that no event named is handled like any other and counted (`event_misses`). So a write the applier's wrap does not see (a queue slot taken between our read and the game's, a type whose queue is not read, a writer that does not use the queues) costs a few seconds, never the change, and the log shows it: `coop: flags: by the game's events: N flag reads for its writes, M changes only the audit found, K whole-list reads (loads)`. M staying 0 through a play session is the proof that the events are complete; then the audit can go.
+- **What co-op writes, through the game's setters.** `GameFlags::set_*` puts each write into a list (`GameFlagCalls`) and writes nothing into the game's memory. On the game's calc thread, at the frame hook, the module calls the game's own setter for each (0x682b20 Bool, 0x163b70 Int, 0x3e0980 Enum, 0x57af30 UInt, 0x3761720 64-bit key: `(manager, value, hash or key)`, read from the instructions), at most 256 a frame and only while that queue is less than half full (the game's own setters stop the game on a full queue). A read sees a write that still waits, as it sees a queued one. A flag written twice before the setter ran is set once, to the newer value.
+- **Switches** (both on unless set to 0): `LICHII_COOP_FLAG_EVENTS=0` reads the tables every frame again; `LICHII_COOP_FLAG_SETTERS=0` writes into the game's queues again. A setter that cannot be called turns the second off by itself, with a warning.
+- Log lines: `coop: flags: the game's writes as events ..., our writes through the game's setters ...` at the start; every 10 s `coop: flags native: the game's applier ran N times, W writes read from its queues (D dropped), S setter calls made for co-op (P waiting, R frames waited for room)`.
+- Tests: `tests/host/flag_events_test.cpp` (the ring, also from several threads; the call list; the watcher by events: only written flags are read, the audit finds and counts an unnamed change, load windows and lost events read everything, no echo of a received value) and `tests/host/game_flags_test.cpp` (the queues decoded; the setters route to the call list and reads see it; room).
+- Not seen in a game yet: all of it. To check in a run: the two log lines above, M = 0 after opening chests, taking items and walking through doors, a flag crossing both ways as fast as before, a join snapshot going in through the setters (S grows, P back to 0), and a save load still seen (`coop: flags: save load seen`).
+
 ## Not done
 
 1. Float, Enum and the other types (UInt is read, above): their tables follow the same pattern (M + 0x10 + 0x60 × t) but were not read.
-2. 0x34fc280, called when a write is late or the queue is full.
+2. The queue sizes (read at run time, never logged).
 3. BoolArray writes, Struct (+0xc20) and BoolExp (+0xc48).

@@ -58,8 +58,12 @@ std::uint32_t as_bits(std::int64_t v) {
 }
 
 // FLAG_SET or FLAG_STATE messages for `table`, at most kMaxFlagEntries each.
+// A message the codec refuses (an entry this kind cannot carry, such as a
+// count delta in a FLAG_STATE) is sent again without the entries it refuses,
+// so one bad entry never takes the others with it; `unsent` counts those.
 template <typename M>
-void push_list(std::vector<Outgoing>& out, const std::map<FlagKey, FlagEntry>& table) {
+void push_list(std::vector<Outgoing>& out, const std::map<FlagKey, FlagEntry>& table,
+               std::uint64_t& unsent) {
   auto it = table.begin();
   while (it != table.end()) {
     M message;
@@ -68,7 +72,23 @@ void push_list(std::vector<Outgoing>& out, const std::map<FlagKey, FlagEntry>& t
       message.flags.push_back(it->second);
       ++it;
     }
-    push(out, message);
+    if (protocol::encode(message)) {
+      push(out, message);
+      continue;
+    }
+    M good;
+    good.player_number = message.player_number;
+    for (const FlagEntry& e : message.flags) {
+      M one;
+      one.player_number = message.player_number;
+      one.flags.push_back(e);
+      if (protocol::encode(one)) {
+        good.flags.push_back(e);
+      } else {
+        ++unsent;
+      }
+    }
+    if (!good.flags.empty()) push(out, good);
   }
 }
 
@@ -291,11 +311,11 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   added_.clear();
 
   if (role_ == FlagRole::player) {
-    push_list<protocol::FlagSet>(out, changes);
+    push_list<protocol::FlagSet>(out, changes, stats_.entries_unsent);
   } else {
     // Answers already updated last_, so the two never hold the same flag.
     answers.merge(changes);
-    push_list<protocol::FlagState>(out, answers);
+    push_list<protocol::FlagState>(out, answers, stats_.entries_unsent);
     out.insert(out.end(), resets.begin(), resets.end());
     if (snapshot_requested_) {
       send_snapshot(store, out);
@@ -482,7 +502,7 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
   if (role_ == FlagRole::host && !changed.empty()) {
     ++stats_.host_resets;
     reset_seen_ = true;
-    push_list<protocol::FlagReset>(out, changed);
+    push_list<protocol::FlagReset>(out, changed, stats_.entries_unsent);
   }
 }
 
@@ -509,7 +529,22 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     if (!takes(entry)) continue;
     note_for_others(store, entry);
     const bool written = store.write(entry);
-    const bool held = !written && store.holds(key);
+    if (!written && is_delta(entry) && (store.holds(key) || store.busy(key))) {
+      // A count change (rupees, keys) refused for now: summed with any other
+      // for the same count and added on a later frame (add()), which then
+      // states the new total. No answer now: a FLAG_STATE carries no delta.
+      ++stats_.write_failures;
+      if (!written_for_others_.empty() && written_for_others_.back() == key) {
+        written_for_others_.pop_back();
+      }
+      auto [it, fresh] = unadded_.try_emplace(key, entry);
+      if (!fresh) it->second.value = as_bits(as_int(it->second.value) + as_int(entry.value));
+      continue;
+    }
+    // Held, or refused only for room in the game's queue (issue 175): kept and
+    // written on a later frame, and answered with the value asked. Answering
+    // with the game's old value would turn the player's change back.
+    const bool held = !written && (store.holds(key) || store.busy(key));
     if (written) {
       ++stats_.applied;
     } else {
@@ -642,8 +677,45 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   restate_.insert(key);
 }
 
+const std::vector<FlagKey>& FlagWatcher::diff_keys() {
+  audit_from_ = static_cast<std::size_t>(-1);
+  const std::vector<FlagKey>& list = shared_.keys();
+  if (!events_) return list;
+  // The whole list: the first time (the baseline), when a flag joined the
+  // list, in a load window (a save load or a room load moves many flags, and
+  // the rules of the window look at each), and when events were lost.
+  if (!baselined_ || wrote_all_ || listed_ != list.size() || window_ || settling()) {
+    baselined_ = true;
+    wrote_all_ = false;
+    listed_ = list.size();
+    wrote_.clear();
+    ++stats_.full_reads;
+    return list;
+  }
+  visit_.clear();
+  for (const FlagKey& key : wrote_) {
+    if (shared_.contains(key)) visit_.push_back(key);
+  }
+  stats_.event_reads += visit_.size();
+  for (const FlagKey& key : restate_) {
+    if (!wrote_.contains(key) && shared_.contains(key)) visit_.push_back(key);
+  }
+  wrote_.clear();
+  audit_from_ = visit_.size();
+  if (!list.empty()) {
+    const std::size_t slice = (list.size() + kAuditFrames - 1) / kAuditFrames;
+    for (std::size_t i = 0; i < slice; ++i) {
+      audit_next_ = audit_next_ >= list.size() ? 0 : audit_next_;
+      visit_.push_back(list[audit_next_++]);
+    }
+  }
+  return visit_;
+}
+
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
-  for (const FlagKey key : shared_.keys()) {
+  const std::vector<FlagKey>& keys = diff_keys();
+  for (std::size_t n = 0; n < keys.size(); ++n) {
+    const FlagKey key = keys[n];
     std::optional<FlagEntry> now = store.read(key);
     if (!now) {
       ++stats_.read_failures;
@@ -653,6 +725,8 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
+    // The audit's read of a flag found a change that no event had named.
+    if (n >= audit_from_ && it->second != *now) ++stats_.event_misses;
     if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
         went_back(it->second, *now)) {
       // The title screen (no scene) and saved progress going back: a save

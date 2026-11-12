@@ -19,6 +19,9 @@
 
 namespace coop::host {
 
+class GameFlagCalls;
+enum class GameFlagType : std::uint8_t;
+
 // Guest memory that can also be written. The emulator implements it.
 class WritableGameMemory : public GameMemory {
  public:
@@ -80,9 +83,31 @@ class GameFlags {
   static bool set_string64_now(WritableGameMemory& memory, std::uint32_t hash,
                                std::string_view text);
 
+  // From now on the setters above hand each write to `calls` (which the
+  // game's calc thread empties into the game's own setter functions,
+  // game_flag_events.hpp) and write nothing into the game's queues; the
+  // getters see a write that still waits there. nullptr: the queues again.
+  // `calls` must outlive its use. Set once at start, before any flag call.
+  static void use_calls(GameFlagCalls* calls);
+  // True while the game's write queue of this type has room for one of our
+  // writes (half of it stays the game's own, as with the queue writes): only
+  // then may the game's setter be called for us, as the game's own setters
+  // stop the game on a full queue (0x34fc280).
+  static bool setter_has_room(GameMemory& memory, GameFlagType type);
+  // The manager (gmd::GameDataMgr), nothing before it is up.
+  static std::optional<std::uint64_t> manager_address(GameMemory& memory);
+
   // Which typed table (the save type ids, 0 to 25) holds `hash`, for finding
   // a flag's type. Nothing when none does.
   std::optional<int> find_type(std::uint32_t hash);
+
+  // The sizes (slots) of the write queues our sets use: Bool, Int, UInt, Enum
+  // and 64-bit keys. Half of each is ours (issue 175); a queue of fewer than
+  // 2 slots gets no write of ours. Nothing before the manager is up.
+  struct QueueSizes {
+    std::uint32_t boolean = 0, int32 = 0, uint32 = 0, enumeration = 0, key64 = 0;
+  };
+  std::optional<QueueSizes> queue_sizes();
 
  private:
   GameMemory& memory_;
@@ -98,6 +123,8 @@ class GameFlagStore final : public FlagStore {
   explicit GameFlagStore(WritableGameMemory& memory) : memory_(memory) {}
   std::optional<protocol::FlagEntry> read(FlagKey key) override;
   bool write(const protocol::FlagEntry& entry) override;
+  // The queue this flag's writes go to has half its slots taken or more.
+  bool busy(FlagKey key) override;
 
  private:
   WritableGameMemory& memory_;

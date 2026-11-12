@@ -30,12 +30,10 @@
    no creates now" exit (main+0x372c88: result 1 in the caller's status word, returns 0) and no actor is made. */
 #define HOS_COOP_WORLD_CREATE_STOP 6u
 
-/* The event numbers are one space with hos_coop_world.h's (agreed in the coordinators' log, 2026-11-12): the actor
-   events have 2 to 15 (2 to 6 used), the world hooks 0, 1 and 16 to 63. */
-#define HOS_COOP_ACTOR_EVENT_FIRST 2u
-#define HOS_COOP_ACTOR_EVENT_LAST 15u
-#if HOS_COOP_WORLD_COUNTER_START >= HOS_COOP_ACTOR_EVENT_FIRST || HOS_COOP_WORLD_CREATE_STOP > HOS_COOP_ACTOR_EVENT_LAST
-#error "hos_coop_actors.h: an event number outside its range (actor events 2 to 15; world hooks 0, 1, 16 to 63)"
+/* The event numbers are one space with hos_coop_world.h's, which names the ranges: the actor events have
+   HOS_COOP_WORLD_ACTOR_FIRST to HOS_COOP_WORLD_ACTOR_LAST (2 to 15; 2 to 6 used). */
+#if HOS_COOP_WORLD_CREATE_REQUEST < HOS_COOP_WORLD_ACTOR_FIRST || HOS_COOP_WORLD_CREATE_STOP > HOS_COOP_WORLD_ACTOR_LAST
+#error "hos_coop_actors.h: an actor event number outside its range (hos_coop_world.h)"
 #endif
 
 #endif

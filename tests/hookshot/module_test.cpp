@@ -309,6 +309,9 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
     std::snprintf(wrap, sizeof wrap, "(%u, 0xb99980, (0xd503237f,", HOS_COOP_WRAP_FLAG_APPLY);
     CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
     CHECK(patch.find("+    coop_world_wraps.install(lifter, img, build_id)") != std::string::npos);
+    // The time set's wrap: the function every time change of the game goes through.
+    std::snprintf(wrap, sizeof wrap, "(%u, 0xeee640, (0xd503237f,", HOS_COOP_WRAP_TIME_SET);
+    CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
 }
 
 TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the module's event numbers") {
@@ -326,7 +329,7 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     CHECK(lift.find(call) != std::string::npos);
     CHECK(lift.find("(0x372a9c, 0x37080f68)") != std::string::npos);  // tbnz w8, #1, main+0x372c88
     CHECK(lift.find("(0x372c88, 0xb4000137)") != std::string::npos);
-    CHECK(HOS_COOP_WORLD_CREATE_STOP <= HOS_COOP_ACTOR_EVENT_LAST);
+    CHECK(HOS_COOP_WORLD_CREATE_STOP <= HOS_COOP_WORLD_ACTOR_LAST);
     std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[19], c->x[20])", HOS_COOP_WORLD_DELETE_REQUEST);
     CHECK(lift.find(call) != std::string::npos);
     std::snprintf(call, sizeof call,

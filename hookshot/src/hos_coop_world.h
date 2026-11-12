@@ -14,15 +14,23 @@
 
 /* The level of the hooks in this file: one more with every change of the events or the wraps. Hookshot tells the module
    at HOS_COOP_WORLD_HELLO, so a module knows what the Hookshot it runs in has (1, the first, sent 0 there). */
-#define HOS_COOP_WORLD_VERSION 2u
+#define HOS_COOP_WORLD_VERSION 3u
 
 /* Events. a and b as listed; a new event takes the next number, an old module answers 0 to one it does not know. */
 #define HOS_COOP_WORLD_HELLO 0u           /* asked by Hookshot before it keeps the exports: 1 once the module is on.
                                              a = HOS_COOP_WORLD_VERSION, b = this build's wraps (bit id for each) */
 #define HOS_COOP_WORLD_COUNTER_START 1u   /* main+0x5e6760 started an AI ExecuteGenericCounter: a = the node */
+/* The event numbers are one space over two headers: 0-1 above; 2-15 are the actor events' (hos_coop_actors.h, patch
+   0007); the world's next ones here are 16-63. */
+#define HOS_COOP_WORLD_ACTOR_FIRST 2u
+#define HOS_COOP_WORLD_ACTOR_LAST 15u
+#define HOS_COOP_WORLD_NEXT_FIRST 16u
+#define HOS_COOP_WORLD_NEXT_LAST 63u
 
 /* Wrapped game functions (nx2/coop_world_wraps.py WRAPS: id, main offset, first words). A new wrap takes the next id. */
 #define HOS_COOP_WRAP_FLAG_APPLY 1u   /* main+0xb99980: the game applies its queued flag writes (the save load's too) */
+#define HOS_COOP_WRAP_TIME_SET 2u     /* main+0xeee640: the game sets its clock (x0 the time object, w1 seconds since
+                                         midnight, w2 a mode, w3 days or -1); every time change goes through it */
 
 /* The module's exports (extern "C"), both optional. Called on the game thread that ran the hooked function (not always
    the calc thread): quick, no lock the game waits on, no game call. hos_coop_world returns 1 when taken.

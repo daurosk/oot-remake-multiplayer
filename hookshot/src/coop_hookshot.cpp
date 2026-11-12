@@ -33,6 +33,8 @@
 #include "coop_cheats_panel.h"
 #include "coop_chatbox.h"
 #include "coop_draw.h"
+#include "coop_flag_native.h"
+#include "coop_flags.h"
 #include "coop_game_build.h"
 #include "coop_hold.h"
 #include "coop_counters.h"
@@ -47,6 +49,7 @@
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
+#include "coop_time.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
 #include "hos_coop_world.h"
@@ -70,6 +73,7 @@ std::atomic<bool> g_on{false};  // (read on the game's threads by the world hook
 std::atomic<std::uint32_t> g_world_version{0};  // Hookshot's HOS_COOP_WORLD_VERSION, 0 until it says hello
 std::atomic<std::uint64_t> g_world_wraps{0};    // the wraps that Hookshot has, a bit for each id
 std::atomic<bool> g_present_seen{false};  // our patch's present site has run
+std::atomic<bool> g_flag_setters{false};  // our flag writes go through the game's setters (coop_flag_native.h)
 bool g_hold = false;
 Core::System g_system;
 
@@ -178,6 +182,81 @@ struct OwnCall {
     OwnCall(const OwnCall&) = delete;
     OwnCall& operator=(const OwnCall&) = delete;
 };
+
+// The flag writes that wait for the game's own setters (coop_flag_native.h), made here on the calc thread. A setter
+// that cannot be called (no function there: another build of the lift) ends this: the writes go into the game's
+// queues again, the ones that wait first.
+void RunFlagSetters(void* ctx) {
+    if (!g_flag_setters.load(std::memory_order_relaxed)) {
+        return;
+    }
+    CoopHook::EmulatorMemory memory(g_system.ApplicationMemory(), CoopRuntime::MainBase());
+    const bool ok = CoopFlagNative::RunSetters(
+        memory, [ctx](std::uint64_t function, std::uint64_t x0, std::uint64_t x1, std::uint64_t x2) {
+            HosCoopCall k{};
+            k.function = function;
+            k.x[0] = x0;
+            k.x[1] = x1;
+            k.x[2] = x2;
+            std::uint64_t result = 0;
+            return g_api->call(ctx, &k, &result) != 0;
+        });
+    if (ok) {
+        return;
+    }
+    g_flag_setters.store(false);
+    coop::host::GameFlags::use_calls(nullptr);
+    std::size_t moved = 0, lost = 0;
+    CoopFlagNative::Calls().run(coop::host::GameFlagCalls::kMost, [&](const coop::host::GameFlagWrite& w) {
+        using coop::host::GameFlags;
+        using coop::host::GameFlagType;
+        const auto hash = static_cast<std::uint32_t>(w.id);
+        bool done = false;
+        switch (w.type) {
+        case GameFlagType::boolean:
+            done = GameFlags::set_bool(memory, hash, w.value != 0);
+            break;
+        case GameFlagType::int32:
+            done = GameFlags::set_int(memory, hash, static_cast<std::int32_t>(w.value));
+            break;
+        case GameFlagType::enum32:
+            done = GameFlags::set_enum(memory, hash, w.value);
+            break;
+        case GameFlagType::uint32:
+            done = GameFlags::set_uint(memory, hash, w.value);
+            break;
+        case GameFlagType::key64:
+            done = GameFlags::set_key64(memory, w.id, w.value != 0);
+            break;
+        }
+        ++(done ? moved : lost);
+        return true;
+    });
+    LOG_WARNING(Core, "coop: flags: a game setter could not be called: writes go into the game's queues from now on "
+                      "({} waiting writes moved there, {} lost)", moved, lost);
+}
+
+// Every 10 s while anything moved: what the applier's wrap and the setter calls did.
+void LogFlagNative() {
+    static std::int64_t said_ms = 0;
+    static std::uint64_t said_applies = 0, said_setters = 0;
+    const std::int64_t now = SteadyMs();
+    if (now - said_ms < 10'000) {
+        return;
+    }
+    const CoopFlagNative::Counters& c = CoopFlagNative::Counts();
+    const std::uint64_t applies = c.applies.load(), setters = c.setters.load();
+    if (applies == said_applies && setters == said_setters) {
+        return;
+    }
+    said_ms = now;
+    said_applies = applies;
+    said_setters = setters;
+    LOG_INFO(Core, "coop: flags native: the game's applier ran {} times, {} writes read from its queues ({} dropped), "
+                   "{} setter calls made for co-op ({} waiting, {} frames waited for room)",
+             applies, c.writes.load(), CoopFlagNative::Events().dropped(), setters, CoopFlagNative::Calls().size(),
+             c.no_room.load());
+}
 
 void RunCalls(void* ctx) {
     BridgeGuest guest;
@@ -593,6 +672,17 @@ bool Start(const HosCoopApi* api) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
+    // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours
+    // through its setters on the calc thread. LICHII_COOP_FLAG_EVENTS=0 / LICHII_COOP_FLAG_SETTERS=0: as on the
+    // emulator (the table diff, writes into the game's queues).
+    CoopFlagNative::Counts().events_on.store(Env("LICHII_COOP_FLAG_EVENTS") != "0");
+    g_flag_setters.store(Env("LICHII_COOP_FLAG_SETTERS") != "0");
+    coop::host::GameFlags::use_calls(g_flag_setters.load() ? &CoopFlagNative::Calls() : nullptr);
+    LOG_INFO(Core, "coop: flags: the game's writes {}, our writes {}",
+             CoopFlagNative::Counts().events_on.load() ? "as events from its applier (patch 0005's wrap)"
+                                                       : "by reading the tables (LICHII_COOP_FLAG_EVENTS=0)",
+             g_flag_setters.load() ? "through the game's setters on its calc thread"
+                                   : "into the game's queues (LICHII_COOP_FLAG_SETTERS=0)");
     CoopHook::Start();
     g_on = true;
     return true;
@@ -619,6 +709,8 @@ void Frame(void* ctx, int site) {
         CoopHook::OnFrame(g_system);
     }
     if (w.calls && ctx != nullptr) {
+        RunFlagSetters(ctx);
+        LogFlagNative();
         RunCalls(ctx);
     }
 }
@@ -737,7 +829,16 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
         return 0;
     }
+    if (id == HOS_COOP_WRAP_TIME_SET && phase == 0) {
+        // The game's own time change, with its exact time: the time sync's jump (coop_time_sync.h, GameSet).
+        CoopTime::OnGameSet(static_cast<std::uint32_t>(x[1]), static_cast<std::uint32_t>(x[2]),
+                            static_cast<std::int32_t>(x[3]));
+        return 0;
+    }
     if (id == HOS_COOP_WRAP_FLAG_APPLY && phase == 0) {
+        // The writes the game is about to apply, read from its queues (x0 = the manager): the flag watcher's events.
+        CoopHook::EmulatorMemory memory(g_system.ApplicationMemory(), CoopRuntime::MainBase());
+        CoopFlagNative::OnApply(memory, x[0]);
         // First proof: how often the game applies its queued flag writes (one line at the first, then every 10 s).
         static std::atomic<std::uint64_t> runs{0};
         static std::atomic<std::int64_t> said_ms{0};

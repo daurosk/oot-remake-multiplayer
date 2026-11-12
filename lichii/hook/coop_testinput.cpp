@@ -327,6 +327,17 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.kind = Kind::setflag;
             step.mark = std::string(w[1]);
             step.start = std::string(w[2]);
+        } else if (cmd == "SETENUM") {
+            // setenum NAME VALUE: this game's Enum flag NAME (a GameDataList name,
+            // or 0x and its hash: a Threads of Time quest's name is not in the
+            // romfs) to the value named VALUE (flag_hash), through the game's
+            // queue. Test only (issue 193).
+            if (w.size() != 3) {
+                return fail("want: setenum NAME VALUE (an Enum flag, or 0xHASH, and a value's name)");
+            }
+            step.kind = Kind::setenum;
+            step.mark = std::string(w[1]);
+            step.start = std::string(w[2]);
         } else if (cmd == "WEAR") {
             if (w.size() != 3 || !WearFlag(w[1])) {
                 return fail("want: wear weapon|shield|head|armor|boots|hand NAME");
@@ -437,7 +448,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
             s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill ||
-            s.kind == Kind::setflag) {
+            s.kind == Kind::setflag || s.kind == Kind::setenum) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
             continue;
@@ -797,6 +808,23 @@ void SetFlag(Core::System& system, const std::string& name, int value) {
     LOG_INFO(Core, "coop: test setflag {} ({}) {}: {}", name, type, value, ok ? "set" : "NOT set");
 }
 
+// setenum: this game's Enum flag (a name, or 0x and its hash) to the value of
+// that name, through the game's own queue (issue 193: a Threads of Time
+// quest's step). Test only.
+void SetEnum(Core::System& system, const std::string& name, const std::string& value) {
+    CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    std::uint32_t hash = 0;
+    if (name.size() > 2 && name[0] == '0' && (name[1] == 'x' || name[1] == 'X')) {
+        const char* end = name.data() + name.size();
+        if (std::from_chars(name.data() + 2, end, hash, 16).ptr != end) hash = 0;
+    } else {
+        hash = coop::host::flag_hash(name);
+    }
+    const bool known = hash != 0 && coop::host::GameFlags(memory).get_enum(hash).has_value();
+    const bool ok = known && coop::host::GameFlags::set_enum(memory, hash, coop::host::flag_hash(value));
+    LOG_INFO(Core, "coop: test setenum {} {}: {}", name, value, ok ? "set" : known ? "NOT set" : "unknown");
+}
+
 // give: bombs, bow and hookshot are the item flags of each; any other name is
 // given as it is. Needs LICHII_COOP_CHEATS=1 (applied on the co-op frame).
 void Give(const std::string& item) {
@@ -941,6 +969,8 @@ void OnFrame(Core::System& system) {
             Assign(system, request.name);
         } else if (request.kind == Kind::setflag) {
             SetFlag(system, request.name, std::stoi(request.start));
+        } else if (request.kind == Kind::setenum) {
+            SetEnum(system, request.name, request.start);
         } else if (request.kind == Kind::place) {
             const bool ok = CoopBoss::MoveLink(system, g_state.main,
                                                CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});

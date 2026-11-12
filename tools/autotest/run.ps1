@@ -662,15 +662,18 @@ function Run-Steps([string]$file) {
             }
             'shot' { Shot-Both "s$n-$($rest[0])" }
             'lines' {
-                if ($rest.Count -lt 4 -or $rest[2] -notmatch '^max=(\d+)$') { throw "steps line ${n}: want lines NAME B max=N REGEX" }
-                $most = [int]$Matches[1]
+                # max=N: at most N lines match; min=N (issue 193): at least N.
+                if ($rest.Count -lt 4 -or $rest[2] -notmatch '^(max|min)=(\d+)$') { throw "steps line ${n}: want lines NAME B max=N|min=N REGEX" }
+                $atLeast = $Matches[1] -eq 'min'
+                $most = [int]$Matches[2]
                 $pattern = ($line -split '\s+', 5)[4]
                 $got = Count (Read-Log $rest[1]) "(?m)^.*$pattern"
-                $res = '{0} {1} ({2}: {3} lines match ''{4}'', at most {5})' -f $(if ($got -le $most) { 'PASS' } else { 'FAIL' }),
-                    $rest[0], $rest[1], $got, $pattern, $most
+                $pass = if ($atLeast) { $got -ge $most } else { $got -le $most }
+                $res = '{0} {1} ({2}: {3} lines match ''{4}'', {5} {6})' -f $(if ($pass) { 'PASS' } else { 'FAIL' }),
+                    $rest[0], $rest[1], $got, $pattern, $(if ($atLeast) { 'at least' } else { 'at most' }), $most
                 Write-Host $res
                 Add-Content "$out\counts.txt" $res
-                if ($got -gt $most) { $script:stepFails++ }
+                if (-not $pass) { $script:stepFails++ }
             }
             'expect' {
                 $name = $rest[0]

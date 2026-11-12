@@ -671,9 +671,24 @@ public:
         if (!reading) CoopTime::Loading(report.server_now_us);  // issue 159: a reload, a death
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
-        // Boss rooms together (docs/dungeons-boss.md).
+        // Boss rooms together (docs/dungeons-boss.md). Issue 148: the room's
+        // "shut in" flag says when we are past its door.
+        std::optional<bool> boss_shut_in;
+        if (memory && view.scene) {
+            if (const CoopBoss::Room* room = CoopBoss::RoomOfScene(*view.scene)) {
+                if (const std::string_view flag = CoopBoss::ShutInFlag(*room); !flag.empty()) {
+                    if (flag != boss_shut_in_name_) {  // hashed once, not every frame
+                        boss_shut_in_name_ = flag;
+                        boss_shut_in_hash_ = coop::host::flag_hash(std::string(flag));
+                    }
+                    coop::host::GameFlagStore flags(*memory);
+                    const auto v = flags.read(coop::protocol::FlagKey{boss_shut_in_hash_, 0});
+                    if (v) boss_shut_in = v->value != 0;
+                }
+            }
+        }
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
-                        reading && reading->event_running.value_or(false),
+                        reading && reading->event_running.value_or(false), boss_shut_in,
                         report.connected ? session_.get() : nullptr, report.server_now_us);
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.
@@ -1238,6 +1253,8 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
+    std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame

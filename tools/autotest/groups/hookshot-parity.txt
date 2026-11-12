@@ -6,6 +6,11 @@
 # Before `groups.py run`:
 #  - g3's hs-ladder: clear the ladder's flag in g3's baselines (save_flags.py from save-flags-hookshot: set <kit>\hookshot-A3\autotest-save\slot_0*\progress.sav
 #    bool:0xb3a4fe84=0, the same for hookshot-B3) and put them back from <kit>\autotest-save-backup afterwards.
+#  - g4's hs-gohma-door (#178 #148): clear the six Deku boss flags in g4's baselines, after hs-gohma ran
+#    (save_flags.py set <kit>\hookshot-A4\autotest-save\slot_0*\progress.sav bool:0xffde6400=0 bool:0x00c0a2f6=0
+#    bool:0x66b97a4a=0 bool:0xe44433dc=0 bool:0x88b1b922=0 bool:0x3d5c0bad=0, the same for hookshot-B4); hs-gohma warps
+#    into the boss rush and does not need them. Put them back afterwards.
+# On the emulator (a server restart is a steps-file step): `stray` proves keep-number (#175 #86).
 # After the groups, by hand on one pair (no expect= possible: the keys are posted to the window):
 #  - hs-chatbox (row 7): any run with -KeepOpen, then the PostMessage snippet in reports/hookshot-parity.md (T, "hi", Enter).
 #  - hs-cheats (row 8): the same with LICHII_COOP_CHEATS=1 (F8, "token", Enter, F8).
@@ -40,3 +45,4 @@ hs-ladder  expect='A:test setflag HavePlayedEvent\.InsideTheDekuTree_Gimmick_Fal
 [g4]
 # The boss: the Gohma fight started, then one owner (#150 #178).
 hs-gohma  expect="A:anim Enemy_DungeonBoss_Gohma \S+ '(?!Pre_Battle)[^']+' \(ours\)"  expect='B:share damage'  label="#150 #178 Gohma fight"
+hs-gohma-door  expect='A:\+ Enemy_DungeonBoss_Gohma'  expect='B:\+ Enemy_DungeonBoss_Gohma'  expect='A:past the door \(shut in\)'  expect='B:moving in \(try 1\)'  label="#178 #148 Gohma door (baseline step)"

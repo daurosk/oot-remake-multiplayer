@@ -1,0 +1,19 @@
+# teleport-lock-out's B (#197): in Kokiri Forest in front of the Deku Tree, standing still.
+#! noload
+#! start coop: test warp done
+#! timeout 420
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 4000
+mark b-end

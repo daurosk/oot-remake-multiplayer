@@ -150,6 +150,12 @@ public:
     // again after this if the game has not taken the request.
     static constexpr const char* kSceneEvent = "DefaultParentEvent";
     static constexpr std::uint64_t kEventAgainUs = 3'000'000;
+    // Off (#197): after a load that kSceneEvent carried, our Link never moved
+    // again and the game refused every later event (autotest teleport-lock,
+    // Kokiri Forest <-> Deku Tree, both ways; docs/scenes.md). So the request
+    // waits for an event of the player's own (a talk, a sign), as the boss
+    // pull's scene change does, which leaves Link playable.
+    static constexpr bool kStartSceneEvent = false;
 
     struct Actions {
         std::vector<std::string> lines;      // chat notices

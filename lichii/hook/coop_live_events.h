@@ -157,6 +157,9 @@ std::optional<std::set<std::string>> ParseNames(std::string_view text);
 class Requester {
 public:
     void Want(std::string name);
+    // Drops the events still waiting (not the one being asked now: its
+    // calls finish and free the block as usual).
+    void Clear() { wanted_.clear(); }
     // CoopSvc::Caller's contract: asked once a frame with after_call false,
     // then again after each call it returned, with the call's x0.
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,

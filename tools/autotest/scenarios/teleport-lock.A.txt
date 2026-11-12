@@ -1,0 +1,52 @@
+# teleport-lock (#197): /teleport from the overworld into a dungeon room. A loads in Kokiri Forest
+# and is put next to the sign KokiriForest_005; B loads in the Deku Tree and is put in the
+# slingshot room (room C, not the entrance's room). A types /teleport B and reads the sign (an
+# event the scene change rides on, as a loading zone's does). Then A walks (goto): its
+# "test steer at" lines must show Link moving after the load (no lock, no black picture).
+# Expect in A's log: "asked the scene change to InsideTheDekuTree at Entrance: scene set",
+# "talk to someone or read a sign", "scene change taken", "scene change cleared", "boss: moved
+# Link", no "goto timed out"; the probe: loading=1 once, then no second load; event=0 at the end.
+# Shots "arrived", "walked": A next to B in the slingshot room, not black.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_SCENE_PROBE=1
+#! timeout 420
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -32.4 111.7 11.6     # next to the sign KokiriForest_005 (-30.4 111.7 13.9)
+wait 240
+mark placed
+wait 900
+chat /teleport B
+wait 120
+mark asked
+toward -30.4 13.9 8
+wait 20
+press A 12                 # read it: an event, the scene change is taken when it ends
+wait 120
+press A 12
+wait 120
+press A 12
+wait 600
+mark loaded
+wait 600
+mark arrived
+goto -38.0 12.0 1.0 600   # 5 m along the room: "test steer at" lines must show Link moving
+wait 60
+goto -33.0 9.0 1.0 600
+wait 60
+mark walked
+wait 1200
+mark end

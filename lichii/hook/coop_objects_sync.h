@@ -348,6 +348,13 @@ public:
     static constexpr std::uint64_t kStepWaitUs = 300'000;
     static constexpr std::uint64_t kStepGivenUs = 1'000'000;
     std::size_t LooseDrops() const { return loose_drops_; }
+    // Hookshot with patch 0007: the game accepted a delete request for this
+    // actor (its own code asked: killed, broken, taken, or our own remove).
+    // It is gone at the first walk that misses it, not the second: off the
+    // list is no "lifted or changing hands" then. Kept kDeletedKeepUs (a
+    // dying actor stays listed a while; the address may be used again later).
+    void GameDeleted(std::uint64_t address, std::uint64_t now_us);
+    static constexpr std::uint64_t kDeletedKeepUs = 10'000'000;
 
     // Projectiles (coop_projectiles.h): true for a life drop at a place and
     // server time that a projectile copy's blast here may have made. A copy
@@ -658,6 +665,7 @@ private:
         std::uint64_t event_until = 0;          // flagged by our event until then
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
+        std::uint64_t deleted_until = 0;        // GameDeleted: gone at the first miss until then
         // Chasing our Link (NoteDrift): the run of steps towards it.
         std::uint64_t chase_first = 0;
         std::uint64_t chase_last = 0;

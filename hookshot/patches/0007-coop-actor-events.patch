@@ -8,24 +8,25 @@ nx2/coop_actor_lift.py adds three lift-time hooks that hand actor
 events to the co-op module through host/coop_world.c (patch 0005):
 the create request (main+0x372a94: CREATE_FROM with the caller and the
 create argument, then CREATE_REQUEST with the name and the handle
-slot), the delete request (main+0xa64bc: DELETE_REQUEST with the actor
-and the reason) and the Life component's step (main+0x49dcb0:
-LIFE_STEP with the component and this frame's damage sum, which the
-module may change, so another player's hit goes in through the game's
-own step). The words and the build id are checked; a hook whose words
-differ is left out.
+slot), the delete request once it is accepted (main+0xa65d0:
+DELETE_REQUEST with the actor and the reason, once for an actor) and
+the Life component's step (main+0x49dcb0: LIFE_STEP with the component
+and this frame's damage sum, which the module may change, so another
+player's hit goes in through the game's own step). The words and the
+build id are checked; a hook whose words differ is left out. They go
+in before the wrapped functions of patch 0005.
 ---
- nx2/coop_actor_lift.py | 74 ++++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_actor_lift.py | 79 ++++++++++++++++++++++++++++++++++++++++++
  nx2/coop_hooks.py      |  2 ++
- 2 files changed, 76 insertions(+)
+ 2 files changed, 81 insertions(+)
  create mode 100644 nx2/coop_actor_lift.py
 
 diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
 new file mode 100644
-index 0000000..d4d2239
+index 0000000..7967abb
 --- /dev/null
 +++ b/nx2/coop_actor_lift.py
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,79 @@
 +"""Co-op's actor events (oot-remake-multiplayer's patch 0007, its docs/hookshot.md "World hooks": enemies, breakables,
 +drops and projectiles straight from the game's C).
 +
@@ -36,8 +37,10 @@ index 0000000..d4d2239
 +- main+0x372a70 requestCreateActorAsync: after `ldr x23, [x29, #0x68]` (main+0x372a94, the end of the prologue; the
 +  arguments and the return address are still the caller's): 5 = CREATE_FROM (a = the return address, b = x2, the
 +  create argument), then 2 = CREATE_REQUEST (a = x1, the name, b = x3, the handle slot the manager fills).
-+- main+0xa6490 the delete request: after `mov x19, x0` (main+0xa64bc; an actor already being deleted returned before
-+  it): 3 = DELETE_REQUEST (a = the actor, b = x1, the reason).
++- main+0xa6490 the delete request: after `ldr x0, [x22]` (main+0xa65d0, reached once for an actor, when the request
++  is accepted: the function has just set bit 16 of actor+0x30 and found it clear; a request for an actor already
++  being deleted, a refused one and a repeated one never get there): 3 = DELETE_REQUEST (a = x19, the actor,
++  b = x20, the reason).
 +- main+0x49d8c0 the Life component's step: after `add w9, w10, w9` (main+0x49dcb0, which every path of the step
 +  reaches: w9 = the damage dealt to it this frame, before it is stored at +0x1cb0 and taken off life): 4 = LIFE_STEP
 +  (a = the Life component, b = the address of an int32 holding w9 in our C). The module may change that number: a hit
@@ -58,12 +61,15 @@ index 0000000..d4d2239
 +      (0x372a98, 0x39442408)),  # ldrb w8, [x0, #0x109]: the manager's "no creates" bit
 +     "{ " + EVENT + "hos_coop_world_event(5u, c->x[30], c->x[2]); hos_coop_world_event(2u, c->x[1], c->x[3]); }   "
 +     "/* (nx2/coop_actor_lift.py: co-op's actor events, 5 = CREATE_FROM, 2 = CREATE_REQUEST) */"),
-+    ("delete request", 0xa64bc,
++    ("delete request", 0xa65d0,
 +     ((0xa64a0, 0xd503237f),    # pacibsp
-+      (0xa64b4, 0x910003fd),    # mov x29, sp
-+      (0xa64b8, 0xb9403008),    # ldr w8, [x0, #0x30]
-+      (0xa64bc, 0xaa0003f3)),   # mov x19, x0
-+     "{ " + EVENT + "hos_coop_world_event(3u, c->x[0], c->x[1]); }   "
++      (0xa64bc, 0xaa0003f3),    # mov x19, x0
++      (0xa64c4, 0xaa0103f4),    # mov x20, x1
++      (0xa65c8, 0xb8293108),    # ldset w9, w8, [x8]: bit 16 of actor+0x30, "delete asked"
++      (0xa65cc, 0x37800128),    # tbnz w8, #0x10: it was set already
++      (0xa65d0, 0xf94002c0),    # ldr x0, [x22]
++      (0xa65d4, 0xaa1303e1)),   # mov x1, x19
++     "{ " + EVENT + "hos_coop_world_event(3u, c->x[19], c->x[20]); }   "
 +     "/* (nx2/coop_actor_lift.py: co-op's actor events, 3 = DELETE_REQUEST) */"),
 +    ("life step", 0x49dcb0,
 +     ((0x49dcac, 0x0b0b014a),   # add w10, w10, w11
@@ -101,16 +107,18 @@ index 0000000..d4d2239
 +    print("co-op actors: %d of %d actor event hooks (world hook)" % (n, len(HOOKS)))
 +    return n
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index 206aa28..1b34a16 100644
+index d8870f0..e59ef6e 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
-@@ -64,4 +64,6 @@ def install(lifter, img, build_id):
+@@ -62,6 +62,8 @@ def install(lifter, img, build_id):
+     coop_puppet_guard.install(lifter, img, build_id)
+     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
      coop_platform_lift.install(lifter, img, build_id)
-     import coop_world_wraps   # (patch 0005: wrapped game functions, host/coop_world.c)
-     coop_world_wraps.install(lifter, img, build_id)
 +    import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
 +    coop_actor_lift.install(lifter, img, build_id)
-     return len(FRAME_SITES) + 1
+     # (patch 0005: wrapped game functions, host/coop_world.c. Kept last: it leaves out what the hooks above took)
+     import coop_world_wraps
+     coop_world_wraps.install(lifter, img, build_id)
 -- 
 2.56.0.windows.4
 

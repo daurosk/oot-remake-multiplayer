@@ -503,6 +503,26 @@ TEST_CASE("objects: life events: the Life step's hit on a copy goes to the owner
     CHECK(sent == 2);
 }
 
+TEST_CASE("objects: an actor the game itself deleted is gone at the first walk without it") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f)});
+    REQUIRE(sync.IdOf(0x100));
+    REQUIRE(sync.IdOf(0x200));
+    sync.GameDeleted(0x100, 10 * kMs);  // (the game's delete request, patch 0007)
+    sync.GameDeleted(0x999, 10 * kMs);  // (an actor we do not share: nothing)
+    Tick(sync, 40 * kMs, {});
+    CHECK_FALSE(sync.IdOf(0x100));
+    CHECK(sync.IdOf(0x200));  // off the list for one walk only: lifted, or changing hands
+    Tick(sync, 80 * kMs, {});
+    CHECK_FALSE(sync.IdOf(0x200));
+    // Long after the request the address is another actor's: two walks again.
+    Tick(sync, 100 * kMs, {Enemy(0x300, 0x33, 2)});
+    sync.GameDeleted(0x300, 100 * kMs);
+    Tick(sync, 20'000 * kMs, {Enemy(0x300, 0x33, 2)});
+    Tick(sync, 20'040 * kMs, {});
+    CHECK(sync.IdOf(0x300));
+}
+
 TEST_CASE("objects: life events: a hit that took no life is forgotten, a fall with no step still counts") {
     Sync sync;
     sync.SetLifeEvents(true);

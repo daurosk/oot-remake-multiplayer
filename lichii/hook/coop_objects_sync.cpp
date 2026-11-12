@@ -712,6 +712,13 @@ void Sync::GameHit(std::uint64_t address, std::int32_t amount) {
     }
 }
 
+void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end()) {
+        it->second.deleted_until = now_us + kDeletedKeepUs;
+    }
+}
+
 void Sync::Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us) {
     const auto it = objects_.find(address);
     if (it != objects_.end() && amount > 0) {
@@ -1249,7 +1256,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             ++it;
             continue;
         }
-        if (++it->second.missed < kMissedWalks) {
+        // (the game's own delete request was seen for it: no second walk needed)
+        const bool deleted = it->second.deleted_until != 0 && now_us < it->second.deleted_until;
+        if (++it->second.missed < kMissedWalks && !deleted) {
             ++it;
             continue;
         }

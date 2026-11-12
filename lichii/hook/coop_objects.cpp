@@ -1902,6 +1902,7 @@ private:
                 break;
             case CoopActorEvents::Kind::Delete: {
                 ++actor_deletes_;
+                sync_.GameDeleted(e.a, server_now_us);  // (gone at the first walk without it)
                 const auto known = names_.find(e.a);
                 if (actor_event_lines_ < 40 && known != names_.end()) {
                     ++actor_event_lines_;

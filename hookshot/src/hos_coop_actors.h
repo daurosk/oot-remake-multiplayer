@@ -13,7 +13,9 @@
    name), b = the handle slot (x3) the manager fills once the actor is made. Always just after CREATE_FROM, on the
    same thread. */
 #define HOS_COOP_WORLD_CREATE_REQUEST 2u
-/* main+0xa6490, the delete request: a = the actor, b = the reason (x1). Not for an actor already being deleted. */
+/* main+0xa6490, the delete request, at the point it is accepted (main+0xa65d0: the function just set "delete asked",
+   bit 16 of actor+0x30, and it was clear): a = the actor, b = the reason (x1). Once for an actor: not for one already
+   being deleted (state 7 to 11), a refused request or a repeated one. */
 #define HOS_COOP_WORLD_DELETE_REQUEST 3u
 /* main+0x49d8c0, the Life component's step, every frame for every Life component: a = the component
    ([[actor + 0x270] + 0x2b8]), b = the address (in hookshot.exe, not the guest) of an int32 holding this frame's damage

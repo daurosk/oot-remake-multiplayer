@@ -595,7 +595,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print):
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None):
+          tunics=(), test_tunic=None, stand_in_effects=True):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -692,14 +692,19 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         log(f"impacts: no {IMPACT_TEMPLATE} in this romfs, left out")
 
     shots = []
+    # stand_in_effects=False (--no-seed-trail) builds the stand-ins model-only, as before issue 198,
+    # so a release can back the seed trail out by building the pack again, without a code change.
+    fx_template = template if stand_in_effects else None
+    if template is not None and not stand_in_effects:
+        log("stand-in effects (seed trail): left out (--no-seed-trail)")
     for source, name in STAND_INS:
         src = os.path.join(romfs, "Pack", "Actor", f"{source}.pack.zs")
         if not os.path.isfile(src) or source not in ai_rows:
             log(f"{name}: no {source} in this romfs, left out")
             continue
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names = build_stand_in(members, source, name, template)
-        effect = name in STAND_IN_EFFECTS and template is not None
+        pack, ap, names = build_stand_in(members, source, name, fx_template)
+        effect = name in STAND_IN_EFFECTS and fx_template is not None
         dst_rel = f"Pack/Actor/{name}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         new_ai.append(stand_in_row(ai_rows[source], name, effect))
@@ -813,6 +818,8 @@ def main(argv=None):
                     help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
+    ap.add_argument("--no-seed-trail", action="store_true",
+                    help="build the shot stand-ins model-only, without the seed's Tail trail (issue 198)")
     ap.add_argument("--player-footsteps", action="store_true",
                     help="test switch: the puppets keep the player's footstep param (the older pack)")
     ap.add_argument("--sound-user", metavar="NAME",
@@ -868,7 +875,8 @@ def _main_build(a, romfs, hud_reader=None):
     try:
         tunics = [] if a.tunics.strip().lower() == "none" else [c.strip() for c in a.tunics.split(",") if c.strip()]
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
-              sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic)
+              sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
+              stand_in_effects=not a.no_seed_trail)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

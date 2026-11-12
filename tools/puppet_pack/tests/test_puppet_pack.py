@@ -927,6 +927,19 @@ class FullBuildTest(unittest.TestCase):
         self.assertGreaterEqual(child["size"], 5584)
         self.assertLess(child["size"], 5584 + 0x200)
 
+    def test_main_no_seed_trail(self):
+        # Issue 198 back-out: --no-seed-trail builds the stand-ins model-only (no Tail), default on.
+        from unittest import mock
+        mod = os.path.join(self.dir, "mod7")
+        for extra, want in (([], True), (["--no-seed-trail"], False)):
+            with mock.patch.object(build, "build", return_value={}) as b:
+                build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version"] + extra)
+            self.assertIs(b.call_args.kwargs["stand_in_effects"], want)
+        # The real build takes it too (this romfs has no stand-in sources, so nothing changes).
+        m = build.build(self.romfs, os.path.join(self.dir, "mod8"), log=lambda *_: None,
+                        stand_in_effects=False)
+        self.assertTrue(all(s["effect"] is None for s in m["shots"]))
+
     def test_main_player_footsteps(self):
         from puppet_pack import zs
         mod = os.path.join(self.dir, "mod5")

@@ -111,6 +111,16 @@ constexpr u64 kActorPosition = 0x31c;
 constexpr u64 kActorRotation = 0x328;  // 9 x f32, rows of 3
 constexpr u64 kLifeHurt = 0x228;       // s32 damage this frame (0x49dc90)
 constexpr u32 kStateAlive = 4;
+// What the game sets on an actor about 25 m or more from its Link (docs/
+// objects.md, "States seen"). A copy asleep at its home is still moved to
+// its owner's place when that is this near our Link (issue 101), so an
+// enemy chasing another player to us comes along and the game wakes it.
+constexpr u32 kStateAsleep = 6;
+constexpr float kAsleepPlaceM = 30.0f;
+float Apart(const coop::protocol::Vec3& a, const coop::protocol::Vec3& b) {
+    const float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
 // The game's own way to move an actor, as the AI node ExecuteActorForceSetMtx
 // (run 0x2622e50) does it: write +0x31c..+0x34b (place, then the 3x3), then
 // call vtable slot 0x218 (actor, 0). Every actor seen shares the vtable
@@ -353,6 +363,7 @@ public:
         u64 actor = 0;
         std::array<float, 12> transform{};  // place, then the 3x3 rows
         bool rotation = false;              // false: keep the actor's own
+        bool asleep = false;                // state 6 may be moved too (issue 101)
     };
 
     struct Hit {
@@ -597,7 +608,7 @@ public:
         // 19 to 21 copies were never moved and no animation was ever played).
         while (next_ < work_.size()) {
             const Pose& p = work_[next_++];
-            if (!Alive(guest, p.actor)) {
+            if (!Alive(guest, p.actor, p.asleep)) {
                 continue;
             }
             if (p.rotation) {
@@ -779,11 +790,13 @@ private:
 
     // On the game thread, so the list cannot change under us: still on the
     // actor list (its node points back at it), awake, and an actor.
-    bool Alive(CoopPuppet::Guest& guest, u64 a) {
+    // `asleep`: state 6 counts too (a copy moved to us from its far home).
+    bool Alive(CoopPuppet::Guest& guest, u64 a, bool asleep = false) {
         u32 state = 0;
         u64 owner = 0;
         u64 vtable = 0;
-        return a != 0 && guest.Read(a + kActorState, &state, 4) && state == kStateAlive &&
+        return a != 0 && guest.Read(a + kActorState, &state, 4) &&
+               (state == kStateAlive || (asleep && state == kStateAsleep)) &&
                guest.Read(a + kActorNode + kNodeOwner, &owner, 8) && owner == a &&
                guest.Read(a, &vtable, 8) && vtable == main_ + kActorVtable;
     }
@@ -1337,6 +1350,8 @@ public:
     bool replay_ = false;
     bool wake_ = true;
     bool release_ = true;  // LICHII_COOP_OBJECTS_RELEASE=0 turns it off (issues 150, 157)
+    bool wake_far_ = true;  // LICHII_COOP_OBJECTS_ASLEEP=0 turns it off (issue 101)
+    std::size_t asleep_placed_ = 0;  // copy-frames placed in state 6 since the last log
     bool drive_ = false;
     int ai_hold_ = 0;  // 0 off, 1 set the brain skip bit on copies, 2 clear it
     u64 test_take_ = 0;
@@ -1662,8 +1677,19 @@ private:
             sync_.NoteTakeover(a, now_us);
         }
         for (const PoseWrite& w : poses) {
-            if (r.Get<u32>(w.address + kActorState).value_or(0) != kStateAlive) {
-                continue;
+            const u32 state = r.Get<u32>(w.address + kActorState).value_or(0);
+            bool asleep = false;
+            if (state != kStateAlive) {
+                // Issue 101: our copy sleeps at its home far from our Link
+                // while the owner's enemy chases another player up to us.
+                // Skipping it left it there; move it when the owner's place
+                // is near our Link, and the game wakes it there.
+                if (!wake_far_ || state != kStateAsleep || !player_ ||
+                    Apart(*player_, w.position) >= kAsleepPlaceM) {
+                    continue;
+                }
+                asleep = true;
+                ++asleep_placed_;
             }
             if (const auto before = placed_.find(w.address); before != placed_.end()) {
                 coop::protocol::Vec3 now{};
@@ -1685,6 +1711,7 @@ private:
             }
             Mover::Pose p;
             p.actor = w.address;
+            p.asleep = asleep;
             std::copy(w.position.begin(), w.position.end(), p.transform.begin());
             if (w.rotation) {
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
@@ -1731,6 +1758,13 @@ private:
             // Issue 101: which copy was furthest from where we put it, so
             // one run tells a copy the setter does not hold (a flying or
             // sleeping enemy) from the AI's own small pull.
+            if (asleep_placed_ > 0) {
+                LOG_INFO(Core,
+                         "coop: objects: share {} copy-frames placed while asleep (owner's "
+                         "place within {:.0f} m of our Link, issue 101)",
+                         asleep_placed_, kAsleepPlaceM);
+                asleep_placed_ = 0;
+            }
             if (debug_ && drift_worst_ != 0 && drift_max_ >= kDriftWorstM) {
                 LOG_INFO(Core, "coop: objects: share worst copy {:#x} '{}' off {:.2f} m", drift_worst_,
                          r.Name(drift_worst_), drift_max_);
@@ -1951,6 +1985,7 @@ Objects& Instance() {
         objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
         objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
         objects.release_ = EnvOn("LICHII_COOP_OBJECTS_RELEASE");
+        objects.wake_far_ = EnvOn("LICHII_COOP_OBJECTS_ASLEEP");
         return true;
     }();
     (void)once;

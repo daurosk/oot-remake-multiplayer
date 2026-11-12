@@ -392,6 +392,24 @@ class LoadTest(unittest.TestCase):
         game.close()
 
 
+class SaveTest(unittest.TestCase):
+    def test_both_baseline_layouts(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            flat = os.path.join(tmp, "flat")
+            os.makedirs(os.path.join(flat, "autotest-save", "slot_03"))
+            open(os.path.join(flat, "autotest-save", "account.sav"), "w").close()
+            os.makedirs(os.path.join(flat, "user", "save", hs.SAVE_USER, "slot_09"))
+            self.assertTrue(hs.restore_save(flat))
+            user = os.path.join(flat, "user", "save", hs.SAVE_USER)
+            self.assertEqual(sorted(os.listdir(user)), ["account.sav", "slot_03"])
+            tree = os.path.join(tmp, "tree")
+            os.makedirs(os.path.join(tree, "autotest-save", hs.SAVE_USER, "slot_01"))
+            self.assertTrue(hs.restore_save(tree))
+            self.assertTrue(os.path.isdir(os.path.join(tree, "user", "save", hs.SAVE_USER, "slot_01")))
+            self.assertFalse(hs.restore_save(os.path.join(tmp, "none")))
+
+
 class RunTest(unittest.TestCase):
     def test_two_games(self):
         """run: both games started with the bridge and memory on, loaded, both scripts played, shots of both, quit."""

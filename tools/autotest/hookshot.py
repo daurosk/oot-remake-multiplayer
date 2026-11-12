@@ -623,12 +623,19 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
     raise TimeoutError("not in play after %d s" % timeout)
 
 
+SAVE_USER = "5a3c9e1f0b7d24680000000000000001"   # the user folder a Hookshot game reads its saves from
+
+
 def restore_save(game):
-    """<game>/autotest-save (the baseline) copied over <game>/user/save, as the emulator kits' saves are."""
+    """<game>/autotest-save (the baseline) copied over the game's saves, as the emulator kits' saves are. The baseline
+    is either a copy of <game>/user/save (user folders inside) or the save files themselves (account.sav, option.sav,
+    slot_NN/: the same files as an emulator kit's autotest-save), which go to user/save/<SAVE_USER>."""
     base = os.path.join(game, "autotest-save")
     if not os.path.isdir(base):
         return False
-    dest = os.path.join(game, "user", "save")
+    names = os.listdir(base)
+    flat = any(n.endswith(".sav") or n.startswith("slot_") for n in names)
+    dest = os.path.join(game, "user", "save", SAVE_USER) if flat else os.path.join(game, "user", "save")
     if os.path.isdir(dest):
         shutil.rmtree(dest)
     shutil.copytree(base, dest)

@@ -3,22 +3,32 @@
 # falls (A's own cutscene; in B the live event, B's cutscene). Then B walks through the room's
 # door (a door cutscene in B, "their cutscene" in A) while A watches it.
 # Run: tools\autotest\run.ps1 -Scenario cutscene-snap
-# Pass: the `lines` checks below (no drawn step of the puppet past 0.75 m and under 20 m, in
-# either game: "coop: puppet: P<n> snap <m> m (show|hold)"; warps do not count). Read too:
-#  - B's log "P1 show -> hold (their cutscene)" or "show -> hide (our cutscene)" at the ladder,
-#    then back to show; A's log "P2 show -> hold (their cutscene)" at the door, "hold -> show".
-#  - "P<n> eased a jump of <m> m" lines say where a jump came in and was eased.
-#  - The ladder in B moves while B's live event runs ("moved by another player" lines during it).
-#  - Shots s2-...: B's puppet in A's window walks to the door during B's door cutscene.
-# If no "-> hold" line shows in A at the door, the door ran no event in B: then the check is
-# only the ladder's.
+# The checks (counts.txt):
+#  - The cases happened (min=1): B's puppet of A went hold or hide at the ladder and came back
+#    to show (B's own event ended too, so the ladder pose writes did not stall it); A's puppet of
+#    B went "show -> hold (their cutscene)" at the door and back. A FAIL of door-* alone: the
+#    door ran no event in B (then only the ladder part was checked; say so).
+#  - snap-A/B: the puppet's own place, read back from the game every frame, never stepped
+#    0.75 m to 20 m in one frame ("P<n> snap <m> m (show|hold)"; warps do not count).
+#  - jump-A/B: the place we were handed (before any easing) jumped at most twice: a held
+#    puppet that follows their place gives no jump when the cutscene ends. Each jump is logged
+#    "P<n> target jump <m> m (show|hold, eased|at once|warp)": read them when it fails.
+#  - navi-snap-A/B: the same snap check for Navi.
+# Read too: B "...FallingLadder... moved by another player" lines while B's event runs, and the
+# shots: B's puppet in A's window walks to the door during B's door cutscene.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,A:LICHII_COOP_CHEATS=1
 #! timeout 600
 start A B
 play A cutscene-snap.A.txt B cutscene-snap.B.txt
+lines ladder-held-B B min=1 (?<!fairy )coop: puppet: P\d+ show -> (hold|hide) \((their|our) cutscene\)
+lines ladder-back-B B min=1 (?<!fairy )coop: puppet: P\d+ (hold|hide) -> show
+lines door-held-A A min=1 (?<!fairy )coop: puppet: P\d+ show -> hold \(their cutscene\)
+lines door-back-A A min=1 (?<!fairy )coop: puppet: P\d+ hold -> show
 lines snap-A A max=0 (?<!fairy )coop: puppet: P\d+ snap \S+ m \((show|hold)\)
 lines snap-B B max=0 (?<!fairy )coop: puppet: P\d+ snap \S+ m \((show|hold)\)
+lines jump-A A max=2 (?<!fairy )coop: puppet: P\d+ target jump \S+ m \((show|hold), (eased|at once)\)
+lines jump-B B max=2 (?<!fairy )coop: puppet: P\d+ target jump \S+ m \((show|hold), (eased|at once)\)
 lines navi-snap-A A max=0 fairy coop: puppet: P\d+ snap \S+ m \((show|hold)\)
 lines navi-snap-B B max=0 fairy coop: puppet: P\d+ snap \S+ m \((show|hold)\)

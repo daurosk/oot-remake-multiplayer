@@ -511,6 +511,11 @@ public:
     void Poses(std::uint64_t now_us, std::vector<CoopObjects::PoseWrite>& out) const;
     // This actor's place is ours to decide: the enemy sharing must not place it.
     bool Places(std::uint64_t address) const { return objects_.contains(address); }
+    // Issue 194: Poses moves this actor (a world object, or a moved block's base anchor):
+    // no event's partner, so its pose goes on while our Link is in an event.
+    bool Follows(std::uint64_t address) const {
+        return objects_.contains(address) || anchor_holds_.contains(address);
+    }
     // The copies to delete (broken elsewhere).
     std::vector<std::uint64_t> Removes() const;
 

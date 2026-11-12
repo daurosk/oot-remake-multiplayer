@@ -943,7 +943,8 @@ TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hi
     CheckPosition(g.guest, kActor + addr::kActorPosition, 4, 5, 6);
 
     // Hold: its frame set back to where it was every frame, and (issue 194) it follows their
-    // place: the 2 m their cutscene moved them (a door) is eased, not left for a snap at the end.
+    // place, so it is not left behind for a snap at the end. A jump while held is a real
+    // teleport (their samples move smoothly in a cutscene): drawn at once, not eased.
     Target held = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hold);
     held.position = {6, 5, 6};
     d.SetInput(Wants({held}));
@@ -955,14 +956,13 @@ TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hi
         CHECK(calls[0].s0 == 11.0f);
         g.guest.Set(kSlot0 + addr::kSlotFrame, 12.0f);
     }
-    const float x = g.guest.Get<float>(kActor + addr::kActorPosition);
-    CHECK(x > 4.0f);
-    CHECK(x < 6.0f);
-    CHECK(d.Slots()[0].anim_name == "Wait");
-    for (std::uint64_t now : {100, 150, 200, 250, 300, 350}) {
-        Frame(d, g, now);
-    }
     CheckPosition(g.guest, kActor + addr::kActorPosition, 6, 5, 6);
+    CHECK(d.Slots()[0].anim_name == "Wait");
+    // Their event walks them on: followed.
+    held.position = {6.2f, 5, 6};
+    d.SetInput(Wants({held}));
+    Frame(d, g, 100);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 6.2f, 5, 6);
 
     // Hide: parked below its spot, no animation calls, not deleted.
     Target hidden = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hide);

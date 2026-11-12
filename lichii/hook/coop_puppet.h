@@ -384,8 +384,8 @@ private:
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
         CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
-        CoopSnap::Meter meter;              // issue 194: drawn steps, snaps logged
-        std::uint64_t jump_log_ms = 0;      // last "eased a jump" line
+        CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
+        bool meter_skip = false;            // the next read is still the parked spot
         Show shown = Show::show;            // the last `show` acted on (log on change)
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made

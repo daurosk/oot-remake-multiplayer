@@ -52,7 +52,7 @@ TEST_CASE("snap: a held puppet's cutscene end (a door, 4 m) is eased, no drawn s
     float jump = 0.0f;
     now += 33;
     // The place jumps 4 m at once (the end of their door cutscene before the fix).
-    CHECK(s.Step({4, 0, 0}, now, &jump) == Vec3{0, 0, 0});
+    CHECK(s.Step({4, 0, 0}, now, true, &jump) == Vec3{0, 0, 0});
     CHECK(jump == doctest::Approx(4.0f));
     CHECK(s.Easing());
     Vec3 last{};
@@ -130,4 +130,39 @@ TEST_CASE("snap: a broken place is passed through, not eased") {
     const Vec3 d = s.Step({nan, 0, 0}, 33);
     CHECK(std::isnan(d[0]));
     CHECK(s.Step({0.1f, 0, 0}, 66) == Vec3{0.1f, 0, 0});
+}
+
+TEST_CASE("snap: while held (their cutscene) a jump is a real teleport, drawn at once") {
+    Smoother s;
+    s.Step({0, 0, 0}, 0, false);
+    float jump = 0.0f;
+    CHECK(s.Step({2, 0, 0}, 33, false, &jump) == Vec3{2, 0, 0});
+    CHECK(jump == doctest::Approx(2.0f));
+    CHECK_FALSE(s.Easing());
+    // Their event moving them smoothly is no jump.
+    CHECK(s.Step({2.3f, 0, 0}, 66, false, &jump) == Vec3{2.3f, 0, 0});
+    CHECK(jump == 0.0f);
+}
+
+TEST_CASE("snap: a jump is the target's own move, so running during a long ease starts no new one") {
+    Smoother s;
+    std::uint64_t now = 0;
+    s.Step({0, 0, 0}, now);
+    now += 33;
+    float jump = 0.0f;
+    s.Step({15, 0, 0}, now, true, &jump);  // a 15 m gap: closes over 1 s
+    CHECK(jump == doctest::Approx(15.0f));
+    // They run on at 0.5 m a frame: ease plus run is more than kSnapM a frame, but the target's
+    // own move is not, so the ease goes on with no stop (each frame further than the last).
+    float x = 15.0f;
+    float last = s.Drawn()->at(0);
+    for (int i = 0; i < 20; ++i) {
+        now += 33;
+        x += 0.5f;
+        const Vec3 d = s.Step({x, 0, 0}, now, true, &jump);
+        CHECK(jump == 0.0f);
+        CHECK(d[0] > last);
+        last = d[0];
+    }
+    CHECK(s.Easing());
 }

@@ -5,13 +5,15 @@
 // - While their cutscene ran the puppet was held where the cutscene began (Show::hold), so
 //   when it ended the puppet jumped to where the event had moved them (through a door, down a
 //   ladder). Now a held puppet keeps its frozen frame but follows their place.
-// - Any other jump in the place we are given (a hide ending, a late sample after a stall) was
-//   drawn in one frame. Now a jump of more than kSnapM in one frame and less than kWarpM is
+// - Any other jump in the place we are given (a late sample after a stall) was drawn in one
+//   frame. Now a move of the target of more than kSnapM in one frame and less than kWarpM is
 //   eased out (EaseMs): the drawn place stays where the puppet was and closes the gap while
-//   it follows the new place. Longer jumps are real warps and are drawn at once.
-// Meter counts what was drawn: a drawn step of more than kSnapM is a snap (logged by the
-// Director as "coop: puppet: P<n> snap <m> m (<why>)", why "warp" past kWarpM), so a run's
-// log says whether the other player's Link still jumps.
+//   it follows the new place. Longer jumps are real warps and are drawn at once; so is any
+//   jump while their cutscene runs (a real teleport then).
+// Logs (coop_puppet.cpp, Director::DrawAt): every target jump ("P<n> target jump <m> m
+// (<show|hold>, eased|at once)"), and the Meter on the puppet's own place read back from the
+// game each frame ("P<n> snap <m> m (<show|hold|warp>)"), so a run's log says both what we
+// were handed and what the game drew.
 // No emulator code: tested in tests/lichii/snap_test.cpp.
 #pragma once
 
@@ -55,9 +57,13 @@ inline float Distance(const Vec3& a, const Vec3& b) {
 // The place a puppet is drawn at, one per puppet.
 class Smoother {
 public:
-    // Where to draw it this frame, for `target` (where its player is now). `jump` is set to
-    // the length of a jump that began an ease this frame (0 none), for the log.
-    Vec3 Step(const Vec3& target, std::uint64_t now_ms, float* jump = nullptr) {
+    // Where to draw it this frame, for `target` (where its player is now). A jump is the
+    // target's own move since the last frame (not the drawn step, so a long ease plus their
+    // running never starts a new ease). With `ease` a jump of kSnapM to kWarpM is eased;
+    // without (their cutscene: samples move smoothly then, so a jump is a real teleport, a
+    // void-out or the event's start mark) and past kWarpM it is drawn at once.
+    // `jump` gets the target's move when it was a jump (0 none).
+    Vec3 Step(const Vec3& target, std::uint64_t now_ms, bool ease = true, float* jump = nullptr) {
         if (jump != nullptr) {
             *jump = 0.0f;
         }
@@ -66,10 +72,12 @@ public:
                 return target;
             }
         }
-        if (!drawn_) {
+        if (!drawn_ || !last_target_) {
             Set(target);
             return target;
         }
+        const float moved = Distance(target, *last_target_);
+        last_target_ = target;
         // Where the current ease draws it now.
         Vec3 now = target;
         if (offset_) {
@@ -83,23 +91,24 @@ public:
                 }
             }
         }
-        const float step = Distance(now, *drawn_);
-        if (step > kSnapM && step < kWarpM) {
-            // A jump: drawn where it was this frame; the gap closes over EaseMs.
-            Vec3 off{};
-            for (std::size_t i = 0; i < 3; ++i) {
-                off[i] = (*drawn_)[i] - target[i];
-            }
-            offset_ = off;
-            start_ms_ = now_ms;
-            ease_ms_ = EaseMs(Distance(*drawn_, target));
+        if (moved > kSnapM && std::isfinite(moved)) {
             if (jump != nullptr) {
-                *jump = step;
+                *jump = moved;
             }
-            now = *drawn_;
-        } else if (step >= kWarpM) {
-            offset_.reset();
-            now = target;
+            if (ease && moved < kWarpM) {
+                // Drawn where it was this frame; the gap closes over EaseMs.
+                Vec3 off{};
+                for (std::size_t i = 0; i < 3; ++i) {
+                    off[i] = (*drawn_)[i] - target[i];
+                }
+                offset_ = off;
+                start_ms_ = now_ms;
+                ease_ms_ = EaseMs(Distance(*drawn_, target));
+                now = *drawn_;
+            } else {
+                offset_.reset();
+                now = target;
+            }
         }
         drawn_ = now;
         return now;
@@ -108,10 +117,12 @@ public:
     // Drawn here from now on, no ease (a new puppet; a hide: it is out of sight).
     void Set(const Vec3& at) {
         drawn_ = at;
+        last_target_ = at;
         offset_.reset();
     }
     void Reset() {
         drawn_.reset();
+        last_target_.reset();
         offset_.reset();
     }
     bool Easing() const { return offset_.has_value(); }
@@ -119,6 +130,7 @@ public:
 
 private:
     std::optional<Vec3> drawn_;
+    std::optional<Vec3> last_target_;
     std::optional<Vec3> offset_;  // drawn minus target when the ease began
     std::uint64_t start_ms_ = 0;
     std::uint64_t ease_ms_ = kEaseMs;

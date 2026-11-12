@@ -253,8 +253,7 @@ int main(int argc, char** argv) {
                  "coop_server: a join password is needed: every session has one, and it also "
                  "encrypts the traffic. Give one with --password TEXT or --password-env NAME. "
                  "With the kit, Host.bat / Host.sh make a new random one when server_password in "
-                 "coop-options.ini is empty or missing. The server was not started.
-");
+                 "coop-options.ini is empty or missing. The server was not started.\n");
     return 2;
   }
 #ifdef _WIN32

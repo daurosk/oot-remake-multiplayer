@@ -18,7 +18,7 @@ doctest_discover_tests(coop_server_tests)
 add_test(NAME server_starts_and_stops COMMAND coop_server --port 0 --password test-pass --run-for-ms 200)
 # Every session has a join password (it also encrypts): none is refused.
 add_test(NAME server_refuses_to_start_without_password COMMAND coop_server --port 0 --run-for-ms 200)
-set_tests_properties(server_refuses_to_start_without_password PROPERTIES WILL_FAIL TRUE)
+set_tests_properties(server_refuses_to_start_without_password PROPERTIES PASS_REGULAR_EXPRESSION "join password is needed")
 add_test(NAME server_refuses_bad_arguments COMMAND coop_server --frobnicate)
 set_tests_properties(server_refuses_bad_arguments PROPERTIES WILL_FAIL TRUE)
 # The relay starts and stops the same way; --upnp without a password or

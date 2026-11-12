@@ -3392,11 +3392,10 @@ TEST_CASE("join password: one HELLO, one nonce: a second HELLO gets no new chall
   CHECK(h.session.player_count() == 1);
 }
 
-TEST_CASE("join password: off, HELLO is welcomed at once and a proof is never relayed") {
-  Harness h;
+TEST_CASE("join password: a joined player's JOIN_PROOF is dropped, never relayed") {
+  Harness h;  // the harness's own password, answered by it
   h.join(1, "Link");
   h.join(2, "Zelda");
-  for (const Sent& s : h.sent) CHECK_FALSE(std::holds_alternative<JoinChallenge>(s.message));
   h.clear();
   h.receive(1, JoinProof{}, kChannelSession);
   CHECK(h.sent.empty());

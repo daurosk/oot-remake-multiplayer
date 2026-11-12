@@ -181,8 +181,7 @@ const char* usage() {
          "  --max-half-open N  most connections one address may hold before\n"
          "                   sending HELLO (default 4, 0 for no limit)\n"
          "  --run-for-ms N   stop by itself after N milliseconds\n"
-         "  --password TEXT  players must give this join password; it also
-"
+         "  --password TEXT  players must give this join password; it also\n"
          "                   encrypts the traffic (required, but not with --relay)\n"
          "  --password-env NAME  the join password is in this environment\n"
          "                   variable (keeps it off the command line)\n"

@@ -341,11 +341,13 @@ Trip::Actions Trip::Accepted(std::uint8_t number, const coop::protocol::JoinTarg
     taken_ = false;
     seen_request_ = false;
     loaded_ = false;
-    arrival_event_ = false;
     a.scene = scene_;
     a.start = start_;
-    a.start_event = true;  // no event runs here (Accepted refuses during one)
+    a.start_event = kStartSceneEvent;  // no event runs here (Accepted refuses during one)
     a.lines.push_back("teleport: going to " + name_ + " in " + scene_);
+    if (!kStartSceneEvent) {
+        a.lines.push_back("teleport: talk to someone or read a sign within a minute to go there");
+    }
     if (CoopDungeon::IsDungeonScene(scene_)) {
         a.lines.push_back("teleport: " + name_ + " is in a dungeon: you may need its items to get on from there");
     }
@@ -442,7 +444,7 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
             }
             // The game takes the request when an event ends: start one if
             // none runs and the last one did not take it.
-            if (!local.event && !local.loading_banc && now_us - event_us_ >= kEventAgainUs) {
+            if (kStartSceneEvent && !local.event && !local.loading_banc && now_us - event_us_ >= kEventAgainUs) {
                 event_us_ = now_us;
                 a.start_event = true;
             }
@@ -455,14 +457,6 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         } else if (*local.scene != scene_) {
             phase_ = Phase::idle;
             a.lines.push_back("teleport: stopped: you left " + scene_);
-        } else if (!arrival_event_) {
-            // The first quiet frame in the new scene: one short event (#197).
-            // A loading zone's load is followed by its arrival event; ours had
-            // none, and our Link stayed locked (the stick moved nothing) until
-            // an event ran and ended. The move waits until it has.
-            arrival_event_ = true;
-            a.start_event = true;
-            settle_us_ = now_us;
         } else if (settle_us_ == 0) {
             settle_us_ = now_us;
         } else if (now_us - settle_us_ >= kSettleUs) {

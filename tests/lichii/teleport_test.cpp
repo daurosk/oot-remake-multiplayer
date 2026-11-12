@@ -239,58 +239,32 @@ TEST_CASE("teleport: another scene changes scene, then asks again and moves") {
     CHECK(trip.phase() == Trip::Phase::idle);
 }
 
-TEST_CASE("teleport: free play starts a short event so the game takes the scene change (#156)") {
+TEST_CASE("teleport: no event of our own; the request waits for the player's own talk or sign (#197)") {
+    REQUIRE_FALSE(Trip::kStartSceneEvent);
     Trip trip;
     const Local here = At("KakarikoVillage_Child", 0, 0, 0);
     trip.Start(2, "Saria", here, 0);
     auto a = trip.Accepted(2, Target("Graveyard_Child", -35, 98, 8), here, kS);
     REQUIRE(a.scene);
-    CHECK(a.start_event);  // with the first ask
-    CHECK(std::string(Trip::kSceneEvent) == "DefaultParentEvent");
-    // Not again until kEventAgainUs, though the request is asked every 0.5 s.
-    a = trip.Tick(here, kS + kS / 2);
-    CHECK(a.scene);
     CHECK_FALSE(a.start_event);
-    CHECK_FALSE(trip.Tick(here, kS + Trip::kEventAgainUs - 1).start_event);
-    // The event runs: none started on top of it.
+    bool says = false;
+    for (const auto& line : a.lines) {
+        says = says || line.find("talk to someone or read a sign") != std::string::npos;
+    }
+    CHECK(says);
+    // The request is asked every 0.5 s, and no event is ever started.
+    for (std::uint64_t t = kS + kS / 2; t < 20 * kS; t += kS / 2) {
+        a = trip.Tick(here, t);
+        CHECK_FALSE(a.start_event);
+    }
+    CHECK(trip.phase() == Trip::Phase::travelling);
+    // The player talks: the game takes the request when the talk ends.
     Local talking = here;
     talking.event = true;
-    CHECK_FALSE(trip.Tick(talking, kS + Trip::kEventAgainUs).start_event);
-    // It ended and the game did not take the request: another one.
-    CHECK(trip.Tick(here, kS + Trip::kEventAgainUs + kS / 10).start_event);
-    // Taken (the load starts): no event while it loads.
+    CHECK_FALSE(trip.Tick(talking, 21 * kS).start_event);
     Local loading = here;
     loading.loading_banc = true;
-    CHECK_FALSE(trip.Tick(loading, 10 * kS).start_event);
-    CHECK_FALSE(trip.Tick(Local{}, 20 * kS).start_event);
-}
-
-TEST_CASE("teleport: once arrived, one short event runs before the move, so Link is not left locked (#197)") {
-    Trip trip;
-    const Local there = At("KokiriForest_Child", 0, 0, 0);
-    trip.Start(2, "Saria", there, 0);
-    REQUIRE(trip.Accepted(2, Target("InsideTheDekuTree", -33, 110, 10), there, kS).scene);
-    const Local arrived = At("InsideTheDekuTree", 0, 101, 14);
-    auto a = trip.Tick(arrived, 10 * kS);  // the scene is in: the request is cleared
-    CHECK(a.cancel_scene);
-    CHECK_FALSE(a.start_event);
-    CHECK(trip.phase() == Trip::Phase::settling);
-    // Still loading or in the game's own event: not yet.
-    Local busy = arrived;
-    busy.event = true;
-    CHECK_FALSE(trip.Tick(busy, 10 * kS + kS / 10).start_event);
-    // The first quiet frame: the event, once.
-    CHECK(trip.Tick(arrived, 10 * kS + kS / 5).start_event);
-    // It runs: no ask, no second event.
-    a = trip.Tick(busy, 11 * kS);
-    CHECK_FALSE(a.start_event);
-    CHECK_FALSE(a.ask);
-    // It ended: the settle counts from here, then the second ask; no more events.
-    CHECK_FALSE(trip.Tick(arrived, 12 * kS).start_event);
-    a = trip.Tick(arrived, 12 * kS + Trip::kSettleUs);
-    CHECK_FALSE(a.start_event);
-    REQUIRE(a.ask);
-    CHECK(trip.phase() == Trip::Phase::asking_again);
+    CHECK(trip.Tick(loading, 22 * kS).release);
 }
 
 TEST_CASE("teleport: after the scene change, a busy or silent player still gives the first place") {

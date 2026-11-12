@@ -150,6 +150,12 @@ public:
     // again after this if the game has not taken the request.
     static constexpr const char* kSceneEvent = "DefaultParentEvent";
     static constexpr std::uint64_t kEventAgainUs = 3'000'000;
+    // Off (#197): after a load that kSceneEvent carried, our Link never moved
+    // again and the game refused every later event (autotest teleport-lock,
+    // Kokiri Forest <-> Deku Tree, both ways; docs/scenes.md). So the request
+    // waits for an event of the player's own (a talk, a sign), as the boss
+    // pull's scene change does, which leaves Link playable.
+    static constexpr bool kStartSceneEvent = false;
 
     struct Actions {
         std::vector<std::string> lines;      // chat notices
@@ -159,7 +165,7 @@ public:
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
         bool cancel_scene = false;           // clear our scene change request and its switch (arrived, given up)
         bool release = false;                // the game took it: drop only the free-play switch
-        bool start_event = false;            // start kSceneEvent (no event runs): with the request set, or once on arrival
+        bool start_event = false;            // with the request set: start kSceneEvent (no event runs)
         // With cancel_scene, not arrived (given up, the player left, a new
         // /teleport) and no load ran in this trip: put back the start name the
         // game had before our first ask, so it does not keep a start of a
@@ -198,7 +204,6 @@ private:
     bool taken_ = false;          // travelling: the game took the request
     bool seen_request_ = false;   // travelling: the game's flag showed our request
     bool loaded_ = false;         // this trip: a load ran (then the old start name is stale)
-    bool arrival_event_ = false;  // settling: kSceneEvent started once in the new scene
     std::uint64_t taken_us_ = 0;
 };
 

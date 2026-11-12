@@ -329,9 +329,7 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     {
         std::lock_guard lock(g.event_mutex);
         g.main = main_base;
-        const auto phase = g.trip.phase();
-        g.events_open = (phase == Trip::Phase::travelling || phase == Trip::Phase::settling) && local.scene &&
-                        !local.loading_banc;
+        g.events_open = g.trip.phase() == Trip::Phase::travelling && local.scene && !local.loading_banc;
     }
     for (auto& act : all) {
         if ((act.cancel_scene || act.release) && main_base != 0) {
@@ -351,9 +349,8 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
             }
         }
         if (act.start_event && main_base != 0) {
-            LOG_INFO(Core, "coop: teleport: starting the event {} ({})", Trip::kSceneEvent,
-                     g.trip.phase() == Trip::Phase::settling ? "arrived: hands Link back to the player"
-                                                             : "so the game takes the scene change");
+            LOG_INFO(Core, "coop: teleport: starting the event {} so the game takes the scene change",
+                     Trip::kSceneEvent);
             std::lock_guard lock(g.event_mutex);
             g.events.Want(Trip::kSceneEvent);
         }

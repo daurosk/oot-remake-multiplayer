@@ -399,6 +399,9 @@ public:
                 // grade too, or every pulled bomb is deleted at once.
                 if (load_mend_.ready()) {
                     MendLiftGrade(*memory);
+                    // Issue 190: a shared ocarina is equipped too, or D-pad
+                    // Left takes nothing out.
+                    MendOcarina(*memory);
                 }
             }
         }
@@ -1280,6 +1283,32 @@ private:
                      *grade, *raise);
         }
     }
+
+    // Issue 190 (docs/items.md, "The ocarina"): equips the best held ocarina
+    // when PlayerStatus.EquipOcarina is "" (an ocarina from another player)
+    // or the Fairy Ocarina while the Ocarina of Time is held. The String64 is
+    // written straight into its buffer (the game has no queue for it), as the
+    // teleport does. A flag that cannot be read is left alone.
+    void MendOcarina(EmulatorMemory& memory) {
+        namespace oc = coop::host::ocarina;
+        coop::host::GameFlags flags(memory);
+        const auto current = flags.get_string64(oc::kEquip);
+        if (!current) {
+            return;
+        }
+        const auto want = coop::host::ocarina_equip_mend(flags.get_int(oc::kFairy).value_or(0),
+                                                         flags.get_int(oc::kTime).value_or(0), *current);
+        if (!want) {
+            return;
+        }
+        if (coop::host::GameFlags::set_string64_now(memory, oc::kEquip, *want)) {
+            LOG_INFO(Core, "coop: items: ocarina '{}' -> '{}' for the held ocarina", *current, *want);
+        } else if (!ocarina_mend_failed_logged_) {
+            ocarina_mend_failed_logged_ = true;
+            LOG_WARNING(Core, "coop: items: could not equip the held ocarina '{}'", *want);
+        }
+    }
+    bool ocarina_mend_failed_logged_ = false;
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

@@ -593,6 +593,17 @@ std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t s
   return kOrder[want];
 }
 
+std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,
+                                                   std::string_view current) {
+  const std::string_view want =
+      time >= 1 ? ocarina::kTimeName : fairy >= 1 ? ocarina::kFairyName : std::string_view{};
+  if (want.empty() || current == want) return std::nullopt;
+  if (current.empty() || (current == ocarina::kFairyName && want == ocarina::kTimeName)) {
+    return want;
+  }
+  return std::nullopt;  // the better one already, or a name we do not know
+}
+
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {
   if (!ready_) {
     // No Link: a load would undo it. A new item gets it all at the mend.

@@ -1,0 +1,14 @@
+# ocarina-given (#190): B never got the ocarina; A has it (from Saria). B gets it through item
+# sharing, takes it out (DLEFT), plays the five notes, then Saria's Song. Before the run, take the
+# ocarinas out of B's baseline save (the old file is kept beside it, in autotest-save-backup):
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py no-ocarina <auto-B>\autotest-save\*\*\slot_00\progress.sav
+# and copy the backup back afterwards. Pass: B's log has
+# "coop: items: ocarina '' -> 'Item_Ocarina_Fairy' for the held ocarina" after the load, and the
+# shots out / note-* / saria show the ocarina in Link's hands (LICHII_COOP_OCARINA_PROBE=1 also
+# logs "our Link plays the ocarina"). Fail as before the fix: no log line and nothing out at DLEFT.
+# Notes assumed as in ocarina-probe: A = A, L = Down, R = Right, Y = Left, X = Up.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1
+# A (who has the ocarina from Saria) only waits.
+mark start
+wait 2400
+mark end

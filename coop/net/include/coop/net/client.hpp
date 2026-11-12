@@ -100,6 +100,7 @@
 #include <vector>
 
 #include "coop/net/clock.hpp"
+#include "coop/net/path_mark.hpp"
 #include "coop/protocol/messages.hpp"
 
 struct _ENetHost;
@@ -470,6 +471,7 @@ class Client {
   LinkInfo link_;  // ENet's values, read after each service() with a peer
   std::uint32_t name_taken_retries_ = 0;
   bool small_datagrams_ = false;
+  PathMark path_mark_;  // enet_path.hpp
 
   ClockEstimator clock_;
   std::vector<Player> players_;  // sorted by number

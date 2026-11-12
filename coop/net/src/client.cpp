@@ -196,6 +196,7 @@ void Client::stop() {
 
 void Client::begin_attempt() {
   attempt_started_us_ = now_us();
+  path_mark_.reset();
   last_receive_us_ = 0;
   link_ = LinkInfo{};
   ENetAddress address{};
@@ -342,7 +343,7 @@ void Client::service(std::uint32_t wait_ms) {
         static_cast<std::uint64_t>(peer_->packetLoss) * 100 / ENET_PEER_PACKET_LOSS_SCALE);
     link_.mtu = peer_->mtu;
     if ((state_ == State::handshaking || state_ == State::connected) &&
-        full_datagrams_lost(*peer_, host_->serviceTime)) {
+        full_datagrams_lost(path_mark_, *peer_, host_->serviceTime)) {
       use_small_datagrams();
       end_attempt(DropReason::small_path);
     }

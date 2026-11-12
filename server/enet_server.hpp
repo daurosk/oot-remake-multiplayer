@@ -10,10 +10,10 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
-#include <set>
 
 #include <enet/enet.h>
 
+#include "coop/net/path_mark.hpp"
 #include "session.hpp"
 
 namespace coop::server {
@@ -86,7 +86,10 @@ class EnetServer {
   ConnectionId next_id_ = 1;
   std::uint64_t mended_bytes_ = 0;
   std::uint64_t small_path_drops_ = 0;
-  std::set<enet_uint32> small_hosts_;  // ENet's form of the address
+  // Addresses sent away (ENet's form) and until when (now_us()) one is told
+  // again at connect; told once, then forgotten (net::kRememberMs).
+  std::map<enet_uint32, std::uint64_t> small_hosts_;
+  std::map<ConnectionId, net::PathMark> path_marks_;  // coop/net/enet_path.hpp
   std::chrono::steady_clock::time_point start_;
 };
 

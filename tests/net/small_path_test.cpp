@@ -8,7 +8,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -79,6 +81,10 @@ class LimitedPath {
 
   int dropped = 0;
   std::size_t largest = 0;
+  // A line that also loses packets: datagrams (either way, by size) for
+  // which this says true are lost.
+  std::function<bool(std::size_t)> lose;
+  int lost = 0;
 
  private:
   static ENetSocket open() {
@@ -95,6 +101,10 @@ class LimitedPath {
     largest = (std::max)(largest, n);
     if (n > max_payload_) {
       ++dropped;
+      return;
+    }
+    if (lose && lose(n)) {
+      ++lost;
       return;
     }
     ENetBuffer b{};
@@ -315,4 +325,97 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
   CHECK(again.small_datagrams());
   CHECK(again.link().mtu == coop::net::kSmallDatagramBytes);
   CHECK(server.small_path_drops() == 2);
+  // Told once more, then forgotten: the next game from there (another
+  // player behind the same router) comes in at full size.
+  CHECK_FALSE(server.small_path(local.host));
+  Client other(config_to(server.port(), "Malon"));
+  REQUIRE(other.start());
+  REQUIRE(pump(other, nullptr, 5000, [&] { return other.synced(); }));
+  CHECK_FALSE(other.small_datagrams());
+  CHECK(other.link().mtu == proto::kDatagramBytes);
+  CHECK(server.small_path_drops() == 2);
+}
+
+TEST_CASE("small path: plain loss and short outages on a line that carries full datagrams do not switch it") {
+  EnetLife enet;
+  coop::server::ServerOptions options;
+  options.port = 0;
+  coop::server::EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client host(config_to(server.port(), "Link"));
+  REQUIRE(host.start());
+  Joiner joiner(server.port(), 1400, "Zelda");
+  // 5% of datagrams lost either way, and every 4 s nothing at all for 0.75 s
+  // (a Wi-Fi stall), while big FLAG_STATEs and FLAG_SETs go both ways.
+  std::mt19937 random(143);
+  std::bernoulli_distribution loss(0.05);
+  const auto begin = Clock::now();
+  bool lossy = false;
+  joiner.path.lose = [&](std::size_t) {
+    if (!lossy) return false;
+    const int t = ms_since(begin) % 4000;
+    return t >= 3250 || loss(random);
+  };
+
+  auto round = [&] {
+    server.service(1);
+    host.service(0);
+    while (host.next_event()) {
+    }
+    joiner.path.service();
+    joiner.client.service(0);
+    joiner.path.service();
+    while (auto e = joiner.client.next_event()) {
+      if (e->kind != EventKind::disconnected) continue;
+      if (e->drop_reason == DropReason::small_path) {
+        ++joiner.small_path_drops;
+      } else {
+        ++joiner.other_drops;
+      }
+    }
+  };
+  auto run_until = [&](int ms, auto done) {
+    const auto start = Clock::now();
+    while (ms_since(start) < ms) {
+      round();
+      if (done()) return true;
+    }
+    return false;
+  };
+  REQUIRE(run_until(3000, [&] { return host.is_host(); }));
+  REQUIRE(host.send_flag_snapshot(flags_from(1, 2000, 7)));
+  run_until(300, [] { return false; });
+  REQUIRE(joiner.client.start());
+  REQUIRE(run_until(5000, [&] { return joiner.client.synced(); }));
+
+  lossy = true;
+  const auto start = Clock::now();
+  auto next_host = start;
+  auto next_join = start;
+  std::int32_t value = 8;
+  while (ms_since(start) < 40'000) {
+    if (Clock::now() >= next_host) {
+      REQUIRE(host.set_flags(flags_from(1, 400, value)));
+      ++value;
+      next_host += std::chrono::milliseconds(500);
+    }
+    if (Clock::now() >= next_join) {
+      joiner.client.set_flags(flags_from(5000, 300, value));
+      next_join += std::chrono::milliseconds(700);
+    }
+    round();
+  }
+  lossy = false;
+  run_until(3000, [] { return false; });
+
+  CHECK(joiner.path.lost > 100);  // the line really lost packets
+  CHECK(joiner.small_path_drops == 0);
+  CHECK(server.small_path_drops() == 0);
+  CHECK_FALSE(joiner.client.small_datagrams());
+  CHECK(joiner.client.link().mtu == proto::kDatagramBytes);
+  CHECK(joiner.other_drops == 0);
+  CHECK(joiner.client.state() == State::connected);
+  CHECK(joiner.client.find_flag(400) == proto::FlagEntry{400, 0, proto::FlagKind::int32,
+                                                         static_cast<std::uint32_t>(value - 1)});
 }

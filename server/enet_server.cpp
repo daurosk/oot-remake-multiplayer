@@ -88,7 +88,7 @@ void EnetServer::service(std::uint32_t timeout_ms) {
   // kMaxWaitingBytes it would refuse (and never acknowledge) all they send.
   std::vector<ENetPeer*> lost_full;
   for (auto& [id, peer] : peers_) {
-    if (net::full_datagrams_lost(*peer, host_->serviceTime)) lost_full.push_back(peer);
+    if (net::full_datagrams_lost(path_marks_[id], *peer, host_->serviceTime)) lost_full.push_back(peer);
     mended_bytes_ += net::mend_waiting_data(*peer);
     links_[id] = LinkSeen{peer->roundTripTime,
                           static_cast<enet_uint32>(static_cast<std::uint64_t>(peer->packetLoss) * 100 /
@@ -96,7 +96,9 @@ void EnetServer::service(std::uint32_t timeout_ms) {
                           peer->totalWaitingData};
   }
   for (ENetPeer* peer : lost_full) {
-    small_hosts_.insert(peer->address.host);
+    const std::uint64_t now = now_us();
+    std::erase_if(small_hosts_, [now](const auto& entry) { return entry.second <= now; });
+    small_hosts_[peer->address.host] = now + std::uint64_t{net::kRememberMs} * 1000;
     send_small(peer, "its path lost our " + std::to_string(peer->mtu) +
                          "-byte datagrams while small ones got through; told it to connect again with " +
                          std::to_string(net::kSmallDatagramBytes) + "-byte ones");
@@ -114,6 +116,7 @@ void EnetServer::send_small(ENetPeer* peer, const std::string& why) {
     links_.erase(seen);
   }
   peers_.erase(id);
+  path_marks_.erase(id);
   peer->data = nullptr;
   enet_peer_disconnect_now(peer, net::kDisconnectSmallDatagrams);
   session_.disconnected(id, now_us(), link);
@@ -123,10 +126,15 @@ void EnetServer::send_small(ENetPeer* peer, const std::string& why) {
 void EnetServer::handle(const ENetEvent& event) {
   switch (event.type) {
     case ENET_EVENT_TYPE_CONNECT: {
-      if (small_hosts_.count(event.peer->address.host) != 0 &&
-          event.peer->mtu > net::kSmallDatagramBytes) {
-        // Its path lost full datagrams before and it missed our note (or
-        // restarted): tell it again before it costs a 10 s timeout.
+      bool tell_again = false;
+      if (auto known = small_hosts_.find(event.peer->address.host);
+          known != small_hosts_.end() && event.peer->mtu > net::kSmallDatagramBytes) {
+        tell_again = now_us() < known->second;
+        small_hosts_.erase(known);  // told at most once more
+      }
+      if (tell_again) {
+        // Its path lost full datagrams a moment ago and it missed our note:
+        // tell it again before it costs a 10 s timeout.
         ++small_path_drops_;
         event.peer->data = nullptr;
         enet_peer_disconnect_now(event.peer, net::kDisconnectSmallDatagrams);
@@ -154,6 +162,7 @@ void EnetServer::handle(const ENetEvent& event) {
     case ENET_EVENT_TYPE_DISCONNECT: {
       ConnectionId id = id_of(event.peer);
       peers_.erase(id);
+      path_marks_.erase(id);
       // As seen at the end of the last round: ENet has reset the peer by now.
       std::string link;
       if (auto seen = links_.find(id); seen != links_.end()) {

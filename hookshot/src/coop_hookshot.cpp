@@ -37,6 +37,7 @@
 #include "coop_hold.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
+#include "coop_native_ui.h"
 #include "coop_hud_hearts.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
@@ -179,6 +180,97 @@ void RunCalls(void* ctx) {
         }
         return std::optional<std::uint64_t>(x0);
     });
+}
+
+// ---- Chat as the game's own UI (coop_native_ui.h), on the game's thread at the frame hook.
+// LICHII_COOP_NATIVE_UI=0 keeps the drawn look only. Until the game's window has shown one line,
+// the drawn chat lines stay as well (a build without the window, the title, an older game).
+class NativeGame final : public CoopNativeUi::Game {
+public:
+    explicit NativeGame(void* ctx) : ctx_(ctx) {}
+    bool Read(std::uint64_t a, void* out, std::size_t n) override { return CoopRuntime::Read(a, out, n); }
+    bool Write(std::uint64_t a, const void* in, std::size_t n) override { return CoopRuntime::Write(a, in, n); }
+    std::optional<std::uint64_t> Call(std::uint64_t f, const std::array<std::uint64_t, 5>& x, float s0) override {
+        HosCoopCall k{};
+        k.function = f;
+        for (std::size_t i = 0; i < x.size(); ++i) {
+            k.x[i] = x[i];
+        }
+        k.s0 = s0;
+        std::uint64_t x0 = 0;
+        if (g_api == nullptr || !g_api->call(ctx_, &k, &x0)) {
+            return std::nullopt;
+        }
+        return x0;
+    }
+
+private:
+    void* ctx_;
+};
+
+struct Native {
+    bool on = false;
+    enum class Block { none, failed, have } block = Block::none;
+    CoopNativeUi::TextRing ring;
+    CoopNativeUi::ChatFeed feed;
+    std::uint64_t failed_ms = 0;
+    bool said_fail = false;
+};
+Native g_native;  // the game's thread only
+std::atomic<bool> g_native_chat{false};  // the game's window has shown a line: no drawn chat lines
+
+void NativeStep(void* ctx) {
+    static const bool on = Env("LICHII_COOP_NATIVE_UI") != "0";
+    if (!on) {
+        return;
+    }
+    NativeGame game(ctx);
+    const std::uint64_t now = SteadyMs();
+    if (g_native.block == Native::Block::none) {
+        const auto block = game.Call(CoopRuntime::MainBase() + CoopNativeUi::addr::kMallocMain,
+                                     {CoopNativeUi::TextRing::kBlockBytes + 64, 0, 0, 0, 0});
+        if (!block || *block == 0) {
+            g_native.block = Native::Block::failed;
+            LOG_WARNING(Core, "coop: native ui: the game gave no memory for its texts; drawn chat only");
+            return;
+        }
+        g_native.ring.SetBlock(*block);
+        g_native.block = Native::Block::have;
+        LOG_INFO(Core, "coop: native ui: chat through the game's message window (texts at {:#x})", *block);
+    }
+    if (g_native.block != Native::Block::have) {
+        return;
+    }
+    std::vector<CoopNativeUi::ChatIn> lines;
+    for (const auto& l : CoopHook::ChatLines()) {
+        lines.push_back({l.text, l.notice, l.age_ms});
+    }
+    g_native.feed.Update(lines, now);
+    if (g_native.feed.Busy(now) || now < g_native.failed_ms + 1000) {
+        return;
+    }
+    const auto line = g_native.feed.Next(now);
+    if (!line) {
+        return;
+    }
+    const bool shown = line->notice ? CoopNativeUi::ShowNotice(game, g_native.ring, *line)
+                                    : CoopNativeUi::ShowLine(game, g_native.ring, *line);
+    if (shown) {
+        if (!g_native_chat.exchange(true)) {
+            LOG_INFO(Core, "coop: native ui: first chat line shown by the game ({})",
+                     line->notice ? "banner" : "message window");
+        }
+    } else {
+        // No window now (title, load) or the game's own message on it: tried again in a second,
+        // until the line is stale (ChatFeed::kStaleMs).
+        g_native.feed.PutBack(*line);
+        g_native.failed_ms = now;
+        if (!g_native.said_fail) {
+            g_native.said_fail = true;
+            LOG_INFO(Core, "coop: native ui: the game's {} is not free now; the line waits",
+                     line->notice ? "banner" : "message window");
+        }
+    }
 }
 
 }  // namespace
@@ -388,7 +480,11 @@ CoopDraw::Scene DrawScene() {
             s.cheats = std::move(v);
         }
     }
-    s.chat = CoopDraw::ShownChat(CoopHook::ChatLines(), s.box.has_value());
+    // The game's message window shows chat once it has shown a line (NativeStep); while the box
+    // is open the drawn lines stay, as the box is still drawn.
+    if (!g_native_chat.load() || s.box.has_value()) {
+        s.chat = CoopDraw::ShownChat(CoopHook::ChatLines(), s.box.has_value());
+    }
     s.markers = CoopHook::CurrentMarkers();
     bool list = false, panel = false;
     {
@@ -592,6 +688,7 @@ void Frame(void* ctx, int site) {
     }
     if (w.calls && ctx != nullptr) {
         RunCalls(ctx);
+        NativeStep(ctx);
     }
 }
 

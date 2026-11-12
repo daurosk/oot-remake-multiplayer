@@ -257,7 +257,7 @@ TEST_CASE("native ui: a chat line goes into the game's in-game message window") 
     CHECK(g.Text(text.text) == "hello");
     CHECK(text.bytes == 5);
     CHECK(text.end == -1);
-    CHECK(g.Get<float>(kScreen + ui::addr::kInGameTime) == 4.0f);
+    CHECK(g.Get<float>(kScreen + ui::addr::kInGameTime) == 4.0f * ui::addr::kFramesPerSecond);
     CHECK(g.Get<std::uint8_t>(kScreen + ui::addr::kInGameShow) == 1);
     CHECK(g.calls[2].function == kOpenFn);
     CHECK(g.calls[2].x[0] == kScreen);
@@ -319,4 +319,39 @@ TEST_CASE("native ui: the game's projection, behind the camera is nothing") {
     g.returns[ui::addr::kProject] = 0;  // off screen
     CHECK_FALSE(ui::Project(g, scratch, {1.0f, 2.0f, 3.0f}).has_value());
     CHECK_FALSE(ui::Project(g, 0, {1.0f, 2.0f, 3.0f}).has_value());
+}
+
+TEST_CASE("native ui: the game's own message on the window is never written over") {
+    FakeGame g;
+    InGameWindow(g);
+    ui::TextRing ring;
+    ring.SetBlock(kBlock);
+    // An NPC's line of the game's: its text outside our block, time left.
+    g.Put<std::uint64_t>(kScreen + ui::addr::kInGameText, 0x83000000);
+    g.Put<float>(kScreen + ui::addr::kInGameTime, 90.0f);
+    CHECK_FALSE(ui::InGameFree(g, kScreen, ring));
+    CHECK_FALSE(ui::ShowLine(g, ring, {"a", "b", false, 1.0f}));
+    CHECK(g.Get<std::uint64_t>(kScreen + ui::addr::kInGameText) == 0x83000000);
+    // Its time out: free.
+    g.Put<float>(kScreen + ui::addr::kInGameTime, 0.0f);
+    CHECK(ui::InGameFree(g, kScreen, ring));
+    // One of ours still showing: free (the next line follows it).
+    REQUIRE(ui::ShowLine(g, ring, {"a", "b", false, 1.0f}));
+    CHECK(ui::InGameFree(g, kScreen, ring));
+}
+
+TEST_CASE("native ui: a line put back is first again, and goes stale from when it came") {
+    ui::ChatFeed feed;
+    feed.Update({}, 0);
+    feed.Update({{"A: one", false, 0}, {"B: two", false, 0}}, 1000);
+    auto line = feed.Next(1000);
+    REQUIRE(line.has_value());
+    CHECK(line->came_ms == 1000);
+    feed.PutBack(*line);
+    CHECK_FALSE(feed.Busy(1000));
+    line = feed.Next(2000);
+    REQUIRE(line.has_value());
+    CHECK(line->text == "one");
+    feed.PutBack(*line);
+    CHECK_FALSE(feed.Next(1000 + ui::ChatFeed::kStaleMs + 1).has_value());  // both stale now
 }

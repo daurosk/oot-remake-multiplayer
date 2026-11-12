@@ -42,7 +42,8 @@ inline constexpr std::uint64_t kInGameScreenGet = 0x833d2690;     // (manager) -
 inline constexpr std::uint64_t kInGameVtable = 0x84c09678;
 inline constexpr std::uint64_t kInGameText = 0x2b0;    // the message reference T_Message_00 is set from
 inline constexpr std::uint64_t kInGameShow = 0x2d0;    // u8: 1 = set the text on the next step
-inline constexpr std::uint64_t kInGameTime = 0x408;    // f32: counts down, closes at 0
+inline constexpr std::uint64_t kInGameTime = 0x408;    // f32: game frames left (the game's default 180), closes at 0
+inline constexpr float kFramesPerSecond = 30.0f;        // its step (f_802f12b0) is one per 30 fps frame
 inline constexpr std::uint64_t kScreenOpenA = 0x1a5;   // s8 and u8: the game sets kInGameShow only when
 inline constexpr std::uint64_t kScreenOpenB = 0x1a6;   //   A >= 1 and B == 0 (f_833d25c0)
 // The banner (UISimpleInfoScreen, vtable 0x84c0d7d8).
@@ -116,6 +117,7 @@ struct Shown {
     std::string text;
     bool notice = false;
     float seconds = 0.0f;  // how long the game shows it
+    std::uint64_t came_ms = 0;  // when it came (ChatFeed)
 };
 
 // New chat lines in, one line at a time out, as fast as the game's window
@@ -133,6 +135,8 @@ public:
     // The next line to show once the window is free at `now_ms`; it is then
     // busy for that line's seconds.
     std::optional<Shown> Next(std::uint64_t now_ms);
+    // A line Next gave that could not be shown yet: first again, and the window not busy.
+    void PutBack(Shown line);
     bool Busy(std::uint64_t now_ms) const { return now_ms < busy_until_; }
     std::size_t waiting() const { return waiting_.size(); }
 
@@ -140,12 +144,8 @@ public:
     static float Seconds(std::size_t chars);
 
 private:
-    struct Waiting {
-        Shown shown;
-        std::uint64_t came_ms = 0;
-    };
     std::set<std::pair<std::string, std::uint64_t>> seen_;
-    std::deque<Waiting> waiting_;
+    std::deque<Shown> waiting_;
     std::uint64_t busy_until_ = 0;
     bool primed_ = false;  // the lines there before the first Update are not shown again
 };
@@ -197,6 +197,8 @@ public:
 
     void SetBlock(std::uint64_t base) { base_ = base; }
     bool HasBlock() const { return base_ != 0; }
+    // Whether a guest address is in the block (a text of ours).
+    bool Owns(std::uint64_t address) const { return base_ != 0 && address >= base_ && address < base_ + kBlockBytes; }
     // Writes the text (cut to kSlotText at a character) and its Ref; the
     // Ref's guest address, or 0 when it could not be written.
     std::uint64_t Put(Game& game, std::string_view text);
@@ -209,6 +211,9 @@ private:
 // ---------------------------------------------------------------- game steps
 // The in-game message window, or 0 (not loaded: the title, a load).
 std::uint64_t InGameScreen(Game& game);
+// Whether the window may take a line of ours now: nothing of the game's own on it (its time is
+// out, or the text on it is one of ours).
+bool InGameFree(Game& game, std::uint64_t screen, const TextRing& ring);
 // A screen the UI manager has, by its vtable; 0 when none.
 std::uint64_t ScreenByVtable(Game& game, std::uint64_t vtable);
 

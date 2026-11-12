@@ -171,7 +171,8 @@ void ChatFeed::Update(const std::vector<ChatIn>& lines, std::uint64_t now_ms) {
             continue;
         }
         shown.seconds = Seconds(shown.text.size());
-        waiting_.push_back({std::move(shown), came});
+        shown.came_ms = came;
+        waiting_.push_back(std::move(shown));
         while (waiting_.size() > kWaiting) {
             waiting_.pop_front();
         }
@@ -184,18 +185,23 @@ void ChatFeed::Update(const std::vector<ChatIn>& lines, std::uint64_t now_ms) {
     }
 }
 
+void ChatFeed::PutBack(Shown line) {
+    waiting_.push_front(std::move(line));
+    busy_until_ = 0;
+}
+
 std::optional<Shown> ChatFeed::Next(std::uint64_t now_ms) {
     if (Busy(now_ms)) {
         return std::nullopt;
     }
     while (!waiting_.empty()) {
-        Waiting w = std::move(waiting_.front());
+        Shown w = std::move(waiting_.front());
         waiting_.pop_front();
         if (now_ms > w.came_ms + kStaleMs) {
             continue;
         }
-        busy_until_ = now_ms + static_cast<std::uint64_t>(w.shown.seconds * 1000.0f);
-        return std::move(w.shown);
+        busy_until_ = now_ms + static_cast<std::uint64_t>(w.seconds * 1000.0f);
+        return w;
     }
     return std::nullopt;
 }
@@ -297,9 +303,18 @@ std::uint64_t InGameScreen(Game& game) {
     return *screen;
 }
 
+bool InGameFree(Game& game, std::uint64_t screen, const TextRing& ring) {
+    float time = 0.0f;
+    std::uint64_t text = 0;
+    if (!ReadValue(game, screen + addr::kInGameTime, time) || !ReadValue(game, screen + addr::kInGameText, text)) {
+        return false;
+    }
+    return !(time > 0.0f) || text == 0 || ring.Owns(text);
+}
+
 bool ShowLine(Game& game, TextRing& ring, const Shown& line) {
     const std::uint64_t screen = InGameScreen(game);
-    if (screen == 0) {
+    if (screen == 0 || !InGameFree(game, screen, ring)) {
         return false;
     }
     const std::uint64_t name_ref = ring.Put(game, line.speaker);
@@ -310,7 +325,7 @@ bool ShowLine(Game& game, TextRing& ring, const Shown& line) {
     }
     if (!SetPane(game, screen, addr::kNameT_Name_00, name_ref) ||
         !WriteValue(game, screen + addr::kInGameText, text) ||
-        !WriteValue(game, screen + addr::kInGameTime, line.seconds)) {
+        !WriteValue(game, screen + addr::kInGameTime, line.seconds * addr::kFramesPerSecond)) {
         return false;
     }
     // As f_833d25c0: the text is set on the window's next step when it is

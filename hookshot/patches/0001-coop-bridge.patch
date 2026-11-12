@@ -1,4 +1,4 @@
-From f520e5d22c2a69615497b900b25a6cf7135b2307 Mon Sep 17 00:00:00 2001
+From 779fff4a04be8605d62df6878dc7de8bfaf84df4 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -250,7 +250,7 @@ index 00000000..d774b878
 +
 +}  // namespace mkwvk::coop
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 872c3f6b..f0a11d39 100644
+index 487f7961..10e332b9 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
 @@ -36,6 +36,7 @@
@@ -260,8 +260,8 @@ index 872c3f6b..f0a11d39 100644
 +#include "vk_coop.h"   // (oot-remake-multiplayer: co-op's drawing over the picture)
  #include "vk_menu_keys.h"   // (which gamepad buttons confirm and go back: those A and B are bound to)         // (how it looks: Dear ImGui, vk_imgui.h)
  #include "vk_dlss.h"
- #include "vk_bug_report.h"   // (the Gameplay tab's Bug report: what it writes, and how)
-@@ -4557,7 +4558,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+ #include "vk_framegen.h"   // (Frame generation by: who makes the frames now, framegen_maker)
+@@ -4962,7 +4963,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
      const bool start = startup_on.load(std::memory_order_acquire);
      const bool fps = opts.show_fps && !start;   // (no game frames yet: not "0 FPS" over the start-up screen)
      const bool open = open_now.load(std::memory_order_relaxed);
@@ -271,7 +271,7 @@ index 872c3f6b..f0a11d39 100644
          // (but a new window size or Menu size since the last bake: one frame with nothing drawn that bakes the menu's glyphs
          // and measures its page for the new size, so the next open has no hitch whatever was resized while nothing showed)
          if (prebake_needed(w, h) && ui::begin(w, h)) {
-@@ -4580,6 +4582,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -4985,6 +4987,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
      ui::Ctx c = ui_ctx(w, h);
      prebake(c);   // (the menu's glyphs at this size, before it opens: no hitch then)
      if (start) draw_startup(c);   // (under the menu)
@@ -279,7 +279,7 @@ index 872c3f6b..f0a11d39 100644
      if (open) draw_menu(c);
      if (fps) draw_fps(c, open);
      ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
-@@ -4589,9 +4592,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -4994,9 +4997,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
  void menu_record_image(VkCommandBuffer cmd, VkImage image, VkImageView view, uint32_t w, uint32_t h) {
      const bool open = open_now.load(std::memory_order_relaxed);
      const bool fps = opts.show_fps && !startup_on.load(std::memory_order_acquire);
@@ -648,26 +648,26 @@ index 00000000..9e2075c4
 +
 +#endif
 diff --git a/host/hos_sdl.c b/host/hos_sdl.c
-index 4a6296a7..152570e9 100644
+index 35a24d6e..91bd8679 100644
 --- a/host/hos_sdl.c
 +++ b/host/hos_sdl.c
-@@ -24,6 +24,7 @@ static struct {
-     void *PadHasSensor, *PadSensorEnable, *PadSensorData;   /* (motion: optional, NULL in an SDL without them) */
+@@ -25,6 +25,7 @@ static struct {
      void *PadVendor, *PadSteamHandle, *SetHintPriority;   /* (Steam's stand-in pads: optional, host/steam_pads.h) */
+     void *JoystickGUID, *PadMapping;   /* (optional connection diagnostics: no serial number or device path) */
      void *GetGamepads, *GetGamepadID, *Free;   /* (SDL3) */
 +    void *StartTextInput;   /* (optional: co-op's chat box, hos_sdl_text_input) */
-     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2) */
+     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2; GetJoystick also SDL3's diagnostics) */
  } f;
  #define CALL(type, fn) ((type)f.fn)
-@@ -77,6 +78,7 @@ static int get_all(HMODULE m, int three) {
-     *(FARPROC *)&f.PadVendor = GetProcAddress(m, three ? "SDL_GetGamepadVendor" : "SDL_GameControllerGetVendor");
-     *(FARPROC *)&f.PadSteamHandle = GetProcAddress(m, three ? "SDL_GetGamepadSteamHandle" : "SDL_GameControllerGetSteamHandle");
+@@ -80,6 +81,7 @@ static int get_all(HMODULE m, int three) {
      *(FARPROC *)&f.SetHintPriority = GetProcAddress(m, "SDL_SetHintWithPriority");
+     *(FARPROC *)&f.JoystickGUID = GetProcAddress(m, three ? "SDL_GetJoystickGUID" : "SDL_JoystickGetGUID");
+     *(FARPROC *)&f.PadMapping = GetProcAddress(m, three ? "SDL_GetGamepadMapping" : "SDL_GameControllerMapping");
 +    *(FARPROC *)&f.StartTextInput = GetProcAddress(m, "SDL_StartTextInput");
      if (three) {
+         *(FARPROC *)&f.GetJoystick = GetProcAddress(m, "SDL_GetGamepadJoystick");   /* (optional: diagnostics only) */
          GET(SetWindowPosition, "SDL_SetWindowPosition");
-         GET(GetPrimaryDisplay, "SDL_GetPrimaryDisplay");
-@@ -236,6 +238,11 @@ void hos_sdl_mouse_position(float *x, float *y) {
+@@ -244,6 +246,11 @@ void hos_sdl_mouse_position(float *x, float *y) {
          *x = (float)ix, *y = (float)iy;
      }
  }
@@ -679,7 +679,7 @@ index 4a6296a7..152570e9 100644
  void hos_sdl_window_size(void *window, int *width, int *height) {
      if (version == 3) CALL(_Bool (*)(void *, int *, int *), GetWindowSize)(window, width, height);
      else CALL(void (*)(void *, int *, int *), GetWindowSize)(window, width, height);
-@@ -279,6 +286,13 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
+@@ -287,6 +294,13 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
              if (dir == 1) e->wheel = -e->wheel;
              break;
          }
@@ -693,7 +693,7 @@ index 4a6296a7..152570e9 100644
          }
          return;
      }
-@@ -312,6 +326,10 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
+@@ -320,6 +334,10 @@ static void read_event(const uint8_t *raw, HosSdlEvent *e) {
          e->wheel = (float)(dir == 1 ? -i[0] : i[0]);
          break;
      }
@@ -705,7 +705,7 @@ index 4a6296a7..152570e9 100644
  }
  int hos_sdl_wait_event(HosSdlEvent *e, int timeout_ms) {
 diff --git a/host/hos_sdl.h b/host/hos_sdl.h
-index a04c061a..df7deee0 100644
+index 167e12e3..35339cf1 100644
 --- a/host/hos_sdl.h
 +++ b/host/hos_sdl.h
 @@ -35,7 +35,8 @@ void hos_sdl_icon(void *window, const char *png);   /* (SDL 3.4's PNG loader: no
@@ -729,7 +729,7 @@ index a04c061a..df7deee0 100644
  int hos_sdl_poll_event(HosSdlEvent *e);
  
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 43e312d2..7f34e061 100644
+index 47e521c0..054caa5a 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
 @@ -52,7 +52,8 @@ static int64_t sampling;
@@ -742,7 +742,7 @@ index 43e312d2..7f34e061 100644
  
  int hos_mouse_take(int32_t *dx, int32_t *dy);   /* display.c */
  
-@@ -1041,6 +1042,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
+@@ -1045,6 +1046,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
  
  static void vibration_send(uint64_t handle, uint64_t value);
  volatile int64_t hos_hid_last_read;
@@ -750,7 +750,7 @@ index 43e312d2..7f34e061 100644
  
  /* GetNpadStates(State* out, int count, unsigned int const& npadId): the latest state first */
  static void npad_states(Ctx *c) {
-@@ -1100,11 +1102,13 @@ static void npad_states(Ctx *c) {
+@@ -1104,11 +1106,13 @@ static void npad_states(Ctx *c) {
      uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
      if (connected) buttons = hos_frame_step_buttons(buttons);
      int64_t s = ++sampling;
@@ -766,10 +766,10 @@ index 43e312d2..7f34e061 100644
          G32(e + 32) = connected ? ATTR_CONNECTED : 0;
      }
 diff --git a/host/nvn_native.c b/host/nvn_native.c
-index a125386f..24cc4e15 100644
+index 7e2bdbe7..0cf33349 100644
 --- a/host/nvn_native.c
 +++ b/host/nvn_native.c
-@@ -2511,6 +2511,8 @@ NV(nvnQueuePresentTexture) {
+@@ -2512,6 +2512,8 @@ NV(nvnQueuePresentTexture) {
      extern volatile LONG64 hos_present_count;   /* display.c */
      InterlockedIncrement64(&hos_present_count);
      hos_vi_native_presented(phases);
@@ -887,12 +887,12 @@ index f6da1cc2..a0e8949e 100644
                          static float rx, ry;
                          rx += e.dx, ry += e.dy;
 diff --git a/nx2/build.py b/nx2/build.py
-index 92b97bfe..1253b776 100644
+index fc123351..effa6705 100644
 --- a/nx2/build.py
 +++ b/nx2/build.py
-@@ -1087,7 +1087,7 @@ def main():
+@@ -1219,7 +1219,7 @@ def main():
                         "-DIMGUI_DISABLE_WIN32_FUNCTIONS", "-DIMGUI_DISABLE_DEMO_WINDOWS", "-DIMGUI_DISABLE_DEBUG_TOOLS"]
-         imgui_deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (imgui, os.path.join(imgui, "backends"), zstd)
+         imgui_deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (imgui, os.path.join(imgui, "backends"), zbic)
                                for f in sorted(os.listdir(d)) if f.endswith(".h"))
 -        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp")
 +        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp", "vk_coop.cpp")   # (oot-remake-multiplayer: co-op's drawing, vk_coop.cpp)

@@ -1,4 +1,4 @@
-From ebceda98ffc289e6c12f0cf423f5dd3bdba1a018 Mon Sep 17 00:00:00 2001
+From ac22975ef1765aec43ac8d8afe9b4415eb00cf3b Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 07:28:40 -0900
 Subject: [PATCH] Co-op puppets: null-pointer reads give 0, as on the emulator
@@ -26,7 +26,7 @@ line there. Called from nx2/coop_hooks.py install().
 
 diff --git a/host/coop_null_page.c b/host/coop_null_page.c
 new file mode 100644
-index 0000000..e64d21c
+index 00000000..e64d21c5
 --- /dev/null
 +++ b/host/coop_null_page.c
 @@ -0,0 +1,84 @@
@@ -115,7 +115,7 @@ index 0000000..e64d21c
 +}
 +#endif
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index a3aa4a3..9648af6 100644
+index a3aa4a38..9648af65 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
 @@ -58,4 +58,6 @@ def install(lifter, img, build_id):
@@ -127,7 +127,7 @@ index a3aa4a3..9648af6 100644
      return len(FRAME_SITES) + 1
 diff --git a/nx2/coop_puppet_guard.py b/nx2/coop_puppet_guard.py
 new file mode 100644
-index 0000000..a1055fc
+index 00000000..a1055fc3
 --- /dev/null
 +++ b/nx2/coop_puppet_guard.py
 @@ -0,0 +1,61 @@
@@ -192,6 +192,3 @@ index 0000000..a1055fc
 +    print("co-op puppet guard: at main+%#x (a missing component skips to main+%#x); null reads give 0 from the "
 +          "first puppet on" % (SITE, SKIP))
 +    return 1
--- 
-2.56.0.windows.4
-

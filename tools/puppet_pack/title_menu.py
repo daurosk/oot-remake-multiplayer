@@ -301,10 +301,28 @@ class _Dir:
 def build(romfs, out_romfs, dicts, table, write, recompress, log=print):
     """The title archive and every language's messages from the romfs folder, into out_romfs
     (write(out_romfs, rel, bytes)); their size table entries grown (`table`: rstb.Rstb). Returns
-    the files written."""
+    the files written.
+
+    All or nothing: every file and size is made in memory first; only when all of them were made
+    (the layout and every language that has Title_00.msbt) is anything written or the table
+    changed. A failure raises before that, so the pack never holds rows without their texts."""
+    files, growth = make(_Dir(romfs), dicts, recompress)
+    for rel, _, required in growth:
+        if required and table.get(_key(rel)) is None:
+            raise TitleMenuError("the size table has no %s" % _key(rel))
+    for rel, by, required in growth:
+        _grow(table, rel, by, required)
+    for rel, data in files.items():
+        write(out_romfs, rel, data)
+    log("title menu: Host, Join and Co-op Settings on the title (%s, %d languages)" % (TITLE_LAYOUT, len(files) - 1))
+    return list(files)
+
+
+def make(reader, dicts, recompress):
+    """({rel: compressed bytes}, [(rel, bytes grown, required)]) for the title archive and every
+    language's messages; raises TitleMenuError (or the reader's error) when any one cannot be made."""
     from . import sarc
-    reader = _Dir(romfs)
-    made = []
+    files, growth = {}, []
     raw = reader.read(TITLE_ARCHIVE)
     entries = sarc.read_entries(dicts.decompress(raw))
     olds = [data for name, data in entries if name == TITLE_LAYOUT]
@@ -314,26 +332,30 @@ def build(romfs, out_romfs, dicts, table, write, recompress, log=print):
     entries = [(name, new.setdefault(data, add_buttons(data)) if name == TITLE_LAYOUT else data)
                for name, data in entries]
     archive = sarc.write(entries, data_align=16)   # (as the game's own: 16)
-    _grow(table, TITLE_ARCHIVE, len(archive) - len(dicts.decompress(raw)))
-    _grow(table, TITLE_LAYOUT, len(new[olds[0]]) - len(olds[0]), required=False)
-    write(out_romfs, TITLE_ARCHIVE, recompress(dicts, raw, archive))
-    made.append(TITLE_ARCHIVE)
+    growth.append((TITLE_ARCHIVE, len(archive) - len(dicts.decompress(raw)), True))
+    growth.append((TITLE_LAYOUT, len(new[olds[0]]) - len(olds[0]), False))
+    files[TITLE_ARCHIVE] = recompress(dicts, raw, archive)
     for rel in sorted(reader.glob(MALS_GLOB)):
         raw = reader.read(rel)
         plain = dicts.decompress(raw)
         msgs = sarc.read_entries(plain)
         if not any(name == MSG_FILE for name, _ in msgs):
             continue
-        packed = sarc.write([(name, add_rows(data) if name == MSG_FILE else data) for name, data in msgs], data_align=16)
-        _grow(table, rel, len(packed) - len(plain))
-        write(out_romfs, rel, recompress(dicts, raw, packed))
-        made.append(rel)
-    log("title menu: Host, Join and Co-op Settings on the title (%s, %d languages)" % (TITLE_LAYOUT, len(made) - 1))
-    return made
+        packed = sarc.write([(name, add_rows(data) if name == MSG_FILE else data) for name, data in msgs],
+                            data_align=16)
+        growth.append((rel, len(packed) - len(plain), True))
+        files[rel] = recompress(dicts, raw, packed)
+    if len(files) < 2:
+        raise TitleMenuError("no language has %s" % MSG_FILE)
+    return files, growth
+
+
+def _key(rel):
+    return rel[:-3] if rel.endswith(".zs") else rel
 
 
 def _grow(table, rel, by, required=True):
-    key = rel[:-3] if rel.endswith(".zs") else rel
+    key = _key(rel)
     size = table.get(key)
     if size is None:
         if required:

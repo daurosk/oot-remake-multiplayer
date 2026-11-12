@@ -5,11 +5,12 @@
 import os
 import struct
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import title_menu as tm  # noqa: E402
+from puppet_pack import sarc, title_menu as tm  # noqa: E402
 
 PANES = ["RootPane", "N_All_00", "A_BtnAlign_00", "Pa_Button_00", "Pa_Button_01", "Pa_Button_02", "Pa_Button_03"]
 PARENT = [0xFFFFFFFF, 0, 1, 2, 2, 2, 2]
@@ -139,6 +140,76 @@ class MsbtTest(unittest.TestCase):
                 ln = data[off]
                 self.assertEqual(tm._label_hash(data[off + 1:off + 1 + ln].decode(), nb), b)
                 off += 5 + ln
+
+
+class _Plain:
+    """Dictionaries that do nothing: the synthetic files are not compressed."""
+    def decompress(self, raw):
+        return raw
+
+
+class _Table:
+    def __init__(self, sizes):
+        self.sizes = dict(sizes)
+
+    def get(self, key):
+        return self.sizes.get(key)
+
+    def set(self, key, value):
+        self.sizes[key] = value
+
+
+class BuildTest(unittest.TestCase):
+    def romfs(self, root, broken=None):
+        files = {tm.TITLE_ARCHIVE: sarc.write([(tm.TITLE_LAYOUT, make_layout())] * 2, data_align=16)}
+        for lang in ("EUen", "JPja", "USen"):
+            msbt = make_msbt(["0000", "0001", "0002"], ["a", "b", "c"])
+            if lang == broken:
+                msbt = msbt[:0x30]   # cut short: it cannot be read
+            files["Mals/%s.Product.110.sarc.zs" % lang] = sarc.write({tm.MSG_FILE: msbt, "Other.msbt": b"x"})
+        for rel, data in files.items():
+            path = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(data)
+        return files
+
+    def run_build(self, broken=None):
+        with tempfile.TemporaryDirectory() as root:
+            src = os.path.join(root, "romfs")
+            self.romfs(src, broken)
+            table = _Table({tm.TITLE_ARCHIVE[:-3]: 1000, tm.TITLE_LAYOUT: 500})
+            for lang in ("EUen", "JPja", "USen"):
+                table.set("Mals/%s.Product.110.sarc" % lang, 2000)
+            before = dict(table.sizes)
+            written = {}
+
+            def write(out, rel, data):
+                written[rel] = data
+
+            try:
+                made = tm.build(src, "out", _Plain(), table, write, lambda d, raw, data: data, log=lambda s: None)
+            except (tm.TitleMenuError, struct.error, IndexError, ValueError) as e:
+                return None, written, table.sizes, before, e
+            return made, written, table.sizes, before, None
+
+    def test_every_file_when_all_can_be_made(self):
+        made, written, sizes, before, err = self.run_build()
+        self.assertIsNone(err)
+        self.assertEqual(len(made), 4)
+        self.assertEqual(set(written), set(made))
+        layouts = [d for n, d in sarc.read_entries(written[tm.TITLE_ARCHIVE]) if n == tm.TITLE_LAYOUT]
+        self.assertEqual(len(layouts), 2)
+        self.assertTrue(all(len(tm.read_layout(d)[0]) == len(PANES) + 3 for d in layouts))
+        _, _, labels, _ = tm.read_msbt(sarc.read(written["Mals/JPja.Product.110.sarc.zs"])[tm.MSG_FILE])
+        self.assertIn("0102", labels)
+        self.assertTrue(all(sizes[k] > before[k] for k in before))
+
+    def test_nothing_written_when_one_language_fails(self):
+        made, written, sizes, before, err = self.run_build(broken="JPja")
+        self.assertIsNotNone(err)
+        self.assertEqual(written, {})
+        self.assertEqual(sizes, before)
 
 
 if __name__ == "__main__":

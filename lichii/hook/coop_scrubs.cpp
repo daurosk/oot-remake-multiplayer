@@ -36,6 +36,8 @@ std::string Hex(std::uint64_t v) {
     return text;
 }
 
+constexpr std::uint32_t kLastOrder = 3;  // One: the last of 2, 3, 1
+
 std::string Label(const Brother& b) {
     return "brother " + std::string(b.name) + " " + Hex(b.hash);
 }
@@ -134,8 +136,11 @@ void Puzzle::Look(const std::string& scene, const std::vector<Seen>& seen,
         const auto it = animation_.find(s.address);
         const std::string before = it != animation_.end() ? it->second : std::string();
         if (!s.animation.empty() && s.animation != before) {
-            // Issue 144: the last right hit (here or given): the manager is solved.
-            if (it != animation_.end() && s.animation.find("SmallHit") != std::string::npos &&
+            // Issue 144: the last right hit (here or given) on the last brother in
+            // order: the manager is solved. A SmallHit on another brother (a wrong
+            // order, not seen yet) does not count.
+            if (it != animation_.end() && b->order == kLastOrder &&
+                s.animation.find("SmallHit") != std::string::npos &&
                 solved_.insert(b->manager).second) {
                 out.notes.push_back("scrubs: " + Label(*b) + " took the last hit: its manager is solved here");
             }
@@ -285,7 +290,11 @@ std::optional<CoopPuppet::Call> Puzzle::Step(CoopPuppet::Guest& guest, bool afte
     return std::nullopt;
 }
 
-void Puzzle::SetEvent(bool in_event, std::uint64_t now_us) {
+void Puzzle::SetEvent(bool in_event_now, std::uint64_t now_us) {
+    if (in_event_now) {
+        last_event_us_ = now_us;
+    }
+    const bool in_event = in_event_now || (last_event_us_ != 0 && now_us < last_event_us_ + kEventTailUs);
     if (in_event == in_event_) {
         return;
     }
@@ -316,6 +325,7 @@ void Puzzle::Reset() {
     echo_until_.clear();
     solved_.clear();
     in_event_ = false;
+    last_event_us_ = 0;
     pending_.clear();
     // block_ is the game's memory, kept for the run (a new game run: Reset
     // by the caller with a new Puzzle).

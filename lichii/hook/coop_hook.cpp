@@ -435,12 +435,12 @@ public:
                              ? "our Link is in an event: Deku Scrub destroy flags from others wait"
                              : "the event ended: Deku Scrub destroy flags from others go through");
             }
-            const bool talk = scrub_talk_.Holding();
+            const CoopScrubTalk::Hold talk = scrub_talk_;
             hold.emplace(*store, [link, scene, talk](coop::protocol::FlagKey key) {
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
-                if (talk && CoopScrubTalk::IsTalkFlag(key.hash)) {
+                if (talk.Holds(key.hash)) {
                     return true;
                 }
                 if (!link || !scene) {
@@ -497,8 +497,12 @@ public:
                 live_requester_.Want(*name);
             }
         }
-        if (hold && (hold->held() != 0) != holding_logged_) {
-            holding_logged_ = hold->held() != 0;
+        // The scrub flags of issue 144 have their own log line (above).
+        const bool gimmick_held =
+            hold && std::any_of(hold->held_keys().begin(), hold->held_keys().end(),
+                                [](const coop::protocol::FlagKey& k) { return !CoopScrubTalk::IsTalkFlag(k.hash); });
+        if (hold && gimmick_held != holding_logged_) {
+            holding_logged_ = gimmick_held;
             LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");

@@ -13,6 +13,8 @@ expect a-paused-back A=1 B=1
 close A                        # A quits; it comes back on the title screen while B plays
 start A
 expect a-on-title A=0 B=0      # the other way: A on the title, so no puppet of A in B; none in A
+# Not covered: going back to the title FROM play (quit in the menu: fade 0.4 s, deleted after the
+# 2 s grace) while still connected; close A leaves the server. By hand or a later scenario.
 load A
 expect a-back-in A=1 B=1
 # Look at the screenshots taken at "paused" in each play: the paused game's window shows the

@@ -3,6 +3,8 @@
 # Run: tools\autotest\run.ps1 -Scenario epona, after make-puppet-pack in both kits (CoopRide_Epona).
 # Shots "mounted", "riding", "riding2": B's puppet on a horse in A's window; "dismounted",
 # "walking": on foot, no copy horse. b-rides 0 = B never got on (place/press missed): INCONCLUSIVE.
+# horse-made-A counts the spawn of the copy (an old pack or a failed spawn FAILs it). a-never-hides
+# counts a hide or hold of the rider between "rides" and "off the horse" (riding keeps show).
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
 #! timeout 360
 start A B
@@ -13,4 +15,5 @@ lines b-rides B min=1 coop: ride: we ride Animal_Epona_Adult
 lines b-got-off B min=1 coop: ride: we got off
 lines a-sees-ride A min=1 coop: ride: P\d+ rides Animal_Epona_Adult
 lines a-sees-off A min=1 coop: ride: P\d+ off the horse
-lines a-never-hides A max=0 (?<!fairy )coop: puppet: P\d+ show -> hide \(riding\)
+lines horse-made-A A min=1 coop: spawn: CoopRide_Epona: create copy
+lines a-never-hides A max=0 (?<=coop: ride: P\d+ rides [\s\S]*)(?<!fairy )coop: puppet: P\d+ show -> (?:hide|hold)(?=[\s\S]*coop: ride: P\d+ off the horse)

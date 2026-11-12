@@ -1,6 +1,6 @@
 # color (puppet-colors): each player's puppet shows in that player's
 # colour. A picks orange, B keeps its slot colour; A steps off the cow and
-# stands by B, so B sees A's puppet tinted orange and A sees B's in B's slot
+# stands by B, so B sees A's puppet in an orange tunic and A sees B's in B's slot
 # colour (player 2: red).
 # Run: tools\autotest\run.ps1 -Scenario color -Switches LICHII_COOP_PUPPET=1,
 #   LICHII_COOP_DEBUG_PUPPET=1, A:LICHII_COOP_COLOR=orange

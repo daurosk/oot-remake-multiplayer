@@ -158,6 +158,9 @@ EOF
 chmod +x "$stub/lichii.AppImage" "$stub/coop_server"
 mk() { bash "$release/make_kit.sh" --appimage "$stub/lichii.AppImage" --server "$stub/coop_server" --out "$tmp/out" "$@" >/dev/null 2>"$tmp/mk.err"; }
 check 'make_kit.sh builds v0.1.0-beta6' mk --release v0.1.0-beta6
+mkdir -p "$tmp/applic" && printf 'usr/lib/libopus.so.0  Ubuntu package libopus0\n' >"$tmp/applic/BUNDLED.txt" && echo 'opus copyright' >"$tmp/applic/libopus0.copyright"
+check 'make_kit.sh --appimage-licenses puts the AppImage list and texts in licenses/appimage/' bash -c 'bash "$1/make_kit.sh" --appimage "$2/lichii.AppImage" --server "$2/coop_server" --out "$3/out-lic" --release v0.1.0-beta6 --no-tar --appimage-licenses "$3/applic" >/dev/null 2>&1 && [ -f "$3/out-lic/oot-coop-v0.1.0-beta6-linux/licenses/appimage/BUNDLED.txt" ] && [ -f "$3/out-lic/oot-coop-v0.1.0-beta6-linux/licenses/appimage/libopus0.copyright" ]' _ "$release" "$stub" "$tmp"
+check 'make_kit.sh refuses a licences folder without BUNDLED.txt' bash -c '! bash "$1/make_kit.sh" --appimage "$2/lichii.AppImage" --server "$2/coop_server" --out "$3/out-lic2" --no-tar --appimage-licenses "$3" >/dev/null 2>&1' _ "$release" "$stub" "$tmp"
 kit6=$tmp/out/oot-coop-v0.1.0-beta6-linux
 arch=$(uname -m)
 check 'the kit has its scripts, emulator, server, tool and docs' bash -c 'cd "$1" && for f in Host.sh Join.sh play.sh start-server.sh collect-logs.sh update.sh make-puppet-pack.sh scripts/kit-lib.sh scripts/coop.ini.template emulator/lichii.AppImage server/coop_server tools/puppet_pack/build.py SETUP.md KNOWN-ISSUES.md SOURCE.txt VERSION.txt MANIFEST.txt coop-options.ini emulator/user/config/coop.ini LICENSE.txt; do [ -f "$f" ] || { echo "missing $f"; exit 1; }; done; [ -x play.sh ] && [ -x emulator/lichii.AppImage ] && [ -d emulator/user/keys ]' _ "$kit6"

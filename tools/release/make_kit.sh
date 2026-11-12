@@ -18,10 +18,12 @@
 # --port      the default server port written into the kit (27510)
 # --emu-source  the emulator's source checkout, for SOURCE.txt and its licence texts
 # --no-tar    skip the tarball
+# --appimage-licenses  the folder tools/release/appimage_licenses.sh wrote for this AppImage
+#             (what it bundles and their licence texts): goes to licenses/appimage/
 set -eu
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
-appimage='' server='' out='' release='' port=27510 emu_source='' tar=1
+appimage='' server='' out='' release='' port=27510 emu_source='' tar=1 appimage_licenses=''
 while (($#)); do
     case $1 in
         --appimage) appimage=$2; shift ;;
@@ -31,6 +33,7 @@ while (($#)); do
         --port) port=$2; shift ;;
         --emu-source) emu_source=$2; shift ;;
         --no-tar) tar=0 ;;
+        --appimage-licenses) appimage_licenses=$2; shift ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -87,6 +90,17 @@ if [[ -n $emu_source && -f $emu_source/LICENSE.txt ]]; then
     for f in "$emu_source"/LICENSES/*.txt; do [[ -f $f ]] && cp "$f" "$kit/licenses/SPDX-${f##*/}"; done
 else
     echo 'Warning: no --emu-source with LICENSE.txt; add the emulator licence texts by hand.' >&2
+fi
+# ENet's MIT text, from the server's build folder (CMake fetches ENet into _deps).
+enet_license=$(find "$(dirname "$server")/.." -maxdepth 4 -path '*enet-src/LICENSE' 2>/dev/null | head -n1)
+if [[ -n $enet_license ]]; then cp "$enet_license" "$kit/licenses/ENet-MIT.txt"
+else echo "Warning: no ENet LICENSE in the server's build folder (_deps/enet-src); add licenses/ENet-MIT.txt by hand." >&2; fi
+if [[ -n $appimage_licenses ]]; then
+    [[ -f $appimage_licenses/BUNDLED.txt ]] || die "No BUNDLED.txt in $appimage_licenses (tools/release/appimage_licenses.sh writes it)."
+    mkdir -p "$kit/licenses/appimage"
+    cp "$appimage_licenses"/* "$kit/licenses/appimage/"
+else
+    echo 'Warning: no --appimage-licenses; the libraries inside the AppImage are not listed in licenses/appimage/.' >&2
 fi
 
 # Where the source is (GPL-3.0, section 6), and what this kit is.

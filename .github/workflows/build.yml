@@ -232,7 +232,9 @@ jobs:
           cmake --build build-server --target coop_server --parallel
           server=$(find build-server -type f -name coop_server -perm -u+x | head -n1)
           test -n "$server"
-          bash tools/release/make_kit.sh --appimage "$RUNNER_TEMP/lichii.AppImage" --server "$server" \
+          bash tools/release/appimage_licenses.sh "$RUNNER_TEMP/lichii.AppImage" "$RUNNER_TEMP/appimage-licenses"
+          head -n 60 "$RUNNER_TEMP/appimage-licenses/BUNDLED.txt"
+          bash tools/release/make_kit.sh --appimage-licenses "$RUNNER_TEMP/appimage-licenses" --appimage "$RUNNER_TEMP/lichii.AppImage" --server "$server" \
             --out "$RUNNER_TEMP/kit" --release "ci-${GITHUB_SHA::8}" --emu-source "$RUNNER_TEMP/fritchii"
           tar -tzf "$RUNNER_TEMP"/kit/oot-coop-*-linux-*.tar.gz | head -n 40
           (cd "$RUNNER_TEMP/kit" && sha256sum -c oot-coop-*-linux-*.tar.gz.sha256)

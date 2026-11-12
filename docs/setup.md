@@ -4,7 +4,7 @@ This is an early test build of online co-op (the newest is on the [releases page
 
 ## What you need
 
-- A Windows 10 or 11 PC (64-bit) that can run the game on Fritchii.
+- A Windows 10 or 11 PC (64-bit) that can run the game on Fritchii, or a 64-bit x86 Linux PC or Steam Deck (glibc 2.39 or newer: Ubuntu 24.04, Fedora 40, Debian 13, Arch and others) with the Linux kit ([Linux and Steam Deck](#linux-and-steam-deck)).
 - Your own copy of the game, dumped from your own console, with its keys (`prod.keys`, `title.keys`) and the console's firmware. The release has no game files, keys or firmware and never will. Every player needs their own.
 - The same game version as the other players (build id `e0f3ccfaf50065ae`; the emulator's log names it, see [below](#check-it-works)).
 - The same release of the co-op kit as the other players.

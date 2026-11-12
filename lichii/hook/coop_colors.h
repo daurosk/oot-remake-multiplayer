@@ -12,12 +12,12 @@
 // the strength. Being a plain store, the director does it from the SVC
 // handler, with no call into the game.
 //
-// Where: on the tunic, as Ship of Harkinian's Anchor co-op colours the other
-// players' tunics. An adult's tunic (Armor_Adult_Normal, _Goron, _Zora) is an
-// actor of its own, worn through the EquipmentUser's upper armor link, so its
-// model takes the colour alone. A child's tunic is part of the body model;
-// a child puppet is tinted whole until a per-material colour is found
-// (docs/puppet.md, "Colour", Not done).
+// Where: the whole puppet. The body model takes the colour, and so does
+// every armor piece it wears (an adult's tunic, Armor_Adult_Normal, _Goron,
+// _Zora, is an actor of its own, worn through the EquipmentUser's armor
+// links, as are boots, masks and gauntlets). So an adult is tinted whole, as
+// a child is (Caleb 2026-11-12: "for adult link the whole model needs the
+// color not just tunic").
 #pragma once
 
 #include <array>
@@ -38,13 +38,14 @@ inline constexpr std::uint64_t kPartsModel = 0x260;    // parts -> model (0xc71c
 inline constexpr std::uint64_t kModelColor = 0x20;     // 4 x f32: r, g, b, strength
 inline constexpr std::uint64_t kModelDirty = 0x120;    // u32 bits
 inline constexpr std::uint32_t kDirtyColor = 0x4;      // 0x2e1d200 sets it
-// The tunic: [[actor + 0x270] + 0x200] is the EquipmentUser (coop_puppet.h);
-// its armor links at + 0xe0, 0x18 each, are {+0x08 holder, +0x10 id}; link 1
-// is the upper body (kind 8, the tunic). The piece is [holder + 0x40].
+// Worn armor: [[actor + 0x270] + 0x200] is the EquipmentUser (coop_puppet.h);
+// its kArmorLinkCount armor links at + 0xe0, 0x18 each, are {+0x08 holder,
+// +0x10 id} (link 1 is the tunic). The piece is [holder + 0x40].
 inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 inline constexpr std::uint64_t kArmorLinks = 0xe0;
 inline constexpr std::uint64_t kLinkStride = 0x18;
 inline constexpr std::uint64_t kTunicLink = 1;
+inline constexpr std::uint32_t kArmorLinkCount = 13;
 inline constexpr std::uint64_t kLinkHolder = 0x08;
 inline constexpr std::uint64_t kLinkId = 0x10;
 inline constexpr std::uint64_t kHolderActor = 0x40;
@@ -90,8 +91,12 @@ std::uint32_t ForPlayer(std::uint8_t player, std::uint8_t self = 0);
 
 // The actor's model, or 0 when the actor has none (yet).
 std::uint64_t ModelOf(CoopPuppet::Guest& guest, std::uint64_t actor);
+// The armor piece in the actor's armor link `link`, or 0 when it wears none.
+std::uint64_t PieceOf(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint32_t link);
 // The tunic piece the actor wears (adult), or 0 when it wears none.
-std::uint64_t TunicOf(CoopPuppet::Guest& guest, std::uint64_t actor);
+inline std::uint64_t TunicOf(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    return PieceOf(guest, actor, static_cast<std::uint32_t>(addr::kTunicLink));
+}
 
 enum class Applied { no_model, same, written };
 // Writes `tint` into the actor's model as 0x2e1d200 does: the four floats,
@@ -101,13 +106,12 @@ Applied Apply(CoopPuppet::Guest& guest, std::uint64_t actor, const Rgba& tint);
 // What one puppet was painted last; kept by the director per puppet.
 struct Painted {
     std::uint64_t actor = 0;   // the puppet
-    std::uint64_t target = 0;  // the actor that took the colour (its tunic, or itself)
     std::uint32_t color = 0;
+    std::uint32_t models = 0;  // how many models took it: the body and its pieces
 };
-// One game frame for one live puppet: the colour on its tunic if it wears
-// one, else on its whole body. When the tunic appears after the body was
-// painted, the body's colour is taken off once. Returns a log line when what
-// was painted changed, "" otherwise.
+// One game frame for one live puppet: the colour on its body and on every
+// armor piece it wears. Returns a log line when the colour or the number of
+// painted models changed, "" otherwise.
 std::string Paint(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint32_t color,
                   float strength, Painted& painted);
 

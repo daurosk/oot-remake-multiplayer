@@ -209,7 +209,7 @@ void WearTunic(Memory& m) {
 }
 }  // namespace
 
-TEST_CASE("colours: an adult's tunic takes the colour, not the body") {
+TEST_CASE("colours: the whole puppet, a child's body or an adult's body and tunic") {
     Memory m = ActorWithModel();
     m.Put<std::uint64_t>(kParts + addr::kPartsEquipmentUser, kEu);
     const std::uint64_t link = kEu + addr::kArmorLinks + addr::kLinkStride * addr::kTunicLink;
@@ -219,35 +219,43 @@ TEST_CASE("colours: an adult's tunic takes the colour, not the body") {
 
     CoopColors::Painted painted;
     const auto tint = CoopColors::TintOf(0xE02020, 0.6f);
-    // A child: the whole body.
+    // A child: the body.
     std::string line = CoopColors::Paint(m, kActor, 0xE02020, 0.6f, painted);
     CHECK(line.find("on body") != std::string::npos);
+    CHECK(line.find("0 worn pieces") != std::string::npos);
     CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == tint);
     CHECK(CoopColors::Paint(m, kActor, 0xE02020, 0.6f, painted).empty());  // said once
 
-    // The tunic appears: it takes the colour, and the body is given back its own.
+    // The tunic appears: it takes the colour too, and the body keeps it.
     WearTunic(m);
     CHECK(CoopColors::TunicOf(m, kActor) == kTunic);
+    CHECK(CoopColors::PieceOf(m, kActor, 0) == 0);
     line = CoopColors::Paint(m, kActor, 0xE02020, 0.6f, painted);
-    CHECK(line.find("on tunic") != std::string::npos);
+    CHECK(line.find("1 worn piece,") != std::string::npos);
     CHECK(m.Get<CoopColors::Rgba>(kTunicModel + addr::kModelColor) == tint);
     CHECK(m.Get<std::uint32_t>(kTunicModel + addr::kModelDirty) == addr::kDirtyColor);
-    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == CoopColors::Rgba{0, 0, 0, 0});
+    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == tint);
+    CHECK(CoopColors::Paint(m, kActor, 0xE02020, 0.6f, painted).empty());
 
-    // A new colour goes on the tunic; the body is left alone (a hit flash there stays).
+    // A new colour goes on both; a hit flash the game wrote is painted over.
     m.Put<CoopColors::Rgba>(kModel + addr::kModelColor, {1, 0, 0, 1});
     line = CoopColors::Paint(m, kActor, 0x2050FF, 0.6f, painted);
     CHECK(line.find("#2050FF") != std::string::npos);
     CHECK(m.Get<CoopColors::Rgba>(kTunicModel + addr::kModelColor) == CoopColors::TintOf(0x2050FF, 0.6f));
-    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == CoopColors::Rgba{1, 0, 0, 1});
+    CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == CoopColors::TintOf(0x2050FF, 0.6f));
 }
 
-TEST_CASE("colours: a tunic piece whose model is not made yet: the body for now") {
+TEST_CASE("colours: a piece whose model is not made yet: the body for now") {
     Memory m = ActorWithModel();
     WearTunic(m);
     m.Put<std::uint64_t>(kTunicParts + addr::kPartsModel, 0);
     CoopColors::Painted painted;
     const std::string line = CoopColors::Paint(m, kActor, 0x20C040, 0.6f, painted);
     CHECK(line.find("on body") != std::string::npos);
+    CHECK(line.find("0 worn pieces") != std::string::npos);
     CHECK(m.Get<CoopColors::Rgba>(kModel + addr::kModelColor) == CoopColors::TintOf(0x20C040, 0.6f));
+    // The model comes: a new line, now with the piece.
+    m.Put<std::uint64_t>(kTunicParts + addr::kPartsModel, kTunicModel);
+    CHECK(CoopColors::Paint(m, kActor, 0x20C040, 0.6f, painted).find("1 worn piece,") !=
+          std::string::npos);
 }

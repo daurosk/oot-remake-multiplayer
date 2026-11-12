@@ -158,15 +158,15 @@ std::uint64_t ModelOf(CoopPuppet::Guest& guest, std::uint64_t actor) {
     return model;
 }
 
-std::uint64_t TunicOf(CoopPuppet::Guest& guest, std::uint64_t actor) {
-    if (actor == 0) return 0;
+std::uint64_t PieceOf(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint32_t link_index) {
+    if (actor == 0 || link_index >= addr::kArmorLinkCount) return 0;
     std::uint64_t parts = 0;
     std::uint64_t eu = 0;
     if (!ReadValue(guest, actor + addr::kActorParts, parts) || parts == 0 ||
         !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
         return 0;
     }
-    const std::uint64_t link = eu + addr::kArmorLinks + addr::kLinkStride * addr::kTunicLink;
+    const std::uint64_t link = eu + addr::kArmorLinks + addr::kLinkStride * link_index;
     std::uint32_t id = 0xFFFFFFFFu;
     std::uint64_t holder = 0;
     std::uint64_t piece = 0;
@@ -198,29 +198,20 @@ std::string Paint(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint32_t c
         painted = Painted{actor, 0, 0};  // a new actor: nothing painted on it yet
     }
     const Rgba tint = TintOf(color, strength);
-    std::uint64_t target = TunicOf(guest, actor);
-    if (target == 0 || Apply(guest, target, tint) == Applied::no_model) {
-        target = actor;  // no tunic piece (a child), or not made yet
-        if (Apply(guest, actor, tint) == Applied::no_model) return "";
+    if (Apply(guest, actor, tint) == Applied::no_model) return "";
+    std::uint32_t models = 1;
+    for (std::uint32_t link = 0; link < addr::kArmorLinkCount; ++link) {
+        const std::uint64_t piece = PieceOf(guest, actor, link);
+        if (piece != 0 && Apply(guest, piece, tint) != Applied::no_model) ++models;
     }
-    if (target == painted.target && color == painted.color) return "";
-    if (painted.target == actor && target != actor) {
-        Apply(guest, actor, Rgba{0, 0, 0, 0});  // the tunic came: the body back to its own colours
-    }
-    painted.target = target;
+    if (color == painted.color && models == painted.models) return "";
     painted.color = color;
-    char s[16];
-    std::snprintf(s, sizeof(s), "%.2f", strength);
-    char where[48];
-    std::snprintf(where, sizeof(where), "%s 0x%llx", target == actor ? "body" : "tunic",
-                  static_cast<unsigned long long>(target));
-    return "colour " + Text(color) + " (strength " + s + ") on " + where + ", model 0x" +
-           [&] {
-               char m[24];
-               std::snprintf(m, sizeof(m), "%llx",
-                             static_cast<unsigned long long>(ModelOf(guest, target)));
-               return std::string(m);
-           }();
+    painted.models = models;
+    char line[128];
+    std::snprintf(line, sizeof(line), " (strength %.2f) on body 0x%llx and %u worn piece%s, model 0x%llx",
+                  strength, static_cast<unsigned long long>(actor), models - 1,
+                  models == 2 ? "" : "s", static_cast<unsigned long long>(ModelOf(guest, actor)));
+    return "colour " + Text(color) + line;
 }
 
 }  // namespace CoopColors

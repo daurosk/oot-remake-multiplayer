@@ -92,11 +92,11 @@ For `server_allow` and `server_bind`: remove the `#` in front of the line, put i
 
 ## Your colour
 
-Every player's Link wears a tunic in that player's colour in the other games, so you can tell each other apart (protocol 10; a child Link is tinted whole for now). Without a choice you get your player number's colour, as in Zelda's own multiplayer games: 1 green, 2 red, 3 blue, 4 purple.
+Every player's Link is tinted in that player's colour in the other games, child and adult, so you can tell each other apart (protocol 10). Without a choice you get your player number's colour, as in Zelda's own multiplayer games: 1 green, 2 red, 3 blue, 4 purple.
 
 To pick your own, any colour you like: open `coop-options.ini` beside `Host.bat` and `Join.bat`, remove the `#` in front of `# color = green` and put in a colour as `#RRGGBB` (for example `color = #FF8020`; any colour picker shows this code) or one of green, red, blue, purple, yellow, orange, cyan, pink, white, black, brown, gray. Close the game and start `Host.bat` or `Join.bat` again; the others see it as soon as you join. Something the kit does not take as a colour is said in the window, and you keep your number's colour. Two players may pick the same colour; nothing stops it, so agree on yours.
 
-How strongly the colours show is up to each player for what they see: `LICHII_COOP_PUPPET_TINT=0.6` in `coop-options.ini` (remove the `#`), from `0.1` (faint) to `1` (solid); `0` shows everyone in their own tunics.
+How strongly the colours show is up to each player for what they see: `LICHII_COOP_PUPPET_TINT=0.6` in `coop-options.ini` (remove the `#`), from `0.1` (faint) to `1` (solid); `0` shows everyone in their own colours.
 
 ## When you are done
 

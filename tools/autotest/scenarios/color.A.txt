@@ -4,7 +4,8 @@
 # colour (player 2: red).
 # Run: tools\autotest\run.ps1 -Scenario color -Switches LICHII_COOP_PUPPET=1,
 #   LICHII_COOP_DEBUG_PUPPET=1, A:LICHII_COOP_COLOR=orange
-# Expect in both logs: "P<n> colour #...... (strength 0.45) on model 0x..."
+# Expect in both logs: "P<n> colour #...... (strength 0.60) on body 0x.. and
+# <n> worn pieces, model 0x.."
 # (A's log: B's slot colour; B's log: #FF8020). Screens: the other Link tinted.
 stick 1 0 50            # off the cow at the save spot
 wait 240

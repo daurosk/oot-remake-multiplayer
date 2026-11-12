@@ -440,7 +440,7 @@ private:
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
-    // The colour onto the live puppet's tunic, or its body (CoopColors::Paint),
+    // The colour onto the live puppet's body and worn pieces (CoopColors::Paint),
     // every frame it is not there yet (a new actor, or the game wrote its own).
     void Tint(Slot& slot, Guest& guest, std::uint32_t color);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,

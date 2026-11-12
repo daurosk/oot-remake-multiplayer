@@ -282,3 +282,4 @@ TEST_CASE("hookshot: on Linux the window's keys, typed text and mouse reach co-o
     // The key state for F6, F7 and the closing keys.
     CHECK(patch.find("+    api.key_down = bridge_key_down;") != std::string::npos);
 }
+

@@ -974,6 +974,7 @@ TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hi
 
     // Shown again: moves, and plays what it missed.
     held.show = CoopPuppet::Show::show;
+    held.position = {40, 5, 6};
     d.SetInput(Wants({held}));
     held.position = {40, 5, 6};
     auto calls = Frame(d, g, 410);

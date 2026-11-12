@@ -113,8 +113,8 @@ struct ClientConfig {
   std::string host = "127.0.0.1";  // an IP, or a name (see above)
   std::uint16_t port = protocol::kDefaultPort;
   protocol::Hello hello;  // sent as is on every connection
-  // The join password, when the server asks for one (JOIN_CHALLENGE). Empty:
-  // none; a server with a password then refuses with bad_password.
+  // The join password, for the server's JOIN_CHALLENGE (every session has
+  // one). Empty: the server refuses with bad_password.
   std::string join_password;
 
   std::uint32_t ping_interval_ms = 250;
@@ -405,9 +405,9 @@ class Client {
   // Messages dropped: not decodable, unknown type, or refused by
   // check_received, or not expected in the current state.
   std::size_t rejected_count() const { return rejected_; }
-  // This connection's traffic is encrypted (a server with a join password;
-  // docs/protocol.md "Encrypted traffic"). False before the JOIN_CHALLENGE
-  // and on a server without a password, whose traffic stays plain.
+  // This connection's traffic is encrypted (docs/protocol.md "Encrypted
+  // traffic"). False only before the JOIN_CHALLENGE: the client never joins
+  // a server that does not encrypt.
   bool encrypted() const { return cipher_ != nullptr; }
   // Attempts since the last WELCOME.
   std::uint32_t failed_attempts() const { return failed_attempts_; }
@@ -442,8 +442,8 @@ class Client {
   // this connection's keys from it. False when it did not work out.
   bool answer_challenge(const protocol::JoinChallenge& challenge,
                         std::span<const std::uint8_t> packet);
-  // Stops for good: the server did not encrypt although we have a join
-  // password (REFUSED not_encrypted, shown like a server's refusal).
+  // Stops for good: the server did not encrypt (every session must; REFUSED
+  // not_encrypted, shown like a server's refusal).
   void refuse_unencrypted();
   void push(Event event);
   // Checks a room message against players_ and updates it; sets `out` to

@@ -52,6 +52,9 @@ struct Sent {
 // Runs the session and splits what it asked for into decoded sends and
 // disconnects.
 struct Harness {
+  static constexpr const char* kTestPassword = "test-pass";
+  bool auto_answer;      // declared before session: the constructor sets these first
+  std::string password;
   Session session;
   std::vector<Sent> sent;
   std::vector<ConnectionId> dropped;
@@ -71,7 +74,20 @@ struct Harness {
   std::map<ConnectionId, RejoinTokenBytes> tokens;
   std::uint64_t now = 1'000'000;
 
-  explicit Harness(SessionConfig config = {}) : session(std::move(config)) {}
+  // Every session has a join password (there is no plain way in). A config
+  // without one gets kTestPassword, and the harness answers each challenge
+  // with its right proof at once, so the tests that are not about the
+  // password see HELLO -> WELCOME as before (the challenge is kept out of
+  // `sent`). A config with its own password is driven by hand.
+  explicit Harness(SessionConfig config = {})
+      : auto_answer(config.join_password.empty()),
+        password(auto_answer ? std::string(kTestPassword) : config.join_password),
+        session(with_join_password(std::move(config), password)) {}
+
+  static SessionConfig with_join_password(SessionConfig config, const std::string& password) {
+    config.join_password = password;
+    return config;
+  }
 
   void collect() {
     for (Action& a : session.take_actions()) {
@@ -89,6 +105,10 @@ struct Harness {
         }
         if (const auto* challenge = std::get_if<JoinChallenge>(&m)) {
           if (challenge->key_share) server_shares[challenge->nonce] = *challenge->key_share;
+          if (auto_answer) {
+            to_answer.emplace_back(s->to, challenge->nonce);
+            continue;
+          }
         }
         sent.push_back({s->to, s->channel, m});
       } else if (auto* d = std::get_if<DisconnectAction>(&a)) {
@@ -97,7 +117,15 @@ struct Harness {
         encrypted.push_back(std::get<EncryptAction>(a).who);
       }
     }
+    // The game's answer, as a real one sends it right after the challenge.
+    std::vector<std::pair<ConnectionId, JoinNonce>> answer = std::move(to_answer);
+    to_answer.clear();
+    for (const auto& [id, nonce] : answer) {
+      session.received(id, kChannelSession, bytes_of(JoinProof{proof(password, nonce)}), now);
+      collect();
+    }
   }
+  std::vector<std::pair<ConnectionId, JoinNonce>> to_answer;
 
   void connect(ConnectionId id, std::optional<std::uint32_t> address = std::nullopt) {
     REQUIRE(session.connected(id, now, address));
@@ -3806,7 +3834,7 @@ TEST_CASE("encrypted traffic: a wrong proof gets no keys") {
   CHECK(refused->reason == RefuseReason::bad_password);
 }
 
-TEST_CASE("encrypted traffic: with a password, a HELLO without a key share is refused") {
+TEST_CASE("encrypted traffic: a HELLO without a key share is refused before the challenge") {
   Harness h(with_password("hunter2"));
   h.connect(1);
   h.clear();
@@ -3821,20 +3849,43 @@ TEST_CASE("encrypted traffic: with a password, a HELLO without a key share is re
   CHECK(h.session.player_count() == 0);
 }
 
-TEST_CASE("encrypted traffic: without a password the traffic stays plain") {
-  Harness h;
-  h.connect(1);
-  h.clear();
-  h.receive(1, hello_from("Link"), kChannelSession);  // with a key share
-  CHECK(h.encrypted.empty());
-  CHECK(messages_to<Welcome>(h, 1).size() == 1);  // the first player also gets HOST and FLAG_SNAPSHOT
+TEST_CASE("encrypted traffic: a session without a join password lets nobody in") {
+  // coop_server does not start without one; the session refuses as well.
+  Session open{SessionConfig{}};
+  REQUIRE(open.connected(1, 0, std::nullopt));
+  open.take_actions();
+  open.received(1, kChannelSession, bytes_of(hello_from("Link")), 0);
+  bool refused = false;
+  for (const Action& a : open.take_actions()) {
+    CHECK_FALSE(std::holds_alternative<EncryptAction>(a));
+    if (const auto* send = std::get_if<SendAction>(&a)) {
+      Message m;
+      REQUIRE(decode(send->bytes, m) == Error::none);
+      CHECK_FALSE(std::holds_alternative<Welcome>(m));
+      CHECK_FALSE(std::holds_alternative<JoinChallenge>(m));
+      if (const auto* r = std::get_if<Refused>(&m)) refused = r->reason == RefuseReason::bad_password;
+    }
+  }
+  CHECK(refused);
+  CHECK(open.player_count() == 0);
+}
+
+TEST_CASE("encrypted traffic: every join is keyed, and a HELLO without a key share is refused") {
+  Harness h;  // the default test password, answered by the harness
+  h.join(1, "Link");
+  CHECK(h.encrypted == std::vector<ConnectionId>{1});
   Hello plain = hello_from("Zelda");
-  plain.key_share.reset();
+  plain.key_share.reset();  // an older game, or someone took it out on the way
   h.connect(2);
   h.clear();
   h.receive(2, plain, kChannelSession);
-  CHECK(messages_to<Welcome>(h, 2).size() == 1);
-  CHECK(h.encrypted.empty());
+  CHECK(messages_to<Welcome>(h, 2).empty());
+  const auto refused = only_message_to<Refused>(h, 2);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::wrong_protocol_version);
+  CHECK(h.session.stats().no_key_share == 1);
+  CHECK(h.encrypted == std::vector<ConnectionId>{1});
+  CHECK(h.session.player_count() == 1);
 }
 
 TEST_CASE("encrypted traffic: a proof for other key shares (a relay in the middle) is refused") {

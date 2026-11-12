@@ -206,6 +206,9 @@ class FakeServer {
   std::uint16_t port_ = 0;
 };
 
+// The join password config_for gives the client (every session has one).
+constexpr const char* kTestPassword = "test-pass";
+
 ClientConfig config_for(const FakeServer& server) {
   ClientConfig c;
   c.host = "127.0.0.1";
@@ -214,6 +217,7 @@ ClientConfig config_for(const FakeServer& server) {
   c.hello.game_build_id = "e0f3ccfaf50065ae";
   c.hello.game_version = "1.1.1";
   c.hello.nickname = "Link";
+  c.join_password = kTestPassword;  // every session has one
   c.retry_first_ms = 50;
   c.retry_max_ms = 400;
   return c;
@@ -230,6 +234,15 @@ bool pump(Client& client, FakeServer& server, const std::function<bool()>& done,
     if (done()) return true;
   }
   return false;
+}
+
+// What the real server does after HELLO: JOIN_CHALLENGE, then keys from the
+// client's JOIN_PROOF on. Waits until the FakeServer has its keys.
+void key_client(Client& client, FakeServer& server, const std::string& password = kTestPassword) {
+  proto::JoinNonce nonce{};
+  nonce[1] = 3;
+  server.send_challenge(nonce, password);
+  REQUIRE(pump(client, server, [&] { return server.cipher != nullptr; }));
 }
 
 // Collects events as they come, so a test can wait for a kind.
@@ -269,6 +282,7 @@ proto::Welcome welcome_client(Client& client, FakeServer& server,
   REQUIRE(pump(client, server, [&] {
     return server.find<proto::Hello>(from).has_value();
   }));
+  key_client(client, server);
   proto::Welcome w;
   w.player_number = 2;
   w.server_time_us = steady_us() + server_offset_us;
@@ -580,9 +594,11 @@ TEST_CASE("client: a JOIN_CHALLENGE is answered once with the proof of the join 
   CHECK(client.state() == State::refused);
 }
 
-TEST_CASE("client: with no join password a challenge is answered with the empty password's proof") {
+TEST_CASE("client: with no join password typed a challenge is still answered (the server refuses it)") {
   FakeServer server;
-  Client client(config_for(server));
+  ClientConfig config = config_for(server);
+  config.join_password.clear();
+  Client client(config);
   Events events;
   REQUIRE(client.start());
   REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
@@ -1066,6 +1082,7 @@ void welcome_as(Client& client, FakeServer& server, Events& events, std::uint8_t
   REQUIRE(pump(client, server, [&] {
     return server.find<proto::Hello>(from).has_value();
   }));
+  key_client(client, server);
   proto::Welcome w;
   w.player_number = self;
   w.server_time_us = steady_us();
@@ -1662,6 +1679,7 @@ TEST_CASE("client flags: HOST and the snapshot may come before WELCOME") {
   Events events;
   REQUIRE(client.start());
   REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  key_client(client, server);
 
   // Channel 1 overtakes channel 0: HOST and a two-part snapshot first.
   server.send(proto::Host{1}, proto::kChannelProgress);
@@ -2399,10 +2417,9 @@ TEST_CASE("client: a sample longer than a datagram stays unreliable, in unreliab
   REQUIRE(pump(client, server, [&] { return client.rejected_count() >= rejected + 2; }));
 }
 
-TEST_CASE("client: with a join password a plain WELCOME (a server that never asked) is refused") {
+TEST_CASE("client: a plain WELCOME (a server that never asked) is refused") {
   FakeServer server;
   ClientConfig config = config_for(server);
-  config.join_password = "hunter2";
   Client client(config);
   Events events;
   REQUIRE(client.start());
@@ -2419,6 +2436,26 @@ TEST_CASE("client: with a join password a plain WELCOME (a server that never ask
   CHECK_FALSE(events.find(EventKind::welcomed).has_value());
   pump(client, server, [] { return false; }, 200);
   CHECK(server.received.size() == after_hello);  // nothing more went out
+}
+
+TEST_CASE("client: with no join password typed a plain WELCOME is refused too (no plain mode)") {
+  FakeServer server;
+  ClientConfig config = config_for(server);
+  config.join_password.clear();
+  Client client(config);
+  Events events;
+  REQUIRE(client.start());
+  REQUIRE(pump(client, server, [&] { return server.find<proto::Hello>().has_value(); }));
+  // The HELLO offers a key share even then.
+  CHECK(std::get<proto::Hello>(server.received[*server.find<proto::Hello>()].message)
+            .key_share.has_value());
+  server.send(proto::Welcome{1, 5, 20, {}}, proto::kChannelSession);
+  REQUIRE(wait_event(client, server, events, EventKind::refused));
+  CHECK(events.all[*events.find(EventKind::refused)].refuse_reason ==
+        proto::RefuseReason::not_encrypted);
+  events.drain(client);
+  CHECK_FALSE(events.find(EventKind::welcomed).has_value());
+  CHECK_FALSE(client.encrypted());
 }
 
 TEST_CASE("client: once keyed, only a plain REFUSED 6 is believed") {

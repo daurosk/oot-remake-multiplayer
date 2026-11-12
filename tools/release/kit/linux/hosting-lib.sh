@@ -22,8 +22,9 @@ kit_new_password() {
 }
 
 # kit_server_access FILE: the host's lines of coop-options.ini, in KA_* variables.
-# KA_PASSWORD_SET is 0 when no line without a '#' sets server_password (then Host.sh makes
-# one each time); KA_PASSWORD '' with KA_PASSWORD_SET=1 means "no password".
+# KA_PASSWORD_SET is 0 when no line without a '#' sets server_password, or the line is empty
+# (then Host.sh makes one each time: every session has a join password, which also encrypts
+# the traffic).
 kit_server_access() {
     KA_ALLOW='' KA_BIND='' KA_PASSWORD='' KA_PASSWORD_SET=0 KA_UPNP=1 KA_INVITE=1 KA_STUN=''
     KA_RELAY='' KA_RELAY_KEY='' KA_PVP=0 KA_LOOKUP=1
@@ -37,7 +38,7 @@ kit_server_access() {
         case $key in
             server_allow) KA_ALLOW=$value ;;
             server_bind) KA_BIND=$value ;;
-            server_password) KA_PASSWORD=$value KA_PASSWORD_SET=1 ;;
+            server_password) if [[ -n $value ]]; then KA_PASSWORD=$value KA_PASSWORD_SET=1; fi ;;
             upnp) [[ $value =~ ^(no|off|false|0)$ ]] && KA_UPNP=0 || KA_UPNP=1 ;;
             invite) [[ $value =~ ^(no|off|false|0)$ ]] && KA_INVITE=0 || KA_INVITE=1 ;;
             stun_servers) KA_STUN=$value ;;
@@ -58,8 +59,7 @@ kit_hosting_args() {
     if ((KA_UPNP)); then
         if [[ -z $password ]]; then
             HOSTING_NOTES+=('The router forward (UPnP) is NOT used: it opens your PC to the whole internet while the server'
-                'runs, so it needs a join password. coop-options.ini has an empty server_password line: delete it'
-                '(Host.sh then makes a password each time) or set one.')
+                'runs, so it needs the join password, and none was given (Host.sh always makes one).')
         else
             HOSTING_ARGS+=(--upnp)
             HOSTING_NOTES+=("UPnP: asking your router to forward the game's port while the server runs. The server's lines"
@@ -68,8 +68,7 @@ kit_hosting_args() {
     fi
     if ((KA_INVITE)); then
         if [[ -z $password ]]; then
-            HOSTING_NOTES+=('No invite code: it carries the join password, and coop-options.ini says none (an empty'
-                'server_password line). Delete that line to get one.')
+            HOSTING_NOTES+=('No invite code: it carries the join password, and none was given (Host.sh always makes one).')
         else
             HOSTING_ARGS+=(--invite)
             local IFS=,
@@ -90,7 +89,7 @@ kit_hosting_args() {
             HOSTING_NOTES+=("relay = '$KA_RELAY' is not a relay address (a name or IPv4 address, optional :port); not used.")
         elif [[ -z $password ]]; then
             HOSTING_NOTES+=('relay = ... is NOT used: the join code only finds your server, the join password keeps'
-                'strangers out, so set server_password in coop-options.ini as well (server_allow is not enough).')
+                'strangers out, and none was given (Host.sh always makes one; server_allow is not enough).')
         else
             HOSTING_ARGS+=(--relay-via "$KA_RELAY")
             [[ -n $KA_RELAY_KEY ]] && HOSTING_ARGS+=(--relay-key-env OOT_COOP_RELAY_KEY)

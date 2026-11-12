@@ -17,6 +17,8 @@
 #include <enet/enet.h>
 
 #include "coop/protocol/codec.hpp"
+#include "coop/protocol/join_password.hpp"
+#include "coop/protocol/traffic_crypto.hpp"
 #include "enet_server.hpp"
 
 using namespace coop::protocol;
@@ -29,12 +31,38 @@ struct Received {
   Message message;
 };
 
+// Every session has a join password and encrypted traffic (docs/protocol.md
+// "Encrypted traffic"): each test server gets this one.
+constexpr const char* kTestPassword = "test-pass";
+
+ServerOptions server_options() {
+  ServerOptions options;
+  options.port = 0;  // any free port
+  options.session.join_password = kTestPassword;
+  return options;
+}
+
+// A game in raw ENet that does what the real one does: offers a key share in
+// HELLO, answers the JOIN_CHALLENGE with the proof of `password`, and seals
+// and opens everything after it.
 struct Client {
   ENetHost* host = nullptr;
   ENetPeer* peer = nullptr;
   bool connected = false;
   bool disconnected = false;
   std::vector<Received> inbox;
+  std::string password = kTestPassword;
+  std::optional<KeyPair> keys;
+  std::vector<std::uint8_t> hello_bytes;
+  std::unique_ptr<TrafficCipher> cipher;
+
+  // The bytes for the wire: sealed once keyed.
+  std::vector<std::uint8_t> wire(std::uint8_t channel, std::vector<std::uint8_t> plain) {
+    if (cipher == nullptr) return plain;
+    auto sealed = cipher->seal(channel, plain);
+    REQUIRE(sealed.has_value());
+    return *sealed;
+  }
 
   Client() { host = enet_host_create(nullptr, 1, kChannelCount, 0, 0); }
   ~Client() {
@@ -49,8 +77,19 @@ struct Client {
   }
 
   void send(const Message& m, std::uint8_t channel) {
-    auto bytes = encode(m);
+    std::optional<std::vector<std::uint8_t>> bytes;
+    if (const auto* hello = std::get_if<Hello>(&m)) {
+      Hello offered = *hello;
+      keys.emplace(KeyPair::generate());
+      offered.key_share = keys->share();
+      bytes = encode(Message{offered});
+      REQUIRE(bytes.has_value());
+      hello_bytes = *bytes;
+    } else {
+      bytes = encode(m);
+    }
     REQUIRE(bytes.has_value());
+    bytes = wire(channel, std::move(*bytes));
     enet_uint32 flags = channel <= kChannelOwnership ? static_cast<enet_uint32>(ENET_PACKET_FLAG_RELIABLE) : 0u;
     ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(), flags);
     REQUIRE(enet_peer_send(peer, channel, p) == 0);
@@ -64,6 +103,32 @@ struct Client {
       if (ev.type == ENET_EVENT_TYPE_RECEIVE) {
         Message m;
         std::span<const std::uint8_t> b(ev.packet->data, ev.packet->dataLength);
+        std::vector<std::uint8_t> plain;
+        if (cipher != nullptr) {
+          if (cipher->open(ev.channelID, b, plain) == OpenError::none) {
+            b = plain;
+          } else if (decode(b, m) != Error::none || !std::holds_alternative<Refused>(m)) {
+            enet_packet_destroy(ev.packet);  // only a wrong password's REFUSED comes plain
+            continue;
+          }
+        }
+        if (decode(b, m) == Error::none && cipher == nullptr && keys) {
+          if (const auto* challenge = std::get_if<JoinChallenge>(&m)) {
+            REQUIRE(challenge->key_share.has_value());
+            auto derived = derive_traffic_keys(*keys, *challenge->key_share, password, hello_bytes,
+                                               b, /*is_server=*/false);
+            REQUIRE(derived.has_value());
+            const auto proof = encode(Message{JoinProof{
+                join_proof(password, challenge->nonce, keys->share(), *challenge->key_share)}});
+            REQUIRE(proof.has_value());
+            ENetPacket* p = enet_packet_create(proof->data(), proof->size(), ENET_PACKET_FLAG_RELIABLE);
+            REQUIRE(enet_peer_send(peer, kChannelSession, p) == 0);
+            cipher = std::make_unique<TrafficCipher>(*derived);
+            keys.reset();
+            enet_packet_destroy(ev.packet);
+            continue;
+          }
+        }
         if (decode(b, m) == Error::none &&
             check_received(m, Sender::server, ev.channelID) == Error::none) {
           inbox.push_back({ev.channelID, m});
@@ -112,8 +177,7 @@ struct EnetLife {
 
 TEST_CASE("loopback: two clients join, relay, ping and leave over real ENet") {
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;  // any free port
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
   std::uint16_t port = server.port();
@@ -196,8 +260,7 @@ TEST_CASE("loopback: two clients join, relay, ping and leave over real ENet") {
 
 TEST_CASE("loopback: a wrong protocol version gets REFUSED and is disconnected") {
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -216,8 +279,7 @@ TEST_CASE("loopback: a wrong protocol version gets REFUSED and is disconnected")
 
 TEST_CASE("loopback: a packet longer than any message is thrown away by ENet unread") {
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -253,8 +315,7 @@ TEST_CASE("loopback: a packet longer than any message is thrown away by ENet unr
 
 TEST_CASE("loopback: a fifth half-open connection from one address is cut at once") {
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -293,8 +354,7 @@ TEST_CASE("loopback: a fifth half-open connection from one address is cut at onc
 
 TEST_CASE("loopback: three clients share a flag through the host and join a partner") {
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -389,8 +449,7 @@ TEST_CASE("loopback: three clients share a flag through the host and join a part
 // passes this only because cmake/enet.cmake turns off that one check.
 TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size parts") {
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -449,8 +508,7 @@ TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size p
 
 TEST_CASE("loopback: a dropped client showing its rejoin token is back in within 2 s") {
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -518,8 +576,7 @@ TEST_CASE("loopback: an older game with ENet's default datagrams gets VPN-safe o
   // Issue 143: the server alone sets the datagram size, so a game built before
   // the fix still gets packets that fit a VPN (Hamachi about 1404 bytes).
   EnetLife enet;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -636,6 +693,7 @@ PlayerPose link_pose(std::uint32_t sequence) {
 void send_fast(Client& c, const Message& m) {
   auto bytes = encode(m);
   REQUIRE(bytes.has_value());
+  bytes = c.wire(channel_of(m), std::move(*bytes));
   ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(),
                                      static_cast<enet_uint32>(ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT));
   REQUIRE(enet_peer_send(c.peer, channel_of(m), p) == 0);
@@ -646,8 +704,7 @@ void send_fast(Client& c, const Message& m) {
 TEST_CASE("loopback: a guest's lost pose fragments do not fill the server's 1 MB waiting count (issue 175)") {
   EnetLife enet;
   std::vector<std::string> lines;
-  ServerOptions options;
-  options.port = 0;
+  ServerOptions options = server_options();
   options.session.log = [&](const std::string& line) { lines.push_back(line); };
   EnetServer server(options);
   REQUIRE(server.start());

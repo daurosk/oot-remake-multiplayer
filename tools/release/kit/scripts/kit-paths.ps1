@@ -232,8 +232,8 @@ function Read-KitOptions([string]$Path) {
 
 # coop-options.ini's server_allow and server_bind (the host's server only; start-server.ps1
 # checks them): an ordered table with Allow and Bind, '' when not set. Password is the join
-# password (server_password): $null when no line without a '#' sets it (Host.bat then asks
-# once), '' when the host chose none. Upnp (on unless upnp = no), Invite (on unless invite =
+# password (server_password): $null when no line without a '#' sets it, or the line is empty
+# (every session has a password: Host.bat then makes a new random one). Upnp (on unless upnp = no), Invite (on unless invite =
 # no), Stun (stun_servers), Relay (relay = address[:port]) and RelayKey (relay_key) are the
 # router forward, the invite code and the relay (docs/play-online.md). Pvp: $true
 # only for 'pvp = on' (or yes, 1, true); anything else, or no line, is off.
@@ -243,7 +243,7 @@ function Read-KitServerAccess([string]$Path) {
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         if ($line -match '^\s*server_allow\s*=\s*(.*?)\s*$') { $access.Allow = $Matches[1] }
         elseif ($line -match '^\s*server_bind\s*=\s*(.*?)\s*$') { $access.Bind = $Matches[1] }
-        elseif ($line -match '^\s*server_password\s*=\s*(.*?)\s*$') { $access.Password = $Matches[1] }
+        elseif ($line -match '^\s*server_password\s*=\s*(.*?)\s*$') { if ($Matches[1]) { $access.Password = $Matches[1] } }
         elseif ($line -match '^\s*upnp\s*=\s*(.*?)\s*$') { $access.Upnp = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*invite\s*=\s*(.*?)\s*$') { $access.Invite = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*stun_servers\s*=\s*(.*?)\s*$') { $access.Stun = $Matches[1] }
@@ -254,7 +254,8 @@ function Read-KitServerAccess([string]$Path) {
     return $access
 }
 
-# Saves the join password in coop-options.ini as 'server_password = ...' ('' for none): over
+# Saves the join password in coop-options.ini as 'server_password = ...' ('' to go back to a
+# new random one each session): over
 # the first server_password line (with or without a '#'), else at the end of the file.
 function Set-KitServerPassword([string]$Path, [string]$Password) {
     $lines = @()

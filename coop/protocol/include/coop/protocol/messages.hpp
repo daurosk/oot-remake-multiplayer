@@ -122,6 +122,11 @@ enum class SampleComponent : std::uint16_t {
   // cinematic part (Dm_...). Absent when none. Scene sync: a game near this
   // player in the same scene starts the same event, so both watch it at once.
   cutscene = 8,
+  // The last ocarina note this player played itself (issue 152): the note,
+  // an index into the game's 19 note sounds (Ocarina_LowB ... Ocarina_HighF,
+  // in the order the ocarina sound object keeps them), and a count that steps
+  // with every new note, so a receiver plays each note once.
+  ocarina = 9,
 };
 
 // PLAYER_EQUIP component ids. 1 to 8 are the game's equipped actor names
@@ -289,6 +294,13 @@ struct Animation {
 
 // PLAYER_SAMPLE. The time component is always sent; the others only when the
 // sender has them. Floats must be finite.
+inline constexpr std::uint8_t kOcarinaNotes = 19;
+struct OcarinaNote {
+  std::uint8_t note = 0;   // 0 to kOcarinaNotes - 1
+  std::uint8_t count = 0;  // steps with every note played, wraps
+  bool operator==(const OcarinaNote&) const = default;
+};
+
 struct PlayerSample {
   std::uint8_t player_number = kPlayerSelf;  // 0 from a client, 1 to 4 relayed
   SampleTime time;
@@ -299,6 +311,7 @@ struct PlayerSample {
   std::optional<Age> age;
   std::optional<Animation> animation;
   std::optional<std::string> cutscene;  // SampleComponent::cutscene
+  std::optional<OcarinaNote> ocarina;   // SampleComponent::ocarina
   bool operator==(const PlayerSample&) const = default;
 };
 

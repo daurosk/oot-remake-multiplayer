@@ -347,6 +347,12 @@ Error encode_body(const PlayerSample& m, Writer& w) {
     });
   }
   if (m.cutscene) component(SampleComponent::cutscene, [&] { w.str(*m.cutscene); });
+  if (m.ocarina) {
+    component(SampleComponent::ocarina, [&] {
+      w.u8(m.ocarina->note);
+      w.u8(m.ocarina->count);
+    });
+  }
   return Error::none;
 }
 
@@ -927,6 +933,13 @@ Error decode_component(SampleComponent id, Reader& c, PlayerSample& m, bool& kno
     }
     case SampleComponent::cutscene:
       return c.str(m.cutscene.emplace(), kMaxCutsceneChars);
+    case SampleComponent::ocarina: {
+      auto& o = m.ocarina.emplace();
+      COOP_READ(c.u8(o.note));
+      COOP_READ(c.u8(o.count));
+      if (o.note >= kOcarinaNotes) return Error::bad_value;
+      return Error::none;
+    }
   }
   known = false;
   return Error::none;

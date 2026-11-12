@@ -134,6 +134,7 @@ SampleResult Player::add(const protocol::PlayerSample& in) {
     cutscene_ = in.cutscene;
     if (in.position) cutscene_place_ = in.position;
     cutscene_sequence_ = t.sequence;
+    ocarina_ = in.ocarina;
   }
 
   if (!in.position) return SampleResult::state_only;

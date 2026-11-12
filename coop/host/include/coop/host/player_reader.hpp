@@ -35,6 +35,9 @@ struct PlayerReading {
   // The running event's flow name while its current part is a cinematic
   // (Dm_...); nothing otherwise (talks, signs, item gets).
   std::optional<std::string> cutscene;
+  // The game's last ocarina note (0 to 18), read only while our Link plays
+  // the ocarina (an AS command with "Ocarina" in it) and no cutscene runs.
+  std::optional<std::uint8_t> ocarina_note;
   std::optional<protocol::Animation> animation;  // AS command in the main slot
   std::optional<protocol::Equipment> equipment;  // what the player wears
   bool operator==(const PlayerReading&) const = default;
@@ -74,6 +77,7 @@ class PlayerReader {
   std::optional<std::string> read_scene();
   std::optional<bool> read_event_running();
   std::optional<std::string> read_cutscene();
+  std::optional<std::uint8_t> read_ocarina_note();
   // The AS command playing in the player's main slot, its frame and rate.
   // Nothing when no command plays, or the name is not 1 to
   // protocol::kMaxAnimationChars printable ASCII characters, or the frame or

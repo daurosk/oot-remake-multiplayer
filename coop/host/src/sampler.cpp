@@ -79,6 +79,7 @@ bool Sampler::should_send(const PlayerReading& reading, std::uint64_t now) const
   if (reading.scene != last_sent_->scene) return true;
   if (reading.age != last_sent_->age) return true;
   if (reading.cutscene != last_sent_->cutscene) return true;  // at once: scene sync
+  if (ocarina_ != last_sent_->ocarina) return true;           // at once: a note
   // Anything else waits for the gap: the change is still there next frame,
   // as it is compared with the last sample sent, not the last frame.
   if (now - last < settings_.min_gap_us) return false;
@@ -122,6 +123,16 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
     }
   }
 
+  // A new note: the game's last note changed while we play, or we started.
+  if (reading->ocarina_note) {
+    if (!ocarina_ || ocarina_->note != *reading->ocarina_note) {
+      if (ocarina_ || (previous_ && previous_->ocarina_note)) ++ocarina_count_;
+      ocarina_ = protocol::OcarinaNote{*reading->ocarina_note, ocarina_count_};
+    }
+  } else {
+    ocarina_.reset();
+  }
+
   if (should_send(*reading, server_now_us)) {
     protocol::PlayerSample sample;
     sample.player_number = protocol::kPlayerSelf;
@@ -133,6 +144,7 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
     sample.age = reading->age;
     sample.animation = reading->animation;
     sample.cutscene = reading->cutscene;
+    sample.ocarina = ocarina_;
     ++sequence_;
     push(out, sample);
     last_sent_ = std::move(sample);

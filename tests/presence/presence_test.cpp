@@ -582,3 +582,15 @@ TEST_CASE("presence: the newest sample says which cutscene a player plays, and w
   p.on_sample(next);
   CHECK_FALSE(p.player(2)->cutscene().has_value());
 }
+
+TEST_CASE("presence: the newest sample says which ocarina note a player played (issue 152)") {
+  Presence p = two_players();
+  proto::PlayerSample s = sample(2, 1000 * kMs, 1, {1.0f, 2.0f, 3.0f});
+  s.ocarina = proto::OcarinaNote{16, 3};
+  p.on_sample(s);
+  REQUIRE(p.player(2)->ocarina().has_value());
+  CHECK(p.player(2)->ocarina()->note == 16);
+  proto::PlayerSample next = sample(2, 1010 * kMs, 2, {1.0f, 2.0f, 3.0f});
+  p.on_sample(next);
+  CHECK_FALSE(p.player(2)->ocarina().has_value());
+}

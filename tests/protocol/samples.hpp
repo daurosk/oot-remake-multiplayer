@@ -19,6 +19,7 @@ inline PlayerSample full_sample() {
   s.age = Age::adult;
   s.animation = Animation{"link_run", 12.5f, 1.0f};
   s.cutscene = "InsideTheDekuTree_BossAppear";
+  s.ocarina = OcarinaNote{13, 7};
   return s;
 }
 

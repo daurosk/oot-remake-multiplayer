@@ -113,6 +113,9 @@ class Player {
   // sequence, like the scene.
   const std::optional<std::string>& cutscene() const { return cutscene_; }
   const std::optional<Vec3>& cutscene_place() const { return cutscene_place_; }
+  // The ocarina note the newest sample carries (issue 152); nothing when the
+  // player is not playing.
+  const std::optional<protocol::OcarinaNote>& ocarina() const { return ocarina_; }
   // False while the player's scene is not known.
   bool same_scene(std::string_view local_scene) const;
 
@@ -138,6 +141,7 @@ class Player {
   std::optional<std::string> cutscene_;
   std::optional<Vec3> cutscene_place_;
   std::optional<std::uint32_t> cutscene_sequence_;
+  std::optional<protocol::OcarinaNote> ocarina_;
   std::deque<Sample> samples_;
   std::optional<std::uint64_t> last_shown_us_;
 };

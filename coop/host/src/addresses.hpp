@@ -189,4 +189,22 @@ inline constexpr std::uint64_t kSessionCurrent = 0xf18;
 inline constexpr std::uint64_t kEventName = 0x8;
 inline constexpr std::uint32_t kMaxSessionEvents = 64;
 
+// The ocarina sound object (issue 152), as main 0x68ac40 finds it:
+// [[main + kOcarinaRootPtr]] -> + 0x1f0 a table (u32 count at + 0x50, more
+// than 0x20; entries at [+ 0x58]) -> entry 32 (+ 0x100). Its vtable is
+// main + 0x4ba1978 (constructor main 0xe7c570 puts the 19 note sound names at
+// + 0x40). The last note played is an int at + 0x23c, an index into those
+// names; the melody kind at + 0x220 (13: none). The node at main 0x2a1b380
+// copies them into Link's AS variables. Seen in a run (oot-nx2-coop
+// tools/ocprobe.py, 2026-11-11): A 11, Down 4, Right 7, Left 13, Up 16, the
+// same each time; Zelda's Lullaby 13 16 7 13 16 7.
+inline constexpr std::uint64_t kOcarinaRootPtr = 0x4c7e178;
+inline constexpr std::uint64_t kOcarinaTable = 0x1f0;
+inline constexpr std::uint64_t kOcarinaTableCount = 0x50;
+inline constexpr std::uint64_t kOcarinaTableArray = 0x58;
+inline constexpr std::uint64_t kOcarinaEntry = 0x100;
+inline constexpr std::uint32_t kOcarinaMinCount = 0x21;
+inline constexpr std::uint64_t kOcarinaSoundVtable = 0x4ba1978;
+inline constexpr std::uint64_t kOcarinaLastNote = 0x23c;
+
 }  // namespace coop::host::addr

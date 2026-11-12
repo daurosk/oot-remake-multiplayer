@@ -170,6 +170,27 @@ void apply_tunic_choice(PlayerReading& reading, const std::optional<std::string>
   reading.equipment->armor = *tunic;
 }
 
+std::optional<std::uint8_t> PlayerReader::read_ocarina_note() {
+  const auto root = read_ptr(memory_, memory_.main_base() + addr::kOcarinaRootPtr);
+  if (!root) return std::nullopt;
+  const auto scene = read_ptr(memory_, *root);
+  if (!scene) return std::nullopt;
+  const auto table = read_ptr(memory_, *scene + addr::kOcarinaTable);
+  if (!table) return std::nullopt;
+  const auto count = read_u32(memory_, *table + addr::kOcarinaTableCount);
+  if (!count || *count < addr::kOcarinaMinCount) return std::nullopt;
+  const auto entries = read_ptr(memory_, *table + addr::kOcarinaTableArray);
+  if (!entries) return std::nullopt;
+  const auto sound = read_ptr(memory_, *entries + addr::kOcarinaEntry);
+  if (!sound) return std::nullopt;
+  // The entry is the sound object itself (its own vtable), as seen in a run.
+  const auto vtable = read_u64(memory_, *sound);
+  if (!vtable || *vtable != memory_.main_base() + addr::kOcarinaSoundVtable) return std::nullopt;
+  const auto note = read_u32(memory_, *sound + addr::kOcarinaLastNote);
+  if (!note || *note >= protocol::kOcarinaNotes) return std::nullopt;
+  return static_cast<std::uint8_t>(*note);
+}
+
 std::optional<std::string> PlayerReader::read_cutscene() {
   const auto events = read_ptr(memory_, memory_.main_base() + addr::kEventManagerPtr);
   if (!events) return std::nullopt;
@@ -365,6 +386,10 @@ std::optional<PlayerReading> PlayerReader::read() {
   reading.event_running = read_event_running();
   if (reading.event_running.value_or(false)) reading.cutscene = read_cutscene();
   reading.animation = read_animation();
+  if (!reading.cutscene && reading.animation &&
+      reading.animation->name.find("Ocarina") != std::string::npos) {
+    reading.ocarina_note = read_ocarina_note();
+  }
   reading.equipment = read_equipment();
   return reading;
 }

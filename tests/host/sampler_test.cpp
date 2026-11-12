@@ -387,3 +387,28 @@ TEST_CASE("host sampler: a cutscene goes out at once, in every sample while it p
   REQUIRE(d.samples.size() == 1);
   CHECK_FALSE(d.samples[0].cutscene.has_value());
 }
+
+TEST_CASE("host sampler: each new ocarina note goes out at once with a new count (issue 152)") {
+  Sampler sampler;
+  PlayerReading r = at(1.0f, false);
+  decode(sampler.frame(r, kStart));
+  r.ocarina_note = 11;  // A
+  auto d = decode(sampler.frame(r, kStart + kFrameUs));
+  REQUIRE(d.samples.size() == 1);
+  REQUIRE(d.samples[0].ocarina.has_value());
+  CHECK(d.samples[0].ocarina->note == 11);
+  const auto first = d.samples[0].ocarina->count;
+  // The same note held: nothing new.
+  d = decode(sampler.frame(r, kStart + 2 * kFrameUs));
+  CHECK(d.samples.empty());
+  r.ocarina_note = 4;  // Down
+  d = decode(sampler.frame(r, kStart + 3 * kFrameUs));
+  REQUIRE(d.samples.size() == 1);
+  CHECK(d.samples[0].ocarina->note == 4);
+  CHECK(d.samples[0].ocarina->count == static_cast<std::uint8_t>(first + 1));
+  // Put away: the next sample carries no note.
+  r.ocarina_note.reset();
+  d = decode(sampler.frame(r, kStart + 4 * kFrameUs));
+  REQUIRE(d.samples.size() == 1);
+  CHECK_FALSE(d.samples[0].ocarina.has_value());
+}

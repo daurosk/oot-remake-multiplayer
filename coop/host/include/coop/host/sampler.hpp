@@ -74,6 +74,10 @@ class Sampler {
   std::uint64_t previous_time_us_ = 0;
   std::optional<protocol::PlayerSample> last_sent_;
   std::optional<protocol::Equipment> equipment_sent_;
+  // The ocarina note being sent (issue 152): its count steps when the game's
+  // last note changes while we play; nothing once we stop playing.
+  std::optional<protocol::OcarinaNote> ocarina_;
+  std::uint8_t ocarina_count_ = 0;
 };
 
 }  // namespace coop::host

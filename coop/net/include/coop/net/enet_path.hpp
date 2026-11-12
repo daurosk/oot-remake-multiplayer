@@ -24,7 +24,7 @@
 //
 // Plain loss or an outage (Wi-Fi) also leaves commands unacknowledged after
 // several sends, but: a small one (PINGs, single flags) does not count at
-// all; once one big command got through on a connection (the join snapshot
+// all; once one full-size command got through on a connection (the join snapshot
 // does at once on a line that carries full datagrams) nothing counts for
 // the rest of it; and before that a big one must also stay stuck through
 // one more send after the line is back. A false switch needs a line that
@@ -69,12 +69,27 @@ inline constexpr std::uint32_t kDisconnectSmallDatagrams = 0x534D4C4Cu;  // "SML
 // True when a datagram of `command` alone (ENet header, its command header
 // and its data) is larger than kSmallDatagramBytes: resending it at a small
 // MTU could not help, and only such a command shows the path is too small.
-inline bool too_big_for_small(const ENetOutgoingCommand& command) {
+inline std::size_t datagram_bytes(const ENetOutgoingCommand& command) {
   const bool fragment = (command.command.header.command & ENET_PROTOCOL_COMMAND_MASK) ==
                         ENET_PROTOCOL_COMMAND_SEND_FRAGMENT;
-  const std::size_t header = sizeof(ENetProtocolHeader) +
-                             (fragment ? sizeof(ENetProtocolSendFragment) : sizeof(ENetProtocolSendReliable));
-  return header + command.fragmentLength > kSmallDatagramBytes;
+  return sizeof(ENetProtocolHeader) +
+         (fragment ? sizeof(ENetProtocolSendFragment) : sizeof(ENetProtocolSendReliable)) +
+         command.fragmentLength;
+}
+inline bool too_big_for_small(const ENetOutgoingCommand& command) {
+  return datagram_bytes(command) > kSmallDatagramBytes;
+}
+
+// Within this of the peer's datagram size a command counts as full size (a
+// full fragment is exactly it; ENet may add a few bytes of header).
+inline constexpr std::size_t kFullSizeSlack = 32;
+
+// True when a datagram of `command` alone is about as large as `peer`'s
+// datagrams: one of these acknowledged proves the path carries full ones.
+// A smaller one (the last piece of a message, a 600-900 byte message) does
+// not: a 900-byte path carries those and still loses every full piece.
+inline bool full_size(const ENetOutgoingCommand& command, const ENetPeer& peer) {
+  return datagram_bytes(command) + kFullSizeSlack >= peer.mtu;
 }
 
 // A reliable command too big for a small datagram, still waiting for its ACK
@@ -123,15 +138,16 @@ inline bool still_waiting(const ENetPeer& peer, const StuckCommand& mark) {
   return waiting;
 }
 
-// Updates mark.big_acked: true once a big command sent on this connection
-// left ENet's lists (acknowledged) while the peer stayed connected.
+// Updates mark.big_acked: true once a full-size command sent on this
+// connection left ENet's lists (acknowledged) while the peer stayed connected.
 inline void note_big_acks(PathMark& mark, const ENetPeer& peer) {
+  if (mark.big_acked) return;
   std::vector<std::uint32_t> now;
   auto scan = [&](const ENetList& list) {
     for (const ENetListNode* node = list.sentinel.next; node != &list.sentinel; node = node->next) {
       const auto* command = reinterpret_cast<const ENetOutgoingCommand*>(node);
       if ((command->command.header.command & ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE) != 0 &&
-          command->sendAttempts > 0 && too_big_for_small(*command)) {
+          command->sendAttempts > 0 && full_size(*command, peer)) {
         now.push_back(std::uint32_t{command->command.header.channelID} << 16 |
                       command->reliableSequenceNumber);
       }
@@ -140,9 +156,7 @@ inline void note_big_acks(PathMark& mark, const ENetPeer& peer) {
   scan(peer.sentReliableCommands);
   scan(peer.outgoingCommands);
   std::sort(now.begin(), now.end());
-  if (!mark.big_acked) {
-    mark.big_acked = !std::includes(now.begin(), now.end(), mark.big_waiting.begin(), mark.big_waiting.end());
-  }
+  mark.big_acked = !std::includes(now.begin(), now.end(), mark.big_waiting.begin(), mark.big_waiting.end());
   mark.big_waiting = mark.big_acked ? std::vector<std::uint32_t>{} : std::move(now);
 }
 
@@ -151,7 +165,7 @@ inline void note_big_acks(PathMark& mark, const ENetPeer& peer) {
 //
 // Plain loss or an outage (Wi-Fi) can also lose every send of a big command
 // and then let later packets through. Two things keep that from counting:
-// - once any big command was acknowledged on this connection, the path
+// - once a full-size command was acknowledged on this connection, the path
 //   carries full datagrams, and nothing counts any more (a small path never
 //   gets one through);
 // - a stuck command is only marked first, and counts once the SAME command

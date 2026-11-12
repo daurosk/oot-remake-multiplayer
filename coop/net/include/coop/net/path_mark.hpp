@@ -20,10 +20,10 @@ struct StuckCommand {
 struct PathMark {
   // The big command marked as stuck, if any.
   std::optional<StuckCommand> marked;
-  // A big command (one that cannot fit a small datagram) was acknowledged
+  // A full-size command (about the peer's datagram size) was acknowledged
   // on this connection: the path carries full datagrams.
   bool big_acked = false;
-  // The big commands sent and waiting for their ACK at the last check, as
+  // The full-size commands sent and waiting for their ACK at the last check, as
   // channel << 16 | sequence, sorted. One gone from the list was acknowledged.
   std::vector<std::uint32_t> big_waiting;
 };

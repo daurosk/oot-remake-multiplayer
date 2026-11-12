@@ -164,7 +164,7 @@ int ms_since(Clock::time_point t) {
 
 }  // namespace
 
-TEST_CASE("small path: games behind 1200- and 576-byte paths stay connected for 2 minutes (issue 143)") {
+TEST_CASE("small path: games behind 1200-, 576- and 900-byte paths stay connected for 2 minutes (issue 143)") {
   EnetLife enet;
   coop::server::ServerOptions options;
   options.port = 0;
@@ -178,6 +178,9 @@ TEST_CASE("small path: games behind 1200- and 576-byte paths stay connected for 
   std::vector<std::unique_ptr<Joiner>> joiners;
   joiners.push_back(std::make_unique<Joiner>(server.port(), 1200, "Zelda"));
   joiners.push_back(std::make_unique<Joiner>(server.port(), 576, "Saria"));
+  // And 900: the last, shorter pieces of messages get through, the full
+  // 1100-byte ones do not; it must switch once all the same.
+  joiners.push_back(std::make_unique<Joiner>(server.port(), 900, "Ruto"));
 
   auto round = [&] {
     server.service(1);
@@ -220,6 +223,7 @@ TEST_CASE("small path: games behind 1200- and 576-byte paths stay connected for 
   REQUIRE(joiners[0]->client.start());
   REQUIRE(run_until(5000, [&] { return joiners[0]->client.synced(); }));
   REQUIRE(joiners[1]->client.start());
+  REQUIRE(joiners[2]->client.start());
   REQUIRE(run_until(15000, [&] {
     return std::all_of(joiners.begin(), joiners.end(), [](const auto& j) {
       return j->client.state() == State::connected && j->client.synced();
@@ -234,11 +238,15 @@ TEST_CASE("small path: games behind 1200- and 576-byte paths stay connected for 
   CHECK(joiners[0]->small_path_drops == 0);
   CHECK(joiners[0]->client.link().mtu == proto::kDatagramBytes);
   CHECK(joiners[0]->path.dropped == 0);
-  CHECK(joiners[1]->small_path_drops == 1);
-  CHECK(joiners[1]->client.small_datagrams());
-  CHECK(joiners[1]->client.link().mtu == coop::net::kSmallDatagramBytes);
+  std::vector<int> dropped_small;
+  for (std::size_t i = 1; i < joiners.size(); ++i) {
+    CAPTURE(i);
+    CHECK(joiners[i]->small_path_drops == 1);
+    CHECK(joiners[i]->client.small_datagrams());
+    CHECK(joiners[i]->client.link().mtu == coop::net::kSmallDatagramBytes);
+    dropped_small.push_back(joiners[i]->path.dropped);
+  }
   CHECK(server.small_path_drops() >= 1);
-  const int dropped_576 = joiners[1]->path.dropped;
 
   // Two minutes of play: the host changes 400 flags every half second, each
   // joiner asks for 300 every 0.7 s (both several datagrams long).
@@ -272,8 +280,11 @@ TEST_CASE("small path: games behind 1200- and 576-byte paths stay connected for 
   }
   CHECK(joiners[0]->small_path_drops == 0);
   CHECK(joiners[0]->path.dropped == 0);
-  CHECK(joiners[1]->small_path_drops == 1);
-  CHECK(joiners[1]->path.dropped == dropped_576);  // nothing lost after the switch
+  for (std::size_t i = 1; i < joiners.size(); ++i) {
+    CAPTURE(i);
+    CHECK(joiners[i]->small_path_drops == 1);
+    CHECK(joiners[i]->path.dropped == dropped_small[i - 1]);  // nothing lost after the switch
+  }
   CHECK(host.state() == State::connected);
 }
 

@@ -2155,7 +2155,24 @@ private:
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
             CoopGuard::Skip(wish, local, where, [](const Mover::Pose& p) { return p.actor; });
+            std::vector<u64> wanted_plays;
+            wanted_plays.reserve(plays.size());
+            for (const PlayWish& p : plays) {
+                wanted_plays.push_back(p.address);
+            }
             CoopGuard::Skip(plays, local, where, [](const PlayWish& p) { return p.address; });
+            if (wanted_plays.size() != plays.size()) {
+                // A chest's open idle held back: its show-open clock waits too.
+                std::set<u64> sent;
+                for (const PlayWish& p : plays) {
+                    sent.insert(p.address);
+                }
+                for (const u64 a : wanted_plays) {
+                    if (!sent.contains(a)) {
+                        sync_.ChestPlayHeld(a, now_us);
+                    }
+                }
+            }
         }
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {

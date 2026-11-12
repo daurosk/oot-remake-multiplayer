@@ -454,6 +454,15 @@ public:
     // animation and its frame (the mover compares it with the copy's own).
     void Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const;
 
+    // Present thread: a chest's open idle from Plays was not sent this frame
+    // (CoopGuard holds plays near our Link in an event). Its show-open clock
+    // starts again, so a long event never turns it into a remove (review of
+    // chest-sync-2). Other addresses are ignored.
+    void ChestPlayHeld(std::uint64_t address, std::uint64_t now_us);
+    // How many chests shown open here our Link then opened again (their
+    // content may count twice), this session.
+    unsigned ChestsOpenedTwice() const { return chests_opened_twice_; }
+
     // Present thread: the enemy copies whose own AI is held (the AI hold,
     // coop_hold.h): an Enemy_ we do not own that its owner's samples place
     // right now, so exactly the enemies Poses moves. One that becomes ours
@@ -754,7 +763,9 @@ private:
     struct ChestShow {
         std::uint64_t since_us = 0;  // when first played
         bool took = false;           // seen showing kChestOpenIdle since
+        unsigned flicks = 0;         // walks that saw its closed idle again after
     };
+    unsigned chests_opened_twice_ = 0;
     std::map<std::uint64_t, ChestShow> chest_shown_;
     std::uint64_t last_tick_us_ = 0;
     bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)

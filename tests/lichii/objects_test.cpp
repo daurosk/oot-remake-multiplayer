@@ -859,6 +859,41 @@ TEST_CASE("objects: our Link opening a chest shown open is not fought, and logge
     bool again = false;
     for (const auto& n : sync.TakeNotes()) again |= n.find("opened here too") != std::string::npos;
     CHECK(again);
+    CHECK(sync.ChestsOpenedTwice() == 1);
+}
+
+TEST_CASE("objects: a chest's show-open clock waits while its play is held in an event (chest-sync-2 review)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    Seen chest = Chest(0x500);
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // Our Link is in a long event beside it: CoopGuard holds the play.
+    for (std::uint64_t t = 500; t <= 8000; t += 500) {
+        sync.ChestPlayHeld(0x500, t * kMs);
+        sync.ChestPlayHeld(0x999, t * kMs);  // not a chest shown open: ignored
+        Tick(sync, t * kMs + 1, {chest, Enemy(0x100, 0x11, 2)});
+        CHECK(sync.Removes().empty());
+    }
+    // The event ends and the play is sent: it shows open, never removed.
+    chest.animation->name = "OpenWait";
+    Tick(sync, 8100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    // Its AI puts the closed idle back: kept, and the flicker is logged.
+    chest.animation->name = "CloseWait";
+    Tick(sync, 8200 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    bool flicker = false;
+    bool removed = false;
+    for (const auto& n : sync.TakeNotes()) {
+        flicker |= n.find("the lid may flicker") != std::string::npos;
+        removed |= n.find("removed") != std::string::npos;
+    }
+    CHECK(flicker);
+    CHECK_FALSE(removed);
+    CHECK(sync.ChestsOpenedTwice() == 0);
 }
 
 TEST_CASE("objects: a second take of a key does not start the chest's wait again") {

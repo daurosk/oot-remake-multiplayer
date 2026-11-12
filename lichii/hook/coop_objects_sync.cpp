@@ -917,14 +917,28 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                 // our Link: ours opens it again here.
                                 chest_shown_.erase(shown);
                                 tk.shown_open.insert(s.address);
-                                notes_.emplace_back(
-                                    s.name + (beside ? ": opened here too after another game ('" + animation +
-                                                           "', its content may count twice)"
-                                                     : ": its own AI shows it open ('" + animation + "')"));
+                                if (beside) {
+                                    ++chests_opened_twice_;
+                                    notes_.emplace_back(s.name + ": opened here too after another game ('" +
+                                                        animation + "', its content may count twice; " +
+                                                        std::to_string(chests_opened_twice_) + " this session)");
+                                } else {
+                                    notes_.emplace_back(s.name + ": its own AI shows it open ('" + animation + "')");
+                                }
                                 continue;
                             }
-                            if (shown->second.took || now_us - shown->second.since_us < kChestShowFailUs) {
-                                continue;  // shown open (its AI may flick it back), or still to take
+                            if (shown->second.took) {
+                                // Its AI put its closed idle back after it showed
+                                // open (we play it again): the lid may flicker.
+                                const unsigned n = ++shown->second.flicks;
+                                if (n == 1 || n % 10 == 0) {
+                                    notes_.emplace_back(s.name + ": closed idle back after it showed open, " +
+                                                        std::to_string(n) + " walks (the lid may flicker)");
+                                }
+                                continue;
+                            }
+                            if (now_us - shown->second.since_us < kChestShowFailUs) {
+                                continue;  // still to take
                             }
                             // Never showed open: the play does not take here.
                             // Removed as before, so its content is not given twice.
@@ -2077,6 +2091,12 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
                        last.time, {}});
+    }
+}
+
+void Sync::ChestPlayHeld(std::uint64_t address, std::uint64_t now_us) {
+    if (const auto it = chest_shown_.find(address); it != chest_shown_.end() && !it->second.took) {
+        it->second.since_us = now_us;
     }
 }
 

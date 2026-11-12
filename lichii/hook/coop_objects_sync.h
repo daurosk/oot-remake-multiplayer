@@ -146,9 +146,12 @@ std::uint64_t SceneSpawnId(std::string_view scene, std::string_view name, unsign
 
 // Enemies the game rolls near a player (docs/objects.md, "Rolled spawns"):
 // the night Stalchild the scene's AutoPlacementMgr makes rise out of the
-// ground around Link. Only one game in a scene rolls them (the decider, the
-// lowest player number there); it shares each with OBJECT_SPAWN of a made id.
-// The others delete their own rolls and create the decided ones.
+// ground around Link. Where players are together only one game rolls them (the
+// lowest player number whose Link is within Sync::kRollNearM of the roll); it
+// shares each with OBJECT_SPAWN of a made id. The others delete their own rolls
+// there and create the decided ones. A player with no lower-numbered player
+// near keeps and shares its own rolls (issue 124: player 2 far from player 1
+// in the night field got none).
 bool IsRolled(std::string_view name);
 
 // Multi-stage enemies (gohma-larva): an enemy whose next stage is another
@@ -284,6 +287,9 @@ public:
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
+    // A roll this near a lower-numbered player's Link is that player's to make
+    // (issue 124). Stalchild rise within about 20 m of the Link they rise for.
+    static constexpr float kRollNearM = 40.0f;
     static constexpr std::uint64_t kCreateWaitUs = 3'000'000;  // then a roll near it is ours to delete
     static constexpr std::uint8_t kRemakes = 3;  // EnemyCopy::remakes for a live one
     static constexpr std::uint64_t kLateUs = 3'000'000;  // after the scene's first walk: came later
@@ -594,6 +600,10 @@ private:
         bool dead = false;
     };
     std::uint8_t DeciderOf(std::uint8_t self, std::uint64_t now_us) const;
+    // The game that keeps a roll that rose at `at`: the lowest player number in
+    // our scene whose Link is within kRollNearM of it (or whose place we do not
+    // know), else us.
+    std::uint8_t RollerFor(std::uint8_t self, const coop::protocol::Vec3& at, std::uint64_t now_us) const;
     // Eggs we owned that left the walk alive, waiting kHatchWindowUs for the
     // hatchling that came out of them.
     struct Egg {

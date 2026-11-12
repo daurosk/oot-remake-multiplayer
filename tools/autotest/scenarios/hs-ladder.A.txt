@@ -1,6 +1,6 @@
 # hs-ladder (issue 129, Hookshot and emulator): A shoots the Deku Tree's eye switch and the ladder
 # falls; B, in the slingshot room, sees it fall live (the held-event catch-up starts it in B's
-# game). test10's cutscene-snap never proved this: the kits' saves already had the ladder played
+# game). cutscene-snap (bigrun4, 2026-11-12) never proved this: the kits' saves already had the ladder played
 # (HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder, Bool 0xb3a4fe84), so B's game started
 # it at setup and A's shot did nothing.
 # BEFORE the run (games closed), clear it in both baselines, then put them back afterwards from

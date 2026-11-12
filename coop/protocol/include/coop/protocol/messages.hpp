@@ -117,6 +117,7 @@ enum class MessageType : std::uint16_t {
   dungeon_event = 355,  // 355 to 359: a room gimmick's event started (docs/protocol.md, "Gimmick events")
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
+  platform_counter = 401,  // looping platforms' pause counters (docs/protocol.md, "Moving platforms")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1264,6 +1265,32 @@ struct PlatformClock {
   bool operator==(const PlatformClock&) const = default;
 };
 
+// PLATFORM_COUNTER (protocol 11, branch platforms-b2): the looping pause
+// counters (AI ExecuteGenericCounter nodes) of the platforms near the
+// sender, each with the time since its last pause began, read at
+// `server_time_us`. A game that has seen fewer starts of the same key
+// shifts its own pause once to be in phase (docs/objects.md, "Moving
+// platforms: the pause counters"). Channel 4, unreliable, every 3 s;
+// relayed to the sender's scene, never kept.
+inline constexpr std::size_t kMaxPlatformCounters = 32;
+inline constexpr std::uint32_t kMinCounterPeriodUs = 100'000;
+
+struct CounterTick {
+  std::uint64_t key = 0;        // hash of the actor's placement, the pause's length and its place in the graph
+  std::uint32_t period_us = 0;  // between two starts; at least kMinCounterPeriodUs
+  std::uint32_t since_us = 0;   // since the last start
+  std::uint32_t starts = 0;     // starts the sender has seen, at least 1
+  bool operator==(const CounterTick&) const = default;
+};
+
+struct PlatformCounter {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::uint64_t server_time_us = 0;
+  std::vector<CounterTick> ticks;  // 1 to kMaxPlatformCounters, no key twice
+  bool operator==(const PlatformCounter&) const = default;
+};
+
 struct DungeonEvent {
   std::uint8_t player_number = kPlayerSelf;
   std::string scene;
@@ -1282,7 +1309,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
-                             OcarinaNote, PlatformClock>;
+                             OcarinaNote, PlatformClock, PlatformCounter>;
 
 MessageType type_of(const Message& message);
 

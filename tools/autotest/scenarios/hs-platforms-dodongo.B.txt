@@ -2,7 +2,8 @@
 # Room 1 lifts (Banc DodongoCavern_Static): Obj_DodongoCave_MoveFloor_A_01 6aaec6828516aa4b (10.5 96.5 -23.0),
 # 51802f1732232227 (-10.5 96.5 -23.0), 765ad7b13c763297 (0.0 96.5 -12.6); _A_02 562f2db3e8559542 (10.5 100.0 -23.0);
 # GroundControlActor_SimpleMoveTo d0fca64033c988bf (10.5 101.0 -19.0). The lifts run their own AI
-# (UpDownLiftMove: a physics slider and a wait counter), so the clock finder decides which word is their clock.
+# (UpDownLiftMove: a physics slider and a wait counter). Hookshot has no counter cave yet (platforms-b2), so here the clock
+# finder decides which word is their clock; expect NO "pause counter" lines on Hookshot.
 # B stands on the lift 765ad7b13c763297 (0.0 96.5 -12.6), 11.6 m from A's. Both get there at the same time ("placed"), then shots every 3 s and at each mark.
 # Expect (both logs; LICHII_COOP_DEBUG_OBJECTS shows the "+ Obj_DodongoCave_MoveFloor_A_01" lines):
 #  - A: "coop: platforms: <hash> Obj_DodongoCave_MoveFloor_A_01: clock <where>, <rate> a second, cycle <c>: ours to send"

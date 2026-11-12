@@ -53,6 +53,7 @@ add_executable(coop_tests
   lichii/colors_test.cpp
   lichii/dungeon_test.cpp
   lichii/platforms_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_platforms.cpp
+  lichii/counters_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_counters.cpp
   lichii/quest_test.cpp
   lichii/story_test.cpp
   lichii/quests_test.cpp

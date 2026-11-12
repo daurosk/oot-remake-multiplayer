@@ -1854,6 +1854,57 @@ Error decode_body(Reader& r, PlatformClock& m) {
   return check_platform_clock(m);
 }
 
+// PLATFORM_COUNTER: u8 player, scene, u64 server time, u8 count, then count
+// x (u64 key, u32 period, u32 since, u32 starts).
+Error check_platform_counter(const PlatformCounter& m) {
+  if (!valid_player_or_self(m.player_number) || m.scene.empty() || m.server_time_us == 0 ||
+      m.ticks.empty() || m.ticks.size() > kMaxPlatformCounters) {
+    return Error::bad_value;
+  }
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  for (std::size_t i = 0; i < m.ticks.size(); ++i) {
+    const CounterTick& t = m.ticks[i];
+    if (t.key == 0 || t.period_us < kMinCounterPeriodUs || t.starts == 0) return Error::bad_value;
+    for (std::size_t j = 0; j < i; ++j) {
+      if (m.ticks[j].key == t.key) return Error::bad_value;
+    }
+  }
+  return Error::none;
+}
+
+Error encode_body(const PlatformCounter& m, Writer& w) {
+  COOP_TRY(check_platform_counter(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.u64(m.server_time_us);
+  w.u8(static_cast<std::uint8_t>(m.ticks.size()));
+  for (const CounterTick& t : m.ticks) {
+    w.u64(t.key);
+    w.u32(t.period_us);
+    w.u32(t.since_us);
+    w.u32(t.starts);
+  }
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PlatformCounter& m) {
+  m = PlatformCounter{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_READ(r.u64(m.server_time_us));
+  std::uint8_t count = 0;
+  COOP_READ(r.u8(count));
+  if (count == 0 || count > kMaxPlatformCounters) return Error::bad_value;
+  m.ticks.resize(count);
+  for (CounterTick& t : m.ticks) {
+    COOP_READ(r.u64(t.key));
+    COOP_READ(r.u32(t.period_us));
+    COOP_READ(r.u32(t.since_us));
+    COOP_READ(r.u32(t.starts));
+  }
+  return check_platform_counter(m);
+}
+
 // SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
 Error check_sign_cut(const SignCut& m) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
@@ -2199,6 +2250,7 @@ MessageType type_of(const Message& message) {
       MessageType::player_ride,
       MessageType::ocarina_note,
       MessageType::platform_clock,
+      MessageType::platform_counter,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2223,6 +2275,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::object_sample:
     case MessageType::world_move:
     case MessageType::platform_clock:
+    case MessageType::platform_counter:
       return kChannelObjectSamples;
     case MessageType::object_present:
     case MessageType::object_owner:
@@ -2289,6 +2342,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::object_sample:
     case MessageType::world_move:
     case MessageType::platform_clock:
+    case MessageType::platform_counter:
       return channel == kChannelObjectSamples;
     case MessageType::object_present:
     case MessageType::object_owner:
@@ -2356,6 +2410,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::world_break:
     case MessageType::world_move:
     case MessageType::platform_clock:
+    case MessageType::platform_counter:
     case MessageType::world_place:
     case MessageType::world_hit:
     case MessageType::drop_spawn:
@@ -2405,7 +2460,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, DungeonEvent> ||
                       std::is_same_v<T, PlayerRide> ||
                       std::is_same_v<T, OcarinaNote> ||
-                      std::is_same_v<T, PlatformClock>) {
+                      std::is_same_v<T, PlatformClock> ||
+                      std::is_same_v<T, PlatformCounter>) {
           field = &m.player_number;
         }
       },
@@ -2523,6 +2579,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::sign_cut: return decode_as<SignCut>(body, out);
     case MessageType::dungeon_event: return decode_as<DungeonEvent>(body, out);
     case MessageType::platform_clock: return decode_as<PlatformClock>(body, out);
+    case MessageType::platform_counter: return decode_as<PlatformCounter>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

@@ -1889,3 +1889,42 @@ TEST_CASE("platform clock: type 400, object samples channel, checked keys and fl
   cut[kHeaderSize + 1 + 15 + 8] = 4;
   CHECK(decode(cut, back) == Error::truncated);
 }
+
+TEST_CASE("platform counter: type 401, object samples channel, checked ticks (platforms-b2)") {
+  CHECK(static_cast<int>(MessageType::platform_counter) == 401);
+  CHECK(channel_of(MessageType::platform_counter) == kChannelObjectSamples);
+  CHECK(allowed_on_channel(MessageType::platform_counter, kChannelObjectSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::platform_counter, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::platform_counter));
+  CHECK(may_send(Sender::server, MessageType::platform_counter));
+  PlatformCounter m;
+  m.player_number = 3;
+  m.scene = "DodongoCavern";
+  m.server_time_us = 77'000'000;
+  m.ticks.push_back({0x1234567890abcdefull, 3'000'000, 1'250'000, 7});
+  m.ticks.push_back({0x2ull, 4'500'000, 0, 1});
+  const Bytes b = must_encode(Message{m});
+  // type, length; u8 player, scene (2 + 13), u64 time, u8 count, 2 x (8 + 4 + 4 + 4)
+  CHECK(b.size() == 4 + 1 + 15 + 8 + 1 + 2 * 20);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{m});
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{3});
+  Bytes out;
+  const auto bad = [&](auto change) {
+    PlatformCounter c = m;
+    change(c);
+    return encode(c, out) == Error::bad_value;
+  };
+  CHECK(bad([](PlatformCounter& c) { c.scene.clear(); }));
+  CHECK(bad([](PlatformCounter& c) { c.server_time_us = 0; }));
+  CHECK(bad([](PlatformCounter& c) { c.ticks.clear(); }));
+  CHECK(bad([](PlatformCounter& c) { c.ticks.resize(kMaxPlatformCounters + 1, c.ticks[0]); }));
+  CHECK(bad([](PlatformCounter& c) { c.ticks[1].key = c.ticks[0].key; }));
+  CHECK(bad([](PlatformCounter& c) { c.ticks[0].key = 0; }));
+  CHECK(bad([](PlatformCounter& c) { c.ticks[0].period_us = kMinCounterPeriodUs - 1; }));
+  CHECK(bad([](PlatformCounter& c) { c.ticks[0].starts = 0; }));
+  Bytes cut = must_encode(Message{m});
+  cut[kHeaderSize + 1 + 15 + 8] = 3;
+  CHECK(decode(cut, back) == Error::truncated);
+}

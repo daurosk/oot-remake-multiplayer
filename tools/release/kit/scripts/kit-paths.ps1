@@ -355,6 +355,12 @@ function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
         if ($json.sound -ne $true) {
             return 'Puppet pack: made without the other players'' sounds. Run make-puppet-pack.cmd again to hear their footsteps, sword and voice.'
         }
+        # No tunic models (a pack from before the colours, or a game without the
+        # tunic textures): every other player shows in the green tunic (#202).
+        $tunics = $json.tunics
+        if (-not $tunics -or @($tunics.PSObject.Properties).Count -eq 0) {
+            return 'Puppet pack: made without the tunic colours, so the other players show in green. Run make-puppet-pack.cmd again.'
+        }
         $tool = Get-PuppetToolHash $ToolDir
         if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {
             return 'Puppet pack: made by another version of the pack tool. Run make-puppet-pack.cmd again for the latest puppet fixes.'

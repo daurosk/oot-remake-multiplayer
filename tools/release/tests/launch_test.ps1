@@ -172,13 +172,17 @@ try {
     Check ((Get-PuppetPackHint $man $tool) -match 'without the other players'' sounds.*make-puppet-pack\.cmd') 'a pack without "sound": run make-puppet-pack again'
     Write-File $man '{"actors": [], "sound": false}'
     Check ((Get-PuppetPackHint $man $tool) -match 'sounds') 'a --no-sound pack: the same line'
-    Write-File $man "{`"actors`": [], `"sound`": true, `"tool_sha256`": `"$hash`"}"
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {`"Red`": [`"x`"]}, `"tool_sha256`": `"$hash`"}"
     (Get-Item (Join-Path $tool 'b_c.py')).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(10)
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'the same tool, its files dated hours ahead (a zip from another time zone): nothing said'
     Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool folder: nothing said'
-    Write-File $man '{"actors": [], "sound": true}'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}}'
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
-    Write-File $man '{"actors": [], "sound": true, "tool_sha256": "0000"}'
+    Write-File $man '{"actors": [], "sound": true}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours.*green.*make-puppet-pack\.cmd') 'a pack from before the tunics: run make-puppet-pack again (#202)'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tool_sha256": "0000"}'
+    Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours') 'a pack with no tunics made: the tunic line first'
+    Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'another version of the pack tool') 'another tool hash: run make-puppet-pack again'
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'

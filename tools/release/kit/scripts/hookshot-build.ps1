@@ -9,6 +9,7 @@
 #   Build-Hookshot-Coop.bat -Language en-US         the game's language (Hookshot's codes; default en-US)
 #   Build-Hookshot-Coop.bat -Rebuild                build again even when nothing changed
 #   Build-Hookshot-Coop.bat -Jobs <n>               at most n compilers at once
+#   Build-Hookshot-Coop.bat -CheckOnly              get the tools and check your game files; build nothing
 #
 # What it does:
 # 1. Hookshot's own build tools: the parts of the Hookshot release named in hookshot\TOOLS.txt (its
@@ -33,7 +34,8 @@ param(
     [string]$Out = '',
     [ValidatePattern('^[A-Za-z]{2}(-[A-Za-z]{2})?$')][string]$Language = 'en-US',
     [ValidateRange(0, 256)][int]$Jobs = 0,
-    [switch]$Rebuild
+    [switch]$Rebuild,
+    [switch]$CheckOnly
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # (Invoke-WebRequest's progress bar makes big downloads many times slower)
@@ -48,7 +50,7 @@ function Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundC
 function Read-KeyFile([string]$Path) {
     $map = @{}
     foreach ($line in Get-Content -LiteralPath $Path) {
-        if ($line -match '^\s*([A-Za-z_]+)\s*=\s*(.+?)\s*$') { $map[$Matches[1]] = $Matches[2] }
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$') { $map[$Matches[1]] = $Matches[2] }
     }
     return $map
 }
@@ -185,7 +187,7 @@ $gameStamp = Join-Path $Out 'coop-built-from.txt'
 $exe = Find-HookshotExe $Out
 $gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $stamp)
 
-if (-not $Game -and (-not $gameReady -or $Rebuild)) {
+if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
     # As make-puppet-pack.cmd: the .nup in a folder of the emulator's game list.
     $check = Join-Path $kit 'tools\puppet_pack\dumpcheck.py'
     if (Test-Path -LiteralPath $check) {
@@ -197,7 +199,8 @@ if (-not $Game -and (-not $gameReady -or $Rebuild)) {
     if (-not $Game) {
         Write-Host ''
         Write-Host 'Drag your game''s .nup file (or its romfs folder) into this window and press Enter:'
-        $Game = (Read-Host).Trim().Trim('"')
+        $Game = "$(Read-Host)".Trim().Trim('"')
+        if (-not $Game) { Fail 'No game files given. Run this again with -Game <your .nup>.' }
     }
 }
 if ($Game) {
@@ -209,7 +212,8 @@ if ($Game) {
             if (Test-Path -LiteralPath (Join-Path $guess 'main')) { $Exefs = $guess }
             else {
                 Write-Host 'A romfs folder needs its exefs folder too. Drag the exefs folder in and press Enter:'
-                $Exefs = (Read-Host).Trim().Trim('"')
+                $Exefs = "$(Read-Host)".Trim().Trim('"')
+                if (-not $Exefs) { Fail 'No exefs folder given.' }
             }
         }
         if (-not (Test-Path -LiteralPath (Join-Path $Exefs 'main'))) { Fail "$Exefs is not an exefs folder (no main in it)." }
@@ -247,13 +251,14 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     return $code
 }
 
-if ($gameReady -and -not $Rebuild) {
+if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     Step "The game: built already ($Out)"
 } else {
     if (-not $gameArgs) { Fail 'No game files given.' }
     Step 'Checking your game files'
     $code = Invoke-MakeGame ($gameArgs + @('--check'))
     if ($code -ne 0) { Fail 'Hookshot cannot build from these files (it said why above). It needs program 0400486024DEC000, update v131072, build e0f3ccfa.' }
+    if ($CheckOnly) { Write-Host ''; Write-Host 'Your game files are right for Hookshot. Run this again without -CheckOnly to build.' -ForegroundColor Green; exit 0 }
     $drive = [System.IO.Path]::GetPathRoot($work)
     $free = (Get-PSDrive -Name $drive.Substring(0, 1) -ErrorAction SilentlyContinue).Free
     if ($free -and $free -lt 60GB -and -not (Test-Path -LiteralPath (Join-Path $work 'sa'))) {

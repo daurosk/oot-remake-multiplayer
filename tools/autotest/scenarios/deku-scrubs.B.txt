@@ -1,0 +1,31 @@
+# deku-scrubs (#149): B hits Three after A hit Two (see deku-scrubs.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -34.0 53.2 29.5
+wait 240
+mark placed
+toward -34.0 39.6 10     # face Three
+wait 1200                # A hits Two meanwhile
+mark aim-three
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+wait 60
+mark three
+wait 2400                # A hits One
+mark end

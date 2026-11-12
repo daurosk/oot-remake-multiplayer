@@ -1,0 +1,65 @@
+# deku-scrubs (#149): the Scrub Brothers 2-3-1 split between two players. Both load into the
+# Deku Tree entrance, are put in the brothers' room (InsideTheDekuTree room index 9) with the
+# test-only `place` step, and shoot with the slingshot, locked on (ZL+ZR, fired on release).
+# Banc (InsideTheDekuTree_Static): Two (DefeatedOrder 1) 927ab536d2e86500 at -29.0 53.0 41.2,
+# Three (2) 079a5f22c7ad91c1 at -34.0 53.0 39.6, One (3) 9b04ae25f50c7fca at -23.7 53.0 40.0,
+# manager eb15dea71838d33d at -27.5 56.4 37.1; the boss shutter behind them at z 46.6, the room
+# centre at -27.8 52.8 20.3. The kit saves have the puzzle solved: clear bool 0xd2f46f66
+# (InsideTheDekuTree_RoomK_Cleared) and bool 0x60c22ed7 (..._EnemyScrubDekuDestroy_003) in both
+# autotest-save baselines first (tools/autotest/save_flags.py set), and put them back after.
+# A hits Two (~10 s after placing), B hits Three (~25 s), A hits One (~45 s).
+# Expect (coop_scrubs.h, lines "coop: scrubs: ..."):
+#  - both: "brother Two/Three/One ... anim '...'" lines (the brothers are there; the hit's AS).
+#  - A "brother Two ... hit here (order 1): sending"; B "P1's hit on brother Two ... to give
+#    here", then "... given to our manager (order 1, send gave N)", and B's Two stunned in shot
+#    "two" (the manager's own stun) with no "hit here" for it in B ("not sent back").
+#  - B "brother Three ... hit here (order 2): sending"; A "... given to our manager (order 2 ...)".
+#  - A "brother One ... hit here (order 3): sending": A's solve (Talk_Deku_03_Attacked, flags
+#    RoomK_Cleared and EnemyScrubDekuDestroy_003 0 -> 1, shared to B), the shutter opens in both.
+#  - If no "hit here" line comes, the hit AS is another name: read the anim lines and run again
+#    with LICHII_COOP_SCRUB_HIT_ANIMS=<name>.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1,LICHII_COOP_CHEATS=1
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -29.5 53.2 29.0
+wait 240
+mark placed
+toward -29.0 41.2 10     # face Two
+wait 360
+mark aim-two
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+wait 60
+mark two
+wait 840                  # B hits Three meanwhile
+mark three
+goto -24.0 29.5 0.6 240
+toward -23.7 40.0 10      # face One
+wait 120
+mark aim-one
+hold ZL 30
+hold ZL+ZR 60
+hold ZL 30
+wait 120
+mark one
+wait 1200
+mark end

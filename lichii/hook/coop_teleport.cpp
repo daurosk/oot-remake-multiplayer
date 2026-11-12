@@ -475,6 +475,7 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         // The game emptied our request itself (after its arrival event).
         if (requested_ && local.reserved_banc && local.reserved_banc->empty()) {
             requested_ = false;
+            a.game_cleared = true;  // nothing to write: logged so a run shows the request is gone
         }
         if (!local.scene || !local.position || local.event || local.loading_banc) {
             settle_us_ = 0;  // still loading, or the arrival's own event

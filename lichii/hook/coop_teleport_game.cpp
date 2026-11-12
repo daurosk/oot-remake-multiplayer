@@ -345,6 +345,9 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                 g.saved_read = false;
             }
         }
+        if (act.game_cleared) {
+            LOG_INFO(Core, "coop: teleport: scene change cleared by the game after its arrival (nothing written)");
+        }
         if (act.scene) {
             // Always with a start point of that scene: without one the game
             // keeps the old scene's start name and the picture stays black.

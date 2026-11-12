@@ -607,14 +607,19 @@ TEST_CASE("teleport: the request stays for the game's arrival, which empties it 
     CHECK(trip.phase() == Trip::Phase::settling);
     // The arrival event runs, then the game empties the request (banc "").
     arrived.event = true;
-    CHECK_FALSE(trip.Tick(arrived, 3 * kS + kS / 2).cancel_scene);
+    a = trip.Tick(arrived, 3 * kS + kS / 2);
+    CHECK_FALSE(a.cancel_scene);
+    CHECK_FALSE(a.game_cleared);
     arrived.event = false;
     arrived.reserved_banc = "";
-    CHECK_FALSE(trip.Tick(arrived, 4 * kS).cancel_scene);
+    a = trip.Tick(arrived, 4 * kS);
+    CHECK_FALSE(a.cancel_scene);
+    CHECK(a.game_cleared);  // logged once ("scene change cleared by the game")
     // Settled: asks again, and writes nothing (the game emptied it).
     a = trip.Tick(arrived, 4 * kS + Trip::kSettleUs);
     CHECK(a.ask);
     CHECK_FALSE(a.cancel_scene);
+    CHECK_FALSE(a.game_cleared);
     // Nothing left to clear afterwards either.
     CHECK_FALSE(trip.Left(2).cancel_scene);
 }

@@ -66,6 +66,7 @@
 #include "coop_story.h"
 #include "coop_live_events.h"
 #include "coop_objects.h"
+#include "coop_ocarina_sound.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_settings.h"
@@ -630,6 +631,12 @@ public:
         }
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Our Ocarina's notes for the other games (issue 152, coop_ocarina_sound.h).
+        CoopOcarinaSound::Frame(system,
+                                reading && reading->animation
+                                    ? std::optional<std::string>(reading->animation->name)
+                                    : std::nullopt,
+                                report.connected ? session_.get() : nullptr);
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,

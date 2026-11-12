@@ -430,6 +430,9 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     }
     case Pending::move:
         break;
+    case Pending::sound:
+        CoopPuppetSound::Finish(slot.sound, result, who, [this](const std::string& line) { Say(line); });
+        break;
     case Pending::none:
         break;
     }
@@ -518,6 +521,20 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             slot.since_ms = now_ms;
             pending_ = Pending::remove;
             return c;
+        }
+        // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
+        // what the puppet's sound user plays (issue 131).
+        if (t->show == Show::show) {
+            const std::string who = "P" + std::to_string(slot.number);
+            const auto say = [this](const std::string& line) { Say(line); };
+            if (anim_) {
+                CoopPuppetSound::LogPlaying(slot.sound, guest, slot.actor, now_ms, who, say);
+            }
+            if (auto c = CoopPuppetSound::Next(slot.sound, t->ocarina, guest, input_.main_base,
+                                               slot.actor, slot.block, now_ms, who, say)) {
+                pending_ = Pending::sound;
+                return c;
+            }
         }
         if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
@@ -1295,6 +1312,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
         t.drawn = r.drawn;
+        t.ocarina = r.ocarina;
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -1337,6 +1355,7 @@ std::mutex g_anim_mutex;
 std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
 std::array<Gear, 5> g_gear;  // the same; guarded
 std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
+std::array<CoopPuppetSound::Wanted, 5> g_ocarina;  // the same; guarded (issue 152)
 
 } // namespace
 
@@ -1350,11 +1369,13 @@ void OnEvent(const coop::net::Event& event) {
         g_anims = {};
         g_gear = {};
         g_drawn = {};
+        g_ocarina = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
         g_gear[event.player] = {};
         g_drawn[event.player].reset();
+        g_ocarina[event.player] = {};
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -1367,6 +1388,18 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;
+    } else if (const auto* note = std::get_if<coop::protocol::OcarinaNote>(&event.message);
+               event.kind == EventKind::message && note != nullptr) {
+        if (note->player_number == 0 || note->player_number >= g_ocarina.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        std::lock_guard lock(g_anim_mutex);
+        auto& w = g_ocarina[note->player_number];
+        w = CoopPuppetSound::Wanted{note->note, w.serial + 1, now_ms};
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -1432,6 +1465,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
+                r.ocarina = g_ocarina[r.number];
             }
         }
     }

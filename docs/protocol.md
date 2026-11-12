@@ -105,6 +105,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 15 | `FLAG_SNAPSHOT` | 1 | both | `u16` part, `u16` part count (at least 1, more than part), a flag list of 0 to 3600 entries |
 | 135 | `FLAG_RESET` | 1 | both | `u8` player field, a flag list of 1 to 3600 entries, no count deltas (protocol 7; types 135 to 139 are for saves) |
 | 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
+| 140 | `OCARINA_NOTE` | 0 | both | `u8` player field, `u8` note: 0 the note held so far was let go, 1 to 19 the game's note (protocol 10; types 140 to 144 are for the Ocarina, below) |
 | 191 | `JOIN_CHALLENGE` | 0 | server | 32-byte nonce (protocol 9, "Join password"; 191 to 195 kept for it) |
 | 192 | `JOIN_PROOF` | 0 | client | 32-byte HMAC-SHA256(password, nonce) |
 | 206 | `SAVE_ASK` | 0 | both | `u8` player field: a guest asks the host for its save (protocol 9; types 206 to 215 are for the save transfer, below) |
@@ -267,6 +268,14 @@ Every game shows the host's time of day ([time.md](time.md)).
 - A game whose clock jumped by itself (the Sun's Song, sleeping, an event) sends it with the jump bit, and every other game, the host's too, takes it at once.
 - The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
 
+### Ocarina (`OCARINA_NOTE`, protocol 10)
+
+The other players hear a player's Ocarina from that player's puppet (issue 152; [puppet.md](puppet.md), "Ocarina").
+
+- A game sends `OCARINA_NOTE` when its own Link, playing the Ocarina, starts a note (a note button pressed) and with note 0 when the last note is let go. Notes 1 to 19 are the game's own table in `OcarinaMgr` (+0x40), plus one: LowB, LowC, LowCsharp, D, Dsharp, E, F, Fsharp, G, Gsharp, A, Asharp, B, C, Csharp, HighD, HighDsharp, HighE, HighF (the SLink assets `Ocarina_<note>`). A note above 19 is refused.
+- The server relays it to everyone else like `CHAT`, with the sender's number in the player field.
+- Only the sound: a song played this way has no effect in the other games (no warp, no rain, no door); the song itself is checked only in the game that played it.
+
 ### Field grass (`GRASS_CUT`)
 
 One cut of the field grass the foliage module draws (no actor; [world.md](world.md), "Field grass"), as the sender's game queued it.
@@ -388,3 +397,4 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.
+- Version 10 also (puppet-looks, issue 152): `OCARINA_NOTE` (140); 140 to 144 kept for the Ocarina. A version 9 server would not relay it.

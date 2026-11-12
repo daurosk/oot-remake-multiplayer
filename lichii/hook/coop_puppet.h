@@ -23,6 +23,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop_puppet_sound.h"
+
 namespace coop::protocol {
 struct Equipment;
 }
@@ -259,6 +261,8 @@ struct Target {
     // PLAYER_EQUIP's drawn bits: bit i set when the player's equipment slot i
     // is in hand (sword out, shield on the arm). Unset: not known.
     std::optional<std::uint8_t> drawn;
+    // The player's newest OCARINA_NOTE, played on the puppet (issue 152).
+    CoopPuppetSound::Wanted ocarina;
 };
 
 struct Input {
@@ -409,9 +413,11 @@ private:
         std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
         std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
+        CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
+        sound
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
@@ -478,6 +484,7 @@ struct Remote {
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear
     std::optional<std::uint8_t> drawn;               // as Target::drawn
+    CoopPuppetSound::Wanted ocarina;                 // as Target::ocarina
 };
 
 struct PlannerSettings {

@@ -1144,6 +1144,30 @@ TEST_CASE("time of day has its number, channel and layout") {
   CHECK(std::get<TimeOfDay>(back).seconds == 0x01020304 % kSecondsPerDay);
 }
 
+TEST_CASE("an ocarina note has its number, channel and layout") {
+  CHECK(static_cast<int>(MessageType::ocarina_note) == 140);
+  CHECK(channel_of(MessageType::ocarina_note) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::ocarina_note, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::ocarina_note));
+  CHECK(may_send(Sender::server, MessageType::ocarina_note));
+  Message n = OcarinaNote{0, 4};
+  CHECK(check_received(n, Sender::client, kChannelSession) == Error::none);
+  CHECK(set_sender(n, 3));
+  CHECK(sender_of(n) == 3);
+  const Bytes b = must_encode(OcarinaNote{0, kOcarinaNotes});
+  REQUIRE(b.size() == kHeaderSize + 1 + 1);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<OcarinaNote>(back).note == kOcarinaNotes);
+  Bytes out;
+  CHECK(encode(OcarinaNote{0, kOcarinaNotes + 1}, out) == Error::bad_value);
+  CHECK(encode(OcarinaNote{5, 1}, out) == Error::bad_value);
+  Bytes bad = must_encode(OcarinaNote{0, 1});
+  bad[kHeaderSize + 1] = 20;  // past the last note
+  Message m;
+  CHECK(decode(bad, m) == Error::bad_value);
+}
+
 TEST_CASE("bad times of day are refused") {
   Bytes out;
   CHECK(encode(TimeOfDay{0, kSecondsPerDay, 0}, out) == Error::bad_value);

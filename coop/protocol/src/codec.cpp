@@ -1344,6 +1344,21 @@ Error encode_body(const TimeOfDay& m, Writer& w) {
   return Error::none;
 }
 
+Error encode_body(const OcarinaNote& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || m.note > kOcarinaNotes) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u8(m.note);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, OcarinaNote& m) {
+  m = OcarinaNote{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.note));
+  if (!valid_player_or_self(m.player_number) || m.note > kOcarinaNotes) return Error::bad_value;
+  return Error::none;
+}
+
 Error decode_body(Reader& r, TimeOfDay& m) {
   m = TimeOfDay{};
   COOP_READ(r.u8(m.player_number));
@@ -1776,7 +1791,7 @@ MessageType type_of(const Message& message) {
       MessageType::drop_spawn, MessageType::drop_take, MessageType::drop_ask,
       MessageType::boss_room, MessageType::sign_cut, MessageType::flag_reset,
       MessageType::flag_origin, MessageType::join_challenge, MessageType::join_proof,
-      MessageType::save_ask,    MessageType::save_part,
+      MessageType::save_ask,    MessageType::save_part, MessageType::ocarina_note,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1841,6 +1856,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::sign_cut:
     case MessageType::save_ask:
     case MessageType::save_part:
+    case MessageType::ocarina_note:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1921,6 +1937,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::sign_cut:
     case MessageType::save_ask:
     case MessageType::save_part:
+    case MessageType::ocarina_note:
       return true;
   }
   return false;
@@ -1951,7 +1968,7 @@ auto* player_field(M& message) {
                       std::is_same_v<T, DropSpawn> || std::is_same_v<T, DropTake> ||
                       std::is_same_v<T, DropAsk> || std::is_same_v<T, BossRoom> ||
                       std::is_same_v<T, SignCut> || std::is_same_v<T, SaveAsk> ||
-                      std::is_same_v<T, SavePart>) {
+                      std::is_same_v<T, SavePart> || std::is_same_v<T, OcarinaNote>) {
           field = &m.player_number;
         }
       },
@@ -2035,6 +2052,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_state: return decode_as<FlagState>(body, out);
     case MessageType::flag_reset: return decode_as<FlagReset>(body, out);
     case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
+    case MessageType::ocarina_note: return decode_as<OcarinaNote>(body, out);
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);

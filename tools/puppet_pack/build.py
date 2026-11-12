@@ -75,6 +75,13 @@ FOOTSTEP_DIR = "Component/SoundFootStepParam/"
 # its own SLink param and its ActorInfo row, e.g. Enemy_MiddleBoss_DarkLink if the Player_* users
 # turn out to play only as the listener's own sounds. NAME must be some row's SLinkUserName.
 SLINK_DIR = "Component/SLink/"
+# The player's XLink param (issue 131, puppet-looks): its PropertyTableListRef names the Player,
+# FootStep and HitReaction property tables (RSDB XLinkPropertyTableList), the properties Link's SLink
+# user reads: which foot (FootStep's foot enum), the weapon kind, the slope and so on. The shared
+# ActorBasic param of FIXED_COMPONENTS has only Common, ActorBasic and WettingRate, so the puppet's
+# sound user found none of them. With sound the puppet keeps the player's XLinkRef; the property
+# values stay at their defaults (the player's own code sets them). `--basic-xlink` (test switch)
+# builds the older pack with ActorBasic.
 SLINK_SUFFIX = ".engine__component__SLinkParam.bgyml"
 FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
 
@@ -202,13 +209,15 @@ def flatten_actor_param(members, actor):
     return comps
 
 
-def make_actor_param(player_components, sound=True):
+def make_actor_param(player_components, sound=True, basic_xlink=False):
     missing = [k for k in REQUIRED_COMPONENTS if k not in player_components]
     if missing:
         raise BuildError(f"the player's ActorParam has no {', '.join(missing)}")
     keep = KEEP_COMPONENTS + (SOUND_COMPONENTS if sound else ())
     comps = {k: player_components[k] for k in keep if k in player_components}
     comps.update(FIXED_COMPONENTS)
+    if sound and not basic_xlink and player_components.get("XLinkRef"):
+        comps["XLinkRef"] = player_components["XLinkRef"]
     return {"Components": comps}
 
 
@@ -305,10 +314,10 @@ def puppet_slink(doc, actor, user):
     return slink_path(actor), byml.dumps({"UserName": user}), src
 
 
-def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None):
+def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, basic_xlink=False):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant."""
     player = f"Player_{variant}"
-    doc = make_actor_param(flatten_actor_param(members, player), sound)
+    doc = make_actor_param(flatten_actor_param(members, player), sound, basic_xlink)
     files = collect_members(members, doc)
     keys = equipment_keys(files, doc)
     fs = puppet_footstep(doc, puppet_name(variant)) if sound and not player_footsteps else None
@@ -431,11 +440,13 @@ def recompress(dicts, original_raw, data):
     return dicts.compress(data, name)
 
 
-def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None):
+def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
+          basic_xlink=False):
     """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111).
     `sound`: False builds the puppets without Link's sounds (issue 131). `player_footsteps`: keep
     the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
-    SLink user for the puppets' sounds (SLINK_DIR)."""
+    SLink user for the puppets' sounds (SLINK_DIR). `basic_xlink`: the shared ActorBasic XLink param
+    instead of the player's (test switch, the pack before puppet-looks)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -465,7 +476,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         if not os.path.isfile(src):
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user)
+        pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, basic_xlink)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -546,6 +557,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "sound_user": sound_user if sound and sound_user else None,
+        "xlink": "player" if sound and not basic_xlink else "basic",
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
@@ -596,6 +608,8 @@ def main(argv=None):
                     help="test switch: the puppets keep the player's footstep param (the older pack)")
     ap.add_argument("--sound-user", metavar="NAME",
                     help="test switch: another actor's SLink user for the puppets' sounds, e.g. Enemy_MiddleBoss_DarkLink")
+    ap.add_argument("--basic-xlink", action="store_true",
+                    help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -641,7 +655,7 @@ def _main_build(a, romfs):
         heaps[name] = int(size)
     try:
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
-              sound_user=a.sound_user)
+              sound_user=a.sound_user, basic_xlink=a.basic_xlink)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

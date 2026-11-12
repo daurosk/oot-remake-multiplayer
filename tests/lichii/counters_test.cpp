@@ -187,7 +187,7 @@ TEST_CASE("counters: a game that came later moves, not the one with more starts"
     CHECK(PhaseApart(a, b) < 0.1);
 }
 
-TEST_CASE("counters: a pause menu puts one out of phase; the next pause puts it back") {
+TEST_CASE("counters: a pause menu puts one out of phase, and the next pause puts it back") {
     Lift a;
     Lift b;
     a.self = 1;
@@ -219,7 +219,7 @@ TEST_CASE("counters: a counter that never loops (a switch's one move) is never s
     CHECK(a.sync.LoopingOwners().empty());
 }
 
-TEST_CASE("counters: a late or other scene's line is not used; a scene change forgets") {
+TEST_CASE("counters: a late or other scene's line is not used, and a scene change forgets") {
     CounterSync s;
     CounterSync::Out out;
     s.Tick("DodongoCavern", 2, 1'000'000, {}, false, out);

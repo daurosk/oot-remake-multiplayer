@@ -245,6 +245,27 @@ try {
     Write-File (Join-Path $sp 'romfs\Tex\Mt_Angin_Acs_Player_Adult_Alb.bntx.zs') 'STALEACS'
     Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
     Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and -not (Test-Path -LiteralPath $model) -and -not (Test-Path -LiteralPath $vest) -and -not (Test-Path -LiteralPath (Join-Path $sp 'romfs\Tex\Mt_Angin_Acs_Player_Adult_Alb.bntx.zs')) -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'self tunic: an older pack: no stale model, vest or acs copy'
+    # Use-KitPuppetPack: one pack step for the emulator and Hookshot (play.ps1, G5)
+    $oldEnv = @{}; foreach ($n in 'LICHII_COOP_COLOR', 'LICHII_COOP_TUNICS', 'LICHII_COOP_SELF_TUNIC', 'LICHII_COOP_PUPPET') { $oldEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+    try {
+        Write-File (Join-Path $sp 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+        $env:LICHII_COOP_COLOR = 'red'; $env:LICHII_COOP_TUNICS = $null; $env:LICHII_COOP_SELF_TUNIC = $null; $env:LICHII_COOP_PUPPET = '1'
+        $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check ($said[-1] -eq $true -and $env:LICHII_COOP_SELF_TUNIC -eq 'red' -and [System.IO.File]::ReadAllText($tile) -eq 'RED') "pack step: found, red: LICHII_COOP_SELF_TUNIC=red and the tile in [$($said -join '|')]"
+        Check ((($said -join '|') -match 'Puppet pack: found\.') -and (($said -join '|') -match 'Your Link: the red tunic') -and $env:LICHII_COOP_PUPPET -eq '1') 'pack step: found: the lines said, puppets stay on'
+        $env:LICHII_COOP_TUNICS = '0'
+        $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check (-not $env:LICHII_COOP_SELF_TUNIC -and -not (Test-Path -LiteralPath $tile)) 'pack step: LICHII_COOP_TUNICS=0: no own colour, the game''s tile'
+        $env:LICHII_COOP_TUNICS = $null
+        Write-File (Join-Path $sp 'coop_puppet.json') '{"sound": true, "tunics": {}}'
+        $said = @(Use-KitPuppetPack (Join-Path $sp 'coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING') 6>&1)
+        Check ((($said -join '|') -match 'without the tunic colours') -and (($said -join '|') -match 'Your Link stays green') -and -not $env:LICHII_COOP_SELF_TUNIC) "pack step: an old pack: the hint and 'stays green' [$($said -join '|')]"
+        $env:LICHII_COOP_SELF_TUNIC = 'red'
+        $said = @(Use-KitPuppetPack (Join-Path $ph 'no-pack\coop_puppet.json') (Join-Path $ph 'no-tool') @('MISSING 1', 'MISSING 2') 6>&1)
+        Check ($said[-1] -eq $false -and (($said -join '|') -match 'MISSING 1\|MISSING 2') -and -not $env:LICHII_COOP_PUPPET -and -not $env:LICHII_COOP_SELF_TUNIC) "pack step: no pack: the given lines, puppets and own colour off [$($said -join '|')]"
+    } finally {
+        foreach ($n in $oldEnv.Keys) { [Environment]::SetEnvironmentVariable($n, $oldEnv[$n]) }
+    }
 } finally {
     Remove-Item -LiteralPath $ph -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -419,6 +440,28 @@ try {
     $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
     Check ($ini -notmatch '(?m)^password' -and ($out -join ' ') -match 'join password none') "Join.bat: '-' clears the password [$(($ini -split "`n") -match 'password' -join '|')]"
+    # play.ps1 -Hookshot (G5): the same pack step as the emulator: your own tunic in Hookshot's
+    # mods\contents pack before the game starts, LICHII_COOP_SELF_TUNIC for the module, the hints.
+    $kit = Join-Path $tmp 'kit hookshot'; New-Kit $kit 'v0.1.0-beta4' 'hs'
+    $hsGame = Join-Path $kit 'hookshot\game'
+    New-Item -ItemType Directory -Force -Path $hsGame | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $hsGame 'hookshot.exe'), [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe')))
+    Write-File (Join-Path $hsGame 'hookshot_coop.dll') 'module'
+    $hsPack = Join-Path $hsGame 'mods\contents\0400486024DEC000\coop-puppet'
+    New-Item -ItemType Directory -Force -Path (Join-Path $hsPack 'coop_self') | Out-Null
+    Write-File (Join-Path $hsPack 'coop_self\red.bntx.zs') 'RED'
+    Write-File (Join-Path $hsPack 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Add-Content -LiteralPath (Join-Path $kit 'coop-options.ini') -Value "`r`ncolor = red"
+    # A saved join password (Enter keeps it): the join goes on whether play.ps1 asks for one or insists on one.
+    Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`npassword = hunter2`r`n"
+    $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
+    $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts\play.ps1') join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate 2>&1) -join '|'
+    Check ($out -match 'Puppet pack: found\.' -and $out -match 'Your Link: the red tunic' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: the pack found and your red tunic said [$out]"
+    Check ([System.IO.File]::ReadAllText((Join-Path $hsPack 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs')) -eq 'RED') 'play.ps1 -Hookshot: the red tile in the Hookshot pack before the game starts'
+    Remove-Item -LiteralPath $hsPack -Recurse -Force
+    $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts\play.ps1') join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate 2>&1) -join '|'
+    Check ($out -match 'Puppet pack: not in the Hookshot game' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: no pack: says so, still starts [$out]"
+    Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
     # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an
     # invite code, the given port for host:port.

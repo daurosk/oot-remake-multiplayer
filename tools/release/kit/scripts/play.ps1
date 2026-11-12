@@ -338,8 +338,12 @@ foreach ($key in $options.Keys) {
     Write-Host "Option: $key=$value"
 }
 if ($Hookshot) {
-    if (Test-Path -LiteralPath (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json')) { Write-Host 'Puppet pack: found.' }
-    else { Write-Host 'Puppet pack: not in the Hookshot game; run Build-Hookshot-Coop.bat -Game <your .nup> again.' }
+    # As the emulator below (kit-paths.ps1 Use-KitPuppetPack): the pack hints, your own tunic (#202), the
+    # puppets off without a pack. The pack is in mods\contents (Build-Hookshot-Coop.bat installs it), and
+    # Hookshot indexes its mod files once at start: this runs before Start-Process.
+    [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
+        'Puppet pack: not in the Hookshot game, so the other players show only as markers.',
+        '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").'))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
     Write-Host "Hookshot started. Its hookshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
@@ -354,29 +358,10 @@ if ($gpl) { Write-Host $gpl }
 # Built-in graphics only: point to the 30 FPS button (docs/setup.md, "Low frame rate").
 $speed = Get-GpuSpeedHint $cardQuery
 if ($speed) { Write-Host $speed }
-$pack = Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json'
-if (Test-Path -LiteralPath $pack) {
-    Write-Host 'Puppet pack: found.'
-    # Made before sound or before the kit's pack tool changed (kit-paths.ps1): say so, start anyway.
-    $hint = Get-PuppetPackHint $pack (Join-Path $kit 'tools\puppet_pack')
-    if ($hint) { Write-Host $hint }
-    # Your own Link in your colour (#202); LICHII_COOP_TUNICS=0 keeps everyone green.
-    $want = if ($env:LICHII_COOP_TUNICS -match '^(0|off)$') { '' } else { $env:LICHII_COOP_COLOR }
-    $self = Set-KitSelfTunic (Split-Path -Parent $pack) $want
-    if ($self) {
-        $env:LICHII_COOP_SELF_TUNIC = $self
-        Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
-    }
-    elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
-    if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
-        Write-Host 'Your Link stays green: the puppet pack has no tunic of your colour. Run make-puppet-pack.cmd again.'
-    }
-}
-else {
-    Write-Host 'Puppet pack: not made yet, so the other players show only as markers.'
-    Write-Host '  Make it once with make-puppet-pack.cmd (SETUP.md, "The puppet pack").'
-    if ($env:LICHII_COOP_PUPPET) { Remove-Item env:LICHII_COOP_PUPPET; Write-Host 'Option: LICHII_COOP_PUPPET off (no pack)' }
-}
+# The pack hints, your own tunic (#202), the puppets off without a pack (kit-paths.ps1, the same for Hookshot above).
+[void](Use-KitPuppetPack (Join-Path (Get-KitLoadDir $user) '0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
+    'Puppet pack: not made yet, so the other players show only as markers.',
+    '  Make it once with make-puppet-pack.cmd (SETUP.md, "The puppet pack").'))
 
 $started = Get-Date
 $game = Start-Process -FilePath $exe -WorkingDirectory $emu -PassThru

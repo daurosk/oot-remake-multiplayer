@@ -439,6 +439,37 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     return ''
 }
 
+# The puppet pack before the game starts, the same for the emulator and Hookshot (play.ps1): the pack
+# hints, your own Link in your colour (#202: LICHII_COOP_SELF_TUNIC and the tile over the game's), and with
+# no pack the puppets off. $Manifest: the pack's coop_puppet.json (the emulator's load\<title>\coop-puppet,
+# Hookshot's mods\contents\<title>\coop-puppet). $Missing: the lines to say when there is no pack.
+# Hookshot indexes its mod files once at start, so this runs before Start-Process there too.
+# Returns $true when the pack is there.
+function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing) {
+    if (Test-Path -LiteralPath $Manifest) {
+        Write-Host 'Puppet pack: found.'
+        # Made before sound or before the kit's pack tool changed: say so, start anyway.
+        $hint = Get-PuppetPackHint $Manifest $ToolDir
+        if ($hint) { Write-Host $hint }
+        # Your own Link in your colour (#202); LICHII_COOP_TUNICS=0 keeps everyone green.
+        $want = if ($env:LICHII_COOP_TUNICS -match '^(0|off)$') { '' } else { $env:LICHII_COOP_COLOR }
+        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want
+        if ($self) {
+            $env:LICHII_COOP_SELF_TUNIC = $self
+            Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+        }
+        elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
+        if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
+            Write-Host 'Your Link stays green: the puppet pack has no tunic of your colour. Run make-puppet-pack.cmd again.'
+        }
+        return $true
+    }
+    foreach ($line in $Missing) { Write-Host $line }
+    if ($env:LICHII_COOP_PUPPET) { Remove-Item env:LICHII_COOP_PUPPET; Write-Host 'Option: LICHII_COOP_PUPPET off (no pack)' }
+    if ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
+    return $false
+}
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop

@@ -89,7 +89,7 @@ TEST_CASE("callers: the one-at-a-time stepper gives the same calls as a whole fr
     CoopCallers::ResetForTest();
 }
 
-TEST_CASE("callers: a frame stops at the call limit and when a call cannot be made; the next frame starts over") {
+TEST_CASE("callers: a frame stops at the call limit and when a call cannot be made, and the next frame starts over") {
     std::vector<std::string> log;
     CoopCallers::ResetForTest(Scripted{"first", 0x100, 5, 0, &log});
     NoGuest guest;

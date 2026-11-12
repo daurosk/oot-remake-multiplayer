@@ -206,7 +206,7 @@ TEST_CASE("teleport: another scene changes scene, then asks again and moves") {
     CHECK(a.start == "Kakariko_WellSide");  // the entrance nearest Saria (-5.8 85.2 44.2)
     CHECK_FALSE(a.move);
     CHECK(Has(a.lines, "going to Saria in KakarikoVillage_Child"));
-    CHECK_FALSE(Has(a.lines, "talk to someone"));  // free play takes it: no event needed
+    CHECK(Has(a.lines, "talk to someone or read a sign"));  // the player's own event carries it (#197)
     CHECK(trip.phase() == Trip::Phase::travelling);
     // Asked again every 0.5 s until the game takes it.
     CHECK_FALSE(trip.Tick(here, kS + kS / 4).scene);

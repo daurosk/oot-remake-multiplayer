@@ -20,6 +20,7 @@
 #include "coop/protocol/join_password.hpp"
 #include "coop/protocol/traffic_crypto.hpp"
 #include "enet_server.hpp"
+#include "host_service.hpp"
 
 using namespace coop::protocol;
 using namespace coop::server;
@@ -771,4 +772,126 @@ TEST_CASE("loopback: a guest's lost pose fragments do not fill the server's 1 MB
   CHECK(left.find("round trip 500 ms") == std::string::npos);  // ENet's reset value
   CHECK(left.find("round trip ") != std::string::npos);
   CHECK(left.find("waiting 0 bytes") == std::string::npos);    // the stuck pose counts
+}
+
+// HostService (host_service.hpp): coop_server's hosting loop as an object,
+// the one the Hookshot module runs on its own thread.
+namespace {
+
+HostServiceConfig service_config(std::vector<std::string>* log) {
+  HostServiceConfig config;
+  config.port = 0;  // any free port
+  config.session.join_password = kTestPassword;
+  if (log != nullptr) config.log = [log](const std::string& line) { log->push_back(line); };
+  return config;
+}
+
+bool pump_service(HostService& service, std::vector<Client*> clients, const std::function<bool()>& done) {
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    service.service(1);
+    for (Client* c : clients) c->pump();
+    if (done()) return true;
+  }
+  return false;
+}
+
+bool said(const std::vector<std::string>& log, const std::string& part) {
+  for (const auto& line : log) {
+    if (line.find(part) != std::string::npos) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+TEST_CASE("host service: a player joins with the password, the status counts them, stop says the totals") {
+  EnetLife enet;
+  std::vector<std::string> log;
+  HostService service(service_config(&log));
+  CHECK(service.status().state == HostState::kOff);
+  std::string why;
+  REQUIRE(service.start(why));
+  CHECK(why.empty());
+  const std::uint16_t port = service.port();
+  REQUIRE(port != 0);
+  CHECK(service.status().state == HostState::kHosting);
+  CHECK(service.status().port == port);
+  CHECK(said(log, "listening on port " + std::to_string(port) + " (all network adapters"));
+  CHECK(said(log, "players must give the join password to join; the traffic is encrypted"));
+
+  Client a;
+  a.connect(port);
+  REQUIRE(pump_service(service, {&a}, [&] { return a.connected; }));
+  a.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_service(service, {&a}, [&] { return a.find<Welcome>() != nullptr; }));
+  CHECK(a.cipher != nullptr);  // the traffic is encrypted
+  CHECK(service.status().players == 1);
+  // No password, port or invite text in the log beyond what coop_server says.
+  for (const auto& line : log) CHECK(line.find(kTestPassword) == std::string::npos);
+
+  service.stop();
+  CHECK(service.status().state == HostState::kStopped);
+  CHECK(service.status().players == 0);
+  CHECK(said(log, "stopping; relayed "));
+  const std::size_t lines = log.size();
+  service.stop();  // a second stop does nothing
+  service.service(1);
+  CHECK(log.size() == lines);
+  CHECK_FALSE(service.running());
+}
+
+TEST_CASE("host service: a taken port tries the next ones, then says which program to close") {
+  EnetLife enet;
+  HostService first(service_config(nullptr));
+  std::string why;
+  REQUIRE(first.start(why));
+  const std::uint16_t taken = first.port();
+
+  HostServiceConfig config = service_config(nullptr);
+  config.port = taken;
+  config.port_tries = 1;
+  HostService second(config);
+  CHECK_FALSE(second.start(why));
+  CHECK(why.find("cannot listen on port " + std::to_string(taken)) != std::string::npos);
+  CHECK(why.find("is a co-op server window open already?") != std::string::npos);
+  CHECK(second.status().state == HostState::kFailed);
+  CHECK(second.status().message == why);
+
+  config.port_tries = 3;
+  HostService third(config);
+  if (third.start(why)) {  // unless the next ports are taken too on this PC
+    CHECK(third.port() != taken);
+    CHECK(third.port() > taken);
+    CHECK(third.port() <= taken + 2);
+  } else {
+    CHECK(why.find("or the 2 after it") != std::string::npos);
+  }
+}
+
+TEST_CASE("host service: no join password, no session") {
+  EnetLife enet;
+  HostServiceConfig config = service_config(nullptr);
+  config.session.join_password.clear();
+  HostService service(config);
+  std::string why;
+  CHECK_FALSE(service.start(why));
+  CHECK(why.find("a join password is needed") != std::string::npos);
+  CHECK(service.port() == 0);
+  CHECK(service.add_answer("ABCDE") == coop::server::nat::CodeError::kNotACode);
+}
+
+TEST_CASE("host service: a wrong password is refused") {
+  EnetLife enet;
+  HostService service(service_config(nullptr));
+  std::string why;
+  REQUIRE(service.start(why));
+  Client a;
+  a.password = "not-the-pass";
+  a.connect(service.port());
+  REQUIRE(pump_service(service, {&a}, [&] { return a.connected; }));
+  a.send(hello_from("Link"), kChannelSession);
+  pump_service(service, {&a}, [&] { return a.find<Refused>() != nullptr || a.disconnected; });
+  CHECK(a.find<Welcome>() == nullptr);
+  CHECK(service.status().players == 0);
 }

@@ -198,27 +198,29 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
   }
   // The password comes before every other check, so someone without it
   // learns nothing about the session (its game build, names, how full).
-  if (!config_.join_password.empty()) {
-    // With a password the traffic is encrypted, always: a game that offers
-    // no key share is not let in plain (so nobody can strip it on the way).
-    if (!hello.key_share) {
-      ++stats_.no_key_share;
-      refuse(id, c, RefuseReason::wrong_protocol_version, now_us,
-             "the game offers no traffic encryption (an older build?)");
-      return;
-    }
-    c.state = State::awaiting_proof;
-    c.pending_hello = hello;
-    c.nonce = random_nonce();
-    c.key_pair = std::make_shared<const KeyPair>(KeyPair::generate());
-    const JoinChallenge challenge{c.nonce, c.key_pair->share()};
-    c.challenge_packet.clear();
-    if (encode(challenge, c.challenge_packet) != Error::none) return;
-    actions_.push_back(SendAction{id, kChannelSession, c.challenge_packet});
+  // Every session has one (coop_server does not start without it), and the
+  // traffic is always encrypted: there is no plain way in.
+  if (config_.join_password.empty()) {
+    refuse(id, c, RefuseReason::bad_password, now_us,
+           "this server has no join password set, so nobody can join");
     return;
   }
-  c.hello_packet.clear();
-  admit(id, c, hello, now_us);
+  // A game that offers no key share is not let in plain (so nobody can
+  // strip it on the way).
+  if (!hello.key_share) {
+    ++stats_.no_key_share;
+    refuse(id, c, RefuseReason::wrong_protocol_version, now_us,
+           "the game offers no traffic encryption (an older build?)");
+    return;
+  }
+  c.state = State::awaiting_proof;
+  c.pending_hello = hello;
+  c.nonce = random_nonce();
+  c.key_pair = std::make_shared<const KeyPair>(KeyPair::generate());
+  const JoinChallenge challenge{c.nonce, c.key_pair->share()};
+  c.challenge_packet.clear();
+  if (encode(challenge, c.challenge_packet) != Error::none) return;
+  actions_.push_back(SendAction{id, kChannelSession, c.challenge_packet});
 }
 
 void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& proof,

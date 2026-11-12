@@ -142,8 +142,8 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
       return "wrong join password: ask the host for it, then start Join.bat again and type it";
     case proto::RefuseReason::not_encrypted:
       return "the server did not ask for the join password, so the game did not join it "
-             "unencrypted: if the host set no password, start Join.bat again with the password "
-             "empty";
+             "unencrypted (every session has a password and is encrypted): the host's server "
+             "is an older build, or someone on the way answered for it";
   }
   return "unknown reason";
 }
@@ -290,7 +290,7 @@ void Client::service(std::uint32_t wait_ms) {
             claimed = send_raw(proto::RejoinClaim{*rejoin_token_}, proto::kChannelSession);
           }
           // Our key share for this connection (docs/protocol.md "Encrypted
-          // traffic"); a server without a password ignores it.
+          // traffic"); every server asks for the password and makes keys with it.
           key_pair_.emplace(proto::KeyPair::generate());
           hello.key_share = key_pair_->share();
           // Our number of the last session, so a restarted server gives it
@@ -441,9 +441,9 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
 
   if (state_ == State::handshaking) {
     if (const auto* welcome = std::get_if<proto::Welcome>(&message)) {
-      // With a join password, only a server that made keys with us may let
-      // us in: a plain WELCOME is someone answering for a no-password server.
-      if (!config_.join_password.empty() && cipher_ == nullptr) {
+      // Only a server that made keys with us may let us in: a plain WELCOME
+      // is an old build or someone answering for the server (no downgrade).
+      if (cipher_ == nullptr) {
         refuse_unencrypted();
         return;
       }
@@ -456,8 +456,8 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
       }
       challenge_answered_ = true;
       if (!answer_challenge(*challenge, std::span<const std::uint8_t>(data, size))) {
-        // A server with a password that does not encrypt: never fall back to
-        // plain traffic (someone on the path may have taken the key out).
+        // A server that does not encrypt: never fall back to plain traffic
+        // (someone on the path may have taken the key out).
         refuse_unencrypted();
       }
     } else if (const auto* refused = std::get_if<proto::Refused>(&message)) {

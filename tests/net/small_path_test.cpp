@@ -130,6 +130,7 @@ ClientConfig config_to(std::uint16_t port, const std::string& name) {
   c.hello.game_build_id = "e0f3ccfaf50065ae";
   c.hello.game_version = "1.1.1";
   c.hello.nickname = name;
+  c.join_password = "test-pass";  // every session has one (and is encrypted)
   c.retry_first_ms = 50;
   c.retry_max_ms = 400;
   return c;
@@ -168,6 +169,7 @@ TEST_CASE("small path: games behind 1200-, 576- and 900-byte paths stay connecte
   EnetLife enet;
   coop::server::ServerOptions options;
   options.port = 0;
+  options.session.join_password = "test-pass";
   coop::server::EnetServer server(options);
   REQUIRE(server.start());
 
@@ -292,6 +294,7 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
   EnetLife enet;
   coop::server::ServerOptions options;
   options.port = 0;
+  options.session.join_password = "test-pass";
   coop::server::EnetServer server(options);
   server.remember_loopback_small_paths(true);  // every game here is on 127.0.0.1
   REQUIRE(server.start());
@@ -352,6 +355,7 @@ TEST_CASE("small path: a loopback game sent away is not remembered (relay guests
   EnetLife enet;
   coop::server::ServerOptions options;
   options.port = 0;
+  options.session.join_password = "test-pass";
   coop::server::EnetServer server(options);
   REQUIRE(server.start());
 
@@ -399,6 +403,7 @@ TEST_CASE("small path: plain loss and short outages on a line that carries full 
   EnetLife enet;
   coop::server::ServerOptions options;
   options.port = 0;
+  options.session.join_password = "test-pass";
   coop::server::EnetServer server(options);
   REQUIRE(server.start());
 

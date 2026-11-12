@@ -33,18 +33,17 @@ if ($Bind.Trim()) {
 . (Join-Path $PSScriptRoot 'invite.ps1')
 $kitAccess = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
 $password = $kitAccess.Password
-# No server_password line: a new random one for this session (docs/play-online.md). Host.bat
+# No server_password (no line, or an empty one): a new random one for this session. Every
+# session has a password, which also encrypts the traffic (docs/play-online.md). Host.bat
 # makes it and hands it over in OOT_COOP_SESSION_PASSWORD, so the host's own game has it too.
 $madePassword = $false
 if ($null -eq $password) {
     $password = if ($env:OOT_COOP_SESSION_PASSWORD) { $env:OOT_COOP_SESSION_PASSWORD } else { New-JoinPassword }
     $madePassword = $true
 }
-if ($password) {
-    if (-not (Test-CoopPassword $password)) { Write-Host 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1 }
-    $env:OOT_COOP_SERVER_PASSWORD = $password
-    $access += @('--password-env', 'OOT_COOP_SERVER_PASSWORD')
-}
+if (-not (Test-CoopPassword $password)) { Write-Host 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1 }
+$env:OOT_COOP_SERVER_PASSWORD = $password
+$access += @('--password-env', 'OOT_COOP_SERVER_PASSWORD')
 # The router forward (upnp = yes) and the relay (relay = address): docs/play-online.md.
 . (Join-Path $PSScriptRoot 'relay-join.ps1')
 $hosting = Get-ServerHostingArgs $kitAccess $password $Allow.Trim()
@@ -65,8 +64,8 @@ if ($madePassword) {
     # Shown here only (never in the log), for friends who join by a VPN or home-network address.
     Write-Host "Join password for this session: $password   (only needed when a friend joins by address instead of the invite code)"
 }
-elseif ($password) { Write-Host 'Join password: on (server_password in coop-options.ini). Send it to your friends with the address.' }
-else { Write-Host 'Join password: none (set one with server_password in coop-options.ini).' }
+else { Write-Host "Join password: $password   (server_password in coop-options.ini). Send it to your friends with the address." }
+Write-Host 'Every session has a join password, and the traffic is encrypted with it.'
 if ($kitAccess.Pvp) { Write-Host 'PvP: on (pvp in coop-options.ini): players can hurt each other. /pvp off in the game chat turns it off.' }
 else { Write-Host 'PvP: off (players cannot hurt each other; pvp = on in coop-options.ini, or /pvp on in the game chat).' }
 # Which address the others type (hosting.ps1): VPN, internet (one HTTPS question to a fixed

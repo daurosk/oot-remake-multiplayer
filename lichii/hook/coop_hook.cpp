@@ -1287,7 +1287,7 @@ private:
                 if (last_state == coop::net::State::connected) {
                     LOG_INFO(Core, "coop: traffic {}", room.encrypted
                                                            ? "encrypted"
-                                                           : "not encrypted (the host set no join password)");
+                                                           : "NOT encrypted (should never happen: the client joins only encrypted servers)");
                 }
             }
             // Issue 108: each REFUSED name taken asked again, so a log shows
@@ -1432,8 +1432,8 @@ private:
             if (CoopPvp::On()) {
                 head += ", PvP on";
             }
-            // Plain only on a server without a join password: say so.
-            head += room.encrypted ? ", encrypted" : ", not encrypted (no join password)";
+            // Every session is encrypted (the client refuses a plain server).
+            head += room.encrypted ? ", encrypted" : ", NOT encrypted";
             lines.push_back({head});
         } else {
             std::string head = "Co-op: " + std::string(coop::net::to_string(room.state));

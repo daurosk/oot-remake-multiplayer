@@ -121,8 +121,8 @@ try {
     }
     [System.IO.File]::WriteAllText($opt, "# server_allow = 9.9.9.9`r`n")
     $a = Read-KitServerAccess $opt
-    # server_password (join-password): $null when no line sets it (Host.bat asks), '' for none.
-    Check ($null -eq $a.Password) 'no server_password line: Password is $null (Host.bat asks once)'
+    # server_password (join-password): $null when no line sets it or it is empty (Host.bat makes one).
+    Check ($null -eq $a.Password) 'no server_password line: Password is $null (Host.bat makes one)'
     [System.IO.File]::WriteAllText($opt, "# --- Who may join ---`r`n# server_password = `r`nLICHII_COOP_PUPPET=1`r`n")
     Check ($null -eq (Read-KitServerAccess $opt).Password) 'server_password behind # is not set'
     Set-KitServerPassword $opt 'hunter2'
@@ -133,7 +133,7 @@ try {
     Check (-not $said -and -not (Read-KitOptions $opt 6>$null).Contains('server_password')) 'server_password is not an emulator switch and is not warned about'
     Set-KitServerPassword $opt ''
     $p = (Read-KitServerAccess $opt).Password
-    Check ($null -ne $p -and $p -eq '' -and ([regex]::Matches([System.IO.File]::ReadAllText($opt), 'server_password')).Count -eq 1) "no password chosen: one empty server_password line, not asked again [$p]"
+    Check ($null -eq $p -and ([regex]::Matches([System.IO.File]::ReadAllText($opt), 'server_password')).Count -eq 1) "an empty server_password line is not 'no password': Host.bat makes one (every session has one) [$p]"
     # color (puppet-colors): passed as LICHII_COOP_COLOR when it is a colour, with a comment after it too.
     . (Join-Path $kitSrc 'scripts\coop-ini.ps1')
     foreach ($good in 'blue', 'Purple', '#FF8020', 'ff8020') { Check (Test-CoopColor $good) "a colour: $good" }
@@ -427,7 +427,7 @@ try {
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
     Check (($out -join ' ') -match "'26\.1\.2' is not an address") 'Join.bat: a typo is asked again'
     Check ($ini -match '(?m)^server = 26\.1\.2\.3\s*$' -and $ini -match '(?m)^port = 27511\s*$') "Join.bat: ' 26.1.2.3:27511. ' is saved as server 26.1.2.3, port 27511"
-    Check (($out -join ' ') -match 'A join password has no spaces' -and $ini -match '(?m)^password = hunter2\s*$') "Join.bat: a password with a space is asked again, then saved in coop.ini [$(($ini -split "`n") -match 'password' -join '|')]"
+    Check (($out -join ' ') -match 'Type the join password the host sent you' -and $ini -match '(?m)^password = hunter2\s*$') "Join.bat: a password with a space is asked again, then saved in coop.ini [$(($ini -split "`n") -match 'password' -join '|')]"
     $summary = @($out | Where-Object { "$_" -match '^Co-op: server' }) -join ' '
     Check ($summary -match 'join password set' -and $summary -notmatch 'hunter2') "Join.bat: the summary says 'join password set', not the password [$summary]"
     [System.IO.File]::WriteAllText($in, "`r`n`r`n")
@@ -436,10 +436,11 @@ try {
     Check ((Read-File "$kit\emulator\user\config\coop.ini") -match '(?m)^password = hunter2\s*$') 'Join.bat: Enter keeps the saved password'
     Get-Process lichii -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 300
-    [System.IO.File]::WriteAllText($in, "`r`n-`r`n")
+    # Every session has a join password: '-' (once "none") is asked again.
+    [System.IO.File]::WriteAllText($in, "`r`n-`r`nzelda42`r`n")
     $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
-    Check ($ini -notmatch '(?m)^password' -and ($out -join ' ') -match 'join password none') "Join.bat: '-' clears the password [$(($ini -split "`n") -match 'password' -join '|')]"
+    Check ($ini -match '(?m)^password = zelda42\s*$' -and ($out -join ' ') -match 'Type the join password' -and ($out -join ' ') -notmatch 'join password none') "Join.bat: '-' is no password any more, asked again [$(($ini -split "`n") -match 'password' -join '|')]"
     # play.ps1 -Hookshot (G5): the same pack step as the emulator: your own tunic in Hookshot's
     # mods\contents pack before the game starts, LICHII_COOP_SELF_TUNIC for the module, the hints.
     $kit = Join-Path $tmp 'kit hookshot'; New-Kit $kit 'v0.1.0-beta4' 'hs'
@@ -453,13 +454,15 @@ try {
     Write-File (Join-Path $hsPack 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
     Add-Content -LiteralPath (Join-Path $kit 'coop-options.ini') -Value "`r`ncolor = red"
     # A saved join password (Enter keeps it): the join goes on whether play.ps1 asks for one or insists on one.
+    # Its join always asks (every session has a password): Enter, from a file as the Join.bat tests do.
+    $enter = Join-Path $tmp 'enter.txt'; [System.IO.File]::WriteAllText($enter, "`r`n")
     Write-File (Join-Path $hsGame 'coop.ini') "server = 127.0.0.1`r`nport = 27510`r`nname = Saria`r`npassword = hunter2`r`n"
     $env:OOT_COOP_UPDATE_API = Join-Path $tmp 'no-such-releases.json'
-    $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts\play.ps1') join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate 2>&1) -join '|'
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$enter`"" 2>&1) -join '|'
     Check ($out -match 'Puppet pack: found\.' -and $out -match 'Your Link: the red tunic' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: the pack found and your red tunic said [$out]"
     Check ([System.IO.File]::ReadAllText((Join-Path $hsPack 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs')) -eq 'RED') 'play.ps1 -Hookshot: the red tile in the Hookshot pack before the game starts'
     Remove-Item -LiteralPath $hsPack -Recurse -Force
-    $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts\play.ps1') join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate 2>&1) -join '|'
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" join -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$enter`"" 2>&1) -join '|'
     Check ($out -match 'Puppet pack: not in the Hookshot game' -and $out -match 'Hookshot started') "play.ps1 -Hookshot: no pack: says so, still starts [$out]"
     Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with

@@ -82,7 +82,7 @@ $f = Findings @((Rule 'OoT co-op server UDP 27510'))
 Check (-not (Text $f 'problem')) 'check: a LAN rule for the program, server running: no problem'
 Check ((Text $f 'ok') -match 'every network' -and (Text $f 'ok') -match '192\.168\.1\.20') 'check: lists the networks it listens on'
 Check ((Text $f 'note') -match 'server_allow is not set') 'check: says server_allow is not set'
-Check ((Text $f 'note') -match 'No join password') 'check: says no join password is set'
+Check ((Text $f 'ok') -match 'makes a new random one' -and (Text $f 'note') -notmatch 'join password') 'check: no server_password: Host.bat makes one (every session has one)'
 $f = Findings @((Rule 'OoT co-op server UDP 27510')) -Access @{ Allow = ''; Bind = ''; Password = 'hunter2' }
 Check ((Text $f 'ok') -match 'A join password is set' -and ((Text $f 'ok') + (Text $f 'note')) -notmatch 'hunter2') 'check: a join password is named as set, never printed'
 $f = Findings @()

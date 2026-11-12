@@ -157,9 +157,10 @@ coop_test_server "$server" || { echo "Bad server address: $server"; exit 1; }
 coop_test_name "$name" || { echo "Bad name: $name"; exit 1; }
 [[ $port =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535)) || { echo "Bad port: $port"; exit 1; }
 
-# The join password (protocol 9). Host.sh: server_password in coop-options.ini, or with no
-# such line a new random one for this session, put into the invite code by the server. Join.sh
-# and play.sh change: asked each time, Enter keeps the saved one, '-' clears it.
+# The join password (protocol 9; every session has one, and it encrypts the traffic). Host.sh:
+# server_password in coop-options.ini, or with none (no line or an empty one) a new random one
+# for this session, put into the invite code by the server. Join.sh and play.sh change: asked
+# each time, Enter keeps the saved one.
 kit_server_access "$options"
 ((password_given)) || password=$COOP_PASSWORD
 if ((invite)); then
@@ -172,22 +173,19 @@ elif [[ $mode == host ]]; then
         password=$(kit_new_password)
         export OOT_COOP_SESSION_PASSWORD=$password
         echo 'Join password: a new random one for this session (it is inside the invite code; nobody types it).'
-    elif [[ -z $password ]]; then
-        echo 'coop-options.ini says no join password (server_password =): no invite code and no router forward.'
-        echo 'Anyone who finds your server can join. Delete that line to get a password and an invite code.'
     elif ! coop_test_password "$password"; then
         echo 'coop-options.ini: server_password has a space or is longer than 128 characters; the server was not started.'
         exit 1
     fi
 elif [[ $mode == join ]] || ((ask)); then
-    echo 'Join password: only if the host gave you one. Enter keeps the one in [ ], - for none.'
+    echo 'Join password: every session has one; the host sees it in the server window. Enter keeps the one in [ ].'
     while :; do
         read -r -p "Join password${password:+ [saved]}: " answer || exit 1
         answer=${answer#"${answer%%[![:space:]]*}"}
         answer=${answer%"${answer##*[![:space:]]}"}
-        if [[ $answer == - ]]; then password=''; elif [[ -n $answer ]]; then password=$answer; fi
-        [[ -z $password ]] || coop_test_password "$password" && break
-        echo 'A join password has no spaces and at most 128 characters. Ask the host for it again.'
+        [[ -n $answer ]] && password=$answer
+        [[ -n $password ]] && coop_test_password "$password" && break
+        echo 'Type the join password the host sent you (no spaces, at most 128 characters).'
         password=''
     done
 fi
@@ -350,7 +348,7 @@ while kill -0 "$game" 2>/dev/null && (($(date +%s) - started < 900)); do
         refused:*)
             echo "The host's server said no: ${state#refused: }."
             echo 'name taken: pick another name with ./play.sh change. wrong protocol version: everyone runs ./update.sh (Update.bat).'
-            echo 'wrong join password: start Join.sh again and type the password the host sent you (- for none).'
+            echo 'wrong join password: start Join.sh again and type the password the host sent you.'
             exit 1 ;;
         trying)
             if [[ -z $trying ]]; then trying=$(date +%s)

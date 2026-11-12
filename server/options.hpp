@@ -62,7 +62,8 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
                                               std::string& error);
 
 // Why a join password cannot be used (too long, a control character), or
-// null when it is fine. Empty is fine: no password.
+// null when it is fine. Empty passes here (the option may come from an
+// environment variable); main then refuses to start without a password.
 const char* password_problem(std::string_view password);
 
 // The --help text.

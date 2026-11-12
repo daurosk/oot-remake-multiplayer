@@ -220,9 +220,10 @@ if (-not (Test-CoopServer $Server)) { Write-Host "Bad server address: $Server"; 
 if (-not (Test-CoopName $Name)) { Write-Host "Bad name: $Name"; exit 1 }
 if ($Port -notmatch '^\d{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) { Write-Host "Bad port: $Port"; exit 1 }
 
-# The join password (protocol 9). Host.bat: asked once and saved as server_password in
-# coop-options.ini (an empty line there means none); this game uses the same one. Join.bat
-# and play.cmd change: asked each time, Enter keeps the saved one, '-' clears it.
+# The join password (protocol 9; every session has one, and it encrypts the traffic).
+# Host.bat: server_password in coop-options.ini, or with none (no line or an empty one) a new
+# random one for this session; this game uses the same one. Join.bat and play.cmd change:
+# asked each time (the invite code holds it), Enter keeps the saved one.
 $optionsFile = Join-Path $kit 'coop-options.ini'
 $Password = $current.password
 if ($inviteJoin) {
@@ -238,29 +239,31 @@ elseif ($Mode -eq 'host') {
         $env:OOT_COOP_SESSION_PASSWORD = $Password
         Write-Host 'Join password: a new random one for this session (it is inside the invite code; nobody types it).'
     }
-    elseif (-not $Password) {
-        Write-Host 'coop-options.ini says no join password (server_password =): no invite code and no router forward.'
-        Write-Host 'Anyone who finds your server can join. Delete that line to get a password and an invite code.'
-    }
-    elseif ($Password -and -not (Test-CoopPassword $Password)) {
+    elseif (-not (Test-CoopPassword $Password)) {
         Write-Host 'coop-options.ini: server_password has a space or is longer than 128 characters; the server was not started.'
         exit 1
     }
 }
 elseif ($Mode -eq 'join' -or $ask) {
-    Write-Host 'Join password: only if the host gave you one. Enter keeps the one in [ ], - for none.'
+    Write-Host 'Join password: every session has one; the host sees it in the server window. Enter keeps the one in [ ].'
+    $tries = 0
     do {
         $answer = Read-Host "Join password$(if ($Password) { ' [saved]' })"
-        if ($answer -and $answer.Trim() -eq '-') { $Password = '' }
+        if ($answer -and $answer.Trim() -eq '-') { $Password = '' }  # once "none": every session has one now
         elseif ($answer -and $answer.Trim()) { $Password = $answer.Trim() }
-        $ok = -not $Password -or (Test-CoopPassword $Password)
-        if (-not $ok) { Write-Host 'A join password has no spaces and at most 128 characters. Ask the host for it again.'; $Password = '' }
+        $ok = $Password -and (Test-CoopPassword $Password)
+        if (-not $ok) {
+            Write-Host 'Type the join password the host sent you (every session has one; no spaces, at most 128 characters).'
+            $Password = ''
+            # Nothing more to read (input from a file or pipe): stop instead of asking forever.
+            if (++$tries -ge 5) { exit 1 }
+        }
     } until ($ok)
 }
 if ($Password -and -not (Test-CoopPassword $Password)) { Write-Host 'coop.ini: the join password has a space or is too long.'; exit 1 }
 
 Write-CoopIni $template $ini $Server $Port $Name $Password
-Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'none' })   (play.cmd change to change the name)"
+Write-Host "Co-op: server $Server, port $Port, name $Name, join password $(if ($Password) { 'set' } else { 'not set: the server will refuse' })   (play.cmd change to change the name)"
 
 $user = Join-Path $emu 'user'
 if ($Hookshot) {
@@ -389,7 +392,7 @@ if ($Mode -eq 'join' -and $game) {
         if ($state -like 'refused:*') {
             Write-Host "The host's server said no: $($state.Substring(9))."
             Write-Host 'name taken: pick another name with play.cmd change. wrong protocol version: everyone runs Update.bat.'
-            Write-Host 'wrong join password: start Join.bat again and type the password the host sent you (- for none).'
+            Write-Host 'wrong join password: start Join.bat again and type the password the host sent you.'
             exit 1
         }
         if ($state -eq 'trying') {

@@ -16,6 +16,8 @@
 #include <enet/enet.h>
 
 #include "coop/protocol/codec.hpp"
+#include "coop/protocol/join_password.hpp"
+#include "coop/protocol/traffic_crypto.hpp"
 #include "enet_server.hpp"
 #include "relay.hpp"
 #include "relay_link.hpp"
@@ -346,7 +348,7 @@ TEST_CASE("relay loopback: a guest joins the host's server through the relay wit
   EnetLife enet;
   ServerOptions options;
   options.port = 0;
-  options.session.join_password = "";
+  options.session.join_password = "relay-pass";  // every session has one
   EnetServer server(options);
   REQUIRE(server.start());
 
@@ -408,13 +410,24 @@ TEST_CASE("relay loopback: a guest joins the host's server through the relay wit
   hello.game_build_id = "e0f3ccfaf50065ae";
   hello.game_version = "1.1.1";
   hello.nickname = "Saria";
+  const KeyPair keys = KeyPair::generate();
+  hello.key_share = keys.share();
   auto bytes = coop::protocol::encode(coop::protocol::Message{hello});
   REQUIRE(bytes.has_value());
   ENetPacket* p = enet_packet_create(bytes->data(), bytes->size(), ENET_PACKET_FLAG_RELIABLE);
   REQUIRE(enet_peer_send(guest.peer, kChannelSession, p) == 0);
-  REQUIRE(pump_until([&] { return guest.find<Welcome>() != nullptr; }));
-  CHECK(guest.find<Welcome>()->player_number == 1);
-  CHECK(server.session().player_count() == 1);
+  // The challenge comes back through the relay; the proof goes out, and from
+  // then on the relay forwards sealed bytes it cannot read (WELCOME too).
+  REQUIRE(pump_until([&] { return guest.find<JoinChallenge>() != nullptr; }));
+  const JoinChallenge challenge = *guest.find<JoinChallenge>();
+  REQUIRE(challenge.key_share.has_value());
+  auto proof = coop::protocol::encode(coop::protocol::Message{
+      JoinProof{join_proof("relay-pass", challenge.nonce, keys.share(), *challenge.key_share)}});
+  REQUIRE(proof.has_value());
+  p = enet_packet_create(proof->data(), proof->size(), ENET_PACKET_FLAG_RELIABLE);
+  REQUIRE(enet_peer_send(guest.peer, kChannelSession, p) == 0);
+  REQUIRE(pump_until([&] { return server.session().player_count() == 1; }));
+  CHECK(guest.find<Welcome>() == nullptr);  // it came sealed: not readable plain
   CHECK(relay_server.relay().stats().to_host > 0);
   CHECK(relay_server.relay().stats().to_guest > 0);
 
@@ -427,6 +440,7 @@ TEST_CASE("relay loopback: a game without the code never reaches the host") {
   EnetLife enet;
   ServerOptions options;
   options.port = 0;
+  options.session.join_password = "relay-pass";
   EnetServer server(options);
   REQUIRE(server.start());
   RelayServer relay_server(0, std::nullopt, RelayConfig{});

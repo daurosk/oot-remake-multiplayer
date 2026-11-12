@@ -67,9 +67,10 @@ param(
     [string[]]$AddOnsOff = @(),
     # The emulator's "30 FPS mode" (oot_30fps) for this run: the game steps twice per frame.
     [switch]$Fps30,
-    # A join password for the server (passed through an environment variable, not the command
-    # line). The games send none unless a steps file says `password A TEXT`.
-    [string]$ServerPassword = "",
+    # The server's join password (passed through an environment variable, not the command
+    # line). Every session has one, and it encrypts the traffic. The games send it too unless a
+    # steps file says `password A TEXT` (or `password A -` for none).
+    [string]$ServerPassword = "autotest-pass",
     # A bad connection (docs/testing.md, "Bad connections"): tools\netsim\netsim.py relays each game
     # in -NetSimFor to the server, on port -Port+1 (A) or -Port+2 (B). -Lag is added round trip in
     # ms (half each way), -Jitter +- ms each way, -Loss % each way, -Spike "<ms>/<every s>" a stall
@@ -483,7 +484,8 @@ function Start-Server {
     $script:serverRuns++
     $sfx = if ($script:serverRuns -gt 1) { "-$($script:serverRuns)" } else { '' }
     $sargs = "--port $Port"
-    if ($ServerPassword) { $env:OOT_COOP_TEST_PASSWORD = $ServerPassword; $sargs += " --password-env OOT_COOP_TEST_PASSWORD" }
+    if (-not $ServerPassword) { throw "-ServerPassword: every session has a join password (coop_server does not start without one)" }
+    $env:OOT_COOP_TEST_PASSWORD = $ServerPassword; $sargs += " --password-env OOT_COOP_TEST_PASSWORD"
     $script:serverProc = Start-Process $Server -ArgumentList $sargs -PassThru -WindowStyle Minimized `
         -RedirectStandardOutput "$out\server-out$sfx.txt" -RedirectStandardError "$out\server-err$sfx.txt"
     Start-Sleep 1
@@ -556,7 +558,8 @@ function Start-Game([string]$x) {
         Write-Host "game ${x}: saves restored from $(Baseline-Dir $kits[$x])"
     }
     $ini = if ($NoCoop) { "name = $x" } else { "server = 127.0.0.1`r`nport = $($netPort[$x])`r`nname = $x" }
-    if (-not $NoCoop -and $script:passwords[$x]) { $ini += "`r`npassword = $($script:passwords[$x])" }
+    $pw = if ($script:passwords.ContainsKey($x)) { $script:passwords[$x] } else { $ServerPassword }
+    if (-not $NoCoop -and $pw) { $ini += "`r`npassword = $pw" }
     Set-Content -Encoding ascii (Join-Path $s.Emu 'user\config\coop.ini') $ini
     Set-NoCloseQuestion (Join-Path $s.Emu 'user\config\qt-config.ini')
     Set-RunSettings $x (Join-Path $s.Emu 'user\config\qt-config.ini')
@@ -729,7 +732,7 @@ function Run-Steps([string]$file) {
                 }
                 Start-Sleep 3
                 Shot-Both "s$n-try-$x-$want"
-                $res = '{0} try {1} (want {2}, got {3}, password set: {4})' -f $(if ($got -eq $want) { 'PASS' } else { 'FAIL' }), $x, $want, $got, [bool]$script:passwords[$x]
+                $res = '{0} try {1} (want {2}, got {3}, password set: {4})' -f $(if ($got -eq $want) { 'PASS' } else { 'FAIL' }), $x, $want, $got, [bool]$(if ($script:passwords.ContainsKey($x)) { $script:passwords[$x] } else { $ServerPassword })
                 Write-Host $res; Add-Content "$out\counts.txt" $res
                 if ($got -ne $want) { $script:stepFails++ }
                 $expectedExit[$x] = $true; $p = $st[$x].Proc

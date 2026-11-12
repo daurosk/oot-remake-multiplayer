@@ -53,8 +53,9 @@ struct SessionConfig {
   std::uint16_t tick_rate = 60;
   std::uint64_t hello_timeout_us = 10'000'000;    // connect to HELLO
   // The join password (coop_server --password): a player must answer the
-  // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce.
-  // Empty: no password, HELLO is answered at once as before.
+  // JOIN_CHALLENGE with HMAC-SHA256 of it over that connection's nonce and
+  // both key shares; the traffic keys come from it too. Required: empty, every
+  // HELLO is refused (there is no plain way in, docs/protocol.md).
   std::string join_password;
   // PvP (coop_server --pvp): players hurt each other. The host may change it
   // in the session (PVP_MODE); every player gets the server's value.

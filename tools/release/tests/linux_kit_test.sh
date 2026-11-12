@@ -75,7 +75,7 @@ kit_hosting_args ''
 check 'upnp and invite: refused without a join password' bash -c '[ "$1" = 0 ] && [[ $2 == *"NOT used"* && $2 == *"No invite code"* ]]' _ "${#HOSTING_ARGS[@]}" "${HOSTING_NOTES[*]}"
 printf 'upnp = no\ninvite = no\nstun_servers = a.example:1, bad host;x\nserver_password =\n' >"$tmp/access.ini"
 kit_server_access "$tmp/access.ini"
-check 'upnp = no, invite = no and an empty server_password are read' [ "$KA_UPNP$KA_INVITE$KA_PASSWORD_SET|$KA_PASSWORD|$KA_STUN" = '001||a.example:1, bad host;x' ]
+check 'upnp = no, invite = no are read; an empty server_password is not set (Host.sh makes one)' [ "$KA_UPNP$KA_INVITE$KA_PASSWORD_SET|$KA_PASSWORD|$KA_STUN" = '000||a.example:1, bad host;x' ]
 KA_INVITE=1
 kit_hosting_args secret
 check 'stun servers are checked' bash -c '[ "$1" = "--invite --stun a.example:1" ] && [[ $2 == *"not a name:port"* ]]' _ "${HOSTING_ARGS[*]}" "${HOSTING_NOTES[*]}"
@@ -204,7 +204,7 @@ cp "$kit6/coop-options.ini" "$tmp/options.keep"
 echo 'server_password =' >>"$kit6/coop-options.ini"
 (cd "$kit6" && bash ./start-server.sh 27600 >"$tmp/server2.out" 2>&1)
 log=$(ls "$kit6"/logs/server-*.log 2>/dev/null | head -n1)
-check 'server_password = (empty): no password, no UPnP, no invite code, said why' bash -c 'grep -q "args: --port 27600 *$" "$1" && grep -q "UPnP) is NOT used" "$2" && grep -q "No invite code" "$2"' _ "$log" "$tmp/server2.out"
+check 'server_password = (empty): a made join password too (every session has one), UPnP and the invite code' bash -c 'grep -q "args: --port 27600 --password-env OOT_COOP_SERVER_PASSWORD --upnp --invite" "$1" && grep -q "Join password for this session: [A-HJ-NP-Z2-9]\{20\}" "$2" && ! grep -q "NOT used" "$2"' _ "$log" "$tmp/server2.out"
 cp "$tmp/options.keep" "$kit6/coop-options.ini"
 rm -f "$kit6"/logs/server-*.log
 

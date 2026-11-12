@@ -531,7 +531,8 @@ def recompress(dicts, original_raw, data):
     return dicts.compress(data, name)
 
 
-def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None):
+def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
+          stand_in_effects=True):
     """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111).
     `sound`: False builds the puppets without Link's sounds (issue 131). `player_footsteps`: keep
     the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
@@ -613,14 +614,19 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         log(f"impacts: no {IMPACT_TEMPLATE} in this romfs, left out")
 
     shots = []
+    # stand_in_effects=False (--no-seed-trail) builds the stand-ins model-only, as before issue 198,
+    # so a release can back the seed trail out by building the pack again, without a code change.
+    fx_template = template if stand_in_effects else None
+    if template is not None and not stand_in_effects:
+        log("stand-in effects (seed trail): left out (--no-seed-trail)")
     for source, name in STAND_INS:
         src = os.path.join(romfs, "Pack", "Actor", f"{source}.pack.zs")
         if not os.path.isfile(src) or source not in ai_rows:
             log(f"{name}: no {source} in this romfs, left out")
             continue
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names = build_stand_in(members, source, name, template)
-        effect = name in STAND_IN_EFFECTS and template is not None
+        pack, ap, names = build_stand_in(members, source, name, fx_template)
+        effect = name in STAND_IN_EFFECTS and fx_template is not None
         dst_rel = f"Pack/Actor/{name}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         new_ai.append(stand_in_row(ai_rows[source], name, effect))
@@ -727,6 +733,8 @@ def main(argv=None):
                     help="test switch: set a puppet's InstanceHeapSize, e.g. CoopPuppet_Adult=20000000")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
+    ap.add_argument("--no-seed-trail", action="store_true",
+                    help="build the shot stand-ins model-only, without the seed's Tail trail (issue 198)")
     ap.add_argument("--player-footsteps", action="store_true",
                     help="test switch: the puppets keep the player's footstep param (the older pack)")
     ap.add_argument("--sound-user", metavar="NAME",
@@ -781,7 +789,7 @@ def _main_build(a, romfs, hud_reader=None):
         heaps[name] = int(size)
     try:
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
-              sound_user=a.sound_user)
+              sound_user=a.sound_user, stand_in_effects=not a.no_seed_trail)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

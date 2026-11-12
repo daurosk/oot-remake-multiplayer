@@ -73,7 +73,9 @@ inline std::uint16_t most_sends(const ENetPeer& peer) {
 // heard within kHeardWithinMs of `now_ms` (ENet's clock, host->serviceTime).
 inline bool full_datagrams_lost(const ENetPeer& peer, enet_uint32 now_ms) {
   if (peer.state != ENET_PEER_STATE_CONNECTED || peer.mtu <= kSmallDatagramBytes) return false;
-  if (ENET_TIME_DIFFERENCE(now_ms, peer.lastReceiveTime) >= kHeardWithinMs) return false;
+  // ENet's clock wraps; its ENET_TIME_DIFFERENCE is not public.
+  const enet_uint32 since = now_ms - peer.lastReceiveTime;
+  if (peer.lastReceiveTime == 0 || since >= kHeardWithinMs) return false;
   return most_sends(peer) >= kStuckSends;
 }
 

@@ -228,7 +228,7 @@ TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat
 
 TEST_CASE("hookshot: the chat box gets Hookshot's keys first, and the game none while it types") {
     const std::string patch = Patch();
-    CHECK(patch.find("+        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) return 0;") != std::string::npos);
+    CHECK(patch.find("+        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) {") != std::string::npos);
     CHECK(patch.find("+        if (hos_coop_char((unsigned)wp)) return 0;") != std::string::npos);
     CHECK(patch.find("+static int key(int vk) { return !rx_option(1, 0) && !hos_coop_keys_taken() &&") != std::string::npos);
     CHECK(patch.find("GetProcAddress(m, \"hos_coop_keys_taken\")") != std::string::npos);

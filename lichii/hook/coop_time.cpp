@@ -251,6 +251,12 @@ void SaveLoaded(std::uint64_t server_now_us) {
     }
 }
 
+void Loading(std::uint64_t server_now_us) {
+    if (server_now_us != 0) {
+        TheGlue().sync.Loading(server_now_us);
+    }
+}
+
 void OnEvent(const coop::net::Event& event) {
     if (event.kind == coop::net::EventKind::message) {
         TheGlue().sync.Receive(event.message);

@@ -192,7 +192,7 @@ TEST_CASE("time: no clock (a load) sends nothing, and the next read is no jump")
     CHECK(send.empty());
 }
 
-TEST_CASE("time: a guest's save load is not sent as a jump; it takes the host's clock again (issue 159)") {
+TEST_CASE("time: a guest's save load is not sent as a jump, it takes the host's clock again (issue 159)") {
     Sync guest;
     std::vector<proto::Message> send;
     // Joined and in sync with the host at 10:00.
@@ -272,4 +272,36 @@ TEST_CASE("time: guests loading saves again and again never move the host's cloc
     }
     CHECK(host_sets == 0);
     CHECK(guest_sets == 10);  // once after each of its loads
+}
+
+TEST_CASE("time: a guest's reload without a save load seen (Link gone) sends no jump either") {
+    Sync guest;
+    std::vector<proto::Message> send;
+    guest.Receive(From(1, 55'000));
+    guest.Tick(55'000, false, 0, send);
+    guest.Tick(55'025, false, 250 * kMs, send);
+    // A death's reload: Link cannot be read for a few frames, then the clock
+    // reads the reload's time (four hours back, as in caleb9-A at 245.8 s).
+    for (std::uint64_t t = 500; t <= 1000; t += 16) guest.Loading(t * kMs);
+    guest.Tick(40'817, false, 1'600 * kMs, send);
+    CHECK(send.empty());
+    // Link stays gone for 8 s (no Tick change); then the host's word is taken once.
+    for (std::uint64_t t = 1000; t <= 9000; t += 16) guest.Loading(t * kMs);
+    guest.Receive(From(1, 56'000));
+    CHECK_FALSE(guest.Tick(40'817, false, 9'500 * kMs, send));  // under 1 s after Link came back
+    guest.Receive(From(1, 56'100));
+    const auto set = guest.Tick(40'817, false, 10'250 * kMs, send);
+    REQUIRE(set);
+    CHECK(*set == 56'100);
+    CHECK(send.empty());
+
+    // A blink of Link with no jump changes nothing, and a real jump later is sent.
+    Sync b;
+    send.clear();
+    b.Tick(36'000, false, 0, send);
+    b.Loading(100 * kMs);
+    b.Tick(36'025, false, 250 * kMs, send);
+    b.Tick(64'800, false, 6'000 * kMs, send);  // the Sun's Song, 6 s later
+    REQUIRE(send.size() == 1);
+    CHECK((std::get<proto::TimeOfDay>(send[0]).flags & proto::time_of_day::jump) != 0);
 }

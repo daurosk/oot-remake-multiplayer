@@ -21,7 +21,8 @@
 //   jump (the group follows the host's save). A guest's does not: it would
 //   set the host's clock, and remake the host's world, every time a guest
 //   loads (each autotest's guest did, issue 159); the guest takes the host's
-//   clock again instead, as on joining.
+//   clock again instead, as on joining. The same for any jump a guest reads
+//   while or just after its Link could not be read (a reload, a death).
 #pragma once
 
 #include <cstdint>
@@ -61,6 +62,12 @@ public:
     // Present thread: a save was loaded in our game just now (the hook's
     // "save load seen"). Same clock as Tick's now_us.
     void SaveLoaded(std::uint64_t now_us);
+    // Present thread: our Link cannot be read this frame (a load, a death's
+    // reload, a door). A guest's jump within kAfterLoadUs of it is not sent
+    // either; the host's clock is then taken as after a save load. Issue 159:
+    // a reload that brings no flags back logs no "save load seen" (caleb9-A,
+    // 245.8 s: the actor list fell to 8, the jump was read 0.6 s later).
+    void Loading(std::uint64_t now_us);
 
     void Reset();
 

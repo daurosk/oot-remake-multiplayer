@@ -1,0 +1,22 @@
+# hs-seed (Hookshot and emulator, #198): seed-view with the seed copy made again. In every run from
+# 2026-11-12 the game dropped each create of CoopShot_Seed ("CoopShot_Seed: request dropped" x3, then
+# the game's own seed: "could not be made 3 times in a row"), and of the impact actors
+# (CoopHit_SeedSpark/SeedSound) every time. The seed stand-in had just been given the seed's Tail
+# effect (an AI root from the impacts' template); the model-only one was made in every earlier run.
+# BEFORE the run: make the pairs' puppet pack again with this branch's pack tool (model-only
+# stand-ins; its log says "stand-in effects (seed trail): left out").
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-seed (the emulator: -Scenario seed-view)
+# Pass, A's log: "spawn: CoopShot_Seed: create copy N" then "spawn: CoopShot_Seed: copy N is actor",
+# and no "CoopShot_Seed: request dropped". Impacts: at most 3 "CoopHit_SeedSpark: request dropped", then
+# "CoopHit_SeedSpark: could not be made 3 times in a row; no more of it this session" (the same for
+# SeedSound). Shots fly1a..: the seed copy in flight on A's screen.
+mark start
+wait 900
+place -35.7 98.3 7.0
+wait 30
+toward -35.7 40 10
+press ZL 10
+wait 60
+mark ready
+wait 900
+mark end

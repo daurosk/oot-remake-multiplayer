@@ -814,7 +814,7 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
             } else {
                 slot.taken = result;
                 slot.phase = Phase::live;
-                if (slot.stand_in) {
+                if (slot.stand_in || CoopProjectiles::IsImpact(slot.copy_of)) {
                     stand_in_fails_[slot.copy_of] = 0;
                 }
                 Say(slot.actor + ": copy " + std::to_string(slot.key) + " is actor " + Hex(result));
@@ -1148,10 +1148,22 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 // made again; after kStandInTries in a row, as the game's
                 // own actor for the rest of the session.
                 started_.erase(slot.key);
-                if (++stand_in_fails_[slot.copy_of] >= kStandInTries &&
-                    no_stand_in_.insert(slot.copy_of).second) {
-                    Say(slot.copy_of + ": " + slot.actor + " could not be made " +
-                        std::to_string(kStandInTries) + " times in a row; the game's own actor is used");
+                if (++stand_in_fails_[slot.copy_of] >= kStandInTries) {
+                    std::lock_guard lock(mutex_);  // Next reads it under the lock
+                    if (no_stand_in_.insert(slot.copy_of).second) {
+                        Say(slot.copy_of + ": " + slot.actor + " could not be made " +
+                            std::to_string(kStandInTries) + " times in a row; the game's own actor is used");
+                    }
+                }
+            } else if (slot.taken == 0 && CoopProjectiles::IsImpact(slot.copy_of)) {
+                // An impact actor the game will not make (issue 198: dropped every
+                // time so far): after kStandInTries in a row, none for the session.
+                if (++stand_in_fails_[slot.copy_of] >= kStandInTries) {
+                    std::lock_guard lock(mutex_);
+                    if (no_stand_in_.insert(slot.copy_of).second) {
+                        Say(slot.copy_of + ": could not be made " + std::to_string(kStandInTries) +
+                            " times in a row; no more of it this session (rebuild the puppet pack)");
+                    }
                 }
             }
             slot = Slot{};
@@ -1246,7 +1258,9 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         if (CoopProjectiles::IsImpact(copy.actor)) {
             // Issue 166: ours only; a pack without them never gets the create.
             std::lock_guard lock(mutex_);
-            if (stand_ins_.count(copy.actor) == 0) {
+            // Not after kStandInTries drops in a row either (issue 198: the game
+            // dropped every create of the impact actors so far).
+            if (stand_ins_.count(copy.actor) == 0 || no_stand_in_.count(copy.actor) != 0) {
                 started_.insert(copy.key);
                 continue;
             }

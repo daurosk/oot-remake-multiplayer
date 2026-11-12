@@ -660,7 +660,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=True, basic_xlink=False):
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -764,11 +764,14 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         log(f"impacts: no {IMPACT_TEMPLATE} in this romfs, left out")
 
     shots = []
-    # stand_in_effects=False (--no-seed-trail) builds the stand-ins model-only, as before issue 198,
-    # so a release can back the seed trail out by building the pack again, without a code change.
+    # Stand-ins are model-only unless stand_in_effects (--seed-trail). With the seed's Tail effect
+    # (an AI root and AIInfo from the impacts' template) the game dropped every create of
+    # CoopShot_Seed ("request dropped", issue 198, every run from 2026-11-12 on; the model-only one
+    # was made in every run before), as it drops the impact actors built the same way. Off until an
+    # effect actor is seen made in a game.
     fx_template = template if stand_in_effects else None
     if template is not None and not stand_in_effects:
-        log("stand-in effects (seed trail): left out (--no-seed-trail)")
+        log("stand-in effects (seed trail): left out (--seed-trail to try them)")
     for source, name in STAND_INS:
         src = os.path.join(romfs, "Pack", "Actor", f"{source}.pack.zs")
         if not os.path.isfile(src) or source not in ai_rows:
@@ -894,8 +897,11 @@ def main(argv=None):
                     help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
+    ap.add_argument("--seed-trail", action="store_true",
+                    help="test switch: the seed stand-in also plays the seed's Tail trail (issue 198; the "
+                         "game dropped every such create so far, so off by default)")
     ap.add_argument("--no-seed-trail", action="store_true",
-                    help="build the shot stand-ins model-only, without the seed's Tail trail (issue 198)")
+                    help="the default now (stand-ins model-only); kept so older commands still work")
     ap.add_argument("--player-footsteps", action="store_true",
                     help="test switch: the puppets keep the player's footstep param (the older pack)")
     ap.add_argument("--sound-user", metavar="NAME",
@@ -956,7 +962,7 @@ def _main_build(a, romfs, hud_reader=None):
         tunics = [] if a.tunics.strip().lower() == "none" else [c.strip() for c in a.tunics.split(",") if c.strip()]
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
-              stand_in_effects=not a.no_seed_trail, basic_xlink=a.basic_xlink)
+              stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

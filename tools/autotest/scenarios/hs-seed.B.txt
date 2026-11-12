@@ -1,0 +1,58 @@
+# hs-seed, B: seed-view's B (see hs-seed.A.txt).
+# seed-view (#198): B shoots slingshot seeds while standing in A's view; A shows the copies.
+# Earlier spawn-seed runs proved the copy is made (logs) but A's puppet was always off the
+# watcher's screen, so a drawn seed was never seen. Here both are placed on one line in the
+# Graveyard (child save of the auto kits, ground y ~98): B (shooter) at z 11, A (watcher) 4 m
+# behind at z 7, both facing +z, where the wall seeds hit 11-15 m away. B aims 2 s (the nocked
+# seed's copy sits in B's puppet's sling on A's screen), fires, and does it three times.
+# Expect A: "got Shootable_DekuSeed", "CoopShot_Seed: copy N is actor", "copy held where the
+# owner's shot hit". PASS = A's screenshots show the seed in the puppet's sling while aiming
+# and/or in flight / at the wall. FAIL = the copy is logged but never on A's screen.
+mark start
+wait 900
+place -35.7 98.3 11.0
+wait 30
+toward -35.7 40 10
+press ZL 10
+wait 60
+mark ready
+hold ZR 60
+mark aim1
+hold ZR 30
+mark aim2
+hold ZR 30
+mark aim3
+wait 4
+mark fired1
+wait 4
+mark fly1a
+wait 4
+mark fly1b
+wait 4
+mark fly1c
+wait 8
+mark hit1
+wait 60
+hold ZR 90
+mark aim4
+hold ZR 30
+wait 3
+mark fired2
+wait 3
+mark fly2a
+wait 3
+mark fly2b
+wait 3
+mark fly2c
+wait 3
+mark fly2d
+wait 60
+hold ZR 120
+wait 5
+mark fired3
+wait 10
+mark hit3
+wait 60
+press B
+wait 30
+mark end

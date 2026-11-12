@@ -117,6 +117,7 @@ enum class Kind {
     place,   // test only: Link put at x, y, z in this scene
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
     setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)
+    setenum, // test only: an Enum flag (name or 0x hash) set to a value's name (issue 193: quests)
 };
 
 struct Step {

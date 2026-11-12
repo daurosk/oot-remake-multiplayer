@@ -1,0 +1,27 @@
+# threads-of-time: opens the pause menu (PLUS), steps right through the tabs (R) with a shot of
+# each, then back (L) and closes it. Threads of Time is one of the tabs.
+press PLUS
+wait 240
+mark tot-b-locked-0
+press R
+wait 90
+mark tot-b-locked-1
+press R
+wait 90
+mark tot-b-locked-2
+press R
+wait 90
+mark tot-b-locked-3
+press R
+wait 90
+mark tot-b-locked-4
+press L
+wait 30
+press L
+wait 30
+press L
+wait 30
+press L
+wait 60
+press PLUS
+wait 120

@@ -105,6 +105,9 @@ enum class MessageType : std::uint16_t {
   join_proof = 192,
   save_ask = 206,   // 206 to 215: the host's save sent to guests (docs/protocol.md, "Save transfer")
   save_part = 207,
+  pvp_mode = 241,  // 241 to 250: player against player (docs/protocol.md, "PvP")
+  pvp_hit = 242,
+  pvp_hurt = 243,
   player_life = 251,  // 251 to 255: the co-op HUD (docs/protocol.md, "Hearts")
 };
 
@@ -1033,6 +1036,55 @@ struct BossRoom {
   bool operator==(const BossRoom&) const = default;
 };
 
+// PvP (protocol 10; docs/protocol.md, "PvP"). Off unless the host turns it
+// on; the server's value (set by the host) is the whole session's.
+
+// Most life one PvP hit may take, and most life a PVP_HURT may report:
+// quarter hearts (20 hearts).
+inline constexpr std::int32_t kMaxPvpLife = 80;
+
+// PVP_MODE: whether players hurt each other in this session. From the server
+// to each player when it joins and to everyone on a change: `set_by` is 0
+// when the server's start decided it (coop_server --pvp), else the player
+// (the host) who changed it. From a player: the host asks for a change
+// (`set_by` 0; the server ignores it from anyone but the host).
+struct PvpMode {
+  std::uint8_t set_by = 0;  // 0 the server, 1 to 4 a player
+  bool on = false;
+  bool operator==(const PvpMode&) const = default;
+};
+
+// PVP_HIT: the sender's attack reached another player's Link on the sender's
+// screen. The server passes it to the victim only, and only while PvP is on;
+// the victim's game decides whether it hurts (PVP_HURT).
+struct PvpHit {
+  std::uint8_t player_number = kPlayerSelf;  // the attacker
+  std::uint8_t victim = 0;                   // 1 to 4, not the attacker
+  std::uint8_t cause = 0;                    // DamageCause; others kept
+  std::int32_t amount = 0;                   // quarter hearts, 1 to kMaxPvpLife
+  Vec3 at{};    // where the blow landed
+  Vec3 from{};  // where the attacker stood
+  bool operator==(const PvpHit&) const = default;
+};
+
+// PVP_HURT flags.
+namespace pvp_hurt {
+inline constexpr std::uint8_t died = 1;     // the hit took the last of the life
+inline constexpr std::uint8_t guarded = 2;  // not taken (amount 0): a cutscene, a menu, ...
+inline constexpr std::uint8_t known = died | guarded;
+}  // namespace pvp_hurt
+
+// PVP_HURT: what a PVP_HIT did in the victim's game (the victim decides).
+// Relayed to everyone else, so the attacker's screen shows it.
+struct PvpHurt {
+  std::uint8_t player_number = kPlayerSelf;  // the victim
+  std::uint8_t attacker = 0;                 // 1 to 4, not the victim
+  std::int32_t amount = 0;                   // taken: 0 to kMaxPvpLife
+  std::int32_t life = 0;                     // left after it: 0 to kMaxPvpLife
+  std::uint8_t flags = 0;                    // pvp_hurt; other bits refused
+  bool operator==(const PvpHurt&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1042,7 +1094,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
-                             JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife>;
+                             JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
+                             PvpMode, PvpHit, PvpHurt>;
 
 MessageType type_of(const Message& message);
 

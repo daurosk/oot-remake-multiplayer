@@ -1673,6 +1673,96 @@ Error decode_body(Reader& r, DropAsk& m) {
   return Error::none;
 }
 
+// PVP_MODE: u8 set by (0 server, 1 to 4), u8 mode (0 off, 1 on).
+Error encode_body(const PvpMode& m, Writer& w) {
+  if (m.set_by > kMaxPlayers) return Error::bad_value;
+  w.u8(m.set_by);
+  w.u8(m.on ? 1 : 0);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PvpMode& m) {
+  m = PvpMode{};
+  std::uint8_t mode = 0;
+  COOP_READ(r.u8(m.set_by));
+  COOP_READ(r.u8(mode));
+  if (m.set_by > kMaxPlayers || mode > 1) return Error::bad_value;
+  m.on = mode == 1;
+  return Error::none;
+}
+
+// PVP_HIT: u8 player, u8 victim (1 to 4, not the player), u8 cause, s32
+// amount (1 to 80), 3 x f32 at, 3 x f32 from (finite).
+Error encode_body(const PvpHit& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.victim) ||
+      m.victim == m.player_number || m.amount < 1 || m.amount > kMaxPvpLife ||
+      !all_finite(m.at) || !all_finite(m.from)) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.u8(m.victim);
+  w.u8(m.cause);
+  w.u32(static_cast<std::uint32_t>(m.amount));
+  for (float f : m.at) w.f32(f);
+  for (float f : m.from) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PvpHit& m) {
+  m = PvpHit{};
+  std::uint32_t amount = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.victim));
+  COOP_READ(r.u8(m.cause));
+  COOP_READ(r.u32(amount));
+  for (float& f : m.at) COOP_READ(r.f32(f));
+  for (float& f : m.from) COOP_READ(r.f32(f));
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.victim) ||
+      m.victim == m.player_number || amount < 1 ||
+      amount > static_cast<std::uint32_t>(kMaxPvpLife) || !all_finite(m.at) ||
+      !all_finite(m.from)) {
+    return Error::bad_value;
+  }
+  m.amount = static_cast<std::int32_t>(amount);
+  return Error::none;
+}
+
+// PVP_HURT: u8 player, u8 attacker (1 to 4, not the player), s32 amount,
+// s32 life (both 0 to 80), u8 flags (bits 0 and 1 only).
+Error encode_body(const PvpHurt& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.attacker) ||
+      m.attacker == m.player_number || m.amount < 0 || m.amount > kMaxPvpLife ||
+      m.life < 0 || m.life > kMaxPvpLife || (m.flags & ~pvp_hurt::known) != 0) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.u8(m.attacker);
+  w.u32(static_cast<std::uint32_t>(m.amount));
+  w.u32(static_cast<std::uint32_t>(m.life));
+  w.u8(m.flags);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PvpHurt& m) {
+  m = PvpHurt{};
+  std::uint32_t amount = 0;
+  std::uint32_t life = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.attacker));
+  COOP_READ(r.u32(amount));
+  COOP_READ(r.u32(life));
+  COOP_READ(r.u8(m.flags));
+  constexpr auto kMax = static_cast<std::uint32_t>(kMaxPvpLife);
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.attacker) ||
+      m.attacker == m.player_number || amount > kMax || life > kMax ||
+      (m.flags & ~pvp_hurt::known) != 0) {
+    return Error::bad_value;
+  }
+  m.amount = static_cast<std::int32_t>(amount);
+  m.life = static_cast<std::int32_t>(life);
+  return Error::none;
+}
+
 // BOSS_ROOM: u8 player, scene, u8 room (0 to 15), u8 state (1 to 5).
 Error encode_body(const BossRoom& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
@@ -1798,6 +1888,7 @@ MessageType type_of(const Message& message) {
       MessageType::boss_room, MessageType::sign_cut, MessageType::flag_reset,
       MessageType::flag_origin, MessageType::join_challenge, MessageType::join_proof,
       MessageType::save_ask,    MessageType::save_part,   MessageType::player_life,
+      MessageType::pvp_mode,    MessageType::pvp_hit,   MessageType::pvp_hurt,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -1832,6 +1923,8 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::drop_spawn:
     case MessageType::drop_take:
     case MessageType::drop_ask:
+    case MessageType::pvp_hit:
+    case MessageType::pvp_hurt:
       return kChannelOwnership;
     default:
       return kChannelSession;
@@ -1863,6 +1956,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::sign_cut:
     case MessageType::save_ask:
     case MessageType::save_part:
+    case MessageType::pvp_mode:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -1888,6 +1982,8 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::drop_spawn:
     case MessageType::drop_take:
     case MessageType::drop_ask:
+    case MessageType::pvp_hit:
+    case MessageType::pvp_hurt:
       return channel == kChannelOwnership;
     case MessageType::test_payload:
       return channel == kChannelSession || channel == kChannelPlayerSamples;
@@ -1944,6 +2040,9 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::sign_cut:
     case MessageType::save_ask:
     case MessageType::save_part:
+    case MessageType::pvp_mode:
+    case MessageType::pvp_hit:
+    case MessageType::pvp_hurt:
       return true;
   }
   return false;
@@ -1974,7 +2073,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, DropSpawn> || std::is_same_v<T, DropTake> ||
                       std::is_same_v<T, DropAsk> || std::is_same_v<T, BossRoom> ||
                       std::is_same_v<T, SignCut> || std::is_same_v<T, SaveAsk> ||
-                      std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife>) {
+                      std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife> ||
+                      std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt>) {
           field = &m.player_number;
         }
       },
@@ -2007,6 +2107,9 @@ bool set_sender(Message& message, std::uint8_t player) {
   if (const auto* j = std::get_if<JoinPartner>(&message); j && j->other_player == player) {
     return false;
   }
+  // Nor hit itself or be hurt by itself (PvP).
+  if (const auto* h = std::get_if<PvpHit>(&message); h && h->victim == player) return false;
+  if (const auto* h = std::get_if<PvpHurt>(&message); h && h->attacker == player) return false;
   *field = player;
   return true;
 }
@@ -2060,6 +2163,9 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::flag_origin: return decode_as<FlagOrigin>(body, out);
     case MessageType::save_ask: return decode_as<SaveAsk>(body, out);
     case MessageType::save_part: return decode_as<SavePart>(body, out);
+    case MessageType::pvp_mode: return decode_as<PvpMode>(body, out);
+    case MessageType::pvp_hit: return decode_as<PvpHit>(body, out);
+    case MessageType::pvp_hurt: return decode_as<PvpHurt>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
     case MessageType::object_present: return decode_as<ObjectPresent>(body, out);

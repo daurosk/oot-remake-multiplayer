@@ -54,6 +54,7 @@
 #include "coop_flags.h"
 #include "coop_hold.h"
 #include "coop_puppet.h"
+#include "coop_pvp_game.h"
 #include "coop_svc.h"
 
 #include <algorithm>
@@ -857,6 +858,32 @@ LifeSeen& TheLife() {
     static LifeSeen seen;
     return seen;
 }
+// PvP (coop_pvp_game.cpp): our Link's life as the last walk read it, and
+// when (steady ms; 0: never), for OurLinkLife; and the hurts the victim's
+// rules decided (HurtOurLink), for the walk to give.
+std::atomic<s32>& TheLinkLife() {
+    static std::atomic<s32> quarters{-1};
+    return quarters;
+}
+std::atomic<u64>& TheLinkLifeAt() {
+    static std::atomic<u64> ms{0};
+    return ms;
+}
+struct PvpAsk {
+    s32 take = 0;
+    std::array<float, 3> at{};
+    std::array<float, 3> from{};
+};
+std::mutex& PvpMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+std::vector<PvpAsk>& PvpAsks() {
+    static std::vector<PvpAsk> asks;
+    return asks;
+}
+constexpr u64 kLinkLifeStaleMs = 1500;
+constexpr u64 kPvpHitWaitMs = 400;  // the game's own hit, before the life is written
 
 class Objects {
 public:
@@ -1059,6 +1086,7 @@ public:
             {
                 CoopWorld::WorldSync::Out swing;  // a sign the sword passed (docs/world.md)
                 world_.Swing(cut, player_, server_now_us, swing);
+                CoopPvp::OwnSwing(cut);  // PvP: the swing may reach another Link
                 for (auto& m : swing.send) {
                     send.emplace_back(std::move(m));
                 }
@@ -1338,6 +1366,15 @@ public:
     s32 link_max_logged_ = -1;
     s32 flag_max_logged_ = -1;
     bool hearts_to_link_ = true;  // LICHII_COOP_HEARTS_TO_LINK, on unless =0 (issue 88)
+    // PvP hurts being given to our Link (GivePvp).
+    struct PvpGive {
+        s32 take = 0;
+        s32 expect = 0;  // the life after it
+        u64 asked_ms = 0;
+        bool replayed = false;
+    };
+    std::vector<PvpGive> pvp_;
+    bool pvp_replay_ = true;  // LICHII_COOP_PVP_REPLAY=0: write the life only
     Core::Memory::Memory* memory_ = nullptr;  // set by Share for Collect
     bool cheat_ = false;
     bool share_ = false;
@@ -1437,6 +1474,9 @@ private:
                         LOG_INFO(Core,
                                  "coop: objects: our Link's life {} of {}, MaxLife flag {} (quarter hearts)",
                                  life, max, flag);
+                    }
+                    if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                        GivePvp(a, value->first + 8, life);  // PvP (coop_pvp_game.cpp)
                     }
                     // On by default (=0 turns it off): a MaxLife raised by
                     // another player is put into the component the hearts are
@@ -1545,6 +1585,66 @@ private:
             return std::nullopt;
         }
         return std::pair{*value, *max};
+    }
+
+    // PvP: our Link's life `life` (at `life_at`) was just read. Notes it for
+    // OurLinkLife, and gives the hurts the victim's rules decided: first as
+    // the game's own hit (the hit replay, as an enemy copy gets one: Link
+    // flinches and is knocked away from the attacker), then, if the game has
+    // not taken it within kPvpHitWaitMs, by writing the life directly (as
+    // docs/objects.md "Damage" found enough for any actor).
+    void GivePvp(u64 link, u64 life_at, s32 life) {
+        const u64 now = SteadyNowMs();
+        TheLinkLife().store(life);
+        TheLinkLifeAt().store(now == 0 ? 1 : now);
+        if (life < 0) {
+            return;  // not read: nothing is given until it is
+        }
+        std::vector<PvpAsk> asks;
+        {
+            std::lock_guard lock(PvpMutex());
+            asks.swap(PvpAsks());
+        }
+        for (const PvpAsk& ask : asks) {
+            PvpGive h;
+            h.take = ask.take;
+            h.expect = std::max<s32>(0, life - ask.take);
+            h.asked_ms = now;
+            if (replay_ && pvp_replay_) {
+                Mover::Hit hit;
+                hit.actor = link;
+                hit.attacker = link;  // the attacker's puppet is another game's; our Link stands in
+                hit.amount = ask.take;
+                hit.at = ask.at;
+                hit.from = ask.from;
+                hit.exact = true;
+                TheMover().AddHit(hit);
+                h.replayed = true;
+            }
+            LOG_INFO(Core, "coop: pvp: our Link hurt by {} at life {} ({})", ask.take, life,
+                     h.replayed ? "the game's hit" : "written");
+            pvp_.push_back(h);
+        }
+        for (auto it = pvp_.begin(); it != pvp_.end();) {
+            if (life <= it->expect) {
+                if (it->replayed) {
+                    LOG_INFO(Core, "coop: pvp: the game took the hit (life {})", life);
+                }
+                it = pvp_.erase(it);
+                continue;
+            }
+            if (!it->replayed || now >= it->asked_ms + kPvpHitWaitMs) {
+                if (memory_ != nullptr && memory_->IsValidVirtualAddressRange(life_at, 4)) {
+                    memory_->Write32(life_at, static_cast<u32>(it->expect));
+                    LOG_INFO(Core, "coop: pvp: our Link's life {} -> {}{}", life, it->expect,
+                             it->replayed ? " (the game's hit was not taken)" : "");
+                    life = it->expect;
+                }
+                it = pvp_.erase(it);
+                continue;
+            }
+            ++it;
+        }
     }
 
     // A direct write of life is enough for the game (docs/objects.md, "Damage").
@@ -1968,6 +2068,7 @@ Objects& Instance() {
         objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
         objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
         objects.release_ = EnvOn("LICHII_COOP_OBJECTS_RELEASE");
+        objects.pvp_replay_ = EnvOn("LICHII_COOP_PVP_REPLAY");
         return true;
     }();
     (void)once;
@@ -1980,16 +2081,36 @@ void SetLocalEvent(bool in_event) {
     TheLocalEvent().store(in_event);
 }
 
-std::optional<OurLinkLife> OurLife() {
+std::optional<LinkHearts> OurLife() {
     const u64 at = TheLife().at_us.load();
     if (at == 0 || CoopEvery::NowUs() - at > 2'000'000) {
         return std::nullopt;
     }
-    return OurLinkLife{TheLife().life.load(), TheLife().max.load()};
+    return LinkHearts{TheLife().life.load(), TheLife().max.load()};
 }
 
 void SetMaxLife(std::optional<std::int32_t> quarters) {
     TheMaxLife().store(quarters.value_or(-1));
+}
+
+std::optional<std::int32_t> OurLinkLife() {
+    const u64 at = TheLinkLifeAt().load();
+    const s32 life = TheLinkLife().load();
+    if (at == 0 || life < 0 || SteadyNowMs() > at + kLinkLifeStaleMs) {
+        return std::nullopt;
+    }
+    return life;
+}
+
+void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
+                 const std::array<float, 3>& from) {
+    if (quarters <= 0) {
+        return;
+    }
+    std::lock_guard lock(PvpMutex());
+    if (PvpAsks().size() < 16) {
+        PvpAsks().push_back({quarters, at, from});
+    }
 }
 
 void OnFrame(Core::System& system) {

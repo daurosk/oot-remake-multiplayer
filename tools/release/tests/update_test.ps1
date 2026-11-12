@@ -91,7 +91,7 @@ try {
     $missing = @((Get-KitOptionNames $kitOptions).Keys | Where-Object { -not (Get-KitOptionNames $m).ContainsKey($_) })
     Check ($missing.Count -eq 0) "every key of the kit's coop-options.ini is in the merged file [$($missing -join ',')]"
     Check ((@($m)[0..3] -join '|') -eq ($old -join '|')) 'the player''s lines stay first and unchanged'
-    foreach ($k in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL') {
+    foreach ($k in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL', 'pvp') {
         Check ((Get-KitOptionNames $kitOptions).ContainsKey($k)) "the kit's coop-options.ini names $k"
     }
     $again = Merge-KitOptions $m $kitOptions 'v0.1.0-beta4'

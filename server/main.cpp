@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     options.session.max_half_open_per_address = line->max_half_open;
     options.session.allowed = line->allowed;
     options.session.join_password = line->password;
+    options.session.pvp = line->pvp;
     options.bind = line->bind;
     options.session.log = [](const std::string& text) {
       std::printf("coop_server: %s\n", text.c_str());
@@ -97,6 +98,9 @@ int main(int argc, char** argv) {
                   static_cast<unsigned>(coop::protocol::kDatagramBytes));
       if (!line->password.empty()) {
         std::printf("coop_server: players must give the join password to join\n");
+      }
+      if (line->pvp) {
+        std::printf("coop_server: PvP is on: players can hurt each other\n");
       }
       if (!line->allowed.empty()) {
         std::printf("coop_server: only the %u address range(s) given with --allow may connect\n",

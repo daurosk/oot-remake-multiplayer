@@ -1164,6 +1164,7 @@ Director& TheDirector() {
 #include "coop/host/game_flags.hpp"
 #include "coop/host/player_reader.hpp"
 #include "coop_flags.h"  // EmulatorMemory
+#include "coop_pvp_game.h"
 #include "coop_svc.h"
 
 namespace CoopSpawn {
@@ -1269,6 +1270,19 @@ public:
                      f.name, f.id.value, static_cast<int>(f.reason), f.lived_us / 1000, f.far,
                      f.top_speed,
                      f.made_up ? ", shot (flight made up)" : f.shot ? ", shot" : "", f.bounces);
+            // PvP (coop_pvp_game.h): a shot that hit something or went off, where
+            // its remove says it ended, may have reached another player's Link.
+            const auto* info = CoopProjectiles::Find(f.name);
+            if (info == nullptr || f.made_up ||
+                (f.reason != coop::protocol::RemoveReason::hit &&
+                 f.reason != coop::protocol::RemoveReason::exploded)) {
+                continue;
+            }
+            for (const auto& m : send) {
+                if (const auto* r = std::get_if<coop::protocol::ObjectRemove>(&m); r && r->id == f.id) {
+                    CoopPvp::OwnShot(CoopProjectiles::CauseOf(info->kind), r->position);
+                }
+            }
         }
         if (send.empty()) {
             return;

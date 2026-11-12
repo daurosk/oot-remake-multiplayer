@@ -58,8 +58,12 @@ std::uint32_t as_bits(std::int64_t v) {
 }
 
 // FLAG_SET or FLAG_STATE messages for `table`, at most kMaxFlagEntries each.
+// A message the codec refuses (an entry this kind cannot carry, such as a
+// count delta in a FLAG_STATE) is sent again without the entries it refuses,
+// so one bad entry never takes the others with it; `unsent` counts those.
 template <typename M>
-void push_list(std::vector<Outgoing>& out, const std::map<FlagKey, FlagEntry>& table) {
+void push_list(std::vector<Outgoing>& out, const std::map<FlagKey, FlagEntry>& table,
+               std::uint64_t& unsent) {
   auto it = table.begin();
   while (it != table.end()) {
     M message;
@@ -68,7 +72,23 @@ void push_list(std::vector<Outgoing>& out, const std::map<FlagKey, FlagEntry>& t
       message.flags.push_back(it->second);
       ++it;
     }
-    push(out, message);
+    if (protocol::encode(message)) {
+      push(out, message);
+      continue;
+    }
+    M good;
+    good.player_number = message.player_number;
+    for (const FlagEntry& e : message.flags) {
+      M one;
+      one.player_number = message.player_number;
+      one.flags.push_back(e);
+      if (protocol::encode(one)) {
+        good.flags.push_back(e);
+      } else {
+        ++unsent;
+      }
+    }
+    if (!good.flags.empty()) push(out, good);
   }
 }
 
@@ -291,11 +311,11 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   added_.clear();
 
   if (role_ == FlagRole::player) {
-    push_list<protocol::FlagSet>(out, changes);
+    push_list<protocol::FlagSet>(out, changes, stats_.entries_unsent);
   } else {
     // Answers already updated last_, so the two never hold the same flag.
     answers.merge(changes);
-    push_list<protocol::FlagState>(out, answers);
+    push_list<protocol::FlagState>(out, answers, stats_.entries_unsent);
     out.insert(out.end(), resets.begin(), resets.end());
     if (snapshot_requested_) {
       send_snapshot(store, out);
@@ -482,7 +502,7 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
   if (role_ == FlagRole::host && !changed.empty()) {
     ++stats_.host_resets;
     reset_seen_ = true;
-    push_list<protocol::FlagReset>(out, changed);
+    push_list<protocol::FlagReset>(out, changed, stats_.entries_unsent);
   }
 }
 
@@ -509,7 +529,22 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     if (!takes(entry)) continue;
     note_for_others(store, entry);
     const bool written = store.write(entry);
-    const bool held = !written && store.holds(key);
+    if (!written && is_delta(entry) && (store.holds(key) || store.busy(key))) {
+      // A count change (rupees, keys) refused for now: summed with any other
+      // for the same count and added on a later frame (add()), which then
+      // states the new total. No answer now: a FLAG_STATE carries no delta.
+      ++stats_.write_failures;
+      if (!written_for_others_.empty() && written_for_others_.back() == key) {
+        written_for_others_.pop_back();
+      }
+      auto [it, fresh] = unadded_.try_emplace(key, entry);
+      if (!fresh) it->second.value = as_bits(as_int(it->second.value) + as_int(entry.value));
+      continue;
+    }
+    // Held, or refused only for room in the game's queue (issue 175): kept and
+    // written on a later frame, and answered with the value asked. Answering
+    // with the game's old value would turn the player's change back.
+    const bool held = !written && (store.holds(key) || store.busy(key));
     if (written) {
       ++stats_.applied;
     } else {

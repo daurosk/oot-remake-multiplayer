@@ -66,6 +66,12 @@ class FlagStore {
   // each frame; the host answers with the value asked. Default: never.
   virtual bool holds(FlagKey) { return false; }
 
+  // True while the game's write queue for this flag has no room for us (the
+  // GameFlagStore keeps half of it for the game's own sets, issue 175): a
+  // refused write of it is kept and tried again each frame, and the host
+  // answers with the value asked, as for holds(). Default: never.
+  virtual bool busy(FlagKey) { return false; }
+
   // True for a Bool the game never takes back once set (a dungeon's map and
   // compass, issue 146): FlagWatcher writes it back to 1 when the game's
   // value drops to 0, at any time, not only after a load. Default: none.
@@ -98,6 +104,7 @@ class HoldFlagStore final : public FlagStore {
   bool is_max(FlagKey key) override { return inner_.is_max(key); }
   bool is_one_way(FlagKey key) override { return inner_.is_one_way(key); }
   bool holds(FlagKey key) override { return hold_ && hold_(key); }
+  bool busy(FlagKey key) override { return inner_.busy(key); }
   // The host's save load (docs/flags.md, "Saves"): a held 1 still waits, a
   // 0 (the save has not played it) goes through.
   bool write_exact(const protocol::FlagEntry& entry) override {

@@ -430,3 +430,16 @@ TEST_CASE("host rendezvous: punches go only toward a signed answer code's addres
   CHECK(f.host.on_datagram(kGuestAddr, f.punch(PunchType::kGuestPunch, a.nonce), 700'000));
   CHECK(f.sent.empty());
 }
+
+TEST_CASE("nat codes: the same bytes as Join.bat's reader (tools/release/tests/hosting_test.ps1)") {
+  // Shared vectors: Join.bat (invite.ps1) decodes these exact strings.
+  CHECK(make_invite(Invite{kHostAddr, "ABCDEFGHJKLMNPQRSTUV"}).value() ==
+        "CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA");
+  CHECK(make_invite(Invite{Addr{0xC6336402u, 27510}, "three-random-words"}).value() ==
+        "CMDDG-3ACPP-5BE7D-JQKUY-LMMUN-FZGJ5-5PFX5-Y86VE-QRWXF-EFR");
+  Answer a;
+  a.guest = kGuestAddr;
+  a.nonce = {1, 2, 3, 4, 5, 6, 7, 8};
+  a.time = static_cast<std::uint32_t>(kNow);
+  CHECK(make_answer(a, "pw-one") == "EHDDG-3ACVT-ASCAS-DASCS-NB2JP-PE7EA-GJEUQ-WC2NA-MLPZ3-JS");
+}

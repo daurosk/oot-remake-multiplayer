@@ -5,8 +5,13 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
+#include <iostream>
 #include <memory>
+#include <mutex>
+#include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <enet/enet.h>
@@ -20,8 +25,12 @@
 
 #include "coop/protocol/messages.hpp"
 #include "enet_server.hpp"
+#include "join_helper.hpp"
+#include "nat_codes.hpp"
+#include "nat_net.hpp"
 #include "options.hpp"
 #include "relay.hpp"
+#include "punch.hpp"
 #include "relay_link.hpp"
 #include "upnp.hpp"
 
@@ -49,6 +58,97 @@ BOOL WINAPI on_console_event(DWORD event) {
 void say(const std::string& text) {
   std::printf("coop_server: %s\n", text.c_str());
   std::fflush(stdout);
+}
+
+std::uint64_t steady_ms() {
+  return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count());
+}
+
+// The STUN servers from the command line, or the free public ones.
+std::vector<coop::server::nat::Addr> stun_servers(const coop::server::CommandLine& line) {
+  namespace nat = coop::server::nat;
+  std::vector<nat::Addr> out;
+  const auto& names = line.stun.empty() ? nat::default_stun_servers() : line.stun;
+  for (const std::string& name : names) {
+    if (auto a = nat::resolve(name, 3478)) {
+      out.push_back(*a);
+    } else {
+      say("stun: cannot find " + name + " (no internet, or the name lookup failed)");
+    }
+  }
+  return out;
+}
+
+// Lines typed into the server window (answer codes), read on their own
+// thread so the game loop never waits for the keyboard. Never freed: the
+// thread may still be waiting for a line when the program ends.
+class TypedLines {
+ public:
+  static TypedLines& get() {
+    static TypedLines* lines = new TypedLines;
+    return *lines;
+  }
+  void start() {
+    if (started_) return;
+    started_ = true;
+    std::thread([this] {
+      std::string text;
+      while (std::getline(std::cin, text)) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (queue_.size() < 16) queue_.push_back(text);
+      }
+    }).detach();
+  }
+  std::vector<std::string> take() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> out(queue_.begin(), queue_.end());
+    queue_.clear();
+    return out;
+  }
+
+ private:
+  bool started_ = false;
+  std::mutex mutex_;
+  std::deque<std::string> queue_;
+};
+
+// coop_server --join: Join.bat's helper for an invite code (join_helper.hpp).
+int run_join(const coop::server::CommandLine& line) {
+  namespace nat = coop::server::nat;
+  const auto host = nat::resolve(line.join, 27510);
+  if (!host) {
+    std::fprintf(stderr, "coop_server: --join: '%s' is not an address\n", line.join.c_str());
+    return 2;
+  }
+  nat::JoinConfig config;
+  config.host = *host;
+  config.password = line.password;
+  config.stun_servers = stun_servers(line);
+  config.game_port = line.game_port;
+  config.log = [](const std::string& text) { say("join: " + text); };
+  nat::JoinHelper helper(config);
+  std::string why;
+  if (!helper.start(why)) {
+    say("join: " + why);
+    return 1;
+  }
+  say("join: the game connects to this helper on 127.0.0.1:" + std::to_string(helper.game_port()) +
+      "; keep this window open while you play");
+  const auto started = std::chrono::steady_clock::now();
+  while (!g_stop) {
+    helper.service(5);
+    if (line.run_for_ms &&
+        std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(*line.run_for_ms)) {
+      break;
+    }
+  }
+  const auto& s = helper.stats();
+  say("join: stopping; " + std::to_string(s.to_host) + " datagrams to the host, " + std::to_string(s.to_game) +
+      " to the game");
+  helper.stop();
+  return 0;
 }
 
 // coop_server --relay: forwards hosts' games to their guests (relay.hpp).
@@ -150,6 +250,14 @@ int main(int argc, char** argv) {
                  "needs a join password (server_password) as well. The server was not started.\n");
     return 2;
   }
+  // An invite code holds the join password, and punches are signed with it:
+  // no invite (and no join helper) without one.
+  if ((line->invite || !line->join.empty()) && line->password.empty()) {
+    std::fprintf(stderr,
+                 "coop_server: --invite and --join need a join password (server_password, or the one in the "
+                 "invite code). The server was not started.\n");
+    return 2;
+  }
   // The relay lets guests in by their internet address once one of them sent
   // the code, so others on that address (CGNAT, dorm, hotspot) get in without
   // it, and every relayed guest is 127.0.0.1 here, so --allow cannot tell them
@@ -169,6 +277,14 @@ int main(int argc, char** argv) {
   if (enet_initialize() != 0) {
     std::fprintf(stderr, "coop_server: ENet failed to start\n");
     return 1;
+  }
+  if (!line->join.empty()) {
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+    const int code = run_join(*line);
+    g_done = true;
+    enet_deinitialize();
+    return code;
   }
   if (line->relay) {
     std::signal(SIGINT, on_signal);
@@ -266,6 +382,30 @@ int main(int argc, char** argv) {
         }
       }
 
+      // Invite code (punch.hpp): STUN from the game port, then the code, then
+      // answer codes typed into this window.
+      namespace nat = coop::server::nat;
+      std::unique_ptr<nat::HostRendezvous> rendezvous;
+      bool invite_shown = false;
+      if (line->invite) {
+        nat::HostConfig config;
+        config.password = line->password;
+        config.stun_servers = stun_servers(*line);
+        config.send = [&server](nat::Addr to, std::span<const std::uint8_t> data) {
+          server.send_raw(nat::to_enet(to), data);
+        };
+        config.log = say;
+        rendezvous = std::make_unique<nat::HostRendezvous>(config);
+        nat::HostRendezvous* r = rendezvous.get();
+        server.set_raw_handler([r](const ENetAddress& from, std::span<const std::uint8_t> data) {
+          return r->on_datagram(nat::from_enet(from), data, steady_ms());
+        });
+        say("invite: asking a public STUN server for this PC's internet address (it sees the address, no game "
+            "data)");
+        rendezvous->start(steady_ms());
+        TypedLines::get().start();
+      }
+
       auto started = std::chrono::steady_clock::now();
       std::uint64_t shown_resets = 0;
       std::uint64_t shown_limited = 0;
@@ -277,6 +417,44 @@ int main(int argc, char** argv) {
         server.service(link ? 1 : 5);
         if (link) link->service();
         if (mapping) mapping->renew_if_due();
+        if (rendezvous) {
+          rendezvous->service(steady_ms());
+          if (!invite_shown && rendezvous->stun_done()) {
+            invite_shown = true;
+            std::optional<nat::Addr> where;
+            const auto seen = rendezvous->public_address();
+            if (mapping) {
+              const auto ext = coop::server::upnp::parse_ipv4(mapping->external_address());
+              if (ext && nat::is_public(*ext)) where = nat::Addr{*ext, server.port()};
+              if (where && seen && seen->ip != where->ip) {
+                say("invite: note: the router's internet address is not the one the STUN server saw (two "
+                    "routers in a row); the invite uses the router's");
+              }
+            }
+            if (!where && seen && nat::is_public(seen->ip)) where = *seen;
+            const auto code = where ? nat::make_invite(nat::Invite{*where, line->password}) : std::nullopt;
+            if (!code) {
+              say("invite: no invite code: no STUN server answered (no internet, or a firewall blocks UDP) and "
+                  "the router did not forward the port. " + nat::no_way_help());
+            } else {
+              say("invite code: " + *code);
+              say("invite: send the invite code to your friends; they paste it into Join.bat. It holds your "
+                  "internet address and the join password, so send it only to friends. It stops working when "
+                  "this window closes, and changes each time.");
+              say("invite: if a friend's Join.bat window shows an ANSWER CODE, paste it here (right-click) and "
+                  "press Enter.");
+              if (rendezvous->symmetric() && !mapping) {
+                say("invite: note: your router gives every address its own port (symmetric NAT), so friends "
+                    "may not get through; upnp = yes or a VPN helps (docs/play-online.md)");
+              }
+            }
+          }
+          for (const std::string& typed : TypedLines::get().take()) {
+            if (typed.find_first_not_of(" \t\r") == std::string::npos) continue;
+            const nat::CodeError e = rendezvous->add_answer(typed, steady_ms());
+            if (e != nat::CodeError::kOk) say("answer code not used: " + nat::explain(e));
+          }
+        }
         // Counts a window or a test can read while the server runs (it is
         // often closed, not stopped): each host save load, and messages over
         // a player's rate (the first, then every 100th).

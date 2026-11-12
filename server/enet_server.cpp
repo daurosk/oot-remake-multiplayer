@@ -23,6 +23,23 @@ constexpr std::size_t kMaxPacketBytes = protocol::kHeaderSize + 0xFFFF;
 // And at most this much a peer's received data may wait to be handled.
 constexpr std::size_t kMaxWaitingBytes = 1 << 20;
 
+// The server whose service() is running: ENet's intercept callback has no
+// pointer of its own, and only runs inside enet_host_service.
+thread_local const EnetServer* t_serving = nullptr;
+
+int ENET_CALLBACK intercept(ENetHost* host, ENetEvent*) {
+  if (t_serving == nullptr || host->receivedData == nullptr) return 0;
+  const std::span<const std::uint8_t> data(host->receivedData, host->receivedDataLength);
+  return t_serving->handle_raw(host->receivedAddress, data) ? 1 : 0;
+}
+
+struct Serving {
+  explicit Serving(const EnetServer* s) { t_serving = s; }
+  ~Serving() { t_serving = nullptr; }
+  Serving(const Serving&) = delete;
+  Serving& operator=(const Serving&) = delete;
+};
+
 ConnectionId id_of(const ENetPeer* peer) {
   return static_cast<ConnectionId>(reinterpret_cast<std::uintptr_t>(peer->data));
 }
@@ -55,7 +72,16 @@ bool EnetServer::start() {
   host_->maximumPacketSize = kMaxPacketBytes;
   host_->maximumWaitingData = kMaxWaitingBytes;
   host_->mtu = protocol::kDatagramBytes;  // VPN-safe datagrams (issue 143)
+  host_->intercept = intercept;
   return true;
+}
+
+bool EnetServer::send_raw(const ENetAddress& to, std::span<const std::uint8_t> data) {
+  if (host_ == nullptr || data.empty()) return false;
+  ENetBuffer buffer;
+  buffer.data = const_cast<std::uint8_t*>(data.data());
+  buffer.dataLength = data.size();
+  return enet_socket_send(host_->socket, &to, &buffer, 1) > 0;
 }
 
 std::uint16_t EnetServer::port() const {
@@ -73,6 +99,7 @@ std::uint64_t EnetServer::now_us() const {
 
 void EnetServer::service(std::uint32_t timeout_ms) {
   if (host_ == nullptr) return;
+  Serving serving(this);
   ENetEvent event;
   int result = enet_host_service(host_, &event, timeout_ms);
   while (result > 0) {

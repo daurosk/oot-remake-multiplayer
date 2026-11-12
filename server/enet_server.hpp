@@ -9,7 +9,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <span>
 
 #include <enet/enet.h>
 
@@ -56,6 +58,17 @@ class EnetServer {
   // (coop/net/enet_waiting.hpp): above 0 means the line loses packets.
   std::uint64_t mended_bytes() const { return mended_bytes_; }
 
+  // Datagrams on the game port that are not ENet's (STUN answers, NAT punches:
+  // punch.hpp): the handler sees each one first, during service(), and keeps
+  // it from ENet by returning true.
+  using RawHandler = std::function<bool(const ENetAddress& from, std::span<const std::uint8_t> data)>;
+  void set_raw_handler(RawHandler handler) { raw_ = std::move(handler); }
+  bool handle_raw(const ENetAddress& from, std::span<const std::uint8_t> data) const {
+    return raw_ && raw_(from, data);
+  }
+  // One datagram from the game port itself (so routers see the game's port).
+  bool send_raw(const ENetAddress& to, std::span<const std::uint8_t> data);
+
  private:
   std::uint64_t now_us() const;
   void handle(const ENetEvent& event);
@@ -76,6 +89,7 @@ class EnetServer {
   ConnectionId next_id_ = 1;
   std::uint64_t mended_bytes_ = 0;
   std::chrono::steady_clock::time_point start_;
+  RawHandler raw_;
 };
 
 }  // namespace coop::server

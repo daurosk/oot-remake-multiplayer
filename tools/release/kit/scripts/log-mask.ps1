@@ -63,6 +63,8 @@ function Protect-LogText([string]$Text, [hashtable]$State,
     # sees none was set.
     $t = [regex]::Replace($t, '(?im)^([ \t]*[\w.]*(?:password|secret|token)\w*[ \t]*[=:])[ \t]*[^\s][^\r\n]*', '$1 (removed)')
     $t = [regex]::Replace($t, '(?i)(?<![\w-])(--?[\w-]*(?:password|secret|token)[\w-]*)(?:[ \t]+|=)(?!-)\S+', '$1 (removed)')
+    # An invite code holds the join password (docs/play-online.md): never in a shared log.
+    $t = [regex]::Replace($t, '(?i)(invite code:?)[ \t]*[A-Z2-9][A-Z2-9-]{9,}', '$1 (removed)')
     # MAC addresses first (their colon form would otherwise look like IPv6 groups), also
     # the dotted form aabb.ccdd.eeff.
     $t = [regex]::Replace($t, '(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])', '<mac>')

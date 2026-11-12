@@ -114,6 +114,24 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       }
     } else if (arg == "--upnp") {
       line.upnp = true;
+    } else if (arg == "--invite") {
+      line.invite = true;
+    } else if (arg == "--stun" || arg == "--join") {
+      if (!has_value || args[i + 1].empty() || args[i + 1].size() > 260) {
+        error = arg + " needs an address, for example stun.example.net:3478";
+        return std::nullopt;
+      }
+      if (arg == "--stun") {
+        line.stun.push_back(args[++i]);
+      } else {
+        line.join = args[++i];
+      }
+    } else if (arg == "--game-port") {
+      if (!has_value || !parse_number(args[i + 1], line.game_port)) {
+        error = "--game-port needs a port number";
+        return std::nullopt;
+      }
+      ++i;
     } else if (arg == "--relay") {
       line.relay = true;
     } else if (arg == "--relay-via") {
@@ -135,6 +153,14 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
   }
   if (line.relay && (line.upnp || !line.relay_via.empty())) {
     error = "--relay runs a relay; it cannot also use --upnp or --relay-via";
+    return std::nullopt;
+  }
+  if (!line.join.empty() && (line.relay || line.upnp || line.invite || !line.relay_via.empty())) {
+    error = "--join runs Join.bat's helper; it cannot also host (--upnp, --invite, --relay, --relay-via)";
+    return std::nullopt;
+  }
+  if (line.relay && line.invite) {
+    error = "--relay runs a relay; it cannot also use --invite";
     return std::nullopt;
   }
   if (line.relay && !line.port_given) line.port = 27530;
@@ -167,6 +193,20 @@ const char* usage() {
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"
          "                   relay, hosts must give it; with --relay-via, the one\n"
          "                   to give\n"
+         "  --invite         learn this PC's internet address (STUN), print an invite
+"
+         "                   code with it and the join password, and take answer
+"
+         "                   codes typed here; needs a join password
+"
+         "  --stun NAME:PORT STUN server to ask (more than once; default: Google's
+"
+         "                   and Cloudflare's free ones)
+"
+         "  --join ADDRESS:PORT [--game-port N]  Join.bat's helper for an invite
+"
+         "                   code: the game connects to 127.0.0.1:N (27512)
+"
          "  --pvp on|off     players can hurt each other (default: off); the\n"
          "                   host can change it in the game with /pvp\n";
 }

@@ -318,7 +318,7 @@ Checked offline on 2026-11-11 (no game run): every one of the 63 distinct saves 
 
 The fix: whenever Link is in the game, the hook equips the best held ocarina when `EquipOcarina` is "" or is the Fairy Ocarina while the Ocarina of Time is held (`ocarina_equip_mend`; log `coop: items: ocarina '' -> 'Item_Ocarina_Fairy' for the held ocarina`). It is written straight into the String64's buffer, as the teleport does; never lowered, and a name it does not know is left alone. The help-box Bools are left to the game: at worst the first D-pad Left shows the ocarina's help box. Songs are `IsGet.Item_Melody_*` (shared, OR).
 
-Not checked in a run yet: that the written name is enough for D-pad Left (the in-game check below), and that songs learned by another player can be played.
+Not checked in a run yet: that the written name is enough for D-pad Left, and that songs learned by another player can be played. The autotest `ocarina-given` checks both on B, after `tools/autotest/save_flags.py no-ocarina` has taken the ocarinas out of B's baseline save (what a save without them holds: the flags above at their defaults and `EquipOcarina` "").
 
 ## Not done
 

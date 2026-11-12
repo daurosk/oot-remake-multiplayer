@@ -139,7 +139,7 @@ struct FakeRouter {
   std::uint16_t ssdp_port = 0;
   std::uint16_t http_port = 0;
   std::atomic<bool> stop{false};
-  bool only_permanent = false;
+  std::atomic<bool> only_permanent{false};
   std::mutex lock;
   std::vector<std::string> actions;  // "AddPortMapping lease=600", ...
   std::thread thread;

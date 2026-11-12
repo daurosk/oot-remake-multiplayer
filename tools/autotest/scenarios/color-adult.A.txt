@@ -1,0 +1,38 @@
+# color-adult (puppet-colors): the colour scenario for adult Link. A loads straight into
+# Kakariko by day as adult (as wear-adult; run with -NoLoad; B is adult there too,
+# color-adult.B.txt), steps aside to face B and stands, so B's shots show A's whole adult
+# puppet (body, tunic, boots) tinted in A's colour, and A's shots show B's in B's.
+# Run: tools\autotest\run.ps1 -Scenario color-adult -ScreenCopy
+#   -Switches LICHII_COOP_PUPPET=1,A:LICHII_COOP_COLOR=<colour>,B:LICHII_COOP_COLOR=<colour>
+#   (LICHII_COOP_DEBUG_COLOR=1 logs every colour parameter of the cloth materials)
+# Expect in both logs: "P<n> cloth #......: ... painted 1 strong, 1 light". Life stays the same
+# while tinted: no "Heart Container" notice and no life change in either log (colour.A check).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PUPPET=1
+mark start
+warp KakarikoVillage_Adult Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+wait 240
+mark a-still
+stick 0.7 0 10           # turn a little, so the tint shows from another side
+wait 240
+mark a-turned
+wait 120
+mark end

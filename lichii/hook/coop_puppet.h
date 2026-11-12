@@ -198,7 +198,7 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x700;
+inline constexpr std::uint64_t kSize = 0x800;
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -217,6 +217,8 @@ inline constexpr std::uint64_t kAnimCapacity = 0x50;  // 64 characters and the 0
 inline constexpr std::uint64_t kGearText = 0x300;
 inline constexpr std::uint64_t kGearCapacity = 0x40;
 inline constexpr std::uint64_t kGearPtr = 0x640;  // kGearCount x 8 bytes (to 0x6a8)
+// The cloth colour planner's scratch (CoopColors::Cloth): a name, its char*, a colour.
+inline constexpr std::uint64_t kCloth = 0x700;   // 0x60 bytes
 }  // namespace block
 
 // Guest memory, as the director sees it. Failures are quiet.
@@ -305,6 +307,12 @@ public:
     // alpha of the game's hit-flash colour, coop_colors.h); 0, the default,
     // writes no colour (the fairies' director).
     void SetTint(float strength) { tint_ = strength; }
+    // Colour each live puppet's cloth per material (CoopColors::Cloth): the
+    // tunic and cap in its target's colour, the undershirt and leggings lighter.
+    void SetCloth(CoopColors::ClothSettings settings) {
+        cloth_ = std::move(settings);
+        cloth_on_ = true;
+    }
 
     // Any thread. The next frame of the cave uses it.
     void SetInput(Input input);
@@ -408,6 +416,7 @@ private:
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
         CoopColors::Painted painted;        // the colour on it (coop_colors.h)
+        CoopColors::Cloth cloth;            // its cloth colours, per material
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
@@ -421,7 +430,8 @@ private:
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
+        cloth
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
@@ -437,6 +447,7 @@ private:
                              std::uint64_t now_ms);
     void LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Move(Slot& slot, Guest& guest);
+    std::optional<Call> Cloth(Slot& slot, Guest& guest, std::uint32_t color);
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
@@ -458,6 +469,8 @@ private:
     bool pose_copy_ = false;
     bool matrix_call_ = false;
     float tint_ = 0.0f;
+    CoopColors::ClothSettings cloth_;
+    bool cloth_on_ = false;
 
     mutable std::mutex input_mutex_;
     Input next_input_;  // guarded

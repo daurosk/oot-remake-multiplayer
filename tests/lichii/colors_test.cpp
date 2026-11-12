@@ -259,3 +259,119 @@ TEST_CASE("colours: a piece whose model is not made yet: the body for now") {
     CHECK(CoopColors::Paint(m, kActor, 0x20C040, 0.6f, painted).find("1 worn piece,") !=
           std::string::npos);
 }
+
+namespace {
+namespace cloth = CoopColors::cloth;
+constexpr std::uint64_t kBase = 0x10000000;
+constexpr std::uint64_t kHolder2 = 0x80009000;
+constexpr std::uint64_t kHolderVt = 0x8000a000;
+constexpr std::uint64_t kSet = 0x8000b000;
+constexpr std::uint64_t kUnits = 0x8000c000;
+constexpr std::uint64_t kEntry = 0x8000d000;
+constexpr std::uint64_t kUnit = 0x8000e000;
+constexpr std::uint64_t kUnitVt = 0x8000f000;
+constexpr std::uint64_t kScratch = 0x80010000;
+
+// An actor with one model unit, as the game lays it out.
+Memory ActorWithUnit() {
+    Memory m;
+    m.Put<std::uint64_t>(kActor + addr::kActorParts, kParts);
+    m.Put<std::uint64_t>(kParts + cloth::kPartsHolder, kHolder2);
+    m.Put<std::uint64_t>(kHolder2, kHolderVt);
+    m.Put<std::uint64_t>(kHolderVt + cloth::kHolderGetSet, kBase + cloth::kHolderGetSetDefault);
+    m.Put<std::uint64_t>(kHolder2 + cloth::kHolderSet, kSet);
+    m.Put<std::int32_t>(kSet + cloth::kSetCount, 1);
+    m.Put<std::uint64_t>(kSet + cloth::kSetUnits, kUnits);
+    m.Put<std::uint64_t>(kUnits, kEntry);
+    m.Put<std::uint64_t>(kEntry, kUnit);
+    m.Put<std::uint64_t>(kUnit, kUnitVt);
+    m.Put<std::uint64_t>(kUnitVt + cloth::kFindMaterial, 0x111);
+    m.Put<std::uint64_t>(kUnitVt + cloth::kFindParam, 0x222);
+    m.Put<std::uint64_t>(kUnitVt + cloth::kSetColor, 0x333);
+    m.Map(kScratch, 0x60);
+    return m;
+}
+
+std::string TextAt(Memory& m, std::uint64_t ptr_cell) {
+    const auto ptr = m.Get<std::uint64_t>(ptr_cell);
+    std::string s;
+    for (char c = m.Get<char>(ptr); c != 0; c = m.Get<char>(ptr + s.size())) s += c;
+    return s;
+}
+}  // namespace
+
+TEST_CASE("colours: cloth colour, the shade and linear values") {
+    const auto c = CoopColors::ClothColor(0xFF0000, 0.0f);
+    CHECK(c[0] == doctest::Approx(1.0f));
+    CHECK(c[1] == doctest::Approx(0.0f));
+    CHECK(c[3] == doctest::Approx(1.0f));
+    const auto light = CoopColors::ClothColor(0xFF0000, 0.5f);
+    CHECK(light[0] == doctest::Approx(1.0f));
+    CHECK(light[1] > 0.2f);  // half way to white in sRGB, then linear
+    CHECK(light[1] < 0.5f);
+    const auto white = CoopColors::ClothColor(0x2050FF, 1.0f);
+    CHECK(white[0] == doctest::Approx(1.0f));
+}
+
+TEST_CASE("colours: cloth, the tunic strong and the undershirt light, through the game's calls") {
+    Memory m = ActorWithUnit();
+    CoopColors::ClothSettings s;
+    s.strong = {"Mt_Angin"};
+    s.light = {"Mt_Inner"};
+    CoopColors::Cloth cloth;
+    std::string line;
+
+    // Material lookups: Mt_Angin is material 4, Mt_Inner is not there.
+    auto c = cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line);
+    REQUIRE(c);
+    CHECK(c->function == 0x111);
+    CHECK(c->x[0] == kUnit);
+    CHECK(TextAt(m, c->x[1]) == "Mt_Angin");
+    CHECK_FALSE(cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line));  // waiting
+    CHECK(cloth.Done(4, s).empty());
+    c = cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line);
+    REQUIRE(c);
+    CHECK(TextAt(m, c->x[1]) == "Mt_Inner");
+    cloth.Done(0xFFFFFFFFu, s);
+
+    // The parameter of the one found.
+    c = cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line);
+    REQUIRE(c);
+    CHECK(c->function == 0x222);
+    CHECK(c->x[1] == 4);
+    CHECK(TextAt(m, c->x[2]) == "ns_param_color0");
+    cloth.Done(2, s);
+
+    // The colour.
+    c = cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line);
+    REQUIRE(c);
+    CHECK(c->function == 0x333);
+    CHECK(c->x[1] == 4);
+    CHECK(c->x[2] == 2);
+    CHECK(m.Get<CoopColors::Rgba>(c->x[3]) == CoopColors::ClothColor(0xE02020, 0.0f));
+    cloth.Done(0, s);
+    CHECK_FALSE(cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line));
+    CHECK(line.find("Mt_Angin u0 m4 ns_param_color0=2 (strong)") != std::string::npos);
+    CHECK(line.find("painted 1 strong, 0 light") != std::string::npos);
+
+    // Same colour: nothing more. A new colour: painted again, no lookups.
+    CHECK_FALSE(cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line));
+    c = cloth.Next(m, kBase, kActor, 0x2050FF, s, kScratch, line);
+    REQUIRE(c);
+    CHECK(c->function == 0x333);
+    CHECK(m.Get<CoopColors::Rgba>(c->x[3]) == CoopColors::ClothColor(0x2050FF, 0.0f));
+}
+
+TEST_CASE("colours: cloth waits for the model and checks the holder's class") {
+    Memory m = ActorWithUnit();
+    CoopColors::ClothSettings s;
+    CoopColors::Cloth cloth;
+    std::string line;
+    m.Put<std::uint64_t>(kHolderVt + cloth::kHolderGetSet, 0x999);  // another class
+    CHECK_FALSE(cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line));
+    m.Put<std::uint64_t>(kHolderVt + cloth::kHolderGetSet, kBase + cloth::kHolderGetSetDefault);
+    m.Put<std::int32_t>(kSet + cloth::kSetCount, 0);  // no unit yet
+    CHECK_FALSE(cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line));
+    m.Put<std::int32_t>(kSet + cloth::kSetCount, 1);
+    CHECK(cloth.Next(m, kBase, kActor, 0xE02020, s, kScratch, line));
+}

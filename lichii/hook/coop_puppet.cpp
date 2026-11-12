@@ -392,6 +392,11 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         Say(who + " wears " + kGearNames[slot.equip_index] + " '" + slot.equip_name +
             "' (returned " + Hex(result & 0xff) + ")");
         break;
+    case Pending::cloth:
+        if (const std::string line = slot.cloth.Done(result, cloth_); !line.empty()) {
+            Say(who + " " + line);
+        }
+        break;
     case Pending::unequip: {
         const std::size_t i = slot.equip_index;
         if ((result & 0xff) != 0) {
@@ -529,6 +534,11 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         }
         if (auto c = Hold(slot, *t, guest, now_ms)) {
             return c;
+        }
+        if (cloth_on_ && t->color) {
+            if (auto c = Cloth(slot, guest, *t->color)) {
+                return c;
+            }
         }
         if (matrix_call_ && t->show != Show::hold) {
             if (auto c = Move(slot, guest)) {
@@ -1111,6 +1121,24 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
 // (+0x358/+0x364), which the actor's calc applies over +0x31c. With the
 // debug anim log, once a second, what the game left there since the last
 // write, so a writer that undoes ours shows up.
+std::optional<Call> Director::Cloth(Slot& slot, Guest& guest, std::uint32_t color) {
+    std::string line;
+    const auto next = slot.cloth.Next(guest, input_.main_base, slot.actor, color, cloth_, slot.block == 0 ? 0 : slot.block + block::kCloth, line);
+    if (!line.empty()) {
+        Say("P" + std::to_string(slot.number) + " " + line + ", puppet " + Hex(slot.actor));
+    }
+    if (!next) {
+        return std::nullopt;
+    }
+    Call c;
+    c.function = next->function;
+    for (std::size_t i = 0; i < next->x.size(); ++i) {
+        c.x[i] = next->x[i];
+    }
+    pending_ = Pending::cloth;
+    return c;
+}
+
 void Director::Tint(Slot& slot, Guest& guest, std::uint32_t color) {
     const std::string line = CoopColors::Paint(guest, slot.actor, color, tint_, slot.painted);
     if (!line.empty()) {
@@ -1406,6 +1434,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
         g_director->SetPoseCopy(true);
         // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
         g_director->SetTint(CoopColors::StrengthFromEnvironment());
+        g_director->SetCloth(CoopColors::ClothSettings::FromEnvironment());
         g_planner = std::make_unique<Planner>(std::move(settings));
         g_configured = true;
     });

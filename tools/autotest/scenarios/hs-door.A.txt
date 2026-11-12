@@ -9,6 +9,8 @@
 # the boss line "event true" while passing; shots b-door: B on the far side of the door.
 # If B's "test steer at" lines stop short of x -30.5, the door is shut (the room's enemies not cleared):
 # then the door rows are inconclusive again, and the room needs clearing first.
+# A's ladder half proves nothing unless the ladder's flag is cleared first (hs-ladder's save_flags.py
+# step, bool 0xb3a4fe84=0): without it the door rows still work, but read only them.
 # cutscene-snap's own notes follow (A's part, the ladder, is as there).
 # cutscene-snap, A (see cutscene-snap.steps.txt): as deku-ladder.A.txt (warp, chest, shoot the
 # eye: the ladder's cutscene), then faces the room's door (ShutterFrame -30.5 109.8 10.2) and

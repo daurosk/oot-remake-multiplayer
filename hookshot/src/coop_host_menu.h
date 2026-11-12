@@ -69,6 +69,8 @@ private:
         std::string name, password, relay_via, relay_key;
         std::uint16_t port = 0;
         bool upnp = false, invite = false, pvp = false;
+        std::uint8_t max_players = 16;
+        std::uint32_t pose_upload_kbps = 0;
     };
     struct JoinJob {
         std::string name, password;

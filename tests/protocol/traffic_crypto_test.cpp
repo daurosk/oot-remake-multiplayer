@@ -231,7 +231,7 @@ TEST_CASE("traffic crypto: the key share rides at the end of HELLO and JOIN_CHAL
   REQUIRE(number_only.has_value());
   REQUIRE(decode(*number_only, back) == Error::none);
   CHECK(std::get<Hello>(back) == no_key);
-  hello.previous_number = 5;  // not a player number
+  hello.previous_number = 17;  // not a player number
   CHECK_FALSE(encode(hello).has_value());
   hello.previous_number.reset();
   // Anything else after the nickname is still refused (a lone byte 0 is no player number).

@@ -897,3 +897,36 @@ TEST_CASE("host service: a wrong password is refused") {
   CHECK(a.find<Welcome>() == nullptr);
   CHECK(service.status().players == 0);
 }
+
+TEST_CASE("host service: 16 real clients join over ENet, a 17th is told the server is full") {
+  EnetLife enet;
+  HostServiceConfig config = service_config(nullptr);
+  config.max_connections = 20;
+  HostService service(config);
+  std::string why;
+  REQUIRE(service.start(why));
+  std::vector<std::unique_ptr<Client>> clients;
+  std::vector<Client*> all;
+  for (int i = 0; i < 17; ++i) {
+    clients.push_back(std::make_unique<Client>());
+    all.push_back(clients.back().get());
+  }
+  for (int i = 0; i < 16; ++i) {
+    Client& c = *clients[static_cast<std::size_t>(i)];
+    c.connect(service.port());
+    REQUIRE(pump_service(service, all, [&] { return c.connected; }));
+    c.send(hello_from("p" + std::to_string(i + 1)), kChannelSession);
+    REQUIRE(pump_service(service, all, [&] { return c.find<Welcome>() != nullptr; }));
+    CHECK(c.find<Welcome>()->player_number == i + 1);
+  }
+  CHECK(service.status().players == 16);
+  CHECK(clients[15]->find<Welcome>()->players.size() == 15);
+  Client& late = *clients[16];
+  late.connect(service.port());
+  REQUIRE(pump_service(service, all, [&] { return late.connected; }));
+  late.send(hello_from("p17"), kChannelSession);
+  REQUIRE(pump_service(service, all, [&] { return late.find<Refused>() != nullptr || late.disconnected; }));
+  if (const Refused* r = late.find<Refused>()) CHECK(r->reason == RefuseReason::server_full);
+  CHECK(late.find<Welcome>() == nullptr);
+  CHECK(service.status().players == 16);
+}

@@ -42,7 +42,9 @@ struct HostServiceConfig {
   std::uint16_t port_tries = 1;
   std::optional<std::uint32_t> bind;  // as ServerOptions::bind
   SessionConfig session;              // join_password must not be empty
-  std::size_t max_connections = 16;
+  // ENet's connection slots: more than max_players, so one more player can
+  // connect and be told the server is full.
+  std::size_t max_connections = 20;
   bool upnp = false;                  // only when the host said yes
   bool invite = false;                // STUN, then the invite code
   std::vector<nat::Addr> stun_servers;

@@ -28,6 +28,9 @@ typedef struct HosCoopHostOptions {
     uint8_t pvp;            /* 1: players can hurt each other */
     const char *relay_via;  /* a relay "host[:port]"; NULL or "": none */
     const char *relay_key;  /* that relay's host key; NULL: none */
+    uint8_t max_players;    /* most players at once, 1 to 16; 0: 16 */
+    uint8_t reserved[3];
+    uint32_t pose_upload_kbps;  /* the host's upload for other players' poses, kilobits a second; 0: no cap */
 } HosCoopHostOptions;
 
 typedef struct HosCoopJoinOptions {

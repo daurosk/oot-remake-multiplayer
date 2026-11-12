@@ -212,7 +212,9 @@ TEST_CASE("a second player sees the first, and the first is told of the second")
 }
 
 TEST_CASE("a fifth player is refused as server full and dropped") {
-  Harness h;
+  SessionConfig four;
+  four.max_players = 4;  // the old cap; the default is 16 (below)
+  Harness h(four);
   for (ConnectionId id = 1; id <= 4; ++id) h.join(id, "p" + std::to_string(id));
   h.clear();
 
@@ -1285,7 +1287,9 @@ TEST_CASE("a rejoining host hands over as on any leave, alone it hosts again wit
 }
 
 TEST_CASE("a rejoin into a full session takes the old place instead of being refused as full") {
-  Harness h;
+  SessionConfig four;
+  four.max_players = 4;
+  Harness h(four);
   h.join(1, "Link", kHomePc);
   h.join(2, "Zelda", kOtherPc);
   h.join(3, "Saria", kOtherPc);
@@ -4031,4 +4035,135 @@ TEST_CASE("encrypted traffic: a proof for other key shares (a relay in the middl
   h.clear();
   h.receive(2, JoinProof{join_proof("hunter2", again)}, kChannelSession);
   CHECK(only_message_to<Refused>(h, 2)->reason == RefuseReason::bad_password);
+}
+
+// 16 players (protocol 12): the cap, and who gets which stream
+// (docs/protocol.md "Who gets which stream").
+namespace {
+
+PlayerSample sample_at(const std::string& scene, float x) {
+  PlayerSample s;
+  s.time = {1, 1};
+  s.scene = scene;
+  s.position = Vec3{x, 0.0f, 0.0f};
+  return s;
+}
+
+PlayerPose a_pose() {
+  PlayerPose p;
+  p.skeleton = 7;
+  PoseBone b;
+  b.bone = 3;
+  b.rotation = std::array<std::int16_t, 4>{0, 0, 0, 32767};
+  p.bones.push_back(b);
+  return p;
+}
+
+template <typename T>
+std::size_t count_to(const Harness& h, ConnectionId id) {
+  std::size_t n = 0;
+  for (const auto& m : h.to(id)) n += std::holds_alternative<T>(m.message) ? 1 : 0;
+  return n;
+}
+
+}  // namespace
+
+TEST_CASE("16 players: all take numbers 1 to 16, the 17th is told the server is full") {
+  Harness h;
+  for (ConnectionId id = 1; id <= 16; ++id) h.join(id, "p" + std::to_string(id));
+  CHECK(h.session.player_count() == 16);
+  h.clear();
+  h.connect(17);
+  h.receive(17, hello_from("p17"), kChannelSession);
+  const auto refused = only_message_to<Refused>(h, 17);
+  REQUIRE(refused.has_value());
+  CHECK(refused->reason == RefuseReason::server_full);
+  CHECK(h.session.player_count() == 16);
+}
+
+TEST_CASE("16 players: the 16th's WELCOME lists the 15 others") {
+  Harness h;
+  for (ConnectionId id = 1; id <= 15; ++id) h.join(id, "p" + std::to_string(id));
+  h.clear();
+  h.join(16, "p16");
+  const auto w = only_message_to<Welcome>(h, 16);
+  REQUIRE(w.has_value());
+  CHECK(w->player_number == 16);
+  CHECK(w->players.size() == 15);
+}
+
+TEST_CASE("max_players (coop_server --max-players) caps the session below 16") {
+  SessionConfig two;
+  two.max_players = 2;
+  Harness h(two);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.connect(3);
+  h.receive(3, hello_from("Saria"), kChannelSession);
+  const auto refused = only_message_to<Refused>(h, 3);
+  REQUIRE(refused.has_value());
+  CHECK(refused->reason == RefuseReason::server_full);
+}
+
+TEST_CASE("interest: poses go to the same scene only, every one near, every 3rd far") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Near");
+  h.join(3, "Far");
+  h.join(4, "Elsewhere");
+  h.receive(1, sample_at("Field", 0.0f), kChannelPlayerSamples);
+  h.receive(2, sample_at("Field", 500.0f), kChannelPlayerSamples);
+  h.receive(3, sample_at("Field", 9000.0f), kChannelPlayerSamples);
+  h.receive(4, sample_at("Village", 0.0f), kChannelPlayerSamples);
+  h.clear();
+  const std::uint8_t channel = channel_of(Message{a_pose()});
+  for (int i = 0; i < 30; ++i) {
+    h.now += 33'000;
+    h.receive(1, a_pose(), channel);
+  }
+  CHECK(count_to<PlayerPose>(h, 2) == 30);
+  CHECK(count_to<PlayerPose>(h, 3) == 10);
+  CHECK(count_to<PlayerPose>(h, 4) == 0);
+  CHECK(h.session.stats().interest_skipped == 20 + 30);
+}
+
+TEST_CASE("interest: samples go everywhere, every 6th to another scene") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Here");
+  h.join(3, "Elsewhere");
+  h.receive(2, sample_at("Field", 100.0f), kChannelPlayerSamples);
+  h.receive(3, sample_at("Village", 0.0f), kChannelPlayerSamples);
+  h.clear();
+  for (int i = 0; i < 60; ++i) {
+    h.now += 16'000;
+    h.receive(1, sample_at("Field", 0.0f), kChannelPlayerSamples);
+  }
+  CHECK(count_to<PlayerSample>(h, 2) == 60);
+  CHECK(count_to<PlayerSample>(h, 3) == 10);
+}
+
+TEST_CASE("interest: the pose upload cap holds poses back, shared by the players") {
+  SessionConfig capped;
+  capped.pose_upload_bytes_per_second = 600;  // two receivers: 300 B/s each
+  Harness h(capped);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  const std::uint8_t channel = channel_of(Message{a_pose()});
+  std::vector<std::uint8_t> bytes;
+  REQUIRE(encode(Message{a_pose()}, bytes) == Error::none);
+  for (int i = 0; i < 60; ++i) {  // 2 s at 30 a second
+    h.now += 33'333;
+    h.receive(1, a_pose(), channel);
+  }
+  // About 300 B/s for 2 s each, plus the first one.
+  const std::size_t most = 600 / bytes.size() + 2;
+  REQUIRE(most < 60);  // the cap has to bite for this test to mean anything
+  CHECK(count_to<PlayerPose>(h, 2) <= most);
+  CHECK(count_to<PlayerPose>(h, 2) >= most / 2);
+  CHECK(count_to<PlayerPose>(h, 3) == count_to<PlayerPose>(h, 2));
+  CHECK(h.session.stats().upload_capped > 0);
 }

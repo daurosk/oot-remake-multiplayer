@@ -283,6 +283,9 @@ int main(int argc, char** argv) {
     config.bind = line->bind;
     config.session.game_build_id = line->game_build_id;
     config.session.max_half_open_per_address = line->max_half_open;
+    config.session.max_players = static_cast<std::uint8_t>(line->max_players);
+    config.session.pose_upload_bytes_per_second = line->pose_upload_kbps * 125u;  // kilobits to bytes
+    config.max_connections = line->max_players + 4u;  // a full server can still say so
     config.session.allowed = line->allowed;
     // Guests through a relay come from this PC's own link (relay_link.hpp);
     // the relay let them in by the join code.

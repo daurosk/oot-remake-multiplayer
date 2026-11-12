@@ -164,6 +164,12 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
     job.relay_via = Trim(COOP_HAS(o, HosCoopHostOptions, relay_via) ? Text(o->relay_via) : std::string());
     job.relay_key = COOP_HAS(o, HosCoopHostOptions, relay_key) ? Text(o->relay_key) : std::string();
+    if (COOP_HAS(o, HosCoopHostOptions, max_players) && o->max_players != 0) {
+        job.max_players = o->max_players < coop::protocol::kMaxPlayers ? o->max_players : coop::protocol::kMaxPlayers;
+    }
+    if (COOP_HAS(o, HosCoopHostOptions, pose_upload_kbps)) {
+        job.pose_upload_kbps = o->pose_upload_kbps;
+    }
     if (job.name.size() > kMaxName) {
         Fail("the name is longer than 16 characters", HOS_COOP_PROBLEM_BAD_NAME);
         return 0;
@@ -200,6 +206,9 @@ void Menu::RunHost(HostJob job) {
         config.port_tries = kPortTries;
         config.session.join_password = job.password;
         config.session.pvp = job.pvp;
+        config.session.max_players = job.max_players;
+        config.session.pose_upload_bytes_per_second = job.pose_upload_kbps * 125u;
+        config.max_connections = static_cast<std::size_t>(job.max_players) + 4;
         config.upnp = job.upnp;
         config.invite = job.invite;
         if (job.invite) {

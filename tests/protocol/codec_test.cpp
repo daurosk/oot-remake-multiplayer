@@ -200,9 +200,9 @@ TEST_CASE("truncated buffers are refused at every length") {
 
 TEST_CASE("values out of range are refused") {
   CHECK(encode(Message{Welcome{0, 0, 60, {}}}) == std::nullopt);
-  CHECK(encode(Message{Welcome{5, 0, 60, {}}}) == std::nullopt);
+  CHECK(encode(Message{Welcome{17, 0, 60, {}}}) == std::nullopt);
   CHECK(encode(Message{PlayerJoined{1, ""}}) == std::nullopt);
-  CHECK(encode(Message{Chat{5, "x"}}) == std::nullopt);
+  CHECK(encode(Message{Chat{17, "x"}}) == std::nullopt);
   CHECK(encode(Message{Chat{0, std::string(201, 'a')}}) == std::nullopt);
   CHECK(encode(Message{Chat{0, std::string(200, 'a')}}) != std::nullopt);
   CHECK(encode(Message{Hello{0, "b", "g", "v", std::string(17, 'n')}}) == std::nullopt);
@@ -1014,7 +1014,12 @@ TEST_CASE("slot_color gives each player number its own colour") {
   CHECK(slot_color(3) != slot_color(4));
   CHECK(slot_color(1) != slot_color(4));
   CHECK(slot_color(0) == 0xFFFFFFu);
-  CHECK(slot_color(5) == 0xFFFFFFu);
+  CHECK(slot_color(17) == 0xFFFFFFu);
+  // All 16 different, and none the white of "no player".
+  for (std::uint8_t a = 1; a <= kMaxPlayers; ++a) {
+    CHECK(slot_color(a) != 0xFFFFFFu);
+    for (std::uint8_t b = static_cast<std::uint8_t>(a + 1); b <= kMaxPlayers; ++b) CHECK(slot_color(a) != slot_color(b));
+  }
   for (std::uint8_t n = 1; n <= kMaxPlayers; ++n) CHECK(slot_color(n) <= 0xFFFFFFu);
 }
 
@@ -1344,7 +1349,7 @@ TEST_CASE("bad grass cuts are refused") {
   c.sweep[0][0] = std::numeric_limits<float>::infinity();
   CHECK(encode(c, out) == Error::bad_value);
   c = Cut();
-  c.player_number = 5;
+  c.player_number = 17;
   CHECK(encode(c, out) == Error::bad_value);
 }
 
@@ -1425,7 +1430,7 @@ TEST_CASE("bad world messages are refused") {
   b.position[2] = std::numeric_limits<float>::infinity();
   CHECK(encode(b, out) == Error::bad_value);
   b = Broke();
-  b.player_number = 5;
+  b.player_number = 17;
   CHECK(encode(b, out) == Error::bad_value);
   WorldMove v = Moved();
   v.rotation = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -1545,7 +1550,7 @@ TEST_CASE("bad boss room messages are refused") {
   CHECK(encode(BossRoom{0, "s", kMaxBossRoom + 1, BossState::in_room}, out) == Error::bad_value);
   CHECK(encode(BossRoom{0, "s", 0, static_cast<BossState>(0)}, out) == Error::bad_value);
   CHECK(encode(BossRoom{0, "s", 0, static_cast<BossState>(6)}, out) == Error::bad_value);
-  CHECK(encode(BossRoom{5, "s", 0, BossState::left}, out) == Error::bad_value);
+  CHECK(encode(BossRoom{17, "s", 0, BossState::left}, out) == Error::bad_value);
   Message m;
   Bytes b = must_encode(BossRoom{0, "s", 0, BossState::defeated});
   b.back() = 6;  // an unknown state

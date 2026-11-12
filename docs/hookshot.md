@@ -86,4 +86,4 @@ Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-reco
 | The module: all of `lichii/hook` through `hookshot/compat` | Written; all 42 hook files and the module pass a syntax check; CI builds it on Windows; `tests/hookshot/module_test.cpp` (the header in the patch is ours, the hook sites are the emulator cave's, the build list) |
 | Callers shared by both builds (`coop_callers`) | Done (`tests/lichii/callers_test.cpp`) |
 | Kit (`Build-Hookshot-Coop.bat`, `Host-/Join-Hookshot.bat`) | In the release kit; ran end to end on the test PC (download, checks, patch, build, co-op install) |
-| Proofs 1 to 5 | 2 done: the patched game builds and loads the module. 3 to 5 in the combined two-game test <!-- FILL from reports/integrate-p11.md --> |
+| Proofs 1 to 5 | 2 done: the patched game builds and loads the module. 3 (two Hookshot games, walk): both connected, but the other's puppet was requested and never shown, so other players may not appear on Hookshot yet. 4 and 5 in the combined test <!-- B #4: may change after Hookshot proofs 4-5 --> |

@@ -181,7 +181,7 @@ The tunics come in ten colours (green, red, orange, yellow, cyan, blue, purple, 
 
 Online it works as the emulator kit does: the host double-clicks `Host-Hookshot.bat` and sends the invite code; the others paste it into `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator). Hookshot and emulator players can be in the same session: same game build, same server, same protocol. Invite codes are not yet tested on Hookshot; an address join (same network, VPN, port forward) works the same. `Join-Hookshot.bat` does not watch for the connection yet: the game's `hookshot_log.txt` (beside `hookshot.exe`) says `coop: module loaded`, then `coop: connected`.
 
-Not on Hookshot yet: the co-op window (panel, chat box, player list, markers, HUD), a Hookshot player's own ocarina notes, and your own Link in your colour ([what is missing](setup.md#what-is-not-on-hookshot-yet)). Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD crashes) are listed on its page.
+Other players may not appear on Hookshot yet: in our two-game test both games connected but the other's Link never showed. Not on Hookshot yet: the co-op window (panel, chat box, player list, markers, HUD), a Hookshot player's own ocarina notes, and your own Link in your colour ([what is missing](setup.md#what-is-not-on-hookshot-yet)). Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD crashes) are listed on its page.
 
 ## When you are done
 

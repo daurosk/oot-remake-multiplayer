@@ -27,7 +27,7 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
    It ends with "Done." and the game's path, in the kit's `hookshot\game` folder (`-Out <folder>` puts it elsewhere).
 4. **First start, as the host.** Double-click `Host-Hookshot.bat`. It works like `Host.bat`: it asks for your player name, starts the co-op server, makes a new random join password, asks your router to open the port and copies an **invite code** for your friends (see [Playing over the internet](play-online.md#the-easy-way-hostbat-and-an-invite-code)). Then it starts the Hookshot game instead of the emulator.
 5. **Joining.** Your friends double-click `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator) and paste the invite code. Invite codes have not been tested on Hookshot yet; joining by address on the same network or a VPN works the same as on the emulator ([play-lan.md](play-lan.md)).
-6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. In the game, the other players show as Link.
+6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. **Other players may not appear on Hookshot yet:** in our two-game test on Hookshot both games connected, but the other player's Link never appeared. <!-- B #4: may change after Hookshot proofs 4-5 -->
 
 **After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files and puppet pack into the game in a few minutes, and builds the whole game again only when the update moved to a newer Hookshot.
 
@@ -35,6 +35,7 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
 
 ### What is not on Hookshot yet
 
+- **Other players may not appear yet:** in our two-game test on Hookshot both games connected, but neither showed the other player's Link (the game asked for it and never showed it). <!-- B #4: may change after Hookshot proofs 4-5 -->
 - **No co-op window:** no status panel, no chat box (Enter) or chat lines, no player list (Tab), no markers, no co-op HUD (the other players' hearts under yours) and no cheats window, so no chat commands such as `/teleport`. The log says what the panel would.
 - **Your own ocarina notes are not sent:** the others do not hear a Hookshot player's ocarina.
 - **Tunic colours only partly:** your own Link stays green (your colour is not put on it), players whose colour is green show as the plain puppet, and `LICHII_COOP_TUNICS=0` does nothing on Hookshot (#202; the emulator kit does all of these).

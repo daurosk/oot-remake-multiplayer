@@ -92,6 +92,11 @@ bool Explodes(std::string_view name) {
     const Kind* k = Find(name);
     return k != nullptr && k->explodes;
 }
+// Issue 85: a hookshot tip's animation set draws its chain (ChainExtend in
+// Weapon_Range_Hookshot.root.asb), so its copy plays the owner's animation too.
+bool Animated(std::string_view name) {
+    return Explodes(name) || name == "Shootable_Hook" || name == "Shootable_HookLong";
+}
 bool Flies(std::string_view name) {
     const Kind* k = Find(name);
     return (k != nullptr && k->flies) || CoopEnemyShots::IsEnemyShot(name);
@@ -128,6 +133,7 @@ void Sync::Reset() {
     copies_.clear();
     copy_addresses_.clear();
     local_.clear();
+    impacts_.clear();  // issue 166: the old scene's sparks
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -319,6 +325,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (Explodes(m.name)) {
                     out.state.fuse = fuse_.Left(now_us - m.made_at);
                     out.state.state = m.held ? proto::object_state::held : std::uint8_t{0};
+                }
+                if (Animated(m.name)) {
                     out.state.animation = m.animation;
                 }
                 send.emplace_back(std::move(out));
@@ -399,6 +407,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (Explodes(s.name)) {
             out.state.fuse = fuse_.Left(0);  // known once one of ours went off
             out.state.state = m.held ? proto::object_state::held : std::uint8_t{0};
+        }
+        if (Animated(s.name)) {
             out.state.animation = m.animation;
         }
         m.sent_held = m.held;
@@ -471,8 +481,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             // Issue 169: in the puppet's hands, shown as late as the puppet
             // (and blown up there when it went off in them).
             c.position = r.held_path.At(now_us - std::min(now_us, CoopProjectiles::kHeldBehindUs));
-        } else {
+        } else if (explode) {
+            // Goes off where the owner's did, at the owner's moment.
             c.position = r.track.At(now_us, info != nullptr && info->ballistic);
+        } else {
+            // Smooth shots: the owner's path as late as the puppet, between
+            // its samples, so the copy flies in even steps.
+            c.position = r.track.Shown(now_us, info != nullptr && info->ballistic);
         }
         if (r.rotation) {
             c.rotation = CoopPuppet::QuatToMatrix(*r.rotation);
@@ -490,11 +505,34 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         const bool made = live_it != copies_live.end() && live_it->second != 0;
         // Issue 166: a shot that hit something is seen landing there (the
         // track is stopped at the owner's last place) before it goes.
-        const bool landing = r.removed && *r.removed == proto::RemoveReason::hit &&
-                             info != nullptr && now_us - r.got_us < CoopProjectiles::LandHoldUs(info->kind);
-        if (landing && !r.landed) {
+        // Smooth shots: a copy is shown Track::kBehindUs late, so any copy
+        // the owner removed (hit or gone) is kept that much longer: it
+        // reaches the hit spot (or the hand) first, then gets its full hold.
+        const bool hit = r.removed && *r.removed == proto::RemoveReason::hit && info != nullptr;
+        const std::uint64_t hold =
+            CoopProjectiles::Track::kBehindUs + (hit ? CoopProjectiles::LandHoldUs(info->kind) : 0);
+        const bool landing = r.removed && !explode && now_us - r.got_us < hold;
+        if (hit && landing && !r.landed) {
             r.landed = true;
             ++landed_;
+        }
+        if (hit && landing && !r.impacted && impacts_on_ &&
+            now_us >= r.got_us + CoopProjectiles::Track::kBehindUs) {
+            // Issue 166: the copy reaches the spot now (it is shown kBehindUs
+            // late): the spark and the sound the owner's game played there.
+            r.impacted = true;
+            for (const std::string_view name : CoopProjectiles::ImpactActors(info->kind)) {
+                impacts_.push_back({next_key_++, std::string(name), r.Position(),
+                                    now_us + CoopProjectiles::kImpactLifeUs});
+                ++impacts_made_;
+            }
+            // At most kMaxImpacts live: the oldest go (the director deletes
+            // them), so sparks never starve the shot copies of slots.
+            if (impacts_.size() > CoopProjectiles::kMaxImpacts) {
+                impacts_.erase(impacts_.begin(),
+                               impacts_.begin() + static_cast<std::ptrdiff_t>(impacts_.size() -
+                                                                              CoopProjectiles::kMaxImpacts));
+            }
         }
         c.act = explode ? Act::explode : (!r.removed || landing) ? Act::show : Act::remove;
         if (explode && r.explode_once_made && !made) {
@@ -506,6 +544,17 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         copies.push_back(std::move(c));
         ++it;
+    }
+    // Issue 166: made where they are and left there (no place written); gone
+    // from the list, the director deletes them.
+    std::erase_if(impacts_, [now_us](const Impact& i) { return now_us >= i.until_us; });
+    for (const Impact& i : impacts_) {
+        Copy c;
+        c.key = i.key;
+        c.actor = i.actor;
+        c.position = i.position;
+        c.place = false;
+        copies.push_back(std::move(c));
     }
 }
 
@@ -792,13 +841,16 @@ std::optional<CoopPuppet::Call> Director::Step(CoopPuppet::Guest& guest, bool af
 }
 
 std::string_view StandIn(std::string_view actor) {
-    constexpr std::array<std::pair<std::string_view, std::string_view>, 6> kStandIns{{
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 7> kStandIns{{
         {"Shootable_DekuSeed", "CoopShot_Seed"},
         {"NormalArrow", "CoopShot_Arrow"},
         {"Shootable_Hook", "CoopShot_Hook"},
         {"Shootable_HookLong", "CoopShot_HookLong"},
         {"Weapon_Lure", "CoopShot_Lure"},
         {"Weapon_SinkingLure", "CoopShot_SinkingLure"},
+        // Issue 85: the game's own boomerang made here homes on our enemies
+        // and hits them; the stand-in is its model only.
+        {"Weapon_Boomerang", "CoopShot_Boomerang"},
     }};
     for (const auto& [shared, stand_in] : kStandIns) {
         if (shared == actor) {
@@ -820,7 +872,7 @@ std::set<std::string> StandInsIn(std::string_view manifest) {
     std::set<std::string> out;
     for (const std::string_view shared :
          {"Shootable_DekuSeed", "NormalArrow", "Shootable_Hook", "Shootable_HookLong", "Weapon_Lure",
-          "Weapon_SinkingLure"}) {
+          "Weapon_SinkingLure", "Weapon_Boomerang"}) {
         const std::string quoted = "\"" + std::string(StandIn(shared)) + "\"";
         if (manifest.find(quoted) != std::string_view::npos) {
             out.insert(std::string(StandIn(shared)));
@@ -829,6 +881,14 @@ std::set<std::string> StandInsIn(std::string_view manifest) {
     const std::string_view bomb = HeldStandIn("Item_Bomb");
     if (manifest.find("\"" + std::string(bomb) + "\"") != std::string_view::npos) {
         out.insert(std::string(bomb));
+    }
+    // Issue 166: the impact actors (its "impacts").
+    for (const auto kind : {CoopProjectiles::Kind::seed, CoopProjectiles::Kind::arrow}) {
+        for (const std::string_view name : CoopProjectiles::ImpactActors(kind)) {
+            if (manifest.find("\"" + std::string(name) + "\"") != std::string_view::npos) {
+                out.insert(std::string(name));
+            }
+        }
     }
     return out;
 }
@@ -1170,6 +1230,14 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         if (!Due(copy, now_ms)) {
             continue;
         }
+        if (CoopProjectiles::IsImpact(copy.actor)) {
+            // Issue 166: ours only; a pack without them never gets the create.
+            std::lock_guard lock(mutex_);
+            if (stand_ins_.count(copy.actor) == 0) {
+                started_.insert(copy.key);
+                continue;
+            }
+        }
         if (StandInOnly(copy.actor)) {
             // Never the game's own lure: a fish here would go for it.
             std::lock_guard lock(mutex_);
@@ -1378,6 +1446,11 @@ public:
             LOG_INFO(Core, "coop: shots: copy held where the owner's shot hit ({} so far)",
                      logged_landed_);
         }
+        if (sync_.Impacts() != logged_impacts_) {
+            logged_impacts_ = sync_.Impacts();
+            LOG_INFO(Core, "coop: shots: impact actors asked for where copies landed ({} so far)",
+                     logged_impacts_);
+        }
         if (sync_.BlownOnTime() != logged_blown_) {
             logged_blown_ = sync_.BlownOnTime();
             LOG_INFO(Core, "coop: shots: bomb copy blown on the owner's fuse ({} so far)",
@@ -1502,6 +1575,7 @@ private:
             sync_.Reset();
             sync_.SetSetter(SetterOn());
             sync_.SetShots(ShotSettingsFromEnv());
+            sync_.SetImpacts(Env("LICHII_COOP_SHOT_IMPACTS").value_or("1") != "0");
             ammo_.Reset();
             LOG_INFO(Core, "coop: spawn: on, main at {:#x}, projectile setter {}", main_,
                      SetterOn() ? "on" : "off");
@@ -1618,8 +1692,9 @@ private:
                         memory.ReadBlockUnsafe(r, m.data(), sizeof(m));
                         s.rotation = m;
                     }
-                    if (Explodes(s.name)) {
-                        s.animation = Slot0(memory, a);  // issue 169: the fuse's blink
+                    if (Animated(s.name)) {
+                        // Issue 169: the fuse's blink; issue 85: the hook's chain.
+                        s.animation = Slot0(memory, a);
                     }
                     if (CoopEnemyShots::IsEnemyShot(s.name)) {
                         s.vtable = Get<u64>(memory, a).value_or(0);  // checked again at a delete
@@ -1661,6 +1736,7 @@ private:
     std::optional<std::uint64_t> logged_fuse_;
     std::size_t logged_blown_ = 0;
     std::size_t logged_landed_ = 0;
+    std::size_t logged_impacts_ = 0;
     std::pair<std::size_t, std::size_t> logged_held_{0, 0};
     bool active_ = false;
     Kernel::KProcess* process_ = nullptr;

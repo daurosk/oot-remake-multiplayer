@@ -2,11 +2,14 @@
 // sync, its director and the objects sync use them.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <ostream>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -180,6 +183,76 @@ TEST_CASE("shots: a track is carried on along the velocity, with the fall the sa
     CHECK(t.Stopped());
     CHECK(t.At(5'000'000, true)[0] == doctest::Approx(7.0f));
     CHECK(t.At(5'000'000, true)[1] == doctest::Approx(8.0f));
+}
+
+TEST_CASE("shots: a copy is shown as late as the puppet, between the owner's samples") {
+    shots::Track t;
+    CHECK(t.Shown(1'000'000, true)[0] == doctest::Approx(0.0f));  // nothing yet
+    REQUIRE(t.Add({1'000'000, {0, 10, 0}, {30, 0, 0}}));
+    // Before the first sample's time (shown 100 ms late): where it was made.
+    CHECK(t.Shown(1'050'000, true)[0] == doctest::Approx(0.0f));
+    REQUIRE(t.Add({1'033'000, {1, 10, 0}, {30, 0, 0}}));
+    REQUIRE(t.Add({1'066'000, {2, 9.9f, 0}, {30, -3, 0}}));
+    // Halfway between two samples: halfway between their places.
+    const auto mid = t.Shown(1'000'000 + shots::Track::kBehindUs + 16'500, true);
+    CHECK(mid[0] == doctest::Approx(0.5f));
+    CHECK(mid[1] == doctest::Approx(10.0f));
+    CHECK(t.Shown(1'166'000, true)[1] == doctest::Approx(9.9f));
+    // Past the newest: carried on from it as At() does.
+    CHECK(t.Shown(1'266'000, false)[0] == doctest::Approx(t.At(1'166'000, false)[0]));
+
+    // A hit: the copy goes on to where it struck, a walk after the last
+    // sample, and stays there.
+    t.Stop({2.5f, 9.8f, 0});
+    const std::uint64_t stop = 1'066'000 + shots::Track::kStopAfterUs;
+    CHECK(t.Shown(stop + shots::Track::kBehindUs, true)[0] == doctest::Approx(2.5f));
+    CHECK(t.Shown(5'000'000, true)[0] == doctest::Approx(2.5f));
+    CHECK(t.Shown(1'066'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(2.0f));
+    // A later sample takes the place of the made-up stop.
+    REQUIRE(t.Add({1'200'000, {4, 9, 0}, {}}));
+    CHECK_FALSE(t.Stopped());
+    CHECK(t.Shown(1'200'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(4.0f));
+    CHECK(t.Shown(1'133'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(3.0f));
+}
+
+TEST_CASE("shots: a copy flies in even steps where carrying on stepped") {
+    // The owner's seed flies at 30 m/s along x. Its game moves it 30 times
+    // a second; the owner walks 60 times a second and sends a sample at most
+    // each 33 ms, with the velocity from the change since the walk before:
+    // 0 or 60 m/s by turns. This screen draws 60 frames a second and gets
+    // each sample at once (no delay).
+    constexpr std::uint64_t kWalk = 16'667;
+    const auto place = [](std::uint64_t us) {
+        return 30.0f * float(us / 33'334) * 0.033334f;  // the game's frame
+    };
+    shots::Track fresh;  // fed as the samples come
+    std::uint64_t sent = 0;
+    float before = 0.0f, old_at = 0.0f, new_at = 0.0f;
+    float old_short = 1e9f, old_long = 0.0f, new_short = 1e9f, new_long = 0.0f;
+    for (std::uint64_t walk = 1; walk <= 40; ++walk) {
+        const std::uint64_t us = walk * kWalk;
+        const float x = place(us);
+        if (walk == 1 || us - sent >= 33'000) {
+            fresh.Add({us, {x, 0, 0}, {(x - before) / (kWalk / 1e6f), 0, 0}});
+            sent = us;
+        }
+        before = x;
+        const float o = fresh.At(us, false)[0];
+        const float n = fresh.Shown(us, false)[0];
+        if (walk > 12) {  // the shot is under way (shown 100 ms late)
+            old_short = std::min(old_short, o - old_at);
+            old_long = std::max(old_long, o - old_at);
+            new_short = std::min(new_short, n - new_at);
+            new_long = std::max(new_long, n - new_at);
+        }
+        old_at = o;
+        new_at = n;
+    }
+    // 30 m/s is 0.5 m a frame. Carried on from the latest sample it stood
+    // still or jumped; between the samples it moves the same each frame.
+    CHECK((old_short < 0.1f || old_long > 0.9f));
+    CHECK(new_short > 0.4f);
+    CHECK(new_long < 0.6f);
 }
 
 TEST_CASE("shots: the fuse is learnt from our own bombs") {
@@ -383,6 +456,7 @@ TEST_CASE("shots: a bomb copy goes off at the owner's fuse, before its remove") 
 
 TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CoopSpawn::Sync sync;
+    sync.SetImpacts(false);  // the copy alone here (impacts: their own test)
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;
@@ -401,9 +475,16 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     sample.state.position = proto::Vec3{3.0f, 5.0f, 0.0f};
     sample.state.velocity = proto::Vec3{30.0f, -2.0f, 0.0f};  // 20 m/s^2 down
     sync.Receive(Wire(sample, 1));
-    // Our clock is 60 ms past the sample: the copy is where the owner's
-    // arrow is now, not where it was when the sample was taken.
+    // Shown 100 ms late on the server clock (as the puppet): 60 of the
+    // 100 ms from the spawn to the sample.
     now += 160 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].position[0] == doctest::Approx(3.0f * 0.6f));
+    CHECK(copies[0].position[1] == doctest::Approx(5.0f));
+    // No newer sample: 60 ms past it (shown late), carried on along the arc.
+    copies.clear();
+    now += 100 * kMs;
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].position[0] == doctest::Approx(3.0f + 30.0f * 0.06f));
@@ -423,9 +504,15 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CHECK(copies[0].act == Act::show);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
     CHECK(sync.Landed() == 1);
+    // Held its full time after it is shown reaching the spot (100 ms late).
     copies.clear();
-    sync.Tick(kScene, 2, now + 33 * kMs + shots::LandHoldUs(shots::Kind::arrow), {}, live, send,
-              copies);
+    const std::uint64_t got = now + 33 * kMs;
+    const std::uint64_t hold = shots::LandHoldUs(shots::Kind::arrow) + shots::Track::kBehindUs;
+    sync.Tick(kScene, 2, got + hold - kMs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    copies.clear();
+    sync.Tick(kScene, 2, got + hold, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
@@ -496,8 +583,150 @@ TEST_CASE("shots: our seed's bounce is sent at once, and the log counts it") {
     CHECK(Of<proto::ObjectRemove>(send).size() == 1);
 }
 
-TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one goes at once") {
+TEST_CASE("shots: rapid hits keep at most kMaxImpacts impact actors, the newest (issue 166)") {
     CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    std::uint64_t now = 10'000'000;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    // Five seeds that all hit, one walk apart: ten impacts asked for.
+    for (std::uint64_t value = 1; value <= 5; ++value) {
+        proto::ObjectSpawn spawn;
+        spawn.id = {proto::ObjectKind::made, 1, value};
+        spawn.actor = "Shootable_DekuSeed";
+        spawn.state.time = {now, 0};
+        spawn.state.position = proto::Vec3{0.0f, 5.0f, static_cast<float>(value)};
+        spawn.state.velocity = proto::Vec3{40.0f, 0.0f, 0.0f};
+        sync.Receive(Wire(spawn, 1));
+        proto::ObjectRemove remove;
+        remove.id = spawn.id;
+        remove.reason = proto::RemoveReason::hit;
+        remove.position = {4.0f, 5.0f, static_cast<float>(value)};
+        sync.Receive(Wire(remove, 1));
+        now += 10 * kMs;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);  // taken in
+        now += shots::Track::kBehindUs;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);  // the copy reaches the spot
+        std::size_t count = 0;
+        for (const Copy& c : copies) {
+            if (shots::IsImpact(c.actor)) {
+                ++count;
+            }
+        }
+        CHECK(count <= shots::kMaxImpacts);
+    }
+    CHECK(sync.Impacts() == 10);  // all asked for; only the newest kept
+    std::vector<Copy> kept;
+    for (const Copy& c : copies) {
+        if (shots::IsImpact(c.actor)) {
+            kept.push_back(c);
+        }
+    }
+    REQUIRE(kept.size() == shots::kMaxImpacts);
+    for (const Copy& c : kept) {
+        CHECK(c.position[2] >= 4.0f);  // the last two seeds' sparks and sounds
+    }
+    // And all gone once their short life is over.
+    copies.clear();
+    sync.Tick(kScene, 2, now + shots::kImpactLifeUs, {}, live, send, copies);
+    for (const Copy& c : copies) {
+        CHECK_FALSE(shots::IsImpact(c.actor));
+    }
+}
+
+TEST_CASE("shots: where a seed copy lands, its spark and sound are made once (issue 166)") {
+    // Double parentheses: compared as a bool, so doctest never prints the vectors.
+    CHECK((shots::ImpactActors(shots::Kind::seed) ==
+           std::vector<std::string_view>{"CoopHit_SeedSpark", "CoopHit_SeedSound"}));
+    CHECK((shots::ImpactActors(shots::Kind::arrow) ==
+           std::vector<std::string_view>{"CoopHit_Arrow", "CoopHit_ArrowSound"}));
+    CHECK(shots::ImpactActors(shots::Kind::nut).empty());
+    CHECK(shots::ImpactActors(shots::Kind::bomb).empty());
+    CHECK(shots::IsImpact("CoopHit_ArrowSound"));
+    CHECK_FALSE(shots::IsImpact("CoopShot_Seed"));
+
+    for (const bool on : {true, false}) {
+        CoopSpawn::Sync sync;
+        sync.SetImpacts(on);
+        std::vector<proto::Message> send;
+        std::vector<Copy> copies;
+        const std::map<std::uint64_t, std::uint64_t> live;
+        std::uint64_t now = 10'000'000;
+        sync.Tick(kScene, 2, now, {}, live, send, copies);
+        auto shoot = [&](std::uint64_t value, proto::RemoveReason reason) {
+            proto::ObjectSpawn spawn;
+            spawn.id = {proto::ObjectKind::made, 1, value};
+            spawn.actor = "Shootable_DekuSeed";
+            spawn.state.time = {now, 0};
+            spawn.state.position = proto::Vec3{0.0f, 5.0f, 0.0f};
+            spawn.state.velocity = proto::Vec3{40.0f, 0.0f, 0.0f};
+            sync.Receive(Wire(spawn, 1));
+            proto::ObjectRemove remove;
+            remove.id = spawn.id;
+            remove.reason = reason;
+            remove.position = {4.0f, 5.0f, 0.0f};
+            sync.Receive(Wire(remove, 1));
+        };
+        shoot(1, proto::RemoveReason::hit);
+        shoot(2, proto::RemoveReason::gone);  // no spark for a shot that hit nothing
+        now += 100 * kMs;
+        const std::uint64_t got = now;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);
+        CHECK(copies.size() == 2);  // the copy is shown 100 ms late: not there yet
+        CHECK(sync.Impacts() == 0);
+
+        auto impacts = [&] {
+            std::vector<Copy> out;
+            for (const Copy& c : copies) {
+                if (shots::IsImpact(c.actor)) {
+                    out.push_back(c);
+                }
+            }
+            return out;
+        };
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
+        auto made = impacts();
+        if (!on) {
+            CHECK(made.empty());
+            CHECK(sync.Impacts() == 0);
+            continue;
+        }
+        REQUIRE(made.size() == 2);
+        CHECK(made[0].actor == "CoopHit_SeedSpark");
+        CHECK(made[1].actor == "CoopHit_SeedSound");
+        for (const Copy& c : made) {
+            CHECK(c.act == Act::show);
+            CHECK_FALSE(c.place);  // made there and left alone
+            CHECK_FALSE(c.setter);
+            CHECK(c.position[0] == doctest::Approx(4.0f));
+            CHECK(c.position[1] == doctest::Approx(5.0f));
+        }
+        CHECK(made[0].key != made[1].key);
+        CHECK(sync.Impacts() == 2);
+
+        // Kept (same keys) while the seed copy goes, then dropped: deleted.
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::seed), {},
+                  live, send, copies);
+        auto later = impacts();
+        REQUIRE(later.size() == 2);
+        CHECK(later[0].key == made[0].key);
+        CHECK(sync.Impacts() == 2);  // asked for once
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::kImpactLifeUs, {}, live, send, copies);
+        CHECK(impacts().empty());
+        CHECK(sync.Impacts() == 2);
+    }
+}
+
+TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one goes after its flight") {
+    CoopSpawn::Sync sync;
+    sync.SetImpacts(false);  // the copies alone here (impacts: their own test)
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;
@@ -521,19 +750,74 @@ TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one 
     shoot(2, proto::RemoveReason::gone);
     copies.clear();
     now += 100 * kMs;
+    const std::uint64_t got = now;
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     REQUIRE(copies.size() == 2);
-    // Keyed in the order made: the hit one first.
+    // Keyed in the order made: the hit one first. Shown 100 ms late, both
+    // are still at the start of their flight.
     CHECK(copies[0].act == Act::show);
-    CHECK(copies[0].position[0] == doctest::Approx(4.0f));  // not carried on past it
-    CHECK(copies[1].act == Act::remove);
+    CHECK(copies[0].position[0] == doctest::Approx(0.0f));
+    CHECK(copies[1].act == Act::show);
     CHECK(sync.Landed() == 1);
 
+    // Shown reaching the end: the hit one at the spot (not carried on past
+    // it), the gone one goes.
     copies.clear();
-    sync.Tick(kScene, 2, now + shots::LandHoldUs(shots::Kind::seed), {}, live, send, copies);
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + 33 * kMs, {}, live, send, copies);
+    REQUIRE(copies.size() == 2);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(4.0f));
+    CHECK(copies[1].act == Act::remove);
+
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::seed), {},
+              live, send, copies);
     REQUIRE(copies.size() == 2);
     CHECK(copies[0].act == Act::remove);
     CHECK(copies[0].position[0] == doctest::Approx(4.0f));
+}
+
+TEST_CASE("shots: a nut copy that hit something reaches the spot before it goes") {
+    // A nut has no land hold: before, its copy was removed as the remove
+    // came, while shown 100 ms late it was still in flight.
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    const std::uint64_t t0 = 10'000'000;
+    sync.Tick(kScene, 2, t0, {}, live, send, copies);
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 31};
+    spawn.actor = "Item_DekuNut";
+    spawn.state.time = {t0, 0};
+    spawn.state.position = proto::Vec3{0.0f, 1.0f, 0.0f};
+    spawn.state.velocity = proto::Vec3{30.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(spawn, 1));
+    proto::ObjectSample sample;
+    sample.id = spawn.id;
+    sample.state.time = {t0 + 33 * kMs, 1};
+    sample.state.position = proto::Vec3{1.0f, 1.0f, 0.0f};
+    sample.state.velocity = proto::Vec3{30.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(sample, 1));
+    proto::ObjectRemove remove;
+    remove.id = spawn.id;
+    remove.reason = proto::RemoveReason::hit;
+    remove.position = {2.0f, 1.0f, 0.0f};
+    sync.Receive(Wire(remove, 1));
+    const std::uint64_t got = t0 + 70 * kMs;  // a walk after its last sample, and the net
+    sync.Tick(kScene, 2, got, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] < 1.0f);  // still in flight here
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs - kMs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(2.0f));  // at the wall
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::remove);
 }
 
 TEST_CASE("shots: a bomb copy that went off by itself is noted as a blast") {
@@ -797,6 +1081,11 @@ TEST_CASE("shots: a bomb copy the owner removed as gone is no blast") {
     sync.Receive(Wire(remove, 1));
     copies.clear();
     now += 33 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);  // shown to its end first (100 ms late)
+    copies.clear();
+    now += shots::Track::kBehindUs;
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);

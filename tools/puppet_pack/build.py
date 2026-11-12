@@ -29,7 +29,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import byml, dumpcheck, hud, nup, rstb, sarc, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, hud, nup, rstb, sarc, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -130,15 +130,50 @@ STAND_INS = (
     # its physics body's fall between the hook's places and dropped out of the puppet's hands; the
     # stand-in has no body. It keeps the bomb's animations, so its fuse can blink.
     ("Item_Bomb", "CoopShot_Bomb"),
+    # Issue 85: another player's thrown boomerang. The game's own one made here homed on this
+    # game's enemies and hit them.
+    ("Weapon_Boomerang", "CoopShot_Boomerang"),
 )
 STAND_IN_COMPONENTS = ("ModelInfoRef", "LODRef")
 # Components some stand-ins keep beyond the model (by stand-in name): the animation set, so the
-# hook can play the owner's animation on it (the bomb's Bomb_Blink).
+# hook can play the owner's animation on it (the bomb's Bomb_Blink; the hookshot tip's chain, whose
+# length is its animation set's ChainExtend, issue 85).
 STAND_IN_EXTRA_COMPONENTS = {
     "CoopShot_Bomb": ("ASRef", "ASInfoRef", "AnimationRef"),
+    "CoopShot_Hook": ("ASRef", "ASInfoRef", "AnimationRef"),
+    "CoopShot_HookLong": ("ASRef", "ASInfoRef", "AnimationRef"),
 }
 # ActorInfo fields of the shootable that a model-only actor must not take over.
 STAND_IN_DROP_INFO = ("ActorName", "ELinkUserName", "SLinkUserName")
+
+
+# Issue 166: the spark and sound where another player's seed or arrow lands. In the shooter's game
+# the shootable's own code plays them; a copy (a stand-in) runs none of it. An impact actor is made
+# where the copy lands: no model, an ELink and/or SLink user, and an AI root that plays one xlink key
+# once (ainb.oneshot_root, from the Business Scrub seed's AI). Users and keys read from the
+# romfs's ELink2/SLink2 files (2026-11-11): the seed's ELink user has `Hit_AdditionalAttacker`
+# (its SLink user only `Shoot`); the surface sounds are the shared SLink user `ReactionHit`'s
+# `Hit_SlingShot_Bullet` and `Hit_Bow_Arrow` (each with lava, sand, water, bog variants by
+# material); the arrow's ELink and SLink users both have `Hit_AdditionalAttacker`.
+# (name, ELink user, SLink user, xlink key)
+IMPACTS = (
+    ("CoopHit_SeedSpark", "Shootable_DekuSeed", None, "Hit_AdditionalAttacker"),
+    ("CoopHit_SeedSound", None, "ReactionHit", "Hit_SlingShot_Bullet"),
+    ("CoopHit_Arrow", "NormalArrow", "NormalArrow", "Hit_AdditionalAttacker"),
+    ("CoopHit_ArrowSound", None, "ReactionHit", "Hit_Bow_Arrow"),
+)
+# Where the AI template comes from, and the row the impacts' rows start from (AI, ELink and SLink).
+IMPACT_SOURCE = "Shootable_ScrubBusinessSees"
+IMPACT_TEMPLATE = "AI/Shootable_ScrubBusinessSees_PostUpdateMatrix.root.ainb"
+ELINK_DIR = "Component/ELink/"
+ELINK_SUFFIX = ".engine__component__ELinkParam.bgyml"
+# Row fields of the source that are about its model or name: an impact has neither.
+IMPACT_DROP_INFO = ("ActorName", "AnimationResources", "DisplayRadius", "FmdbName", "LoadRadius",
+                    "ModelAabbMax", "ModelAabbMin", "ModelProjectName", "UsePreActorRenderer",
+                    "ELinkUserName", "SLinkUserName")
+IMPACT_COMPONENTS = {
+    "LODRef": "?Component/LODParam/Default.engine__component__LODParam.bgyml",
+}
 
 
 class BuildError(RuntimeError):
@@ -345,6 +380,43 @@ def build_stand_in(members, source, name):
     return sarc.write(files), ap, sorted(files)
 
 
+def impact_files(template, name, elink_user, slink_user, key):
+    """{member path: bytes} of one impact actor's pack (its ActorParam last)."""
+    files = {}
+    comps = dict(FIXED_COMPONENTS)
+    comps.update(IMPACT_COMPONENTS)
+    if elink_user:
+        path = f"{ELINK_DIR}{name}{ELINK_SUFFIX}"
+        files[path] = byml.dumps({"UserName": elink_user})
+        comps["ELinkRef"] = "?" + path
+    if slink_user:
+        path = slink_path(name)
+        files[path] = byml.dumps({"UserName": slink_user})
+        comps["SLinkRef"] = "?" + path
+    files[f"AI/{name}.root.ainb"] = ainb.oneshot_root(template, f"{name}.root", key,
+                                                      elink=bool(elink_user), slink=bool(slink_user))
+    info = f"AI/AIInfo/{name}.engine__actor__AIInfo.bgyml"
+    files[info] = byml.dumps({"RootAIRef": f"Work/AI/Root/{name}.root.ain"})
+    comps["AIInfoRef"] = "?" + info
+    files[actor_param_path(name)] = byml.dumps({"Components": comps})
+    return files
+
+
+def impact_row(source_row, name, elink_user, slink_user):
+    """An impact's ActorInfo row: the source's (heap, radii), less its model and name, with its
+    own effect and sound users and the puppet's INFO_OVERRIDES."""
+    row = {k: v for k, v in source_row.items() if k not in IMPACT_DROP_INFO}
+    if isinstance(row.get("PreActorRenderInfoHeapSize"), int):
+        row["PreActorRenderInfoHeapSize"] = 0  # nothing drawn (as the game's effect locators)
+    if elink_user:
+        row["ELinkUserName"] = elink_user
+    if slink_user:
+        row["SLinkUserName"] = slink_user
+    row.update(INFO_OVERRIDES)
+    row["__RowId"] = name
+    return row
+
+
 def stand_in_row(source_row, name):
     """The stand-in's ActorInfo row: the shootable's, less its effect, sound and name fields, with
     the puppet's INFO_OVERRIDES."""
@@ -525,6 +597,29 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                       "param_size": ap_size, "members": names})
         log(f"{name}: {len(names)} files, {len(pack)} bytes -> {dst_rel}")
 
+    impacts = []
+    src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
+    template = None
+    if os.path.isfile(src) and IMPACT_SOURCE in ai_rows:
+        template = sarc.read(dicts.decompress(read(src))).get(IMPACT_TEMPLATE)
+    if template is None:
+        log(f"impacts: no {IMPACT_TEMPLATE} in this romfs, left out")
+    for name, elink_user, slink_user, key in IMPACTS if template is not None else ():
+        files = impact_files(template, name, elink_user, slink_user, key)
+        pack = sarc.write(files)
+        dst_rel = f"Pack/Actor/{name}.pack.zs"
+        write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
+        new_ai.append(impact_row(ai_rows[IMPACT_SOURCE], name, elink_user, slink_user))
+        new_gai.append({"__RowId": name})
+        table.add_new(strip_zs(dst_rel), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+        template_size = table.get(IMPACT_TEMPLATE) or 0
+        for path, data in files.items():
+            grow = template_size + len(data) if path.endswith(".ainb") else 0
+            table.add_new(path, max(grow, len(data) + PACK_SIZE_MARGIN))
+        impacts.append({"actor": name, "elink": elink_user, "slink": slink_user, "key": key,
+                        "pack": dst_rel, "pack_bytes": len(pack), "members": sorted(files)})
+        log(f"{name}: {key} on {elink_user or '-'} / {slink_user or '-'}, {len(pack)} bytes -> {dst_rel}")
+
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))
     for path, old, new in ((ai_path, ai_old, ai_new), (gai_path, gai_old, gai_new)):
@@ -543,6 +638,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "title_id": TITLE_ID,
         "actors": made,
         "shots": shots,
+        "impacts": impacts,
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "sound_user": sound_user if sound and sound_user else None,

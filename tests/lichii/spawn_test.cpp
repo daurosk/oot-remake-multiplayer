@@ -374,8 +374,8 @@ TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back")
     sync.Tick(kScene, 2, now, {Made(0x9000, 10.2f)}, live, send, copies);
     CHECK(send.empty());
 
-    // The owner's sample moves it, with its velocity carried on from the
-    // sample's time on the server clock (99 ms at 10 m/s).
+    // The owner's sample moves it: the copy is shown 100 ms late on the
+    // server clock (as the puppet is), between the two samples around then.
     proto::ObjectSample sample;
     sample.id = spawn.id;
     sample.state.time = {5'100'000, 1};
@@ -388,10 +388,16 @@ TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back")
     sync.Tick(kScene, 2, now, {Made(0x9000, 12.0f)}, live, send, copies);
     CHECK(send.empty());
     REQUIRE(copies.size() == 1);
-    CHECK(copies[0].position[0] == doctest::Approx(12.0f));
+    // 4.999 s: 9 of the 110 ms from 4.99 s (x 10) to 5.1 s (x 12).
+    CHECK(copies[0].position[0] == doctest::Approx(10.0f + 2.0f * 9.0f / 110.0f));
     copies.clear();
     now += 100 * kMs;
     sync.Tick(kScene, 2, now, {Made(0x9000, 12.0f)}, live, send, copies);
+    CHECK(copies[0].position[0] == doctest::Approx(10.0f + 2.0f * 109.0f / 110.0f));
+    copies.clear();
+    now += 100 * kMs;
+    sync.Tick(kScene, 2, now, {Made(0x9000, 12.0f)}, live, send, copies);
+    // Past the newest sample: carried on by its velocity (99 ms at 10 m/s).
     CHECK(copies[0].position[0] == doctest::Approx(12.99f));
 
     // The owner's bomb exploded: so does the copy, at the owner's place.
@@ -741,7 +747,7 @@ TEST_CASE("spawn: a seed copy is the stand-in the pack has, placed as the puppet
     CHECK(std::string(CoopSpawn::StandIn("Shootable_HookLong")) == "CoopShot_HookLong");
     CHECK(CoopSpawn::StandIn("Item_Bomb").empty());
     CHECK(CoopSpawn::StandIn("Item_DekuNut").empty());
-    CHECK(CoopSpawn::StandIn("Weapon_Boomerang").empty());
+    CHECK(std::string(CoopSpawn::StandIn("Weapon_Boomerang")) == "CoopShot_Boomerang");
 
     StandInRig rig;
     CoopSpawn::Director d;
@@ -784,6 +790,10 @@ TEST_CASE("spawn: without the stand-in in the pack, the copy is the game's own s
     CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Seed\"}, {\"actor\": \"CoopShot_Hook\"}]}") ==
           std::set<std::string>{"CoopShot_Hook", "CoopShot_Seed"});
     CHECK(CoopSpawn::StandInsIn("CoopShot_SeedX").empty());
+    // Issue 166: the impact actors of the pack's "impacts".
+    CHECK(CoopSpawn::StandInsIn("{\"impacts\": [{\"actor\": \"CoopHit_SeedSpark\"}, "
+                                "{\"actor\": \"CoopHit_ArrowSound\"}]}") ==
+          std::set<std::string>{"CoopHit_SeedSpark", "CoopHit_ArrowSound"});
 
     for (const bool listed_other : {false, true}) {
         StandInRig rig;
@@ -905,6 +915,48 @@ TEST_CASE("spawn: a lure copy is only ever its stand-in") {
         Copy copy;
         copy.key = 1;
         copy.actor = "Weapon_Lure";
+        d.SetInput(R::base, {copy});
+        auto c = d.Step(rig.guest, false, 0, 0);
+        if (c && c->function != R::base + addr::kCreate) {
+            c = d.Step(rig.guest, true, R::block, 0);  // the slots' malloc
+        }
+        CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        for (std::uint64_t ms = 16; ms < 200; ms += 16) {
+            c = d.Step(rig.guest, false, 0, ms);
+            CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        }
+        CHECK(d.Live().empty());
+    }
+}
+
+// Issue 166: an impact actor (the spark or sound where a copy landed) is made
+// by its own name, and only from a pack that lists it.
+TEST_CASE("spawn: an impact actor is made only when the pack has it") {
+    using R = StandInRig;
+    namespace addr = CoopPuppet::addr;
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopShot_Seed", "CoopHit_SeedSpark"});
+        Copy copy;
+        copy.key = 1;
+        copy.actor = "CoopHit_SeedSpark";
+        copy.place = false;
+        d.SetInput(R::base, {copy});
+        REQUIRE(d.Step(rig.guest, false, 0, 0));
+        auto c = d.Step(rig.guest, true, R::block, 0);
+        REQUIRE(c);
+        REQUIRE(c->function == R::base + addr::kCreate);
+        CHECK(rig.Name(*c) == "CoopHit_SeedSpark");
+    }
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopShot_Seed"});  // a pack built before the impacts
+        Copy copy;
+        copy.key = 1;
+        copy.actor = "CoopHit_SeedSpark";
+        copy.place = false;
         d.SetInput(R::base, {copy});
         auto c = d.Step(rig.guest, false, 0, 0);
         if (c && c->function != R::base + addr::kCreate) {
@@ -1070,7 +1122,7 @@ TEST_CASE("spawn: another player's held bomb is the held stand-in in the puppet'
     live[held_key] = 0x9000;
 
     // Thrown: a new key (the stand-in goes, the game's bomb is made), placed
-    // along the owner's flight as before.
+    // along the owner's flight as late as when held, so it does not jump.
     sample.state.time = {5'200'000, 2};
     sample.state.position = proto::Vec3{13.0f, 2.0f, 2.0f};
     sample.state.velocity = proto::Vec3{10.0f, 0.0f, 0.0f};
@@ -1081,7 +1133,7 @@ TEST_CASE("spawn: another player's held bomb is the held stand-in in the puppet'
     REQUIRE(copies.size() == 1);
     CHECK_FALSE(copies[0].held);
     CHECK(copies[0].key != held_key);
-    CHECK(copies[0].position[0] == doctest::Approx(13.0f));
+    CHECK(copies[0].position[0] == doctest::Approx(12.0f));
     CHECK(sync.HeldCopies() == 0);
     CHECK(send.empty());
 }
@@ -1214,4 +1266,76 @@ TEST_CASE("spawn: a held copy is the bomb stand-in, and the owner's animation is
     c = plain.Step(rig2.guest, true, R::block, 0);
     REQUIRE(c);
     CHECK(rig2.Name(*c) == "Item_Bomb");
+}
+
+// ---------------------------------------------------------------- issue 85
+
+TEST_CASE("spawn: a boomerang copy is its stand-in, never the game's homing boomerang (issue 85)") {
+    CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Boomerang\"}]}") ==
+          std::set<std::string>{"CoopShot_Boomerang"});
+    using R = StandInRig;
+    StandInRig rig;
+    CoopSpawn::Director d;
+    d.SetStandIns({"CoopShot_Boomerang"});
+    Copy copy;
+    copy.key = 9;
+    copy.actor = "Weapon_Boomerang";
+    copy.position = {1.0f, 2.0f, 3.0f};
+    d.SetInput(R::base, {copy});
+    REQUIRE(d.Step(rig.guest, false, 0, 0));  // malloc
+    auto c = d.Step(rig.guest, true, R::block, 0);
+    REQUIRE(c);
+    CHECK(rig.Name(*c) == "CoopShot_Boomerang");
+}
+
+TEST_CASE("spawn: our hookshot tip sends its animation (the chain), a seed does not (issue 85)") {
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> none;
+    std::uint64_t now = 1'000'000;
+    sync.Tick(kScene, 1, now, {}, none, send, copies);
+
+    auto seen = [](std::uint64_t address, const char* name, float z, const char* animation) {
+        Seen s;
+        s.address = address;
+        s.name = name;
+        s.position = {0.0f, 1.0f, z};
+        s.animation = proto::Animation{animation, 2.0f, 1.0f};
+        return s;
+    };
+    now += 33 * kMs;
+    sync.Tick(kScene, 1, now,
+              {seen(0x7000, "Shootable_Hook", 0.5f, "HookshotShootHook"),
+               seen(0x7100, "Shootable_DekuSeed", 0.5f, "Anything")},
+              none, send, copies);
+    auto spawns = Of<proto::ObjectSpawn>(send);
+    REQUIRE(spawns.size() == 2);
+    for (const auto& s : spawns) {
+        if (s.actor == "Shootable_Hook") {
+            REQUIRE(s.state.animation);
+            CHECK(s.state.animation->name == "HookshotShootHook");
+            CHECK_FALSE(s.state.fuse);
+        } else {
+            CHECK_FALSE(s.state.animation);
+        }
+    }
+
+    send.clear();
+    now += 40 * kMs;
+    sync.Tick(kScene, 1, now,
+              {seen(0x7000, "Shootable_Hook", 3.0f, "HookshotChainExtend"),
+               seen(0x7100, "Shootable_DekuSeed", 3.0f, "Anything")},
+              none, send, copies);
+    auto samples = Of<proto::ObjectSample>(send);
+    REQUIRE_FALSE(samples.empty());
+    int hooks = 0;
+    for (const auto& s : samples) {
+        if (s.state.animation) {
+            ++hooks;
+            CHECK(s.state.animation->name == "HookshotChainExtend");
+            CHECK_FALSE(s.state.state);  // never the bomb's held bit
+        }
+    }
+    CHECK(hooks == 1);
 }

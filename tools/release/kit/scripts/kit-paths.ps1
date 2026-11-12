@@ -381,8 +381,8 @@ function Get-KitTunic([string]$Color) {
 
 # Puts your colour's tunic textures over the game's in the pack's romfs, so your own Link wears
 # your colour: the pack tool's coop_self/ files, listed in coop_puppet.json as self_files
-# ({colour: {romfs path: file}}: the tile, the child's dark tile and the adult's other tunic
-# textures, #202); a pack from before that: self_tiles / self_dark_tiles. Green, no colour or a
+# ({colour: {romfs path: file}}: the tile, the child's dark tile, the adult's other tunic
+# textures and the adult's model copy that names the colour's textures, #202); a pack from before that: self_tiles / self_dark_tiles. Green, no colour or a
 # pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
 # Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
 function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
@@ -394,7 +394,8 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     try {
         $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
     } catch { }
-    $ok = { param($rel) $rel -is [string] -and $rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' }
+    $ok = { param($rel) $rel -is [string] -and ($rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' -or
+            $rel -match '^Model/Player_(Adult|Child)\.Player_(Adult|Child)\.bfres\.zs$') }
     # Every file a colour may put in, taken away first: no copy stays after a change of colour.
     $targets = @($tile, $dark)
     $put = [ordered]@{}

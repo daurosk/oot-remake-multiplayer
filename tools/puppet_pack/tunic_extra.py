@@ -49,10 +49,10 @@ def hue(rgb):
 
 
 def is_green(rgb):
-    """Tunic green, olive included (hue 48..180); not brown leather (about 30), grey or white."""
+    """Tunic green, olive included (hue 40..180); not brown leather (about 30), grey or white."""
     hi, lo = max(rgb[:3]), min(rgb[:3])
     h = hue(rgb)
-    return h is not None and 48 <= h <= 180 and hi >= 6 and hi - lo >= max(3, 0.08 * hi)
+    return h is not None and 40 <= h <= 180 and hi >= 6 and hi - lo >= max(3, 0.08 * hi)
 
 
 class Shade:

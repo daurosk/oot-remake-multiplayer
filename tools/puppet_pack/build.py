@@ -570,6 +570,11 @@ def recompress(dicts, original_raw, data, level=16):
     return dicts.compress(data, name, level=level)
 
 
+# The variants whose own Link wears the colour's model copy (above); the child's own Link took
+# the colour from its replaced tiles (bigrun5 PASS), so it keeps the game's model.
+SELF_MODEL_VARIANTS = ("Adult",)
+
+
 def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None,
                  self_dark_tiles=None, self_files=None):
     """The recoloured tiles and the model copies that name them (puppet_pack.tunic), with their
@@ -678,6 +683,12 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             write(os.path.join(out_romfs, dst), recompress(dicts, m_raw, data, level=3))
             table.add_new(strip_zs(dst), table.get(strip_zs(m_rel)) or len(data) + PACK_SIZE_MARGIN)
             paths.append(dst)
+            if v in SELF_MODEL_VARIANTS and self_dir and c != "green":
+                # Your own adult Link wears the puppet's model copy (same size: the game's entry
+                # stands), which names the colour's textures: bigrun5 showed the game's own names
+                # replaced in Tex/ did not reach the adult's lower tunic and hood, while the
+                # puppet's renamed ones did. The kit copies it from the pack's romfs, no 2nd copy.
+                self_files.setdefault(c, {})[m_rel] = f"romfs/{dst}"
         out[c] = paths
         log(f"tunic {c}: {name} and {len(models)} models")
     if self_dark_tiles and dark is not None:

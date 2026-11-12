@@ -1261,7 +1261,10 @@ class FullBuildTest(unittest.TestCase):
             "Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs",
             "Tex/Angin_Tile_A_Dark_Alb.bntx.zs": "coop_self/red.dark.bntx.zs",
             "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Adult_Alb.bntx.zs",
-            "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Angin_Acs_Player_Adult_Alb.bntx.zs"})
+            "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
+            # your own adult Link wears the puppet's model copy (bigrun5): the pack's own file
+            "Model/Player_Adult.Player_Adult.bfres.zs": "romfs/Model/CoopTunic_Adult_Red.Player_Adult.bfres.zs"})
+        self.assertTrue(os.path.isfile(os.path.join(mod, "romfs/Model/CoopTunic_Adult_Red.Player_Adult.bfres.zs")))
         self.assertNotIn("green", m["self_files"])
         vest = d.decompress(build.read(os.path.join(mod, m["self_files"]["red"]["Tex/Mt_Vest_Player_Adult_Alb.bntx.zs"])))
         game_vest = d.decompress(build.read(os.path.join(self.romfs, "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs")))

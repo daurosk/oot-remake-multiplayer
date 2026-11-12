@@ -71,7 +71,7 @@ The password never goes on the wire, and a proof is good for one nonce only, so 
 
 A dropped or killed emulator stays in the session until the server times it out, so its new connection would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when all three hold:
 
-- the new connection showed that player's rejoin token: after each `WELCOME` the server sends `REJOIN_TOKEN` (345), 32 fresh random bytes for that place; the client keeps it and sends `REJOIN_CLAIM` (346) with it before its `HELLO` on every later connection (the first claim on a connection counts; one after `HELLO` is dropped, stat `stray_rejoin_claim`). It works with a join password too: claim, `HELLO`, challenge, proof. The server compares in constant time, and each `WELCOME` brings a new token, so an old one is spent;
+- the new connection showed that player's rejoin token: after each `WELCOME` the server sends `REJOIN_TOKEN` (345), 32 fresh random bytes for that place; the client keeps it and sends `REJOIN_CLAIM` (346) with it before its `HELLO` on every later connection (the first claim on a connection counts; one after `HELLO` is dropped, stat `stray_rejoin_claim`). It works with a join password too: claim, `HELLO`, challenge, proof. The server compares in constant time, and each `WELCOME` brings a new token, so an old one is spent. The token goes in the clear, as everything on ENet does: someone who can read the link and is behind the same address could still take the place. That is outside issue 163 (two honest players behind one router);
 - it comes from the same IP address as that player, and
 - the server has heard nothing from that player for 1 second (a server option; 0 turns the takeover off). Every build answers the server's `PING` every 250 ms, so a live player is never this quiet.
 
@@ -110,10 +110,10 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 150 | `FLAG_ORIGIN` | 1 | server | `u8` player (1 to 4: who asked), a flag list of 1 to 3600 entries, count deltas allowed: the FLAG_SET the server just gave the host, sent to every other player but the host and the asker, before the host's answer (protocol 8; types 150 to 154 are for "who did it", the chat notices in [setup.md](setup.md)) |
 | 191 | `JOIN_CHALLENGE` | 0 | server | 32-byte nonce (protocol 9, "Join password"; 191 to 195 kept for it) |
 | 192 | `JOIN_PROOF` | 0 | client | 32-byte HMAC-SHA256(password, nonce) |
-| 345 | `REJOIN_TOKEN` | 0 | server | 32-byte random token, sent right after `WELCOME` (protocol 10, "Rejoin after a crash"; 345 to 349 kept for it) |
-| 346 | `REJOIN_CLAIM` | 0 | client | 32-byte token from the last `REJOIN_TOKEN`, sent before `HELLO` on a new connection |
 | 206 | `SAVE_ASK` | 0 | both | `u8` player field: a guest asks the host for its save (protocol 9; types 206 to 215 are for the save transfer, below) |
 | 207 | `SAVE_PART` | 0 | both | `u8` player field, `u8` to player (0 every guest), `u32` transfer id, `u8` reason (1 join, 2 host load), `u32` total size (1 to 1 MiB), `u32` CRC-32 of all of it, `u16` index, `u16` count, then the part's bytes (below) |
+| 345 | `REJOIN_TOKEN` | 0 | server | 32-byte random token, sent right after `WELCOME` (protocol 10, "Rejoin after a crash"; 345 to 349 kept for it) |
+| 346 | `REJOIN_CLAIM` | 0 | client | 32-byte token from the last `REJOIN_TOKEN`, sent before `HELLO` on a new connection |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
@@ -388,9 +388,9 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 7 (chunk 5): `WORLD_BREAK` flags bit 1, `kept` (branch `locked-doors`). A version 6 game or server refuses a break with that bit, and a version 6 server would forget a lock's break when its scene empties, so every game and the server must be 7.
 - Version 7 also brings `FLAG_RESET` (135; 135 to 139 kept for saves, branch `host-save`): the host's save load sets every game's shared flags to the save's values. A version 6 server would not relay it.
 - Version 8: `FLAG_ORIGIN` (150; 150 to 154 kept), from the server only. A version 7 game would refuse it as unknown, so every game and the server must be 8.
-- Version 10 (host-fixes, issue 163): `REJOIN_TOKEN` (345) and `REJOIN_CLAIM` (346); 345 to 349 kept. A build without them is never given a takeover (it shows no token), which is only slower, so no bump of its own.
 - Version 9 (chunk 8) also brings `SAVE_ASK` (206) and `SAVE_PART` (207); 206 to 215 kept for the save transfer (branch `host-save-load`, issue 167). A version 8 server would not relay them.
 - Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.
+- Version 10 (host-fixes, issue 163): `REJOIN_TOKEN` (345) and `REJOIN_CLAIM` (346); 345 to 349 kept. A build without them is never given a takeover (it shows no token), which is only slower, so no bump of its own.

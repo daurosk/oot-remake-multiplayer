@@ -1,0 +1,18 @@
+# ocarina-probe-here: B (P2) loads its save at the same moment as A (sync), then stands and
+# listens: A plays the ocarina beside it in the same scene of the shared save.
+#! noload
+mark start
+wait 1200
+sync title 2
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 3000
+mark loaded
+wait 3600
+mark end

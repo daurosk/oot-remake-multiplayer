@@ -1,0 +1,73 @@
+# ocarina-probe-here: as ocarina-probe (issue 152), from whatever place the test save loads in
+# (title -> Continue, no Graveyard check), so it runs on any save that owns the Ocarina.
+#! noload
+#! start coop: game build
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1,LICHII_COOP_DEBUG_ANIM=1
+#! timeout 600
+mark start
+wait 1200
+sync title 2           # both games leave the title screen together
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 3000
+mark loaded
+wait 120
+press DLEFT 12
+wait 240
+mark out
+mark note1-A
+press A 12
+wait 120
+mark note1-down
+press L 12
+wait 120
+mark note1-right
+press R 12
+wait 120
+mark note1-left
+press Y 12
+wait 120
+mark note1-up
+press X 12
+wait 120
+mark note2-A
+press A 12
+wait 120
+mark note2-down
+press L 12
+wait 120
+mark note2-right
+press R 12
+wait 120
+mark note2-left
+press Y 12
+wait 120
+mark note2-up
+press X 12
+wait 120
+mark lullaby
+press Y 12
+wait 40
+press X 12
+wait 40
+press R 12
+wait 40
+press Y 12
+wait 40
+press X 12
+wait 40
+press R 12
+wait 40
+wait 300
+mark after-song
+press B 12
+wait 120
+press B 12
+wait 90
+mark end

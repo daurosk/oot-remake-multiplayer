@@ -1,0 +1,45 @@
+# gohma-hit: B (P2) as in gohma, but waits until Gohma has come down from the ceiling
+# (about 100 s after its room loads on a slow PC: the ceiling intro starts when a player is
+# seen), then shoots the slingshot at it six times, 6 s apart (ZL lock-on, ZR aim, release).
+# Expect: "share damage" (a hit) or "stunned here ... share damage 0" (a seed in the eye) in
+# B, then the server hands Gohma to B ("share owner ... is player 2") within a second.
+mark start
+warp InsideTheDekuTree StartPos_Get_StoneOfForest
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+wait 6000
+mark b-near
+hold ZL+ZR 90 aim1
+wait 20
+press ZL 6
+wait 330
+hold ZL+ZR 90 aim2
+wait 20
+press ZL 6
+wait 330
+hold ZL+ZR 90 aim3
+wait 20
+press ZL 6
+wait 330
+hold ZL+ZR 90 aim4
+wait 20
+press ZL 6
+wait 330
+hold ZL+ZR 90 aim5
+wait 20
+press ZL 6
+wait 330
+hold ZL+ZR 90 aim6
+wait 900
+mark b-after
+wait 1800
+mark end

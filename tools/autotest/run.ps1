@@ -201,6 +201,8 @@ if (-not $NoRestore) {
 
 $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
 New-Item -ItemType Directory -Force $out | Out-Null
+# `sync NAME N` in a script: every game of this run meets in this folder (empty at the start).
+$env:LICHII_COOP_TEST_SYNC_DIR = Join-Path $out 'sync'
 
 Add-Type -ReferencedAssemblies System.Drawing @"
 using System; using System.Runtime.InteropServices; using System.Drawing;

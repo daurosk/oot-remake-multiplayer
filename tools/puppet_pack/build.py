@@ -607,7 +607,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         log(f"tunics: no {dark_rel} in this romfs, the child's tunic body stays green")
     tile_size = table.get(strip_zs(tile_rel))
     dark_size = table.get(strip_zs(dark_rel))
-    # The adult's other tunic textures (puppet_pack.tunic_extra): only their green parts change.
+    # The other tunic textures, adult and child (puppet_pack.tunic_extra): only their green parts change.
     extras = {}
     for name in tunic_extra.EXTRA:
         rel_ = f"Tex/{name}.bntx.zs"
@@ -615,7 +615,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             raw_ = read(os.path.join(romfs, rel_))
             extras[name] = (rel_, raw_, dicts.decompress(raw_))
         else:
-            log(f"tunics: no {rel_} in this romfs, that part of the adult's tunic stays green")
+            log(f"tunics: no {rel_} in this romfs, that part of the tunic stays green")
     base = tunic.average_luma(tile)
     models = {}
     for v in VARIANTS:

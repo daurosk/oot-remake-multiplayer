@@ -72,6 +72,8 @@ OPTIONAL = (
     "Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
     "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs",
     "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
+    "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs",
+    "Tex/Mt_Vest_Player_Child_Alb.bntx.zs",
     "Model/Player_Child.Player_Child.bfres.zs",
     "Model/Player_Adult.Player_Adult.bfres.zs",
 )

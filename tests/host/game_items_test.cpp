@@ -220,7 +220,7 @@ TEST_CASE("game items: the shared list") {
   CHECK(all.contains(FlagKey{kForestKeys, 0}));
   CHECK(all.contains(FlagKey{kMaxLife, 0}));
   CHECK_FALSE(all.contains(FlagKey{kRupees, 0}));
-  CHECK(all.size() == 302 - 20);
+  CHECK(all.size() == 302 - 18);  // the Deku Shield is shared again (issue 130)
 }
 
 TEST_CASE("game items: merge rules") {

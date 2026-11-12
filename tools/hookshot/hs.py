@@ -414,13 +414,17 @@ def msvc_prefix():
     bat = os.path.join(inst, "VC", "Auxiliary", "Build", "vcvars64.bat")
     if not os.path.isfile(bat):
         raise Fail("no vcvars64.bat under %s" % inst)
+    # vcvars64.bat runs vswhere itself and prints "'vswhere.exe' is not recognized" without its folder on PATH.
+    os.environ["PATH"] = os.path.dirname(vswhere) + os.pathsep + os.environ.get("PATH", "")
     return ["cmd", "/c", "call", bat, ">nul", "&&"]
 
 
 def unit_steps(build, jobs, repo=REPO, target=None):
-    """The unit build's commands: configure once (Ninja, Release, MSVC), then build everything or one target."""
+    """The unit build's commands: configure (Ninja, Release, MSVC) when the folder has no finished configure, then
+    build everything or one target. A configure that failed leaves CMakeCache.txt but no build.ninja (ninja then fails
+    with "loading 'build.ninja'"): configure again then too."""
     steps = []
-    if not os.path.isfile(os.path.join(build, "CMakeCache.txt")):
+    if not all(os.path.isfile(os.path.join(build, f)) for f in ("CMakeCache.txt", "build.ninja")):
         steps.append(["cmake", "-S", repo, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
                       "-DCOOP_BUILD_TESTS=ON"])
     b = ["cmake", "--build", build, "--parallel", str(jobs)]

@@ -27,9 +27,9 @@
 #  - g2's hs-seed (row 15): the pairs' puppet pack made again with this branch's pack tool first (its log:
 #    "stand-in effects (seed trail): left out"); with the old pack the seed copy is still dropped.
 
-# WAVE 4 of 4: the master's g10, made by tools/autotest/groups/mkwaves.py from hookshot-parity.txt
-# (do not edit here: edit the master and make the waves again). Here they are g1..g1: pairs
-# hookshot-A1..1 / -B1..1. A setup step above that names a master group (g3, g4, g7) applies to
+# WAVE 4 of 4: the master's g10, g11, g12, made by tools/autotest/groups/mkwaves.py from hookshot-parity.txt
+# (do not edit here: edit the master and make the waves again). Here they are g1..g3: pairs
+# hookshot-A1..3 / -B1..3. A setup step above that names a master group (g3, g4, g7) applies to
 # the pair that group has here.
 
 [g1]
@@ -37,3 +37,19 @@
 teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"
 kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"
 pvp  expect='A:coop: pvp: our sword reached P2'  label="PvP hits"
+
+[g2]
+# Steps files on Hookshot (G7, tools/autotest/hs_steps.py through run.ps1 -Runtime hookshot): close, start, kill,
+# server stop/start, password tries. Graded by each run's counts.txt (PASS/FAIL lines, as on the emulator).
+# stray and screens count puppets (expect A=1): they FAIL while the module refuses Link puppets on Hookshot
+# (docs/hookshot.md, proofs 3 and 4) unless the crash is fixed; their joins, leaves and server restart still show.
+join-password  password=zelda-test-ocarina-42  label="#160 #201 join password and encrypted traffic (G6)"
+world-reset  label="#159 world reset"
+threads-of-time  label="#193 Threads of Time"
+stray  label="#175 stray: leave, rejoin, crash, server restart, keep-number"
+screens  label="screens: rejoin on other screens"
+
+[g3]
+# Moving platforms in step (platforms-b, #196 #194: one clock word per platform, PLATFORM_CLOCK). The Dodongo's Cavern
+# room 1 lifts; its own warp (noload). Shots s1..s4: the lift under A's Link at the same height in both games.
+hs-platforms-dodongo  expect='A:coop: platforms: .*: ours to send'  expect="B:coop: platforms: .*following player 1's clock"  label="#196 #194 moving platforms (Dodongo lifts)"

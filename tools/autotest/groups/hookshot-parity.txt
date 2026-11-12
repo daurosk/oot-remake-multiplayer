@@ -116,3 +116,8 @@ world-reset  label="#159 world reset"
 threads-of-time  label="#193 Threads of Time"
 stray  label="#175 stray: leave, rejoin, crash, server restart, keep-number"
 screens  label="screens: rejoin on other screens"
+
+[g12]
+# Moving platforms in step (platforms-b, #196 #194: one clock word per platform, PLATFORM_CLOCK). The Dodongo's Cavern
+# room 1 lifts; its own warp (noload). Shots s1..s4: the lift under A's Link at the same height in both games.
+hs-platforms-dodongo  expect='A:coop: platforms: .*: ours to send'  expect="B:coop: platforms: .*following player 1's clock"  label="#196 #194 moving platforms (Dodongo lifts)"

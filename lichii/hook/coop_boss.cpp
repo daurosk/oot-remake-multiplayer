@@ -380,7 +380,10 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
         case Phase::outro:
             if (provisional_) {
                 const bool gone = local.boss_alive.has_value() && !*local.boss_alive;
-                const bool long_event = now_us - outro_at_ >= kLongEventUs;
+                // An untouched boss is not dying: a long event with the boss at
+                // full life is a scene of the fight (Gohma's ceiling intro).
+                const bool untouched = local.boss_hurt.has_value() && !*local.boss_hurt;
+                const bool long_event = now_us - outro_at_ >= kLongEventUs && !untouched;
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
                     Defeat(out);

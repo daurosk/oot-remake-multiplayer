@@ -44,6 +44,15 @@ Two parts:
 
 A DLL keeps the patch to Hookshot small (it changes only when Hookshot moves) and keeps our C++20 out of Hookshot's C build.
 
+## World hooks
+
+Test11 on is Hookshot only, and co-op takes part in the game's world through the game's own functions instead of caves and guest memory. One layer does it, our patch 0005 (`hookshot/patches/0005-coop-world-hooks.patch`, header `hookshot/src/hos_coop_world.h`, Hookshot's `host/coop_world.c`), made when Hookshot is built:
+
+- **Events after one instruction** (`Lifter.after`): `hos_coop_world_event(event, a, b)` reaches the module's optional export `hos_coop_world`. The AI pause counter start (main+`0x5e6778`, `nx2/coop_platform_lift.py`) is `HOS_COOP_WORLD_COUNTER_START`: the node goes into a ring in the module's own memory (`CoopCounters::HostRing`), which the Objects walk reads as it read the guest ring. No game malloc, nothing at main+`0x3c46780`. The emulator keeps its cave.
+- **Wrapped game functions** (`Lifter.wraps`, in `third_party/a64-kit/lift/a64_lift.py`, and sent to the emit workers through `nx2/chunks.py`'s `EMIT_TABLES`): every call of a listed function, and the indirect table, reach `hos_coop_w_<entry>` in `a64_hooks.c`, which calls the module's optional export `hos_coop_wrap(id, phase, x, ctx)` before (phase 0; 1 = the module did the call's work) and after (phase 1) the game's own unchanged `f_<entry>`. `nx2/coop_world_wraps.py` lists them with their first words; build id and words are checked, and a function Hookshot hooks or edits by name is never wrapped. First wrap: the flag applier (main+`0xb99980`, `HOS_COOP_WRAP_FLAG_APPLY`), which only counts for now (`coop: world wraps: the game's flag applier ran N times`).
+
+Hookshot keeps the exports only once the module answers `HOS_COOP_WORLD_HELLO` with 1, so a module the bridge refused is never called. The order of the rest (flags, time, dungeon events, teleport) is in the native-world-b report.
+
 ## For players: the kit
 
 Nothing of Hookshot or the game is in the kit. The kit's `Build-Hookshot-Coop.bat` (player steps in [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental)) downloads Hookshot's builder parts and source for `hookshot/PIN` (each checked against its SHA-256), applies `hookshot/patches` without git, runs Hookshot's own `nx2/make_game.py` on the player's game file, and installs `hookshot_coop.dll`, `coop.ini` (beside `hookshot.exe`) and the puppet pack. `Host-Hookshot.bat` and `Join-Hookshot.bat` start it as `Host.bat` and `Join.bat` start the emulator.

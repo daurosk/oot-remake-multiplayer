@@ -247,7 +247,6 @@ std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool a
 #else
     u32 word = 0;  // only when the loader put the cave in
     guest.Read(box.main + CoopCounters::kStartOffset, &word, 4);
-#endif
     if (word != CoopCounters::HookWord()) {
         box.asked = true;
         LOG_INFO(Core, "coop: platforms: no counter cave (main+{:#x} holds {:#010x}): pause counters off",
@@ -260,6 +259,7 @@ std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool a
     c.function = box.main + kMalloc;
     c.x[0] = CoopCounters::kRingBytes;
     return c;
+#endif
 }
 constexpr u64 kPlayLogMs = 1000;  // a copy's replays of one name: one log line a second
 // LICHII_COOP_OBJECTS_HIT_REPLAY=1 (experiment): a life a copy must lose is

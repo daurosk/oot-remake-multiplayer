@@ -9,13 +9,15 @@
 # After the groups, by hand on one pair (no expect= possible: the keys are posted to the window):
 #  - hs-chatbox (row 7): any run with -KeepOpen, then the PostMessage snippet in reports/hookshot-parity.md (T, "hi", Enter).
 #  - hs-cheats (row 8): the same with LICHII_COOP_CHEATS=1 (F8, "token", Enter, F8).
-# Not merged yet (in review): hs-gohma (row 12) and spawn-pop's hs-spawn (row 13): uncomment once integrate-p12 has them.
+#  - g2's hs-seed (row 15): the pairs' puppet pack made again with this branch's pack tool first (its log:
+#    "stand-in effects (seed trail): left out"); with the old pack the seed copy is still dropped.
 
 [g1]
 # Puppet looks: the puppet shows (hs-puppets), tunics (#202), masks (#91), the HUD blocks under your hearts.
 hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_SELF_TUNIC=blue  expect='A:coop: your Link wears blue; green players get CoopPuppet_<Age>_Green'  label="#202 own colour"
 hs-tunic  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_TUNICS=0  expect='A:tunics off \(LICHII_COOP_TUNICS=0\)'  expect='B:tunics off \(LICHII_COOP_TUNICS=0\)'  label="#202 tunics off"
 hs-puppets  expect='B:P1: create CoopPuppet_(Child|Adult)\S* requested \(returned 0x1\)'  expect='B:P1 CoopPuppet_(Child|Adult)\S* spawned after'  expect='A:P2 CoopPuppet_(Child|Adult)\S* spawned after'  label="#202 puppet shows (fresh pack)"
+hs-spawn  expect='B:P1 (eased|drawn at once) from where it was made'  label="spawn pop (B: no 'P1 snap' before the first hold)"
 hs-masks  expect="B:P1 wears head 'Armor_Child_Mask_Skull'"  expect='B:P1 takes off head'  label="#91 masks"
 hs-hud  expect='A:coop: drawing over Hookshot.s picture'  label="HUD blocks"
 hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: no block)"
@@ -24,6 +26,8 @@ hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: 
 # The overlay and the Ocarina: chat lines and name tags, list and panel, own notes (#152).
 hs-panel  expect='A:coop: drawing over Hookshot.s picture'  expect='B:coop: drawing over Hookshot.s picture'  label="chat lines, name tags"
 hs-players  expect='A:coop: drawing over Hookshot.s picture'  label="player list, panel"
+hs-ocarina-show  expect="B:P1 hold -> show \(ocarina\)"  expect='A:P2 hide -> show'  label="#86 Ocarina: stays seen"
+hs-seed  expect='A:spawn: CoopShot_Seed: copy [0-9]+ is actor'  label="#198 seed copy (pack made again)"
 hs-ocarina  expect='A:coop: ocarina note 4 \(Ocarina_D\) sent'  expect='A:coop: ocarina note 16 \(Ocarina_HighD\) sent'  expect="B:plays sound 'Ocarina_D'"  label="#152 own notes"
 
 [g3]
@@ -32,6 +36,7 @@ warp  expect='A:coop: Hookshot calls co-op at each present'  expect='B:coop: Hoo
 hs-teleport-room  expect='A:scene change taken'  expect='A:coop: teleport: not moved to .*\(issue 197\)'  expect='A:test steer at'  label="#197"
 hs-ladder  expect='A:test setflag HavePlayedEvent\.InsideTheDekuTree_Gimmick_FallingLadder \(bool\) 0: set'  expect='A:get_bool\(0xb3a4fe84\) = 1 \(was 0\)'  expect='B:starting the event InsideTheDekuTree_Gimmick_FallingLadder here'  label="#129 eye shot"
 
-# Once merged (review), add to g3 or a [g4]:
-# hs-gohma  expect="A:anim Enemy_DungeonBoss_Gohma \S+ '(?!Pre_Battle)[^']+' \(ours\)"  expect='B:share damage'  label="#150 #178"
-# hs-spawn  label="spawn pop (B's log: no 'P1 snap' before the first hold)"
+
+[g4]
+# The boss: the Gohma fight started, then one owner (#150 #178).
+hs-gohma  expect="A:anim Enemy_DungeonBoss_Gohma \S+ '(?!Pre_Battle)[^']+' \(ours\)"  expect='B:share damage'  label="#150 #178 Gohma fight"

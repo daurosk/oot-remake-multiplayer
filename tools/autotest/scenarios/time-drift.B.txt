@@ -18,7 +18,7 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400               # the save loads, then the warp lands (about 30 s)
 mark day
-wait 3000               # the guest drifts 120 s after joining, then is nudged back
+wait 4800               # the guest drifts 120 s after joining (joined at boot), then is nudged back
 mark nudged
 wait 600
 mark end

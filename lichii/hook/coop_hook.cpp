@@ -375,7 +375,8 @@ public:
             if (cheats_) {
                 CoopCheats::Frame(*game_store);
             }
-            if (sharing_ && load_mend_.ready() && CoopStory::On()) {
+            if (sharing_ && load_mend_.ready() && CoopStory::On() &&
+                quest_catch_up_.Due(CoopEvery::NowUs())) {
                 CatchUpQuests(*memory);  // issue 173: Impa comes for every player
             }
             if (sharing_) {
@@ -648,7 +649,8 @@ public:
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         if (!reading) CoopTime::Loading(report.server_now_us);  // issue 159: a reload, a death
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
-                        report.server_now_us);
+                        report.server_now_us,
+                        reading && reading->event_running.value_or(false));  // issue 192: no nudge in a cutscene
         // Boss rooms together (docs/dungeons-boss.md).
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
                         reading && reading->event_running.value_or(false),
@@ -1271,6 +1273,7 @@ private:
     // Issue 173 (coop_quest.h): raises our own quests (Goto_HyruleCastle,
     // DoorOfTime) to what the shared story scenes say, so a scene another
     // player played does not leave our quest behind. Only ever raised.
+    CoopEvery::Every quest_catch_up_{CoopEvery::kSecondUs};
     void CatchUpQuests(EmulatorMemory& memory) {
         coop::host::GameFlags flags(memory);
         const CoopQuest::ReadBool flag = [&](std::uint32_t h) { return flags.get_bool(h); };

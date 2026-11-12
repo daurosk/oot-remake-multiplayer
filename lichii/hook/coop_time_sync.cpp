@@ -144,19 +144,24 @@ std::optional<std::uint32_t> Sync::Tick(std::optional<std::uint32_t> now, bool h
         const auto off = static_cast<std::uint32_t>(std::abs(ahead));
         if (off <= kNudgeSeconds) {
             nudge_tries_ = 0;
-        } else if (!nudges_off_ && off <= kResyncSeconds && running && host_running_ &&
-                   now_us - nudge_at_ >= kNudgeEveryUs) {
+        } else if (!nudges_off_ && !in_event_ && off <= kResyncSeconds && running &&
+                   host_running_ && now_us - nudge_at_ >= kNudgeEveryUs) {
             if (nudge_tries_ >= kNudgeTries) {
                 nudges_off_ = true;  // the game does not keep our write: stop
             } else {
                 const auto step = static_cast<std::int32_t>(kNudgeStepSeconds);
                 const std::int32_t move = ahead > step ? step : (ahead < -step ? -step : ahead);
                 const auto day = static_cast<std::int32_t>(proto::kSecondsPerDay);
-                nudge_ = static_cast<std::uint32_t>(
-                    (static_cast<std::int32_t>(*now) + move + day) % day);
-                nudge_at_ = now_us;
-                ++nudge_tries_;
-                last_ = nudge_;  // our own move is no jump and does not stop "running"
+                const std::int32_t to = static_cast<std::int32_t>(*now) + move;
+                // A nudge across midnight would leave the day counter behind
+                // (a day skipped or repeated): wait until both clocks are on
+                // the same side of it (at most an in-game hour).
+                if (to >= 0 && to < day) {
+                    nudge_ = static_cast<std::uint32_t>(to);
+                    nudge_at_ = now_us;
+                    ++nudge_tries_;
+                    last_ = nudge_;  // our own move is no jump and does not stop "running"
+                }
             }
         }
     }

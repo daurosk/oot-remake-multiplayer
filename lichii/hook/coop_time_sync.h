@@ -75,6 +75,10 @@ public:
     std::optional<std::uint32_t> TakeNudge();
     // A nudge could not be written (the clock is in a time change): forget it.
     void NudgeNotWritten();
+    // Present thread, before Tick: whether our Link is in an event (a
+    // cutscene, a talk). No nudge is made while one runs; a nudge still due
+    // runs after it.
+    void SetEvent(bool running) { in_event_ = running; }
     // Nudges stopped for this session (they did not hold).
     bool NudgesOff() const { return nudges_off_; }
     // Present thread: a save was loaded in our game just now (the hook's
@@ -105,6 +109,7 @@ private:
 
     std::optional<std::uint32_t> nudge_;  // to write, taken by TakeNudge
     std::uint64_t nudge_at_ = 0;
+    bool in_event_ = false;
     int nudge_tries_ = 0;  // nudges in a row without getting within kNudgeSeconds
     bool nudges_off_ = false;
 

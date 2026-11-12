@@ -278,6 +278,46 @@ TEST_CASE("time: nudges that do not hold stop, and the hourly set is left") {
     CHECK_FALSE(r.guest.NudgesOff());
 }
 
+TEST_CASE("time: no nudge during an event, it runs once the event ends") {
+    Run r(10 * 60);
+    r.guest.SetEvent(true);  // a cutscene or a talk
+    r.For(10);
+    CHECK(r.nudges == 0);
+    CHECK(r.sets == 0);
+    r.guest.SetEvent(false);
+    r.For(3);
+    CHECK(r.nudges == 1);
+    CHECK(std::abs(CoopTime::Ahead(r.clock, r.host_clock)) <= 60);
+}
+
+TEST_CASE("time: no nudge across midnight, it runs once both clocks are past it") {
+    Sync guest;
+    std::vector<proto::Message> send;
+    std::uint64_t at = 0;
+    std::uint32_t clock = 86'400 - 300;      // 23:55
+    std::uint32_t host_clock = 300;          // 00:05, 10 min ahead
+    guest.Tick(clock, false, at, send);
+    guest.Receive(From(1, clock));
+    guest.Tick(clock, false, at, send);
+    int nudges = 0;
+    int crossing = 0;
+    for (int i = 0; i < 60 * 4; ++i) {
+        at += 250 * kMs;
+        host_clock = (host_clock + 30) % 86'400;
+        clock = (clock + 30) % 86'400;
+        if (i % 4 == 3) guest.Receive(From(1, host_clock));
+        guest.Tick(clock, false, at, send);
+        if (const auto n = guest.TakeNudge()) {
+            ++nudges;
+            if ((clock > 43'200) != (*n > 43'200)) ++crossing;
+            clock = *n;
+        }
+    }
+    CHECK(crossing == 0);
+    CHECK(nudges >= 1);
+    CHECK(std::abs(CoopTime::Ahead(clock, host_clock)) <= 60);
+}
+
 TEST_CASE("time: no nudge while either clock stands, nor for the host") {
     Run r(10 * 60);
     r.For(3, true, 0);  // our clock stands (indoors)

@@ -236,7 +236,7 @@ struct Glue {
     }
 
     void Frame(Core::System& system, std::uint64_t main, coop::host::Session* session,
-               std::uint64_t now_us) {
+               std::uint64_t now_us, bool in_event) {
         if (!on || !every.Due(CoopEvery::NowUs())) {
             return;
         }
@@ -279,6 +279,7 @@ struct Glue {
             }
         }
         std::vector<coop::protocol::Message> send;
+        sync.SetEvent(in_event);  // issue 192: no nudge during a cutscene
         if (const auto target = sync.Tick(now, host, now_us, send)) {
             setter.Want(main, *target);
         }
@@ -314,8 +315,8 @@ Glue& TheGlue() {
 } // namespace
 
 void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* session,
-           std::uint64_t server_now_us) {
-    TheGlue().Frame(system, main_base, session, server_now_us);
+           std::uint64_t server_now_us, bool in_event) {
+    TheGlue().Frame(system, main_base, session, server_now_us, in_event);
 }
 
 void SaveLoaded(std::uint64_t server_now_us) {

@@ -330,6 +330,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     refuse(id, c, RefuseReason::server_full, now_us);
     return;
   }
+  // A game coming back to a restarted server (protocol 11): its old number
+  // when free, so the numbers (colours, objects' owners) do not swap with
+  // the order the games notice the restart in (stray, 2026-11-12).
+  if (preferred == 0 && hello.previous_number) preferred = *hello.previous_number;
 
   Welcome welcome;
   welcome.player_number = free_number(preferred);

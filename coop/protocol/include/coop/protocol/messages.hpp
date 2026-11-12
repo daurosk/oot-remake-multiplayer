@@ -21,7 +21,7 @@ namespace coop::protocol {
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
 // (types 28 to 39) and the server sending HANDOVER_ASK; 9: the join password
 // (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
-inline constexpr std::uint16_t kProtocolVersion = 10;
+inline constexpr std::uint16_t kProtocolVersion = 11;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 4;
 
@@ -176,6 +176,12 @@ struct Hello {
   // 32 bytes after the nickname. Sent by every game since protocol 10; a
   // server with a join password refuses a HELLO without it.
   std::optional<KeyShare> key_share{};
+  // Since protocol 11: the player number this game had in its last session
+  // (1 to 4), one byte after the key share (or after the nickname without
+  // one). The server gives it back when it is free, so a server restart
+  // does not swap the players' numbers (and with them their colours and
+  // every object's owner). Nothing on a game's first join.
+  std::optional<std::uint8_t> previous_number{};
   bool operator==(const Hello&) const = default;
 };
 

@@ -227,6 +227,10 @@ Error encode_body(const Hello& m, Writer& w) {
   w.str(m.game_version);
   w.str(m.nickname);
   if (m.key_share) w.bytes(m.key_share->data(), m.key_share->size());
+  if (m.previous_number) {
+    if (!valid_player(*m.previous_number)) return Error::bad_value;
+    w.u8(*m.previous_number);
+  }
   return Error::none;
 }
 
@@ -929,8 +933,17 @@ Error decode_body(Reader& r, Hello& m) {
   COOP_TRY(r.str(m.game_version, kMaxGameVersionChars));
   COOP_TRY(r.str(m.nickname, kMaxNicknameChars));
   if (m.nickname.empty()) return Error::bad_value;
-  // Nothing more, or exactly the key share (anything else is trailing bytes).
-  if (r.left() == kKeyShareBytes) COOP_TRY(read_array(r, m.key_share.emplace()));
+  // Nothing more, the key share, the previous number (protocol 11), or both
+  // in that order; anything else is trailing bytes.
+  if (r.left() == kKeyShareBytes || r.left() == kKeyShareBytes + 1) {
+    COOP_TRY(read_array(r, m.key_share.emplace()));
+  }
+  if (r.left() == 1) {
+    std::uint8_t n = 0;
+    COOP_READ(r.u8(n));
+    if (!valid_player(n)) return Error::bad_value;
+    m.previous_number = n;
+  }
   return Error::none;
 }
 

@@ -319,6 +319,41 @@ TEST_CASE("a player who leaves is reported to the others and frees the number") 
   CHECK(w.players.size() == 2);
 }
 
+// Stray (2026-11-12): after a server restart the games came back in the order
+// they noticed it, so A (was 1) became 2 and B (was 2) became 1. With their
+// previous numbers in HELLO (protocol 11) they keep them.
+TEST_CASE("a restarted server gives each game back its previous number when free") {
+  Harness h;
+  Hello b = hello_from("B");
+  b.previous_number = 2;
+  h.connect(1);
+  h.receive(1, b, kChannelSession);
+  Welcome wb;
+  for (const auto& s : h.to(1)) {
+    if (const auto* w = std::get_if<Welcome>(&s.message)) wb = *w;
+  }
+  CHECK(wb.player_number == 2);  // B came back first, still 2
+  Hello a = hello_from("A");
+  a.previous_number = 1;
+  h.connect(2);
+  h.receive(2, a, kChannelSession);
+  Welcome wa;
+  for (const auto& s : h.to(2)) {
+    if (const auto* w = std::get_if<Welcome>(&s.message)) wa = *w;
+  }
+  CHECK(wa.player_number == 1);
+  // A number already taken is not given twice: the lowest free one instead.
+  Hello c = hello_from("C");
+  c.previous_number = 1;
+  h.connect(3);
+  h.receive(3, c, kChannelSession);
+  Welcome wc;
+  for (const auto& s : h.to(3)) {
+    if (const auto* w = std::get_if<Welcome>(&s.message)) wc = *w;
+  }
+  CHECK(wc.player_number == 3);
+}
+
 TEST_CASE("relayed messages carry the sender's real number, on the channel they came in on") {
   Harness h;
   h.join(1, "Link");

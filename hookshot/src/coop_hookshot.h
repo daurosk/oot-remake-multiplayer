@@ -39,6 +39,26 @@ inline bool HasPadButtons(const HosCoopApi* api) {
            api->pad_buttons != nullptr;
 }
 
+// What a call of hos_coop_frame does. CoopHook::OnFrame runs once per
+// present, as the emulator runs it at the guest's present (loads and pause
+// included); a Hookshot built from an older patch never calls the present
+// site, so until one is seen it runs at the every-frame site. The callers'
+// game calls need the game's context: the every-frame site only.
+struct FrameWork {
+    bool on_frame = false;
+    bool calls = false;
+};
+inline FrameWork WorkAt(int site, bool present_seen) {
+    FrameWork w;
+    if (site == HOS_COOP_SITE_PRESENT) {
+        w.on_frame = true;
+    } else if (site == HOS_COOP_SITE_FRAME) {
+        w.on_frame = !present_seen;
+        w.calls = true;
+    }
+    return w;
+}
+
 // Whether co-op knows the game whose main has this build id (hex, 16 or more
 // digits; Hookshot gives 32).
 inline bool BuildSupported(const std::string& build_id_hex) {

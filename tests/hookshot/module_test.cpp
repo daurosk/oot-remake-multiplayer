@@ -138,3 +138,23 @@ TEST_CASE("hookshot: own Ocarina notes read the pad word Hookshot gave the game 
     CHECK(sound.find("CoopRuntime::PadButtons(buttons)") != std::string::npos);
     CHECK(sound.find("so our own notes are not sent") == std::string::npos);
 }
+
+TEST_CASE("hookshot: co-op's per-frame work runs at each present, the game calls at the frame site") {
+    using CoopHookshot::WorkAt;
+    // A Hookshot from an older patch: everything at the every-frame site.
+    CHECK(WorkAt(HOS_COOP_SITE_FRAME, false).on_frame);
+    CHECK(WorkAt(HOS_COOP_SITE_FRAME, false).calls);
+    // Presents seen: OnFrame there only (as the emulator's composite), calls stay at the frame site.
+    CHECK(WorkAt(HOS_COOP_SITE_PRESENT, true).on_frame);
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_PRESENT, true).calls);
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_FRAME, true).on_frame);
+    CHECK(WorkAt(HOS_COOP_SITE_FRAME, true).calls);
+    // The rare site does nothing, as before.
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_RARE, false).on_frame);
+    CHECK_FALSE(WorkAt(HOS_COOP_SITE_RARE, true).calls);
+    // The patch calls the present site from the game's present, only once the module is loaded.
+    const std::string patch = Patch();
+    CHECK(patch.find("+    hos_coop_present();") != std::string::npos);
+    CHECK(patch.find("+    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);") !=
+          std::string::npos);
+}

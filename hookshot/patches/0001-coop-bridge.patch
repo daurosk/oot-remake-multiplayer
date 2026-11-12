@@ -1,4 +1,4 @@
-From 63f3bb564581acf15b0886328c9ede05416ff549 Mon Sep 17 00:00:00 2001
+From 93b0d7a6f39ab60014c3d2372be9dab220512359 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -8,25 +8,27 @@ nx2/coop_hooks.py hooks the frame function's two calls in moduleCalc_ and
 the AI's calc-bits call (build e0f3ccfa only, words checked); host/coop_bridge.c
 loads hookshot_coop.dll beside the game and gives it guest memory, game
 function calls, the log and player 1's buttons as the game got them
-(host/hos_coop_api.h; host/nn_hid.c keeps that word). From oot-remake-multiplayer
+(host/hos_coop_api.h; host/nn_hid.c keeps that word), and calls it at each
+present too (host/nvn_native.c), as the emulator's composite does. From oot-remake-multiplayer
 (GPL-3.0), docs/hookshot.md.
 ---
- host/coop_bridge.c  | 172 ++++++++++++++++++++++++++++++++++++++++++++
- host/hos_coop_api.h |  55 ++++++++++++++
+ host/coop_bridge.c  | 177 ++++++++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_api.h |  59 +++++++++++++++
  host/nn_hid.c       |   5 +-
- nx2/coop_hooks.py   |  61 ++++++++++++++++
+ host/nvn_native.c   |   2 +
+ nx2/coop_hooks.py   |  61 +++++++++++++++
  nx2/lift.py         |   2 +
- 5 files changed, 294 insertions(+), 1 deletion(-)
+ 6 files changed, 305 insertions(+), 1 deletion(-)
  create mode 100644 host/coop_bridge.c
  create mode 100644 host/hos_coop_api.h
  create mode 100644 nx2/coop_hooks.py
 
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
 new file mode 100644
-index 00000000..f001a391
+index 00000000..bf89a4b4
 --- /dev/null
 +++ b/host/coop_bridge.c
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,177 @@
 +/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md): the bridge between the game and the co-op module.
 +
 +   nx2/coop_hooks.py puts two calls into the lifted game: hos_coop_frame at the frame function's two calls in moduleCalc_,
@@ -185,6 +187,11 @@ index 00000000..f001a391
 +    __atomic_store_n(&state, 2, __ATOMIC_RELEASE);
 +}
 +
++/* nvn_native.c nvnQueuePresentTexture: every present, once the module is loaded (it loads at a frame hook). */
++void hos_coop_present(void) {
++    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);
++}
++
 +void hos_coop_frame(Ctx *c, int site) {
 +    int s = __atomic_load_n(&state, __ATOMIC_ACQUIRE);
 +    if (s == 0) {
@@ -201,10 +208,10 @@ index 00000000..f001a391
 +}
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
 new file mode 100644
-index 00000000..01e96f10
+index 00000000..e7212c1f
 --- /dev/null
 +++ b/host/hos_coop_api.h
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,59 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   The co-op module's interface to Hookshot (oot-remake-multiplayer, docs/hookshot.md).
 +
@@ -223,6 +230,9 @@ index 00000000..01e96f10
 +   cave has them (lichii/hook/coop_svc.h kHooks). */
 +#define HOS_COOP_SITE_RARE 0    /* main+0x6e6dd8 */
 +#define HOS_COOP_SITE_FRAME 1   /* main+0x6e70f8: every frame */
++/* Added after the first version: the game's present (nvnQueuePresentTexture, the emulator's composite), loads and
++   pause included; ctx is NULL there and call() may not be used. Only once the module is loaded. */
++#define HOS_COOP_SITE_PRESENT 2
 +
 +/* One game function call (CoopPuppet::Call): x0-x7, four words at sp, s0. */
 +typedef struct HosCoopCall {
@@ -255,7 +265,8 @@ index 00000000..01e96f10
 +
 +/* The module's exports (extern "C"). */
 +typedef int (*hos_coop_start_fn)(const HosCoopApi *api);   /* 1: co-op on; 0: off (the bridge unloads it) */
-+typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thread, at a frame hook */
++typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thread at a frame hook; the presenting
++                                                             thread at HOS_COOP_SITE_PRESENT */
 +typedef uint32_t (*hos_coop_hold_fn)(uint64_t component, uint32_t bits);   /* the AI hold: a BSA component's calc bits */
 +typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
 +
@@ -287,6 +298,19 @@ index 43e312d2..9691d9bb 100644
          memcpy(GP(e + 16), stick, 16);
          G32(e + 32) = connected ? ATTR_CONNECTED : 0;
      }
+diff --git a/host/nvn_native.c b/host/nvn_native.c
+index a125386f..24cc4e15 100644
+--- a/host/nvn_native.c
++++ b/host/nvn_native.c
+@@ -2511,6 +2511,8 @@ NV(nvnQueuePresentTexture) {
+     extern volatile LONG64 hos_present_count;   /* display.c */
+     InterlockedIncrement64(&hos_present_count);
+     hos_vi_native_presented(phases);
++    void hos_coop_present(void);   /* (oot-remake-multiplayer, coop_bridge.c: co-op's per-present work) */
++    hos_coop_present();
+ }
+ 
+ /* ---- NVN2 (mkw-recomp): what the Switch 2's NVN adds, as MKW uses it ---- */
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 new file mode 100644
 index 00000000..a3aa4a38

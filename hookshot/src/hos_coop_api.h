@@ -16,6 +16,9 @@
    cave has them (lichii/hook/coop_svc.h kHooks). */
 #define HOS_COOP_SITE_RARE 0    /* main+0x6e6dd8 */
 #define HOS_COOP_SITE_FRAME 1   /* main+0x6e70f8: every frame */
+/* Added after the first version: the game's present (nvnQueuePresentTexture, the emulator's composite), loads and
+   pause included; ctx is NULL there and call() may not be used. Only once the module is loaded. */
+#define HOS_COOP_SITE_PRESENT 2
 
 /* One game function call (CoopPuppet::Call): x0-x7, four words at sp, s0. */
 typedef struct HosCoopCall {
@@ -48,7 +51,8 @@ typedef struct HosCoopApi {
 
 /* The module's exports (extern "C"). */
 typedef int (*hos_coop_start_fn)(const HosCoopApi *api);   /* 1: co-op on; 0: off (the bridge unloads it) */
-typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thread, at a frame hook */
+typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thread at a frame hook; the presenting
+                                                             thread at HOS_COOP_SITE_PRESENT */
 typedef uint32_t (*hos_coop_hold_fn)(uint64_t component, uint32_t bits);   /* the AI hold: a BSA component's calc bits */
 typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
 

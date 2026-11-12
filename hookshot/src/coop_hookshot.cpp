@@ -14,6 +14,7 @@
 //   as in the emulator (the kit's launcher sets them from coop-options.ini).
 #include "coop_hookshot.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +40,7 @@ namespace {
 const HosCoopApi* g_api = nullptr;
 std::string g_build;
 bool g_on = false;
+std::atomic<bool> g_present_seen{false};  // our patch's present site has run
 bool g_hold = false;
 Core::System g_system;
 
@@ -191,11 +193,19 @@ bool Start(const HosCoopApi* api) {
 }
 
 void Frame(void* ctx, int site) {
-    if (!g_on || site != HOS_COOP_SITE_FRAME) {
+    if (!g_on) {
         return;
     }
-    CoopHook::OnFrame(g_system);
-    RunCalls(ctx);
+    if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
+        LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
+    }
+    const FrameWork w = WorkAt(site, g_present_seen.load());
+    if (w.on_frame) {
+        CoopHook::OnFrame(g_system);
+    }
+    if (w.calls && ctx != nullptr) {
+        RunCalls(ctx);
+    }
 }
 
 // coop_hold.s: a held component's calc bits become (bits & and) | or.

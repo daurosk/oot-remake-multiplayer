@@ -1191,6 +1191,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.late_until = now_us + kHurtLateUs;
                 o.life = o.hurt_target;
                 ++hurt_missed_;
+                // A killing hit written as life 0 on an enemy of ours: it
+                // may stand on at 0 (issue 133, the big Skulltula hit from
+                // its armoured side, a wall Skulltula hit by a seed).
+                const auto own = owners_.find(o.id);
+                if (o.hurt_target <= 0 && own != owners_.end() && own->second.player == self) {
+                    DeadByWrite(o, own->second.epoch, now_us, send, "a hit our game did not take");
+                }
             }
             o.hurt_left = 0;
             o.hurt_until = 0;
@@ -1269,6 +1276,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     std::vector<proto::ObjectPresence> present;
     present.reserve(objects_.size());
     for (auto& [address, o] : objects_) {
+        if (o.dead_said) {
+            // Said dead (DeadByWrite): off our list, as the server takes it
+            // (still listed would read as a respawn and undo the kill).
+            continue;
+        }
         std::uint8_t flags = proto::object_presence::awake;
         if (o.fight_until > now_us) {
             flags |= proto::object_presence::in_fight;
@@ -1471,8 +1483,8 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             // Its life 0 alone does not reach a copy whose life cannot be
             // read (the big Skulltula), nor end a copy whose game did not
             // take the life we wrote. Rolled ones say it in Tick already.
-            const bool died = (o.life && *o.life <= 0) ||
-                              (o.animation && IsDeathAnimation(o.animation->name));
+            const bool died = !o.dead_said && ((o.life && *o.life <= 0) ||
+                                               (o.animation && IsDeathAnimation(o.animation->name)));
             // A fish of ours gone in our Link's hands: caught here (issue
             // 151), gone for everyone.
             const bool caught = o.fish && player_ && Distance(o.position, *player_) <= kCatchNearM;
@@ -1728,6 +1740,12 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number);
             o->fight_until = now_us + kFightUs;
+            if (!hurt_ && have - amount <= 0) {
+                // Hurt off: the life was written, not given as a hit.
+                const auto own = owners_.find(o->id);
+                DeadByWrite(*o, own != owners_.end() ? own->second.epoch : 0, now_us, send,
+                            "life written to 0");
+            }
         } else if (const auto* ask = std::get_if<proto::HandoverAsk>(&m)) {
             proto::HandoverState state;
             state.id = ask->id;
@@ -1745,9 +1763,31 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (o != nullptr && handed->state.life && o->life &&
                 handed->state.life->life < *o->life) {
                 write(*o, handed->state.life->life);
+                if (handed->state.life->life <= 0) {
+                    // Killed in the old owner's game as it came to us.
+                    DeadByWrite(*o, handed->epoch, now_us, send, "dead in the hand-over");
+                }
             }
         }
     }
+}
+
+void Sync::DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                       std::vector<proto::Message>& send, const char* why) {
+    if (!o.reacts || o.dead_at != 0 || o.dead_said) {
+        return;
+    }
+    o.dead_at = now_us;  // deleted kDeadGraceUs later if still here (Removes)
+    if (o.id.kind == proto::ObjectKind::placed) {
+        proto::ObjectRemove r;
+        r.id = o.id;
+        r.epoch = epoch;
+        r.reason = proto::RemoveReason::dead;
+        r.position = o.position;
+        send.emplace_back(r);
+        o.dead_said = true;
+    }
+    notes_.emplace_back(std::string("dead by ") + why + ", said to the others: " + o.name);
 }
 
 void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,

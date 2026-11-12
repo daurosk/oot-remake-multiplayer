@@ -484,6 +484,85 @@ TEST_CASE("objects: a hurt the game does not take is written as life after 400 m
     CHECK(sync.HurtsMissed() == 1);
 }
 
+TEST_CASE("objects: our enemy killed by a hit our game did not take is said dead and deleted (issue 133)") {
+    // The big Skulltula hit from its armoured side in another game: our game
+    // refuses the hurt, its life is written to 0 and it would stand on.
+    Sync sync;
+    sync.SetHurt(true);
+    const auto skull = [](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, "Enemy_Skulltula"); };
+    Tick(sync, 0, {skull(2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1, 3);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 2;
+    sync.Receive(d);
+    auto step = Tick(sync, 10 * kMs, {skull(2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    CHECK(All<proto::ObjectRemove>(step).empty());  // the game may still take it
+    step = Tick(sync, 430 * kMs, {skull(2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    auto removes = All<proto::ObjectRemove>(step);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == id);
+    CHECK(removes[0].reason == proto::RemoveReason::dead);
+    CHECK(removes[0].epoch == 3);
+    // Off our presence list from then on (the server takes it as dropped).
+    const auto presents = All<proto::ObjectPresent>(step);
+    REQUIRE(presents.size() == 1);
+    CHECK(presents[0].objects.empty());
+    // Standing on at life 0: deleted 3 s later.
+    Tick(sync, 3000 * kMs, {skull(0)});
+    CHECK(sync.Removes().empty());
+    Tick(sync, 3500 * kMs, {skull(0)});
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
+    // When it goes, it is not said dead a second time.
+    Tick(sync, 3600 * kMs, {});
+    CHECK(All<proto::ObjectRemove>(Tick(sync, 3700 * kMs, {})).empty());
+}
+
+TEST_CASE("objects: a hurt not taken on a copy, or one that leaves life, says nobody dead") {
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 3), Enemy(0x200, 0x22, 3, 5.0f)});
+    Own(sync, *sync.IdOf(0x100), 1);
+    Own(sync, *sync.IdOf(0x200), 2);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = *sync.IdOf(0x100);
+    d.amount = 1;  // 3 -> 2: not a kill
+    sync.Receive(d);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 3), Enemy(0x200, 0x22, 3, 5.0f)});
+    const auto step = Tick(sync, 430 * kMs, {Enemy(0x100, 0x11, 3), Enemy(0x200, 0x22, 3, 5.0f)});
+    CHECK(All<proto::ObjectRemove>(step).empty());
+    Tick(sync, 4000 * kMs, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 3, 5.0f)});
+    CHECK(sync.Removes().empty());
+}
+
+TEST_CASE("objects: with hurt off, a DAMAGE that takes our enemy to 0 says it dead at once") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 1, 0.0f, "Enemy_Skullwalltula")});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1, 2);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 1;
+    sync.Receive(d);
+    const auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, "Enemy_Skullwalltula")});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    const auto removes = All<proto::ObjectRemove>(step);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].epoch == 2);
+    // Its own death takes it: no second remove.
+    Tick(sync, 100 * kMs, {});
+    CHECK(All<proto::ObjectRemove>(Tick(sync, 200 * kMs, {})).empty());
+}
+
 TEST_CASE("objects: a pickup another game took is removed here") {
     Sync sync;
     Seen token;
@@ -1543,6 +1622,9 @@ TEST_CASE("objects: OBJECT_OWNER is logged on a change, not on every repeat") {
     CHECK(log.Changed(a));  // a new epoch
     a.owner = 1;
     CHECK(log.Changed(a));  // a new owner
+    CHECK_FALSE(log.Changed(a));
+    a.group = 7;
+    CHECK(log.Changed(a));  // joined a group (issue 105)
     CHECK_FALSE(log.Changed(a));
     log.Clear();
     CHECK(log.Changed(a));

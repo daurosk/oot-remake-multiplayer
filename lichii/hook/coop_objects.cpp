@@ -1253,7 +1253,7 @@ public:
 
     void Receive(const coop::protocol::Message& m) {
         if (const auto* o = std::get_if<coop::protocol::ObjectOwner>(&m)) {
-            if (owner_log_.Changed(*o)) {  // owner and epoch only: a group change alone is not logged here
+            if (owner_log_.Changed(*o)) {  // owner, epoch or group changed
                 LOG_INFO(Core, "coop: objects: share owner {:#x} is player {} epoch {} group {}",
                          o->id.value, o->owner, o->epoch, o->group);
             }

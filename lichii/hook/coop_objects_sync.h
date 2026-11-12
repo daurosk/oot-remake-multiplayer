@@ -32,6 +32,7 @@
 #include <span>
 #include <set>
 #include <string>
+#include <tuple>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -240,11 +241,13 @@ struct EnemyCopy {
 // The server repeats OBJECT_OWNER for every shared object about every 10 s.
 // Changed() is true only when an object's owner or epoch differs from what
 // was seen last, so the log shows changes, not repeats (issue 111).
+// Owner, epoch and group (enemy-sync-3, issue 105: a part joining its
+// boss's group changes only the group, and is logged too).
 class OwnerLog {
 public:
     bool Changed(const coop::protocol::ObjectOwner& o) {
         if (last_.size() >= kMax && !last_.contains(o.id)) last_.clear();
-        const auto now = std::make_pair(o.owner, o.epoch);
+        const auto now = std::make_tuple(o.owner, o.epoch, o.group);
         const auto [it, added] = last_.try_emplace(o.id, now);
         if (added) return true;
         if (it->second == now) return false;
@@ -255,7 +258,7 @@ public:
 
 private:
     static constexpr std::size_t kMax = 4096;
-    std::map<coop::protocol::ObjectId, std::pair<std::uint8_t, std::uint16_t>> last_;
+    std::map<coop::protocol::ObjectId, std::tuple<std::uint8_t, std::uint16_t, std::uint32_t>> last_;
 };
 
 class Sync {
@@ -554,6 +557,9 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool dead_now = false;  // a kill from before we came: deleted at once
+        // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
+        // that our game did not take, already said dead (OBJECT_REMOVE).
+        bool dead_said = false;
         // An egg we own that a hatchling came out of: when it leaves the
         // walk, OBJECT_REMOVE reason gone goes out for it.
         bool hatched = false;
@@ -569,6 +575,13 @@ private:
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter);
+
+    // enemy-sync-3 (issue 133): an enemy we own whose life was written to 0
+    // (another game's hit our game did not take, or hurt off) may stand on
+    // at life 0. Said dead to the others now, deleted here kDeadGraceUs
+    // later if its own death has not taken it by then.
+    void DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                     std::vector<coop::protocol::Message>& send, const char* why);
 
     void Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
                std::vector<coop::protocol::Message>& send);

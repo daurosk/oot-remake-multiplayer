@@ -29,7 +29,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import byml, dumpcheck, nup, rstb, sarc, zs  # noqa: E402
+from . import byml, dumpcheck, hud, nup, rstb, sarc, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -596,6 +596,10 @@ def main(argv=None):
                     help="test switch: the puppets keep the player's footstep param (the older pack)")
     ap.add_argument("--sound-user", metavar="NAME",
                     help="test switch: another actor's SLink user for the puppets' sounds, e.g. Enemy_MiddleBoss_DarkLink")
+    ap.add_argument("--no-hud", action="store_true",
+                    help="do not make the co-op HUD's look (font, hearts, place names)")
+    ap.add_argument("--hud-lang", default=hud.DEFAULT_LANG,
+                    help="the language of the HUD's place names, e.g. USen, EUen, EUfr")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -615,16 +619,17 @@ def main(argv=None):
                 for rel in dumpcheck.nup_files(n).values():
                     nup.write_under(tmp, rel, n.read(rel))
             print(f"read the game files from {a.romfs}")
-            return _main_build(a, tmp)
+            with nup.Nup(a.romfs) as n:
+                return _main_build(a, tmp, hud.NupReader(n))
         except nup.NupError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-    return _main_build(a, a.romfs)
+    return _main_build(a, a.romfs, hud.DirReader(a.romfs))
 
 
-def _main_build(a, romfs):
+def _main_build(a, romfs, hud_reader=None):
     if a.mod_dir:
         mod_dir = a.mod_dir
     else:
@@ -645,8 +650,20 @@ def _main_build(a, romfs):
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    if hud_reader is not None and not a.no_hud:
+        _build_hud(hud_reader, os.path.join(mod_dir, hud.HUD_DIR), a.hud_lang)
     print(f"done: {mod_dir}")
     return 0
+
+
+def _build_hud(reader, out_dir, lang):
+    """The co-op HUD's font, hearts and place names (hud.py). A failure here does not fail
+    the puppets: the co-op window then keeps its plain look."""
+    try:
+        hud.build(reader, out_dir, lang)
+    except (hud.HudError, nup.NupError, OSError, ValueError, KeyError) as e:
+        print(f"note: the co-op HUD's game look was not made ({e}); co-op still works, "
+              "with plain text.")
 
 
 if __name__ == "__main__":

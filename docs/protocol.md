@@ -111,6 +111,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 207 | `SAVE_PART` | 0 | both | `u8` player field, `u8` to player (0 every guest), `u32` transfer id, `u8` reason (1 join, 2 host load), `u32` total size (1 to 1 MiB), `u32` CRC-32 of all of it, `u16` index, `u16` count, then the part's bytes (below) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
+| 251 | `PLAYER_LIFE` | 0 | both | `u8` player field, `u16` life, `u16` max life, quarter hearts (protocol 10; 251 to 255 are the co-op HUD's, [Hearts](#hearts-player_life)) |
 
 Type numbers are never reused or renumbered; new types are added at the end.
 
@@ -212,6 +213,18 @@ Small keys, Gold Skulltula tokens and heart pieces are counts ([items.md](items.
 - A player writes a total on top of any change its game made that it has not sent yet, and still sends that change. So every gain and every spend is counted once, whatever the order.
 - A count change does not wait for an answer of its own. A delta not answered when the host changes is sent again to the new host (the sum, if there were several); when the new host is us, it is dropped, since our game holds it and our snapshot carries it. A host's own count change goes out as its total. Our own delta that comes back to us as host (sent before we knew we host) is not added again.
 - Not covered: a delta that reached a host who left before its `FLAG_STATE` went out is lost with that host's game; one answered by a `FLAG_STATE` for the same flag from another player's change is no longer sent again on a host change.
+
+### Hearts (`PLAYER_LIFE`)
+
+Protocol 10, type 251 (251 to 255 are the co-op HUD's). Each player's hearts, for the HUD's player blocks ([lichii.md](lichii.md#the-game-look)) and PvP. On channel 0, reliable; the server relays it to the others like `PLAYER_STATUS` and keeps nothing.
+
+| Bytes | Field |
+|---|---|
+| u8 | player: 0 from a client, 1 to 4 relayed |
+| u16 | life now, in quarter hearts (4 = one heart), as the game keeps it |
+| u16 | the most life can be (heart containers), same unit; 0: not known |
+
+Both at most 160 (`kMaxLifeQuarters`, 40 hearts); more is refused. A game sends it when its Link's hearts change (at most ten a second), every 5 s anyway, and again when a player joins (`CoopHud::Frame`, `lichii/hook/coop_hud.cpp`). The values are Link's own Life component as the object walk reads it (`CoopObjects::OurLife`, the one source; `LICHII_COOP_OBJECTS=1`, on in the kit), not the `PlayerStatus.Life` flag, which is a copy ([items.md](items.md), live check 2). A receiver forgets a player's hearts when they leave or the connection drops. An older game skips the type as unknown.
 
 ### Equipment (`PLAYER_EQUIP`)
 

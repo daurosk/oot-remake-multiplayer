@@ -1546,3 +1546,30 @@ TEST_CASE("save ask and save part: types 206 and 207, session channel, both ways
   b.pop_back();  // one byte short
   CHECK(decode(b, back) != Error::none);
 }
+
+TEST_CASE("player life: type 251, session channel, quarter hearts, both ways") {
+  CHECK(static_cast<int>(MessageType::player_life) == 251);
+  CHECK(channel_of(MessageType::player_life) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::player_life, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::player_life, kChannelPlayerSamples));
+  CHECK(may_send(Sender::client, MessageType::player_life));
+  CHECK(may_send(Sender::server, MessageType::player_life));
+
+  Message back;
+  Message m = PlayerLife{2, 13, 20};
+  const Bytes b = must_encode(m);
+  CHECK(b.size() == 4 + 5);  // type, length, then u8 player, u16 life, u16 max
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == m);
+  CHECK(type_of(back) == MessageType::player_life);
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{2});
+  CHECK(check_received(Message{PlayerLife{0, 4, 12}}, Sender::client, kChannelSession) == Error::none);
+  CHECK(check_received(Message{PlayerLife{3, 4, 12}}, Sender::client, kChannelSession) == Error::wrong_sender);
+
+  Bytes out;
+  CHECK(encode(PlayerLife{0, 0, kMaxLifeQuarters + 1}, out) == Error::bad_value);
+  CHECK(encode(PlayerLife{5, 4, 12}, out) == Error::bad_value);
+  Bytes short_one = b;
+  short_one.pop_back();
+  CHECK(decode(short_one, back) != Error::none);
+}

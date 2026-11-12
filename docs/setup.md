@@ -56,13 +56,13 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 
 1. Double-click `make-puppet-pack.cmd` in the kit folder.
 2. It finds the `.nup` in the emulator's game list folders (step 3). If it asks for it, type its path or drag the file into the window.
-3. Wait for it to finish: it reads the game files straight from the `.nup` and builds the pack in under a minute.
+3. Wait for it to finish: it reads the game files straight from the `.nup` and builds the pack in about a minute. It also makes the co-op HUD's look from the same files (the game's font, heart pictures and place names, for the other players' names, hearts and places under your hearts): it prints `co-op HUD: font, 5 hearts and ... place names`. If that part fails it prints a note and co-op still works, with plain text.
 
 Do not use the emulator's **Dump RomFS** for a `.nup`: you do not need it, and it often fails with "RomFS Extraction Failed" (for example when your keys are older than the game's update).
 
 **Which file do you have?** Look at the file you added to the emulator's game list in step 3: its name ends in `.nup`, `.nsp` or `.xci` (the game list also shows it in its **File type** column: NUP, NSP or XCI). `.nup`: the steps above are all you need. `.nsp` or `.xci`: see below.
 
-The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed). Without the pack, co-op still works, but the other players show only as a name and a dot.
+The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed). Without the pack, co-op still works, but the other players show only as a name and a dot, and co-op's text is plain (no game font or hearts).
 
 ### Only if your game is an `.nsp` or `.xci`: dump the RomFS first
 

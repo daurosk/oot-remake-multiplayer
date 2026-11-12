@@ -15,8 +15,10 @@ check() {  # check "what" command...
 }
 has() { grep -qF -- "$2" "$1"; }
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/oot-coop-linux-test-XXXXXX")
-trap 'pkill -f -- "$tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
+trap 'pkill -f -- "$tmp" 2>/dev/null; [ -n "${KEEP_TMP-}" ] || rm -rf "$tmp"' EXIT
+[ -n "${KEEP_TMP-}" ] && echo "tmp: $tmp"
 . "$release/kit/linux/kit-lib.sh"
+. "$release/kit/linux/hosting-lib.sh"
 
 # --- coop.ini rules ---------------------------------------------------------------------
 check 'a host, an IP and host:port are servers' bash -c '. "$1"; coop_test_server example.com && coop_test_server 192.168.1.20 && coop_test_server 10.0.0.1:27510' _ "$release/kit/linux/kit-lib.sh"
@@ -30,6 +32,59 @@ check 'an empty server or name stays a comment' bash -c 'grep -q "^# server =$" 
 printf 'auto_update = yes\nLICHII_COOP_PUPPET=1\n# EDEN_NX2_GPL=1\nEDEN_NX2_GPL = 1\nEDEN_OTHER=1\n' >"$tmp/options.ini"
 check 'coop-options.ini: LICHII_COOP_ and EDEN_NX2_ lines only' [ "$(kit_read_options "$tmp/options.ini" 2>/dev/null | tr '\n' ,)" = 'LICHII_COOP_PUPPET=1,EDEN_NX2_GPL=1,' ]
 check 'auto_update is read' [ "$(kit_auto_update "$tmp/options.ini")" = yes ]
+printf 'pvp = off\nupnp = no\nserver_password = abc\nLICHII_COOP_PUPPET=1\n' >"$tmp/options2.ini"
+check "the kit's own lines (pvp, upnp, server_password) are no switches and no warning" [ "$(kit_read_options "$tmp/options2.ini" 2>&1 | tr '\n' ,)" = 'LICHII_COOP_PUPPET=1,' ]
+coop_write_ini "$release/kit/coop.ini.template" "$tmp/coop.ini" 127.0.0.1 27510 Saria hunter2
+coop_read_ini "$tmp/coop.ini"
+check 'coop.ini keeps the join password' [ "$COOP_PASSWORD" = hunter2 ]
+coop_write_ini "$release/kit/coop.ini.template" "$tmp/coop.ini" 127.0.0.1 27510 Saria
+check 'no join password: the line stays a comment' bash -c 'grep -q "^# password =$" "$1" && ! grep -q @PASSWORD@ "$1"' _ "$tmp/coop.ini"
+
+# --- Hosting: invite codes, passwords, the host's lines ------------------------------------------
+# The server's own vectors (tests/server/nat_test.cpp), as tools/release/tests/hosting_test.ps1.
+lib=$release/kit/linux/hosting-lib.sh
+good='CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA'
+kit_invite_decode "$good"
+check 'invite: a made password' [ "$INV_ADDRESS|$INV_PORT|$INV_PASSWORD" = '203.0.113.5|27510|ABCDEFGHJKLMNPQRSTUV' ]
+kit_invite_decode ' cmddg 3acpp 5be7d jqkuy lmmun fzgj5 5pfx5 y86ve qrwxf efr. '
+check "invite: the host's own password, pasted loosely" [ "$INV_ADDRESS|$INV_PASSWORD" = '198.51.100.2|three-random-words' ]
+all=1
+letters=$(kit_invite_letters "$good")
+for ((k = 0; k < ${#letters}; k++)); do
+    c=${letters:k:1}
+    if [[ $c == A ]]; then r=B; else r=A; fi
+    kit_invite_decode "${letters:0:k}$r${letters:k+1}" && all=0
+done
+check 'invite: every mistyped letter is caught' [ "$all" = 1 ]
+check 'invite: a missing letter is caught' bash -c '. "$1"; ! kit_invite_decode "${2%?}"' _ "$lib" "$good"
+kit_invite_decode 'EHDDG-3ACVT-ASCAS-DASCS-NB2JP-PE7EA-GJEUQ-WC2NA-MLPZ3-JS'
+check 'invite: an answer code is named as one' bash -c '[[ $1 == *ANSWER* ]]' _ "$INV_ERROR"
+check 'invite: told apart from relay codes and addresses' bash -c '. "$1"; ! kit_is_invite ABCD-EFGH && ! kit_is_invite 203.0.113.5 && kit_is_invite "$2"' _ "$lib" "$good"
+p1=$(kit_new_password)
+p2=$(kit_new_password)
+check 'a made password is 20 letters and new each time' bash -c '[[ $1 =~ ^[A-HJ-NP-Z2-9]{20}$ && $1 != "$2" ]]' _ "$p1" "$p2"
+check 'join passwords: no spaces, at most 128 bytes' bash -c '. "$1"; coop_test_password abc && ! coop_test_password "a b" && ! coop_test_password "" && ! coop_test_password "$(printf "%0129d" 0)"' _ "$lib"
+check 'a pasted address is made plain' [ "$(kit_join_address ' udp://26.1.2.3:27511/ ')|$(kit_join_address localhost.)" = '26.1.2.3 27511|127.0.0.1 ' ]
+check 'a typo in an address is caught' bash -c '. "$1"; ! kit_join_address 26.1.2 && ! kit_join_address 1.2.3.400 && ! kit_join_address a:0' _ "$lib"
+printf '# upnp = no\n# invite = no\n' >"$tmp/access.ini"
+kit_server_access "$tmp/access.ini"
+check 'defaults: upnp and invite on, no password line' [ "$KA_UPNP$KA_INVITE$KA_PASSWORD_SET" = 110 ]
+kit_hosting_args secret
+check 'upnp and invite: on with a join password' [ "${HOSTING_ARGS[*]}" = '--upnp --invite' ]
+kit_hosting_args ''
+check 'upnp and invite: refused without a join password' bash -c '[ "$1" = 0 ] && [[ $2 == *"NOT used"* && $2 == *"No invite code"* ]]' _ "${#HOSTING_ARGS[@]}" "${HOSTING_NOTES[*]}"
+printf 'upnp = no\ninvite = no\nstun_servers = a.example:1, bad host;x\nserver_password =\n' >"$tmp/access.ini"
+kit_server_access "$tmp/access.ini"
+check 'upnp = no, invite = no and an empty server_password are read' [ "$KA_UPNP$KA_INVITE$KA_PASSWORD_SET|$KA_PASSWORD|$KA_STUN" = '001||a.example:1, bad host;x' ]
+KA_INVITE=1
+kit_hosting_args secret
+check 'stun servers are checked' bash -c '[ "$1" = "--invite --stun a.example:1" ] && [[ $2 == *"not a name:port"* ]]' _ "${HOSTING_ARGS[*]}" "${HOSTING_NOTES[*]}"
+printf 'x\ncoop: on, server 127.0.0.1:27510\n' >"$tmp/eden.txt"
+check 'join state: trying' [ "$(kit_join_state "$tmp/eden.txt")" = trying ]
+echo 'coop: server refused: wrong join password' >>"$tmp/eden.txt"
+check 'join state: refused, with why' [ "$(kit_join_state "$tmp/eden.txt")" = 'refused: wrong join password' ]
+echo 'coop: welcomed as player 2' >>"$tmp/eden.txt"
+check 'join state: welcomed' [ "$(kit_join_state "$tmp/eden.txt")" = welcomed ]
 check 'versions: beta2 < beta10 < release, numbers win' bash -c '. "$1"; [ "$(kit_version_compare v0.1.0-beta2 v0.1.0-beta10)" = -1 ] && [ "$(kit_version_compare v0.1.0 v0.1.0-beta9)" = 1 ] && [ "$(kit_version_compare v0.2.0-beta1 v0.1.9)" = 1 ] && [ "$(kit_version_compare v0.1.0-beta7 v0.1.0-beta7)" = 0 ] && [ "$(kit_version_compare junk v0.0.1)" = -1 ]' _ "$release/kit/linux/kit-lib.sh"
 
 # --- Mods (issue 136) -----------------------------------------------------------------------
@@ -92,7 +147,12 @@ EOF
 cat >"$stub/coop_server" <<'EOF'
 #!/usr/bin/env bash
 echo "coop_server on port $2"
+echo "args: $*"
+echo "password env: ${OOT_COOP_SERVER_PASSWORD:+server-set} ${OOT_COOP_JOIN_PASSWORD:+join-$([ "$OOT_COOP_JOIN_PASSWORD" = ABCDEFGHJKLMNPQRSTUV ] && echo right || echo wrong)}"
+case " $* " in *" --invite "*) echo "coop_server: invite code: CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA" ;; esac
+case " $* " in *" --join "*) echo "join: answer code: EHDDG-3ACVT-ASCAS" ;; esac
 echo "refused a connection, reason 1"
+sleep "${STUB_SERVER_SLEEP:-0}"
 exit 0
 EOF
 chmod +x "$stub/lichii.AppImage" "$stub/coop_server"
@@ -102,7 +162,7 @@ kit6=$tmp/out/oot-coop-v0.1.0-beta6-linux
 arch=$(uname -m)
 check 'the kit has its scripts, emulator, server, tool and docs' bash -c 'cd "$1" && for f in Host.sh Join.sh play.sh start-server.sh collect-logs.sh update.sh make-puppet-pack.sh scripts/kit-lib.sh scripts/coop.ini.template emulator/lichii.AppImage server/coop_server tools/puppet_pack/build.py SETUP.md KNOWN-ISSUES.md SOURCE.txt VERSION.txt MANIFEST.txt coop-options.ini emulator/user/config/coop.ini LICENSE.txt; do [ -f "$f" ] || { echo "missing $f"; exit 1; }; done; [ -x play.sh ] && [ -x emulator/lichii.AppImage ] && [ -d emulator/user/keys ]' _ "$kit6"
 check 'VERSION.txt names the release' has "$kit6/VERSION.txt" 'kit: oot-coop-v0.1.0-beta6-linux (release v0.1.0-beta6)'
-check 'the port is filled in, no @PORT@ left' bash -c '! grep -rl "@PORT@" "$1" --include=*.sh --include=*.template && grep -q "^port = 27510$" "$1/emulator/user/config/coop.ini"' _ "$kit6"
+check 'the port is filled in, no @PORT@ left' bash -c '! grep -rl "@PORT@" "$1" --include=*.sh && grep -q "^port = 27510$" "$1/emulator/user/config/coop.ini"' _ "$kit6"
 check 'MANIFEST.txt lists the kit'"'"'s files, never user/' bash -c 'grep -qx play.sh "$1/MANIFEST.txt" && grep -qx emulator/lichii.AppImage "$1/MANIFEST.txt" && ! grep -q "^emulator/user" "$1/MANIFEST.txt"' _ "$kit6"
 check 'the tarball and its sha256 match' bash -c 'cd "$1" && sha256sum -c "oot-coop-v0.1.0-beta6-linux-$2.tar.gz.sha256" >/dev/null' _ "$tmp/out" "$arch"
 
@@ -128,12 +188,46 @@ check 'a bad address is refused' has "$tmp/play3.out" 'Bad server address: my pc
 log=$(ls "$kit6"/logs/server-*.log 2>/dev/null | head -n1)
 check 'start-server.sh runs the server on the port and logs it' bash -c '[ -n "$1" ] && grep -q "coop_server on port 27600" "$1" && grep -q "server exited with code 0" "$1"' _ "$log"
 check 'a refused older game is told which release to update to' has "$log" 'every player needs v0.1.0-beta6'
+check 'no server_password line: a made join password, UPnP and the invite code' bash -c 'grep -q "args: --port 27600 --password-env OOT_COOP_SERVER_PASSWORD --upnp --invite" "$1" && grep -q "password env: server-set" "$1" && grep -q "Join password for this session: [A-HJ-NP-Z2-9]\{20\}" "$2"' _ "$log" "$tmp/server.out"
+check 'the invite code is shown, never in the log' bash -c 'grep -q "invite code: CHFSA" "$2" && ! grep -q CHFSA "$1" && grep -q "not in the log" "$1"' _ "$log" "$tmp/server.out"
+check 'the invite code file goes when the server stops' [ ! -e "$kit6/logs/invite-code.txt" ]
+rm -f "$kit6"/logs/server-*.log
+cp "$kit6/coop-options.ini" "$tmp/options.keep"
+echo 'server_password =' >>"$kit6/coop-options.ini"
+(cd "$kit6" && bash ./start-server.sh 27600 >"$tmp/server2.out" 2>&1)
+log=$(ls "$kit6"/logs/server-*.log 2>/dev/null | head -n1)
+check 'server_password = (empty): no password, no UPnP, no invite code, said why' bash -c 'grep -q "args: --port 27600 *$" "$1" && grep -q "UPnP) is NOT used" "$2" && grep -q "No invite code" "$2"' _ "$log" "$tmp/server2.out"
+cp "$tmp/options.keep" "$kit6/coop-options.ini"
+rm -f "$kit6"/logs/server-*.log
+
+# --- Host.sh and Join.sh with an invite code ---------------------------------------------------
+(cd "$kit6" && STUB_SERVER_SLEEP=4 bash ./Host.sh --no-update --name Saria </dev/null >"$tmp/host.out" 2>&1)
+check 'Host.sh: a new join password, the server in the background, the invite code shown' bash -c 'grep -q "a new random one for this session" "$1" && grep -q "INVITE CODE" "$1" && grep -q "^  CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA$" "$1" && grep -q "start-server.sh --answer" "$1"' _ "$tmp/host.out"
+check "Host.sh: the host's game uses the same join password" bash -c 'grep -q "^password = [A-HJ-NP-Z2-9]\{20\}$" "$1" && grep -qx "server = 127.0.0.1" "$1"' _ "$kit6/emulator/user/config/coop.ini"
+check 'Host.sh: the answer-code pipe is there while the server runs' [ -p "$kit6/logs/.server-input" ]
+# pgrep and file modes are Linux's; Git Bash on Windows has neither, so these two run in CI.
+linux=0
+[[ $(uname -s) == Linux ]] && linux=1
+((linux)) && check './start-server.sh --answer reaches the background server' bash -c 'cd "$1" && bash ./start-server.sh --answer EHDDG-ABCDE | grep -q "Given to the server"' _ "$kit6"
+((linux)) && check 'the console lines (with the password) are only for this user' bash -c '[ "$(stat -c %a "$1")" = 600 ]' _ "$kit6/logs/server-console.txt"
+sleep 5
+check 'the server stopped: console file, invite file and pipe are gone' bash -c '[ ! -e "$1/server-console.txt" ] && [ ! -e "$1/invite-code.txt" ] && [ ! -e "$1/.server-input" ]' _ "$kit6/logs"
+rm -f "$kit6/emulator/started.txt"
+(cd "$kit6" && STUB_SERVER_SLEEP=2 bash ./Join.sh --no-update --name Link --server "$good" </dev/null >"$tmp/join.out" 2>&1)
+jlog=$(ls "$kit6"/logs/join-*.log 2>/dev/null | head -n1)
+check 'Join.sh with an invite code: the game goes to the join helper with the password' bash -c 'grep -qx "server = 127.0.0.1" "$1" && grep -qx "port = 27512" "$1" && grep -qx "password = ABCDEFGHJKLMNPQRSTUV" "$1"' _ "$kit6/emulator/user/config/coop.ini"
+check 'Join.sh: the join helper gets the host, and the password in its environment only' bash -c '[ -n "$1" ] && grep -q "args: --join 203.0.113.5:27510 --game-port 27512 --password-env OOT_COOP_JOIN_PASSWORD" "$1" && grep -q "join-right" "$1" && ! grep -q ABCDEFGHJKLMNPQRSTUV "$1" && ! grep "args:" "$1" | grep -q ABCDEFGHJKLMNPQRSTUV' _ "$jlog"
+check 'Join.sh: the emulator starts' waitfor "$kit6/emulator/started.txt"
+(cd "$kit6" && bash ./Join.sh --no-update --name Link --server 'EHDDG-3ACVT-ASCAS-DASCS-NB2JP-PE7EA-GJEUQ-WC2NA-MLPZ3-JS' </dev/null >"$tmp/join2.out" 2>&1)
+check 'Join.sh with an answer code: says where it goes' has "$tmp/join2.out" 'ANSWER code'
+sleep 3
 
 # --- collect-logs.sh -------------------------------------------------------------------------
-echo 'a log line' >"$kit6/emulator/user/log/eden_log.txt"
+echo 'a log line from 192.168.1.20 and 203.0.113.5' >"$kit6/emulator/user/log/eden_log.txt"
 (cd "$kit6" && bash ./collect-logs.sh >"$tmp/collect.out" 2>&1)
 packed=$(ls "$kit6"/coop-logs-*.tar.gz 2>/dev/null | head -n1)
 check 'collect-logs.sh packs the logs, coop.ini and a note about this PC' bash -c '[ -n "$1" ] && tar -tzf "$1" | grep -q "emulator/log/eden_log.txt" && tar -tzf "$1" | grep -q "emulator/coop.ini" && tar -tzf "$1" | grep -q about-this-pc.txt' _ "$packed"
+check 'collect-logs.sh masks the join password, everywhere, and the addresses' bash -c 'tar -xzOf "$1" ./emulator/coop.ini | grep -qx "password = (removed)" && ! tar -xzOf "$1" | grep -q -e ABCDEFGHJKLMNPQRSTUV -e 203.0.113.5 && tar -xzOf "$1" ./emulator/log/eden_log.txt | grep -q "<lan-1> and <public-1>"' _ "$packed"
 
 # --- update.sh ---------------------------------------------------------------------------------
 echo 'my keys' >"$kit6/emulator/user/keys/prod.keys"

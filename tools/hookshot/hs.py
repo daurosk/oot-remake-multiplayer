@@ -321,7 +321,8 @@ def warm_start(game, out, timeout, say=print, popen=subprocess.Popen, connect=No
         sys.path.insert(0, os.path.join(REPO, "tools", "autotest"))
         import hookshot as hk  # noqa: E402 (the autotest's bridge client)
         connect = hk.Bridge.connect
-    env = dict(os.environ, HOS_CONTROL=sock)
+    # (co-op off: the module would look for a server and could join a game running at the same time)
+    env = dict(os.environ, HOS_CONTROL=sock, HOS_COOP="0")
     with open(log, "wb") as go:
         kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
         p = popen([exe], cwd=os.path.dirname(exe), env=env, stdin=subprocess.DEVNULL, stdout=go,

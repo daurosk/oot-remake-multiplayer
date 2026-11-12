@@ -273,6 +273,7 @@ class WarmTest(Fixture):
 
             def __init__(self, args, stdout=None, **kw):
                 test.assertTrue(kw["env"]["HOS_CONTROL"])   # the bridge the quit goes through
+                test.assertEqual(kw["env"]["HOS_COOP"], "0")   # co-op off: no server, no other game
                 self.out = stdout
 
             def poll(self):

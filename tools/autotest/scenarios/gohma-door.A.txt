@@ -1,0 +1,35 @@
+# gohma-door (#148, branch boss-movein-2): A loads into the Deku Tree and is put in Gohma's room
+# (warp InsideTheDekuTree StartPos_Get_StoneOfForest), then walks to the room's edge and back; B
+# loads at the Deku Tree's entrance and stays there. B must be moved in only after A's game says A
+# is past the door, and A is never moved and never outside a shut door.
+# Expect A: "coop: boss: in the boss room of InsideTheDekuTree", the debug lines "phase ..., shut
+# in 0/1" (write down when ShutIn turns 1: at the door's cutscene, or at once), then "past the door
+# (shut in)" or "past the door (the intro is over)", never "moving in". Any "that event was not the
+# intro" line must come while A's shut in is 0. B: no "moving in" before A's "past the door" line
+# (compare the times); after it, within about 1 s, "another player is in the boss room of
+# InsideTheDekuTree: moving in (try 1)", then "moved Link to" or "asked the scene change".
+# Screenshots at b-in: both inside the room, the door behind them shut in each game for its own
+# Link only (A's door state is A's own: the ShutIn flag is not shared).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1
+#! timeout 300
+mark start
+warp InsideTheDekuTree StartPos_Get_StoneOfForest
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-in
+goto 7.5 95 1.5 900     # the room's edge, toward the circle's rim
+mark a-at-edge
+goto 6.7 67.6 1.5 900   # back to the centre
+mark b-in
+wait 1800
+mark end

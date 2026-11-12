@@ -638,9 +638,20 @@ public:
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopTime::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
                         report.server_now_us);
-        // Boss rooms together (docs/dungeons-boss.md).
+        // Boss rooms together (docs/dungeons-boss.md). Issue 148: the room's
+        // "shut in" flag says when we are past its door.
+        std::optional<bool> boss_shut_in;
+        if (memory && view.scene) {
+            if (const CoopBoss::Room* room = CoopBoss::RoomOfScene(*view.scene)) {
+                if (const std::string_view flag = CoopBoss::ShutInFlag(*room); !flag.empty()) {
+                    coop::host::GameFlagStore flags(*memory);
+                    const auto v = flags.read(coop::protocol::FlagKey{coop::host::flag_hash(std::string(flag)), 0});
+                    if (v) boss_shut_in = v->value != 0;
+                }
+            }
+        }
         CoopBoss::Frame(system, view.game ? base_ : 0, view.scene, view.position,
-                        reading && reading->event_running.value_or(false),
+                        reading && reading->event_running.value_or(false), boss_shut_in,
                         report.connected ? session_.get() : nullptr, report.server_now_us);
         // /teleport <player> (docs/setup.md "Chat commands"), after the boss
         // rooms: it reads whether our boss fight runs.

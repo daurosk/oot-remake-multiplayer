@@ -385,6 +385,10 @@ public:
     // is flagged too (a fight to the server), so it stays with the game whose
     // Link woke it. Off with SetWake(false) (LICHII_COOP_OBJECTS_WAKE=0).
     void SetWake(bool on) { wake_ = on; }
+    // The boss actors our game is not ready to own (its intro not played
+    // here): listed with object_presence::unready, so the server keeps them
+    // with a game whose boss is fighting.
+    void SetUnready(std::vector<std::string> names) { unready_ = std::move(names); }
     static constexpr float kWakeM = 10.0f;
     // Issue 157: the Mover puts the owner's animation back on the very next
     // game frame, so a copy whose AI asks for its wake animation once (a
@@ -694,6 +698,7 @@ private:
     std::set<std::uint64_t> hidden_;  // loaded actors whose pickup was taken
     std::set<std::uint64_t> dead_;    // copies whose owner said dead kDeadGraceUs ago
     bool wake_ = true;
+    std::vector<std::string> unready_;
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts written directly after the wait

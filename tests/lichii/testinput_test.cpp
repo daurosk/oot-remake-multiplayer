@@ -413,3 +413,39 @@ TEST_CASE("testinput: place hands the hook a world point, then the script goes o
     CHECK(log[0] == "mark there");
     CHECK(r.Done());
 }
+
+TEST_CASE("test input: sync waits with every button let go until the games meet, then goes on together") {
+    std::string error;
+    auto script = Parse("press A 6\nsync title 2\npress A 6\n", error);
+    REQUIRE(script.has_value());
+    // press is a press and a release step; the sync comes after both.
+    const auto it = std::find_if((*script).steps.begin(), (*script).steps.end(),
+                                 [](const Step& s) { return s.kind == Kind::sync; });
+    REQUIRE(it != (*script).steps.end());
+    CHECK(it->ticks == 2u);
+    CHECK(it->mark == "title");
+    Runner r(std::move(*script));
+    bool met = false;
+    int asked = 0;
+    r.SetBarrier([&](const std::string& name, std::uint32_t games) {
+        ++asked;
+        CHECK(name == "title");
+        CHECK(games == 2u);
+        return met;
+    });
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    r.Advance(1.0, std::nullopt, log);  // the first press is over: waiting at sync
+    CHECK(r.Current().buttons == 0u);
+    CHECK(asked > 0);
+    r.Advance(30.0, std::nullopt, log);  // still waiting, however long
+    CHECK(r.Current().buttons == 0u);
+    met = true;
+    log.clear();
+    r.Advance(30.5, std::nullopt, log);
+    CHECK(std::find(log.begin(), log.end(), "sync title passed") != log.end());
+    CHECK(r.Current().buttons != 0u);  // the press after it, starting now
+    std::string bad;
+    CHECK_FALSE(Parse("sync title 9\n", bad).has_value());
+    CHECK_FALSE(Parse("sync title\n", bad).has_value());
+}

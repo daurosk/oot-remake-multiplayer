@@ -947,6 +947,10 @@ public:
             }
             sync_.Bind(live);
         }
+        {
+            std::lock_guard lock(g_unready_mutex);
+            sync_.SetUnready(g_unready);
+        }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
         if (sync_.BlastDrops() != blast_drops_logged_) {
             blast_drops_logged_ = sync_.BlastDrops();
@@ -2066,6 +2070,14 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
         return std::nullopt;
     }
     return BossAlive(g_bosses, bodies);
+}
+
+std::mutex g_unready_mutex;
+std::vector<std::string> g_unready;
+
+void SetUnreadyBosses(std::vector<std::string> bodies) {
+    std::lock_guard lock(g_unready_mutex);
+    g_unready = std::move(bodies);
 }
 
 std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies) {

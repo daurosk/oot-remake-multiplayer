@@ -1372,6 +1372,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (o.chase_until > now_us) {
             flags |= proto::object_presence::targeting;
         }
+        if (std::find(unready_.begin(), unready_.end(), o.name) != unready_.end()) {
+            flags |= proto::object_presence::unready;
+        }
         present.push_back({o.id, flags});
     }
     // gohma-larva: an egg of ours that just left the walk alive stays on the

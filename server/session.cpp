@@ -747,6 +747,11 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
     } else {
       o.chased_by.erase(id);
     }
+    if (e.flags & object_presence::unready) {
+      o.unready.insert(id);
+    } else {
+      o.unready.erase(id);
+    }
     // Tell a newcomer who owns it and the epoch to send with; its own made
     // enemy it knows.
     if (refresh || (fresh && !(o.made && o.owner == id))) {
@@ -924,7 +929,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   }
   if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
     if (root->owner && *root->owner != id && !root->ask && !(c.status & kBusy) &&
-        has_loaded(id, *root) &&
+        has_loaded(id, *root) && !root->unready.contains(id) &&
         (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
         !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {
       ask_handover(root_id, *root, id, now_us);
@@ -1365,6 +1370,7 @@ void Session::run_ownership(std::uint64_t now_us) {
         double best = 0;
         for (ConnectionId other : o.present) {
           if (other == owner || !has_loaded(other, o)) continue;
+          if (o.unready.contains(other)) continue;  // its boss has not begun the fight
           const Connection& pc = connections_.at(other);
           if (pc.status & kBusy) continue;
           const auto mine = distance_to(pc, o, now_us);

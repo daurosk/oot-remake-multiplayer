@@ -58,6 +58,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -110,11 +111,12 @@ enum class Kind {
     assign,  // test only: the item on ZR (PlayerStatus.AssignableItem.Child and .Adult)
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
+    sync,    // sync NAME N: wait here, buttons let go, until N games reached NAME
 };
 
 struct Step {
     Kind kind = Kind::timed;
-    std::uint32_t ticks = 0;  // timed and toward; goto: the give-up time
+    std::uint32_t ticks = 0;  // timed and toward; goto: the give-up time; sync: N
     std::uint64_t buttons = 0;
     std::optional<Stick> left;   // unset: the real stick
     std::optional<Stick> right;
@@ -161,6 +163,12 @@ class Runner {
 public:
     explicit Runner(Script script);
 
+    // sync NAME N: says we reached NAME and whether N games have (the hook
+    // keeps one file per game in a folder the test runner shares). Without
+    // one, a sync step passes at once.
+    using Barrier = std::function<bool(const std::string& name, std::uint32_t games)>;
+    void SetBarrier(Barrier barrier) { barrier_ = std::move(barrier); }
+
     // The camera on the ground: unit vectors (x, z) of where stick up and
     // stick right walk Link. From the game's camera matrix when the hook has
     // it; without it the stepper learns them from how Link moves.
@@ -205,6 +213,7 @@ private:
     void Steer(const Step& step, double now_s, std::optional<std::array<float, 2>> player);
     std::optional<Camera> camera_;  // this frame's, when given
     std::vector<Request> requests_;
+    Barrier barrier_;
     void Hold(std::optional<double> stick_angle, double now_s);
 
     Script script_;

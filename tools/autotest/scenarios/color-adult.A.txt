@@ -34,5 +34,6 @@ mark a-still
 stick 0.7 0 10           # turn a little, so the tint shows from another side
 wait 240
 mark a-turned
+wait 1800               # a colour sweep (LICHII_COOP_COLOR_SWEEP) needs about 30 s
 wait 120
 mark end

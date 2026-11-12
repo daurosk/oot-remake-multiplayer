@@ -447,7 +447,7 @@ private:
                              std::uint64_t now_ms);
     void LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Move(Slot& slot, Guest& guest);
-    std::optional<Call> Cloth(Slot& slot, Guest& guest, std::uint32_t color);
+    std::optional<Call> Cloth(Slot& slot, Guest& guest, std::uint32_t color, std::uint64_t now_ms);
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);

@@ -338,9 +338,17 @@ std::string DumpParams(CoopPuppet::Guest& guest, std::uint64_t unit, std::int32_
         }
         Rgba v{};
         guest.Read(values + offset, v.data(), sizeof(v));
+        // [res + 0x60][p]: the parameter's place in the shader's uniform block;
+        // negative when this shader variant does not use it (0x3595f60 then
+        // stores the value but never marks it for upload).
+        std::uint64_t res = 0, used_map = 0;
+        std::int32_t used = -2;
+        if (ReadValue(guest, slot, res) && ReadValue(guest, res + 0x60, used_map) && used_map != 0) {
+            ReadValue(guest, used_map + 4ull * static_cast<std::uint64_t>(p), used);
+        }
         char b[160];
-        std::snprintf(b, sizeof(b), " [%d %s +0x%x %.3f %.3f %.3f %.3f]", p,
-                      name.empty() ? "-" : name.c_str(), offset, v[0], v[1], v[2], v[3]);
+        std::snprintf(b, sizeof(b), " [%d %s +0x%x u%d %.3f %.3f %.3f %.3f]", p,
+                      name.empty() ? "-" : name.c_str(), offset, used, v[0], v[1], v[2], v[3]);
         s += b;
     }
     return s;
@@ -357,6 +365,7 @@ ClothSettings ClothSettings::FromEnvironment() {
         if (end != v->c_str() && std::isfinite(f) && f >= 0.0f && f <= 1.0f) s.lighten = f;
     }
     if (auto v = Env("LICHII_COOP_DEBUG_COLOR")) s.probe = !v->empty() && *v != "0";
+    if (auto v = Env("LICHII_COOP_COLOR_SWEEP")) s.sweep = !v->empty() && *v != "0";
     return s;
 }
 
@@ -385,7 +394,7 @@ std::vector<std::string> Cloth::MaterialNames(const ClothSettings& settings) con
 
 std::vector<std::string> Cloth::ParamNames(const ClothSettings& settings) const {
     std::vector<std::string> names{settings.param};
-    if (settings.probe) {
+    if (settings.probe || settings.sweep) {
         for (int i = 0; i < 6; ++i) {
             std::string n = "ns_param_color" + std::to_string(i);
             if (!Has(names, n)) names.push_back(n);
@@ -394,10 +403,20 @@ std::vector<std::string> Cloth::ParamNames(const ClothSettings& settings) const 
     return names;
 }
 
+std::vector<std::size_t> Cloth::Kinds(const ClothSettings& settings) const {
+    if (!settings.sweep) return {0};
+    std::vector<std::size_t> k;
+    const auto names = ParamNames(settings);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] != "ns_param_color0" && names[i].rfind("ns_param_color", 0) == 0) k.push_back(i);
+    }
+    return k;
+}
+
 std::optional<ClothCall> Cloth::Next(CoopPuppet::Guest& guest, std::uint64_t main_base,
                                      std::uint64_t actor, std::uint32_t color,
                                      const ClothSettings& settings, std::uint64_t scratch,
-                                     std::string& line) {
+                                     std::string& line, std::uint64_t now_ms) {
     line.clear();
     if (actor == 0 || scratch == 0) return std::nullopt;
     if (actor != actor_) {
@@ -469,6 +488,7 @@ std::optional<ClothCall> Cloth::Next(CoopPuppet::Guest& guest, std::uint64_t mai
             if (found_i_ >= found_.size()) {
                 step_ = Step::paint;
                 found_i_ = 0;
+                pk_ = 0;
                 paint_color_ = color;
                 break;
             }
@@ -484,16 +504,30 @@ std::optional<ClothCall> Cloth::Next(CoopPuppet::Guest& guest, std::uint64_t mai
             return c;
         }
         case Step::paint: {
+            const auto kinds = Kinds(settings);
+            const auto paintable = [&](const Found& f) {
+                return Has(settings.strong, f.material) ||
+                       (!settings.sweep && Has(settings.light, f.material));
+            };
             while (found_i_ < found_.size() &&
-                   (found_[found_i_].params.empty() || found_[found_i_].params[0] < 0 ||
-                    !(Has(settings.strong, found_[found_i_].material) ||
-                      Has(settings.light, found_[found_i_].material)))) {
-                ++found_i_;
+                   (!paintable(found_[found_i_]) || pk_ >= kinds.size() ||
+                    kinds[pk_] >= found_[found_i_].params.size() ||
+                    found_[found_i_].params[kinds[pk_]] < 0)) {
+                if (paintable(found_[found_i_]) && pk_ + 1 < kinds.size()) {
+                    ++pk_;
+                } else {
+                    ++found_i_;
+                    pk_ = 0;
+                }
             }
             if (found_i_ >= found_.size()) {
                 step_ = Step::done;
                 color_ = paint_color_;
                 line = Report(settings);
+                sweep_ms_ = now_ms;
+                if (settings.sweep) {
+                    line += "; sweep: " + ParamNames(settings)[Kinds(settings)[static_cast<std::size_t>(sweep_ - 1) % Kinds(settings).size()]] + " = colour, the others white";
+                }
                 if (settings.probe) {
                     const auto names = ParamNames(settings);
                     for (const auto& f : found_) {
@@ -507,30 +541,42 @@ std::optional<ClothCall> Cloth::Next(CoopPuppet::Guest& guest, std::uint64_t mai
                             }
                         }
                     }
-                    if (!found_.empty()) {
-                        line += "\n  " + found_[0].material + " params " +
-                                DumpParams(guest, units_[found_[0].unit].object, found_[0].index, 0, 160);
+                    for (const auto& f : found_) {
+                        if (f.material != "Mt_Angin" && f.material != "Mt_Inner" &&
+                            f.material != "Mt_Cloth" && f.material != "Mt_Cloth_Pants") {
+                            continue;
+                        }
+                        line += "\n  " + f.material + " params " +
+                                DumpParams(guest, units_[f.unit].object, f.index, 0, 123);
                     }
                 }
                 return std::nullopt;
             }
             const Found& f = found_[found_i_];
-            const Rgba value = ClothColor(paint_color_, f.light ? settings.lighten : 0.0f);
+            Rgba value = ClothColor(paint_color_, f.light ? settings.lighten : 0.0f);
+            if (settings.sweep && pk_ != static_cast<std::size_t>(sweep_ - 1) % kinds.size()) {
+                value = Rgba{1.0f, 1.0f, 1.0f, 1.0f};
+            }
             guest.Write(scratch + kScratchColor, value.data(), sizeof(value));
             ClothCall c;
             c.function = virtual_at(units_[f.unit], cloth::kSetColor);
             c.x[0] = units_[f.unit].object;
             c.x[1] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(f.index));
-            c.x[2] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(f.params[0]));
+            c.x[2] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(f.params[kinds[pk_]]));
             c.x[3] = scratch + kScratchColor;
             if (c.function == 0) return std::nullopt;
             waiting_ = true;
             return c;
         }
         case Step::done:
-            if (color == color_) return std::nullopt;
+            if (settings.sweep && now_ms - sweep_ms_ >= 5000) {
+                sweep_ = sweep_ % static_cast<int>(Kinds(settings).size()) + 1;
+            } else if (color == color_) {
+                return std::nullopt;
+            }
             step_ = Step::paint;
             found_i_ = 0;
+            pk_ = 0;
             paint_color_ = color;
             break;
         }
@@ -569,7 +615,10 @@ std::string Cloth::Done(std::uint64_t result, const ClothSettings& settings) {
     }
     case Step::paint:
         found_[found_i_].painted = true;
-        ++found_i_;
+        if (++pk_ >= Kinds(settings).size()) {
+            pk_ = 0;
+            ++found_i_;
+        }
         return "";
     default:
         return "";

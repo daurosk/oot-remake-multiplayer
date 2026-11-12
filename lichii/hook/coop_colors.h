@@ -166,6 +166,9 @@ struct ClothSettings {
     std::string param = "ns_param_color0";
     float lighten = 0.55f;   // how far the light shade goes toward white
     bool probe = false;      // LICHII_COOP_DEBUG_COLOR: log every colour parameter found
+    // LICHII_COOP_COLOR_SWEEP: debug, every 5 s the next of ns_param_color1 to 5 takes the
+    // colour on the strong materials and the others go back to white (finds the one shown).
+    bool sweep = false;
     static ClothSettings FromEnvironment();
 };
 // Other materials the probe looks at (not painted).
@@ -201,7 +204,7 @@ public:
     std::optional<ClothCall> Next(CoopPuppet::Guest& guest, std::uint64_t main_base,
                                   std::uint64_t actor, std::uint32_t color,
                                   const ClothSettings& settings, std::uint64_t scratch,
-                                  std::string& line);
+                                  std::string& line, std::uint64_t now_ms = 0);
     // The call's x0. Returns a log line when a pass ends, "" otherwise.
     std::string Done(std::uint64_t result, const ClothSettings& settings);
     bool Waiting() const { return waiting_; }
@@ -231,6 +234,10 @@ private:
     std::vector<Found> found_;
     std::size_t unit_i_ = 0, name_i_ = 0, found_i_ = 0, param_i_ = 0;
     std::uint32_t paint_color_ = 0;
+    std::size_t pk_ = 0;          // the parameter (ParamNames index) being painted
+    int sweep_ = 1;
+    std::uint64_t sweep_ms_ = 0;
+    std::vector<std::size_t> Kinds(const ClothSettings& settings) const;
     bool waiting_ = false;
 };
 

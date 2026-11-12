@@ -536,7 +536,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             return c;
         }
         if (cloth_on_ && t->color) {
-            if (auto c = Cloth(slot, guest, *t->color)) {
+            if (auto c = Cloth(slot, guest, *t->color, now_ms)) {
                 return c;
             }
         }
@@ -1121,9 +1121,9 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
 // (+0x358/+0x364), which the actor's calc applies over +0x31c. With the
 // debug anim log, once a second, what the game left there since the last
 // write, so a writer that undoes ours shows up.
-std::optional<Call> Director::Cloth(Slot& slot, Guest& guest, std::uint32_t color) {
+std::optional<Call> Director::Cloth(Slot& slot, Guest& guest, std::uint32_t color, std::uint64_t now_ms) {
     std::string line;
-    const auto next = slot.cloth.Next(guest, input_.main_base, slot.actor, color, cloth_, slot.block == 0 ? 0 : slot.block + block::kCloth, line);
+    const auto next = slot.cloth.Next(guest, input_.main_base, slot.actor, color, cloth_, slot.block == 0 ? 0 : slot.block + block::kCloth, line, now_ms);
     if (!line.empty()) {
         Say("P" + std::to_string(slot.number) + " " + line + ", puppet " + Hex(slot.actor));
     }

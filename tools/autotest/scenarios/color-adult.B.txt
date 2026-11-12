@@ -19,5 +19,5 @@ stick 0 0.3 8           # turn to face up the path
 press ZL                # camera behind B
 wait 60
 mark ready
-wait 900
+wait 2700               # long enough for a colour sweep (LICHII_COOP_COLOR_SWEEP, 5 s a step)
 mark end

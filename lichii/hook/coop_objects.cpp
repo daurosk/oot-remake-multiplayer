@@ -92,6 +92,8 @@
 #include <atomic>
 #include <unordered_map>
 #include "coop_world.h"
+#include "coop_scrubs.h"
+#include <set>
 
 namespace CoopObjects {
 void NoteBosses(const std::vector<Seen>& seen);  // issue 109, below
@@ -135,6 +137,29 @@ constexpr unsigned kGrassCallerOrder = 40;  // the others' field grass cuts (coo
 CoopWorld::GrassSync& TheGrass() {
     static CoopWorld::GrassSync grass;
     return grass;
+}
+
+// Issue 149 (coop_scrubs.h): the Scrub Brothers' hits. The present thread
+// looks and receives, the calc thread's cave gives the others' hits.
+constexpr int kScrubsCallerOrder = 62;
+
+std::string EnvText(const char* name);  // below EnvOn  // after the live events (60) and the teleport's (61)
+
+struct ScrubsBox {
+    std::mutex mutex;
+    CoopScrubs::Puzzle puzzle{HitAnimations()};
+    u64 main = 0;  // the game's main, for the cave
+
+    static std::set<std::string> HitAnimations() {
+        const std::string names = EnvText("LICHII_COOP_SCRUB_HIT_ANIMS");
+        auto parsed = CoopScrubs::ParseAnimations(names);
+        return parsed.empty() ? CoopScrubs::DefaultHitAnimations() : parsed;
+    }
+};
+
+ScrubsBox& TheScrubs() {
+    static ScrubsBox box;
+    return box;
 }
 
 u64 SteadyNowMs() {
@@ -295,6 +320,23 @@ bool EnvOn(const char* name) {
 #else
     const char* value = std::getenv(name);
     return value == nullptr || std::string_view(value) != "0";
+#endif
+}
+
+// Unset: empty.
+std::string EnvText(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return {};
+    }
+    std::string text(value);
+    std::free(value);
+    return text;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string() : std::string(value);
 #endif
 }
 
@@ -959,6 +1001,22 @@ public:
                                       std::uint64_t result, std::uint64_t now_ms) {
                                        return TheGrass().Step(guest, after_call, result, now_ms);
                                    });
+                // Issue 149: another player's hit on a Scrub Brother, given to our manager.
+                CoopSvc::AddCaller(kScrubsCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                      std::uint64_t) -> std::optional<CoopPuppet::Call> {
+                                       ScrubsBox& box = TheScrubs();
+                                       std::lock_guard lock(box.mutex);
+                                       if (box.main == 0) {
+                                           return std::nullopt;
+                                       }
+                                       auto call = box.puzzle.Step(guest, after_call, result, box.main,
+                                                                   CoopEvery::NowUs());
+                                       for (const auto& line : box.puzzle.TakeNotes()) {
+                                           LOG_INFO(Core, "coop: {}", line);
+                                       }
+                                       return call;
+                                   });
                 return true;
             }();
             (void)registered;
@@ -1077,7 +1135,23 @@ public:
                     LOG_INFO(Core, "coop: {}", note);
                 }
             }
-        }        // Field grass (docs/world.md): our new cuts go out, the others' are
+        }
+        if (scrubs_on_) {  // issue 149: our hits on the Scrub Brothers go out
+            CoopScrubs::Puzzle::Out out;
+            {
+                ScrubsBox& box = TheScrubs();
+                std::lock_guard lock(box.mutex);
+                box.main = main_;
+                box.puzzle.Look(*scene, scrubs_seen_, player_, CoopEvery::NowUs(), out);
+            }
+            for (auto& h : out.send) {
+                send.emplace_back(std::move(h));
+            }
+            for (const auto& line : out.notes) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
+        // Field grass (docs/world.md): our new cuts go out, the others' are
         // made at the svc cave.
         for (auto& cut : TheGrass().Look([&r](u64 address) { return r.Get<u64>(address); }, main_,
                                          *scene, SteadyNowMs())) {
@@ -1306,6 +1380,15 @@ public:
                      g->radius);
             TheGrass().Receive(*g);
             return;
+        } else if (const auto* sh = std::get_if<coop::protocol::WorldHit>(&m);
+                   sh != nullptr && scrubs_on_ && CoopScrubs::FindBrother(sh->hash) != nullptr) {
+            ScrubsBox& box = TheScrubs();  // issue 149: a Scrub Brother hit in another game
+            std::lock_guard lock(box.mutex);
+            box.puzzle.Receive(*sh, CoopEvery::NowUs());
+            for (const auto& line : box.puzzle.TakeNotes()) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+            return;
         } else if (std::holds_alternative<coop::protocol::WorldBreak>(m) ||
                    std::holds_alternative<coop::protocol::WorldPlace>(m) ||
                    std::holds_alternative<coop::protocol::WorldHit>(m) ||
@@ -1330,6 +1413,8 @@ public:
     CoopWorld::GimmickProbe gimmick_probe_;  // LICHII_COOP_GIMMICK_PROBE=1 turns it on
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
+    bool scrubs_on_ = true;  // LICHII_COOP_SCRUBS=0 turns it off (issue 149)
+    std::vector<CoopScrubs::Seen> scrubs_seen_;
     bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
     CoopOcarina::OcarinaProbe ocarina_probe_;
     u64 our_link_ = 0;                        // our Link's actor, from the last walk
@@ -1411,6 +1496,12 @@ private:
             names_.clear();
             sync_.Reset();
             world_.Reset();
+            {
+                ScrubsBox& box = TheScrubs();  // a new game run: its block is gone
+                std::lock_guard lock(box.mutex);
+                box.puzzle = CoopScrubs::Puzzle(ScrubsBox::HitAnimations());
+                box.main = 0;
+            }
             LOG_INFO(Core, "coop: objects: main at {:#x}", main_);
         }
         return true;
@@ -1420,6 +1511,7 @@ private:
     // the list changed under us (try the next frame).
     bool Collect(Reader& r, std::vector<Seen>& out) {
         gimmicks_.clear();  // dungeon gimmicks for the probe
+        scrubs_seen_.clear();  // issue 149
         std::vector<u64> actors;
         if (!List(r, actors)) {
             return false;
@@ -1489,6 +1581,20 @@ private:
                                  max, *raised);
                     }
                 }
+            }
+            if (scrubs_on_ && (CoopScrubs::FindBrother(known.second) != nullptr ||
+                               CoopScrubs::IsManager(known.second))) {
+                CoopScrubs::Seen sc;  // issue 149: the Scrub Brothers and their manager
+                sc.address = a;
+                sc.hash = known.second;
+                sc.id = r.Get<u32>(a + CoopScrubs::addr::kTransceiverId).value_or(0);
+                if (const auto anim = Animation(r, a)) {
+                    sc.animation = anim->name;
+                }
+                for (std::size_t i = 0; i < 3; ++i) {
+                    sc.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                scrubs_seen_.push_back(std::move(sc));
             }
             if (gimmick_probe_on_ && CoopWorld::IsGimmick(known.first)) {
                 CoopWorld::GimmickProbe::Gimmick g;
@@ -2054,6 +2160,7 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        objects.scrubs_on_ = EnvOn("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
         objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a

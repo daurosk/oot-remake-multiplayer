@@ -2,7 +2,6 @@
 # npc-anim (issue 200): A runs an event in Kakariko (reads the signpost, as cutscene.A.txt) and
 # holds the text open about 12 s; B stands a few metres away outside it (npc-anim.B.txt).
 # Run: tools\autotest\run.ps1 -Scenario npc-anim (the header adds LICHII_COOP_DEBUG_NPC=1).
-un.ps1 -Scenario npc-anim (the header adds LICHII_COOP_DEBUG_NPC=1).
 # Expect in A's log while reading: "coop: npc-anim: our Link is in an event: N NPCs near it are ours now"
 # (N > 0 when a townsperson is within 30 m), then "the event's NPCs are free again" ~2 s after the text closes.
 # In B's log: "coop: npc-anim: <Npc_...> copied from P1 at x y z plays '<anim>' frame f" for those NPCs,

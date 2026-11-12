@@ -2958,9 +2958,9 @@ TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the e
     Tick(sync, 0, {npc});
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 2);
-    CHECK(sync.OwnerAt(0x100) == 2);
     sync.SetEvent(true);
-    Tick(sync, 100 * kMs, {npc});
+    Tick(sync, 100 * kMs, {npc});  // applies the OBJECT_OWNER too
+    CHECK(sync.OwnerAt(0x100) == 2);
     CHECK(sync.EventNpc(0x100, 100 * kMs));
     CHECK(sync.EventNpcs(100 * kMs) == 1);
     sync.SetEvent(false);

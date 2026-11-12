@@ -274,3 +274,12 @@ TEST_CASE("hookshot: on Linux the window's keys, typed text and mouse reach co-o
     CHECK(patch.find("+    api.key_down = bridge_key_down;") != std::string::npos);
 }
 
+
+TEST_CASE("hookshot: the voice header in patch 0009 is hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0009-coop-voice.patch");
+    CHECK(NewFile(patch, "host/hos_coop_voice.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_voice.h"));
+    // The mixer's hunk and the module's exports it looks for.
+    CHECK(patch.find("hos_coop_voice_mix(ch, vn, FRAME);") != std::string::npos);
+    CHECK(patch.find("\"hos_coop_voice_attach\"") != std::string::npos);
+    CHECK(patch.find("\"hos_coop_voice_render\"") != std::string::npos);
+}

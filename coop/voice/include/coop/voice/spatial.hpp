@@ -27,6 +27,9 @@ struct SpatialConfig {
   float range_m = 30.0f;  // silent from here
   float fade_m = 6.0f;    // the last stretch before range_m fades to 0
   float min_cutoff_hz = 2500.0f;  // the low-pass at range_m (none up close)
+  // False when the listener's facing is not known (no camera): every voice
+  // in the middle, loudness and dullness by distance only.
+  bool pan = true;
 };
 
 struct Placement {

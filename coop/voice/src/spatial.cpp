@@ -47,7 +47,7 @@ Placement place(const Listener& listener, const Vec3& source, const SpatialConfi
   const float flat = std::sqrt(x * x + z * z);
   float pan = 0.0f;    // -1 left, +1 right
   float front = 1.0f;  // 1 ahead, -1 behind
-  if (flat > 1e-4f) {
+  if (flat > 1e-4f && config.pan) {
     pan = x / flat;
     front = z / flat;
   }

@@ -99,6 +99,15 @@ TEST_CASE("voice placement: the listener from the camera's world-to-clip matrix"
   CHECK_FALSE(listener_from_clip(bad).has_value());
 }
 
+TEST_CASE("voice placement: with no facing known every voice is in the middle") {
+  SpatialConfig c;
+  c.pan = false;
+  const Placement p = place(Listener{}, {6, 0, 0}, c);
+  CHECK(p.left == doctest::Approx(p.right));
+  CHECK(p.rear_left == doctest::Approx(0.0f).scale(1.0));
+  CHECK(p.gain == doctest::Approx(0.5f));
+}
+
 TEST_CASE("voice placement: a Link's facing as the listener") {
   const Listener l = listener_at({0, 0, 0}, 3.14159265f / 2.0f);  // facing -x
   CHECK(l.forward[0] == doctest::Approx(-1.0f));

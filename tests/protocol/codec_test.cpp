@@ -1572,6 +1572,8 @@ TEST_CASE("player life: type 251, session channel, quarter hearts, both ways") {
   Bytes short_one = b;
   short_one.pop_back();
   CHECK(decode(short_one, back) != Error::none);
+}
+
 TEST_CASE("pvp messages: types 241 to 243, mode on the session channel, hits and hurts on ownership") {
   CHECK(static_cast<int>(MessageType::pvp_mode) == 241);
   CHECK(static_cast<int>(MessageType::pvp_hit) == 242);

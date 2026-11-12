@@ -66,6 +66,7 @@
 #include "coop_every.h"
 #include "coop_dungeon.h"
 #include "coop_story.h"
+#include "coop_quests.h"
 #include "coop_live_events.h"
 #include "coop_objects.h"
 #include "coop_pose.h"
@@ -249,6 +250,7 @@ public:
         session.shared = LoadShared(flag_error);
         if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md
         if (flag_error.empty()) CoopStory::AddShared(session.shared);  // docs/flags.md, "Story and cutscenes"
+        if (flag_error.empty()) CoopQuests::AddShared(session.shared);  // docs/flags.md, "Threads of Time"
         if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
@@ -417,7 +419,15 @@ public:
         // gimmick's played event, or the Forest Temple corridor, waits while
         // our Link is in that dungeon; written when we are out or loading.
         std::optional<coop::host::HoldFlagStore> hold;
+        // Issue 193: the Threads of Time quests, ordered (coop_quests.h).
+        std::optional<CoopQuests::Store> quests;
         if (store) {
+            quests.emplace(
+                *store,
+                [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_enum(hash); },
+                [&memory](std::uint32_t hash, std::uint32_t value) {
+                    return coop::host::GameFlags::set_enum(*memory, hash, value);
+                });
             // Released only after a real load (0.5 s without Link), not on one
             // frame the reader missed; the scene as last read. Timed, not
             // counted in presents: high refresh (Ctrl+U) presents up to 2.75
@@ -433,9 +443,12 @@ public:
             const bool link = !no_link_since_ || view.at - *no_link_since_ < kHoldRelease;
             const std::optional<std::string> scene =
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
-            hold.emplace(*store, [link, scene](coop::protocol::FlagKey key) {
+            hold.emplace(*quests, [link, scene](coop::protocol::FlagKey key) {
                 if (!link || !scene || key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
+                }
+                if (CoopQuests::Find(key.hash) != nullptr) {
+                    return CoopDungeon::IsDungeonScene(*scene);  // a quest step waits outside dungeons
                 }
                 const auto in = CoopDungeon::HeldIn(key.hash);
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);

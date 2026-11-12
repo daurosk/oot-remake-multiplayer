@@ -61,6 +61,9 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x1330a253u, Kind::scene, "HavePlayedEvent.Dm_FairyFountain_Courage"},
     {0x13e870d1u, Kind::scene, "HavePlayedEvent.GoTo_DeathMountainCrater"},
     {0x13f3c149u, Kind::scene, "HavePlayedEvent.Dm_HrlField_0073"},
+    // Issue 193: the Threads of Time tab is masked until this is set, and only
+    // the owl's Goto_HyruleCastle event (Dm_HrlField_0010, shared) sets it.
+    {0x1450c74fu, Kind::scene, "UI_IsFinishChallengeMenuOpenEvent"},
     {0x14b2d7bcu, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_10"},
     {0x14d6db1eu, Kind::scene, "HavePlayedEvent.Dm_LostWood_0000"},
     {0x16f7f759u, Kind::scene, "HavePlayedEvent.Dm_Kakariko_0050"},

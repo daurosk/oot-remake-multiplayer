@@ -1,0 +1,39 @@
+# deku-map-both: B, the same steps as A at the same chest (header in A).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 5.45 108.9 6.15
+wait 240
+toward 6.51 7.25 10       # face the chest
+mark placed
+press A
+wait 60
+press A
+wait 60
+press A
+wait 600                  # the get scene
+press A
+wait 120
+press A
+wait 120
+press B
+wait 600
+mark opened
+press PLUS
+wait 180
+press R                   # to the map page (if PLUS opens on another page)
+wait 180
+mark map
+press PLUS
+wait 300
+mark end

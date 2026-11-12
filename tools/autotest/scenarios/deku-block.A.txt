@@ -8,6 +8,9 @@
 #  - A: "world: 7155a64297e96d5a Obj_MovableBox_A_01 moved here: sending", then "at rest: place sent".
 #  - B: "... moved by another player", ~0.5 s after the rest "came to rest where another player
 #    left it; its base anchor is put there too" and "old rest x y z -> x y z: N places rewritten".
+#  - B (world-objects-2): "push node <address>: 2 of its places moved to the new rest: node+0xfc
+#    node+0x108" (the AI node keeps where the next push starts; docs/world.md "the push node").
+#    "push node not found" = the pointer walk missed it: FAIL of that part, report the line.
 #  - B's pushes ("b-push1", "b-push2"): the block moves on from where A left it in both games, no
 #    snap of B's Link or the block back to the start (shots "b-push1", "b-push2", "end"; B's log
 #    "moved here: sending" from the new place; A "moved by another player" and its own "old rest").

@@ -1085,6 +1085,32 @@ public:
             // Issue 147: a block another game moved rests here now; its own
             // memory's old rest place gets the new one.
             for (const auto& fix : block_fixes_) {
+                // world-objects-2: the block's push node (known fields,
+                // found by its vtables and owner): on unless
+                // LICHII_COOP_BLOCK_NODE=0.
+                static const bool node_on = EnvOn("LICHII_COOP_BLOCK_NODE");
+                if (node_on) {
+                    const auto node = CoopWorld::FindBlockNode(
+                        [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
+                    if (!node) {
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node not found: its next push may "
+                                       "start from the old place",
+                                 fix.hash, fix.name);
+                    } else {
+                        const auto words = CoopWorld::NodeRestWords(
+                            [&r](u64 address) { return r.Get<u64>(address); }, *node, fix.from, fix.to);
+                        for (const auto& w : words.writes) {
+                            memory_->Write32(w.address, w.value);
+                        }
+                        std::string at;
+                        for (const auto& w : words.where) {
+                            at += " " + w;
+                        }
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: {} of its places moved to "
+                                       "the new rest{}{}",
+                                 fix.hash, fix.name, *node, words.where.size(), at.empty() ? "" : ":", at);
+                    }
+                }
                 const auto scan = CoopWorld::RestWords(
                     [&r](u64 address) { return r.Get<u64>(address); }, fix.address, fix.from,
                     fix.to);

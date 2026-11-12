@@ -1,0 +1,56 @@
+# deku-map-both (world-objects-2, #146): both players open the Deku Tree map chest at about the
+# same time, each in their own game, and both keep the map. Map chest Obj_TBox_A_02
+# 0x771092ae2f3b7100 (Banc hash 8579518566955184384) at 6.51 108.40 7.25 in the entrance room,
+# Item_Dungeon_Map, get event InsideTheDekuTree_GetMap; its front is taken as -x -z (turn
+# -0.77 with x and z flipped), so both stand at 5.45 108.9 6.15. If the "placed" shot shows Link
+# behind the chest, use 7.57 108.9 8.35 in both files.
+# The map flag DungeonInfo.InsideTheDekuTree.IsGetMap 0x89787395 is watched in both.
+# Expect: one or both "Obj_TBox_A_02 0x771092ae2f3b7100" open lines (or B's "opened in another
+# game" and the chest removed); bool 0x89787395 "0 -> 1" in both and never a later "1 -> 0"
+# that stays; if a game cleared it, "(dungeon map or compass) went back to 0 here: put back to 1"
+# (map-lost's fix; that is a PASS, note it in #146). Shots "map" (both): the pause screen's map
+# page shows the Deku Tree map, not "Unavailable right now".
+# The reload part of #146 (map still there after loading the save) is not here: check it by hand
+# (save in both, load, pause map) or with the host-save-load steps.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 5.45 108.9 6.15
+wait 240
+toward 6.51 7.25 10       # face the chest
+mark placed
+press A
+wait 60
+press A
+wait 60
+press A
+wait 600                  # the get scene
+press A
+wait 120
+press A
+wait 120
+press B
+wait 600
+mark opened
+press PLUS
+wait 180
+press R                   # to the map page (if PLUS opens on another page)
+wait 180
+mark map
+press PLUS
+wait 300
+mark end

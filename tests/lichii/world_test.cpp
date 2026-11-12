@@ -2344,3 +2344,71 @@ TEST_CASE("world: RestWords skips exact zeros and finds a place ending on a regi
     REQUIRE(scan.where.size() == 1);
     CHECK(scan.where[0] == "c+0x10+0x1f4");
 }
+
+namespace {
+
+// The block's push node (ExecuteMovableBoxControl), as the game lays it out:
+// both vtables, owner chain [[[node+8]+8]+0x1f0] = actor, reached from a
+// component through one more object.
+constexpr std::uint64_t kNodeMain = 0x0080004000, kNodeHolder = 0x2100600000, kNode = 0x2100700000,
+                        kNodeCtx = 0x2100800000, kNodeAi = 0x2100900000;
+void BlockNodeMemory(FakeGame& g) {
+    BlockMemory(g);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kNodeHolder + a, 0);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kNode + a, 0);
+    for (std::uint64_t a = 0; a < 0x200; a += 8) g.Word(kNodeAi + a, 0);
+    g.Word(kBlockComp + 0x38, kNodeHolder);  // component -> holder -> node
+    g.Word(kNodeHolder + 0x10, kNode);
+    g.Word(kNode, kNodeMain + CoopWorld::BlockNode::kVtable);
+    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
+    g.Word(kNode + 8, kNodeCtx);
+    g.Word(kNodeCtx + 8, kNodeAi);
+    g.Word(kNodeAi + 0x1f0, kBlockActor);
+}
+
+} // namespace
+
+TEST_CASE("world: the block's push node is found by its vtables and owner (issue 147)") {
+    FakeGame g;
+    BlockNodeMemory(g);
+    const auto node = CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain);
+    REQUIRE(node);
+    CHECK(*node == kNode);
+    // Another block's node (owner is not this actor): not taken.
+    g.Word(kNodeAi + 0x1f0, kBlockActor + 0x1000);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
+    g.Word(kNodeAi + 0x1f0, kBlockActor);
+    // Only the first vtable right: not taken.
+    g.Word(kNode + 0x20, 0);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
+    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
+    // Another main: not taken.
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain + 0x1000));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, 0));
+}
+
+TEST_CASE("world: a followed push puts the new rest in the push node's target and start (issue 147)") {
+    FakeGame g;
+    BlockNodeMemory(g);
+    const proto::Vec3 from{-51.06f, 79.27f, 47.1f}, to{-51.06f, 79.27f, 45.6f};
+    PutFloats(g, kNode + CoopWorld::BlockNode::kBase, {-51.06f, 79.27f, 47.1f});  // grid base
+    PutFloats(g, kNode + CoopWorld::BlockNode::kGoal, {-51.06f, 79.27f, 42.6f});  // the answer
+    PutFloats(g, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 47.1f});
+    PutFloats(g, kNode + CoopWorld::BlockNode::kStart, {-51.07f, 79.27f, 47.11f});
+    const auto words = CoopWorld::NodeRestWords(g.Reader(), kNode, from, to);
+    REQUIRE(words.where.size() == 2);
+    CHECK(words.where[0] == "node+0xfc");
+    CHECK(words.where[1] == "node+0x108");
+    REQUIRE(words.writes.size() == 6);
+    for (const auto& w : words.writes) {
+        g.Put(w.address, &w.value, 4);
+    }
+    CHECK(FloatAt(g, kNode + 0xfc + 8) == 45.6f);
+    CHECK(FloatAt(g, kNode + 0x108) == -51.06f);
+    CHECK(FloatAt(g, kNode + 0x108 + 8) == 45.6f);
+    CHECK(FloatAt(g, kNode + 0x40 + 8) == 47.1f);  // base left alone
+    CHECK(FloatAt(g, kNode + 0x4c + 8) == 42.6f);  // goal left alone
+    // Already at the new place, or a move under 5 cm: nothing.
+    CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, from, to).writes.empty());
+    CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, to, {-51.06f, 79.27f, 45.62f}).writes.empty());
+}

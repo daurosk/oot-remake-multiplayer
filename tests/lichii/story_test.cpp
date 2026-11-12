@@ -224,3 +224,17 @@ TEST_CASE("story: the host's save load decides, also back to a wall (FLAG_RESET)
     CHECK(guest.get(wall) == 1);
     CHECK(guest.get(saria) == 0);
 }
+
+TEST_CASE("story: the Kakariko guard's gate and the letter scene are shared (issue 171)") {
+    // The guard's flow Npc_Hylia_Soldier_003 and the letter scene Dm_Kakariko_0010
+    // set Npc_Hylia_Soldier_003_GateOpen (romfs Event/EventFlow); the scene's
+    // own played flag goes with it, so the other game neither keeps the gate
+    // shut nor plays the scene again (its letter is already gone: shared item).
+    for (const char* name : {"Npc_Hylia_Soldier_003_GateOpen", "HavePlayedEvent.Dm_Kakariko_0010"}) {
+        INFO(name);
+        const auto* f = CoopStory::Find(host::flag_hash(name));
+        REQUIRE(f != nullptr);
+        CHECK(std::string(f->name) == name);
+    }
+    CHECK(host::flag_hash("Npc_Hylia_Soldier_003_GateOpen") == 0x19898d14u);
+}

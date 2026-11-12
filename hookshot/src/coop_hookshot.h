@@ -2,6 +2,7 @@
 // hookshot_coop.dll's exports (hos_coop_api.h) and what is behind them.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -26,6 +27,17 @@ void Frame(void* ctx, int site);
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits);
 // hos_coop_stop: CoopHook::Shutdown.
 void Stop();
+
+// The table's size in the first version, before pad_buttons: a Hookshot
+// built from an older patch gives this much, and co-op still runs on it.
+inline constexpr std::size_t kFirstApiSize = offsetof(HosCoopApi, pad_buttons);
+
+// The table has pad_buttons (player 1's buttons word, Ocarina notes sent).
+inline bool HasPadButtons(const HosCoopApi* api) {
+    return api != nullptr &&
+           api->size >= offsetof(HosCoopApi, pad_buttons) + sizeof(api->pad_buttons) &&
+           api->pad_buttons != nullptr;
+}
 
 // Whether co-op knows the game whose main has this build id (hex, 16 or more
 // digits; Hookshot gives 32).

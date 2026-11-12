@@ -40,6 +40,10 @@ typedef struct HosCoopApi {
        no function at that address. *x0 = what it returned. */
     int (*call)(void *ctx, const HosCoopCall *call, uint64_t *x0);
     void (*log)(const char *line);   /* one line into hookshot_log.txt */
+    /* Added after the first version (check size covers it): the buttons word the game was last given for player 1
+       (Switch NpadButton bits, as nn::hid::GetNpadStates hands them, note keys included while the game waits for a
+       note), any thread. */
+    uint64_t (*pad_buttons)(void);
 } HosCoopApi;
 
 /* The module's exports (extern "C"). */

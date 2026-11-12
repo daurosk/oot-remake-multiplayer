@@ -109,3 +109,32 @@ TEST_CASE("hookshot: test commands come from the driver's file, the pad stays th
     const std::string driver = ReadFile(kRepo / "tools" / "autotest" / "hookshot.py");
     CHECK(driver.find("LICHII_COOP_TEST_COMMANDS") != std::string::npos);
 }
+
+namespace {
+std::uint64_t TestPad() {
+    return 0xC5;  // A, X, Y, L, R
+}
+}  // namespace
+
+TEST_CASE("hookshot: own Ocarina notes read the pad word Hookshot gave the game (issue 152)") {
+    // The table: an older bridge (no pad_buttons) still starts co-op, without notes.
+    HosCoopApi api{};
+    api.version = HOS_COOP_API_VERSION;
+    api.size = static_cast<std::uint32_t>(CoopHookshot::kFirstApiSize);
+    CHECK_FALSE(CoopHookshot::HasPadButtons(&api));
+    api.size = sizeof api;
+    CHECK_FALSE(CoopHookshot::HasPadButtons(&api));  // no function
+    api.pad_buttons = TestPad;
+    CHECK(CoopHookshot::HasPadButtons(&api));
+    CHECK_FALSE(CoopHookshot::HasPadButtons(nullptr));
+    // The patch keeps the word nn::hid gives the game and hands it over.
+    const std::string patch = Patch();
+    CHECK(patch.find("+volatile uint64_t hos_coop_pad;") != std::string::npos);
+    CHECK(patch.find("+    if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);") != std::string::npos);
+    CHECK(patch.find("+        G64(e + 8) = word;") != std::string::npos);
+    CHECK(patch.find("+    api.pad_buttons = bridge_pad_buttons;") != std::string::npos);
+    // The hook asks for it on Hookshot instead of sending nothing.
+    const std::string sound = ReadFile(kRepo / "lichii" / "hook" / "coop_ocarina_sound.cpp");
+    CHECK(sound.find("CoopRuntime::PadButtons(buttons)") != std::string::npos);
+    CHECK(sound.find("so our own notes are not sent") == std::string::npos);
+}

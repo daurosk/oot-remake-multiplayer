@@ -22,5 +22,9 @@ bool Read(std::uint64_t address, void* out, std::size_t size);
 bool Write(std::uint64_t address, const void* in, std::size_t size);
 bool Cas32(std::uint64_t address, std::uint32_t expected, std::uint32_t desired, std::uint32_t& seen);
 void Log(const std::string& line);
+// Player 1's buttons as the game last got them (Switch NpadButton bits, the
+// emulator's GetNpadButtons().raw). False when Hookshot's bridge is older
+// than HosCoopApi::pad_buttons.
+bool PadButtons(std::uint64_t& out);
 
 }  // namespace CoopRuntime

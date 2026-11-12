@@ -1,4 +1,4 @@
-From e61509dedc5bb9e14b7a5629f635ee32f894432b Mon Sep 17 00:00:00 2001
+From 63f3bb564581acf15b0886328c9ede05416ff549 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -7,24 +7,26 @@ Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
 nx2/coop_hooks.py hooks the frame function's two calls in moduleCalc_ and
 the AI's calc-bits call (build e0f3ccfa only, words checked); host/coop_bridge.c
 loads hookshot_coop.dll beside the game and gives it guest memory, game
-function calls and the log (host/hos_coop_api.h). From oot-remake-multiplayer
+function calls, the log and player 1's buttons as the game got them
+(host/hos_coop_api.h; host/nn_hid.c keeps that word). From oot-remake-multiplayer
 (GPL-3.0), docs/hookshot.md.
 ---
- host/coop_bridge.c  | 169 ++++++++++++++++++++++++++++++++++++++++++++
- host/hos_coop_api.h |  51 +++++++++++++
+ host/coop_bridge.c  | 172 ++++++++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_api.h |  55 ++++++++++++++
+ host/nn_hid.c       |   5 +-
  nx2/coop_hooks.py   |  61 ++++++++++++++++
  nx2/lift.py         |   2 +
- 4 files changed, 283 insertions(+)
+ 5 files changed, 294 insertions(+), 1 deletion(-)
  create mode 100644 host/coop_bridge.c
  create mode 100644 host/hos_coop_api.h
  create mode 100644 nx2/coop_hooks.py
 
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
 new file mode 100644
-index 00000000..d5c17813
+index 00000000..f001a391
 --- /dev/null
 +++ b/host/coop_bridge.c
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,172 @@
 +/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md): the bridge between the game and the co-op module.
 +
 +   nx2/coop_hooks.py puts two calls into the lifted game: hos_coop_frame at the frame function's two calls in moduleCalc_,
@@ -103,6 +105,8 @@ index 00000000..d5c17813
 +    return 1;
 +}
 +static void bridge_log(const char *line) { hos_log("%s", line ? line : ""); }
++extern volatile uint64_t hos_coop_pad;   /* nn_hid.c: the word npad_states gave the game */
++static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED); }
 +
 +static void at_exit(void) {
 +    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_stop) coop_stop();
@@ -170,6 +174,7 @@ index 00000000..d5c17813
 +    api.main_build_id = hos_main_build_id;
 +    api.game_dir = game_dir;
 +    api.read = bridge_read, api.write = bridge_write, api.cas32 = bridge_cas32, api.call = bridge_call, api.log = bridge_log;
++    api.pad_buttons = bridge_pad_buttons;
 +    if (!start(&api)) {
 +        hos_log("coop: the module stays off");
 +        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
@@ -196,10 +201,10 @@ index 00000000..d5c17813
 +}
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
 new file mode 100644
-index 00000000..8c0f6814
+index 00000000..01e96f10
 --- /dev/null
 +++ b/host/hos_coop_api.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,55 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   The co-op module's interface to Hookshot (oot-remake-multiplayer, docs/hookshot.md).
 +
@@ -242,6 +247,10 @@ index 00000000..8c0f6814
 +       no function at that address. *x0 = what it returned. */
 +    int (*call)(void *ctx, const HosCoopCall *call, uint64_t *x0);
 +    void (*log)(const char *line);   /* one line into hookshot_log.txt */
++    /* Added after the first version (check size covers it): the buttons word the game was last given for player 1
++       (Switch NpadButton bits, as nn::hid::GetNpadStates hands them, note keys included while the game waits for a
++       note), any thread. */
++    uint64_t (*pad_buttons)(void);
 +} HosCoopApi;
 +
 +/* The module's exports (extern "C"). */
@@ -251,6 +260,33 @@ index 00000000..8c0f6814
 +typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
 +
 +#endif
+diff --git a/host/nn_hid.c b/host/nn_hid.c
+index 43e312d2..9691d9bb 100644
+--- a/host/nn_hid.c
++++ b/host/nn_hid.c
+@@ -1041,6 +1041,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
+ 
+ static void vibration_send(uint64_t handle, uint64_t value);
+ volatile int64_t hos_hid_last_read;
++volatile uint64_t hos_coop_pad;   /* (oot-remake-multiplayer, coop_bridge.c: player 1's word as the game got it) */
+ 
+ /* GetNpadStates(State* out, int count, unsigned int const& npadId): the latest state first */
+ static void npad_states(Ctx *c) {
+@@ -1100,11 +1101,13 @@ static void npad_states(Ctx *c) {
+     uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
+     if (connected) buttons = hos_frame_step_buttons(buttons);
+     int64_t s = ++sampling;
++    const uint64_t word = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
++    if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
+     for (int i = 0; i < count; i++) {
+         uint64_t e = out + (uint64_t)i * STATE_SIZE;
+         memset(GP(e), 0, STATE_SIZE);
+         G64(e) = (uint64_t)(s - i);
+-        G64(e + 8) = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
++        G64(e + 8) = word;
+         memcpy(GP(e + 16), stick, 16);
+         G32(e + 32) = connected ? ATTR_CONNECTED : 0;
+     }
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 new file mode 100644
 index 00000000..a3aa4a38

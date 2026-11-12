@@ -142,6 +142,13 @@ void Log(const std::string& line) {
         g_api->log(line.c_str());
     }
 }
+bool PadButtons(std::uint64_t& out) {
+    if (!CoopHookshot::HasPadButtons(g_api)) {
+        return false;
+    }
+    out = g_api->pad_buttons();
+    return true;
+}
 }  // namespace CoopRuntime
 
 // The emulator-only parts of the hook, as Hookshot has them.
@@ -154,7 +161,7 @@ std::string Refusal() {
 namespace CoopHookshot {
 
 bool Start(const HosCoopApi* api) {
-    if (api == nullptr || api->version != HOS_COOP_API_VERSION || api->size < sizeof(HosCoopApi)) {
+    if (api == nullptr || api->version != HOS_COOP_API_VERSION || api->size < kFirstApiSize) {
         return false;
     }
     g_api = api;
@@ -164,7 +171,8 @@ bool Start(const HosCoopApi* api) {
         g_api = nullptr;
         return false;
     }
-    LOG_INFO(Core, "coop: Hookshot module, game build {}, main at {:#x}", g_build.substr(0, 16), api->main_base);
+    LOG_INFO(Core, "coop: Hookshot module, game build {}, main at {:#x}{}", g_build.substr(0, 16), api->main_base,
+             HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     if (!CoopHook::LoadSettings(ini, errors).enabled() || !errors.empty()) {

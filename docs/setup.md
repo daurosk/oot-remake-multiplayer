@@ -118,6 +118,16 @@ If it cannot update, it says why and how to update by hand: download the newest 
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
 
+## Check the download
+
+Optional. `Update.bat` checks every download against the SHA-256 published with the release, which proves the file arrived whole. Each release's zip and `Update.bat` are also signed: when the release is published, our release workflow on GitHub makes a signed record (an artifact attestation) of those exact files. To check that a zip you downloaded is the one the release published, install the [GitHub CLI](https://cli.github.com), run `gh auth login` once, and in the folder with the zip:
+
+```
+gh attestation verify oot-coop-<version>.zip --repo daurosk/oot-remake-multiplayer --signer-workflow daurosk/oot-remake-multiplayer/.github/workflows/release-attest.yml
+```
+
+It must say the verification succeeded. If it fails, do not use the zip, and tell us ([Reporting a problem](#reporting-a-problem)). From a copy of this repository, `tools\release\verify_kit.ps1 -Zip <zip>` does the same and also checks the `.sha256` beside it.
+
 ## Chat notices
 
 When another player's progress reaches your game, a line in the chat says so (only in your game, nothing is sent): "Tobi got the Fairy Slingshot - you got one too!", "Tobi found a Small Key (Deku Tree) - the group has 2", "Tobi got a Heart Container - your max health went up", "Tobi got the map (Deku Tree)", "Tobi learned Zelda's Lullaby", "Tobi got a Gold Skulltula token (12)", "Tobi opened a chest". Joining a session says one line ("Synced with the group: 14 items, 3 songs"), and so does the host loading a save. At most 4 lines in 3 seconds; the rest is one "...and N more" line. To turn them off, set `LICHII_COOP_NOTIFY=0`.

@@ -126,4 +126,48 @@ private:
     int lines_ = 0;
 };
 
+// Issue 152, the Ocarina in the puppet's hands. The hold probe (run
+// 20261111-192211, child Link) showed what the player's code changes while it
+// plays: in the Ocarina actor's first component block (its model bind), the
+// bone index at +0x13a goes from 0x133 (Pod_B, the belt) to 0x44 (a Weapon_
+// hand bone), the 3x4 offset matrix at +0x140 becomes identity, and the bone
+// name at +0x194 goes from "Pod_B" to "Weapon_...". The puppet's animation
+// does not do this, so while the puppet plays an Ocarina node this does it on
+// the puppet's own Ocarina (never the holder) and puts the saved words back
+// after. It writes only when the bind looks exactly like the belt one A had
+// (name "Pod_", bone 0x133); otherwise (an adult, another layout) it leaves
+// the Ocarina alone.
+class HandBind {
+public:
+    using ReadWord = std::function<std::optional<std::uint64_t>(std::uint64_t)>;
+    using WriteWord = std::function<bool(std::uint64_t, std::uint64_t)>;
+
+    static constexpr std::uint64_t kBindBone = 0x138;    // word; bone index in bits 16..31
+    static constexpr std::uint64_t kBindMatrix = 0x140;  // 12 floats, 6 words
+    static constexpr std::uint64_t kBindName = 0x190;    // word: 0x100, then the name
+    static constexpr std::uint32_t kMatrixWords = 6;
+    static constexpr std::uint64_t kBeltBone = 0x133;
+    static constexpr std::uint64_t kHandBone = 0x44;
+    static constexpr std::uint64_t kBeltName = 0x5f646f5000000100;  // 0x100, "Pod_"
+
+    // Whether a puppet animation (AS command) is an Ocarina one.
+    static bool Playing(std::string_view anim);
+    // The model bind block of the actor's Ocarina accessory, or 0.
+    static std::uint64_t Find(const ReadWord& read, std::uint64_t actor);
+
+    // Once a frame for one puppet. Returns a log line when it moves the
+    // Ocarina, puts it back or refuses ("" otherwise).
+    std::string Step(const ReadWord& read, const WriteWord& write, std::uint64_t actor,
+                     bool playing);
+    bool Held() const { return block_ != 0; }
+
+private:
+    void Restore(const WriteWord& write);
+    std::uint64_t actor_ = 0;
+    std::uint64_t block_ = 0;  // set while held
+    std::uint64_t saved_bone_ = 0;
+    std::uint64_t saved_matrix_[kMatrixWords] = {};
+    bool refused_ = false;     // logged once per play
+};
+
 } // namespace CoopOcarina

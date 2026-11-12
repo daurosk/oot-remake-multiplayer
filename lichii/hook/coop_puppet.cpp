@@ -267,6 +267,18 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     parked[1] -= kHideDrop;
                     Pose(slot, guest, parked, nullptr, now_ms);
                 }  // hold: left where it is
+                // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h).
+                const std::string hand = slot.ocarina_hand.Step(
+                    [&guest](std::uint64_t a) -> std::optional<std::uint64_t> {
+                        std::uint64_t w = 0;
+                        return guest.Read(a, &w, 8) ? std::optional<std::uint64_t>(w) : std::nullopt;
+                    },
+                    [&guest](std::uint64_t a, std::uint64_t w) { return guest.Write(a, &w, 8); },
+                    slot.actor,
+                    t->show != Show::hide && CoopOcarina::HandBind::Playing(slot.anim_name));
+                if (!hand.empty()) {
+                    Say("P" + std::to_string(slot.number) + " " + hand);
+                }
             }
             break;
         case Phase::deleting:

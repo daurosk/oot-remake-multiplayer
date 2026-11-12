@@ -209,6 +209,10 @@ std::vector<std::string> HoldProbe::Step(const ReadWord& read, std::uint64_t lin
             during_ = Take(read);
             place_during_ = Place(read, link);
             lines.push_back("ocarina hold probe: during " + place_during_);
+            if (regions_.size() > 2 && regions_[2].name == "ocaparts+0x0") {
+                const auto bone = ReadText(read, regions_[2].base + HandBind::kBindName + 4);
+                lines.push_back("ocarina hold probe: during bone '" + bone.value_or("?") + "'");
+            }
         }
         if (!playing) {
             phase_ = Phase::Away;
@@ -369,6 +373,114 @@ std::vector<std::string> OcarinaProbe::Look(const ReadWord& read, std::uint64_t 
         ++lines_;
     }
     return lines;
+}
+
+bool HandBind::Playing(std::string_view anim) {
+    return anim.find("Ocarina") != std::string_view::npos;
+}
+
+std::uint64_t HandBind::Find(const ReadWord& read, std::uint64_t actor) {
+    using H = HoldProbe;
+    const auto parts = read(actor + H::kParts);
+    const auto eu = parts && *parts ? read(*parts + H::kPartsEquipment) : std::nullopt;
+    if (!eu || *eu == 0) {
+        return 0;
+    }
+    for (std::uint32_t i = 0; i < H::kArmorLinkCount; ++i) {
+        const std::uint64_t at = *eu + H::kArmorLinks + H::kLinkStride * i;
+        const auto id = read(at + H::kLinkId);
+        const auto holder = read(at + H::kLinkHolder);
+        if (!id || (*id & 0xffffffffu) == 0xffffffffu || !holder || *holder == 0) {
+            continue;
+        }
+        const auto oca = read(*holder + H::kHolderActor);
+        const auto name_ptr = oca && *oca ? read(*oca + H::kActorName) : std::nullopt;
+        const auto name = name_ptr ? ReadText(read, *name_ptr) : std::nullopt;
+        if (!name || !name->starts_with("Item_Ocarina_") || name->ends_with("_Holder")) {
+            continue;
+        }
+        const auto table = read(*oca + H::kParts);
+        const auto block = table && *table ? read(*table) : std::nullopt;
+        return block && (*block & 7) == 0 ? *block : 0;
+    }
+    return 0;
+}
+
+void HandBind::Restore(const WriteWord& write) {
+    write(block_ + kBindBone, saved_bone_);
+    for (std::uint32_t i = 0; i < kMatrixWords; ++i) {
+        write(block_ + kBindMatrix + 8 * i, saved_matrix_[i]);
+    }
+    block_ = 0;
+}
+
+std::string HandBind::Step(const ReadWord& read, const WriteWord& write, std::uint64_t actor,
+                           bool playing) {
+    if (actor != actor_) {
+        block_ = 0;  // a new puppet: the old block is not ours to write
+        actor_ = actor;
+        refused_ = false;
+    }
+    if (actor == 0) {
+        return "";
+    }
+    if (!playing) {
+        refused_ = false;
+        if (block_ == 0) {
+            return "";
+        }
+        // Only put back what is still ours: the same Ocarina, still in hand.
+        const auto bone = read(block_ + kBindBone);
+        if (Find(read, actor) == block_ && bone && ((*bone >> 16) & 0xffff) == kHandBone) {
+            Restore(write);
+            return "ocarina back on the belt";
+        }
+        block_ = 0;
+        return "ocarina changed while held; left as it is";
+    }
+    bool just = false;
+    if (block_ == 0) {
+        if (refused_) {
+            return "";
+        }
+        const std::uint64_t block = Find(read, actor);
+        const auto bone = block ? read(block + kBindBone) : std::nullopt;
+        const auto name = block ? read(block + kBindName) : std::nullopt;
+        if (!bone || !name || *name != kBeltName || ((*bone >> 16) & 0xffff) != kBeltBone) {
+            refused_ = true;
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "ocarina not moved: bind 0x%llx bone 0x%llx name 0x%llx",
+                          static_cast<unsigned long long>(block),
+                          static_cast<unsigned long long>(bone.value_or(0)),
+                          static_cast<unsigned long long>(name.value_or(0)));
+            return buf;
+        }
+        for (std::uint32_t i = 0; i < kMatrixWords; ++i) {
+            const auto w = read(block + kBindMatrix + 8 * i);
+            if (!w) {
+                refused_ = true;
+                return "ocarina not moved: matrix unreadable";
+            }
+            saved_matrix_[i] = *w;
+        }
+        saved_bone_ = *bone;
+        block_ = block;
+        just = true;
+    }
+    // Every frame while playing, in case the game writes the belt back.
+    const auto bone = read(block_ + kBindBone);
+    if (!bone) {
+        block_ = 0;
+        return "ocarina bind unreadable; let go";
+    }
+    const std::uint64_t hand = (*bone & ~(0xffffull << 16)) | (kHandBone << 16);
+    static constexpr std::uint64_t kIdentity[kMatrixWords] = {
+        0x3f800000ull, 0, 0x3f800000ull << 32, 0, 0, 0x3f800000ull};
+    write(block_ + kBindBone, hand);
+    for (std::uint32_t i = 0; i < kMatrixWords; ++i) {
+        write(block_ + kBindMatrix + 8 * i, kIdentity[i]);
+    }
+    return just ? "ocarina to the hand" : "";
 }
 
 } // namespace CoopOcarina

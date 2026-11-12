@@ -184,3 +184,92 @@ TEST_CASE("ocarina hold probe: logs the words that change while playing and come
     CHECK(Has(lines, "1 words changed"));
     CHECK(probe.Step(m.Reader(), kLink, true, 9'000'000).empty());  // once per session
 }
+
+namespace {
+
+// The puppet's Ocarina (Belt() above) with its model bind on the belt, as A's
+// own Ocarina was in run 20261111-192211.
+constexpr std::uint64_t kBind = 0x3a000;
+constexpr std::uint64_t kBeltWord = 0x2101330000;
+constexpr std::uint64_t kBeltMatrix0 = 0xbf4c04abbf1522e0;
+
+Memory Puppet() {
+    using B = CoopOcarina::HandBind;
+    Memory m = Belt();
+    m.Put(kOcarinaParts, kBind);
+    m.Put(kBind + B::kBindBone, kBeltWord);
+    m.Put(kBind + B::kBindMatrix, kBeltMatrix0);
+    m.Put(kBind + B::kBindMatrix + 8, 0x3cf5c28fbe23822c);
+    m.Put(kBind + B::kBindName, B::kBeltName);
+    return m;
+}
+
+CoopOcarina::HandBind::WriteWord Writer(Memory& m) {
+    return [&m](std::uint64_t at, std::uint64_t w) {
+        m.words[at] = w;
+        return true;
+    };
+}
+
+} // namespace
+
+TEST_CASE("ocarina hand: an Ocarina animation is playing, others are not") {
+    using B = CoopOcarina::HandBind;
+    CHECK(B::Playing("Ocarina_Child_StartWait"));
+    CHECK(B::Playing("DemoOcarina"));
+    CHECK_FALSE(B::Playing("Wait"));
+    CHECK_FALSE(B::Playing(""));
+}
+
+TEST_CASE("ocarina hand: finds the Ocarina's bind, never the holder's") {
+    using B = CoopOcarina::HandBind;
+    Memory m = Puppet();
+    CHECK(B::Find(m.Reader(), kLink) == kBind);
+    m.PutName(0x13000, "Item_Ocarina_Fairy_Holder");
+    CHECK(B::Find(m.Reader(), kLink) == 0);
+}
+
+TEST_CASE("ocarina hand: to the hand while playing, back on the belt after") {
+    using B = CoopOcarina::HandBind;
+    B hand;
+    Memory m = Puppet();
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, false).empty());
+    CHECK(m.words[kBind + B::kBindBone] == kBeltWord);
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true) == "ocarina to the hand");
+    CHECK(m.words[kBind + B::kBindBone] == 0x2100440000);
+    CHECK(m.words[kBind + B::kBindMatrix] == 0x3f800000);
+    CHECK(m.words[kBind + B::kBindMatrix + 0x10] == 0x3f80000000000000);
+    CHECK(m.words[kBind + B::kBindMatrix + 0x28] == 0x3f800000);
+    // The game puts the belt back: written again, no new log line.
+    m.Put(kBind + B::kBindBone, kBeltWord);
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true).empty());
+    CHECK(m.words[kBind + B::kBindBone] == 0x2100440000);
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, false) == "ocarina back on the belt");
+    CHECK(m.words[kBind + B::kBindBone] == kBeltWord);
+    CHECK(m.words[kBind + B::kBindMatrix] == kBeltMatrix0);
+    CHECK(m.words[kBind + B::kBindName] == B::kBeltName);  // the name is never written
+    CHECK_FALSE(hand.Held());
+}
+
+TEST_CASE("ocarina hand: an unknown bind (adult, other layout) is left alone") {
+    using B = CoopOcarina::HandBind;
+    B hand;
+    Memory m = Puppet();
+    m.Put(kBind + B::kBindBone, 0x2100990000);  // not the child belt bone
+    const std::string line = hand.Step(m.Reader(), Writer(m), kLink, true);
+    CHECK(line.find("ocarina not moved") == 0);
+    CHECK(m.words[kBind + B::kBindBone] == 0x2100990000);
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true).empty());  // said once
+    CHECK_FALSE(hand.Held());
+}
+
+TEST_CASE("ocarina hand: a new puppet actor drops the old bind without writing it") {
+    using B = CoopOcarina::HandBind;
+    B hand;
+    Memory m = Puppet();
+    CHECK(hand.Step(m.Reader(), Writer(m), kLink, true) == "ocarina to the hand");
+    const auto before = m.words;
+    CHECK(hand.Step(m.Reader(), Writer(m), 0x99000, false).empty());
+    CHECK(m.words == before);
+    CHECK_FALSE(hand.Held());
+}

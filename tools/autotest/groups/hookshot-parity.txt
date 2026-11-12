@@ -78,3 +78,30 @@ hs-deku-torch  expect='B:our game started the event InsideTheDekuTree_Gimmick_Ca
 hs-deku-water-floor  expect='A:RoomG_WaterLevel.*0 -> 1'  expect='B:Obj_Deku_MoveFloor_A_01 moved by another player'  label="#196 water floor"
 hs-chest-other  expect='B:0x89787395.*0 -> 1'  expect='A:opened in another game, shows open here'  label="#195 map chest"
 hs-ocarina-given  expect='B:ocarina bool 0x[0-9a-f]+ 0 -> 1 for the held ocarina'  expect='B:ocarina probe: our Link plays the ocarina'  label="#190 Ocarina given back"
+
+[g8]
+# The emulator big run's scenarios on Hookshot as they are (no twin needed: plain A/B scripts) and the two steps-file
+# twins: puppets moving, riding, crawling, the HUD hearts. Pass lines: each scenario's header (and hs-crawl/hs-epona's).
+walk  label="walk (puppet follows)"
+hs-crawl  expect='A:coop: test warp done'  expect="B:(?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?!Wait)"  label="#86 crawl (twin of crawl)"
+hs-epona  expect='B:coop: ride: we ride Animal_Epona_Adult'  expect='A:coop: ride: P\d+ rides Animal_Epona_Adult'  expect='A:coop: spawn: CoopRide_Epona: create copy'  label="#199 Epona (twin of epona)"
+color-field  label="#202 colours in the field (adult)"
+hearts  label="HUD hearts (puppet life)"
+ocarina-hand  label="#152 ocarina in hand"
+spawn-seed  label="#166 seed copy held"
+
+[g9]
+# World and enemies on Hookshot as on the emulator: chest notice, drops, signs, Peahat, Stalchildren, scrubs, Navi.
+chest-notice  label="#195 chest notice"
+drops  label="#101 #102 enemy drops"
+sign  label="#90 sign cut live"
+peahat  label="#157 Peahat"
+stalchild  label="#124 Stalchildren (its own time switch: give it no switches=)"
+deku-scrubs  label="#149 Deku Scrub brothers"
+navi-room  label="#145 Navi per room"
+
+[g10]
+# Teleport, PvP and the gate on Hookshot as on the emulator.
+teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"
+kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"
+pvp  expect='A:coop: pvp: our sword reached P2'  label="PvP hits"

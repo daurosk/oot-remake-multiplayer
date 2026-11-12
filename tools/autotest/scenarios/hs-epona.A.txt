@@ -1,0 +1,70 @@
+# hs-epona (Hookshot): the twin of `epona`, whose checks live in epona.steps.txt (the emulator's
+# runner reads steps files; a Hookshot run plays the A/B scripts only). The steps file's header
+# lines are here, and its checks are the pass lines below: read them in hookshot_log-A/-B.txt.
+# The min=1 ones are also expect= lines in tools/autotest/groups/hookshot-parity.txt. A max=0 line
+# (nothing may match) cannot be an expect=: count those by hand (grep) when grading.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-epona  (emulator: -Scenario epona)
+# Checks (from the steps file: lines NAME GAME min|max=N REGEX):
+#   warped-A A min=1 coop: test warp done
+#   warped-B B min=1 coop: test warp done
+#   b-rides B min=1 coop: ride: we ride Animal_Epona_Adult
+#   b-got-off B min=1 coop: ride: we got off
+#   a-sees-ride A min=1 coop: ride: P\d+ rides Animal_Epona_Adult
+#   a-sees-off A min=1 coop: ride: P\d+ off the horse
+#   horse-made-A A min=1 coop: spawn: CoopRide_Epona: create copy
+#   a-never-hides A max=0 (?<!fairy )coop: puppet: P\d+ show -> (?:hide|hold)(?<=coop: ride: P\d+ rides [\s\S]*)(?=[\s\S]*coop: ride: P\d+ off the horse)
+# epona's own notes:
+# epona (issues 86, 199), checked by itself: both warp into Hyrule Field as adult (no save set up);
+# B gets on the field's Epona, rides, gets off; A watches (epona.A.txt / epona.B.txt).
+# Run: tools\autotest\run.ps1 -Scenario epona, after make-puppet-pack in both kits (CoopRide_Epona).
+# Shots "mounted", "riding", "riding2": B's puppet on a horse in A's window; "dismounted",
+# "walking": on foot, no copy horse. b-rides 0 = B never got on (place/press missed): INCONCLUSIVE.
+# horse-made-A counts the spawn of the copy (an old pack or a failed spawn FAILs it). a-never-hides
+# counts a hide or hold of the rider between "rides" and "off the horse" (riding keeps show).
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OBJECTS=1,LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
+# epona (issue 199), A: the watcher. Loads into Hyrule Field as adult like B (epona.B.txt) and
+# stands 10 m south of Epona, facing her, while B gets on, rides and gets off.
+# Before issue 199 B's puppet vanished here ("P2 show -> hide (riding)"). Now:
+# - A's log: "coop: ride: P2 rides Animal_Epona_Adult (horse copy CoopRide_Epona)" and the spawn
+#   director's "CoopRide_Epona: create copy" once B is on; "P2 off the horse (copy deleted)" after
+#   B gets off; no "P2 show -> hide (riding)". With LICHII_COOP_DEBUG_ANIM=1: "P2 plays 'Horse..."
+# - Shots: "mounted", "riding", "riding2": B's puppet on a horse in A's window, moving between
+#   riding and riding2 (two horses near the spot only before B rides off: the field's own Epona
+#   in A's game stays where she is). "dismounted", "walking": B's puppet on foot, no copy horse.
+# The kits' puppet pack must be made again (make-puppet-pack.cmd) to have CoopRide_Epona; an old
+# pack logs no create and shows B in the riding pose without a horse (the fallback).
+#! noload
+#! start coop: test warp done
+# (the A script's own switches LICHII_COOP_DEBUG_ANIM=1: the steps file's line above is the one the emulator ran with)
+mark start
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark field
+place -100.5 151.0 254.5 # 10 m south of Epona
+wait 240
+toward -100.47 264.55 6  # face her (and B)
+press ZL                 # camera behind A
+wait 120
+mark watching
+wait 300                 # B gets on
+mark mounted
+wait 120
+mark riding
+wait 120
+mark riding2
+wait 480                 # B stops and gets off
+mark dismounted
+wait 60
+mark walking
+wait 300
+mark end

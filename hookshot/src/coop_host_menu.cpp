@@ -218,6 +218,7 @@ void Menu::RunHost(HostJob job) {
         config.relay_via = job.relay_via;
         config.relay_key = job.relay_key;
         config.counts = false;  // the game's log need not have them every 5 s
+        config.log_invite = false;  // it holds the join password; the menu shows it
         config.log = [this](const std::string& text) { Say("coop: host: " + text); };
         coop::server::HostService host(config);
         std::string why;
@@ -366,7 +367,12 @@ void Menu::RunJoin(JoinJob job) {
         config.stun_servers = StunServers();
         config.game_port = hooks_.helper_port;
         config.direct_ms = hooks_.direct_ms;
-        config.log = [this](const std::string& text) { Say("coop: join: " + text); };
+        // The answer code goes to the menu (status.answer), not the log.
+        config.log = [this](const std::string& text) {
+            if (text.rfind("answer code: ", 0) != 0) {
+                Say("coop: join: " + text);
+            }
+        };
         nat::JoinHelper helper(config);
         std::string why;
         if (!helper.start(why)) {

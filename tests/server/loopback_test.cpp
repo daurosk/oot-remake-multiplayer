@@ -901,6 +901,7 @@ TEST_CASE("host service: a wrong password is refused") {
 TEST_CASE("host service: 16 real clients join over ENet, a 17th is told the server is full") {
   EnetLife enet;
   HostServiceConfig config = service_config(nullptr);
+  config.session.max_players = 16;
   config.max_connections = 20;
   HostService service(config);
   std::string why;

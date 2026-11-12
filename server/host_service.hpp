@@ -51,6 +51,10 @@ struct HostServiceConfig {
   bool stun_allow_private = false;    // tests: a STUN server on 127.0.0.1
   std::string relay_via;              // "" for none
   std::string relay_key;
+  // coop_server's window shows the invite code (the host copies it from
+  // there). The game's log must not have it: it holds the join password and
+  // logs are shared (collect-logs). false: the code is only in status().
+  bool log_invite = true;
   // Every line the service has to say, without a "coop_server: " head.
   std::function<void(const std::string&)> log;
   // Enemy counts and the like, at most every 5 s (coop_server's window

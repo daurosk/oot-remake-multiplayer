@@ -204,11 +204,15 @@ void HostService::finish_invite() {
     status_.problem = HostProblem::kNoInvite;
     return;
   }
-  say("invite code: " + *code);
-  say("invite: send the invite code to your friends; they paste it into Join.bat. It holds your internet address "
-      "and the join password, so send it only to friends. It stops working when this window closes, and changes "
-      "each time.");
-  say("invite: if a friend's Join.bat window shows an ANSWER CODE, paste it here (right-click) and press Enter.");
+  if (config_.log_invite) {
+    say("invite code: " + *code);
+    say("invite: send the invite code to your friends; they paste it into Join.bat. It holds your internet "
+        "address and the join password, so send it only to friends. It stops working when this window closes, "
+        "and changes each time.");
+    say("invite: if a friend's Join.bat window shows an ANSWER CODE, paste it here (right-click) and press Enter.");
+  } else {
+    say("invite: the invite code is made (not written here: it holds the join password)");
+  }
   const bool symmetric = rendezvous_->symmetric() && !mapping_;
   if (symmetric) {
     say("invite: note: your router gives every address its own port (symmetric NAT), so friends may not get "

@@ -275,6 +275,28 @@ TEST_CASE("host service: the invite code holds this server's address and the pas
   for (const auto& line : log) shown = shown || line == "invite code: " + status.invite;
   CHECK(shown);
 
+  // The game's log (log_invite false) never has the code or the password.
+  {
+    FakeStun stun2;
+    std::vector<std::string> quiet;
+    HostServiceConfig c2 = config;
+    c2.stun_servers = {stun2.address()};
+    c2.log_invite = false;
+    c2.log = [&quiet](const std::string& line) { quiet.push_back(line); };
+    HostService s2(c2);
+    REQUIRE(s2.start(why));
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!s2.status().invite_done && std::chrono::steady_clock::now() < until) {
+      s2.service(1);
+      stun2.pump();
+    }
+    REQUIRE_FALSE(s2.status().invite.empty());
+    for (const auto& line : quiet) {
+      CHECK(line.find(s2.status().invite) == std::string::npos);
+      CHECK(line.find(c2.session.join_password) == std::string::npos);
+    }
+  }
+
   // A pasted answer that is not one is explained, not used.
   CHECK(service.add_answer("hello") != CodeError::kOk);
   bool explained = false;

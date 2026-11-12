@@ -46,6 +46,9 @@ std::optional<AddressRange> parse_address_range(std::string_view text);
 // number with the first dotted part highest.
 std::uint32_t ipv4_of(std::uint32_t enet_host);
 
+// Players a server takes unless told otherwise (coop_server --max-players).
+inline constexpr std::uint8_t kDefaultMaxPlayers = 4;
+
 struct SessionConfig {
   // The game build every player must run. Empty: the first player to join
   // decides it, and it is forgotten again when the session empties.
@@ -58,8 +61,9 @@ struct SessionConfig {
   // HELLO is refused (there is no plain way in, docs/protocol.md).
   std::string join_password;
   // Most players at once (coop_server --max-players), 1 to protocol::kMaxPlayers;
-  // one more is told the server is full.
-  std::uint8_t max_players = protocol::kMaxPlayers;
+  // one more is told the server is full. 4 until the game's side (puppets,
+  // HUD, tables) takes 16; the protocol already does.
+  std::uint8_t max_players = kDefaultMaxPlayers;
   // Interest (16 players, docs/protocol.md "Who gets which stream"): each
   // PLAYER_SAMPLE and PLAYER_POSE goes to a player by where the two are.
   // Same scene within near_distance (game units), or either place unknown:

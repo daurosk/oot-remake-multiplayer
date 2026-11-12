@@ -178,7 +178,7 @@ class Presence {
 
   Settings settings_;
   std::uint8_t self_ = 0;
-  std::array<std::optional<Player>, 4> players_;
+  std::array<std::optional<Player>, protocol::kMaxPlayers> players_;
 };
 
 // Shortest-path spherical interpolation of two rotations, t in 0..1. The

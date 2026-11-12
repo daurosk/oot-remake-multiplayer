@@ -4069,7 +4069,11 @@ std::size_t count_to(const Harness& h, ConnectionId id) {
 }  // namespace
 
 TEST_CASE("16 players: all take numbers 1 to 16, the 17th is told the server is full") {
-  Harness h;
+  // 4 by default until the games' side takes 16; the protocol takes 16.
+  CHECK(SessionConfig{}.max_players == 4);
+  SessionConfig sixteen;
+  sixteen.max_players = 16;
+  Harness h(sixteen);
   for (ConnectionId id = 1; id <= 16; ++id) h.join(id, "p" + std::to_string(id));
   CHECK(h.session.player_count() == 16);
   h.clear();
@@ -4082,7 +4086,9 @@ TEST_CASE("16 players: all take numbers 1 to 16, the 17th is told the server is 
 }
 
 TEST_CASE("16 players: the 16th's WELCOME lists the 15 others") {
-  Harness h;
+  SessionConfig sixteen;
+  sixteen.max_players = 16;
+  Harness h(sixteen);
   for (ConnectionId id = 1; id <= 15; ++id) h.join(id, "p" + std::to_string(id));
   h.clear();
   h.join(16, "p16");
@@ -4092,7 +4098,7 @@ TEST_CASE("16 players: the 16th's WELCOME lists the 15 others") {
   CHECK(w->players.size() == 15);
 }
 
-TEST_CASE("max_players (coop_server --max-players) caps the session below 16") {
+TEST_CASE("max_players (coop_server --max-players) caps the session below the default") {
   SessionConfig two;
   two.max_players = 2;
   Harness h(two);

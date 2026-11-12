@@ -271,6 +271,12 @@ TEST_CASE("host menu: Host with an invite code, and a second game joins with onl
     FakeStun stun;
     Game host_game;
     CoopHostMenu::Hooks hh = host_game.hooks();
+    std::mutex log_mutex;
+    std::vector<std::string> log;
+    hh.log = [&](const std::string& line) {
+        std::lock_guard lock(log_mutex);
+        log.push_back(line);
+    };
     hh.stun_servers = std::vector<nat::Addr>{stun.address()};
     hh.allow_private = true;  // 127.0.0.1 is not an internet address
     CoopHostMenu::Menu host(hh);
@@ -288,6 +294,7 @@ TEST_CASE("host menu: Host with an invite code, and a second game joins with onl
 
     Game guest_game;
     CoopHostMenu::Hooks gh = guest_game.hooks();
+    gh.log = hh.log;
     gh.stun_servers = std::vector<nat::Addr>{stun.address()};
     gh.helper_port = 0;  // any free one
     CoopHostMenu::Menu guest(gh);
@@ -320,6 +327,13 @@ TEST_CASE("host menu: Host with an invite code, and a second game joins with onl
     host.Leave();
     CHECK(guest_game.disconnects == 1);
     CHECK(host_game.disconnects == 1);
+    // The game's log never holds the invite code or the join password.
+    std::lock_guard lock(log_mutex);
+    CHECK_FALSE(log.empty());
+    for (const auto& line : log) {
+        CHECK(line.find(hs.invite) == std::string::npos);
+        CHECK(line.find(hs.password) == std::string::npos);
+    }
 }
 
 TEST_CASE("host menu: CopyText cuts to fit and always ends the string") {

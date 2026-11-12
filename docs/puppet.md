@@ -358,7 +358,9 @@ An earlier run that saw no mod at all had copied the kit folder: its `qt-config.
 
 What is proven: the packs, tables and size table parse back with the tool's readers, the tables keep their sort order, and the tool's own tests (`tools/puppet_pack/tests/test_puppet_pack.py`, synthetic data) pass.
 
-## Next step
+## First step (done)
+
+Kept for the record: this was the plan before the pack existed. It is built and run; what is built now is in the sections below.
 
 Prove the create path with the smallest patch, before the pack exists:
 

@@ -18,8 +18,8 @@ You get:
 
 | File | What it is for |
 |---|---|
-| `Host.bat` | Start a game others join: starts the server and your emulator |
-| `Join.bat` | Join someone's game: asks for the host's address |
+| `Host.bat` | Start a game others join: starts the server (it shows an invite code for your friends) and your emulator |
+| `Join.bat` | Join someone's game: asks for the host's invite code (or address) |
 | `make-puppet-pack.cmd` | Builds the puppet Link from your own game files (once) |
 | `coop-options.ini` | Which co-op features are on |
 | `collect-logs.cmd` | Zips your logs to send with a bug report |

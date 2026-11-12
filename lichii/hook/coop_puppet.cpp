@@ -232,16 +232,19 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 slot.phase = Phase::live;
                 slot.since_ms = now_ms;
                 slot.shown = Show::show;  // a new actor stands where it was made
+                slot.model_checked = !IsTunicActor(slot.actor_name);
             } else if (now_ms - slot.since_ms > kCreateTimeoutMs) {
                 Say("P" + std::to_string(slot.number) + " " + slot.actor_name +
                     " not spawned after " + std::to_string(kCreateTimeoutMs) + " ms (actor " +
                     Hex(slot.actor) + ", state " + (have_state ? std::to_string(state) : "-") +
                     "); trying again in 5 s");
-                // Twice, so one slow load does not cost the colours.
-                if (IsTunicActor(slot.actor_name) && ++tunic_fails_ == 2) {
-                    tunic_failed_ = true;
-                    Say("tunic puppets are not in the puppet pack (an older pack): plain "
-                        "puppets from now on; run make-puppet-pack again for the colours");
+                // Twice for the same actor, and only while no tunic puppet has
+                // spawned yet: slow loads in a heavy scene must not cost a
+                // working pack its colours.
+                if (IsTunicActor(slot.actor_name) && !tunic_proven_ &&
+                    ++tunic_timeouts_[slot.actor_name] == 2) {
+                    TunicFails(slot.actor_name, "not made twice: the puppet pack has no tunic "
+                                                "colours (an older pack? run make-puppet-pack again)");
                 }
                 slot.phase = Phase::idle;
                 slot.retry_ms = now_ms + 5000;
@@ -249,6 +252,26 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             }
             break;
         case Phase::live:
+            if (!slot.model_checked && have_state && state == addr::kStatePresent &&
+                now_ms - slot.since_ms >= kTunicModelCheckMs) {
+                // A tunic puppet is the player's model under another project
+                // name (tools/puppet_pack/tunic.py): if the engine did not load
+                // it, the actor stands without a Player_ model. Plain then.
+                slot.model_checked = true;
+                // The name comes through the skeleton path (checked on the child),
+                // the model object through +0x260 (seen on the adult too): only
+                // neither, or a name other than Player_, counts as a failure.
+                const auto model = CoopPose::ModelNameOf(guest, slot.actor);
+                const std::uint64_t object = CoopColors::ModelOf(guest, slot.actor);
+                if (model ? model->rfind("Player_", 0) == 0 : object != 0) {
+                    tunic_proven_ = true;
+                    Say("P" + std::to_string(slot.number) + " " + slot.actor_name + ": model " +
+                        (model ? *model : "object " + Hex(object) + " (name not read)"));
+                } else {
+                    TunicFails(slot.actor_name, "spawned with " +
+                                                    (model ? "model " + *model : std::string("no model")));
+                }
+            }
             if (!have_state || Gone(state)) {
                 Say("P" + std::to_string(slot.number) + " gone (" +
                     (have_state ? "state " + std::to_string(state) : std::string("no actor")) +
@@ -1411,14 +1434,23 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
-    std::string name = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
+    const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
     if (settings_.tunics && color) {
         if (const auto tunic = CoopColors::TunicOf(*color); !tunic.empty()) {
-            name += '_';
-            name += tunic;
+            std::string name = plain + '_' + std::string(tunic);
+            if (std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end()) {
+                return name;
+            }
         }
     }
-    return name;
+    return plain;
+}
+
+void Director::TunicFails(const std::string& actor, const std::string& why) {
+    std::lock_guard lock(tunic_mutex_);
+    if (tunic_failed_.insert(actor).second) {
+        Say(actor + " " + why + "; that colour shows as the plain puppet from now on");
+    }
 }
 
 namespace {
@@ -1569,9 +1601,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    if (g_director->TunicFailed()) {
-        g_planner->SetTunics(false);
-    }
+    g_planner->SetFailedTunics(g_director->FailedTunics());
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));

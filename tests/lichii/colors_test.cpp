@@ -180,7 +180,13 @@ TEST_CASE("colours: the tunic of a colour, and the puppet actor for it") {
     CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Red");
     CHECK(p.ActorFor(false, 0x3070FFu) == "CoopPuppet_Child_Blue");
     CHECK(p.ActorFor(false, 0x30D040u) == "CoopPuppet_Child");
-    p.SetTunics(false);  // an old pack, or LICHII_COOP_TUNICS=0
+    p.SetFailedTunics({"CoopPuppet_Adult_Red"});  // that one did not work: plain, the others stay
+    CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult");
+    CHECK(p.ActorFor(false, 0xFF3030u) == "CoopPuppet_Child_Red");
+    CHECK(p.ActorFor(true, 0x3070FFu) == "CoopPuppet_Adult_Blue");
+    p.SetFailedTunics({});
+    CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Red");
+    p.SetTunics(false);  // LICHII_COOP_TUNICS=0
     CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult");
     CHECK(CoopPuppet::Director::IsTunicActor("CoopPuppet_Adult_Red"));
     CHECK_FALSE(CoopPuppet::Director::IsTunicActor("CoopPuppet_Adult"));

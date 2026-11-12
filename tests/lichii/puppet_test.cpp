@@ -424,6 +424,43 @@ TEST_CASE("puppet: a player who changes age gets the other puppet, in the same s
     CHECK(d.Slots()[0].actor_name == "CoopPuppet_Adult");
 }
 
+TEST_CASE("puppet: a tunic puppet without a Player_ model falls back to the plain one") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult_Red")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);  // the fake actor has no skeleton or model
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    Frame(d, g, 1000);
+    CHECK(d.FailedTunics().empty());  // checked only after kTunicModelCheckMs
+    Frame(d, g, 15 + Director::kTunicModelCheckMs + 10);
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Adult_Red"});
+}
+
+TEST_CASE("puppet: the plain puppet's model is not checked") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    for (std::uint64_t t = 10; t < 10000; t += 500) Frame(d, g, t);
+    CHECK(d.FailedTunics().empty());
+}
+
+TEST_CASE("puppet: a tunic actor that is never made falls back after two timeouts") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+    for (std::uint64_t t = 0; t < 2 * (Director::kCreateTimeoutMs + 5000) + 2000; t += 250) {
+        Frame(d, g, t);
+    }
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
+}
+
 TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
     Game g;
     Director d;

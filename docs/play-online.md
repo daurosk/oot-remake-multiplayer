@@ -172,7 +172,7 @@ Every player's Link wears a tunic (and cap) in that player's colour in the other
 
 To pick your own: open `coop-options.ini` beside `Host.bat` and `Join.bat`, remove the `#` in front of `# color = blue` and put in one of red, orange, yellow, green, cyan, blue, purple, pink, white, black, brown, gray, or any colour as `#RRGGBB` (for example `color = #FF8020`). Close the game and start `Host.bat` or `Join.bat` again. A word the kit does not know is said in the window and you keep your number's colour. Two players may pick the same colour; nothing stops it, so agree on yours.
 
-The tunics come in ten colours (green, red, orange, yellow, cyan, blue, purple, pink, white, black); another colour gets the nearest of them (brown looks black, gray looks white). They are made by `make-puppet-pack.cmd` from your own game, so run it again after an update that brings them. A puppet pack from before the colours still works: everyone then wears green. `LICHII_COOP_TUNICS=0` in `coop-options.ini` turns the colours off for what you see.
+The tunics come in ten colours (green, red, orange, yellow, cyan, blue, purple, pink, white, black); another colour gets the nearest of them (brown looks black, gray looks white). They are made by `make-puppet-pack.cmd` from your own game, so run it again after an update that brings them. A puppet pack from before the colours still works: everyone then wears green (after about 30 s the first time). `LICHII_COOP_TUNICS=0` in `coop-options.ini` turns the colours off for what you see.
 
 ## When you are done
 

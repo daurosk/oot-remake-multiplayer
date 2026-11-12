@@ -971,6 +971,53 @@ TEST_CASE("spawn: an impact actor is made only when the pack has it") {
     }
 }
 
+// Issue 198: the game dropped every create of the impact actors (built with an effect AI)
+// so far. After kStandInTries drops in a row, none of that actor is asked for again.
+TEST_CASE("spawn: an impact actor the game keeps dropping is not asked for again") {
+    using R = StandInRig;
+    namespace addr = CoopPuppet::addr;
+    StandInRig rig;
+    std::vector<std::string> said;
+    CoopSpawn::Director d([&](const std::string& s) { said.push_back(s); });
+    d.SetStandIns({"CoopShot_Seed", "CoopHit_SeedSpark"});
+    std::uint64_t now = 0;
+    int created = 0;
+    bool malloced = false;
+    for (std::uint64_t key = 1; key <= 5; ++key) {
+        Copy copy;
+        copy.key = key;
+        copy.actor = "CoopHit_SeedSpark";
+        copy.place = false;
+        d.SetInput(R::base, {copy});
+        auto c = d.Step(rig.guest, false, 0, now);
+        if (!malloced && c && c->function != R::base + addr::kCreate) {
+            c = d.Step(rig.guest, true, R::block, now);  // the slots' malloc
+            malloced = true;
+        }
+        now += 16;
+        if (!(c && c->function == R::base + addr::kCreate)) {
+            continue;
+        }
+        ++created;
+        CHECK(rig.Name(*c) == "CoopHit_SeedSpark");
+        const std::uint64_t handle = c->x[3];
+        d.Step(rig.guest, true, 0, now);  // the create call returned
+        rig.guest.Set(handle, R::request);
+        rig.guest.Set(R::request, std::uint32_t{addr::kRequestDrop});
+        c = d.Step(rig.guest, false, 0, now);  // the game dropped it: our drop call
+        REQUIRE(c);
+        REQUIRE(c->function == R::base + addr::kDropCreate);
+        d.Step(rig.guest, true, 0, now);
+        now += 16;
+        d.Step(rig.guest, false, 0, now);  // the slot is let go and counted
+        now += 16;
+    }
+    CHECK(created == 3);
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("CoopHit_SeedSpark: could not be made 3 times in a row; no more of it") != std::string::npos;
+    }));
+}
+
 TEST_CASE("spawn: our cast lure's place is known for the fish rules") {
     CoopSpawn::Sync sync;
     std::vector<proto::Message> send;

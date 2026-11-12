@@ -968,10 +968,12 @@ class FullBuildTest(unittest.TestCase):
         self.assertLess(child["size"], 5584 + 0x200)
 
     def test_main_no_seed_trail(self):
-        # Issue 198 back-out: --no-seed-trail builds the stand-ins model-only (no Tail), default on.
+        # Issue 198: the stand-ins are model-only by default (the game dropped every create of the
+        # seed copy with its Tail); --seed-trail asks for the trail, --no-seed-trail still works.
         from unittest import mock
         mod = os.path.join(self.dir, "mod7")
-        for extra, want in (([], True), (["--no-seed-trail"], False)):
+        for extra, want in (([], False), (["--no-seed-trail"], False), (["--seed-trail"], True),
+                            (["--seed-trail", "--no-seed-trail"], False)):
             with mock.patch.object(build, "build", return_value={}) as b:
                 build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version"] + extra)
             self.assertIs(b.call_args.kwargs["stand_in_effects"], want)

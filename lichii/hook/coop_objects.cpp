@@ -229,6 +229,10 @@ bool& ForgetKeptFlag() {  // a host save load: WorldSync::ForgetKept before the 
     static bool f = false;
     return f;
 }
+std::vector<std::string>& TestKillQueue() {  // the test script's kill steps (QueueTestKill)
+    static std::vector<std::string> q;
+    return q;
+}
 
 bool EnvFlag(const char* name) {
 #ifdef _WIN32
@@ -996,6 +1000,7 @@ public:
                 send.emplace_back(std::move(m));
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
+            TestKills(seen, writes);
             if (!world.key_refunds.empty()) {
                 std::lock_guard lock(KeyRefundMutex());
                 auto& refunds = KeyRefundQueue();
@@ -1532,6 +1537,51 @@ private:
 
     // A direct write of life is enough for the game (docs/objects.md, "Damage").
     // A hurt is added to the damage the Life step takes off this frame.
+    // The test script's kill steps (coop_testinput, test only): the nearest
+    // actor of that name to our Link with a life takes a hit from our Link of
+    // its whole life, through the game's damage, so it dies as from a real hit
+    // (and drops what it drops: a Gold Skulltula its token).
+    void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes) {
+        std::vector<std::string> names;
+        {
+            std::lock_guard lock(KeyRefundMutex());
+            names.swap(TestKillQueue());
+        }
+        for (const std::string& name : names) {
+            const Seen* best = nullptr;
+            float best_m = 0.0f;
+            for (const Seen& s : seen) {
+                if (s.name != name || !s.life || s.life->life <= 0) {
+                    continue;
+                }
+                float m = 0.0f;
+                if (player_) {
+                    const float dx = s.position[0] - (*player_)[0];
+                    const float dy = s.position[1] - (*player_)[1];
+                    const float dz = s.position[2] - (*player_)[2];
+                    m = std::sqrt(dx * dx + dy * dy + dz * dz);
+                }
+                if (!best || m < best_m) {
+                    best = &s;
+                    best_m = m;
+                }
+            }
+            if (!best) {
+                LOG_INFO(Core, "coop: test kill {}: none here with a life", name);
+                continue;
+            }
+            LifeWrite w;
+            w.address = best->address;
+            w.life = 0;
+            w.hurt = std::max<std::int32_t>(best->life->life, 1);
+            w.from = player_;
+            writes.push_back(w);
+            LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
+                     name, best->address, best->position[0], best->position[1], best->position[2],
+                     best_m, best->life->life);
+        }
+    }
+
     void WriteLife(Core::Memory::Memory& memory, Reader& r, const LifeWrite& w) {
         const auto value = LifeValue(r, w.address);
         if (!value || !memory.IsValidVirtualAddressRange(value->first + 8, 4)) {
@@ -2000,6 +2050,13 @@ void OwnCountDrops(const std::vector<std::uint32_t>& key_flags) {
     std::lock_guard lock(KeyRefundMutex());
     auto& drops = OwnDropQueue();
     drops.insert(drops.end(), key_flags.begin(), key_flags.end());
+}
+
+void QueueTestKill(std::string name) {
+    std::lock_guard lock(KeyRefundMutex());
+    if (TestKillQueue().size() < 16) {
+        TestKillQueue().push_back(std::move(name));
+    }
 }
 
 void ForgetKeptBreaks() {

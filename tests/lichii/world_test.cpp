@@ -2344,3 +2344,45 @@ TEST_CASE("world: RestWords skips exact zeros and finds a place ending on a regi
     REQUIRE(scan.where.size() == 1);
     CHECK(scan.where[0] == "c+0x10+0x1f4");
 }
+
+TEST_CASE("world: a token far from where its Skulltula was seen is its own when the Skulltula just left (items-sync)") {
+    WorldSync a;
+    GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    // Knocked 6 m away as it died: the token is not within 3 m of where we saw it.
+    GraveWalk(a, 1100 * kMs, {});
+    const proto::Vec3 by_token{7.0f, 2.0f, 4.0f};  // our Link walked over to it
+    Walk(a, 1200 * kMs, {Token(0x200, {7.0f, 2.5f, 3.0f})}, by_token, 2, kGrave);
+    std::vector<proto::WorldBreak> sent;
+    for (std::uint64_t t = 1300; t <= 2800; t += 100) {
+        for (const auto& b : Sent<proto::WorldBreak>(Walk(a, t * kMs, {}, by_token, 2, kGrave))) {
+            sent.push_back(b);
+        }
+    }
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].hash == CoopWorld::TokenId(kGoldHash));
+
+    // Taken elsewhere: B's far token goes too.
+    WorldSync b;
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(b, 1100 * kMs, {});
+    GraveWalk(b, 1200 * kMs, {Token(0x300, {1.0f, -6.0f, 3.0f})});  // fell 9 m
+    b.Receive(BreakOf(CoopWorld::TokenId(kGoldHash), 0, kGrave));
+    GraveWalk(b, 1300 * kMs, {Token(0x300, {1.0f, -6.0f, 3.0f})});
+    CHECK(Removed(b, 0x300));
+
+    // A token long after the Skulltula left, or farther than 12 m, is not its.
+    WorldSync c;
+    GraveWalk(c, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(c, 1100 * kMs, {});
+    GraveWalk(c, 7000 * kMs, {Token(0x400, {7.0f, 2.5f, 3.0f})});
+    WorldSync d;
+    GraveWalk(d, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(d, 1100 * kMs, {});
+    GraveWalk(d, 1200 * kMs, {Token(0x500, {20.0f, 2.5f, 3.0f})});
+    for (std::uint64_t t = 7100; t <= 8600; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(c, t * kMs, {})).empty());
+    }
+    for (std::uint64_t t = 1300; t <= 2800; t += 100) {
+        CHECK(Sent<proto::WorldBreak>(GraveWalk(d, t * kMs, {})).empty());
+    }
+}

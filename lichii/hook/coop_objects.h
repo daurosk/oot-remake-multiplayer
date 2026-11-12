@@ -70,6 +70,11 @@ void OwnCountDrops(const std::vector<std::uint32_t>& key_flags);
 // breaks (WorldSync::ForgetKept). For the integrator to call on that event.
 void ForgetKeptBreaks();
 
+// Test only (coop_testinput's "kill NAME" step): the nearest actor of that
+// name to our Link takes a hit of its whole life from our Link in the next
+// walk of LICHII_COOP_OBJECTS (logs "coop: test kill ..."). Any thread.
+void QueueTestKill(std::string name);
+
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).
 std::vector<std::uint64_t> OwnedActors();

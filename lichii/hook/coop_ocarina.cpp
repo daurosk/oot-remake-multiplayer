@@ -209,9 +209,11 @@ std::vector<std::string> HoldProbe::Step(const ReadWord& read, std::uint64_t lin
             during_ = Take(read);
             place_during_ = Place(read, link);
             lines.push_back("ocarina hold probe: during " + place_during_);
-            if (regions_.size() > 2 && regions_[2].name == "ocaparts+0x0") {
-                const auto bone = ReadText(read, regions_[2].base + HandBind::kBindName + 4);
-                lines.push_back("ocarina hold probe: during bone '" + bone.value_or("?") + "'");
+            for (const auto& r : regions_) {
+                if (r.name == "ocaparts+0x0") {
+                    const auto bone = ReadText(read, r.base + HandBind::kBindName + 4);
+                    lines.push_back("ocarina hold probe: during bone '" + bone.value_or("?") + "'");
+                }
             }
         }
         if (!playing) {

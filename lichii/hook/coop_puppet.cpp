@@ -267,7 +267,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     parked[1] -= kHideDrop;
                     Pose(slot, guest, parked, nullptr, now_ms);
                 }  // hold: left where it is
-                // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h).
+                // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
+                // by their own command: while held for their cutscene (free play
+                // is DemoOcarina) nothing new is played on the puppet.
+                const std::string their = t->anim ? t->anim->name : std::string();
+                if (anim_ && their != slot.their_anim) {
+                    Say("P" + std::to_string(slot.number) + " their command '" + their + "'");
+                }
+                slot.their_anim = their;
                 const std::string hand = slot.ocarina_hand.Step(
                     [&guest](std::uint64_t a) -> std::optional<std::uint64_t> {
                         std::uint64_t w = 0;
@@ -275,9 +282,11 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     },
                     [&guest](std::uint64_t a, std::uint64_t w) { return guest.Write(a, &w, 8); },
                     slot.actor,
-                    t->show != Show::hide && CoopOcarina::HandBind::Playing(slot.anim_name));
+                    t->show != Show::hide &&
+                        (CoopOcarina::HandBind::Playing(their) ||
+                         CoopOcarina::HandBind::Playing(slot.anim_name)));
                 if (!hand.empty()) {
-                    Say("P" + std::to_string(slot.number) + " " + hand);
+                    Say("P" + std::to_string(slot.number) + " " + hand + " ('" + their + "')");
                 }
             }
             break;

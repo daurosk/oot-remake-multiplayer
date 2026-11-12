@@ -459,6 +459,7 @@ public:
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
+            CoopTime::SaveLoaded(report.server_now_us);  // issue 159
         }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live

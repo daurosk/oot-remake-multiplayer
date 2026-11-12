@@ -17,6 +17,11 @@
 // - A game whose clock jumped by itself (the Sun's Song, a night's sleep, an
 //   event) sends TIME_OF_DAY with the jump bit at once; every other game, the
 //   host's too, takes it. A jump we caused by setting the clock is not sent.
+// - A save load moves the clock to the save's time. The host's goes out as a
+//   jump (the group follows the host's save). A guest's does not: it would
+//   set the host's clock, and remake the host's world, every time a guest
+//   loads (each autotest's guest did, issue 159); the guest takes the host's
+//   clock again instead, as on joining.
 #pragma once
 
 #include <cstdint>
@@ -40,6 +45,8 @@ public:
     static constexpr std::uint64_t kSetEveryUs = 60'000'000;
     static constexpr std::uint64_t kRunningForUs = 2'000'000;  // our clock runs: no change, not indoors
     static constexpr std::uint64_t kQuietAfterSetUs = 3'000'000;  // our own set is no jump
+    static constexpr std::uint64_t kAfterLoadUs = 5'000'000;  // a guest's jump this soon after its load is not sent
+    static constexpr std::uint64_t kRejoinAfterUs = 1'000'000;  // then the host's clock is taken
 
     // Network thread: TIME_OF_DAY from the others. Applied on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -50,6 +57,10 @@ public:
     std::optional<std::uint32_t> Tick(std::optional<std::uint32_t> now, bool host,
                                       std::uint64_t now_us,
                                       std::vector<coop::protocol::Message>& send);
+
+    // Present thread: a save was loaded in our game just now (the hook's
+    // "save load seen"). Same clock as Tick's now_us.
+    void SaveLoaded(std::uint64_t now_us);
 
     void Reset();
 
@@ -62,8 +73,10 @@ private:
     bool set_once_ = false;
     std::optional<std::uint64_t> running_since_;  // our clock moved forward on every tick since
     std::optional<std::uint32_t> host_last_;  // the host's last plain TIME_OF_DAY
-    bool host_running_ = false;
-    bool joined_ = false;  // the host's first plain TIME_OF_DAY was taken (or kept)  // its last two moved forward (not indoors, no time change)
+    bool host_running_ = false;  // its last two moved forward (not indoors, no time change)
+    bool joined_ = false;  // the host's first plain TIME_OF_DAY was taken (or kept)
+    std::optional<std::uint64_t> load_at_;  // our last save load
+    bool rejoin_ = false;  // a guest after its load: take the host's clock as on joining
 
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::TimeOfDay> inbox_;

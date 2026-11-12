@@ -15,6 +15,7 @@
 
 #include <enet/enet.h>
 
+#include "coop/net/path_mark.hpp"
 #include "session.hpp"
 
 namespace coop::server {
@@ -69,10 +70,19 @@ class EnetServer {
   // One datagram from the game port itself (so routers see the game's port).
   bool send_raw(const ENetAddress& to, std::span<const std::uint8_t> data);
 
+  // Players sent away to connect again with small datagrams because their
+  // path lost full ones (coop/net/enet_path.hpp, issue 143), and the
+  // addresses remembered for that.
+  std::uint64_t small_path_drops() const { return small_path_drops_; }
+  bool small_path(enet_uint32 host) const { return small_hosts_.count(host) != 0; }
+
  private:
   std::uint64_t now_us() const;
   void handle(const ENetEvent& event);
   void apply_actions();
+  // Ends `peer`'s connection with kDisconnectSmallDatagrams (no DISCONNECT
+  // event follows) and tells the session; `why` goes into its drop line.
+  void send_small(ENetPeer* peer, const std::string& why);
 
   ServerOptions options_;
   Session session_;
@@ -88,6 +98,11 @@ class EnetServer {
   std::map<ConnectionId, LinkSeen> links_;
   ConnectionId next_id_ = 1;
   std::uint64_t mended_bytes_ = 0;
+  std::uint64_t small_path_drops_ = 0;
+  // Addresses sent away (ENet's form) and until when (now_us()) one is told
+  // again at connect; told once, then forgotten (net::kRememberMs).
+  std::map<enet_uint32, std::uint64_t> small_hosts_;
+  std::map<ConnectionId, net::PathMark> path_marks_;  // coop/net/enet_path.hpp
   std::chrono::steady_clock::time_point start_;
   RawHandler raw_;
 };

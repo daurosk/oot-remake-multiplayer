@@ -18,6 +18,7 @@ add_executable(coop_tests
   protocol/join_password_test.cpp
   net/clock_test.cpp
   net/client_test.cpp
+  net/small_path_test.cpp
   presence/presence_test.cpp
   host/reader_test.cpp
   host/sampler_test.cpp

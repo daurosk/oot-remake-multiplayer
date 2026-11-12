@@ -100,6 +100,7 @@
 #include <vector>
 
 #include "coop/net/clock.hpp"
+#include "coop/net/path_mark.hpp"
 #include "coop/protocol/messages.hpp"
 
 struct _ENetHost;
@@ -221,6 +222,9 @@ enum class DropReason : std::uint8_t {
   connection_lost,    // ENet disconnect or timeout
   handshake_timeout,  // no answer to HELLO in time
   no_route,           // the address could not be resolved or used
+  // Full datagrams did not get through while small ones did (we saw it, or
+  // the server said so): connecting again with small ones (enet_path.hpp).
+  small_path,
 };
 
 // How the link to the server looked (issue 143), for the log. Read from
@@ -413,8 +417,12 @@ class Client {
   // or connected; the server PINGs every 250 ms, so a few seconds of quiet
   // means its packets do not reach us.
   LinkInfo link() const;
+  // True once the path to the server lost full datagrams (DropReason
+  // small_path): every connection from then on uses ENet's smallest, 576.
+  bool small_datagrams() const { return small_datagrams_; }
 
  private:
+  void use_small_datagrams();
   void begin_attempt();
   void end_attempt(DropReason reason);
   void on_receive(const std::uint8_t* data, std::size_t size, std::uint8_t channel);
@@ -467,6 +475,8 @@ class Client {
   std::uint64_t last_receive_us_ = 0;  // last packet from the server, 0: none this attempt
   LinkInfo link_;  // ENet's values, read after each service() with a peer
   std::uint32_t name_taken_retries_ = 0;
+  bool small_datagrams_ = false;
+  PathMark path_mark_;  // enet_path.hpp
 
   ClockEstimator clock_;
   std::vector<Player> players_;  // sorted by number

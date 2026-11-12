@@ -144,6 +144,8 @@ Only join Hamachi networks of people you know: everyone in the network can reach
 
 A virtual LAN adds a little delay when it cannot connect the PCs directly; the ping in the game's co-op panel shows how much.
 
+**Dropped every 15-20 seconds?** Older kits sent packets too big for some VPNs and tunnels (Hamachi, Tailscale, DS-Lite internet lines, a VPN inside another VPN): small things got through, but the big ones (the shared flags sent when you join) were lost, and the game was cut after 10 s and joined again, over and over. The packets now fit Hamachi and lines down to 1200 bytes, and a game whose line still loses them switches by itself to the smallest size once (the host's server window shows `its path lost our 1100-byte datagrams ...; told it to connect again with 576-byte ones`, one short reconnect) and then stays in. Both players need the same, current kit. Still dropped? Run `collect-logs.cmd` on both PCs and send the zips.
+
 ## Who can join
 
 By default anyone who can reach the server's port may join. Three lines in the host's `coop-options.ini` (beside `Host.bat`) narrow that:

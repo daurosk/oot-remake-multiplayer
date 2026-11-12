@@ -144,6 +144,11 @@ void JoinHelper::open(bool direct) {
     say("the host's server answered directly (their router lets the game in). The game connects now; "
         "keep this window open while you play.");
   } else {
+    // The host's punch got here first, so our earlier punches (sent before the host
+    // pasted the answer code) were not counted there: one more tells the host's window
+    // the friend got through. Signed like every punch; the host answers it at most with
+    // a punch toward the answer code's address, which we no longer act on.
+    send_punch(PunchType::kGuestPunch);
     say("the way through both routers is open. The game connects now; keep this window open while you play.");
   }
 }

@@ -195,7 +195,8 @@ TEST_CASE("nat loopback: answer code, punches both ways, then the game reaches t
   REQUIRE(w.pump_until([&] { return !w.answer.empty(); }));
   REQUIRE(w.helper->public_address().has_value());
   CHECK(w.helper->public_address()->port == w.helper->public_socket_port());
-  CHECK(w.rendezvous->public_address().has_value());
+  // The helper may make its answer code before the server has serviced its own STUN answer.
+  CHECK(w.pump_until([&] { return w.rendezvous->public_address().has_value(); }));
   // Before the host pastes it, the game gets nowhere.
   w.game.connect(w.helper->game_port());
   w.pump_until([] { return false; }, 300);
@@ -205,7 +206,9 @@ TEST_CASE("nat loopback: answer code, punches both ways, then the game reaches t
   REQUIRE(w.rendezvous->add_answer(w.answer, ms_now()) == CodeError::kOk);
   REQUIRE(w.pump_until([&] { return w.helper->state() == JoinState::kOpen; }));
   CHECK_FALSE(w.helper->direct());
-  CHECK(w.rendezvous->stats().guest_punches > 0);
+  CHECK(w.rendezvous->stats().punches_sent > 0);
+  // The helper answers the host's punch once; the server sees it on a later service.
+  CHECK(w.pump_until([&] { return w.rendezvous->stats().guest_punches > 0; }));
   // ENet's connect is sent again by itself; the server asks for the password.
   REQUIRE(w.pump_until([&] { return w.game.connected; }, 8000));
   w.say_hello();

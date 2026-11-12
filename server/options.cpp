@@ -193,20 +193,13 @@ const char* usage() {
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"
          "                   relay, hosts must give it; with --relay-via, the one\n"
          "                   to give\n"
-         "  --invite         learn this PC's internet address (STUN), print an invite
-"
-         "                   code with it and the join password, and take answer
-"
-         "                   codes typed here; needs a join password
-"
-         "  --stun NAME:PORT STUN server to ask (more than once; default: Google's
-"
-         "                   and Cloudflare's free ones)
-"
-         "  --join ADDRESS:PORT [--game-port N]  Join.bat's helper for an invite
-"
-         "                   code: the game connects to 127.0.0.1:N (27512)
-"
+         "  --invite         learn this PC's internet address (STUN), print an invite\n"
+         "                   code with it and the join password, and take answer\n"
+         "                   codes typed here; needs a join password\n"
+         "  --stun NAME:PORT STUN server to ask (more than once; default: Google's\n"
+         "                   and Cloudflare's free ones)\n"
+         "  --join ADDRESS:PORT [--game-port N]  Join.bat's helper for an invite\n"
+         "                   code: the game connects to 127.0.0.1:N (27512)\n"
          "  --pvp on|off     players can hurt each other (default: off); the\n"
          "                   host can change it in the game with /pvp\n";
 }

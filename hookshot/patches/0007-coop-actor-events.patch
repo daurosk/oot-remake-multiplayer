@@ -22,7 +22,7 @@ differ is left out.
 
 diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
 new file mode 100644
-index 00000000..d4d2239c
+index 0000000..d4d2239
 --- /dev/null
 +++ b/nx2/coop_actor_lift.py
 @@ -0,0 +1,74 @@
@@ -101,13 +101,13 @@ index 00000000..d4d2239c
 +    print("co-op actors: %d of %d actor event hooks (world hook)" % (n, len(HOOKS)))
 +    return n
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index 52a19bc9..0eb62ede 100644
+index 206aa28..1b34a16 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
-@@ -62,4 +62,6 @@ def install(lifter, img, build_id):
-     coop_puppet_guard.install(lifter, img, build_id)
-     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
+@@ -64,4 +64,6 @@ def install(lifter, img, build_id):
      coop_platform_lift.install(lifter, img, build_id)
+     import coop_world_wraps   # (patch 0005: wrapped game functions, host/coop_world.c)
+     coop_world_wraps.install(lifter, img, build_id)
 +    import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
 +    coop_actor_lift.install(lifter, img, build_id)
      return len(FRAME_SITES) + 1

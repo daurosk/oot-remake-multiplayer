@@ -292,7 +292,14 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
     // The guest ring is gone on Hookshot; the bridge keeps the export only once the module says it is on.
     CHECK(patch.find("deleted file mode 100644") != std::string::npos);
     CHECK(patch.find("--- a/host/coop_platform_ring.c") != std::string::npos);
-    CHECK(patch.find("f(HOS_COOP_WORLD_HELLO, 0, 0) != 1") != std::string::npos);
+    CHECK(patch.find("w(HOS_COOP_WORLD_HELLO, 0, 0) != 1") != std::string::npos);
+    // The wraps: every call reaches the wrapper, the emit workers get the table, and the first wrap's id is the header's.
+    CHECK(patch.find("return \"hos_coop_w_%08x\" % t") != std::string::npos);
+    CHECK(patch.find("\"wraps\")   # (oot-remake-multiplayer's patch 0005)") != std::string::npos);
+    char wrap[48];
+    std::snprintf(wrap, sizeof wrap, "(%u, 0xb99980, (0xd503237f,", HOS_COOP_WRAP_FLAG_APPLY);
+    CHECK(NewFile(patch, "nx2/coop_world_wraps.py").find(wrap) != std::string::npos);
+    CHECK(patch.find("+    coop_world_wraps.install(lifter, img, build_id)") != std::string::npos);
 }
 
 TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the module's event numbers") {

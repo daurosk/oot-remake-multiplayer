@@ -29,6 +29,8 @@ std::uint32_t Hold(std::uint64_t component, std::uint32_t bits);
 // The world hooks (hos_coop_world.h, patch 0005): an event from the game's C, on whichever game thread ran it.
 // 1 when taken; HOS_COOP_WORLD_HELLO: 1 once the module is on. Nothing while off.
 int World(std::uint32_t event, std::uint64_t a, std::uint64_t b);
+// A wrapped game function (hos_coop_world.h): phase 0 before it (1: do not run it), 1 after; x = its registers.
+int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* ctx);
 // hos_coop_stop: CoopHook::Shutdown.
 void Stop();
 

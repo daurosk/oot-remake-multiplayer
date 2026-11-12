@@ -16,8 +16,16 @@
 #define HOS_COOP_WORLD_HELLO 0u           /* asked by Hookshot before it keeps the export: 1 once the module is on */
 #define HOS_COOP_WORLD_COUNTER_START 1u   /* main+0x5e6760 started an AI ExecuteGenericCounter: a = the node */
 
-/* The module's export (extern "C"). Called on the game thread that ran the hooked function (not always the calc
-   thread): it must be quick, take no lock the game waits on, and not call the game. Returns 1 when taken. */
+/* Wrapped game functions (nx2/coop_world_wraps.py WRAPS: id, main offset, first words). A new wrap takes the next id. */
+#define HOS_COOP_WRAP_FLAG_APPLY 1u   /* main+0xb99980: the game applies its queued flag writes (the save load's too) */
+
+/* The module's exports (extern "C"), both optional. Called on the game thread that ran the hooked function (not always
+   the calc thread): quick, no lock the game waits on, no game call. hos_coop_world returns 1 when taken.
+   hos_coop_wrap: phase 0 before the game's function, phase 1 after it; x = the guest registers x0-x31 (x[31] is SP),
+   read and written in place (arguments at phase 0, x0 the result at phase 1); ctx = the game's context (for later
+   use with HosCoopApi::call, not yet allowed here). Phase 0 returning 1 means the module did the call's work and the
+   game's function is not run (phase 1 still comes); return 0 to let the game run it, as nearly always. */
 typedef int (*hos_coop_world_fn)(uint32_t event, uint64_t a, uint64_t b);
+typedef int (*hos_coop_wrap_fn)(uint32_t id, int phase, uint64_t *x, void *ctx);
 
 #endif

@@ -2,7 +2,7 @@
 
 [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0) is a static recompilation of the same game build co-op already supports: main build id `e0f3ccfaf50065ae` (version 1.1.1). The game's AArch64 code is translated to C ahead of time from the player's own dump, compiled for x86-64 Windows and Linux, with Horizon OS and NVN2 written natively and the GPU work replayed on Vulkan. No CPU or GPU emulation.
 
-Co-op runs on it as Stage 2 (see [plan.md](plan.md)), experimental, next to the emulator kit in the release kits. This page is the design, for Hookshot commit `c544828ff2d545829505cd894bb7968c7c2c5fcb` (2026-11-12); the files are in `hookshot/` ([hookshot/README.md](../hookshot/README.md)); what is proven is under Status.
+Co-op runs on it as Stage 2 (see [plan.md](plan.md)), experimental, next to the emulator kit in the release kits. This page is the design, for Hookshot commit `4aee23659b9436dab2cd7be1ac07333c06246b7c` (v2.2.0-rc.1, 2026-11-12; until then c544828); the files are in `hookshot/` ([hookshot/README.md](../hookshot/README.md)); what is proven is under Status.
 
 Hookshot's own repository is never forked or committed to from here. Our repository gets only our patches, our code, docs and scripts. Built game files and Hookshot's generated C (both contain the game) are never published.
 
@@ -46,6 +46,15 @@ Two parts:
 
 A DLL keeps the patch to Hookshot small (it changes only when Hookshot moves) and keeps our C++20 out of Hookshot's C build.
 
+## World hooks
+
+Co-op takes part in the game's world through the game's own functions instead of caves and guest memory. One layer does it, our patch 0005 (`hookshot/patches/0005-coop-world-hooks.patch`, header `hookshot/src/hos_coop_world.h`, Hookshot's `host/coop_world.c`), made when Hookshot is built:
+
+- **Events after one instruction** (`Lifter.after`): `hos_coop_world_event(event, a, b)` reaches the module's optional export `hos_coop_world`. The AI pause counter start (main+`0x5e6778`, `nx2/coop_platform_lift.py`) is `HOS_COOP_WORLD_COUNTER_START`: the node goes into a ring in the module's own memory (`CoopCounters::HostRing`), which the Objects walk reads as it read the guest ring. No game malloc, nothing at main+`0x3c46780`. The emulator keeps its cave.
+- **Wrapped game functions** (`Lifter.wraps`, in `third_party/a64-kit/lift/a64_lift.py`, and sent to the emit workers through `nx2/chunks.py`'s `EMIT_TABLES`): every call of a listed function, and the indirect table, reach `hos_coop_w_<entry>` in `a64_hooks.c`, which calls the module's optional export `hos_coop_wrap(id, phase, x, ctx)` before (phase 0; 1 = the module did the call's work) and after (phase 1) the game's own unchanged `f_<entry>`. `nx2/coop_world_wraps.py` lists them with their first words; build id and words are checked, and a function Hookshot hooks or edits by name is never wrapped. First wrap: the flag applier (main+`0xb99980`, `HOS_COOP_WRAP_FLAG_APPLY`), which only counts for now (`coop: world wraps: the game's flag applier ran N times`).
+
+Hookshot keeps the exports only once the module answers `HOS_COOP_WORLD_HELLO` with 1, so a module the bridge refused is never called. Flags, time of day, dungeon events and teleports move onto this layer next.
+
 ## For players: the kit
 
 Nothing of Hookshot or the game is in the kit. The kit's `Build-Hookshot-Coop.bat` (player steps in [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental)) downloads Hookshot's builder parts and source for `hookshot/PIN` (each checked against its SHA-256), applies `hookshot/patches` without git, runs Hookshot's own `nx2/make_game.py` on the player's game file, and installs `hookshot_coop.dll`, `coop.ini` (beside `hookshot.exe`) and the puppet pack. `Host-Hookshot.bat` and `Join-Hookshot.bat` start it as `Host.bat` and `Join.bat` start the emulator.
@@ -63,6 +72,7 @@ What the module expects from that install (`hookshot/compat`): `coop.ini` beside
 - **Memory.** A Hookshot game takes about 10 GB of RAM; 8 GB of VRAM is recommended. Two games on one PC are fine on the test PC (128 GB of RAM) at the normal preset; players with 16 to 32 GB of RAM should run one game each.
 - **Open crashes and GPU limits.** Hookshot needs Vulkan 1.3 with mesh shaders (RTX 20 or newer, RX 6000 or newer); Intel is mostly untested. Open issues there: an intermittent device loss after the first gameplay frames (its design.md, S4), crashes outside Kokiri Forest (Hookshot issues 317, 648), AMD crashes (708, 614).
 - **Patch upkeep.** Hookshot moves fast. Our patch touches three new files and two lines of `nx2/lift.py`; moving `hookshot/PIN` (and the kit's list of builder parts with it) is a test like moving the Fritchii pin.
+  - **The move to v2.2.0-rc.1** (from c544828, 66 commits). Every hunk of the three patches applied unchanged except one: `host/hos_sdl.c` merged by hand, because Hookshot added its own optional SDL functions on the lines beside our `StartTextInput`. The upstream changes to the files we touch were these: `vk_menu.cpp`'s `menu_record` gained the frame-generation menu, with the same three conditions; `nn_hid.c` gained the stick's dead-zone pairs and `player_used`; `nvn_native.c` and `nx2/build.py` changed only by moving lines. `nx2/lift.py`, `display.c`, `display_sdl.c` and the hook sites did not change. Hookshot's lift now writes the C in several processes on Windows too (its #2748). Our hooks still reach every process, because all three (`coop_hooks.py`, `coop_puppet_guard.py`, `coop_platform_lift.py`) write only `Lifter.after`, which is one of the tables sent to each process (`EMIT_TABLES` in `nx2/chunks.py`). Hookshot's new game patches (the new-game opening, its own zstd) are in other functions.
 - **Frame timing.** Hookshot runs at its own speed (30 to 60 fps, a high-fps option). The co-op sampler and puppets work from time, not frames; to check with a puppet in view.
 - **Addresses.** Code offsets are checked (`set_time`); the data slots are read through the same `CoopGameBuild` offsets from main's base, and the first runs check them (the scene and Link read, puppets made).
 - **The co-op window.** The emulator's Qt window is not on Hookshot; the chat, name tags, player list, panel, HUD and cheats are drawn in Hookshot's ImGui frame instead ("Where the co-op module lives" above).

@@ -672,6 +672,27 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
     }
 }
 
+// The wrapped game functions (patch 0005, nx2/coop_world_wraps.py). The game's function always runs (0 at phase 0).
+int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
+    if (!g_on || x == nullptr) {
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_FLAG_APPLY && phase == 0) {
+        // First proof: how often the game applies its queued flag writes (one line at the first, then every 10 s).
+        static std::atomic<std::uint64_t> runs{0};
+        static std::atomic<std::int64_t> said_ms{0};
+        const std::uint64_t n = runs.fetch_add(1, std::memory_order_relaxed) + 1;
+        const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+        std::int64_t last = said_ms.load(std::memory_order_relaxed);
+        if ((n == 1 || now - last >= 10'000) && said_ms.compare_exchange_strong(last, now)) {
+            LOG_INFO(Core, "coop: world wraps: the game's flag applier ran {} times so far (x0 {:#x})", n, x[0]);
+        }
+    }
+    return 0;
+}
+
 // The AI hold (native-plan row 6): a held component's calc bits become
 // (bits & and) | or, from the set the Objects step published in our own
 // memory (CoopHold::TheHostTable; no guest table at main+0x3c46400).
@@ -726,6 +747,9 @@ COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
 // The world hooks (hos_coop_world.h): Hookshot's host/coop_world.c, on the game's threads.
 COOP_HOOKSHOT_EXPORT int hos_coop_world(uint32_t event, uint64_t a, uint64_t b) {
     return CoopHookshot::World(event, a, b);
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_wrap(uint32_t id, int phase, uint64_t* x, void* ctx) {
+    return CoopHookshot::Wrap(id, phase, x, ctx);
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
     CoopHookshot::Stop();

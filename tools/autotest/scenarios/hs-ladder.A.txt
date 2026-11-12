@@ -1,0 +1,75 @@
+# hs-ladder (issue 129, Hookshot and emulator): A shoots the Deku Tree's eye switch and the ladder
+# falls; B, in the slingshot room, sees it fall live (the held-event catch-up starts it in B's
+# game). test10's cutscene-snap never proved this: the kits' saves already had the ladder played
+# (HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder, Bool 0xb3a4fe84), so B's game started
+# it at setup and A's shot did nothing.
+# BEFORE the run (games closed), clear it in both baselines, then put them back afterwards from
+# <kit>\autotest-save-backup:
+#   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <kit>\hookshot-A\autotest-save\*\*\slot_0*\progress.sav bool:0xb3a4fe84=0
+#   (the same for hookshot-B; for the emulator kits, auto-A / auto-B)
+# Both games also clear it after the load (setflag below), in case the host still holds it.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-ladder
+# Pass:
+# - A's log: "coop: test setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder (bool) 0: set", then after
+#   "mark shot1".."mark ladder" "coop: flags debug: get_bool(0xb3a4fe84) = 1 (was 0)" (A's shot played it).
+# - B's log: "coop: dungeon: starting the event InsideTheDekuTree_Gimmick_FallingLadder here (another player played
+#   it)" only AFTER A's shot (one before "mark placed" in B = the setup leak again: the run proves nothing).
+# - Shots: B's b-view the ladder up, b-ladder the ladder down; A's ladder: the ladder down.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_LIVE_EVENTS=1,LICHII_COOP_DEBUG_BOOL=0xb3a4fe84,A:LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder 0
+wait 60
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -51.8 112.6 12.2
+wait 240
+mark placed
+goto -53.3 12.2 0.4 300  # in front of the chest
+toward -54.4 12.2 8
+press A                  # open it: the item get, and the trap floor goes
+wait 300
+press A
+wait 120
+press A
+wait 120
+press A
+wait 240
+mark trap
+wait 300
+toward -35.6 10.7 10     # face the eye switch across the room
+wait 30
+hold ZR 60 aim1
+hold ZR 30
+wait 60
+mark shot1
+rstick 0 0.4 6           # a little higher
+hold ZR 60 aim2
+hold ZR 30
+wait 60
+mark shot2
+rstick 0 0.4 6
+hold ZR 60 aim3
+hold ZR 30
+wait 120
+press B
+mark ladder
+wait 900
+mark late
+mark a-end

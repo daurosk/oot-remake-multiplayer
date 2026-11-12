@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "coop_draw.h"
+#include "coop_hud_layout.h"
 
 namespace {
 
@@ -194,4 +195,25 @@ TEST_CASE("hookshot draw: the panel at the top left, and F7 turns it over on eac
     k.Update(false, true);
     CHECK_FALSE(k.panel);
     CHECK_FALSE(k.list);
+}
+
+TEST_CASE("hookshot draw: the other players under your hearts, hearts as shapes") {
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    s.hud = {{"Mido", "Kokiri Forest", {4, 4, 2, 0}, false}, {"Saria", "", {}, true}};
+    CHECK(CoopDraw::Wanted(s));
+    CoopDraw::Draw(c.d, s);
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() == 27);  // three outlined lines: Mido, Kokiri Forest, Saria
+    const auto& mido = texts[8];
+    CHECK(mido.text == "Mido");
+    CHECK(mido.x == doctest::Approx(40.0f));                      // 40 of 720 lines at 720 high
+    CHECK(mido.y == doctest::Approx(CoopHudLayout::BlocksTop(1280, 720)));
+    CHECK(texts[17].text == "Kokiri Forest");
+    CHECK(texts[17].y > mido.y);
+    CHECK(texts[26].text == "Saria");
+    CHECK(AlphaOf(texts[26].rgba) == 150);  // not connected: dim
+    // Four hearts: each a dark one; three of them filled (two full, one half), the empty one not.
+    CHECK(c.Of("triangle").size() == 4 + 3);
+    CHECK(c.Of("circle").size() == 2 * (4 + 3));
 }

@@ -3,7 +3,9 @@
 // window draws with Qt (lichii/hook/coop_window.cpp, its plain look), drawn
 // here through Hookshot's Dear ImGui (hos_coop_draw.h): the chat lines, the
 // players' name tags, the player list (F6 held) and the panel (F7). The chat
-// box, the HUD hearts and the cheats window are not drawn on Hookshot yet.
+// box and the cheats window are not drawn on Hookshot yet. The HUD blocks
+// (the other players under your hearts) are drawn with shapes, not the
+// game's heart pictures.
 #pragma once
 
 #include <cstdint>
@@ -35,8 +37,17 @@ struct ChatShown {
 // The chat lines still showing, oldest first, with their fade.
 std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines);
 
+// One other player under your hearts (the co-op window's HudLayer).
+struct HudBlock {
+    std::string name;
+    std::string place;        // the place's name, or ""
+    std::vector<int> hearts;  // quarters filled in each (CoopHudHearts::Quarters)
+    bool dim = false;         // not connected
+};
+
 // What to draw this present.
 struct Scene {
+    std::vector<HudBlock> hud;
     std::vector<ChatShown> chat;
     std::optional<CoopHook::Markers> markers;
     std::optional<std::vector<CoopHook::PlayerRow>> players;  // the player list key is held

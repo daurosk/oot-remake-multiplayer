@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "coop_hud_hearts.h"
+#include "coop_hud_layout.h"
+
 namespace CoopDraw {
 namespace {
 
@@ -161,6 +164,59 @@ void DrawPlayers(const HosCoopDraw& d, const std::vector<CoopHook::PlayerRow>& r
     }
 }
 
+// A heart `s` across, centred at (cx, cy): two circles over a triangle.
+void Heart(const HosCoopDraw& d, float cx, float cy, float s, std::uint32_t rgba) {
+    const float r = s * 0.28f;
+    d.circle(d.user, cx - s * 0.24f, cy - s * 0.12f, r, rgba, 0.0f);
+    d.circle(d.user, cx + s * 0.24f, cy - s * 0.12f, r, rgba, 0.0f);
+    d.triangle(d.user, cx - s * 0.5f, cy - s * 0.04f, cx + s * 0.5f, cy - s * 0.04f, cx, cy + s * 0.5f, rgba);
+}
+
+// The co-op window's HudLayer sizes, in the game's 720-line picture.
+constexpr float kGameHeight = 720.0f;
+constexpr float kHudLeft = 40.0f;
+constexpr float kHudNamePx = 25.0f;
+constexpr float kHudPlacePx = 19.0f;
+constexpr float kHudHeart = 20.0f;  // the heart as seen (the window's 38 px pictures are half margin)
+constexpr float kHudGap = 16.0f;
+
+void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks) {
+    // The game's 16:9 picture inside the window.
+    const float s = std::min(d.width / 16.0f, d.height / 9.0f);
+    const float pic_left = (d.width - 16.0f * s) / 2;
+    const float u = 9.0f * s / kGameHeight;
+    const float x = pic_left + kHudLeft * u;
+    float y = static_cast<float>(CoopHudLayout::BlocksTop(d.width, d.height));
+    const float heart = kHudHeart * u;
+    for (const auto& b : blocks) {
+        const int a = b.dim ? 150 : 255;
+        const float name_px = kHudNamePx * u;
+        Outlined(d, x, y, name_px, Rgba(255, 255, 255, a), a, b.name.c_str());
+        y += name_px + 2 * u;
+        if (!b.hearts.empty()) {
+            for (std::size_t i = 0; i < b.hearts.size(); ++i) {
+                const int col = static_cast<int>(i) % CoopHudHearts::kPerRow;
+                const int row = static_cast<int>(i) / CoopHudHearts::kPerRow;
+                const float cx = x + heart / 2 + col * heart * 1.05f;
+                const float cy = y + heart / 2 + row * heart * 1.05f;
+                Heart(d, cx, cy, heart, Rgba(40, 20, 20, a * 3 / 4));
+                const int q = std::clamp(b.hearts[i], 0, 4);
+                if (q > 0) {
+                    Heart(d, cx, cy, heart * (q == 4 ? 0.9f : std::sqrt(q / 4.0f) * 0.9f), Rgba(230, 40, 50, a));
+                }
+            }
+            const int rows = (static_cast<int>(b.hearts.size()) + CoopHudHearts::kPerRow - 1) / CoopHudHearts::kPerRow;
+            y += rows * heart * 1.05f + 3 * u;
+        }
+        if (!b.place.empty()) {
+            const float place_px = kHudPlacePx * u;
+            Outlined(d, x, y, place_px, Rgba(225, 225, 225, a), a, b.place.c_str());
+            y += place_px;
+        }
+        y += kHudGap * u;
+    }
+}
+
 }  // namespace
 
 std::vector<std::vector<std::string>> PlayerCells(const std::vector<CoopHook::PlayerRow>& rows) {
@@ -191,7 +247,7 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines) {
 }
 
 bool Wanted(const Scene& s) {
-    return !s.chat.empty() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
+    return !s.chat.empty() || !s.hud.empty() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
            (s.panel && !s.panel->empty());
 }
 
@@ -202,6 +258,7 @@ void Draw(const HosCoopDraw& d, const Scene& s) {
     if (s.markers) {
         DrawMarkers(d, *s.markers);
     }
+    DrawHud(d, s.hud);
     if (s.panel) {
         DrawPanel(d, *s.panel);
     }

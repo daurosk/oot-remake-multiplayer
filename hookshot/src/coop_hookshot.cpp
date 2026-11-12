@@ -30,6 +30,8 @@
 #include "coop_game_build.h"
 #include "coop_hold.h"
 #include "coop_hook.h"
+#include "coop_hud.h"
+#include "coop_hud_hearts.h"
 #include "coop_puppet.h"
 #include "coop_runtime.h"
 #include "coop_settings.h"
@@ -214,8 +216,25 @@ CoopDraw::Scene DrawScene() {
         list = g_keys.list || always;
         panel = g_keys.panel;
     }
+    const auto rows = CoopHook::PlayerList();
+    static const bool hud_off = Env("LICHII_COOP_HUD") == "0";
+    for (const auto& row : hud_off ? std::vector<CoopHook::PlayerRow>{} : rows) {
+        if (row.self) {
+            continue;
+        }
+        CoopDraw::HudBlock b;
+        b.name = row.name.empty() ? "Player " + std::to_string(row.number) : row.name;
+        if (row.scene && !row.scene->empty()) {
+            b.place = CoopHud::PlaceName(*row.scene);
+        }
+        if (const auto life = CoopHud::PlayerLife(row.number); life && life->max > 0) {
+            b.hearts = CoopHudHearts::Quarters(life->life, life->max);
+        }
+        b.dim = row.state != "connected";
+        s.hud.push_back(std::move(b));
+    }
     if (list) {
-        s.players = CoopHook::PlayerList();
+        s.players = rows;
     }
     if (panel) {
         s.panel = CoopHook::OverlayLines();

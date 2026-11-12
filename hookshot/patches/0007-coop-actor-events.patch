@@ -14,8 +14,9 @@ DELETE_REQUEST with the actor and the reason, once for an actor) and
 the Life component's step (main+0x49dcb0: LIFE_STEP with the component
 and this frame's damage sum, which the module may change, so another
 player's hit goes in through the game's own step). The words and the
-build id are checked; a hook whose words differ is left out. They go
-in before the wrapped functions of patch 0005.
+build id are checked; a hook whose words differ is left out. Their
+install line goes right after patch 0005's, so the patch applies with or
+without the patches numbered between them.
 The fourth is the game's shoot code (main+0xc16d24: SHOOT_FROM with
 the shooter's actor, before the create it makes).
 ---
@@ -134,18 +135,18 @@ index 0000000..7e67e39
 +    print("co-op actors: %d of %d actor event hooks (world hook)" % (n, len(HOOKS)))
 +    return n
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index d8870f0..e59ef6e 100644
+index 5f5a5f3..2d0ffda 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
-@@ -62,6 +62,8 @@ def install(lifter, img, build_id):
-     coop_puppet_guard.install(lifter, img, build_id)
-     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
-     coop_platform_lift.install(lifter, img, build_id)
-+    import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
-+    coop_actor_lift.install(lifter, img, build_id)
-     # (patch 0005: wrapped game functions, host/coop_world.c. Kept last: it leaves out what the hooks above took)
+@@ -63,6 +63,8 @@ def install(lifter, img, build_id):
+     # installs below add, so its place among them does not matter)
      import coop_world_wraps
      coop_world_wraps.install(lifter, img, build_id)
++    import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
++    coop_actor_lift.install(lifter, img, build_id)
+     import coop_puppet_guard   # (patch 0002: the other players' Link)
+     coop_puppet_guard.install(lifter, img, build_id)
+     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
 -- 
 2.56.0.windows.4
 

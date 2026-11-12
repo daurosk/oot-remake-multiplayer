@@ -13,6 +13,9 @@
 #  - jump-A/B: the place we were handed (before any easing) jumped at most twice: a held
 #    puppet that follows their place gives no jump when the cutscene ends. Each jump is logged
 #    "P<n> target jump <m> m (show|hold, eased|at once|warp)": read them when it fails.
+#    Counted only after each game's own "mark placed": the test's `place` moves of both
+#    Links (setup, 35-53 m handed over 3-5 packets) are target jumps by design and
+#    can give 3-5 such lines per game, all before "placed".
 #  - navi-snap-A/B: the same snap check for Navi.
 # Read too: B "...FallingLadder... moved by another player" lines while B's event runs, and the
 # shots: B's puppet in A's window walks to the door during B's door cutscene.
@@ -28,7 +31,7 @@ lines door-held-A A min=1 (?<!fairy )coop: puppet: P\d+ show -> hold \(their cut
 lines door-back-A A min=1 (?<!fairy )coop: puppet: P\d+ hold -> show
 lines snap-A A max=0 (?<!fairy )coop: puppet: P\d+ snap \S+ m \((show|hold)\)
 lines snap-B B max=0 (?<!fairy )coop: puppet: P\d+ snap \S+ m \((show|hold)\)
-lines jump-A A max=2 (?<!fairy )coop: puppet: P\d+ target jump \S+ m \((show|hold), (eased|at once)\)
-lines jump-B B max=2 (?<!fairy )coop: puppet: P\d+ target jump \S+ m \((show|hold), (eased|at once)\)
+lines jump-A A max=2 (?<!fairy )coop: puppet: P\d+ target jump \S+ m \((show|hold), (eased|at once)\)(?<=coop: test mark placed[\s\S]*)
+lines jump-B B max=2 (?<!fairy )coop: puppet: P\d+ target jump \S+ m \((show|hold), (eased|at once)\)(?<=coop: test mark placed[\s\S]*)
 lines navi-snap-A A max=0 fairy coop: puppet: P\d+ snap \S+ m \((show|hold)\)
 lines navi-snap-B B max=0 fairy coop: puppet: P\d+ snap \S+ m \((show|hold)\)

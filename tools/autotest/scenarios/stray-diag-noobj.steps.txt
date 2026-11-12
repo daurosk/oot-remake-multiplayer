@@ -6,7 +6,9 @@
 # The owner hold (stray-hold) must be OFF here, or no flip happens: '#! server --owner-hold-ms 0' below. A
 # coop_server built with stray-hold takes that option; an older server has no hold at all and refuses the
 # option, so on one of those delete the '#! server' line.
-# Run: tools\autotest\run.ps1 -Scenario stray-diag-noobj   (emulator; Hookshot: -Runtime hookshot)
+# Run WITHOUT -Switches: a command-line -Switches with LICHII_COOP_OBJECTS=1 wins over this header (the end
+# of the big run on 2026-11-12 passed one, so that noobj result proves nothing):
+#   tools\autotest\run.ps1 -Scenario stray-diag-noobj   (emulator; Hookshot: -Runtime hookshot)
 # Read per restart (counts.txt and the logs):
 #  - which game listed first: A's log "objects: share owner ... is player 2 epoch 0" after its "welcomed as
 #    player 1" = B first (the case that aborted); "is player 1" = A first (no flip, proves nothing);

@@ -1,0 +1,30 @@
+# stray-diag-nopuppet (#175 root cause, round 2): puppets off (LICHII_COOP_PUPPET=0).
+# Round 1 (2026-11-12 end of the big run): with the owner hold (stray-hold) A still aborted 45 ms after its
+# rejoin, before any owner arrived, so the owner flip is NOT the cause; with poses, hit replay, wake and the
+# platform/scrub callers each off it aborted too. Only A (player 1) aborts, never B; after a restart B comes
+# back first (host). Round 2 turns whole systems off. Run it WITHOUT -Switches: a -Switches on the command
+# line wins over this header (round 1's noobj ran with LICHII_COOP_OBJECTS=1 for that reason):
+#   tools\autotest\run.ps1 -Scenario stray-diag-nopuppet
+# Read: no-panic-A (0 "Userspace PANIC" lines in A) after three restarts. A PANIC: what this turns off is not
+# the cause. No PANIC: it (or something only it starts) is the cause.
+#! switches LICHII_COOP_PUPPET=0
+#! server --owner-hold-ms 0
+start A B
+load A B
+sleep 15
+server stop
+sleep 5
+server start
+sleep 30
+server stop
+sleep 5
+server start
+sleep 30
+server stop
+sleep 5
+server start
+sleep 30
+shot after
+lines no-panic-A A max=0 Userspace PANIC
+lines no-panic-B B max=0 Userspace PANIC
+lines a-rejoined A min=3 coop: welcomed as player

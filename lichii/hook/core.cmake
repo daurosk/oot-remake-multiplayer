@@ -8,6 +8,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_teleport.cpp"
     "${_coop_hook}/coop_teleport_game.cpp"
     "${_coop_hook}/coop_scene_probe.cpp"
+    "${_coop_hook}/coop_callers.cpp"
     "${_coop_hook}/coop_camera.cpp"
     "${_coop_hook}/coop_cheat_items.cpp"
     "${_coop_hook}/coop_cheats.cpp"

@@ -105,27 +105,7 @@ private:
 };
 
 
-// The callers after the puppets, by order. The mutex is held across a step;
-// only AddCaller (rare) waits on it.
-struct Callers {
-    std::mutex mutex;
-    std::vector<std::pair<int, Caller>> list;
-};
-Callers& TheCallers() {
-    static Callers callers;
-    return callers;
-}
-
 } // namespace
-
-void AddCaller(int order, Caller caller) {
-    Callers& c = TheCallers();
-    std::lock_guard lock(c.mutex);
-    const auto at = std::upper_bound(
-        c.list.begin(), c.list.end(), order,
-        [](int o, const std::pair<int, Caller>& e) { return o < e.first; });
-    c.list.emplace(at, order, std::move(caller));
-}
 
 namespace {
 std::mutex g_refusal_mutex;
@@ -240,27 +220,8 @@ bool Call(Core::System& system, std::uint32_t imm, std::array<std::uint64_t, 8>&
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     const std::uint64_t buffer = args[0];
-    // Caller 0 is the puppet director, then the others by order. Each is asked
-    // once a frame (after_call false) when its turn comes and gets the result
-    // of each call it made; the turn passes on when it has no more calls.
-    static std::size_t current = 0;  // who made the last call; the calc thread only
-    Callers& callers = TheCallers();
-    std::lock_guard lock(callers.mutex);
-    const auto step = [&](std::size_t i, bool after_call, std::uint64_t result) {
-        return i == 0 ? CoopPuppet::TheDirector().Step(guest, after_call, result, now_ms)
-                      : callers.list[i - 1].second(guest, after_call, result, now_ms);
-    };
-    const std::size_t count = callers.list.size() + 1;
-    std::optional<CoopPuppet::Call> call;
-    std::size_t i = 0;
-    if (args[2] != 0 && current < count) {
-        call = step(current, true, args[1]);
-        i = current + 1;
-    }
-    for (; !call && i < count; ++i) {
-        call = step(i, false, 0);
-        current = i;
-    }
+    // The puppet director, then the others by order (coop_callers.h).
+    const auto call = CoopCallers::Next(guest, args[2] != 0, args[1], now_ms);
     if (!call) {
         args[0] = 0;
         return true;

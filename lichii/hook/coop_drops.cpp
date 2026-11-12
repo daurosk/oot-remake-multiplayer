@@ -1026,10 +1026,13 @@ private:
                             // Bush and grass loot (#102): every game has
                             // its own with this hash; only pickups are shared.
                             entry.hash = hash;
-                            if (!first_ && placed_logged_ < 64) {
+                            if (!first_ && placed_logged_ < 256) {
                                 ++placed_logged_;
-                                LOG_INFO(Core, "coop: drops: {} {:#x} is placed (hash {:#x}): pickup shared",
-                                         name, a, hash);
+                                const Vec3 at = Place(memory, a);
+                                LOG_INFO(Core,
+                                         "coop: drops: {} {:#x} is placed (hash {:#x}) at {:.1f} {:.1f} "
+                                         "{:.1f}: pickup shared",
+                                         name, a, hash, at[0], at[1], at[2]);
                             }
                         }
                         entry.name = std::move(name);

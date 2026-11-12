@@ -97,7 +97,7 @@ Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-reco
 
 | Feature | On Hookshot |
 |---|---|
-| Puppet settings: `LICHII_COOP_TUNICS=0`, `LICHII_COOP_SELF_TUNIC` (green players get the green puppet, issue 202) | Same code as the emulator (`lichii/hook/coop_puppet_config.cpp`; the module had a shortened copy). The kit's Hookshot launcher sets `LICHII_COOP_SELF_TUNIC` and recolours your own tile in the pack in `mods\contents` before the game starts (`play.ps1 -Hookshot`, as for the emulator) <!-- TBC big run: own tunic on Hookshot --> |
+| Puppet settings: `LICHII_COOP_TUNICS=0`, `LICHII_COOP_SELF_TUNIC` (green players get the green puppet, issue 202) | Same code as the emulator (`lichii/hook/coop_puppet_config.cpp`; the module had a shortened copy). The kit's Hookshot launcher sets `LICHII_COOP_SELF_TUNIC` and recolours your own tile in the pack in `mods\contents` before the game starts (`play.ps1 -Hookshot`, as for the emulator) |
 | Your own Ocarina notes sent to the others (issue 152) | The module reads the buttons word Hookshot's `nn_hid.c` gave the game (`HosCoopApi::pad_buttons`); a Hookshot built from an older patch sends no notes and says so at start |
 | Co-op window: chat, player list, markers, HUD hearts, cheats | Drawn in Hookshot's ImGui frame (see the table above, "Co-op window, chat, player list, markers"): chat lines, name tags, player list (F6), panel (F7), HUD blocks, chat box (T), item cheats (F8). Keys differ from the emulator's: Enter and Tab are the game's Plus on Hookshot. With the HUD pack in the game look (the game's font, heart pictures, players' colours); the cheats take the mouse; on Linux too |
 | Co-op's per-frame work during loads and pause | Once per present, as the emulator's composite |

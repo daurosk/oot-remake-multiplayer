@@ -842,6 +842,10 @@ namespace object_presence {
 inline constexpr std::uint8_t awake = 1u << 0;
 inline constexpr std::uint8_t in_fight = 1u << 1;
 inline constexpr std::uint8_t targeting = 1u << 2;  // targeting our player
+// A boss whose intro this game has not played: its own boss is still in its
+// pre-battle phase (Gohma on the ceiling), so it must not own the boss; its AI
+// would hold every game's boss there.
+inline constexpr std::uint8_t unready = 1u << 3;
 }  // namespace object_presence
 
 struct ObjectPresence {

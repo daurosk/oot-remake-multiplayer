@@ -590,6 +590,8 @@ class Session {
     std::uint64_t candidate_since = 0;
     // Games other than the owner whose copy chases their Link, and since when.
     std::map<ConnectionId, std::uint64_t> chased_by;
+    // Games whose boss is not ready to be owned (object_presence::unready).
+    std::set<ConnectionId> unready;
     // A HANDOVER_ASK the owner has not answered yet.
     struct Ask {
       ConnectionId to = 0;

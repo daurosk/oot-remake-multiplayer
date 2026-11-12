@@ -158,6 +158,7 @@ struct Glue {
     bool debug = false;
     std::uint64_t tick_at = 0;  // steady clock, us
     bool connected = false;
+    bool unready_logged_ = true;  // the last state logged: ready
     std::uint64_t debug_at = 0;
     Sync sync;
     Mover mover;
@@ -257,6 +258,27 @@ struct Glue {
             if (const Room* room = RoomOfScene(*scene)) {
                 local.boss_alive = CoopObjects::LastBossAlive(Bodies(*room));
                 local.boss_hurt = CoopObjects::LastBossHurt(Bodies(*room));
+                // Not ready to own the boss until our game has played its
+                // intro: before it our boss is still in its pre-battle phase
+                // (Gohma on the ceiling), and as owner it would hold every
+                // game's boss there (the eye shut, no fight).
+                CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
+                coop::host::GameFlags flags(memory);
+                const auto intro = flags.get_bool(
+                    coop::host::flag_hash("HavePlayedEvent." + std::string(room->intro)));
+                std::vector<std::string> unready;
+                if (intro.has_value() && !*intro) {
+                    for (const auto body : Bodies(*room)) unready.emplace_back(body);
+                }
+                if (unready.empty() != unready_logged_) {
+                    unready_logged_ = unready.empty();
+                    LOG_INFO(Core, "coop: boss: {} ({})",
+                             unready.empty() ? "ready to own the boss" : "not ready to own the boss: its intro is not played here",
+                             room->intro);
+                }
+                CoopObjects::SetUnreadyBosses(std::move(unready));
+            } else {
+                CoopObjects::SetUnreadyBosses({});
             }
         }
         local.self = session->with_client([](coop::net::Client& c) { return c.player_number(); });

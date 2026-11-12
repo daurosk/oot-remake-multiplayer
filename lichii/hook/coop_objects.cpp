@@ -1361,6 +1361,10 @@ public:
         StepHits();
 #endif
         share_now_us_ = server_now_us;
+        {
+            std::lock_guard lock(g_unready_mutex);
+            sync_.SetUnready(g_unready);
+        }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
@@ -3595,6 +3599,14 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
         return std::nullopt;
     }
     return BossAlive(g_bosses, bodies);
+}
+
+std::mutex g_unready_mutex;
+std::vector<std::string> g_unready;
+
+void SetUnreadyBosses(std::vector<std::string> bodies) {
+    std::lock_guard lock(g_unready_mutex);
+    g_unready = std::move(bodies);
 }
 
 std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies) {

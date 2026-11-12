@@ -29,7 +29,9 @@ Vec3 Follower::Goal(const CoopPuppet::Target& puppet, float t, std::uint8_t numb
     const float phase = static_cast<float>(number) * 1.7f;
     Vec3 local = settings_.offset;
     const std::string_view actor = puppet.actor;
-    if (actor.size() >= 6 && actor.substr(actor.size() - 6) == "_Adult") {
+    // CoopPuppet_Adult, or a tunic colour of it (CoopPuppet_Adult_Red).
+    if (actor.size() >= 6 && (actor.substr(actor.size() - 6) == "_Adult" ||
+                              actor.find("_Adult_") != std::string_view::npos)) {
         for (float& v : local) {
             v *= settings_.adult_scale;
         }

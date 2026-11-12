@@ -206,13 +206,24 @@ function Get-KitMods([string]$User) {
 
 # Reads coop-options.ini: NAME=value lines for LICHII_COOP_* switches and the emulator's
 # own EDEN_NX2_* switches. Blank lines and lines starting with # or ; are skipped, and so
-# are auto_update and verify_signature (the updater reads them, the emulator does not). Returns an ordered table.
+# are auto_update and verify_signature (the updater reads them, the emulator does not). 'color = <colour>'
+# is passed as LICHII_COOP_COLOR when Test-CoopColor (coop-ini.ps1) takes it. Returns an ordered table.
 function Read-KitOptions([string]$Path) {
     $values = [ordered]@{}
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
         if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_password|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|pvp)\s*=') { continue }
+        if ($t -match '^color\s*=\s*(.*?)\s*$') {
+            $c = $Matches[1] -replace '\s+[#;].*$', ''  # a comment after it: 'color = blue  # mine'
+            if (-not $c) { continue }  # none chosen: the player number's colour
+            if ((Get-Command Test-CoopColor -ErrorAction SilentlyContinue) -and -not (Test-CoopColor $c)) {
+                Write-Host "coop-options.ini: color '$c' is not a colour (red, blue, ... or #RRGGBB); your player number's colour is used"
+                continue
+            }
+            $values['LICHII_COOP_COLOR'] = $c
+            continue
+        }
         if ($t -match '^((LICHII_COOP|EDEN_NX2)_[A-Z0-9_]+)\s*=\s*(.*)$') { $values[$Matches[1]] = $Matches[3] }
         else { Write-Host "coop-options.ini: skipped '$t' (only LICHII_COOP_NAME=value or EDEN_NX2_NAME=value lines)" }
     }

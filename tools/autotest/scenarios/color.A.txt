@@ -1,0 +1,16 @@
+# color (puppet-colors): each player's puppet shows in that player's
+# colour. A picks orange, B keeps its slot colour; A steps off the cow and
+# stands by B, so B sees A's puppet tinted orange and A sees B's in B's slot
+# colour (player 2: red).
+# Run: tools\autotest\run.ps1 -Scenario color -Switches LICHII_COOP_PUPPET=1,
+#   LICHII_COOP_DEBUG_PUPPET=1, A:LICHII_COOP_COLOR=orange
+# Expect in both logs: "P<n> colour #...... (strength 0.45) on model 0x..."
+# (A's log: B's slot colour; B's log: #FF8020). Screens: the other Link tinted.
+stick 1 0 50            # off the cow at the save spot
+wait 240
+mark a-still
+wait 120
+stick 0 0.4 60          # a few steps forward, so B sees the tint as it moves
+mark a-walked
+wait 120
+mark a-end

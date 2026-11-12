@@ -148,6 +148,9 @@ enum class EquipComponent : std::uint16_t {
   third_weapon = 13,  // slot 2, ThirdWeapon
   tool = 14,          // slot 5, Tool
   sub_tool = 15,      // slot 6, SubTool
+  // The player's colour (coop-options.ini `color`): 3 bytes, red, green,
+  // blue. Others tint that player's puppet with it (docs/puppet.md, "Colour").
+  color = 16,
 };
 
 // Longest equipped actor name: the game keeps each in a String64 flag.
@@ -601,6 +604,9 @@ struct Equipment {
   std::optional<std::string> third_weapon;
   std::optional<std::string> tool;
   std::optional<std::string> sub_tool;
+  // The player's colour, 0xRRGGBB. Unset: the player chose none (a receiver
+  // uses its slot's colour, coop::protocol::slot_color).
+  std::optional<std::uint32_t> color;
   bool operator==(const Equipment&) const = default;
 };
 
@@ -627,7 +633,20 @@ inline Equipment merge_equipment(const Equipment& before, const Equipment& now) 
   keep(e.third_weapon, before.third_weapon);
   keep(e.tool, before.tool);
   keep(e.sub_tool, before.sub_tool);
+  keep(e.color, before.color);
   return e;
+}
+
+// The colour of a player who chose none: one per player number (1 to 4),
+// far apart on the colour wheel. 0 (and anything above 4) gets white.
+inline constexpr std::uint32_t slot_color(std::uint8_t player_number) {
+  switch (player_number) {
+    case 1: return 0x3070FF;  // blue
+    case 2: return 0xFF3030;  // red
+    case 3: return 0x30D040;  // green
+    case 4: return 0xFFC020;  // yellow
+    default: return 0xFFFFFF;
+  }
 }
 
 // PLAYER_EQUIP: a player's equipment, sent reliably on every change and again

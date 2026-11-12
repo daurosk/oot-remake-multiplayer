@@ -111,10 +111,14 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
     push(out, protocol::PlayerStatus{protocol::kPlayerSelf, flags_});
   }
 
-  if (reading->equipment) {
+  std::optional<protocol::Equipment> read = reading->equipment;
+  if (settings_.color) {
+    if (!read) read = protocol::Equipment{};
+    read->color = settings_.color;
+  }
+  if (read) {
     const protocol::Equipment now =
-        equipment_sent_ ? protocol::merge_equipment(*equipment_sent_, *reading->equipment)
-                        : *reading->equipment;
+        equipment_sent_ ? protocol::merge_equipment(*equipment_sent_, *read) : *read;
     if (now != equipment_sent_) {
       push(out, protocol::PlayerEquip{protocol::kPlayerSelf, now});
       equipment_sent_ = now;

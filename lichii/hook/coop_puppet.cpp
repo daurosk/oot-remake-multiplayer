@@ -2,6 +2,7 @@
 #include "coop_puppet.h"
 
 #include "coop_camera.h"
+#include "coop_colors.h"
 #include "coop_pose.h"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 
@@ -235,6 +237,12 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     " not spawned after " + std::to_string(kCreateTimeoutMs) + " ms (actor " +
                     Hex(slot.actor) + ", state " + (have_state ? std::to_string(state) : "-") +
                     "); trying again in 5 s");
+                // Twice, so one slow load does not cost the colours.
+                if (IsTunicActor(slot.actor_name) && ++tunic_fails_ == 2) {
+                    tunic_failed_ = true;
+                    Say("tunic puppets are not in the puppet pack (an older pack): plain "
+                        "puppets from now on; run make-puppet-pack again for the colours");
+                }
                 slot.phase = Phase::idle;
                 slot.retry_ms = now_ms + 5000;
                 slot.take = slot.drop = false;
@@ -267,6 +275,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 // Issue 194 (coop_snap.h): a held puppet (their cutscene) follows their
                 // place with its frame frozen, so it is not left behind and does not jump
                 // when the cutscene ends; any jump is eased, a snap is logged.
+                if (t->color && tint_ > 0.0f) {
+                    Tint(slot, guest, *t->color);  // LICHII_COOP_PUPPET_TINT only
+                }
                 if (t->show == Show::show || t->show == Show::hold) {
                     DrawAt(slot, guest, *t, now_ms);
                 } else if (t->show == Show::hide) {
@@ -1168,6 +1179,22 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
 // (+0x358/+0x364), which the actor's calc applies over +0x31c. With the
 // debug anim log, once a second, what the game left there since the last
 // write, so a writer that undoes ours shows up.
+void Director::Tint(Slot& slot, Guest& guest, std::uint32_t color) {
+    const auto result = CoopColors::Apply(guest, slot.actor, CoopColors::TintOf(color, tint_));
+    if (result == CoopColors::Applied::no_model) {
+        return;  // not made yet; asked again next frame
+    }
+    if (slot.tint_actor != slot.actor || slot.tint_color != color) {
+        slot.tint_actor = slot.actor;
+        slot.tint_color = color;
+        char strength[16];
+        std::snprintf(strength, sizeof(strength), "%.2f", tint_);
+        Say("P" + std::to_string(slot.number) + " colour " + CoopColors::Text(color) +
+            " (strength " + strength + ") on model " +
+            Hex(CoopColors::ModelOf(guest, slot.actor)) + " of " + Hex(slot.actor));
+    }
+}
+
 void Director::Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
                     std::uint64_t now_ms) {
     if (anim_ && now_ms - slot.pose_log_ms >= 1000) {
@@ -1297,7 +1324,8 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
                     const std::optional<Vec3>& position, bool local_event,
                     const std::vector<Remote>& remotes, std::uint64_t now_ms,
                     const Gear& own_gear,
-                    std::optional<std::uint8_t> own_drawn) {
+                    std::optional<std::uint8_t> own_drawn,
+                    std::optional<std::uint32_t> own_color) {
     Input in;
     if (main_base == 0) {
         return in;
@@ -1347,7 +1375,8 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         }
         Target t;
         t.number = r.number;
-        t.actor = ActorFor(r.adult);
+        t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
+        t.actor = ActorFor(r.adult, t.color);
         t.position = r.position;
         if (r.rotation) {
             t.rotation = QuatToMatrix(*r.rotation);
@@ -1368,20 +1397,28 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         }
         Target t;
         t.number = 0;
-        t.actor = ActorFor(false);
+        t.actor = ActorFor(false, own_color);
         t.position = *debug_spot_;
         t.gear = own_gear;
         t.drawn = own_drawn;
+        t.color = own_color;  // the test puppet wears your own colour, if you chose one
         in.targets.push_back(std::move(t));
     }
     return in;
 }
 
-std::string Planner::ActorFor(bool adult) const {
+std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
-    return adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
+    std::string name = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
+    if (settings_.tunics && color) {
+        if (const auto tunic = CoopColors::TunicOf(*color); !tunic.empty()) {
+            name += '_';
+            name += tunic;
+        }
+    }
+    return name;
 }
 
 namespace {
@@ -1400,6 +1437,7 @@ std::mutex g_anim_mutex;
 std::array<std::optional<Received>, 5> g_anims;  // by player number; guarded
 std::array<Gear, 5> g_gear;  // the same; guarded
 std::array<std::optional<std::uint8_t>, 5> g_drawn;                // the same; guarded
+std::array<std::optional<std::uint32_t>, 5> g_color;               // the same; guarded
 
 } // namespace
 
@@ -1413,11 +1451,13 @@ void OnEvent(const coop::net::Event& event) {
         g_anims = {};
         g_gear = {};
         g_drawn = {};
+        g_color = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
         g_anims[event.player].reset();
         g_gear[event.player] = {};
         g_drawn[event.player].reset();
+        g_color[event.player].reset();
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -1430,6 +1470,7 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;
+        g_color[event.player] = e.color;
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -1449,6 +1490,11 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
+        // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
+        // The model tint darkens the whole Link (reports puppet-colors-2): off
+        // unless asked for; the colour is the tunic (PlannerSettings::tunics).
+        const char* tint = std::getenv("LICHII_COOP_PUPPET_TINT");
+        g_director->SetTint(tint != nullptr ? CoopColors::StrengthFrom(tint) : 0.0f);
         g_planner = std::make_unique<Planner>(std::move(settings));
         g_configured = true;
     });
@@ -1495,6 +1541,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
+                r.color = g_color[r.number];
             }
         }
     }
@@ -1510,17 +1557,22 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     std::vector<Remote> remotes = Collect(session, server_now_us);
     Gear own_gear;
     std::optional<std::uint8_t> own_drawn;
+    std::optional<std::uint32_t> own_color;
     if (session != nullptr) {
         if (const auto& e = session->sampler().last_equipment()) {
             own_gear = GearOf(*e);
             own_drawn = e->drawn;
+            own_color = e->color;
         }
     }
     const auto now_ms = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn);
+    if (g_director->TunicFailed()) {
+        g_planner->SetTunics(false);
+    }
+    auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));
 }

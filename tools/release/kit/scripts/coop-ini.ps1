@@ -26,6 +26,16 @@ function Test-CoopPassword([string]$Value) {
     return ([System.Text.Encoding]::UTF8.GetByteCount($Value) -le 128)
 }
 
+# A player colour (coop-options.ini's color, the emulator's LICHII_COOP_COLOR): one of the
+# names below (case does not matter) or #RRGGBB / RRGGBB. The names are the emulator's
+# (lichii/hook/coop_colors.cpp); keep the two lists the same.
+$CoopColorNames = @('red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink', 'white', 'black', 'brown', 'gray', 'grey')
+function Test-CoopColor([string]$Value) {
+    $v = $Value.Trim()
+    if ($CoopColorNames -contains $v.ToLowerInvariant()) { return $true }
+    return ($v -match '^#?[0-9A-Fa-f]{6}$')
+}
+
 # Returns @{ server; port; name; password } from an existing coop.ini (missing keys are empty).
 function Read-CoopIni([string]$Path) {
     $values = @{ server = ''; port = ''; name = ''; password = '' }

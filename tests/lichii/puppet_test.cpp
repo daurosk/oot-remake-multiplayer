@@ -520,7 +520,7 @@ TEST_CASE("puppet planner: remote players in this scene, and the debug puppet") 
     auto in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 1000);
     REQUIRE(in.targets.size() == 1);  // the debug puppet waits for the delay
     CHECK(in.targets[0].number == 2);
-    CHECK(in.targets[0].actor == "CoopPuppet_Child");  // by age
+    CHECK(in.targets[0].actor == "CoopPuppet_Child_Red");  // by age, player 2 red
     CHECK(in.targets[0].rotation[0] == doctest::Approx(-1.0f));  // half a turn about y
 
     in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 4000);
@@ -1030,12 +1030,12 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     auto in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[0].show == CoopPuppet::Show::show);
-    CHECK(in.targets[0].actor == "CoopPuppet_Child");
+    CHECK(in.targets[0].actor == "CoopPuppet_Child_Blue");  // player 1: blue
     REQUIRE(in.targets[0].anim);
     CHECK(in.targets[0].anim->name == "Wait");
     CHECK(in.targets[0].anim_serial == 7u);
     CHECK(in.targets[1].show == CoopPuppet::Show::hold);  // their cutscene
-    CHECK(in.targets[1].actor == "CoopPuppet_Adult");
+    CHECK(in.targets[1].actor == "CoopPuppet_Adult_Red");  // player 2: red
 
     // Our cutscene: every puppet here kept but hidden.
     in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, true, remotes, 10);

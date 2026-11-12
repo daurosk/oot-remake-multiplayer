@@ -262,6 +262,9 @@ struct Target {
     // PLAYER_EQUIP's drawn bits: bit i set when the player's equipment slot i
     // is in hand (sword out, shield on the arm). Unset: not known.
     std::optional<std::uint8_t> drawn;
+    // The player's colour, 0xRRGGBB (coop_colors.h): the puppet is tinted
+    // with it while live. Unset: no tint.
+    std::optional<std::uint32_t> color;
 };
 
 struct Input {
@@ -299,6 +302,19 @@ public:
     // Move each puppet with the game's own setter as well (addr::kSetMatrix),
     // once a frame: for an actor with a physics body, such as the fairy.
     void SetMatrixCall(bool on) { matrix_call_ = on; }
+    // Tint each live puppet in its target's colour with this strength (the
+    // alpha of the game's hit-flash colour, coop_colors.h); 0, the default,
+    // writes no colour (the fairies' director).
+    void SetTint(float strength) { tint_ = strength; }
+    // A tunic puppet (CoopPuppet_<Age>_<Colour>) was not made: the mod is a
+    // pack from before the colours. The planner then uses the plain ones.
+    bool TunicFailed() const { return tunic_failed_.load(); }
+    // CoopPuppet_<Age>_<Colour>, not the plain CoopPuppet_<Age>.
+    static bool IsTunicActor(std::string_view name) {
+        constexpr std::string_view kBase = "CoopPuppet_";
+        return name.substr(0, kBase.size()) == kBase &&
+               name.find('_', kBase.size()) != std::string_view::npos;
+    }
 
     // Any thread. The next frame of the cave uses it.
     void SetInput(Input input);
@@ -406,6 +422,8 @@ private:
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
+        std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
+        std::uint32_t tint_color = 0;       // and its colour
         std::uint64_t rewear_ms = 0;        // no new "left behind" check before this
         std::array<std::uint64_t, kGearCount> far_since_ms{};  // first far reading of each piece; 0 near
         std::array<std::uint8_t, kGearCount> rewear_tries{};   // re-wears since the piece was last near
@@ -438,6 +456,9 @@ private:
     std::optional<Call> SetFrame(Slot& slot, std::uint64_t controller, float frame);
     static std::uint64_t Controller(Guest& guest, std::uint64_t actor);
     static std::optional<float> Frame(Guest& guest, std::uint64_t controller);
+    // The colour into the live puppet's model (coop_colors.h), every frame
+    // it is not there yet (a new actor, or the game wrote its own).
+    void Tint(Slot& slot, Guest& guest, std::uint32_t color);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
               std::uint64_t now_ms);
     void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
@@ -453,6 +474,9 @@ private:
     bool anim_;
     bool pose_copy_ = false;
     bool matrix_call_ = false;
+    float tint_ = 0.0f;
+    std::atomic<bool> tunic_failed_ = false;
+    int tunic_fails_ = 0;  // coloured creates that timed out
 
     mutable std::mutex input_mutex_;
     Input next_input_;  // guarded
@@ -487,6 +511,9 @@ struct Remote {
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear
     std::optional<std::uint8_t> drawn;               // as Target::drawn
+    // PLAYER_EQUIP's colour; unset: the player chose none, and Plan gives the
+    // player's slot colour (coop::protocol::slot_color).
+    std::optional<std::uint32_t> color;
 };
 
 struct PlannerSettings {
@@ -494,6 +521,9 @@ struct PlannerSettings {
     // player's age (LICHII_COOP_PUPPET_ACTOR overrides it).
     std::string actor;
     bool debug_anim = false;      // LICHII_COOP_DEBUG_ANIM
+    // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
+    // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
+    bool tunics = true;
     bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
@@ -510,8 +540,12 @@ public:
                const std::optional<Vec3>& position, bool local_event,
                const std::vector<Remote>& remotes, std::uint64_t now_ms,
                const Gear& own_gear = {},
-               std::optional<std::uint8_t> own_drawn = {});
-    std::string ActorFor(bool adult) const;
+               std::optional<std::uint8_t> own_drawn = {},
+               std::optional<std::uint32_t> own_color = {});
+    // The actor for a player of that age and colour: CoopPuppet_<Age>, or
+    // CoopPuppet_<Age>_<Colour> (CoopColors::TunicOf) while tunics are on.
+    std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}) const;
+    void SetTunics(bool on) { settings_.tunics = on; }
     const PlannerSettings& settings() const { return settings_; }
 
 private:

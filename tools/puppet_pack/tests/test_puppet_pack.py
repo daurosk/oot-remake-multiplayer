@@ -1067,11 +1067,27 @@ class FullBuildTest(unittest.TestCase):
     def test_build_tunics(self):
         from puppet_pack import tunic, zs
         mod = os.path.join(self.dir, "mod_t")
-        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red", "blue"], test_tunic="red")
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red", "blue", "green"], test_tunic="red")
         d = zs.Dicts.from_romfs(self.romfs)
         out = os.path.join(mod, "romfs")
-        self.assertEqual(sorted(m["tunics"]), ["blue", "red"])
+        self.assertEqual(sorted(m["tunics"]), ["blue", "green", "red"])
+        game_tile = d.decompress(build.read(os.path.join(self.romfs, "Tex/Angin_Tile_A_Alb.bntx.zs")))
+        # green: the game's own tile under the green name, not recoloured (#202)
+        green = d.decompress(build.read(os.path.join(out, "Tex/Angin_Tile_G_Alb.bntx.zs")))
+        self.assertEqual(green, game_tile.replace(b"Angin_Tile_A_Alb\x00", b"Angin_Tile_G_Alb\x00"))
+        # your own Link: per colour but green, the tile recoloured under the game's name, beside
+        # romfs/ (the kit copies one in); as long as the game's tile, so its size entry stands
+        self.assertEqual(m["self_tiles"], {"red": "coop_self/red.bntx.zs", "blue": "coop_self/blue.bntx.zs"})
+        self.assertFalse(os.path.exists(os.path.join(mod, "coop_self", "green.bntx.zs")))
+        self.assertFalse(os.path.exists(os.path.join(out, "Tex", "Angin_Tile_A_Alb.bntx.zs")))
         for c in ("red", "blue"):
+            own = d.decompress(build.read(os.path.join(mod, m["self_tiles"][c])))
+            self.assertEqual(len(own), len(game_tile))
+            self.assertIn(b"Angin_Tile_A_Alb\x00", own)
+            self.assertNotEqual(own, game_tile)
+            recoloured = d.decompress(build.read(os.path.join(out, f"Tex/{tunic.tile_name(c)}.bntx.zs")))
+            self.assertEqual(own, recoloured.replace(tunic.tile_name(c).encode() + b"\x00", b"Angin_Tile_A_Alb\x00"))
+        for c in ("red", "blue", "green"):
             tile = d.decompress(build.read(os.path.join(out, f"Tex/{tunic.tile_name(c)}.bntx.zs")))
             self.assertIn(tunic.tile_name(c).encode() + b"\x00", tile)
             for v in ("Child", "Adult"):
@@ -1098,6 +1114,7 @@ class FullBuildTest(unittest.TestCase):
         os.remove(os.path.join(self.romfs, "Tex", "Angin_Tile_A_Alb.bntx.zs"))
         m = build.build(self.romfs, os.path.join(self.dir, "mod_n"), log=lambda *_: None, tunics=["red"])
         self.assertEqual(m["tunics"], {})
+        self.assertEqual(m["self_tiles"], {})
         self.assertEqual(sorted(a["actor"] for a in m["actors"]), ["CoopPuppet_Adult", "CoopPuppet_Child"])
 
     def test_build_from_nup_writes_the_room_table(self):

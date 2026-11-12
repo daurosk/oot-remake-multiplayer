@@ -34,7 +34,16 @@ COLORS = {
     "pink": ("M", (0xF0, 0x70, 0xB0)),
     "white": ("W", (0xE8, 0xE8, 0xE8)),
     "black": ("K", (0x28, 0x28, 0x28)),
+    # The game's own tile under another name, not recoloured (the colour is only for the list):
+    # the green puppet, for when your own Link wears another colour (SELF_DIR).
+    "green": ("G", (0x30, 0xA0, 0x40)),
 }
+
+# Your own Link in your colour: the game's tile recoloured under its own name, one per colour,
+# kept beside the pack (not in romfs/, so the game does not load it). The kit copies the one of
+# your colour over romfs/Tex/<TILE>.bntx.zs at each start (scripts/kit-paths.ps1
+# Set-KitSelfTunic); green or none: no copy, the game's own tile.
+SELF_DIR = "coop_self"
 
 BC1, BC3 = 0x1A, 0x1C
 
@@ -195,6 +204,18 @@ def rename(data, old, new, at_least=1, at_most=None):
     if n < at_least or (at_most is not None and n > at_most):
         raise TunicError(f"expected {at_least}..{at_most or 'any'} '{old}' strings, found {n}")
     return data.replace(a, b)
+
+
+def tile_for(data, color):
+    """The tile of a colour: green is the game's own tile renamed, the rest recoloured."""
+    if color == "green":
+        return rename(data, TILE, tile_name(color), at_least=1)
+    return recolor_bntx(data, COLORS[color][1], TILE, tile_name(color))
+
+
+def self_tile(data, color):
+    """The game's tile recoloured under its own name: your own Link in `color` (not green)."""
+    return recolor_bntx(data, COLORS[color][1], TILE, TILE)
 
 
 def model_for(model, color):

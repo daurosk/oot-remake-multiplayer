@@ -32,6 +32,7 @@ Each rule answers a way the TotK online sync was seen to break.
 | 2 | reliable, ordered | ownership and damage events |
 | 3 | unreliable, sequenced | player samples (position, rotation, animation) |
 | 4 | unreliable, sequenced | object and enemy samples from their owners |
+| 5 | unreliable, sequenced | proximity voice (`VOICE_FRAME`, protocol 12) |
 
 - Each message type has its channel, and each is sent by the client, the server or both (table below). A receiver refuses a message that came on the wrong channel or from a side that may not send it (`check_received` in the code).
 - The server relays and decides; it never runs the game. The host player's game is the source of truth for shared progress (stage 4).
@@ -423,6 +424,19 @@ Type 401 `PLATFORM_COUNTER` (branch `platforms-b2`, the method of Hot Onion): th
 
 Both: on channel 4 like `WORLD_MOVE`, not reliable: the next one comes a second later. The server writes the sender's number, relays it to the others in the sender's scene (dropped when the sender is not in that scene) and keeps nothing. A version 10 server refuses it as unknown.
 
+### Voice (`VOICE_FRAME`, protocol 12)
+
+Type 420 (420 to 424 kept; branch `proximity-voip`). Proximity voice chat: each game sends its microphone as Opus, 48 kHz mono, one 20 ms frame per message, while its player talks (push-to-talk or open mic). Both sides, on channel 5, unreliable.
+
+| Field | Type | |
+|---|---|---|
+| player | `u8` | 0 from a game; the server writes the speaker's number |
+| sequence | `u16` | +1 per 20 ms frame, wraps; the listener's jitter buffer orders and times by it |
+| flags | `u8` | bit 0 `end`: the talk spurt ends here (the gate closed); no audio. Other bits refused |
+| opus | the rest | 1 to 400 bytes of one Opus packet; none with `end` |
+
+The server relays a frame only to the players in the speaker's scene whose Link is within `voice_range_m` (35 m; 0 = the whole scene) of the speaker's, by the positions of their latest `PLAYER_SAMPLE`; a listener or speaker whose place is not known or is older than `position_stale_us` hears the whole scene. A frame with `end` goes to the whole scene. A speaker whose scene is not known yet is not relayed (stat `voice_unplaced`). Nothing is kept. Voice has a message budget of its own (60 a second, bursts of twice), apart from channels 3 and 4. The games play each voice at the speaker's Link in their own game sound, fading to silence at their own range (30 m), so the server's range is a little larger and a voice never cuts off at the edge (docs/voice.md).
+
 ### Boss rooms (`BOSS_ROOM`)
 
 Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field and keeps nothing.
@@ -487,3 +501,4 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also (branch `net-encrypt`): encrypted traffic with a join password ("Encrypted traffic"). No new type; `HELLO` and `JOIN_CHALLENGE` may end with a 32-byte key share. A version 10 build without it sends no key share and is refused by a server with a password, so with a password every game and the server need it; with no password nothing changes (replaced in version 11, below: every session has a password).
 - Version 11 (branch `keep-number`, stray server restart, 2026-11-12): `HELLO` may end with one more byte, the player's previous number, after the key share. A version 10 server refuses such a `HELLO` as trailing bytes, so the version went up. Version 11 also brings `PLATFORM_CLOCK` (400, branch `platforms-b`) and `PLATFORM_COUNTER` (401, branch `platforms-b2`; 402 to 404 kept), which a version 10 server refuses as unknown: no bump of its own, 11 is not released yet.
 - Version 11 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). Protocol 11 was not released yet, so this shares its number: no new type, no format change.
+- Version 12 also (branch `proximity-voip`): `VOICE_FRAME` (420; 420 to 424 kept) on a new channel 5 (`kChannelCount` 6). A version 11 server would refuse the channel and the type, so no bump of its own: it comes with 12.

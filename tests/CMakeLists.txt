@@ -22,6 +22,10 @@ add_executable(coop_tests
   net/small_path_test.cpp
   net/encrypt_loopback_test.cpp
   presence/presence_test.cpp
+  voice/jitter_test.cpp
+  voice/gate_test.cpp
+  voice/spatial_test.cpp
+  voice/engine_test.cpp
   host/reader_test.cpp
   host/sampler_test.cpp
   host/flags_test.cpp
@@ -114,7 +118,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/cheats_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_cheats_panel.cpp
   hookshot/png_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_png.cpp)
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src)
-target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host coop_overlay doctest::doctest coop_warnings)
+target_link_libraries(coop_tests PRIVATE coop coop_presence coop_host coop_overlay coop_voice doctest::doctest coop_warnings)
 # The session tests run the real server in process.
 target_link_libraries(coop_tests PRIVATE coop_server_lib)
 doctest_discover_tests(coop_tests)

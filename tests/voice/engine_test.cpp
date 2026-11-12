@@ -105,6 +105,19 @@ TEST_CASE("voice engine: push to talk makes one frame per 20 ms, numbered, then 
   CHECK(out[2].flags == proto::voice::end);
   CHECK(out[2].opus.empty());
   CHECK_FALSE(e.talking());
+  // The microphone going away mid-sentence ends it at once, tail or not.
+  Settings tail = s;
+  tail.gate.tail_frames = 5;
+  Engine t(fake_codecs(), tail);
+  std::vector<proto::VoiceFrame> sent;
+  t.capture(std::vector<std::int16_t>(960, 5), true, sent);
+  t.stop_talking(sent);
+  REQUIRE(sent.size() == 2);
+  CHECK(sent[1].flags == proto::voice::end);
+  CHECK(sent[1].sequence == 1);
+  CHECK_FALSE(t.talking());
+  t.stop_talking(sent);  // not talking: nothing more
+  CHECK(sent.size() == 2);
   // Not held: nothing.
   e.capture(std::vector<std::int16_t>(960 * 3, 99), false, out);
   CHECK(out.size() == 3);

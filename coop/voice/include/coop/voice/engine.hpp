@@ -82,6 +82,9 @@ class Engine {
   // to `out` (each with player 0, as a game sends them).
   void capture(std::span<const std::int16_t> samples, bool key_held,
                std::vector<protocol::VoiceFrame>& out);
+  // Ends our talk spurt now (the microphone goes away): the end frame when
+  // we were talking, else nothing. Pending samples are dropped.
+  void stop_talking(std::vector<protocol::VoiceFrame>& out);
   // True while our gate is open (we are talking).
   bool talking() const;
   float mic_level_db() const;

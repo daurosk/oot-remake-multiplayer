@@ -86,6 +86,21 @@ void Engine::capture(std::span<const std::int16_t> samples, bool key_held,
   talking_.store(gate_.open());
 }
 
+void Engine::stop_talking(std::vector<protocol::VoiceFrame>& out) {
+  pending_.clear();
+  if (!gate_.open()) return;
+  const std::array<std::int16_t, kSamplesPerFrame> silence{};
+  if (gate_.update(silence, false, true) == Gate::Step::ended) {  // muted: closes at once
+    protocol::VoiceFrame v;
+    v.flags = protocol::voice::end;
+    v.sequence = sequence_++;
+    out.push_back(std::move(v));
+    std::lock_guard lock(stats_mutex_);
+    ++stats_.sent;
+  }
+  talking_.store(false);
+}
+
 bool Engine::talking() const { return talking_.load(); }
 float Engine::mic_level_db() const { return level_db_.load(); }
 
@@ -172,7 +187,8 @@ void Engine::render(float* const* out, int channels, int frames, std::uint64_t n
     std::lock_guard lock(listener_mutex_);
     listener = listener_;
   }
-  std::vector<float> mono(static_cast<std::size_t>(frames));
+  thread_local std::vector<float> mono;  // the mixer's thread: no allocation once grown
+  mono.resize(static_cast<std::size_t>(frames));
   for (std::size_t p = 1; p <= kMaxSpeakers; ++p) {
     Speaker& s = *speakers_[p];
     std::lock_guard lock(s.mutex);

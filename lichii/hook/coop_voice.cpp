@@ -242,8 +242,7 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
             }
         } else if (!want && g_mic_on) {
             // Close the spurt if we were talking, then let the microphone go.
-            std::vector<std::int16_t> silence(static_cast<std::size_t>(coop::voice::kSamplesPerFrame), 0);
-            e->capture(silence, false, out);
+            e->stop_talking(out);
             if (g_backend.mic_stop) {
                 g_backend.mic_stop();
             }

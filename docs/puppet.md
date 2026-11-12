@@ -436,9 +436,9 @@ What each case does now. "Handled" is by code and unit tests; none of these is p
 | Loading, other scene | theirs | Their scene changes: other place, deleted | Handled (proven, `stray`) | `stray` |
 | Riding Epona | theirs | Puppet shown in its riding animation while their command names a horse (`Horse...`, `Evt_Horse_...`, not `DismountHorse` or `HorseAccess`), with a copy of their Epona under it (`CoopRide_Epona`, [Riding](#riding-issue-199)); dismount: the copy goes, the puppet walks on | Built (issue 199); not run in game yet | `epona` |
 | Riding Epona | ours | We send `PLAYER_RIDE` while we ride | Built (issue 199) | `epona` |
-| Ocarina played freely | theirs | Shown (not held) while their command starts `Ocarina`, even if their event bit is set | Handled; whether the game sets the event bit then is not known | `ocarina` |
-| Ocarina played freely | ours | Our event does not hide the others while our own command starts `Ocarina` | Handled, same unknown | `ocarina` |
-| Song taught, warp song, Song of Time block | either | `DemoOcarina...` and what follows are cutscenes: as a cutscene | Handled as a cutscene | `ocarina` (log only) |
+| Ocarina played freely | theirs | Shown (not held) while their command is `DemoOcarina` (not `DemoOcarinaMelodyGet`) or starts `Ocarina`, though the game sets their event bit then (ocarina-b, 2026-11-12) | Handled; taking it out first is a plain `EvtWait` event (about 4 s): held then, as any talk | `ocarina`, `hs-ocarina-show` |
+| Ocarina played freely | ours | Our event does not hide the others while our own command is `DemoOcarina` or starts `Ocarina` | Handled; the take-out `EvtWait` hides them, as any event | `ocarina`, `hs-ocarina-show` |
+| Song taught, warp song, Song of Time block | either | `DemoOcarinaMelodyGet...` and what follows are cutscenes: as a cutscene | Handled as a cutscene | `ocarina` (log only) |
 | Time travel (Master Sword) | either | A cutscene, then the age changes: the puppet is made again as the other age (settle 1 s) | Handled (the age swap is proven, `stray-adult`) | none new |
 | Crawlspace | either | Unknown: the AS tables have no crawl command name (`Crouch...` is crouching); if the game runs it as an event, ours hides puppets and theirs holds them at the entrance | Unknown | `crawl` (both warp into Kokiri Forest; A crawls the Kokiri Sword tunnel, B watches from inside; no save to set up) |
 

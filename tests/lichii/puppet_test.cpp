@@ -1162,7 +1162,7 @@ TEST_CASE("puppet planner: riding shows (issue 199), the Ocarina plays through t
     remotes[2].number = 3;
     remotes[2].scene = "HyruleField_Child";
     remotes[2].status = coop::protocol::status::in_cutscene;
-    remotes[2].anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};
+    remotes[2].anim = CoopPuppet::Anim{"DemoOcarinaMelodyGet", 0.0f, 1.0f};  // a song taught
 
     auto in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 3);
@@ -1745,4 +1745,21 @@ TEST_CASE("fairy join: the fairy waits for the drawing after a load, as her pupp
     calls = Frame(d, g, 3400 + Director::kDrawnMs);
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kCreate);
+}
+
+TEST_CASE("puppet planner: the Ocarina played freely (DemoOcarina) shows through their event bit (#86)") {
+    CoopPuppet::Planner p;
+    std::vector<CoopPuppet::Remote> remotes(1);
+    remotes[0].number = 1;
+    remotes[0].scene = "Graveyard_Child";
+    remotes[0].status = coop::protocol::status::in_cutscene;
+    remotes[0].anim = CoopPuppet::Anim{"EvtWait", 0.0f, 1.0f};  // taking it out: any event
+    auto in = p.Plan(kBase, std::string("Graveyard_Child"), std::nullopt, false, remotes, 0);
+    REQUIRE(in.targets.size() == 1);
+    CHECK(in.targets[0].show == CoopPuppet::Show::hold);
+    remotes[0].anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};  // playing
+    in = p.Plan(kBase, std::string("Graveyard_Child"), std::nullopt, false, remotes, 10);
+    REQUIRE(in.targets.size() == 1);
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);
+    CHECK(std::string(in.targets[0].why) == "ocarina");
 }

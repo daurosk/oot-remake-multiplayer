@@ -324,8 +324,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     Pose(slot, guest, parked, nullptr, now_ms);
                 }
                 // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
-                // by their own command: while held for their cutscene (free play
-                // is DemoOcarina) nothing new is played on the puppet.
+                // by their own command (free play is DemoOcarina: shown, not held,
+                // coop/host/scene.hpp activity_of).
                 const std::string their = t->anim ? t->anim->name : std::string();
                 if (anim_ && their != slot.their_anim) {
                     Say("P" + std::to_string(slot.number) + " their command '" + their + "'");

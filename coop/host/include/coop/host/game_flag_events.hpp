@@ -22,6 +22,7 @@
 #include <optional>
 #include <utility>
 
+#include "coop/host/bounded_queue.hpp"
 #include "coop/host/flags.hpp"
 #include "coop/host/game_memory.hpp"
 
@@ -69,17 +70,16 @@ std::size_t queued_flag_writes(GameMemory& memory, std::uint64_t manager,
                                const std::function<void(const GameFlagWrite&)>& sink);
 
 // From the game's threads to the watcher's: a fixed ring, no lock, no
-// allocation on the pushing side. A push into a full ring is dropped and
+// allocation (bounded_queue.hpp). A push into a full ring is dropped and
 // remembered (take_overflow), and the reader then looks at every flag.
 class GameFlagEvents {
  public:
   static constexpr std::size_t kSlots = 4096;  // a power of two
 
-  GameFlagEvents();
   // Any thread, several at once.
   bool push(const GameFlagWrite& write);
-  // One reader at a time. False when empty.
-  bool pop(GameFlagWrite& out);
+  // False when empty.
+  bool pop(GameFlagWrite& out) { return ring_.pop(out); }
   // True once after pushes were dropped.
   bool take_overflow() { return overflow_.exchange(false); }
   std::uint64_t pushed() const { return pushed_.load(std::memory_order_relaxed); }
@@ -87,12 +87,7 @@ class GameFlagEvents {
   void clear();
 
  private:
-  struct Cell {
-    std::atomic<std::size_t> seq{0};
-    GameFlagWrite value;
-  };
-  std::array<Cell, kSlots> cells_;
-  std::atomic<std::size_t> head_{0}, tail_{0};
+  BoundedQueue<GameFlagWrite, kSlots> ring_;
   std::atomic<bool> overflow_{false};
   std::atomic<std::uint64_t> pushed_{0}, dropped_{0};
 };

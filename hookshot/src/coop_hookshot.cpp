@@ -43,6 +43,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_live_events.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
@@ -840,6 +841,22 @@ bool HasWrap(std::uint32_t id) {
 // The wrapped game functions (patch 0005, nx2/coop_world_wraps.py). The game's function always runs (0 at phase 0).
 int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_EVENT_REQUEST) {
+        // The game asks for an event: its name at the request (phase 0: x1 is the request), whether the manager took
+        // it after the game's function (phase 1: x0). Both on the same game thread, one after the other.
+        thread_local char name[sizeof(CoopLiveEvents::GameRequest::name)];
+        thread_local bool named = false;
+        if (phase == 0) {
+            std::uint64_t text = 0;
+            named = x[1] != 0 && CoopRuntime::Read(x[1] + CoopLiveEvents::addr::kArgName, &text, sizeof text) &&
+                    text != 0 && CoopRuntime::Read(text, name, sizeof name - 1);
+            name[sizeof name - 1] = 0;
+        } else if (named) {
+            named = false;
+            CoopLiveEvents::TheGameRequests().Push(name, x[0] != 0);
+        }
         return 0;
     }
     if (id == HOS_COOP_WRAP_TIME_SET && phase == 0) {

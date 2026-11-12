@@ -1627,11 +1627,11 @@ Error decode_body(Reader& r, DropSpawn& m) {
   return Error::none;
 }
 
-// DROP_TAKE: u8 player, object id (made), u8 reason (0 picked up, 1 gone).
+// DROP_TAKE: u8 player, object id (made, or placed: a bush's loot), u8 reason
+// (0 picked up, 1 gone).
 Error encode_body(const DropTake& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_TRY(check_object_id(m.id));
-  if (m.id.kind != ObjectKind::made) return Error::bad_value;
   if (static_cast<std::uint8_t>(m.reason) > static_cast<std::uint8_t>(DropTakeReason::gone)) {
     return Error::bad_value;
   }
@@ -1646,7 +1646,6 @@ Error decode_body(Reader& r, DropTake& m) {
   COOP_READ(r.u8(m.player_number));
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_TRY(read_object_id(r, m.id));
-  if (m.id.kind != ObjectKind::made) return Error::bad_value;
   std::uint8_t reason = 0;
   COOP_READ(r.u8(reason));
   if (reason > static_cast<std::uint8_t>(DropTakeReason::gone)) return Error::bad_value;

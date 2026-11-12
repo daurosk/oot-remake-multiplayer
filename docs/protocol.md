@@ -357,7 +357,7 @@ The rupees, hearts and ammo that an enemy, a pot, grass or a rock leaves ([objec
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
 | 36 | `DROP_SPAWN` | 2 | both | `u8` player field, object id (kind made: the game that rolled it and its counter), scene (string, 1 to 64), actor name (string, 1 to 64), position (3 x f32), `u64` server time when its maker first saw it, `u8` flags (bit 0 the sender owns what dropped it, bit 1 told again for a player who came later; other bits refused) |
-| 37 | `DROP_TAKE` | 2 | both | `u8` player field, object id (kind made), `u8` reason (0 picked up, 1 blinked out; others refused) |
+| 37 | `DROP_TAKE` | 2 | both | `u8` player field, object id (kind made, or since version 10 kind placed: a bush's or grass tuft's fixed loot by its placement hash), `u8` reason (0 picked up, 1 blinked out; others refused) |
 | 38 | `DROP_ASK` | 2 | both | `u8` player field, scene (string, 1 to 64): the sender came into this scene and asks for its drops |
 
 Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from any game that still shows the drop, so the maker in its id need not be the sender.
@@ -415,4 +415,5 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
 - Version 10 also brings PvP: `PVP_MODE` (241), `PVP_HIT` (242), `PVP_HURT` (243); 241 to 250 kept (branch `pvp`). A version 9 server would not keep the host's value or keep hits from a game with PvP off. The bump itself comes with the player colours (branch `puppet-colors`).
+- Version 10 (branch `enemy-drops`, issue 102): `DROP_TAKE` may carry a placed id (kind placed, maker 0, the placement hash): the loot a bush or a grass tuft lays out in every game is taken from all when one player picks it up. A version 9 game refuses such a take, so every game must be 10. No new type.
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.

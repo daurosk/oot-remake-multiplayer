@@ -589,6 +589,11 @@ public:
                 if (took_over_.size() < 256) {
                     took_over_.push_back(p.address);
                 }
+            }
+            // Remembered even on the first play we make on this copy (the
+            // peahat rerun: its rise was the first thing the Mover put back,
+            // so the check above had nothing to compare with).
+            if (!slot_name.empty() && AnimationBase(slot_name) != AnimationBase(p.name)) {
                 if (wanted_.size() >= 256) {
                     std::erase_if(wanted_, [now_ms](const auto& e) {
                         return now_ms - e.second.second > kWakeReplayMs;

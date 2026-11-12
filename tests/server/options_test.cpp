@@ -26,10 +26,15 @@ TEST_CASE("command line: defaults, flags and mistakes") {
   auto off = parse_command_line({"--max-half-open", "0"}, error);
   REQUIRE(off.has_value());
   CHECK(off->max_half_open == 0u);
+  // The owner hold after a start (stray-hold): its default when not given, 0 turns it off.
+  CHECK(!none->owner_hold_ms.has_value());
+  auto hold = parse_command_line({"--owner-hold-ms", "0"}, error);
+  REQUIRE(hold.has_value());
+  CHECK(hold->owner_hold_ms == 0u);
 
   for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
            {"--port"}, {"--port", "70000"}, {"--port", "12x"}, {"--port", "-1"},
-           {"--game-build"}, {"--run-for-ms", "soon"},
+           {"--game-build"}, {"--run-for-ms", "soon"}, {"--owner-hold-ms"}, {"--owner-hold-ms", "x"},
            {"--max-half-open"}, {"--max-half-open", "-2"}, {"--frobnicate"}}) {
     error.clear();
     CHECK(!parse_command_line(bad, error).has_value());

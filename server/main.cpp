@@ -295,6 +295,7 @@ int main(int argc, char** argv) {
     }
     options.session.join_password = line->password;
     options.session.pvp = line->pvp;
+    if (line->owner_hold_ms) options.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
     options.bind = line->bind;
     options.session.log = [](const std::string& text) {
       std::printf("coop_server: %s\n", text.c_str());

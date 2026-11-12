@@ -52,6 +52,7 @@ These are fixed or built in, but no two-game test has reached them yet. Please t
 
 ## Hookshot (experimental)
 
+- Test releases after this one are Hookshot only; this release still has the emulator kit.
 - Co-op also runs on [Hookshot](https://github.com/NotRexed/Hookshot), a native PC build of the game that each player builds from their own game with the kit's `Build-Hookshot-Coop.bat` ([setup.md, Hookshot](setup.md#play-on-hookshot-experimental)). Hookshot and emulator players can play together.
 - It needs Vulkan 1.3 with mesh shaders: NVIDIA RTX 20 or newer, AMD RX 6000 or newer; Intel is mostly untested.
 - Checked on Hookshot in our tests: <!-- FILL from the integrator's Hookshot proofs 3-5 --> everything else is the same co-op code as on the emulator, not yet checked on Hookshot.

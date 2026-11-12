@@ -173,6 +173,28 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual(sf.main(["set", self.slots[0], "float:0x1=1"]), 1)  # type not handled
         self.assertEqual(sf.main(["list", os.path.join(self.root, "kit", "autotest-save")]), 0)
 
+    def test_a_hookshot_pair_baseline(self):
+        # hookshot-A/-B keep <pair>/autotest-save/slot_NN/progress.sav, no user or title folders.
+        d = os.path.join(self.root, "hookshot-A", "autotest-save", "slot_00")
+        os.makedirs(d)
+        path = os.path.join(d, "progress.sav")
+        with open(path, "wb") as f:
+            f.write(autotest_like())
+        old = sf.read_file(path)
+        self.assertEqual(sf.main(["set", path, "int:0xdb1bcd4f=9"]), 0)
+        self.assertEqual(sf.get(sf.read_file(path), 2, 0xdb1bcd4f), 9)
+        kept = sf.backup_dir(path)
+        self.assertEqual(kept, os.path.join(self.root, "hookshot-A", "autotest-save-backup", "slot_00"))
+        self.assertEqual(sf.read_file(os.path.join(kept, os.listdir(kept)[0])), old)
+        self.assertEqual(os.listdir(d), ["progress.sav"])
+        self.assertEqual(sf.main(["list", os.path.join(self.root, "hookshot-A", "autotest-save")]), 0)
+        # Still never a player's own saves, in either layout.
+        own = os.path.join(self.root, "roaming", "x", "autotest-save", "slot_00", "progress.sav")
+        os.makedirs(os.path.dirname(own))
+        with open(own, "wb") as f:
+            f.write(autotest_like())
+        self.assertEqual(sf.main(["get", own, "int:0xdb1bcd4f"]), 1)
+
     def test_only_baseline_saves_are_touched(self):
         def refused(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)

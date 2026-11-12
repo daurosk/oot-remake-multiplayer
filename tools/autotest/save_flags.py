@@ -24,7 +24,9 @@ in the table are changed; nothing is added or moved.
 
 SAVE may be a pattern (slot_0*/progress.sav); it is expanded here, as the
 Windows shells do not. Only saves in a kit's baseline are touched: a path
-must be <...>/autotest-save/<user>/<title>/slot_NN/progress.sav, and nothing
+must be <...>/autotest-save/<user>/<title>/slot_NN/progress.sav (an emulator kit) or
+<...>/autotest-save/slot_NN/progress.sav (a Hookshot pair, hookshot-A/-B: its saves have no user or
+title folders), and nothing
 under %APPDATA% or %LOCALAPPDATA% (a player's own saves, the emulator's
 NAND) is ever read or written. Before a change the file is copied to
 <kit>/autotest-save-backup/<user>/<title>/slot_NN/progress.sav.bak-<time>
@@ -145,10 +147,20 @@ def check_path(path):
         if norm == root or norm.startswith(root.rstrip(os.sep) + os.sep):
             raise SaveError(f"{path}: under %APPDATA% or %LOCALAPPDATA%, never touched")
     parts = os.path.normpath(real).split(os.sep)
-    if (len(parts) < 5 or parts[-1].lower() != "progress.sav" or not SLOT.match(parts[-2])
-            or parts[-5].lower() != "autotest-save"):
-        raise SaveError(f"{path}: not <kit>/autotest-save/<user>/<title>/slot_NN/progress.sav")
+    if (len(parts) < 3 or parts[-1].lower() != "progress.sav" or not SLOT.match(parts[-2])
+            or baseline_index(parts) is None):
+        raise SaveError(f"{path}: not <kit>/autotest-save/<user>/<title>/slot_NN/progress.sav "
+                        "(emulator) or <pair>/autotest-save/slot_NN/progress.sav (Hookshot)")
     return real
+
+
+def baseline_index(parts):
+    """The index of the autotest-save folder in a save path's parts: 5 from the end in an emulator
+    kit (<user>/<title>/slot_NN), 3 in a Hookshot pair (slot_NN); None for neither."""
+    for back in (5, 3):
+        if len(parts) >= back and parts[-back].lower() == "autotest-save":
+            return len(parts) - back
+    return None
 
 
 def expand(patterns):
@@ -163,9 +175,10 @@ def expand(patterns):
 
 
 def backup_dir(path):
-    """<kit>/autotest-save-backup/<user>/<title>/slot_NN for a checked path."""
+    """<kit>/autotest-save-backup/[<user>/<title>/]slot_NN for a checked path."""
     parts = os.path.normpath(path).split(os.sep)
-    parts[-5] = parts[-5] + "-backup"
+    i = baseline_index(parts)
+    parts[i] = parts[i] + "-backup"
     return os.sep.join(parts[:-1])
 
 
@@ -304,6 +317,8 @@ def main(argv=None):
     try:
         if a.cmd == "list":
             pattern = os.path.join(a.autotest_save, "*", "*", "slot_*", "progress.sav")
+            if not glob.glob(pattern):  # a Hookshot pair's baseline: slot_NN right under it
+                pattern = os.path.join(a.autotest_save, "slot_*", "progress.sav")
             for path in expand([pattern]):
                 data = read_file(path)
                 print(f"{path}: bombs {get(data, 2, 0xdb1bcd4f)}, "

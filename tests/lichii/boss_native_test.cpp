@@ -178,7 +178,7 @@ TEST_CASE("native boss: a copy's action waits for its own node, then is asked wi
     CHECK(t.Totals().action_applied == 1);
 }
 
-TEST_CASE("native boss: a hand-over keeps the state; switches off leave the game alone") {
+TEST_CASE("native boss: a hand-over keeps the state, and switches off leave the game alone") {
     Table t;
     t.SetOn(true, true);
     t.Publish({Gohma(Role::copy)});

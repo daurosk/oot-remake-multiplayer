@@ -7,7 +7,6 @@
 #   ..\oot-remake-recomp\.venv\Scripts\python.exe tools\autotest\save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0xffde6400=0 bool:0x00c0a2f6=0 bool:0x66b97a4a=0 bool:0xe44433dc=0 bool:0x88b1b922=0 bool:0x3d5c0bad=0
 #   for hookshot-A and hookshot-B, and put them back from <pair>\autotest-save-backup afterwards.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-gohma-native
-un.ps1 -Runtime hookshot -Scenario hs-gohma-native
 # Route: A walks in through the door (hs-gohma-door), B is moved in after it (boss-movein), then the fight
 # of hs-gohma (A under her ceiling spot, seeds into the eye; B's sword on the stunned eye, B's seed).
 # PASS (proof lines):

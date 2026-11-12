@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "coop_dungeon.h"
+#include "coop_rooms.h"
 
 namespace CoopTeleport {
 namespace {
@@ -469,6 +470,19 @@ Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
         }
     }
     return a;
+}
+
+MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to) {
+    if (!CoopDungeon::IsDungeonScene(scene)) {
+        return MoveCheck::ok;
+    }
+    const auto a = rooms.Nearest(scene, CoopRooms::Vec3{from.x, from.y, from.z});
+    const auto b = rooms.Nearest(scene, CoopRooms::Vec3{to.x, to.y, to.z});
+    if (a && b) {
+        return a->room == b->room ? MoveCheck::ok : MoveCheck::other_room;
+    }
+    const float dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz) <= kNearMove ? MoveCheck::ok : MoveCheck::too_far;
 }
 
 } // namespace CoopTeleport

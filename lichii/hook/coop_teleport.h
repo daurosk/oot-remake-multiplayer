@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_rooms.h"
 
 namespace CoopTeleport {
 
@@ -47,6 +48,22 @@ struct Vec {
     float y = 0.0f;  // height
     float z = 0.0f;
 };
+
+// Whether the "next to" move may put our Link from `from` at `to` in
+// `scene` (issue 197). Moving Link into another room of a dungeon right
+// after the load left the picture black and Link held for good (bigrun4:
+// Kokiri Forest -> the Deku Tree's slingshot room, arrival at Entrance, the
+// move into room C): a dungeon loads one room at a time. So in a dungeon the
+// move stays within our room: by the puppet pack's room table when it knows
+// both rooms, else only within kNearMove. Outside dungeons (overworld,
+// interiors) any move is fine (teleport-other passes).
+enum class MoveCheck : std::uint8_t {
+    ok,
+    other_room,  // the room table puts `to` in another room of the dungeon
+    too_far,     // no room known for one of them, and farther than kNearMove
+};
+inline constexpr float kNearMove = 10.0f;  // game units (about metres)
+MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to);
 
 // The entrance start point of `scene` nearest `to` (coop_start_points.inc,
 // written from the game's scene files by tools/puppet_pack/start_points.py).

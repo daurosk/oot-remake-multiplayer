@@ -538,3 +538,22 @@ TEST_CASE("teleport: no give-up in the middle of a load, and no old start put ba
     CHECK(a.cancel_scene);
     CHECK_FALSE(a.restore_start);
 }
+
+TEST_CASE("teleport: the next-to move stays in our room of a dungeon (issue 197)") {
+    using CoopTeleport::CheckMove;
+    using CoopTeleport::MoveCheck;
+    // Two rooms of the Deku Tree, placements far apart; one Kokiri Forest point.
+    const CoopRooms::Table rooms({{"InsideTheDekuTree", 0, 0.0f, 0.0f, 0.0f},
+                                  {"InsideTheDekuTree", 0, 5.0f, 0.0f, 5.0f},
+                                  {"InsideTheDekuTree", 2, -33.0f, 110.0f, 10.0f}});
+    const Vec entrance{1.0f, 0.0f, 1.0f};
+    const Vec slingshot_room{-33.2f, 109.8f, 10.4f};  // bigrun4's B: Link held here after the move
+    CHECK(CheckMove(rooms, "InsideTheDekuTree", entrance, slingshot_room) == MoveCheck::other_room);
+    CHECK(CheckMove(rooms, "InsideTheDekuTree", entrance, Vec{4.0f, 0.0f, 4.0f}) == MoveCheck::ok);
+    // No room known for a spot (no table, or too far from every placement): only short moves.
+    const CoopRooms::Table none;
+    CHECK(CheckMove(none, "InsideTheDekuTree", entrance, slingshot_room) == MoveCheck::too_far);
+    CHECK(CheckMove(none, "InsideTheDekuTree", entrance, Vec{6.0f, 0.0f, 6.0f}) == MoveCheck::ok);
+    // Outside dungeons any move (teleport-other: Kakariko -> Graveyard passes).
+    CHECK(CheckMove(none, "KakarikoVillage_Child", entrance, slingshot_room) == MoveCheck::ok);
+}

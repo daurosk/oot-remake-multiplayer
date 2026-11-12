@@ -156,7 +156,35 @@ std::optional<std::set<std::string>> ParseNames(std::string_view text);
 // The cave side: starts the asked events, one at a time. Pure over Guest.
 class Requester {
 public:
-    void Want(std::string name);
+    // `scene`: where it was decided (empty: any); `at_us` when; `max_age_us`
+    // how long it may wait for a free moment (0: no limit). See Expire.
+    void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0);
+    // review-p11-interactions: one requester takes gimmick and story events,
+    // and an event waits while another runs. Once a frame, under the same
+    // lock as Step: drops each name still waiting (not one being asked now)
+    // that was decided in another scene than `scene` (empty: not known, kept),
+    // that is older than its max age, or that `played(name)` says our game has
+    // played already (HavePlayedEvent.<name>).
+    template <typename Played>
+    void Expire(const std::string& scene, std::uint64_t now_us, Played&& played) {
+        for (auto it = wanted_.begin(); it != wanted_.end();) {
+            const char* why = nullptr;
+            if (!scene.empty() && !it->scene.empty() && it->scene != scene) {
+                why = "we left its scene";
+            } else if (it->max_age_us != 0 && now_us >= it->at_us + it->max_age_us) {
+                why = "it waited too long behind another event";
+            } else if (played(it->name)) {
+                why = "our game has it played already";
+            }
+            if (why == nullptr) {
+                ++it;
+                continue;
+            }
+            notes_.push_back("live event " + it->name + " dropped before it was asked (" + why + ")");
+            it = wanted_.erase(it);
+        }
+    }
+    std::size_t Waiting() const { return wanted_.size(); }
     // Drops the events still waiting (not the one being asked now: its
     // calls finish and free the block as usual).
     void Clear() { wanted_.clear(); }
@@ -175,7 +203,13 @@ private:
     // live members.
     std::optional<CoopPuppet::Call> FreeFirst(CoopPuppet::Guest& guest, std::uint64_t main);
     static bool EventRunning(CoopPuppet::Guest& guest, std::uint64_t main);
-    std::deque<std::string> wanted_;
+    struct Wanted {
+        std::string name;
+        std::string scene;
+        std::uint64_t at_us = 0;
+        std::uint64_t max_age_us = 0;
+    };
+    std::deque<Wanted> wanted_;
     std::string current_;
     std::uint64_t block_ = 0;
     Next next_ = Next::none;  // the call made last, whose return comes next

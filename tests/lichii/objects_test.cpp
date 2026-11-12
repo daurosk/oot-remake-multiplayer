@@ -299,6 +299,8 @@ TEST_CASE("objects: every message it sends passes the client's own check") {
 
 TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK(CoopObjects::IsShared("Animal_Cucco"));
+    // epona-ride: each game keeps its own ridable Epona (the ride sync shows the other's).
+    CHECK_FALSE(CoopObjects::IsShared("Animal_Epona_Adult"));
     CHECK(CoopObjects::IsShared("Npc_Hylia_051"));
     CHECK_FALSE(CoopObjects::IsShared("CoopPuppet_Child"));
     CHECK_FALSE(CoopObjects::IsShared("Npc_Navi"));

@@ -63,6 +63,16 @@ inline constexpr std::uint32_t kHeardWithinMs = 2000;
 // How long the server remembers an address it sent away, for a game that
 // missed the note: it is told once more at its next connect within this.
 inline constexpr std::uint32_t kRememberMs = 60'000;
+// Whether the server may remember `host` (ENet's address, network byte order)
+// that way. Not a loopback address (127.0.0.0/8): every relay guest and the
+// host's own game reach the server from 127.0.0.1, so one relay guest's lost
+// path would send the next of them away for nothing (review-p11-interactions).
+// Such a game is still told when its own path loses full datagrams.
+// `loopback_too`: the tests, whose games all connect from 127.0.0.1.
+inline bool remember_small_path(enet_uint32 host, bool loopback_too = false) {
+  const auto* b = reinterpret_cast<const unsigned char*>(&host);
+  return loopback_too || b[0] != 127;
+}
 // Disconnect data from the server: "connect again with small datagrams".
 inline constexpr std::uint32_t kDisconnectSmallDatagrams = 0x534D4C4Cu;  // "SMLL"
 

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
+#include "coop_objects_sync.h"
 #include "coop_ride.h"
 
 namespace proto = coop::protocol;
@@ -214,4 +215,9 @@ TEST_CASE("ride: a player who never sent a ride gets no horse (an old build): th
     REQUIRE(in.targets.size() == 1);
     CHECK(in.targets[0].show == CoopPuppet::Show::show);
     CHECK(std::string(in.targets[0].why) == "riding");
+}
+
+TEST_CASE("ride: the ridable horse is never a shared object (one horse per game)") {
+    CHECK(CoopRide::IsHorse(CoopRide::kHorse));
+    CHECK_FALSE(CoopObjects::IsShared(CoopRide::kHorse));
 }

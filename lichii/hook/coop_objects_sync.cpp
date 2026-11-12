@@ -138,6 +138,11 @@ bool IsShared(std::string_view name) {
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
+    // The horse a player rides (CoopRide::kHorse) is each game's own: shared,
+    // one game's Epona was a copy, frozen or pulled back under its rider, or
+    // the other game drew two horses (its copy and the ride's stand-in).
+    // The ride sync (coop_ride.h) shows the other player's horse instead.
+    if (name == "Animal_Epona_Adult") return false;
     return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
            CoopWorld::IsBreakable(name);
 }

@@ -275,6 +275,8 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     if (-not $exe) { Fail "The build finished but there is no hookshot.exe in $Out. Its log: $buildLog" }
     [System.IO.File]::WriteAllText($gameStamp, $stamp)
 }
+# Where the game is, for Host-Hookshot.bat and Join-Hookshot.bat (play.ps1 -Hookshot).
+[System.IO.File]::WriteAllText((Join-Path $hs 'game-folder.txt'), "$Out`n")
 
 # --- 4: co-op into the game ----------------------------------------------------------------
 Step 'Co-op into the game'
@@ -326,10 +328,8 @@ if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPa
 }
 
 Write-Host ''
-Write-Host 'Done. To play co-op on Hookshot:' -ForegroundColor Green
-Write-Host "  - the host runs start-server.cmd in this kit (or Host.bat once, which also sets the server);"
-Write-Host "  - set server and name in $ini (as Join.bat asks for them);"
-Write-Host "  - start $exe"
+Write-Host 'Done. To play co-op on Hookshot: Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green
+Write-Host "  Join.bat, with the Hookshot game in place of the emulator). The game: $exe"
 Write-Host "  Its hookshot_log.txt says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
 Write-Host '  Run this again after Update.bat: it only reinstalls co-op unless the update needs a new build.'
 exit 0

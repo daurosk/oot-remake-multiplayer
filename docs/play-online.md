@@ -174,9 +174,8 @@ Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bomb
 **You need:** a graphics card with Vulkan 1.3 and mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM, about 60 GB free while it builds, and your game as a `.nup` file (or its `romfs` and `exefs` folders), the same version as for the emulator. [setup.md](setup.md#hookshot-instead-of-the-emulator-experimental) has the details.
 
 1. Double-click `Build-Hookshot-Coop.bat` in the kit. It finds your `.nup` as `make-puppet-pack.cmd` does, or asks you to drag it into the window. The first time it downloads Hookshot's build tools (about 400 MB, checked against what Hookshot published), then builds the game: 10 to 45 minutes. When it finishes, the game is in `hookshot\game` in the kit, with co-op and the puppet pack already in it.
-2. Server and name: the build copies them from the kit's emulator (Host.bat and Join.bat set them there). To change them, edit `coop.ini` beside `hookshot.exe` in `hookshot\game`, the same keys as the emulator's (`server`, `port`, `name`, `password`).
-3. The host runs `start-server.cmd` (or `Host.bat`, which also starts the emulator) and gives the others the address, as for the emulator. Invite codes and relay join codes are not in the Hookshot game yet: use an address (LAN, a VPN network or a port forward).
-4. Start `hookshot\game\hookshot.exe`. Its `hookshot_log.txt` says `coop: module loaded`, then `coop: connected`.
+2. The host double-clicks `Host-Hookshot.bat`, the others `Join-Hookshot.bat`. They work like `Host.bat` and `Join.bat` (same questions, same server; invite codes too, not yet tested on Hookshot) but start the Hookshot game instead of the emulator; they write its `coop.ini` beside its `hookshot.exe`. Hookshot and emulator players can join each other's games.
+3. The game's `hookshot_log.txt` (beside it) says `coop: module loaded`, then `coop: connected`. `Join-Hookshot.bat` does not yet watch for the connection as `Join.bat` does: look in the log, or for the other players in the game.
 
 **After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files into the game in a few minutes, and builds the game again only when the update moved to a newer Hookshot.
 

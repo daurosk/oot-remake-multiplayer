@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Thu, 12 Nov 2026 13:30:00 -0900
+Subject: [PATCH] Co-op actor events: creates, deletes and damage straight to
+ the module
+
+nx2/coop_actor_lift.py adds three lift-time hooks that hand actor
+events to the co-op module through host/coop_world.c (patch 0005):
+the create request (main+0x372a94: CREATE_FROM with the caller and the
+create argument, then CREATE_REQUEST with the name and the handle
+slot), the delete request (main+0xa64bc: DELETE_REQUEST with the actor
+and the reason) and the Life component's frame damage sum
+(main+0x49dcb8: LIFE_DAMAGE, only when it is not 0). The words and the
+build id are checked; a hook whose words differ is left out.
+---
+ nx2/coop_actor_lift.py | 72 ++++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_hooks.py      |  2 ++
+ 2 files changed, 74 insertions(+)
+ create mode 100644 nx2/coop_actor_lift.py
+
+diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
+new file mode 100644
+index 00000000..d111000c
+--- /dev/null
++++ b/nx2/coop_actor_lift.py
+@@ -0,0 +1,72 @@
++"""Co-op's actor events (oot-remake-multiplayer's patch 0007, its docs/hookshot.md "World hooks": enemies, breakables,
++drops and projectiles straight from the game's C).
++
++Three C hooks, each after one ordinary instruction near a game function's start, hand what the function was asked to
++do to the co-op module through host/coop_world.c (patch 0005), the same world hook layer as the pause counters. The
++event numbers are in the module's hookshot/src/hos_coop_actors.h:
++
++- main+0x372a70 requestCreateActorAsync: after `ldr x23, [x29, #0x68]` (main+0x372a94, the end of the prologue; the
++  arguments and the return address are still the caller's): 5 = CREATE_FROM (a = the return address, b = x2, the
++  create argument), then 2 = CREATE_REQUEST (a = x1, the name, b = x3, the handle slot the manager fills).
++- main+0xa6490 the delete request: after `mov x19, x0` (main+0xa64bc; an actor already being deleted returned before
++  it): 3 = DELETE_REQUEST (a = the actor, b = x1, the reason).
++- main+0x49d8c0 the Life component's step: after `str w9, [x19, #0x1cb0]` (main+0x49dcb8: w9 = the damage dealt to
++  it this frame, before life is set): 4 = LIFE_DAMAGE (a = the Life component, b = w9), only when w9 is not 0.
++
++The module only reads in them (no game call, no lock). The words are checked and the build id; another game version, or
++a word that differs, leaves that hook out.
++"""
++
++MAIN = 0x80020000
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++EVENT = "extern void hos_coop_world_event(uint32_t event, uint64_t a, uint64_t b); "
++HOOKS = (
++    ("create request", 0x372a94,
++     ((0x372a70, 0xd503237f),   # pacibsp
++      (0x372a90, 0xd11383ff),   # sub sp, sp, #0x4e0
++      (0x372a94, 0xf94037b7),   # ldr x23, [x29, #0x68]
++      (0x372a98, 0x39442408)),  # ldrb w8, [x0, #0x109]: the manager's "no creates" bit
++     "{ " + EVENT + "hos_coop_world_event(5u, c->x[30], c->x[2]); hos_coop_world_event(2u, c->x[1], c->x[3]); }   "
++     "/* (nx2/coop_actor_lift.py: co-op's actor events, 5 = CREATE_FROM, 2 = CREATE_REQUEST) */"),
++    ("delete request", 0xa64bc,
++     ((0xa64a0, 0xd503237f),    # pacibsp
++      (0xa64b4, 0x910003fd),    # mov x29, sp
++      (0xa64b8, 0xb9403008),    # ldr w8, [x0, #0x30]
++      (0xa64bc, 0xaa0003f3)),   # mov x19, x0
++     "{ " + EVENT + "hos_coop_world_event(3u, c->x[0], c->x[1]); }   "
++     "/* (nx2/coop_actor_lift.py: co-op's actor events, 3 = DELETE_REQUEST) */"),
++    ("life damage", 0x49dcb8,
++     ((0x49dcb0, 0x0b090149),   # add w9, w10, w9: the frame's damage sum
++      (0x49dcb4, 0xb940726a),   # ldr w10, [x19, #0x70]
++      (0x49dcb8, 0xb91cb269),   # str w9, [x19, #0x1cb0]
++      (0x49dcbc, 0x0aa97d29)),  # bic w9, w9, w9, asr #31
++     "{ if ((uint32_t)c->x[9] != 0) { " + EVENT +
++     "hos_coop_world_event(4u, c->x[19], (uint32_t)c->x[9]); } }   "
++     "/* (nx2/coop_actor_lift.py: co-op's actor events, 4 = LIFE_DAMAGE) */"),
++)
++
++
++def _word(img, pc):
++    try:
++        return img.word(pc)
++    except Exception:
++        return None
++
++
++def install(lifter, img, build_id):
++    """The hooks into lifter.after; each left out when the build or one of its words differs. Returns how many went in."""
++    if build_id != BUILD_ID:
++        return 0
++    n = 0
++    for name, site, words, text in HOOKS:
++        bad = next(((off, want, _word(img, MAIN + off)) for off, want in words if _word(img, MAIN + off) != want), None)
++        if bad:
++            off, want, have = bad
++            print("co-op actors: %s: main+%#x holds %s, not %08x: left out" % (
++                name, off, "?" if have is None else "%08x" % have, want))
++            continue
++        pc = MAIN + site
++        lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + text
++        n += 1
++    print("co-op actors: %d of %d actor event hooks (world hook)" % (n, len(HOOKS)))
++    return n
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+index 52a19bc9..0eb62ede 100644
+--- a/nx2/coop_hooks.py
++++ b/nx2/coop_hooks.py
+@@ -62,4 +62,6 @@ def install(lifter, img, build_id):
+     coop_puppet_guard.install(lifter, img, build_id)
+     import coop_platform_lift   # (patch 0003: looping platforms' pause counters)
+     coop_platform_lift.install(lifter, img, build_id)
++    import coop_actor_lift   # (patch 0007: enemies, breakables, drops, projectiles)
++    coop_actor_lift.install(lifter, img, build_id)
+     return len(FRAME_SITES) + 1
+-- 
+2.56.0.windows.4
+

@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "common/fs/path_util.h"
@@ -35,6 +36,7 @@
 #include "coop_game_build.h"
 #include "coop_hold.h"
 #include "coop_counters.h"
+#include "coop_actor_events.h"
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
@@ -47,6 +49,7 @@
 #include "core/core.h"
 #include "hos_coop_api.h"
 #include "hos_coop_world.h"
+#include "hos_coop_actors.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -596,8 +599,12 @@ void Frame(void* ctx, int site) {
     }
 }
 
+// (CREATE_FROM's caller and create argument until that thread's CREATE_REQUEST)
+thread_local std::uint64_t t_create_from = 0;
+thread_local std::uint64_t t_create_arg = 0;
+
 // The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
-int World(std::uint32_t event, std::uint64_t a, std::uint64_t /*b*/) {
+int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
     if (!g_on) {
         return 0;
     }
@@ -610,6 +617,39 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t /*b*/) {
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: world hooks: first pause counter start from hookshot.exe (node {:#x})", a);
         }
+        return 1;
+    }
+    // The actor events (patch 0007, hos_coop_actors.h; coop_actor_events.h:
+    // the Objects step drains them on the frame hook). Only reads here.
+    case HOS_COOP_WORLD_CREATE_FROM: {  // (just before CREATE_REQUEST, on this thread)
+        t_create_from = a;
+        t_create_arg = b;
+        return 1;
+    }
+    case HOS_COOP_WORLD_CREATE_REQUEST: {
+        CoopActorEvents::Event e;
+        e.kind = CoopActorEvents::Kind::Create;
+        e.a = a;
+        e.b = b;
+        e.from = std::exchange(t_create_from, 0);
+        const std::uint64_t arg = std::exchange(t_create_arg, 0);
+        float place[3] = {};
+        if (arg != 0 && CoopRuntime::Read(arg, place, sizeof place)) {
+            for (int i = 0; i < 3; ++i) {
+                std::memcpy(&e.place[i], &place[i], 4);
+            }
+        }
+        CoopActorEvents::TheRing().Push(e);
+        return 1;
+    }
+    case HOS_COOP_WORLD_DELETE_REQUEST:
+    case HOS_COOP_WORLD_LIFE_DAMAGE: {
+        CoopActorEvents::Event e;
+        e.kind = event == HOS_COOP_WORLD_DELETE_REQUEST ? CoopActorEvents::Kind::Delete
+                                                        : CoopActorEvents::Kind::Damage;
+        e.a = a;
+        e.b = b;
+        CoopActorEvents::TheRing().Push(e);
         return 1;
     }
     default:

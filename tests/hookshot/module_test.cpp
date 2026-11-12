@@ -14,6 +14,7 @@
 #include "coop_hold.h"
 #include "coop_hookshot.h"
 #include "hos_coop_world.h"
+#include "hos_coop_actors.h"
 #include "coop_svc.h"
 
 namespace {
@@ -292,4 +293,25 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
     CHECK(patch.find("deleted file mode 100644") != std::string::npos);
     CHECK(patch.find("--- a/host/coop_platform_ring.c") != std::string::npos);
     CHECK(patch.find("f(HOS_COOP_WORLD_HELLO, 0, 0) != 1") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the module's event numbers") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0007-coop-actor-events.patch");
+    const std::string lift = NewFile(patch, "nx2/coop_actor_lift.py");
+    REQUIRE(!lift.empty());
+    char call[160];
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[30], c->x[2]); hos_coop_world_event(%uu, c->x[1], c->x[3])",
+                  HOS_COOP_WORLD_CREATE_FROM, HOS_COOP_WORLD_CREATE_REQUEST);
+    CHECK(lift.find(call) != std::string::npos);
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[0], c->x[1])", HOS_COOP_WORLD_DELETE_REQUEST);
+    CHECK(lift.find(call) != std::string::npos);
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[19], (uint32_t)c->x[9])", HOS_COOP_WORLD_LIFE_DAMAGE);
+    CHECK(lift.find(call) != std::string::npos);
+    // The three sites, each after its checked word; the install is called from coop_hooks.py.
+    CHECK(lift.find("(0x372a94, 0xf94037b7)") != std::string::npos);
+    CHECK(lift.find("(0xa64bc, 0xaa0003f3)") != std::string::npos);
+    CHECK(lift.find("(0x49dcb8, 0xb91cb269)") != std::string::npos);
+    CHECK(patch.find("+    coop_actor_lift.install(lifter, img, build_id)") != std::string::npos);
+    // New numbers follow the world hook's own (0 hello, 1 counter start).
+    CHECK(HOS_COOP_WORLD_CREATE_REQUEST > HOS_COOP_WORLD_COUNTER_START);
 }

@@ -472,9 +472,16 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     sample.state.position = proto::Vec3{3.0f, 5.0f, 0.0f};
     sample.state.velocity = proto::Vec3{30.0f, -2.0f, 0.0f};  // 20 m/s^2 down
     sync.Receive(Wire(sample, 1));
-    // Our clock is 60 ms past the sample: the copy is where the owner's
-    // arrow is now, not where it was when the sample was taken.
+    // Shown 100 ms late on the server clock (as the puppet): 60 of the
+    // 100 ms from the spawn to the sample.
     now += 160 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].position[0] == doctest::Approx(3.0f * 0.6f));
+    CHECK(copies[0].position[1] == doctest::Approx(5.0f));
+    // No newer sample: 60 ms past it (shown late), carried on along the arc.
+    copies.clear();
+    now += 100 * kMs;
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].position[0] == doctest::Approx(3.0f + 30.0f * 0.06f));
@@ -494,9 +501,15 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CHECK(copies[0].act == Act::show);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
     CHECK(sync.Landed() == 1);
+    // Held its full time after it is shown reaching the spot (100 ms late).
     copies.clear();
-    sync.Tick(kScene, 2, now + 33 * kMs + shots::LandHoldUs(shots::Kind::arrow), {}, live, send,
-              copies);
+    const std::uint64_t got = now + 33 * kMs;
+    const std::uint64_t hold = shots::LandHoldUs(shots::Kind::arrow) + shots::Track::kBehindUs;
+    sync.Tick(kScene, 2, got + hold - kMs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    copies.clear();
+    sync.Tick(kScene, 2, got + hold, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
@@ -567,7 +580,7 @@ TEST_CASE("shots: our seed's bounce is sent at once, and the log counts it") {
     CHECK(Of<proto::ObjectRemove>(send).size() == 1);
 }
 
-TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one goes at once") {
+TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one goes after its flight") {
     CoopSpawn::Sync sync;
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
@@ -592,19 +605,74 @@ TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one 
     shoot(2, proto::RemoveReason::gone);
     copies.clear();
     now += 100 * kMs;
+    const std::uint64_t got = now;
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     REQUIRE(copies.size() == 2);
-    // Keyed in the order made: the hit one first.
+    // Keyed in the order made: the hit one first. Shown 100 ms late, both
+    // are still at the start of their flight.
     CHECK(copies[0].act == Act::show);
-    CHECK(copies[0].position[0] == doctest::Approx(4.0f));  // not carried on past it
-    CHECK(copies[1].act == Act::remove);
+    CHECK(copies[0].position[0] == doctest::Approx(0.0f));
+    CHECK(copies[1].act == Act::show);
     CHECK(sync.Landed() == 1);
 
+    // Shown reaching the end: the hit one at the spot (not carried on past
+    // it), the gone one goes.
     copies.clear();
-    sync.Tick(kScene, 2, now + shots::LandHoldUs(shots::Kind::seed), {}, live, send, copies);
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + 33 * kMs, {}, live, send, copies);
+    REQUIRE(copies.size() == 2);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(4.0f));
+    CHECK(copies[1].act == Act::remove);
+
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::seed), {},
+              live, send, copies);
     REQUIRE(copies.size() == 2);
     CHECK(copies[0].act == Act::remove);
     CHECK(copies[0].position[0] == doctest::Approx(4.0f));
+}
+
+TEST_CASE("shots: a nut copy that hit something reaches the spot before it goes") {
+    // A nut has no land hold: before, its copy was removed as the remove
+    // came, while shown 100 ms late it was still in flight.
+    CoopSpawn::Sync sync;
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    const std::uint64_t t0 = 10'000'000;
+    sync.Tick(kScene, 2, t0, {}, live, send, copies);
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 31};
+    spawn.actor = "Item_DekuNut";
+    spawn.state.time = {t0, 0};
+    spawn.state.position = proto::Vec3{0.0f, 1.0f, 0.0f};
+    spawn.state.velocity = proto::Vec3{30.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(spawn, 1));
+    proto::ObjectSample sample;
+    sample.id = spawn.id;
+    sample.state.time = {t0 + 33 * kMs, 1};
+    sample.state.position = proto::Vec3{1.0f, 1.0f, 0.0f};
+    sample.state.velocity = proto::Vec3{30.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(sample, 1));
+    proto::ObjectRemove remove;
+    remove.id = spawn.id;
+    remove.reason = proto::RemoveReason::hit;
+    remove.position = {2.0f, 1.0f, 0.0f};
+    sync.Receive(Wire(remove, 1));
+    const std::uint64_t got = t0 + 70 * kMs;  // a walk after its last sample, and the net
+    sync.Tick(kScene, 2, got, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] < 1.0f);  // still in flight here
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs - kMs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(2.0f));  // at the wall
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::remove);
 }
 
 TEST_CASE("shots: a bomb copy that went off by itself is noted as a blast") {
@@ -868,6 +936,11 @@ TEST_CASE("shots: a bomb copy the owner removed as gone is no blast") {
     sync.Receive(Wire(remove, 1));
     copies.clear();
     now += 33 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);  // shown to its end first (100 ms late)
+    copies.clear();
+    now += shots::Track::kBehindUs;
     sync.Tick(kScene, 2, now, {}, live, send, copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);

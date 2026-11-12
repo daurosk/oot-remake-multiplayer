@@ -458,9 +458,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         const bool made = live_it != copies_live.end() && live_it->second != 0;
         // Issue 166: a shot that hit something is seen landing there (the
         // track is stopped at the owner's last place) before it goes.
-        const bool landing = r.removed && *r.removed == proto::RemoveReason::hit &&
-                             info != nullptr && now_us - r.got_us < CoopProjectiles::LandHoldUs(info->kind);
-        if (landing && !r.landed) {
+        // Smooth shots: a copy is shown Track::kBehindUs late, so any copy
+        // the owner removed (hit or gone) is kept that much longer: it
+        // reaches the hit spot (or the hand) first, then gets its full hold.
+        const bool hit = r.removed && *r.removed == proto::RemoveReason::hit && info != nullptr;
+        const std::uint64_t hold =
+            CoopProjectiles::Track::kBehindUs + (hit ? CoopProjectiles::LandHoldUs(info->kind) : 0);
+        const bool landing = r.removed && !explode && now_us - r.got_us < hold;
+        if (hit && landing && !r.landed) {
             r.landed = true;
             ++landed_;
         }

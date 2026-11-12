@@ -62,6 +62,7 @@ add_executable(coop_tests
   lichii/teleport_test.cpp
   lichii/pvp_test.cpp
   lichii/live_events_test.cpp
+  lichii/shared_scenes_test.cpp
   lichii/scrubs_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_scrubs.cpp
   lichii/cheat_items_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_cheat_items.cpp
   # These hook files have no emulator code, so they are tested on their own.
@@ -75,6 +76,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_quests.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_events.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_live_places.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_shared_scenes.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp

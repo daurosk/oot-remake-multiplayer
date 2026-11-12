@@ -306,10 +306,13 @@ if (-not (Test-Path -LiteralPath $options)) {
     if (Test-Path -LiteralPath $kitOptions) { Copy-Item -LiteralPath $kitOptions -Destination $options }
 }
 
-# The puppet pack, from the same game files, into the game's mods folder (Hookshot reads
-# <mods>\<name>\romfs beside hookshot.exe, as the emulator reads its load folder).
+# The puppet pack, from the same game files, where the co-op hook looks for it: its load folder
+# (<exe dir>\mods\contents on Hookshot)\0400486024DEC000\coop-puppet, the emulator's layout, which Hookshot's
+# host/mods.c also loads as a mod. A pack an earlier version of this script put in mods\coop-puppet goes.
 $packTool = Join-Path $kit 'tools\puppet_pack\build.py'
-$mod = Join-Path $exeDir 'mods\coop-puppet'
+$mod = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet'
+$oldMod = Join-Path $exeDir 'mods\coop-puppet'
+if (Test-Path -LiteralPath (Join-Path $oldMod 'coop_puppet.json')) { Remove-Item -LiteralPath $oldMod -Recurse -Force }
 $packFrom = $Game
 if (-not $packFrom) {
     $last = Join-Path $hs 'game-files.txt'

@@ -338,7 +338,7 @@ foreach ($key in $options.Keys) {
     Write-Host "Option: $key=$value"
 }
 if ($Hookshot) {
-    if (Test-Path -LiteralPath (Join-Path $emu 'mods\coop-puppet\romfs')) { Write-Host 'Puppet pack: found.' }
+    if (Test-Path -LiteralPath (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json')) { Write-Host 'Puppet pack: found.' }
     else { Write-Host 'Puppet pack: not in the Hookshot game; run Build-Hookshot-Coop.bat -Game <your .nup> again.' }
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru

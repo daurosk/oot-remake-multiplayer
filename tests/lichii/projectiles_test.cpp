@@ -597,6 +597,7 @@ TEST_CASE("shots: the game's own shot made for a hit effect is never taken for a
     for (const std::string actor : {"Shootable_DekuSeed", "NormalArrow"}) {
         CoopSpawn::Sync sync;
         sync.SetHitEffects(CoopSpawn::Sync::HitEffectMode::real);
+        sync.SetImpacts(false);  // (the hook's default: no impact actors beside it)
         std::vector<proto::Message> send;
         std::vector<Copy> copies;
         std::map<std::uint64_t, std::uint64_t> live;
@@ -669,6 +670,7 @@ TEST_CASE("shots: the game's own shot made for a hit effect is never taken for a
 TEST_CASE("shots: a new scene drops the game's own shots made for hit effects") {
     CoopSpawn::Sync sync;
     sync.SetHitEffects(CoopSpawn::Sync::HitEffectMode::real);
+    sync.SetImpacts(false);  // (the hook's default: no impact actors beside it)
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;

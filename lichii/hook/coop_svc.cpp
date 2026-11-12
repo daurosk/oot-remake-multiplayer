@@ -65,6 +65,9 @@ void ConfigurePuppets() {
     if (const auto actor = Env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = actor;
     }
+    if (const auto tunics = Env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
+        settings.tunics = false;
+    }
     const bool verbose = EnvOn("LICHII_COOP_DEBUG_PUPPET");
     LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
              settings.debug ? ", test puppet beside you" : "");

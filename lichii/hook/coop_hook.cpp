@@ -53,6 +53,7 @@
 #include "coop_pvp_game.h"
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
+#include "coop_colors.h"
 #include "coop_chat.h"
 #include "coop_hud.h"  // the HUD's hearts (PLAYER_LIFE), docs/overlay.md
 #include "coop_cheats.h"
@@ -250,6 +251,10 @@ public:
             return false;
         }
         coop::host::SessionSettings session;
+        // The player's colour goes out in PLAYER_EQUIP (docs/puppet.md, "Colour").
+        session.sampler.color = settings_.color;
+        LOG_INFO(Core, "coop: colour {}", settings_.color ? CoopColors::Text(*settings_.color)
+                                                          : std::string("none chosen (slot colour)"));
         std::string flag_error;
         session.shared = LoadShared(flag_error);
         if (flag_error.empty()) CoopDungeon::AddShared(session.shared);  // docs/dungeon.md

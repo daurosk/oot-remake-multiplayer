@@ -673,6 +673,32 @@ Issue 152 (testers, 2026-11-11): the puppet plays the ocarina animation, but the
 
 The puppet itself takes no hits: its game has no collision for another player's Link. PvP ([play-online.md](play-online.md), "PvP"; `lichii/hook/coop_pvp.h`) is decided outside the puppet. The attacker's game compares its own sword swing (the three blade points of the grass sync's foliage cut, [world.md](world.md)) and the place where its own shots ended with each other player's Link as presence shows it (the same place the puppet stands), and sends `PVP_HIT` to that player. The victim's game gives its own Link the hit through the hit replay the enemy sharing has (`Mover::AddHit`, the game's own damage record, so Link flinches and is knocked away from the attacker's place; `LICHII_COOP_PVP_REPLAY=0` leaves it out), and writes the life directly when the game has not taken it within 0.4 s. The hurt the victim's Link shows reaches the attacker's screen through the pose, as any animation does. Not seen in a game yet: whether Link's Life component takes the replayed hit (otherwise only the direct write, with no flinch).
 
+## Colour
+
+Each player's puppet wears a tunic and cap in that player's colour (`tools/puppet_pack/tunic.py`, `lichii/hook/coop_colors.*`, branch `puppet-colors-3`).
+
+**Why a texture and not a parameter.** Two earlier ways showed nothing usable in the game (reports `puppet-colors-2`): writing the tunic material's colour parameters (`ns_param_color0..5` of `Mt_Angin`, through the game's own setter 0x3595f60) never changed the tunic, and the hit-flash model colour (model + 0x20, 0x2e1d200) darkens the whole Link, face and skin too. The game's own looks are data: the Goron and Zora tunics are models of their own (`Armor_Adult_Goron` names `Mt_Angin_Armor_Adult_Goron_Alb` and hides Link's `G_Angin`, `G_Body`, ... material groups through its `ArmorParam` `HideMaterialGroupNameList`), and a model finds its textures in `Tex/` by name.
+
+**What the lifted code shows** (the game's `main`, translated, `f_7103595f60`): the setter stores the 16 bytes at `[slot + 0x48] + offset` (offset from the shader's parameter table, `[[[slot] + 0x10] + 0] + 0x20` + 0x18 * index + 0x10), sets the parameter's bit in the dirty mask `[slot + 0x10]` and bit 0 of the byte at slot + 0x2c, and marks the model unit for upload over its buffered frames (bits 7..9 of the u16 at unit + 0x14, one per buffer, the buffer count in bits 0..1). The material slot is `[unit + 0x108] + 0x80 * index` (or `[[unit + 0x110] + 8 * index]`). So a write is uploaded like any other; the tunic's green simply does not come from those parameters: it is the tile texture.
+
+**The tunic's texture.** Adult `Mt_Angin` (tunic and cap) and the child's cloth take their colour from one tile, `Tex/Angin_Tile_A_Alb.bntx` (BC3 sRGB, 512 x 512 with mips), named as a string in `Model/Player_Adult.Player_Adult.bfres` and `Model/Player_Child.Player_Child.bfres`. Our own Link uses it too, so it is never changed in place.
+
+**What the pack makes** for each colour (`--tunics`, default all nine; green is the game's own):
+
+| File | What |
+|---|---|
+| `Tex/Angin_Tile_<L>_Alb.bntx` | The tile with both RGB565 end colours of every BC3 block recoloured: each texel keeps its brightness against the tile's average, and the average becomes the colour. The texels are fixed blends of the two end colours, so this needs no encoder; the block order (tiling) does not matter. The name has the same length (`<L>`: R, O, Y, C, B, P, M, W, K). |
+| `Model/CoopTunic_<Age>_<Colour>.Player_<Age>.bfres` | The player's model with the tile's name changed (same length, so nothing in the file moves). The model inside is still `Player_<Age>`, so the pose's skeleton id is unchanged. |
+| `CoopPuppet_<Age>_<Colour>` | The puppet actor with its own ModelInfo (`FmdbName` `Player_<Age>`, `ModelProjectName` `CoopTunic_<Age>_<Colour>`) and the same in its ActorInfo row. |
+
+All three get size-table entries (the game's own file's size). About 69 MB for the nine colours; the pack takes about a minute. `--test-tunic <colour>` gives the plain puppets a colour too (to test a pack with a hook that knows no colours).
+
+**Which colour.** A player picks one in `coop-options.ini` (`color = blue`, or `#RRGGBB`; see [play-online.md](play-online.md#your-colour)); the kit passes it to the emulator as `LICHII_COOP_COLOR`, and `color` in `coop.ini` works too. It goes to the others in `PLAYER_EQUIP` component 16, `color`, with the equipment, so a newcomer gets it when the equipment is sent again on `PLAYER_JOINED`. A player who chose none gets the colour of their player number (`coop::protocol::slot_color`: 1 blue, 2 red, 3 green, 4 yellow). The planner picks the actor `CoopPuppet_<Age>_<Colour>` for the preset nearest the colour (`CoopColors::TunicOf`), the plain `CoopPuppet_<Age>` for green; a colour change makes the puppet again, as an age change does.
+
+**When a tunic does not work.** Each coloured actor falls back on its own to the plain puppet (the planner gets `Director::FailedTunics`; the log names the actor and why): when its create times out twice while no tunic puppet has spawned yet (an older pack; once one has spawned with its model, slow loads no longer count), or when it spawns but has no `Player_` model 3 s later (`kTunicModelCheckMs`: neither a model name through the skeleton nor a model object at parts + 0x260), which is how a model copy the engine refused would show. `LICHII_COOP_TUNICS=0` turns the colours off. The old model tint stays for tests only (`LICHII_COOP_PUPPET_TINT=<0 to 1>`, off by default).
+
+**Hookshot.** The recomp reads the same romfs mods, so the same pack gives the same tunics there.
+
 ## Not done
 
 1. The local player's current AS command name and frame, for the sampler. 0x3abebc0 reads a frame; the name was not found.

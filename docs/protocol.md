@@ -1,4 +1,4 @@
-# Wire protocol, version 9
+# Wire protocol, version 10
 
 The one protocol that the emulator build, the recomp build and the server all speak. The messages of stages 0 and 1 are coded in `coop/protocol/` (`messages.hpp`, `codec.hpp`); the later stages are still a design. The code and this page change together in the same pull request.
 
@@ -266,8 +266,9 @@ Components, as in `PLAYER_SAMPLE` (id, length, data; unknown ids skipped, a know
 | 13 | `third_weapon` | string: the actor in slot 2 (ThirdWeapon); bit 2 | the same |
 | 14 | `tool` | string: the actor in slot 5 (Tool); bit 5 | the same |
 | 15 | `sub_tool` | string: the actor in slot 6 (SubTool); bit 6 | the same |
+| 16 | `color` | 3 bytes: red, green, blue. The player's colour; others dress that player's puppet in the tunic of the nearest colour ([puppet.md](puppet.md#colour)). Left out: the player chose none, and a receiver uses the player number's colour | `coop-options.ini` `color` (`LICHII_COOP_COLOR`) |
 
-Each string is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
+Each string (all but `drawn` and `color`) is the game's actor name of the piece, for example `Weapon_Sword_Kokiri` or `Armor_Adult_Goron`; an empty string means nothing in that slot. A component that is left out is unknown (the sender could not read it): the receiver keeps what it had for it (`merge_equipment` in the code). Age is not here: it is in `PLAYER_SAMPLE`.
 
 How it moves:
 
@@ -437,6 +438,7 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.
 - Version 10 (chunk 11): one bump for all of these. New types: `PVP_MODE` (241), `PVP_HIT` (242), `PVP_HURT` (243), 241 to 250 kept for PvP (branch `pvp`); `PLAYER_LIFE` (251), 251 to 255 kept for the co-op HUD (branch `game-hud`). Changed: `DROP_TAKE` may carry a placed id (kind placed, maker 0, the placement hash), so the loot a bush or grass tuft lays out in every game is taken from all when one player picks it up (branch `enemy-drops`, issue 102); a version 9 game refuses such a take. Enemy shots (branch `enemy-shots`) go as `OBJECT_SPAWN` with the projectile flag and add no type. A version 9 server would not relay or check the new types, so every game and the server must be 10. The Deku Shield's two flags are shared again (max / any, branch `shop-shield-2`, issue 130); a version 9 game keeps them per player, so it would not take a shield bought elsewhere.
+- Protocol 10 also (branch `puppet-colors-3`): `PLAYER_EQUIP` component 16, `color`, with no bump. An older reader skips it, but a server without it drops it when it relays (it reads and writes the message again): every game then shows the others in their player number's colour.
 - Protocol 10 (items-sync, issues 89 and 130): adds no message type (325 to 329 kept, unused). A Gold Skulltula token that appears within 5 s of its Skulltula leaving the walk, up to 12 m away, is now known as its token ([world.md](world.md), tokens).
 - Version 10 also brings `FISH_LURE` (320; 320 to 324 kept, branch `fishing-3`, issue 151), from a client only and not relayed. A version 9 server refuses it as unknown.
 - Version 10 also brings `DUNGEON_EVENT` (355; 355 to 359 kept, branch `deku-dungeon-2`, issues 176 and 196), from either side, relayed to the sender's scene, never kept.

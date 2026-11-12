@@ -660,6 +660,81 @@ class BuildPackTest(unittest.TestCase):
 
 
 @unittest.skipIf(zstandard is None, "needs the zstandard package")
+def fake_bntx(name, blocks=None, fmt=0x1C):
+    """A one-texture BNTX as tunic.py reads it: the name, a BRTI with the format at +0x1C and a
+    BRTD (size at +8) holding the blocks."""
+    if blocks is None:
+        blocks = []
+        for i in range(8):  # BC3: 8 alpha bytes, two greens, indices
+            blocks.append(bytes(8) + struct.pack("<HHI", 0x2a05 + i * 0x20, 0x1903, 0xE4E4E4E4))
+        blocks.append(bytes(16))  # padding
+    head = b"BNTX" + bytes(12) + struct.pack("<H", len(name)) + name.encode() + b"\x00"
+    head += bytes(-len(head) % 8)
+    brti = b"BRTI" + bytes(0x18) + struct.pack("<I", fmt << 8 | 6) + bytes(0x20)
+    data = b"".join(blocks)
+    brtd = b"BRTD" + bytes(4) + struct.pack("<Q", 0x10 + len(data)) + data
+    return head + brti + brtd
+
+
+class TunicTest(unittest.TestCase):
+    def test_recolor_bc3(self):
+        from puppet_pack import tunic
+        src = fake_bntx("Angin_Tile_A_Alb")
+        out = tunic.recolor_bntx(src, (0xD0, 0x20, 0x20), "Angin_Tile_A_Alb", "Angin_Tile_R_Alb")
+        self.assertEqual(len(out), len(src))
+        self.assertIn(b"Angin_Tile_R_Alb\x00", out)
+        self.assertNotIn(b"Angin_Tile_A_Alb\x00", out)
+        start = out.find(b"BRTD") + 0x10
+        reds = 0
+        for k in range(8):
+            q = start + 16 * k
+            self.assertEqual(out[q:q + 8], src[q:q + 8])  # alpha untouched
+            self.assertEqual(out[q + 12:q + 16], src[q + 12:q + 16])  # indices untouched
+            for (c,) in struct.iter_unpack("<H", out[q + 8:q + 12]):
+                r, g, b = tunic.unpack565(c)
+                self.assertGreaterEqual(r, g)
+                self.assertGreaterEqual(r, b)
+                reds += r > 2 * g
+        self.assertGreater(reds, 8)
+        pad = start + 16 * 8
+        self.assertEqual(out[pad:pad + 16], bytes(16))  # padding stays zero
+
+    def test_average_becomes_target(self):
+        from puppet_pack import tunic
+        src = fake_bntx("Angin_Tile_A_Alb")
+        out = tunic.recolor_bntx(src, (0x20, 0x50, 0xE0), "Angin_Tile_A_Alb", "Angin_Tile_B_Alb")
+        lin = [tunic._lin(c) for c in (0x20, 0x50, 0xE0)]
+        self.assertAlmostEqual(tunic.average_luma(out), tunic._luma(lin), delta=0.02)
+
+    def test_bc1_keeps_mode(self):
+        from puppet_pack import tunic
+        four, n0, n1, idx = True, 5, 9, 0b11100100  # mode flips: swap and remap
+        a, b, x = tunic._bc1_order(four, n0, n1, idx)
+        self.assertEqual((a, b), (9, 5))
+        self.assertEqual(x & 0xFF, 0b10110001)
+        a, b, x = tunic._bc1_order(False, 9, 5, 0b11100100)  # 3-colour: 2 and 3 stay
+        self.assertEqual((a, b, x & 0xFF), (5, 9, 0b11100001))
+        self.assertEqual(tunic._bc1_order(True, 7, 7, 0xFFFF), (7, 7, 0))
+
+    def test_errors(self):
+        from puppet_pack import tunic
+        with self.assertRaises(tunic.TunicError):
+            tunic.recolor_bntx(fake_bntx("Angin_Tile_A_Alb", fmt=0x20), (1, 2, 3), "Angin_Tile_A_Alb", "Angin_Tile_R_Alb")
+        with self.assertRaises(tunic.TunicError):
+            tunic.rename(b"x", "Angin_Tile_A_Alb", "Angin_Tile_RR_Alb")
+        with self.assertRaises(tunic.TunicError):
+            tunic.model_for(b"no tile here", "red")
+
+    def test_names_fit(self):
+        from puppet_pack import tunic
+        letters = [l for l, _ in tunic.COLORS.values()]
+        self.assertEqual(len(set(letters)), len(letters))
+        self.assertNotIn("A", letters)
+        for c in tunic.COLORS:
+            self.assertEqual(len(tunic.tile_name(c)), len(tunic.TILE))
+            self.assertTrue(tunic.tile_name(c).endswith("_Alb"))
+
+
 class FullBuildTest(unittest.TestCase):
     """The whole tool on a made-up romfs with made-up dictionaries."""
 
@@ -698,6 +773,11 @@ class FullBuildTest(unittest.TestCase):
             t.set(f"Actor/Player_{v}.engine__actor__ActorParam.bgyml", 8000)
         t.set("Actor/Player_Base.engine__actor__ActorParam.bgyml", 13336)
         self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(t.dumps()))
+        # The tunic tile and the two player models (puppet_pack.tunic).
+        self.write("Tex/Angin_Tile_A_Alb.bntx.zs", plain.compress(fake_bntx("Angin_Tile_A_Alb")))
+        for v in ("Child", "Adult"):
+            self.write(f"Model/Player_{v}.Player_{v}.bfres.zs",
+                       plain.compress(b"FRES" + bytes(12) + b"\x10\x00Angin_Tile_A_Alb\x00" + f"Player_{v}\x00".encode()))
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -855,7 +935,7 @@ class FullBuildTest(unittest.TestCase):
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertIs(man["sound"], True)
         self.assertEqual(man["footsteps"], "player")
-        self.assertEqual([a["footstep"] for a in man["actors"]], [None, None])
+        self.assertEqual([a["footstep"] for a in man["actors"] if not a["tunic"]], [None, None])
         d = zs.Dicts.from_romfs(self.romfs)
         files = sarc.read(d.decompress(build.read(os.path.join(mod, "romfs", "Pack/Actor/CoopPuppet_Child.pack.zs"))))
         self.assertIn("Component/SoundFootStepParam/Player_Child.game__component__SoundFootStepParam.bgyml", files)
@@ -887,7 +967,7 @@ class FullBuildTest(unittest.TestCase):
         man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
         self.assertIs(man["sound"], False)
         self.assertEqual(man["footsteps"], "player")
-        self.assertEqual([a["footstep"] for a in man["actors"]], [None, None])
+        self.assertEqual([a["footstep"] for a in man["actors"] if not a["tunic"]], [None, None])
         d = zs.Dicts.from_romfs(self.romfs)
         out = os.path.join(mod, "romfs")
         rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
@@ -961,6 +1041,42 @@ class FullBuildTest(unittest.TestCase):
                     for r, _, ns in os.walk(d) for n in ns}
         self.assertEqual(tree(a), tree(b))
         self.assertGreater(len(tree(a)), 4)
+
+    def test_build_tunics(self):
+        from puppet_pack import tunic, zs
+        mod = os.path.join(self.dir, "mod_t")
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red", "blue"], test_tunic="red")
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        self.assertEqual(sorted(m["tunics"]), ["blue", "red"])
+        for c in ("red", "blue"):
+            tile = d.decompress(build.read(os.path.join(out, f"Tex/{tunic.tile_name(c)}.bntx.zs")))
+            self.assertIn(tunic.tile_name(c).encode() + b"\x00", tile)
+            for v in ("Child", "Adult"):
+                model = d.decompress(build.read(os.path.join(out, f"Model/CoopTunic_{v}_{c.capitalize()}.Player_{v}.bfres.zs")))
+                self.assertIn(tunic.tile_name(c).encode() + b"\x00", model)
+                self.assertIn(f"Player_{v}".encode(), model)
+                files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/CoopPuppet_{v}_{c.capitalize()}.pack.zs"))))
+                ap = byml.loads(files[f"Actor/CoopPuppet_{v}_{c.capitalize()}.engine__actor__ActorParam.bgyml"])
+                mi = ap["Components"]["ModelInfoRef"]
+                self.assertEqual(byml.loads(files[mi[1:]]),
+                                 {"FmdbName": f"Player_{v}", "ModelProjectName": f"CoopTunic_{v}_{c.capitalize()}"})
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(rows["CoopPuppet_Adult_Blue"]["ModelProjectName"], "CoopTunic_Adult_Blue")
+        # --test-tunic: the plain puppets use the red model too
+        self.assertEqual(rows["CoopPuppet_Adult"]["ModelProjectName"], "CoopTunic_Adult_Red")
+        self.assertEqual(m["test_tunic"], "red")
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertIsNotNone(t.get("Tex/Angin_Tile_B_Alb.bntx"))
+        self.assertIsNotNone(t.get("Model/CoopTunic_Child_Red.Player_Child.bfres"))
+
+    def test_build_no_tile_no_tunics(self):
+        os.remove(os.path.join(self.romfs, "Tex", "Angin_Tile_A_Alb.bntx.zs"))
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_n"), log=lambda *_: None, tunics=["red"])
+        self.assertEqual(m["tunics"], {})
+        self.assertEqual(sorted(a["actor"] for a in m["actors"]), ["CoopPuppet_Adult", "CoopPuppet_Child"])
 
     def test_not_a_romfs(self):
         with self.assertRaises(build.BuildError):
@@ -1036,7 +1152,9 @@ class NupTest(unittest.TestCase):
         # The pack built from a .nup (before this fix) had "shots": []: only REQUIRED was extracted, so
         # every STAND_INS source was "left out". They are read from the .nup when it has them.
         self.assertEqual({f"Pack/Actor/{src}.pack.zs" for src, _ in build.STAND_INS} |
-                         {f"Pack/Actor/{build.IMPACT_SOURCE}.pack.zs"},
+                         {f"Pack/Actor/{build.IMPACT_SOURCE}.pack.zs"} |
+                         {"Tex/Angin_Tile_A_Alb.bntx.zs"} |
+                         {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"
         nup.write_nup(self.path, [(self.TID, 0, nup.KIND_BASE, dict(self.base, **{seed: (b"seed", nup.CODEC_RAW)}))])

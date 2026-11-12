@@ -166,6 +166,13 @@ Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bomb
 - **Your own game decides whether you are hurt.** A hit that reached you on the other player's screen is checked by your game: nothing while you or the attacker are in a cutscene, a talk, a menu, paused or loading, nothing from a player in another area, and at most one hit every 0.8 s (Link blinks after a hit). So a player who lags cannot hurt you when you got away on your screen.
 - **How much:** a sword hit takes half a heart, a seed or the boomerang a quarter, an arrow (fire and ice too) a heart, a light arrow or a bomb two hearts; a Deku nut stuns nobody and hurts nobody. The chat says who hit whom ("Saria hit you (-1/2 heart)", "you defeated Mido").
 - **Not yet:** the sword is read where the area has the game's grass (outdoor areas); a sword swing indoors is not seen yet. A shot hits only when it ended (hit something or went off) beside the other player. Shown in the debug log as lines with `coop: pvp:`.
+## Your colour
+
+Every player's Link wears a tunic (and cap) in that player's colour in the other games, so you can tell each other apart. Without a choice you get your player number's colour: 1 blue, 2 red, 3 green, 4 yellow.
+
+To pick your own: open `coop-options.ini` beside `Host.bat` and `Join.bat`, remove the `#` in front of `# color = blue` and put in one of red, orange, yellow, green, cyan, blue, purple, pink, white, black, brown, gray, or any colour as `#RRGGBB` (for example `color = #FF8020`). Close the game and start `Host.bat` or `Join.bat` again. A word the kit does not know is said in the window and you keep your number's colour. Two players may pick the same colour; nothing stops it, so agree on yours.
+
+The tunics come in ten colours (green, red, orange, yellow, cyan, blue, purple, pink, white, black); another colour gets the nearest of them (brown looks black, gray looks white). They are made by `make-puppet-pack.cmd` from your own game, so run it again after an update that brings them. A puppet pack from before the colours still works: everyone then wears green (after about 30 s the first time). `LICHII_COOP_TUNICS=0` in `coop-options.ini` turns the colours off for what you see.
 
 ## When you are done
 

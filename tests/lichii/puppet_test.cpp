@@ -424,6 +424,43 @@ TEST_CASE("puppet: a player who changes age gets the other puppet, in the same s
     CHECK(d.Slots()[0].actor_name == "CoopPuppet_Adult");
 }
 
+TEST_CASE("puppet: a tunic puppet without a Player_ model falls back to the plain one") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult_Red")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);  // the fake actor has no skeleton or model
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    Frame(d, g, 1000);
+    CHECK(d.FailedTunics().empty());  // checked only after kTunicModelCheckMs
+    Frame(d, g, 15 + Director::kTunicModelCheckMs + 10);
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Adult_Red"});
+}
+
+TEST_CASE("puppet: the plain puppet's model is not checked") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Adult")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    for (std::uint64_t t = 10; t < 10000; t += 500) Frame(d, g, t);
+    CHECK(d.FailedTunics().empty());
+}
+
+TEST_CASE("puppet: a tunic actor that is never made falls back after two timeouts") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Blue")}));
+    for (std::uint64_t t = 0; t < 2 * (Director::kCreateTimeoutMs + 5000) + 2000; t += 250) {
+        Frame(d, g, t);
+    }
+    CHECK(d.FailedTunics() == std::vector<std::string>{"CoopPuppet_Child_Blue"});
+}
+
 TEST_CASE("puppet: an engine-deleted actor is noticed and created again") {
     Game g;
     Director d;
@@ -520,7 +557,7 @@ TEST_CASE("puppet planner: remote players in this scene, and the debug puppet") 
     auto in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 1000);
     REQUIRE(in.targets.size() == 1);  // the debug puppet waits for the delay
     CHECK(in.targets[0].number == 2);
-    CHECK(in.targets[0].actor == "CoopPuppet_Child");  // by age
+    CHECK(in.targets[0].actor == "CoopPuppet_Child_Red");  // by age, player 2 red
     CHECK(in.targets[0].rotation[0] == doctest::Approx(-1.0f));  // half a turn about y
 
     in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{10, 0, 10}, false, remotes, 4000);
@@ -1030,12 +1067,12 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     auto in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 2);
     CHECK(in.targets[0].show == CoopPuppet::Show::show);
-    CHECK(in.targets[0].actor == "CoopPuppet_Child");
+    CHECK(in.targets[0].actor == "CoopPuppet_Child_Blue");  // player 1: blue
     REQUIRE(in.targets[0].anim);
     CHECK(in.targets[0].anim->name == "Wait");
     CHECK(in.targets[0].anim_serial == 7u);
     CHECK(in.targets[1].show == CoopPuppet::Show::hold);  // their cutscene
-    CHECK(in.targets[1].actor == "CoopPuppet_Adult");
+    CHECK(in.targets[1].actor == "CoopPuppet_Adult_Red");  // player 2: red
 
     // Our cutscene: every puppet here kept but hidden.
     in = p.Plan(kBase, std::string("Kokiri"), std::nullopt, true, remotes, 10);

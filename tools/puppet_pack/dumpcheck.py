@@ -67,6 +67,10 @@ OPTIONAL = (
     "Pack/Actor/Animal_Epona_Adult.pack.zs",
     # Issue 166: the AI the impact actors are made from (build.py IMPACT_SOURCE).
     "Pack/Actor/Shootable_ScrubBusinessSees.pack.zs",
+    # The tunic colours (puppet_pack/tunic.py): the green tile and the two player models.
+    "Tex/Angin_Tile_A_Alb.bntx.zs",
+    "Model/Player_Child.Player_Child.bfres.zs",
+    "Model/Player_Adult.Player_Adult.bfres.zs",
 )
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "

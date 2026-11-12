@@ -61,6 +61,9 @@
 #include "coop_cheats.h"
 #include "coop_chests.h"
 #include "coop_flags.h"
+#ifdef COOP_HOOKSHOT
+#include "coop_flag_native.h"
+#endif
 #include "coop_save.h"
 #include "coop_game_build.h"
 #include "coop_game_scan.h"
@@ -521,6 +524,12 @@ public:
         if (memory) {  // docs/flags.md, "Saves": no scene for a while is the title screen
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
+#ifdef COOP_HOOKSHOT
+        // The game's own flag writes since the last frame (the applier's wrap, coop_flag_native.h): the watcher
+        // reads those flags, not the whole list.
+        CoopFlagNative::Feed(*session_);
+        LogFlagEvents();
+#endif
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
         if (quests) {
             for (const auto& r : quests->take_raised()) {
@@ -1528,6 +1537,27 @@ private:
     static constexpr std::uint64_t kDoubledNoEventMs = 1000;
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+#ifdef COOP_HOOKSHOT
+    // Every 10 s while the flag watcher goes by the game's events (coop_flag_native.h): what it read, and what its
+    // audit found that no event had named (0 when the applier's wrap sees every write).
+    void LogFlagEvents() {
+        if (!session_ || !CoopFlagNative::EventsLive() || !flag_events_log_.Due(CoopEvery::NowUs())) {
+            return;
+        }
+        const coop::host::FlagStats s = session_->flag_stats();
+        if (s.event_reads == flag_event_reads_ && s.event_misses == flag_event_misses_ &&
+            s.full_reads == flag_full_reads_) {
+            return;
+        }
+        flag_event_reads_ = s.event_reads;
+        flag_event_misses_ = s.event_misses;
+        flag_full_reads_ = s.full_reads;
+        LOG_INFO(Core, "coop: flags: by the game's events: {} flag reads for its writes, {} changes only the audit found, "
+                       "{} whole-list reads (loads)", s.event_reads, s.event_misses, s.full_reads);
+    }
+    CoopEvery::Every flag_events_log_{10 * CoopEvery::kSecondUs};
+    std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
+#endif
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)

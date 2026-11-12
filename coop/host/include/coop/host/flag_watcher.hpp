@@ -66,6 +66,9 @@ struct FlagStats {
   std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
   std::uint64_t doubled_gains = 0;     // a chest opened again here: its gain taken back (expect_doubled_gain)
   std::uint64_t entries_unsent = 0;    // entries a message kind cannot carry: left out, the rest sent
+  std::uint64_t event_reads = 0;       // use_events: flags read because the game wrote them
+  std::uint64_t event_misses = 0;      // use_events: a change the audit found that no event had named
+  std::uint64_t full_reads = 0;        // use_events: frames that read the whole list (a load window, the first)
 };
 
 class FlagWatcher {
@@ -263,6 +266,31 @@ class FlagWatcher {
     return s;
   }
 
+  // The game's own flag writes come as events (game_flag_events.hpp: the
+  // game's write queues, read as its applier is about to take them). Once
+  // on, a frame while playing reads only the flags the game wrote
+  // (game_wrote) and those a rule here asks for, not the whole list. The
+  // whole list is still read on the first frame, in every load window (a
+  // save load changes most of it) and after game_wrote_all(). As an audit, a
+  // small slice of the list is read each frame too (the whole list about
+  // every kAuditFrames frames): a change found there that no event named
+  // is handled as any other and counted in stats().event_misses, so a
+  // missing event shows and costs a few seconds, never the change.
+  void use_events(bool on) {
+    if (on && !events_) baselined_ = false;  // the whole list first
+    events_ = on;
+  }
+  bool uses_events() const { return events_; }
+  // The game wrote this flag (any value; a flag not in the list is ignored).
+  void game_wrote(FlagKey key) {
+    if (!events_) return;
+    if (wrote_.size() >= kMaxWrote) wrote_all_ = true; else wrote_.insert(key);
+  }
+  // Events were lost: the next frame reads the whole list.
+  void game_wrote_all() { wrote_all_ = true; }
+  static constexpr std::size_t kAuditFrames = 240;
+  static constexpr std::size_t kMaxWrote = 1u << 16;
+
   // A FLAG_SNAPSHOT has started and its last part has not come yet.
   bool holding() const { return holding_; }
   // Local changes sent and not answered yet.
@@ -367,6 +395,16 @@ class FlagWatcher {
   Table snapshot_;                        // parts so far
   std::vector<protocol::FlagState> held_states_;  // came while holding
   FlagStats stats_;
+  // use_events
+  const std::vector<FlagKey>& diff_keys();
+  bool events_ = false;
+  bool baselined_ = false;       // a whole-list read was made since events came on
+  bool wrote_all_ = false;       // game_wrote_all, or too many game_wrote
+  std::set<FlagKey> wrote_;      // game_wrote since the last diff
+  std::vector<FlagKey> visit_;   // this frame's flags: written, restated, then the audit's
+  std::size_t audit_from_ = 0;   // where the audit's begin in visit_ (past the end: none)
+  std::size_t audit_next_ = 0;   // the audit's place in the list
+  std::size_t listed_ = 0;       // the list's size at the last whole read
 };
 
 }  // namespace coop::host

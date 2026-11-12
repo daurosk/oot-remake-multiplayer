@@ -354,15 +354,19 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             std::string how;
             const std::uint64_t system = SLinkSystem(guest, main_base);
             state.ocarina_user = FindUserInModules(guest, SoundRoot(guest, main_base), kOcarinaUser, &how);
+            std::string no_module;
             if (state.ocarina_user == 0) {
                 // The module by its vtable: its user even when the name checks fail (logged).
                 std::string where;
                 const std::uint64_t module =
                     FindOcarinaModule(guest, main_base, SoundRoot(guest, main_base), &where);
-                say(module != 0 ? who + ": Ocarina " + DescribeModule(guest, module) + " (" + where + ")"
-                                : who + ": no Ocarina module (vtable [main+" +
-                                      Hex(addr::kOcarinaModuleVtableGot) + "]+0x10) near the sound root " +
-                                      Hex(SoundRoot(guest, main_base)));
+                if (module != 0) {
+                    say(who + ": Ocarina " + DescribeModule(guest, module) + " (" + where + ")");
+                } else {
+                    no_module = "; no Ocarina module (vtable [main+" +
+                                Hex(addr::kOcarinaModuleVtableGot) + "]+0x10) near the sound root " +
+                                Hex(SoundRoot(guest, main_base));
+                }
                 const std::uint64_t mu = module != 0 ? Pointer(guest, module + addr::kModuleUser) : 0;
                 if (mu != 0 && Accessor(guest, mu) != 0) {
                     state.ocarina_user = mu;
@@ -382,7 +386,7 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
                     : who + ": no '" + kOcarinaUser + "' sound user found (SLink system " +
                           Hex(system) + " vtable main+" +
                           Hex(Pointer(guest, system) - main_base) + ", own user " + Hex(user) + (LooksLikeUser(guest, user) ? " passes" : " fails") +
-                          " the user check): notes searched in its own user");
+                          " the user check" + no_module + "): notes searched in its own user");
         }
         const std::uint64_t notes_user = state.ocarina_user != 0 ? state.ocarina_user : user;
         const std::uint64_t notes_accessor =

@@ -921,6 +921,7 @@ TEST_CASE("host service: 16 real clients join over ENet, a 17th is told the serv
   }
   CHECK(service.status().players == 16);
   CHECK(clients[15]->find<Welcome>()->players.size() == 15);
+  CHECK(service.status().stream_kbps == 0);  // nobody sent a sample yet
   Client& late = *clients[16];
   late.connect(service.port());
   REQUIRE(pump_service(service, all, [&] { return late.connected; }));

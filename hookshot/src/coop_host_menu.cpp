@@ -259,6 +259,7 @@ void Menu::RunHost(HostJob job) {
             const coop::server::HostStatus s = host.status();
             std::lock_guard lock(mutex_);
             status_.players = static_cast<std::uint16_t>(s.players);
+            status_.stream_kbps = s.stream_kbps;
             status_.invite_done = s.invite_done ? 1 : 0;
             status_.upnp_open = s.upnp_open ? 1 : 0;
             CopyText(status_.invite, sizeof status_.invite, s.invite);

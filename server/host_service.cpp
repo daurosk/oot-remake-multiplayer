@@ -267,7 +267,17 @@ void HostService::service(std::uint32_t wait_ms) {
     if (!invite_shown_ && rendezvous_->stun_done()) finish_invite();
   }
   say_counts();
+  const std::uint64_t now = now_ms();
+  const std::uint64_t bytes = server_->session().stats().stream_bytes;
   std::lock_guard lock(status_mutex_);
+  if (stream_second_ == 0 || now - stream_second_ >= 1000) {
+    if (stream_second_ != 0) {
+      const std::uint64_t ms = now - stream_second_;
+      status_.stream_kbps = static_cast<std::uint32_t>((bytes - stream_bytes_at_) * 8 / ms);  // bits per ms = kbit/s
+    }
+    stream_second_ = now;
+    stream_bytes_at_ = bytes;
+  }
   status_.players = server_->session().player_count();
 }
 

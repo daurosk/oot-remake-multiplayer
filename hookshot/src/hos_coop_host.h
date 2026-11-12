@@ -85,6 +85,7 @@ typedef struct HosCoopStatus {
     char password[132];      /* the join password (host); show it only when the player asks */
     char message[256];       /* the last problem or hint, plain English; "" when none */
     int32_t problem;         /* HOS_COOP_PROBLEM_* for message */
+    uint32_t stream_kbps;    /* host: other players' samples and poses sent in the last second, kilobits (the upload) */
 } HosCoopStatus;
 
 /* The module's exports (extern "C"). */

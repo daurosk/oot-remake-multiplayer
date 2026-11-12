@@ -76,6 +76,10 @@ struct HostStatus {
   std::string external;     // the router's internet address (UPnP), if known
   std::string message;      // the last problem or hint, plain English
   HostProblem problem = HostProblem::kNone;
+  // Other players' samples and poses this server sent in the last second,
+  // in kilobits (the host's upload for them; docs/protocol.md "Who gets
+  // which stream").
+  std::uint32_t stream_kbps = 0;
 };
 
 class HostService {
@@ -123,6 +127,8 @@ class HostService {
   std::uint64_t shown_limited_ = 0;
   std::uint64_t shown_enemies_ = 0;
   std::uint64_t enemies_at_ = 0;
+  std::uint64_t stream_bytes_at_ = 0;  // session stats at the last second
+  std::uint64_t stream_second_ = 0;    // when that was, ms
   mutable std::mutex status_mutex_;
   HostStatus status_;
 };

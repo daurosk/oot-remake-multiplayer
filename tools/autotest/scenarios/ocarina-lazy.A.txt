@@ -1,0 +1,51 @@
+# ocarina-lazy (issue 152 part 2, puppet-looks): as ocarina-notes, but B takes out its own
+# Ocarina first and plays one note. ocarina-notes 2026-11-12 found the game's Ocarina module on
+# B (root +0xc0) holding a user with no resource (accessor 0): is it loaded only on first use?
+# Look at B's log: "P1: Ocarina module ..." lines (accessor before and after B's own note), then
+# "Ocarina notes go to sound user" and "P1 plays sound 'Ocarina_D'".
+# A waits until B is done (about 15 s) before the song.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+wait 900
+hold LSTICK_UP 40
+wait 60
+press DLEFT 12
+wait 240
+mark out
+press A 12
+wait 120
+mark ready
+mark note-L
+hold L 30
+wait 90
+mark note-R
+hold R 30
+wait 90
+mark note-Y
+hold Y 30
+wait 90
+mark note-X
+hold X 30
+wait 90
+mark note-A
+hold A 30
+wait 90
+mark lullaby
+press X 15
+wait 30
+press A 15
+wait 30
+press Y 15
+wait 30
+press X 15
+wait 30
+press A 15
+wait 30
+press Y 15
+wait 300
+mark after-song
+press B 12
+wait 120
+press B 12
+wait 90
+mark end

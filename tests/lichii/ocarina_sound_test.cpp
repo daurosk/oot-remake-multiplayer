@@ -412,3 +412,36 @@ TEST_CASE("the Ocarina module is found by its vtable one object below the sound 
     CHECK(c->x[0] == 0x400080000);
     CHECK(run.said.back().find("Ocarina module at root +0x48 -> array +0x10 [0]") != std::string::npos);
 }
+
+TEST_CASE("the Ocarina module's user is taken on a later note once it has its resource") {
+    FakeGuest g = PuppetWithSound();
+    constexpr std::uint64_t kRoot = 0x4000a0000;
+    constexpr std::uint64_t kModules = 0x4000b0000;
+    constexpr std::uint64_t kModule = 0x4000c0000;
+    constexpr std::uint64_t kOcarina = 0x400060000;
+    constexpr std::uint64_t kOcarinaResource = 0x400070000;
+    constexpr std::uint64_t kVtableBase = kBase + 0x4b00000;
+    g.Put<std::uint64_t>(kBase + snd::addr::kSoundRootGot, kBase + 0x100000);
+    g.Put<std::uint64_t>(kBase + 0x100000, kRoot);
+    g.Put<std::uint64_t>(kBase + snd::addr::kOcarinaModuleVtableGot, kVtableBase);
+    g.Put<std::int32_t>(kRoot + 0xc0, 1);
+    g.Put<std::int32_t>(kRoot + 0xc4, 1);
+    g.Put<std::uint64_t>(kRoot + 0xc8, kModules);
+    g.Put<std::uint64_t>(kModules, kModule);
+    g.Put<std::uint64_t>(kModule, kVtableBase + 0x10);
+    g.Put<std::uint64_t>(kModule + snd::addr::kModuleUser, kOcarina);  // no resource yet
+
+    Run run;
+    snd::State st;
+    auto c = snd::Next(st, snd::Wanted{4, 1, 0}, g, kBase, kActor, kBlock, 10, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->x[0] != 0x400080000);  // its own user's accessor
+    snd::Finish(st, 0, "P1", run.say());
+
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserResource, kOcarinaResource);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceAccessor, 0x400080000);
+    c = snd::Next(st, snd::Wanted{6, 2, 500}, g, kBase, kActor, kBlock, 510, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->x[0] == 0x400080000);
+    CHECK(run.said.back().find("on a later note") != std::string::npos);
+}

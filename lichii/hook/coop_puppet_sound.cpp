@@ -208,6 +208,14 @@ std::uint64_t FindOcarinaModule(CoopPuppet::Guest& guest, std::uint64_t main_bas
     return 0;
 }
 
+static std::string Words(CoopPuppet::Guest& guest, std::uint64_t at, std::uint64_t size) {
+    std::string out;
+    for (std::uint64_t off = 0; off < size; off += 8) {
+        out += (off == 0 ? "" : " ") + Hex(Pointer(guest, at + off));
+    }
+    return out;
+}
+
 std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module) {
     const std::uint64_t user = Pointer(guest, module + addr::kModuleUser);
     std::uint32_t flags = 0;
@@ -216,7 +224,8 @@ std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module) {
     return "module " + Hex(module) + ", user +0x40 " + Hex(user) + " '" + UserName(guest, user) +
            "' accessor " + Hex(user != 0 ? Accessor(guest, user) : 0) + " flags " + Hex(flags) +
            (user != 0 && LooksLikeUser(guest, user) ? " passes" : " fails") +
-           " the user check, back link " + (back == module + 0x38 ? "ok" : Hex(back));
+           " the user check, back link " + (back == module + 0x38 ? "ok" : Hex(back)) +
+           (user != 0 ? ", user words " + Words(guest, user, 0x80) : std::string());
 }
 
 std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,
@@ -282,6 +291,7 @@ void Reset(State& state) {
     state.missing_said = false;
     state.ocarina_user = 0;
     state.ocarina_looked = false;
+    state.module_said.clear();
     state.playing.clear();
 }
 
@@ -348,6 +358,26 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
         }
         // The notes are the game's "Ocarina" user's assets (issue 152): played on it
         // (not placed at the puppet: the game's own notes are not placed either).
+        if (state.ocarina_looked && state.ocarina_user == 0) {
+            // The module's user may get its resource later (first use on this game?): look
+            // again on each note, saying the module line only when it changes.
+            std::string where;
+            const std::uint64_t module =
+                FindOcarinaModule(guest, main_base, SoundRoot(guest, main_base), &where);
+            const std::uint64_t mu = module != 0 ? Pointer(guest, module + addr::kModuleUser) : 0;
+            if (module != 0) {
+                const std::string line = who + ": Ocarina " + DescribeModule(guest, module) + " (" + where + ")";
+                if (line != state.module_said) {
+                    state.module_said = line;
+                    say(line);
+                }
+            }
+            if (mu != 0 && Accessor(guest, mu) != 0) {
+                state.ocarina_user = mu;
+                say(who + ": Ocarina notes go to sound user " + Hex(mu) + " '" + kOcarinaUser +
+                    "' (Ocarina module at " + where + ", field +0x40, on a later note)");
+            }
+        }
         if (!state.ocarina_looked) {
             state.ocarina_looked = true;
             std::uint64_t off = 0;
@@ -361,7 +391,8 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
                 const std::uint64_t module =
                     FindOcarinaModule(guest, main_base, SoundRoot(guest, main_base), &where);
                 if (module != 0) {
-                    say(who + ": Ocarina " + DescribeModule(guest, module) + " (" + where + ")");
+                    state.module_said = who + ": Ocarina " + DescribeModule(guest, module) + " (" + where + ")";
+                    say(state.module_said);
                 } else {
                     no_module = "; no Ocarina module (vtable [main+" +
                                 Hex(addr::kOcarinaModuleVtableGot) + "]+0x10) near the sound root " +

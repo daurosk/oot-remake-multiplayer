@@ -93,6 +93,7 @@ struct State {
     // puppet's user (FindUser); 0 not looked for or not found (then the puppet's user).
     std::uint64_t ocarina_user = 0;
     bool ocarina_looked = false;
+    std::string module_said;  // the last module line logged (said again only when it changes)
     std::string playing;         // the names last logged (debug)
     std::uint64_t playing_ms = 0;
 };

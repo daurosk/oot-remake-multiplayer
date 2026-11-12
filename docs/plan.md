@@ -2,6 +2,12 @@
 
 Two stages: co-op on the Lichii emulator first, then the same co-op in a native recomp. One design, one wire protocol and one server serve both.
 
+## Where it stands
+
+- **Stage 1 (emulator)**: steps 0 to 6 below are built and ship in the test releases (see the [README](../README.md) and [known-issues.md](known-issues.md) for what works). Sharing is being widened area by area: [sync-coverage.md](sync-coverage.md).
+- **Stage 2 (PC port)**: co-op in Hookshot, the PC port of the same game build, is in progress as an experimental second runtime, with the same protocol and server.
+- Wire protocol: version 10 ([protocol.md](protocol.md)).
+
 ## Why the emulator first
 
 - The game already runs well there (Frizti's Lichii build).
@@ -14,7 +20,7 @@ The TOTK Online mod (kirbymimi) is a closed module that hooks Tears of the Kingd
 
 ## Design
 
-- **Transport:** ENet (MIT). Reliable channels for events and progress, fast unreliable channels for positions. Runs on the PC side, never inside guest code. LAN or Tailscale first, a relay later.
+- **Transport:** ENet (MIT). Reliable channels for events and progress, fast unreliable channels for positions. Runs on the PC side, never inside guest code. LAN, VPN networks, invite codes with UPnP and NAT hole punching, and an optional relay ([play-online.md](play-online.md)).
 - **Server:** our own, small, in this repository. The host's game decides shared progress.
 - **Wire format:** every sample carries a timestamp and a velocity; every component carries its own length; the same layout in both directions; a protocol version checked on connect.
 - **Players:** 2 to 4.
@@ -35,7 +41,7 @@ C++20 and CMake, the same as Lichii, so the co-op code builds inside it and insi
 
 Lichii is now Frizti's Fritchii (github.com/Frizti/Fritchii, GPL-3.0). Decided 2026-11-08: its source is not committed here and not forked on GitHub. `lichii/fetch.ps1` clones it at the pinned commit to `fritchii-src` beside this repo (outside every repo) and applies our patches as local commits. A new Fritchii release means a new pin and, if they no longer apply, refreshed patches.
 
-ENet comes in as a pinned git submodule or CMake `FetchContent` at a fixed version, never copied into the tree.
+ENet comes in through CMake `FetchContent` at a pinned commit (`cmake/enet.cmake`), never copied into the tree.
 
 ## Game facts we start from
 
@@ -89,9 +95,9 @@ Caleb's calls, taken 2026-11-09 (the suggested answers this plan assumed, plus t
 | Branch protection on `main`? | On: a pull request needs the checks `check`, `windows`, `linux (gcc)`, `linux (clang)`, `sanitize (clang, asan + ubsan)` and `sanitize (clang, tsan)` to pass. Admins are not held to it. |
 | Half-open connections from one address | At most 4 at a time. |
 | Bytes a player may send through the server | 1 MB a second, bursts of 2 MB, besides the 60 + 240 messages a second; `FLAG_SNAPSHOT` (server only, bounded by max_flags) is not counted. The fast (unreliable) messages leave the last 256 KB for the reliable ones, so flags, items and chat still go when poses fill the rate. See [SECURITY.md](../SECURITY.md). |
-| Who may connect | Anyone who reaches the port, unless the host lists addresses (`coop_server --allow`, `server_allow` in coop-options.ini) or listens on one address (`--bind`, `server_bind`). |
+| Who may connect | Whoever has the join password (Host.bat makes a new one each start unless `server_password` is set; the invite code carries it). The host can also list addresses (`coop_server --allow`, `server_allow` in coop-options.ini) or listen on one address (`--bind`, `server_bind`). |
 | Times in `PLAYER_SAMPLE` | Server time. ENet's throttle stays at its default. |
-| Player colours (tunic by slot) | Later release. |
+| Player colours (tunic by slot) | Built in: each player picks a colour (`color =` in coop-options.ini, else the slot's: 1 blue, 2 red, 3 green, 4 yellow); name tags and the puppets' tunics use it, and your own Link's Kokiri tunic on the emulator kit. Ten tunic colours, made by the puppet pack tool. |
 
 ## Risks
 

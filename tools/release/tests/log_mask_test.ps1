@@ -22,6 +22,7 @@ $lines = [ordered]@{
     'server = 26.12.34.56'          = 'server = <radmin-1>'
     'server = 127.0.0.1'            = 'server = <loopback-1>'
     'server = 8.8.8.8'              = 'server = <public-1>'
+    'coop_server: invite code: ABCDE-FGHJK-LMNPQ-RSTUV' = 'coop_server: invite code: (removed)'
     'peer fe80::1c2b:3a4d:5e6f:7a8b%12 up' = 'peer <lan-1> up'
     'peer fd12:3456:789a::1 up'     = 'peer <lan-1> up'
     'peer fd7a:115c:a1e0::1234:5678 up' = 'peer <tailscale-1> up'

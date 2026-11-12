@@ -1,0 +1,21 @@
+# peahat: B (P2) is put 25 m north-east of the Peahat, then walks right up to it.
+mark start
+warp HyruleField_Child HyruleField_FrontOfMarket
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+place -95.0 151.0 76.0
+wait 600
+mark b-placed
+goto -110.0 61.0 1.5 900  # beside it (about 4 m)
+mark b-at
+wait 3600
+mark end

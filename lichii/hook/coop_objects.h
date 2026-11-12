@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -41,6 +42,27 @@ void Share(Core::System& system, coop::host::Session* session,
 // that off).
 void SetMaxLife(std::optional<std::int32_t> quarters);
 
+// Our own Link's hearts as the object walk last read them from his Life
+// component, in quarter hearts (4 = one heart): now and the most. Nothing
+// when no walk read them in the last 2 s (not connected, no Link loaded,
+// LICHII_COOP_OBJECTS off). The one source for the co-op HUD (PLAYER_LIFE,
+// coop_hud) and PvP. Any thread.
+struct LinkHearts {
+    std::int32_t life = 0;
+    std::int32_t max = 0;
+};
+std::optional<LinkHearts> OurLife();
+// PvP (coop_pvp_game.cpp; needs LICHII_COOP_OBJECTS=1, on by default): our
+// Link's life in quarter hearts as the object walk last read it; nothing
+// when no walk saw our Link in the last 1.5 s. Any thread.
+std::optional<std::int32_t> OurLinkLife();
+// Any thread: take `quarters` off our Link at the next walk, as the game's
+// own hit at `at` from `from` (Link flinches), or by writing the life when
+// the game does not take that hit within 0.4 s (LICHII_COOP_PVP_REPLAY=0:
+// the write only).
+void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
+                 const std::array<float, 3>& from);
+
 // Emulator thread, each frame: whether our own Link is in an event (a talk, a
 // cutscene). While it is, shared changes to actors near it wait (coop_guard.h,
 // issue 144).
@@ -53,6 +75,11 @@ void OnEvent(const coop::net::Event& event);
 // watcher wrote 0 to 1 for another player (a chest opened, a pickup taken
 // there). What of them is loaded now is removed (docs/items.md, "Chests").
 void TakenForOthers(const std::vector<std::uint64_t>& keys);
+
+// Emulator thread: how many chests shown open here (another player opened
+// them) our Link opened again since the last call (issue 195). Each one's
+// content is taken back from the shared counts (Session::expect_doubled_gain).
+unsigned TakeChestsOpenedTwice();
 
 // Issue 109 (coop_boss): whether the boss with body actors `bodies` was
 // alive in the last walk of LICHII_COOP_OBJECTS (BossAlive); nothing when
@@ -69,6 +96,11 @@ void OwnCountDrops(const std::vector<std::uint32_t>& key_flags);
 // The host loaded a save (host-save's FLAG_RESET): forget the kept lock
 // breaks (WorldSync::ForgetKept). For the integrator to call on that event.
 void ForgetKeptBreaks();
+
+// Test only (coop_testinput's "kill NAME" step): the nearest actor of that
+// name to our Link takes a hit of its whole life from our Link in the next
+// walk of LICHII_COOP_OBJECTS (logs "coop: test kill ..."). Any thread.
+void QueueTestKill(std::string name);
 
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).

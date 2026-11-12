@@ -91,9 +91,11 @@ try {
     $missing = @((Get-KitOptionNames $kitOptions).Keys | Where-Object { -not (Get-KitOptionNames $m).ContainsKey($_) })
     Check ($missing.Count -eq 0) "every key of the kit's coop-options.ini is in the merged file [$($missing -join ',')]"
     Check ((@($m)[0..3] -join '|') -eq ($old -join '|')) 'the player''s lines stay first and unchanged'
-    foreach ($k in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL') {
+    foreach ($k in 'server_allow', 'server_bind', 'public_address_lookup', 'EDEN_NX2_GPL', 'pvp', 'color') {
         Check ((Get-KitOptionNames $kitOptions).ContainsKey($k)) "the kit's coop-options.ini names $k"
     }
+    Check ($m -contains '# color = blue') 'an older kit gets the color line, behind #, so its colour stays its player number''s'
+    Check (@($m | Where-Object { $_ -match '^# Each player''s Link wears a tunic' }).Count -eq 1) 'with its comment'
     $again = Merge-KitOptions $m $kitOptions 'v0.1.0-beta4'
     Check ($again.Count -eq $m.Count) 'merging twice adds nothing the second time'
     # The new kit's own merge is used when it has one.
@@ -174,6 +176,8 @@ try {
     Write-File "$newKit\emulator\lichii.exe" 'new exe coop: loaded'
     Write-File "$newKit\emulator\user\config\coop.ini" 'name = '
     Write-File "$newKit\scripts\new.ps1" 'new script'
+    # A verifier that would pass anything: the updater must never run the download's own.
+    Write-File "$newKit\scripts\verify_kit.ps1" 'exit 0'
     Write-File "$newKit\coop-options.ini" "LICHII_COOP_PUPPET=1`r`n# Time of day. To turn it off:`r`n# LICHII_COOP_TIME=0`r`n"
     Write-File "$newKit\MANIFEST.txt" "# Files`r`nHost.bat`r`n"
     # The emulator's own folder as Fritchii v5.6+ ships it (qt.conf, Qt plugins).
@@ -244,6 +248,32 @@ try {
     Check ($LASTEXITCODE -ne 0 -and ($out -join ' ') -match 'damaged') 'a wrong SHA-256 stops the update'
     Check ((Read-File "$kit\Host.bat") -eq 'old host' -and (Read-File "$kit\emulator\lichii.exe") -eq 'old exe') 'and changes no file'
     Check (-not (Test-Path "$kit\backup-v0.1.0-beta2")) 'and leaves no backup'
+
+    # The release signature: this kit's own scripts\verify_kit.ps1 (0 good, 1 bad, 2 cannot check).
+    $env:OOT_COOP_VERIFY_NO_AUTH_CHECK = '1'
+    function Set-Verifier([string]$Kit, [int]$Code, [string]$Say) {
+        Write-File "$Kit\scripts\verify_kit.ps1" ("param([string]`$Zip, [string]`$Repo)`r`n" +
+            "[System.IO.File]::WriteAllText('$Kit\verified.txt', `"`$Zip|`$Repo`")`r`nWrite-Host '$Say'`r`nexit $Code`r`n")
+    }
+    $skit = Join-Path $tmp 'kit-sig-bad'; New-OldKit $skit; Set-Verifier $skit 1 'FAIL: no valid attestation (test)'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $skit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -ne 0 -and ($out -join ' ') -match 'signature does not check') 'a zip whose signature fails is refused (the download''s own verifier is not used)'
+    Check ((Read-File "$skit\Host.bat") -eq 'old host' -and (Read-File "$skit\emulator\lichii.exe") -eq 'old exe') 'and changes no file'
+    Check (-not (Test-Path "$skit\backup-v0.1.0-beta2")) 'and leaves no backup'
+    Check ((Read-File "$skit\verified.txt") -match 'oot-coop-v0\.1\.0-beta3\.zip\|daurosk/oot-remake-multiplayer$') 'the verifier got the downloaded zip and the repo'
+    Check (($out -join ' ') -match 'verify_signature = no') 'and the player is told how to skip it'
+    Add-Content -LiteralPath "$skit\coop-options.ini" -Value 'verify_signature = no'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $skit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Read-File "$skit\Host.bat") -eq 'new host' -and ($out -join ' ') -match 'Signature check skipped') 'verify_signature = no: updated on the SHA-256 alone'
+    Check ((Read-File "$skit\scripts\verify_kit.ps1") -eq 'exit 0') 'the new kit brings its verifier'
+    $skit = Join-Path $tmp 'kit-sig-good'; New-OldKit $skit; Set-Verifier $skit 0 'OK (test)'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $skit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Read-File "$skit\emulator\lichii.exe") -eq 'new exe coop: loaded' -and ($out -join ' ') -match 'Signature checked') 'a good signature: updated, emulator too, and said'
+    Test-PlayerKept $skit 'signed update'
+    $skit = Join-Path $tmp 'kit-sig-none'; New-OldKit $skit; Set-Verifier $skit 2 'Could not check the signature: no gh (test)'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $skit -Yes -Api $good 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Read-File "$skit\Host.bat") -eq 'new host' -and ($out -join ' ') -match 'Signature not checked: Could not check') 'cannot check the signature: updated on the SHA-256, and said'
+    Remove-Item Env:\OOT_COOP_VERIFY_NO_AUTH_CHECK
 
     # -Check says a new version is out, and says so when it cannot read the list.
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Check -Api $good 2>&1

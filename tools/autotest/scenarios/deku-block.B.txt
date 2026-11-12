@@ -22,10 +22,17 @@ wait 600                 # A pushes now
 mark b-watched
 place -51.06 79.9 50.2   # behind the block, where A stood
 wait 240
-toward -51.06 40.0 150   # push it on
+goto -51.06 47.4 0.3 300 # walk up to its +z face (block one step on, at about 45.6)
+mark b-reach
+press A 90               # GRAB by the non-owner, held 1.5 s: the block must not move
+mark b-grab
+toward -51.06 60.0 120 A # PULL it back one step toward +z, A held
+wait 120
+mark b-pull
+toward -51.06 40.0 150 A # PUSH it on, A held (grab and push)
 wait 120
 mark b-push1
-toward -51.06 40.0 150   # and once more
+toward -51.06 40.0 150   # and once more, walking into it
 wait 120
 mark b-push2
 wait 1200

@@ -32,6 +32,7 @@
 #include <span>
 #include <set>
 #include <string>
+#include <tuple>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -50,6 +51,9 @@ struct Seen {
     coop::protocol::Vec3 position{};
     std::optional<std::array<float, 9>> rotation;  // actor +0x328, rows of 3
     std::optional<coop::protocol::Animation> animation;  // AS slot 0
+    // Issue 150: a boss's other AS slots (Gohma's eye guard, eyelids),
+    // read only for bosses (IsBoss); empty otherwise.
+    std::vector<coop::protocol::SlotAnimation> slots;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -65,6 +69,14 @@ struct PlayWish {
     // latest sample: its frame plus rate * 30 a second since it was taken.
     float frame = 0.0f;
     std::uint64_t sample = 0;  // the sample's time: a new one checks the frame
+    // Issue 150: the AS slot (0: the whole body). Other slots are a boss's
+    // (Gohma's eye guard): played and framed the same way, never counted
+    // as the copy's own AI taking over.
+    std::int32_t slot = 0;
+    // Not empty: played again only over an animation with this in its name
+    // (a chest shown open, issue 195: only over its closed idle "CloseWait",
+    // never over its own opening when our Link opens it here).
+    std::string only_over;
 };
 
 // The frame of an animation `age_us` after it showed `frame` at `rate`
@@ -112,10 +124,25 @@ bool IsShared(std::string_view name);
 // fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
 
-// Issue 151 (fishing-2): a fish (Animal_Fish_*). Shared like any animal, with
-// one owner game; the lure rules in Sync (SetLures) move a fish to the game
-// whose lure it goes for, and a fish its owner catches is gone for everyone.
+// Issue 151 (fishing-2, fishing-3): a fish (Animal_Fish_*). Shared like any animal, with
+// one owner game; the lure rules in Sync (SetLures, FISH_LURE) move a fish to the game
+// whose lure is nearest it, and a fish its owner catches is gone for everyone.
 bool IsFish(std::string_view name);
+
+// Issue 191: guards (docs/objects.md, "Guards"). The stealth guards that throw
+// a child out when they spot him (Npc_Hylia_Soldier_SecurityGuard in the
+// castle garden, Npc_Gerudo_GEN_SecurityGuard and Npc_Gerudo_FortressGuard),
+// and the town soldiers (Npc_Hylia_Soldier_*, Npc_Hylia_ImperialSoldier_*),
+// who salute, greet and turn to Link. Shared like any townsperson, with one
+// owner; a copy that reacts to our Link (IsGuardReaction) is handed to us.
+bool IsGuard(std::string_view name);
+
+// A guard animation that answers this game's Link and no other: noticing,
+// discovering, surprise, alert, found (the stealth guards' 'Notice',
+// 'NoticeTurn_Quick', 'Discover', 'Surprise'), and the town soldiers'
+// 'Salute', greeting and talk. Not walking, waiting or turning on a patrol,
+// which differ between games only by timing.
+bool IsGuardReaction(std::string_view name);
 
 // True for an actor that is gone, or shows done, once its placement key is
 // set: chests, pickups (rupees, hearts, heart pieces and containers, silver
@@ -146,9 +173,12 @@ std::uint64_t SceneSpawnId(std::string_view scene, std::string_view name, unsign
 
 // Enemies the game rolls near a player (docs/objects.md, "Rolled spawns"):
 // the night Stalchild the scene's AutoPlacementMgr makes rise out of the
-// ground around Link. Only one game in a scene rolls them (the decider, the
-// lowest player number there); it shares each with OBJECT_SPAWN of a made id.
-// The others delete their own rolls and create the decided ones.
+// ground around Link. Where players are together only one game rolls them (the
+// lowest player number whose Link is within Sync::kRollNearM of the roll); it
+// shares each with OBJECT_SPAWN of a made id. The others delete their own rolls
+// there and create the decided ones. A player with no lower-numbered player
+// near keeps and shares its own rolls (issue 124: player 2 far from player 1
+// in the night field got none).
 bool IsRolled(std::string_view name);
 
 // Multi-stage enemies (gohma-larva): an enemy whose next stage is another
@@ -240,11 +270,13 @@ struct EnemyCopy {
 // The server repeats OBJECT_OWNER for every shared object about every 10 s.
 // Changed() is true only when an object's owner or epoch differs from what
 // was seen last, so the log shows changes, not repeats (issue 111).
+// Owner, epoch and group (enemy-sync-3, issue 105: a part joining its
+// boss's group changes only the group, and is logged too).
 class OwnerLog {
 public:
     bool Changed(const coop::protocol::ObjectOwner& o) {
         if (last_.size() >= kMax && !last_.contains(o.id)) last_.clear();
-        const auto now = std::make_pair(o.owner, o.epoch);
+        const auto now = std::make_tuple(o.owner, o.epoch, o.group);
         const auto [it, added] = last_.try_emplace(o.id, now);
         if (added) return true;
         if (it->second == now) return false;
@@ -255,7 +287,7 @@ public:
 
 private:
     static constexpr std::size_t kMax = 4096;
-    std::map<coop::protocol::ObjectId, std::pair<std::uint8_t, std::uint16_t>> last_;
+    std::map<coop::protocol::ObjectId, std::tuple<std::uint8_t, std::uint16_t, std::uint32_t>> last_;
 };
 
 class Sync {
@@ -284,6 +316,9 @@ public:
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
+    // A roll this near a lower-numbered player's Link is that player's to make
+    // (issue 124). Stalchild rise within about 20 m of the Link they rise for.
+    static constexpr float kRollNearM = 40.0f;
     static constexpr std::uint64_t kCreateWaitUs = 3'000'000;  // then a roll near it is ours to delete
     static constexpr std::uint8_t kRemakes = 3;  // EnemyCopy::remakes for a live one
     static constexpr std::uint64_t kLateUs = 3'000'000;  // after the scene's first walk: came later
@@ -327,23 +362,54 @@ public:
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
 
-    // Issue 151 (fishing-2). Present thread, before Tick: where our own cast
-    // lures are (CoopProjectiles::TheLures). A fish copy we do not own whose
-    // own AI swims it towards one of them (kLureStepM or more a frame, within
-    // kLureReachM, or held within kLureHookM: it bites) for kChaseHoldUs is
-    // flagged targeting, so the server hands it to us and our game runs the
-    // bite and the fight. A fish we own within kLureHookM of our lure, or
-    // coming at it at kLureSpeed or more within kLureReachM, is flagged the
-    // same way (ChaseStep's targeting flag, as for enemies; not in_fight), so
-    // it stays ours while it is hooked
-    // and reeled in. A fish we own that leaves the walk within kCatchNearM of
-    // our Link was caught here (landed, in Link's hands): OBJECT_REMOVE dead,
-    // and every other game deletes its copy at once.
+    // Issue 200 (npc-anim). Present thread, before Tick: whether our Link is
+    // in an event (a cutscene or a talk, PlayerReading::event_running). While
+    // it is, every townsperson (Npc_, shared) within kEventNpcM of our Link
+    // is flagged targeting in OBJECT_PRESENT, so the server gives it to us
+    // (or, ours already, keeps it in a fight lock): every other game's copy
+    // then plays our NPC's cutscene motion (place, rotation, AS command and
+    // frame, the usual copy) instead of its own routine. kEventNpcKeepUs
+    // after the event the flag drops and the normal owner rules come back;
+    // the copies stay where our NPC was left. No new message.
+    void SetEvent(bool in_event) { in_event_ = in_event; }
+    // A copy our event claimed (within kEventNpcKeepUs of the last Tick that
+    // flagged it): the owner's routine is not put on it while the hand-over
+    // runs, as the 8 m event rule (coop_guard.h) does nearer.
+    bool EventNpc(std::uint64_t address, std::uint64_t now_us) const;
+    // Who owns the object at `address` (0: not known, or not on our list).
+    std::uint8_t OwnerAt(std::uint64_t address) const;
+    // How many townspeople our event flags now (for the log).
+    std::size_t EventNpcs(std::uint64_t now_us) const;
+    // How many of them the server has handed to us already (for the log:
+    // the claim is a wish, this is the hand-over).
+    std::size_t EventNpcsOurs(std::uint64_t now_us) const;
+    static constexpr float kEventNpcM = 30.0f;
+    static constexpr std::uint64_t kEventNpcKeepUs = 2'000'000;
+
+    // Issue 151. Present thread, before Tick: where our own cast lures are
+    // (CoopProjectiles::TheLures). Each Tick sends FISH_LURE (fishing-3):
+    // every fish in the walk with how near our nearest lure is (within
+    // kLureReachM), hooked when we own it and it is within kLureHookM, drawn
+    // when we own it and it comes at our lure at kLureSpeed or more, or when
+    // it is a copy whose own AI swims it at our lure (kLureStepM or more a
+    // frame, or held within kLureHookM) for kChaseHoldUs. The server gives the
+    // fish to the nearest lure's game, so that game runs the approach, the
+    // bite and the fight; a fish is never flagged targeting or fighting (a
+    // fight lock would hold it in the wrong game). A fish we own that leaves
+    // the walk within kCatchNearM of our Link was caught here (landed, in
+    // Link's hands): OBJECT_REMOVE dead, and every other game deletes its copy
+    // at once.
     void SetLures(std::vector<coop::protocol::Vec3> lures) { lures_ = std::move(lures); }
     static constexpr float kLureReachM = 6.0f;
     static constexpr float kLureStepM = 0.005f;
     static constexpr float kLureHookM = 1.0f;
     static constexpr float kLureSpeed = 0.2f;  // metres a second
+    // fishing-3: FISH_LURE (the server gives each fish to the game whose lure
+    // is nearest). Sent on a change at most this often (a change of hooked or
+    // drawn at once), and with every presence. Distances in kFishStepCm steps.
+    static constexpr std::uint64_t kFishEveryUs = 250'000;
+    static constexpr std::uint32_t kFishStepCm = 25;
+    static constexpr std::uint64_t kFishRepeatUs = 1'000'000;
     static constexpr float kCatchNearM = 3.0f;
     static constexpr float kBreakNearM = 8.0f;
     static constexpr float kBreakReachM = 3.0f;  // unmoved: within sword reach
@@ -387,12 +453,17 @@ public:
     // Peahat rising out of the ground) is rarely seen in it by the walk.
     // The Mover tells each such put-back (NoteTakeover, present thread); the
     // copy then counts as playing its own animation for kWakeLatchUs.
-    void NoteTakeover(std::uint64_t address, std::uint64_t now_us);
+    // `name` is what the copy's own AI played (a guard is taken only for an
+    // IsGuardReaction one).
+    void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
     static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
     static constexpr std::uint64_t kWakeOwnUs = 4'000'000;
+    // Issue 191: a guard sees further than an enemy wakes; its reaction to
+    // our Link (IsGuardReaction) counts within this, the patrol never does.
+    static constexpr float kGuardWakeM = 25.0f;
     // A copy's kill counts for a resend this long after our hit took it to 0.
     static constexpr std::uint64_t kKilledKeepUs = 5'000'000;
 
@@ -413,6 +484,15 @@ public:
     // Present thread: for each copy we do not own, the owner's latest
     // animation and its frame (the mover compares it with the copy's own).
     void Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const;
+
+    // Present thread: a chest's open idle from Plays was not sent this frame
+    // (CoopGuard holds plays near our Link in an event). Its show-open clock
+    // starts again, so a long event never turns it into a remove (review of
+    // chest-sync-2). Other addresses are ignored.
+    void ChestPlayHeld(std::uint64_t address, std::uint64_t now_us);
+    // How many chests shown open here our Link then opened again (their
+    // content may count twice), this session.
+    unsigned ChestsOpenedTwice() const { return chests_opened_twice_; }
 
     // Present thread: the enemy copies whose own AI is held (the AI hold,
     // coop_hold.h): an Enemy_ we do not own that its owner's samples place
@@ -472,6 +552,9 @@ public:
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
     // The actors of the enemies we own, with their names (for the test drive).
     std::vector<std::pair<std::uint64_t, std::string>> Owned() const;
+    // The player who owns the object at `address` (0: the server, none: not
+    // known). For coop_enemy_shots.
+    std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
@@ -488,6 +571,7 @@ private:
         std::optional<coop::protocol::Quat> rotation;
         std::optional<coop::protocol::Vec3> velocity;
         std::optional<coop::protocol::Animation> animation;
+        std::vector<coop::protocol::SlotAnimation> slots;  // issue 150
     };
     struct Object {
         coop::protocol::ObjectId id;
@@ -497,6 +581,7 @@ private:
         coop::protocol::Vec3 position{};
         std::optional<Mat3> rotation;
         std::optional<coop::protocol::Animation> animation;
+        std::vector<coop::protocol::SlotAnimation> slots;  // issue 150: a boss's, as last read
         coop::protocol::Vec3 velocity{};
         std::uint64_t seen_at = 0;
         std::string name;
@@ -510,6 +595,7 @@ private:
         coop::protocol::Vec3 sent_position{};
         std::optional<coop::protocol::Quat> sent_rotation;
         std::string sent_animation;
+        std::string sent_slots;  // issue 150: the slot names last sent
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
@@ -537,6 +623,9 @@ private:
         bool breakable = false;                 // coop_world.h
         bool reacts = false;                    // an enemy: hurts go through the game
         bool fish = false;                      // IsFish: the lure rules
+        bool guard = false;                     // IsGuard: handed over on a reaction
+        bool npc = false;                       // Npc_: claimed by our event (issue 200)
+        std::uint64_t event_until = 0;          // flagged by our event until then
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         // Chasing our Link (NoteDrift): the run of steps towards it.
@@ -547,6 +636,7 @@ private:
         std::string rest_animation;
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
         std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
+        std::string took_over_name;      // ... and what it was (a guard's, issue 191)
         // Our own hit took its life to 0 here (the DAMAGE resend's mark).
         std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when
@@ -554,6 +644,9 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool dead_now = false;  // a kill from before we came: deleted at once
+        // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
+        // that our game did not take, already said dead (OBJECT_REMOVE).
+        bool dead_said = false;
         // An egg we own that a hatchling came out of: when it leaves the
         // walk, OBJECT_REMOVE reason gone goes out for it.
         bool hatched = false;
@@ -570,6 +663,13 @@ private:
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter);
 
+    // enemy-sync-3 (issue 133): an enemy we own whose life was written to 0
+    // (another game's hit our game did not take, or hurt off) may stand on
+    // at life 0. Said dead to the others now, deleted here kDeadGraceUs
+    // later if its own death has not taken it by then.
+    void DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                     std::vector<coop::protocol::Message>& send, const char* why);
+
     void Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& gone,
                std::vector<coop::protocol::Message>& send);
     void Apply(std::uint8_t self, std::uint64_t now_us, std::vector<coop::protocol::Message>& send,
@@ -580,6 +680,8 @@ private:
     // when it already left. True: the hatchling is ours to share.
     bool Hatch(std::uint8_t self, const Seen& s,
                std::vector<coop::protocol::Message>& send);
+    // gohma-sync: an egg of ours still on the walk, marked hatched, near `at`.
+    Object* HatchedSibling(std::uint8_t self, const coop::protocol::Vec3& at);
 
     // A rolled enemy another game decided, from its OBJECT_SPAWN.
     struct Decided {
@@ -594,6 +696,10 @@ private:
         bool dead = false;
     };
     std::uint8_t DeciderOf(std::uint8_t self, std::uint64_t now_us) const;
+    // The game that keeps a roll that rose at `at`: the lowest player number in
+    // our scene whose Link is within kRollNearM of it (or whose place we do not
+    // know), else us.
+    std::uint8_t RollerFor(std::uint8_t self, const coop::protocol::Vec3& at, std::uint64_t now_us) const;
     // Eggs we owned that left the walk alive, waiting kHatchWindowUs for the
     // hatchling that came out of them.
     struct Egg {
@@ -607,7 +713,15 @@ private:
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
+    bool in_event_ = false;  // issue 200: SetEvent
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
+    std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE
+    std::uint64_t fish_at_ = 0;
+    // One fish's FISH_LURE entry: how near our nearest lure is, hooked (ours,
+    // within kLureHookM) or drawn (ours coming at it at kLureSpeed, or a copy
+    // whose own AI swims at it: NoteDrift's chase steps).
+    coop::protocol::FishLureEntry FishClaim(const Object& o, std::uint8_t self,
+                                            std::uint64_t now_us) const;
     // The nearest of our lures to `at` (metres), or nothing with none.
     std::optional<float> LureDistance(const coop::protocol::Vec3& at) const;
     std::vector<std::string> notes_;
@@ -655,12 +769,6 @@ private:
     // A taken falling floor or web part (CoopWorld::IsFallTaken) stays this
     // long, so the fall (as the others' moves) or the break shows first.
     static constexpr std::uint64_t kTakeFallUs = 4'000'000;
-    // A chest (Obj_TBox_*) taken here, away from our Link, is given this long
-    // to show itself open (its own AI reads the shared opened flag, issue 87:
-    // its animation changes, after the take, to one with "Open" in it, seen
-    // while our Link is not beside it); one still closed after that is
-    // removed. Counted from the first take.
-    static constexpr std::uint64_t kChestOpenWaitUs = 1'500'000;
     // A chest whose animation changed to one with "Open" in it this recently
     // when the take came is opening now: beside our Link, ours opened it too
     // (both at once); away from it, its AI reacted to the flag. Only a change
@@ -675,6 +783,7 @@ private:
         std::uint64_t since_us = 0;          // when the take came
         std::set<std::uint64_t> shown_open;  // chests that showed themselves open
         std::map<std::uint64_t, std::string> bound_animation;  // each chest's animation when bound
+        std::set<std::uint64_t> show_failed;  // chests the open idle never took on: removed
     };
     // Every loaded chest's animation and when it last changed (0: the same
     // since it was first seen), for the opening tests above.
@@ -683,6 +792,20 @@ private:
         std::uint64_t changed_us = 0;
     };
     std::map<std::uint64_t, ChestAnimation> chest_animations_;
+    // Issue 195: a loaded closed chest that another player opened is shown
+    // open here with its own open idle (kChestOpenIdle, through Plays), not
+    // removed (it vanished in Caleb's play-test). Address: when first played.
+    // Removed only if it still shows its closed idle kChestShowFailUs after.
+    static constexpr const char* kChestOpenIdle = "OpenWait";
+    static constexpr const char* kChestClosedIdle = "Close";  // "CloseWait"
+    static constexpr std::uint64_t kChestShowFailUs = 3'000'000;
+    struct ChestShow {
+        std::uint64_t since_us = 0;  // when first played
+        bool took = false;           // seen showing kChestOpenIdle since
+        unsigned flicks = 0;         // walks that saw its closed idle again after
+    };
+    unsigned chests_opened_twice_ = 0;
+    std::map<std::uint64_t, ChestShow> chest_shown_;
     std::uint64_t last_tick_us_ = 0;
     bool ticked_ = false;  // a Tick has run (last_tick_us_ is set)
     std::map<std::uint64_t, Taking> taken_;

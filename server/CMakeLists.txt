@@ -5,6 +5,14 @@ add_library(coop_server_lib STATIC
   world.cpp
   enet_server.cpp
   options.cpp
+  relay.cpp
+  relay_link.cpp
+  relay_wire.cpp
+  upnp.cpp
+  nat_codes.cpp
+  stun.cpp
+  punch.cpp
+  join_helper.cpp
 )
 target_include_directories(coop_server_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(coop_server_lib PUBLIC coop_protocol coop_net enet PRIVATE coop_warnings)

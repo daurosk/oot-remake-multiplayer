@@ -22,6 +22,24 @@ powershell -ExecutionPolicy Bypass -File lichii\fetch.ps1
 
 This clones `fritchii-src` beside the main checkout of this repo (`-Dest <folder>` picks another place), checks out the pinned commit and puts our patches on a local branch `coop`. It refuses to run if the source has uncommitted changes. Running it again resets `coop` to the pin and applies the patches afresh; build folders and the download cache (`.cache/`) are ignored by the emulator's `.gitignore` and are kept.
 
+On Linux (or macOS), `lichii/fetch.sh [folder]` does the same.
+
+## Build (Linux)
+
+`lichii/build-linux.sh` fetches (with `fetch.sh`), configures and builds the co-op emulator in one go, with the flags of Fritchii's own Linux release, `ENABLE_UPDATE_CHECKER=OFF`, `LICHII_COOP=ON` and `trim_paths.cmake`:
+
+```sh
+lichii/build-linux.sh                                  # source in fritchii-src, build in fritchii-src/build/coop-linux
+lichii/build-linux.sh --appimage ~/lichii.AppImage     # also a self-contained AppImage (the kit's emulator/lichii.AppImage)
+lichii/build-linux.sh --hook-only                      # only compile the co-op hook (a quick check; CI does this on every push)
+```
+
+It needs CMake 3.24+, Ninja, gcc 13+ or clang 17+, Qt 6 (6.8, as Fritchii's release; point `QT_ROOT_DIR` at it, or install the distribution's `qt6` development packages) and the packages Fritchii's Linux release installs (Ubuntu 24.04 names): `autoconf g++ glslang-tools libglu1-mesa-dev libpulse-dev libtool libudev-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build pkg-config zlib1g-dev libva-dev libvdpau-dev libavfilter-dev libavcodec-dev libswscale-dev spirv-tools spirv-headers libusb-1.0-0-dev libboost-dev libboost-fiber-dev libboost-context-dev libopus-dev libasound2-dev`. The rest (SDL3, ENet, OpenSSL and so on) is downloaded into `.cache/cpm` on the first configure. The program is `build/coop-linux/bin/lichii`; the AppImage needs glibc 2.39 or newer to run (Ubuntu 24.04, Fedora 40, Debian 13, Arch).
+
+On Linux the emulator's portable folder is `user/` in the **current directory** (not beside the program, as on Windows); without one it uses `~/.local/share/eden` and the other XDG folders. So start it from the folder that holds `user/` (the kit's start scripts do: `cd emulator`, then `./lichii.AppImage`).
+
+CI (`.github/workflows/build.yml`, job `linux-emulator`) compiles the hook on every push, and builds the whole emulator, its AppImage and a start without a game on the `linux-build` branch, on tags and by hand (workflow_dispatch); the AppImage is kept as the artifact `lichii-linux-x86_64`.
+
 ## Build (Windows)
 
 Tools:

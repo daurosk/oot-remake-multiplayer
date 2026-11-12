@@ -1,10 +1,63 @@
 # Setting up the co-op test release
 
-This is an early test build of online co-op (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)) for the Ocarina of Time remake on the Fritchii emulator. Expect bugs; [known-issues.md](known-issues.md) lists what works and what does not yet. After this page, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet) says how to play together.
+This is an early test build of online co-op (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)) for the Ocarina of Time remake, on the kit's Fritchii emulator or, as an experiment, on Hookshot. Expect bugs; [known-issues.md](known-issues.md) lists what works and what does not yet. After this page, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet) says how to play together.
+
+This page goes: [Hookshot](#play-on-hookshot-experimental) (new and experimental), then the [emulator setup for new players](#emulator-setup-for-new-players), then [updating a kit you already have](#updating), then settings, chat commands, saves, [Linux](#linux-and-steam-deck) and [troubleshooting](#troubleshooting).
+
+## Play on Hookshot (experimental)
+
+Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), a native PC version of the game that the kit builds on your PC from your own copy. No emulator: the game runs as a normal Windows program. It is **experimental**: it is newer than the emulator kit, fewer players have tried it, and parts of co-op are not on it yet (see [What is not on Hookshot yet](#what-is-not-on-hookshot-yet)). Hookshot players and emulator players can join the same session, on the same server; Hookshot players don't see the others yet. If you are not sure, play on the emulator ([Emulator setup for new players](#emulator-setup-for-new-players)). **The test releases after this one are Hookshot only**: this release still ships the emulator kit, and this page still documents it.
+
+### What you need for Hookshot
+
+- **A graphics card with Vulkan 1.3 and mesh shaders**: NVIDIA RTX 20 series or newer, or AMD RX 6000 series or newer. Older cards (GTX 10 series, RX 5000 and older) cannot run it; Intel cards are mostly untested. Without mesh shaders, play on the emulator.
+- **16 GB of RAM** (a Hookshot game uses about 10 GB; 8 GB of video memory is recommended) and a CPU with AVX2 for the fastest build.
+- **About 60 GB free** on the drive the kit is on, while it builds.
+- **Your own game as a `.nup` file**, or its `romfs` and `exefs` folders, the same version as for the emulator (program `0400486024DEC000`, update v131072, build `e0f3ccfa`). No keys or firmware are needed for Hookshot. Every player needs their own copy of the game.
+- Windows 10 or 11 (64-bit) and an internet connection for the first build (it downloads Hookshot's build tools, about 400 MB).
+
+### Hookshot step by step
+
+1. **Download and unzip.** Download `oot-coop-<version>.zip` from the newest release on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases) (the same zip as for the emulator) and unzip it to a short folder you can write to, for example `C:\oot-coop`.
+2. **Optional: check your game files first.** Open a command prompt in the kit folder and run `Build-Hookshot-Coop.bat -CheckOnly -Game <your .nup>`. It downloads the build tools, checks them and your game, and builds nothing. It ends with "Your game files are right for Hookshot" when all is well.
+3. **Build the game.** Double-click `Build-Hookshot-Coop.bat`. It finds your `.nup` in the emulator's game list folders if you set the emulator up before; otherwise it asks you to drag the `.nup` (or its `romfs` folder, then its `exefs` folder) into the window and press Enter. Then it:
+   - downloads Hookshot's build tools and its source for the version this kit was made for, each checked against the SHA-256 this kit expects (a file that does not match stops it);
+   - adds co-op's patch and builds the game from your files: **10 to 45 minutes the first time**, with the window showing each stage;
+   - puts co-op in it: `hookshot_coop.dll`, the co-op settings (`coop.ini` beside `hookshot.exe`) and the puppet pack (the other players' Link and the tunic colours), made from your own game files as `make-puppet-pack.cmd` makes them for the emulator.
+   It ends with "Done." and the game's path, in the kit's `hookshot\game` folder (`-Out <folder>` puts it elsewhere).
+4. **First start, as the host.** Double-click `Host-Hookshot.bat`. It works like `Host.bat`: it asks for your player name, starts the co-op server, makes a new random join password, asks your router to open the port and copies an **invite code** for your friends (see [Playing over the internet](play-online.md#the-easy-way-hostbat-and-an-invite-code)). Then it starts the Hookshot game instead of the emulator.
+5. **Joining.** Your friends double-click `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator) and paste the invite code. Invite codes have not been tested on Hookshot yet; joining by address on the same network or a VPN works the same as on the emulator ([play-lan.md](play-lan.md)).
+6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. **On Hookshot you don't see the other players yet** (see below).
+
+**After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files and puppet pack into the game in a few minutes, and builds the whole game again only when the update moved to a newer Hookshot.
+
+**Where it keeps things:** the kit's `hookshot\` folder holds `tools\` (Hookshot's build tools and source with our patch), `downloads\`, `work\` (the unpacked game, kept so the next build is quick; delete it to get the space back, and the next build takes the full time again) and `game\`. None of these are part of the kit, so `Update.bat` keeps them. Like the puppet pack, the built game is made from your game files: never share it or upload it.
+
+### What is not on Hookshot yet
+
+- **You don't see the other players yet:** showing them as Link crashes Hookshot in this version, so it is switched off (a fix is planned). Emulator players do see Hookshot players as Link (seen in our logs). (`LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns the Links back on, but the game then crashes.)
+- **No co-op window:** no status panel, no chat box (Enter) or chat lines, no player list (Tab), no markers, no co-op HUD (the other players' hearts under yours) and no cheats window, so no chat commands such as `/teleport`. The log says what the panel would.
+- **Your own ocarina notes are not sent:** the others do not hear a Hookshot player's ocarina.
+- **Tunic colours only partly:** your own Link stays green (your colour is not put on it), players whose colour is green show as the plain puppet, and `LICHII_COOP_TUNICS=0` does nothing on Hookshot (#202; the emulator kit does all of these).
+- **No old-pack hint:** `Host-Hookshot.bat` and `Join-Hookshot.bat` say when the game has no puppet pack, but not when it is an old one made before the tunic colours; rerun `Build-Hookshot-Coop.bat` after an update.
+- What has been checked on Hookshot in our two-game tests: the co-op module loads and the games connect to the server, with no crash; the rest of co-op is the same code as on the emulator but not yet checked there.
+
+### Hookshot troubleshooting
+
+- **"No co-op Hookshot game in ... yet"** from `Host-Hookshot.bat` or `Join-Hookshot.bat`: run `Build-Hookshot-Coop.bat` first, and let it finish.
+- **The build stops on a download or a SHA-256 that does not match:** run it again (a download may have broken off). If it keeps failing, report it with the window's text.
+- **Not enough space:** it warns below about 60 GB free. Free some space, or move the kit to a bigger drive.
+- **The game closes at the start or the screen goes black:** check that your card has mesh shaders (above) and that its driver is up to date. Hookshot's own open problems (crashes outside Kokiri Forest on some PCs, crashes on some AMD cards, a device loss soon after the start) are listed on [Hookshot's page](https://github.com/NotRexed/Hookshot); play on the emulator meanwhile.
+- **To try the game without co-op:** set `HOS_COOP=0` before starting `hookshot.exe`; if it crashes without co-op too, it is Hookshot's problem, not co-op's.
+- **Reporting a problem:** `collect-logs.cmd` does not pick up the Hookshot log yet: attach `hookshot_log.txt` from beside `hookshot.exe` to your report, and say in it that you played on Hookshot ([Reporting a problem](#reporting-a-problem)).
+
+## Emulator setup for new players
+
+The usual way to play: the kit's patched Fritchii emulator. It runs on most PCs that can run the game in an emulator. Steps 1 to 4 below, then [Check it works](#check-it-works); after that, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet).
 
 ## What you need
 
-- A Windows 10 or 11 PC (64-bit) that can run the game on Fritchii.
+- A Windows 10 or 11 PC (64-bit) that can run the game on Fritchii, or a 64-bit x86 Linux PC or Steam Deck (glibc 2.39 or newer: Ubuntu 24.04, Fedora 40, Debian 13, Arch and others) with the Linux kit ([Linux and Steam Deck](#linux-and-steam-deck)).
 - Your own copy of the game, dumped from your own console, with its keys (`prod.keys`, `title.keys`) and the console's firmware. The release has no game files, keys or firmware and never will. Every player needs their own.
 - The same game version as the other players (build id `e0f3ccfaf50065ae`; the emulator's log names it, see [below](#check-it-works)).
 - The same release of the co-op kit as the other players.
@@ -18,11 +71,14 @@ You get:
 
 | File | What it is for |
 |---|---|
-| `Host.bat` | Start a game others join: starts the server and your emulator |
-| `Join.bat` | Join someone's game: asks for the host's address |
+| `Host.bat` | Start a game others join: starts the server (it shows an invite code for your friends) and your emulator |
+| `Join.bat` | Join someone's game: asks for the host's invite code (or address) |
 | `make-puppet-pack.cmd` | Builds the puppet Link from your own game files (once) |
 | `coop-options.ini` | Which co-op features are on |
-| `collect-logs.cmd` | Zips your logs to send with a bug report |
+| `collect-logs.cmd` | Zips your logs to send with a bug report (addresses, passwords and names masked) |
+| `Update.bat` | Updates the kit to the newest release ([Updating](#updating)) |
+| `check-hosting.cmd` | Says why friends cannot reach your server, and what to change ([play-online.md](play-online.md)) |
+| `Build-Hookshot-Coop.bat`, `Host-Hookshot.bat`, `Join-Hookshot.bat`, `hookshot\` | Hookshot, experimental ([above](#play-on-hookshot-experimental)) |
 | `start-server.cmd`, `play.cmd` | The server alone, and the emulator alone (for advanced setups) |
 | `emulator\` | The patched emulator; `emulator\user\` holds all its data |
 | `SOURCE.txt`, `licenses\`, `THIRD_PARTY_NOTICES.md` | Where the source is, and the licences |
@@ -56,13 +112,15 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 
 1. Double-click `make-puppet-pack.cmd` in the kit folder.
 2. It finds the `.nup` in the emulator's game list folders (step 3). If it asks for it, type its path or drag the file into the window.
-3. Wait for it to finish: it reads the game files straight from the `.nup` and builds the pack in under a minute.
+3. Wait for it to finish: it reads the game files straight from the `.nup` and builds the pack in about a minute. It also makes the co-op HUD's look from the same files (the game's font, heart pictures and place names, for the other players' names, hearts and places under your hearts): it prints `co-op HUD: font, 5 hearts and ... place names`. If that part fails it prints a note and co-op still works, with plain text.
 
 Do not use the emulator's **Dump RomFS** for a `.nup`: you do not need it, and it often fails with "RomFS Extraction Failed" (for example when your keys are older than the game's update).
 
 **Which file do you have?** Look at the file you added to the emulator's game list in step 3: its name ends in `.nup`, `.nsp` or `.xci` (the game list also shows it in its **File type** column: NUP, NSP or XCI). `.nup`: the steps above are all you need. `.nsp` or `.xci`: see below.
 
-The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC (and again after an update, when [Update.bat](#updating) says the puppet pack tool changed). Without the pack, co-op still works, but the other players show only as a name and a dot.
+The other players appear as Link only with the puppet pack, which is made from your own game files, so it cannot come in the zip. Do this once per PC, and **again after every update** that changes the pack ([Updating](#updating); `Update.bat` does not rebuild it). Without the pack, co-op still works, but the other players show only as a name and a dot, and co-op's text is plain (no game font or hearts).
+
+The pack also holds the **tunic colours**: each player's Link wears that player's colour in the other games, and your own Link wears yours (the Kokiri tunic; the Goron and Zora tunics keep their colours). Pick yours with `color =` in `coop-options.ini` ([Your colour](play-online.md#your-colour)). With a pack made before the colours, the other players stay green, and `Host.bat` / `Join.bat` say: "Puppet pack: made without the tunic colours ... Run make-puppet-pack.cmd again."
 
 ### Only if your game is an `.nsp` or `.xci`: dump the RomFS first
 
@@ -78,35 +136,27 @@ The other players appear as Link only with the puppet pack, which is made from y
 
 ## Check it works
 
-`Host.bat` on one PC opens a server window and the emulator. Start the game: a small panel in the top-left corner says `Co-op: player 1, ping ... ms`. The emulator's log, `emulator\user\log\eden_log.txt`, has lines starting with `coop:`, among them `coop: build ...` (which co-op build this is), `coop: welcomed as player 1` and `coop: game build e0f3ccfaf50065ae`.
+`Host.bat` on one PC opens a server window and the emulator. Start the game: a small panel in the top-left corner says `Co-op: player 1, ping ... ms`. The emulator's log, `emulator\user\log\eden_log.txt`, has lines starting with `coop:`, among them `coop: build ...` (which co-op build this is), `coop: welcomed as player 1` and `coop: game build e0f3ccfaf50065ae`. With a join password (`Host.bat` makes one each time) the game traffic is encrypted: the panel's first line ends in `, encrypted`, and the log has a `coop: traffic ...` line. `, not encrypted (no join password)` means the host turned the password off.
 
 Next: [play-lan.md](play-lan.md) or [play-online.md](play-online.md).
-
-## Settings
-
-`coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again. The **join password** is optional: the host sets it once when `Host.bat` asks (saved as `server_password` in `coop-options.ini`, Enter for none), and every other player types it when `Join.bat` asks (Enter keeps the last one, `-` for none; kept in `coop.ini` as `password`). A wrong one shows `wrong join password` in the `Join.bat` window and in the game's co-op panel ([play-online.md](play-online.md), "Who can join").
-
-## Chat commands
-
-Press Enter in the game to open the chat box. A line that starts with `/teleport` (or `/tp`) is a command, not chat:
-
-- `/teleport` alone lists the other players.
-- `/teleport <player>` takes you to that player. The whole name works in any case, and so does the start of a name if only one player's name starts that way, or the player's number (`/teleport 2`).
-  - The other player's game answers with where they last stood on their feet, so you never land in a wall or in mid-air.
-  - In the same scene you are moved there at once.
-  - In another scene the game changes scene first, as a loading zone does: a fade and a load, arriving at that place's entrance nearest the other player. After the load you are moved next to them. A scene change not taken in 60 seconds is given up.
-  - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link, or in a place with no entrance to arrive at (the boss-rush room, the ending, the Sage room). Lake Hylia, Lon Lon Ranch, the Temple of Time and the houses are parts of Hyrule Field, the Market or their village, so those work. A dungeon gives a warning: you may need its items to get on from there.
-  - A player with an older build does not answer: "no answer from" after 5 seconds.
-
-`LICHII_COOP_TELEPORT=0` turns it off in your game: the command says so, and the others' requests to come to you are refused.
 
 ## Updating
 
 Every player needs the same version: a game of one version cannot join a server of another.
 
-**On every start** (a kit whose `coop-options.ini` has `auto_update`): when `Host.bat`, `Join.bat` or `play.cmd` start and a newer co-op release is out, they ask "Update now? [Y/n]" (yes after 10 s with no key, so an unattended start updates too). Yes updates the whole kit, the emulator included, then starts the new version. No, no network, or GitHub down: this version starts as it is, after at most 6 s. If the update fails, the old files are put back and this version starts. `auto_update` in `coop-options.ini` sets it: `ask` (the default), `yes` (update without asking) or `no` (only say that one is out). An update stops this kit's server if it is still running, so a host should update when nobody is playing: guests on it are dropped (and need the same update anyway).
+**This release is protocol 10: everyone updates.** A game of it refuses a server of an older release, and the other way round, so the host and every guest update before playing. In short:
 
-**By hand:** close the emulator and the server, then double-click `Update.bat` in the kit folder. It looks for the newest release on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page, says which one, and asks before it changes anything. Then it downloads the zip, checks it against the SHA-256 published with the release, and replaces the kit's own files.
+1. Close the games and the server window.
+2. Double-click `Update.bat` (or answer **Y** when `Host.bat` or `Join.bat` asks).
+3. Double-click `make-puppet-pack.cmd` once more: `Update.bat` does not rebuild the pack, and the new one has the tunic colours (with an old pack the other players stay green).
+4. The emulator changed, so the first start shows **"Preparing shaders"** again: let it finish ([Low frame rate](#low-frame-rate)).
+5. On Hookshot: run `Build-Hookshot-Coop.bat` again ([Hookshot](#play-on-hookshot-experimental)).
+
+The details:
+
+**On every start** (a kit whose `coop-options.ini` has `auto_update`): when `Host.bat`, `Join.bat` or `play.cmd` start and a newer co-op release is out, they ask "Update now? [Y/n]" (yes after 10 s with no key, so an unattended start updates too). Yes updates the whole kit, the emulator included, then starts the new version. No, no network, or GitHub down: this version starts as it is, after at most 15 s, with a line saying why it could not check. If the update fails, the old files are put back and this version starts. `auto_update` in `coop-options.ini` sets it: `ask` (the default), `yes` (update without asking) or `no` (only say that one is out). An update stops this kit's server if it is still running, so a host should update when nobody is playing: guests on it are dropped (and need the same update anyway).
+
+**By hand:** close the emulator and the server, then double-click `Update.bat` in the kit folder. It looks for the newest release on the [Releases](https://github.com/daurosk/oot-remake-multiplayer/releases) page, says which one, and asks before it changes anything. Then it downloads the zip, checks it against the SHA-256 published with the release and, when the GitHub CLI (`gh`) is installed and logged in, against the release's signature (its attestation, made by our release workflow; a zip that fails it is refused, `verify_signature = no` in `coop-options.ini` skips that check). Then it replaces the kit's own files, the emulator included. It needs no admin rights: it writes only in the kit folder and your temp folder.
 
 The emulator is updated only this way, with the co-op build from our release. Fritchii's own updater is switched off in our builds and never used: it would put a plain Fritchii without co-op over the kit's. When Frizti publishes a newer Fritchii, the next co-op release moves to it.
 
@@ -118,6 +168,34 @@ If it cannot update, it says why and how to update by hand: download the newest 
 
 It sends nothing about you: one request for the list of releases, and the two downloads. If it says the puppet pack tool changed, run `make-puppet-pack.cmd` once more.
 
+## Check the download
+
+Optional. `Update.bat` checks every download against the SHA-256 published with the release, which proves the file arrived whole. Each release's zip and `Update.bat` are also signed: when the release is published, our release workflow on GitHub makes a signed record (an artifact attestation) of those exact files. To check that a zip you downloaded is the one the release published, install the [GitHub CLI](https://cli.github.com), run `gh auth login` once, and in the folder with the zip:
+
+```
+gh attestation verify oot-coop-<version>.zip --repo daurosk/oot-remake-multiplayer --signer-workflow daurosk/oot-remake-multiplayer/.github/workflows/release-attest.yml
+```
+
+It must say the verification succeeded. If it fails, do not use the zip, and tell us ([Reporting a problem](#reporting-a-problem)). From a copy of this repository, `tools\release\verify_kit.ps1 -Zip <zip>` does the same and also checks the `.sha256` beside it.
+
+## Settings
+
+`coop-options.ini` turns features on and off; by default the puppets, shared enemies and townspeople, and objects (seeds, nuts, bombs, arrows) are on, debug logging off. Everyone should use the same settings. Your server address and name are in `emulator\user\config\coop.ini`; `Join.bat` asks for the address each time, and `play.cmd change` asks for both again. The **join password**: `Host.bat` makes a new random one each time it starts and puts it in the invite code, so nobody types it; it also turns on the encryption of the game traffic. A host who wants the same one every time sets `server_password = <one without spaces>` in `coop-options.ini`; then the others type it when `Join.bat` asks (unless they use the invite code; Enter keeps the last one, `-` for none; kept in `coop.ini` as `password`). `server_password =` with nothing after it means no password: then there is no invite code, no router forward and no encryption, and anyone who finds the server can join. A wrong one shows `wrong join password` in the `Join.bat` window and in the game's co-op panel ([play-online.md](play-online.md), "Who can join").
+
+## Chat commands
+
+Press Enter in the game to open the chat box. A line that starts with `/teleport` (or `/tp`) is a command, not chat:
+
+- `/teleport` alone lists the other players.
+- `/teleport <player>` takes you to that player. The whole name works in any case, and so does the start of a name if only one player's name starts that way, or the player's number (`/teleport 2`).
+  - The other player's game answers with where they last stood on their feet, so you never land in a wall or in mid-air.
+  - In the same scene you are moved there at once.
+  - In another scene the game changes scene first: talk to someone or read a sign within a minute, and when the talk ends there is a fade and a load, arriving at that place's entrance nearest the other player. After the load you are moved next to them. A scene change not taken in 60 seconds is given up. **Known issue:** when the other player is inside a dungeon (seen: Kokiri Forest to the Deku Tree's slingshot room), the screen can stay black after the load and your Link cannot move ([#197](https://github.com/daurosk/oot-remake-multiplayer/issues/197)): walk there instead, and if it happens, close the game and start it again. In our test, teleporting from Kakariko to the Graveyard worked.
+  - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link, or in a place with no entrance to arrive at (the boss-rush room, the ending, the Sage room). Lake Hylia, Lon Lon Ranch, the Temple of Time and the houses are parts of Hyrule Field, the Market or their village, so those work. A dungeon gives a warning: you may need its items to get on from there.
+  - A player with an older build does not answer: "no answer from" after 5 seconds.
+
+`LICHII_COOP_TELEPORT=0` turns it off in your game: the command says so, and the others' requests to come to you are refused.
+
 ## Chat notices
 
 When another player's progress reaches your game, a line in the chat says so (only in your game, nothing is sent): "Tobi got the Fairy Slingshot - you got one too!", "Tobi found a Small Key (Deku Tree) - the group has 2", "Tobi got a Heart Container - your max health went up", "Tobi got the map (Deku Tree)", "Tobi learned Zelda's Lullaby", "Tobi got a Gold Skulltula token (12)", "Tobi opened a chest". Joining a session says one line ("Synced with the group: 14 items, 3 songs"), and so does the host loading a save. At most 4 lines in 3 seconds; the rest is one "...and N more" line. To turn them off, set `LICHII_COOP_NOTIFY=0`.
@@ -127,6 +205,28 @@ When another player's progress reaches your game, a line in the chat says so (on
 The host's save decides. Everyone's progress is shared while you play, but when the host loads a save, every game in the session goes back to that save's progress: items, keys, chests, doors and switches. A guest who loads a save gets the host's progress, and nothing changes for the others. To undo something (a door that locked you out, a key used in the wrong place), the host loads an older save. Rupees, ammo, hearts and where you stand stay your own. Be careful: if the host restarts the game and loads its save, **everything the guests did since the host last saved is undone** for everyone: chests, keys, doors, items. The host should save often, especially after the guests make progress.
 
 **Guests play from the host's save file.** When you join (`Join.bat`), your game uses a separate co-op save folder, so your own saves are never touched: the host's newest save is copied into it, and the chat says "The host's save is ready". On the title screen choose **Continue** (or **Load Game**, the newest save) to play from it; you start where the host's save starts, with its items, hearts and rupees. When the host loads another save, you get that one too after the host's next door or save point: load it to stand where it starts (your progress already follows the host at once). Without joining (playing alone, or hosting with `Host.bat`) the game shows your own saves as before. The host's own saves (`Host.bat`) are its normal ones.
+
+## Linux and Steam Deck
+
+There is a Linux kit too: `oot-coop-<version>-linux-x86_64.tar.gz` on the same release page. A Linux player and a Windows player can play together on the same release. Everything above applies; only the file names and a few commands differ.
+
+**What you need on top:** a 64-bit x86 Linux (or a Steam Deck in Desktop Mode), and for the puppet pack, Python 3 with the `zstandard` package (`sudo apt install python3 python3-zstandard` on Debian or Ubuntu, `sudo pacman -S python python-zstandard` on Arch). The emulator is an AppImage. If it does not start and says FUSE is missing, install `libfuse2` (Debian, Ubuntu) or `fuse2` (Arch).
+
+| Windows kit | Linux kit |
+|---|---|
+| unzip the `.zip` | `tar -xzf oot-coop-<version>-linux-x86_64.tar.gz` (keep the folder somewhere your user can write, for example `~/oot-coop`) |
+| `emulator\user\keys\` | `emulator/user/keys/` (the same folders under `emulator/user/` for keys, firmware, saves and settings) |
+| `make-puppet-pack.cmd` | `./make-puppet-pack.sh` |
+| `Host.bat`, `Join.bat`, `play.cmd` | `./Host.sh`, `./Join.sh`, `./play.sh` (in a terminal, in the kit folder) |
+| `start-server.cmd` | `./start-server.sh` (`Host.sh` starts it in the background; `./start-server.sh --stop` stops it) |
+| `Update.bat` | `./update.sh` (also offered on every start, as `auto_update` in `coop-options.ini` says) |
+| `collect-logs.cmd` | `./collect-logs.sh` (writes `coop-logs-<time>.tar.gz`) |
+
+- **Portable folder.** On Linux the emulator uses the `user` folder of the folder it is started in, so start it through the scripts, not by double-clicking `emulator/lichii.AppImage`. Started anywhere else, it uses your normal emulator folders (`~/.local/share/eden`) and co-op settings from there.
+- **Hosting.** `./Host.sh` works as `Host.bat` does: it makes a new join password each time (unless `server_password` in `coop-options.ini` sets one), asks your router to forward the port (UPnP), and prints an **INVITE CODE** in the terminal (copied to the clipboard when `wl-copy`, `xclip` or `xsel` is installed; also in `logs/invite-code.txt` while the server runs). Send it to your friends; they paste it into `Join.sh` or `Join.bat`. If a friend gets an **ANSWER CODE**, run `./start-server.sh --answer <code>` in the kit folder. The server runs in the background: `./start-server.sh --stop` stops it. Open the server's UDP port if a firewall runs, for example `sudo ufw allow 27510/udp`. `start-server.sh` lists this PC's addresses.
+- **Joining.** `./Join.sh` asks for the invite code or the host's address (and then the join password, if the host gave you one). With an invite code a join helper runs in the background while you play and stops when the emulator closes; its log is `logs/join-*.log`. The terminal says when you are connected, or why not. A relay join code (`CODE@relay`) works only in the Windows kit for now.
+- **Mods.** As on Windows: code and cheat mods stop `Host.sh` and `Join.sh` and are named; texture and model mods are fine.
+- **Steam Deck.** Not tested yet: nobody has run the kit on a Deck so far, so tell us how it goes ([Reporting a problem](#reporting-a-problem)). Use Desktop Mode: open Konsole, `cd` to the kit folder and run `./Join.sh` (or `./Host.sh`). Play with the Deck's own controls once the game runs. To start it from Game Mode, add `play.sh` as a non-Steam game with its "Start in" set to the kit folder; the first start must still happen in Desktop Mode, because it asks for your name and server.
 
 ## Troubleshooting
 

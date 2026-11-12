@@ -8,6 +8,28 @@ body:
       label: Co-op build and game version
     validations:
       required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Where you played
+      options:
+        - The kit's emulator (Lichii / Fritchii)
+        - Hookshot (experimental)
+        - The Linux kit (experimental)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: hosting
+    attributes:
+      label: How you connected
+      options:
+        - Invite code (Host.bat / Join.bat)
+        - VPN (Radmin VPN, Hamachi, ZeroTier, Tailscale)
+        - Port forwarding
+        - Relay with a join code
+        - Same network (LAN)
+        - Not sure
   - type: textarea
     id: what
     attributes:

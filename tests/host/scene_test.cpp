@@ -85,13 +85,13 @@ TEST_CASE("local_event_hides: every event of ours but the Ocarina") {
   CHECK_FALSE(local_event_hides(true, std::string_view("OcarinaReadyStart")));
 }
 
-TEST_CASE("visibility with their animation: riding parks, the Ocarina shows") {
+TEST_CASE("visibility with their animation: riding shows with a horse (issue 199), the Ocarina shows") {
   const std::string_view a = "HyruleField_Child", b = "LonLonRanch";
   const auto ride = std::optional<std::string_view>("HorseMove");
   const auto play = std::optional<std::string_view>("Ocarina_Adult_B_lp");
   const auto demo = std::optional<std::string_view>("DemoOcarina");
-  CHECK(visibility(a, false, a, 0, ride) == Visibility::park);
-  CHECK(visibility(a, false, a, status::in_cutscene, ride) == Visibility::park);
+  CHECK(visibility(a, false, a, 0, ride) == Visibility::ride);
+  CHECK(visibility(a, false, a, status::in_cutscene, ride) == Visibility::ride);
   CHECK(visibility(a, true, a, 0, ride) == Visibility::hide);   // our cutscene first
   CHECK(visibility(a, false, b, 0, ride) == Visibility::hide);  // elsewhere first
   CHECK(visibility(a, false, a, status::in_cutscene, play) == Visibility::show);

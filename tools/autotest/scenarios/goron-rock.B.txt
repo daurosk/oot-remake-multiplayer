@@ -1,0 +1,25 @@
+# goron-rock, B: put at the start point east of the rock, watches it (see goron-rock.A.txt).
+mark start
+warp GoronCity_Child GoronCity_LostWoodSide_before
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 23.5 104.94 -2.6
+wait 60
+toward 16.07 -1.58 10
+press ZL 10
+mark b-placed
+wait 600
+toward 16.07 -1.58 6
+press ZL 10
+mark b-mid
+wait 600
+mark b-end

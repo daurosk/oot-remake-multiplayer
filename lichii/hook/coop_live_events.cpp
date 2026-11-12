@@ -2,6 +2,7 @@
 #include "coop_live_events.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 
 namespace CoopLiveEvents {
@@ -37,14 +38,17 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
     if (scene.empty()) {
         return std::nullopt;  // no scene read (a load): the same visit, nothing asked
     }
-    if (scene != scene_) {
-        scene_ = scene;
-        asked_.clear();
-    }
+    Visit(scene);
     if (event_running) {
         return std::nullopt;
     }
-    for (const std::string& name : held) {
+    std::vector<std::string> wanted = held;
+    for (const std::string& name : early_) {
+        if (std::find(wanted.begin(), wanted.end(), name) == wanted.end()) {
+            wanted.push_back(name);
+        }
+    }
+    for (const std::string& name : wanted) {
         const bool named = allowed_.contains(name);
         if (!allowed_.empty() && !named) {
             continue;
@@ -57,7 +61,174 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
             continue;  // not near it yet (it waits), or no place known and not asked by name
         }
         asked_.insert(name);
+        early_.erase(name);
         return name;
+    }
+    return std::nullopt;
+}
+
+void Decider::Visit(const std::string& scene) {
+    if (scene != scene_) {
+        scene_ = scene;
+        asked_.clear();
+        early_.clear();
+    }
+}
+
+void Decider::Started(const std::string& name, const std::string& scene) {
+    if (scene.empty() || name.empty()) {
+        return;
+    }
+    Visit(scene);
+    if (!asked_.contains(name)) {
+        early_.insert(name);
+    }
+}
+
+void Decider::Ours(const std::string& name, const std::string& scene) {
+    if (scene.empty() || name.empty()) {
+        return;
+    }
+    Visit(scene);
+    asked_.insert(name);
+    early_.erase(name);
+}
+
+std::vector<std::string_view> EventsIn(std::string_view scene) {
+    std::vector<std::string_view> out;
+    for (const Place& p : Places()) {
+        if (p.scene == scene && std::find(out.begin(), out.end(), p.event) == out.end()) {
+            out.push_back(p.event);
+        }
+    }
+    return out;
+}
+
+namespace {
+
+// The name of `names` that `bytes` hold at `at` as a whole C string (the
+// start or a NUL before it, a NUL after it), or nullptr.
+const std::string_view* NameAt(const std::vector<std::uint8_t>& bytes, std::size_t at,
+                               const std::vector<std::string_view>& names) {
+    if (at > 0 && bytes[at - 1] != 0) {
+        return nullptr;
+    }
+    for (const std::string_view& n : names) {
+        if (at + n.size() < bytes.size() && bytes[at + n.size()] == 0 &&
+            std::memcmp(bytes.data() + at, n.data(), n.size()) == 0) {
+            return &n;
+        }
+    }
+    return nullptr;
+}
+
+// `size` bytes at `address`, read in 0x100-byte pieces; a piece that cannot
+// be read stays zero (a mapping may end inside the block).
+std::vector<std::uint8_t> ReadSome(Reader read, void* context, std::uint64_t address, std::size_t size) {
+    std::vector<std::uint8_t> out(size, 0);
+    for (std::size_t at = 0; at < size; at += 0x100) {
+        const std::size_t n = std::min<std::size_t>(0x100, size - at);
+        if (!read(context, address + at, out.data() + at, n)) {
+            std::fill(out.begin() + static_cast<std::ptrdiff_t>(at),
+                      out.begin() + static_cast<std::ptrdiff_t>(at + n), std::uint8_t{0});
+        }
+    }
+    return out;
+}
+
+// A word that may point into the game's memory (not 0, not a small number).
+bool MayPoint(std::uint64_t w) {
+    return w >= 0x10000 && w < (std::uint64_t{1} << 48);
+}
+
+} // namespace
+
+std::optional<std::string> FindRunningEvent(Reader read, void* context, std::uint64_t main,
+                                            const std::vector<std::string_view>& names) {
+    if (names.empty()) {
+        return std::nullopt;
+    }
+    const auto u64 = [&](std::uint64_t a) -> std::optional<std::uint64_t> {
+        std::uint64_t v = 0;
+        if (!read(context, a, &v, 8)) {
+            return std::nullopt;
+        }
+        return v;
+    };
+    const auto manager = u64(main + addr::kEventStatePtr);
+    if (!manager || *manager == 0) {
+        return std::nullopt;
+    }
+    const auto session = u64(*manager + addr::kEventSession);
+    if (!session || *session == 0) {
+        return std::nullopt;
+    }
+    std::uint64_t event = 0;
+    std::uint32_t count = 0;
+    std::uint32_t current = 0;
+    const auto events = u64(*session + addr::kSessionEvents);
+    if (events && *events != 0 && read(context, *session + addr::kSessionCount, &count, 4) &&
+        read(context, *session + addr::kSessionCurrent, &current, 4) && current < count &&
+        count < 0x100) {
+        event = u64(*events + 8ull * current).value_or(0);
+    }
+    std::size_t longest = 0;
+    for (const std::string_view& n : names) {
+        longest = std::max(longest, n.size());
+    }
+    // The string a word points to: one read of the longest name's length;
+    // when that fails, each name's own length (a string may end right before
+    // unmapped memory).
+    const auto pointed = [&](std::uint64_t w) -> std::optional<std::string> {
+        std::vector<std::uint8_t> all(longest + 1, 0xff);
+        if (read(context, w, all.data(), all.size())) {
+            const auto* n = NameAt(all, 0, names);
+            return n != nullptr ? std::optional<std::string>(std::string(*n)) : std::nullopt;
+        }
+        for (const std::string_view& n : names) {
+            std::vector<std::uint8_t> s(n.size() + 1, 0xff);
+            if (read(context, w, s.data(), s.size()) && s.back() == 0 &&
+                std::memcmp(s.data(), n.data(), n.size()) == 0) {
+                return std::string(n);
+            }
+        }
+        return std::nullopt;
+    };
+    const auto search = [&](const std::vector<std::uint8_t>& block,
+                            std::vector<std::uint64_t>* words) -> std::optional<std::string> {
+        for (std::size_t at = 0; at < block.size(); ++at) {
+            if (const auto* n = NameAt(block, at, names)) {
+                return std::string(*n);
+            }
+        }
+        for (std::size_t at = 0; at + 8 <= block.size(); at += 8) {
+            std::uint64_t w = 0;
+            std::memcpy(&w, block.data() + at, 8);
+            if (!MayPoint(w)) {
+                continue;
+            }
+            if (auto n = pointed(w)) {
+                return n;
+            }
+            if (words != nullptr) {
+                words->push_back(w);
+            }
+        }
+        return std::nullopt;
+    };
+    std::vector<std::uint64_t> inner;
+    if (event != 0) {
+        if (auto n = search(ReadSome(read, context, event, addr::kScanEvent), &inner)) {
+            return n;
+        }
+    }
+    if (auto n = search(ReadSome(read, context, *session, addr::kScanSession), nullptr)) {
+        return n;
+    }
+    for (const std::uint64_t w : inner) {
+        if (auto n = search(ReadSome(read, context, w, addr::kScanInner), nullptr)) {
+            return n;
+        }
     }
     return std::nullopt;
 }
@@ -89,7 +260,7 @@ std::optional<std::set<std::string>> ParseNames(std::string_view text) {
     return out;
 }
 
-void Requester::Want(std::string name) {
+void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, std::uint64_t max_age_us) {
     if (name.empty()) {
         notes_.push_back("live event with no name not asked");
         return;
@@ -98,8 +269,10 @@ void Requester::Want(std::string name) {
         notes_.push_back("live event " + name + " not asked (name too long or too many waiting)");
         return;
     }
-    if (std::find(wanted_.begin(), wanted_.end(), name) == wanted_.end() && name != current_) {
-        wanted_.push_back(std::move(name));
+    const bool waiting =
+        std::any_of(wanted_.begin(), wanted_.end(), [&](const Wanted& w) { return w.name == name; });
+    if (!waiting && name != current_) {
+        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us});
     }
 }
 
@@ -212,7 +385,7 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         return std::nullopt;  // an event began since it was asked: wait, it stays queued
     }
     if (current_.empty()) {
-        current_ = std::move(wanted_.front());
+        current_ = std::move(wanted_.front().name);
         wanted_.pop_front();
     }
     c.function = main + addr::kArgBuild;

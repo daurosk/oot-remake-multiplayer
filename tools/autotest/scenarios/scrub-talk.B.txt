@@ -1,0 +1,71 @@
+# scrub-talk (#144): B ends its own talk with One while A's talk with One is open (see scrub-talk.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -24.0 53.2 29.5
+wait 240
+mark placed
+toward -23.7 40.0 10     # face One
+wait 3000                # A solves meanwhile (its hits make our brothers run too)
+mark aim-one
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+hold ZL 30
+hold ZL+ZR 50
+hold ZL 20
+wait 80
+mark one
+wait 300
+goto -23.1 35.5 1.0 600  # to One (it stops: the talk comes when Link is near)
+mark at-one
+mark talk
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+press A
+wait 120
+wait 600
+mark end

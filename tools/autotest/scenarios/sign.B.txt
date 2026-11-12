@@ -1,17 +1,28 @@
-# sign, B: walks into Kakariko with A, stops a few metres from the signpost and faces it.
+# sign, B: warps in with A, is put back at the start point and faces the post (see sign.A.txt).
 mark start
-wait 120
-stick 0 -1 300          # its save is further up the Graveyard path than A's
-wait 420
-mark kakariko
-stick 0 1 60            # out of the gate passage first
-goto -2.5 72.5 1.0      # the post to the west
+warp KakarikoVillage_Child Kakariko_GraveYardSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -1.73 101.54 68.8
+wait 60
 toward -7.46 71.12 10   # face it, so the camera looks at it
 press ZL 10             # nothing to target: the camera swings behind Link, onto the post
 mark watching
-wait 300
-toward -7.46 71.12 6    # face it again (A's cut pushes nothing, but B may have drifted)
+wait 420
+toward -7.46 71.12 6
 press ZL 10
 mark framed
-wait 600
-mark end
+wait 300
+toward -7.46 71.12 6
+press ZL 10
+mark b-end
+wait 300

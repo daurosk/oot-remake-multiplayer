@@ -33,6 +33,34 @@ All the main offsets are in one place now: `CoopGameBuild::MainOffsets` in `coop
 
 Duplicates found: the actor manager slot is in three files, malloc in three, the game flags slot in two, the Scene slot in two (one a bare number in `coop_pose.cpp`), the vtable, set matrix, request delete, play AS and set AS frame in two each.
 
+## Builds of the game
+
+Checked 2026-11-11 (press about the update, our own dump):
+
+| Version | Build id | How a player gets it | Co-op |
+|---------|----------|----------------------|-------|
+| 1.0.0 | not known to us | the game as sold, before the update (cartridge or download without the patch) | refused; scan not tried |
+| 1.1.1 | `e0f3ccfaf50065ae` | the day-one update, out 2026-11-04 (Zelda Notes support and fixes, about 343 MB) | works; table and scan agree |
+
+No other update is known. We own only 1.1.1 here, so the scan is proven only there: on 1.0.0 it is unproven until a tester with that build sends a log (the lines below say what it found). A tester on 1.0.0 can also just install the 1.1.1 update.
+
+## Signature scan
+
+At every game start the hook also searches main for the offsets (`lichii/hook/coop_game_scan.h`, issue 97): 28 short masked instruction patterns, 8 to 24 words each, made by `tools/game_scan/make_patterns.py` from your own 1.1.1 main and stored in `coop_game_scan_patterns.inc`. Each pattern is a function's first instructions, a call to the function, or the ADRP pair that loads a global (the actor vtable through its GOT slot); branch targets, pages, the low 12 bits after an ADRP and the three words the loader patches are masked out. A pattern must match exactly once. The four cave offsets are not searched: they sit 0xd80, 0xd00 and 0xc00 bytes before rodata, whose start is the page of main's MOD0 header (text word 1).
+
+What the log says (once per game start):
+
+- 1.1.1: `coop: build e0f3ccfaf50065ae: offsets by scan match the table (28 patterns, N ms)`. If the scan disagrees, a warning names the fields; co-op runs on the table either way.
+- Another build, everything found and equal to 1.1.1's: `coop: build <id>: offsets by scan ...; partial co-op`, and the reader path runs (position, scene, flags). Only partly: the loader patch (`CoopSvc::PatchMain`, puppets and the svc hooks) and the object, drop and spawn readers still want build 1.1.1 by its id, so there are no puppets, objects, drops or spawns on that build. `HELLO` still names 1.1.1 (it goes out before the game starts), so the server takes such a player as a 1.1.1 player on purpose; the readers it runs are the ones whose offsets were just found equal.
+- Another build, everything found but elsewhere: a warning lists every field `name (scan 0x..., table 0x...)`, and co-op stays off with the refusal above: the readers still use the 1.1.1 constants (one-time steps below). Those numbers are what a new table entry needs, checked by hand.
+- Something not found or found twice: `coop: build <id>: scan did not find N of 28 offsets: name (none), name (2 or more)`, and the same refusal as before.
+
+Cost: main's code (about 63 MB) is copied once per game start and read in one pass: every word is looked up among the patterns' fully fixed words, so each pattern costs nothing extra. The log line gives the time. On a known build the scan only checks itself; `LICHII_COOP_SCAN=0` leaves it out there (another build is always scanned).
+
+Proof: `tests/lichii/game_scan_test.cpp` builds a main from the patterns alone (nothing of the game is in the repo) and checks the scan gives back the whole 1.1.1 table, names missing and doubled patterns, and masks the hooked words. With `COOP_TEST_MAIN` set to your own plain 1.1.1 main NSO, it scans the real one too. `make_patterns.py --check <main>` does the same scan in Python.
+
+To make the patterns again (after a table change): `python -I tools/game_scan/make_patterns.py <your plain 1.1.1 main>`. It refuses any other build.
+
 ## Supporting another build
 
 ### How to fill an entry: table, filled offline
@@ -42,7 +70,7 @@ Two ways to find the addresses:
 - **Signature scan at run time**: the hook searches main for byte patterns around each function and slot when the game starts. Works on builds nobody has looked at, but needs a pattern per address (about 31), each pattern must survive a recompile (ADRP/ADD pairs and branch offsets differ), a wrong match calls a wrong function in the game, and the caves still have to be re-linked per build, so a scan alone cannot make the code patches work.
 - **Per-build table, filled offline** (recommended): someone with that build runs a tool over its main once, checks the result, and adds one `Build` entry. The hook only looks up the entry. A build without an entry stays refused with the clear message above.
 
-Recommended: the table, with an offline tool that does the matching. The game has had few updates, so few entries are needed, and each entry is checked by a person and by a test before anyone plays on it.
+Both now exist: the scan above runs at every game start and logs what it found; that log is the offline matching tool's first pass. Recommended stays: a checked table entry per build. The game has had few updates, so few entries are needed, and each entry is checked by a person and by a test before anyone plays on it.
 
 ### Steps for one new build
 

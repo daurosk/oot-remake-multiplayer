@@ -143,6 +143,13 @@ struct Glue {
             CoopSvc::AddCaller(kEventCallerOrder, [this](CoopPuppet::Guest& guest, bool after_call,
                                                          std::uint64_t result, std::uint64_t) {
                 std::lock_guard lock(event_mutex);
+                // Only while a trip waits for its scene change and nothing
+                // loads (#197): a queued event must never start in the middle
+                // of a load or after the trip ended. A call chain under way
+                // still finishes (it frees its block).
+                if (!after_call && !events_open) {
+                    events.Clear();
+                }
                 auto call = events.Step(guest, after_call, result, main);
                 for (const auto& note : events.TakeNotes()) {
                     LOG_INFO(Core, "coop: teleport: {}", note);
@@ -155,6 +162,7 @@ struct Glue {
 
     static constexpr int kEventCallerOrder = 61;  // after the live events (60)
     std::uint64_t main = 0;  // set by Frame under event_mutex
+    bool events_open = false;  // set by Frame under event_mutex: travelling, no load
 
     void Line(std::string text) {  // with the mutex held
         LOG_INFO(Core, "coop: {}", text);
@@ -321,6 +329,7 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     {
         std::lock_guard lock(g.event_mutex);
         g.main = main_base;
+        g.events_open = g.trip.phase() == Trip::Phase::travelling && local.scene && !local.loading_banc;
     }
     for (auto& act : all) {
         if ((act.cancel_scene || act.release) && main_base != 0) {

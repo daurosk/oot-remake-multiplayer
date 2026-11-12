@@ -26,8 +26,8 @@ namespace {
 //   ZoraFountain, LakeHrl, Gerudo, GerudoValley, DesertColossus, MelodyGet,
 //   FairyFountain), and the story events of the stones' quests, the "go to"
 //   prompts and the Door of Time scenes in Hyrule Field.
-//   Left out: the opening of a new game (Dm_Kokiri_0000 to _0050: a new save
-//   must still wake up and leave its house), time travel
+//   Left out: the opening of a new game (Dm_Kokiri_0000 to _0030: a new save
+//   must still wake up; leaving its house, 0045/0050, is shared), time travel
 //   (Dm_TimeTemple_*: a child who has not pulled the sword must still be able
 //   to), the Chamber of Sages (Dm_SageRoom_*, SageRoom_*, the sages'
 //   awakenings Dm_Awake_*: the first sword pull and the scenes after an adult
@@ -46,6 +46,9 @@ namespace {
 //   Gerudo carpenters, the light prelude, the owl at Lake Hylia.
 //   Left out: minigames, the scarecrow, Gossip Stone fairies, where one
 //   player is (IsEntered, ArriveFrom), weather and age (Sequence_IsChildhood).
+// talk: a talk Caleb's play-test asked to be shared (2026-11-12): the Kokiri
+//   Shop keeper's first talk and her Deku Shield talk. Other talks stay each
+//   player's own.
 constexpr std::array kFlags = std::to_array<Flag>({
     {0x007d38a2u, Kind::scene, "HavePlayedEvent.Dm_LostWood_0010"},
     {0x00a58feeu, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Fire"},
@@ -61,6 +64,9 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x1330a253u, Kind::scene, "HavePlayedEvent.Dm_FairyFountain_Courage"},
     {0x13e870d1u, Kind::scene, "HavePlayedEvent.GoTo_DeathMountainCrater"},
     {0x13f3c149u, Kind::scene, "HavePlayedEvent.Dm_HrlField_0073"},
+    // Issue 193: the Threads of Time tab is masked until this is set, and only
+    // the owl's Goto_HyruleCastle event (Dm_HrlField_0010, shared) sets it.
+    {0x1450c74fu, Kind::scene, "UI_IsFinishChallengeMenuOpenEvent"},
     {0x14b2d7bcu, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_10"},
     {0x14d6db1eu, Kind::scene, "HavePlayedEvent.Dm_LostWood_0000"},
     {0x16f7f759u, Kind::scene, "HavePlayedEvent.Dm_Kakariko_0050"},
@@ -70,6 +76,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x19898d14u, Kind::world, "Npc_Hylia_Soldier_003_GateOpen"},
     {0x1c3ca514u, Kind::scene, "HavePlayedEvent.Dm_LakeHrl_0010"},
     {0x1db3a87eu, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0040"},
+    {0x22d6ff6fu, Kind::talk, "HaveTalked.Npc_Kokiri_001_Shop_Child"},  // Caleb's play-test 2026-11-12 (issue 173)
     {0x249e026eu, Kind::scene, "HavePlayedEvent.Dm_GerudoValley_0000"},
     {0x26d2802cu, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0035"},
     {0x273a73e9u, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0010"},
@@ -134,6 +141,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x712fffd5u, Kind::scene, "HavePlayedEvent.Goto_SacredForest"},
     {0x71fb94e3u, Kind::scene, "HavePlayedEvent.Goto_ZoraDomain"},
     {0x7275f781u, Kind::scene, "HavePlayedEvent.Dm_DeathMtTrail_0027"},
+    {0x72984c4fu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0050"},  // Caleb's play-test 2026-11-12 (issue 173)
     {0x754f6228u, Kind::scene, "HavePlayedEvent.Meet_FourCarpenter_ClearEvent"},
     {0x75b6f007u, Kind::scene, "HavePlayedEvent.Dm_FairyFountain_Nayru"},
     {0x7607c748u, Kind::scene, "HavePlayedEvent.Dm_DesertColossus_0000"},
@@ -155,6 +163,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x89fc39f9u, Kind::scene, "HavePlayedEvent.Dm_MelodyGet_Sun_07"},
     {0x8ab78984u, Kind::scene, "HavePlayedEvent.Dm_Goron_0000"},
     {0x8b591e04u, Kind::scene, "HavePlayedEvent.Goto_KakarikoWells"},
+    {0x8bb76427u, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0045"},  // Caleb's play-test 2026-11-12 (issue 173)
     {0x8c9a392fu, Kind::scene, "HavePlayedEvent.Dm_HrlField_0080"},
     {0x8e15ffd6u, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0060"},
     {0x8f02a43bu, Kind::scene, "HavePlayedEvent.Dm_Kokiri_0162"},
@@ -164,6 +173,8 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x98bf10c1u, Kind::scene, "HavePlayedEvent.HyruleField_Goto_HyruleCastle_Kaepora"},
     {0x992fb436u, Kind::owl, "HaveTalked_Special.Npc_Kaepora_DeathMountainTrail_Talk_Event2"},
     {0x9a400d41u, Kind::scene, "HavePlayedEvent.Dm_ZoraRiver_0005"},
+    {0x9a60a460u, Kind::world, "KokiriForest_Meet_DekuTree_OpenDekuTreeMouth"},  // Caleb's play-test 2026-11-12 (issue 173)
+    {0x9b1b27d2u, Kind::world, "KokiriForest_LinkHouseDoor_Open"},  // Caleb's play-test 2026-11-12 (issue 173)
     {0x9cc98b79u, Kind::scene, "HavePlayedEvent.Dm_HrlField_0050"},
     {0x9dae4eb7u, Kind::scene, "HavePlayedEvent.SageOfFire_CityIn"},
     {0x9dfb0473u, Kind::scene, "HavePlayedEvent.Dm_HrlCastle_0045"},
@@ -200,6 +211,7 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xbd081d54u, Kind::scene, "HavePlayedEvent.Dm_LostWood_0030"},
     {0xbee7359bu, Kind::scene, "HavePlayedEvent.Dm_HrlField_0030"},
     {0xbf9dfc7eu, Kind::scene, "HavePlayedEvent.Dm_Zora_0010"},
+    {0xbfc69399u, Kind::talk, "HaveTalked_Npc_Kokiri_001_Shop_Child_PresentDekuShield"},  // Caleb's play-test 2026-11-12 (issue 173)
     {0xc06dceb8u, Kind::scene, "HavePlayedEvent.Dm_Zora_0000"},
     {0xc2f17358u, Kind::scene, "HavePlayedEvent.Get_StoneOfWater_Complete"},
     {0xc3cc0e0eu, Kind::scene, "HavePlayedEvent.Dm_Gerudo_0020"},
@@ -298,6 +310,42 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     }
     shared = coop::host::SharedFlags(std::move(keys));  // sorts, drops repeats
     return shared->size() - before;
+}
+
+std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
+                                          std::optional<bool> mido_blocker,
+                                          std::optional<bool> met_deku_tree) {
+    const auto rank = [](std::uint32_t v) -> int {
+        switch (v) {
+        case quest::kReady:
+            return 1;
+        case quest::kStep01:
+            return 2;
+        case quest::kStep02:
+            return 3;
+        case quest::kStep03:
+            return 4;
+        case quest::kComplete:
+            return 5;
+        default:
+            return 0;  // NotReady or a value we do not know
+        }
+    };
+    if (!step || rank(*step) == 0) {
+        return std::nullopt;
+    }
+    std::uint32_t target = 0;
+    if (met_deku_tree == true) {
+        target = quest::kComplete;
+    } else if (mido_blocker == false) {
+        target = quest::kStep03;
+    } else {
+        return std::nullopt;
+    }
+    if (rank(target) <= rank(*step)) {
+        return std::nullopt;
+    }
+    return target;
 }
 
 bool On() {

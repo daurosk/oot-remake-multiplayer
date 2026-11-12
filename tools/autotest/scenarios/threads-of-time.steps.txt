@@ -1,0 +1,34 @@
+# threads-of-time (issue 193): the Threads of Time tab opens for a player who never saw the owl,
+# and its quest steps are the same in both games. Run:
+#   tools\autotest\run.ps1 -Scenario threads-of-time
+# Needs a build with setenum (coop_testinput) and the quests store (coop_quests.cpp).
+# 1. A shuts the tab (UI_IsFinishChallengeMenuOpenEvent 0, a shared story flag): B's goes to 0.
+#    Both put SubEvent_GetScarecrow (0x9472302b) at NotReady: a lowered max-rule value stays in
+#    that game, so each sets its own. B opens the pause menu and steps through the tabs (shots).
+# 2. A opens the tab (flag 1, as the owl's event does) and moves the scarecrow quest to IntoTheFuture.
+#    B's flag goes to 1 and its quest to IntoTheFuture. B opens the pause menu again: the tab opens.
+#    Look at B's shots: tab masked in tot-b-locked-*, open in tot-b-open-*. Say whether it opened
+#    at once (no scene change between).
+# 3. B moves the quest to Complete: A's game takes it. A opens the tab (shots).
+#    The kit saves are at PlayScarecrowSong and the host keeps the group's highest step, so the
+#    raised steps must be above it (IntoTheFuture, Complete). If a kit save gets autosaved at
+#    Complete, quest-to-a cannot pass again: reload a save from before (bigrun2 had the old steps).
+#! switches LICHII_COOP_DEBUG_FLAGS=1
+start A B
+load A B
+play A threads-of-time.A1.txt B threads-of-time.B1.txt
+sleep 5
+play B threads-of-time.pause-locked.txt
+play A threads-of-time.A2.txt
+sleep 5
+play B threads-of-time.pause-open.txt
+play B threads-of-time.B3.txt
+sleep 5
+play A threads-of-time.pause-a.txt
+shot end
+lines unlock-b B min=1 flags debug: bool 0x1450c74f .* -> 1
+lines quest-to-b B min=1 coop: quests: SubEvent_GetScarecrow .* -> IntoTheFuture
+lines quest-to-a A min=1 coop: quests: SubEvent_GetScarecrow .* -> Complete
+lines setenum-ok A min=2 coop: test setenum 0x9472302b \S+: set
+lines setenum-ok-b B min=2 coop: test setenum 0x9472302b \S+: set
+lines no-step-down B max=0 coop: quests: SubEvent_GetScarecrow Complete -> 

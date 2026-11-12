@@ -1,0 +1,333 @@
+From e61509dedc5bb9e14b7a5629f635ee32f894432b Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Wed, 11 Nov 2026 22:08:58 -0900
+Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
+ loader
+
+nx2/coop_hooks.py hooks the frame function's two calls in moduleCalc_ and
+the AI's calc-bits call (build e0f3ccfa only, words checked); host/coop_bridge.c
+loads hookshot_coop.dll beside the game and gives it guest memory, game
+function calls and the log (host/hos_coop_api.h). From oot-remake-multiplayer
+(GPL-3.0), docs/hookshot.md.
+---
+ host/coop_bridge.c  | 169 ++++++++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_api.h |  51 +++++++++++++
+ nx2/coop_hooks.py   |  61 ++++++++++++++++
+ nx2/lift.py         |   2 +
+ 4 files changed, 283 insertions(+)
+ create mode 100644 host/coop_bridge.c
+ create mode 100644 host/hos_coop_api.h
+ create mode 100644 nx2/coop_hooks.py
+
+diff --git a/host/coop_bridge.c b/host/coop_bridge.c
+new file mode 100644
+index 00000000..d5c17813
+--- /dev/null
++++ b/host/coop_bridge.c
+@@ -0,0 +1,169 @@
++/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md): the bridge between the game and the co-op module.
++
++   nx2/coop_hooks.py puts two calls into the lifted game: hos_coop_frame at the frame function's two calls in moduleCalc_,
++   and hos_coop_hold after the AI's calc-bits call. On the first frame hook this loads hookshot_coop.dll (hookshot_coop.so)
++   from beside the executable, unless HOS_COOP is 0/off, and hands it the table in hos_coop_api.h: guest memory, game
++   function calls and the log. The module owns its sockets and network thread; the game never waits for them. Without the
++   module (no file, refused, or co-op off in its settings) every hook returns at once. */
++#include "hos.h"
++#include "hos_coop_api.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++
++uint8_t *hos_guest_base(void);                       /* (hos_main.c) */
++int hos_mem_region(uint64_t addr, uint64_t size);    /* (hos_mem.c: 0 if not wholly in mapped guest memory) */
++void hos_mark_written(const void *p, uint64_t n);    /* (hos_mem.c: the GPU mirror picks the pages up) */
++extern const char hos_main_build_id[];              /* (gen/hos_image.c) */
++
++#ifdef _WIN32
++#define COOP_DLL "hookshot_coop.dll"
++#define COOP_DLL_W L"hookshot_coop.dll"
++#else
++#define COOP_DLL "hookshot_coop.so"
++#endif
++
++static int state;   /* (atomic) 0 not tried, 1 loading, 2 on, 3 off */
++static hos_coop_frame_fn coop_frame;
++static hos_coop_hold_fn coop_hold;
++static hos_coop_stop_fn coop_stop;
++static char game_dir[MAX_PATH * 3];   /* (UTF-8) */
++
++static int in_guest(uint64_t a, size_t n) { return n == 0 || (a + n > a && hos_mem_region(a, n)); }
++
++static int bridge_read(uint64_t a, void *out, size_t n) {
++    if (!in_guest(a, n)) return 0;
++    if (n) memcpy(out, hos_guest_base() + a, n);
++    return 1;
++}
++static int bridge_write(uint64_t a, const void *in, size_t n) {
++    if (!in_guest(a, n)) return 0;
++    if (n) {
++        memcpy(hos_guest_base() + a, in, n);
++        hos_mark_written(hos_guest_base() + a, n);
++    }
++    return 1;
++}
++static int bridge_cas32(uint64_t a, uint32_t expected, uint32_t desired, uint32_t *seen) {
++    if ((a & 3) || !in_guest(a, 4)) return 0;
++    uint32_t *p = (uint32_t *)(hos_guest_base() + a);
++    uint32_t e = expected;
++    if (__atomic_compare_exchange_n(p, &e, desired, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) hos_mark_written(p, 4);
++    if (seen) *seen = e;
++    return 1;
++}
++/* A game function from the frame hook: the game's own context, saved and put back whole, with the call's arguments, four
++   words at a stack pointer below the game's, and s0. Lifted code returns to us like any C function. */
++static int bridge_call(void *ctx, const HosCoopCall *k, uint64_t *x0) {
++    Ctx *c = (Ctx *)ctx;
++    A64Fn f = k && k->function ? a64_lookup(k->function) : NULL;
++    if (!c || !f) return 0;
++    const Ctx saved = *c;
++    const uint64_t sp = (c->x[31] - 0x200) & ~0xfULL;
++    if (!in_guest(sp, sizeof k->stack)) return 0;
++    for (int i = 0; i < 4; i++) recomp_store64(c, sp + 8 * i, k->stack[i]);
++    for (int i = 0; i < 8; i++) c->x[i] = k->x[i];
++    uint32_t s0;
++    memcpy(&s0, &k->s0, sizeof s0);
++    c->vreg[0][0] = s0, c->vreg[0][1] = 0;
++    c->x[30] = 0;
++    c->x[31] = sp;
++    f(c);
++    if (x0) *x0 = c->x[0];
++    *c = saved;
++    return 1;
++}
++static void bridge_log(const char *line) { hos_log("%s", line ? line : ""); }
++
++static void at_exit(void) {
++    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_stop) coop_stop();
++}
++
++static void load(void) {
++    const char *e = getenv("HOS_COOP");
++    if (e && (!strcmp(e, "0") || !strcmp(e, "off") || !strcmp(e, "no") || !strcmp(e, "false") || !strcmp(e, "OFF"))) {
++        hos_log("coop: off (HOS_COOP=%s)", e);
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    char path[MAX_PATH * 3];   /* (UTF-8: the module's folder for the module, and for the log) */
++#ifdef _WIN32
++    /* Wide calls, so a game folder whose name has characters outside the ANSI code page still loads the module. */
++    wchar_t wpath[MAX_PATH];
++    const DWORD wn = GetModuleFileNameW(NULL, wpath, MAX_PATH);
++    wchar_t *wslash = wn && wn < MAX_PATH ? wcsrchr(wpath, L'\\') : NULL;
++    if (!wslash || (size_t)(wslash + 1 - wpath) + sizeof COOP_DLL > MAX_PATH) {
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    *wslash = 0;
++    if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, game_dir, sizeof game_dir, NULL, NULL)) {
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    memcpy(wslash, L"\\" COOP_DLL_W, sizeof(L"\\" COOP_DLL_W));
++    snprintf(path, sizeof path, "%s\\" COOP_DLL, game_dir);
++    if (GetFileAttributesW(wpath) == INVALID_FILE_ATTRIBUTES) {   /* (no module: not a co-op game folder, nothing to say) */
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    HMODULE m = LoadLibraryW(wpath);
++#else
++    const DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
++    char *slash = n && n < MAX_PATH ? strrchr(path, '/') : NULL;
++    if (!slash || (size_t)(slash + 1 - path) + sizeof COOP_DLL > MAX_PATH) {
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    *slash = 0;
++    snprintf(game_dir, sizeof game_dir, "%s", path);
++    memcpy(slash, "/" COOP_DLL, sizeof "/" COOP_DLL);
++    HMODULE m = LoadLibraryA(path);
++#endif
++    if (!m) {
++        hos_log("coop: %s did not load (%lu): co-op off", path, (unsigned long)GetLastError());
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    hos_coop_start_fn start = (hos_coop_start_fn)(void *)GetProcAddress(m, "hos_coop_start");
++    coop_frame = (hos_coop_frame_fn)(void *)GetProcAddress(m, "hos_coop_frame");
++    coop_hold = (hos_coop_hold_fn)(void *)GetProcAddress(m, "hos_coop_hold");
++    coop_stop = (hos_coop_stop_fn)(void *)GetProcAddress(m, "hos_coop_stop");
++    if (!start || !coop_frame || !coop_hold || !coop_stop) {
++        hos_log("coop: %s lacks an export: co-op off", path);
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    static HosCoopApi api;
++    api.version = HOS_COOP_API_VERSION;
++    api.size = sizeof api;
++    api.main_base = 0x80020000ULL;
++    api.main_build_id = hos_main_build_id;
++    api.game_dir = game_dir;
++    api.read = bridge_read, api.write = bridge_write, api.cas32 = bridge_cas32, api.call = bridge_call, api.log = bridge_log;
++    if (!start(&api)) {
++        hos_log("coop: the module stays off");
++        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
++        return;
++    }
++    atexit(at_exit);
++    hos_log("coop: module loaded (%s)", path);
++    __atomic_store_n(&state, 2, __ATOMIC_RELEASE);
++}
++
++void hos_coop_frame(Ctx *c, int site) {
++    int s = __atomic_load_n(&state, __ATOMIC_ACQUIRE);
++    if (s == 0) {
++        int expected = 0;
++        if (!__atomic_compare_exchange_n(&state, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;
++        load();   /* (sets 2 or 3) */
++        s = __atomic_load_n(&state, __ATOMIC_ACQUIRE);
++    }
++    if (s == 2) coop_frame(c, site);
++}
++
++uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 ? coop_hold(component, bits) : bits;
++}
+diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
+new file mode 100644
+index 00000000..8c0f6814
+--- /dev/null
++++ b/host/hos_coop_api.h
+@@ -0,0 +1,51 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   The co-op module's interface to Hookshot (oot-remake-multiplayer, docs/hookshot.md).
++
++   Hookshot's host/coop_bridge.c loads hookshot_coop.dll (hookshot_coop.so on Linux) from beside the game when
++   HOS_COOP=1 (or a coop.ini beside the game names a server), and calls its four exports. The same file is in
++   Hookshot's host/ through our patch (hookshot/patches) and in our repository (hookshot/src): keep them equal
++   (tests/hookshot/api_test.cpp checks it). Plain C, so both sides' compilers agree on the layout. */
++#ifndef HOS_COOP_API_H
++#define HOS_COOP_API_H
++#include <stddef.h>
++#include <stdint.h>
++
++#define HOS_COOP_API_VERSION 1u
++
++/* Where the frame hook ran (nx2/coop_hooks.py): the two calls of the frame function in moduleCalc_, as the emulator's
++   cave has them (lichii/hook/coop_svc.h kHooks). */
++#define HOS_COOP_SITE_RARE 0    /* main+0x6e6dd8 */
++#define HOS_COOP_SITE_FRAME 1   /* main+0x6e70f8: every frame */
++
++/* One game function call (CoopPuppet::Call): x0-x7, four words at sp, s0. */
++typedef struct HosCoopCall {
++    uint64_t function;   /* guest address */
++    uint64_t x[8];
++    uint64_t stack[4];
++    float s0;
++} HosCoopCall;
++
++typedef struct HosCoopApi {
++    uint32_t version;             /* HOS_COOP_API_VERSION */
++    uint32_t size;                /* sizeof(HosCoopApi) */
++    uint64_t main_base;           /* main's guest address (0x80020000) */
++    const char *main_build_id;    /* main's build id, hex (32 digits) */
++    const char *game_dir;         /* the folder of the game's executable, UTF-8, no trailing separator */
++    /* Guest memory, any thread. 0 when any byte is outside mapped guest memory (nothing copied). */
++    int (*read)(uint64_t address, void *out, size_t size);
++    int (*write)(uint64_t address, const void *in, size_t size);   /* also marks the pages for the GPU mirror */
++    /* Atomic compare-and-swap of a guest u32; 1 when mapped, *seen = the value that was there. */
++    int (*cas32)(uint64_t address, uint32_t expected, uint32_t desired, uint32_t *seen);
++    /* Calls a game function, only from inside hos_coop_frame (on the game's thread, with its context). 0 when there is
++       no function at that address. *x0 = what it returned. */
++    int (*call)(void *ctx, const HosCoopCall *call, uint64_t *x0);
++    void (*log)(const char *line);   /* one line into hookshot_log.txt */
++} HosCoopApi;
++
++/* The module's exports (extern "C"). */
++typedef int (*hos_coop_start_fn)(const HosCoopApi *api);   /* 1: co-op on; 0: off (the bridge unloads it) */
++typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thread, at a frame hook */
++typedef uint32_t (*hos_coop_hold_fn)(uint64_t component, uint32_t bits);   /* the AI hold: a BSA component's calc bits */
++typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
++
++#endif
+diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
+new file mode 100644
+index 00000000..a3aa4a38
+--- /dev/null
++++ b/nx2/coop_hooks.py
+@@ -0,0 +1,61 @@
++"""Co-op's hooks for Ocarina of Time 1.1.1 (oot-remake-multiplayer's patch, its docs/hookshot.md): C after three of the
++game's instructions (a64_lift.py Lifter.after), calling host/coop_bridge.c.
++
++- The frame hook: moduleCalc_ calls the frame function (main+0x3b4e300) from two places, each right after `mov x0, x20`.
++  hos_coop_frame runs after that mov, before the call, on the game's calc thread: this frame's actors have run and the
++  next draw has not read them yet. The emulator's co-op patches the two calls themselves (lichii/hook/coop_svc.h kHooks).
++- The AI hold: main+0x369df8 is `blr x8`, the call whose answer (w0) gives a BSA component (x21) its calc bits for the
++  frame. After the next instruction (an ldrh into w8, which leaves w0 alone) hos_coop_hold may change those bits
++  (lichii/hook/coop_hold.h).
++
++Each site's words are checked, and the build id: another game version leaves the hooks out. Without the co-op module the
++bridge's functions return at once.
++"""
++
++MAIN = 0x80020000   # (main's base in this image: nx2/eden_image.py)
++BUILD_ID = "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348"
++MOV_X0_X20 = 0xaa1403e0
++
++# (offset of the mov, the bl after it, the site number hos_coop_frame gets: host/hos_coop_api.h HOS_COOP_SITE_*)
++FRAME_SITES = ((0x6e6dd4, 0x94d19d4a, 0), (0x6e70f4, 0x94d19c82, 1))
++HOLD_CALL = 0x369df8      # blr x8
++HOLD_WORDS = (0xd63f0100, 0x79418aa8)   # blr x8; ldrh w8, [x21, #0xc4]
++
++FRAME_TEXT = ("{ extern void hos_coop_frame(Ctx *c, int site); hos_coop_frame(c, %d); }   "
++              "/* (nx2/coop_hooks.py: co-op's frame hook) */")
++HOLD_TEXT = ("{ extern uint32_t hos_coop_hold(uint64_t component, uint32_t bits); "
++             "const uint32_t was = (uint32_t)c->x[0], now = hos_coop_hold(c->x[21], was); "
++             "if (now != was) c->x[0] = now; }   /* (nx2/coop_hooks.py: co-op's AI hold) */")
++
++
++def _word(img, pc):
++    try:
++        return img.word(pc)
++    except Exception:
++        return None
++
++
++def _add(lifter, pc, text):
++    lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + text
++
++
++def install(lifter, img, build_id):
++    """The hooks into lifter.after; nothing at all when the build or any word differs. Returns how many went in."""
++    if build_id != BUILD_ID:
++        print("co-op hooks: build %s is not %s: left out" % (build_id or "?", BUILD_ID))
++        return 0
++    checks = [(MAIN + mov, MOV_X0_X20) for mov, _, _ in FRAME_SITES] + \
++             [(MAIN + mov + 4, bl) for mov, bl, _ in FRAME_SITES] + \
++             [(MAIN + HOLD_CALL + 4 * i, w) for i, w in enumerate(HOLD_WORDS)]
++    for pc, want in checks:
++        have = _word(img, pc)
++        if have != want:
++            print("co-op hooks: main+%#x holds %s, not %08x: left out" % (
++                pc - MAIN, "?" if have is None else "%08x" % have, want))
++            return 0
++    for mov, _, site in FRAME_SITES:
++        _add(lifter, MAIN + mov, FRAME_TEXT % site)
++    _add(lifter, MAIN + HOLD_CALL + 4, HOLD_TEXT)
++    print("co-op hooks: frame hook at main+%#x and main+%#x, AI hold at main+%#x" % (
++        FRAME_SITES[0][0], FRAME_SITES[1][0], HOLD_CALL + 4))
++    return len(FRAME_SITES) + 1
+diff --git a/nx2/lift.py b/nx2/lift.py
+index 2f378363..e7ee9a6a 100644
+--- a/nx2/lift.py
++++ b/nx2/lift.py
+@@ -175,6 +175,8 @@ def main():
+         oot_jitter.install(L, img)
+         import oot_occlusion   # (no occlusion queries when HOOKSHOT_OCCLUSION_OFF=1: Fritchii's Occlusion Off)
+         oot_occlusion.install(L, img)
++        import coop_hooks   # (oot-remake-multiplayer: co-op's frame hook and AI hold, host/coop_bridge.c)
++        coop_hooks.install(L, img, next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), ""))
+     L.discover(max_insns=a.max_func)
+     print("discovered %d functions (%.0fs)" % (len(L.funcs), time.time() - t0))
+     last[0] = time.time()

@@ -1,14 +1,34 @@
-# sign: both walk back from the Graveyard save into Kakariko; A walks to the signpost by the
-# Graveyard path (Obj_GuidePost_A_02 at x -7.46, z 71.12; Link comes out at about -1.7, 68.8)
-# and cuts it with the sword (Y). B, near the gate, should see the same post cut.
-# Bindings: see walk.A.txt.
+# sign (#90): both warp into Kakariko (child) at Kakariko_GraveYardSide (-1.73 101.54 68.80), next
+# to the signpost by the Graveyard gate (Obj_GuidePost_A_02 a4bc132d2b5d7eae at -7.46 101.58
+# 71.12). A is put just east of the post and cuts it with the sword (Y, three swings). B stays at
+# the start point, about 6 m away, facing the post (sign.B.txt). The older version walked B
+# there with goto: in 20261110-175836 B ended facing a wall and the post was never on B's
+# screen, so nobody saw whether B's sign was cut.
+# Expect: A "world: a4bc132d2b5d7eae Obj_GuidePost_A_02 our sword passed it: hit sent", then
+# "... cut here: N words sent". B "... hit by another player's sword", "... cut by another
+# player: N of N words to write", and no "sign word ... not written" line (if there is one, it
+# now says why: the word's value in B, or which pointer differed). Shots cut3/after/end: A's
+# post in pieces; B's post in pieces the same way = PASS. B's post whole = the written words
+# do not make the cut (the next step is the contact call, docs/world.md "Signs").
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 360
 mark start
-wait 120                # let both games settle after the load (B can be at a few FPS)
-stick 0 -1 120          # back down the path, out of the Graveyard
-wait 420                # Kakariko loads; its title card shows
-mark kakariko
-stick 0 1 60            # out of the gate passage first (walls on both sides)
-goto -5.9 70.5 0.6      # just east of the post
+warp KakarikoVillage_Child Kakariko_GraveYardSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -5.9 101.6 70.5
+wait 300                # B is placed and the probe has its copy (one a second, within 12 m)
 mark at-post
 toward -7.46 71.12 8
 press Y
@@ -22,5 +42,8 @@ toward -7.46 71.12 8
 press Y
 wait 60
 mark cut3
+goto -3.5 66.5 0.8 300  # step aside (south-east), so B's camera sees the post, not A
 wait 120
-mark after
+mark after-cut
+wait 600
+mark end

@@ -29,6 +29,11 @@
 #               .nx2recipe in it (in the zip, under recipes/) goes to emulator\recipes\, so
 #               the first start shows Fritchii's "Preparing shaders" step. A recipe holds no
 #               game code (Fritchii's tools/nx2-precompile/README.md); SOURCE.txt names it.
+# -HookshotDll  the co-op module for Hookshot (hookshot_coop.dll, this repo's CMake target
+#               hookshot_coop; default: found under -BuildDir). With it and hookshot\PIN in the repo,
+#               the kit gets Build-Hookshot-Coop.bat and hookshot\ (PIN, patches, TOOLS.txt, the module):
+#               each player builds Hookshot from their own game (docs/play-online.md, "On Hookshot").
+#               Without them the kit is emulator-only (a warning says so).
 param(
     [string]$EmulatorBin = '',
     [string]$BuildDir = '',
@@ -38,7 +43,8 @@ param(
     [switch]$NoZip,
     [string]$Python = '',
     [ValidatePattern('^[A-Za-z0-9._-]*$')][string]$Release = '',
-    [string]$Recipes = ''
+    [string]$Recipes = '',
+    [string]$HookshotDll = ''
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -70,12 +76,10 @@ function Test-BinaryHas([string]$Path, [string]$Text) {
     $bytes = [System.IO.File]::ReadAllBytes($Path)
     return [System.Text.Encoding]::ASCII.GetString($bytes).Contains($Text)
 }
-# Copies a text file and gives it Windows line ends (the repo stores LF) with @PORT@ filled in.
-function Copy-Text([string]$From, [string]$To) {
-    $text = [System.IO.File]::ReadAllText($From).Replace("`r`n", "`n").Replace('@PORT@', "$Port")
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $To) | Out-Null
-    [System.IO.File]::WriteAllText($To, $text.Replace("`n", "`r`n"), [System.Text.UTF8Encoding]::new($false))
-}
+# Copies a text file with Windows line ends and @PORT@ filled in, except in coop.ini.template,
+# which keeps @PORT@ for play.ps1 (an invite-code join writes 27512 there). kit_text.ps1.
+. (Join-Path $PSScriptRoot 'kit_text.ps1')
+function Copy-Text([string]$From, [string]$To) { Copy-KitText $From $To $Port }
 
 $repo = Invoke-Git $here rev-parse --show-toplevel
 if (-not $repo) { throw "tools\release is not inside a git checkout" }
@@ -193,15 +197,61 @@ if ($crt) {
     }
 }
 
-foreach ($f in 'Host.bat', 'Join.bat', 'start-server.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'check-hosting.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
-foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1', 'update.ps1', 'hosting.ps1', 'check-hosting.ps1', 'log-mask.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+foreach ($f in 'Host.bat', 'Join.bat', 'start-server.cmd', 'start-join.cmd', 'start-relay.cmd', 'play.cmd', 'collect-logs.cmd', 'make-puppet-pack.cmd', 'check-hosting.cmd', 'coop-options.ini') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
+foreach ($f in 'start-server.ps1', 'play.ps1', 'collect-logs.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'puppet-pack.ps1', 'update.ps1', 'hosting.ps1', 'check-hosting.ps1', 'log-mask.ps1', 'relay-join.ps1', 'invite.ps1', 'start-join.ps1') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+# The updater's signature check (update.ps1, Test-KitSignature) runs the installed kit's own copy.
+$verifyKit = Join-Path $here 'verify_kit.ps1'
+Copy-Text $verifyKit (Join-Path $kit 'scripts\verify_kit.ps1')
 # Update.bat: the updater in one file (the same file is attached to each release for old kits).
 & (Join-Path $here 'make_update_bat.ps1') -Out (Join-Path $kit 'Update.bat')
+
+# Hookshot (experimental): the script that builds it on the player's PC from their own game, our
+# pin and patches, the tools list and the module. No Hookshot or game file goes in.
+$hookshotNote = ''
+$fmtLicense = $null
+$hsPin = Join-Path $repo 'hookshot\PIN'
+if (-not $HookshotDll) {
+    $HookshotDll = Get-ChildItem -LiteralPath $BuildDir -Filter 'hookshot_coop.dll' -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(Debug|_deps)\\' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not (Test-Path $hsPin)) {
+    Write-Warning 'No hookshot\PIN in the repo: the kit has no Hookshot part.'
+} elseif (-not $HookshotDll -or -not (Test-Path -LiteralPath $HookshotDll)) {
+    Write-Warning "No hookshot_coop.dll (build the hookshot_coop target, Release, or pass -HookshotDll): the kit has no Hookshot part."
+} else {
+    if (Test-BinaryHas $HookshotDll 'VCRUNTIME140D.dll') { throw "$HookshotDll is a Debug build; build Release." }
+    $hsKit = Join-Path $kit 'hookshot'
+    New-Item -ItemType Directory -Force -Path (Join-Path $hsKit 'patches') | Out-Null
+    Copy-Item -LiteralPath $HookshotDll -Destination $hsKit
+    if ($crt) { Get-ChildItem $crt.FullName -Filter '*.dll' | Copy-Item -Destination $hsKit }
+    Copy-Text $hsPin (Join-Path $hsKit 'PIN')
+    Copy-Text (Join-Path $here 'kit\hookshot\TOOLS.txt') (Join-Path $hsKit 'TOOLS.txt')
+    $hsPatches = @(Get-ChildItem (Join-Path $repo 'hookshot\patches') -Filter '*.patch' -File | Sort-Object Name)
+    if (-not $hsPatches) { throw 'hookshot\PIN is there but hookshot\patches has no .patch.' }
+    # (byte for byte: a patch's own line ends are part of it)
+    foreach ($p in $hsPatches) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $hsKit "patches\$($p.Name)") }
+    foreach ($f in 'Build-Hookshot-Coop.bat', 'Host-Hookshot.bat', 'Join-Hookshot.bat') { Copy-Text (Join-Path $here "kit\$f") (Join-Path $kit $f) }
+    foreach ($f in 'hookshot-build.ps1', 'apply_patch.py') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+    $hsPinMap = @{}
+    Get-Content $hsPin | ForEach-Object { if ($_ -match '^(\w+)=(.*)$') { $hsPinMap[$Matches[1]] = $Matches[2].Trim() } }
+    $hookshotNote = $hsPinMap.commit
+    # The module links fmt (MIT, fetched by hookshot/CMakeLists.txt): its licence text goes with it.
+    # Looked for in the CMake build the module came from (the folder above it with CMakeCache.txt), then -BuildDir.
+    $fmtRoots = @()
+    for ($d = Split-Path -Parent ([System.IO.Path]::GetFullPath($HookshotDll)); $d; $d = Split-Path -Parent $d) {
+        if (Test-Path -LiteralPath (Join-Path $d 'CMakeCache.txt')) { $fmtRoots += $d; break }
+    }
+    $fmtRoots += $BuildDir
+    $fmtLicense = $fmtRoots | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $_ '_deps\fmt-src') -Filter 'LICENSE*' -File -ErrorAction SilentlyContinue } |
+        Select-Object -First 1 -ExpandProperty FullName
+    if (-not $fmtLicense) { throw "fmt's LICENSE not found under _deps\fmt-src of the build that made $HookshotDll; the kit must carry it (MIT)." }
+    Write-Host "Hookshot: module $(Split-Path -Leaf $HookshotDll), pin $($hsPinMap.commit), $($hsPatches.Count) patch(es)"
+}
 
 # The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
 # scene-placing test helper stay out.
 $packTool = Join-Path $repo 'tools\puppet_pack'
-foreach ($f in 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'nup.py', 'rstb.py', 'sarc.py', 'zs.py') {
+foreach ($f in 'ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'dungeon_rooms.py', 'hud.py', 'nup.py', 'rstb.py', 'sarc.py', 'texture.py', 'tunic.py', 'tunic_extra.py', 'zs.py') {
     Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
 }
 
@@ -259,6 +309,7 @@ if ($emuSource -and (Test-Path (Join-Path $emuSource 'LICENSE.txt'))) {
 $enetLicense = Join-Path $BuildDir '_deps\enet-src\LICENSE'
 if (Test-Path $enetLicense) { Copy-Item $enetLicense (Join-Path $lic 'ENet-MIT.txt') }
 else { Write-Warning 'ENet LICENSE not found in the build folder; add it by hand.' }
+if ($fmtLicense) { Copy-Item -LiteralPath $fmtLicense (Join-Path $lic 'fmt-MIT.txt') }
 
 # Where the source of this exact build is (GPL-3.0, section 6).
 $hookCommit = Invoke-Git $hookDir rev-parse HEAD
@@ -279,6 +330,17 @@ $source = @(
     "  This kit's emulator was built from $emuCommit (that tag plus the patches).",
     ''
 )
+if ($hookshotNote) {
+    $source += @(
+        'Hookshot (experimental): NotRexed''s static recompilation, GPL-3.0. Not in this kit:',
+        'Build-Hookshot-Coop.bat downloads it and builds it on your PC from your own game:',
+        "  https://github.com/NotRexed/Hookshot/tree/$hookshotNote",
+        '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and',
+        '  the build tools of the Hookshot release named in hookshot\TOOLS.txt.',
+        '  hookshot\hookshot_coop.dll is built from the co-op repo above (CMake target hookshot_coop).',
+        ''
+    )
+}
 if ($recipeLines) {
     $source += @(
         "Shader recipes, from Frizti's Fritchii release ($(Split-Path -Leaf $Recipes)), unchanged:"

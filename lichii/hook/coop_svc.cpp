@@ -7,10 +7,14 @@
 #include <cstring>
 #include <optional>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <utility>
 
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
@@ -25,6 +29,24 @@
 
 namespace CoopSvc {
 namespace {
+
+// Any mod folder's coop_puppet.json under load/<title id> with both green
+// puppets (CoopPuppet::PackHasGreenPuppets), as coop_spawn's PackStandIns looks.
+bool PackGreenPuppets() {
+    std::error_code ec;
+    const auto title = Common::FS::GetEdenPath(Common::FS::EdenPath::LoadDir) / "0400486024DEC000";
+    for (const auto& mod : std::filesystem::directory_iterator(title, ec)) {
+        std::ifstream in(mod.path() / "coop_puppet.json", std::ios::binary);
+        if (!in) {
+            continue;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (CoopPuppet::PackHasGreenPuppets(text)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 constexpr std::uint64_t kOcarinaProgramId = 0x0400486024DEC000ULL;
 constexpr std::string_view kMainBuild = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348";
@@ -64,6 +86,18 @@ void ConfigurePuppets() {
     settings.debug_anim = EnvOn("LICHII_COOP_DEBUG_ANIM");
     if (const auto actor = Env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = actor;
+    }
+    if (const auto tunics = Env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
+        settings.tunics = false;
+    }
+    // The kit's tools/release/kit/scripts/kit-paths.ps1 Set-KitSelfTunic. Only
+    // with a pack that has the green puppets (a hand-set switch and an older
+    // pack must not leave green players without a puppet).
+    if (const auto self = Env("LICHII_COOP_SELF_TUNIC"); !self.empty() && self != "green") {
+        settings.green_puppet = PackGreenPuppets();
+        LOG_INFO(Core, "coop: your Link wears {}; green players {}", self,
+                 settings.green_puppet ? "get CoopPuppet_<Age>_Green"
+                                       : "get the plain puppet (the pack has no green puppet; make it again)");
     }
     const bool verbose = EnvOn("LICHII_COOP_DEBUG_PUPPET");
     LOG_INFO(Core, "coop: puppets on, actor {}{}", settings.actor.empty() ? "by age" : settings.actor,
@@ -105,27 +139,7 @@ private:
 };
 
 
-// The callers after the puppets, by order. The mutex is held across a step;
-// only AddCaller (rare) waits on it.
-struct Callers {
-    std::mutex mutex;
-    std::vector<std::pair<int, Caller>> list;
-};
-Callers& TheCallers() {
-    static Callers callers;
-    return callers;
-}
-
 } // namespace
-
-void AddCaller(int order, Caller caller) {
-    Callers& c = TheCallers();
-    std::lock_guard lock(c.mutex);
-    const auto at = std::upper_bound(
-        c.list.begin(), c.list.end(), order,
-        [](int o, const std::pair<int, Caller>& e) { return o < e.first; });
-    c.list.emplace(at, order, std::move(caller));
-}
 
 namespace {
 std::mutex g_refusal_mutex;
@@ -240,27 +254,8 @@ bool Call(Core::System& system, std::uint32_t imm, std::array<std::uint64_t, 8>&
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     const std::uint64_t buffer = args[0];
-    // Caller 0 is the puppet director, then the others by order. Each is asked
-    // once a frame (after_call false) when its turn comes and gets the result
-    // of each call it made; the turn passes on when it has no more calls.
-    static std::size_t current = 0;  // who made the last call; the calc thread only
-    Callers& callers = TheCallers();
-    std::lock_guard lock(callers.mutex);
-    const auto step = [&](std::size_t i, bool after_call, std::uint64_t result) {
-        return i == 0 ? CoopPuppet::TheDirector().Step(guest, after_call, result, now_ms)
-                      : callers.list[i - 1].second(guest, after_call, result, now_ms);
-    };
-    const std::size_t count = callers.list.size() + 1;
-    std::optional<CoopPuppet::Call> call;
-    std::size_t i = 0;
-    if (args[2] != 0 && current < count) {
-        call = step(current, true, args[1]);
-        i = current + 1;
-    }
-    for (; !call && i < count; ++i) {
-        call = step(i, false, 0);
-        current = i;
-    }
+    // The puppet director, then the others by order (coop_callers.h).
+    const auto call = CoopCallers::Next(guest, args[2] != 0, args[1], now_ms);
     if (!call) {
         args[0] = 0;
         return true;

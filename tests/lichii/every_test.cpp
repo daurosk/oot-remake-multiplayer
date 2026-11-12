@@ -72,3 +72,14 @@ TEST_CASE("every: NowUs moves forward") {
     const auto b = CoopEvery::NowUs();
     CHECK(b >= a);
 }
+
+TEST_CASE("every: issue 106: the save folder check runs twice a second at any refresh") {
+    // coop_save.cpp: was every 30 presented frames (2.75 times as often with Ctrl+U).
+    for (const std::uint64_t frame_us : {33'333u, 16'667u, 6'061u}) {
+        Every folder{CoopEvery::kHalfSecondUs};
+        CHECK(Fired(folder, frame_us, 10.0) == doctest::Approx(20).epsilon(0.1));
+    }
+    // The stopped-transfer warning waits 10 s of real time, not 600 presents
+    // (3.6 s at 165 presents a second).
+    CHECK(CoopEvery::kSaveStuckUs == 10'000'000);
+}

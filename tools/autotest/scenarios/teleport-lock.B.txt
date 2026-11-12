@@ -1,0 +1,23 @@
+# teleport-lock's B (#197): in the Deku Tree slingshot room (room C), standing still by its door.
+#! noload
+#! start coop: test warp done
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 240
+place -33.2 110.3 10.4
+wait 240
+mark placed
+wait 3600
+mark b-end

@@ -17,3 +17,8 @@ shot end
 lines notice B max=1 got a Heart Container
 lines maxlife B max=4 flags debug: int 0xfbe01da1 .* -> 
 lines notice-a A max=0 got a Heart Container
+# The flag scan above runs a few times a second and misses a value the game writes back within
+# one scan; the object walk logs every MaxLife it sees ("MaxLife flag F"). Run 20261111-172443
+# (f9249a0): 5 such lines on B (12, 16 from the host's save load, 12, 20 from A's heart, 12),
+# then none for 30 s. The loop made one every frame.
+lines maxlife-walk B max=8 MaxLife flag

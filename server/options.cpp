@@ -42,6 +42,7 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         error = "--port needs a number from 0 to 65535";
         return std::nullopt;
       }
+      line.port_given = true;
     } else if (arg == "--game-build") {
       if (!has_value || args[i + 1].empty()) {
         error = "--game-build needs a game build id";
@@ -100,11 +101,32 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       } else {
         line.password_env = value;
       }
+    } else if (arg == "--upnp") {
+      line.upnp = true;
+    } else if (arg == "--relay") {
+      line.relay = true;
+    } else if (arg == "--relay-via") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--relay-via needs the relay's address, for example relay.example.net:27530";
+        return std::nullopt;
+      }
+      line.relay_via = args[++i];
+    } else if (arg == "--relay-key" || arg == "--relay-key-env") {
+      if (!has_value || args[i + 1].empty() || args[i + 1].size() > 64) {
+        error = arg + " needs a value of at most 64 characters";
+        return std::nullopt;
+      }
+      (arg == "--relay-key" ? line.relay_key : line.relay_key_env) = args[++i];
     } else {
       error = "unknown argument: " + arg;
       return std::nullopt;
     }
   }
+  if (line.relay && (line.upnp || !line.relay_via.empty())) {
+    error = "--relay runs a relay; it cannot also use --upnp or --relay-via";
+    return std::nullopt;
+  }
+  if (line.relay && !line.port_given) line.port = 27530;
   return line;
 }
 
@@ -124,7 +146,16 @@ const char* usage() {
          "  --run-for-ms N   stop by itself after N milliseconds\n"
          "  --password TEXT  players must give this join password (default: none)\n"
          "  --password-env NAME  the join password is in this environment\n"
-         "                   variable (keeps it off the command line)\n";
+         "                   variable (keeps it off the command line)\n"
+         "  --upnp           ask the router (UPnP) to forward the port while the\n"
+         "                   server runs; needs a join password or --allow\n"
+         "  --relay-via ADDRESS[:PORT]  host through a relay (default port 27530)\n"
+         "                   and print a join code for the players\n"
+         "  --relay          run as a relay for hosts that use --relay-via\n"
+         "                   (UDP port 27530 unless --port), not a game server\n"
+         "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"
+         "                   relay, hosts must give it; with --relay-via, the one\n"
+         "                   to give\n";
 }
 
 }  // namespace coop::server

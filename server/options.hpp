@@ -27,6 +27,18 @@ struct CommandLine {
   // line (where other programs can read it); main() reads that variable.
   std::string password;
   std::string password_env;
+  bool port_given = false;  // --port was on the command line
+  // --upnp: ask the router to forward the port while the server runs (upnp.hpp).
+  bool upnp = false;
+  // --relay: run as a relay (relay.hpp) instead of a game server; its port is
+  // 27530 unless --port says otherwise.
+  bool relay = false;
+  // --relay-via ADDRESS[:PORT]: host through that relay and get a join code.
+  std::string relay_via;
+  // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
+  // hosts must give; with --relay-via: the one to give).
+  std::string relay_key;
+  std::string relay_key_env;
   bool help = false;
 };
 

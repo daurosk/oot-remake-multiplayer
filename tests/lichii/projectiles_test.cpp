@@ -454,6 +454,7 @@ TEST_CASE("shots: a bomb copy goes off at the owner's fuse, before its remove") 
 
 TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CoopSpawn::Sync sync;
+    sync.SetImpacts(false);  // the copy alone here (impacts: their own test)
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;
@@ -580,8 +581,95 @@ TEST_CASE("shots: our seed's bounce is sent at once, and the log counts it") {
     CHECK(Of<proto::ObjectRemove>(send).size() == 1);
 }
 
+TEST_CASE("shots: where a seed copy lands, its spark and sound are made once (issue 166)") {
+    CHECK(shots::ImpactActors(shots::Kind::seed) ==
+          std::vector<std::string_view>{"CoopHit_SeedSpark", "CoopHit_SeedSound"});
+    CHECK(shots::ImpactActors(shots::Kind::arrow) ==
+          std::vector<std::string_view>{"CoopHit_Arrow", "CoopHit_ArrowSound"});
+    CHECK(shots::ImpactActors(shots::Kind::nut).empty());
+    CHECK(shots::ImpactActors(shots::Kind::bomb).empty());
+    CHECK(shots::IsImpact("CoopHit_ArrowSound"));
+    CHECK_FALSE(shots::IsImpact("CoopShot_Seed"));
+
+    for (const bool on : {true, false}) {
+        CoopSpawn::Sync sync;
+        sync.SetImpacts(on);
+        std::vector<proto::Message> send;
+        std::vector<Copy> copies;
+        const std::map<std::uint64_t, std::uint64_t> live;
+        std::uint64_t now = 10'000'000;
+        sync.Tick(kScene, 2, now, {}, live, send, copies);
+        auto shoot = [&](std::uint64_t value, proto::RemoveReason reason) {
+            proto::ObjectSpawn spawn;
+            spawn.id = {proto::ObjectKind::made, 1, value};
+            spawn.actor = "Shootable_DekuSeed";
+            spawn.state.time = {now, 0};
+            spawn.state.position = proto::Vec3{0.0f, 5.0f, 0.0f};
+            spawn.state.velocity = proto::Vec3{40.0f, 0.0f, 0.0f};
+            sync.Receive(Wire(spawn, 1));
+            proto::ObjectRemove remove;
+            remove.id = spawn.id;
+            remove.reason = reason;
+            remove.position = {4.0f, 5.0f, 0.0f};
+            sync.Receive(Wire(remove, 1));
+        };
+        shoot(1, proto::RemoveReason::hit);
+        shoot(2, proto::RemoveReason::gone);  // no spark for a shot that hit nothing
+        now += 100 * kMs;
+        const std::uint64_t got = now;
+        copies.clear();
+        sync.Tick(kScene, 2, now, {}, live, send, copies);
+        CHECK(copies.size() == 2);  // the copy is shown 100 ms late: not there yet
+        CHECK(sync.Impacts() == 0);
+
+        auto impacts = [&] {
+            std::vector<Copy> out;
+            for (const Copy& c : copies) {
+                if (shots::IsImpact(c.actor)) {
+                    out.push_back(c);
+                }
+            }
+            return out;
+        };
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
+        auto made = impacts();
+        if (!on) {
+            CHECK(made.empty());
+            CHECK(sync.Impacts() == 0);
+            continue;
+        }
+        REQUIRE(made.size() == 2);
+        CHECK(made[0].actor == "CoopHit_SeedSpark");
+        CHECK(made[1].actor == "CoopHit_SeedSound");
+        for (const Copy& c : made) {
+            CHECK(c.act == Act::show);
+            CHECK_FALSE(c.place);  // made there and left alone
+            CHECK_FALSE(c.setter);
+            CHECK(c.position[0] == doctest::Approx(4.0f));
+            CHECK(c.position[1] == doctest::Approx(5.0f));
+        }
+        CHECK(made[0].key != made[1].key);
+        CHECK(sync.Impacts() == 2);
+
+        // Kept (same keys) while the seed copy goes, then dropped: deleted.
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::seed), {},
+                  live, send, copies);
+        auto later = impacts();
+        REQUIRE(later.size() == 2);
+        CHECK(later[0].key == made[0].key);
+        CHECK(sync.Impacts() == 2);  // asked for once
+        copies.clear();
+        sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::kImpactLifeUs, {}, live, send, copies);
+        CHECK(impacts().empty());
+        CHECK(sync.Impacts() == 2);
+    }
+}
+
 TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one goes after its flight") {
     CoopSpawn::Sync sync;
+    sync.SetImpacts(false);  // the copies alone here (impacts: their own test)
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
     const std::map<std::uint64_t, std::uint64_t> live;

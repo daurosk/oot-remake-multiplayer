@@ -347,6 +347,30 @@ std::uint64_t LandHoldUs(Kind kind) {
     }
 }
 
+std::vector<std::string_view> ImpactActors(Kind kind) {
+    switch (kind) {
+    case Kind::seed:
+        // The seed's ELink Hit_AdditionalAttacker; ReactionHit's Hit_SlingShot_Bullet.
+        return {"CoopHit_SeedSpark", "CoopHit_SeedSound"};
+    case Kind::arrow:
+        // The arrow's ELink and SLink Hit_AdditionalAttacker; ReactionHit's Hit_Bow_Arrow.
+        return {"CoopHit_Arrow", "CoopHit_ArrowSound"};
+    default:
+        return {};
+    }
+}
+
+bool IsImpact(std::string_view actor) {
+    for (const Kind kind : {Kind::seed, Kind::arrow}) {
+        for (const std::string_view name : ImpactActors(kind)) {
+            if (name == actor) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 proto::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, float speed) {
     if (info.blasts) {
         // A bomb or bombchu that lived at all went off; one gone at once was

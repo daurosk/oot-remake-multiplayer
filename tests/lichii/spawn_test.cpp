@@ -790,6 +790,10 @@ TEST_CASE("spawn: without the stand-in in the pack, the copy is the game's own s
     CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopShot_Seed\"}, {\"actor\": \"CoopShot_Hook\"}]}") ==
           std::set<std::string>{"CoopShot_Hook", "CoopShot_Seed"});
     CHECK(CoopSpawn::StandInsIn("CoopShot_SeedX").empty());
+    // Issue 166: the impact actors of the pack's "impacts".
+    CHECK(CoopSpawn::StandInsIn("{\"impacts\": [{\"actor\": \"CoopHit_SeedSpark\"}, "
+                                "{\"actor\": \"CoopHit_ArrowSound\"}]}") ==
+          std::set<std::string>{"CoopHit_SeedSpark", "CoopHit_ArrowSound"});
 
     for (const bool listed_other : {false, true}) {
         StandInRig rig;
@@ -911,6 +915,48 @@ TEST_CASE("spawn: a lure copy is only ever its stand-in") {
         Copy copy;
         copy.key = 1;
         copy.actor = "Weapon_Lure";
+        d.SetInput(R::base, {copy});
+        auto c = d.Step(rig.guest, false, 0, 0);
+        if (c && c->function != R::base + addr::kCreate) {
+            c = d.Step(rig.guest, true, R::block, 0);  // the slots' malloc
+        }
+        CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        for (std::uint64_t ms = 16; ms < 200; ms += 16) {
+            c = d.Step(rig.guest, false, 0, ms);
+            CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        }
+        CHECK(d.Live().empty());
+    }
+}
+
+// Issue 166: an impact actor (the spark or sound where a copy landed) is made
+// by its own name, and only from a pack that lists it.
+TEST_CASE("spawn: an impact actor is made only when the pack has it") {
+    using R = StandInRig;
+    namespace addr = CoopPuppet::addr;
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopShot_Seed", "CoopHit_SeedSpark"});
+        Copy copy;
+        copy.key = 1;
+        copy.actor = "CoopHit_SeedSpark";
+        copy.place = false;
+        d.SetInput(R::base, {copy});
+        REQUIRE(d.Step(rig.guest, false, 0, 0));
+        auto c = d.Step(rig.guest, true, R::block, 0);
+        REQUIRE(c);
+        REQUIRE(c->function == R::base + addr::kCreate);
+        CHECK(rig.Name(*c) == "CoopHit_SeedSpark");
+    }
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopShot_Seed"});  // a pack built before the impacts
+        Copy copy;
+        copy.key = 1;
+        copy.actor = "CoopHit_SeedSpark";
+        copy.place = false;
         d.SetInput(R::base, {copy});
         auto c = d.Step(rig.guest, false, 0, 0);
         if (c && c->function != R::base + addr::kCreate) {

@@ -63,6 +63,8 @@ OPTIONAL = (
     "Pack/Actor/Weapon_SinkingLure.pack.zs",
     "Pack/Actor/Item_Bomb.pack.zs",
     "Pack/Actor/Weapon_Boomerang.pack.zs",
+    # Issue 166: the AI the impact actors are made from (build.py IMPACT_SOURCE).
+    "Pack/Actor/Shootable_ScrubBusinessSees.pack.zs",
 )
 
 REDUMP = ("Delete the folder {romfs} and dump again: Join.bat, right-click the game, "

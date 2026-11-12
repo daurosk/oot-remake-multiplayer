@@ -141,6 +141,10 @@ public:
     // Issue 166: copies held where the owner's shot hit (remove reason hit,
     // CoopProjectiles::LandHoldUs) before they go.
     std::size_t Landed() const { return landed_; }
+    // Issue 166: impact actors (CoopProjectiles::ImpactActors) asked for where
+    // a copy landed, as it reaches the spot. LICHII_COOP_SHOT_IMPACTS=0: none.
+    void SetImpacts(bool on) { impacts_on_ = on; }
+    std::size_t Impacts() const { return impacts_made_; }
 
     // A shot's flight when the game's place does not show it (issue 158).
     // The seed and the arrow are made when they are nocked and sit in the
@@ -231,6 +235,7 @@ private:
         std::optional<std::uint64_t> blow_at;
         bool blasted = false;         // added to TheBlasts once
         bool landed = false;          // counted in landed_ once (issue 166)
+        bool impacted = false;        // its impacts asked for once (issue 166)
         bool live = false;            // the director had it on the list
         // Issue 169: in the owner's hands (shown as the held stand-in, along
         // `held_path` kHeldBehindUs late), and the owner's animation.
@@ -264,6 +269,16 @@ private:
     CoopProjectiles::FuseClock fuse_;  // kept across scenes: the game's fuse
     std::size_t blown_on_time_ = 0;
     std::size_t landed_ = 0;
+    // Issue 166: impact actors to show (CoopProjectiles::kImpactLifeUs each).
+    struct Impact {
+        std::uint64_t key = 0;
+        std::string actor;
+        Vec3 position{};
+        std::uint64_t until_us = 0;
+    };
+    std::vector<Impact> impacts_;
+    bool impacts_on_ = true;
+    std::size_t impacts_made_ = 0;
     std::vector<Flight> flights_;
     std::vector<MadeUp> made_up_;
     ShotSettings shot_settings_;

@@ -132,6 +132,7 @@ void Sync::Reset() {
     mine_.clear();
     copies_.clear();
     copy_addresses_.clear();
+    impacts_.clear();  // issue 166: the old scene's sparks
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -478,6 +479,17 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             r.landed = true;
             ++landed_;
         }
+        if (hit && landing && !r.impacted && impacts_on_ &&
+            now_us >= r.got_us + CoopProjectiles::Track::kBehindUs) {
+            // Issue 166: the copy reaches the spot now (it is shown kBehindUs
+            // late): the spark and the sound the owner's game played there.
+            r.impacted = true;
+            for (const std::string_view name : CoopProjectiles::ImpactActors(info->kind)) {
+                impacts_.push_back({next_key_++, std::string(name), r.Position(),
+                                    now_us + CoopProjectiles::kImpactLifeUs});
+                ++impacts_made_;
+            }
+        }
         c.act = explode ? Act::explode : (!r.removed || landing) ? Act::show : Act::remove;
         if (explode && r.explode_once_made && !made) {
             c.act = Act::show;  // made first; blown up once the director has it
@@ -488,6 +500,17 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         copies.push_back(std::move(c));
         ++it;
+    }
+    // Issue 166: made where they are and left there (no place written); gone
+    // from the list, the director deletes them.
+    std::erase_if(impacts_, [now_us](const Impact& i) { return now_us >= i.until_us; });
+    for (const Impact& i : impacts_) {
+        Copy c;
+        c.key = i.key;
+        c.actor = i.actor;
+        c.position = i.position;
+        c.place = false;
+        copies.push_back(std::move(c));
     }
 }
 
@@ -742,6 +765,14 @@ std::set<std::string> StandInsIn(std::string_view manifest) {
     const std::string_view bomb = HeldStandIn("Item_Bomb");
     if (manifest.find("\"" + std::string(bomb) + "\"") != std::string_view::npos) {
         out.insert(std::string(bomb));
+    }
+    // Issue 166: the impact actors (its "impacts").
+    for (const auto kind : {CoopProjectiles::Kind::seed, CoopProjectiles::Kind::arrow}) {
+        for (const std::string_view name : CoopProjectiles::ImpactActors(kind)) {
+            if (manifest.find("\"" + std::string(name) + "\"") != std::string_view::npos) {
+                out.insert(std::string(name));
+            }
+        }
     }
     return out;
 }
@@ -1080,6 +1111,14 @@ std::optional<CoopPuppet::Call> Director::Next(CoopPuppet::Guest& guest, std::ui
         if (!Due(copy, now_ms)) {
             continue;
         }
+        if (CoopProjectiles::IsImpact(copy.actor)) {
+            // Issue 166: ours only; a pack without them never gets the create.
+            std::lock_guard lock(mutex_);
+            if (stand_ins_.count(copy.actor) == 0) {
+                started_.insert(copy.key);
+                continue;
+            }
+        }
         if (StandInOnly(copy.actor)) {
             // Never the game's own lure: a fish here would go for it.
             std::lock_guard lock(mutex_);
@@ -1279,6 +1318,11 @@ public:
             LOG_INFO(Core, "coop: shots: copy held where the owner's shot hit ({} so far)",
                      logged_landed_);
         }
+        if (sync_.Impacts() != logged_impacts_) {
+            logged_impacts_ = sync_.Impacts();
+            LOG_INFO(Core, "coop: shots: impact actors asked for where copies landed ({} so far)",
+                     logged_impacts_);
+        }
         if (sync_.BlownOnTime() != logged_blown_) {
             logged_blown_ = sync_.BlownOnTime();
             LOG_INFO(Core, "coop: shots: bomb copy blown on the owner's fuse ({} so far)",
@@ -1390,6 +1434,7 @@ private:
             sync_.Reset();
             sync_.SetSetter(SetterOn());
             sync_.SetShots(ShotSettingsFromEnv());
+            sync_.SetImpacts(Env("LICHII_COOP_SHOT_IMPACTS").value_or("1") != "0");
             ammo_.Reset();
             LOG_INFO(Core, "coop: spawn: on, main at {:#x}, projectile setter {}", main_,
                      SetterOn() ? "on" : "off");
@@ -1547,6 +1592,7 @@ private:
     std::optional<std::uint64_t> logged_fuse_;
     std::size_t logged_blown_ = 0;
     std::size_t logged_landed_ = 0;
+    std::size_t logged_impacts_ = 0;
     std::pair<std::size_t, std::size_t> logged_held_{0, 0};
     bool active_ = false;
     Kernel::KProcess* process_ = nullptr;

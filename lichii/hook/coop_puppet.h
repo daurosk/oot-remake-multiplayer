@@ -616,5 +616,8 @@ void OnEvent(const coop::net::Event& event);
 std::optional<std::uint32_t> PlayerColor(std::uint8_t number);
 void SetOwnColor(std::optional<std::uint32_t> rgb);
 std::optional<std::uint32_t> OwnColor();
+// The colour to show player `number` in (we are `self`): theirs (ours), else
+// their slot's (coop::protocol::slot_color).
+std::uint32_t NameColor(std::uint8_t number, std::uint8_t self);
 
 } // namespace CoopPuppet

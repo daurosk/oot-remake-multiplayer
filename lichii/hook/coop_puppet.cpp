@@ -1550,6 +1550,11 @@ std::optional<std::uint32_t> OwnColor() {
     return g_own_color;
 }
 
+std::uint32_t NameColor(std::uint8_t number, std::uint8_t self) {
+    return (number == self ? OwnColor() : PlayerColor(number))
+        .value_or(coop::protocol::slot_color(number));
+}
+
 void OnEvent(const coop::net::Event& event) {
     if (!g_configured) {
         return;

@@ -1,0 +1,36 @@
+# The Hookshot parity run (reports/hookshot-parity.md, "Big-run checks"): every hs-* scenario on integrate-p12, in
+# three groups that play at the same time (tools/autotest/groups.py; docs/testing.md, "Hookshot test loop").
+# Group N plays on <kit>\hookshot-A<N> + -B<N>, port 27560 + 10*(N-1), pipes coop-auto-g<N>-A/-B.
+# Hookshot must be built with integrate-p12's patch (hs.py build): the module's start line must NOT end in
+# "gives no pad word" (expect= cannot check an absence: look once in any run's hookshot_log-A.txt).
+# Before `groups.py run`:
+#  - g3's hs-ladder: clear the ladder's flag in g3's baselines (save_flags.py set <kit>\hookshot-A3\autotest-save\*\*\slot_0*\progress.sav
+#    bool:0xb3a4fe84=0, the same for hookshot-B3) and put them back from <kit>\autotest-save-backup afterwards.
+# After the groups, by hand on one pair (no expect= possible: the keys are posted to the window):
+#  - hs-chatbox (row 7): any run with -KeepOpen, then the PostMessage snippet in reports/hookshot-parity.md (T, "hi", Enter).
+#  - hs-cheats (row 8): the same with LICHII_COOP_CHEATS=1 (F8, "token", Enter, F8).
+# Not merged yet (in review): hs-gohma (row 12) and spawn-pop's hs-spawn (row 13): uncomment once integrate-p12 has them.
+
+[g1]
+# Puppet looks: tunics (#202), masks (#91), the HUD blocks under your hearts.
+hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_SELF_TUNIC=blue  expect='A:coop: your Link wears blue; green players get CoopPuppet_<Age>_Green'  label="#202 own colour"
+hs-tunic  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_TUNICS=0  expect='A:tunics off \(LICHII_COOP_TUNICS=0\)'  expect='B:tunics off \(LICHII_COOP_TUNICS=0\)'  label="#202 tunics off"
+hs-masks  expect="B:P1 wears head 'Armor_Child_Mask_Skull'"  expect='B:P1 takes off head'  label="#91 masks"
+hs-hud  expect='A:coop: drawing over Hookshot.s picture'  label="HUD blocks"
+hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: no block)"
+
+[g2]
+# The overlay and the Ocarina: chat lines and name tags, list and panel, own notes (#152).
+hs-panel  expect='A:coop: drawing over Hookshot.s picture'  expect='B:coop: drawing over Hookshot.s picture'  label="chat lines, name tags"
+hs-players  expect='A:coop: drawing over Hookshot.s picture'  label="player list, panel"
+hs-ocarina  expect='A:coop: ocarina note 4 \(Ocarina_D\) sent'  expect='A:coop: ocarina note 16 \(Ocarina_HighD\) sent'  expect="B:plays sound 'Ocarina_D'"  label="#152 own notes"
+
+[g3]
+# Dungeons and the frame cadence: /teleport into a dungeon room (#197), the ladder (#129), work during a load.
+warp  expect='A:coop: Hookshot calls co-op at each present'  expect='B:coop: Hookshot calls co-op at each present'  label="cadence"
+hs-teleport-room  expect='A:scene change taken'  expect='A:coop: teleport: not moved to .*\(issue 197\)'  expect='A:test steer at'  label="#197"
+hs-ladder  expect='A:test setflag HavePlayedEvent\.InsideTheDekuTree_Gimmick_FallingLadder \(bool\) 0: set'  expect='A:get_bool\(0xb3a4fe84\) = 1 \(was 0\)'  expect='B:starting the event InsideTheDekuTree_Gimmick_FallingLadder here'  label="#129 eye shot"
+
+# Once merged (review), add to g3 or a [g4]:
+# hs-gohma  expect="A:anim Enemy_DungeonBoss_Gohma \S+ '(?!Pre_Battle)[^']+' \(ours\)"  expect='B:share damage'  label="#150 #178"
+# hs-spawn  label="spawn pop (B's log: no 'P1 snap' before the first hold)"

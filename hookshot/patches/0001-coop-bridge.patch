@@ -1,4 +1,4 @@
-From ffc6e14180fd3a567047a86995e0b04e1409957a Mon Sep 17 00:00:00 2001
+From 5ea4ed5d6c965630aa713b540b32b026438c84c3 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -17,17 +17,17 @@ reads no keys while the module has the keyboard. From oot-remake-multiplayer
 (GPL-3.0), docs/hookshot.md.
 ---
  gpu/vk/hos_coop_draw.h |  36 ++++++++
- gpu/vk/vk_coop.cpp     | 137 +++++++++++++++++++++++++++++
+ gpu/vk/vk_coop.cpp     | 137 ++++++++++++++++++++++++++++
  gpu/vk/vk_coop.h       |  13 +++
  gpu/vk/vk_menu.cpp     |   9 +-
- host/coop_bridge.c     | 195 +++++++++++++++++++++++++++++++++++++++++
- host/display.c         |   7 ++
- host/hos_coop_api.h    |  66 ++++++++++++++
+ host/coop_bridge.c     | 201 +++++++++++++++++++++++++++++++++++++++++
+ host/display.c         |  28 +++++-
+ host/hos_coop_api.h    |  71 +++++++++++++++
  host/nn_hid.c          |   8 +-
  host/nvn_native.c      |   2 +
  nx2/coop_hooks.py      |  61 +++++++++++++
  nx2/lift.py            |   2 +
- 11 files changed, 532 insertions(+), 4 deletions(-)
+ 11 files changed, 563 insertions(+), 5 deletions(-)
  create mode 100644 gpu/vk/hos_coop_draw.h
  create mode 100644 gpu/vk/vk_coop.cpp
  create mode 100644 gpu/vk/vk_coop.h
@@ -284,10 +284,10 @@ index 872c3f6b..f0a11d39 100644
      ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
 new file mode 100644
-index 00000000..916c4a4c
+index 00000000..bbf52798
 --- /dev/null
 +++ b/host/coop_bridge.c
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,201 @@
 +/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md): the bridge between the game and the co-op module.
 +
 +   nx2/coop_hooks.py puts two calls into the lifted game: hos_coop_frame at the frame function's two calls in moduleCalc_,
@@ -369,6 +369,7 @@ index 00000000..916c4a4c
 +static hos_coop_key_fn coop_key;   /* (optional: typing, display.c and nn_hid.c below) */
 +static hos_coop_char_fn coop_char;
 +static hos_coop_keys_taken_fn coop_keys_taken;
++static hos_coop_mouse_fn coop_mouse;   /* (optional: the cheats panel's clicks, display.c) */
 +extern volatile uint64_t hos_coop_pad;   /* nn_hid.c: the word npad_states gave the game */
 +static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED); }
 +
@@ -429,6 +430,7 @@ index 00000000..916c4a4c
 +    coop_key = (hos_coop_key_fn)(void *)GetProcAddress(m, "hos_coop_key");
 +    coop_char = (hos_coop_char_fn)(void *)GetProcAddress(m, "hos_coop_char");
 +    coop_keys_taken = (hos_coop_keys_taken_fn)(void *)GetProcAddress(m, "hos_coop_keys_taken");
++    coop_mouse = (hos_coop_mouse_fn)(void *)GetProcAddress(m, "hos_coop_mouse");
 +    if (!start || !coop_frame || !coop_hold || !coop_stop) {
 +        hos_log("coop: %s lacks an export: co-op off", path);
 +        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
@@ -459,6 +461,10 @@ index 00000000..916c4a4c
 +int hos_coop_char(unsigned ch) {
 +    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_char ? coop_char(ch) : 0;
 +}
++/* display.c: the cursor (a fraction of the client area) for the module first (its cheats panel); 1 = taken. */
++int hos_coop_mouse(float fx, float fy, int event) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_mouse ? coop_mouse(fx, fy, event) : 0;
++}
 +/* nn_hid.c key: the module has the keyboard (the game reads no keys) */
 +int hos_coop_keys_taken(void) {
 +    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_keys_taken ? coop_keys_taken() : 0;
@@ -484,10 +490,50 @@ index 00000000..916c4a4c
 +    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 ? coop_hold(component, bits) : bits;
 +}
 diff --git a/host/display.c b/host/display.c
-index 33910607..0d4edc34 100644
+index 33910607..8f58c150 100644
 --- a/host/display.c
 +++ b/host/display.c
-@@ -358,7 +358,14 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -266,11 +266,21 @@ static void menu_press(HWND w, LPARAM lp, LONG bit) {   /* (a click while the me
+     pointer_publish_at(w, at, (uint32_t)bit, 0);
+ }
+ 
++/* (oot-remake-multiplayer) the cursor for co-op's cheats panel first (coop_bridge.c), while no menu has the mouse:
++   at (client pixels) as a fraction of the client area; 1 = taken */
++static int coop_mouse(HWND w, POINT at, int event) {
++    extern int hos_coop_mouse(float fx, float fy, int event);
++    RECT rc;
++    if (menu_open || game_menu_open || !GetClientRect(w, &rc) || rc.right <= 0 || rc.bottom <= 0) return 0;
++    return hos_coop_mouse((float)at.x / (float)rc.right, (float)at.y / (float)rc.bottom, event);
++}
++
+ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+     switch (msg) {
+     case WM_MOUSEMOVE: {
+         if (mouse_captured) return 0;
+         const int x = (short)LOWORD(lp), y = (short)HIWORD(lp);
++        coop_mouse(w, (POINT){x, y}, 0);   /* (oot-remake-multiplayer: the row under the cursor) */
+         if (game_menu_open && !menu_open && (x != gm_mx || y != gm_my)) {   /* (a move: not a repeat at rest) */
+             gm_mx = x, gm_my = y;
+             gm_mouse_used();
+@@ -286,7 +296,11 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+         pointer_tracking = 0;
+         pointer_update(w, 0, 0);
+         return 0;
+-    case WM_MOUSEWHEEL:
++    case WM_MOUSEWHEEL: {   /* (oot-remake-multiplayer: the cheats panel's wheel first) */
++        POINT at = {(short)LOWORD(lp), (short)HIWORD(lp)};
++        ScreenToClient(w, &at);
++        if (coop_mouse(w, at, GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 2 : 3)) return 0;
++    }
+         if (menu_open || game_menu_open) pointer_update(w, 0, GET_WHEEL_DELTA_WPARAM(wp));   /* (hidden or not) */
+         else if ((LONG64)hos_now_ns() - InterlockedCompareExchange64(&play_wheel_ns, 0, 0) < 200000000LL)
+             InterlockedExchangeAdd(&play_wheel, GET_WHEEL_DELTA_WPARAM(wp));   /* (a screen that takes the wheel only) */
+@@ -354,11 +368,23 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+         return DefWindowProcA(w, msg, wp, lp);
+     }
+     case WM_LBUTTONDOWN:
++        if (coop_mouse(w, (POINT){(short)LOWORD(lp), (short)HIWORD(lp)}, 1)) return 0;   /* (oot-remake-multiplayer) */
+         if (menu_open) menu_press(w, lp, HOS_MOUSE_LEFT);
          else if (game_menu_open) game_menu_press(lp, HOS_MOUSE_LEFT);
          else if (renderer && !mouse_captured) mouse_capture(w, 1);
          return 0;
@@ -498,16 +544,20 @@ index 33910607..0d4edc34 100644
 +    }
      case WM_KEYDOWN: {
 +        extern int hos_coop_key(unsigned key, int repeat);   /* (oot-remake-multiplayer: the chat box's keys first) */
-+        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) return 0;
++        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) {
++            extern int hos_coop_keys_taken(void);   /* (the chat box or cheats opened: the cursor back, for clicks) */
++            if (mouse_captured && hos_coop_keys_taken()) mouse_capture(w, 0);
++            return 0;
++        }
          extern void hos_vk_note_key_press(unsigned key);
          if (!(lp & (1 << 30))) hos_vk_note_key_press((unsigned)wp);
          if (wp == VK_ESCAPE) {   /* (it may open the Insert menu too: a capture let go here comes back) */
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
 new file mode 100644
-index 00000000..b9861cc7
+index 00000000..bb5c6984
 --- /dev/null
 +++ b/host/hos_coop_api.h
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,71 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   The co-op module's interface to Hookshot (oot-remake-multiplayer, docs/hookshot.md).
 +
@@ -572,6 +622,11 @@ index 00000000..b9861cc7
 +typedef int (*hos_coop_key_fn)(uint32_t vk, int repeat);   /* the window's thread */
 +typedef int (*hos_coop_char_fn)(uint32_t ch);              /* the window's thread */
 +typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often: cheap */
++/* The mouse, added with the cheats panel's clicks (an optional export): the cursor as a fraction of the window's client
++   area (0 to 1 across and down), offered first while neither Hookshot's menu nor a game menu has the mouse; 1 = taken,
++   Hookshot does nothing more with it (a click taken does not capture the mouse for the camera). */
++enum { HOS_COOP_MOUSE_MOVE = 0, HOS_COOP_MOUSE_LEFT = 1, HOS_COOP_MOUSE_WHEEL_UP = 2, HOS_COOP_MOUSE_WHEEL_DOWN = 3 };
++typedef int (*hos_coop_mouse_fn)(float fx, float fy, int event);   /* the window's thread */
 +
 +#endif
 diff --git a/host/nn_hid.c b/host/nn_hid.c

@@ -102,6 +102,16 @@ struct CheatsView {
     std::string result;             // CoopCheats::LastResult
 };
 
+// Where the cheats panel is on a `width` x `height` picture, as DrawCheats
+// draws it: its rectangle and its rows (row i's text at rows_top + i * line).
+struct CheatsBox {
+    float left = 0, top = 0, right = 0, bottom = 0;
+    float rows_top = 0, line = 0, px = 0;
+};
+CheatsBox CheatsAt(float width, float height, const CheatsView& c);
+// The row under (x, y), for the mouse; nothing outside the rows.
+std::optional<std::size_t> CheatsRowAt(float width, float height, const CheatsView& c, float x, float y);
+
 // What to draw this present.
 struct Scene {
     std::optional<CheatsView> cheats;

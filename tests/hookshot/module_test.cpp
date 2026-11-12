@@ -230,3 +230,13 @@ TEST_CASE("hookshot: the chat box gets Hookshot's keys first, and the game none 
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch)") != std::string::npos);
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void)") != std::string::npos);
 }
+
+TEST_CASE("hookshot: the mouse reaches the cheats panel first, a click it takes never turns the camera") {
+    const std::string patch = Patch();
+    CHECK(patch.find("+    coop_mouse = (hos_coop_mouse_fn)(void *)GetProcAddress(m, \"hos_coop_mouse\");") != std::string::npos);
+    CHECK(patch.find("+        if (coop_mouse(w, (POINT){(short)LOWORD(lp), (short)HIWORD(lp)}, 1)) return 0;") != std::string::npos);
+    CHECK(patch.find("+        if (coop_mouse(w, at, GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 2 : 3)) return 0;") != std::string::npos);
+    CHECK(patch.find("+            if (mouse_captured && hos_coop_keys_taken()) mouse_capture(w, 0);") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event)") != std::string::npos);
+}

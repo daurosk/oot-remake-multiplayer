@@ -62,5 +62,10 @@ typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
 typedef int (*hos_coop_key_fn)(uint32_t vk, int repeat);   /* the window's thread */
 typedef int (*hos_coop_char_fn)(uint32_t ch);              /* the window's thread */
 typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often: cheap */
+/* The mouse, added with the cheats panel's clicks (an optional export): the cursor as a fraction of the window's client
+   area (0 to 1 across and down), offered first while neither Hookshot's menu nor a game menu has the mouse; 1 = taken,
+   Hookshot does nothing more with it (a click taken does not capture the mouse for the camera). */
+enum { HOS_COOP_MOUSE_MOVE = 0, HOS_COOP_MOUSE_LEFT = 1, HOS_COOP_MOUSE_WHEEL_UP = 2, HOS_COOP_MOUSE_WHEEL_DOWN = 3 };
+typedef int (*hos_coop_mouse_fn)(float fx, float fy, int event);   /* the window's thread */
 
 #endif

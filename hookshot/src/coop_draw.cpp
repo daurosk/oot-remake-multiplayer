@@ -406,18 +406,17 @@ void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks, const Lo
 }
 
 void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
-    const float px = std::clamp(d.height * 0.022f, 14.0f, 28.0f);
-    const float line = px + 6.0f;
-    const float width = std::min(560.0f * px / 14.0f, d.width - 2 * kMargin);
-    const float left = d.width - kMargin - width;
-    const std::size_t lines = 3 + std::max<std::size_t>(c.rows.size(), 1) + (c.result.empty() ? 0 : 1);
-    const float height = static_cast<float>(lines) * line + 2 * kPad;
-    d.rect(d.user, left, kMargin, left + width, kMargin + height, Rgba(0, 0, 0, 200), 8.0f);
+    const CheatsBox b = CheatsAt(d.width, d.height, c);
+    const float px = b.px;
+    const float line = b.line;
+    const float left = b.left;
+    const float width = b.right - b.left;
+    d.rect(d.user, b.left, b.top, b.right, b.bottom, Rgba(0, 0, 0, 200), 8.0f);
     const float x = left + kPad;
     const float room = width - 2 * kPad;
     float y = kMargin + kPad;
     d.text(d.user, x, y, px, Rgba(255, 220, 120, 255),
-           Elided(d, px, "Co-op item cheats (debug): Enter gives, F8 or Esc closes", room).c_str());
+           Elided(d, px, "Co-op item cheats (debug): a click or Enter gives, F8 or Esc closes", room).c_str());
     y += line;
     d.text(d.user, x, y, px, Rgba(255, 255, 255, 255),
            Tail(d, px, "Find: " + c.filter + "_", room).c_str());
@@ -442,6 +441,32 @@ void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
 }
 
 }  // namespace
+
+CheatsBox CheatsAt(float width, float height, const CheatsView& c) {
+    CheatsBox b;
+    b.px = std::clamp(height * 0.022f, 14.0f, 28.0f);
+    b.line = b.px + 6.0f;
+    const float w = std::min(560.0f * b.px / 14.0f, width - 2 * kMargin);
+    b.left = width - kMargin - w;
+    b.right = b.left + w;
+    b.top = kMargin;
+    const std::size_t lines = 3 + std::max<std::size_t>(c.rows.size(), 1) + (c.result.empty() ? 0 : 1);
+    b.bottom = b.top + static_cast<float>(lines) * b.line + 2 * kPad;
+    b.rows_top = kMargin + kPad + 3 * b.line;
+    return b;
+}
+
+std::optional<std::size_t> CheatsRowAt(float width, float height, const CheatsView& c, float x, float y) {
+    const CheatsBox b = CheatsAt(width, height, c);
+    if (x < b.left || x >= b.right || y < b.rows_top - 3.0f) {
+        return std::nullopt;
+    }
+    const auto i = static_cast<std::size_t>((y - (b.rows_top - 3.0f)) / b.line);
+    if (i >= c.rows.size()) {
+        return std::nullopt;
+    }
+    return i;
+}
 
 std::vector<std::vector<std::string>> PlayerCells(const std::vector<CoopHook::PlayerRow>& rows, bool place) {
     std::vector<std::vector<std::string>> cells{{"#", "Player", "State", "Ping", place ? "Place" : "Scene"}};

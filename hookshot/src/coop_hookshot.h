@@ -70,6 +70,12 @@ CoopDraw::Scene DrawScene();
 // instead (an older Hookshot), so the plain look for good.
 void DrawWithLook(const HosCoopDraw& d);
 void NoGameLook();
+// The picture's size at this draw (the mouse's fractions are of it).
+void NoteDrawn(const HosCoopDraw& d);
+
+// The mouse (hos_coop_mouse): the cheats panel's rows. fx, fy: the cursor as
+// a fraction of the window; event: HOS_COOP_MOUSE_*. True when taken.
+bool Mouse(float fx, float fy, int event);
 
 // Typing (hos_coop_key / hos_coop_char / hos_coop_keys_taken): the chat box.
 bool TypeKey(std::uint32_t vk, bool repeat);

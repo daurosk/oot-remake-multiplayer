@@ -421,3 +421,27 @@ TEST_CASE("hookshot draw: the item cheats panel at the top right, the chosen row
     REQUIRE(rects.size() == 2);  // the panel and the chosen row
     CHECK(rects[1].y > texts[3].y);  // the second row is the chosen one
 }
+
+TEST_CASE("hookshot draw: the mouse finds the cheats panel's rows where they are drawn") {
+    CoopDraw::CheatsView v;
+    v.rows = {"IsGet.Item_Boomerang", "PouchData.Item_Boomerang.StockNum", "PlayerStatus.MaxLife"};
+    v.selected = 0;
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    s.cheats = v;
+    CoopDraw::Draw(c.d, s);
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() == 6);  // title, find line, heading, three rows
+    const auto box = CoopDraw::CheatsAt(1280, 720, v);
+    CHECK(c.Of("rect")[0].x == doctest::Approx(box.left));
+    for (std::size_t i = 0; i < 3; ++i) {
+        const auto& row = texts[3 + i];
+        CHECK(row.y == doctest::Approx(box.rows_top + static_cast<float>(i) * box.line));
+        const auto hit = CoopDraw::CheatsRowAt(1280, 720, v, row.x + 10, row.y + row.px / 2);
+        REQUIRE(hit);
+        CHECK(*hit == i);
+    }
+    CHECK_FALSE(CoopDraw::CheatsRowAt(1280, 720, v, box.left - 5, texts[3].y + 5));  // left of the panel
+    CHECK_FALSE(CoopDraw::CheatsRowAt(1280, 720, v, texts[3].x, texts[0].y + 5));   // the title
+    CHECK_FALSE(CoopDraw::CheatsRowAt(1280, 720, v, texts[3].x, texts[5].y + box.line + 5));  // below the last row
+}

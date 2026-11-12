@@ -285,6 +285,18 @@ std::vector<CoopCheatsPanel::Row> CheatRows() {
     return CoopCheatsPanel::Rows(g_cheats.filter(), items);
 }
 
+// The flag Enter or a click chose, given (under g_box_mutex).
+void GiveChosen(const std::vector<CoopCheatsPanel::Row>& rows) {
+    if (const auto i = g_cheats.TakeGive(); i && *i < rows.size()) {
+        CoopCheats::Give(rows[*i].flag);
+        LOG_INFO(Core, "coop: cheats: give {}", rows[*i].flag);
+    }
+}
+
+// The picture's size at the last draw: where the mouse is on it.
+std::atomic<float> g_drawn_w{0.0f};
+std::atomic<float> g_drawn_h{0.0f};
+
 bool AsyncDown(int vk) {
 #ifdef _WIN32
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -415,10 +427,7 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
     if (g_cheats.open() || (!g_box.open() && CoopCheats::On())) {
         const auto rows = CheatRows();
         if (g_cheats.Key(vk, repeat, rows.size())) {
-            if (const auto i = g_cheats.TakeGive(); i && *i < rows.size()) {
-                CoopCheats::Give(rows[*i].flag);
-                LOG_INFO(Core, "coop: cheats: give {}", rows[*i].flag);
-            }
+            GiveChosen(rows);
             return true;
         }
     }
@@ -449,6 +458,31 @@ bool TypeChar(std::uint32_t byte) {
         return g_cheats.Char(cp, CoopChatBox::Utf8(cp));
     }
     return g_box.Char(cp);
+}
+
+bool Mouse(float fx, float fy, int event) {
+    if (!g_on || event < HOS_COOP_MOUSE_MOVE || event > HOS_COOP_MOUSE_WHEEL_DOWN) {
+        return false;
+    }
+    std::lock_guard lock(g_box_mutex);
+    if (!g_cheats.open()) {
+        return false;
+    }
+    const auto rows = CheatRows();
+    const float w = g_drawn_w.load(), h = g_drawn_h.load();
+    std::optional<std::size_t> row;
+    if (w > 0 && h > 0) {
+        CoopDraw::CheatsView v;  // its layout only: how many rows, whether a result line shows
+        v.rows.resize(rows.size());
+        v.result = CoopCheats::LastResult();
+        row = CoopDraw::CheatsRowAt(w, h, v, fx * w, fy * h);
+    }
+    static constexpr CoopCheatsPanel::Mouse kWhat[] = {CoopCheatsPanel::Mouse::kMove, CoopCheatsPanel::Mouse::kLeft,
+                                                      CoopCheatsPanel::Mouse::kWheelUp,
+                                                      CoopCheatsPanel::Mouse::kWheelDown};
+    const bool taken = g_cheats.Pointer(kWhat[event], row, rows.size());
+    GiveChosen(rows);
+    return taken;
 }
 
 bool KeysTaken() {
@@ -543,7 +577,13 @@ void NoGameLook() {
     g_look_state = kLookOff;
 }
 
+void NoteDrawn(const HosCoopDraw& d) {
+    g_drawn_w = d.width;
+    g_drawn_h = d.height;
+}
+
 void DrawWithLook(const HosCoopDraw& d) {
+    NoteDrawn(d);
     if (g_look_state.load() == kLookNotYet) {
         if (d.font && d.use_font && d.image && d.draw_image) {
             LoadLook(d);
@@ -579,6 +619,10 @@ COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
 COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
     return CoopHookshot::KeysTaken() ? 1 : 0;
 }
+// The mouse (hos_coop_api.h): the cheats panel's clicks.
+COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
+    return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
+}
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
     return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
@@ -592,6 +636,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
                      static_cast<int>(d->width), static_cast<int>(d->height));
         }
         CoopHookshot::NoGameLook();
+        CoopHookshot::NoteDrawn(*d);
         // An older Hookshot's table ends at text_width: the rest stays empty.
         HosCoopDraw t{};
         t.width = d->width;

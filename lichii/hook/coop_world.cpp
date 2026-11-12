@@ -2295,4 +2295,101 @@ RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_
     return out;
 }
 
+std::optional<std::uint64_t> FindBlockNode(
+    const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read, std::uint64_t actor,
+    std::uint64_t main) {
+    using namespace BlockNode;
+    if (!HeapPointer(actor) || main == 0) {
+        return std::nullopt;
+    }
+    const auto is_node = [&](std::uint64_t p) {
+        const auto v1 = read(p);
+        if (!v1 || *v1 != main + kVtable) return false;
+        const auto v2 = read(p + 0x20);
+        if (!v2 || *v2 != main + kVtable2) return false;
+        const auto a = read(p + kOwner);
+        if (!a || !HeapPointer(*a)) return false;
+        const auto b = read(*a + 8);
+        if (!b || !HeapPointer(*b)) return false;
+        const auto owner = read(*b + kOwnerActor);
+        return owner && *owner == actor;
+    };
+    // Breadth first from the actor's components, so the nearest match wins.
+    std::vector<std::uint64_t> level;
+    std::set<std::uint64_t> seen{actor};
+    if (const auto table = read(actor + SignProbe::kActorTable); table && HeapPointer(*table)) {
+        for (std::uint64_t at = 0; at < SignProbe::kTableWords * 8; at += 8) {
+            const auto c = read(*table + at);
+            if (c && HeapPointer(*c) && seen.insert(*c).second) {
+                if (is_node(*c)) return *c;
+                level.push_back(*c);
+            }
+        }
+    }
+    std::size_t looks = 0;
+    for (int depth = 0; depth < kNodeDepth && !level.empty(); ++depth) {
+        std::vector<std::uint64_t> next;
+        for (const std::uint64_t object : level) {
+            if (++looks > kNodeLooks) {
+                return std::nullopt;
+            }
+            for (std::uint64_t at = 0; at < kNodeBytes; at += 8) {
+                const auto p = read(object + at);
+                if (!p || !HeapPointer(*p) || !seen.insert(*p).second) {
+                    continue;
+                }
+                if (is_node(*p)) return *p;
+                next.push_back(*p);
+            }
+        }
+        level = std::move(next);
+    }
+    return std::nullopt;
+}
+
+RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                       std::uint64_t node, const proto::Vec3& from, const proto::Vec3& to) {
+    RestScan out;
+    if (!Finite(from) || !Finite(to) || Distance(from, to) < WorldSync::kBlockStartM) {
+        return out;
+    }
+    const auto float_at = [&](std::uint64_t address) -> std::optional<float> {
+        const auto word = read(address & ~std::uint64_t{7});
+        if (!word) return std::nullopt;
+        const auto b = static_cast<std::uint32_t>((address & 4) != 0 ? *word >> 32 : *word);
+        float f = 0.0f;
+        std::memcpy(&f, &b, 4);
+        return f;
+    };
+    const auto holds_from = [&](std::uint64_t offset) {
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto v = float_at(node + offset + 4 * axis);
+            if (!v || !std::isfinite(*v) || std::fabs(*v - from[axis]) > kRestMatchM) return false;
+        }
+        return true;
+    };
+    // Both or none (review): a node with only one of them at the old place is
+    // mid-push here (its target is the next cell); writing just one would make
+    // it run from the new place toward a cell figured from the old one.
+    const bool target = holds_from(BlockNode::kTarget), start = holds_from(BlockNode::kStart);
+    if (target != start) {
+        out.busy = true;
+        return out;
+    }
+    if (!target) {
+        return out;
+    }
+    char text[32];
+    for (const std::uint64_t offset : {BlockNode::kTarget, BlockNode::kStart}) {
+        for (int axis = 0; axis < 3; ++axis) {
+            std::uint32_t b = 0;
+            std::memcpy(&b, &to[axis], 4);
+            out.writes.push_back({node + offset + 4 * axis, b});
+        }
+        std::snprintf(text, sizeof text, "node+%#llx", static_cast<unsigned long long>(offset));
+        out.where.push_back(text);
+    }
+    return out;
+}
+
 } // namespace CoopWorld

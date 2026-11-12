@@ -329,12 +329,57 @@ struct RestScan {
     std::vector<RestWrite> writes;
     std::vector<std::string> where;  // per place found: actor+0x.., c+0x50+0x.., physics root+0x.. (matrix)
     bool too_many = false;
+    bool busy = false;  // NodeRestWords: only one of the push node's places is the old one
 };
 inline constexpr std::size_t kMaxRestTriplets = 12;
 inline constexpr float kRestMatchM = 0.02f;
 RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
                    std::uint64_t actor, const coop::protocol::Vec3& from,
                    const coop::protocol::Vec3& to);
+
+// Issue 147, world-objects-2: the push block's own AI node, the AINB node
+// ExecuteMovableBoxControl (main of build e0f3ccfaf50065ae, read from the
+// code; docs/world.md "The block's push node"):
+//   [node] = main + kVtable, [node + 0x20] = main + kVtable2 (its constructor
+//   0xe5a870 and destructor 0x275ac10 store both);
+//   its actor = [[[node + 8] + 8] + 0x1f0] (enter 0x2751790 reads the
+//   actor's place +0x31c through that chain);
+//   +0x40 the grid base (from the link MovableBox_BasePosAnchor, else the
+//   actor's place), +0x4c the goal (link Gimmick_AnswerPosAnchor), both NaN
+//   when unset; +0xfc the place the push goes to and +0x108 the place it
+//   starts from, both copies of the actor's place when the node starts;
+//   the next step's target is figured from them (0xd6ef80, PushPerBlock).
+// A follower's block is warped by the setter, but its node keeps +0xfc and
+// +0x108 at the old rest place, so its player's next push starts there and
+// the block and its pusher snap back. FindBlockNode finds the node by
+// following heap pointers from the actor's components (at most kNodeDepth
+// steps, kNodeLooks objects, each object's first kNodeBytes), and takes it
+// only when both vtables and the actor chain match. NodeRestWords then gives
+// the writes that put the new place in +0xfc and +0x108 when both hold the
+// old one (each axis within kRestMatchM); only one of them: the node is
+// mid-push here, nothing is written and `busy` is set. The base and goal are
+// left alone (the grid and the answer do not move). Open (no run yet): if
+// the node's start runs at every push, and not once when the block's AI
+// starts, these are fresh anyway and the write changes nothing (harmless).
+namespace BlockNode {
+inline constexpr std::uint64_t kVtable = 0x49ae6f8;
+inline constexpr std::uint64_t kVtable2 = 0x49ae8b8;
+inline constexpr std::uint64_t kOwner = 0x8;          // [node + 8] -> [+8] -> [+0x1f0] = actor
+inline constexpr std::uint64_t kOwnerActor = 0x1f0;
+inline constexpr std::uint64_t kBase = 0x40;
+inline constexpr std::uint64_t kGoal = 0x4c;
+inline constexpr std::uint64_t kTarget = 0xfc;
+inline constexpr std::uint64_t kStart = 0x108;
+inline constexpr int kNodeDepth = 3;
+inline constexpr std::size_t kNodeLooks = 2048;
+inline constexpr std::size_t kNodeBytes = 0x200;
+} // namespace BlockNode
+std::optional<std::uint64_t> FindBlockNode(
+    const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read, std::uint64_t actor,
+    std::uint64_t main);
+RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
+                       std::uint64_t node, const coop::protocol::Vec3& from,
+                       const coop::protocol::Vec3& to);
 
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the

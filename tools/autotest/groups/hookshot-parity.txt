@@ -4,7 +4,7 @@
 # Hookshot must be built with integrate-p12's patch (hs.py build): the module's start line must NOT end in
 # "gives no pad word" (expect= cannot check an absence: look once in any run's hookshot_log-A.txt).
 # Before `groups.py run`:
-#  - g3's hs-ladder: clear the ladder's flag in g3's baselines (save_flags.py set <kit>\hookshot-A3\autotest-save\*\*\slot_0*\progress.sav
+#  - g3's hs-ladder: clear the ladder's flag in g3's baselines (save_flags.py from save-flags-hookshot: set <kit>\hookshot-A3\autotest-save\slot_0*\progress.sav
 #    bool:0xb3a4fe84=0, the same for hookshot-B3) and put them back from <kit>\autotest-save-backup afterwards.
 # After the groups, by hand on one pair (no expect= possible: the keys are posted to the window):
 #  - hs-chatbox (row 7): any run with -KeepOpen, then the PostMessage snippet in reports/hookshot-parity.md (T, "hi", Enter).

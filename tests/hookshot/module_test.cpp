@@ -82,6 +82,32 @@ TEST_CASE("hookshot: the module knows the game build by main's id as Hookshot gi
     CHECK_FALSE(CoopHookshot::BuildSupported(""));
 }
 
+TEST_CASE("hookshot: Link-model puppets are not made (they crash Hookshot's game), the rest are") {
+    // Plain and coloured, both ages: the crash is the same for all of them.
+    CHECK(CoopHookshot::RefuseCreate("CoopPuppet_Child", false));
+    CHECK(CoopHookshot::RefuseCreate("CoopPuppet_Adult", false));
+    CHECK(CoopHookshot::RefuseCreate("CoopPuppet_Child_Red", false));
+    CHECK(CoopHookshot::RefuseCreate("CoopPuppet_Adult_Cyan", false));
+    // The fairy, the shot and ride stand-ins and a chosen other actor still are.
+    CHECK_FALSE(CoopHookshot::RefuseCreate("Dm_Npc_Navi", false));
+    CHECK_FALSE(CoopHookshot::RefuseCreate("CoopShot_Arrow", false));
+    CHECK_FALSE(CoopHookshot::RefuseCreate("CoopRide_Epona", false));
+    CHECK_FALSE(CoopHookshot::RefuseCreate("Animal_Cow_LinkHouse", false));
+    CHECK_FALSE(CoopHookshot::RefuseCreate("", false));
+    // LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1: made again (to check a Hookshot fix).
+    CHECK_FALSE(CoopHookshot::RefuseCreate("CoopPuppet_Child_Red", true));
+}
+
+TEST_CASE("hookshot: the module refuses puppet creates before they reach the game") {
+    const std::string src = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    const auto refused = src.find("if (Refused(c))");
+    const auto call = src.find("g_api->call(ctx, &k, &x0)");
+    REQUIRE(refused != std::string::npos);
+    REQUIRE(call != std::string::npos);
+    CHECK(refused < call);
+    CHECK(src.find("LICHII_COOP_HOOKSHOT_LINK_PUPPETS") != std::string::npos);
+}
+
 TEST_CASE("hookshot: the module builds every hook file the emulator builds, but the cave") {
     const std::string cmake = ReadFile(kRepo / "hookshot" / "CMakeLists.txt");
     CHECK(cmake.find("lichii/hook/core.cmake") != std::string::npos);

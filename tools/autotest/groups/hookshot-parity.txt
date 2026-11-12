@@ -1,6 +1,11 @@
 # The Hookshot parity run (reports/hookshot-parity.md, "Big-run checks"): every hs-* scenario on integrate-p12, in
 # three groups that play at the same time (tools/autotest/groups.py; docs/testing.md, "Hookshot test loop").
 # Group N plays on <kit>\hookshot-A<N> + -B<N>, port 27560 + 10*(N-1), pipes coop-auto-g<N>-A/-B.
+# BLOCKER from main (docs/hookshot.md, proofs 3 and 4): the module refuses to make other players' Link
+# (CoopPuppet_*) on Hookshot because making one crashed it; LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 makes them
+# again and the game then crashes. Every run that reads puppet lines (g1, hs-ocarina-show, hs-teleport-room's
+# 'next to', hs-door, hs-gohma) proves nothing until that crash is fixed (B's hs-crash-b) or is run with the
+# switch on a build that has the fix. Runs without puppets (world, flags, drops, overlay text) are not affected.
 # g5 and g6 (hs-scenarios-2) need nothing done to the saves; the other groups' steps are below.
 # Hookshot must be built with integrate-p12's patch (hs.py build): the module's start line must NOT end in
 # "gives no pad word" (expect= cannot check an absence: look once in any run's hookshot_log-A.txt).

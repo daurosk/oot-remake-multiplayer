@@ -2,11 +2,11 @@
 
 This is an early test build of online co-op (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)) for the Ocarina of Time remake, on the kit's Fritchii emulator or, as an experiment, on Hookshot. Expect bugs; [known-issues.md](known-issues.md) lists what works and what does not yet. After this page, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet) says how to play together.
 
-This page goes: [Hookshot](#play-on-hookshot-experimental) (new and experimental), then the [emulator setup for new players](#emulator-setup-for-new-players), then [updating a kit you already have](#updating), then settings, chat commands, saves, [Linux](#linux-and-steam-deck) <!-- DROP if linux-2 is not in the release --> and [troubleshooting](#troubleshooting).
+This page goes: [Hookshot](#play-on-hookshot-experimental) (new and experimental), then the [emulator setup for new players](#emulator-setup-for-new-players), then [updating a kit you already have](#updating), then settings, chat commands, saves, [Linux](#linux-and-steam-deck) and [troubleshooting](#troubleshooting).
 
 ## Play on Hookshot (experimental)
 
-Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), a native PC version of the game that the kit builds on your PC from your own copy. No emulator: the game runs as a normal Windows program. It is **experimental**: it is newer than the emulator kit, fewer players have tried it, and parts of co-op are not on it yet (see [What is not on Hookshot yet](#what-is-not-on-hookshot-yet)). Hookshot players and emulator players can play in the same session, on the same server. If you are not sure, play on the emulator ([Emulator setup for new players](#emulator-setup-for-new-players)). **The test releases after this one are Hookshot only**: this release still ships the emulator kit, and this page still documents it.
+Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), a native PC version of the game that the kit builds on your PC from your own copy. No emulator: the game runs as a normal Windows program. It is **experimental**: it is newer than the emulator kit, fewer players have tried it, and parts of co-op are not on it yet (see [What is not on Hookshot yet](#what-is-not-on-hookshot-yet)). Hookshot players and emulator players can join the same session, on the same server; Hookshot players don't see the others yet. If you are not sure, play on the emulator ([Emulator setup for new players](#emulator-setup-for-new-players)). **The test releases after this one are Hookshot only**: this release still ships the emulator kit, and this page still documents it.
 
 ### What you need for Hookshot
 
@@ -27,7 +27,7 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
    It ends with "Done." and the game's path, in the kit's `hookshot\game` folder (`-Out <folder>` puts it elsewhere).
 4. **First start, as the host.** Double-click `Host-Hookshot.bat`. It works like `Host.bat`: it asks for your player name, starts the co-op server, makes a new random join password, asks your router to open the port and copies an **invite code** for your friends (see [Playing over the internet](play-online.md#the-easy-way-hostbat-and-an-invite-code)). Then it starts the Hookshot game instead of the emulator.
 5. **Joining.** Your friends double-click `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator) and paste the invite code. Invite codes have not been tested on Hookshot yet; joining by address on the same network or a VPN works the same as on the emulator ([play-lan.md](play-lan.md)).
-6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. In the game, the other players show as Link.
+6. **Check it works.** `Join-Hookshot.bat` does not watch for the connection the way `Join.bat` does. Open `hookshot_log.txt` beside `hookshot.exe`: it says `coop: module loaded`, then `coop: connected`. **On Hookshot you don't see the other players yet** (see below).
 
 **After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files and puppet pack into the game in a few minutes, and builds the whole game again only when the update moved to a newer Hookshot.
 
@@ -35,11 +35,12 @@ Co-op now also runs on [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexe
 
 ### What is not on Hookshot yet
 
+- **You don't see the other players yet:** showing them as Link crashes Hookshot in this version, so it is switched off (a fix is planned). Emulator players do see Hookshot players as Link (seen in our logs). (`LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns the Links back on, but the game then crashes.)
 - **No co-op window:** no status panel, no chat box (Enter) or chat lines, no player list (Tab), no markers, no co-op HUD (the other players' hearts under yours) and no cheats window, so no chat commands such as `/teleport`. The log says what the panel would.
 - **Your own ocarina notes are not sent:** the others do not hear a Hookshot player's ocarina.
 - **Tunic colours only partly:** your own Link stays green (your colour is not put on it), players whose colour is green show as the plain puppet, and `LICHII_COOP_TUNICS=0` does nothing on Hookshot (#202; the emulator kit does all of these).
 - **No old-pack hint:** `Host-Hookshot.bat` and `Join-Hookshot.bat` say when the game has no puppet pack, but not when it is an old one made before the tunic colours; rerun `Build-Hookshot-Coop.bat` after an update.
-- What has been checked on Hookshot in our two-game tests: <!-- FILL from the integrator's Hookshot proofs 3-5 (reports/integrate-p11.md) --> the rest of co-op is the same code as on the emulator but not yet checked there.
+- What has been checked on Hookshot in our two-game tests: the co-op module loads and the games connect to the server, with no crash; the rest of co-op is the same code as on the emulator but not yet checked there.
 
 ### Hookshot troubleshooting
 
@@ -189,7 +190,7 @@ Press Enter in the game to open the chat box. A line that starts with `/teleport
 - `/teleport <player>` takes you to that player. The whole name works in any case, and so does the start of a name if only one player's name starts that way, or the player's number (`/teleport 2`).
   - The other player's game answers with where they last stood on their feet, so you never land in a wall or in mid-air.
   - In the same scene you are moved there at once.
-  - In another scene the game changes scene first: talk to someone or read a sign within a minute, and when the talk ends there is a fade and a load, arriving at that place's entrance nearest the other player. After the load you are moved next to them; in a dungeon only when they are in the room you arrive in, otherwise you stay at the entrance and walk there (moving into another room of a dungeon left Link stuck, issue 197). A scene change not taken in 60 seconds is given up. (An earlier build changed scene with no talk, but that left your Link unable to move after the load, #197.)
+  - In another scene the game changes scene first: talk to someone or read a sign within a minute, and when the talk ends there is a fade and a load, arriving at that place's entrance nearest the other player. After the load you are moved next to them; in a dungeon only when they are in the room you arrive in, otherwise you stay at the entrance and walk there (moving into another room of a dungeon left Link stuck, issue 197). A scene change not taken in 60 seconds is given up. **Known issue, before this rule:** when the other player was inside a dungeon (seen: Kokiri Forest to the Deku Tree's slingshot room), the screen could stay black after the load and your Link could not move ([#197](https://github.com/daurosk/oot-remake-multiplayer/issues/197)). If it still happens, close the game and start it again, and walk there instead. In our test, teleporting from Kakariko to the Graveyard worked.
   - Refused, with a line in the chat box: while your game loads or plays a cutscene or a talk, during your boss fight, while the other player is busy (loading, a cutscene, a talk, in the air) or in a boss fight, and when the other player is in a place only for the other age (`_Child` or `_Adult`) than your Link, or in a place with no entrance to arrive at (the boss-rush room, the ending, the Sage room). Lake Hylia, Lon Lon Ranch, the Temple of Time and the houses are parts of Hyrule Field, the Market or their village, so those work. A dungeon gives a warning: you may need its items to get on from there.
   - A player with an older build does not answer: "no answer from" after 5 seconds.
 

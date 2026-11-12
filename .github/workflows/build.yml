@@ -241,7 +241,7 @@ jobs:
           bash tools/release/appimage_licenses.sh "$RUNNER_TEMP/lichii.AppImage" "$RUNNER_TEMP/appimage-licenses"
           head -n 60 "$RUNNER_TEMP/appimage-licenses/BUNDLED.txt"
           bash tools/release/make_kit.sh --appimage-licenses "$RUNNER_TEMP/appimage-licenses" --appimage "$RUNNER_TEMP/lichii.AppImage" --server "$server" \
-            --out "$RUNNER_TEMP/kit" --release "ci-${GITHUB_SHA::8}" --emu-source "$RUNNER_TEMP/fritchii"
+            --out "$RUNNER_TEMP/kit" --release "$(if [ "$GITHUB_REF_TYPE" = tag ]; then echo "$GITHUB_REF_NAME"; else echo "ci-${GITHUB_SHA::8}"; fi)" --emu-source "$RUNNER_TEMP/fritchii"
           tar -tzf "$RUNNER_TEMP"/kit/oot-coop-*-linux-*.tar.gz | head -n 40
           (cd "$RUNNER_TEMP/kit" && sha256sum -c oot-coop-*-linux-*.tar.gz.sha256)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2

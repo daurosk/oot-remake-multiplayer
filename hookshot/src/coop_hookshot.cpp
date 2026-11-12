@@ -89,9 +89,44 @@ public:
 };
 
 // The game calls the hook's callers ask for this frame, made here.
+// The actor a requestCreateActorAsync call names: x1 is {char*, capacity}.
+std::string CreateName(const CoopPuppet::Call& c) {
+    std::uint64_t text = 0;
+    char name[0x41] = {};
+    if (!CoopRuntime::Read(c.x[1], &text, sizeof text) || text == 0 ||
+        !CoopRuntime::Read(text, name, sizeof name - 1)) {
+        return {};
+    }
+    return std::string(name);
+}
+
+// coop_hookshot.h RefuseCreate: a Link-model puppet crashes Hookshot's game.
+bool Refused(const CoopPuppet::Call& c) {
+    static const bool allow = EnvOn("LICHII_COOP_HOOKSHOT_LINK_PUPPETS");
+    if (c.function != CoopRuntime::MainBase() + CoopPuppet::addr::kCreate) {
+        return false;
+    }
+    const std::string actor = CreateName(c);
+    if (!CoopHookshot::RefuseCreate(actor, allow)) {
+        return false;
+    }
+    static bool said = false;
+    if (!said) {
+        said = true;
+        LOG_WARNING(Core,
+                    "coop: Hookshot: {} not made (a second Link model crashes Hookshot's game); other players "
+                    "show as their fairy. LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1 tries them again",
+                    actor);
+    }
+    return true;
+}
+
 void RunCalls(void* ctx) {
     BridgeGuest guest;
     CoopCallers::RunFrame(guest, SteadyMs(), CoopSvc::kCallsPerFrame, [ctx](const CoopPuppet::Call& c) {
+        if (Refused(c)) {
+            return std::optional<std::uint64_t>(0);  // as the game refusing it: asked again later
+        }
         HosCoopCall k{};
         k.function = c.function;
         std::memcpy(k.x, c.x.data(), sizeof k.x);

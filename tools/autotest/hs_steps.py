@@ -360,9 +360,17 @@ class HookshotGames:
     def _log_path(self, x):
         return os.path.join(self.hk.exe_dir(self.games[x]), "hookshot_log.txt")
 
+    def _run_log(self, x):
+        """This run's log: the game's hookshot_log.txt (start() removes an older one), else game-out-<x>-<n>.txt.
+        Hookshot writes hookshot_log.txt only when its stderr goes nowhere (started from its icon); here stderr is
+        captured, so its log is in game-out."""
+        if os.path.isfile(self._log_path(x)) or not self.runs[x]:
+            return self._log_path(x)
+        return os.path.join(self.out, "game-out-%s-%d.txt" % (x, self.runs[x]))
+
     def log(self, x):
         try:
-            with open(self._log_path(x), encoding="utf-8", errors="replace") as f:
+            with open(self._run_log(x), encoding="utf-8", errors="replace") as f:
                 return f.read()
         except OSError:
             return ""
@@ -527,8 +535,8 @@ class HookshotGames:
 
     def kill(self, x, keep_log=None):
         self._end(x, "kill")
-        if keep_log and os.path.isfile(self._log_path(x)):
-            shutil.copy2(self._log_path(x), os.path.join(self.out, "hookshot_log-%s-%s.txt" % (x, keep_log)))
+        if keep_log and os.path.isfile(self._run_log(x)):
+            shutil.copy2(self._run_log(x), os.path.join(self.out, "hookshot_log-%s-%s.txt" % (x, keep_log)))
 
     def server_start(self):
         if not self.server_exe:
@@ -570,8 +578,8 @@ class HookshotGames:
             self._end(x, "quit")
         self.server_stop()
         for x in self.games:
-            if os.path.isfile(self._log_path(x)):
-                shutil.copy2(self._log_path(x), os.path.join(self.out, "hookshot_log-%s.txt" % x))
+            if os.path.isfile(self._run_log(x)):
+                shutil.copy2(self._run_log(x), os.path.join(self.out, "hookshot_log-%s.txt" % x))
 
 
 def main(argv=None):

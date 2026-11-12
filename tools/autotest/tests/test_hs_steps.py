@@ -365,6 +365,19 @@ class HookshotGamesTest(unittest.TestCase):
         self.g.close("B")
         self.g.finish()
 
+    def test_log_is_the_captured_output_when_the_game_writes_no_file(self):
+        # Hookshot writes hookshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>-<n>.txt.
+        self.g.start("A", "", wait=False)
+        self.g.procs["A"].wait(30)
+        with open(os.path.join(self.out, "game-out-A-1.txt"), "w") as f:
+            f.write("coop: welcomed as player 1\n")
+        self.assertEqual(self.g.log("A"), "coop: welcomed as player 1\n")
+        self.g.kill("A", keep_log="try2")
+        self.assertTrue(os.path.isfile(os.path.join(self.out, "hookshot_log-A-try2.txt")))
+        self.g.finish()
+        with open(os.path.join(self.out, "hookshot_log-A.txt")) as f:
+            self.assertEqual(f.read(), "coop: welcomed as player 1\n")   # what groups.py judges
+
     def test_server_log_and_password_option(self):
         with open(os.path.join(self.out, "server-out.txt"), "w") as f:
             f.write("refused a connection, reason 6\n")

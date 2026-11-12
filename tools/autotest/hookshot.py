@@ -853,7 +853,10 @@ def run(a):
             if server:
                 server.terminate()
         for x in tags:
-            lp = find_log(games[x])
+            # Hookshot writes hookshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
+            # that is the log (an old hookshot_log.txt in the folder is from another run). The game's file otherwise.
+            go = os.path.join(out, "game-out-%s.txt" % x)
+            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(games[x])
             if lp:
                 shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
     if failed:

@@ -80,12 +80,25 @@ public:
     float Gravity() const { return gravity_; }
     // Where it is at `now_us` (server clock). `ballistic` adds the fall.
     Vec3 At(std::uint64_t now_us, bool ballistic) const;
-    // Held still at `at` (the owner's remove): no more carrying on.
+    // Smooth shots: where a copy is shown at `now_us`. The owner's
+    // path kBehindUs late (as late as the puppet that shot it), between the
+    // two samples around that time, so the copy moves in even steps every
+    // frame. Carried on as At() only when the samples are later than that.
+    // Before, a copy was carried on from the latest sample by its velocity
+    // (measured between two walks, so noisy) and snapped at each sample.
+    static constexpr std::uint64_t kBehindUs = 100'000;
+    static constexpr std::size_t kKeep = 16;
+    Vec3 Shown(std::uint64_t now_us, bool ballistic) const;
+    // Held still at `at` (the owner's remove): no more carrying on. A shown
+    // copy goes on to `at` (taken as kStopAfterUs after the last sample, a
+    // walk later) and stays there.
+    static constexpr std::uint64_t kStopAfterUs = 33'000;
     void Stop(const Vec3& at);
     bool Stopped() const { return stopped_; }
 
 private:
     std::optional<Point> last_;
+    std::deque<Point> points_;  // the newest kKeep, oldest first (and the stop)
     float gravity_ = 0.0f;
     bool stopped_ = false;
 };

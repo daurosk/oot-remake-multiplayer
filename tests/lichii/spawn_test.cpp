@@ -374,8 +374,8 @@ TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back")
     sync.Tick(kScene, 2, now, {Made(0x9000, 10.2f)}, live, send, copies);
     CHECK(send.empty());
 
-    // The owner's sample moves it, with its velocity carried on from the
-    // sample's time on the server clock (99 ms at 10 m/s).
+    // The owner's sample moves it: the copy is shown 100 ms late on the
+    // server clock (as the puppet is), between the two samples around then.
     proto::ObjectSample sample;
     sample.id = spawn.id;
     sample.state.time = {5'100'000, 1};
@@ -388,10 +388,16 @@ TEST_CASE("spawn: another player's bomb becomes a copy that is never sent back")
     sync.Tick(kScene, 2, now, {Made(0x9000, 12.0f)}, live, send, copies);
     CHECK(send.empty());
     REQUIRE(copies.size() == 1);
-    CHECK(copies[0].position[0] == doctest::Approx(12.0f));
+    // 4.999 s: 9 of the 110 ms from 4.99 s (x 10) to 5.1 s (x 12).
+    CHECK(copies[0].position[0] == doctest::Approx(10.0f + 2.0f * 9.0f / 110.0f));
     copies.clear();
     now += 100 * kMs;
     sync.Tick(kScene, 2, now, {Made(0x9000, 12.0f)}, live, send, copies);
+    CHECK(copies[0].position[0] == doctest::Approx(10.0f + 2.0f * 109.0f / 110.0f));
+    copies.clear();
+    now += 100 * kMs;
+    sync.Tick(kScene, 2, now, {Made(0x9000, 12.0f)}, live, send, copies);
+    // Past the newest sample: carried on by its velocity (99 ms at 10 m/s).
     CHECK(copies[0].position[0] == doctest::Approx(12.99f));
 
     // The owner's bomb exploded: so does the copy, at the owner's place.
@@ -1070,7 +1076,7 @@ TEST_CASE("spawn: another player's held bomb is the held stand-in in the puppet'
     live[held_key] = 0x9000;
 
     // Thrown: a new key (the stand-in goes, the game's bomb is made), placed
-    // along the owner's flight as before.
+    // along the owner's flight as late as when held, so it does not jump.
     sample.state.time = {5'200'000, 2};
     sample.state.position = proto::Vec3{13.0f, 2.0f, 2.0f};
     sample.state.velocity = proto::Vec3{10.0f, 0.0f, 0.0f};
@@ -1081,7 +1087,7 @@ TEST_CASE("spawn: another player's held bomb is the held stand-in in the puppet'
     REQUIRE(copies.size() == 1);
     CHECK_FALSE(copies[0].held);
     CHECK(copies[0].key != held_key);
-    CHECK(copies[0].position[0] == doctest::Approx(13.0f));
+    CHECK(copies[0].position[0] == doctest::Approx(12.0f));
     CHECK(sync.HeldCopies() == 0);
     CHECK(send.empty());
 }

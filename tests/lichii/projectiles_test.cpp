@@ -2,6 +2,7 @@
 // sync, its director and the objects sync use them.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -180,6 +181,76 @@ TEST_CASE("shots: a track is carried on along the velocity, with the fall the sa
     CHECK(t.Stopped());
     CHECK(t.At(5'000'000, true)[0] == doctest::Approx(7.0f));
     CHECK(t.At(5'000'000, true)[1] == doctest::Approx(8.0f));
+}
+
+TEST_CASE("shots: a copy is shown as late as the puppet, between the owner's samples") {
+    shots::Track t;
+    CHECK(t.Shown(1'000'000, true)[0] == doctest::Approx(0.0f));  // nothing yet
+    REQUIRE(t.Add({1'000'000, {0, 10, 0}, {30, 0, 0}}));
+    // Before the first sample's time (shown 100 ms late): where it was made.
+    CHECK(t.Shown(1'050'000, true)[0] == doctest::Approx(0.0f));
+    REQUIRE(t.Add({1'033'000, {1, 10, 0}, {30, 0, 0}}));
+    REQUIRE(t.Add({1'066'000, {2, 9.9f, 0}, {30, -3, 0}}));
+    // Halfway between two samples: halfway between their places.
+    const auto mid = t.Shown(1'000'000 + shots::Track::kBehindUs + 16'500, true);
+    CHECK(mid[0] == doctest::Approx(0.5f));
+    CHECK(mid[1] == doctest::Approx(10.0f));
+    CHECK(t.Shown(1'166'000, true)[1] == doctest::Approx(9.9f));
+    // Past the newest: carried on from it as At() does.
+    CHECK(t.Shown(1'266'000, false)[0] == doctest::Approx(t.At(1'166'000, false)[0]));
+
+    // A hit: the copy goes on to where it struck, a walk after the last
+    // sample, and stays there.
+    t.Stop({2.5f, 9.8f, 0});
+    const std::uint64_t stop = 1'066'000 + shots::Track::kStopAfterUs;
+    CHECK(t.Shown(stop + shots::Track::kBehindUs, true)[0] == doctest::Approx(2.5f));
+    CHECK(t.Shown(5'000'000, true)[0] == doctest::Approx(2.5f));
+    CHECK(t.Shown(1'066'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(2.0f));
+    // A later sample takes the place of the made-up stop.
+    REQUIRE(t.Add({1'200'000, {4, 9, 0}, {}}));
+    CHECK_FALSE(t.Stopped());
+    CHECK(t.Shown(1'200'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(4.0f));
+    CHECK(t.Shown(1'133'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(3.0f));
+}
+
+TEST_CASE("shots: a copy flies in even steps where carrying on stepped") {
+    // The owner's seed flies at 30 m/s along x. Its game moves it 30 times
+    // a second; the owner walks 60 times a second and sends a sample at most
+    // each 33 ms, with the velocity from the change since the walk before:
+    // 0 or 60 m/s by turns. This screen draws 60 frames a second and gets
+    // each sample at once (no delay).
+    constexpr std::uint64_t kWalk = 16'667;
+    const auto place = [](std::uint64_t us) {
+        return 30.0f * float(us / 33'334) * 0.033334f;  // the game's frame
+    };
+    shots::Track fresh;  // fed as the samples come
+    std::uint64_t sent = 0;
+    float before = 0.0f, old_at = 0.0f, new_at = 0.0f;
+    float old_short = 1e9f, old_long = 0.0f, new_short = 1e9f, new_long = 0.0f;
+    for (std::uint64_t walk = 1; walk <= 40; ++walk) {
+        const std::uint64_t us = walk * kWalk;
+        const float x = place(us);
+        if (walk == 1 || us - sent >= 33'000) {
+            fresh.Add({us, {x, 0, 0}, {(x - before) / (kWalk / 1e6f), 0, 0}});
+            sent = us;
+        }
+        before = x;
+        const float o = fresh.At(us, false)[0];
+        const float n = fresh.Shown(us, false)[0];
+        if (walk > 12) {  // the shot is under way (shown 100 ms late)
+            old_short = std::min(old_short, o - old_at);
+            old_long = std::max(old_long, o - old_at);
+            new_short = std::min(new_short, n - new_at);
+            new_long = std::max(new_long, n - new_at);
+        }
+        old_at = o;
+        new_at = n;
+    }
+    // 30 m/s is 0.5 m a frame. Carried on from the latest sample it stood
+    // still or jumped; between the samples it moves the same each frame.
+    CHECK((old_short < 0.1f || old_long > 0.9f));
+    CHECK(new_short > 0.4f);
+    CHECK(new_long < 0.6f);
 }
 
 TEST_CASE("shots: the fuse is learnt from our own bombs") {

@@ -434,8 +434,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             // Issue 169: in the puppet's hands, shown as late as the puppet
             // (and blown up there when it went off in them).
             c.position = r.held_path.At(now_us - std::min(now_us, CoopProjectiles::kHeldBehindUs));
-        } else {
+        } else if (explode) {
+            // Goes off where the owner's did, at the owner's moment.
             c.position = r.track.At(now_us, info != nullptr && info->ballistic);
+        } else {
+            // Smooth shots: the owner's path as late as the puppet, between
+            // its samples, so the copy flies in even steps.
+            c.position = r.track.Shown(now_us, info != nullptr && info->ballistic);
         }
         if (r.rotation) {
             c.rotation = CoopPuppet::QuatToMatrix(*r.rotation);

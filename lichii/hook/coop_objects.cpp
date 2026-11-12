@@ -2088,7 +2088,7 @@ private:
         // keep one in another game's fight lock): log each change of how
         // many of the claimed ones are ours.
         const std::size_t ours = claimed == 0 ? 0 : sync_.EventNpcsOurs(now_us);
-        if (ours != npc_ours_) {
+        if (ours != npc_ours_ && claimed != 0) {  // the end has its own line
             LOG_INFO(Core, "coop: npc-anim: {} of the {} claimed NPCs are ours now", ours, claimed);
         }
         npc_ours_ = ours;

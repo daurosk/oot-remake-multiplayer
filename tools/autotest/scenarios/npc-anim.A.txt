@@ -4,8 +4,9 @@
 # ('Walk_Slowly'); in a talk he stops, turns to A and plays his talk animations. Both saves load at
 # about -35.7 8.5, 26 m from him. Run: tools\autotest\run.ps1 -Scenario npc-anim.
 # Why this tells the feature from no feature: B walks to Dampe first and stays within 5 m of him,
-# so B (P2) owns him by the distance rule (B is 10 m nearer than A for 3 s). A then walks up and
-# talks; A is never 10 m nearer than B, so the distance rule alone never moves him to A. Only the
+# so B (P2) owns him by the distance rule even if A reported him first: A waits at the load
+# spot, about 25 m from him, so B is about 20 m nearer (over the 10 m margin) for well over 3 s.
+# A then walks up and talks; A is never 10 m nearer than B, so the distance rule alone never moves him to A. Only the
 # event claim (this branch) does: B's owner of Dampe goes P2 -> P1 within about 1 s of A's "talk"
 # mark and stays P1 until about 2 s after "closed"; without the branch it stays P2 and B sees his
 # walk go on while A's Dampe stands and talks.
@@ -22,8 +23,8 @@
 # does not talk by day): FAIL of the route, not of the feature; say so and widen the follow below.
 mark start
 wait 120
-goto -24.0 16.0 1.0 900  # the way B went, behind it
-wait 840                 # B gets Dampe (3 s hold after it is near him)
+# A stays at the load spot, about 25 m from Dampe, while B (about 4 m from him) takes him.
+wait 960
 mark before-talk
 goto -16.5 19.0 1.5 900  # next to B, near where he walks
 hold ZL+LSTICK_UP 90     # lock on him and walk up to him

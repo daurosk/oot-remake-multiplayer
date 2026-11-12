@@ -22,13 +22,13 @@ The exports are kept once the module answers HOS_COOP_WORLD_HELLO.
 ---
  host/coop_platform_ring.c            | 19 --------
  host/coop_world.c                    | 62 ++++++++++++++++++++++++++
- host/hos_coop_world.h                | 38 ++++++++++++++++
+ host/hos_coop_world.h                | 44 +++++++++++++++++++
  nx2/chunks.py                        |  3 +-
  nx2/coop_hooks.py                    |  3 ++
  nx2/coop_platform_lift.py            | 15 ++++---
  nx2/coop_world_wraps.py              | 66 ++++++++++++++++++++++++++++
  third_party/a64-kit/lift/a64_lift.py | 26 ++++++++++-
- 8 files changed, 204 insertions(+), 28 deletions(-)
+ 8 files changed, 210 insertions(+), 28 deletions(-)
  delete mode 100644 host/coop_platform_ring.c
  create mode 100644 host/coop_world.c
  create mode 100644 host/hos_coop_world.h
@@ -129,10 +129,10 @@ index 0000000..ffea5b0
 +}
 diff --git a/host/hos_coop_world.h b/host/hos_coop_world.h
 new file mode 100644
-index 0000000..0492ecd
+index 0000000..d961208
 --- /dev/null
 +++ b/host/hos_coop_world.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,44 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   Co-op's world hooks on Hookshot (oot-remake-multiplayer, docs/hookshot.md "World hooks"; our patch 0005).
 +
@@ -155,6 +155,12 @@ index 0000000..0492ecd
 +#define HOS_COOP_WORLD_HELLO 0u           /* asked by Hookshot before it keeps the exports: 1 once the module is on.
 +                                             a = HOS_COOP_WORLD_VERSION, b = this build's wraps (bit id for each) */
 +#define HOS_COOP_WORLD_COUNTER_START 1u   /* main+0x5e6760 started an AI ExecuteGenericCounter: a = the node */
++/* The event numbers are one space over two headers: 0-1 above; 2-15 are the actor events' (hos_coop_actors.h, patch
++   0007); the world's next ones here are 16-63. */
++#define HOS_COOP_WORLD_ACTOR_FIRST 2u
++#define HOS_COOP_WORLD_ACTOR_LAST 15u
++#define HOS_COOP_WORLD_NEXT_FIRST 16u
++#define HOS_COOP_WORLD_NEXT_LAST 63u
 +
 +/* Wrapped game functions (nx2/coop_world_wraps.py WRAPS: id, main offset, first words). A new wrap takes the next id. */
 +#define HOS_COOP_WRAP_FLAG_APPLY 1u   /* main+0xb99980: the game applies its queued flag writes (the save load's too) */

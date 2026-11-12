@@ -352,3 +352,16 @@ function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
         return 'Puppet pack: coop_puppet.json could not be read. Run make-puppet-pack.cmd again.'
     }
 }
+
+# What a Hookshot build with co-op was made from (hookshot-build.ps1 writes it to
+# hookshot-build\built-with.txt; play.ps1 -Hookshot compares): the pin, the builder parts'
+# list and our patches, as one SHA-256. A kit update that changes any of them needs a new build.
+function Get-HookshotStamp([string]$Pieces) {
+    $parts = @()
+    foreach ($f in @((Join-Path $Pieces 'PIN'), (Join-Path $Pieces 'TOOLS')) + @(Get-ChildItem -LiteralPath (Join-Path $Pieces 'patches') -Filter '*.patch' -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object { $_.FullName })) {
+        if (Test-Path -LiteralPath $f) { $parts += [System.IO.File]::ReadAllText($f).Replace("`r`n", "`n") }
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($parts -join "`n--`n"))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLower() } finally { $sha.Dispose() }
+}

@@ -344,8 +344,30 @@ try {
     $out = cmd /c "`"$kit\Join.bat`" < `"$in`"" 2>&1
     $ini = Read-File "$kit\emulator\user\config\coop.ini"
     Check ($ini -notmatch '(?m)^password' -and ($out -join ' ') -match 'join password none') "Join.bat: '-' clears the password [$(($ini -split "`n") -match 'password' -join '|')]"
+    # Hookshot (play.ps1 -Hookshot, docs/hookshot.md): coop.ini beside hookshot.exe, the kit's module copied
+    # beside it, and a kit whose Hookshot patch changed since the build asks for a new build.
+    $kit = Join-Path $tmp 'kit hookshot'; New-Kit $kit 'v0.1.0-beta3' 'old'
+    $stub = [System.IO.File]::ReadAllBytes((Join-Path $env:SystemRoot 'System32\rundll32.exe'))
+    New-Item -ItemType Directory -Force -Path "$kit\hookshot", "$kit\hookshot-kit\patches", "$kit\hookshot-build" | Out-Null
+    [System.IO.File]::WriteAllBytes("$kit\hookshot\hookshot.exe", $stub)
+    Write-File "$kit\hookshot-kit\hookshot_coop.dll" 'module v2'
+    Write-File "$kit\hookshot-kit\PIN" "commit=abc`n"
+    Write-File "$kit\hookshot-kit\TOOLS" "# none`n"
+    Write-File "$kit\hookshot-kit\patches\0001-coop-bridge.patch" "patch`n"
+    Write-File "$kit\hookshot\hookshot_coop.dll" 'module v1'
+    Write-File "$kit\hookshot-build\built-with.txt" (Get-HookshotStamp "$kit\hookshot-kit")
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$kit\scripts\play.ps1" -Hookshot -Server 127.0.0.1 -Name Saria -Port 27510 -NoUpdate 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'Hookshot started') "Hookshot: the game starts [$(($out | Select-Object -Last 1) -join '')]"
+    Check ((Read-File "$kit\hookshot\coop.ini") -match '(?m)^name = Saria') 'Hookshot: coop.ini is written beside hookshot.exe'
+    Check ((Read-File "$kit\emulator\user\config\coop.ini") -notmatch 'Saria') "Hookshot: the emulator's coop.ini is left alone"
+    Check ((Read-File "$kit\hookshot\hookshot_coop.dll") -eq 'module v2') "Hookshot: the kit's newer module goes beside the game"
+    Write-File "$kit\hookshot-kit\patches\0001-coop-bridge.patch" "patch v2`n"
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$kit\scripts\play.ps1" -Hookshot -Server 127.0.0.1 -Name Saria -Port 27510 -NoUpdate 2>&1
+    Check ($LASTEXITCODE -ne 0 -and ($out -join ' ') -match 'run make-hookshot\.cmd again') 'Hookshot: a newer patch than the build asks for make-hookshot.cmd'
+    Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($tmp, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+
     # The launch files run all on one line (the update may replace them while they run).
-    foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd') {
+    foreach ($f in 'Host.bat', 'Join.bat', 'play.cmd', 'Host-Hookshot.bat', 'Join-Hookshot.bat') {
         $last = @(Get-Content (Join-Path $kitSrc $f) | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })
         Check ($last.Count -eq 1 -and $last[0] -match '& exit /b$') "$f is one command line ending in exit /b"
     }

@@ -852,8 +852,14 @@ private:
         if (components.size() > CoopHold::kMaxHeld) {
             components.resize(CoopHold::kMaxHeld);
         }
+#ifdef COOP_HOOKSHOT
+        // Hookshot: the hold hook asks the module (CoopHold::TheHostTable),
+        // no table in the game's memory.
+        CoopHold::TheHostTable().Publish(components, masks_);
+#else
         const auto bytes = CoopHold::Table(components, masks_);
         guest.Write(main_ + CoopHold::kTableOffset, bytes.data(), bytes.size());
+#endif
         held_before_ = std::unordered_set<u64>(components.begin(), components.end());
     }
 

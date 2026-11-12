@@ -1595,6 +1595,34 @@ TEST_CASE("objects: the AI hold's table and hook") {
     CHECK(u32(0) == 0);
 }
 
+TEST_CASE("objects: the AI hold's host table (Hookshot, no guest table)") {
+    CoopHold::HostTable t;
+    // Nothing held yet: every brain runs as the game wants.
+    CHECK(t.Apply(0x1111, 0x1230u) == 0x1230u);
+    t.Publish({0x1111, 0, 0x2222}, CoopHold::MasksFor(1));
+    CHECK(t.Count() == 2);
+    CHECK(t.Apply(0x1111, 0x1230u) == 0x1231u);
+    CHECK(t.Apply(0x2222, 0x1230u) == 0x1231u);
+    CHECK(t.Apply(0x3333, 0x1230u) == 0x1230u);
+    CHECK(t.Apply(0, 0x1230u) == 0x1230u);
+    // Mode 2 clears the bit; a component no longer listed runs its own AI again.
+    t.Publish({0x2222}, CoopHold::MasksFor(2));
+    CHECK(t.Apply(0x2222, 0x1231u) == 0x1230u);
+    CHECK(t.Apply(0x1111, 0x1231u) == 0x1231u);
+    // At most 64; past them nothing is held.
+    std::vector<std::uint64_t> many;
+    for (std::uint64_t i = 1; i <= 100; ++i) {
+        many.push_back(0x10000 + i);
+    }
+    t.Publish(many, CoopHold::MasksFor(1));
+    CHECK(t.Count() == CoopHold::kMaxHeld);
+    CHECK(t.Apply(0x10000 + CoopHold::kMaxHeld, 0) == 1u);
+    CHECK(t.Apply(0x10000 + CoopHold::kMaxHeld + 1, 0) == 0u);
+    t.Clear();
+    CHECK(t.Count() == 0);
+    CHECK(t.Apply(0x10001, 0) == 0u);
+}
+
 TEST_CASE("objects: group rules for parts and bosses") {
     using CoopObjects::IsBoss;
     using CoopObjects::PartOf;

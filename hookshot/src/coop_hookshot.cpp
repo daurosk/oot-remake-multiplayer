@@ -617,31 +617,18 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t /*b*/) {
     }
 }
 
-// coop_hold.s: a held component's calc bits become (bits & and) | or.
+// The AI hold (native-plan row 6): a held component's calc bits become
+// (bits & and) | or, from the set the Objects step published in our own
+// memory (CoopHold::TheHostTable; no guest table at main+0x3c46400).
 std::uint32_t Hold(std::uint64_t component, std::uint32_t bits) {
     if (!g_hold || component == 0) {
         return bits;
     }
-    const std::uint64_t table = CoopRuntime::MainBase() + CoopHold::kTableOffset;
-    std::uint32_t head[3] = {};
-    if (!CoopRuntime::Read(table, head, sizeof head) || head[0] == 0) {
-        return bits;
-    }
-    const std::uint32_t count =
-        head[0] < CoopHold::kMaxHeld ? head[0] : static_cast<std::uint32_t>(CoopHold::kMaxHeld);
-    std::uint64_t held[CoopHold::kMaxHeld] = {};
-    if (!CoopRuntime::Read(table + 0x10, held, 8 * count)) {
-        return bits;
-    }
-    for (std::uint32_t i = 0; i < count; ++i) {
-        if (held[i] == component) {
-            return (bits & head[1]) | head[2];
-        }
-    }
-    return bits;
+    return CoopHold::TheHostTable().Apply(component, bits);
 }
 
 void Stop() {
+    CoopHold::TheHostTable().Clear();  // (no copy stays held once co-op is off)
     if (g_on) {
         g_on = false;
         CoopHook::Shutdown();

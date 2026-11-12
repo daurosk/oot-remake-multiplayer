@@ -1650,6 +1650,31 @@ Error decode_body(Reader& r, WorldHit& m) {
   return Error::none;
 }
 
+// DUNGEON_EVENT: u8 player, scene, name.
+Error check_dungeon_event(const DungeonEvent& m) {
+  if (!valid_player_or_self(m.player_number) || m.scene.empty() || m.name.empty()) {
+    return Error::bad_value;
+  }
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  return check_string(m.name, kMaxEventNameChars);
+}
+
+Error encode_body(const DungeonEvent& m, Writer& w) {
+  COOP_TRY(check_dungeon_event(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.str(m.name);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DungeonEvent& m) {
+  m = DungeonEvent{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_TRY(r.str(m.name, kMaxEventNameChars));
+  return check_dungeon_event(m);
+}
+
 // SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
 Error check_sign_cut(const SignCut& m) {
   COOP_TRY(check_world(m.player_number, m.scene, m.hash));
@@ -1991,6 +2016,7 @@ MessageType type_of(const Message& message) {
       MessageType::save_ask,    MessageType::save_part,   MessageType::player_life,
       MessageType::pvp_mode,    MessageType::pvp_hit,   MessageType::pvp_hurt,
       MessageType::fish_lure,   MessageType::rejoin_token, MessageType::rejoin_claim,
+      MessageType::dungeon_event,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2059,6 +2085,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::world_hit:
     case MessageType::boss_room:
     case MessageType::sign_cut:
+    case MessageType::dungeon_event:
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
@@ -2147,6 +2174,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::drop_ask:
     case MessageType::boss_room:
     case MessageType::sign_cut:
+    case MessageType::dungeon_event:
     case MessageType::save_ask:
     case MessageType::save_part:
     case MessageType::pvp_mode:
@@ -2183,7 +2211,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, DropAsk> || std::is_same_v<T, BossRoom> ||
                       std::is_same_v<T, SignCut> || std::is_same_v<T, SaveAsk> ||
                       std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife> ||
-                      std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt>) {
+                      std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt> ||
+                      std::is_same_v<T, DungeonEvent>) {
           field = &m.player_number;
         }
       },
@@ -2297,6 +2326,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::world_place: return decode_as<WorldPlace>(body, out);
     case MessageType::world_hit: return decode_as<WorldHit>(body, out);
     case MessageType::sign_cut: return decode_as<SignCut>(body, out);
+    case MessageType::dungeon_event: return decode_as<DungeonEvent>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);

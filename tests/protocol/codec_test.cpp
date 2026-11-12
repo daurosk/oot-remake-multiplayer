@@ -1720,3 +1720,19 @@ TEST_CASE("bad fish lures are refused (issue 151)") {
   b[kHeaderSize + 1] = 2;  // two said, one sent
   CHECK(decode(b, m) == Error::truncated);
 }
+
+TEST_CASE("dungeon event has its number, the session channel and checked strings (deku-dungeon-2)") {
+  CHECK(static_cast<int>(MessageType::dungeon_event) == 355);
+  CHECK(channel_of(MessageType::dungeon_event) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::dungeon_event, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::dungeon_event, kChannelProgress));
+  CHECK(may_send(Sender::client, MessageType::dungeon_event));
+  CHECK(may_send(Sender::server, MessageType::dungeon_event));
+  Bytes out;
+  CHECK(encode(DungeonEvent{0, "", "A"}, out) == Error::bad_value);       // no scene
+  CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", ""}, out) == Error::bad_value);  // no name
+  CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", std::string(kMaxEventNameChars + 1, 'a')}, out) ==
+        Error::string_too_long);
+  CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", std::string(kMaxEventNameChars, 'a')}, out) ==
+        Error::none);
+}

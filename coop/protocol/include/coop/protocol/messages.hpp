@@ -112,6 +112,7 @@ enum class MessageType : std::uint16_t {
   fish_lure = 320,  // 320 to 324: the fishing pond (docs/protocol.md, "Fishing")
   rejoin_token = 345,  // 345 to 349: rejoin after a crash or drop (docs/protocol.md, "Rejoin")
   rejoin_claim = 346,
+  dungeon_event = 355,  // 355 to 359: a room gimmick's event started (docs/protocol.md, "Gimmick events")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1148,6 +1149,22 @@ struct PvpHurt {
   bool operator==(const PvpHurt&) const = default;
 };
 
+// DUNGEON_EVENT (protocol 10, deku-dungeon-2, issues 176 and 196): a room
+// gimmick's event (a switch's cutscene, as InsideTheDekuTree_Gimmick_RoomD_PlatformUp)
+// started in the sender's game. The others in that scene start the same
+// event at once, so its result (platforms up, a ladder down) runs at the same
+// time in every game, not only after the sender's cutscene ended and its
+// played flag came (docs/dungeon.md, "Live events"). Relayed to the scene,
+// never kept.
+inline constexpr std::size_t kMaxEventNameChars = 96;
+
+struct DungeonEvent {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::string name;  // the event's name, 1 to kMaxEventNameChars, no "HavePlayedEvent."
+  bool operator==(const DungeonEvent&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1158,7 +1175,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
-                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim>;
+                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent>;
 
 MessageType type_of(const Message& message);
 

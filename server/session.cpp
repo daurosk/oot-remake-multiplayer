@@ -405,6 +405,15 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_grass_cut(id, c, *cut, now_us);
     return;
   }
+  if (std::holds_alternative<DungeonEvent>(message)) {
+    // deku-dungeon-2: relayed to the others in the sender's scene, never kept.
+    set_sender(message, c.number);
+    const auto& e = std::get<DungeonEvent>(message);
+    if (e.scene != c.scene) return;  // late, from the scene it left
+    send_to_scene(e.scene, id, channel, message);
+    ++stats_.relayed;
+    return;
+  }
   if (std::holds_alternative<WorldBreak>(message) || std::holds_alternative<WorldMove>(message) ||
       std::holds_alternative<WorldPlace>(message) || std::holds_alternative<WorldHit>(message) ||
       std::holds_alternative<SignCut>(message)) {

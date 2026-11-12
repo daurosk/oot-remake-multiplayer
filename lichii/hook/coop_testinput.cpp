@@ -614,6 +614,7 @@ struct Running {
 
 struct State {
     bool checked_env = false;
+    std::optional<std::array<float, 3>> link;  // our Link's place this frame (x, height, z)
     std::filesystem::path path;  // empty: off
     std::filesystem::file_time_type seen_time{};
     std::uintmax_t seen_size = 0;
@@ -688,8 +689,10 @@ std::optional<std::array<float, 2>> PlayerXZ(Core::System& system) {
     coop::host::PlayerReader reader(memory);
     const auto p = reader.read_position();
     if (!p) {
+        g_state.link.reset();
         return std::nullopt;
     }
+    g_state.link = std::array<float, 3>{(*p)[0], (*p)[1], (*p)[2]};
     return std::array<float, 2>{(*p)[0], (*p)[2]};
 }
 
@@ -929,7 +932,13 @@ void OnFrame(Core::System& system) {
                  out.left ? out.left->x : 0, out.left ? out.left->y : 0);
     }
     for (const auto& line : log) {
-        LOG_INFO(Core, "coop: test {}", line);
+        if (line.starts_with("mark ") && g_state.link) {
+            // With the height, so a scenario can tell a rider fell off (deku-water-floor).
+            LOG_INFO(Core, "coop: test {} (Link at {:.2f} {:.2f} {:.2f})", line, (*g_state.link)[0],
+                     (*g_state.link)[1], (*g_state.link)[2]);
+        } else {
+            LOG_INFO(Core, "coop: test {}", line);
+        }
     }
     for (const auto& request : r.runner->TakeRequests()) {
         if (request.kind == Kind::warp) {

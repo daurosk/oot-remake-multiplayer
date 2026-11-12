@@ -115,6 +115,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 320 | `FISH_LURE` | 2 | client | `u8` player field, `u16` count (0 to 256), then per fish: object id (10 bytes), `u16` centimetres from the sender's nearest cast lure (`0xffff`: none within 6 m), `u8` flags (bit 0 hooked, bit 1 drawn; both 0 with `0xffff`); no fish twice. Not relayed (protocol 10; types 320 to 324 are for fishing, "Fish and lures" below) |
 | 345 | `REJOIN_TOKEN` | 0 | server | 32-byte random token, sent right after `WELCOME` (protocol 10, "Rejoin after a crash"; 345 to 349 kept for it) |
 | 346 | `REJOIN_CLAIM` | 0 | client | 32-byte token from the last `REJOIN_TOKEN`, sent before `HELLO` on a new connection |
+| 355 | `DUNGEON_EVENT` | 0 | both | `u8` player field, scene (string, 1 to 64), event name (string, 1 to 96, no `HavePlayedEvent.`): a room gimmick's event started in the sender's game. Relayed to the others in that scene (only while the sender is in it), never kept (protocol 10, branch `deku-dungeon-2`; 356 to 359 kept; [dungeon.md](dungeon.md), "Live events") |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 | 251 | `PLAYER_LIFE` | 0 | both | `u8` player field, `u16` life, `u16` max life, quarter hearts (protocol 10; 251 to 255 are the co-op HUD's, [Hearts](#hearts-player_life)) |
@@ -368,6 +369,10 @@ The rupees, hearts and ammo that an enemy, a pot, grass or a rock leaves ([objec
 
 Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from any game that still shows the drop, so the maker in its id need not be the sender.
 
+### Gimmick events (`DUNGEON_EVENT`)
+
+Protocol 10, type 355 (355 to 359 kept; branch `deku-dungeon-2`, issues 176 and 196). When a game starts one of the room gimmick events whose played flag the others hold ([dungeon.md](dungeon.md), "Live events"), it sends the event's name at once. The others in that scene start the same event as soon as their Link is near its place, instead of waiting for the played flag, which comes only at the end of the sender's event. On channel 0, reliable; the server writes the sender's number, relays it to the others in the sender's scene and keeps nothing (a game that comes later gets the played flag). A version 9 server refuses it as unknown.
+
 ### Boss rooms (`BOSS_ROOM`)
 
 Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field and keeps nothing.
@@ -424,4 +429,5 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 (chunk 11): one bump for all of these. New types: `PVP_MODE` (241), `PVP_HIT` (242), `PVP_HURT` (243), 241 to 250 kept for PvP (branch `pvp`); `PLAYER_LIFE` (251), 251 to 255 kept for the co-op HUD (branch `game-hud`). Changed: `DROP_TAKE` may carry a placed id (kind placed, maker 0, the placement hash), so the loot a bush or grass tuft lays out in every game is taken from all when one player picks it up (branch `enemy-drops`, issue 102); a version 9 game refuses such a take. Enemy shots (branch `enemy-shots`) go as `OBJECT_SPAWN` with the projectile flag and add no type. A version 9 server would not relay or check the new types, so every game and the server must be 10. The Deku Shield's two flags are shared again (max / any, branch `shop-shield-2`, issue 130); a version 9 game keeps them per player, so it would not take a shield bought elsewhere.
 - Protocol 10 (items-sync, issues 89 and 130): adds no message type (325 to 329 kept, unused). A Gold Skulltula token that appears within 5 s of its Skulltula leaving the walk, up to 12 m away, is now known as its token ([world.md](world.md), tokens).
 - Version 10 also brings `FISH_LURE` (320; 320 to 324 kept, branch `fishing-3`, issue 151), from a client only and not relayed. A version 9 server refuses it as unknown.
+- Version 10 also brings `DUNGEON_EVENT` (355; 355 to 359 kept, branch `deku-dungeon-2`, issues 176 and 196), from either side, relayed to the sender's scene, never kept.
 - Version 10 (host-fixes, issue 163): `REJOIN_TOKEN` (345) and `REJOIN_CLAIM` (346); 345 to 349 kept. A build without them is never given a takeover (it shows no token), which is only slower, so no bump of its own.

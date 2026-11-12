@@ -32,34 +32,36 @@ coop_test_name() {
 
 # Sets COOP_SERVER, COOP_PORT and COOP_NAME from an existing coop.ini (missing: empty).
 coop_read_ini() {
-    COOP_SERVER='' COOP_PORT='' COOP_NAME=''
+    COOP_SERVER='' COOP_PORT='' COOP_NAME='' COOP_PASSWORD=''
     [[ -f $1 ]] || return 0
     local line key value
     while IFS= read -r line || [[ -n $line ]]; do
         line=${line%$'\r'}
-        [[ $line =~ ^[[:space:]]*(server|port|name)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] || continue
+        [[ $line =~ ^[[:space:]]*(server|port|name|password)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] || continue
         key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
         case $key in
             server) COOP_SERVER=$value ;;
             port) COOP_PORT=$value ;;
             name) COOP_NAME=$value ;;
+            password) COOP_PASSWORD=$value ;;
         esac
     done <"$1"
 }
 
-# coop_write_ini TEMPLATE OUT SERVER PORT NAME: an empty value leaves that line commented out,
+# coop_write_ini TEMPLATE OUT SERVER PORT NAME [PASSWORD]: an empty value leaves that line commented out,
 # so co-op is off without an error in the log.
 coop_write_ini() {
-    local template=$1 out=$2 server=$3 port=$4 name=$5 line marker value
+    local template=$1 out=$2 server=$3 port=$4 name=$5 password=${6-} line marker value
     mkdir -p "$(dirname "$out")"
     {
         while IFS= read -r line || [[ -n $line ]]; do
             line=${line%$'\r'}
-            for marker in SERVER PORT NAME; do
+            for marker in SERVER PORT NAME PASSWORD; do
                 case $marker in
                     SERVER) value=$server ;;
                     PORT) value=$port ;;
                     NAME) value=$name ;;
+                    PASSWORD) value=$password ;;
                 esac
                 if [[ $line == *"@$marker@"* ]]; then
                     if [[ -n $value ]]; then
@@ -78,7 +80,7 @@ coop_write_ini() {
 # --- coop-options.ini --------------------------------------------------------------------
 
 # Prints the NAME=value lines for LICHII_COOP_* and EDEN_NX2_* switches (blank lines, # and ;
-# comments and auto_update are skipped; anything else is named on stderr).
+# comments and the kit's own lines (auto_update, server_..., upnp, pvp, ...) are skipped; anything else is named on stderr).
 kit_read_options() {
     [[ -f $1 ]] || return 0
     local line t
@@ -87,7 +89,7 @@ kit_read_options() {
         t=${t#"${t%%[![:space:]]*}"}
         t=${t%"${t##*[![:space:]]}"}
         [[ -z $t || $t == '#'* || $t == ';'* ]] && continue
-        [[ $t =~ ^auto_update[[:space:]]*= ]] && continue
+        [[ $t =~ ^(auto_update|verify_signature|server_allow|server_bind|server_password|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|pvp)[[:space:]]*= ]] && continue
         if [[ $t =~ ^((LICHII_COOP|EDEN_NX2)_[A-Z0-9_]+)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
             printf '%s=%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
         else

@@ -2,8 +2,8 @@
 # Updates a Linux co-op kit to the newest release, keeping everything of the player's.
 #   ./update.sh [--kit DIR] [--yes]   update this kit (asks before it starts, unless --yes)
 #   ./update.sh --check               only say whether a newer release is out
-#   ./update.sh --status              one line for play.sh: "newer <version>", "unfinished", or
-#                                     nothing (none, or no network)
+#   ./update.sh --status              one line for play.sh: "newer <version>", "unfinished",
+#                                     "failed <why>" (no answer from GitHub) or nothing
 #   ./update.sh --launch              update without asking, for play.sh (exit 3: updated, start
 #                                     the new kit)
 # What it does (as the Windows kit's Update.bat): reads the kit's version from VERSION.txt, asks
@@ -18,6 +18,10 @@
 # Never touched: emulator/user/ (keys, firmware, saves, settings, coop.ini, the puppet pack),
 # logs/, backup-*/ and every file that is not part of the kit. coop-options.ini keeps your
 # values; a switch the new kit adds is appended as a '#' line.
+# If the GitHub CLI (gh) is installed and logged in, the release's signature (attestation, made
+# by .github/workflows/release-attest.yml) is checked too, and a tarball that fails it is
+# refused; verify_signature = no in coop-options.ini skips that check (not the SHA-256).
+# OOT_COOP_VERIFY_NO_AUTH_CHECK=1 skips the 'gh auth status' step before it.
 # For tests: OOT_COOP_UPDATE_API names the release list (a URL or a local .json file), and the
 # download addresses in it may then be local files.
 set -u
@@ -56,10 +60,11 @@ url_ok() {
 }
 
 # The newest release with a Linux kit for this machine: prints "tag tar_url sha_url".
+# Exit 2 when the release list could not be read.
 newest_release() {
     local list
     list=$(mktemp)
-    fetch "$API" "$list" 2>/dev/null || { rm -f "$list"; return 1; }
+    fetch "$API" "$list" 2>/dev/null || { rm -f "$list"; return 2; }
     grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$list" | sed 's/.*:[[:space:]]*"//; s/"$//' >"$list.urls"
     rm -f "$list"
     local url name tag best='' best_tar='' best_sha=''
@@ -81,7 +86,10 @@ newest_release() {
 current=$(kit_version "$KIT")
 if [[ $action == status ]]; then
     if [[ -f $KIT/$MARKER ]]; then echo unfinished; exit 0; fi
-    read -r tag _ < <(newest_release) || exit 0
+    found=$(newest_release)
+    (($? == 2)) && { echo 'failed GitHub did not answer (no network, or GitHub turned the check away)'; exit 0; }
+    read -r tag _ <<<"$found"
+    [[ -n $tag ]] || exit 0
     [[ -n $current && $(kit_version_compare "$tag" "$current") == 1 ]] && echo "newer $tag"
     exit 0
 fi
@@ -111,6 +119,27 @@ fetch "$tar_url" "$work/kit.tar.gz" && fetch "$sha_url" "$work/kit.sha256" || { 
 want=$(grep -oE '[0-9a-fA-F]{64}' "$work/kit.sha256" | head -n1 | tr 'A-F' 'a-f')
 have=$(sha256sum "$work/kit.tar.gz" | cut -d' ' -f1)
 [[ -n $want && $want == "$have" ]] || { echo 'The download is damaged (its SHA-256 does not match); nothing was changed.'; exit 1; }
+# The release signature, when gh can check it (see the top of this file).
+verify=auto
+grep -qE '^[[:space:]]*verify_signature[[:space:]]*=[[:space:]]*no[[:space:]]*$' "$KIT/coop-options.ini" 2>/dev/null && verify=no
+if [[ $verify == no ]]; then
+    echo 'Signature check skipped (verify_signature = no).'
+elif [[ $tar_url != https://* ]] || ! command -v gh >/dev/null; then
+    :  # a local test download, or no GitHub CLI: the SHA-256 is the check
+elif [[ -z ${OOT_COOP_VERIFY_NO_AUTH_CHECK-} ]] && ! gh auth status >/dev/null 2>&1; then
+    echo "Signature not checked: the GitHub CLI is not logged in ('gh auth login'). The SHA-256 is checked."
+else
+    cp "$work/kit.tar.gz" "$work/${tar_url##*/}"
+    if gh attestation verify "$work/${tar_url##*/}" --repo "$REPO" --signer-workflow "$REPO/.github/workflows/release-attest.yml" >"$work/verify.txt" 2>&1; then
+        echo 'Signature: OK (signed by our release workflow).'
+    else
+        tail -n 2 "$work/verify.txt"
+        echo "The download's release signature does not check. Nothing changed."
+        echo 'A release only minutes old may not be signed yet: try again later. To update on the SHA-256 alone,'
+        echo "put 'verify_signature = no' in coop-options.ini."
+        exit 1
+    fi
+fi
 mkdir "$work/new"
 tar -xzf "$work/kit.tar.gz" -C "$work/new" || { echo 'The download is damaged (it does not unpack); nothing was changed.'; exit 1; }
 new=$(find "$work/new" -mindepth 1 -maxdepth 1 -type d | head -n1)

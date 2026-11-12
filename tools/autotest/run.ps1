@@ -84,7 +84,16 @@ param(
     # "A:--rate 256" gives one to that game's relay only. Also turns the relay on alone.
     [string[]]$NetSimArgs = @(),
     # Python 3.8+ for the relay. Default: the recomp's .venv beside the repo, else py -3 / python.
-    [string]$Python = ""
+    [string]$Python = "",
+    # What runs the games: the patched emulator (kits A and B), or Hookshot, the static recomp
+    # (docs/hookshot.md). Hookshot games are played through Hookshot's control bridge by
+    # tools\autotest\hookshot.py: the same A/B scripts, shots and logs in the run folder.
+    [ValidateSet('emulator', 'hookshot')][string]$Runtime = 'emulator',
+    # Hookshot game folders (hookshot.exe, or bin\hookshot.exe, with hookshot_coop.dll and the
+    # puppet pack in mods\). Default: hookshot-A and hookshot-B in the coop-kit folder. A folder's
+    # autotest-save\ (a copy of its user\save\) is put back over user\save\ before each run.
+    [string]$HookshotA = "",
+    [string]$HookshotB = ""
 )
 $ErrorActionPreference = 'Stop'
 
@@ -101,7 +110,7 @@ if (-not $Game) {
     $Game = Get-ChildItem (Split-Path (Split-Path $KitA)) -Filter *.nup -File -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
 }
-if (-not $TakeBaseline -and (-not $Game -or -not (Test-Path -LiteralPath $Game))) { throw "no game file; pass -Game" }
+if ($Runtime -eq 'emulator' -and -not $TakeBaseline -and (-not $Game -or -not (Test-Path -LiteralPath $Game))) { throw "no game file; pass -Game" }
 if (-not $Shots) { $Shots = Resolve "$(Split-Path $KitA)\shots" }
 $scA = "$here\scenarios\$Scenario.A.txt"
 $scB = "$here\scenarios\$Scenario.B.txt"
@@ -139,6 +148,46 @@ if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Grav
 
 $Server = Resolve $Server
 if (-not $TakeBaseline -and -not $NoCoop -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
+
+# Hookshot: tools\autotest\hookshot.py runs the whole test (server, both games, load, scenario,
+# shots, logs) and leaves them in the run folder like the emulator run does.
+if ($Runtime -eq 'hookshot') {
+    if ($steps) { throw "-Runtime hookshot plays A/B scripts only; steps files ($Scenario.steps.txt) read the emulator's logs" }
+    if ($TakeBaseline) { throw "-Runtime hookshot: copy <game>\user\save to <game>\autotest-save for a baseline" }
+    foreach ($o in 'Exe', 'Game', 'ScreenCopy', 'Fps30', 'AddOnsOff', 'ServerPassword', 'Lag', 'Jitter', 'Loss', 'Spike', 'NetSimArgs') {
+        if ($PSBoundParameters.ContainsKey($o)) { throw "-$o is for the emulator; not with -Runtime hookshot" }
+    }
+    if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
+    if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
+    if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
+    $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
+    New-Item -ItemType Directory -Force $out | Out-Null
+    $py = @()
+    if ($Python) { $py = @($Python) } else {
+        for ($d = Get-Item $here; $d; $d = $d.Parent) {
+            $v = Join-Path $d.FullName 'oot-remake-recomp\.venv\Scripts\python.exe'
+            if (Test-Path $v) { $py = @($v); break }
+        }
+        if (-not $py.Count) { if (Get-Command py -ErrorAction SilentlyContinue) { $py = @('py', '-3') } else { $py = @('python') } }
+    }
+    $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hookshot.py", 'run', '--game-a', (Resolve $HookshotA),
+        '--game-b', (Resolve $HookshotB), '--out', $out, '--name', $Scenario, '--script-a', $scA, '--every', "$Every",
+        '--timeout', "$([Math]::Max($Timeout, 900))", '--scenario-timeout', "$([Math]::Max($Timeout, 600))")
+    if (Test-Path $scB) { $a += @('--script-b', $scB) }
+    if ($NoLoad) { $a += '--no-load' } else { $a += @('--load', "$here\scenarios\load.txt") }
+    if ($NoRestore) { $a += '--no-restore' }
+    if ($KeepOpen) { $a += '--keep-open' }
+    if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
+    foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
+        $a += @('--env', $e)
+    }
+    Write-Host "hookshot: $($py[0]) $($a -join ' ')"
+    & $py[0] @a
+    $code = $LASTEXITCODE
+    $out
+    if ($code) { exit $code }
+    return
+}
 
 # The folders a kit's emulator really uses: qt-config.ini can point nand/sdmc/load/dump anywhere
 # (kits copied from another kit keep that kit's absolute paths).

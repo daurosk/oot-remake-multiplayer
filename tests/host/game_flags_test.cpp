@@ -237,6 +237,24 @@ TEST_CASE("game flags: slots the game took count against our half (issue 175)") 
   CHECK(GameFlags::set_bool(w, 0x11, false));
 }
 
+TEST_CASE("game flag store: busy while its queue has no room for us (issue 175)") {
+  auto w = game();
+  GameFlagStore store(w);
+  const auto chest = protocol::FlagKey::key64_flag(0x8c44828386468bfull);
+  CHECK_FALSE(store.busy({0x11, 0}));
+  w.mem.put_u32(kMgr + 0x40, 0x30400004u);  // the Bool queue: 4 of 8 taken
+  CHECK(store.busy({0x11, 0}));
+  CHECK_FALSE(store.write({0x11, 0, protocol::FlagKind::boolean, 1}));
+  CHECK_FALSE(store.busy({0x22, 0}));  // an Int: its own queue
+  CHECK_FALSE(store.busy(chest));
+  w.mem.put_u32(kMgr + 0xc78, 4);
+  CHECK(store.busy(chest));
+  CHECK_FALSE(store.busy({0x25, 0}));  // unknown: refused for that, not for room
+  CHECK_FALSE(store.busy({0x33, 1}));  // a BoolArray element is never written
+  coop::host::HoldFlagStore held(store, [](coop::host::FlagKey) { return false; });
+  CHECK(held.busy({0x11, 0}));  // the wrappers ask the game's store
+}
+
 TEST_CASE("game flag store: a value the game already holds takes no slot (issue 175)") {
   auto w = game();
   GameFlagStore store(w);

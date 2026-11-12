@@ -509,7 +509,10 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     if (!takes(entry)) continue;
     note_for_others(store, entry);
     const bool written = store.write(entry);
-    const bool held = !written && store.holds(key);
+    // Held, or refused only for room in the game's queue (issue 175): kept and
+    // written on a later frame, and answered with the value asked. Answering
+    // with the game's old value would turn the player's change back.
+    const bool held = !written && (store.holds(key) || store.busy(key));
     if (written) {
       ++stats_.applied;
     } else {

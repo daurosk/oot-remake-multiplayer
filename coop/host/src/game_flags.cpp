@@ -119,6 +119,21 @@ std::optional<std::uint32_t> queued(GameMemory& m, std::uint64_t mgr, std::uint6
   return std::nullopt;
 }
 
+// Half the queue stays free for the game. Its own setters (0x608a10, a Bool
+// set an actor makes every frame) abort the game when they find the queue
+// full (0x34fc280), and enqueue runs on another thread at any point of the
+// frame. Issue 175: a whole join snapshot written at once filled it. What
+// is refused for that is written again on a later frame (FlagWatcher,
+// FlagStore::busy).
+std::uint32_t ours(std::uint32_t cap) { return cap / 2; }
+
+// The queue at `word_at` has no room for us now.
+bool no_room(GameMemory& m, std::uint64_t mgr, std::uint64_t cap_at, std::uint64_t word_at) {
+  const auto cap = read_u32(m, mgr + cap_at);
+  const auto word = read_u32(m, mgr + word_at);
+  return cap && word && (*word & kTakenMask) >= ours(*cap);
+}
+
 // Takes a slot, writes it, marks it finished: the game's setter (0x682b20).
 // `word8`: a u32 the setter also stores at slot + 8 (the UInt setter stores 1).
 bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
@@ -130,15 +145,9 @@ bool enqueue(WritableGameMemory& m, std::uint64_t mgr, std::uint64_t cap_at,
   if (!cap || !buf) return false;
   const std::uint64_t word_addr = mgr + word_at;
   std::optional<std::uint32_t> taken_word;
-  // Half the queue stays free for the game. Its own setters (0x608a10, a Bool
-  // set an actor makes every frame) abort the game when they find the queue
-  // full (0x34fc280), and this runs on another thread at any point of the
-  // frame. Issue 175: a whole join snapshot written at once filled it. What
-  // is refused here is written again on a later frame (FlagWatcher).
-  const std::uint32_t ours = *cap / 2;
   for (int t = 0; t < kCasTries && !taken_word; ++t) {
     const auto w = read_u32(m, word_addr);
-    if (!w || (*w & kTakenMask) >= ours) return false;
+    if (!w || (*w & kTakenMask) >= ours(*cap)) return false;
     if (m.compare_exchange_u32(word_addr, *w, *w + 1) == w) taken_word = *w;
   }
   if (!taken_word) return false;
@@ -373,6 +382,16 @@ std::optional<protocol::FlagEntry> GameFlagStore::read(FlagKey key) {
     return e;
   }
   return std::nullopt;
+}
+
+bool GameFlagStore::busy(FlagKey key) {
+  const auto mgr = manager(memory_);
+  if (!mgr) return false;
+  if (key.kind == FlagKeyKind::key64) return no_room(memory_, *mgr, kKeyQueueCap, kKeyQueueWord);
+  if (key.kind != FlagKeyKind::named || key.index != 0) return false;
+  if (find(memory_, *mgr, kBool, key.hash)) return no_room(memory_, *mgr, kBool.queue_cap, kBool.queue_word);
+  if (find(memory_, *mgr, kInt, key.hash)) return no_room(memory_, *mgr, kInt.queue_cap, kInt.queue_word);
+  return false;
 }
 
 bool GameFlagStore::write(const protocol::FlagEntry& entry) {

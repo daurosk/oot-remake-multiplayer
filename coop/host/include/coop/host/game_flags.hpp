@@ -98,6 +98,8 @@ class GameFlagStore final : public FlagStore {
   explicit GameFlagStore(WritableGameMemory& memory) : memory_(memory) {}
   std::optional<protocol::FlagEntry> read(FlagKey key) override;
   bool write(const protocol::FlagEntry& entry) override;
+  // The queue this flag's writes go to has half its slots taken or more.
+  bool busy(FlagKey key) override;
 
  private:
   WritableGameMemory& memory_;

@@ -33,6 +33,7 @@ class FakeStore : public FlagStore {
   std::map<FlagKey, proto::FlagEntry> values;
   std::set<FlagKey> unreadable;
   std::set<FlagKey> unwritable;
+  std::set<FlagKey> no_room;  // refused for room in the game's queue (busy)
   int writes = 0;
 
   void set(FlagKey key, std::uint32_t value) { values[key] = entry(key, value); }
@@ -46,11 +47,12 @@ class FakeStore : public FlagStore {
   }
   bool write(const proto::FlagEntry& e) override {
     const FlagKey key = key_of(e);
-    if (unwritable.contains(key) || !values.contains(key)) return false;
+    if (unwritable.contains(key) || no_room.contains(key) || !values.contains(key)) return false;
     ++writes;
     values[key] = e;
     return true;
   }
+  bool busy(FlagKey key) override { return no_room.contains(key); }
 };
 
 SharedFlags shared() { return SharedFlags({kChest, kDoor, kKey0, kKey1}); }
@@ -341,6 +343,23 @@ TEST_CASE("flag watcher, host: a FLAG_SET is applied and answered with what came
   CHECK(store.get(kHearts) == 0);
   CHECK(w.stats().answers_sent == 2);
   CHECK(w.frame(store).empty());  // the write is not seen as a change
+}
+
+TEST_CASE("flag watcher, host: a FLAG_SET refused for queue room is answered as asked and written later (issue 175)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  store.no_room.insert(kChest);
+  CHECK(w.receive(proto::FlagSet{2, {entry(kChest, 1)}}));
+  // Not the game's old 0: that would turn the player's change back.
+  CHECK(only<proto::FlagState>(w.frame(store)) == std::vector{entry(kChest, 1)});
+  CHECK(store.get(kChest) == 0);
+  CHECK(w.frame(store).empty());  // still no room: kept, nothing sent
+  CHECK(store.get(kChest) == 0);
+  store.no_room.clear();
+  CHECK(w.frame(store).empty());  // written now, and not seen as a change of the host's
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.frame(store).empty());
 }
 
 TEST_CASE("flag watcher, host: a FLAG_STATE is written into the host's game and not sent back") {

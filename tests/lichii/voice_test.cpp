@@ -70,3 +70,23 @@ TEST_CASE("voice settings: the engine's, and where a voice comes from") {
     CHECK(mouth[1] == doctest::Approx(2.0f + 1.44f));
     CHECK(MouthOf({1, 2, 3}, 0.0f)[1] == doctest::Approx(3.2f));
 }
+
+TEST_CASE("voice microphone: push to talk opens it only while the key is held or the spurt ends") {
+    Settings ptt;  // the default: push to talk
+    CHECK_FALSE(MicWanted(ptt, true, false, false));  // connected, never pressed: no microphone
+    CHECK(MicWanted(ptt, true, true, false));          // key held
+    CHECK(MicWanted(ptt, true, false, true));          // let go: the tail and the end frame
+    CHECK_FALSE(MicWanted(ptt, false, true, false));   // not connected or not in the game
+    Settings muted = ptt;
+    muted.muted = true;
+    CHECK_FALSE(MicWanted(muted, true, true, true));
+    Settings off;
+    off.mode = coop::voice::Mode::off;
+    CHECK_FALSE(MicWanted(off, true, true, true));
+    Settings open;
+    open.mode = coop::voice::Mode::open_mic;
+    CHECK(MicWanted(open, true, false, false));
+    CHECK_FALSE(MicWanted(open, false, false, false));
+    open.muted = true;
+    CHECK_FALSE(MicWanted(open, true, false, false));
+}

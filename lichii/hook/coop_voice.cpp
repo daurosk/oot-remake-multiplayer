@@ -82,6 +82,20 @@ coop::voice::Settings EngineSettings(const Settings& s, bool camera_known) {
     return e;
 }
 
+bool MicWanted(const Settings& s, bool can_send, bool key_held, bool talking) {
+    if (!can_send || s.muted) {
+        return false;
+    }
+    switch (s.mode) {
+    case coop::voice::Mode::open_mic:
+        return true;
+    case coop::voice::Mode::push_to_talk:
+        return key_held || talking;
+    default:
+        return false;
+    }
+}
+
 coop::voice::Vec3 MouthOf(const std::array<float, 3>& feet, float head) {
     const float up = head > 0.3f ? head * 0.9f : 1.2f;
     return {feet[0], feet[1] + up, feet[2]};
@@ -117,6 +131,7 @@ bool g_settings_read = false;
 bool g_camera_known = false;
 bool g_mic_on = false;
 std::atomic<std::uint64_t> g_mic_said{0};
+std::atomic<bool> g_mic_opened{false};
 
 std::string EnvOf(const char* name) {
     const char* v = std::getenv(name);
@@ -233,12 +248,18 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
             g_camera_known = view.has_value();
             e->configure(EngineSettings(g_settings, g_camera_known));
         }
-        const bool want = session != nullptr && our_feet && g_settings.mode != coop::voice::Mode::off &&
-                          g_backend.mic_start && g_backend.mic_read;
+        const bool can_send = session != nullptr && our_feet.has_value() && g_backend.mic_start &&
+                              g_backend.mic_read;
+        const bool key = g_settings.mode == coop::voice::Mode::push_to_talk && g_backend.key_down &&
+                         g_backend.key_down(g_settings.key);
+        const bool want = MicWanted(g_settings, can_send, key, e->talking());
         if (want && !g_mic_on) {
             g_mic_on = g_backend.mic_start();
             if (!g_mic_on && g_mic_said.exchange(1) == 0) {
                 LOG_WARNING(Core, "coop: voice: the microphone did not start; the others hear nothing");
+            } else if (g_mic_on && g_mic_opened.exchange(true) == false) {
+                LOG_INFO(Core, "coop: voice: microphone opened ({}); closed again when not talking",
+                         g_settings.mode == coop::voice::Mode::open_mic ? "open mic" : "push to talk held");
             }
         } else if (!want && g_mic_on) {
             // Close the spurt if we were talking, then let the microphone go.
@@ -249,7 +270,6 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
             g_mic_on = false;
         }
         if (g_mic_on) {
-            const bool key = g_backend.key_down && g_backend.key_down(g_settings.key);
             std::array<std::int16_t, 4800> buffer{};
             for (int round = 0; round < 4; ++round) {  // at most 400 ms a frame
                 const int n = g_backend.mic_read(buffer.data(), static_cast<int>(buffer.size()));

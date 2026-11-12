@@ -199,6 +199,11 @@ struct SessionConfig {
   // stale) hears the whole scene. The games fade a voice out to silence at
   // their own range (default 30 m), so this is a little larger.
   float voice_range_m = 35.0f;
+  // At most this many voices reach one player at once (the first to start
+  // talking keep it until they stop or are quiet voice_quiet_us); 0: no cap.
+  // Bounds the host's upload with 16 players in one room.
+  std::uint32_t voice_max_speakers = 4;
+  std::uint64_t voice_quiet_us = 400'000;
   // How often tick runs the ownership rules.
   std::uint64_t ownership_check_us = 250'000;
   // Every this often a player's OBJECT_PRESENT is answered with OBJECT_OWNER
@@ -265,6 +270,7 @@ struct Stats {
   std::uint64_t voice_relayed = 0;      // VOICE_FRAME passed on (once per frame)
   std::uint64_t voice_out_of_range = 0; // a listener left out: too far from the speaker
   std::uint64_t voice_unplaced = 0;     // from a player whose scene is not known yet: dropped
+  std::uint64_t voice_capped = 0;       // a listener left out: voice_max_speakers others were talking
   // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
@@ -427,6 +433,9 @@ class Session {
     double reliable_budget = 0;
     double unreliable_budget = 0;
     double voice_budget = 0;
+    // Proximity voice: the speakers this player hears now, by number, and
+    // when each one's last frame was passed on (voice_max_speakers).
+    std::map<std::uint8_t, std::uint64_t> voices_heard;
     double byte_budget = 0;
     std::uint64_t budget_time = 0;
     std::optional<std::uint32_t> address;

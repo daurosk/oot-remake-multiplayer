@@ -3982,6 +3982,38 @@ TEST_CASE("a voice frame with no known place goes to the whole scene, and range 
   CHECK(r.session.stats().voice_unplaced == 1);
 }
 
+TEST_CASE("one player hears at most voice_max_speakers voices at once") {
+  SessionConfig config;
+  config.voice_max_speakers = 2;
+  Harness h(config);
+  for (ConnectionId p = 1; p <= 4; ++p) {
+    h.join(p, "P" + std::to_string(p));
+    h.receive(p, sample_at("KokiriForest", {static_cast<float>(p), 0, 0}), kChannelPlayerSamples);
+  }
+  h.clear();
+  h.receive(1, voice_frame(1), kChannelVoice);
+  h.receive(2, voice_frame(1), kChannelVoice);
+  h.receive(3, voice_frame(1), kChannelVoice);  // a third voice for player 4: left out
+  auto heard = [&](ConnectionId to) {
+    std::vector<std::uint8_t> from;
+    for (const auto& v : messages_to<VoiceFrame>(h, to)) from.push_back(v.player_number);
+    return from;
+  };
+  CHECK(heard(4) == std::vector<std::uint8_t>{1, 2});
+  CHECK(h.session.stats().voice_capped >= 1);
+  // Player 1 stops: its end goes out, and player 3 gets the place.
+  h.clear();
+  h.receive(1, voice_frame(2, voice::end), kChannelVoice);
+  h.receive(3, voice_frame(2), kChannelVoice);
+  CHECK(heard(4) == std::vector<std::uint8_t>{1, 3});
+  // Player 2 goes quiet without an end (lost): after voice_quiet_us its place frees too.
+  h.clear();
+  h.now += 500'000;
+  h.receive(3, sample_at("KokiriForest", {3, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, voice_frame(3), kChannelVoice);
+  CHECK(heard(4) == std::vector<std::uint8_t>{1});
+}
+
 TEST_CASE("voice frames have a budget of their own, apart from the samples'") {
   ObjectHarness h;
   h.receive(1, sample_at("KokiriForest", {0, 0, 0}), kChannelPlayerSamples);

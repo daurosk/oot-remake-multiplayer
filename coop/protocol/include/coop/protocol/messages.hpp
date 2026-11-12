@@ -1302,12 +1302,13 @@ struct DungeonEvent {
   bool operator==(const DungeonEvent&) const = default;
 };
 
-// VOICE_FRAME (protocol 12, branch proximity-voip): 20 ms of the sender's
+// VOICE_FRAME (protocol 11, branch proximity-voip): 20 ms of the sender's
 // microphone as one Opus packet (48 kHz mono), or an empty packet with
 // voice::end that closes a talk spurt (the gate closed). Channel 5,
 // unreliable. The server writes the sender's number and relays it to the
 // players in the sender's scene whose Link is within the voice range of the
 // sender's (docs/protocol.md, "Voice"); never kept.
+// A ceiling, not the size: at 24 kbit/s a frame is about 60 bytes.
 inline constexpr std::size_t kMaxVoiceBytes = 400;
 namespace voice {
 inline constexpr std::uint8_t end = 1u << 0;  // the talk spurt ends here; no audio

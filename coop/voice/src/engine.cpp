@@ -191,7 +191,10 @@ void Engine::render(float* const* out, int channels, int frames, std::uint64_t n
   mono.resize(static_cast<std::size_t>(frames));
   for (std::size_t p = 1; p <= kMaxSpeakers; ++p) {
     Speaker& s = *speakers_[p];
-    std::lock_guard lock(s.mutex);
+    // The game's own sound waits on this thread: a speaker busy elsewhere (a
+    // push from the network, a move from the game) sits this 5 ms out.
+    std::unique_lock lock(s.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) continue;
     if (s.pcm_at >= kSamplesPerFrame && s.jitter.queued() == 0 && !s.jitter.playing()) continue;
     // This block's samples, one 20 ms frame decoded whenever the last is used.
     int made = 0;

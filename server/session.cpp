@@ -1799,12 +1799,27 @@ void Session::on_voice(ConnectionId id, const Connection& c, VoiceFrame& m,
   // out of range mid-sentence stops at once instead of filling the gap.
   const bool end = (m.flags & voice::end) != 0;
   const bool ranged = config_.voice_range_m > 0.0f && !end && placed(c);
-  for (const auto& [other, o] : connections_) {
+  for (auto& [other, o] : connections_) {
     if (other == id || o.state != State::joined || o.scene != c.scene) continue;
+    if (end) {
+      o.voices_heard.erase(c.number);
+      actions_.push_back(SendAction{other, kChannelVoice, bytes});
+      continue;
+    }
     if (ranged && placed(o) && metres(*c.position, *o.position) > config_.voice_range_m) {
       ++stats_.voice_out_of_range;
       continue;
     }
+    if (config_.voice_max_speakers > 0 && !o.voices_heard.contains(c.number)) {
+      std::erase_if(o.voices_heard, [&](const auto& v) {
+        return now_us > v.second && now_us - v.second > config_.voice_quiet_us;
+      });
+      if (o.voices_heard.size() >= config_.voice_max_speakers) {
+        ++stats_.voice_capped;
+        continue;
+      }
+    }
+    o.voices_heard[c.number] = now_us;
     actions_.push_back(SendAction{other, kChannelVoice, bytes});
   }
   ++stats_.voice_relayed;

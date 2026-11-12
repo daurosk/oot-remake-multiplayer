@@ -311,6 +311,11 @@ TEST_CASE("colours: cloth colour, the shade and linear values") {
     CHECK(light[1] < 0.5f);
     const auto white = CoopColors::ClothColor(0x2050FF, 1.0f);
     CHECK(white[0] == doctest::Approx(1.0f));
+    // Divided by the texture's own colour: a mid-grey base gives more than 4 times the value.
+    const auto based = CoopColors::ClothColor(0xFF0000, 0.0f, 0x808080);
+    CHECK(based[0] > 4.0f);
+    CHECK(based[1] == doctest::Approx(0.0f));
+    CHECK(based[3] == doctest::Approx(1.0f));
 }
 
 TEST_CASE("colours: cloth, the tunic strong and the undershirt light, through the game's calls") {

@@ -364,17 +364,22 @@ ClothSettings ClothSettings::FromEnvironment() {
         const float f = std::strtof(v->c_str(), &end);
         if (end != v->c_str() && std::isfinite(f) && f >= 0.0f && f <= 1.0f) s.lighten = f;
     }
+    if (auto v = Env("LICHII_COOP_COLOR_BASE")) {
+        if (const auto rgb = Parse(*v)) s.base = *rgb;
+    }
     if (auto v = Env("LICHII_COOP_DEBUG_COLOR")) s.probe = !v->empty() && *v != "0";
     if (auto v = Env("LICHII_COOP_COLOR_SWEEP")) s.sweep = !v->empty() && *v != "0";
     return s;
 }
 
-Rgba ClothColor(std::uint32_t rgb, float lighten) {
+Rgba ClothColor(std::uint32_t rgb, float lighten, std::uint32_t base) {
     lighten = std::isfinite(lighten) ? std::clamp(lighten, 0.0f, 1.0f) : 0.0f;
     Rgba out{0, 0, 0, 1.0f};
     for (int i = 0; i < 3; ++i) {
         const float c = static_cast<float>((rgb >> (16 - 8 * i)) & 0xFF) / 255.0f;
-        out[static_cast<std::size_t>(i)] = Linear(c + (1.0f - c) * lighten);
+        const float b = static_cast<float>((base >> (16 - 8 * i)) & 0xFF) / 255.0f;
+        out[static_cast<std::size_t>(i)] =
+            Linear(c + (1.0f - c) * lighten) / std::max(Linear(b), 0.01f);
     }
     return out;
 }
@@ -553,7 +558,8 @@ std::optional<ClothCall> Cloth::Next(CoopPuppet::Guest& guest, std::uint64_t mai
                 return std::nullopt;
             }
             const Found& f = found_[found_i_];
-            Rgba value = ClothColor(paint_color_, f.light ? settings.lighten : 0.0f);
+            Rgba value = f.light ? ClothColor(paint_color_, settings.lighten)
+                                  : ClothColor(paint_color_, 0.0f, settings.base);
             if (settings.sweep && pk_ != static_cast<std::size_t>(sweep_ - 1) % kinds.size()) {
                 value = Rgba{1.0f, 1.0f, 1.0f, 1.0f};
             }

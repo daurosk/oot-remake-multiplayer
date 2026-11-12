@@ -165,6 +165,9 @@ struct ClothSettings {
     std::vector<std::string> light{"Mt_Inner", "Mt_Cloth_Pants"};
     std::string param = "ns_param_color0";
     float lighten = 0.55f;   // how far the light shade goes toward white
+    // LICHII_COOP_COLOR_BASE: the strong materials' own texture colour (#RRGGBB); the
+    // value is divided by it, so a multiplier on a green texture still gives the colour.
+    std::uint32_t base = 0xFFFFFF;
     bool probe = false;      // LICHII_COOP_DEBUG_COLOR: log every colour parameter found
     // LICHII_COOP_COLOR_SWEEP: debug, every 5 s the next of ns_param_color1 to 5 takes the
     // colour on the strong materials and the others go back to white (finds the one shown).
@@ -186,7 +189,7 @@ std::string DumpParams(CoopPuppet::Guest& guest, std::uint64_t unit, std::int32_
 
 // The colour as the material takes it: linear floats, alpha 1. `lighten` 0
 // is the colour itself, 1 white.
-Rgba ClothColor(std::uint32_t rgb, float lighten);
+Rgba ClothColor(std::uint32_t rgb, float lighten, std::uint32_t base = 0xFFFFFF);
 
 // One game call the planner wants (the director's cave runs it).
 struct ClothCall {

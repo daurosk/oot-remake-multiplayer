@@ -406,6 +406,14 @@ Trip::Actions Trip::Left(std::uint8_t number) {
 
 Trip::Actions Trip::Tick(const Local& local, std::uint64_t now_us) {
     Actions a;
+    // A trip that ended (settle given up, left) in the middle of a load with
+    // our request still there: emptied on the first tick outside a load, or a
+    // request the game keeps taking would load the scene again and again.
+    if (phase_ == Phase::idle && requested_ && !local.loading_banc && local.scene) {
+        a.cancel_scene = true;
+        requested_ = false;
+        return a;
+    }
     if (phase_ == Phase::travelling) {
         if (local.scene && *local.scene == scene_) {
             phase_ = Phase::settling;

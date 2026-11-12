@@ -642,3 +642,30 @@ TEST_CASE("teleport: a request still there is emptied when leaving or a new /tel
     CHECK_FALSE(trip.Tick(arrived, 2 * kS).cancel_scene);
     CHECK(trip.Start(3, "Sam", arrived, 3 * kS).cancel_scene);
 }
+
+TEST_CASE("teleport: a settle given up during a load empties the request after the load (issue 197)") {
+    const Local here = At("KakarikoVillage_Child", 0, 0, 0);
+    Trip trip;
+    trip.Start(2, "Saria", here, 0);
+    REQUIRE(trip.Accepted(2, Target("Graveyard_Child", -35.7f, 98.0f, 8.5f), here, kS).scene);
+    Local arrived = At("Graveyard_Child", 0, 0, 0);
+    arrived.reserved_banc = "Graveyard_Child";
+    CHECK_FALSE(trip.Tick(arrived, 2 * kS).cancel_scene);
+    // The arrival keeps taking our request: a load again, past the settle's give-up.
+    Local loading = arrived;
+    loading.loading_banc = true;
+    auto a = trip.Tick(loading, 2 * kS + 2 * Trip::kGiveUpUs);
+    CHECK(Has(a.lines, "did not settle"));
+    CHECK(trip.phase() == Trip::Phase::idle);
+    CHECK_FALSE(a.cancel_scene);  // never during a load
+    CHECK_FALSE(trip.Tick(loading, 3 * kS + 2 * Trip::kGiveUpUs).cancel_scene);
+    // Loading, the scene unreadable: still nothing.
+    Local gone;
+    CHECK_FALSE(trip.Tick(gone, 4 * kS + 2 * Trip::kGiveUpUs).cancel_scene);
+    // The first tick outside the load empties it, once.
+    a = trip.Tick(arrived, 5 * kS + 2 * Trip::kGiveUpUs);
+    CHECK(a.cancel_scene);
+    CHECK_FALSE(a.restore_start);
+    CHECK_FALSE(trip.Tick(arrived, 6 * kS + 2 * Trip::kGiveUpUs).cancel_scene);
+    CHECK_FALSE(trip.Left(2).cancel_scene);
+}

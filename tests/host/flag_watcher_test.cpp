@@ -1538,3 +1538,22 @@ TEST_CASE("doubled chest: once its get scene ends, a key counts again") {
   CHECK(store.tokens() == 6);
   CHECK(w.stats().doubled_gains == 0);
 }
+
+TEST_CASE("flag watcher, host: a busy count delta is added later, summed, and the other answers still go") {
+  TokenStore store = token_game();  // 5 tokens
+  FlagWatcher w(token_shared(), FlagRole::host);
+  w.frame(store);
+  store.no_room.insert(kTokens);
+  CHECK(w.receive(proto::FlagSet{2, {entry(kChest, 1), token_delta(2)}}));
+  // The Bool's answer goes out; no delta in it (a FLAG_STATE cannot carry one).
+  CHECK(entries(w.frame(store)) == std::vector{entry(kChest, 1)});
+  CHECK(w.receive(proto::FlagSet{3, {token_delta(3)}}));
+  CHECK(w.frame(store).empty());
+  CHECK(store.tokens() == 5);
+  store.no_room.clear();
+  // Both gains, added once, and the new total stated.
+  CHECK(entries(w.frame(store)) == std::vector{token_total(10)});
+  CHECK(store.tokens() == 10);
+  CHECK(w.frame(store).empty());
+  CHECK(w.stats().entries_unsent == 0);
+}

@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -88,4 +89,33 @@ TEST_CASE("actor events: several game threads push at once, nothing is torn") {
     for (const auto& e : got) {
         CHECK(e.b == (e.a ^ 0xabcdefu));
     }
+}
+
+TEST_CASE("actor events: a hit given goes in through the next Life step once, and the game's own is reported") {
+    static Ring ring;
+    static CoopActorEvents::LifeTable table;
+    CHECK(CoopActorEvents::Step(ring, table, 0x500, 0) == 0);  // (nothing given, no hit)
+    CHECK(ring.Drain().empty());
+    CHECK(table.Give(0x500, 3));
+    CHECK(table.Give(0x500, 2));
+    CHECK(table.Pending(0x500) == 5);
+    // The game's own hit of 1 is pushed; the step takes 1 + 5.
+    CHECK(CoopActorEvents::Step(ring, table, 0x500, 1) == 6);
+    auto got = ring.Drain();
+    REQUIRE(got.size() == 1);
+    CHECK(got[0].kind == Kind::Damage);
+    CHECK(CoopActorEvents::Amount(got[0].b) == 1);
+    CHECK(CoopActorEvents::Step(ring, table, 0x500, 0) == 0);  // (taken once)
+    CHECK(table.Take(0x600) == 0);
+    CHECK_FALSE(table.Give(0, 1));
+    table.Clear();
+    CHECK(table.Pending(0x500) == 0);
+}
+
+TEST_CASE("actor events: a create keeps its name") {
+    Event e;
+    e.SetName("Shootable_DekuSeed");
+    CHECK(e.Name() == "Shootable_DekuSeed");
+    e.SetName(std::string(40, 'x'));
+    CHECK(e.Name().size() == 31);
 }

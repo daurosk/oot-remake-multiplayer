@@ -12,6 +12,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace CoopActorEvents {
@@ -20,7 +23,7 @@ enum class Kind : std::uint32_t {
     None = 0,
     Create = 1,  // a create request: name, handle slot, caller, create argument
     Delete = 2,  // a delete request: actor, reason
-    Damage = 3,  // a Life step's frame damage: Life component, amount
+    Damage = 3,  // a Life step's frame damage (not 0): Life component, amount
 };
 
 struct Event {
@@ -29,6 +32,18 @@ struct Event {
     std::uint64_t b = 0;       // Create: the handle slot; Delete: the reason; Damage: the amount (int32)
     std::uint64_t from = 0;    // Create: the caller (guest return address)
     std::uint64_t place[3]{};  // Create: the asked position (bits of 3 floats, 0 when not read)
+    std::uint64_t name[4]{};   // Create: the name's first 31 bytes, 0-terminated (read at the request)
+
+    std::string Name() const {
+        char text[sizeof name + 1] = {};
+        std::memcpy(text, name, sizeof name);
+        return std::string(text);
+    }
+    void SetName(std::string_view n) {
+        char text[sizeof name] = {};
+        std::memcpy(text, n.data(), n.size() < sizeof text - 1 ? n.size() : sizeof text - 1);
+        std::memcpy(name, text, sizeof name);
+    }
 };
 
 // Many writers, one reader. A slot's sequence says which push it holds:
@@ -49,6 +64,9 @@ public:
         s.from.store(e.from, std::memory_order_relaxed);
         for (int i = 0; i < 3; ++i) {
             s.place[i].store(e.place[i], std::memory_order_relaxed);
+        }
+        for (int i = 0; i < 4; ++i) {
+            s.name[i].store(e.name[i], std::memory_order_relaxed);
         }
         s.seq.store(n + 1, std::memory_order_release);
     }
@@ -77,6 +95,9 @@ public:
             for (int i = 0; i < 3; ++i) {
                 e.place[i] = s.place[i].load(std::memory_order_relaxed);
             }
+            for (int i = 0; i < 4; ++i) {
+                e.name[i] = s.name[i].load(std::memory_order_relaxed);
+            }
             std::atomic_thread_fence(std::memory_order_acquire);
             if (seq != tail_ + 1 || s.seq.load(std::memory_order_relaxed) != seq) {
                 ++gone;  // (written over by a later push)
@@ -101,6 +122,7 @@ private:
         std::atomic<std::uint32_t> kind{0};
         std::atomic<std::uint64_t> a{0}, b{0}, from{0};
         std::atomic<std::uint64_t> place[3]{};
+        std::atomic<std::uint64_t> name[4]{};
     };
     std::atomic<std::uint64_t> head_{0};
     std::uint64_t tail_ = 0;  // (the reader's)
@@ -115,6 +137,107 @@ inline Ring& TheRing() {
 // Damage amounts come as the low 32 bits of the event: an int32.
 constexpr std::int32_t Amount(std::uint64_t b) {
     return static_cast<std::int32_t>(static_cast<std::uint32_t>(b));
+}
+
+// Damage another player dealt, for the game's own Life step to take (the
+// LIFE_STEP hook adds it to that frame's sum, on the game's thread): no
+// write into the game's damage field from our thread. One writer (the
+// Objects step), the game's job threads taking. A component keeps its slot
+// until Clear (a new scene); a full table refuses (Give answers false).
+class LifeTable {
+public:
+    static constexpr std::size_t kSlots = 256;
+    static constexpr std::size_t kProbes = 16;
+
+    bool Give(std::uint64_t component, std::int32_t amount) noexcept {
+        if (component == 0 || amount == 0) {
+            return false;
+        }
+        for (std::size_t i = 0; i < kProbes; ++i) {
+            Slot& s = slots_[(Hash(component) + i) % kSlots];
+            std::uint64_t key = s.key.load(std::memory_order_acquire);
+            if (key == 0) {
+                // (only this writer inserts: no race on the key)
+                s.key.store(component, std::memory_order_release);
+                key = component;
+            }
+            if (key == component) {
+                s.add.fetch_add(amount, std::memory_order_acq_rel);
+                return true;
+            }
+        }
+        return false;
+    }
+    // What the step adds this frame (0 for a component never given any).
+    std::int32_t Take(std::uint64_t component) noexcept {
+        Slot* s = Find(component);
+        if (s == nullptr || s->add.load(std::memory_order_relaxed) == 0) {
+            return 0;
+        }
+        return s->add.exchange(0, std::memory_order_acq_rel);
+    }
+    // Given and not yet taken (for the Objects step's fallback and logs).
+    std::int32_t Pending(std::uint64_t component) noexcept {
+        Slot* s = Find(component);
+        return s == nullptr ? 0 : s->add.load(std::memory_order_acquire);
+    }
+    void Clear() noexcept {
+        for (auto& s : slots_) {
+            s.add.store(0, std::memory_order_relaxed);
+            s.key.store(0, std::memory_order_release);
+        }
+    }
+
+private:
+    struct Slot {
+        std::atomic<std::uint64_t> key{0};
+        std::atomic<std::int32_t> add{0};
+    };
+    static std::size_t Hash(std::uint64_t c) noexcept {
+        return static_cast<std::size_t>(((c >> 4) * 0x9e3779b97f4a7c15ull) >> 56);
+    }
+    Slot* Find(std::uint64_t component) noexcept {
+        if (component == 0) {
+            return nullptr;
+        }
+        for (std::size_t i = 0; i < kProbes; ++i) {
+            Slot& s = slots_[(Hash(component) + i) % kSlots];
+            const std::uint64_t key = s.key.load(std::memory_order_acquire);
+            if (key == 0) {
+                return nullptr;
+            }
+            if (key == component) {
+                return &s;
+            }
+        }
+        return nullptr;
+    }
+    std::array<Slot, kSlots> slots_{};
+};
+
+inline LifeTable& TheLifeTable() {
+    static LifeTable table;
+    return table;
+}
+
+// Set once the game's Life step has called the module (the hook is in this
+// Hookshot build): only then does a hit go in through LifeTable.
+inline std::atomic<bool>& LifeStepSeen() {
+    static std::atomic<bool> seen{false};
+    return seen;
+}
+
+// One Life step through the module: the damage the game dealt this frame
+// (pushed as a Damage event when not 0) and the sum the step then takes.
+inline std::int32_t Step(Ring& ring, LifeTable& table, std::uint64_t component, std::int32_t sum) noexcept {
+    if (sum != 0) {
+        Event e;
+        e.kind = Kind::Damage;
+        e.a = component;
+        e.b = static_cast<std::uint32_t>(sum);
+        ring.Push(e);
+    }
+    return sum + table.Take(component);
 }
 
 } // namespace CoopActorEvents

@@ -633,6 +633,12 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         e.b = b;
         e.from = std::exchange(t_create_from, 0);
         const std::uint64_t arg = std::exchange(t_create_arg, 0);
+        std::uint64_t text = 0;  // (x1: its first 8 bytes point at the name; on the caller's stack: read now)
+        char name[32] = {};
+        if (a != 0 && CoopRuntime::Read(a, &text, sizeof text) && text != 0 &&
+            CoopRuntime::Read(text, name, sizeof name - 1)) {
+            e.SetName(name);
+        }
         float place[3] = {};
         if (arg != 0 && CoopRuntime::Read(arg, place, sizeof place)) {
             for (int i = 0; i < 3; ++i) {
@@ -642,14 +648,23 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         CoopActorEvents::TheRing().Push(e);
         return 1;
     }
-    case HOS_COOP_WORLD_DELETE_REQUEST:
-    case HOS_COOP_WORLD_LIFE_DAMAGE: {
+    case HOS_COOP_WORLD_DELETE_REQUEST: {
         CoopActorEvents::Event e;
-        e.kind = event == HOS_COOP_WORLD_DELETE_REQUEST ? CoopActorEvents::Kind::Delete
-                                                        : CoopActorEvents::Kind::Damage;
+        e.kind = CoopActorEvents::Kind::Delete;
         e.a = a;
         e.b = b;
         CoopActorEvents::TheRing().Push(e);
+        return 1;
+    }
+    case HOS_COOP_WORLD_LIFE_STEP: {  // (b: our C's int32 sum, in hookshot.exe's memory)
+        auto* sum = reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(b));
+        if (sum == nullptr) {
+            return 0;
+        }
+        if (!CoopActorEvents::LifeStepSeen().exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO(Core, "coop: actors: the game's Life step calls the module (patch 0007): hits go in through it");
+        }
+        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, *sum);
         return 1;
     }
     default:

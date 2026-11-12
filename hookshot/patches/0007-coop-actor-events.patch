@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:30:00 -0900
-Subject: [PATCH] Co-op actor events: creates, deletes and damage straight to
+Subject: [PATCH] Co-op actor events: creates, deletes and the Life step go to
  the module
 
 nx2/coop_actor_lift.py adds three lift-time hooks that hand actor
@@ -9,21 +9,23 @@ events to the co-op module through host/coop_world.c (patch 0005):
 the create request (main+0x372a94: CREATE_FROM with the caller and the
 create argument, then CREATE_REQUEST with the name and the handle
 slot), the delete request (main+0xa64bc: DELETE_REQUEST with the actor
-and the reason) and the Life component's frame damage sum
-(main+0x49dcb8: LIFE_DAMAGE, only when it is not 0). The words and the
-build id are checked; a hook whose words differ is left out.
+and the reason) and the Life component's step (main+0x49dcb0:
+LIFE_STEP with the component and this frame's damage sum, which the
+module may change, so another player's hit goes in through the game's
+own step). The words and the build id are checked; a hook whose words
+differ is left out.
 ---
- nx2/coop_actor_lift.py | 72 ++++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_actor_lift.py | 74 ++++++++++++++++++++++++++++++++++++++++++
  nx2/coop_hooks.py      |  2 ++
- 2 files changed, 74 insertions(+)
+ 2 files changed, 76 insertions(+)
  create mode 100644 nx2/coop_actor_lift.py
 
 diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
 new file mode 100644
-index 00000000..d111000c
+index 00000000..d4d2239c
 --- /dev/null
 +++ b/nx2/coop_actor_lift.py
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,74 @@
 +"""Co-op's actor events (oot-remake-multiplayer's patch 0007, its docs/hookshot.md "World hooks": enemies, breakables,
 +drops and projectiles straight from the game's C).
 +
@@ -36,10 +38,12 @@ index 00000000..d111000c
 +  create argument), then 2 = CREATE_REQUEST (a = x1, the name, b = x3, the handle slot the manager fills).
 +- main+0xa6490 the delete request: after `mov x19, x0` (main+0xa64bc; an actor already being deleted returned before
 +  it): 3 = DELETE_REQUEST (a = the actor, b = x1, the reason).
-+- main+0x49d8c0 the Life component's step: after `str w9, [x19, #0x1cb0]` (main+0x49dcb8: w9 = the damage dealt to
-+  it this frame, before life is set): 4 = LIFE_DAMAGE (a = the Life component, b = w9), only when w9 is not 0.
++- main+0x49d8c0 the Life component's step: after `add w9, w10, w9` (main+0x49dcb0, which every path of the step
++  reaches: w9 = the damage dealt to it this frame, before it is stored at +0x1cb0 and taken off life): 4 = LIFE_STEP
++  (a = the Life component, b = the address of an int32 holding w9 in our C). The module may change that number: a hit
++  from another player goes in through the game's own step (its clamp, its death, its drop), and w9 takes the result.
 +
-+The module only reads in them (no game call, no lock). The words are checked and the build id; another game version, or
++The module only reads in them (no game call, no lock), besides that one number. The words are checked and the build id; another game version, or
 +a word that differs, leaves that hook out.
 +"""
 +
@@ -61,14 +65,14 @@ index 00000000..d111000c
 +      (0xa64bc, 0xaa0003f3)),   # mov x19, x0
 +     "{ " + EVENT + "hos_coop_world_event(3u, c->x[0], c->x[1]); }   "
 +     "/* (nx2/coop_actor_lift.py: co-op's actor events, 3 = DELETE_REQUEST) */"),
-+    ("life damage", 0x49dcb8,
-+     ((0x49dcb0, 0x0b090149),   # add w9, w10, w9: the frame's damage sum
++    ("life step", 0x49dcb0,
++     ((0x49dcac, 0x0b0b014a),   # add w10, w10, w11
++      (0x49dcb0, 0x0b090149),   # add w9, w10, w9: the frame's damage sum
 +      (0x49dcb4, 0xb940726a),   # ldr w10, [x19, #0x70]
-+      (0x49dcb8, 0xb91cb269),   # str w9, [x19, #0x1cb0]
-+      (0x49dcbc, 0x0aa97d29)),  # bic w9, w9, w9, asr #31
-+     "{ if ((uint32_t)c->x[9] != 0) { " + EVENT +
-+     "hos_coop_world_event(4u, c->x[19], (uint32_t)c->x[9]); } }   "
-+     "/* (nx2/coop_actor_lift.py: co-op's actor events, 4 = LIFE_DAMAGE) */"),
++      (0x49dcb8, 0xb91cb269)),  # str w9, [x19, #0x1cb0]
++     "{ int32_t coop_sum = (int32_t)(uint32_t)c->x[9]; " + EVENT +
++     "hos_coop_world_event(4u, c->x[19], (uint64_t)(uintptr_t)&coop_sum); c->x[9] = (uint32_t)coop_sum; }   "
++     "/* (nx2/coop_actor_lift.py: co-op's actor events, 4 = LIFE_STEP) */"),
 +)
 +
 +

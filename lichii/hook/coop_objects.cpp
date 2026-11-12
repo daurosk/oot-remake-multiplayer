@@ -53,6 +53,7 @@
 #include "coop_cheat_items.h"
 #include "coop_flags.h"
 #include "coop_hold.h"
+#include "coop_actor_events.h"
 #include "coop_puppet.h"
 #include "coop_pvp_game.h"
 #include "coop_svc.h"
@@ -1135,6 +1136,9 @@ public:
         if (!Ready(system)) {
             return;
         }
+#ifdef COOP_HOOKSHOT
+        ActorEvents(server_now_us);
+#endif
         if (test_take_ != 0 && sharing_ && self_ == 2 && take_at_ != 0 &&
             server_now_us >= take_at_) {
             take_at_ = 0;
@@ -1865,6 +1869,68 @@ private:
     }
 
     // The pause counters (coop_counters.h): the nodes the cave kept, read.
+#ifdef COOP_HOOKSHOT
+    // The game's own creates, deletes and hits (patch 0007), drained each
+    // presented frame. First step: counted and said, per kind, against
+    // what the walk sees, so one run shows the events are the game's own
+    // (docs/hookshot.md "Actor events"); the walk still decides.
+    void ActorEvents(u64 server_now_us) {
+        std::size_t lost = 0;
+        const auto events = CoopActorEvents::TheRing().Drain(&lost);
+        actor_events_lost_ += lost;
+        for (const auto& e : events) {
+            switch (e.kind) {
+            case CoopActorEvents::Kind::Create:
+                ++actor_creates_;
+                if (actor_event_lines_ < 40) {
+                    ++actor_event_lines_;
+                    float place[3] = {};
+                    for (int i = 0; i < 3; ++i) {
+                        const auto bits = static_cast<u32>(e.place[i]);
+                        std::memcpy(&place[i], &bits, 4);
+                    }
+                    LOG_INFO(Core, "coop: actors: create '{}' from main+{:#x} at ({:.1f}, {:.1f}, {:.1f})", e.Name(),
+                             e.from >= main_ && main_ != 0 ? e.from - main_ : e.from, place[0], place[1], place[2]);
+                }
+                break;
+            case CoopActorEvents::Kind::Delete: {
+                ++actor_deletes_;
+                const auto known = names_.find(e.a);
+                if (actor_event_lines_ < 40 && known != names_.end()) {
+                    ++actor_event_lines_;
+                    LOG_INFO(Core, "coop: actors: the game deletes {:#x} '{}' (reason {})", e.a, known->second.first,
+                             e.b);
+                }
+                break;
+            }
+            case CoopActorEvents::Kind::Damage:
+                ++actor_hits_;
+                actor_hit_sum_ += CoopActorEvents::Amount(e.b);
+                break;
+            default:
+                break;
+            }
+        }
+        if (actor_events_said_us_ == 0) {
+            actor_events_said_us_ = server_now_us;
+        } else if (server_now_us >= actor_events_said_us_ + 10'000'000 &&
+                   (actor_creates_ | actor_deletes_ | actor_hits_ | actor_events_lost_) != 0) {
+            actor_events_said_us_ = server_now_us;
+            LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates, {} deletes, {} hits (life {}), {} lost",
+                     actor_creates_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_);
+            actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = 0;
+            actor_hit_sum_ = 0;
+        }
+    }
+    std::size_t actor_creates_ = 0;
+    std::size_t actor_deletes_ = 0;
+    std::size_t actor_hits_ = 0;
+    std::size_t actor_events_lost_ = 0;
+    std::int64_t actor_hit_sum_ = 0;
+    std::size_t actor_event_lines_ = 0;
+    u64 actor_events_said_us_ = 0;
+#endif
+
     void Counters(Reader& r, const std::string& scene, u8 self, u64 server_now_us,
                   std::vector<coop::protocol::Message>& send) {
         u64 ring = 0;
@@ -1882,6 +1948,8 @@ private:
 #ifdef COOP_HOOKSHOT
                 CoopCounters::TheHostRing().Clear();
                 ring_count_seen_ = CoopCounters::TheHostRing().Count();
+                CoopActorEvents::TheLifeTable().Clear();  // (another heap's components)
+                CoopActorEvents::TheRing().Forget();
 #endif
             }
             box.main = main_;
@@ -2418,6 +2486,33 @@ private:
                 return;  // the game takes the life; Sync writes it after 400 ms if not
             }
         }
+#ifdef COOP_HOOKSHOT
+        // Hookshot with patch 0007: the hit (or the life the owner says this
+        // copy has lost) goes in through the game's own Life step on its own
+        // thread (CoopActorEvents::LifeTable), so the game clamps it, reacts
+        // and runs its own death. A hit still waiting from an earlier write
+        // (the actor's step did not run: asleep, paused) is taken back and
+        // the life written directly, so nothing is dealt twice.
+        if (CoopActorEvents::LifeStepSeen().load(std::memory_order_relaxed) && old >= 0 &&
+            (w.hurt > 0 || w.life < old)) {
+            const auto table = r.Ptr(w.address + kActorComponents);
+            const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+            if (life) {
+                auto& steps = CoopActorEvents::TheLifeTable();
+                const s32 stale = steps.Take(*life);
+                const s32 amount = w.hurt > 0 ? w.hurt : old - w.life;
+                if (stale == 0 && steps.Give(*life, amount)) {
+                    LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
+                             w.hurt > 0 ? "hurt" : "life", w.address, amount, old, w.life);
+                    return;
+                }
+                if (stale != 0) {
+                    LOG_INFO(Core, "coop: objects: {:#x}: {} given earlier was never taken by its Life step",
+                             w.address, stale);
+                }
+            }
+        }
+#endif
         if (w.hurt > 0) {
             const auto table = r.Ptr(w.address + kActorComponents);
             const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;

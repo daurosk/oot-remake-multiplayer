@@ -15,9 +15,11 @@
 #define HOS_COOP_WORLD_CREATE_REQUEST 2u
 /* main+0xa6490, the delete request: a = the actor, b = the reason (x1). Not for an actor already being deleted. */
 #define HOS_COOP_WORLD_DELETE_REQUEST 3u
-/* main+0x49d8c0, the Life component's step: a = the Life component ([[actor + 0x270] + 0x2b8]), b = this frame's
-   damage sum (an int32; 0 is never sent), before the step takes it off life. */
-#define HOS_COOP_WORLD_LIFE_DAMAGE 4u
+/* main+0x49d8c0, the Life component's step, every frame for every Life component: a = the component
+   ([[actor + 0x270] + 0x2b8]), b = the address (in hookshot.exe, not the guest) of an int32 holding this frame's damage
+   sum, before the step stores it and takes it off life. The module may change it: what it holds afterwards is the
+   damage the game's own step takes this frame. */
+#define HOS_COOP_WORLD_LIFE_STEP 4u
 /* The same create, first: a = the caller (the return address, a guest address), b = the create argument (x2:
    position at +0, rotation 3x3 at +0xc, on the caller's stack: read it at once or not at all). */
 #define HOS_COOP_WORLD_CREATE_FROM 5u

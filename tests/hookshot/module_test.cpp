@@ -305,12 +305,14 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     CHECK(lift.find(call) != std::string::npos);
     std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[0], c->x[1])", HOS_COOP_WORLD_DELETE_REQUEST);
     CHECK(lift.find(call) != std::string::npos);
-    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[19], (uint32_t)c->x[9])", HOS_COOP_WORLD_LIFE_DAMAGE);
+    std::snprintf(call, sizeof call,
+                  "hos_coop_world_event(%uu, c->x[19], (uint64_t)(uintptr_t)&coop_sum); c->x[9] = (uint32_t)coop_sum;",
+                  HOS_COOP_WORLD_LIFE_STEP);
     CHECK(lift.find(call) != std::string::npos);
     // The three sites, each after its checked word; the install is called from coop_hooks.py.
     CHECK(lift.find("(0x372a94, 0xf94037b7)") != std::string::npos);
     CHECK(lift.find("(0xa64bc, 0xaa0003f3)") != std::string::npos);
-    CHECK(lift.find("(0x49dcb8, 0xb91cb269)") != std::string::npos);
+    CHECK(lift.find("(0x49dcb0, 0x0b090149)") != std::string::npos);
     CHECK(patch.find("+    coop_actor_lift.install(lifter, img, build_id)") != std::string::npos);
     // New numbers follow the world hook's own (0 hello, 1 counter start).
     CHECK(HOS_COOP_WORLD_CREATE_REQUEST > HOS_COOP_WORLD_COUNTER_START);

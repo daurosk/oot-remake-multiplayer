@@ -64,10 +64,10 @@ These are fixed or built in, but no two-game test has reached them yet, or reach
 ## Hookshot (experimental)
 
 - Test releases after this one are Hookshot only; this release still has the emulator kit.
-- Co-op also runs on [Hookshot](https://github.com/NotRexed/Hookshot), a native PC build of the game that each player builds from their own game with the kit's `Build-Hookshot-Coop.bat` ([setup.md, Hookshot](setup.md#play-on-hookshot-experimental)). Hookshot and emulator players can play together.
+- Co-op also runs on [Hookshot](https://github.com/NotRexed/Hookshot), a native PC build of the game that each player builds from their own game with the kit's `Build-Hookshot-Coop.bat` ([setup.md, Hookshot](setup.md#play-on-hookshot-experimental)). Hookshot and emulator players can join the same game; on Hookshot the others show as fairies.
 - It needs Vulkan 1.3 with mesh shaders: NVIDIA RTX 20 or newer, AMD RX 6000 or newer; Intel is mostly untested.
 - Checked on Hookshot in our tests: <!-- FILL from the integrator's Hookshot proofs 3-5 --> everything else is the same co-op code as on the emulator, not yet checked on Hookshot.
-- **Other players may not appear on Hookshot yet**: in our two-game test on Hookshot both games connected, but the other player's Link was asked for and never shown. <!-- B #4: may change after Hookshot proofs 4-5 -->
+- **On Hookshot the other players show as their Navi fairy only**, not as Link: showing other Links crashes Hookshot in this version, so it is switched off (`LICHII_COOP_HOOKSHOT_LINK_PUPPETS=1` turns it back on, but the game then crashes). Emulator players still see Hookshot players as Link.
 - Not on Hookshot yet: the co-op window (panel, chat box and chat lines, player list, markers, the co-op HUD's hearts, the cheats window; so no chat commands); a Hookshot player's own ocarina notes are not sent, so others do not hear them ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); tunic colours only partly: your own Link stays green, green players show as the plain puppet and `LICHII_COOP_TUNICS=0` is ignored ([#202](https://github.com/daurosk/oot-remake-multiplayer/issues/202)); no warning about an old puppet pack (a missing one is named); `collect-logs.cmd` does not pick up `hookshot_log.txt`; invite codes are not yet tested there.
 - Hookshot itself is young: it can crash outside Kokiri Forest, lose the graphics device early on, or crash on some AMD cards (Hookshot's own issues). Use the emulator kit for longer sessions.
 

@@ -49,7 +49,7 @@ Share it only with the people you play with. It holds your internet address, the
 
 ## Emulator or Hookshot?
 
-The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build, and it has no co-op window or chat box yet. Both can be in one session.
+The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build, and it has no co-op window or chat box yet. Both can join one session; on Hookshot the others show as Navi fairies only for now.
 
 ## Is my game traffic encrypted?
 

@@ -745,6 +745,18 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
     }
+    if (!restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&
+        now->kind == protocol::FlagKind::int32 && as_int(now->value) < as_int(before.value) &&
+        store.is_max(key)) {
+      // A max-rule value our game lowered (MaxLife: the game writes its own
+      // hearts back when nothing raised Link's). Every store keeps the higher
+      // value, so sending it only brings the higher one back, the game lowers
+      // it again, and so on for ever, with a notice and the heal sound each
+      // time. Ours alone: not sent, not put back.
+      ++stats_.max_drops_kept;
+      pending_.erase(key);
+      continue;
+    }
     if (const auto g = guards_.find(key); g != guards_.end() &&
                                           before.kind == protocol::FlagKind::int32 &&
                                           now->kind == protocol::FlagKind::int32) {

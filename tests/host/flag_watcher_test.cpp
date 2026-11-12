@@ -993,6 +993,72 @@ TEST_CASE("flag watcher: a one-way room flag the game resets is no save load and
   CHECK(reset == std::vector{entry(kDoor, 0), entry(kKey0, 0)});
 }
 
+TEST_CASE("flag watcher: a max-rule value our game lowers is ours: not sent, no echo (MaxLife loop)") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};  // PlayerStatus.MaxLife, max
+  FakeStore game_store;
+  game_store.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  CHECK(store.is_max(kMaxLife));
+  CHECK_FALSE(store.is_count(kMaxLife));
+  FlagWatcher w(SharedFlags({kMaxLife}), FlagRole::player);
+  w.frame(store);
+  // The group's 16 comes in; our game writes its own 12 back (no object
+  // walk raised Link's hearts). Nothing goes out, every time.
+  for (int round = 0; round < 5; ++round) {
+    CHECK(w.receive(state({entry(kMaxLife, 16, proto::FlagKind::int32)})));
+    CHECK(w.frame(store).empty());
+    CHECK(game_store.get(kMaxLife) == 16u);
+    game_store.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+    CHECK(w.frame(store).empty());
+    CHECK(w.frame(store).empty());
+  }
+  CHECK(w.stats().max_drops_kept == 5);
+  // A rise of our own still goes out.
+  game_store.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kMaxLife, 20, proto::FlagKind::int32)});
+  // A host's game lowering it sends no FLAG_STATE either.
+  FakeStore host_game;
+  host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game);
+  FlagWatcher h(SharedFlags({kMaxLife}), FlagRole::host);
+  h.frame(host_store);
+  host_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  CHECK(h.frame(host_store).empty());
+}
+
+TEST_CASE("flag watcher: host and player settle a MaxLife the player's game keeps lowering") {
+  // The run that found it: after the host's save load, B's game wrote its own
+  // max life back every frame; B sent it, the host answered with its higher
+  // one, and the two went round for ever with a notice each time.
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  FakeStore host_game, player_game;
+  host_game.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  player_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game), player_store(player_game);
+  FlagWatcher h(SharedFlags({kMaxLife}), FlagRole::host);
+  FlagWatcher p(SharedFlags({kMaxLife}), FlagRole::player);
+  h.frame(host_store);
+  p.frame(player_store);
+  CHECK(p.receive(state({entry(kMaxLife, 16, proto::FlagKind::int32)})));  // the host's value arrives
+  int sent = 0;
+  int raised = 0;
+  for (int frame = 0; frame < 300; ++frame) {
+    for (const auto& o : p.frame(player_store)) {
+      ++sent;
+      CHECK(h.receive(o.bytes));
+    }
+    for (const auto& o : h.frame(host_store)) CHECK(p.receive(o.bytes));
+    for (const auto& r : p.take_received()) {
+      if (r.key == kMaxLife && r.after.value > r.before.value) ++raised;
+    }
+    // The player's game puts its own hearts back each frame.
+    player_game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  }
+  CHECK(sent == 0);
+  CHECK(raised == 1);  // the host's value, once
+  CHECK(host_game.get(kMaxLife) == 16);
+}
+
 TEST_CASE("item store: a reset that lowers the hearts holds life to the new maximum") {
   constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
   constexpr FlagKey kLife{0x31ab5580u, 0};

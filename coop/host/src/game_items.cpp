@@ -708,4 +708,11 @@ bool ItemFlagStore::is_count(FlagKey key) {
   return item != nullptr && item->on && item->rule == ItemRule::count;
 }
 
+bool ItemFlagStore::is_max(FlagKey key) {
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  return item != nullptr && item->on && item->rule == ItemRule::max &&
+         item->kind == protocol::FlagKind::int32;
+}
+
 }  // namespace coop::host

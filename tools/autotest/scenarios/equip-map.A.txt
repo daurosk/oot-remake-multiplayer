@@ -1,7 +1,7 @@
 # equip-map (issue 91, puppet-looks): maps the pause menu's Equipment page, where masks
 # (Armor_Child_Mask_*) and boots (Armor_*_Boot) are worn: `assign` puts nothing on ZR for
 # them (wear-masks-real and wear-boots-real 2026-11-12: A's own Link never wore one). A gets
-# three masks, opens the menu on the Equipment page (L four times = Collection, R once =
+# three masks, opens the menu on the Equipment page (L four times from the Items page lands on
 # Equipment) and walks the cursor row by row; each `cell-R-C` mark is a screenshot whose
 # right panel names the piece under the cursor. Nothing is selected. B only watches.
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
@@ -11,17 +11,22 @@ give PouchData.Armor_Child_Mask_Bunny.StockNum
 give PouchData.Armor_Child_Mask_Keaton.StockNum
 wait 120
 press PLUS 12
+wait 150
+mark page-open
+press L 10
 wait 90
+mark page-L1
 press L 10
-wait 30
+wait 90
+mark page-L2
 press L 10
-wait 30
-press L 10
-wait 30
-press L 10
-wait 30
+wait 90
+mark page-L3
+# Runs 2026-11-12: four Ls then one R landed on Items once and Collection once (presses
+# during the page slide seem dropped). The page-* shots show where each press lands.
 press R 10
-wait 60
+wait 120
+mark page-R1
 mark cell-open
 press DRIGHT 10
 wait 40

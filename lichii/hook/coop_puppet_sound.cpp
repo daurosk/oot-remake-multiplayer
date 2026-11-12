@@ -216,6 +216,26 @@ static std::string Words(CoopPuppet::Guest& guest, std::uint64_t at, std::uint64
     return out;
 }
 
+// For each pointer field in `at`'s first 0x80 bytes: the text at [p + 0x10] or at p (a
+// resource's or a string's name), as " +off 'text'".
+static std::string Names(CoopPuppet::Guest& guest, std::uint64_t at) {
+    std::string out;
+    for (std::uint64_t off = 0; at != 0 && off < 0x80; off += 8) {
+        const std::uint64_t p = Pointer(guest, at + off);
+        if (p == 0 || (p & 7) != 0) {
+            continue;
+        }
+        std::string t = Text(guest, Pointer(guest, p + 0x10));
+        if (t.size() < 3) {
+            t = Text(guest, p);
+        }
+        if (t.size() >= 3) {
+            out += " +" + Hex(off) + " '" + t + "'";
+        }
+    }
+    return out;
+}
+
 std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module) {
     const std::uint64_t user = Pointer(guest, module + addr::kModuleUser);
     std::uint32_t flags = 0;
@@ -225,7 +245,10 @@ std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module) {
            "' accessor " + Hex(user != 0 ? Accessor(guest, user) : 0) + " flags " + Hex(flags) +
            (user != 0 && LooksLikeUser(guest, user) ? " passes" : " fails") +
            " the user check, back link " + (back == module + 0x38 ? "ok" : Hex(back)) +
-           (user != 0 ? ", user words " + Words(guest, user, 0x80) : std::string());
+           (user != 0 ? ", user words " + Words(guest, user, 0x80) + Names(guest, user) +
+                            ", +0x20 words " + Words(guest, Pointer(guest, user + 0x20), 0x80) +
+                            Names(guest, Pointer(guest, user + 0x20))
+                      : std::string());
 }
 
 std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,

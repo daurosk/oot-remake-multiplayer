@@ -2,7 +2,7 @@
 # plays one note (L) and puts it away (B B), before A's song starts.
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
 mark b-start
-wait 60
+wait 900               # the scene shows (black until ~10 s after load)
 press DLEFT 12
 wait 240
 press A 12

@@ -393,3 +393,60 @@ PvP scenario (branch `pvp`, `-NoLoad`; not run yet): `pvp` (both land in Hyrule 
 Warp scenarios (run with `-NoLoad`): `warp` (both games load into Kakariko at the well) and `water` (both load into the Water Temple entrance; checked 2026-11-09: both logs `warp done` after about 50 s, screenshots in the temple). Warping a game that is already playing works only while an event runs.
 
 Scenarios (checked 2026-11-09 unless said): `walk` (A walks, dashes, turns; B sees it move), `slingshot` (aims and fires a seed), `menu-gear` (equips the Deku Shield in the menu), `sword` (target and swing; no enemy at the save point, so no hit seen yet), `bomb` (not checked: the auto kits' save has no bombs), `buttons` (presses each button with a screenshot after it). The bindings are the game's own (pause menu > System > Basic Controls): ZL target, ZR use item, L/R quick select, MINUS map, PLUS menu (L/R change page), A actions and dash (hold), B put away, X jump, Y attack. Screenshots are the screen under each game's client area: the runner keeps both windows on top, side by side, at real pixels (DPI-aware).
+
+## Bad connections
+
+Two games on one PC talk over a perfect network: no delay, nothing lost. `tools/netsim/netsim.py` is a small UDP relay that sits between a game and the server and makes the connection bad on purpose, so sync can be watched under lag, loss and stalls without a second PC. Nothing in the game or the server changes; the game's `coop.ini` names the relay's port instead of the server's. It needs Python 3.8 or newer and nothing else.
+
+| Option | What |
+|---|---|
+| `--lag MS` | added round trip (ping), half each way |
+| `--jitter MS` | each packet ± up to this, each way; packets stay in order (one route) |
+| `--loss PCT` | packets dropped, each way |
+| `--dup PCT` | packets sent twice |
+| `--reorder PCT` | packets held back past later ones (by twice the jitter, at least 10 ms; `--up reorder_gap=..` sets it) |
+| `--rate KBIT` | link speed each way; a packet that would wait more than `--queue` ms (default 500) is dropped |
+| `--spike MS/S` | a stall of MS ms every S seconds, both ways at once: what comes in meanwhile is held and comes out together at the end. This is what makes rubber-banding. |
+| `--up`, `--down` | one direction only, as `name=value,...` (lag here is one way): `--down lag=300,loss=5,spike=500/10` |
+| `--seed N` | the same drops and delays every run |
+
+Every 10 s (`--report-every`) and at the end it prints, per client and direction, the packets in and out, lost, dropped by the queue, doubled, reordered and held by a stall, and the average and highest delay it gave.
+
+By hand, with any server (here a kit's on 27510) and a game whose `coop.ini` says `port = 27511`:
+
+```
+python tools\netsim\netsim.py --listen 27511 --server 127.0.0.1:27510 --lag 150 --jitter 20 --loss 2 --spike 500/10
+```
+
+It listens on 127.0.0.1 only (no firewall question); `--listen 0.0.0.0:27511` lets another PC in.
+
+### In the automatic tests
+
+`run.ps1` starts one relay per game when any of these is given, and points that game's `coop.ini` at it (A on `-Port`+1, B on `-Port`+2; the server stays on `-Port`):
+
+```
+tools\autotest\run.ps1 -Scenario walk -Lag 150 -Jitter 20 -Loss 2 -Spike 500/10
+```
+
+`-NetSimFor A` puts only A behind the relay (B connects straight: A slow, B fine). `-NetSimArgs` passes more relay options, `A:` or `B:` for one game only: `-NetSimArgs "--seed 3","B:--down loss=10"`. The relay's Python is the recomp's `.venv` beside the repo, else `py -3` or `python` (`-Python` sets it). The run folder gets `netsim.txt` (the conditions and each relay's command line) and `netsim-A.txt` / `netsim-B.txt` (each relay's counts).
+
+### What it does to the puppet
+
+`coop_test` ([soak.md](soak.md)) shows the effect without the game: its clients draw each other with the same `coop/presence` code as the emulator, and its `shown error` line is how far, in game units, the drawn player is from where it really was at the time shown. The largest is the biggest correction the puppet makes when the late samples arrive: the rubber-band. One server, client `lagA` through the relay, client `okB` straight, 30 s each (`coop_test --server-only`, then one `--connect` client each; the moving player runs a circle of 100 units every 4 s, about 157 units/s):
+
+| Relay on `lagA` | Round trip of `lagA` (avg / max ms) | `okB` draws `lagA`: error avg / max (units) | `lagA` draws `okB`: error avg / max | Frames extrapolated / held (of about 1780) |
+|---|---|---|---|---|
+| none (0 ms) | 14 / 17 | 0.000 / 0.08 | 0.000 / 0.00 | 3 / 0 |
+| `--lag 100` | 119 / 144 | 0.003 / 0.22 | 0.002 / 0.14 | 190-240 / 0 |
+| `--lag 250` | 260 / 296 | 0.26 / 1.26 | 0.26 / 1.27 | all / 0 |
+| `--lag 150 --jitter 20 --loss 2` | 170 / 420 | 0.005 / 0.11 | 0.002 / 0.16 | 255-461 / 0 |
+| `--lag 100 --spike 500/5` | 106 / 246 | 1.9 / **46** | 2.2 / **50** | 54 / 126-132 (36-42 faded out) |
+
+(2026-11-11, one PC, Python 3.13, coop_test from a main build of that day. The 14 ms round trip with no relay is ENet's own, the same for a client that connects straight.)
+
+Reading it:
+
+- Plain lag hardly moves the puppet: the samples carry velocity, and the moving player is shown 100 ms behind the server clock. Up to about 100 ms one way it is drawn between two samples it already has; past that (250 ms round trip is 125 one way) every frame is extrapolated from the last sample, which on this smooth circle is off by about a unit. A player who turns or stops sharply is off by more, for up to 150 ms.
+- 2 % loss with jitter is the same story: a lost sample is bridged by the next one.
+- Stalls are what rubber-band. 500 ms with nothing arriving is longer than the 150 ms of extrapolation, so the puppet is held, fades, and when the held samples all arrive at once it jumps up to 50 units (about a third of a second of running) to where the player really is. That jump is the number to watch when changing `coop/presence` (show delay, extrapolation, catching up smoothly instead of jumping).
+- The same runs in the game: `run.ps1 -Lag ... -Spike ...`, with the puppet's position read off the screenshots or `LICHII_COOP_DEBUG_CAMERA=1` (`camera debug: P<n> at (x, y, z)`, every 2 s).

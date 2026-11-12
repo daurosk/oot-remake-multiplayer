@@ -1,6 +1,6 @@
 # teleport-lock (#197): /teleport from the overworld into a dungeon room. A loads in Kokiri Forest
 # in front of the Deku Tree, B in the Deku Tree and is put in the slingshot room (room C, not the
-# entrance's room). A types /teleport B. Then A walks for 10 s: A must move (no lock).
+# entrance's room). A types /teleport B. Then A walks (goto): its "test steer at" lines must show Link moving (no lock).
 # Expect in A's log: "asked the scene change to InsideTheDekuTree at Entrance: scene set",
 # "live event DefaultParentEvent asked of the game", "scene change taken", "scene change cleared",
 # "asked player 2 where they are" (again), "boss: moved Link"; the probe: loading=1 once, then no
@@ -8,7 +8,7 @@
 # A's place changed between them (objects debug "at x y z" lines, or the shots).
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_OBJECTS=1,A:LICHII_COOP_SCENE_PROBE=1
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_SCENE_PROBE=1
 #! timeout 420
 mark start
 warp KokiriForest_Child FrontDekuTree
@@ -23,7 +23,7 @@ wait 300
 press A
 wait 2400
 mark after
-wait 900
+wait 1500
 chat /teleport B
 wait 120
 mark asked
@@ -31,9 +31,9 @@ wait 600
 mark loaded
 wait 600
 mark arrived
-stick 0 1 300
+goto -38.0 12.0 1.0 600   # 5 m along the room: "test steer at" lines must show Link moving
 wait 60
-stick 1 0 300
+goto -33.0 9.0 1.0 600
 wait 60
 mark walked
 wait 1200

@@ -4,7 +4,7 @@
 # "asked the scene change to KokiriForest_Child at FrontDekuTree".
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_OBJECTS=1,A:LICHII_COOP_SCENE_PROBE=1
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_SCENE_PROBE=1
 #! timeout 420
 mark start
 warp InsideTheDekuTree Entrance
@@ -31,9 +31,9 @@ wait 600
 mark loaded
 wait 600
 mark arrived
-stick 0 1 300
+goto 85.0 -20.0 1.0 600   # 8 m from the start: "test steer at" lines must show Link moving
 wait 60
-stick 1 0 300
+goto 90.0 -27.0 1.0 600
 wait 60
 mark walked
 wait 1200

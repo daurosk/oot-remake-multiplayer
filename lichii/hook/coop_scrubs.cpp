@@ -114,6 +114,7 @@ void Puzzle::Look(const std::string& scene, const std::vector<Seen>& seen,
         first_seen_us_ = 0;
         animation_.clear();
         echo_until_.clear();
+        solved_.clear();
         if (!pending_.empty()) {
             out.notes.push_back("scrubs: " + std::to_string(pending_.size()) +
                                 " hits from other games dropped: we left the scene");
@@ -133,6 +134,11 @@ void Puzzle::Look(const std::string& scene, const std::vector<Seen>& seen,
         const auto it = animation_.find(s.address);
         const std::string before = it != animation_.end() ? it->second : std::string();
         if (!s.animation.empty() && s.animation != before) {
+            // Issue 144: the last right hit (here or given): the manager is solved.
+            if (it != animation_.end() && s.animation.find("SmallHit") != std::string::npos &&
+                solved_.insert(b->manager).second) {
+                out.notes.push_back("scrubs: " + Label(*b) + " took the last hit: its manager is solved here");
+            }
             if (anim_lines_ < kMaxAnimLines && !IsIdleAnimation(s.animation)) {
                 ++anim_lines_;
                 char at[64];
@@ -178,6 +184,8 @@ bool Puzzle::Receive(const proto::WorldHit& h, std::uint64_t now_us) {
     const std::string from = "P" + std::to_string(h.player_number) + "'s hit on " + Label(*b);
     if (h.scene != scene_) {
         notes_.push_back("scrubs: " + from + " in " + h.scene + " dropped: not our scene");
+    } else if (solved_.contains(b->manager)) {
+        notes_.push_back("scrubs: " + from + " dropped: solved here already (issue 144)");
     } else if (first_seen_us_ == 0) {
         notes_.push_back("scrubs: " + from + " dropped: our brothers are not loaded");
     } else if (now_us < first_seen_us_ + kSettleUs) {
@@ -211,6 +219,9 @@ std::optional<CoopPuppet::Call> Puzzle::Step(CoopPuppet::Guest& guest, bool afte
             }
         }
     }
+    if (in_event_ && !pending_.empty()) {
+        return std::nullopt;  // issue 144: given after our Link's event
+    }
     while (!pending_.empty()) {
         if (malloc_failed_) {
             pending_.clear();
@@ -230,6 +241,10 @@ std::optional<CoopPuppet::Call> Puzzle::Step(CoopPuppet::Guest& guest, bool afte
             continue;
         }
         const std::string what = "scrubs: P" + std::to_string(w.player) + "'s hit on " + Label(*b);
+        if (solved_.contains(b->manager)) {
+            notes_.push_back(what + " dropped: solved here already (issue 144)");
+            continue;
+        }
         if (now_us > w.got_us + kWaitUs) {
             notes_.push_back(what + " dropped: waited too long");
             continue;
@@ -270,6 +285,22 @@ std::optional<CoopPuppet::Call> Puzzle::Step(CoopPuppet::Guest& guest, bool afte
     return std::nullopt;
 }
 
+void Puzzle::SetEvent(bool in_event, std::uint64_t now_us) {
+    if (in_event == in_event_) {
+        return;
+    }
+    in_event_ = in_event;
+    if (!pending_.empty()) {
+        notes_.push_back("scrubs: " + std::to_string(pending_.size()) + " hits from other games " +
+                         (in_event ? "wait: our Link is in an event" : "given now: our Link's event ended"));
+    }
+    if (!in_event) {
+        for (Want& w : pending_) {
+            w.got_us = now_us;  // the wait for the cave starts again
+        }
+    }
+}
+
 std::vector<std::string> Puzzle::TakeNotes() {
     std::vector<std::string> out;
     out.swap(notes_);
@@ -283,6 +314,8 @@ void Puzzle::Reset() {
     here_.clear();
     animation_.clear();
     echo_until_.clear();
+    solved_.clear();
+    in_event_ = false;
     pending_.clear();
     // block_ is the game's memory, kept for the run (a new game run: Reset
     // by the caller with a new Puzzle).

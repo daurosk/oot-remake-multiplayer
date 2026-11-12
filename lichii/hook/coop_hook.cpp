@@ -70,6 +70,7 @@
 #include "coop_puppet.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_scrub_talk.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -426,8 +427,23 @@ public:
             const bool link = !no_link_since_ || view.at - *no_link_since_ < kHoldRelease;
             const std::optional<std::string> scene =
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
-            hold.emplace(*store, [link, scene](coop::protocol::FlagKey key) {
-                if (!link || !scene || key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
+            // Issue 144 (coop_scrub_talk.h): a scrub's destroy flag waits while our
+            // Link is in an event (its talk), or the room graph deletes the scrub mid-talk.
+            if (scrub_talk_on_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
+                                  CoopEvery::NowUs())) {
+                LOG_INFO(Core, "coop: dungeon: {}", scrub_talk_.Holding()
+                             ? "our Link is in an event: Deku Scrub destroy flags from others wait"
+                             : "the event ended: Deku Scrub destroy flags from others go through");
+            }
+            const bool talk = scrub_talk_.Holding();
+            hold.emplace(*store, [link, scene, talk](coop::protocol::FlagKey key) {
+                if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
+                    return false;
+                }
+                if (talk && CoopScrubTalk::IsTalkFlag(key.hash)) {
+                    return true;
+                }
+                if (!link || !scene) {
                     return false;
                 }
                 const auto in = CoopDungeon::HeldIn(key.hash);
@@ -1195,6 +1211,8 @@ private:
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+    CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";

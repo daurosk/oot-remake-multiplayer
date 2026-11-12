@@ -117,6 +117,13 @@ public:
     // A WORLD_HIT from another game. False when it is not a brother's (for
     // the world sync); true when taken here (queued or dropped, see notes).
     bool Receive(const coop::protocol::WorldHit& h, std::uint64_t now_us);
+    // Issue 144: our Link's event (a brother's talk), once a frame. While it
+    // runs, hits from other games wait (the 2 s wait starts again when it
+    // ends), so no message reaches our manager in the middle of our talk.
+    void SetEvent(bool in_event, std::uint64_t now_us);
+    // A manager whose last right hit (SmallHit) was played here this visit:
+    // solved; later hits from other games for it are dropped (issue 144).
+    bool Solved(std::uint64_t manager) const { return solved_.contains(manager); }
 
     // CoopSvc::Caller's contract (as CoopLiveEvents::Requester).
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
@@ -146,6 +153,8 @@ private:
     std::map<std::uint64_t, Here> here_;                 // by hash: brothers and managers of the last walk
     std::map<std::uint64_t, std::string> animation_;     // by address: the last AS command
     std::map<std::uint64_t, std::uint64_t> echo_until_;  // by brother hash
+    std::set<std::uint64_t> solved_;                     // managers solved here (issue 144)
+    bool in_event_ = false;                              // our Link's event (issue 144)
     std::deque<Want> pending_;
     std::uint64_t block_ = 0;
     Next next_ = Next::none;

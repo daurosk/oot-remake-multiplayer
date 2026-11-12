@@ -39,6 +39,7 @@ add_executable(coop_tests
   lichii/projectiles_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_projectiles.cpp
   lichii/drops_test.cpp
   lichii/guard_test.cpp
+  lichii/scrub_talk_test.cpp
   lichii/chests_test.cpp
   lichii/dungeon_test.cpp
   lichii/story_test.cpp

@@ -29,6 +29,11 @@
 #               .nx2recipe in it (in the zip, under recipes/) goes to emulator\recipes\, so
 #               the first start shows Fritchii's "Preparing shaders" step. A recipe holds no
 #               game code (Fritchii's tools/nx2-precompile/README.md); SOURCE.txt names it.
+# -HookshotDll  the co-op module for Hookshot (hookshot_coop.dll, this repo's CMake target
+#               hookshot_coop; default: found under -BuildDir). With it and hookshot\PIN in the repo,
+#               the kit gets Build-Hookshot-Coop.bat and hookshot\ (PIN, patches, TOOLS.txt, the module):
+#               each player builds Hookshot from their own game (docs/play-online.md, "On Hookshot").
+#               Without them the kit is emulator-only (a warning says so).
 param(
     [string]$EmulatorBin = '',
     [string]$BuildDir = '',
@@ -38,7 +43,8 @@ param(
     [switch]$NoZip,
     [string]$Python = '',
     [ValidatePattern('^[A-Za-z0-9._-]*$')][string]$Release = '',
-    [string]$Recipes = ''
+    [string]$Recipes = '',
+    [string]$HookshotDll = ''
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -201,6 +207,38 @@ Copy-Text $verifyKit (Join-Path $kit 'scripts\verify_kit.ps1')
 # Update.bat: the updater in one file (the same file is attached to each release for old kits).
 & (Join-Path $here 'make_update_bat.ps1') -Out (Join-Path $kit 'Update.bat')
 
+# Hookshot (experimental): the script that builds it on the player's PC from their own game, our
+# pin and patches, the tools list and the module. No Hookshot or game file goes in.
+$hookshotNote = ''
+$hsPin = Join-Path $repo 'hookshot\PIN'
+if (-not $HookshotDll) {
+    $HookshotDll = Get-ChildItem -LiteralPath $BuildDir -Filter 'hookshot_coop.dll' -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(Debug|_deps)\\' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not (Test-Path $hsPin)) {
+    Write-Warning 'No hookshot\PIN in the repo: the kit has no Hookshot part.'
+} elseif (-not $HookshotDll -or -not (Test-Path -LiteralPath $HookshotDll)) {
+    Write-Warning "No hookshot_coop.dll (build the hookshot_coop target, Release, or pass -HookshotDll): the kit has no Hookshot part."
+} else {
+    if (Test-BinaryHas $HookshotDll 'VCRUNTIME140D.dll') { throw "$HookshotDll is a Debug build; build Release." }
+    $hsKit = Join-Path $kit 'hookshot'
+    New-Item -ItemType Directory -Force -Path (Join-Path $hsKit 'patches') | Out-Null
+    Copy-Item -LiteralPath $HookshotDll -Destination $hsKit
+    if ($crt) { Get-ChildItem $crt.FullName -Filter '*.dll' | Copy-Item -Destination $hsKit }
+    Copy-Text $hsPin (Join-Path $hsKit 'PIN')
+    Copy-Text (Join-Path $here 'kit\hookshot\TOOLS.txt') (Join-Path $hsKit 'TOOLS.txt')
+    $hsPatches = @(Get-ChildItem (Join-Path $repo 'hookshot\patches') -Filter '*.patch' -File | Sort-Object Name)
+    if (-not $hsPatches) { throw 'hookshot\PIN is there but hookshot\patches has no .patch.' }
+    # (byte for byte: a patch's own line ends are part of it)
+    foreach ($p in $hsPatches) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $hsKit "patches\$($p.Name)") }
+    Copy-Text (Join-Path $here 'kit\Build-Hookshot-Coop.bat') (Join-Path $kit 'Build-Hookshot-Coop.bat')
+    foreach ($f in 'hookshot-build.ps1', 'apply_patch.py') { Copy-Text (Join-Path $here "kit\scripts\$f") (Join-Path $kit "scripts\$f") }
+    $hsPinMap = @{}
+    Get-Content $hsPin | ForEach-Object { if ($_ -match '^(\w+)=(.*)$') { $hsPinMap[$Matches[1]] = $Matches[2].Trim() } }
+    $hookshotNote = $hsPinMap.commit
+    Write-Host "Hookshot: module $(Split-Path -Leaf $HookshotDll), pin $($hsPinMap.commit), $($hsPatches.Count) patch(es)"
+}
+
 # The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
 # scene-placing test helper stay out.
 $packTool = Join-Path $repo 'tools\puppet_pack'
@@ -282,6 +320,17 @@ $source = @(
     "  This kit's emulator was built from $emuCommit (that tag plus the patches).",
     ''
 )
+if ($hookshotNote) {
+    $source += @(
+        'Hookshot (experimental): NotRexed''s static recompilation, GPL-3.0. Not in this kit:',
+        'Build-Hookshot-Coop.bat downloads it and builds it on your PC from your own game:',
+        "  https://github.com/NotRexed/Hookshot/tree/$hookshotNote",
+        '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and',
+        '  the build tools of the Hookshot release named in hookshot\TOOLS.txt.',
+        '  hookshot\hookshot_coop.dll is built from the co-op repo above (CMake target hookshot_coop).',
+        ''
+    )
+}
 if ($recipeLines) {
     $source += @(
         "Shader recipes, from Frizti's Fritchii release ($(Split-Path -Leaf $Recipes)), unchanged:"

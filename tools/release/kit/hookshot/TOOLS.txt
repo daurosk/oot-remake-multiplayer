@@ -1,0 +1,7 @@
+# Hookshot's own build tools for Build-Hookshot-Coop (scripts\hookshot-build.ps1): the parts listed in
+# hookshot-setup.txt of this Hookshot release (its Python, llvm-mingw, headers, wgpu-native, prebuilt
+# third-party files). The SHA-256 is of that hookshot-setup.txt (also in the release's SHA256SUMS);
+# each part is checked against the SHA-256 the file lists. The source built is hookshot\PIN's commit.
+# Move this with the pin when a newer release's tools are needed.
+release=v2.1.0
+setup_sha256=21a0263b44443ebeff7768bbc4b720709c3245f7340a579dc85bd219cce0df74

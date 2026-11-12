@@ -159,9 +159,11 @@ jobs:
       - name: Skip the full build here
         id: gate
         shell: bash
+        env:
+          PART: ${{ matrix.part }}
         run: |
-          if [ "${{ matrix.part }}" = full ] && [ "${{ github.event_name }}" != workflow_dispatch ] &&
-             [ "${{ github.ref }}" != refs/heads/linux-build ] && [ "${{ github.ref }}" != refs/heads/linux-2 ] && [[ "${{ github.ref }}" != refs/tags/* ]]; then
+          if [ "$PART" = full ] && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] &&
+             [ "$GITHUB_REF" != refs/heads/linux-build ] && [ "$GITHUB_REF" != refs/heads/linux-2 ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -230,7 +232,8 @@ jobs:
           cmake --build build-server --target coop_server --parallel
           server=$(find build-server -type f -name coop_server -perm -u+x | head -n1)
           test -n "$server"
-          bash tools/release/make_kit.sh --appimage "$RUNNER_TEMP/lichii.AppImage" --server "$server"             --out "$RUNNER_TEMP/kit" --release "ci-${GITHUB_SHA::8}" --emu-source "$RUNNER_TEMP/fritchii"
+          bash tools/release/make_kit.sh --appimage "$RUNNER_TEMP/lichii.AppImage" --server "$server" \
+            --out "$RUNNER_TEMP/kit" --release "ci-${GITHUB_SHA::8}" --emu-source "$RUNNER_TEMP/fritchii"
           tar -tzf "$RUNNER_TEMP"/kit/oot-coop-*-linux-*.tar.gz | head -n 40
           (cd "$RUNNER_TEMP/kit" && sha256sum -c oot-coop-*-linux-*.tar.gz.sha256)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2

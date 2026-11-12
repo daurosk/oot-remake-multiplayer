@@ -101,12 +101,21 @@ if [ -n "$appimage" ]; then
     tools="$build/linuxdeploy"
     mkdir -p "$tools"
     arch="$(uname -m)"
-    for t in linuxdeploy linuxdeploy-plugin-qt; do
+    [ "$arch" = x86_64 ] || fail "the pinned linuxdeploy tools are x86_64 only (this is $arch)"
+    # Fixed releases with their SHA-256 (never the moving "continuous" one): name, tag, sha256.
+    for pin in \
+        "linuxdeploy 1-alpha-20251107-1 c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d" \
+        "linuxdeploy-plugin-qt 1-alpha-20250213-1 15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724"; do
+        read -r t tag want <<<"$pin"
         f="$tools/$t-$arch.AppImage"
-        [ -x "$f" ] || {
-            curl -fsSL -o "$f" "https://github.com/linuxdeploy/$t/releases/download/continuous/$t-$arch.AppImage"
+        if [ ! -x "$f" ] || [ "$(sha256sum "$f" | cut -d' ' -f1)" != "$want" ]; then
+            rm -f "$f"
+            curl -fsSL -o "$f.part" "https://github.com/linuxdeploy/$t/releases/download/$tag/$t-$arch.AppImage"
+            have="$(sha256sum "$f.part" | cut -d' ' -f1)"
+            [ "$have" = "$want" ] || { rm -f "$f.part"; fail "$t $tag: SHA-256 $have, expected $want"; }
+            mv "$f.part" "$f"
             chmod +x "$f"
-        }
+        fi
     done
     icon="$build/io.github.zortos293.lichii.png"
     cp "$src/dist/lichii.png" "$icon"

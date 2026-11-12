@@ -152,7 +152,7 @@ There is a Linux kit too: `oot-coop-<version>-linux-x86_64.tar.gz` on the same r
 | `Host.bat`, `Join.bat`, `play.cmd` | `./Host.sh`, `./Join.sh`, `./play.sh` (in a terminal, in the kit folder) |
 | `start-server.cmd` | `./start-server.sh` (`Host.sh` starts it in the background; `./start-server.sh --stop` stops it) |
 | `Update.bat` | `./update.sh` (also offered on every start, as `auto_update` in `coop-options.ini` says) |
-| `collect-logs.cmd` | `./collect-logs.sh` (writes `coop-logs-<pc>-<time>.tar.gz`) |
+| `collect-logs.cmd` | `./collect-logs.sh` (writes `coop-logs-<time>.tar.gz`) |
 
 - **Portable folder.** On Linux the emulator uses the `user` folder of the folder it is started in, so start it through the scripts, not by double-clicking `emulator/lichii.AppImage`. Started anywhere else, it uses your normal emulator folders (`~/.local/share/eden`) and co-op settings from there.
 - **Hosting.** `./Host.sh` works as `Host.bat` does: it makes a new join password each time (unless `server_password` in `coop-options.ini` sets one), asks your router to forward the port (UPnP), and prints an **INVITE CODE** in the terminal (copied to the clipboard when `wl-copy`, `xclip` or `xsel` is installed; also in `logs/invite-code.txt` while the server runs). Send it to your friends; they paste it into `Join.sh` or `Join.bat`. If a friend gets an **ANSWER CODE**, run `./start-server.sh --answer <code>` in the kit folder. The server runs in the background: `./start-server.sh --stop` stops it. Open the server's UDP port if a firewall runs, for example `sudo ufw allow 27510/udp`. `start-server.sh` lists this PC's addresses.

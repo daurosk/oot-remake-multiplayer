@@ -192,6 +192,13 @@ elif [[ $mode == join ]] || ((ask)); then
     done
 fi
 if [[ -n $password ]] && ! coop_test_password "$password"; then echo 'coop.ini: the join password has a space or is too long.'; exit 1; fi
+# Host.sh with a server of an earlier Host.sh still running: it has another session's password,
+# so this game could not join it. Stop before coop.ini gets the new one.
+if [[ $mode == host && -n ${OOT_COOP_SESSION_PASSWORD-} ]] && pgrep -f -- "$KIT/server/coop_server --port" >/dev/null 2>&1; then
+    echo 'The server from this kit is still running from an earlier Host.sh. Stop it with'
+    echo './start-server.sh --stop, then start Host.sh again.'
+    exit 1
+fi
 
 coop_write_ini "$KIT/scripts/coop.ini.template" "$ini" "$server" "$port" "$name" "$password"
 echo "Co-op: server $server, port $port, name $name, join password $([[ -n $password ]] && echo set || echo none)   (./play.sh change to change the name)"
@@ -247,12 +254,6 @@ fi
 
 if [[ $mode == host ]]; then
     if pgrep -f -- "$KIT/server/coop_server --port" >/dev/null 2>&1; then
-        if [[ -n ${OOT_COOP_SESSION_PASSWORD-} ]]; then
-            # It runs with another session's password: this game could not join it.
-            echo 'The server from this kit is still running from an earlier Host.sh. Stop it with'
-            echo './start-server.sh --stop, then start Host.sh again.'
-            exit 1
-        fi
         echo 'The server from this kit is already running.'
     else
         server_args=("$port" --background)

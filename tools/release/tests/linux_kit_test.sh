@@ -162,7 +162,7 @@ kit6=$tmp/out/oot-coop-v0.1.0-beta6-linux
 arch=$(uname -m)
 check 'the kit has its scripts, emulator, server, tool and docs' bash -c 'cd "$1" && for f in Host.sh Join.sh play.sh start-server.sh collect-logs.sh update.sh make-puppet-pack.sh scripts/kit-lib.sh scripts/coop.ini.template emulator/lichii.AppImage server/coop_server tools/puppet_pack/build.py SETUP.md KNOWN-ISSUES.md SOURCE.txt VERSION.txt MANIFEST.txt coop-options.ini emulator/user/config/coop.ini LICENSE.txt; do [ -f "$f" ] || { echo "missing $f"; exit 1; }; done; [ -x play.sh ] && [ -x emulator/lichii.AppImage ] && [ -d emulator/user/keys ]' _ "$kit6"
 check 'VERSION.txt names the release' has "$kit6/VERSION.txt" 'kit: oot-coop-v0.1.0-beta6-linux (release v0.1.0-beta6)'
-check 'the port is filled in, no @PORT@ left' bash -c '! grep -rl "@PORT@" "$1" --include=*.sh && grep -q "^port = 27510$" "$1/emulator/user/config/coop.ini"' _ "$kit6"
+check 'the port is filled in, no @PORT@ left' bash -c '! grep -rl "@PORT@" "$1" --include=*.sh && grep -q "^port = 27510$" "$1/emulator/user/config/coop.ini" && grep -q "^port = @PORT@$" "$1/scripts/coop.ini.template"' _ "$kit6"
 check 'MANIFEST.txt lists the kit'"'"'s files, never user/' bash -c 'grep -qx play.sh "$1/MANIFEST.txt" && grep -qx emulator/lichii.AppImage "$1/MANIFEST.txt" && ! grep -q "^emulator/user" "$1/MANIFEST.txt"' _ "$kit6"
 check 'the tarball and its sha256 match' bash -c 'cd "$1" && sha256sum -c "oot-coop-v0.1.0-beta6-linux-$2.tar.gz.sha256" >/dev/null' _ "$tmp/out" "$arch"
 
@@ -224,10 +224,13 @@ sleep 3
 
 # --- collect-logs.sh -------------------------------------------------------------------------
 echo 'a log line from 192.168.1.20 and 203.0.113.5' >"$kit6/emulator/user/log/eden_log.txt"
+cp "$kit6/coop-options.ini" "$tmp/options.keep"
+echo 'relay_key = s3cret-key' >>"$kit6/coop-options.ini"
 (cd "$kit6" && bash ./collect-logs.sh >"$tmp/collect.out" 2>&1)
 packed=$(ls "$kit6"/coop-logs-*.tar.gz 2>/dev/null | head -n1)
 check 'collect-logs.sh packs the logs, coop.ini and a note about this PC' bash -c '[ -n "$1" ] && tar -tzf "$1" | grep -q "emulator/log/eden_log.txt" && tar -tzf "$1" | grep -q "emulator/coop.ini" && tar -tzf "$1" | grep -q about-this-pc.txt' _ "$packed"
-check 'collect-logs.sh masks the join password, everywhere, and the addresses' bash -c 'tar -xzOf "$1" ./emulator/coop.ini | grep -qx "password = (removed)" && ! tar -xzOf "$1" | grep -q -e ABCDEFGHJKLMNPQRSTUV -e 203.0.113.5 && tar -xzOf "$1" ./emulator/log/eden_log.txt | grep -q "<lan-1> and <public-1>"' _ "$packed"
+check 'collect-logs.sh masks the join password, everywhere, and the addresses' bash -c 'tar -xzOf "$1" ./emulator/coop.ini | grep -qx "password = (removed)" && tar -xzOf "$1" ./coop-options.ini | grep -qx "relay_key = (removed)" && [[ $1 != *"$(hostname)"* ]] && ! tar -xzOf "$1" | grep -q -e ABCDEFGHJKLMNPQRSTUV -e 203.0.113.5 && tar -xzOf "$1" ./emulator/log/eden_log.txt | grep -q "<lan-1> and <public-1>"' _ "$packed"
+cp "$tmp/options.keep" "$kit6/coop-options.ini"
 
 # --- update.sh ---------------------------------------------------------------------------------
 echo 'my keys' >"$kit6/emulator/user/keys/prod.keys"

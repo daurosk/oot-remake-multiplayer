@@ -67,7 +67,7 @@ for f in Host.sh Join.sh play.sh start-server.sh collect-logs.sh update.sh make-
 text "$src/kit-lib.sh" "$kit/scripts/kit-lib.sh"
 text "$src/hosting-lib.sh" "$kit/scripts/hosting-lib.sh"
 # The template keeps its @PORT@: coop_write_ini fills in the port each player chose.
-tr -d '' <"$here/kit/coop.ini.template" >"$kit/scripts/coop.ini.template"
+tr -d '\r' <"$here/kit/coop.ini.template" >"$kit/scripts/coop.ini.template"
 text "$here/kit/coop-options.ini" "$kit/coop-options.ini"
 # The empty coop.ini, as the Windows kit has it.
 . "$src/kit-lib.sh"

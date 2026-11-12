@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packs what is needed to see what went wrong into coop-logs-<pc>-<time>.tar.gz: the emulator
+# Packs what is needed to see what went wrong into coop-logs-<time>.tar.gz: the emulator
 # logs, coop.ini, the server logs, VERSION.txt, coop-options.ini, the puppet pack's manifest,
 # the newest crash dumps and a short note about this PC. Send that file back.
 set -u
@@ -7,7 +7,7 @@ KIT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 user=$KIT/emulator/user
 stamp=$(date +%Y%m%d-%H%M%S)
 host=$(hostname 2>/dev/null || uname -n)
-out=$KIT/coop-logs-$host-$stamp.tar.gz
+out=$KIT/coop-logs-$stamp.tar.gz  # no PC name: it is masked inside too
 stage=$(mktemp -d "${TMPDIR:-/tmp}/coop-logs-XXXXXX")
 found=0
 pick() {  # pick FROM TO
@@ -39,7 +39,7 @@ fi
     pgrep -af -- "$KIT/(emulator/lichii.AppImage|server/coop_server)" 2>/dev/null | sed 's/^/running: /'
 } >"$stage/about-this-pc.txt"
 # What identifies a player is masked, as the Windows kit's log-mask.ps1 does: a set password
-# (password = ..., server_password = ..., --password x) and an invite code become (removed),
+# (password = ..., server_password = ..., relay_key = ..., --password x) and an invite code become (removed),
 # MAC addresses <mac>, each IPv4 address its kind with a number (<lan-1>, <public-1>, ...; the
 # same address gets the same tag in every file), a host name as the server <host>, the user
 # name (in /home/<name> and on its own) <user> and the PC name <pc>. Crash dumps stay as they are.
@@ -74,7 +74,7 @@ function words(t, w, r,   out, before, after, lw, i) {
 FNR == 1 { if (outfile != "") close(outfile); outfile = FILENAME ".masked" }
 {
     t = $0
-    if (match(t, /^[ \t]*[A-Za-z0-9_.]*([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])[A-Za-z0-9_]*[ \t]*[=:][ \t]*[^ \t]/))
+    if (match(t, /^[ \t]*[A-Za-z0-9_.]*([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy])[A-Za-z0-9_]*[ \t]*[=:][ \t]*[^ \t]/))
         t = substr(t, 1, RLENGTH - 1) "(removed)"
     gsub(/--?[A-Za-z0-9-]*password[A-Za-z0-9-]*[ \t=]+[^ \t-][^ \t]*/, "--password (removed)", t)
     gsub(/[Ii]nvite code:?[ \t]*[A-Z2-9][A-Z2-9-][A-Z2-9-][A-Z2-9-][A-Z2-9-][A-Z2-9-][A-Z2-9-][A-Z2-9-][A-Z2-9-][A-Z2-9-]+/, "invite code: (removed)", t)

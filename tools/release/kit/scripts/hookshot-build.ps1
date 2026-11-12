@@ -83,7 +83,7 @@ function Copy-Tree([string]$From, [string]$To, [switch]$OnlyNew) {
 
 # --- What this kit has ---------------------------------------------------------------------
 if (-not [Environment]::Is64BitOperatingSystem) { Fail 'Hookshot needs 64-bit Windows.' }
-foreach ($need in 'PIN', 'TOOLS.txt', 'hookshot_coop.dll') {
+foreach ($need in 'PIN', 'TOOLS.txt') {
     if (-not (Test-Path -LiteralPath (Join-Path $hs $need))) { Fail "This kit has no hookshot\$need. Get a kit with Hookshot support (Update.bat)." }
 }
 $patches = @(Get-ChildItem -LiteralPath (Join-Path $hs 'patches') -Filter '*.patch' -File -ErrorAction SilentlyContinue | Sort-Object Name)
@@ -282,7 +282,13 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
 Step 'Co-op into the game'
 $exeDir = Split-Path -Parent $exe
 # The module and the Visual C++ runtime it needs (when the kit carries it), beside hookshot.exe.
-Copy-Item -LiteralPath (Join-Path $hs 'hookshot_coop.dll') -Destination $exeDir -Force
+# (a kit always has it; a hand-made test folder may not yet: the game is built, and co-op is off until it is there)
+$module = Join-Path $hs 'hookshot_coop.dll'
+if (-not (Test-Path -LiteralPath $module)) {
+    Write-Host "  No hookshot\hookshot_coop.dll in this kit: the game is built without co-op. Put the module there and run this again." -ForegroundColor Yellow
+    exit 1
+}
+Copy-Item -LiteralPath $module -Destination $exeDir -Force
 Get-ChildItem -LiteralPath $hs -Filter '*.dll' -File | Where-Object { $_.Name -ne 'hookshot_coop.dll' } |
     Where-Object { -not (Test-Path -LiteralPath (Join-Path $exeDir $_.Name)) } | Copy-Item -Destination $exeDir
 Write-Host "  hookshot_coop.dll -> $exeDir"

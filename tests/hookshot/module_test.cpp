@@ -51,10 +51,84 @@ std::string NewFile(const std::string& patch, const std::string& path) {
     return out;
 }
 
+// `text` with a later patch's hunks for `path` applied (unified diff: context
+// ' ', removed '-', added '+' lines; each hunk at its "@@ -line" in the text
+// as the earlier hunks left it). Empty when a hunk does not match.
+std::string Applied(const std::string& text, const std::string& patch, const std::string& path) {
+    std::vector<std::string> lines;
+    for (std::size_t at = 0; at < text.size();) {
+        const auto end = text.find('
+', at);
+        lines.push_back(text.substr(at, end - at));
+        at = end == std::string::npos ? text.size() : end + 1;
+    }
+    auto at = patch.find("+++ b/" + path + "
+");
+    REQUIRE(at != std::string::npos);
+    at = patch.find('
+', at) + 1;
+    long shift = 0;
+    while (at < patch.size() && patch.compare(at, 3, "@@ ") == 0) {
+        const long old_start = std::stol(patch.substr(at + 4));
+        at = patch.find('
+', at) + 1;
+        std::size_t pos = static_cast<std::size_t>(old_start - 1 + shift);
+        while (at < patch.size()) {
+            const auto end = patch.find('
+', at);
+            const std::string line = patch.substr(at, end - at);
+            if (line.empty() || (line[0] != ' ' && line[0] != '-' && line[0] != '+')) break;
+            if (line[0] == '+') {
+                lines.insert(lines.begin() + static_cast<long>(pos++), line.substr(1));
+                ++shift;
+            } else {
+                if (pos >= lines.size() || lines[pos] != line.substr(1)) return {};
+                if (line[0] == '-') {
+                    lines.erase(lines.begin() + static_cast<long>(pos));
+                    --shift;
+                } else {
+                    ++pos;
+                }
+            }
+            at = end + 1;
+        }
+    }
+    std::string out;
+    for (const auto& l : lines) out += l + "
+";
+    return out;
+}
+
 }  // namespace
 
-TEST_CASE("hookshot: the API header in our patch is hookshot/src's") {
-    CHECK(NewFile(Patch(), "host/hos_coop_api.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_api.h"));
+TEST_CASE("hookshot: the API header in our patches is hookshot/src's") {
+    // 0001 makes it, 0004 (the title menu) adds to it.
+    const std::string first = NewFile(Patch(), "host/hos_coop_api.h");
+    const std::string title = ReadFile(kRepo / "hookshot" / "patches" / "0004-coop-title-menu.patch");
+    CHECK(Applied(first, title, "host/hos_coop_api.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_api.h"));
+}
+
+TEST_CASE("hookshot: patch 0004 hooks the title screen, hands the pad over and sets x8 for calls") {
+    const std::string p = ReadFile(kRepo / "hookshot" / "patches" / "0004-coop-title-menu.patch");
+    CHECK(p.find("+    if (connected) buttons = hos_coop_pad_filter(buttons, stick);") != std::string::npos);
+    CHECK(p.find("+    coop_title_hooks.install(lifter, img, build_id)") != std::string::npos);
+    CHECK(p.find("+SITES = ((0x3406940, (0xf9401660, 0xb0004961), 1, 19),") != std::string::npos);
+    CHECK(p.find("+    c->x[8] = (saved.x[31] - 0xb0) & ~0xfULL;") != std::string::npos);
+    CHECK(p.find("+    coop_pad = (hos_coop_pad_fn)(void *)GetProcAddress(m, \"hos_coop_pad\");") != std::string::npos);
+    CHECK(p.find("+    coop_title = (hos_coop_title_fn)(void *)GetProcAddress(m, \"hos_coop_title\");") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the title menu needs patch 0004's table and can be turned off") {
+    HosCoopApi api{};
+    api.size = sizeof api;
+    CHECK_FALSE(CoopHookshot::TitleMenuPossible(&api, ""));   // no scratch call
+    api.scratch = [](void*, const void*, size_t) -> uint64_t { return 0; };
+    CHECK(CoopHookshot::TitleMenuPossible(&api, ""));
+    CHECK(CoopHookshot::TitleMenuPossible(&api, "1"));
+    CHECK_FALSE(CoopHookshot::TitleMenuPossible(&api, "0"));
+    api.size = offsetof(HosCoopApi, scratch);   // an older Hookshot's table
+    CHECK_FALSE(CoopHookshot::TitleMenuPossible(&api, ""));
+    CHECK_FALSE(CoopHookshot::TitleMenuPossible(nullptr, ""));
 }
 
 TEST_CASE("hookshot: the patch's hook sites are the emulator cave's") {

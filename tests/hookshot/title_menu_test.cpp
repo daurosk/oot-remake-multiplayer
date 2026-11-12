@@ -145,7 +145,13 @@ TEST_CASE("title menu: the Join field is an invite code, an address or an error"
     CHECK(std::get<JoinAddress>(addr).server == "25.1.2.3:27510");
     CHECK(std::holds_alternative<JoinAddress>(ReadJoin("myhost.example", none)));
     CHECK(std::holds_alternative<std::string>(ReadJoin("1.2.3.4:99999", none)));
-    CHECK(std::holds_alternative<std::string>(ReadJoin("hello there", none)));
+    CHECK(std::holds_alternative<std::string>(ReadJoin("hello, there", none)));
+    const auto with = ReadJoin("25.1.2.3 OURSECRET", none);
+    REQUIRE(std::holds_alternative<JoinAddress>(with));
+    CHECK(std::get<JoinAddress>(with).server == "25.1.2.3");
+    CHECK(std::get<JoinAddress>(with).password == "OURSECRET");
+    CHECK(std::get<JoinAddress>(addr).password.empty());
+    CHECK(std::holds_alternative<std::string>(ReadJoin("25.1.2.3 two words", none)));
 
     CodeResult bad;
     bad.looks_like_code = true;
@@ -324,4 +330,17 @@ TEST_CASE("title menu: Up or Down while editing ends the edit; keys only type in
     m.Press(Input::kDown);
     CHECK_FALSE(m.editing());
     CHECK_FALSE(m.Char('a'));
+}
+
+TEST_CASE("title menu: the kit's options as the launcher's variables") {
+    const std::string t = "# LICHII_COOP_CHEATS=1\r\nauto_update = ask\r\npvp = off\r\ncolor = blue  # mine\r\n"
+                          "LICHII_COOP_PUPPET=1\r\nLICHII_COOP_FLAGS = shared_flags.txt\r\nEDEN_NX2_X=2\r\n"
+                          "LICHII_COOP_bad=1\r\nserver_password = PW\r\n";
+    const auto v = KitVariables(t);
+    REQUIRE(v.size() == 4);
+    CHECK(v[0] == std::pair<std::string, std::string>{"LICHII_COOP_COLOR", "blue"});
+    CHECK(v[1] == std::pair<std::string, std::string>{"LICHII_COOP_PUPPET", "1"});
+    CHECK(v[2] == std::pair<std::string, std::string>{"LICHII_COOP_FLAGS", "shared_flags.txt"});
+    CHECK(v[3] == std::pair<std::string, std::string>{"EDEN_NX2_X", "2"});
+    CHECK(KitVariables("color =\r\n").empty());
 }

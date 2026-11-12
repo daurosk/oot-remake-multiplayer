@@ -87,6 +87,12 @@ struct Options {
 std::string CoopIniFor(std::string_view coop_ini, std::string_view server, std::string_view name,
                        std::string_view password);
 
+// The variables the kit's launcher sets from coop-options.ini (play.ps1
+// Read-KitOptions): each LICHII_COOP_* and EDEN_NX2_* line without a '#', and
+// `color` as LICHII_COOP_COLOR (none when empty). The module sets the ones not
+// set already when the game was started without the launcher. In file order.
+std::vector<std::pair<std::string, std::string>> KitVariables(std::string_view options_ini);
+
 // ---------------------------------------------------------------------------
 // What the Join page's field may hold.
 
@@ -94,10 +100,12 @@ struct JoinInvite {   // an invite code (coop_server --invite): the helper windo
     std::string host;   // "203.0.113.5:27510"
     std::string password;
 };
-struct JoinAddress {   // a server's address (VPN, home network, port forward)
-    std::string server;   // "host" or "host:port"
+struct JoinAddress {   // a server's address (VPN, home network, port forward), then its join password
+    std::string server;     // "host" or "host:port"
+    std::string password;   // "" when none was typed after it
 };
-// The field's text as an invite code or an address, or one line saying what is
+// The field's text as an invite code or an address (with the join password
+// after a space: "25.1.2.3:27510 PASSWORD"), or one line saying what is
 // wrong. `explain_code` turns an invite code's letters into the invite or the
 // reason it is refused (server/nat_codes.hpp read_invite, given by the module,
 // so this file needs no network code).

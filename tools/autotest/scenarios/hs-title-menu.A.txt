@@ -1,0 +1,24 @@
+# hs-title-menu, A (see hs-title-menu.steps.txt): at the title, the Multiplayer menu with the pad.
+mark prompt
+press MINUS
+wait 90
+mark open
+press DDOWN
+wait 30
+press DDOWN
+wait 30
+press A
+wait 90
+mark settings
+press B
+wait 60
+press DUP
+wait 30
+press A
+wait 90
+mark join
+press B
+wait 60
+press B
+wait 120
+mark closed

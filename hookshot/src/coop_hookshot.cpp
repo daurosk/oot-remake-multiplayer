@@ -43,6 +43,7 @@
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
+#include "coop_title.h"
 #include "core/core.h"
 #include "hos_coop_api.h"
 
@@ -61,6 +62,7 @@ namespace {
 const HosCoopApi* g_api = nullptr;
 std::string g_build;
 bool g_on = false;
+bool g_menu_only = false;  // loaded for the title's Multiplayer menu only: co-op starts when it hosts or joins
 std::atomic<bool> g_present_seen{false};  // our patch's present site has run
 bool g_hold = false;
 Core::System g_system;
@@ -371,6 +373,7 @@ std::uint32_t FromCodePage(unsigned byte) {
 
 CoopDraw::Scene DrawScene() {
     CoopDraw::Scene s;
+    s.title = CoopTitle::View();
     {
         std::lock_guard lock(g_box_mutex);
         if (g_box.open()) {
@@ -457,6 +460,9 @@ CoopDraw::Scene DrawScene() {
 }
 
 bool TypeKey(std::uint32_t vk, bool repeat) {
+    if (CoopTitle::Key(vk, repeat)) {   // the title's Multiplayer menu, while it is open
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -495,16 +501,22 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
 }
 
 bool TypeChar(std::uint32_t byte) {
-    if (!g_on) {
+    if (!g_on && !g_menu_only) {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
-    if (!g_box.open() && !g_cheats.open()) {
+    if (!CoopTitle::KeysTaken() && (!g_on || (!g_box.open() && !g_cheats.open()))) {
         return false;
     }
     const std::uint32_t cp = FromCodePage(byte);
     if (cp == 0) {
         return true;
+    }
+    if (CoopTitle::Char(cp)) {
+        return true;
+    }
+    if (!g_on) {
+        return false;
     }
     if (g_cheats.open()) {
         return g_cheats.Char(cp, CoopChatBox::Utf8(cp));
@@ -538,6 +550,9 @@ bool Mouse(float fx, float fy, int event) {
 }
 
 bool KeysTaken() {
+    if (CoopTitle::KeysTaken()) {
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -547,6 +562,8 @@ bool KeysTaken() {
     const bool cheats = g_cheats.KeysTaken(closing || AsyncDown(CoopCheatsPanel::kKeyToggle));
     return box || cheats;
 }
+
+bool StartCoop();
 
 bool Start(const HosCoopApi* api) {
     if (api == nullptr || api->version != HOS_COOP_API_VERSION || api->size < kFirstApiSize) {
@@ -561,24 +578,55 @@ bool Start(const HosCoopApi* api) {
     }
     LOG_INFO(Core, "coop: Hookshot module, game build {}, main at {:#x}{}", g_build.substr(0, 16), api->main_base,
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
+    // Started without the kit's launcher: its coop-options.ini switches still count.
+    CoopTitle::ApplyKitOptions();
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     if (!CoopHook::LoadSettings(ini, errors).enabled() || !errors.empty()) {
+        if (TitleMenuPossible(api, Env("LICHII_COOP_TITLE_MENU"))) {
+            // The title's Multiplayer menu hosts or joins; co-op starts then (StartCoop).
+            for (const auto& e : errors) {
+                LOG_WARNING(Core, "coop: {} (the title's Multiplayer menu writes coop.ini again)", e);
+            }
+            LOG_INFO(Core, "coop: no server in coop.ini yet: the title's Multiplayer menu (Minus) hosts or joins");
+            CoopTitle::Init(api, false);
+            g_menu_only = true;
+            return true;
+        }
         CoopHook::Start();  // logs why co-op is off
         g_api = nullptr;
         return false;
     }
+    if (!StartCoop()) {
+        g_api = nullptr;
+        return false;
+    }
+    CoopTitle::Init(api, true);
+    return true;
+}
+
+// lichii/hook's co-op, from coop.ini (at the start, or once the title menu wrote it): true when it runs.
+bool StartCoop() {
     // The same switches that make the emulator put its cave in.
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopHook::Start();
-    g_on = true;
-    return true;
+    g_on = !CoopHook::OverlayLines().empty();   // (a co-op that runs always has its state's line)
+    return g_on;
 }
 
 void Frame(void* ctx, int site) {
+    if (g_menu_only && CoopTitle::TakeStartCoop()) {   // the title menu hosted or joined: co-op now
+        const bool on = StartCoop();
+        LOG_INFO(Core, "coop: {} from the title menu", on ? "started" : "did not start");
+        CoopTitle::CoopStarted(on);
+        g_menu_only = !on;
+    }
+    if (site == HOS_COOP_SITE_FRAME && ctx != nullptr) {
+        CoopTitle::OnFrame(ctx);
+    }
     if (!g_on) {
         return;
     }
@@ -676,11 +724,20 @@ COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
     return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
 }
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
+// The title menu (hos_coop_api.h, patch 0004): the game's title screen and the pad first.
+COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) {
+    if (g_on || g_menu_only) {
+        CoopTitle::OnTitle(ctx, screen, event);
+    }
+}
+COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
+    return (g_on || g_menu_only) && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;
+}
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
-    return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
+    return (g_on || g_menu_only) && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
-    if (g_on && d != nullptr) {
+    if ((g_on || g_menu_only) && d != nullptr) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{}); plain look: "
@@ -703,7 +760,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
     }
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
-    if (g_on && d != nullptr) {
+    if ((g_on || g_menu_only) && d != nullptr) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",

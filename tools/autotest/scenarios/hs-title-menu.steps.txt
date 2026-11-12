@@ -1,0 +1,25 @@
+# hs-title-menu (Hookshot only): the title screen's Multiplayer menu (patch 0004,
+# docs/hookshot.md "The title menu"). A starts as the harness starts it (co-op on, coop.ini names
+# the test server), stays at the title, opens the menu with Minus, goes to Settings and back, to
+# Join and back, and closes it. The game's own UI sounds play on each move (heard only).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-title-menu
+# Pass: the lines below, and the shots (player-A.txt names them):
+#   prompt    the title with "(-) Multiplayer" at the bottom left
+#   open      the menu over the dimmed title: Multiplayer, "Host a game" gold on a dark band, Join a game,
+#             Settings, Back; "Co-op is on in this game." under them
+#   settings  "Multiplayer settings": Your name, Your colour, ... Save, Back
+#   join      "Join a game": "Invite code: (paste it here)"
+#   closed    the title as at "prompt", its own button still on the one it was (the game took none of
+#             the presses: no file select, no options screen)
+# Not in this run (reports/title-menu.md, check list): the menu-only start (no server in coop.ini, Host
+# and Join from the menu, the invite code), and LICHII_COOP_TITLE_NATIVE=1 (the 4th title button).
+#! switches LICHII_COOP_PUPPET=1
+#! timeout 240
+start A
+sleep 15
+play A hs-title-menu.A.txt
+lines menu-on A min=1 coop: title menu: on \(Minus at the title\)
+lines title-seen A min=1 coop: title menu: the title screen 0x[0-9a-f]+, \d+ buttons
+lines title-steps A min=1 coop: title menu: the title screen's step runs
+lines opened A min=1 coop: title menu: opened
+lines no-sound-trouble A max=0 coop: title menu: the game's sound name

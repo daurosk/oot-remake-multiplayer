@@ -344,6 +344,36 @@ std::string CoopIniFor(std::string_view coop_ini, std::string_view server, std::
     return t;
 }
 
+std::vector<std::pair<std::string, std::string>> KitVariables(std::string_view options_ini) {
+    bool crlf = false;
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto& raw : Lines(options_ini, crlf)) {
+        const std::string_view t = Trim(raw);
+        if (t.empty() || t.front() == '#' || t.front() == ';') {
+            continue;
+        }
+        if (ActiveValue(t, "color")) {
+            if (const auto c = IniGet(t, "color"); c && !c->empty()) {
+                out.emplace_back("LICHII_COOP_COLOR", *c);
+            }
+            continue;
+        }
+        const bool coop = t.rfind("LICHII_COOP_", 0) == 0, nx2 = t.rfind("EDEN_NX2_", 0) == 0;
+        const std::size_t eq = t.find('=');
+        if ((!coop && !nx2) || eq == std::string_view::npos) {
+            continue;
+        }
+        const std::string_view key = Trim(t.substr(0, eq));
+        if (!std::all_of(key.begin(), key.end(), [](char c) {
+                return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+            })) {
+            continue;
+        }
+        out.emplace_back(std::string(key), std::string(Trim(t.substr(eq + 1))));
+    }
+    return out;
+}
+
 bool AddressOk(std::string_view typed) {
     const std::string_view t = Trim(typed);
     const std::size_t colon = t.find(':');
@@ -378,8 +408,14 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {
         return code.error.empty() ? std::string("That invite code is not right; ask the host to copy it again.")
                                   : code.error;
     }
-    if (AddressOk(t)) {
-        return JoinAddress{std::string(t)};
+    const std::size_t space = t.find_first_of(" 	");
+    const std::string_view address = t.substr(0, space);
+    const std::string_view password = space == std::string_view::npos ? std::string_view{} : Trim(t.substr(space));
+    if (AddressOk(address)) {
+        if (!password.empty() && !PasswordOk(password)) {
+            return std::string("The join password after the address: no spaces, at most 128 characters.");
+        }
+        return JoinAddress{std::string(address), std::string(password)};
     }
     return std::string("That is not an invite code or a server address.");
 }

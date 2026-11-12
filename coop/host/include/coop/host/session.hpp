@@ -172,6 +172,13 @@ class Session {
     watcher_->guard_count(count, sources);
     return true;
   }
+  // Emulator thread only: FlagWatcher::expect_doubled_gain (issue 195, a
+  // chest opened again here). False when flags are not shared.
+  bool expect_doubled_gain() {
+    if (!watcher_) return false;
+    watcher_->expect_doubled_gain();
+    return true;
+  }
   // Emulator thread only: FlagWatcher::take_counts_guarded.
   std::vector<FlagWatcher::CountGuarded> take_counts_guarded() {
     return watcher_ ? watcher_->take_counts_guarded() : std::vector<FlagWatcher::CountGuarded>{};

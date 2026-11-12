@@ -11,11 +11,13 @@
 #  - Lid steady: shot "a-look2" (10 s later) must match "a-look" (lid open in both). In A's log,
 #    "copy 0x<chest> plays 'OpenWait'" comes once or twice, not every second while A only watches,
 #    and no "closed idle back after it showed open ... (the lid may flicker)". Either: FAIL (flicker).
-#  - "a-try" (A presses A at the shown-open chest): a REAL check of the double give. FAIL (record
-#    in #195) if A logs "Obj_TBox_A_02: opened here too after another game (... N this session)",
-#    or shot "a-try-get" shows A's own get scene / the map held up. PASS: nothing opens.
-#    (The map is one-way shared, so a second map is not seen in the flags: the log line and the
-#    shot are the proof. A small key would count twice for the group.)
+#  - "a-try" (A presses A at the shown-open chest): the double give. PASS: nothing opens. If the
+#    AI still opens it (A logs "Obj_TBox_A_02: opened here too after another game (... N this
+#    session)" and shot "a-try-get" shows A's own get scene), A must ALSO log "a chest another
+#    player had opened was opened here too: this game's next count gain is taken back": then a
+#    small key or heart piece in such a chest counts once (flag_watcher expect_doubled_gain);
+#    record in #195 that the AI lets it open. FAIL: "opened here too" without that line.
+#    (The map is one-way shared, so no count moves here: the lines and the shot are the proof.)
 #  - bool 0x89787395 "0 -> 1" in both, never a later "1 -> 0" that stays.
 #  - "far" then "back" (both to room 3 and back: the room's actors unload and load again): in
 #    both, "+ Obj_TBox_A_02 ... 0x771092ae2f3b7100" again with no "shown open here (OpenWait

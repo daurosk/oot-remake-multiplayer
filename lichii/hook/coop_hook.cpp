@@ -569,6 +569,12 @@ public:
                      "put back, not sent",
                      g.count.hash, g.amount);
         }
+        for (unsigned n = CoopObjects::TakeChestsOpenedTwice(); n > 0; --n) {  // issue 195
+            if (session_->expect_doubled_gain()) {
+                LOG_INFO(Core, "coop: flags: a chest another player had opened was opened here too: "
+                               "this game's next count gain is taken back");
+            }
+        }
         if (const auto taken = session_->take_written_for_others(); !taken.empty()) {
             std::vector<std::uint64_t> keys;
             for (const auto& k : taken) {

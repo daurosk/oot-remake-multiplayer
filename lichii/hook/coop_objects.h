@@ -76,6 +76,11 @@ void OnEvent(const coop::net::Event& event);
 // there). What of them is loaded now is removed (docs/items.md, "Chests").
 void TakenForOthers(const std::vector<std::uint64_t>& keys);
 
+// Emulator thread: how many chests shown open here (another player opened
+// them) our Link opened again since the last call (issue 195). Each one's
+// content is taken back from the shared counts (Session::expect_doubled_gain).
+unsigned TakeChestsOpenedTwice();
+
 // Issue 109 (coop_boss): whether the boss with body actors `bodies` was
 // alive in the last walk of LICHII_COOP_OBJECTS (BossAlive); nothing when
 // no walk ran in the last 1.5 s, or its life is not read. Any thread.

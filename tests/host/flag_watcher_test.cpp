@@ -1444,3 +1444,52 @@ TEST_CASE("flag watcher: the settle lasts 2 s at 165 presents a second, not 0.73
   CHECK(settle >= 1'950'000);
   CHECK(settle <= 2'100'000);
 }
+
+// Issue 195: our Link opened again a chest another player had opened (it is
+// shown open here, but its AI lets it open). Its content counted once for the
+// group already, so this game's next count gain is put back, not sent.
+TEST_CASE("doubled chest: the next count gain is put back, not sent") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.tokens(6);
+  const auto sent = entries(w.frame(store));
+  CHECK_FALSE(has(sent, token_delta(1)));
+  CHECK(store.tokens() == 5);
+  CHECK(w.stats().doubled_gains == 1);
+  const auto guarded = w.take_counts_guarded();
+  REQUIRE(guarded.size() == 1);
+  CHECK(guarded[0].count == kTokens);
+  CHECK(guarded[0].amount == 1);
+  // Only one: the next gain is ours and counts.
+  CHECK(entries(w.frame(store)).empty());
+  store.tokens(6);
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 6);
+}
+
+TEST_CASE("doubled chest: unused, it lapses; a drop is never taken back") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.tokens(4);  // spent one: sent as ever
+  CHECK(has(entries(w.frame(store)), token_delta(-1)));
+  for (std::uint64_t f = 0; f <= FlagWatcher::kDoubledGainFrames; ++f) w.frame(store);
+  store.tokens(5);  // a gain after the window: counts
+  CHECK(has(entries(w.frame(store)), token_delta(1)));
+  CHECK(store.tokens() == 5);
+  CHECK(w.stats().doubled_gains == 0);
+}
+
+TEST_CASE("doubled chest: the host takes it back too and sends no total") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::host);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.tokens(6);
+  CHECK_FALSE(has(entries(w.frame(store)), token_total(6)));
+  CHECK(store.tokens() == 5);
+  CHECK(w.stats().doubled_gains == 1);
+}

@@ -64,6 +64,7 @@ struct FlagStats {
   std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
   std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
   std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
+  std::uint64_t doubled_gains = 0;     // a chest opened again here: its gain taken back (expect_doubled_gain)
 };
 
 class FlagWatcher {
@@ -158,6 +159,16 @@ class FlagWatcher {
   };
   // The gains guard_count put back since the last call, for the log.
   std::vector<CountGuarded> take_counts_guarded() { return std::exchange(counts_guarded_, {}); }
+
+  // Issue 195: our Link opened a chest that another player had opened
+  // already (the hook shows it open, but its AI still lets it open again).
+  // Its content was given in the other game and counted for the group, so
+  // the next gain of any count (a small key, a heart piece) in our own game
+  // within kDoubledGainFrames is put back and not sent (take_counts_guarded
+  // reports it). One call drops one gain; unused ones lapse.
+  void expect_doubled_gain();
+  static constexpr std::uint64_t kDoubledGainFrames = 15 * 60;
+  static constexpr std::int32_t kMaxDoubledGains = 4;
 
   // The host left and this player takes over, or the other way round. Keeps
   // what is known of the game; drops a snapshot being held.
@@ -301,6 +312,8 @@ class FlagWatcher {
   std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
   Table added_;                              // count deltas add() put in this frame
   std::vector<CountGuarded> counts_guarded_;  // take_counts_guarded
+  std::int32_t doubled_ = 0;                  // expect_doubled_gain: gains still to drop
+  std::uint64_t doubled_until_ = 0;           // the frame they lapse
   void settle_guards(FlagStore& store, Table& changes);
   // Notes a 64-bit key about to be written to 1 when the game has it at 0.
   void note_for_others(FlagStore& store, const protocol::FlagEntry& entry);

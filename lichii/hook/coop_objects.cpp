@@ -976,6 +976,11 @@ std::atomic<bool>& TheLocalEvent() {
 }
 
 // The MaxLife flag as the session left it (SetMaxLife); -1: not known.
+std::atomic<unsigned>& TheChestsOpenedTwice() {
+    static std::atomic<unsigned> count{0};
+    return count;
+}
+
 std::atomic<s32>& TheMaxLife() {
     static std::atomic<s32> quarters{-1};
     return quarters;
@@ -1137,6 +1142,14 @@ public:
             sync_.Bind(live);
         }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
+            // Issue 195: a chest shown open that our Link opened again; the
+            // flag watcher takes back its content's count (TakeChestsOpenedTwice).
+            if (twice > chests_twice_seen_) {
+                TheChestsOpenedTwice() += twice - chests_twice_seen_;
+            }
+            chests_twice_seen_ = twice;
+        }
         {
             // Enemy shots (coop_enemy_shots.h): which game's enemy fired one.
             std::vector<CoopEnemyShots::Shooter> shooters;
@@ -2381,6 +2394,7 @@ private:
     CoopEvery::Every share_every_{CoopEvery::kTwoFramesUs};
     bool sharing_ = false;
     std::size_t blast_drops_logged_ = 0;
+    unsigned chests_twice_seen_ = 0;  // sync_.ChestsOpenedTwice() passed on (issue 195)
     std::size_t present_logged_ = ~std::size_t{0};
     std::pair<std::size_t, std::string> fish_logged_;  // the last FISH_LURE logged
     std::vector<coop::protocol::ObjectGroupEntry> group_logged_;
@@ -2517,6 +2531,10 @@ std::vector<std::uint32_t> TakeKeyRefunds() {
     std::vector<std::uint32_t> out;
     out.swap(KeyRefundQueue());
     return out;
+}
+
+unsigned TakeChestsOpenedTwice() {
+    return TheChestsOpenedTwice().exchange(0);
 }
 
 void TakenForOthers(const std::vector<std::uint64_t>& keys) {

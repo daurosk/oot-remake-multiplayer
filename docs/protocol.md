@@ -441,3 +441,4 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - Version 10 also brings `FISH_LURE` (320; 320 to 324 kept, branch `fishing-3`, issue 151), from a client only and not relayed. A version 9 server refuses it as unknown.
 - Version 10 also brings `DUNGEON_EVENT` (355; 355 to 359 kept, branch `deku-dungeon-2`, issues 176 and 196), from either side, relayed to the sender's scene, never kept.
 - Version 10 (host-fixes, issue 163): `REJOIN_TOKEN` (345) and `REJOIN_CLAIM` (346); 345 to 349 kept. A build without them is never given a takeover (it shows no token), which is only slower, so no bump of its own.
+- Version 10 also brings `PLAYER_RIDE` (385; 385 to 389 kept, branch `epona-ride`, issue 199), on the samples channel, relayed to everyone else. A build without it ignores the type and its riders show on foot.

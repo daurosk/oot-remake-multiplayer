@@ -390,6 +390,9 @@ public:
     // Present thread: drops another game rolled (coop_drops). Keys have bit
     // 62 set.
     void SetDrops(std::uint64_t main_base, std::vector<Copy> copies);
+    // Present thread: the horses other players ride (coop_ride.h, issue
+    // 199), each made as its stand-in only (StandInOnly). Keys have bit 61 set.
+    void SetRides(std::uint64_t main_base, std::vector<Copy> copies);
     // Present thread: enemy shots of copy enemies to delete (Sync::Doom).
     // Each is deleted once, with the game's delete request, only if it is
     // still on the actor list with the same vtable and is none of ours.
@@ -445,6 +448,8 @@ private:
     std::vector<Copy> next_enemies_;     // guarded
     std::uint64_t next_drop_base_ = 0;   // guarded
     std::vector<Copy> next_drops_;       // guarded
+    std::uint64_t next_ride_base_ = 0;   // guarded
+    std::vector<Copy> next_rides_;       // guarded
     std::map<std::uint64_t, std::uint64_t> live_;  // guarded
 
     std::uint64_t base_ = 0;

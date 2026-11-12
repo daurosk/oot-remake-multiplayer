@@ -1692,3 +1692,51 @@ TEST_CASE("bad fish lures are refused (issue 151)") {
   b[kHeaderSize + 1] = 2;  // two said, one sent
   CHECK(decode(b, m) == Error::truncated);
 }
+
+TEST_CASE("player ride: type 385, samples channel, horse and offset, both ways") {
+  CHECK(static_cast<int>(MessageType::player_ride) == 385);
+  CHECK(channel_of(MessageType::player_ride) == kChannelPlayerSamples);
+  CHECK(allowed_on_channel(MessageType::player_ride, kChannelPlayerSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::player_ride, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::player_ride));
+  CHECK(may_send(Sender::server, MessageType::player_ride));
+
+  Message back;
+  const PlayerRide ride{3, kRideRiding, "Animal_Epona_Adult", {0.0f, -1.1f, 0.2f},
+                        {0.0f, 0.38f, 0.0f, 0.92f}, Animation{"Gallop", 12.0f, 1.5f}};
+  const Bytes b = must_encode(Message{ride});
+  // type, length; u8 player, u8 flags, name (2 + 18), 7 floats, u8 1, anim (2 + 6 + 8)
+  CHECK(b.size() == 4 + 2 + 20 + 28 + 1 + 16);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == Message{ride});
+  CHECK(sender_of(back) == std::optional<std::uint8_t>{3});
+
+  PlayerRide off{0, 0, "", {}, {0, 0, 0, 1}, std::nullopt};
+  REQUIRE(decode(must_encode(Message{off}), back) == Error::none);
+  CHECK(back == Message{off});
+  CHECK(check_received(Message{off}, Sender::client, kChannelPlayerSamples) == Error::none);
+
+  Bytes out;
+  PlayerRide bad = ride;
+  bad.player_number = 0;
+  bad.flags = 0x02;
+  CHECK(encode(Message{bad}, out) == Error::bad_value);  // unknown flag bit
+  bad = ride;
+  bad.player_number = 0;
+  bad.horse.clear();
+  CHECK(encode(Message{bad}, out) == Error::bad_value);  // riding nothing
+  bad = ride;
+  bad.player_number = 0;
+  bad.offset[1] = -kMaxRideOffset - 1.0f;
+  CHECK(encode(Message{bad}, out) == Error::bad_value);  // too far from the rider
+  bad = ride;
+  bad.player_number = 0;
+  bad.rotation[3] = std::numeric_limits<float>::infinity();
+  CHECK(encode(Message{bad}, out) == Error::bad_value);
+  Bytes short_one = b;
+  short_one.pop_back();
+  CHECK(decode(short_one, back) != Error::none);
+  Bytes flag_two = b;
+  flag_two[4 + 1] = 0x03;  // flags byte
+  CHECK(decode(flag_two, back) == Error::bad_value);
+}

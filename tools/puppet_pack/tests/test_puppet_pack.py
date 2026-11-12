@@ -497,7 +497,7 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual([n for _, n in build.STAND_INS],
                          ["CoopShot_Seed", "CoopShot_Arrow", "CoopShot_Hook", "CoopShot_HookLong",
                           "CoopShot_Lure", "CoopShot_SinkingLure", "CoopShot_Bomb",
-                          "CoopShot_Boomerang"])
+                          "CoopShot_Boomerang", "CoopRide_Epona"])
 
     def test_impact(self):
         # Issue 166: an impact actor plays one xlink key where a copy lands.
@@ -585,6 +585,17 @@ class BuildPackTest(unittest.TestCase):
         self.assertNotIn("ASRef", boom)
         self.assertNotIn("PhysicsRef", boom)
         self.assertIn("ModelInfoRef", boom)
+        # Issue 199: the ridden horse keeps her animations (the hook plays the rider's horse's), and
+        # none of her AI, physics or riding.
+        horse_src = dict(bomb, Components=dict(bomb["Components"], AIScheduleRef="x", RidableRef="y",
+                                               HorseRef="z"))
+        _, horse_ap, _ = build.build_stand_in(
+            {"Actor/Animal_Epona_Adult.engine__actor__ActorParam.bgyml": byml.dumps(horse_src)},
+            "Animal_Epona_Adult", "CoopRide_Epona")
+        horse = byml.loads(horse_ap)["Components"]
+        self.assertEqual(horse["ASRef"], bomb["Components"]["ASRef"])
+        for k in ("AIScheduleRef", "RidableRef", "HorseRef", "PhysicsRef"):
+            self.assertNotIn(k, horse)
 
     def test_actor_param_chain(self):
         members = fake_player_pack("Adult")

@@ -1043,7 +1043,7 @@ TEST_CASE("puppet planner: scene and cutscene rules, actor by age, animation pas
     CHECK(in.targets[1].actor == "Animal_Cow_LinkHouse");
 }
 
-TEST_CASE("puppet planner: riding parks, the Ocarina plays through their cutscene") {
+TEST_CASE("puppet planner: riding shows (issue 199), the Ocarina plays through their cutscene") {
     CoopPuppet::Planner p;
     std::vector<CoopPuppet::Remote> remotes(3);
     remotes[0].number = 1;
@@ -1061,7 +1061,7 @@ TEST_CASE("puppet planner: riding parks, the Ocarina plays through their cutscen
 
     auto in = p.Plan(kBase, std::string("HyruleField_Child"), std::nullopt, false, remotes, 0);
     REQUIRE(in.targets.size() == 3);
-    CHECK(in.targets[0].show == CoopPuppet::Show::hide);  // kept, parked
+    CHECK(in.targets[0].show == CoopPuppet::Show::show);  // on its horse copy, never parked
     CHECK(std::string(in.targets[0].why) == "riding");
     CHECK(in.targets[1].show == CoopPuppet::Show::show);
     CHECK(std::string(in.targets[1].why) == "ocarina");

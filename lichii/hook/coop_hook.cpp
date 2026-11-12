@@ -70,6 +70,7 @@
 #include "coop_objects.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
+#include "coop_ride.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
 #include "coop_scrub_talk.h"
@@ -280,6 +281,7 @@ public:
             CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
             CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
             CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
+            CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -663,6 +665,12 @@ public:
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         CoopFairy::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                            report.connected ? session_.get() : nullptr, report.server_now_us);
+        // Issue 199: our horse sent while we ride; a copy of theirs under each
+        // riding puppet (coop_ride.h).
+        CoopRide::Frame(system, view.game ? base_ : 0, report.connected ? session_.get() : nullptr,
+                        view.scene, event, view.position,
+                        reading ? reading->rotation : std::nullopt,
+                        reading ? reading->animation : std::nullopt, report.server_now_us);
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
                            report.server_now_us);
         CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)

@@ -1,0 +1,44 @@
+# epona (issue 199), B: the rider. Both games load the save into Hyrule Field as adults
+# (HyruleField_Adult). A save without Epona yet (the kits' saves) has her standing in the field
+# at -100.47 150.60 264.55 (HyruleField_Adult_Static, present while Get_Epona_IsCompleted_Exp is
+# false). B is put beside her, gets on with A, rides forward, stops and gets off with A.
+# A (epona.A.txt) stands 10 m away and watches. Run with -NoLoad (this file loads the save).
+# Expect in B's log: "coop: ride: we ride Animal_Epona_Adult, sending PLAYER_RIDE" once on,
+# then "coop: ride: we got off, riding off sent". With "but no Animal_Epona_Adult within 4 m"
+# the horse is not that actor: read B's "P2 plays" lines in A's log for the command names.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_ANIM=1
+mark start
+warp HyruleField_Adult HyruleField_FrontOfMarket
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400               # the save loads, then the warp lands (about 30 s)
+mark field
+place -99.0 151.0 264.5 # beside Epona (1.5 m east of her)
+wait 240
+toward -100.47 264.55 6 # face her
+wait 30
+mark by-horse
+press A                 # get on
+wait 240
+mark mounted
+stick 0 0.8 120         # ride forward
+mark riding
+stick 0 0.8 120
+mark riding2
+wait 240                # let her stop
+press A                 # get off
+wait 240
+mark dismounted
+stick 0 0.6 60          # walk a little on foot
+mark walking
+wait 300
+mark end

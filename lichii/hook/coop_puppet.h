@@ -496,7 +496,7 @@ public:
     explicit Planner(PlannerSettings settings = {}) : settings_(std::move(settings)) {}
     // `local_event`: our own cutscene runs (it hides every puppet;
     // coop::host::local_event_hides). Each remote's case is
-    // coop::host::visibility, with its animation (riding parks it).
+    // coop::host::visibility, with its animation (riding shows it, issue 199).
     Input Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                const std::optional<Vec3>& position, bool local_event,
                const std::vector<Remote>& remotes, std::uint64_t now_ms,

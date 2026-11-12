@@ -1339,3 +1339,46 @@ TEST_CASE("spawn: our hookshot tip sends its animation (the chain), a seed does 
     }
     CHECK(hooks == 1);
 }
+
+// Issue 199: another player's horse (coop_ride.h, SetRides) is only ever the
+// stand-in CoopRide_Epona: the game's own Epona here would run on her own AI.
+TEST_CASE("spawn: a ridden horse copy is only ever its stand-in") {
+    using R = StandInRig;
+    namespace addr = CoopPuppet::addr;
+    CHECK(std::string(CoopSpawn::StandIn("Animal_Epona_Adult")) == "CoopRide_Epona");
+    CHECK(CoopSpawn::StandInOnly("Animal_Epona_Adult"));
+    CHECK_FALSE(CoopSpawn::IsShared("Animal_Epona_Adult"));  // not a thing a player makes
+    CHECK(CoopSpawn::StandInsIn("{\"shots\": [{\"actor\": \"CoopRide_Epona\"}]}") ==
+          std::set<std::string>{"CoopRide_Epona"});
+    Copy copy;
+    copy.key = (1ull << 61) | (2ull << 32) | 1;
+    copy.actor = "Animal_Epona_Adult";
+    copy.position = {1.0f, 2.0f, 3.0f};
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopRide_Epona"});
+        d.SetRides(R::base, {copy});
+        REQUIRE(d.Step(rig.guest, false, 0, 0));
+        auto c = d.Step(rig.guest, true, R::block, 0);
+        REQUIRE(c);
+        REQUIRE(c->function == R::base + addr::kCreate);
+        CHECK(rig.Name(*c) == "CoopRide_Epona");
+    }
+    {
+        StandInRig rig;
+        CoopSpawn::Director d;
+        d.SetStandIns({"CoopShot_Seed"});  // a pack built before the horse
+        d.SetRides(R::base, {copy});
+        auto c = d.Step(rig.guest, false, 0, 0);
+        if (c && c->function != R::base + addr::kCreate) {
+            c = d.Step(rig.guest, true, R::block, 0);  // the slots' malloc
+        }
+        CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        for (std::uint64_t ms = 16; ms < 200; ms += 16) {
+            c = d.Step(rig.guest, false, 0, ms);
+            CHECK_FALSE((c && c->function == R::base + addr::kCreate));
+        }
+        CHECK(d.Live().empty());
+    }
+}

@@ -125,7 +125,9 @@ void EnetServer::service(std::uint32_t timeout_ms) {
   for (ENetPeer* peer : lost_full) {
     const std::uint64_t now = now_us();
     std::erase_if(small_hosts_, [now](const auto& entry) { return entry.second <= now; });
-    small_hosts_[peer->address.host] = now + std::uint64_t{net::kRememberMs} * 1000;
+    if (net::remember_small_path(peer->address.host, remember_loopback_)) {
+      small_hosts_[peer->address.host] = now + std::uint64_t{net::kRememberMs} * 1000;
+    }
     send_small(peer, "its path lost our " + std::to_string(peer->mtu) +
                          "-byte datagrams while small ones got through; told it to connect again with " +
                          std::to_string(net::kSmallDatagramBytes) + "-byte ones");

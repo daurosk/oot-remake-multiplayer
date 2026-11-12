@@ -260,7 +260,7 @@ std::optional<std::set<std::string>> ParseNames(std::string_view text) {
     return out;
 }
 
-void Requester::Want(std::string name) {
+void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, std::uint64_t max_age_us) {
     if (name.empty()) {
         notes_.push_back("live event with no name not asked");
         return;
@@ -269,8 +269,10 @@ void Requester::Want(std::string name) {
         notes_.push_back("live event " + name + " not asked (name too long or too many waiting)");
         return;
     }
-    if (std::find(wanted_.begin(), wanted_.end(), name) == wanted_.end() && name != current_) {
-        wanted_.push_back(std::move(name));
+    const bool waiting =
+        std::any_of(wanted_.begin(), wanted_.end(), [&](const Wanted& w) { return w.name == name; });
+    if (!waiting && name != current_) {
+        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us});
     }
 }
 
@@ -383,7 +385,7 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         return std::nullopt;  // an event began since it was asked: wait, it stays queued
     }
     if (current_.empty()) {
-        current_ = std::move(wanted_.front());
+        current_ = std::move(wanted_.front().name);
         wanted_.pop_front();
     }
     c.function = main + addr::kArgBuild;

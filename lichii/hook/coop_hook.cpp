@@ -581,6 +581,18 @@ public:
         if (shared_scenes_) {
             SharedScenes(view, reading, memory, report.server_now_us);
         }
+        // review-p11-interactions: a gimmick or story event still waiting in
+        // the requester is dropped when we left its scene, when it waited too
+        // long (story cutscenes: kJoinUs) or when our game has it played.
+        if (live_events_ && memory) {
+            std::lock_guard lock(live_mutex_);
+            live_requester_.Expire(view.scene.value_or(std::string()), CoopEvery::NowUs(),
+                                   [&](const std::string& n) {
+                                       return coop::host::GameFlags(*memory)
+                                           .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                                           .value_or(false);
+                                   });
+        }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
         // (coop_live_events.h; off with LICHII_COOP_LIVE_EVENTS=0).
@@ -599,7 +611,7 @@ public:
             if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
                 std::lock_guard lock(live_mutex_);
-                live_requester_.Want(*name);
+                live_requester_.Want(*name, hold_scene_);  // no age limit: started when near, as before
             }
         }
         // The scrub flags of issue 144 have their own log line (above).
@@ -1515,7 +1527,7 @@ private:
         }
         if (name) {
             std::lock_guard lock(live_mutex_);
-            live_requester_.Want(*name);
+            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs);
         }
     }
 

@@ -395,3 +395,35 @@ TEST_CASE("live events: another player's start is offered at once near its place
     empty.Started(kPlatform, "");
     CHECK_FALSE(empty.Next({}, kDeku, false, kInRoomD));
 }
+
+TEST_CASE("live events: a waiting request is dropped when we left its scene, it is too old, or it was played") {
+    CoopLiveEvents::Requester r;
+    const auto none = [](const std::string&) { return false; };
+    r.Want("Gimmick_A", "InsideTheDekuTree");                       // no age limit
+    r.Want("Dm_Kokiri_0030", "KokiriForest", 1'000'000, 3'000'000);  // a story cutscene
+    r.Want("Any");                                                   // no scene: kept
+    REQUIRE(r.Waiting() == 3);
+
+    // A load (scene not known): nothing dropped for the scene.
+    r.Expire("", 2'000'000, none);
+    CHECK(r.Waiting() == 3);
+    // In the Kokiri Forest within 3 s: the gimmick of the Deku Tree goes.
+    r.Expire("KokiriForest", 2'000'000, none);
+    CHECK(r.Waiting() == 2);
+    // Waited too long behind another event.
+    r.Expire("KokiriForest", 4'000'000, none);
+    CHECK(r.Waiting() == 1);
+    // Played already (its flag came): gone too.
+    r.Expire("KokiriForest", 4'000'000, [](const std::string& n) { return n == "Any"; });
+    CHECK(r.Waiting() == 0);
+    const auto notes = r.TakeNotes();
+    REQUIRE(notes.size() == 3);
+    CHECK(notes[0].find("Gimmick_A dropped before it was asked (we left its scene)") != std::string::npos);
+    CHECK(notes[1].find("Dm_Kokiri_0030") != std::string::npos);
+    CHECK(notes[1].find("waited too long") != std::string::npos);
+    CHECK(notes[2].find("played already") != std::string::npos);
+    // The same name asked twice waits once.
+    r.Want("Again", "KokiriForest");
+    r.Want("Again", "KokiriForest");
+    CHECK(r.Waiting() == 1);
+}

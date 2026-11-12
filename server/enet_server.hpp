@@ -75,6 +75,9 @@ class EnetServer {
   // addresses remembered for that.
   std::uint64_t small_path_drops() const { return small_path_drops_; }
   bool small_path(enet_uint32 host) const { return small_hosts_.count(host) != 0; }
+  // Loopback addresses are not remembered (net::remember_small_path): every
+  // relay guest and the host's own game share 127.0.0.1. Tests turn it on.
+  void remember_loopback_small_paths(bool on) { remember_loopback_ = on; }
 
  private:
   std::uint64_t now_us() const;
@@ -102,6 +105,7 @@ class EnetServer {
   // Addresses sent away (ENet's form) and until when (now_us()) one is told
   // again at connect; told once, then forgotten (net::kRememberMs).
   std::map<enet_uint32, std::uint64_t> small_hosts_;
+  bool remember_loopback_ = false;
   std::map<ConnectionId, net::PathMark> path_marks_;  // coop/net/enet_path.hpp
   std::chrono::steady_clock::time_point start_;
   RawHandler raw_;

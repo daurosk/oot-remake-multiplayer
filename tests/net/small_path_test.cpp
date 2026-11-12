@@ -293,6 +293,7 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
   coop::server::ServerOptions options;
   options.port = 0;
   coop::server::EnetServer server(options);
+  server.remember_loopback_small_paths(true);  // every game here is on 127.0.0.1
   REQUIRE(server.start());
 
   Client host(config_to(server.port(), "Link"));
@@ -345,6 +346,53 @@ TEST_CASE("small path: the server tells a remembered address again when it conne
   CHECK_FALSE(other.small_datagrams());
   CHECK(other.link().mtu == proto::kDatagramBytes);
   CHECK(server.small_path_drops() == 2);
+}
+
+TEST_CASE("small path: a loopback game sent away is not remembered (relay guests and the host share 127.0.0.1)") {
+  EnetLife enet;
+  coop::server::ServerOptions options;
+  options.port = 0;
+  coop::server::EnetServer server(options);
+  REQUIRE(server.start());
+
+  Client host(config_to(server.port(), "Link"));
+  REQUIRE(host.start());
+  auto pump = [&](Client& c, LimitedPath* path, int ms, auto done) {
+    const auto start = Clock::now();
+    while (ms_since(start) < ms) {
+      server.service(1);
+      host.service(0);
+      if (path != nullptr) path->service();
+      if (&c != &host) c.service(0);
+      if (path != nullptr) path->service();
+      if (done()) return true;
+    }
+    return false;
+  };
+  REQUIRE(pump(host, nullptr, 3000, [&] { return host.is_host(); }));
+  REQUIRE(host.send_flag_snapshot(flags_from(1, 2000, 7)));
+
+  // A first game behind a 576 path: sent away once, comes back small.
+  {
+    LimitedPath path(server.port(), 576);
+    Client joiner(config_to(path.port(), "Saria"));
+    REQUIRE(joiner.start());
+    REQUIRE(pump(joiner, &path, 15000, [&] { return joiner.synced(); }));
+    CHECK(joiner.small_datagrams());
+    joiner.stop();
+    pump(joiner, &path, 200, [] { return false; });
+  }
+  REQUIRE(server.small_path_drops() == 1);
+  ENetAddress local{};
+  REQUIRE(enet_address_set_host_ip(&local, "127.0.0.1") == 0);
+  CHECK_FALSE(server.small_path(local.host));
+  // The next game from 127.0.0.1 (the host's own, or another relay guest)
+  // comes in at full size, not sent away.
+  Client other(config_to(server.port(), "Malon"));
+  REQUIRE(other.start());
+  REQUIRE(pump(other, nullptr, 5000, [&] { return other.synced(); }));
+  CHECK_FALSE(other.small_datagrams());
+  CHECK(server.small_path_drops() == 1);
 }
 
 TEST_CASE("small path: plain loss and short outages on a line that carries full datagrams do not switch it") {

@@ -1,21 +1,25 @@
 # hookshot/
 
-Co-op inside [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), the static recompilation of the same game build. The plan and what is proven: [docs/hookshot.md](../docs/hookshot.md). Hookshot's source is not in this repository and not forked on GitHub: `fetch.ps1` clones it at the pinned commit next to this repo and applies our patch as a local commit. Built games and Hookshot's generated C contain the game: they never leave the player's PC.
+Co-op inside [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0), the PC port of the same game build. The design and what is proven: [docs/hookshot.md](../docs/hookshot.md); for players: [docs/play-online.md, "On Hookshot"](../docs/play-online.md#on-hookshot-experimental). Hookshot's source is not in this repository and not forked on GitHub. Built games and Hookshot's generated C contain the game: they never leave the player's PC.
 
 | File | What |
 |---|---|
-| `PIN` | Repo URL and the Hookshot commit our patch applies to. |
-| `fetch.ps1` | Clones or updates `hookshot-src` beside the main checkout to the pin and applies `patches/*.patch` on a local branch `coop`. |
-| `patches/0001-coop-bridge.patch` | `nx2/coop_hooks.py` (the frame hook after the `mov x0, x20` before each of moduleCalc_'s two calls of the frame function, and the AI hold after main+0x369df8's call), its two lines in `nx2/lift.py`, `host/coop_bridge.c` (loads the module, guest memory, game calls, log) and `host/hos_coop_api.h`. Hookshot compiles every `host/*.c`, so its build needs no change. |
-| `src/hos_coop_api.h` | The C table between the bridge and the module; the patch carries the same file (`tests/hookshot/module_test.cpp` checks). |
-| `src/coop_hookshot.cpp` | The module, `hookshot_coop.dll`: settings, the network thread, our Link read and sent, puppets planned and their game calls made (lichii/hook's `coop_puppet`, `coop_pose`, `coop_callers`). Built by this repository's CMake (`COOP_BUILD_HOOKSHOT`, on by default). |
+| `PIN` | Hookshot's repo and the commit our patch applies to. |
+| `TOOLS` | Hookshot's builder parts for that commit (and llvm-mingw), with SHA-256 and size: what the kit downloads. The "app" and "third_party" parts are Hookshot's source tree at the pin. |
+| `patches/0001-coop-bridge.patch` | Our only change to Hookshot: `nx2/coop_hooks.py` (the frame hook after the `mov x0, x20` before each of moduleCalc_'s two calls of the frame function, and the AI hold after main+0x369df8's call), its two lines in `nx2/lift.py`, `host/coop_bridge.c` (loads the module; guest memory, game calls, the log) and `host/hos_coop_api.h`. |
+| `apply_patch.py` | Applies the patches without git (the kit's build). |
+| `fetch.ps1` | For developers: clones Hookshot beside the main checkout at the pin and applies the patches as a local commit (as `lichii/fetch.ps1`). |
+| `src/` | The module, `hookshot_coop.dll`: `hos_coop_api.h` (the bridge's table, the same file the patch adds), `coop_hookshot.cpp` (start, frame, AI hold, stop; it drives `CoopHook` and makes the callers' game calls). |
+| `compat/` | Stand-ins for the slice of the emulator's API that `lichii/hook` uses, answered from the bridge's table, so every hook file compiles unchanged for Hookshot: one copy of co-op for both. |
+| `CMakeLists.txt` | Target `hookshot_coop` (Windows, MSVC): `lichii/hook`'s files as `core.cmake` lists them, but the emulator's cave and input injection, plus `src/`. |
+| `proof.py` | The two-game check on one PC (both games, the server, shots of both pictures, the co-op log lines). |
 
-## Make a co-op Hookshot game folder (Windows)
+## A co-op Hookshot game, for development (Windows)
 
-1. `powershell -ExecutionPolicy Bypass -File hookshot\fetch.ps1` (once, and after a pin change).
-2. Build the game from your own `.nup` with Hookshot's own script, from `hookshot-src` (its readme, "Build from source", lists the tools: Python 3 with its `requirements.txt`, llvm-mingw, the builder's `tools` folder): `python -I nx2/make_game.py --nup <your .nup> --out <game folder> --language en-US`. The log says `co-op hooks: frame hook at ...`.
-3. Build the module: `cmake -S . -B build` and `cmake --build build --config Release --target hookshot_coop` in this repository; copy `hookshot_coop.dll` next to `hookshot.exe` (the game folder's `bin\` when it has one).
-4. The puppet pack into the game's mods: `<repo venv python> tools/puppet_pack/build.py --romfs <your .nup> --mod-dir "<game folder>\mods\contents 0486024DEC000\coop-puppet"` (the hook looks for the pack there, as in an emulator's load folder).
-5. `coop.ini` beside the game (as the emulator's: `server = 127.0.0.1`, `name = Saria`), or `LICHII_COOP_SERVER` / `LICHII_COOP_NAME`. Start `coop_server` and the game. `hookshot_log.txt` says `coop: module loaded` and `coop: connected`.
+1. `powershell -ExecutionPolicy Bypass -File hookshot\fetch.ps1`.
+2. The builder parts in `TOOLS` (the kit's `scripts\hookshot-build.ps1` does all of this), or the tools Hookshot's readme lists under "Build from source". In `hookshot-src`: `python -I nx2/make_game.py --nup <your .nup> --out <game folder> --language en-US`. Its log says `co-op hooks: frame hook at ...`.
+3. `cmake --build build --config Release --target hookshot_coop` here; `hookshot_coop.dll` beside `hookshot.exe`.
+4. The puppet pack: `tools/puppet_pack/build.py --romfs <your .nup> --mod-dir "<game folder>\mods\contents\0400486024DEC000\coop-puppet"`.
+5. `coop.ini` beside `hookshot.exe` (as the emulator's: `server = 127.0.0.1`, `name = Saria`) and the `LICHII_COOP_*` switches as in the kit's `coop-options.ini`. `hookshot_log.txt` says `coop: module loaded` and `coop: connected`.
 
 `HOS_COOP=0` keeps the module out for a run.

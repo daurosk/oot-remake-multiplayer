@@ -2,6 +2,8 @@
 
 This is an early test build of online co-op (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)) for the Ocarina of Time remake on the Fritchii emulator. Expect bugs; [known-issues.md](known-issues.md) lists what works and what does not yet. After this page, [play-lan.md](play-lan.md) (same network) or [play-online.md](play-online.md) (over the internet) says how to play together.
 
+**On Hookshot instead (experimental):** with a mesh-shader graphics card (NVIDIA RTX 20 or AMD RX 6000 and newer) the kit can also build [Hookshot](https://github.com/NotRexed/Hookshot), a PC port of the game, with co-op, from your own `.nup`: `make-hookshot.cmd`, then `Host-Hookshot.bat` / `Join-Hookshot.bat`. Hookshot and emulator players play together. See [play-online.md, "On Hookshot"](play-online.md#on-hookshot-experimental).
+
 ## What you need
 
 - A Windows 10 or 11 PC (64-bit) that can run the game on Fritchii.

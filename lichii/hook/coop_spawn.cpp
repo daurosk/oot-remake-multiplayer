@@ -1148,10 +1148,12 @@ void Director::NewFrame(CoopPuppet::Guest& guest, std::uint64_t now_ms) {
                 // made again; after kStandInTries in a row, as the game's
                 // own actor for the rest of the session.
                 started_.erase(slot.key);
-                if (++stand_in_fails_[slot.copy_of] >= kStandInTries &&
-                    no_stand_in_.insert(slot.copy_of).second) {
-                    Say(slot.copy_of + ": " + slot.actor + " could not be made " +
-                        std::to_string(kStandInTries) + " times in a row; the game's own actor is used");
+                if (++stand_in_fails_[slot.copy_of] >= kStandInTries) {
+                    std::lock_guard lock(mutex_);  // Next reads it under the lock
+                    if (no_stand_in_.insert(slot.copy_of).second) {
+                        Say(slot.copy_of + ": " + slot.actor + " could not be made " +
+                            std::to_string(kStandInTries) + " times in a row; the game's own actor is used");
+                    }
                 }
             } else if (slot.taken == 0 && CoopProjectiles::IsImpact(slot.copy_of)) {
                 // An impact actor the game will not make (issue 198: dropped every

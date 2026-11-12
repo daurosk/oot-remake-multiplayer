@@ -31,6 +31,7 @@
 #include "coop_hook.h"
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
+#include "coop_hud_layout.h"
 #if __has_include("coop_colors.h")
 #include "coop_colors.h"  // each player's colour (branch puppet-colors)
 #define COOP_WINDOW_HAS_COLORS 1
@@ -463,9 +464,9 @@ public:
     }
 
     // Where the blocks start and their sizes, in the game's 720-line picture.
-    // The game's hearts sit near the top left with the item icons under them.
+    // The top is CoopHudLayout::kBlocksTop, below the game's hearts, magic bar
+    // and d-pad item row.
     static constexpr double kLeft = 40.0;
-    static constexpr double kTop = 205.0;
     static constexpr double kNamePx = 25.0;
     static constexpr double kPlacePx = 19.0;
     // The heart pictures are 96 x 96 with the heart about half as wide in
@@ -498,7 +499,7 @@ protected:
         const QFontMetricsF nm(name_font), pm(place_font);
         const double heart = kHeartPx * u;
         const double x = pic.left() + kLeft * u;
-        double y = pic.top() + kTop * u;
+        double y = CoopHudLayout::BlocksTop(width(), height());
         for (const Block& b : blocks_) {
             const int alpha = b.dim ? 150 : 255;
             y += nm.ascent();

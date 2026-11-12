@@ -70,7 +70,7 @@ The pictures are read with `tools/puppet_pack/texture.py`: the `.bntx` header of
 
 In the emulator, `CoopHud::Folder()` (`lichii/hook/coop_hud.cpp`) finds the folder once (the default mod name, then any mod folder under the title; `LICHII_COOP_HUD_DIR` for tests, `LICHII_COOP_HUD=0` to turn it off) and logs `coop: hud: the game look from ...` or `coop: hud: plain look (why)`. The window loads the fonts with `QFontDatabase` and the hearts as pixmaps; one missing file means the plain look (`coop: hud: ... could not be loaded; plain look`). A scene missing from `places.json` shows as its name made readable (`SageRoom` -> `Sage Room`).
 
-Sizes are in the pixels of the game's 720-line picture and scale with it: blocks start 40 left and 205 down (under the game's hearts and item icons), name 25 px, place 19 px, hearts 38 px pictures (about 20 px of heart) 0.55 of that apart, ten to a row; chat 23 px.
+Sizes are in the pixels of the game's 720-line picture and scale with it: blocks start 40 left and 0.38 of the picture height down (`CoopHudLayout::kBlocksTop`, `lichii/hook/coop_hud_layout.h`: clear of the game's hearts, magic bar and d-pad item row, which end at about 0.30 at most; the same at 16:9 and ultrawide, where the 16:9 picture is pillarboxed), name 25 px, place 19 px, hearts 38 px pictures (about 20 px of heart) 0.55 of that apart, ten to a row; chat 23 px.
 
 ## Not yet proven
 

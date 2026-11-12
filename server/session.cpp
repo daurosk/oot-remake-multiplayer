@@ -405,6 +405,15 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_grass_cut(id, c, *cut, now_us);
     return;
   }
+  if (std::holds_alternative<DungeonEvent>(message)) {
+    // deku-dungeon-2: relayed to the others in the sender's scene, never kept.
+    set_sender(message, c.number);
+    const auto& e = std::get<DungeonEvent>(message);
+    if (e.scene != c.scene) return;  // late, from the scene it left
+    send_to_scene(e.scene, id, channel, message);
+    ++stats_.relayed;
+    return;
+  }
   if (std::holds_alternative<WorldBreak>(message) || std::holds_alternative<WorldMove>(message) ||
       std::holds_alternative<WorldPlace>(message) || std::holds_alternative<WorldHit>(message) ||
       std::holds_alternative<SignCut>(message)) {
@@ -998,7 +1007,9 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     }
   }
   if ((o.boss || root->boss) && config_.boss_hitter_cooldown_us != 0) {
-    if (root->owner && *root->owner != id && !root->ask && !(c.status & kBusy) &&
+    // A hit that takes life stays with the owner (gohma-sync): only a stun.
+    if ((d.amount == 0 || config_.boss_hit_handover) && root->owner && *root->owner != id &&
+        !root->ask && !(c.status & kBusy) &&
         has_loaded(id, *root) &&
         (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
         !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {

@@ -2526,3 +2526,71 @@ TEST_CASE("world: a followed push puts the new rest in the push node's target an
     CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, from, to).writes.empty());
     CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, to, {-51.06f, 79.27f, 45.62f}).writes.empty());
 }
+
+// ------------------------------- deku-dungeon-2: the basement's moving floor (issue 196)
+
+TEST_CASE("world: the Deku Tree's moving floor is a gimmick mover, its lifts are not") {
+    CHECK(CoopWorld::IsGimmickMover("Obj_Deku_MoveFloor_A_01"));
+    CHECK(CoopWorld::IsGimmickMover("Obj_Deku_MoveFloor_A_02"));
+    CHECK(CoopWorld::IsWorldObject("Obj_Deku_MoveFloor_A_01"));
+    // The lifts only animate (OnOffAnim): their actor place never moves.
+    CHECK_FALSE(CoopWorld::IsGimmickMover("Obj_InsideTheDekuTree_ElevatorLift_A_01"));
+    CHECK_FALSE(CoopWorld::IsGimmickMover("Obj_ForestTemple_MovableBox_A_01"));
+}
+
+TEST_CASE("world: a moving floor moved in one game is sent and held in the others until it is home (issue 196)") {
+    const char* floor = "Obj_Deku_MoveFloor_A_01";
+    const proto::Vec3 link{1.0f, 2.0f, 23.0f};  // 20 m off, across the basement
+    auto at = [&](float x) { return Thing(0x400, 0x71, std::nullopt, floor, {x, 2.0f, 3.0f}); };
+
+    // A: bobbing near its start is nobody's move.
+    WorldSync a;
+    Walk(a, 1000 * kMs, {at(1.0f)}, link);
+    for (int i = 1; i <= 10; ++i) {
+        const float x = 1.0f + (i % 2 == 0 ? 0.3f : -0.3f);
+        CHECK(Walk(a, static_cast<std::uint64_t>(1000 + 100 * i) * kMs, {at(x)}, link).send.empty());
+    }
+    // The water drops in A: the floor moves 4 m and stops there.
+    std::vector<proto::WorldMove> moves;
+    std::vector<proto::WorldPlace> places;
+    std::uint64_t t = 2100;
+    for (int i = 1; i <= 20; ++i, t += 100) {
+        const auto out = Walk(a, t * kMs, {at(std::min(5.0f, 1.0f + 0.25f * static_cast<float>(i)))}, link);
+        for (const auto& v : Sent<proto::WorldMove>(out)) moves.push_back(v);
+        for (const auto& p : Sent<proto::WorldPlace>(out)) places.push_back(p);
+    }
+    for (int i = 0; i < 10; ++i, t += 100) {
+        for (const auto& p : Sent<proto::WorldPlace>(Walk(a, t * kMs, {at(5.0f)}, link))) places.push_back(p);
+    }
+    REQUIRE_FALSE(moves.empty());
+    for (const auto& v : moves) {
+        CHECK(v.flags == 0);  // never "carried", also with a Link standing on it
+    }
+    REQUIRE(places.size() == 1);
+    CHECK(places[0].position[0] == doctest::Approx(5.0f));
+
+    // B: its own floor stays home (no drop there); put at A's place and held there.
+    WorldSync b;
+    Walk(b, 1000 * kMs, {at(1.0f)}, link);
+    b.Receive(places[0]);
+    for (std::uint64_t u = 1100; u <= 30000; u += 1000) {
+        CHECK(Walk(b, u * kMs, {at(1.0f)}, link).send.empty());  // never sends its own home back
+        std::vector<CoopObjects::PoseWrite> poses;
+        b.Poses(u * kMs, poses);
+        REQUIRE(poses.size() == 1);
+        CHECK(poses[0].position[0] == doctest::Approx(5.0f));
+    }
+    // A's floor back home: B lets go once it settled there.
+    b.Receive(PlaceOf(0x71, 1.0f));
+    Walk(b, 31000 * kMs, {at(1.0f)}, link);
+    Walk(b, 32000 * kMs, {at(1.0f)}, link);
+    std::vector<CoopObjects::PoseWrite> none;
+    b.Poses(32000 * kMs, none);
+    CHECK(none.empty());
+
+    // Beyond 40 m it is not ours to send.
+    WorldSync far;
+    const proto::Vec3 away{1.0f, 2.0f, 50.0f};
+    Walk(far, 1000 * kMs, {at(1.0f)}, away);
+    CHECK(Walk(far, 1100 * kMs, {at(3.0f)}, away).send.empty());
+}

@@ -48,6 +48,12 @@ inline constexpr std::uint64_t kArgMember1 = 0x1968;       // freed first, as th
 inline constexpr std::uint64_t kArgMember2 = 0x1950;
 inline constexpr std::uint64_t kEventStatePtr = 0x4e94840;  // as coop_boss_game.cpp
 inline constexpr std::uint64_t kEventSession = 0x68;        // set while an event runs
+inline constexpr std::uint64_t kSessionCount = 0xeb0;       // u32, as coop_boss_game.cpp
+inline constexpr std::uint64_t kSessionEvents = 0xeb8;      // -> event pointers
+inline constexpr std::uint64_t kSessionCurrent = 0xf18;     // u32
+inline constexpr std::uint64_t kScanSession = 0x1000;       // bytes of the session searched
+inline constexpr std::uint64_t kScanEvent = 0x400;          // bytes of the current event searched
+inline constexpr std::uint64_t kScanInner = 0x100;          // bytes of what the event's words point to
 } // namespace addr
 
 // Where an event is asked for in its dungeon (coop_live_places.cpp, read
@@ -82,10 +88,63 @@ public:
                                     bool event_running,
                                     std::optional<std::array<float, 3>> link = std::nullopt);
 
+    // deku-dungeon-2 (DUNGEON_EVENT): another player's game started `name` in
+    // `scene` just now. If it is our scene and not asked yet this visit, Next
+    // offers it as if its played flag were held here (the same near-place and
+    // once-a-visit rules), before that flag comes at the end of their event.
+    void Started(const std::string& name, const std::string& scene);
+    // Our own game started `name` in `scene` (StartWatch): never asked here
+    // again this visit, also when its flag or another player's start comes later.
+    void Ours(const std::string& name, const std::string& scene);
+
 private:
+    void Visit(const std::string& scene);
     std::set<std::string> allowed_;
     std::string scene_;
     std::set<std::string> asked_;  // this visit of scene_
+    std::set<std::string> early_;  // Started, not asked yet (this visit)
+};
+
+// deku-dungeon-2: which gimmick event our own game just started, read from the
+// game's event session ([[main + kEventStatePtr] + kEventSession]; its event
+// list at +kSessionEvents, count +kSessionCount, current +kSessionCurrent, as
+// coop_boss_game.cpp reads them). Where the running event keeps its name is
+// not known, so the current event (kScanEvent bytes) and the session
+// (kScanSession) are searched for one of `names`: as a whole C string in them,
+// or as the string one of their words points to; then the same one step
+// further from the event's words (kScanInner bytes each). Pure over `read`.
+using Reader = bool (*)(void* context, std::uint64_t address, void* out, std::size_t size);
+std::optional<std::string> FindRunningEvent(Reader read, void* context, std::uint64_t main,
+                                            const std::vector<std::string_view>& names);
+// The gimmick events with a place in `scene` (Places()), each once.
+std::vector<std::string_view> EventsIn(std::string_view scene);
+
+// Once a frame: when an event starts, look for its name (FindRunningEvent) on
+// its 1st, 2nd, 4th, 8th and 16th frame (kTries searches: every event in a
+// dungeon starts one, doors too, so not every frame); at most one name per event.
+class StartWatch {
+public:
+    static constexpr int kTries = 5;
+    // `find` is called only on those frames of a running event, until a name is found.
+    template <typename Find>
+    std::optional<std::string> Frame(bool running, Find&& find) {
+        if (!running) {
+            frame_ = 0;
+            done_ = false;
+            return std::nullopt;
+        }
+        const int f = frame_++;
+        if (done_ || f >= (1 << (kTries - 1)) || (f != 0 && (f & (f + 1)) != 0)) {
+            return std::nullopt;  // tries on frames 0, 1, 3, 7, 15 (counted from 0)
+        }
+        std::optional<std::string> name = find();
+        done_ = name.has_value();
+        return name;
+    }
+
+private:
+    int frame_ = 0;
+    bool done_ = false;
 };
 
 // LICHII_COOP_LIVE_EVENT_NAMES: "a,b,c" (spaces trimmed, empty parts

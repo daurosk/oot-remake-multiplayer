@@ -1,0 +1,52 @@
+# deku-ladder-b, B: the shooter (deku-ladder.A.txt's steps).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -51.8 112.6 12.2
+wait 240
+mark placed
+goto -53.3 12.2 0.4 300  # in front of the chest
+toward -54.4 12.2 8
+press A                  # open it: the item get, and the trap floor goes
+wait 300
+press A
+wait 120
+press A
+wait 120
+press A
+wait 240
+mark trap
+wait 300
+toward -35.6 10.7 10     # face the eye switch across the room
+wait 30
+hold ZR 60 aim1
+hold ZR 30
+wait 60
+mark shot1
+rstick 0 0.4 6           # a little higher
+hold ZR 60 aim2
+hold ZR 30
+wait 60
+mark shot2
+rstick 0 0.4 6
+hold ZR 60 aim3
+hold ZR 30
+wait 120
+press B
+mark ladder
+wait 900
+mark late

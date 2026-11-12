@@ -106,6 +106,7 @@ Dungeon state is in named flags that the room logic reads ([dungeon.md](dungeon.
 |---|---|---|---|---|---|
 | Overworld doors, gates (Kakariko, Lon Lon, Gerudo, castle gate) | named flags where story, else none | ? | - | A gate opened by story in A, shut in B | **P1** to check |
 | Story events, cutscenes, medals and stones | items (medals and stones are items) + the overworld's story scenes and story gates (`CoopStory::Flags()`, [flags.md](flags.md#story-and-cutscenes-issue-173)); dungeon scenes, time travel and bosses not shared | live; late joiner by the host's table | unit | Before (issue 173): each player watched Saria and the owl; a guest behind the host kept the forest-exit wall | **P1** to check in game |
+| Threads of Time (pause menu quest log) | the unlock flag `UI_IsFinishChallengeMenuOpenEvent` in `CoopStory::Flags()`; 11 listed quests' saved Enums by step order, highest wins (`CoopQuests`, [flags.md](flags.md#threads-of-time-issue-193)) | live; late joiner by the host's table | unit | Before (issue 193): the second player never saw the owl, so the tab stayed shut; quests were each game's own | **P1** to check in game |
 | Time of day | `TIME_OF_DAY` (host's clock) | live | game | - | P3 |
 | Song events (Zelda's Lullaby doors, Sun's Song, Song of Storms well) | none, unless the result is a flag | ? | - | The door a song opened in A stays in B | P2 |
 | Shops (stock sold out) | none; a bought Deku Shield reaches everyone (max, issue 130), a lost one is bought again by that player | - | - | - | P2 |

@@ -112,6 +112,7 @@ enum class MessageType : std::uint16_t {
   fish_lure = 320,  // 320 to 324: the fishing pond (docs/protocol.md, "Fishing")
   rejoin_token = 345,  // 345 to 349: rejoin after a crash or drop (docs/protocol.md, "Rejoin")
   rejoin_claim = 346,
+  dungeon_event = 355,  // 355 to 359: a room gimmick's event started (docs/protocol.md, "Gimmick events")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -644,6 +645,7 @@ enum class ObjectComponent : std::uint16_t {
   life = 16,
   fuse = 17,
   state = 18,
+  slots = 19,  // protocol 10, issue 150: a boss's other AS slots (below)
 };
 
 struct ObjectLife {
@@ -658,6 +660,17 @@ inline constexpr std::uint8_t held = 1u << 1;
 inline constexpr std::uint8_t asleep = 1u << 2;
 }  // namespace object_state
 
+// Issue 150 (protocol 10): one more AS slot of the owner's actor than slot 0
+// (Gohma's eye guard and eyelids play on their own slots). slot is 1 or more
+// and below 32; no slot twice. An empty name: the slot plays nothing.
+struct SlotAnimation {
+  std::uint8_t slot = 1;
+  Animation animation;
+  bool operator==(const SlotAnimation&) const = default;
+};
+inline constexpr std::size_t kMaxObjectSlots = 8;
+inline constexpr std::uint8_t kMaxSlotIndex = 31;
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -669,6 +682,7 @@ struct ObjectState {
   std::optional<ObjectLife> life;
   std::optional<float> fuse;          // seconds left
   std::optional<std::uint8_t> state;  // object_state bits
+  std::optional<std::vector<SlotAnimation>> slots;  // issue 150: bosses only
   bool operator==(const ObjectState&) const = default;
 };
 
@@ -1135,6 +1149,22 @@ struct PvpHurt {
   bool operator==(const PvpHurt&) const = default;
 };
 
+// DUNGEON_EVENT (protocol 10, deku-dungeon-2, issues 176 and 196): a room
+// gimmick's event (a switch's cutscene, as InsideTheDekuTree_Gimmick_RoomD_PlatformUp)
+// started in the sender's game. The others in that scene start the same
+// event at once, so its result (platforms up, a ladder down) runs at the same
+// time in every game, not only after the sender's cutscene ended and its
+// played flag came (docs/dungeon.md, "Live events"). Relayed to the scene,
+// never kept.
+inline constexpr std::size_t kMaxEventNameChars = 96;
+
+struct DungeonEvent {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::string name;  // the event's name, 1 to kMaxEventNameChars, no "HavePlayedEvent."
+  bool operator==(const DungeonEvent&) const = default;
+};
+
 using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              Ping, Pong, PlayerStatus, Chat, PlayerSample,
                              TestPayload, JoinPartner, FlagSet, FlagState,
@@ -1145,7 +1175,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
-                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim>;
+                             PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent>;
 
 MessageType type_of(const Message& message);
 

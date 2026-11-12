@@ -2507,6 +2507,57 @@ TEST_CASE("objects: a boss copy stunned here sends a DAMAGE of 0 and keeps its s
     CHECK(step.writes.empty());
 }
 
+TEST_CASE("objects: a boss's other AS slots go with its samples and are played on the copy (gohma-sync, issue 150)") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Stun_Lp", 10.0f, 1.0f};
+    e.slots = {{1, {"Eyelid_Up", 3.0f, 1.0f}}, {2, {"", 0.0f, 0.0f}}};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.slots);
+    CHECK(*samples[0].state.slots == e.slots);
+    // Only the eye slot changes (the guard comes down): a new sample at once.
+    e.slots[0].animation = proto::Animation{"GuardArm", 0.0f, 1.0f};
+    auto changed = All<proto::ObjectSample>(Tick(owner, 200 * kMs, {e}));
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0].state.slots->at(0).animation.name == "GuardArm");
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    c.slots = {{1, {"GuardWait", 0.0f, 1.0f}}};  // its own AI's guard
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);  // the copy takes the sample in
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(1020 * kMs, plays);
+    REQUIRE(plays.size() == 2);  // slot 0 and the eyelid; the empty slot 2 is left alone
+    CHECK(plays[0].slot == 0);
+    CHECK(plays[0].name == "Stun_Lp");
+    CHECK(plays[1].address == 0x200);
+    CHECK(plays[1].slot == 1);
+    CHECK(plays[1].name == "Eyelid_Up");
+    CHECK(plays[1].sample == plays[0].sample);
+
+    // A plain enemy's samples carry no slots.
+    Sync plain;
+    Seen p = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");
+    p.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(plain, 0, {p});
+    Own(plain, *plain.IdOf(0x300), 1);
+    auto ps = All<proto::ObjectSample>(Tick(plain, 10 * kMs, {p}));
+    REQUIRE(ps.size() == 1);
+    CHECK_FALSE(ps[0].state.slots);
+}
+
 TEST_CASE("objects: no stun DAMAGE from a plain enemy, our own boss, or when the owner is stunned too") {
     const std::string gohma = "Enemy_DungeonBoss_Gohma";
     Seen plain = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");
@@ -2920,6 +2971,81 @@ TEST_CASE("objects: a larva that comes after its egg left still ends the egg (go
     CHECK(removes[0].id == egg);
     CHECK(removes[0].epoch == 2);
     REQUIRE(All<proto::ObjectSpawn>(born).size() == 1);
+}
+
+TEST_CASE("objects: a larva matched to its sibling egg still ends the egg it came from (gohma-sync, issue 178)") {
+    Sync a;
+    const auto both = [](float larva_x) {
+        std::vector<Seen> seen{Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x101, 0, 1, 2.5f, kEgg)};
+        if (larva_x >= 0.0f) seen.push_back(Enemy(0x200, 0, 1, larva_x, kLarva));
+        return seen;
+    };
+    Tick(a, 0, both(-1.0f), 1, kDeku);
+    const proto::ObjectId first = *a.IdOf(0x100);
+    const proto::ObjectId second = *a.IdOf(0x101);
+    Own(a, first, 1, 3);
+    Own(a, second, 1, 5);
+    Tick(a, 100 * kMs, both(-1.0f), 1, kDeku);
+    // The first egg's larva comes out nearer the second egg: matched to it.
+    REQUIRE(All<proto::ObjectSpawn>(Tick(a, 200 * kMs, both(1.5f), 1, kDeku)).size() == 1);
+    // The first egg leaves: it is the one that hatched, ended at once.
+    const std::vector<Seen> after{Enemy(0x101, 0, 1, 2.5f, kEgg), Enemy(0x200, 0, 1, 1.5f, kLarva)};
+    std::vector<proto::ObjectRemove> removes;
+    for (std::uint64_t t = 300; t <= 500; t += 100) {
+        for (const auto& r : All<proto::ObjectRemove>(Tick(a, t * kMs, after, 1, kDeku))) removes.push_back(r);
+    }
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == first);
+    CHECK(removes[0].epoch == 3);
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
+    // The second egg hatches later: its own larva is shared and it is ended too.
+    std::vector<Seen> later = after;
+    later.push_back(Enemy(0x201, 0, 1, 3.5f, kLarva));
+    REQUIRE(All<proto::ObjectSpawn>(Tick(a, 600 * kMs, later, 1, kDeku)).size() == 1);
+    const std::vector<Seen> larvae{Enemy(0x200, 0, 1, 1.5f, kLarva), Enemy(0x201, 0, 1, 3.5f, kLarva)};
+    removes.clear();
+    for (std::uint64_t t = 700; t <= 900; t += 100) {
+        for (const auto& r : All<proto::ObjectRemove>(Tick(a, t * kMs, larvae, 1, kDeku))) removes.push_back(r);
+    }
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == second);
+    CHECK(removes[0].epoch == 5);
+}
+
+TEST_CASE("objects: two eggs hatch one after the other, the second leaving first: both end, both larvae shared (gohma-sync review)") {
+    Sync a;
+    const Seen e1 = Enemy(0x100, 0, 1, 0.0f, kEgg);
+    const Seen e2 = Enemy(0x101, 0, 1, 2.5f, kEgg);
+    Tick(a, 0, {e1, e2}, 1, kDeku);
+    const proto::ObjectId first = *a.IdOf(0x100);
+    const proto::ObjectId second = *a.IdOf(0x101);
+    Own(a, first, 1, 3);
+    Own(a, second, 1, 5);
+    Tick(a, 100 * kMs, {e1, e2}, 1, kDeku);
+    // E1's larva comes beside E1: matched to it, rightly.
+    const Seen l1 = Enemy(0x200, 0, 1, -0.5f, kLarva);
+    REQUIRE(All<proto::ObjectSpawn>(Tick(a, 200 * kMs, {e1, e2, l1}, 1, kDeku)).size() == 1);
+    // E2 leaves (hatching) while E1 is still listed: ended at once, E1 unmatched.
+    std::vector<proto::ObjectRemove> removes;
+    std::vector<proto::ObjectSpawn> spawns;
+    const auto step = [&](std::uint64_t t, const std::vector<Seen>& seen) {
+        const auto out = Tick(a, t * kMs, seen, 1, kDeku);
+        for (const auto& r : All<proto::ObjectRemove>(out)) removes.push_back(r);
+        for (const auto& sp : All<proto::ObjectSpawn>(out)) spawns.push_back(sp);
+    };
+    for (std::uint64_t t = 300; t <= 500; t += 100) step(t, {e1, l1});
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == second);
+    // E1 leaves, then E2's larva comes out where E2 was: it matches E1 (gone
+    // alive within 2 s), which ends E1. Both eggs ended once, both larvae shared.
+    for (std::uint64_t t = 600; t <= 800; t += 100) step(t, {l1});
+    const Seen l2 = Enemy(0x201, 0, 1, 2.0f, kLarva);
+    for (std::uint64_t t = 900; t <= 1100; t += 100) step(t, {l1, l2});
+    REQUIRE(removes.size() == 2);
+    CHECK(removes[1].id == first);
+    CHECK(removes[1].epoch == 3);
+    CHECK(spawns.size() == 1);  // l2 (l1 was shared at 200 ms)
+    CHECK(a.Hatched() == 2);
 }
 
 TEST_CASE("objects: no larva, a dead egg, or another game's egg: nothing hatched here (gohma-larva)") {

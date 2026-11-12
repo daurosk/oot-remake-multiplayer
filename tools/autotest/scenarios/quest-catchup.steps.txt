@@ -1,0 +1,27 @@
+# quest-catchup (#173): a guest whose own quest is behind the shared story catches up, so
+# Impa's courtyard events (DoorOfTime Step01) come in its game too. Run:
+#   tools\autotest\run.ps1 -Scenario quest-catchup
+# Prep, games closed (save_flags.py keeps a backup in <kit>\autotest-save-backup\; copy it back
+# over the baseline after the run). <save> = <kit>\autotest-save\<user>\0400486024DEC000\slot_0*\progress.sav
+#   A (host, has met Zelda):  save_flags.py set <A save> bool:0x8e15ffd6=1 enum:0xdb89c1a9=0x4c0a63f4
+#   B (has not):              save_flags.py set <B save> bool:0x8e15ffd6=0 enum:0xdb89c1a9=0xd932a31c enum:0x378913ca=0x57b849f0
+#   (0x8e15ffd6 HavePlayedEvent.Dm_HrlCastle_0060, Impa's scene; 0xdb89c1a9 Goto_HyruleCastle,
+#   Complete / Step03_02; 0x378913ca DoorOfTime, NotReady.) A `set` refused because the flag is
+#   not in the save: the test save cannot show it; say so in the report.
+# A loads first, B loads 20 s later and takes A's shared scene flags.
+# Pass: B's log has "flags: ... 0x8e15ffd6 ... 0 -> 1" (or the scene in its join batch), then
+# "coop: story: quest Goto_HyruleCastle 0xd932a31c -> 0x4c0a63f4" and then
+# "coop: story: quest DoorOfTime 0x57b849f0 -> 0xeb62add9", once each (no repeat every frame);
+# A's log has no "coop: story: quest" line. Impa herself is checked by hand in the courtyard
+# (reports/time-story.md, in-game check 3).
+#! switches LICHII_COOP_DEBUG_FLAGS=1
+start A
+start B
+sleep 40
+load A
+sleep 20
+load B
+sleep 30
+shot b-loaded
+sleep 10
+shot end

@@ -550,6 +550,28 @@ bool Sync::Hatch(std::uint8_t self, const Seen& s,
     return true;
 }
 
+// An egg of ours still on the walk, marked hatched, within two hatch reaches
+// of `at` (a larva's egg is at most kHatchReachM from it either way).
+Sync::Object* Sync::HatchedSibling(std::uint8_t self, const proto::Vec3& at) {
+    Object* best = nullptr;
+    float best_d = 2.0f * kHatchReachM;
+    for (auto& [address, e] : objects_) {
+        if (!IsHatchingEgg(e.name) || !e.hatched || e.id.kind != proto::ObjectKind::placed) {
+            continue;
+        }
+        const auto owner = owners_.find(e.id);
+        if (owner == owners_.end() || owner->second.player != self) {
+            continue;
+        }
+        const float d = Distance(e.position, at);
+        if (d <= best_d) {
+            best = &e;
+            best_d = d;
+        }
+    }
+    return best;
+}
+
 void Sync::Reset() {
     scene_.clear();
     objects_.clear();
@@ -689,6 +711,9 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     state.position = o.position;
     state.velocity = o.velocity;
     state.animation = o.animation;
+    if (!o.slots.empty()) {
+        state.slots = o.slots;  // issue 150: a boss's eye guard and the like
+    }
     if (o.rotation) {
         state.rotation = QuatOf(*o.rotation);
     }
@@ -1014,6 +1039,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
         }
         o.animation = s.animation;
+        o.slots = s.slots;
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
         std::optional<proto::ObjectLife> life = s.life;
@@ -1144,6 +1170,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     r.reason = proto::RemoveReason::gone;
                     r.position = o.position;
                     send.emplace_back(r);
+                } else if (Object* sibling = HatchedSibling(self, o.position); sibling != nullptr) {
+                    // gohma-sync (issue 178, review of gohma-larva): the
+                    // larva came while this egg was still listed and was
+                    // matched to a sibling egg near it, which is still here.
+                    // This one is the egg that hatched: ended now, and the
+                    // sibling may match its own larva later.
+                    sibling->hatched = false;
+                    proto::ObjectRemove r;
+                    r.id = o.id;
+                    r.epoch = owner->second.epoch;
+                    r.reason = proto::RemoveReason::gone;
+                    r.position = o.position;
+                    send.emplace_back(r);
+                    notes_.emplace_back("hatched here (its sibling egg was matched first): " + o.name);
                 } else {
                     eggs_.push_back({o.id, owner->second.epoch, o.position, now_us});
                 }
@@ -1192,6 +1232,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.position = s->position;
         o.rotation = s->rotation;
         o.animation = s->animation;
+        o.slots = s->slots;
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
@@ -1362,9 +1403,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             const std::optional<proto::Quat> rotation =
                 o.rotation ? std::optional(QuatOf(*o.rotation)) : std::nullopt;
             const std::string animation = o.animation ? o.animation->name : std::string();
+            std::string slots;  // issue 150: a boss's other slots' names
+            for (const proto::SlotAnimation& s : o.slots) {
+                slots += std::to_string(s.slot) + ":" + s.animation.name + ";";
+            }
             const bool changed = life != o.sent_life || Moved(o.position, o.sent_position) ||
                                  Turned(rotation, o.sent_rotation) ||
-                                 animation != o.sent_animation;
+                                 animation != o.sent_animation || slots != o.sent_slots;
             if (!o.sent_once || changed || now_us - o.sent_at >= kStillEveryUs) {
                 proto::ObjectSample sample;
                 sample.id = o.id;
@@ -1377,6 +1422,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.sent_position = o.position;
                 o.sent_rotation = rotation;
                 o.sent_animation = animation;
+                o.sent_slots = std::move(slots);
             }
         }
     }
@@ -1843,7 +1889,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 const std::uint64_t t = sample->state.time.server_time_us;
                 if (o->received.empty() || t > o->received.back().time) {
                     o->received.push_back({t, *sample->state.position, sample->state.rotation,
-                                           sample->state.velocity, sample->state.animation});
+                                           sample->state.velocity, sample->state.animation,
+                                           sample->state.slots.value_or(
+                                               std::vector<proto::SlotAnimation>{})});
                     while (o->received.size() > kKeepSamples) {
                         o->received.pop_front();
                     }
@@ -2061,7 +2109,7 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
     for (const auto& [address, since] : chest_shown_) {
         // Issue 195: a chest opened elsewhere shows its open idle; played
         // again only over its closed idle (sample 1: its frame is set once).
-        out.push_back({address, kChestOpenIdle, 1.0f, 0.0f, 1, kChestClosedIdle});
+        out.push_back({address, kChestOpenIdle, 1.0f, 0.0f, 1, 0, kChestClosedIdle});
     }
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||
@@ -2090,7 +2138,21 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
             -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
-                       last.time, {}});
+                       last.time, 0, {}});
+        // Issue 150: a boss's other slots (Gohma's eye guard and eyelids,
+        // whose AS events open and close the eye's guard). Without them
+        // each game's copy kept its own AI's guard: the eye stood open for
+        // one player and guarded for the other.
+        for (const proto::SlotAnimation& s : last.slots) {
+            if (s.animation.name.empty()) {
+                continue;
+            }
+            const float r = std::isfinite(s.animation.rate) && s.animation.rate > 0.0f
+                                ? s.animation.rate
+                                : 1.0f;
+            out.push_back({address, s.animation.name, r, FrameAfter(s.animation.frame, r, age),
+                           last.time, s.slot, {}});
+        }
     }
 }
 

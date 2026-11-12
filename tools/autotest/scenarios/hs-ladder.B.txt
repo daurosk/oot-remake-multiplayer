@@ -1,0 +1,33 @@
+# hs-ladder, B (see hs-ladder.A.txt): in the slingshot room by its door, facing the ladder; clears
+# the ladder's flag after the load as A does, then watches A's shot drop it.
+#! noload
+#! start coop: test warp done
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+setflag HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder 0
+wait 240
+place -33.2 110.3 10.4
+wait 240
+mark placed
+toward -45.0 11.0 10     # face into the room: ladder, pillar, trap floor
+press ZL 10
+wait 1200
+toward -45.0 11.0 6
+press ZL 10
+mark b-view
+wait 1500                # the ladder falls (A's eye shot) and B's live event plays
+mark b-ladder
+wait 300
+mark b-end

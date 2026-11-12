@@ -64,6 +64,10 @@ enum class MoveCheck : std::uint8_t {
 };
 inline constexpr float kNearMove = 10.0f;  // game units (about metres)
 MoveCheck CheckMove(const CoopRooms::Table& rooms, std::string_view scene, const Vec& from, const Vec& to);
+// The chat line when CheckMove refused (not ok): "<name> is in another room of this dungeon;
+// you are at its entrance: walk there" (`after_load`: just arrived by a scene change) or
+// "...; walk there" (a /teleport within the dungeon: we stay where we were).
+std::string NotMovedLine(MoveCheck check, std::string_view name, bool after_load);
 
 // The entrance start point of `scene` nearest `to` (coop_start_points.inc,
 // written from the game's scene files by tools/puppet_pack/start_points.py).
@@ -179,6 +183,7 @@ public:
         std::optional<std::string> scene;    // ask the game's scene change to it (free play or event)
         std::string start;                   // with scene: the start point there (never empty)
         std::optional<Vec> move;             // move our Link here (same scene)
+        bool after_load = false;             // with move: we just arrived by a scene change (at an entrance)
         std::optional<std::uint8_t> ask;     // send a JOIN_PARTNER request to this player
         bool cancel_scene = false;           // clear our scene change request and its switch (arrived, given up)
         bool release = false;                // the game took it: drop only the free-play switch

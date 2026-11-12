@@ -239,7 +239,7 @@ TEST_CASE("teleport: another scene changes scene, then asks again and moves") {
     CHECK(trip.phase() == Trip::Phase::idle);
 }
 
-TEST_CASE("teleport: no event of our own; the request waits for the player's own talk or sign (#197)") {
+TEST_CASE("teleport: no event of our own, the request waits for the player's own talk or sign (#197)") {
     REQUIRE_FALSE(Trip::kStartSceneEvent);
     Trip trip;
     const Local here = At("KakarikoVillage_Child", 0, 0, 0);

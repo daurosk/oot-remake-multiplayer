@@ -53,9 +53,13 @@ jobs:
           ls -l
           test -f "oot-coop-$TAG.zip" || { echo "::error::release $TAG has no oot-coop-$TAG.zip"; exit 1; }
           sha256sum -c "oot-coop-$TAG.zip.sha256"
+          # The Linux kit (issue 127), when the release has one: its update.sh checks it too.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "oot-coop-$TAG-linux-*.tar.gz" --pattern "oot-coop-$TAG-linux-*.tar.gz.sha256" || true
+          for sum in oot-coop-*-linux-*.tar.gz.sha256; do [ -f "$sum" ] && sha256sum -c "$sum"; done
           {
             echo "subjects<<EOF"
-            ls -1 "$PWD"/oot-coop-*.zip "$PWD"/Update.bat 2>/dev/null || true
+            ls -1 "$PWD"/oot-coop-*.zip "$PWD"/oot-coop-*-linux-*.tar.gz "$PWD"/Update.bat 2>/dev/null || true
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
         id: assets
@@ -64,7 +68,7 @@ jobs:
           subject-path: ${{ steps.assets.outputs.subjects }}
       - name: Verify the attestation
         run: |
-          for f in kit/oot-coop-*.zip kit/Update.bat; do
+          for f in kit/oot-coop-*.zip kit/oot-coop-*-linux-*.tar.gz kit/Update.bat; do
             [ -f "$f" ] || continue
             gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-attest.yml"

@@ -44,6 +44,16 @@ or run `tools\release\verify_kit.ps1 -Zip <file>` from this repository, which al
 - Names that are already taken, blank, or that hold invisible or right-to-left characters are refused, so nobody can pass for another player.
 - Nothing from the network is used as a file name, a command, or a format string. Chat and names are shown as text only.
 
+## The Linux kit
+
+The Linux kit (`Host.sh`, `Join.sh`, `start-server.sh`, `update.sh`) opens the same one UDP port and follows the same rules: the same join password, UPnP and invite code (only with a password), the same message checks. What differs:
+
+- **The host's server runs in the background**, not in a window: `./start-server.sh --stop` stops it (and the UPnP forward), as does shutting the PC down. Its lines, which hold the session's join password, are in `logs/server-console.txt`, readable only by your user and removed when the server stops; the invite code is in `logs/invite-code.txt` (only your user) while it runs and never in the server log. Answer codes reach the server through `logs/.server-input`, a pipe only your user can write.
+- **A join with an invite code** runs the join helper in the background; it stops when the emulator closes. The join password goes to it in its environment, never on a command line (other users of the PC can see command lines) or in a log.
+- **Nothing changes the firewall** (ufw, firewalld): a port you open by hand stays open until you close it.
+- **`update.sh`** downloads only from this repository's releases, checks the SHA-256, and checks the release signature when the GitHub CLI is installed and logged in (`verify_signature = no` skips only that check). The emulator inside is an AppImage built by our CI from the pinned Fritchii source with our patches; the tools that build it (linuxdeploy) are pinned and SHA-256 checked.
+- **`collect-logs.sh`** masks passwords, keys, invite codes, IP and MAC addresses, your user name and PC name, as `collect-logs.cmd` does.
+
 ## What another player can do
 
 The people you play with share your game's progress: items, songs, flags, enemies, the host's save. A player who means harm can spoil that game (take or give items, open doors, kill enemies) as any co-op partner could. They cannot reach anything outside the game through the co-op. Play with people you trust, and keep a copy of saves you care about (the Saves window can export them).

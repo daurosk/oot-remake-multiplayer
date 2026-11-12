@@ -64,3 +64,23 @@ if(NOT _coop_version)
 endif()
 set_property(SOURCE "${_coop_hook}/coop_hook.cpp" APPEND PROPERTY
     COMPILE_DEFINITIONS "LICHII_COOP_VERSION=\"${_coop_version}\"")
+# GCC and Clang (the Linux build, issue 127): Fritchii's src/CMakeLists.txt makes -Wall,
+# -Wextra, -Wmissing-declarations, -Wshadow and -Wunused errors for everything in core. The
+# hook is built with MSVC on Windows, which never sees them, so here they stay warnings for
+# the hook's own files (they still show in the build log). Fritchii's code is unchanged.
+if(NOT MSVC)
+    # The hook's own files: those under _coop_hook (a plain prefix test, so a path with
+    # regex characters such as + or ( still matches).
+    get_target_property(_coop_all_sources core SOURCES)
+    set(_coop_core_sources "")
+    foreach(_coop_src IN LISTS _coop_all_sources)
+        string(FIND "${_coop_src}" "${_coop_hook}/" _coop_at)
+        if(_coop_at EQUAL 0)
+            list(APPEND _coop_core_sources "${_coop_src}")
+        endif()
+    endforeach()
+    set_property(SOURCE ${_coop_core_sources} APPEND PROPERTY COMPILE_OPTIONS
+        -Wno-error=all -Wno-error=extra -Wno-error=missing-declarations -Wno-error=shadow
+        -Wno-error=unused -Wno-error=range-loop-construct
+        $<$<CXX_COMPILER_ID:GNU>:-Wno-error=maybe-uninitialized>)
+endif()

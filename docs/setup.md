@@ -55,7 +55,7 @@ The usual way to play: the kit's patched Fritchii emulator. It runs on most PCs 
 
 ## What you need
 
-- A Windows 10 or 11 PC (64-bit) that can run the game on Fritchii.
+- A Windows 10 or 11 PC (64-bit) that can run the game on Fritchii, or a 64-bit x86 Linux PC or Steam Deck (glibc 2.39 or newer: Ubuntu 24.04, Fedora 40, Debian 13, Arch and others) with the Linux kit ([Linux and Steam Deck](#linux-and-steam-deck)).
 - Your own copy of the game, dumped from your own console, with its keys (`prod.keys`, `title.keys`) and the console's firmware. The release has no game files, keys or firmware and never will. Every player needs their own.
 - The same game version as the other players (build id `e0f3ccfaf50065ae`; the emulator's log names it, see [below](#check-it-works)).
 - The same release of the co-op kit as the other players.
@@ -203,6 +203,28 @@ When another player's progress reaches your game, a line in the chat says so (on
 The host's save decides. Everyone's progress is shared while you play, but when the host loads a save, every game in the session goes back to that save's progress: items, keys, chests, doors and switches. A guest who loads a save gets the host's progress, and nothing changes for the others. To undo something (a door that locked you out, a key used in the wrong place), the host loads an older save. Rupees, ammo, hearts and where you stand stay your own. Be careful: if the host restarts the game and loads its save, **everything the guests did since the host last saved is undone** for everyone: chests, keys, doors, items. The host should save often, especially after the guests make progress.
 
 **Guests play from the host's save file.** When you join (`Join.bat`), your game uses a separate co-op save folder, so your own saves are never touched: the host's newest save is copied into it, and the chat says "The host's save is ready". On the title screen choose **Continue** (or **Load Game**, the newest save) to play from it; you start where the host's save starts, with its items, hearts and rupees. When the host loads another save, you get that one too after the host's next door or save point: load it to stand where it starts (your progress already follows the host at once). Without joining (playing alone, or hosting with `Host.bat`) the game shows your own saves as before. The host's own saves (`Host.bat`) are its normal ones.
+
+## Linux and Steam Deck
+
+There is a Linux kit too: `oot-coop-<version>-linux-x86_64.tar.gz` on the same release page. A Linux player and a Windows player can play together on the same release. Everything above applies; only the file names and a few commands differ.
+
+**What you need on top:** a 64-bit x86 Linux (or a Steam Deck in Desktop Mode), and for the puppet pack, Python 3 with the `zstandard` package (`sudo apt install python3 python3-zstandard` on Debian or Ubuntu, `sudo pacman -S python python-zstandard` on Arch). The emulator is an AppImage. If it does not start and says FUSE is missing, install `libfuse2` (Debian, Ubuntu) or `fuse2` (Arch).
+
+| Windows kit | Linux kit |
+|---|---|
+| unzip the `.zip` | `tar -xzf oot-coop-<version>-linux-x86_64.tar.gz` (keep the folder somewhere your user can write, for example `~/oot-coop`) |
+| `emulator\user\keys\` | `emulator/user/keys/` (the same folders under `emulator/user/` for keys, firmware, saves and settings) |
+| `make-puppet-pack.cmd` | `./make-puppet-pack.sh` |
+| `Host.bat`, `Join.bat`, `play.cmd` | `./Host.sh`, `./Join.sh`, `./play.sh` (in a terminal, in the kit folder) |
+| `start-server.cmd` | `./start-server.sh` (`Host.sh` starts it in the background; `./start-server.sh --stop` stops it) |
+| `Update.bat` | `./update.sh` (also offered on every start, as `auto_update` in `coop-options.ini` says) |
+| `collect-logs.cmd` | `./collect-logs.sh` (writes `coop-logs-<time>.tar.gz`) |
+
+- **Portable folder.** On Linux the emulator uses the `user` folder of the folder it is started in, so start it through the scripts, not by double-clicking `emulator/lichii.AppImage`. Started anywhere else, it uses your normal emulator folders (`~/.local/share/eden`) and co-op settings from there.
+- **Hosting.** `./Host.sh` works as `Host.bat` does: it makes a new join password each time (unless `server_password` in `coop-options.ini` sets one), asks your router to forward the port (UPnP), and prints an **INVITE CODE** in the terminal (copied to the clipboard when `wl-copy`, `xclip` or `xsel` is installed; also in `logs/invite-code.txt` while the server runs). Send it to your friends; they paste it into `Join.sh` or `Join.bat`. If a friend gets an **ANSWER CODE**, run `./start-server.sh --answer <code>` in the kit folder. The server runs in the background: `./start-server.sh --stop` stops it. Open the server's UDP port if a firewall runs, for example `sudo ufw allow 27510/udp`. `start-server.sh` lists this PC's addresses.
+- **Joining.** `./Join.sh` asks for the invite code or the host's address (and then the join password, if the host gave you one). With an invite code a join helper runs in the background while you play and stops when the emulator closes; its log is `logs/join-*.log`. The terminal says when you are connected, or why not. A relay join code (`CODE@relay`) works only in the Windows kit for now.
+- **Mods.** As on Windows: code and cheat mods stop `Host.sh` and `Join.sh` and are named; texture and model mods are fine.
+- **Steam Deck.** Not tested yet: nobody has run the kit on a Deck so far, so tell us how it goes ([Reporting a problem](#reporting-a-problem)). Use Desktop Mode: open Konsole, `cd` to the kit folder and run `./Join.sh` (or `./Host.sh`). Play with the Deck's own controls once the game runs. To start it from Game Mode, add `play.sh` as a non-Steam game with its "Start in" set to the kit folder; the first start must still happen in Desktop Mode, because it asks for your name and server.
 
 ## Troubleshooting
 

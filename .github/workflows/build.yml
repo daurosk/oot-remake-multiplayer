@@ -3,6 +3,7 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -93,6 +94,9 @@ jobs:
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Linux kit tests
+        if: matrix.compiler.name == 'gcc'
+        run: bash tools/release/tests/linux_kit_test.sh
 
   sanitize:
     runs-on: ubuntu-latest
@@ -144,3 +148,107 @@ jobs:
           set -o pipefail
           ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
           grep -q '^result: PASS' coop_test.log
+
+  # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the
+  # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every push
+  # only the hook's files are compiled; the whole emulator, its AppImage and a start without a
+  # game run on the linux-build and linux-2 branches, on tags and by hand (workflow_dispatch).
+  linux-emulator:
+    runs-on: ubuntu-24.04
+    name: linux-emulator (${{ matrix.part }})
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [hook, full]
+    steps:
+      - name: Skip the full build here
+        id: gate
+        shell: bash
+        env:
+          PART: ${{ matrix.part }}
+        run: |
+          if [ "$PART" = full ] && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] &&
+             [ "$GITHUB_REF" != refs/heads/linux-build ] && [ "$GITHUB_REF" != refs/heads/linux-2 ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        if: steps.gate.outputs.run == 'true'
+      # The packages Fritchii's Linux release installs (release-binaries.yml).
+      - name: Install Linux dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev \
+            libpulse-dev libtool libudev-dev libxkbcommon-x11-0 \
+            mesa-common-dev nasm ninja-build pkg-config zlib1g-dev libva-dev libvdpau-dev \
+            libavfilter-dev libavcodec-dev libswscale-dev \
+            spirv-tools spirv-headers libusb-1.0-0-dev \
+            libboost-dev libboost-fiber-dev libboost-context-dev \
+            libopus-dev libasound2-dev xvfb \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+      - name: Install Qt
+        if: steps.gate.outputs.run == 'true'
+        uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005  # v4.3.0
+        with:
+          version: "6.8.3"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+      - name: Emulator dependency cache
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ${{ runner.temp }}/cpm-cache
+          key: fritchii-cpm-${{ hashFiles('lichii/PIN') }}
+      - name: Compile the co-op hook
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'hook'
+        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --cpm-cache "$RUNNER_TEMP/cpm-cache" --hook-only
+      - name: Build the emulator and its AppImage
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        run: lichii/build-linux.sh --src "$RUNNER_TEMP/fritchii" --cpm-cache "$RUNNER_TEMP/cpm-cache" --appimage "$RUNNER_TEMP/lichii.AppImage"
+      # No game here: start it with no display, check it runs, logs its version and has the
+      # hook, then stop it. "coop: loaded" itself is logged when a game starts.
+      - name: Start without a game
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        run: |
+          set -u
+          mkdir -p "$RUNNER_TEMP/smoke/user"
+          cd "$RUNNER_TEMP/smoke"
+          status=0
+          APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen timeout 30 "$RUNNER_TEMP/lichii.AppImage" || status=$?
+          echo "exit status $status (124: still running after 30 s, stopped)"
+          ls -R user | head -n 20
+          log=user/log/eden_log.txt
+          test -s "$log"
+          grep -m3 -i "version" "$log" || true
+          if grep -q -i "crash\|segmentation" "$log"; then exit 1; fi
+          test "$status" = 0 -o "$status" = 124
+      # The Linux kit tarball (tools/release/make_kit.sh) with this AppImage and a Linux server.
+      - name: Build the server and the Linux kit
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        run: |
+          cmake -S . -B build-server -DCMAKE_BUILD_TYPE=Release -DCOOP_BUILD_TESTS=OFF
+          cmake --build build-server --target coop_server --parallel
+          server=$(find build-server -type f -name coop_server -perm -u+x | head -n1)
+          test -n "$server"
+          bash tools/release/appimage_licenses.sh "$RUNNER_TEMP/lichii.AppImage" "$RUNNER_TEMP/appimage-licenses"
+          head -n 60 "$RUNNER_TEMP/appimage-licenses/BUNDLED.txt"
+          bash tools/release/make_kit.sh --appimage-licenses "$RUNNER_TEMP/appimage-licenses" --appimage "$RUNNER_TEMP/lichii.AppImage" --server "$server" \
+            --out "$RUNNER_TEMP/kit" --release "ci-${GITHUB_SHA::8}" --emu-source "$RUNNER_TEMP/fritchii"
+          tar -tzf "$RUNNER_TEMP"/kit/oot-coop-*-linux-*.tar.gz | head -n 40
+          (cd "$RUNNER_TEMP/kit" && sha256sum -c oot-coop-*-linux-*.tar.gz.sha256)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: steps.gate.outputs.run == 'true' && matrix.part == 'full'
+        with:
+          name: oot-coop-linux-x86_64
+          path: |
+            ${{ runner.temp }}/kit/oot-coop-*-linux-*.tar.gz
+            ${{ runner.temp }}/kit/oot-coop-*-linux-*.tar.gz.sha256
+          retention-days: 14

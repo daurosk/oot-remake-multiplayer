@@ -90,14 +90,60 @@ void DrawMarkers(const HosCoopDraw& d, const CoopHook::Markers& m) {
     }
 }
 
-void DrawChat(const HosCoopDraw& d, const std::vector<ChatShown>& chat) {
+// The end of `text` that fits `room` pixels, "..." in front when cut.
+std::string Tail(const HosCoopDraw& d, float px, const std::string& text, float room) {
+    if (d.text_width(d.user, px, text.c_str()) <= room) {
+        return text;
+    }
+    std::size_t at = 0;
+    while (at < text.size()) {
+        ++at;
+        while (at < text.size() && (static_cast<unsigned char>(text[at]) & 0xC0) == 0x80) {
+            ++at;
+        }
+        const std::string t = "..." + text.substr(at);
+        if (d.text_width(d.user, px, t.c_str()) <= room) {
+            return t;
+        }
+    }
+    return "...";
+}
+
+float ChatPx(const HosCoopDraw& d) {
+    return std::clamp(d.height * 0.025f, 14.0f, 32.0f);
+}
+
+// The chat box's height (0 when closed), drawn at the bottom left.
+float DrawBox(const HosCoopDraw& d, const std::optional<ChatBoxView>& box) {
+    if (!box) {
+        return 0.0f;
+    }
+    const float px = ChatPx(d);
+    const float width = std::min(kChatWidth * px / 14.0f, d.width - 2 * kMargin);
+    const float height = px + 12.0f;
+    const float top = d.height - kMargin - height;
+    if (box->failed) {
+        d.rect(d.user, kMargin - 2, top - 2, kMargin + width + 2, top + height + 2, Rgba(220, 60, 60, 230), 7.0f);
+    }
+    d.rect(d.user, kMargin, top, kMargin + width, top + height, Rgba(0, 0, 0, 190), 6.0f);
+    const float room = width - 2 * kPad;
+    if (box->text.empty()) {
+        d.text(d.user, kMargin + kPad, top + 6, px, Rgba(255, 255, 255, 160),
+               Elided(d, px, kChatPlaceholder, room).c_str());
+    } else {
+        d.text(d.user, kMargin + kPad, top + 6, px, Rgba(255, 255, 255, 255), Tail(d, px, box->text + "_", room).c_str());
+    }
+    return height;
+}
+
+void DrawChat(const HosCoopDraw& d, const std::vector<ChatShown>& chat, float above) {
     if (chat.empty()) {
         return;
     }
-    const float px = std::clamp(d.height * 0.025f, 14.0f, 32.0f);
+    const float px = ChatPx(d);
     const float room = std::min(kChatWidth * px / 14.0f, d.width - 2 * kMargin) - 2 * kPad;
     const float line = px + 8.0f;
-    float y = d.height - kMargin - line * static_cast<float>(chat.size());
+    float y = d.height - kMargin - (above > 0 ? above + 6.0f : 0.0f) - line * static_cast<float>(chat.size());
     for (const auto& l : chat) {
         const int a = Alpha(l.alpha);
         const std::string text = Elided(d, px, l.text, room);
@@ -232,11 +278,11 @@ std::vector<std::vector<std::string>> PlayerCells(const std::vector<CoopHook::Pl
     return cells;
 }
 
-std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines) {
+std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, bool box_open) {
     std::vector<ChatShown> out;
     for (const auto& l : lines) {
         float alpha = 1.0f;
-        if (l.age_ms >= kChatShowMs) {
+        if (!box_open && l.age_ms >= kChatShowMs) {
             alpha = 1.0f - static_cast<float>(l.age_ms - kChatShowMs) / static_cast<float>(kChatFadeMs);
         }
         if (alpha > 0.0f) {
@@ -247,7 +293,7 @@ std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines) {
 }
 
 bool Wanted(const Scene& s) {
-    return !s.chat.empty() || !s.hud.empty() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
+    return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
            (s.panel && !s.panel->empty());
 }
 
@@ -262,7 +308,7 @@ void Draw(const HosCoopDraw& d, const Scene& s) {
     if (s.panel) {
         DrawPanel(d, *s.panel);
     }
-    DrawChat(d, s.chat);
+    DrawChat(d, s.chat, DrawBox(d, s.box));
     if (s.players) {
         DrawPlayers(d, *s.players);
     }

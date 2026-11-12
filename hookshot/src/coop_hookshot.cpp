@@ -26,6 +26,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "coop_callers.h"
+#include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop_game_build.h"
 #include "coop_hold.h"
@@ -197,11 +198,55 @@ bool KeyDown(int vk) {
 std::mutex g_keys_mutex;
 CoopDraw::Keys g_keys;
 
+// The chat box (coop_chatbox.h): the window's thread types, the game's input
+// thread asks whether it has the keyboard, the render thread draws it.
+std::mutex g_box_mutex;
+CoopChatBox::Box g_box;
+unsigned g_box_lead = 0;  // a double-byte code page's lead byte, waiting for its second
+
+bool AsyncDown(int vk) {
+#ifdef _WIN32
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+#else
+    (void)vk;
+    return false;
+#endif
+}
+
+// A WM_CHAR byte of the ANSI window as Unicode; 0 while a lead byte waits.
+std::uint32_t FromCodePage(unsigned byte) {
+#ifdef _WIN32
+    char b[2];
+    int n = 0;
+    if (g_box_lead != 0) {
+        b[n++] = static_cast<char>(g_box_lead);
+        g_box_lead = 0;
+    } else if (byte >= 0x80 && IsDBCSLeadByte(static_cast<BYTE>(byte))) {
+        g_box_lead = byte;
+        return 0;
+    }
+    b[n++] = static_cast<char>(byte);
+    wchar_t w[2] = {};
+    if (MultiByteToWideChar(CP_ACP, 0, b, n, w, 2) != 1) {
+        return 0xFFFD;
+    }
+    return w[0];
+#else
+    return byte < 0x80 ? byte : 0xFFFD;
+#endif
+}
+
 }  // namespace
 
 CoopDraw::Scene DrawScene() {
     CoopDraw::Scene s;
-    s.chat = CoopDraw::ShownChat(CoopHook::ChatLines());
+    {
+        std::lock_guard lock(g_box_mutex);
+        if (g_box.open()) {
+            s.box = CoopDraw::ChatBoxView{g_box.text(), g_box.failed()};
+        }
+    }
+    s.chat = CoopDraw::ShownChat(CoopHook::ChatLines(), s.box.has_value());
     s.markers = CoopHook::CurrentMarkers();
     bool list = false, panel = false;
     {
@@ -240,6 +285,42 @@ CoopDraw::Scene DrawScene() {
         s.panel = CoopHook::OverlayLines();
     }
     return s;
+}
+
+bool TypeKey(std::uint32_t vk, bool repeat) {
+    if (!g_on) {
+        return false;
+    }
+    std::lock_guard lock(g_box_mutex);
+    const bool taken = g_box.Key(vk, repeat);
+    if (auto text = g_box.TakeSend()) {
+        const bool ok = CoopHook::SendChat(*text);
+        g_box.Sent(ok);
+        if (!ok) {
+            LOG_INFO(Core, "coop: chat not sent (not connected, or refused); the box stays open");
+        }
+    }
+    return taken;
+}
+
+bool TypeChar(std::uint32_t byte) {
+    if (!g_on) {
+        return false;
+    }
+    std::lock_guard lock(g_box_mutex);
+    if (!g_box.open()) {
+        return false;
+    }
+    const std::uint32_t cp = FromCodePage(byte);
+    return cp == 0 ? true : g_box.Char(cp);
+}
+
+bool KeysTaken() {
+    if (!g_on) {
+        return false;
+    }
+    std::lock_guard lock(g_box_mutex);
+    return g_box.KeysTaken(AsyncDown(0x0D) || AsyncDown(0x1B));
 }
 
 bool Start(const HosCoopApi* api) {
@@ -333,6 +414,16 @@ COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
     CoopHookshot::Stop();
+}
+// Typing (hos_coop_api.h): the chat box.
+COOP_HOOKSHOT_EXPORT int hos_coop_key(uint32_t vk, int repeat) {
+    return CoopHookshot::TypeKey(vk, repeat != 0) ? 1 : 0;
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
+    return CoopHookshot::TypeChar(ch) ? 1 : 0;
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
+    return CoopHookshot::KeysTaken() ? 1 : 0;
 }
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {

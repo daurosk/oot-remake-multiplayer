@@ -217,3 +217,39 @@ TEST_CASE("hookshot draw: the other players under your hearts, hearts as shapes"
     CHECK(c.Of("triangle").size() == 4 + 3);
     CHECK(c.Of("circle").size() == 2 * (4 + 3));
 }
+
+TEST_CASE("hookshot draw: the chat box at the bottom left, the lines above it and unfaded") {
+    using CoopHook::ChatLine;
+    const auto all = CoopDraw::ShownChat({ChatLine{"old", false, 30000}, ChatLine{"new", false, 100}}, true);
+    REQUIRE(all.size() == 2);  // the box is open: every kept line
+    CHECK(all[0].alpha == doctest::Approx(1.0f));
+
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    s.box = CoopDraw::ChatBoxView{"", false};
+    CHECK(CoopDraw::Wanted(s));
+    CoopDraw::Draw(c.d, s);
+    auto texts = c.Of("text");
+    REQUIRE(texts.size() == 1);
+    CHECK(texts[0].text == CoopDraw::kChatPlaceholder);
+    CHECK(AlphaOf(texts[0].rgba) == 160);
+
+    Canvas t(1280, 720);
+    s.box = CoopDraw::ChatBoxView{"hello", true};
+    s.chat = all;
+    CoopDraw::Draw(t.d, s);
+    texts = t.Of("text");
+    REQUIRE(texts.size() == 3);
+    CHECK(texts[0].text == "hello_");               // the box (drawn first), with its caret
+    CHECK(texts[2].text == "new");
+    CHECK(texts[2].y + texts[2].px < texts[0].y);    // the lines above it
+    CHECK(t.Of("rect").size() == 2 + 2);             // refused: a red frame behind the box, + two line boxes
+
+    Canvas l(1280, 720);
+    s.box = CoopDraw::ChatBoxView{std::string(300, 'y'), false};
+    s.chat.clear();
+    CoopDraw::Draw(l.d, s);
+    const auto tail = l.Of("text")[0].text;
+    CHECK(tail.substr(0, 3) == "...");               // the end shows, where the typing is
+    CHECK(tail.substr(tail.size() - 2) == "y_");
+}

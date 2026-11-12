@@ -3,7 +3,7 @@
 // window draws with Qt (lichii/hook/coop_window.cpp, its plain look), drawn
 // here through Hookshot's Dear ImGui (hos_coop_draw.h): the chat lines, the
 // players' name tags, the player list (F6 held) and the panel (F7). The chat
-// box and the cheats window are not drawn on Hookshot yet. The HUD blocks
+// box (T, coop_chatbox.h) too; the cheats window is not drawn on Hookshot yet. The HUD blocks
 // (the other players under your hearts) are drawn with shapes, not the
 // game's heart pictures.
 #pragma once
@@ -34,8 +34,19 @@ struct ChatShown {
     float alpha = 1.0f;
 };
 
-// The chat lines still showing, oldest first, with their fade.
-std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines);
+// The chat lines still showing, oldest first, with their fade. While the
+// chat box is open every kept line shows, unfaded (as the co-op window).
+std::vector<ChatShown> ShownChat(const std::vector<CoopHook::ChatLine>& lines, bool box_open = false);
+
+// The chat box, when it is open.
+struct ChatBoxView {
+    std::string text;
+    bool failed = false;  // the last Enter was refused (not connected, or text the protocol refuses)
+};
+
+// What the box shows: the text with a caret, the start cut ("...") to fit
+// `room` pixels; the placeholder when empty.
+inline constexpr const char* kChatPlaceholder = "Say something (Enter sends, Esc closes)";
 
 // One other player under your hearts (the co-op window's HudLayer).
 struct HudBlock {
@@ -48,6 +59,7 @@ struct HudBlock {
 // What to draw this present.
 struct Scene {
     std::vector<HudBlock> hud;
+    std::optional<ChatBoxView> box;
     std::vector<ChatShown> chat;
     std::optional<CoopHook::Markers> markers;
     std::optional<std::vector<CoopHook::PlayerRow>> players;  // the player list key is held

@@ -27,7 +27,7 @@ foreach(line IN LISTS _coop_lines)
 endforeach()
 list(REMOVE_DUPLICATES _coop_sources)
 
-add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp ${_coop_sources})
+add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_chatbox.cpp ${_coop_sources})
 # compat/ first: its core/ and common/ headers stand in for the emulator's.
 target_include_directories(hookshot_coop PRIVATE compat src "${_coop_hook}")
 target_compile_definitions(hookshot_coop PRIVATE LICHII_COOP COOP_HOOKSHOT)

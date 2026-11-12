@@ -173,3 +173,15 @@ TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void)") != std::string::npos);
     CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d)") != std::string::npos);
 }
+
+TEST_CASE("hookshot: the chat box gets Hookshot's keys first, and the game none while it types") {
+    const std::string patch = Patch();
+    CHECK(patch.find("+        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) return 0;") != std::string::npos);
+    CHECK(patch.find("+        if (hos_coop_char((unsigned)wp)) return 0;") != std::string::npos);
+    CHECK(patch.find("+static int key(int vk) { return !rx_option(1, 0) && !hos_coop_keys_taken() &&") != std::string::npos);
+    CHECK(patch.find("GetProcAddress(m, \"hos_coop_keys_taken\")") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_key(uint32_t vk, int repeat)") != std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch)") != std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void)") != std::string::npos);
+}

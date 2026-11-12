@@ -55,5 +55,12 @@ typedef void (*hos_coop_frame_fn)(void *ctx, int site);   /* the game's calc thr
                                                              thread at HOS_COOP_SITE_PRESENT */
 typedef uint32_t (*hos_coop_hold_fn)(uint64_t component, uint32_t bits);   /* the AI hold: a BSA component's calc bits */
 typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
+/* Typing, added after the first version (optional exports; an older module has none): Hookshot's window (display.c)
+   offers each key press (virtual-key code, repeat 1 for an auto-repeat) and each character (WM_CHAR of the ANSI window:
+   a byte of the active code page) to the module first; 1 = taken, Hookshot does nothing more with it. While
+   hos_coop_keys_taken says 1, the game reads no keys or mouse buttons (nn_hid.c key), as while the Insert menu is open. */
+typedef int (*hos_coop_key_fn)(uint32_t vk, int repeat);   /* the window's thread */
+typedef int (*hos_coop_char_fn)(uint32_t ch);              /* the window's thread */
+typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often: cheap */
 
 #endif

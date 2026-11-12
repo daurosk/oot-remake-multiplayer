@@ -64,6 +64,11 @@ inline FrameWork WorkAt(int site, bool present_seen) {
 // is held, the panel after F7 or with LICHII_COOP_DEBUG_PANEL=1).
 CoopDraw::Scene DrawScene();
 
+// Typing (hos_coop_key / hos_coop_char / hos_coop_keys_taken): the chat box.
+bool TypeKey(std::uint32_t vk, bool repeat);
+bool TypeChar(std::uint32_t byte);
+bool KeysTaken();
+
 // Whether co-op knows the game whose main has this build id (hex, 16 or more
 // digits; Hookshot gives 32).
 inline bool BuildSupported(const std::string& build_id_hex) {

@@ -1,4 +1,4 @@
-From 1120a4f7b26ccaeacab7a966da2fc64455dcf96a Mon Sep 17 00:00:00 2001
+From b21140b9cb8bc112d517af8af2bb6825de34b932 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -11,20 +11,23 @@ function calls, the log and player 1's buttons as the game got them
 (host/hos_coop_api.h; host/nn_hid.c keeps that word), and calls it at each
 present too (host/nvn_native.c), as the emulator's composite does.
 gpu/vk/vk_coop.cpp draws what the module asks for (chat lines, name tags) in
-the menu's Dear ImGui frame (hos_coop_draw.h). From oot-remake-multiplayer
+the menu's Dear ImGui frame (hos_coop_draw.h). host/display.c offers key
+presses and characters to the module first (its chat box) and host/nn_hid.c
+reads no keys while the module has the keyboard. From oot-remake-multiplayer
 (GPL-3.0), docs/hookshot.md.
 ---
- gpu/vk/hos_coop_draw.h |  28 +++++++
- gpu/vk/vk_coop.cpp     |  81 +++++++++++++++++++
+ gpu/vk/hos_coop_draw.h |  28 ++++++
+ gpu/vk/vk_coop.cpp     |  81 +++++++++++++++++
  gpu/vk/vk_coop.h       |  13 +++
- gpu/vk/vk_menu.cpp     |   9 ++-
- host/coop_bridge.c     | 177 +++++++++++++++++++++++++++++++++++++++++
- host/hos_coop_api.h    |  59 ++++++++++++++
- host/nn_hid.c          |   5 +-
+ gpu/vk/vk_menu.cpp     |   9 +-
+ host/coop_bridge.c     | 195 +++++++++++++++++++++++++++++++++++++++++
+ host/display.c         |   7 ++
+ host/hos_coop_api.h    |  66 ++++++++++++++
+ host/nn_hid.c          |   8 +-
  host/nvn_native.c      |   2 +
- nx2/coop_hooks.py      |  61 ++++++++++++++
+ nx2/coop_hooks.py      |  61 +++++++++++++
  nx2/lift.py            |   2 +
- 10 files changed, 434 insertions(+), 3 deletions(-)
+ 11 files changed, 468 insertions(+), 4 deletions(-)
  create mode 100644 gpu/vk/hos_coop_draw.h
  create mode 100644 gpu/vk/vk_coop.cpp
  create mode 100644 gpu/vk/vk_coop.h
@@ -217,10 +220,10 @@ index 872c3f6b..f0a11d39 100644
      ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
 new file mode 100644
-index 00000000..bf89a4b4
+index 00000000..916c4a4c
 --- /dev/null
 +++ b/host/coop_bridge.c
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,195 @@
 +/* Co-op (oot-remake-multiplayer, GPL-3.0; its docs/hookshot.md): the bridge between the game and the co-op module.
 +
 +   nx2/coop_hooks.py puts two calls into the lifted game: hos_coop_frame at the frame function's two calls in moduleCalc_,
@@ -299,6 +302,9 @@ index 00000000..bf89a4b4
 +    return 1;
 +}
 +static void bridge_log(const char *line) { hos_log("%s", line ? line : ""); }
++static hos_coop_key_fn coop_key;   /* (optional: typing, display.c and nn_hid.c below) */
++static hos_coop_char_fn coop_char;
++static hos_coop_keys_taken_fn coop_keys_taken;
 +extern volatile uint64_t hos_coop_pad;   /* nn_hid.c: the word npad_states gave the game */
 +static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED); }
 +
@@ -356,6 +362,9 @@ index 00000000..bf89a4b4
 +    coop_frame = (hos_coop_frame_fn)(void *)GetProcAddress(m, "hos_coop_frame");
 +    coop_hold = (hos_coop_hold_fn)(void *)GetProcAddress(m, "hos_coop_hold");
 +    coop_stop = (hos_coop_stop_fn)(void *)GetProcAddress(m, "hos_coop_stop");
++    coop_key = (hos_coop_key_fn)(void *)GetProcAddress(m, "hos_coop_key");
++    coop_char = (hos_coop_char_fn)(void *)GetProcAddress(m, "hos_coop_char");
++    coop_keys_taken = (hos_coop_keys_taken_fn)(void *)GetProcAddress(m, "hos_coop_keys_taken");
 +    if (!start || !coop_frame || !coop_hold || !coop_stop) {
 +        hos_log("coop: %s lacks an export: co-op off", path);
 +        __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
@@ -379,6 +388,18 @@ index 00000000..bf89a4b4
 +    __atomic_store_n(&state, 2, __ATOMIC_RELEASE);
 +}
 +
++/* display.c: a key press or a character for the module first (its chat box); 1 = taken. */
++int hos_coop_key(unsigned vk, int repeat) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_key ? coop_key(vk, repeat) : 0;
++}
++int hos_coop_char(unsigned ch) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_char ? coop_char(ch) : 0;
++}
++/* nn_hid.c key: the module has the keyboard (the game reads no keys) */
++int hos_coop_keys_taken(void) {
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_keys_taken ? coop_keys_taken() : 0;
++}
++
 +/* nvn_native.c nvnQueuePresentTexture: every present, once the module is loaded (it loads at a frame hook). */
 +void hos_coop_present(void) {
 +    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);
@@ -398,12 +419,31 @@ index 00000000..bf89a4b4
 +uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
 +    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 ? coop_hold(component, bits) : bits;
 +}
+diff --git a/host/display.c b/host/display.c
+index 33910607..0d4edc34 100644
+--- a/host/display.c
++++ b/host/display.c
+@@ -358,7 +358,14 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+         else if (game_menu_open) game_menu_press(lp, HOS_MOUSE_LEFT);
+         else if (renderer && !mouse_captured) mouse_capture(w, 1);
+         return 0;
++    case WM_CHAR: {   /* (oot-remake-multiplayer: co-op's chat box, coop_bridge.c) */
++        extern int hos_coop_char(unsigned ch);
++        if (hos_coop_char((unsigned)wp)) return 0;
++        break;
++    }
+     case WM_KEYDOWN: {
++        extern int hos_coop_key(unsigned key, int repeat);   /* (oot-remake-multiplayer: the chat box's keys first) */
++        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) return 0;
+         extern void hos_vk_note_key_press(unsigned key);
+         if (!(lp & (1 << 30))) hos_vk_note_key_press((unsigned)wp);
+         if (wp == VK_ESCAPE) {   /* (it may open the Insert menu too: a capture let go here comes back) */
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
 new file mode 100644
-index 00000000..e7212c1f
+index 00000000..b9861cc7
 --- /dev/null
 +++ b/host/hos_coop_api.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,66 @@
 +/* SPDX-License-Identifier: GPL-3.0-or-later
 +   The co-op module's interface to Hookshot (oot-remake-multiplayer, docs/hookshot.md).
 +
@@ -461,13 +501,30 @@ index 00000000..e7212c1f
 +                                                             thread at HOS_COOP_SITE_PRESENT */
 +typedef uint32_t (*hos_coop_hold_fn)(uint64_t component, uint32_t bits);   /* the AI hold: a BSA component's calc bits */
 +typedef void (*hos_coop_stop_fn)(void);                    /* at exit */
++/* Typing, added after the first version (optional exports; an older module has none): Hookshot's window (display.c)
++   offers each key press (virtual-key code, repeat 1 for an auto-repeat) and each character (WM_CHAR of the ANSI window:
++   a byte of the active code page) to the module first; 1 = taken, Hookshot does nothing more with it. While
++   hos_coop_keys_taken says 1, the game reads no keys or mouse buttons (nn_hid.c key), as while the Insert menu is open. */
++typedef int (*hos_coop_key_fn)(uint32_t vk, int repeat);   /* the window's thread */
++typedef int (*hos_coop_char_fn)(uint32_t ch);              /* the window's thread */
++typedef int (*hos_coop_keys_taken_fn)(void);               /* any thread, often: cheap */
 +
 +#endif
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 43e312d2..9691d9bb 100644
+index 43e312d2..7f34e061 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
-@@ -1041,6 +1041,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
+@@ -52,7 +52,8 @@ static int64_t sampling;
+ 
+ int rx_option(int id, int otherwise);
+ /* (the Insert menu takes the keyboard while it is open) */
+-static int key(int vk) { return !rx_option(1, 0) && (GetAsyncKeyState(vk) & 0x8000) != 0; }
++int hos_coop_keys_taken(void);   /* (oot-remake-multiplayer, coop_bridge.c: co-op's chat box has the keyboard) */
++static int key(int vk) { return !rx_option(1, 0) && !hos_coop_keys_taken() && (GetAsyncKeyState(vk) & 0x8000) != 0; }
+ 
+ int hos_mouse_take(int32_t *dx, int32_t *dy);   /* display.c */
+ 
+@@ -1041,6 +1042,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
  
  static void vibration_send(uint64_t handle, uint64_t value);
  volatile int64_t hos_hid_last_read;
@@ -475,7 +532,7 @@ index 43e312d2..9691d9bb 100644
  
  /* GetNpadStates(State* out, int count, unsigned int const& npadId): the latest state first */
  static void npad_states(Ctx *c) {
-@@ -1100,11 +1101,13 @@ static void npad_states(Ctx *c) {
+@@ -1100,11 +1102,13 @@ static void npad_states(Ctx *c) {
      uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
      if (connected) buttons = hos_frame_step_buttons(buttons);
      int64_t s = ++sampling;

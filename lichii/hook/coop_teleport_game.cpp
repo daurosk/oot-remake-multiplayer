@@ -14,6 +14,8 @@
 
 #include "coop_teleport_game.h"
 
+#include "coop/presence/presence.hpp"
+
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
@@ -339,7 +341,16 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
     for (const auto& a : answers) {
         switch (a.kind) {
         case Answered::Kind::accepted:
-            all.push_back(g.trip.Accepted(a.player, a.target, local, now));
+        {
+            std::optional<coop::protocol::Age> their_age;
+            if (session != nullptr) {
+                their_age = session->with_presence([&](coop::presence::Presence& p) {
+                    const auto* pl = p.player(a.player);
+                    return pl ? pl->age() : std::nullopt;
+                });
+            }
+            all.push_back(g.trip.Accepted(a.player, a.target, local, now, their_age));
+        }
             break;
         case Answered::Kind::refused:
             all.push_back(g.trip.Refused(a.player, a.reason));

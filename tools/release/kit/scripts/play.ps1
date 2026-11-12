@@ -18,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
 . (Join-Path $PSScriptRoot 'hosting.ps1')
+. (Join-Path $PSScriptRoot 'relay-join.ps1')
 $kit = Split-Path -Parent $PSScriptRoot
 $emu = Join-Path $kit 'emulator'
 $exe = Join-Path $emu 'lichii.exe'
@@ -131,11 +132,23 @@ if (-not $Name) { $Name = $current.name }
 if (-not $Port) { $Port = if ($current.port) { $current.port } else { '@PORT@' } }
 
 if ($askServer -or -not $Server) {
+    # The last join through a relay is offered as its join code (relay-join.ps1).
+    $savedRelay = Read-RelayJoin $kit
+    if ($savedRelay -and $Server -eq $savedRelay.Address) { $Server = $savedRelay.Text }
     Write-Host 'The host''s address: paste what the host sent you (right-click or Ctrl+V pastes here).'
     Write-Host 'The host''s server window shows it, and copies it for them. Enter keeps the one in [ ].'
     do {
         $answer = Read-Host "Host's address$(if ($Server) { " [$Server]" })"
         $typed = if ($answer -and $answer.Trim()) { $answer } else { $Server }
+        # A join code with its relay (ABCD-EFGH@relay.example.net:27530): the code goes to the
+        # relay first, then the game connects to the relay.
+        $relayJoin = ConvertTo-RelayJoin $typed
+        if ($relayJoin) {
+            $relayAddress = Connect-RelayJoin $relayJoin
+            $ok = [bool]$relayAddress
+            if ($ok) { $Server = $relayAddress; $Port = "$($relayJoin.Port)"; Save-RelayJoin $kit $relayJoin $relayAddress }
+            continue
+        }
         # Pasted with spaces, a trailing dot or :port: made plain (hosting.ps1).
         $parsed = ConvertTo-JoinAddress $typed
         $ok = $parsed -and (Test-CoopServer $parsed.Server)
@@ -146,9 +159,16 @@ if ($askServer -or -not $Server) {
         }
         else {
             Write-Host "'$typed' is not an address. It looks like 26.12.34.56 or 192.168.1.20 (four numbers"
-            Write-Host 'with dots), sometimes with :port at the end. Ask the host to copy it from their server window.'
+            Write-Host 'with dots), sometimes with :port at the end, or a join code with its relay (ABCD-EFGH@relay.example.net).'
+            Write-Host 'Ask the host to copy it from their server window.'
         }
     } until ($ok)
+}
+elseif ($serverGiven -and (ConvertTo-RelayJoin $Server)) {
+    $relayJoin = ConvertTo-RelayJoin $Server
+    $relayAddress = Connect-RelayJoin $relayJoin
+    if (-not $relayAddress) { exit 1 }
+    $Server = $relayAddress; $Port = "$($relayJoin.Port)"; Save-RelayJoin $kit $relayJoin $relayAddress
 }
 elseif ($serverGiven) {
     $parsed = ConvertTo-JoinAddress $Server

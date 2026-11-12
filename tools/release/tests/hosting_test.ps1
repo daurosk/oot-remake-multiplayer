@@ -121,5 +121,44 @@ Check ((Text $f 'problem') -match 'Set server_allow' -and (Text $f 'problem') -n
 $f = Findings @() -Access @{ Allow = '81.9.9.9; rm'; Bind = '' }
 Check ((Text $f 'problem') -match 'is not a list of addresses' -and (Text $f 'problem') -notmatch 'remoteip=81\.9\.9\.9;') 'check: a bad server_allow is named, not printed into a command'
 
+# --- Joining through a relay (relay-join.ps1) ---
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\scripts\relay-join.ps1')
+$j = ConvertTo-RelayJoin ' abcd-efgh@relay.example.net:27600. '
+Check ($j -and $j.Code -eq 'ABCDEFGH' -and $j.Relay -eq 'relay.example.net' -and $j.Port -eq 27600) 'relay: a pasted join code with its relay and port'
+$j = ConvertTo-RelayJoin 'ABCDEFGH@1.2.3.4'
+Check ($j -and $j.Port -eq 27530 -and $j.Relay -eq '1.2.3.4') 'relay: no port is the relay port 27530'
+Check ((Format-RelayJoin $j) -eq 'ABCD-EFGH@1.2.3.4:27530') 'relay: shown as the host''s window shows it'
+foreach ($bad in @('ABCD-EFG@1.2.3.4', 'ABCD-EFGI@1.2.3.4', 'ABCD-EFGH', 'ABCD-EFGH@', 'ABCD-EFGH@1.2.3.4:0', '26.1.2.3', 'ABCD-EFGH@bad;host')) {
+    Check (-not (ConvertTo-RelayJoin $bad)) "relay: '$bad' is not a join code with a relay"
+}
+Check (-not (ConvertTo-JoinAddress 'ABCD-EFGH@1.2.3.4')) 'relay: a join code is not taken as a plain address'
+$bytes = Get-RelayLookupBytes 'ABCDEFGH'
+Check ($bytes.Length -eq 13 -and $bytes[0] -eq 0x4F -and $bytes[4] -eq 0x10 -and $bytes[5] -eq [byte][char]'A') 'relay: the lookup datagram (server/relay_wire.hpp)'
+Check ((ConvertFrom-RelayFound ([byte[]](0x4F, 0x43, 0x52, 1, 0x90, 0))) -eq 'ok') 'relay: answer ok'
+Check ((ConvertFrom-RelayFound ([byte[]](0x4F, 0x43, 0x52, 1, 0x90, 1))) -eq 'unknown') 'relay: answer unknown code'
+Check ((ConvertFrom-RelayFound ([byte[]](0x4F, 0x43, 0x52, 1, 0x90, 2))) -eq 'slow-down') 'relay: answer slow down'
+Check ($null -eq (ConvertFrom-RelayFound ([byte[]](0x4F, 0x43, 0x52, 1, 0x81, 0)))) 'relay: another message is no answer'
+Check ((Get-RelayLookupHelp 'unknown' $j) -join ' ' -match 'code changes every time') 'relay: an unknown code is explained'
+Check ((Get-RelayLookupHelp 'no-answer' $j) -join ' ' -match 'No answer from the relay 1\.2\.3\.4') 'relay: no answer is explained'
+Check ((Invoke-RelayLookup '127.0.0.1' 9 'ABCDEFGH') -eq 'no-answer') 'relay: nobody on the port is no answer'
+$kitDir = Join-Path ([System.IO.Path]::GetTempPath()) ('relay-join-test-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $kitDir | Out-Null
+Save-RelayJoin $kitDir $j '1.2.3.4'
+$saved = Read-RelayJoin $kitDir
+Check ($saved -and $saved.Text -eq 'ABCD-EFGH@1.2.3.4:27530' -and $saved.Address -eq '1.2.3.4') 'relay: the last join is kept for Enter'
+Remove-Item -Recurse -Force $kitDir
+
+# The host's coop_server arguments from coop-options.ini.
+$h = Get-ServerHostingArgs @{ Upnp = $true; Relay = ''; RelayKey = '' } '' ''
+Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'NOT used') 'upnp: refused without a join password or server_allow'
+$h = Get-ServerHostingArgs @{ Upnp = $true; Relay = ''; RelayKey = '' } 'secret' ''
+Check (($h.Args -join ' ') -eq '--upnp') 'upnp: on with a join password'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = ''; RelayKey = '' } '' '25.1.2.3'
+Check ($h.Args.Count -eq 0) 'upnp: off by default'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'relay.example.net:27530'; RelayKey = 'k' } '' ''
+Check (($h.Args -join ' ') -eq '--relay-via relay.example.net:27530 --relay-key-env OOT_COOP_RELAY_KEY') 'relay: via the relay, key in the environment'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = 'bad relay;x'; RelayKey = '' } '' ''
+Check ($h.Args.Count -eq 0 -and ($h.Notes -join ' ') -match 'not a relay address') 'relay: a bad address is named, not used'
+
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

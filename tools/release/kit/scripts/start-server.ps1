@@ -30,12 +30,18 @@ if ($Bind.Trim()) {
 # and is never printed or logged.
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
-$password = (Read-KitServerAccess (Join-Path $kit 'coop-options.ini')).Password
+$kitAccess = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
+$password = $kitAccess.Password
 if ($password) {
     if (-not (Test-CoopPassword $password)) { Write-Host 'server_password: no spaces, at most 128 characters. The server was not started.'; exit 1 }
     $env:OOT_COOP_SERVER_PASSWORD = $password
     $access += @('--password-env', 'OOT_COOP_SERVER_PASSWORD')
 }
+# The router forward (upnp = yes) and the relay (relay = address): docs/play-online.md.
+. (Join-Path $PSScriptRoot 'relay-join.ps1')
+$hosting = Get-ServerHostingArgs $kitAccess $password $Allow.Trim()
+$access += $hosting.Args
+if ($kitAccess.RelayKey) { $env:OOT_COOP_RELAY_KEY = $kitAccess.RelayKey }
 
 $logs = Join-Path $kit 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -60,6 +66,7 @@ $best = Get-BestJoinAddress $addresses $Port
 $copied = ''
 if ($best) { try { Set-Clipboard -Value $best -ErrorAction Stop; $copied = $best } catch { } }
 foreach ($line in (Format-JoinBlock $addresses $Port ($lookup -and -not $Bind.Trim() -and -not $public) $Allow.Trim() $copied $Bind.Trim())) { Write-Host $line }
+foreach ($line in $hosting.Notes) { Write-Host $line }
 
 # This kit's co-op release (VERSION.txt), named when the server refuses a game of another
 # version, so the players know which one to update to.
@@ -75,6 +82,10 @@ $args2 = @('--port', "$Port") + $access + @($Rest | Where-Object { $_ })
     $text = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
     if ($release -and $text -match 'refused a connection, reason 1\b') {
         $text += ". This server is co-op ${release}: every player needs $release (Update.bat updates to the newest release)."
+    }
+    # The relay's join code (relay-join.ps1): copied, so the host can paste it to the others.
+    if ($text -match 'relay: join code \S+\. Give your friends (\S+) ') {
+        try { Set-Clipboard -Value $Matches[1] -ErrorAction Stop; $text += ' Copied to the clipboard.' } catch { }
     }
     $line = '{0:HH:mm:ss.fff} {1}' -f (Get-Date), $text
     Write-Host $line

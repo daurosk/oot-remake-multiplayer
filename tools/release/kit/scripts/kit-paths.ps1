@@ -212,7 +212,7 @@ function Read-KitOptions([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
-        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|server_allow|server_bind|server_password|public_address_lookup)\s*=') { continue }
+        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|server_allow|server_bind|server_password|public_address_lookup|upnp|relay|relay_key)\s*=') { continue }
         if ($t -match '^((LICHII_COOP|EDEN_NX2)_[A-Z0-9_]+)\s*=\s*(.*)$') { $values[$Matches[1]] = $Matches[3] }
         else { Write-Host "coop-options.ini: skipped '$t' (only LICHII_COOP_NAME=value or EDEN_NX2_NAME=value lines)" }
     }
@@ -222,14 +222,18 @@ function Read-KitOptions([string]$Path) {
 # coop-options.ini's server_allow and server_bind (the host's server only; start-server.ps1
 # checks them): an ordered table with Allow and Bind, '' when not set. Password is the join
 # password (server_password): $null when no line without a '#' sets it (Host.bat then asks
-# once), '' when the host chose none.
+# once), '' when the host chose none. Upnp (upnp = yes), Relay (relay = address[:port]) and
+# RelayKey (relay_key) are the router forward and the relay (docs/play-online.md).
 function Read-KitServerAccess([string]$Path) {
-    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null }
+    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $false; Relay = ''; RelayKey = '' }
     if (-not (Test-Path -LiteralPath $Path)) { return $access }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         if ($line -match '^\s*server_allow\s*=\s*(.*?)\s*$') { $access.Allow = $Matches[1] }
         elseif ($line -match '^\s*server_bind\s*=\s*(.*?)\s*$') { $access.Bind = $Matches[1] }
         elseif ($line -match '^\s*server_password\s*=\s*(.*?)\s*$') { $access.Password = $Matches[1] }
+        elseif ($line -match '^\s*upnp\s*=\s*(.*?)\s*$') { $access.Upnp = $Matches[1] -match '^(yes|on|true|1)$' }
+        elseif ($line -match '^\s*relay\s*=\s*(.*?)\s*$') { $access.Relay = $Matches[1] }
+        elseif ($line -match '^\s*relay_key\s*=\s*(.*?)\s*$') { $access.RelayKey = $Matches[1] }
     }
     return $access
 }

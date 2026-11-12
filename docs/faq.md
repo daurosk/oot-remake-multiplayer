@@ -46,3 +46,15 @@ We never ship save files, keys, firmware or the game in a release or in this rep
 ## Is it safe to share the invite code?
 
 Share it only with the people you play with. It holds your internet address, the port and the join password, so anyone who has it can join while your server window is open. It stops working when you close that window, and `Host.bat` makes a new password each time it starts (unless you set `server_password`). More in [SECURITY.md](../SECURITY.md).
+
+## Emulator or Hookshot?
+
+The emulator kit is the usual way and has every co-op feature. [Hookshot](setup.md#play-on-hookshot-experimental) is experimental: no emulator, but it needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and a long first build, and it has no co-op window or chat box yet. Both can be in one session.
+
+## Is my game traffic encrypted?
+
+Yes, when the session has a join password, which `Host.bat` makes by itself each time. The co-op panel's first line ends in `, encrypted`. Only a host who set `server_password =` (empty) plays without one; then the traffic is plain.
+
+## The other players are all green
+
+Your puppet pack was made before the tunic colours. Run `make-puppet-pack.cmd` once more (`Update.bat` does not rebuild it); `Host.bat` and `Join.bat` say so at start when the pack has no colours.

@@ -42,7 +42,7 @@ A DLL keeps the patch to Hookshot small (it changes only when Hookshot moves) an
 
 ## For players: the kit
 
-Nothing of Hookshot or the game is in the kit. The kit's `Build-Hookshot-Coop.bat` (branch hookshot-kit, its own docs in play-online.md "On Hookshot") downloads Hookshot's builder parts and source for `hookshot/PIN` (each checked against its SHA-256), applies `hookshot/patches` without git, runs Hookshot's own `nx2/make_game.py` on the player's game file, and installs `hookshot_coop.dll`, `coop.ini` (beside `hookshot.exe`) and the puppet pack. `Host-Hookshot.bat` and `Join-Hookshot.bat` start it as `Host.bat` and `Join.bat` start the emulator.
+Nothing of Hookshot or the game is in the kit. The kit's `Build-Hookshot-Coop.bat` (player steps in [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental)) downloads Hookshot's builder parts and source for `hookshot/PIN` (each checked against its SHA-256), applies `hookshot/patches` without git, runs Hookshot's own `nx2/make_game.py` on the player's game file, and installs `hookshot_coop.dll`, `coop.ini` (beside `hookshot.exe`) and the puppet pack. `Host-Hookshot.bat` and `Join-Hookshot.bat` start it as `Host.bat` and `Join.bat` start the emulator.
 
 What the module expects from that install (`hookshot/compat`): `coop.ini` beside `hookshot.exe`; the puppet pack at `<exe folder>\mods\contents\0400486024DEC000\coop-puppet` (the hook finds packs under `<load folder>\0400486024DEC000\<mod>`, and Hookshot's `host/mods.c` loads that layout as a mod); the `LICHII_COOP_*` switches from `coop-options.ini` in the environment.
 
@@ -85,5 +85,5 @@ Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-reco
 | The patch (bridge, hooks, API header), `PIN`, `fetch.ps1` | Done; `fetch.ps1` applies it to the pinned source; `coop_bridge.c` passes a compiler's syntax check |
 | The module: all of `lichii/hook` through `hookshot/compat` | Written; all 42 hook files and the module pass a syntax check; CI builds it on Windows; `tests/hookshot/module_test.cpp` (the header in the patch is ours, the hook sites are the emulator cave's, the build list) |
 | Callers shared by both builds (`coop_callers`) | Done (`tests/lichii/callers_test.cpp`) |
-| Kit (`Build-Hookshot-Coop.bat`, `Host-/Join-Hookshot.bat`) | Branch hookshot-kit |
-| Proofs 1 to 5 | Not yet (waiting for a build turn) |
+| Kit (`Build-Hookshot-Coop.bat`, `Host-/Join-Hookshot.bat`) | In the release kit; ran end to end on the test PC (download, checks, patch, build, co-op install) |
+| Proofs 1 to 5 | 2 done: the patched game builds and loads the module. 3 to 5 in the combined two-game test <!-- FILL from reports/integrate-p11.md --> |

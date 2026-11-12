@@ -15,7 +15,7 @@ Co-op inside [Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and cont
 ## A co-op Hookshot game, for development (Windows)
 
 1. `powershell -ExecutionPolicy Bypass -File hookshot\fetch.ps1`.
-2. The tools Hookshot's readme lists under "Build from source" (the kit's `Build-Hookshot-Coop.bat`, branch hookshot-kit, does all of this for players). In `hookshot-src`: `python -I nx2/make_game.py --nup <your .nup> --out <game folder> --language en-US`. Its log says `co-op hooks: frame hook at ...`.
+2. The tools Hookshot's readme lists under "Build from source" (the kit's `Build-Hookshot-Coop.bat` does all of this for players: [setup.md, "Play on Hookshot"](../docs/setup.md#play-on-hookshot-experimental)). In `hookshot-src`: `python -I nx2/make_game.py --nup <your .nup> --out <game folder> --language en-US`. Its log says `co-op hooks: frame hook at ...`.
 3. `cmake --build build --config Release --target hookshot_coop` here; `hookshot_coop.dll` beside `hookshot.exe`.
 4. The puppet pack: `tools/puppet_pack/build.py --romfs <your .nup> --mod-dir "<game folder>\mods\contents\0400486024DEC000\coop-puppet"`.
 5. `coop.ini` beside `hookshot.exe` (as the emulator's: `server = 127.0.0.1`, `name = Saria`) and the `LICHII_COOP_*` switches as in the kit's `coop-options.ini`. `hookshot_log.txt` says `coop: module loaded` and `coop: connected`.

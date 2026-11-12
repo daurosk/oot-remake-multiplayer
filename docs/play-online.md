@@ -13,6 +13,7 @@ No router settings, no VPN, no server of ours.
 What Host.bat does for this, by itself:
 
 - It makes a **new random join password** each time it starts (20 letters, 100 random bits) and puts it in the invite code, so nobody has to type it. If you set your own `server_password` in `coop-options.ini`, that one is used instead (an empty `server_password =` line means no password, and then there is no invite code and no router forward).
+- With the join password the **game traffic is encrypted** (X25519 and XChaCha20-Poly1305, from the password and the join messages; the password itself is never sent). Someone on the path (a shared Wi-Fi, a VPN, a relay) can neither read nor change it. The co-op panel's first line ends in `, encrypted`. Without a password (`server_password =` empty) it is plain, and the panel says `, not encrypted (no join password)`.
 - It asks your router to **forward the game's UDP port** (UPnP) while the server runs; see [Let the router forward the port](#let-the-router-forward-the-port-upnp). Many routers have UPnP off; the invite code then still works for most friends through the answer code.
 - It asks a free public **STUN server** (Google's `stun.l.google.com`, then Cloudflare's `stun.cloudflare.com`) which internet address and port your router gives the game's port. That address goes into the invite code.
 
@@ -168,7 +169,7 @@ Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bomb
 - **Not yet:** the sword is read where the area has the game's grass (outdoor areas); a sword swing indoors is not seen yet. A shot hits only when it ended (hit something or went off) beside the other player. Shown in the debug log as lines with `coop: pvp:`.
 ## Your colour
 
-Every player's Link wears a tunic (and cap) in that player's colour in the other games, so you can tell each other apart. Without a choice you get your player number's colour: 1 blue, 2 red, 3 green, 4 yellow.
+Every player's Link wears a tunic (and cap) in that player's colour in the other games, so you can tell each other apart, and your own Link wears your colour on your screen too (the Kokiri tunic only: the Goron and Zora tunics keep their own colours; the emulator kit only, not yet on Hookshot). `Host.bat` and `Join.bat` say "Your Link: the <colour> tunic". Without a choice you get your player number's colour: 1 blue, 2 red, 3 green, 4 yellow.
 
 To pick your own: open `coop-options.ini` beside `Host.bat` and `Join.bat`, remove the `#` in front of `# color = blue` and put in one of red, orange, yellow, green, cyan, blue, purple, pink, white, black, brown, gray, or any colour as `#RRGGBB` (for example `color = #FF8020`). Close the game and start `Host.bat` or `Join.bat` again. A word the kit does not know is said in the window and you keep your number's colour. Two players may pick the same colour; nothing stops it, so agree on yours.
 
@@ -176,17 +177,11 @@ The tunics come in ten colours (green, red, orange, yellow, cyan, blue, purple, 
 
 ## On Hookshot (experimental)
 
-[Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0) runs the game as a native PC program instead of in the emulator. The kit can build a co-op Hookshot game for you from your own game files. Emulator players and Hookshot players can be in the same session: same game build, same server.
+[Hookshot](https://github.com/NotRexed/Hookshot) (NotRexed and contributors, GPL-3.0) runs the game as a native PC program instead of in the emulator; the kit builds a co-op Hookshot game on your PC from your own game files. It needs a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM and about 60 GB free while it builds. The whole setup, step by step, is in [setup.md, "Play on Hookshot"](setup.md#play-on-hookshot-experimental).
 
-**You need:** a graphics card with Vulkan 1.3 and mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer), 16 GB of RAM, about 60 GB free while it builds, and your game as a `.nup` file (or its `romfs` and `exefs` folders), the same version as for the emulator. [setup.md](setup.md#hookshot-instead-of-the-emulator-experimental) has the details.
+Online it works as the emulator kit does: the host double-clicks `Host-Hookshot.bat` and sends the invite code; the others paste it into `Join-Hookshot.bat` (Hookshot) or `Join.bat` (emulator). Hookshot and emulator players can be in the same session: same game build, same server, same protocol. Invite codes are not yet tested on Hookshot; an address join (same network, VPN, port forward) works the same. `Join-Hookshot.bat` does not watch for the connection yet: the game's `hookshot_log.txt` (beside `hookshot.exe`) says `coop: module loaded`, then `coop: connected`.
 
-1. Double-click `Build-Hookshot-Coop.bat` in the kit. It finds your `.nup` as `make-puppet-pack.cmd` does, or asks you to drag it into the window. The first time it downloads Hookshot's build tools (about 400 MB, checked against what Hookshot published), then builds the game: 10 to 45 minutes. When it finishes, the game is in `hookshot\game` in the kit, with co-op and the puppet pack already in it.
-2. The host double-clicks `Host-Hookshot.bat`, the others `Join-Hookshot.bat`. They work like `Host.bat` and `Join.bat` (same questions, same server; invite codes too, not yet tested on Hookshot) but start the Hookshot game instead of the emulator; they write its `coop.ini` beside its `hookshot.exe`. Hookshot and emulator players can join each other's games.
-3. The game's `hookshot_log.txt` (beside it) says `coop: module loaded`, then `coop: connected`. `Join-Hookshot.bat` does not yet watch for the connection as `Join.bat` does: look in the log, or for the other players in the game.
-
-**After `Update.bat`:** run `Build-Hookshot-Coop.bat` again. It copies the new co-op files into the game in a few minutes, and builds the game again only when the update moved to a newer Hookshot.
-
-**What works on Hookshot so far:** seeing each other (the puppets) and the session itself. The rest of co-op (shared items, flags, enemies, the co-op window and chat) is emulator-only for now; [known-issues.md](known-issues.md) says what changes. `HOS_COOP=0` starts the Hookshot game without co-op. Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD device losses) are listed in its readme.
+Not on Hookshot yet: the co-op window (panel, chat box, player list), a Hookshot player's own ocarina notes, and your own Link in your colour ([what is missing](setup.md#what-is-not-on-hookshot-yet)). Hookshot's own problems (crashes outside Kokiri Forest on some PCs, AMD crashes) are listed on its page.
 
 ## When you are done
 

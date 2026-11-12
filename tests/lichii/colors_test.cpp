@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <map>
+#include <ostream>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"

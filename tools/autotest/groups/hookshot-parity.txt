@@ -1,6 +1,7 @@
 # The Hookshot parity run (reports/hookshot-parity.md, "Big-run checks"): every hs-* scenario on integrate-p12, in
 # three groups that play at the same time (tools/autotest/groups.py; docs/testing.md, "Hookshot test loop").
 # Group N plays on <kit>\hookshot-A<N> + -B<N>, port 27560 + 10*(N-1), pipes coop-auto-g<N>-A/-B.
+# g5 and g6 (hs-scenarios-2) need nothing done to the saves; the other groups' steps are below.
 # Hookshot must be built with integrate-p12's patch (hs.py build): the module's start line must NOT end in
 # "gives no pad word" (expect= cannot check an absence: look once in any run's hookshot_log-A.txt).
 # Before `groups.py run`:
@@ -46,3 +47,16 @@ hs-ladder  expect='A:test setflag HavePlayedEvent\.InsideTheDekuTree_Gimmick_Fal
 # The boss: the Gohma fight started, then one owner (#150 #178).
 hs-gohma  expect="A:anim Enemy_DungeonBoss_Gohma \S+ '(?!Pre_Battle)[^']+' \(ours\)"  expect='B:share damage'  label="#150 #178 Gohma fight"
 hs-gohma-door  expect='A:\+ Enemy_DungeonBoss_Gohma'  expect='B:\+ Enemy_DungeonBoss_Gohma'  expect='A:past the door \(shut in\)'  expect='B:moving in \(try 1\)'  label="#178 #148 Gohma door (baseline step)"
+
+[g5]
+# World objects (hs-scenarios-2): pot drops (#101 #102), a late loader's cut sign (#90), the Goron rock (#84), the token (#89).
+hs-pot-drops  expect='A:coop: drops: sent '  expect='B:coop: drops: got '  label="#101 #102 pot drops (a roll: inconclusive if none drops)"
+hs-sign-late  expect='A:Obj_GuidePost_A_02 cut here: \d+ words sent'  expect='B:Obj_GuidePost_A_02 cut by another player: \d+ of \d+ words to write'  label="#90 late loader"
+hs-goron-rock  expect='A:751d254f812d5cfb Obj_Goron_BrokenRock_A_01 broken here'  expect='B:751d254f812d5cfb .*broken by another player'  label="#84 Goron rock"
+hs-skulltula-token  expect='A:Obj_Token_Gold broken here'  expect='B:a token taken elsewhere'  label="#89 token (no switches: its header's @75 must win)"
+
+[g6]
+# People and items (hs-scenarios-2): NPC animations (#200), Zelda's Letter at the gate (#171), fishing (#151).
+hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark talk.*npc-anim: our Link is in an event: \d+ NPCs near it claimed'  expect='A:(?s)test mark talk.*npc-anim: \d+ of the \d+ claimed NPCs are ours now'  expect='A:(?s)test mark closed.*npc-anim: the event.s NPCs are free again'  label="#200 NPC animations"
+hs-kak-letter  expect='A:bool 0x19898d14.*0 -> 1'  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 letter at the gate"
+hs-fishing  expect="B:held 'Weapon_FishingRod'"  expect='A:share fish lure \d+ fish, [1-9]\d* near our lure'  label="#151 fishing (inconclusive if A rents no rod)"

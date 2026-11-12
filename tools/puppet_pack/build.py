@@ -31,7 +31,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, nup, rstb, sarc, tunic, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -347,23 +347,38 @@ def puppet_slink(doc, actor, user):
     return slink_path(actor), byml.dumps({"UserName": user}), src
 
 
-def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None):
-    """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant."""
+def tunic_model_info(actor, variant, project):
+    """(member path, bytes) of a colour puppet's ModelInfo: the player's model under its own
+    project name, `Model/<project>.Player_<variant>.bfres` (puppet_pack.tunic)."""
+    path = f"Component/ModelInfo/{actor}.engine__component__ModelInfo.bgyml"
+    return path, byml.dumps({"FmdbName": f"Player_{variant}", "ModelProjectName": project})
+
+
+def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
+               project=None):
+    """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
+    `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
+    (a tunic colour), else the player's."""
     player = f"Player_{variant}"
+    actor = actor or puppet_name(variant)
     doc = make_actor_param(flatten_actor_param(members, player), sound)
     files = collect_members(members, doc)
+    if project:
+        path, data = tunic_model_info(actor, variant, project)
+        files[path] = data
+        doc["Components"]["ModelInfoRef"] = "?" + path
     keys = equipment_keys(files, doc)
-    fs = puppet_footstep(doc, puppet_name(variant)) if sound and not player_footsteps else None
+    fs = puppet_footstep(doc, actor) if sound and not player_footsteps else None
     if fs:
         path, data, _ = fs
         files[path] = data  # its $parent, the player's file and that one's parent, stay in the pack
         doc["Components"]["SoundFootStepRef"] = "?" + path
     if sound and sound_user:
-        path, data, _ = puppet_slink(doc, puppet_name(variant), sound_user)
+        path, data, _ = puppet_slink(doc, actor, sound_user)
         files[path] = data
         doc["Components"]["SLinkRef"] = "?" + path
     ap = byml.dumps(doc)
-    files[actor_param_path(puppet_name(variant))] = ap
+    files[actor_param_path(actor)] = ap
     return sarc.write(files), ap, sorted(files), keys
 
 
@@ -499,7 +514,7 @@ def write(path, data):
     os.replace(tmp, path)
 
 
-def recompress(dicts, original_raw, data):
+def recompress(dicts, original_raw, data, level=16):
     """Compresses like the game's own copy of the file: same dictionary, or none."""
     did = zs.frame_dict_id(original_raw)
     name = None
@@ -507,11 +522,58 @@ def recompress(dicts, original_raw, data):
         name = next((n for n, d in dicts.by_name.items() if d.dict_id() == did), None)
         if name is None:
             raise BuildError(f"no dictionary with id {did}")
-    return dicts.compress(data, name)
+    return dicts.compress(data, name, level=level)
 
 
-def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None):
-    """`heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111).
+def write_tunics(romfs, out_romfs, dicts, table, colors, log=print):
+    """The recoloured tiles and the model copies that name them (puppet_pack.tunic), with their
+    size-table entries (the game's own file's). Returns {colour: [paths]}."""
+    out = {}
+    tile_rel = f"Tex/{tunic.TILE}.bntx.zs"
+    tile_src = os.path.join(romfs, tile_rel)
+    need = [tile_rel] + [f"Model/Player_{v}.Player_{v}.bfres.zs" for v in VARIANTS]
+    missing = [p for p in need if not os.path.isfile(os.path.join(romfs, p))]
+    if missing:
+        log(f"tunics: no {', '.join(missing)} in this romfs, no colours")
+        return out
+    tile_raw = read(tile_src)
+    tile = dicts.decompress(tile_raw)
+    models = {}
+    for v in VARIANTS:
+        m_rel = f"Model/Player_{v}.Player_{v}.bfres.zs"
+        m_src = os.path.join(romfs, m_rel)
+        models[v] = (m_rel, read(m_src))
+    for c in colors:
+        paths = []
+        name = tunic.tile_name(c)
+        try:
+            data = tunic.recolor_bntx(tile, tunic.COLORS[c][1], tunic.TILE, name)
+        except tunic.TunicError as e:
+            raise BuildError(f"{tile_rel}: {e}")
+        dst = f"Tex/{name}.bntx.zs"
+        write(os.path.join(out_romfs, dst), recompress(dicts, tile_raw, data))
+        table.add_new(strip_zs(dst), table.get(strip_zs(tile_rel)) or len(data) + PACK_SIZE_MARGIN)
+        paths.append(dst)
+        for v, (m_rel, m_raw) in models.items():
+            try:
+                data = tunic.model_for(dicts.decompress(m_raw), c)
+            except tunic.TunicError as e:
+                raise BuildError(f"{m_rel}: {e}")
+            dst = f"Model/{tunic.project_name(v, c)}.Player_{v}.bfres.zs"
+            write(os.path.join(out_romfs, dst), recompress(dicts, m_raw, data, level=3))
+            table.add_new(strip_zs(dst), table.get(strip_zs(m_rel)) or len(data) + PACK_SIZE_MARGIN)
+            paths.append(dst)
+        out[c] = paths
+        log(f"tunic {c}: {name} and {len(models)} models")
+    return out
+
+
+def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
+          tunics=(), test_tunic=None):
+    """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
+    a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
+    that colour too (a test of the colours with a hook that knows none).
+    `heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111).
     `sound`: False builds the puppets without Link's sounds (issue 131). `player_footsteps`: keep
     the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
     SLink user for the puppets' sounds (SLINK_DIR)."""
@@ -537,19 +599,31 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         raise BuildError(f"no actor has the SLink user {sound_user}")
     made = []
     new_ai, new_gai = [], []
-    for v in VARIANTS:
+    for c in list(tunics) + ([test_tunic] if test_tunic else []):
+        if c not in tunic.COLORS:
+            raise BuildError(f"no tunic colour {c} (have {', '.join(tunic.COLORS)})")
+    tunics = list(dict.fromkeys(list(tunics) + ([test_tunic] if test_tunic else [])))
+    tunic_files = write_tunics(romfs, out_romfs, dicts, table, tunics, log) if tunics else {}
+    tunics = [c for c in tunics if c in tunic_files]
+    test_tunic = test_tunic if test_tunic in tunic_files else None
+    jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
+    for v, color in jobs:
         player = f"Player_{v}"
-        actor = puppet_name(v)
+        actor = tunic.actor_name(v, color) if color else puppet_name(v)
+        shade = color or test_tunic
+        project = tunic.project_name(v, shade) if shade else None
         src = os.path.join(romfs, "Pack", "Actor", f"{player}.pack.zs")
         if not os.path.isfile(src):
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
-        pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user)
+        pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
             raise BuildError(f"ActorInfo has no row {player}")
         new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor), sound, sound_user))
+        if project:
+            new_ai[-1]["ModelProjectName"] = project
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
@@ -579,7 +653,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 raise BuildError(f"the player's SLink param {src} is not in the pack")
             table.add_new(path, max((table.get(src) or 0) + max(0, len(data) - len(members[src])),
                                     len(data) + PACK_SIZE_MARGIN))
-        made.append({"actor": actor, "from": player, "pack": dst_rel, "pack_bytes": len(pack),
+        made.append({"actor": actor, "from": player, "tunic": shade, "model": project, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
                      "members": names, "equipment_keys": keys, "footstep": footstep})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
@@ -646,6 +720,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "actors": made,
         "shots": shots,
         "impacts": impacts,
+        "tunics": tunic_files,
+        "test_tunic": test_tunic,
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "sound_user": sound_user if sound and sound_user else None,
@@ -696,6 +772,11 @@ def main(argv=None):
                     help=f"accept a dump that is not game data version {dumpcheck.EXPECTED_VERSION}")
     ap.add_argument("--heap", action="append", default=[], metavar="ACTOR=BYTES",
                     help="test switch: set a puppet's InstanceHeapSize, e.g. CoopPuppet_Adult=20000000")
+    ap.add_argument("--tunics", default=",".join(tunic.COLORS), metavar="LIST",
+                    help="the tunic colours to make puppets of, comma-separated, or 'none' "
+                         f"(default: all, {','.join(tunic.COLORS)})")
+    ap.add_argument("--test-tunic", metavar="COLOUR",
+                    help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--player-footsteps", action="store_true",
@@ -751,8 +832,9 @@ def _main_build(a, romfs, hud_reader=None):
             return 2
         heaps[name] = int(size)
     try:
+        tunics = [] if a.tunics.strip().lower() == "none" else [c.strip() for c in a.tunics.split(",") if c.strip()]
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
-              sound_user=a.sound_user)
+              sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -38,7 +38,7 @@ float Run(Smoother& s, const Vec3& target, std::uint64_t& now, int frames, Vec3*
 
 }  // namespace
 
-TEST_CASE("snap: the first place is drawn as given; walking is drawn as given") {
+TEST_CASE("snap: the first place is drawn as given, walking is drawn as given") {
     Smoother s;
     CHECK(s.Step({1, 2, 3}, 0) == Vec3{1, 2, 3});
     CHECK(s.Step({1.2f, 2, 3}, 33) == Vec3{1.2f, 2, 3});
@@ -107,7 +107,7 @@ TEST_CASE("snap: a warp (past kWarpM) is drawn at once and counted as a warp, no
     CHECK(m.NearSnaps() == 0);
 }
 
-TEST_CASE("snap: the meter counts a near snap; Set (a hide) starts again with no ease") {
+TEST_CASE("snap: the meter counts a near snap, and Set (a hide) starts again with no ease") {
     Meter m;
     m.Step({0, 0, 0});
     CHECK_FALSE(m.Step({0.5f, 0, 0}).has_value());

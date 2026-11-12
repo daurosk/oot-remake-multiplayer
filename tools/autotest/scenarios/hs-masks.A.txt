@@ -1,0 +1,41 @@
+# hs-masks (Hookshot, issue 91): wear-masks-real on Hookshot. A is given three masks, puts each
+# on ZR and wears it, then takes the last one off; A steps aside to face B, B watches A's puppet.
+# Nothing in the module differs from the emulator here (the same hook files; the pack is in
+# mods\contents before Hookshot starts), so this run is the proof.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-masks
+# Pass:
+# - B's log: "P1 wears head 'Armor_Child_Mask_Skull'", then Bunny and Keaton; at off
+#   "P1 takes off head ... (returned 0x1)", and no new "create CoopPuppet_Child".
+# - B's shots b-skull, b-bunny, b-keaton: the mask on A's puppet; b-off: none.
+# - A's shots: the mask on A's own Link at skull, bunny, keaton.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+give PouchData.Armor_Child_Mask_Skull.StockNum
+give PouchData.Armor_Child_Mask_Bunny.StockNum
+give PouchData.Armor_Child_Mask_Keaton.StockNum
+wait 120
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+assign SkullMask
+wait 30
+press ZR 10            # puts the Skull Mask on
+wait 240
+mark skull
+assign BunnyMask
+wait 30
+press ZR 10            # the Bunny Hood in its place
+wait 240
+mark bunny
+assign KeatonMask
+wait 30
+press ZR 10
+wait 240
+mark keaton
+press ZR 10            # the same mask again: taken off
+wait 300
+mark off
+wait 300
+mark end

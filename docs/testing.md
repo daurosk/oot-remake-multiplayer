@@ -441,6 +441,16 @@ For the integrator after each merge. Nothing here is needed to play.
    - `run.ps1 -Runtime hookshot -DryRun` prints the `hookshot.py` command of one run and starts nothing.
 5. **Steps files on Hookshot:** `run.ps1 -Runtime hookshot -Scenario stray` (or any `<name>.steps.txt`) plays the steps file through `tools/autotest/hs_steps.py`, with the same lines as on the emulator: `start`, `load`, `play`, `close` (the game quits through its control bridge), `kill`, `server stop`/`start`, `sleep`, `password` (sent as `LICHII_COOP_PASSWORD`), `try`, `expect` (puppets and fairies from the objects debug lines), `lines` and `shot`. Each `start` puts the save baseline back and begins a fresh `hookshot_log.txt` (the old one is kept as `hookshot_log-<x>-<n>.txt`). Results go to `counts.txt`, as on the emulator, and `groups.py merge` grades the run by them. `-ServerPassword` works here too (join-password: `password=` in a group file). `-DryRun` prints every step's plan; `python -I tools/autotest/hs_steps.py check <file>` parses one. A `lines` pattern that only .NET reads (a variable-width lookbehind) is counted through PowerShell.
 
+## CI
+
+GitHub Actions runs `Build` in two tiers (`.github/workflows/build.yml`), so work branches do not fill the free runners' queue:
+
+- Fast tier, on a push to any branch: `linux (gcc)` (unit tests, `-Werror`) and `python-tools (ubuntu-latest, 3.12)`. About 2 jobs.
+- Full tier, on a push to `main` or `integrate-*`, on a tag, on a pull request into `main`, and on a manual run: the fast tier plus Windows (MSVC, unit and kit script tests), linux clang, ASan + UBSan, TSan and python-tools on Windows and Python 3.10. To get the full proof for a branch before integration: Actions, Build, Run workflow, pick the branch (or `gh workflow run build.yml --ref <branch>`).
+- A pull request from a branch of this repo into anything but `main` runs nothing (its push already did); a pull request from a fork runs the fast tier.
+- A newer push cancels the branch's older run (not on `main` or tags). Docs-only changes (`docs/`, `*.md`, issue templates) skip `Build`; `Content guard` runs on every push.
+- Caches: ccache on linux, sccache on Windows, and the fetched libraries (ENet, doctest, Monocypher) at their pinned commits. `linux-emulator` (the hook compile) is full tier too, and also runs on pushes to `linux-build` and `linux-2`.
+
 ## Bad connections
 
 Two games on one PC talk over a perfect network: no delay, nothing lost. `tools/netsim/netsim.py` is a small UDP relay that sits between a game and the server and makes the connection bad on purpose, so sync can be watched under lag, loss and stalls without a second PC. Nothing in the game or the server changes; the game's `coop.ini` names the relay's port instead of the server's. It needs Python 3.8 or newer and nothing else.

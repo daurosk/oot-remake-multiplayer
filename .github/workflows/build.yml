@@ -1,23 +1,58 @@
 name: Build
 
+# Two tiers, so a push to a work branch does not fill the free runners' queue:
+# - fast tier, on a push to any branch: linux gcc unit tests and python-tools on
+#   ubuntu, Python 3.12. About 7 minutes, 2 jobs.
+# - full tier: every job below. On a push to main or integrate-*, on a tag, on a
+#   pull request into main, and on a manual run (Actions > Build > Run workflow,
+#   pick the branch) when a branch wants the full proof before integration.
+#   linux-emulator (hook compile) is full tier too, and also runs on pushes to
+#   linux-build and linux-2.
+# A pull request from a branch of this repo into anything but main runs nothing:
+# the push already ran it. A pull request from a fork runs the fast tier.
+# Docs-only changes skip Build; Content guard still checks them.
+#
+# The full-tier test is repeated in each job's `if` or matrix (GitHub has no
+# shared expressions):
+#   github.event_name == 'workflow_dispatch'
+#   || (github.event_name == 'pull_request' && github.base_ref == 'main')
+#   || (github.event_name == 'push' && (github.ref == 'refs/heads/main'
+#       || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))
+
 on:
   push:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push cancels the branch's older run. The event is in the group so a push
+# does not cancel a manual full run on the same branch. Runs on main and on tags
+# are kept: each merge keeps its own proof.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   # The puppet pack tool runs on the player's PC (Windows, any recent Python 3), so its
   # tests run there too, on the oldest and newest Python we support. The tests use
-  # made-up data only; nothing from the game is needed.
+  # made-up data only; nothing from the game is needed. Fast tier: ubuntu, 3.12 only.
   python-tools:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.10", "3.12"]
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))) && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+        python: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))) && '["3.10", "3.12"]' || '["3.12"]') }}
     runs-on: ${{ matrix.os }}
     name: python-tools (${{ matrix.os }}, ${{ matrix.python }})
     steps:
@@ -47,16 +82,54 @@ jobs:
         env:
           PYTHONPATH: tools
 
+  # Full tier only. MSVC with Ninja so sccache can cache each object file
+  # (sccache keeps them in the GitHub Actions cache).
   windows:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))
     runs-on: windows-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: Fetched libraries cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: .deps
+          key: deps-${{ hashFiles('cmake/enet.cmake', 'cmake/doctest.cmake', 'cmake/monocypher.cmake') }}
+      - name: Fetch libraries (ENet, doctest, Monocypher) at their pinned commits
+        shell: bash
+        run: |
+          fetch() {  # name, url, cmake file with the GIT_TAG commit
+            local dir=".deps/$1" rev
+            rev=$(sed -n 's/.*GIT_TAG *\([0-9a-f]\{40\}\).*/\1/p' "$3")
+            [ -n "$rev" ] || { echo "no GIT_TAG commit in $3"; exit 1; }
+            if [ -f "$dir.rev" ] && [ "$(cat "$dir.rev")" = "$rev" ]; then return; fi
+            rm -rf "$dir"; git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "$2" "$rev"
+            git -C "$dir" checkout -q FETCH_HEAD
+            echo "$rev" > "$dir.rev"
+          }
+          fetch enet https://github.com/lsalzman/enet.git cmake/enet.cmake
+          fetch doctest https://github.com/doctest/doctest.git cmake/doctest.cmake
+          fetch monocypher https://github.com/LoupVaillant/Monocypher.git cmake/monocypher.cmake
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1.13.0
+      - name: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad  # v0.0.9
       - name: Configure
-        run: cmake -S . -B build -DCOOP_BUILD_TESTS=ON
+        shell: bash
+        run: >
+          cmake -S . -B build -G Ninja -DCOOP_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DFETCHCONTENT_SOURCE_DIR_ENET="$(pwd -W)/.deps/enet"
+          -DFETCHCONTENT_SOURCE_DIR_DOCTEST="$(pwd -W)/.deps/doctest"
+          -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$(pwd -W)/.deps/monocypher"
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: sccache stats
+        run: sccache --show-stats
       - name: Kit updater tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/update_test.ps1
       - name: Kit path check tests
@@ -70,90 +143,105 @@ jobs:
       - name: Kit log masking tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/log_mask_test.ps1
 
+  # gcc: Release, -Werror (fast tier). clang: the same with clang. asan: clang
+  # Debug with ASan + UBSan. tsan: clang Debug with TSan. asan and tsan also run
+  # coop_test with 2 clients for 20 seconds. Everything but gcc is full tier.
   linux:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        compiler:
-          - { name: gcc, cc: gcc, cxx: g++ }
-          - { name: clang, cc: clang, cxx: clang++ }
-    name: linux (${{ matrix.compiler.name }})
+        job: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))) && '["gcc", "clang", "asan", "tsan"]' || '["gcc"]') }}
+    name: linux (${{ matrix.job }})
     env:
-      CC: ${{ matrix.compiler.cc }}
-      CXX: ${{ matrix.compiler.cxx }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-      - name: Configure
-        # -Werror: our code builds clean at -Wall -Wextra -Wpedantic.
-        # ENet is built with -w, so this only holds our own targets to it.
-        run: >
-          cmake -S . -B build -DCOOP_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_CXX_FLAGS=-Werror
-      - name: Build
-        run: cmake --build build --parallel
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
-      - name: Linux kit tests
-        if: matrix.compiler.name == 'gcc'
-        run: bash tools/release/tests/linux_kit_test.sh
-
-  sanitize:
-    runs-on: ubuntu-latest
-    name: sanitize (clang, asan + ubsan)
-    env:
-      CC: clang
-      CXX: clang++
       ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-      - name: Configure
-        run: >
-          cmake -S . -B build -DCOOP_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-          -DCOOP_SANITIZE=ON
-      - name: Build
-        run: cmake --build build --parallel
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
-      - name: coop_test, 2 clients for 20 seconds
-        run: |
-          set -o pipefail
-          ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
-          grep -q '^result: PASS' coop_test.log
-
-  tsan:
-    runs-on: ubuntu-latest
-    name: sanitize (clang, tsan)
-    env:
-      CC: clang
-      CXX: clang++
       TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 400M
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: Settings for ${{ matrix.job }}
+        env:
+          JOB: ${{ matrix.job }}
+        run: |
+          # -Werror: our code builds clean at -Wall -Wextra -Wpedantic.
+          # ENet is built with -w, so this only holds our own targets to it.
+          case "$JOB" in
+            gcc)   cc=gcc;   cxx=g++;     args="-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-Werror"; soak=0 ;;
+            clang) cc=clang; cxx=clang++; args="-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-Werror"; soak=0 ;;
+            asan)  cc=clang; cxx=clang++; args="-DCMAKE_BUILD_TYPE=Debug -DCOOP_SANITIZE=ON"; soak=1 ;;
+            tsan)  cc=clang; cxx=clang++; args="-DCMAKE_BUILD_TYPE=Debug -DCOOP_TSAN=ON"; soak=1 ;;
+            *) echo "unknown job $JOB"; exit 1 ;;
+          esac
+          { echo "CC=$cc"; echo "CXX=$cxx"; echo "COOP_ARGS=$args"; echo "COOP_SOAK=$soak"; } >> "$GITHUB_ENV"
+      - name: Install ccache
+        run: sudo apt-get install -y -q ccache || { sudo apt-get update -q && sudo apt-get install -y -q ccache; }
+      - name: ccache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.job }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.job }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            ccache-${{ matrix.job }}-
+      - name: Fetched libraries cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: .deps
+          key: deps-${{ hashFiles('cmake/enet.cmake', 'cmake/doctest.cmake', 'cmake/monocypher.cmake') }}
+      - name: Fetch libraries (ENet, doctest, Monocypher) at their pinned commits
+        run: |
+          fetch() {  # name, url, cmake file with the GIT_TAG commit
+            local dir=".deps/$1" rev
+            rev=$(sed -n 's/.*GIT_TAG *\([0-9a-f]\{40\}\).*/\1/p' "$3")
+            [ -n "$rev" ] || { echo "no GIT_TAG commit in $3"; exit 1; }
+            if [ -f "$dir.rev" ] && [ "$(cat "$dir.rev")" = "$rev" ]; then return; fi
+            rm -rf "$dir"; git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "$2" "$rev"
+            git -C "$dir" checkout -q FETCH_HEAD
+            echo "$rev" > "$dir.rev"
+          }
+          fetch enet https://github.com/lsalzman/enet.git cmake/enet.cmake
+          fetch doctest https://github.com/doctest/doctest.git cmake/doctest.cmake
+          fetch monocypher https://github.com/LoupVaillant/Monocypher.git cmake/monocypher.cmake
       # Newer runner kernels use more mmap randomness than older TSan runtimes
       # accept ("unexpected memory mapping"); lower it for this job.
       - name: Lower ASLR entropy for TSan
+        if: matrix.job == 'tsan'
         run: sudo sysctl -w vm.mmap_rnd_bits=28
       - name: Configure
         run: >
-          cmake -S . -B build -DCOOP_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-          -DCOOP_TSAN=ON
+          cmake -S . -B build -DCOOP_BUILD_TESTS=ON $COOP_ARGS
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DFETCHCONTENT_SOURCE_DIR_ENET="$GITHUB_WORKSPACE/.deps/enet"
+          -DFETCHCONTENT_SOURCE_DIR_DOCTEST="$GITHUB_WORKSPACE/.deps/doctest"
+          -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$GITHUB_WORKSPACE/.deps/monocypher"
       - name: Build
         run: cmake --build build --parallel
+      - name: ccache stats
+        run: ccache --show-stats
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Linux kit tests
+        if: matrix.job == 'gcc'
+        run: bash tools/release/tests/linux_kit_test.sh
       - name: coop_test, 2 clients for 20 seconds
+        if: env.COOP_SOAK == '1'
         run: |
           set -o pipefail
           ./build/tools/coop_test/coop_test --clients 2 --seconds 20 --report-every 5 | tee coop_test.log
           grep -q '^result: PASS' coop_test.log
 
   # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the
-  # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every push
+  # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every full-tier run
   # only the hook's files are compiled; the whole emulator, its AppImage and a start without a
   # game run on the linux-build and linux-2 branches, on tags and by hand (workflow_dispatch).
   linux-emulator:
+    # Full tier, plus pushes to the Linux branches (their full part, the AppImage, is gated below).
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/linux-build' || github.ref == 'refs/heads/linux-2'))
     runs-on: ubuntu-24.04
     name: linux-emulator (${{ matrix.part }})
     timeout-minutes: 300

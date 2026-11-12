@@ -98,10 +98,13 @@ struct SessionConfig {
   // 0 keeps nothing; more than 65535 parts' worth counts as 65535 parts.
   std::size_t max_flags = 262'144;
   // A HELLO whose name a player already holds takes that player's place
-  // (rejoin after a crash) only when it comes from the same address and the
-  // old player has sent nothing for this long; otherwise it is refused as
+  // (rejoin after a drop or crash) only when its connection showed that
+  // player's rejoin token (REJOIN_CLAIM), it comes from the same address and
+  // the old player has sent nothing for this long; otherwise it is refused as
   // name taken. The server pings every 250 ms and a live build answers, so a
-  // live player is never this quiet. 0: never take over.
+  // live player is never this quiet. Without the token nobody takes over, so
+  // two players behind one address cannot push each other out by name.
+  // 0: never take over.
   std::uint64_t rejoin_stale_us = 1'000'000;
   // Most shared objects (enemies, projectiles) the server keeps track of.
   // Objects past it are not owned by anyone and nothing about them is
@@ -235,6 +238,11 @@ struct Stats {
   // HELLOs that took over a stale player of the same name (see
   // rejoin_stale_us).
   std::uint64_t rejoined = 0;
+  // HELLOs for a quiet player's name from its address refused because the
+  // connection showed no rejoin token, or a wrong one.
+  std::uint64_t rejoin_no_token = 0;
+  // REJOIN_CLAIMs after HELLO (a joined player's, or a second one): dropped.
+  std::uint64_t stray_rejoin_claim = 0;
   // JOIN_PROOFs that did not match the join password (each one refused).
   std::uint64_t bad_password = 0;
   // JOIN_PROOFs nobody asked for: no challenge open on that connection.
@@ -379,6 +387,10 @@ class Session {
     // While awaiting_proof: the HELLO to admit and the nonce it was sent.
     std::optional<protocol::Hello> pending_hello;
     protocol::JoinNonce nonce{};
+    // Once joined: the token sent with its WELCOME (REJOIN_TOKEN). Before
+    // HELLO: the token its REJOIN_CLAIM showed, if any.
+    protocol::RejoinTokenBytes rejoin_token{};
+    std::optional<protocol::RejoinTokenBytes> rejoin_claim;
     std::uint8_t number = 0;  // 1 to 4 once joined
     std::string nickname;
     // The scene the player is in, from its latest OBJECT_PRESENT or

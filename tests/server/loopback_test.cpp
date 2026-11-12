@@ -447,7 +447,7 @@ TEST_CASE("loopback: a host's full-size snapshot reaches a joiner in full-size p
   CHECK(server.session().stats().dropped() == 0);
 }
 
-TEST_CASE("loopback: a killed client restarted on the same PC is back in within 2 s") {
+TEST_CASE("loopback: a dropped client showing its rejoin token is back in within 2 s") {
   EnetLife enet;
   ServerOptions options;
   options.port = 0;
@@ -461,7 +461,8 @@ TEST_CASE("loopback: a killed client restarted on the same PC is back in within 
   REQUIRE(pump_until(server, {killed.get(), &zelda},
                      [&] { return killed->connected && zelda.connected; }));
   killed->send(hello_from("Link"), kChannelSession);
-  REQUIRE(pump_until(server, {killed.get()}, [&] { return killed->find<Welcome>() != nullptr; }));
+  REQUIRE(pump_until(server, {killed.get()}, [&] { return killed->find<RejoinToken>() != nullptr; }));
+  const RejoinTokenBytes token = killed->find<RejoinToken>()->token;
   zelda.send(hello_from("Zelda"), kChannelSession);
   REQUIRE(pump_until(server, {&zelda}, [&] { return zelda.find<Welcome>() != nullptr; }));
 
@@ -479,14 +480,26 @@ TEST_CASE("loopback: a killed client restarted on the same PC is back in within 
   REQUIRE(refused != nullptr);
   CHECK(refused->reason == RefuseReason::name_taken);
 
-  // The restarted build, a second after the kill, takes the old place.
   while (std::chrono::steady_clock::now() - kill_time < std::chrono::milliseconds(1050)) {
     server.service(1);
     zelda.pump();
   }
+  // Issue 163: a second later, a connection without the token (a restarted
+  // build, or another player behind the same address) is still refused.
+  Client no_token;
+  no_token.connect(server.port());
+  REQUIRE(pump_until(server, {&no_token, &zelda}, [&] { return no_token.connected; }));
+  no_token.send(hello_from("Link"), kChannelSession);
+  REQUIRE(pump_until(server, {&no_token, &zelda}, [&] { return no_token.disconnected; }));
+  REQUIRE(no_token.find<Refused>() != nullptr);
+  CHECK(no_token.find<Refused>()->reason == RefuseReason::name_taken);
+  CHECK(server.session().stats().rejoin_no_token == 1);
+
+  // The same game, reconnecting with its token, takes the old place.
   Client restarted;
   restarted.connect(server.port());
   REQUIRE(pump_until(server, {&restarted, &zelda}, [&] { return restarted.connected; }));
+  restarted.send(RejoinClaim{token}, kChannelSession);
   restarted.send(hello_from("Link"), kChannelSession);
   REQUIRE(pump_until(server, {&restarted, &zelda}, [&] {
     return restarted.find<Welcome>() != nullptr && zelda.find<PlayerJoined>() != nullptr;

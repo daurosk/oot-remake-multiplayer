@@ -4,6 +4,7 @@
 #include <chrono>
 #include <initializer_list>
 #include <random>
+#include <utility>
 
 #include "nat_net.hpp"
 

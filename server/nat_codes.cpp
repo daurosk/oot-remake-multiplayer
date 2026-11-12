@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <random>
+#include <utility>
 
 namespace coop::server::nat {
 

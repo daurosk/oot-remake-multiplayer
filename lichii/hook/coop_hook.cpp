@@ -1144,6 +1144,12 @@ private:
     static bool ScanBuild(Core::System& system, Kernel::KProcess* process,
                           const std::string& build) {
         const auto* known = CoopGameBuild::Find(build);
+        // A known build runs on its table; the scan there only checks itself.
+        // LICHII_COOP_SCAN=0 leaves that check out (unknown builds still scan).
+        if (const char* env = std::getenv("LICHII_COOP_SCAN");
+            known != nullptr && env != nullptr && std::string_view(env) == "0") {
+            return false;
+        }
         const u64 base = FindMain(system, process);
         auto& memory = system.ApplicationMemory();
         u32 mod0 = 0;
@@ -1152,9 +1158,14 @@ private:
             return false;
         }
         const u64 rodata = CoopGameScan::RodataStart(mod0);
+        // Range first: a bad MOD0 word must not size a 4 GB buffer.
+        if (rodata == 0 || rodata > 0x10000000) {
+            LOG_WARNING(Core, "coop: build {}: scan skipped, rodata at {:#x} is not sensible",
+                        build, rodata);
+            return false;
+        }
         std::vector<u32> text(rodata / 4);
-        if (rodata == 0 || rodata > 0x10000000 ||
-            !memory.ReadBlockUnsafe(base, text.data(), text.size() * 4)) {
+        if (!memory.ReadBlockUnsafe(base, text.data(), text.size() * 4)) {
             LOG_WARNING(Core, "coop: build {}: scan skipped, main's code ({:#x} bytes) not readable",
                         build, rodata);
             return false;
@@ -1189,7 +1200,13 @@ private:
             return false;
         }
         if (diff.empty()) {
-            LOG_INFO(Core, "coop: build {}: offsets by scan ({} ms)", build, ms);
+            // Partial: the loader patch (puppets, svc hooks) and the object,
+            // drop and spawn readers still want build 1.1.1 by id, and HELLO
+            // names 1.1.1 (docs/game-builds.md).
+            LOG_INFO(Core,
+                     "coop: build {}: offsets by scan ({} ms); partial co-op: position, scene and "
+                     "flags only, no puppets, objects, drops or spawns on this build",
+                     build, ms);
             return true;
         }
         // Found, but elsewhere than in 1.1.1: log them so a table entry can be

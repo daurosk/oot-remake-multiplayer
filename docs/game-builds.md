@@ -51,9 +51,11 @@ At every game start the hook also searches main for the offsets (`lichii/hook/co
 What the log says (once per game start):
 
 - 1.1.1: `coop: build e0f3ccfaf50065ae: offsets by scan match the table (28 patterns, N ms)`. If the scan disagrees, a warning names the fields; co-op runs on the table either way.
-- Another build, everything found and equal to 1.1.1's: `coop: build <id>: offsets by scan`, and co-op runs.
+- Another build, everything found and equal to 1.1.1's: `coop: build <id>: offsets by scan ...; partial co-op`, and the reader path runs (position, scene, flags). Only partly: the loader patch (`CoopSvc::PatchMain`, puppets and the svc hooks) and the object, drop and spawn readers still want build 1.1.1 by its id, so there are no puppets, objects, drops or spawns on that build. `HELLO` still names 1.1.1 (it goes out before the game starts), so the server takes such a player as a 1.1.1 player on purpose; the readers it runs are the ones whose offsets were just found equal.
 - Another build, everything found but elsewhere: a warning lists every field `name (scan 0x..., table 0x...)`, and co-op stays off with the refusal above: the readers still use the 1.1.1 constants (one-time steps below). Those numbers are what a new table entry needs, checked by hand.
 - Something not found or found twice: `coop: build <id>: scan did not find N of 28 offsets: name (none), name (2 or more)`, and the same refusal as before.
+
+Cost: main's code (about 63 MB) is copied once per game start and read in one pass: every word is looked up among the patterns' fully fixed words, so each pattern costs nothing extra. The log line gives the time. On a known build the scan only checks itself; `LICHII_COOP_SCAN=0` leaves it out there (another build is always scanned).
 
 Proof: `tests/lichii/game_scan_test.cpp` builds a main from the patterns alone (nothing of the game is in the repo) and checks the scan gives back the whole 1.1.1 table, names missing and doubled patterns, and masks the hooked words. With `COOP_TEST_MAIN` set to your own plain 1.1.1 main NSO, it scans the real one too. `make_patterns.py --check <main>` does the same scan in Python.
 

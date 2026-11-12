@@ -243,3 +243,31 @@ TEST_CASE("game scan: your own 1.1.1 main (COOP_TEST_MAIN, plain NSO)") {
         CHECK(false);
     }
 }
+
+TEST_CASE("game scan: a pattern without a fully fixed word is found by its own pass") {
+    static constexpr Word kWords[] = {{0x94000000, 0xfc000000}, {0x91000000, 0xffc00000},
+                                      {0xd65f0000, 0xffff0000}};
+    const Pattern p{"test", &MainOffsets::malloc, Kind::Site, 0, 0, 0, kWords, std::size(kWords)};
+    std::vector<std::uint32_t> text(64, 0);
+    text[10] = 0x94001234;
+    text[11] = 0x91004108;
+    text[12] = 0xd65f03c0;
+    std::size_t first = 0;
+    CHECK(Find(p, text.data(), text.size(), first) == 1);
+    CHECK(first == 10);
+    text[30] = 0x97ffffff;
+    text[31] = 0x91000000;
+    text[32] = 0xd65f0000;
+    CHECK(Find(p, text.data(), text.size(), first) == 2);
+}
+
+TEST_CASE("game scan: every 1.1.1 pattern has a fully fixed word (the one-pass lookup)") {
+    for (const auto& p : kPatterns) {
+        bool full = false;
+        for (std::size_t k = 0; k < p.count; ++k) {
+            full = full || p.words[k].mask == 0xffffffff;
+        }
+        INFO(p.name);
+        CHECK(full);
+    }
+}

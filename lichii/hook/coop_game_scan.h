@@ -15,6 +15,7 @@
 // there is zero padding before it writes there.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -23,6 +24,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "coop_game_build.h"
@@ -156,11 +158,55 @@ inline std::size_t Find(const Pattern& p, const std::uint32_t* text, std::size_t
 inline Result Scan(const std::uint32_t* text, std::size_t words, std::uint64_t rodata,
                    const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read_slot) {
     Result r;
-    for (const auto& p : kPatterns) {
-        std::size_t s = 0;
-        const std::size_t hits = Find(p, text, words, s);
-        if (hits != 1) {
-            r.missing.push_back({p.name, hits});
+    // One pass for every pattern with a fully fixed word: each text word is
+    // looked up among those words (sorted), so main is read once, not 28
+    // times. The rest (none in the 1.1.1 patterns) get their own pass.
+    constexpr std::size_t kCount = std::size(kPatterns);
+    std::array<std::size_t, kCount> hits{}, first{}, anchor{};
+    std::array<bool, kCount> keyed{};
+    std::vector<std::pair<std::uint32_t, std::size_t>> keys;
+    for (std::size_t i = 0; i < kCount; ++i) {
+        const auto& p = kPatterns[i];
+        for (std::size_t k = 0; k < p.count; ++k) {
+            if (p.words[k].mask == 0xffffffff) {
+                anchor[i] = k;
+                keyed[i] = true;
+                keys.emplace_back(p.words[k].value, i);
+                break;
+            }
+        }
+        if (!keyed[i]) {
+            hits[i] = Find(p, text, words, first[i]);
+        }
+    }
+    std::sort(keys.begin(), keys.end());
+    for (std::size_t s = 0; s < words && !keys.empty(); ++s) {
+        const std::uint32_t w = text[s];
+        if (w < keys.front().first || w > keys.back().first) {
+            continue;
+        }
+        auto it = std::lower_bound(keys.begin(), keys.end(), std::make_pair(w, std::size_t{0}));
+        for (; it != keys.end() && it->first == w; ++it) {
+            const std::size_t i = it->second;
+            const auto& p = kPatterns[i];
+            if (s < anchor[i] || s - anchor[i] + p.count > words || hits[i] >= 2) {
+                continue;
+            }
+            const std::size_t start = s - anchor[i];
+            bool ok = true;
+            for (std::size_t k = 0; k < p.count && ok; ++k) {
+                ok = (text[start + k] & p.words[k].mask) == p.words[k].value;
+            }
+            if (ok && hits[i]++ == 0) {
+                first[i] = start;
+            }
+        }
+    }
+    for (std::size_t n = 0; n < kCount; ++n) {
+        const auto& p = kPatterns[n];
+        const std::size_t s = first[n];
+        if (hits[n] != 1) {
+            r.missing.push_back({p.name, hits[n]});
             continue;
         }
         const std::uint64_t i = s + p.at;

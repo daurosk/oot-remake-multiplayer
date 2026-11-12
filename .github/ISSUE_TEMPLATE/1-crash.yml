@@ -9,9 +9,30 @@ body:
     id: version
     attributes:
       label: Co-op build and game version
-      description: For example "coop-v3, game 1.1.1".
+      description: The first line of the kit's VERSION.txt, and the game version.
     validations:
       required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Where you played
+      options:
+        - The kit's emulator (Lichii / Fritchii)
+        - Hookshot (experimental)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: hosting
+    attributes:
+      label: How you connected
+      options:
+        - Invite code (Host.bat / Join.bat)
+        - VPN (Radmin VPN, Hamachi, ZeroTier, Tailscale)
+        - Port forwarding
+        - Relay with a join code
+        - Same network (LAN)
+        - Not sure
   - type: textarea
     id: steps
     attributes:

@@ -2,7 +2,7 @@
 
 The goal (Caleb, 2026-11-11): everything one player does to the world is the same in every game, **live** (not only after a room reload), and nothing one player does can leave another unable to continue. This page is the map for that work. The fix branches (`dungeon-live`, `breakables`, `softlock-audit`) update their own rows when they change something.
 
-State on `main` at 99332d9 (chunk 4 merged, protocol 6). Sources are the docs named in each row and the reports of the chunk 3 and 4 test turns (integrate-p6, integrate-p7). The actor classes are read from the romfs (`Pack/Actor`, 8,373 packs, grouped by name).
+State on `main` at 99332d9 (chunk 4 merged, protocol 6). Later branches changed some rows themselves; what the integration branch `integrate-p11` (protocol 10) added beyond the rows is listed in [Added for protocol 10](#added-for-protocol-10). Sources are the docs named in each row and the reports of the chunk 3 and 4 test turns (integrate-p6, integrate-p7). The actor classes are read from the romfs (`Pack/Actor`, 8,373 packs, grouped by name).
 
 **Columns**
 - **Path** is the code that shares it:
@@ -193,6 +193,32 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 7. Locked doors (D2, D3), Water or Fire Temple, both with the same key count. (a) A opens a locked door with B more than 3 m away: B's log `world: <hash> Obj_DoorChainLock_A_01 broken by another player`, B's lock goes, **B can walk through the door**, B's key count dropped by 1 only. (b) Both stand at the next locked door; B waits by it while A opens it, then B presses open too (or both press at once): one log has `one key back` and `coop: doors: small key … given back`, and both games end with the count down by 1 only. (c) Both leave the dungeon and come back: the opened doors stay open in both.
 8. Jabu-Jabu Room 17 stone switch (D1, Check), `LICHII_COOP_DEBUG_FLAGS=1` on A: A puts the stone on the switch, then takes it off or leaves the room. Copy A's `bool 0x6fd2e588` lines. Only `0 -> 1` and never back to 0: one-way, it can be shared. Back to 0: it stays per player.
 6. Lock flag hunt (D3, only if 7a fails): `LICHII_COOP_DEBUG_FLAGS=1` in A only. A opens one locked door in the Water or Shadow Temple. Copy every `bool …` and `key64 …` line logged within 2 s of the door opening into the report, so the lock's flag can be added for all doors.
+
+## Added for protocol 10
+
+Merged into `integrate-p11`, with unit tests and review. None of it is proven in the game yet: the combined autotest run of that branch is the proof, and each fix branch's rows above get their **Proven** column from that run. Details are in each branch's commits and the topic docs.
+
+| What | Issues | Branch |
+|---|---|---|
+| Enemy sharing fixes: owner, life, hits | #105 #132 #133 | enemy-sync-3 |
+| Enemy shots: every game shows the owner's shot | #189 | enemy-shots |
+| Enemy drops | #101 #102 | enemy-drops |
+| Where shots land (spark, sound) | #166 | shot-impacts |
+| Deku Scrubs; their talk and sales | #149, #144 | deku-scrubs, scrub-talk |
+| Signs, rocks and more world objects | #84 #90, #146 #147 #171 | world-breakables, world-objects-2 |
+| Guards and town soldiers | #191 | guard-sync |
+| Boss targets, boss walk-in, Gohma and its larvae | #124 #150 #157, #148, #178 | boss-targets, boss-movein-2, gohma-sync |
+| Dungeon events started in one game play live in the others (lifts, ladder) | #176 #196 | deku-dungeon-2 |
+| Story cutscenes play in every game near the player who started one | | shared-cutscenes |
+| Chests opened elsewhere show open | #195 | chest-sync-2 |
+| Gold Skulltula tokens, the Deku Shield, the ocarina | #89 #130, #190 | items-sync, ocarina-use |
+| Story scenes, quest steps, time of day, cutscene positions | #173 #192, #193, #194 | time-story, threads-of-time, cutscene-snap |
+| Fishing: two players at once, each with their own catch | #151 | fishing-3 |
+| Riding Epona | #199 | epona-ride |
+| NPCs' moves copied from one game | #200 | npc-anim |
+| Navi in the right room | #145 | navi-room-2 |
+| A guest's save load no longer resets the host's world | #159 | world-reset |
+| PvP, off by default ([play-online.md](play-online.md#pvp-players-hurting-each-other)) | | pvp |
 
 ## How to keep this page
 

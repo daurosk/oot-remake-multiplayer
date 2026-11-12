@@ -295,6 +295,10 @@ What it proves: the file is the one the release had when it was published, check
 tools\autotest\run.ps1 -Scenario walk
 ```
 
+Who runs it: branches do not run the game or build the emulator on their own. Each branch is proven by its unit tests in CI and a review, and lists what should be checked in the game. The integrator merges a chunk of reviewed branches, builds once (unit tests, emulator, kits) and runs **one big autotest turn** that covers every branch's list, then reports a result per check ([workflow.md](workflow.md#how-a-chunk-of-work-goes)). Only one session runs the games on a PC at a time.
+
+`-Runtime hookshot` (default `emulator`) runs the same scenarios in two Hookshot games instead of the two emulator kits; how to set those up is in `docs/hookshot.md`.
+
 What it does:
 
 1. Starts the server (`build\server\coop_server.exe`, port 27560) and the two kits `coop-kit\auto-A` and `auto-B` (found by going up from the repo; `-KitA`, `-KitB`, `-Game`, `-Exe`, `-Server` override). Each kit is an ordinary kit folder with a filled `emulator\user\` and a save. With `-Exe`, that emulator build is copied into both kits first.

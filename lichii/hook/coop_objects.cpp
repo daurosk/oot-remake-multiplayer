@@ -2213,8 +2213,12 @@ private:
             const CoopGuard::Local local = GuardLocal();
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
-            CoopGuard::Skip(wish, local, where, [](const Mover::Pose& p) { return p.actor; });
-            CoopGuard::Skip(plays, local, where, [](const PlayWish& p) { return p.address; });
+            // Issue 194: a world object another game moves (coop_world: a falling ladder,
+            // a block and its base anchor) is no event's partner: it follows at once, else
+            // it jumped after.
+            const auto world = [this](std::uint64_t a) { return world_.Follows(a); };
+            CoopGuard::Skip(wish, local, where, [](const Mover::Pose& p) { return p.actor; }, world);
+            CoopGuard::Skip(plays, local, where, [](const PlayWish& p) { return p.address; }, world);
         }
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {

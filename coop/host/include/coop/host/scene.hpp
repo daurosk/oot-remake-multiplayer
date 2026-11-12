@@ -80,7 +80,8 @@ enum class Visibility : std::uint8_t {
   hide,  // other scene, scene unknown, or our cutscene: no puppet, no marker
   park,  // same place, but the puppet cannot be drawn right (riding a horse
          // we do not have): puppet kept out of sight, marker kept
-  hold,  // same place, but their cutscene runs: draw frozen at the last pose
+  hold,  // same place, but their cutscene runs: animation frozen at the last
+         // frame, place followed (issue 194, docs/puppet.md)
   show,  // same place, nobody in a cutscene: draw and move as usual
 };
 
@@ -91,8 +92,8 @@ enum class Visibility : std::uint8_t {
 //   actors the event knows about).
 // - They ride a horse: park. Their Epona is not in our game, so the puppet
 //   would sit in the air at saddle height.
-// - Their cutscene running: hold, since their samples would show them being
-//   moved by an event we do not see. Not while they play the Ocarina: then
+// - Their cutscene running: hold, since their animation is the event's, which
+//   the puppet may not have; their place is still followed (issue 194). Not while they play the Ocarina: then
 //   they stand and play, and show copies that.
 inline Visibility visibility(std::optional<std::string_view> local_scene,
                              bool local_hides,

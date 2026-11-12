@@ -140,6 +140,10 @@ std::string_view refuse_reason_text(proto::RefuseReason reason) {
     case proto::RefuseReason::bad_name: return "bad name";
     case proto::RefuseReason::bad_password:
       return "wrong join password: ask the host for it, then start Join.bat again and type it";
+    case proto::RefuseReason::not_encrypted:
+      return "the server did not ask for the join password, so the game did not join it "
+             "unencrypted: if the host set no password, start Join.bat again with the password "
+             "empty";
   }
   return "unknown reason";
 }
@@ -305,8 +309,8 @@ void Client::service(std::uint32_t wait_ms) {
           last_receive_us_ = now_us();
           if (cipher_ != nullptr) {
             // Encrypted: only what opens with the key counts. The one plain
-            // answer left is REFUSED for a wrong password, which the server
-            // sends before it has keys (anyone on the path could also just
+            // answer left is REFUSED 6, wrong password, which the server
+            // sends before it has keys (any other reason comes sealed) (anyone on the path could also just
             // drop our packets, so it gives nothing away).
             std::vector<std::uint8_t> plain;
             const std::span<const std::uint8_t> raw(event.packet->data,
@@ -317,7 +321,9 @@ void Client::service(std::uint32_t wait_ms) {
             } else if (state_ == State::handshaking &&
                        event.channelID == proto::kChannelSession &&
                        proto::decode(raw, refused) == proto::Error::none &&
-                       std::holds_alternative<proto::Refused>(refused)) {
+                       std::holds_alternative<proto::Refused>(refused) &&
+                       std::get<proto::Refused>(refused).reason ==
+                           proto::RefuseReason::bad_password) {
               on_receive(raw.data(), raw.size(), event.channelID);
             } else {
               ++rejected_;
@@ -432,6 +438,12 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
 
   if (state_ == State::handshaking) {
     if (const auto* welcome = std::get_if<proto::Welcome>(&message)) {
+      // With a join password, only a server that made keys with us may let
+      // us in: a plain WELCOME is someone answering for a no-password server.
+      if (!config_.join_password.empty() && cipher_ == nullptr) {
+        refuse_unencrypted();
+        return;
+      }
       on_welcome(*welcome);
     } else if (const auto* challenge = std::get_if<proto::JoinChallenge>(&message)) {
       // One answer per connection: the proof is for this nonce only.
@@ -443,15 +455,7 @@ void Client::on_receive(const std::uint8_t* data, std::size_t size,
       if (!answer_challenge(*challenge, std::span<const std::uint8_t>(data, size))) {
         // A server with a password that does not encrypt: never fall back to
         // plain traffic (someone on the path may have taken the key out).
-        if (peer_ != nullptr) {
-          enet_peer_disconnect_now(peer_, 0);
-          peer_ = nullptr;
-        }
-        state_ = State::refused;
-        Event event;
-        event.kind = EventKind::refused;
-        event.refuse_reason = proto::RefuseReason::wrong_protocol_version;
-        push(std::move(event));
+        refuse_unencrypted();
       }
     } else if (const auto* refused = std::get_if<proto::Refused>(&message)) {
       if (peer_ != nullptr) {
@@ -708,20 +712,32 @@ bool Client::send_chat(std::string_view text) {
   return send(proto::Chat{proto::kPlayerSelf, std::string(text)});
 }
 
+void Client::refuse_unencrypted() {
+  if (peer_ != nullptr) {
+    enet_peer_disconnect_now(peer_, 0);
+    peer_ = nullptr;
+  }
+  state_ = State::refused;
+  Event event;
+  event.kind = EventKind::refused;
+  event.refuse_reason = proto::RefuseReason::not_encrypted;
+  push(std::move(event));
+}
+
 bool Client::answer_challenge(const proto::JoinChallenge& challenge,
                               std::span<const std::uint8_t> packet) {
   if (!challenge.key_share || !key_pair_) return false;
   std::optional<proto::TrafficKeys> keys =
       proto::derive_traffic_keys(*key_pair_, *challenge.key_share, config_.join_password,
                                  hello_packet_, packet, /*is_server=*/false);
+  const proto::JoinProofBytes proof = proto::join_proof(
+      config_.join_password, challenge.nonce, key_pair_->share(), *challenge.key_share);
   key_pair_.reset();
   hello_packet_.clear();
   if (!keys) return false;
   // The proof goes out plain (the server needs it to make its keys); from
   // the next packet on, everything is sealed.
-  const bool sent = send_raw(
-      proto::JoinProof{proto::join_proof(config_.join_password, challenge.nonce)},
-      proto::kChannelSession);
+  const bool sent = send_raw(proto::JoinProof{proof}, proto::kChannelSession);
   cipher_ = std::make_unique<proto::TrafficCipher>(*keys);
   keys->wipe();
   return sent;

@@ -225,9 +225,14 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
                             std::uint64_t now_us) {
   const Hello hello = *c.pending_hello;
   c.pending_hello.reset();
-  const bool right = same_proof(proof.proof, join_proof(config_.join_password, c.nonce));
-  c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
   std::shared_ptr<const KeyPair> key_pair = std::move(c.key_pair);
+  // Bound to both key shares: a proof relayed by someone who swapped them
+  // (to sit in the middle) does not match.
+  const bool right =
+      key_pair != nullptr && hello.key_share &&
+      same_proof(proof.proof, join_proof(config_.join_password, c.nonce, *hello.key_share,
+                                         key_pair->share()));
+  c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
   std::vector<std::uint8_t> hello_packet = std::move(c.hello_packet);
   std::vector<std::uint8_t> challenge_packet = std::move(c.challenge_packet);
   c.key_pair.reset();

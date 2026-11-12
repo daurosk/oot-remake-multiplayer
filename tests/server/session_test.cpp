@@ -57,6 +57,16 @@ struct Harness {
   std::vector<ConnectionId> dropped;
   // Connections the session switched to encrypted traffic (EncryptAction).
   std::vector<ConnectionId> encrypted;
+  // The server's key share sent with each JOIN_CHALLENGE nonce.
+  std::map<JoinNonce, KeyShare> server_shares;
+
+  // The game's JOIN_PROOF for `nonce` (bound to both key shares, as
+  // hello_from's game sends it). A nonce never sent gets a zero share.
+  JoinProofBytes proof(const std::string& password, const JoinNonce& nonce) const {
+    auto it = server_shares.find(nonce);
+    const KeyShare server = it != server_shares.end() ? it->second : KeyShare{};
+    return join_proof(password, nonce, *hello_from("x").key_share, server);
+  }
   // The REJOIN_TOKEN each connection was sent last (right after WELCOME).
   std::map<ConnectionId, RejoinTokenBytes> tokens;
   std::uint64_t now = 1'000'000;
@@ -76,6 +86,9 @@ struct Harness {
           CHECK(s->channel == kChannelSession);
           tokens[s->to] = token->token;
           continue;
+        }
+        if (const auto* challenge = std::get_if<JoinChallenge>(&m)) {
+          if (challenge->key_share) server_shares[challenge->nonce] = *challenge->key_share;
         }
         sent.push_back({s->to, s->channel, m});
       } else if (auto* d = std::get_if<DisconnectAction>(&a)) {
@@ -1336,7 +1349,7 @@ TEST_CASE("issue 163: a rejoin with a join password shows the token, then the pr
     const auto challenge = only_message_to<JoinChallenge>(h, id);
     REQUIRE(challenge.has_value());
     h.clear();
-    h.receive(id, JoinProof{join_proof("kokiri", challenge->nonce)}, kChannelSession);
+    h.receive(id, JoinProof{h.proof("kokiri", challenge->nonce)}, kChannelSession);
     return h.to(id);
   };
   auto first = join_with_proof(1, "Link", std::nullopt);
@@ -3235,7 +3248,7 @@ TEST_CASE("join password: the right proof is welcomed") {
   const JoinNonce nonce = challenge_for(h, 1, "Link");
   CHECK(h.session.player_count() == 0);  // not in before the proof
   h.clear();
-  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  h.receive(1, JoinProof{h.proof("hunter2", nonce)}, kChannelSession);
   bool welcomed = false;
   for (const Sent& s : h.to(1)) welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
   CHECK(welcomed);
@@ -3248,7 +3261,7 @@ TEST_CASE("join password: a wrong proof is refused with bad_password and closed"
   Harness h(with_password("hunter2"));
   const JoinNonce nonce = challenge_for(h, 1, "Link");
   h.clear();
-  h.receive(1, JoinProof{join_proof("hunter3", nonce)}, kChannelSession);
+  h.receive(1, JoinProof{h.proof("hunter3", nonce)}, kChannelSession);
   auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused);
   CHECK(refused->reason == RefuseReason::bad_password);
@@ -3257,7 +3270,7 @@ TEST_CASE("join password: a wrong proof is refused with bad_password and closed"
   CHECK(h.session.stats().bad_password == 1);
   // A second try on the same connection goes nowhere: it is closing.
   h.clear();
-  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  h.receive(1, JoinProof{h.proof("hunter2", nonce)}, kChannelSession);
   CHECK(h.sent.empty());
   CHECK(h.session.player_count() == 0);
 }
@@ -3266,7 +3279,7 @@ TEST_CASE("join password: a game with no password (the empty one's proof) is ref
   Harness h(with_password("hunter2"));
   const JoinNonce nonce = challenge_for(h, 1, "Link");
   h.clear();
-  h.receive(1, JoinProof{join_proof("", nonce)}, kChannelSession);
+  h.receive(1, JoinProof{h.proof("", nonce)}, kChannelSession);
   auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused);
   CHECK(refused->reason == RefuseReason::bad_password);
@@ -3289,7 +3302,7 @@ TEST_CASE("join password: no proof at all times out like a missing HELLO") {
 TEST_CASE("join password: a recorded proof does not work on another connection") {
   Harness h(with_password("hunter2"));
   const JoinNonce first = challenge_for(h, 1, "Link");
-  const JoinProofBytes recorded = join_proof("hunter2", first);
+  const JoinProofBytes recorded = h.proof("hunter2", first);
   h.receive(1, JoinProof{recorded}, kChannelSession);
   REQUIRE(h.session.player_count() == 1);
 
@@ -3312,7 +3325,7 @@ TEST_CASE("join password: one HELLO, one nonce: a second HELLO gets no new chall
   h.receive(1, hello_from("Link"), kChannelSession);
   CHECK(h.sent.empty());
   CHECK(h.session.stats().repeated_hello == 1);
-  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  h.receive(1, JoinProof{h.proof("hunter2", nonce)}, kChannelSession);
   CHECK(h.session.player_count() == 1);
 }
 
@@ -3341,11 +3354,11 @@ TEST_CASE("join password: a wrong protocol version is refused before any challen
 TEST_CASE("join password: the checks after it still run (a name taken is refused)") {
   Harness h(with_password("hunter2"));
   JoinNonce nonce = challenge_for(h, 1, "Link");
-  h.receive(1, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  h.receive(1, JoinProof{h.proof("hunter2", nonce)}, kChannelSession);
   REQUIRE(h.session.player_count() == 1);
   nonce = challenge_for(h, 2, "Link");
   h.clear();
-  h.receive(2, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  h.receive(2, JoinProof{h.proof("hunter2", nonce)}, kChannelSession);
   auto refused = only_message_to<Refused>(h, 2);
   REQUIRE(refused);
   CHECK(refused->reason == RefuseReason::name_taken);
@@ -3363,7 +3376,7 @@ TEST_CASE("join password: 5 wrong guesses from one address close it at connect f
     h.receive(id, hello_from("Ganon"), kChannelSession);
     auto challenge = only_message_to<JoinChallenge>(h, id);
     REQUIRE(challenge);
-    h.receive(id, JoinProof{join_proof("guess" + std::to_string(i), challenge->nonce)},
+    h.receive(id, JoinProof{h.proof("guess" + std::to_string(i), challenge->nonce)},
               kChannelSession);
   }
   CHECK(h.session.stats().bad_password == 5);
@@ -3381,7 +3394,7 @@ TEST_CASE("join password: 5 wrong guesses from one address close it at connect f
     h.receive(id, hello_from("Zelda"), kChannelSession);
     auto challenge = only_message_to<JoinChallenge>(h, id);
     REQUIRE(challenge);
-    h.receive(id, JoinProof{join_proof("hunter2", challenge->nonce)}, kChannelSession);
+    h.receive(id, JoinProof{h.proof("hunter2", challenge->nonce)}, kChannelSession);
     CHECK(h.session.player_count() == 1);
   }
 
@@ -3405,7 +3418,7 @@ TEST_CASE("join password: 5 wrong guesses from one address close it at connect f
   REQUIRE(challenge);
   nonce = challenge->nonce;
   h.clear();
-  h.receive(id, JoinProof{join_proof("hunter2", nonce)}, kChannelSession);
+  h.receive(id, JoinProof{h.proof("hunter2", nonce)}, kChannelSession);
   bool welcomed = false;
   for (const Sent& s : h.to(id)) welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
   CHECK(welcomed);  // (Zelda timed out meanwhile: the fake clock jumped a minute)
@@ -3422,7 +3435,7 @@ TEST_CASE("join password: 4 wrong guesses, then a minute without, start the coun
     h.receive(id, hello_from("Ganon"), kChannelSession);
     auto challenge = only_message_to<JoinChallenge>(h, id);
     REQUIRE(challenge);
-    h.receive(id, JoinProof{join_proof("nope", challenge->nonce)}, kChannelSession);
+    h.receive(id, JoinProof{h.proof("nope", challenge->nonce)}, kChannelSession);
   };
   for (int i = 0; i < 4; ++i) guess_wrong();
   h.now += 60'000'000;
@@ -3726,7 +3739,7 @@ TEST_CASE("encrypted traffic: a right proof switches the connection to its keys 
   REQUIRE(challenge.key_share.has_value());
 
   h.session.received(1, kChannelSession,
-                     bytes_of(JoinProof{join_proof("hunter2", challenge.nonce)}), h.now);
+                     bytes_of(JoinProof{join_proof("hunter2", challenge.nonce, *hello.key_share, *challenge.key_share)}), h.now);
   actions = h.session.take_actions();
   REQUIRE(actions.size() >= 2);
   // The keys come before anything else, so WELCOME already goes sealed.
@@ -3750,7 +3763,7 @@ TEST_CASE("encrypted traffic: a wrong proof gets no keys") {
   Harness h(with_password("hunter2"));
   const JoinNonce nonce = challenge_for(h, 1, "Link");
   h.clear();
-  h.receive(1, JoinProof{join_proof("hunter3", nonce)}, kChannelSession);
+  h.receive(1, JoinProof{h.proof("hunter3", nonce)}, kChannelSession);
   CHECK(h.encrypted.empty());
   const auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused);
@@ -3786,4 +3799,25 @@ TEST_CASE("encrypted traffic: without a password the traffic stays plain") {
   h.receive(2, plain, kChannelSession);
   CHECK(only_message_to<Welcome>(h, 2).has_value());
   CHECK(h.encrypted.empty());
+}
+
+TEST_CASE("encrypted traffic: a proof for other key shares (a relay in the middle) is refused") {
+  Harness h(with_password("hunter2"));
+  const JoinNonce nonce = challenge_for(h, 1, "Link");
+  h.clear();
+  // Right password and nonce, but made for the share someone in the middle
+  // put in place of the game's: the server took the game's.
+  const KeyPair middle = KeyPair::from_secret({9, 9, 9});
+  h.receive(1, JoinProof{join_proof("hunter2", nonce, middle.share(), h.server_shares.at(nonce))},
+            kChannelSession);
+  CHECK(h.encrypted.empty());
+  const auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+  CHECK(h.session.player_count() == 0);
+  // And the old unbound proof is not taken either.
+  const JoinNonce again = challenge_for(h, 2, "Zelda");
+  h.clear();
+  h.receive(2, JoinProof{join_proof("hunter2", again)}, kChannelSession);
+  CHECK(only_message_to<Refused>(h, 2)->reason == RefuseReason::bad_password);
 }

@@ -442,6 +442,9 @@ class Client {
   // this connection's keys from it. False when it did not work out.
   bool answer_challenge(const protocol::JoinChallenge& challenge,
                         std::span<const std::uint8_t> packet);
+  // Stops for good: the server did not encrypt although we have a join
+  // password (REFUSED not_encrypted, shown like a server's refusal).
+  void refuse_unencrypted();
   void push(Event event);
   // Checks a room message against players_ and updates it; sets `out` to
   // the event that follows its `message` event, if any. False to refuse.

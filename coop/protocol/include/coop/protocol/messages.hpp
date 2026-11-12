@@ -198,6 +198,10 @@ enum class RefuseReason : std::uint8_t {
   name_taken = 4,
   bad_name = 5,  // empty or nothing but spaces
   bad_password = 6,  // the server has a join password and the JOIN_PROOF did not match
+  // Never sent: the game's own refusal of a server that did not encrypt
+  // although the game has a join password (docs/protocol.md "Encrypted
+  // traffic"), so nobody on the path can stand in for a no-password server.
+  not_encrypted = 200,
 };
 
 struct Refused {

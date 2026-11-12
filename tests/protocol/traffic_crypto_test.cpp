@@ -5,7 +5,6 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -21,10 +20,11 @@ using Bytes = std::vector<std::uint8_t>;
 
 std::array<std::uint8_t, 32> from_hex(const char* text) {
   std::array<std::uint8_t, 32> out{};
+  auto digit = [](char c) {
+    return static_cast<std::uint8_t>(c <= '9' ? c - '0' : c - 'a' + 10);
+  };
   for (std::size_t i = 0; i < out.size(); ++i) {
-    unsigned v = 0;
-    std::sscanf(text + 2 * i, "%2x", &v);
-    out[i] = static_cast<std::uint8_t>(v);
+    out[i] = static_cast<std::uint8_t>((digit(text[2 * i]) << 4) | digit(text[2 * i + 1]));
   }
   return out;
 }

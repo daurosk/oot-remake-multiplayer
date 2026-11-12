@@ -239,3 +239,15 @@ TEST_CASE("encrypted traffic: a wrong password is refused as before and gets no 
   w.pump([] { return false; }, 200);
   CHECK(w.server.encrypted_connections() == 1);  // only the host's
 }
+
+TEST_CASE("encrypted traffic: a game with a password does not join a server without one") {
+  World w("", "leftover-password");
+  REQUIRE(w.guest.start());
+  REQUIRE(w.pump([&] { return w.guest.state() == State::refused; }));
+  std::optional<proto::RefuseReason> reason;
+  while (auto e = w.guest.next_event()) {
+    if (e->kind == EventKind::refused) reason = e->refuse_reason;
+  }
+  REQUIRE(reason.has_value());
+  CHECK(*reason == proto::RefuseReason::not_encrypted);
+}

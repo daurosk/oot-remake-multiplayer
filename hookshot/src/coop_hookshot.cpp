@@ -65,7 +65,9 @@ namespace {
 
 const HosCoopApi* g_api = nullptr;
 std::string g_build;
-bool g_on = false;
+std::atomic<bool> g_on{false};  // (read on the game's threads by the world hooks)
+std::atomic<std::uint32_t> g_world_version{0};  // Hookshot's HOS_COOP_WORLD_VERSION, 0 until it says hello
+std::atomic<std::uint64_t> g_world_wraps{0};    // the wraps that Hookshot has, a bit for each id
 std::atomic<bool> g_present_seen{false};  // our patch's present site has run
 bool g_hold = false;
 Core::System g_system;
@@ -590,6 +592,15 @@ void Frame(void* ctx, int site) {
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
     }
+    if (site != HOS_COOP_SITE_PRESENT && g_world_version.load() == 0) {
+        // A Hookshot built without patch 0005 never says hello (one with it does at the first hooked function the game
+        // runs): say so once, some thousand frame hooks in.
+        static std::atomic<std::uint32_t> frames{0};
+        if (frames.fetch_add(1) == 3600) {
+            LOG_WARNING(Core, "coop: world hooks: hookshot.exe has not said hello yet: built without patch 0005, or no "
+                              "hooked game function ran so far (until it does: no pause counters, no flag events)");
+        }
+    }
     const FrameWork w = WorkAt(site, g_present_seen.load());
     if (w.on_frame) {
         CoopHook::OnFrame(g_system);
@@ -609,8 +620,17 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         return 0;
     }
     switch (event) {
-    case HOS_COOP_WORLD_HELLO:
+    case HOS_COOP_WORLD_HELLO: {
+        // (the first patch 0005 sent a = 0: level 1, with the flag applier's wrap)
+        const WorldLevel level = HelloLevel(a, b);
+        g_world_wraps.store(level.wraps);
+        if (g_world_version.exchange(level.version) != level.version) {
+            LOG_INFO(Core, "coop: world hooks: hookshot.exe has level {} (this module {}), wraps {:#x}{}", level.version,
+                     HOS_COOP_WORLD_VERSION, level.wraps,
+                     level.version < HOS_COOP_WORLD_VERSION ? ": an older Hookshot build, some hooks are missing" : "");
+        }
         return 1;
+    }
     case HOS_COOP_WORLD_COUNTER_START: {  // (coop_counters.h: the Objects walk reads the ring)
         CoopCounters::TheHostRing().Push(a);
         static std::atomic<bool> said{false};
@@ -670,6 +690,14 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
     default:
         return 0;  // (a newer Hookshot's event this module does not know)
     }
+}
+
+WorldLevel WorldHooks() {
+    return WorldLevel{g_world_version.load(), g_world_wraps.load()};
+}
+
+bool HasWrap(std::uint32_t id) {
+    return id < 64 && (g_world_wraps.load() >> id & 1) != 0;
 }
 
 // The wrapped game functions (patch 0005, nx2/coop_world_wraps.py). The game's function always runs (0 at phase 0).

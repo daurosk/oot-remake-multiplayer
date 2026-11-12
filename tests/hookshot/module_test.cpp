@@ -292,7 +292,16 @@ TEST_CASE("hookshot: the world hooks (patch 0005) hand the pause counter starts 
     // The guest ring is gone on Hookshot; the bridge keeps the export only once the module says it is on.
     CHECK(patch.find("deleted file mode 100644") != std::string::npos);
     CHECK(patch.find("--- a/host/coop_platform_ring.c") != std::string::npos);
-    CHECK(patch.find("w(HOS_COOP_WORLD_HELLO, 0, 0) != 1") != std::string::npos);
+    CHECK(patch.find("w(HOS_COOP_WORLD_HELLO, HOS_COOP_WORLD_VERSION, hos_coop_wrap_mask) != 1") != std::string::npos);
+    // The hello's level: the first patch sent 0, 0 and had the flag applier's wrap; later ones their version and wraps.
+    CHECK(CoopHookshot::HelloLevel(0, 0).version == 1);
+    CHECK(CoopHookshot::HelloLevel(0, 0).wraps == 1ull << HOS_COOP_WRAP_FLAG_APPLY);
+    CHECK(CoopHookshot::HelloLevel(HOS_COOP_WORLD_VERSION, 0x6).version == HOS_COOP_WORLD_VERSION);
+    CHECK(CoopHookshot::HelloLevel(HOS_COOP_WORLD_VERSION, 0x6).wraps == 0x6);
+    // Only a function the lift made is wrapped, a wrapped one stays hot, and the build's wraps go out as bits.
+    CHECK(patch.find("the lift made no function there") != std::string::npos);
+    CHECK(patch.find("+            if hot and \"f_%08x\" % e in hot:") != std::string::npos);
+    CHECK(patch.find("const uint64_t hos_coop_wrap_mask = %#xull;") != std::string::npos);
     // The wraps: every call reaches the wrapper, the emit workers get the table, and the first wrap's id is the header's.
     CHECK(patch.find("return \"hos_coop_w_%08x\" % t") != std::string::npos);
     CHECK(patch.find("\"wraps\")   # (oot-remake-multiplayer's patch 0005)") != std::string::npos);

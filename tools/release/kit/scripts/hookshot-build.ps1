@@ -10,6 +10,8 @@
 #   Build-Hookshot-Coop.bat -Rebuild                build again even when nothing changed
 #   Build-Hookshot-Coop.bat -Jobs <n>               at most n compilers at once
 #   Build-Hookshot-Coop.bat -CheckOnly              get the tools and check your game files; build nothing
+#   (for tools\hookshot\hs.py) -Tools <folder> -Work <folder>: Hookshot's tools and source, and its work folder,
+#   somewhere else than this kit's hookshot\ (one of each per pin, shared by every kit: hs-build-speed)
 #
 # What it does:
 # 1. Hookshot's own build tools: the parts of the Hookshot release named in hookshot\TOOLS.txt (its
@@ -26,6 +28,9 @@
 #    puppet pack (built from your game) in the game's mods folder.
 # Steps 1 to 3 are skipped when the tools, pin and patches are the ones the game was built with,
 # so after Update.bat a run only does step 4 (a few minutes) unless the update moved the pin.
+# When only the patches changed, step 2 puts the files the old ones changed back and applies the new
+# ones (apply_patch.py --refresh), and step 3 is Hookshot's own incremental build: no new translation
+# unless a lift file changed, and only the changed files compiled.
 #
 # Nothing in the kit holds the game: the tools are Hookshot's, the patches and the module are ours.
 param(
@@ -34,6 +39,8 @@ param(
     [string]$Out = '',
     [ValidatePattern('^[A-Za-z]{2}(-[A-Za-z]{2})?$')][string]$Language = 'en-US',
     [ValidateRange(0, 256)][int]$Jobs = 0,
+    [string]$Tools = '',
+    [string]$Work = '',
     [switch]$Rebuild,
     [switch]$CheckOnly
 )
@@ -104,9 +111,11 @@ $patchHash = (($patches | ForEach-Object { Get-Sha256 $_.FullName }) -join ',')
 # What the tools folder and the game are made from: when this is unchanged, steps 1 to 3 are done.
 $stamp = "release=$($toolsPin.release)`ncommit=$($pin.commit)`npatches=$patchHash"
 
-$tools = Join-Path $hs 'tools'
-$work = Join-Path $hs 'work'
-$downloads = Join-Path $hs 'downloads'
+$sharedWork = [bool]$Work
+$tools = if ($Tools) { [System.IO.Path]::GetFullPath($Tools) } else { Join-Path $hs 'tools' }
+$work = if ($Work) { [System.IO.Path]::GetFullPath($Work) } else { Join-Path $hs 'work' }
+# (beside a shared tools folder, so its 400 MB of parts are fetched once for every kit)
+$downloads = if ($Tools) { Join-Path (Split-Path -Parent $tools) 'downloads' } else { Join-Path $hs 'downloads' }
 if (-not $Out) { $Out = Join-Path $hs 'game' }
 $Out = [System.IO.Path]::GetFullPath($Out)
 $python = Join-Path $tools 'python\python.exe'
@@ -114,6 +123,19 @@ $python = Join-Path $tools 'python\python.exe'
 # --- 1 and 2: the tools and the patched source ---------------------------------------------
 $toolsStamp = Join-Path $tools 'coop-tools.txt'
 $toolsReady = (Test-Path -LiteralPath $toolsStamp) -and ([System.IO.File]::ReadAllText($toolsStamp) -eq $stamp) -and (Test-Path -LiteralPath $python)
+# The same release and pin with other patches: the source is refreshed in place (only what the patches touch).
+$baseStamp = "release=$($toolsPin.release)`ncommit=$($pin.commit)`n"
+$keep = Join-Path $tools '.coop-orig'
+$samePin = -not $toolsReady -and (Test-Path -LiteralPath $toolsStamp) -and (Test-Path -LiteralPath $python) -and
+    (Test-Path -LiteralPath (Join-Path $keep 'manifest.txt')) -and
+    ([System.IO.File]::ReadAllText($toolsStamp).StartsWith($baseStamp))
+if ($samePin) {
+    Step "Hookshot's source: the co-op patches changed ($($patches.Count) patch(es); the tools and pin stay)"
+    & $python -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh $keep $tools @($patches | ForEach-Object FullName)
+    if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Hookshot $($pin.commit). This kit is broken: tell the co-op testers." }
+    [System.IO.File]::WriteAllText($toolsStamp, $stamp)
+    $toolsReady = $true
+}
 if ($toolsReady) {
     Step "Hookshot's tools: ready ($($toolsPin.release) tools, Hookshot $($pin.commit.Substring(0, 12)) with $($patches.Count) co-op patch(es))"
 } else {
@@ -141,8 +163,8 @@ if ($toolsReady) {
     Get-Download "https://codeload.github.com/$repoPath/zip/$($pin.commit)" $sourceZip $toolsPin.source_sha256.ToLowerInvariant() "Hookshot's source archive differs from the one this kit was made with"
 
     Write-Host '  unpacking ...'
-    $staging = Join-Path $hs 'tools.new'
-    $parts_root = Join-Path $hs 'parts.new'
+    $staging = "$tools.new"
+    $parts_root = "$tools.parts"
     foreach ($d in $staging, $parts_root) { if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force } }
     # The source: the archive's one top folder (Hookshot-<commit>) left out.
     Expand-Zip $sourceZip $staging 1
@@ -168,11 +190,12 @@ if ($toolsReady) {
     Remove-Item -LiteralPath $parts_root -Recurse -Force
 
     Write-Host "  applying $($patches.Count) co-op patch(es) ..."
-    & (Join-Path $staging 'python\python.exe') -I -B (Join-Path $PSScriptRoot 'apply_patch.py') $staging @($patches | ForEach-Object FullName)
+    # (--refresh keeps the originals of what the patches change: a later patch change refreshes only those)
+    & (Join-Path $staging 'python\python.exe') -I -B (Join-Path $PSScriptRoot 'apply_patch.py') --refresh (Join-Path $staging '.coop-orig') $staging @($patches | ForEach-Object FullName)
     if ($LASTEXITCODE -ne 0) { Fail "The co-op patches do not apply to Hookshot $($pin.commit). This kit is broken: tell the co-op testers." }
     [System.IO.File]::WriteAllText((Join-Path $staging 'coop-tools.txt'), $stamp)
     if (Test-Path -LiteralPath $tools) { Remove-Item -LiteralPath $tools -Recurse -Force }
-    Rename-Item -LiteralPath $staging -NewName 'tools'
+    Move-Item -LiteralPath $staging -Destination $tools
     Write-Host '  ready.'
 }
 
@@ -237,6 +260,9 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     foreach ($v in 'HOOKSHOT_NGX_SDK', 'HOOKSHOT_FFX_SDK', 'HOOKSHOT_MSVC', 'EMSDK', 'HOOKSHOT_BUILDER_EXE', 'HOOKSHOT_TOOLS') {
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
+    # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
+    # skips the translation unless a lift file changed. A kit's own folder keeps Hookshot's default.)
+    if ($sharedWork) { $env:HOOKSHOT_KEEP_BUILD_FILES = '1' }
     $logArgs = if ($Log) { @('--log', $Log) } else { @() }
     Push-Location $tools
     try {

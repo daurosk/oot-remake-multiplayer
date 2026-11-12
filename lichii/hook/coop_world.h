@@ -325,6 +325,7 @@ struct RestScan {
     std::vector<RestWrite> writes;
     std::vector<std::string> where;  // per place found: actor+0x.., c+0x50+0x.., physics root+0x.. (matrix)
     bool too_many = false;
+    bool busy = false;  // NodeRestWords: only one of the push node's places is the old one
 };
 inline constexpr std::size_t kMaxRestTriplets = 12;
 inline constexpr float kRestMatchM = 0.02f;
@@ -350,9 +351,12 @@ RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_
 // following heap pointers from the actor's components (at most kNodeDepth
 // steps, kNodeLooks objects, each object's first kNodeBytes), and takes it
 // only when both vtables and the actor chain match. NodeRestWords then gives
-// the writes that put the new place in +0xfc and +0x108 where they hold the
-// old one (each axis within kRestMatchM); the base and goal are left alone
-// (the grid and the answer do not move).
+// the writes that put the new place in +0xfc and +0x108 when both hold the
+// old one (each axis within kRestMatchM); only one of them: the node is
+// mid-push here, nothing is written and `busy` is set. The base and goal are
+// left alone (the grid and the answer do not move). Open (no run yet): if
+// the node's start runs at every push, and not once when the block's AI
+// starts, these are fresh anyway and the write changes nothing (harmless).
 namespace BlockNode {
 inline constexpr std::uint64_t kVtable = 0x49ae6f8;
 inline constexpr std::uint64_t kVtable2 = 0x49ae8b8;

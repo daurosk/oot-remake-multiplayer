@@ -2300,14 +2300,26 @@ RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uin
         std::memcpy(&f, &b, 4);
         return f;
     };
+    const auto holds_from = [&](std::uint64_t offset) {
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto v = float_at(node + offset + 4 * axis);
+            if (!v || !std::isfinite(*v) || std::fabs(*v - from[axis]) > kRestMatchM) return false;
+        }
+        return true;
+    };
+    // Both or none (review): a node with only one of them at the old place is
+    // mid-push here (its target is the next cell); writing just one would make
+    // it run from the new place toward a cell figured from the old one.
+    const bool target = holds_from(BlockNode::kTarget), start = holds_from(BlockNode::kStart);
+    if (target != start) {
+        out.busy = true;
+        return out;
+    }
+    if (!target) {
+        return out;
+    }
     char text[32];
     for (const std::uint64_t offset : {BlockNode::kTarget, BlockNode::kStart}) {
-        bool all = true;
-        for (int axis = 0; axis < 3 && all; ++axis) {
-            const auto v = float_at(node + offset + 4 * axis);
-            all = v && std::isfinite(*v) && std::fabs(*v - from[axis]) <= kRestMatchM;
-        }
-        if (!all) continue;
         for (int axis = 0; axis < 3; ++axis) {
             std::uint32_t b = 0;
             std::memcpy(&b, &to[axis], 4);

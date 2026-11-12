@@ -1,9 +1,14 @@
 # kak-gate (world-objects-2, #171): the Death Mountain gate in Kakariko opens for every player.
 # Both games load at Kakariko_MountainTrailSide (-41.20 109.99 -16.00), on the trail side of the
 # gate (Land_Kakariko_Gate_A_02 at -42.36 109.76 -13.02, the guard Npc_Hylia_Soldier_003 beside
-# it; the exit to the trail at -39.38 110.28 -28.28). At 70 s A sets the guard's flag
+# it; the exit to the trail at -39.38 110.28 -28.28). At 150 s A sets the guard's flag
 # Npc_Hylia_Soldier_003_GateOpen 0x19898d14 (shared through CoopStory, coop_story.cpp), as the
 # letter talk (Dm_Kakariko_0010) does. B watches it and walks into the village through the gate.
+# Timing (review): SET_AFTER counts from the flag debug's start in early boot, not from the
+# script, and the preamble ends about 70-90 s in; so the set is at 150 s, after B's "before"
+# walk and return (done by about 110 s), and B's "b-walk" waits 70 s more. Check the order in
+# B's log: the "test mark b-stopped" line must come BEFORE "bool 0x19898d14 ... 0 -> 1", and
+# "test mark b-walk" after it; if not, the before/after halves are INCONCLUSIVE (say so).
 # Expect: both logs "coop: story: sharing N story flags"; B "bool 0x19898d14 ... 0 -> 1" about
 # 1 s after A's; shots "open" (both): the gate open in A and in B; B's "b-through" shot shows B
 # on the village side (z > -5) and no "coop: test goto timed out" after the "b-walk" mark.
@@ -13,8 +18,8 @@
 # (the guard's gate is drawn from the flag when the area loads): note it in #171.
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=19898d14,A:LICHII_COOP_SET_BOOL=19898d14,A:LICHII_COOP_SET_AFTER=70
-#! timeout 300
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=19898d14,A:LICHII_COOP_SET_BOOL=19898d14,A:LICHII_COOP_SET_AFTER=150
+#! timeout 360
 mark start
 warp KakarikoVillage_Child Kakariko_MountainTrailSide
 wait 1200
@@ -31,7 +36,7 @@ mark after
 toward -42.36 -13.02 10   # face the gate
 press ZL 10
 mark a-gate
-wait 1200                 # the flag is set about now
+wait 4800                 # the flag is set at 150 s from boot, about now
 mark open
-wait 1800
+wait 2400
 mark end

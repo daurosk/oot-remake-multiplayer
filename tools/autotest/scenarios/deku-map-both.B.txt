@@ -31,6 +31,7 @@ wait 600
 mark opened
 press PLUS
 wait 180
+mark paused
 press R                   # to the map page (if PLUS opens on another page)
 wait 180
 mark map

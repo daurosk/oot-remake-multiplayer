@@ -2408,6 +2408,16 @@ TEST_CASE("world: a followed push puts the new rest in the push node's target an
     CHECK(FloatAt(g, kNode + 0x108 + 8) == 45.6f);
     CHECK(FloatAt(g, kNode + 0x40 + 8) == 47.1f);  // base left alone
     CHECK(FloatAt(g, kNode + 0x4c + 8) == 42.6f);  // goal left alone
+    // Mid-push here: the start is the old place, the target the next cell.
+    {
+        FakeGame m;
+        BlockNodeMemory(m);
+        PutFloats(m, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 45.6f});
+        PutFloats(m, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 47.1f});
+        const auto busy = CoopWorld::NodeRestWords(m.Reader(), kNode, from, to);
+        CHECK(busy.busy);
+        CHECK(busy.writes.empty());
+    }
     // Already at the new place, or a move under 5 cm: nothing.
     CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, from, to).writes.empty());
     CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, to, {-51.06f, 79.27f, 45.62f}).writes.empty());

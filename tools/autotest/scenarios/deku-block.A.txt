@@ -14,7 +14,16 @@
 #  - B's pushes ("b-push1", "b-push2"): the block moves on from where A left it in both games, no
 #    snap of B's Link or the block back to the start (shots "b-push1", "b-push2", "end"; B's log
 #    "moved here: sending" from the new place; A "moved by another player" and its own "old rest").
-#  - FAIL = B's Link or block jumps back to z ~47.1 at "b-push1".
+#  - Non-owner grab, pull, push (Caleb: boxes still teleport back a bit when ANOTHER player grabs
+#    them): B (who did not move it last) grabs it at "b-grab" (A held 1.5 s; shots "b-reach" and
+#    "b-grab" show the block at the same place in B, and A's copy still), pulls it one step toward
+#    +z at "b-pull", pushes it at "b-push1" (A held) and "b-push2" (walking). Each B shot vs the one
+#    before: the block moves only the way B moves it, never back first; A's paired shots show the
+#    same place after about 0.1 s. B's log: no "moved by another player" for this block after
+#    "b-reach"; one "moved here: sending" per move; A: "moved by another player" and later its own
+#    "push node ... moved" line. If "b-reach" shows Link not touching the block, change the goto z.
+#  - FAIL = B's Link or block jumps back (to z ~47.1 or a step back) at "b-grab", "b-pull" or
+#    "b-push1", in B's shots or A's.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_BLOCK_REST=1

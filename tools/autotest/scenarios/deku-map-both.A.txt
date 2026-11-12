@@ -8,7 +8,10 @@
 # Expect: one or both "Obj_TBox_A_02 0x771092ae2f3b7100" open lines (or B's "opened in another
 # game" and the chest removed); bool 0x89787395 "0 -> 1" in both and never a later "1 -> 0"
 # that stays; if a game cleared it, "(dungeon map or compass) went back to 0 here: put back to 1"
-# (map-lost's fix; that is a PASS, note it in #146). Shots "map" (both): the pause screen's map
+# (map-lost's fix; that is a PASS, note it in #146). INCONCLUSIVE (not a PASS): B's chest was
+# removed live ("opened in another game ... removed") before B pressed A: then only one
+# player opened it, which is not the #146 case (B starts about 4 s after A); rerun with A's
+# "wait 600" before "placed" made longer, or note the order from the two logs. Shots "map" (both): the pause screen's map
 # page shows the Deku Tree map, not "Unavailable right now".
 # The reload part of #146 (map still there after loading the save) is not here: check it by hand
 # (save in both, load, pause map) or with the host-save-load steps.
@@ -48,7 +51,8 @@ wait 600
 mark opened
 press PLUS
 wait 180
-press R                   # to the map page (if PLUS opens on another page)
+mark paused
+press R                   # to the map page; the "paused" shot shows the page PLUS opened on
 wait 180
 mark map
 press PLUS

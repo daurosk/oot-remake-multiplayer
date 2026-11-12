@@ -1099,6 +1099,12 @@ public:
                     } else {
                         const auto words = CoopWorld::NodeRestWords(
                             [&r](u64 address) { return r.Get<u64>(address); }, *node, fix.from, fix.to);
+                        if (words.busy) {
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} busy (mid-push here): "
+                                           "not written",
+                                     fix.hash, fix.name, *node);
+                            continue;  // RestWords below too: one block, one decision
+                        }
                         for (const auto& w : words.writes) {
                             memory_->Write32(w.address, w.value);
                         }

@@ -127,18 +127,24 @@ Applied Apply(CoopPuppet::Guest& guest, std::uint64_t actor, const Rgba& tint) {
 }
 
 std::string_view TunicOf(std::uint32_t rgb) {
-    const auto channel = [](std::uint32_t c, int shift) {
-        return static_cast<int>((c >> shift) & 0xFF);
+    // Brightness (luma) and colour (chroma) apart, chroma counted double: a
+    // plain RGB distance puts gray (A0A0A0) nearer pink than white.
+    struct Ycc {
+        double y, cb, cr;
     };
+    const auto ycc = [](std::uint32_t c) {
+        const double r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+        const double y = 0.299 * r + 0.587 * g + 0.114 * b;
+        return Ycc{y, 0.564 * (b - y), 0.713 * (r - y)};
+    };
+    const Ycc want = ycc(rgb);
     std::string_view best;
-    long best_d = -1;
+    double best_d = -1.0;
     for (const auto& t : kTunics) {
-        long d = 0;
-        for (int shift : {16, 8, 0}) {
-            const long x = channel(rgb, shift) - channel(t.rgb, shift);
-            d += x * x;
-        }
-        if (best_d < 0 || d < best_d) {
+        const Ycc have = ycc(t.rgb);
+        const double dy = want.y - have.y, db = want.cb - have.cb, dr = want.cr - have.cr;
+        const double d = dy * dy + 2.0 * (db * db + dr * dr);
+        if (best_d < 0.0 || d < best_d) {
             best_d = d;
             best = t.suffix;
         }

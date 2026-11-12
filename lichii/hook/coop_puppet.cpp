@@ -1261,10 +1261,15 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
             Say(who + " snap " + std::to_string(*snap).substr(0, 5) + " m (" +
                 (*snap >= CoopSnap::kWarpM ? std::string("warp") : ShowText(target.show)) + ")");
         }
+        slot.smooth.Spawned(at, target.position);  // a new puppet: eased from where the game made it (no spawn pop)
     }
     float jump = 0.0f;
     const Vec3 drawn = slot.smooth.Step(target.position, now_ms, !held, &jump);
-    if (jump > 0.0f) {
+    if (jump > 0.0f && slot.smooth.FromSpawn()) {
+        // Held (their cutscene) the smoother does not ease: the step is drawn at once then.
+        Say(who + (held ? " drawn at once from where it was made, " : " eased from where it was made, ") +
+            std::to_string(jump).substr(0, 5) + " m");
+    } else if (jump > 0.0f) {
         Say(who + " target jump " + std::to_string(jump).substr(0, 5) + " m (" + ShowText(target.show) +
             (jump >= CoopSnap::kWarpM ? ", warp" : held ? ", at once" : ", eased") + ")");
     }

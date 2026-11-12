@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace CoopSnap {
 
@@ -36,6 +37,8 @@ inline constexpr float kWarpM = 20.0f;
 // frame steps past kSnapM at 20 frames a second or more.
 inline constexpr std::uint64_t kEaseMs = 250;
 inline constexpr float kEaseSpeed = 15.0f;  // metres a second
+// A new puppet is made where its player was a few frames before it shows: at most this far.
+inline constexpr float kSpawnLagM = 3.0f;
 
 inline std::uint64_t EaseMs(float gap) {
     const float ms = gap / kEaseSpeed * 1000.0f;
@@ -72,6 +75,7 @@ public:
                 return target;
             }
         }
+        from_spawn_ = std::exchange(spawned_, false);
         if (!drawn_ || !last_target_) {
             Set(target);
             return target;
@@ -114,6 +118,21 @@ public:
         return now;
     }
 
+    // A new puppet the game made at `made_at` (where its player was when it was asked for, a
+    // few frames ago): drawn from there, so the first Step eases to where the player is now
+    // instead of a one-frame step (the 0.8 m spawn pop of cutscene-snap, 2026-11-12). Only
+    // before the first Step, and only when `made_at` is within kSpawnLagM of `target` (a few
+    // frames of running): a place read from a half-made actor is not eased from.
+    void Spawned(const Vec3& made_at, const Vec3& target) {
+        if (!drawn_ && Distance(made_at, target) <= kSpawnLagM) {
+            Set(made_at);
+            spawned_ = true;
+        }
+    }
+    // The last Step was a new puppet's first, eased from where the game made it: its jump is
+    // that catch-up, not a move of the player (DrawAt does not log it as a target jump).
+    bool FromSpawn() const { return from_spawn_; }
+
     // Drawn here from now on, no ease (a new puppet; a hide: it is out of sight).
     void Set(const Vec3& at) {
         drawn_ = at;
@@ -124,6 +143,7 @@ public:
         drawn_.reset();
         last_target_.reset();
         offset_.reset();
+        spawned_ = from_spawn_ = false;
     }
     bool Easing() const { return offset_.has_value(); }
     const std::optional<Vec3>& Drawn() const { return drawn_; }
@@ -134,6 +154,8 @@ private:
     std::optional<Vec3> offset_;  // drawn minus target when the ease began
     std::uint64_t start_ms_ = 0;
     std::uint64_t ease_ms_ = kEaseMs;
+    bool spawned_ = false;     // Spawned, no Step since
+    bool from_spawn_ = false;  // the last Step was the first after Spawned
 };
 
 // The drawn steps of one puppet: Step returns the snap to log, if any.

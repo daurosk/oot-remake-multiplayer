@@ -109,6 +109,7 @@ Then the old player is dropped and reported as `PLAYER_LEFT` timed out, with the
 | 192 | `JOIN_PROOF` | 0 | client | 32-byte HMAC-SHA256(password, nonce) |
 | 206 | `SAVE_ASK` | 0 | both | `u8` player field: a guest asks the host for its save (protocol 9; types 206 to 215 are for the save transfer, below) |
 | 207 | `SAVE_PART` | 0 | both | `u8` player field, `u8` to player (0 every guest), `u32` transfer id, `u8` reason (1 join, 2 host load), `u32` total size (1 to 1 MiB), `u32` CRC-32 of all of it, `u16` index, `u16` count, then the part's bytes (below) |
+| 320 | `FISH_LURE` | 2 | client | `u8` player field, `u16` count (0 to 256), then per fish: object id (10 bytes), `u16` centimetres from the sender's nearest cast lure (`0xffff`: none within 6 m), `u8` flags (bit 0 hooked, bit 1 drawn; both 0 with `0xffff`); no fish twice. Not relayed (protocol 10; types 320 to 324 are for fishing, "Fish and lures" below) |
 | 16 | `HOST` | 1 | server | `u8` the hosting player's number (1 to 4) |
 | 17 | `PLAYER_EQUIP` | 0 | both | `u8` player field, then the components below |
 
@@ -335,7 +336,7 @@ Object components use the same scheme as `PLAYER_SAMPLE` (`u16` id, `u16` length
 
 The player field follows the `PLAYER_SAMPLE` rule (0 from a client, the sender's number when relayed).
 
-Fish and lures (issue 151, fishing-2, protocol 8) use no new message: a fish moves to the game whose lure it goes for through `OBJECT_PRESENT`'s targeting flag, a landed fish is `OBJECT_REMOVE` reason dead, and lures are `OBJECT_SPAWN`/`OBJECT_SAMPLE`/`OBJECT_REMOVE` made objects ([objects.md](objects.md), "Fish and lures"). Types 186 to 190 stay free for it.
+Fish and lures (issue 151). A landed fish is `OBJECT_REMOVE` reason dead, and lures are `OBJECT_SPAWN`/`OBJECT_SAMPLE`/`OBJECT_REMOVE` made objects ([objects.md](objects.md), "Fish and lures"). Since protocol 10 (branch fishing-3) each game sends `FISH_LURE` (320) after its `OBJECT_PRESENT`: every fish it has loaded, how near its own cast lure is, and whether the fish is hooked (the sender owns it, within 1 m of the lure) or drawn (it swims at the lure). It goes on a change (at most every 250 ms, a change of hooked or drawn at once), every second while a fish is loaded, and once empty when the last fish left. The server marks each listed object a fish: a fish is never moved by the distance rule, never held by a fight lock, and a hit does not move it; it goes to the game whose lure beats its owner's (hooked, then drawn, then 1 m nearer), held 300 ms, not within 1 s of its last change; the owner keeps a hooked fish; a list older than 2.5 s counts as no lure. Types 186 to 190 (protocol 8) were never used; 321 to 324 are kept.
 
 ### Drops
 
@@ -387,4 +388,5 @@ Types 51 to 54 are kept for boss rooms and not used.
 - Version 8 also brings held pieces in `PLAYER_POSE` (branch `sling-fire`, issue 158): each piece in Link's hands goes as a pose of its own skeleton. The layout is unchanged; a build before it keeps one pose track per player and would mix Link's poses with the slingshot's, so every game of protocol 8 must have it. Types 156 to 160 are kept for projectiles (none used yet).
 - Version 8 also (chunk 7, world-objects): no new message (171 to 175 kept). The placed rolling boulders now go as `WORLD_MOVE` ([world.md](world.md), "Rolling boulders").
 - Version 8 also (items-progress): adds no message type (176 to 180 kept, unused). The Deku Shield (`PouchData.Weapon_Shield_Deku.StockNum`, `IsGet.Weapon_Shield_Deku`) is each player's own, and the Gold Skulltula token count is guarded by the 100 Skulltula keys ([items.md](items.md), issues 130 and 89).
+- Version 10 also brings `FISH_LURE` (320; 320 to 324 kept, branch `fishing-3`, issue 151), from a client only and not relayed. A version 9 server refuses it as unknown.
 - Version 9 (chunk 8, join-password, issue 160): `JOIN_CHALLENGE` (191), `JOIN_PROOF` (192) and `REFUSED` reason 6, bad password; 191 to 195 kept. A version 8 game cannot answer the challenge, so every game and the server must be 9. Other chunk 8 branches add their types under protocol 9 without a bump of their own.

@@ -1238,6 +1238,25 @@ public:
                     LOG_INFO(Core, "coop: objects: share group {} entries, {} changed{}",
                              g->entries.size(), changed, sent ? "" : " (not sent)");
                     group_logged_ = g->entries;
+                } else if (const auto* f = std::get_if<coop::protocol::FishLure>(&m)) {
+                    // Issue 151: one line when the fish at our lure change.
+                    std::size_t near = 0;
+                    std::string at;
+                    for (const auto& e : f->fish) {
+                        if (e.distance_cm == coop::protocol::kFishLureNone) continue;
+                        ++near;
+                        if (e.flags != 0) {
+                            at += fmt::format(" {:#x} {} cm {}", e.id.value, e.distance_cm,
+                                              (e.flags & coop::protocol::fish_lure::hooked)
+                                                  ? "hooked"
+                                                  : "drawn");
+                        }
+                    }
+                    if (std::make_pair(near, at) != fish_logged_) {
+                        fish_logged_ = std::make_pair(near, at);
+                        LOG_INFO(Core, "coop: objects: share fish lure {} fish, {} near our lure{}{}",
+                                 f->fish.size(), near, at, sent ? "" : " (not sent)");
+                    }
                 }
             }
         });
@@ -1916,6 +1935,7 @@ private:
     bool sharing_ = false;
     std::size_t blast_drops_logged_ = 0;
     std::size_t present_logged_ = ~std::size_t{0};
+    std::pair<std::size_t, std::string> fish_logged_;  // the last FISH_LURE logged
     std::vector<coop::protocol::ObjectGroupEntry> group_logged_;
     CoopObjects::OwnerLog owner_log_;  // network thread
     std::size_t enemies_logged_ = 0;

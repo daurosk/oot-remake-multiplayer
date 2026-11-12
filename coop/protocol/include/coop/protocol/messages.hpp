@@ -105,6 +105,7 @@ enum class MessageType : std::uint16_t {
   join_proof = 192,
   save_ask = 206,   // 206 to 215: the host's save sent to guests (docs/protocol.md, "Save transfer")
   save_part = 207,
+  fish_lure = 320,  // 320 to 324: the fishing pond (docs/protocol.md, "Fishing")
 };
 
 // PLAYER_SAMPLE component ids.
@@ -819,6 +820,34 @@ struct ObjectGroupEntry {
   bool operator==(const ObjectGroupEntry&) const = default;
 };
 
+// FISH_LURE (client only, not relayed; issue 151, docs/objects.md "Fish and
+// lures"): every fish the sender has loaded and how near the sender's own cast
+// lure is to it. It replaces the sender's previous list. The server gives each
+// fish to the game whose lure is nearest (a hooked fish stays with its owner),
+// and a fish is never moved by the distance rule or held by a fight lock.
+namespace fish_lure {
+inline constexpr std::uint8_t hooked = 1u << 0;  // the sender owns it and it is on its lure
+inline constexpr std::uint8_t drawn = 1u << 1;   // it swims at the sender's lure
+}  // namespace fish_lure
+
+// distance_cm when no lure of the sender's is in reach.
+inline constexpr std::uint16_t kFishLureNone = 0xffff;
+// Most fish in one FISH_LURE. 0 to this many, no fish twice.
+inline constexpr std::size_t kMaxFishLures = 256;
+
+struct FishLureEntry {
+  ObjectId id;
+  std::uint16_t distance_cm = kFishLureNone;  // fish to our nearest lure
+  std::uint8_t flags = 0;                     // fish_lure bits
+  bool operator==(const FishLureEntry&) const = default;
+};
+
+struct FishLure {
+  std::uint8_t player_number = kPlayerSelf;
+  std::vector<FishLureEntry> fish;
+  bool operator==(const FishLure&) const = default;
+};
+
 // Most entries in one OBJECT_GROUP. 1 to this many, no member twice.
 inline constexpr std::size_t kMaxGroupEntries = 256;
 
@@ -1025,7 +1054,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              TimeOfDay, GrassCut, ObjectGroup, WorldBreak, WorldMove,
                              WorldPlace, WorldHit, DropSpawn, DropTake,
                              DropAsk, BossRoom, SignCut, FlagReset, FlagOrigin,
-                             JoinChallenge, JoinProof, SaveAsk, SavePart>;
+                             JoinChallenge, JoinProof, SaveAsk, SavePart, FishLure>;
 
 MessageType type_of(const Message& message);
 

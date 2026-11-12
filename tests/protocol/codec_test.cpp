@@ -1546,3 +1546,50 @@ TEST_CASE("save ask and save part: types 206 and 207, session channel, both ways
   b.pop_back();  // one byte short
   CHECK(decode(b, back) != Error::none);
 }
+
+TEST_CASE("fish lure has its number, channel and layout, only a client sends it (issue 151)") {
+  CHECK(static_cast<int>(MessageType::fish_lure) == 320);
+  CHECK(channel_of(MessageType::fish_lure) == kChannelOwnership);
+  CHECK_FALSE(allowed_on_channel(MessageType::fish_lure, kChannelSession));
+  CHECK(may_send(Sender::client, MessageType::fish_lure));
+  CHECK_FALSE(may_send(Sender::server, MessageType::fish_lure));
+  const ObjectId fish{ObjectKind::placed, 0, 0x0102030405060708ull};
+  const ObjectId other{ObjectKind::placed, 0, 9};
+  const Message f = FishLure{0, {{fish, 0x0123, fish_lure::hooked}, {other, kFishLureNone, 0}}};
+  CHECK(check_received(f, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(f, Sender::server, kChannelOwnership) == Error::wrong_sender);
+  const Bytes b = must_encode(f);
+  // u8 player, u16 count, then per fish: id (10 bytes), u16 cm, u8 flags.
+  REQUIRE(b.size() == kHeaderSize + 3 + 2 * 13);
+  CHECK(b[kHeaderSize + 1] == 2);
+  CHECK(b[kHeaderSize + 5] == 0x08);  // its hash, little-endian
+  CHECK(b[kHeaderSize + 13] == 0x23);  // 0x123 cm, little-endian
+  CHECK(b[kHeaderSize + 14] == 0x01);
+  CHECK(b[kHeaderSize + 15] == fish_lure::hooked);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == f);
+  // An empty list is allowed: the last fish went.
+  const Message none = FishLure{0, {}};
+  REQUIRE(decode(must_encode(none), back) == Error::none);
+  CHECK(back == none);
+}
+
+TEST_CASE("bad fish lures are refused (issue 151)") {
+  const ObjectId a{ObjectKind::placed, 0, 1};
+  Bytes out;
+  CHECK(encode(FishLure{0, {{a, 10, 0}, {a, 20, 0}}}, out) == Error::bad_value);  // a fish twice
+  CHECK(encode(FishLure{0, {{a, 10, 4}}}, out) == Error::bad_value);  // an unknown flag
+  CHECK(encode(FishLure{0, {{a, kFishLureNone, fish_lure::drawn}}}, out) ==
+        Error::bad_value);  // drawn to no lure
+  CHECK(encode(FishLure{5, {{a, 10, 0}}}, out) == Error::bad_value);
+  std::vector<FishLureEntry> many;
+  for (std::uint64_t i = 0; i <= kMaxFishLures; ++i) {
+    many.push_back({ObjectId{ObjectKind::placed, 0, i}, 10, 0});
+  }
+  CHECK(encode(FishLure{0, many}, out) == Error::bad_value);
+  Message m;
+  Bytes b = must_encode(FishLure{0, {{a, 10, 0}}});
+  b[kHeaderSize + 1] = 2;  // two said, one sent
+  CHECK(decode(b, m) == Error::truncated);
+}

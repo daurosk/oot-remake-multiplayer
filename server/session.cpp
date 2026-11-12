@@ -363,6 +363,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_object_group(id, c, *group);
     return;
   }
+  if (const auto* lure = std::get_if<FishLure>(&message)) {
+    on_fish_lure(c, *lure, now_us);
+    return;
+  }
   if (auto* cut = std::get_if<GrassCut>(&message)) {
     on_grass_cut(id, c, *cut, now_us);
     return;
@@ -933,7 +937,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
     return;  // a boss is not moved by the distance rule below
   }
 
-  if (o.ask || o.root || o.projectile || (c.status & kBusy) || !has_loaded(id, o)) return;
+  if (o.ask || o.root || o.projectile || o.fish || (c.status & kBusy) || !has_loaded(id, o)) return;
   if (o.changed_at != 0 && now_us - o.changed_at < config_.handover_cooldown_us) return;
   auto owner = connections_.find(*o.owner);
   if (owner == connections_.end()) return;
@@ -1307,6 +1311,81 @@ void Session::change_owner(const ObjectId& oid, Object& o, std::optional<Connect
   announce_owner(oid, o);
 }
 
+// Fishing (issue 151, docs/objects.md "Fish and lures"). Each game says how
+// near its own lure is to every fish it has loaded. A fish's AI only sees the
+// lure of the game it runs in, so the fish belongs in the game whose lure is
+// nearest: that game runs the approach, the bite, the fight and the catch.
+void Session::on_fish_lure(Connection& c, const FishLure& m, std::uint64_t now_us) {
+  c.lures.clear();
+  for (const FishLureEntry& e : m.fish) {
+    c.lures.emplace(e.id, e);
+    auto it = objects_.find(e.id);
+    if (it != objects_.end() && it->second.scene == c.scene) it->second.fish = true;
+  }
+  c.lures_at = stamp(now_us);
+}
+
+void Session::fish_owner(const ObjectId& oid, Object& o, ConnectionId owner,
+                         std::uint64_t now_us) {
+  // A game's claim on the fish: its lure in reach, from a fresh list.
+  auto claim = [&](ConnectionId cid) -> std::optional<FishLureEntry> {
+    const Connection& pc = connections_.at(cid);
+    if (pc.lures_at == 0 || now_us < pc.lures_at ||
+        now_us - pc.lures_at > config_.fish_lure_stale_us) {
+      return std::nullopt;
+    }
+    auto it = pc.lures.find(oid);
+    if (it == pc.lures.end() || it->second.distance_cm == kFishLureNone) return std::nullopt;
+    return it->second;
+  };
+  // Lower is better: on the lure, then swimming at it, then the distance.
+  auto rank = [](const FishLureEntry& e) {
+    return (e.flags & fish_lure::hooked) ? 0 : (e.flags & fish_lure::drawn) ? 1 : 2;
+  };
+  const auto mine = claim(owner);
+  std::optional<ConnectionId> want;
+  if (!(mine && (mine->flags & fish_lure::hooked))) {
+    const double margin_cm = static_cast<double>(config_.fish_lure_margin_m) * 100.0;
+    std::optional<FishLureEntry> best;
+    std::uint8_t best_number = 0;
+    for (ConnectionId other : o.present) {
+      if (other == owner || !has_loaded(other, o)) continue;
+      const Connection& pc = connections_.at(other);
+      if (pc.status & kBusy) continue;
+      const auto theirs = claim(other);
+      if (!theirs) continue;
+      // Beats the owner: a better rank, or the same and clearly nearer.
+      if (mine && (rank(*theirs) > rank(*mine) ||
+                   (rank(*theirs) == rank(*mine) &&
+                    theirs->distance_cm + margin_cm > mine->distance_cm))) {
+        continue;
+      }
+      if (!best || rank(*theirs) < rank(*best) ||
+          (rank(*theirs) == rank(*best) &&
+           (theirs->distance_cm < best->distance_cm ||
+            (theirs->distance_cm == best->distance_cm && pc.number < best_number)))) {
+        best = theirs;
+        best_number = pc.number;
+        want = other;
+      }
+    }
+  }
+  if (!want) {
+    o.candidate.reset();
+    return;
+  }
+  if (o.candidate != want) {
+    o.candidate = want;
+    o.candidate_since = now_us;
+  }
+  const bool settled =
+      o.changed_at == 0 || now_us - o.changed_at >= config_.fish_lure_cooldown_us;
+  if (settled && now_us - o.candidate_since >= config_.fish_lure_hold_us) {
+    ++stats_.fish_to_lure;
+    ask_handover(oid, o, *want, now_us);
+  }
+}
+
 void Session::run_ownership(std::uint64_t now_us) {
   std::vector<ObjectId> ids;
   ids.reserve(objects_.size());
@@ -1350,6 +1429,12 @@ void Session::run_ownership(std::uint64_t now_us) {
     // An owner whose game stands still gives it up, fight or not.
     if (unfit_owner(oc, now_us)) {
       if (auto next = best_other(o, owner, true, now_us)) ask_handover(oid, o, *next, now_us);
+      continue;
+    }
+
+    // A fish goes by the lures only (issue 151).
+    if (o.fish) {
+      fish_owner(oid, o, owner, now_us);
       continue;
     }
 

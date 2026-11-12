@@ -351,6 +351,27 @@ public:
     // unloaded.
     void SetPlayer(std::optional<coop::protocol::Vec3> player) { player_ = player; }
 
+    // Issue 200 (npc-anim). Present thread, before Tick: whether our Link is
+    // in an event (a cutscene or a talk, PlayerReading::event_running). While
+    // it is, every townsperson (Npc_, shared) within kEventNpcM of our Link
+    // is flagged targeting in OBJECT_PRESENT, so the server gives it to us
+    // (or, ours already, keeps it in a fight lock): every other game's copy
+    // then plays our NPC's cutscene motion (place, rotation, AS command and
+    // frame, the usual copy) instead of its own routine. kEventNpcKeepUs
+    // after the event the flag drops and the normal owner rules come back;
+    // the copies stay where our NPC was left. No new message.
+    void SetEvent(bool in_event) { in_event_ = in_event; }
+    // A copy our event claimed (within kEventNpcKeepUs of the last Tick that
+    // flagged it): the owner's routine is not put on it while the hand-over
+    // runs, as the 8 m event rule (coop_guard.h) does nearer.
+    bool EventNpc(std::uint64_t address, std::uint64_t now_us) const;
+    // Who owns the object at `address` (0: not known, or not on our list).
+    std::uint8_t OwnerAt(std::uint64_t address) const;
+    // How many townspeople our event flags now (for the log).
+    std::size_t EventNpcs(std::uint64_t now_us) const;
+    static constexpr float kEventNpcM = 30.0f;
+    static constexpr std::uint64_t kEventNpcKeepUs = 2'000'000;
+
     // Issue 151. Present thread, before Tick: where our own cast lures are
     // (CoopProjectiles::TheLures). Each Tick sends FISH_LURE (fishing-3):
     // every fish in the walk with how near our nearest lure is (within
@@ -577,6 +598,8 @@ private:
         bool reacts = false;                    // an enemy: hurts go through the game
         bool fish = false;                      // IsFish: the lure rules
         bool guard = false;                     // IsGuard: handed over on a reaction
+        bool npc = false;                       // Npc_: claimed by our event (issue 200)
+        std::uint64_t event_until = 0;          // flagged by our event until then
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         // Chasing our Link (NoteDrift): the run of steps towards it.
@@ -662,6 +685,7 @@ private:
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
+    bool in_event_ = false;  // issue 200: SetEvent
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
     std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE
     std::uint64_t fish_at_ = 0;

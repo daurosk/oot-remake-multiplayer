@@ -2918,3 +2918,61 @@ TEST_CASE("objects: a copy's egg goes and the owner's larva is made here (gohma-
     REQUIRE(b.IdOf(0x300));
     CHECK(*b.IdOf(0x300) == spawn.id);
 }
+
+TEST_CASE("objects: townspeople near our Link in an event are flagged targeting and wait (issue 200)") {
+    constexpr const char* kNpc = "Npc_Kokiri_Mido";
+    // A copy at x owned by player 2; our Link at 0 is in an event or not.
+    auto run = [&](float x, bool event, const std::string& name, bool ours) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 100, x, "Wait", name)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, ours ? 1 : 2);
+        sync.SetEvent(event);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 700; t += 66) {
+            if (!ours) {
+                sync.Receive(OwnerSample(id, 2, t * kMs, x, 100, "Wait"));
+            }
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x100, 0x11, 100, x, "Talk", name)}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        const bool waits = sync.EventNpc(0x100, 700 * kMs);
+        CHECK(waits == (flags && (*flags & kTargeting) != 0));
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, true, kNpc, false));
+    CHECK(run(25.0f, true, kNpc, false));  // further than the 8 m event rule
+    CHECK(run(5.0f, true, kNpc, true));    // ours: held (a fight to the server)
+    CHECK_FALSE(run(5.0f, false, kNpc, false));             // no event
+    CHECK_FALSE(run(35.0f, true, kNpc, false));             // over 30 m
+    CHECK_FALSE(run(5.0f, true, "Animal_Cucco", false));    // not a townsperson
+}
+
+TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the event (issue 200)") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    const Seen npc = Acting(0x100, 0x11, 100, 3.0f, "Wait", "Npc_Kokiri_Saria");
+    Tick(sync, 0, {npc});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    CHECK(sync.OwnerAt(0x100) == 2);
+    sync.SetEvent(true);
+    Tick(sync, 100 * kMs, {npc});
+    CHECK(sync.EventNpc(0x100, 100 * kMs));
+    CHECK(sync.EventNpcs(100 * kMs) == 1);
+    sync.SetEvent(false);
+    std::optional<std::uint8_t> flags;
+    for (std::uint64_t t = 166; t <= 4000; t += 66) {
+        for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {npc}))) {
+            flags = p.objects[0].flags;
+        }
+    }
+    CHECK_FALSE(sync.EventNpc(0x100, 4000 * kMs));
+    CHECK(sync.EventNpcs(4000 * kMs) == 0);
+    REQUIRE(flags);
+    CHECK((*flags & kTargeting) == 0);
+    CHECK(sync.OwnerAt(0x999) == 0);
+}

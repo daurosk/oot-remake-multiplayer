@@ -1,0 +1,35 @@
+#! switches LICHII_COOP_DEBUG_NPC=1
+# npc-anim (issue 200): A runs an event in Kakariko (reads the signpost, as cutscene.A.txt) and
+# holds the text open about 12 s; B stands a few metres away outside it (npc-anim.B.txt).
+# Run: tools\autotest\run.ps1 -Scenario npc-anim (the header adds LICHII_COOP_DEBUG_NPC=1).
+un.ps1 -Scenario npc-anim (the header adds LICHII_COOP_DEBUG_NPC=1).
+# Expect in A's log while reading: "coop: npc-anim: our Link is in an event: N NPCs near it are ours now"
+# (N > 0 when a townsperson is within 30 m), then "the event's NPCs are free again" ~2 s after the text closes.
+# In B's log: "coop: npc-anim: <Npc_...> copied from P1 at x y z plays '<anim>' frame f" for those NPCs,
+# once a second, all through "reading" (P1 = A; before the event the owner may be P2 = B itself, so
+# those lines name P2 or are missing). Screenshots at "reading": the NPCs near the post stand and
+# animate the same in both windows. N = 0 means no townsperson was near the post: then any NPC
+# talk (A in front of an NPC, e.g. Mido or Saria in Kokiri Forest) is the next thing to try.
+mark start
+wait 120
+stick 0 -1 120          # back down the path, out of the Graveyard
+wait 420                # Kakariko loads
+mark kakariko
+stick 0 1 60
+goto -5.9 70.5 0.6      # just east of the post
+toward -7.46 71.12 8
+mark at-post
+wait 20
+press A 12              # read it: the event starts
+wait 240
+mark reading
+wait 360
+mark reading-2
+wait 120
+press A 12              # through the text
+wait 60
+press A 12
+wait 60
+press B 12
+wait 240
+mark closed

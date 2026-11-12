@@ -102,6 +102,27 @@ FIXED_COMPONENTS = {
     "XLinkRef": "?Component/XLink/ActorBasic.engine__component__XLinkParam.bgyml",
 }
 
+# Test switches for Hookshot (hs-puppets-alt-b). The game reads two of the components the puppet
+# leaves out, where the emulator gives 0 for the null read and Hookshot faults:
+# - actor component slot 10 (table +0x50) is PhysicsRef: the engine's component registry
+#   (main+0x11e9b00) fills one 0x18-byte row per component in slot order, BlackboardRef 0, the
+#   model 1, ModelInfoRef 2, ..., ASRef 8, AIInfoRef 9, PhysicsRef 10, ELinkRef 11, SLinkRef 12,
+#   XLinkRef 13; the game's components follow from slot 32 (main+0x120c800; EquipmentUserRef 64,
+#   LifeRef 87, PlayerRef 107). main+0x4b8240, run when a model's hair material gets its
+#   ns_tex_mtx0, then marks [[physics +0x20] +0x1c8] (the physics root's main body / cloth).
+# - slot 107, PlayerRef (+0x358), at +0x7d8: main+0x2dcee60, a proc of an item the puppet wears
+#   (slot 59, DynamicEquipment, its +0x20 the wearer), via main+0x82acc0.
+# `--keep-components A,B` keeps those of the player's components as they are. `--puppet-physics`
+# gives the puppet its own PhysicsParam whose ControllerSet has only these keys of the player's:
+# Link's cloth (hair, hood, belt), no character controller, bodies, sensors or ragdoll.
+CLOTH_KEYS = ("Cloth", "ClothAdvandecOption", "ClothList", "ClothReaction")
+HELPER_BONE_KEYS = ("HelperBoneList", "HelperBoneControlBoneGroup")
+PUPPET_PHYSICS = {"cloth": CLOTH_KEYS, "bones": CLOTH_KEYS + HELPER_BONE_KEYS}
+PHYSICS_DIR = "Component/Physics/"
+PHYSICS_SUFFIX = ".engine__component__PhysicsParam.bgyml"
+CONTROLLER_SET_DIR = "Phive/ControllerSetParam/"
+CONTROLLER_SET_SUFFIX = ".phive__ControllerSetParam.bgyml"
+
 # ActorInfo fields of the player row that belong to the player only. SLinkUserName names the
 # sound user and is kept unless the pack is built without sound.
 DROP_INFO_FIELDS = ("ActorName", "ELinkUserName")
@@ -259,16 +280,62 @@ def flatten_actor_param(members, actor):
     return comps
 
 
-def make_actor_param(player_components, sound=True, basic_xlink=False):
+def make_actor_param(player_components, sound=True, basic_xlink=False, keep_components=()):
+    """`keep_components`: more of the player's components to keep as they are (a test switch)."""
     missing = [k for k in REQUIRED_COMPONENTS if k not in player_components]
     if missing:
         raise BuildError(f"the player's ActorParam has no {', '.join(missing)}")
+    unknown = [k for k in keep_components if k not in player_components]
+    if unknown:
+        raise BuildError(f"--keep-components: the player's ActorParam has no {', '.join(unknown)}")
     keep = KEEP_COMPONENTS + (SOUND_COMPONENTS if sound else ())
     comps = {k: player_components[k] for k in keep if k in player_components}
     comps.update(FIXED_COMPONENTS)
     if sound and not basic_xlink and player_components.get("XLinkRef"):
         comps["XLinkRef"] = player_components["XLinkRef"]
+    for k in keep_components:
+        comps[k] = player_components[k]
     return {"Components": comps}
+
+
+def _merged_chain(members, path):
+    """A member with its in-pack `$parent` chain merged (child wins), and the paths read."""
+    chain, seen = [], []
+    while path and path in members and path not in seen:
+        seen.append(path)
+        doc = byml.loads(members[path])
+        chain.append(doc)
+        path = ref_to_member(doc.get("$parent")) if isinstance(doc, dict) else None
+    out = {}
+    for doc in reversed(chain):
+        out.update({k: v for k, v in doc.items() if k != "$parent"})
+    return out, seen
+
+
+def physics_paths(actor):
+    return f"{PHYSICS_DIR}{actor}{PHYSICS_SUFFIX}", f"{CONTROLLER_SET_DIR}{actor}{CONTROLLER_SET_SUFFIX}"
+
+
+def puppet_physics(members, player_components, actor, mode):
+    """The puppet's own physics (`--puppet-physics`): {member path: (bytes, the player's member
+    it is made from)} for a PhysicsParam and a ControllerSetParam with only PUPPET_PHYSICS[mode]
+    of the player's ControllerSet (its $parent chain merged)."""
+    if mode not in PUPPET_PHYSICS:
+        raise BuildError(f"no puppet physics {mode} (have {', '.join(PUPPET_PHYSICS)})")
+    src = ref_to_member(player_components.get("PhysicsRef"))
+    if not src or src not in members:
+        raise BuildError("the player's ActorParam has no PhysicsRef in the pack")
+    phys, _ = _merged_chain(members, src)
+    cs_src = ref_to_member(phys.get("ControllerSetPath"))
+    if not cs_src or cs_src not in members:
+        raise BuildError(f"the player's physics param {src} has no ControllerSet in the pack")
+    cs, _ = _merged_chain(members, cs_src)
+    own_cs = {k: cs[k] for k in PUPPET_PHYSICS[mode] if k in cs}
+    if "Cloth" not in own_cs:
+        raise BuildError(f"the player's ControllerSet {cs_src} has no Cloth")
+    phys_path, cs_path = physics_paths(actor)
+    own_phys = {"ControllerSetPath": "Work/" + cs_path[:-len(".bgyml")] + ".gyml"}
+    return {phys_path: (byml.dumps(own_phys), src), cs_path: (byml.dumps(own_cs), cs_src)}
 
 
 def collect_members(members, root_doc):
@@ -372,14 +439,24 @@ def tunic_model_info(actor, variant, project):
 
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
-               project=None, basic_xlink=False):
+               project=None, basic_xlink=False, keep_components=(), physics=None):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
-    (a tunic colour), else the player's."""
+    (a tunic colour), else the player's. `keep_components`, `physics`: the Hookshot test switches
+    (`--keep-components`, `--puppet-physics`, see PUPPET_PHYSICS)."""
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
-    doc = make_actor_param(flatten_actor_param(members, player), sound, basic_xlink)
+    if physics and "PhysicsRef" in keep_components:
+        raise BuildError("--puppet-physics and --keep-components PhysicsRef: choose one")
+    player_components = flatten_actor_param(members, player)
+    doc = make_actor_param(player_components, sound, basic_xlink, keep_components)
     files = collect_members(members, doc)
+    if physics:
+        own = puppet_physics(members, player_components, actor, physics)
+        for path, (data, _) in own.items():
+            files[path] = data
+            files.update(collect_members(members, byml.loads(data)))
+        doc["Components"]["PhysicsRef"] = "?" + physics_paths(actor)[0]
     if project:
         path, data = tunic_model_info(actor, variant, project)
         files[path] = data
@@ -701,7 +778,8 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False):
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, keep_components=(),
+          physics=None):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -709,7 +787,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     `sound`: False builds the puppets without Link's sounds (issue 131). `player_footsteps`: keep
     the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
     SLink user for the puppets' sounds (SLINK_DIR). `basic_xlink`: the shared ActorBasic XLink param
-    instead of the player's (test switch, the pack before puppet-looks)."""
+    instead of the player's (test switch, the pack before puppet-looks). `keep_components`,
+    `physics`: Hookshot test switches (PUPPET_PHYSICS)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -756,7 +835,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
-                                           basic_xlink=basic_xlink)
+                                           basic_xlink=basic_xlink, keep_components=keep_components,
+                                           physics=physics)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -793,9 +873,19 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 raise BuildError(f"the player's SLink param {src} is not in the pack")
             table.add_new(path, max((table.get(src) or 0) + max(0, len(data) - len(members[src])),
                                     len(data) + PACK_SIZE_MARGIN))
+        own_physics = None
+        if physics:
+            own_physics = {}
+            for path, (data, src) in puppet_physics(members, flatten_actor_param(members, player), actor,
+                                                    physics).items():
+                # Sized as the player's file it is cut from (it is never longer).
+                size = max(table.get(src) or 0, len(data) + PACK_SIZE_MARGIN)
+                table.add_new(path, size)
+                own_physics[path] = size
         made.append({"actor": actor, "from": player, "tunic": shade, "model": project, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
-                     "members": names, "equipment_keys": keys, "footstep": footstep})
+                     "members": names, "equipment_keys": keys, "footstep": footstep,
+                     "keep_components": list(keep_components), "physics": physics, "physics_files": own_physics})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
     src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
@@ -955,6 +1045,12 @@ def main(argv=None):
                     help="the language of the HUD's place names, e.g. USen, EUen, EUfr")
     ap.add_argument("--basic-xlink", action="store_true",
                     help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
+    ap.add_argument("--keep-components", default="", metavar="LIST",
+                    help="Hookshot test switch: also keep these of the player's components, e.g. "
+                         "PhysicsRef,PlayerRef (see PUPPET_PHYSICS in this file)")
+    ap.add_argument("--puppet-physics", choices=sorted(PUPPET_PHYSICS),
+                    help="Hookshot test switch: the puppets get a physics component of their own with "
+                         "only Link's cloth (cloth) or cloth and helper bones (bones)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -1005,7 +1101,9 @@ def _main_build(a, romfs, hud_reader=None):
         tunics = [] if a.tunics.strip().lower() == "none" else [c.strip() for c in a.tunics.split(",") if c.strip()]
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
-              stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink)
+              stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
+              keep_components=[k.strip() for k in a.keep_components.split(",") if k.strip()],
+              physics=a.puppet_physics)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

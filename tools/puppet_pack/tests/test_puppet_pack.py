@@ -1656,5 +1656,121 @@ class DungeonRoomsTest(unittest.TestCase):
                 self.assertEqual(best[0], room, f"{scene} {p}")
 
 
+def fake_physics(members, variant):
+    """The fake player pack with a physics chain shaped like the game's: the variant's PhysicsParam
+    (a $parent) names a ControllerSet whose $parent holds the cloth and the body."""
+    m = dict(members)
+    cs = "Phive/ControllerSetParam/"
+    m["Component/Physics/P.engine__component__PhysicsParam.bgyml"] = byml.dumps(
+        {"$parent": "Work/Component/Physics/Base.engine__component__PhysicsParam.gyml",
+         "ControllerSetPath": f"Work/{cs}Player_{variant}.phive__ControllerSetParam.gyml"})
+    m["Component/Physics/Base.engine__component__PhysicsParam.bgyml"] = byml.dumps(
+        {"ControllerSetPath": f"Work/{cs}Player.phive__ControllerSetParam.gyml"})
+    m[f"{cs}Player_{variant}.phive__ControllerSetParam.bgyml"] = byml.dumps(
+        {"$parent": f"Work/{cs}Player.phive__ControllerSetParam.gyml",
+         "Cloth": [{"FilePath": f"Work/Phive/ClothParam/Player_{variant}.phive__ClothParam.gyml", "Name": "Default"}],
+         "ClothList": [{"Name": "Default", "Path": f"Work/Phive/Cloth/Player_{variant}.phcl"}]})
+    m[f"{cs}Player.phive__ControllerSetParam.bgyml"] = byml.dumps(
+        {"Cloth": [{"FilePath": "Work/Phive/ClothParam/Player_Base.phive__ClothParam.gyml", "Name": "Default"}],
+         "ClothReaction": [{"FilePath": "Work/Phive/ClothReaction/Hair.phive__ClothReaction.gyml", "Name": "Hair"}],
+         "HelperBoneList": [{"FilePath": "Work/Phive/HelperBoneParam/P.phive__HelperBoneParam.gyml", "Name": "Default"}],
+         "PathCharacterController": "Work/Phive/CharacterControllerParam/P.phive__CharacterControllerParam.gyml",
+         "ShapeNamePathAry": [{"FilePath": "Work/Phive/ShapeParam/P.phive__ShapeParam.gyml", "Name": "Player_cct"}]})
+    for f in (f"Phive/ClothParam/Player_{variant}.phive__ClothParam.bgyml",
+              "Phive/ClothParam/Player_Base.phive__ClothParam.bgyml",
+              "Phive/ClothReaction/Hair.phive__ClothReaction.bgyml",
+              "Phive/HelperBoneParam/P.phive__HelperBoneParam.bgyml",
+              "Phive/CharacterControllerParam/P.phive__CharacterControllerParam.bgyml",
+              "Phive/ShapeParam/P.phive__ShapeParam.bgyml"):
+        m[f] = byml.dumps({"X": 1})
+    return m
+
+
+class HookshotSwitchTest(unittest.TestCase):
+    """--keep-components and --puppet-physics (hs-puppets-alt-b): off by default."""
+
+    def comps(self, pack, actor="CoopPuppet_Child"):
+        out = sarc.read(pack)
+        return out, byml.loads(out[f"Actor/{actor}.engine__actor__ActorParam.bgyml"])["Components"]
+
+    def test_default_unchanged(self):
+        members = fake_physics(fake_player_pack("Child"), "Child")
+        self.assertEqual(build.build_pack(members, "Child"),
+                         build.build_pack(members, "Child", keep_components=(), physics=None))
+        out, comps = self.comps(build.build_pack(members, "Child")[0])
+        self.assertNotIn("PhysicsRef", comps)
+        self.assertFalse([k for k in out if k.startswith("Phive/")])
+
+    def test_keep_components(self):
+        members = fake_physics(fake_player_pack("Child"), "Child")
+        out, comps = self.comps(build.build_pack(members, "Child", keep_components=("PhysicsRef", "ELinkRef"))[0])
+        self.assertEqual(comps["PhysicsRef"], "?Component/Physics/P.engine__component__PhysicsParam.bgyml")
+        self.assertEqual(comps["ELinkRef"], "?Component/ELink/Player.engine__component__ELinkParam.bgyml")
+        # The player's whole physics comes along, the character controller too.
+        self.assertIn("Phive/CharacterControllerParam/P.phive__CharacterControllerParam.bgyml", out)
+        self.assertIn("ASRef", comps)
+        with self.assertRaisesRegex(build.BuildError, "no PlayerRef"):
+            build.build_pack(members, "Child", keep_components=("PlayerRef",))
+
+    def test_cloth_physics(self):
+        members = fake_physics(fake_player_pack("Child"), "Child")
+        out, comps = self.comps(build.build_pack(members, "Child", physics="cloth")[0])
+        phys, cs = build.physics_paths("CoopPuppet_Child")
+        self.assertEqual(comps["PhysicsRef"], "?" + phys)
+        self.assertEqual(byml.loads(out[phys]),
+                         {"ControllerSetPath": "Work/Phive/ControllerSetParam/CoopPuppet_Child.phive__ControllerSetParam.gyml"})
+        own = byml.loads(out[cs])
+        # Merged through the $parent (the child's Cloth wins), cloth keys only.
+        self.assertEqual(sorted(own), ["Cloth", "ClothList", "ClothReaction"])
+        self.assertEqual(own["Cloth"][0]["FilePath"], "Work/Phive/ClothParam/Player_Child.phive__ClothParam.gyml")
+        self.assertIn("Phive/ClothParam/Player_Child.phive__ClothParam.bgyml", out)
+        self.assertIn("Phive/ClothReaction/Hair.phive__ClothReaction.bgyml", out)
+        for gone in ("Phive/ClothParam/Player_Base.phive__ClothParam.bgyml",
+                     "Phive/CharacterControllerParam/P.phive__CharacterControllerParam.bgyml",
+                     "Phive/ShapeParam/P.phive__ShapeParam.bgyml",
+                     "Phive/HelperBoneParam/P.phive__HelperBoneParam.bgyml",
+                     "Component/Physics/P.engine__component__PhysicsParam.bgyml",
+                     "Phive/ControllerSetParam/Player.phive__ControllerSetParam.bgyml"):
+            self.assertNotIn(gone, out)
+        out, _ = self.comps(build.build_pack(members, "Child", physics="bones")[0])
+        self.assertIn("HelperBoneList", byml.loads(out[cs]))
+        self.assertIn("Phive/HelperBoneParam/P.phive__HelperBoneParam.bgyml", out)
+
+    def test_physics_errors(self):
+        members = fake_physics(fake_player_pack("Child"), "Child")
+        with self.assertRaisesRegex(build.BuildError, "choose one"):
+            build.build_pack(members, "Child", keep_components=("PhysicsRef",), physics="cloth")
+        with self.assertRaisesRegex(build.BuildError, "no puppet physics"):
+            build.build_pack(members, "Child", physics="rigid")
+        with self.assertRaisesRegex(build.BuildError, "no ControllerSet"):
+            build.build_pack(fake_player_pack("Child"), "Child", physics="cloth")
+
+
+@unittest.skipIf(zstandard is None, "needs zstandard")
+class HookshotSwitchBuildTest(unittest.TestCase):
+    """The whole tool with --puppet-physics, on FullBuildTest's made-up romfs."""
+    setUp = FullBuildTest.setUp
+    tearDown = FullBuildTest.tearDown
+    write = FullBuildTest.write
+
+    def test_build(self):
+        from puppet_pack import zs
+        d = zs.Dicts.from_romfs(self.romfs)
+        for v in ("Child", "Adult"):
+            self.write(f"Pack/Actor/Player_{v}.pack.zs",
+                       d.compress(sarc.write(fake_physics(fake_player_pack(v), v)), build.PACK_DICT))
+        mod = os.path.join(self.dir, "mod")
+        build.build(self.romfs, mod, log=lambda *_: None, physics="cloth")
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            mod, "romfs", "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        man = json.loads(build.read(os.path.join(mod, "coop_puppet.json")))
+        for a in man["actors"]:
+            self.assertEqual(a["physics"], "cloth")
+            self.assertEqual(sorted(a["physics_files"]), sorted(build.physics_paths(a["actor"])))
+            for path, size in a["physics_files"].items():
+                self.assertEqual(t.get(path), size)
+                self.assertGreater(size, build.PACK_SIZE_MARGIN)
+
+
 if __name__ == "__main__":
     unittest.main()

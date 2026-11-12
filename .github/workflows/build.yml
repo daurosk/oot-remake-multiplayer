@@ -88,6 +88,9 @@ jobs:
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Linux kit tests
+        if: matrix.compiler.name == 'gcc'
+        run: bash tools/release/tests/linux_kit_test.sh
 
   sanitize:
     runs-on: ubuntu-latest

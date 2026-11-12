@@ -142,12 +142,12 @@ int main(int argc, char** argv) {
     }
   }
   // A forward opens this PC to the whole internet while the server runs:
-  // only with something that says who may join (issue 165).
-  if (line->upnp && line->password.empty() && line->allowed.empty()) {
+  // never without a join password (issue 165; --allow alone is not enough:
+  // the password is the lock, an address can be shared).
+  if (line->upnp && line->password.empty()) {
     std::fprintf(stderr,
                  "coop_server: --upnp (upnp = yes) opens this PC's port to the whole internet, so it "
-                 "needs a join password (server_password) or --allow (server_allow) as well. The server "
-                 "was not started.\n");
+                 "needs a join password (server_password) as well. The server was not started.\n");
     return 2;
   }
   // The relay lets guests in by their internet address once one of them sent

@@ -1,0 +1,72 @@
+# hs-door (Hookshot and emulator, issue 194): cutscene-snap with B really going through the slingshot
+# room's door. In cutscene-snap-b (bigrun4, 2026-11-12) the door rows never ran: B's "toward" turned
+# Link, but "stick 0 1" moves by the camera, so Link walked into the rock wall beside the door and stood
+# there from 141 s (b-door: -34.38 12.46, the door's ShutterFrame at -30.5 10.2; shot b-door-B: Link
+# pinned at the wall facing the camera). Here B walks to the door and through it with goto (by place).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-door (emulator: cutscene-snap's steps)
+# Pass, A's log after B's "mark b-door" time: "coop: puppet: P2 show -> hold (their cutscene)" then
+# "P2 hold -> show", and no "P2 snap" (the puppet follows B through the door without a jump); B's log:
+# the boss line "event true" while passing; shots b-door: B on the far side of the door.
+# If B's "test steer at" lines stop short of x -30.5, the door is shut (the room's enemies not cleared):
+# then the door rows are inconclusive again, and the room needs clearing first.
+# cutscene-snap's own notes follow (A's part, the ladder, is as there).
+# cutscene-snap, A (see cutscene-snap.steps.txt): as deku-ladder.A.txt (warp, chest, shoot the
+# eye: the ladder's cutscene), then faces the room's door (ShutterFrame -30.5 109.8 10.2) and
+# watches B walk through it.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 120
+assign SlingShot
+wait 120
+place -51.8 112.6 12.2
+wait 240
+mark placed
+goto -53.3 12.2 0.4 300  # in front of the chest
+toward -54.4 12.2 8
+press A                  # open it: the item get, and the trap floor goes
+wait 300
+press A
+wait 120
+press A
+wait 120
+press A
+wait 240
+mark trap
+wait 300
+toward -35.6 10.7 10     # face the eye switch across the room
+wait 30
+hold ZR 60 aim1
+hold ZR 30
+wait 60
+mark shot1
+rstick 0 0.4 6           # a little higher
+hold ZR 60 aim2
+hold ZR 30
+wait 60
+mark shot2
+rstick 0 0.4 6
+hold ZR 60 aim3
+hold ZR 30
+wait 120
+press B
+mark ladder
+wait 900
+mark late
+toward -30.5 10.2 10     # face B and the door
+press ZL 10
+wait 60
+mark a-watch
+wait 1500                # B goes through the door here
+mark a-end

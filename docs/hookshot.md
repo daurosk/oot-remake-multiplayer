@@ -87,3 +87,12 @@ Hookshot is by NotRexed and its contributors, GPL-3.0, itself a fork of mkw-reco
 | Callers shared by both builds (`coop_callers`) | Done (`tests/lichii/callers_test.cpp`) |
 | Kit (`Build-Hookshot-Coop.bat`, `Host-/Join-Hookshot.bat`) | In the release kit; ran end to end on the test PC (download, checks, patch, build, co-op install) |
 | Proofs 1 to 5 | 2 done: the patched game builds and loads the module. 3 to 5 in the combined two-game test <!-- FILL from reports/integrate-p11.md --> |
+
+### What the emulator has that Hookshot does not yet
+
+| Feature | On Hookshot |
+|---|---|
+| Puppet settings: `LICHII_COOP_TUNICS=0`, `LICHII_COOP_SELF_TUNIC` (green players get the green puppet, issue 202) | Same code as the emulator since `hs-tunic` (`lichii/hook/coop_puppet_config.cpp`; the module had a shortened copy). The kit's Hookshot launcher still has to set `LICHII_COOP_SELF_TUNIC` and recolour the pack in `mods\contents` (tools/release follow-up) |
+| Your own Ocarina notes sent to the others (issue 152) | Not yet: the hook reads the pad from the emulator's HID, which Hookshot does not have |
+| Co-op window: chat, player list, markers, HUD hearts, cheats | Not yet (Qt in the emulator; Hookshot draws ImGui). The log only |
+| Pack hints (old pack, no pack) at start | Not yet (kit launcher) |

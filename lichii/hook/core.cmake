@@ -38,6 +38,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_enemy_shots.cpp"
     "${_coop_hook}/coop_projectiles.cpp"
     "${_coop_hook}/coop_puppet.cpp"
+    "${_coop_hook}/coop_puppet_config.cpp"
     "${_coop_hook}/coop_ride.cpp"
     "${_coop_hook}/coop_settings.cpp"
     "${_coop_hook}/coop_spawn.cpp"

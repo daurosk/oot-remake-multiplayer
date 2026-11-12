@@ -95,6 +95,19 @@ TEST_CASE("hookshot: the module builds every hook file the emulator builds, but 
     CHECK(module.find("namespace CoopTestInput") == std::string::npos);  // the real one is built
 }
 
+TEST_CASE("hookshot: the puppets' settings are the emulator's, not a copy") {
+    // A shortened copy in the module dropped LICHII_COOP_TUNICS and
+    // LICHII_COOP_SELF_TUNIC on Hookshot (issue 202): both call one function.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    const std::string svc = ReadFile(kRepo / "lichii" / "hook" / "coop_svc.cpp");
+    CHECK(module.find("CoopPuppetConfig::Configure()") != std::string::npos);
+    CHECK(svc.find("CoopPuppetConfig::Configure()") != std::string::npos);
+    CHECK(module.find("PlannerSettings") == std::string::npos);
+    CHECK(svc.find("PlannerSettings") == std::string::npos);
+    const std::string cmake = ReadFile(kRepo / "lichii" / "hook" / "core.cmake");
+    CHECK(cmake.find("coop_puppet_config.cpp") != std::string::npos);
+}
+
 TEST_CASE("hookshot: test commands come from the driver's file, the pad stays the emulator's") {
     const std::string input = ReadFile(kRepo / "lichii" / "hook" / "coop_testinput.cpp");
     CHECK(input.find("\"LICHII_COOP_TEST_COMMANDS\"") != std::string::npos);

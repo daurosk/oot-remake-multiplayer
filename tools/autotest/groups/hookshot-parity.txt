@@ -105,3 +105,14 @@ navi-room  label="#145 Navi per room"
 teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"
 kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"
 pvp  expect='A:coop: pvp: our sword reached P2'  label="PvP hits"
+
+[g11]
+# Steps files on Hookshot (G7, tools/autotest/hs_steps.py through run.ps1 -Runtime hookshot): close, start, kill,
+# server stop/start, password tries. Graded by each run's counts.txt (PASS/FAIL lines, as on the emulator).
+# stray and screens count puppets (expect A=1): they FAIL while the module refuses Link puppets on Hookshot
+# (docs/hookshot.md, proofs 3 and 4) unless the crash is fixed; their joins, leaves and server restart still show.
+join-password  password=zelda-test-ocarina-42  label="#160 #201 join password and encrypted traffic (G6)"
+world-reset  label="#159 world reset"
+threads-of-time  label="#193 Threads of Time"
+stray  label="#175 stray: leave, rejoin, crash, server restart, keep-number"
+screens  label="screens: rejoin on other screens"

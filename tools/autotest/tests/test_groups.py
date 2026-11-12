@@ -37,7 +37,8 @@ class ParseTest(unittest.TestCase):
         gs = g.parse_groups(GROUPS)
         self.assertEqual([n for n, _ in gs], ["g1", "g2"])
         walk, door = gs[0][1]
-        self.assertEqual(walk, {"scenario": "walk", "switches": "", "expects": [], "timeout": None, "label": ""})
+        self.assertEqual(walk, {"scenario": "walk", "switches": "", "expects": [], "timeout": None, "label": "",
+                                "password": ""})
         self.assertEqual(door["switches"], "LICHII_COOP_CHEATS=1,A:LICHII_COOP_COLOR=red")
         self.assertEqual(door["expects"], [("A", "coop: connected")])
         self.assertEqual(door["label"], "#178 door")
@@ -181,6 +182,30 @@ class RunTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "hookshot-A1", "autotest-save", "mine.sav")))
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "hookshot-A1", "autotest-save", "new.sav")))
         self.assertFalse(g.prepare(planned, self.tmp, dry=True, say=lambda *_: None, restore=lambda f, d: False))
+
+
+class StepsGroupTest(unittest.TestCase):
+    """Steps files in a group (hs_steps.py through run.ps1 -Runtime hookshot)."""
+
+    def test_password_goes_to_run_ps1(self):
+        planned = g.plan(g.parse_groups("[g11]\njoin-password  password=zelda-test-ocarina-42\nstray\n"),
+                         "K", "R", "S")
+        cmd = planned[0][2][0]
+        self.assertEqual(cmd[cmd.index("-ServerPassword") + 1], "zelda-test-ocarina-42")
+        self.assertNotIn("-ServerPassword", planned[0][2][1])
+
+    def test_a_steps_run_is_graded_by_its_counts(self):
+        root = tempfile.mkdtemp()
+        try:
+            f = os.path.join(root, "g11", "stray", "t")
+            write(os.path.join(f, "steps.txt"), "step 5: start A B\nsteps done: 0 FAIL\n")
+            write(os.path.join(f, "counts.txt"), "PASS both-loaded (want A=1 B=1, after 3 s)\nPASS b-left\n")
+            write(os.path.join(f, "run.json"), json.dumps({"group": "g11", "scenario": "stray", "exit": 0}))
+            self.assertEqual(g.judge(f), ("PASS", "counts.txt: 2 PASS"))
+            write(os.path.join(f, "counts.txt"), "PASS both-loaded\nFAIL b-left (want A=0)\n")
+            self.assertEqual(g.judge(f)[0], "FAIL")
+        finally:
+            shutil.rmtree(root)
 
 
 class MergeTest(unittest.TestCase):

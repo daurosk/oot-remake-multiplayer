@@ -72,7 +72,7 @@ def parse_groups(text):
             words = shlex.split(line, posix=True)
         except ValueError as e:
             raise Fail("line %d: %s" % (n, e))
-        run = {"scenario": words[0], "switches": "", "expects": [], "timeout": None, "label": ""}
+        run = {"scenario": words[0], "switches": "", "expects": [], "timeout": None, "label": "", "password": ""}
         if not re.match(r"^[A-Za-z0-9_.-]+$", run["scenario"]):
             raise Fail("line %d: bad scenario name %r" % (n, run["scenario"]))
         for w in words[1:]:
@@ -95,6 +95,8 @@ def parse_groups(text):
                 run["timeout"] = int(v)
             elif k == "label":
                 run["label"] = v
+            elif k == "password":   # run.ps1 -ServerPassword: a steps file's password/try lines (join-password)
+                run["password"] = v
             else:
                 raise Fail("line %d: unknown %s=" % (n, k))
         cur[1].append(run)
@@ -142,6 +144,8 @@ def run_command(setup, run, server, run_ps1=None):
         cmd += ["-Switches", run["switches"]]
     if run["timeout"]:
         cmd += ["-Timeout", str(run["timeout"])]
+    if run.get("password"):
+        cmd += ["-ServerPassword", run["password"]]
     return cmd
 
 
@@ -272,6 +276,10 @@ def judge(folder, meta=None):
     code = meta.get("exit", 0)
     if code:
         return "FAIL", "run.ps1 exit %s" % code
+    good = [line for line in (counts or "").splitlines() if line.startswith("PASS")]
+    if good and not meta.get("expects"):
+        # A steps file's run (hs_steps.py): its counts are the verdict, it plays no "scenario played" line.
+        return "PASS", "counts.txt: %d PASS" % len(good)
     expects = [tuple(e) for e in meta.get("expects", [])]
     if not expects:
         played = read_text(os.path.join(folder, "steps.txt")) or ""

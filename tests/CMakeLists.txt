@@ -38,6 +38,7 @@ add_executable(coop_tests
   lichii/settings_test.cpp
   lichii/puppet_test.cpp
   lichii/puppet_config_test.cpp
+  lichii/player_input_test.cpp
   lichii/callers_test.cpp
   lichii/fairy_test.cpp
   lichii/rooms_test.cpp

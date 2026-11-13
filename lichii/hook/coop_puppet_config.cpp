@@ -22,6 +22,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
     if (auto actor = env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = std::move(actor);
     }
+    settings.native_player = On(env("LICHII_COOP_NATIVE_PLAYER"));
     bool pack_plain = false;
     if (const auto tunics = env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
         settings.tunics = false;
@@ -55,6 +56,10 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
                        (settings.tunics  ? ""
                         : pack_plain     ? ", tunics off (the pack has none)"
                                          : ", tunics off (LICHII_COOP_TUNICS=0)") +
+                       (settings.native_player && settings.actor.empty()
+                            ? ", NATIVE PLAYER TEST (LICHII_COOP_NATIVE_PLAYER): the game's own "
+                              "Player_<Age>, left alone"
+                            : "") +
                        (settings.debug ? ", test puppet beside you" : ""));
     }
     return settings;

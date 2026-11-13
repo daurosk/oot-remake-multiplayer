@@ -650,10 +650,22 @@ try {
     # the game somewhere else (hs.py, -Out): game-folder.txt, and a builder's bin\ layout
     $other = Join-Path $hk 'elsewhere'
     Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"
-    Check ((Get-KitHookshotGame $hk) -eq $other -and (Get-KitHookshotNeed $hk) -eq 'game') 'hookshot need: game-folder.txt is followed'
+    Check ((Get-KitHookshotGame $hk) -eq $other -and (Get-KitHookshotNeed $hk) -eq 'moved') 'hookshot need: game-folder.txt is followed; its game gone -> moved'
     Write-File (Join-Path $other 'bin\hookshot.exe') 'exe'
     Check ((Get-KitHookshotExe $other) -eq (Join-Path $other 'bin\hookshot.exe')) 'hookshot exe: bin\ first'
-    foreach ($n in 'game', 'pin', 'patches', 'module') { Check ([bool](Get-KitHookshotNeedText $n)) "hookshot need text: $n" }
+    # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
+    Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
+    Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'
+    Write-File (Join-Path $other 'bin\hookshot_coop.dll') 'MODULE 2'
+    Check ((Get-KitHookshotNeed $hk) -ne 'quarantine') 'hookshot need: the kit''s module gone, the game''s there -> the game still starts'
+    Remove-Item -LiteralPath (Join-Path $other 'bin\hookshot_coop.dll')
+    Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 2'
+    foreach ($n in 'game', 'moved', 'pin', 'patches', 'module', 'quarantine') { Check ([bool](Get-KitHookshotNeedText $n)) "hookshot need text: $n" }
+    foreach ($n in 'game', 'moved', 'pin') { Check ([bool](Get-KitHookshotNeedQuestion $n)) "hookshot need question: $n asks first" }
+    foreach ($n in 'patches', 'module', 'quarantine', '') { Check (-not (Get-KitHookshotNeedQuestion $n)) "hookshot need question: none for '$n'" }
+    Check ((Get-KitHookshotNeedText 'game') -match "isn't set up yet" -and (Get-KitHookshotNeedText 'game') -notmatch 'No co-op') 'hookshot need text: game says it is not set up yet, in plain words'
+    Check ((Get-KitHookshotNeedText 'moved' 'D:\Old\game') -match 'D:\\Old\\game' -and (Get-KitHookshotNeedText 'moved') -match '-Out') 'hookshot need text: moved names the folder and -Out'
+    Check ((Get-KitHookshotNeedText 'quarantine') -match 'Antivirus' -and (Get-KitHookshotNeedText 'quarantine') -match 'Exclusions') 'hookshot need text: quarantine says antivirus and the exclusion steps'
     Check ((Get-KitHookshotNeedText 'pin') -match 'about 15 minutes') 'hookshot need text: a pin move says about 15 minutes'
     Check (-not (Get-KitHookshotNeedText '')) 'hookshot need text: nothing to say when nothing is needed'
 
@@ -671,6 +683,48 @@ try {
     Check ((Get-KitHostPort $hk @(27510, 27600) 27510) -in 27510, 27600) 'host port: two listening: one of the kit''s'
 } finally {
     Remove-Item -LiteralPath $hk -Recurse -Force -ErrorAction SilentlyContinue
+}
+# --- hs-missing: Host-/Join-Hookshot.bat with no co-op Hookshot game say why in plain words and offer the build ---
+$hm = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-hs-missing-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    New-Kit $hm 'v0.1.0-beta4' 'hm'
+    Write-File (Join-Path $hm 'hookshot\PIN') "repo=https://github.com/NotRexed/Hookshot`ncommit=4aee23659b9436dab2cd7be1ac07333c06246b7c`n"
+    Write-File (Join-Path $hm 'hookshot\TOOLS.txt') "release=v2.2.0-rc.1`nsetup_sha256=b3`n"
+    Write-File (Join-Path $hm 'hookshot\hookshot_coop.dll') 'MODULE'
+    $no = Join-Path $hm 'no.txt'; [System.IO.File]::WriteAllText($no, "n`r`n")
+    $runHs = { param($Mode) (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$hm\scripts\play.ps1`" $Mode -Server 127.0.0.1 -Name Saria -Hookshot -NoUpdate < `"$no`"" 2>&1) -join '|' }
+    $built = { Test-Path -LiteralPath (Join-Path $hm 'hookshot\tools') }
+    # never built: plain words, the offer, n = no build, a pointer to Build-Hookshot-Coop.bat
+    $out = & $runHs 'join'
+    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\? \(then the game starts\) \[Y/n\]' -and $out -match 'Not now\. Build-Hookshot-Coop\.bat' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, no game: says not set up yet, offers the build, n builds nothing [$out]"
+    $out = & $runHs 'host'
+    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Hookshot started') "Host-Hookshot, no game: the same offer [$out]"
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$hm\scripts\play.ps1`" choose -Hookshot -NoUpdate < `"$no`"" 2>&1) -join '|'
+    Check ($out -match "Hookshot isn't set up yet" -and $out -match 'Set it up now\?' -and $out -notmatch 'Hookshot started') "Play-OoT-Coop, no game: the same offer [$out]"
+    # the built game moved or deleted: names where it was and -Out
+    $gone = Join-Path $hm 'moved away\game'
+    Write-File (Join-Path $hm 'hookshot\game-folder.txt') "$gone`n"
+    $out = & $runHs 'join'
+    Check ($out -match 'not in .*moved away.game any more \(moved or deleted\)' -and $out -match 'Build-Hookshot-Coop\.bat -Out' -and $out -match 'Build it again now\?' -and -not (& $built)) "Join-Hookshot, the game moved: says so, -Out, offers a new build [$out]"
+    # built for an older pin: the rebuild offer
+    $g = Join-Path $hm 'hookshot\game'
+    Write-File (Join-Path $hm 'hookshot\game-folder.txt') "$g`n"
+    Write-File (Join-Path $g 'hookshot.exe') 'exe'
+    Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE'
+    Write-File (Join-Path $g 'coop-built-from.txt') "release=v2.1.0`ncommit=0000000000000000000000000000000000000000`npatches="
+    $out = & $runHs 'join'
+    Check ($out -match 'built for another Hookshot version' -and $out -match 'Update it now\?' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, an older pin: the rebuild offer [$out]"
+    # the module taken (antivirus): no build offered, the restore and exclusion steps
+    Remove-Item -LiteralPath (Join-Path $g 'hookshot_coop.dll'), (Join-Path $hm 'hookshot\hookshot_coop.dll')
+    $out = & $runHs 'join'
+    Check ($out -match 'hookshot_coop\.dll is missing' -and $out -match 'Antivirus' -and $out -match 'Protection history' -and $out -match 'Exclusions' -and $out -notmatch '\[Y/n\]' -and $out -notmatch 'Hookshot started' -and -not (& $built)) "Join-Hookshot, the module quarantined: antivirus steps, no build [$out]"
+    # the game's copy gone after it was put in (a kit without a pin to build: the last check before the start)
+    Remove-Item -LiteralPath (Join-Path $hm 'hookshot\PIN')
+    Write-File (Join-Path $hm 'hookshot\hookshot_coop.dll') 'MODULE'
+    $out = & $runHs 'join'
+    Check ($out -match 'hookshot_coop\.dll is missing' -and $out -match 'Antivirus' -and $out -notmatch 'No co-op Hookshot game' -and $out -notmatch 'Hookshot started') "Join-Hookshot, the game's module gone: antivirus steps, not 'No co-op Hookshot game' [$out]"
+} finally {
+    Remove-Item -LiteralPath $hm -Recurse -Force -ErrorAction SilentlyContinue
 }
 # The new launcher is one command line too (the update may replace it while it runs).
 $last = @(Get-Content (Join-Path $kitSrc 'Play-OoT-Coop.bat') | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })

@@ -4580,6 +4580,22 @@ bool was_dropped(const Harness& h, ConnectionId id) {
 
 }  // namespace
 
+// Split screen: extra local players on one connection (docs/protocol.md, "Local players").
+namespace {
+
+LocalJoined local_joined_to(const Harness& h, ConnectionId id) {
+  const auto answers = messages_of<LocalJoined>(h, id);
+  REQUIRE(answers.size() == 1);
+  return answers[0];
+}
+
+bool nothing_to_local_players(const Harness& h) {
+  return std::none_of(h.sent.begin(), h.sent.end(), [](const Sent& s) { return s.to >= kLocalPlayerIds; }) &&
+         std::none_of(h.dropped.begin(), h.dropped.end(), [](ConnectionId id) { return id >= kLocalPlayerIds; });
+}
+
+}  // namespace
+
 TEST_CASE("lobby: only the host may kick, ban or mute, others are told no") {
   Harness h;
   h.join(1, "Link");
@@ -4766,4 +4782,187 @@ TEST_CASE("lobby: when the host leaves, the new host has the controls and the mu
   h.receive(2, LobbyAction{LobbyActionKind::kick, 3}, kChannelSession);
   CHECK(all_to<Refused>(h, 3) == std::vector<Refused>{Refused{RefuseReason::kicked}});
   CHECK(h.session.player_count() == 1);
+}
+
+TEST_CASE("local players: a seat gets its own number, the others meet it, its own game is told only LOCAL_JOINED") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  const LocalJoined answer = local_joined_to(h, 1);
+  CHECK(answer == LocalJoined{1, 3, RefuseReason::server_full});
+  CHECK(messages_of<PlayerJoined>(h, 1).empty());
+  CHECK(messages_of<PlayerJoined>(h, 2) == std::vector<PlayerJoined>{{3, "Saria"}});
+  CHECK(h.session.player_count() == 3);
+  CHECK(h.session.stats().local_joined == 1);
+  // Asked again: the same answer, nobody told twice.
+  h.clear();
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  CHECK(local_joined_to(h, 1).player_number == 3);
+  CHECK(h.to(2).empty());
+  // A later joiner finds it in its WELCOME.
+  const Welcome w = h.join(4, "Darunia");
+  CHECK(std::find(w.players.begin(), w.players.end(), PlayerInfo{3, "Saria"}) != w.players.end());
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: what its game sends in the envelope reaches the others as the local player's") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{2, "Saria"}, kChannelSession);
+  h.clear();
+  PlayerSample sample;
+  sample.time = {9, 1};
+  sample.position = Vec3{4.0f, 5.0f, 6.0f};
+  h.receive(1, *local_envelope(2, sample), kChannelPlayerSamples);
+  h.receive(1, *local_envelope(2, PlayerStatus{0, status::paused}), kChannelSession);
+  CHECK(h.to(1).empty());  // never back to its own game
+  const auto msgs = h.to(2);
+  REQUIRE(msgs.size() == 2);
+  CHECK(msgs[0].channel == kChannelPlayerSamples);
+  const auto* s = std::get_if<PlayerSample>(&msgs[0].message);
+  REQUIRE(s != nullptr);
+  CHECK(s->player_number == 3);
+  CHECK(s->position == sample.position);
+  CHECK(std::get<PlayerStatus>(msgs[1].message) == PlayerStatus{3, status::paused});
+  // A seat nobody joined: dropped and counted.
+  h.clear();
+  h.receive(1, *local_envelope(1, sample), kChannelPlayerSamples);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().local_no_seat == 1);
+  // The others' messages go to the game, never to the local player itself.
+  h.clear();
+  h.receive(2, Chat{0, "hi"}, kChannelSession);
+  CHECK(messages_of<Chat>(h, 1) == std::vector<Chat>{{2, "hi"}});
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: refused as bad name, name taken or server full") {
+  SessionConfig three;
+  three.max_players = 3;
+  Harness h(three);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, LocalJoin{1, "  "}, kChannelSession);
+  CHECK(local_joined_to(h, 1) == LocalJoined{1, 0, RefuseReason::bad_name});
+  h.clear();
+  h.receive(1, LocalJoin{1, "Zelda"}, kChannelSession);
+  CHECK(local_joined_to(h, 1) == LocalJoined{1, 0, RefuseReason::name_taken});
+  h.clear();
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  CHECK(local_joined_to(h, 1).player_number == 3);
+  h.clear();
+  h.receive(2, LocalJoin{1, "Mido"}, kChannelSession);
+  CHECK(local_joined_to(h, 2) == LocalJoined{1, 0, RefuseReason::server_full});
+  CHECK(messages_of<PlayerJoined>(h, 1).empty());
+  CHECK(h.session.stats().local_refused == 3);
+  // And a game's HELLO with the local player's name is refused, never taken over.
+  h.clear();
+  SessionConfig open;
+  Harness g(open);
+  g.join(1, "Link");
+  g.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  g.clear();
+  g.connect(2);
+  g.receive(2, hello_from("Saria"), kChannelSession);
+  const auto refused = messages_of<Refused>(g, 2);
+  REQUIRE(refused.size() == 1);
+  CHECK(refused[0].reason == RefuseReason::name_taken);
+  CHECK(nothing_to_local_players(g));
+}
+
+TEST_CASE("local players: LOCAL_LEAVE frees the number, the others are told, its game is not") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{3, "Saria"}, kChannelSession);
+  h.clear();
+  h.receive(1, LocalLeave{3}, kChannelSession);
+  CHECK(messages_of<PlayerLeft>(h, 2) == std::vector<PlayerLeft>{{3, LeaveReason::left}});
+  CHECK(messages_of<PlayerLeft>(h, 1).empty());
+  CHECK(h.session.player_count() == 2);
+  h.clear();
+  CHECK(h.join(5, "Mido").player_number == 3);  // the number is free again
+  // A leave for a seat nobody has: nothing.
+  h.clear();
+  h.receive(1, LocalLeave{1}, kChannelSession);
+  CHECK(h.sent.empty());
+}
+
+TEST_CASE("local players: they live by their game's traffic, leave with it, and never host") {
+  Harness h;
+  h.join(1, "Link");     // hosts
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.receive(2, LocalJoin{1, "Mido"}, kChannelSession);
+  h.clear();
+  // 12 s: both games keep talking; nobody is dropped.
+  for (int i = 0; i < 48; ++i) {
+    h.now += 250'000;
+    h.receive(1, Ping{h.now}, kChannelSession);
+    h.receive(2, Ping{h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  CHECK(h.dropped.empty());
+  CHECK(h.session.player_count() == 4);
+  CHECK(nothing_to_local_players(h));
+  // The host's game goes: its local player goes first, then it; the lowest
+  // remaining real player (2) hosts, not local player 3.
+  h.clear();
+  h.session.disconnected(1, h.now);
+  h.collect();
+  const auto left = messages_of<PlayerLeft>(h, 2);
+  REQUIRE(left.size() == 2);
+  CHECK(left[0].player_number == 3);
+  CHECK(left[1].player_number == 1);
+  const auto hosts = messages_of<Host>(h, 2);
+  REQUIRE(hosts.size() == 1);
+  CHECK(hosts[0].player_number == 2);
+  CHECK(h.session.player_count() == 2);
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: a split-screen game that goes silent times out with its seats, and the server lives") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.receive(1, LocalJoin{2, "Mido"}, kChannelSession);
+  h.clear();
+  // Game 1 (and so its seats) goes quiet; game 2 keeps talking past the silence timeout.
+  for (int i = 0; i < 48; ++i) {
+    h.now += 250'000;
+    h.receive(2, Ping{h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  CHECK(h.dropped == std::vector<ConnectionId>{1});
+  CHECK(h.session.player_count() == 1);
+  const auto left = messages_of<PlayerLeft>(h, 2);
+  REQUIRE(left.size() == 3);
+  CHECK(left[2].player_number == 1);
+  CHECK(nothing_to_local_players(h));
+}
+
+TEST_CASE("local players: seats' envelopes do not use up their game's own message rate") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LocalJoin{1, "Saria"}, kChannelSession);
+  h.clear();
+  PlayerSample sample;
+  sample.time = {1, 1};
+  sample.position = Vec3{1.0f, 0.0f, 0.0f};
+  for (int i = 0; i < 600; ++i) h.receive(1, *local_envelope(1, sample), kChannelPlayerSamples);
+  CHECK(h.session.stats().rate_limited > 0);  // the seat is held to its own rate
+  h.clear();
+  sample.time = {2, 1};
+  h.receive(1, sample, kChannelPlayerSamples);  // the game's own player still gets through
+  const auto got = messages_of<PlayerSample>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got[0].player_number == 1);
 }

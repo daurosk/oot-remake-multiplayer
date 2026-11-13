@@ -181,6 +181,13 @@ inline std::vector<Message> every_message() {
   all.push_back(LobbyMutes{1, 0});
   all.push_back(LobbyResult{LobbyActionKind::ban, 4, LobbyResultCode::done});
   all.push_back(LobbyResult{LobbyActionKind::mute_voice, 1, LobbyResultCode::not_host});
+  // Split screen (protocol 11, "Local players").
+  all.push_back(LocalJoin{2, "Mido"});
+  all.push_back(LocalJoined{1, 5, RefuseReason::server_full});
+  all.push_back(LocalJoined{3, 0, RefuseReason::name_taken});
+  all.push_back(LocalLeave{2});
+  all.push_back(*local_envelope(1, full_sample()));
+  all.push_back(*local_envelope(3, PlayerStatus{0, status::paused}));
   return all;
 }
 

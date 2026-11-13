@@ -92,6 +92,7 @@ Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config
 
 bool Session::connected(ConnectionId id, std::uint64_t now_us,
                         std::optional<std::uint32_t> address) {
+  if (id >= kLocalPlayerIds) return false;  // (the local players' numbers)
   if (!config_.allowed.empty()) {
     const bool ok = address && std::any_of(config_.allowed.begin(), config_.allowed.end(),
                                            [&](const AddressRange& r) {
@@ -134,9 +135,10 @@ std::size_t Session::half_open_count(std::uint32_t address) const {
 void Session::received(ConnectionId id, std::uint8_t channel,
                        std::span<const std::uint8_t> bytes, std::uint64_t now_us) {
   auto it = connections_.find(id);
-  if (it == connections_.end()) return;  // the transport's mistake, not the peer's
+  if (it == connections_.end() || it->second.parent) return;  // the transport's mistake, not the peer's
   Connection& c = it->second;
   c.last_heard = now_us;
+  for (ConnectionId local : local_players(id)) connections_.at(local).last_heard = now_us;  // (they live by it)
 
   if (c.state == State::closing) {
     ++stats_.after_refused;
@@ -327,6 +329,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   std::uint8_t preferred = 0;
   if (auto holder = holder_of(hello.nickname)) {
     const Connection& old = connections_.at(*holder);
+    if (old.parent) {  // an extra local player's name: never taken over by a rejoin
+      refuse(id, c, RefuseReason::name_taken, now_us);
+      return;
+    }
     const bool quiet = config_.rejoin_stale_us != 0 && c.address && old.address == c.address &&
                        now_us - old.last_heard >= config_.rejoin_stale_us;
     const bool token = c.rejoin_claim && same_proof(*c.rejoin_claim, old.rejoin_token);
@@ -423,7 +429,13 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   // the host only (on_save). Outside the host's byte and message budgets: a
   // part dropped here would leave the guest's transfer unfinished.
   const bool host_save = std::holds_alternative<SavePart>(message) && id == host_;
-  if (!host_save && !within_rate(c, channel, bytes, now_us)) {
+  // A split-screen seat's envelope is charged to that seat (on_local), not to
+  // its game as well: two to four players on one connection keep their rates.
+  const bool seat_envelope =
+      (std::holds_alternative<LocalSample>(message) &&
+       local_player(id, std::get<LocalSample>(message).seat)) ||
+      (std::holds_alternative<LocalMessage>(message) && local_player(id, std::get<LocalMessage>(message).seat));
+  if (!host_save && !seat_envelope && !within_rate(c, channel, bytes, now_us)) {
     ++stats_.rate_limited;
     return;
   }
@@ -433,6 +445,11 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (std::holds_alternative<Hello>(message)) {
     ++stats_.repeated_hello;
+    return;
+  }
+  if (std::holds_alternative<LocalJoin>(message) || std::holds_alternative<LocalLeave>(message) ||
+      std::holds_alternative<LocalSample>(message) || std::holds_alternative<LocalMessage>(message)) {
+    on_local(id, c, message, now_us);
     return;
   }
   // PLAYER_STATUS, CHAT and PLAYER_SAMPLE carry the sender: the server writes
@@ -2016,7 +2033,7 @@ void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId
   std::vector<std::uint8_t> bytes;
   if (encode(m, bytes) != Error::none) return;
   for (const auto& [id, c] : connections_) {
-    if (id == except || c.state != State::joined) continue;
+    if ((except && same_game(id, *except)) || c.state != State::joined) continue;
     if (!scene.empty() && c.scene != scene) continue;
     actions_.push_back(SendAction{id, channel, bytes});
   }
@@ -2223,12 +2240,16 @@ void Session::disconnected(ConnectionId id, std::uint64_t now_us, const std::str
 
 void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t now_us,
                             const std::string& why) {
+  // Its extra local players go with it, before it.
+  for (ConnectionId local : local_players(id)) remove_player(local, reason, now_us, "their game left");
   auto it = connections_.find(id);
   if (it == connections_.end()) return;
+  const ConnectionId game = it->second.parent.value_or(id);
   Connection c = std::move(it->second);
   connections_.erase(it);
   if (c.state != State::joined) return;
-  send_to_others(id, kChannelSession, PlayerLeft{c.number, reason});
+  // A local player's own game knows it left (it asked, or it left itself).
+  send_to_others(game, kChannelSession, PlayerLeft{c.number, reason});
   // After PLAYER_LEFT, so the others learn the owner left before the new
   // owner is announced; the leaver is out of connections_ by now.
   drop_all_objects(id, c.number, c.present, now_us);
@@ -2262,7 +2283,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     // any FLAG_SET relayed to it.
     std::optional<ConnectionId> next;
     for (const auto& [other, oc] : connections_) {
-      if (oc.state == State::joined && (!next || oc.number < connections_.at(*next).number)) {
+      if (oc.state == State::joined && !oc.parent && (!next || oc.number < connections_.at(*next).number)) {
         next = other;
       }
     }
@@ -2295,6 +2316,7 @@ void Session::tick(std::uint64_t now_us) {
                now_us - c.refused_at >= config_.refused_grace_us) {
       late_hello.push_back(id);  // refused, but the transport never closed it
     } else if (c.state == State::joined) {
+      if (c.parent) continue;  // (a split-screen seat leaves with its game, never on its own)
       if (now_us - c.last_heard >= config_.silence_timeout_us) {
         silent.push_back(id);
       } else if (now_us - c.last_ping >= config_.ping_interval_us) {
@@ -2308,8 +2330,10 @@ void Session::tick(std::uint64_t now_us) {
     remove_player(id, LeaveReason::timed_out, now_us);
   }
   for (ConnectionId id : silent) {
+    auto it = connections_.find(id);
+    if (it == connections_.end()) continue;  // (gone with an earlier one this tick)
     actions_.push_back(DisconnectAction{id});
-    const std::uint64_t quiet_ms = (now_us - connections_.at(id).last_heard) / 1000;
+    const std::uint64_t quiet_ms = (now_us - it->second.last_heard) / 1000;
     remove_player(id, LeaveReason::timed_out, now_us,
                   "timed out: nothing heard for " + std::to_string(quiet_ms) + " ms");
   }
@@ -2351,7 +2375,15 @@ void Session::end_owner_hold(std::uint64_t now_us) {
   }
 }
 
-std::vector<Action> Session::take_actions() { return std::exchange(actions_, {}); }
+std::vector<Action> Session::take_actions() {
+  // A local player has no transport connection: its game gets everything through its own.
+  std::erase_if(actions_, [](const Action& a) {
+    if (const auto* s = std::get_if<SendAction>(&a)) return s->to >= kLocalPlayerIds;
+    if (const auto* d = std::get_if<DisconnectAction>(&a)) return d->who >= kLocalPlayerIds;
+    return std::get<EncryptAction>(a).who >= kLocalPlayerIds;
+  });
+  return std::exchange(actions_, {});
+}
 
 std::size_t Session::player_count() const {
   return static_cast<std::size_t>(std::count_if(
@@ -2368,6 +2400,96 @@ std::optional<std::uint8_t> Session::player_number(ConnectionId id) const {
   auto it = connections_.find(id);
   if (it == connections_.end() || it->second.state != State::joined) return std::nullopt;
   return it->second.number;
+}
+
+// Split screen (docs/protocol.md, "Local players"). The envelopes' inner
+// messages go through on_player_message as the local player's own, with its
+// own rate limits; check_received has let only client messages of the right
+// channel in, and decoding only the types an envelope carries.
+void Session::on_local(ConnectionId id, Connection& c, const Message& message, std::uint64_t now_us) {
+  if (c.parent) return;  // (a local player's envelope: cannot be, nothing it carries is one)
+  if (const auto* j = std::get_if<LocalJoin>(&message)) {
+    local_join(id, c, *j, now_us);
+    return;
+  }
+  if (const auto* leave = std::get_if<LocalLeave>(&message)) {
+    if (auto local = local_player(id, leave->seat)) remove_player(*local, LeaveReason::left, now_us, "left split screen");
+    return;
+  }
+  const std::uint8_t seat = std::holds_alternative<LocalSample>(message) ? std::get<LocalSample>(message).seat
+                                                                          : std::get<LocalMessage>(message).seat;
+  const auto local = local_player(id, seat);
+  std::optional<Message> inner = local_inner(message);
+  if (!local || !inner) {
+    ++stats_.local_no_seat;
+    return;
+  }
+  std::vector<std::uint8_t> bytes;
+  encode(*inner, bytes);
+  on_player_message(*local, connections_.at(*local), channel_of(*inner), *inner, bytes.size(), now_us);
+}
+
+void Session::local_join(ConnectionId id, Connection& c, const LocalJoin& j, std::uint64_t now_us) {
+  LocalJoined answer{j.seat, 0, RefuseReason::server_full};
+  if (auto known = local_player(id, j.seat)) {
+    answer.player_number = connections_.at(*known).number;  // (asked again: the same answer)
+    send(id, kChannelSession, answer);
+    return;
+  }
+  if (blank_name(j.nickname) || hidden_characters(j.nickname)) {
+    answer.reason = RefuseReason::bad_name;
+  } else if (holder_of(j.nickname)) {
+    answer.reason = RefuseReason::name_taken;
+  } else if (player_count() >= max_players()) {
+    answer.reason = RefuseReason::server_full;
+  } else {
+    Connection local;
+    local.state = State::joined;
+    local.parent = id;
+    local.seat = j.seat;
+    local.number = free_number();
+    local.nickname = j.nickname;
+    local.address = c.address;
+    local.connected_at = local.last_heard = local.last_ping = now_us;
+    local.reliable_budget = 2.0 * config_.reliable_per_second;
+    local.unreliable_budget = 2.0 * config_.unreliable_per_second;
+    local.byte_budget = 2.0 * config_.bytes_per_second;
+    local.budget_time = now_us;
+    answer.player_number = local.number;
+    const ConnectionId local_id = next_local_id_++;
+    connections_[local_id] = std::move(local);
+  }
+  send(id, kChannelSession, answer);
+  if (answer.player_number == 0) {
+    ++stats_.local_refused;
+    return;
+  }
+  ++stats_.local_joined;
+  // Everyone else meets it as any player; its own game knows it from LOCAL_JOINED.
+  send_to_others(id, kChannelSession, PlayerJoined{answer.player_number, j.nickname});
+  log("player " + std::to_string(answer.player_number) + " joined: " + j.nickname + " (split screen with player " +
+      std::to_string(c.number) + ")");
+}
+
+std::optional<ConnectionId> Session::local_player(ConnectionId parent, std::uint8_t seat) const {
+  for (const auto& [id, c] : connections_)
+    if (c.parent == parent && c.seat == seat) return id;
+  return std::nullopt;
+}
+
+std::vector<ConnectionId> Session::local_players(ConnectionId parent) const {
+  std::vector<ConnectionId> out;
+  for (const auto& [id, c] : connections_)
+    if (c.parent == parent) out.push_back(id);
+  return out;
+}
+
+bool Session::same_game(ConnectionId a, ConnectionId b) const {
+  const auto game = [this](ConnectionId x) {
+    auto it = connections_.find(x);
+    return it != connections_.end() && it->second.parent ? *it->second.parent : x;
+  };
+  return game(a) == game(b);
 }
 
 std::optional<ConnectionId> Session::holder_of(const std::string& nickname) const {
@@ -2401,7 +2523,7 @@ void Session::send_to_others(ConnectionId except, std::uint8_t channel, const Me
   std::vector<std::uint8_t> bytes;
   if (encode(m, bytes) != Error::none) return;
   for (const auto& [id, c] : connections_) {
-    if (id != except && c.state == State::joined) {
+    if (!same_game(id, except) && c.state == State::joined) {
       actions_.push_back(SendAction{id, channel, bytes});
     }
   }
@@ -2420,14 +2542,14 @@ void Session::send_streamed(ConnectionId from, const Connection& sender, std::ui
   if (encode(m, bytes) != Error::none) return;
   std::size_t receivers = 0;
   for (const auto& [id, r] : connections_) {
-    if (id != from && r.state == State::joined) ++receivers;
+    if (!same_game(id, from) && !r.parent && r.state == State::joined) ++receivers;
   }
   const double share = receivers == 0 || config_.pose_upload_bytes_per_second == 0
                            ? 0.0
                            : static_cast<double>(config_.pose_upload_bytes_per_second) / receivers;
   const std::size_t n = sender.number <= kMaxPlayers ? sender.number : 0;
   for (auto& [id, r] : connections_) {
-    if (id == from || r.state != State::joined) continue;
+    if (same_game(id, from) || r.parent || r.state != State::joined) continue;
     const bool same = sender.scene.empty() || r.scene.empty() || sender.scene == r.scene;
     bool near = same;
     if (same && sender.position && r.position) {

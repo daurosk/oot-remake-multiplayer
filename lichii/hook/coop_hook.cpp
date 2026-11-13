@@ -80,6 +80,8 @@
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_live_events.h"
+#include "coop_local_game.h"
+#include "coop_local_net.h"
 #include "coop_shared_scenes.h"
 #include "coop_objects.h"
 #include "coop_ocarina_sound.h"
@@ -326,6 +328,7 @@ public:
                 v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
                 CoopVoice::OnEvent(event);
             }
+            CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -547,7 +550,18 @@ public:
         CoopFlagNative::Feed(*session_);
         LogFlagEvents();
 #endif
+        if (auto color = TakeColor()) {  // the pause menu's look (hookshot/src/coop_look.h)
+            session_->set_color(*color);
+        }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        if (memory) {  // split screen: each extra local player is a player of the session (coop_local_net.h)
+            CoopLocalNet::Online(
+                *memory, reading, report.connected, report.server_now_us,
+                [this](const coop::protocol::Message& m) {
+                    return session_->with_client([&m](coop::net::Client& client) { return client.send(m); });
+                },
+                [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
+        }
         if (quests) {
             for (const auto& r : quests->take_raised()) {
                 LOG_INFO(Core, "coop: quests: {} {} -> {} (shared Threads of Time; issue 193)", r.quest,
@@ -845,6 +859,9 @@ public:
                 return shown;
             });
         }
+        // Local co-op (coop_local_game.h): the first Link this frame, then its Core's step, before the puppets are planned.
+        CoopLocalGame::Frame({view.game && view.scene.has_value(), view.position,
+                              view.age == coop::protocol::Age::adult});
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.
@@ -954,6 +971,12 @@ public:
         return Compose(room, frame);
     }
 
+    // SetColor (coop_hook.h). Any thread; the next Frame sends it.
+    void SetColor(std::optional<std::uint32_t> color) {
+        std::lock_guard lock(color_mutex_);
+        color_change_ = color;
+    }
+
     // Chat and the player list (coop_hook.h). Any thread.
     bool SendChat(const std::string& text) {
         if (CoopTeleport::OnChat(text, *session_)) {
@@ -1053,6 +1076,11 @@ public:
     }
 
 private:
+    std::optional<std::optional<std::uint32_t>> TakeColor() {
+        std::lock_guard lock(color_mutex_);
+        return std::exchange(color_change_, std::nullopt);
+    }
+
     // Projects the players with the camera the renderer found (coop_camera.h).
     // Without one, view.markers stays empty and only the panel shows.
     void Place(FrameView& view) {
@@ -1907,6 +1935,8 @@ private:
     std::mutex view_mutex_;
     RoomView room_;
     FrameView frame_;
+    std::mutex color_mutex_;
+    std::optional<std::optional<std::uint32_t>> color_change_;  // guarded: SetColor's, for the next Frame
 };
 
 std::mutex g_mutex;
@@ -1915,6 +1945,8 @@ bool g_shut_down = false;
 std::atomic<bool> g_mod_refused{false};  // a game mod patches where co-op does (Start)
 std::unique_ptr<Coop> g_coop;  // set by Start or Begin, cleared by End or Shutdown
 std::vector<std::unique_ptr<Coop>> g_ended;  // End's: kept until Shutdown (see End)
+// SetColor's colour: a session started after it wears it, not the settings' (guarded).
+std::optional<std::optional<std::uint32_t>> g_chosen_color;
 
 // Joins the thread if the program ends without Shutdown.
 void Stop(bool quiet) {
@@ -1980,6 +2012,9 @@ void Start() {
     }
     LOG_INFO(Core, "coop: on, server {}:{}, name '{}', join password {}", settings.server,
              settings.port, settings.name, settings.password.empty() ? "none" : "set");
+    if (g_chosen_color) {
+        settings.color = *g_chosen_color;
+    }
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (coop->Begin()) {
         g_coop = std::move(coop);
@@ -2022,6 +2057,9 @@ bool Begin(Settings settings) {
     g_started = true;  // Start() then reads no coop.ini
     LOG_INFO(Core, "coop: on (from the menu), server {}:{}, name '{}', join password {}", settings.server,
              settings.port, settings.name, settings.password.empty() ? "none" : "set");
+    if (g_chosen_color) {
+        settings.color = *g_chosen_color;
+    }
     auto coop = std::make_unique<Coop>(std::move(settings));
     if (!coop->Begin()) {
         return false;
@@ -2043,6 +2081,17 @@ void End() {
     LOG_INFO(Core, "coop: off (left from the menu)");
     std::lock_guard lock(g_mutex);
     g_ended.push_back(std::move(coop));
+}
+
+void SetColor(std::optional<std::uint32_t> color) {
+    CoopPuppet::SetOwnColor(color);  // the test puppet and your name's colour
+    std::lock_guard lock(g_mutex);
+    g_chosen_color = color;
+    if (g_coop) {
+        g_coop->SetColor(color);
+    }
+    LOG_INFO(Core, "coop: colour changed in the game: {}",
+             color ? CoopColors::Text(*color) : std::string("none chosen (slot colour)"));
 }
 
 std::vector<OverlayLine> OverlayLines() {

@@ -39,6 +39,13 @@ bool Begin(Settings settings);
 // it stays valid. For the title screen: puppets the game made stay.
 void End();
 
+// The player chose another colour while the game runs (hookshot/src/
+// coop_look.h): the next frame sends it in PLAYER_EQUIP, so the others'
+// puppet of this player changes; a session started later wears it too, not
+// the settings' colour. Unset after a colour ("by player number"): the
+// others get this player's slot colour. Any thread; works with co-op off.
+void SetColor(std::optional<std::uint32_t> color);
+
 // What the co-op window shows: one line of text each. Empty when co-op is
 // off. Any thread.
 struct OverlayLine {

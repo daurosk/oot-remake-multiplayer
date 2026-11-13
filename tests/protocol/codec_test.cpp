@@ -1169,18 +1169,16 @@ TEST_CASE("native boss sync: an object sample carries a boss's brain and action 
   s.state.bsa->recent = {BossChange{5, BossBrain{3, true}}, BossChange{6, a}, BossChange{7, BossBrain{2, false}}};
   REQUIRE(decode(must_encode(s), m) == Error::none);
   CHECK(std::get<ObjectSample>(m) == s);
+  const std::vector<BossChange> kept_recent = s.state.bsa->recent;
   for (const auto& recent : {std::vector<BossChange>{BossChange{6, BossBrain{}}, BossChange{6, BossBrain{}}},
                              std::vector<BossChange>{BossChange{8, BossBrain{}}},
                              std::vector<BossChange>{BossChange{0, BossBrain{}}},
                              std::vector<BossChange>(kMaxBossChanges + 1, BossChange{1, BossBrain{}})}) {
-    // In place and put back after (a copy of `s` here made gcc 15's -O2
-    // warn "may be used uninitialized" inside the copied vector, with -Werror).
     Bytes refused;
-    const std::vector<BossChange> good = s.state.bsa->recent;
-    s.state.bsa->recent = recent;
+    s.state.bsa->recent = recent;  // (in place: a copy of s made gcc 15 see the copy's vector as maybe uninitialized)
     CHECK(encode(s, refused) == Error::bad_value);
-    s.state.bsa->recent = good;
   }
+  s.state.bsa->recent = kept_recent;
   // No bsa component: none after decoding (older senders).
   Message plain;
   REQUIRE(decode(must_encode(ObjectSample{0, test::kPlacedId, 3, {}}), plain) == Error::none);
@@ -2277,4 +2275,76 @@ TEST_CASE("mod settings: type 491, session channel, unique keys (modloader)") {
   ModSettings longer = m;
   longer.settings[0].value = std::string(kMaxModSettingValueChars + 1, 'v');
   CHECK(encode(longer, out) == Error::string_too_long);
+}
+
+TEST_CASE("local players: types 460 to 464, their channels and senders (split screen)") {
+  CHECK(static_cast<int>(MessageType::local_join) == 460);
+  CHECK(static_cast<int>(MessageType::local_message) == 464);
+  CHECK(channel_of(MessageType::local_sample) == kChannelPlayerSamples);
+  CHECK(allowed_on_channel(MessageType::local_sample, kChannelPlayerSamples));
+  CHECK_FALSE(allowed_on_channel(MessageType::local_sample, kChannelSession));
+  for (MessageType t : {MessageType::local_join, MessageType::local_joined, MessageType::local_leave,
+                        MessageType::local_message}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK(allowed_on_channel(t, kChannelSession));
+    CHECK_FALSE(allowed_on_channel(t, kChannelPlayerSamples));
+  }
+  CHECK(may_send(Sender::client, MessageType::local_join));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_join));
+  CHECK(may_send(Sender::server, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::client, MessageType::local_joined));
+  CHECK_FALSE(may_send(Sender::server, MessageType::local_sample));
+}
+
+TEST_CASE("local players: seats are 1 to 3, a refusal names why, a join names no reason") {
+  Bytes out;
+  CHECK(encode(Message{LocalJoin{0, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{4, "Mido"}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, ""}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoin{1, std::string(17, 'a')}}, out) != Error::none);
+  CHECK(encode(Message{LocalLeave{0}}, out) == Error::bad_value);
+  CHECK(encode(Message{LocalJoined{1, 17, RefuseReason::server_full}}, out) == Error::bad_value);
+  // A join with a reason byte, or a refusal without one, does not decode.
+  Bytes joined = must_encode(LocalJoined{1, 5, RefuseReason::server_full});
+  joined.back() = 3;
+  CHECK(decode_bytes(joined) == Error::bad_value);
+  Bytes refused = must_encode(LocalJoined{1, 0, RefuseReason::server_full});
+  refused.back() = 0;
+  CHECK(decode_bytes(refused) == Error::bad_value);
+}
+
+TEST_CASE("local players: an envelope carries only its own kinds, whole, and never another envelope") {
+  PlayerSample sample;
+  sample.time = {5, 1};
+  sample.position = Vec3{1.0f, 2.0f, 3.0f};
+  const auto s = local_envelope(2, sample);
+  REQUIRE(s.has_value());
+  REQUIRE(std::holds_alternative<LocalSample>(*s));
+  CHECK(std::get<LocalSample>(*s).seat == 2);
+  CHECK(local_inner(*s) == Message{sample});
+  const auto m = local_envelope(1, PlayerEquip{0, {}});
+  REQUIRE(m.has_value());
+  CHECK(std::holds_alternative<LocalMessage>(*m));
+  CHECK(local_inner(*m) == Message{PlayerEquip{0, {}}});
+  CHECK_FALSE(local_envelope(1, Chat{0, "hi"}).has_value());          // chat stays the connection's player's
+  CHECK_FALSE(local_envelope(1, FlagSet{0, {}}).has_value());        // the world is the game's, not a seat's
+  CHECK_FALSE(local_envelope(0, sample).has_value());                // no seat 0
+  CHECK_FALSE(local_envelope(1, *s).has_value());                    // no envelope in an envelope
+  CHECK_FALSE(local_inner(Message{Ping{1}}).has_value());
+  // A wrong kind inside, written by hand, is refused on decode.
+  Bytes body{1};
+  const Bytes chat = must_encode(Chat{0, "hi"});
+  body.insert(body.end(), chat.begin(), chat.end());
+  Bytes wire{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+             static_cast<std::uint8_t>(body.size()), 0};
+  wire.insert(wire.end(), body.begin(), body.end());
+  CHECK(decode_bytes(wire) == Error::bad_value);
+  // The right kind in the wrong envelope too: a sample in LOCAL_MESSAGE.
+  Bytes body2{1};
+  const Bytes sb = must_encode(sample);
+  body2.insert(body2.end(), sb.begin(), sb.end());
+  Bytes wire2{static_cast<std::uint8_t>(464 & 0xff), static_cast<std::uint8_t>(464 >> 8),
+              static_cast<std::uint8_t>(body2.size()), 0};
+  wire2.insert(wire2.end(), body2.begin(), body2.end());
+  CHECK(decode_bytes(wire2) == Error::bad_value);
 }

@@ -10,9 +10,11 @@
 #include <vector>
 
 #include "common/logging.h"
+#include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
 #include "coop_lobby_tab.h"
+#include "coop_look.h"
 #include "coop_mods_tab.h"
 #include "coop_pause_files.h"
 #include "coop_title.h"
@@ -75,14 +77,18 @@ HosCoopStatus Status() {
     return st;
 }
 
-// Link's look: customizer-live-b's coop_look.h (CoopLook::SetPending when the player picks, ApplyOnUnpause when the
-// menu closes). These two are the only places it is wired. Until coop_look.h is under this branch: the colour is
-// saved (coop-options.ini color, by Save) and Link wears it at the next start.
+// Link's look (coop_look.h): CoopLook::SetPending when the player picks, ApplyOnUnpause when the menu closes; the
+// look is worn on the game's next frame (CoopLook::Frame). These two are the only places it is wired.
 std::vector<std::string> ChooseLook(const std::string& colour) {
     LOG_INFO(Core, "coop: multiplayer tab: Link's look: {}", colour.empty() ? std::string("by player number") : colour);
-    return {"Link wears it the next time the game starts."};
+    CoopLook::Look look = CoopLook::Shown();
+    look[CoopLook::Part::tunic] = CoopColors::Parse(colour);   // ("" or an unknown name: by player number)
+    CoopLook::SetPending(look);
+    return {"Link wears it when this menu closes."};
 }
-void WearChosenLook() {}
+void WearChosenLook() {
+    CoopLook::ApplyOnUnpause();
+}
 
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). Only reads: what follows from

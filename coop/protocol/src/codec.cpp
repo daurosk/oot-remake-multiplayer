@@ -2125,6 +2125,51 @@ Error check_mod_settings(const ModSettings& m) {
   return Error::none;
 }
 
+// Split screen (docs/protocol.md, "Local players").
+bool valid_seat(std::uint8_t seat) { return seat >= 1 && seat <= kMaxLocalSeats; }
+
+// LOCAL_JOIN: u8 seat (1 to 3), str nickname (1 to 16).
+Error encode_body(const LocalJoin& m, Writer& w) {
+  if (!valid_seat(m.seat) || m.nickname.empty()) return Error::bad_value;
+  COOP_TRY(check_string(m.nickname, kMaxNicknameChars));
+  w.u8(m.seat);
+  w.str(m.nickname);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LocalJoin& m) {
+  m = LocalJoin{};
+  COOP_READ(r.u8(m.seat));
+  COOP_TRY(r.str(m.nickname, kMaxNicknameChars));
+  if (!valid_seat(m.seat) || m.nickname.empty()) return Error::bad_value;
+  return Error::none;
+}
+
+// LOCAL_JOINED: u8 seat, u8 player (0: refused), u8 reason (0 when joined).
+Error encode_body(const LocalJoined& m, Writer& w) {
+  if (!valid_seat(m.seat) || (m.player_number != 0 && !valid_player(m.player_number))) return Error::bad_value;
+  w.u8(m.seat);
+  w.u8(m.player_number);
+  w.u8(m.player_number != 0 ? 0 : static_cast<std::uint8_t>(m.reason));
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LocalJoined& m) {
+  m = LocalJoined{};
+  std::uint8_t reason = 0;
+  COOP_READ(r.u8(m.seat));
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(reason));
+  if (!valid_seat(m.seat) || (m.player_number != 0 && !valid_player(m.player_number))) return Error::bad_value;
+  if (m.player_number == 0) {
+    if (reason == 0) return Error::bad_value;
+    m.reason = static_cast<RefuseReason>(reason);
+  } else if (reason != 0) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
 // MOD_SETTINGS: u8 player, u8 count, then per setting: str mod id, str key, str value.
 Error encode_body(const ModSettings& m, Writer& w) {
   COOP_TRY(check_mod_settings(m));
@@ -2152,6 +2197,54 @@ Error decode_body(Reader& r, ModSettings& m) {
   }
   return check_mod_settings(m);
 }
+
+// LOCAL_LEAVE: u8 seat.
+Error encode_body(const LocalLeave& m, Writer& w) {
+  if (!valid_seat(m.seat)) return Error::bad_value;
+  w.u8(m.seat);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LocalLeave& m) {
+  m = LocalLeave{};
+  COOP_READ(r.u8(m.seat));
+  return valid_seat(m.seat) ? Error::none : Error::bad_value;
+}
+
+// LOCAL_SAMPLE, LOCAL_MESSAGE: u8 seat, then the inner message as encode()
+// makes it (header included) to the end of the body. It must decode, be of a
+// type this envelope carries, and hold no other envelope.
+Error check_inner(std::span<const std::uint8_t> inner, bool (*carries)(MessageType)) {
+  Message m;
+  COOP_TRY(decode(inner, m));
+  return carries(type_of(m)) ? Error::none : Error::bad_value;
+}
+
+template <typename Envelope>
+Error encode_envelope(const Envelope& m, Writer& w, bool (*carries)(MessageType)) {
+  if (!valid_seat(m.seat)) return Error::bad_value;
+  COOP_TRY(check_inner(m.inner, carries));
+  w.u8(m.seat);
+  w.bytes(m.inner.data(), m.inner.size());
+  return Error::none;
+}
+
+template <typename Envelope>
+Error decode_envelope(Reader& r, Envelope& m, bool (*carries)(MessageType)) {
+  m = Envelope{};
+  COOP_READ(r.u8(m.seat));
+  if (!valid_seat(m.seat)) return Error::bad_value;
+  std::span<const std::uint8_t> inner;
+  COOP_READ(r.take(r.left(), inner));
+  COOP_TRY(check_inner(inner, carries));
+  m.inner.assign(inner.begin(), inner.end());
+  return Error::none;
+}
+
+Error encode_body(const LocalSample& m, Writer& w) { return encode_envelope(m, w, local_sample_carries); }
+Error decode_body(Reader& r, LocalSample& m) { return decode_envelope(r, m, local_sample_carries); }
+Error encode_body(const LocalMessage& m, Writer& w) { return encode_envelope(m, w, local_message_carries); }
+Error decode_body(Reader& r, LocalMessage& m) { return decode_envelope(r, m, local_message_carries); }
 
 // SIGN_CUT: head, u16 count, then count x (u64 key, u64 value).
 Error check_sign_cut(const SignCut& m) {
@@ -2694,6 +2787,11 @@ MessageType type_of(const Message& message) {
       MessageType::voice_frame,
       MessageType::mod_list,      MessageType::mod_settings,
       MessageType::lobby_action,  MessageType::lobby_mutes, MessageType::lobby_result,
+      MessageType::local_join,
+      MessageType::local_joined,
+      MessageType::local_leave,
+      MessageType::local_sample,
+      MessageType::local_message,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -2707,6 +2805,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::player_pose:
     case MessageType::player_ride:
     case MessageType::test_payload:
+    case MessageType::local_sample:
       return kChannelPlayerSamples;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -2781,6 +2880,10 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::ocarina_note:
     case MessageType::dbno_mode:
     case MessageType::dbno_state:
+    case MessageType::local_join:
+    case MessageType::local_joined:
+    case MessageType::local_leave:
+    case MessageType::local_message:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -2792,6 +2895,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::player_sample:
     case MessageType::player_pose:
     case MessageType::player_ride:
+    case MessageType::local_sample:
       return channel == kChannelPlayerSamples;
     case MessageType::object_sample:
     case MessageType::world_move:
@@ -2830,6 +2934,10 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::object_group:
     case MessageType::fish_lure:
     case MessageType::lobby_action:
+    case MessageType::local_join:
+    case MessageType::local_leave:
+    case MessageType::local_sample:
+    case MessageType::local_message:
       return from == Sender::client;
     case MessageType::welcome:
     case MessageType::refused:
@@ -2843,6 +2951,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::flag_origin:
     case MessageType::lobby_mutes:
     case MessageType::lobby_result:
+    case MessageType::local_joined:
       return from == Sender::server;
     case MessageType::ping:
     case MessageType::pong:
@@ -3063,6 +3172,11 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::lobby_action: return decode_as<LobbyAction>(body, out);
     case MessageType::lobby_mutes: return decode_as<LobbyMutes>(body, out);
     case MessageType::lobby_result: return decode_as<LobbyResult>(body, out);
+    case MessageType::local_join: return decode_as<LocalJoin>(body, out);
+    case MessageType::local_joined: return decode_as<LocalJoined>(body, out);
+    case MessageType::local_leave: return decode_as<LocalLeave>(body, out);
+    case MessageType::local_sample: return decode_as<LocalSample>(body, out);
+    case MessageType::local_message: return decode_as<LocalMessage>(body, out);
     case MessageType::drop_spawn: return decode_as<DropSpawn>(body, out);
     case MessageType::drop_take: return decode_as<DropTake>(body, out);
     case MessageType::drop_ask: return decode_as<DropAsk>(body, out);
@@ -3194,6 +3308,37 @@ std::optional<std::vector<FlagSnapshot>> split_snapshot(
     out[i].flags.assign(flags.begin() + static_cast<std::ptrdiff_t>(from),
                         flags.begin() + static_cast<std::ptrdiff_t>(to));
   }
+  return out;
+}
+
+bool local_sample_carries(MessageType type) {
+  return type == MessageType::player_sample || type == MessageType::player_pose ||
+         type == MessageType::player_ride;
+}
+
+bool local_message_carries(MessageType type) {
+  return type == MessageType::player_status || type == MessageType::player_equip ||
+         type == MessageType::player_life || type == MessageType::ocarina_note;
+}
+
+std::optional<Message> local_envelope(std::uint8_t seat, const Message& inner) {
+  const MessageType type = type_of(inner);
+  const bool sample = local_sample_carries(type);
+  if (!sample && !local_message_carries(type)) return std::nullopt;
+  std::vector<std::uint8_t> bytes;
+  if (encode(inner, bytes) != Error::none) return std::nullopt;
+  Message envelope = sample ? Message{LocalSample{seat, std::move(bytes)}} : Message{LocalMessage{seat, std::move(bytes)}};
+  std::vector<std::uint8_t> check;
+  if (encode(envelope, check) != Error::none) return std::nullopt;   // (a bad seat)
+  return envelope;
+}
+
+std::optional<Message> local_inner(const Message& envelope) {
+  const std::vector<std::uint8_t>* inner = nullptr;
+  if (const auto* s = std::get_if<LocalSample>(&envelope)) inner = &s->inner;
+  if (const auto* m = std::get_if<LocalMessage>(&envelope)) inner = &m->inner;
+  Message out;
+  if (inner == nullptr || decode(*inner, out) != Error::none) return std::nullopt;
   return out;
 }
 

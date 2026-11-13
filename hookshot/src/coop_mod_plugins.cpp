@@ -320,7 +320,17 @@ void Host::Start() {
             }
         }
     });
+    bool open_crashed = false;
     for (const CoopMods::Mod& m : loader_.CodeToLoad()) {
+        if (open_crashed) {
+            // The system's loader may still be locked after a crash in a library's own start: no more libraries.
+            const std::string problem = "not loaded: another mod crashed while its code was loaded; start the game again";
+            if (game_.log) {
+                game_.log("mod " + m.manifest.id + ": " + problem);
+            }
+            loader_.NoteCode(m.name, problem);
+            continue;
+        }
         auto s = std::make_unique<Slot>();
         s->loader = &loader_;
         s->game = &game_;
@@ -330,18 +340,24 @@ void Host::Start() {
         // From before its library opens to the end of its start: a crash the guard cannot catch (a stack overflow,
         // a fast fail, its own thread) or a hang leaves coop-mods.starting behind, and the next start skips it.
         loader_.CodeStarting(m.name);
-        Begin(*s, m);
-        loader_.CodeStarted();
+        if (Begin(*s, m)) {
+            loader_.CodeStarted();
+        } else {
+            open_crashed = true;  // coop-mods.starting stays: the next start switches this mod off
+        }
         slots_.push_back(std::move(s));  // a library that opened stays: its code may have started a thread
     }
 }
 
-void Host::Begin(Slot& s, const CoopMods::Mod& m) {
+bool Host::Begin(Slot& s, const CoopMods::Mod& m) {
     std::string problem;
     if (library_.open) {
         OpenCall open{&library_, &m.code, &problem, nullptr};
         if (!Guarded(RunOpen, &open)) {
-            problem = "crashed while its code was loaded";
+            problem = "crashed while its code was loaded: no other code mod is loaded until the game starts again";
+            s.Say(problem);
+            loader_.NoteCode(m.name, problem);
+            return false;
         }
         s.handle = open.handle;
     }
@@ -356,7 +372,7 @@ void Host::Begin(Slot& s, const CoopMods::Mod& m) {
         }
         s.Say(problem);
         loader_.NoteCode(m.name, problem);
-        return;
+        return true;
     }
     s.stop = reinterpret_cast<coop_mod_stop_fn>(library_.symbol(s.handle, COOP_MOD_STOP_EXPORT));
     CoopModApi& api = s.table.api;
@@ -396,12 +412,13 @@ void Host::Begin(Slot& s, const CoopMods::Mod& m) {
         s.stop = nullptr;
         s.Say(problem);
         loader_.NoteCode(m.name, problem);
-        return;
+        return true;
     }
     s.Say("started (" +
           std::to_string(s.frame.size() + s.overlay.size() + s.key.size() + s.setting.size() + s.hook.size()) +
           " callbacks)");
     loader_.NoteCode(m.name, "");
+    return true;
 }
 
 void Host::Stop() {

@@ -122,6 +122,41 @@ constexpr std::int32_t Lowered(std::int32_t life, std::int32_t sum, std::int32_t
     return to >= 0 && life - sum > to ? life - to : sum;
 }
 
+// How long a lowering waits for the game's Life step before it is written
+// directly (the step skips some frames: no life value), as CoopActorEvents'
+// fallback does.
+inline constexpr std::uint64_t kTakeWaitUs = 250'000;
+
+// A lowering of our Link's life for the Life step (Lowered's `to`). The frame
+// asks (Ask, each frame it wants it); the Life step takes it (Take, any game
+// thread). An ask the step has not taken within kTakeWaitUs comes back from
+// Ask as the life to write directly instead.
+class Lowering {
+public:
+    std::optional<std::int32_t> Ask(std::int32_t to, std::uint64_t now_us) noexcept {
+        if (to_.exchange(to, std::memory_order_acq_rel) < 0 || since_us_ == 0) {
+            since_us_ = now_us == 0 ? 1 : now_us;  // a new ask: the step had taken the last
+            return std::nullopt;
+        }
+        if (now_us < since_us_ + kTakeWaitUs) {
+            return std::nullopt;
+        }
+        to_.store(-1, std::memory_order_release);
+        since_us_ = 0;
+        return to;
+    }
+    // The frame's ask is over (nothing to lower now).
+    void Drop() noexcept {
+        to_.store(-1, std::memory_order_release);
+        since_us_ = 0;
+    }
+    std::int32_t Take() noexcept { return to_.exchange(-1, std::memory_order_acq_rel); }
+
+private:
+    std::atomic<std::int32_t> to_{-1};
+    std::uint64_t since_us_ = 0;  // the frame's own
+};
+
 // The guard as the game's threads see it. The frame sets it (Set); the Life
 // step of our own Link asks it (Step, any game thread) and its lethal hits
 // are counted for the next frame (TakeLethal).

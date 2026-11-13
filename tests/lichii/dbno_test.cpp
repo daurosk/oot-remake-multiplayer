@@ -786,3 +786,19 @@ TEST_CASE("dbno: the rules lower the life through the game's own step, never les
     CHECK(Lowered(1, 0, 1) == 0);    // already there
     CHECK(Lowered(1, 0, 3) == 0);    // a raise is not this step's (it is written)
 }
+
+TEST_CASE("dbno: a lowering the Life step does not take in a quarter second is written instead") {
+    CoopDbno::Lowering l;
+    const std::uint64_t t0 = 1'000'000;
+    CHECK_FALSE(l.Ask(0, t0));
+    CHECK(l.Take() == 0);  // the step took it
+    CHECK(l.Take() == -1);
+    CHECK_FALSE(l.Ask(0, t0 + 100'000));  // asked again: a new wait
+    CHECK_FALSE(l.Ask(0, t0 + 200'000));
+    CHECK(l.Ask(0, t0 + 100'000 + CoopDbno::kTakeWaitUs) == std::optional<std::int32_t>{0});
+    CHECK(l.Take() == -1);  // written: the step has nothing left to do
+    CHECK_FALSE(l.Ask(1, t0 + 400'000));
+    l.Drop();
+    CHECK(l.Take() == -1);
+    CHECK_FALSE(l.Ask(1, t0 + 900'000));  // after a drop the wait starts again
+}

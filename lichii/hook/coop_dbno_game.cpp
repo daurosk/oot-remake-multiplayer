@@ -59,7 +59,7 @@ struct Glue {
     LifeGuard guard;
     std::atomic<std::uint64_t> life_component{0};
     std::atomic<std::int32_t> life_write{-1};  // raise to this (-1: none); the objects walk writes it
-    std::atomic<std::int32_t> take_to{-1};     // lower to this (-1: none); the Life step takes it
+    Lowering take_to;                          // lower to this; the Life step takes it
     std::atomic<PadMode> pad_mode{PadMode::game};
     std::atomic<bool> button{false};  // A as the player holds it (before we take it)
 
@@ -311,11 +311,18 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     if (out.write_life) {
         // Less: through the game's own Life step (its death at 0). More (a
         // revive): written, as the step heals nothing.
+        // The step not taken in time: written after all (it skips frames).
         if (in.life && *out.write_life < *in.life) {
-            g.take_to.store(*out.write_life);
+            if (const auto late = g.take_to.Ask(*out.write_life, now_us)) {
+                g.life_write.store(*late);
+                LOG_INFO(Core, "coop: dbno: the Life step did not lower our Link in time: written");
+            }
         } else {
+            g.take_to.Drop();
             g.life_write.store(*out.write_life);
         }
+    } else if (out.state == State::up) {
+        g.take_to.Drop();  // up again (a fairy, the title screen): nothing left to lower
     }
 
     // Beside a downed teammate: hold A.
@@ -400,7 +407,7 @@ std::int32_t LifeStep(std::uint64_t component, std::int32_t life, std::int32_t s
         return sum;
     }
     sum = g.guard.Step(life, sum);
-    return Lowered(life, sum, g.take_to.exchange(-1));
+    return Lowered(life, sum, g.take_to.Take());
 }
 
 std::optional<std::int32_t> TakeLifeWrite() {

@@ -277,7 +277,7 @@ TEST_CASE("title menu: Settings change with Left and Right, Save asks to write t
     CHECK(m.Press(Input::kDecide) == Sound::kDecide);   // done
     CHECK_FALSE(m.editing());
     CHECK(m.options().name == "Sari!");
-    for (int i = 0; i < 11; ++i) {
+    for (int i = 0; i < 12; ++i) {
         m.Press(Input::kDown);
     }
     CHECK(m.view().rows[m.selected()].label == "Save");
@@ -296,7 +296,7 @@ TEST_CASE("title menu: Save refuses a bad name or password") {
     m.Press(Input::kDown);
     m.Press(Input::kDown);
     m.Press(Input::kDecide);
-    for (int i = 0; i < 11; ++i) {
+    for (int i = 0; i < 12; ++i) {
         m.Press(Input::kDown);
     }
     CHECK(m.Press(Input::kDecide) == Sound::kRefuse);
@@ -317,7 +317,7 @@ TEST_CASE("title menu: the name stops at 16 characters, the password takes no sp
     m.Char('q');
     CHECK(m.options().name == "abcdefghijklmnop");
     m.Press(Input::kDecide);
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 9; ++i) {
         m.Press(Input::kDown);
     }
     CHECK(m.view().rows[m.selected()].value == "New each session");
@@ -356,4 +356,29 @@ TEST_CASE("title menu: the kit's options as the launcher's variables") {
     CHECK(v[2] == std::pair<std::string, std::string>{"LICHII_COOP_FLAGS", "shared_flags.txt"});
     CHECK(v[3] == std::pair<std::string, std::string>{"EDEN_NX2_X", "2"});
     CHECK(KitVariables("color =\r\n").empty());
+}
+
+TEST_CASE("title menu: the host's player count, 2 to 16, round the ends, read and written") {
+    Menu m;
+    m.Open(Options{}, Page::kSettings);
+    for (int i = 0; i < 7; ++i) {
+        m.Press(Input::kDown);
+    }
+    REQUIRE(m.view().rows[m.selected()].label == "Players when you host");
+    CHECK(m.view().rows[m.selected()].value == "4");
+    m.Press(Input::kLeft);
+    m.Press(Input::kLeft);
+    CHECK(m.options().max_players == 2);
+    m.Press(Input::kLeft);
+    CHECK(m.options().max_players == 16);
+    m.Press(Input::kRight);
+    CHECK(m.options().max_players == 2);
+    Options o;
+    o.max_players = 12;
+    std::string c, opt;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "max_players") == "12");
+    CHECK(Options::Read("", opt).max_players == 12);
+    CHECK(Options::Read("", "max_players = 40\r\n").max_players == 16);
+    CHECK(Options::Read("", "max_players = x\r\n").max_players == 4);
 }

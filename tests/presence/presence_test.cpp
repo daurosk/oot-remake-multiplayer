@@ -259,7 +259,7 @@ TEST_CASE("presence: join, leave and welcome") {
   CHECK(p.apply(proto::Message{proto::PlayerJoined{3, "Three"}}));
   CHECK(p.players() == std::vector<std::uint8_t>{1, 3, 4});
   CHECK_FALSE(p.on_joined({2, "Me"}));  // own number
-  CHECK_FALSE(p.on_joined({5, "Five"}));
+  CHECK_FALSE(p.on_joined({17, "Seventeen"}));
 
   CHECK(p.on_sample(sample(3, 100, 1, {0, 0, 0})) == SampleResult::buffered);
   CHECK(p.apply(proto::Message{proto::PlayerLeft{3, proto::LeaveReason::timed_out}}));
@@ -554,10 +554,30 @@ TEST_CASE("presence: unknown player numbers are ignored") {
     CHECK_FALSE(p.player(n));
   }
   proto::PlayerJoined j;
-  j.player_number = 5;
+  j.player_number = 17;
   CHECK_FALSE(p.on_joined(j));
   j.player_number = 0;
   CHECK_FALSE(p.on_joined(j));
   CHECK(p.players() == std::vector<std::uint8_t>{2});
   CHECK(p.on_sample(sample(1, 0, 1, {0, 0, 0})) == SampleResult::self);
+}
+
+TEST_CASE("presence holds 16 players (protocol 11): a WELCOME of 15 and joins up to 16") {
+  Presence p;
+  proto::Welcome w;
+  w.player_number = 16;
+  for (std::uint8_t n = 1; n <= 12; ++n) w.players.push_back({n, "p" + std::to_string(n)});
+  p.on_welcome(w);
+  CHECK(p.players().size() == 12);
+  CHECK(p.on_joined({13, "p13"}));
+  CHECK(p.on_joined({14, "p14"}));
+  CHECK(p.on_joined({15, "p15"}));
+  CHECK_FALSE(p.on_joined({16, "Me"}));  // own number
+  CHECK_FALSE(p.on_joined({17, "p17"}));
+  const auto all = p.players();
+  REQUIRE(all.size() == 15);
+  CHECK(all.front() == 1);
+  CHECK(all.back() == 15);
+  CHECK(p.on_left(proto::PlayerLeft{15}));
+  CHECK(p.players().size() == 14);
 }

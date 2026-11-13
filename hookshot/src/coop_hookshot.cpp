@@ -46,7 +46,9 @@
 #include "coop_svc.h"
 #include "coop_title.h"
 #include "core/core.h"
+#include "coop_host_menu.h"
 #include "hos_coop_api.h"
+#include "hos_coop_host.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -63,7 +65,6 @@ namespace {
 const HosCoopApi* g_api = nullptr;
 std::string g_build;
 bool g_on = false;
-bool g_menu_only = false;  // loaded for the title's Multiplayer menu only: co-op starts when it hosts or joins
 std::atomic<bool> g_present_seen{false};  // our patch's present site has run
 bool g_hold = false;
 Core::System g_system;
@@ -242,6 +243,32 @@ std::string Refusal() {
 }  // namespace CoopSvc
 
 namespace CoopHookshot {
+
+// Host and Join from the game's menu (hos_coop_host.h, coop_host_menu.h).
+CoopHostMenu::Menu& HostMenu() {
+    static CoopHostMenu::Menu menu([] {
+        CoopHostMenu::Hooks h;
+        h.connect = [](const CoopHostMenu::Target& t) {
+            const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
+            std::vector<std::string> errors;
+            CoopHook::Settings s = CoopHook::LoadSettings(ini, errors);  // the colour, as the player set it
+            s.server = t.server;
+            s.port = t.port;
+            s.name = t.name;
+            s.password = t.password;
+            return CoopHook::Begin(std::move(s));
+        };
+        h.disconnect = [] { CoopHook::End(); };
+        h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
+        h.default_name = [] {
+            const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
+            std::vector<std::string> errors;
+            return CoopHook::LoadSettings(ini, errors).name;
+        };
+        return h;
+    }());
+    return menu;
+}
 
 namespace {
 
@@ -502,7 +529,7 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
 }
 
 bool TypeChar(std::uint32_t byte) {
-    if (!g_on && !g_menu_only) {
+    if (!g_on) {
         return false;
     }
     std::lock_guard lock(g_box_mutex);
@@ -564,8 +591,6 @@ bool KeysTaken() {
     return box || cheats;
 }
 
-bool StartCoop();
-
 bool Start(const HosCoopApi* api) {
     if (api == nullptr || api->version != HOS_COOP_API_VERSION || api->size < kFirstApiSize) {
         return false;
@@ -583,49 +608,34 @@ bool Start(const HosCoopApi* api) {
     CoopTitle::ApplyKitOptions();
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
-    if (!CoopHook::LoadSettings(ini, errors).enabled() || !errors.empty()) {
-        if (TitleMenuPossible(api, Env("LICHII_COOP_TITLE_MENU"))) {
-            // The title's Multiplayer menu hosts or joins; co-op starts then (StartCoop).
-            for (const auto& e : errors) {
-                LOG_WARNING(Core, "coop: {} (the title's Multiplayer menu writes coop.ini again)", e);
-            }
-            LOG_INFO(Core, "coop: no server in coop.ini yet: the title's Multiplayer menu (Minus) hosts or joins");
-            CoopTitle::Init(api, false);
-            g_menu_only = true;
-            return true;
-        }
+    // The title's menu (patch 0004's Hookshot, or HOS_COOP_MENU=1): the module stays loaded with co-op idle until the
+    // player hosts or joins from the title (coop_title.h, hos_coop_host.h).
+    const bool menu = EnvOn("HOS_COOP_MENU") || TitleMenuPossible(api, Env("LICHII_COOP_TITLE_MENU"));
+    const bool server = CoopHook::LoadSettings(ini, errors).enabled() && errors.empty();
+    for (const auto& e : errors) {
+        LOG_WARNING(Core, "coop: {}", e);
+    }
+    if (!menu && !server) {
         CoopHook::Start();  // logs why co-op is off
         g_api = nullptr;
         return false;
     }
-    if (!StartCoop()) {
-        g_api = nullptr;
-        return false;
+    if (!server) {
+        LOG_INFO(Core, "coop: no server in coop.ini: co-op idle until the title's Host or Join");
     }
-    CoopTitle::Init(api, true);
-    return true;
-}
-
-// lichii/hook's co-op, from coop.ini (at the start, or once the title menu wrote it): true when it runs.
-bool StartCoop() {
     // The same switches that make the emulator put its cave in.
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopHook::Start();
-    g_on = !CoopHook::OverlayLines().empty();   // (a co-op that runs always has its state's line)
-    return g_on;
+    g_on = true;
+    CoopTitle::Init(api, server);
+    return true;
 }
 
 void Frame(void* ctx, int site) {
-    if (g_menu_only && CoopTitle::TakeStartCoop()) {   // the title menu hosted or joined: co-op now
-        const bool on = StartCoop();
-        LOG_INFO(Core, "coop: {} from the title menu", on ? "started" : "did not start");
-        CoopTitle::CoopStarted(on);
-        g_menu_only = !on;
-    }
-    if (site == HOS_COOP_SITE_FRAME && ctx != nullptr) {
+    if (site == HOS_COOP_SITE_FRAME && ctx != nullptr && g_on) {
         CoopTitle::OnFrame(ctx);
     }
     if (!g_on) {
@@ -668,6 +678,7 @@ std::uint32_t Hold(std::uint64_t component, std::uint32_t bits) {
 }
 
 void Stop() {
+    HostMenu().Leave();  // our own server goes after our own client
     if (g_on) {
         g_on = false;
         CoopHook::Shutdown();
@@ -710,6 +721,22 @@ COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
     CoopHookshot::Stop();
 }
+// Host and Join from the game's menu (hos_coop_host.h).
+COOP_HOOKSHOT_EXPORT int hos_coop_host_start(const HosCoopHostOptions* options) {
+    return CoopHookshot::HostMenu().HostStart(options);
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_join(const HosCoopJoinOptions* options) {
+    return CoopHookshot::HostMenu().Join(options);
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_host_answer(const char* answer_code) {
+    return CoopHookshot::HostMenu().Answer(answer_code);
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_leave(void) {
+    CoopHookshot::HostMenu().Leave();
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_status(HosCoopStatus* out) {
+    CoopHookshot::HostMenu().Status(out);
+}
 // Typing (hos_coop_api.h): the chat box.
 COOP_HOOKSHOT_EXPORT int hos_coop_key(uint32_t vk, int repeat) {
     return CoopHookshot::TypeKey(vk, repeat != 0) ? 1 : 0;
@@ -727,18 +754,18 @@ COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
 // The title menu (hos_coop_api.h, patch 0004): the game's title screen and the pad first.
 COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) {
-    if (g_on || g_menu_only) {
+    if (g_on) {
         CoopTitle::OnTitle(ctx, screen, event);
     }
 }
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
-    return (g_on || g_menu_only) && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;
+    return g_on && stick != nullptr ? CoopTitle::OnPad(buttons, stick) : buttons;
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
-    return (g_on || g_menu_only) && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
+    return g_on && CoopDraw::Wanted(CoopHookshot::DrawScene()) ? 1 : 0;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
-    if ((g_on || g_menu_only) && d != nullptr) {
+    if (g_on && d != nullptr) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{}); plain look: "
@@ -778,7 +805,7 @@ COOP_HOOKSHOT_EXPORT void hos_coop_camera(uint64_t frame, const float* block, fl
     CoopCamera::Publish(frame, block + CoopHookshot::kCameraMatrix, width, height, false);
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
-    if ((g_on || g_menu_only) && d != nullptr) {
+    if (g_on && d != nullptr) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",

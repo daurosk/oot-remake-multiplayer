@@ -51,6 +51,7 @@ const std::vector<std::string>& ChatKeys();
 
 inline constexpr std::size_t kMaxNameChars = 16;   // coop_settings.h
 inline constexpr std::size_t kMaxPasswordBytes = 128;
+inline constexpr int kMinPlayers = 2, kMaxPlayers = 16;   // a session's size (protocol 11: up to 16)
 
 // A name the server takes: 1 to 16 characters (code points), no control
 // characters. Spaces at the ends do not count.
@@ -71,6 +72,7 @@ struct Options {
     std::string password;          // server_password ("": a new one each session)
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
     bool cheats = false;           // LICHII_COOP_CHEATS
+    int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);

@@ -17,6 +17,7 @@
 
 #include "coop/protocol/codec.hpp"
 #include "enet_server.hpp"
+#include "host_service.hpp"
 #include "join_helper.hpp"
 #include "nat_net.hpp"
 #include "punch.hpp"
@@ -239,4 +240,90 @@ TEST_CASE("nat loopback: a server that hears the helper directly answers its pro
   CHECK(w.rendezvous->stats().probes_answered > 0);
   w.game.connect(w.helper->game_port());
   REQUIRE(w.pump_until([&] { return w.game.connected; }, 8000));
+}
+
+// HostService (host_service.hpp) with invite: the same STUN round and code as
+// coop_server --invite, read from its status (what the game's menu shows).
+TEST_CASE("host service: the invite code holds this server's address and the password") {
+  EnetLife enet;
+  FakeStun stun;
+  std::vector<std::string> log;
+  HostServiceConfig config;
+  config.port = 0;
+  config.session.join_password = make_password();
+  config.invite = true;
+  config.stun_servers = {stun.address()};
+  config.stun_allow_private = true;  // 127.0.0.1 is not an internet address
+  config.log = [&log](const std::string& line) { log.push_back(line); };
+  HostService service(config);
+  std::string why;
+  REQUIRE(service.start(why));
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (!service.status().invite_done && std::chrono::steady_clock::now() < deadline) {
+    service.service(1);
+    stun.pump();
+  }
+  const HostStatus status = service.status();
+  REQUIRE(status.invite_done);
+  REQUIRE_FALSE(status.invite.empty());
+  const InviteRead read = read_invite(status.invite);
+  // 127.0.0.1 is not an internet address: read, but refused for a real join.
+  REQUIRE(read.error == CodeError::kNotPublic);
+  CHECK(read.invite.host.ip == 0x7F000001u);
+  CHECK(read.invite.host.port == service.port());
+  CHECK(read.invite.password == config.session.join_password);
+  bool shown = false;
+  for (const auto& line : log) shown = shown || line == "invite code: " + status.invite;
+  CHECK(shown);
+
+  // The game's log (log_invite false) never has the code or the password.
+  {
+    FakeStun stun2;
+    std::vector<std::string> quiet;
+    HostServiceConfig c2 = config;
+    c2.stun_servers = {stun2.address()};
+    c2.log_invite = false;
+    c2.log = [&quiet](const std::string& line) { quiet.push_back(line); };
+    HostService s2(c2);
+    REQUIRE(s2.start(why));
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!s2.status().invite_done && std::chrono::steady_clock::now() < until) {
+      s2.service(1);
+      stun2.pump();
+    }
+    REQUIRE_FALSE(s2.status().invite.empty());
+    for (const auto& line : quiet) {
+      CHECK(line.find(s2.status().invite) == std::string::npos);
+      CHECK(line.find(c2.session.join_password) == std::string::npos);
+    }
+  }
+
+  // A pasted answer that is not one is explained, not used.
+  CHECK(service.add_answer("hello") != CodeError::kOk);
+  bool explained = false;
+  for (const auto& line : log) explained = explained || line.rfind("answer code not used: ", 0) == 0;
+  CHECK(explained);
+}
+
+TEST_CASE("host service: no STUN answer, no invite code, and the status says why") {
+  EnetLife enet;
+  HostServiceConfig config;
+  config.port = 0;
+  config.session.join_password = make_password();
+  config.invite = true;  // and no STUN server at all
+  std::uint64_t now = 0;
+  config.now_ms = [&now] { return now; };
+  HostService service(config);
+  std::string why;
+  REQUIRE(service.start(why));
+  for (int i = 0; i < 100 && !service.status().invite_done; ++i) {
+    now += 500;
+    service.service(0);
+  }
+  const HostStatus status = service.status();
+  REQUIRE(status.invite_done);
+  CHECK(status.invite.empty());
+  CHECK(status.message.find("no invite code") != std::string::npos);
+  CHECK(status.problem == HostProblem::kNoInvite);
+  CHECK(status.state == HostState::kHosting);  // LAN and VPN players still get in
 }

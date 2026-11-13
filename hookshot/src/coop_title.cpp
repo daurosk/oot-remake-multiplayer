@@ -19,6 +19,7 @@
 
 #include "common/logging.h"
 #include "coop_hook.h"
+#include "coop_hookshot.h"
 #include "coop_runtime.h"
 #include "coop_title_menu.h"
 #include "nat_codes.hpp"
@@ -89,7 +90,6 @@ bool g_native = false;   // LICHII_COOP_TITLE_NATIVE=1: the 4th title button (Pa
 std::atomic<std::uint64_t> g_screen{0};
 std::atomic<std::uint64_t> g_last_step_ms{0};
 std::atomic<bool> g_step_seen{false};
-std::atomic<bool> g_start_coop{false};
 std::atomic<bool> g_rows{false};   // the title has our three rows (the puppet pack's Title_00), texts set
 
 std::mutex g_mutex;   // everything below
@@ -99,10 +99,7 @@ std::uint64_t g_pad_last = 0;
 bool g_pad_eat = false;          // the press that opened or closed the menu: kept from the game until let go
 std::uint64_t g_held_dir = 0;    // the direction held (pad bit), for repeats
 std::uint64_t g_next_repeat_ms = 0;
-std::string g_invite;            // this session's invite code (Host), once seen
-std::uint64_t g_watch_until_ms = 0;   // until when the clipboard is watched for the server's invite code
-std::string g_clip_before;       // the clipboard when Host was chosen
-std::string g_doing;             // the prompt's words while co-op runs ("Multiplayer: hosting")
+std::string g_doing;             // what co-op does since the menu started it: "hosting", "joined"
 int g_focus_logged = -2;
 
 std::uint64_t NowMs() {
@@ -300,47 +297,6 @@ bool SetClipboardText(const std::string& text) {
 #endif
 }
 
-// One of the kit's .cmd files in its own minimised window (`start /min`), with
-// these variables (secrets go here, never on a command line). False with why.
-bool LaunchKit(const fs::path& kit, const std::string& cmd, const std::vector<std::string>& args,
-               const std::vector<std::pair<std::string, std::string>>& env, const std::string& title,
-               std::string& why) {
-#ifdef _WIN32
-    std::wstring line = L"cmd.exe /d /c start \"" + Wide(title) + L"\" /min \"" + (kit / cmd).wstring() + L"\"";
-    for (const auto& a : args) {
-        line += L" " + Wide(a);   // (addresses and ports only: no spaces or quotes)
-    }
-    std::vector<std::pair<std::string, std::string>> before;
-    for (const auto& [k, v] : env) {
-        before.emplace_back(k, Env(k.c_str()));
-        SetEnv(k, v);
-    }
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;   // (the cmd.exe that runs `start`; the window it starts is minimised)
-    PROCESS_INFORMATION pi{};
-    std::wstring dir = kit.wstring();
-    const BOOL ok = CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                                   dir.c_str(), &si, &pi);
-    const DWORD err = GetLastError();
-    for (const auto& [k, v] : before) {
-        SetEnv(k, v);
-    }
-    if (!ok) {
-        why = "could not start " + cmd + " (Windows error " + std::to_string(err) + ")";
-        return false;
-    }
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    return true;
-#else
-    (void)kit, (void)cmd, (void)args, (void)env, (void)title;
-    why = "hosting and joining from the title are Windows only for now: use Host.sh or Join.sh";
-    return false;
-#endif
-}
-
 // --- What the menu asked for (under g_mutex) ---
 
 void SetCoopEnvironment(const CoopTitleMenu::Options& o) {
@@ -349,74 +305,106 @@ void SetCoopEnvironment(const CoopTitleMenu::Options& o) {
     }
 }
 
-bool WriteCoopIni(const std::string& server, const std::string& name, const std::string& password) {
-    const fs::path ini = CoopIni();
-    const std::string text = CoopTitleMenu::CoopIniFor(ReadText(ini), server, name, password);
-    if (!WriteText(ini, text)) {
-        LOG_ERROR(Core, "coop: title menu: {} could not be written", ini.string());
-        return false;
+// What the module's host is doing, in lines for the Hosting / Joining page (the game's own dialog is next).
+std::vector<std::string> HostStatusLines() {
+    HosCoopStatus st{};
+    st.size = sizeof st;
+    CoopHookshot::HostMenu().Status(&st);
+    std::vector<std::string> out;
+    switch (st.state) {
+    case HOS_COOP_STARTING:
+        out.push_back(g_doing == "joined" ? "Finding the host..." : "Starting the server...");
+        break;
+    case HOS_COOP_HOSTING:
+        out.push_back(fmt::format("Hosting on port {}: {} player(s).", st.port, st.players));
+        if (st.invite[0] != 0) {
+            out.push_back("Invite code (Copy the invite code puts it on the clipboard):");
+            out.push_back(st.invite);
+        } else if (!st.invite_done) {
+            out.push_back("Making the invite code...");
+        }
+        break;
+    case HOS_COOP_JOINING:
+        out.push_back("Joining the host...");
+        break;
+    case HOS_COOP_WAIT_HOST:
+        out.push_back("The host could not be reached directly. Send the host this ANSWER CODE:");
+        out.push_back(st.answer);
+        break;
+    case HOS_COOP_CONNECTED:
+        out.push_back("Connected. Choose your file and play.");
+        break;
+    case HOS_COOP_FAILED:
+        out.push_back("It did not start.");
+        break;
+    default:
+        break;
     }
-    return true;
+    if (st.message[0] != 0) {
+        out.push_back(st.message);
+    }
+    return out;
+}
+
+// The Hosting / Joining page follows the host's status.
+void RefreshStatus() {
+    if (g_menu.page() == Page::kHosting || g_menu.page() == Page::kJoining) {
+        static std::uint64_t next = 0;
+        if (NowMs() >= next) {
+            next = NowMs() + 250;
+            g_menu.SetStatus(HostStatusLines());
+        }
+    }
+}
+
+std::string HostInvite() {
+    HosCoopStatus st{};
+    st.size = sizeof st;
+    CoopHookshot::HostMenu().Status(&st);
+    return st.invite;
+}
+
+// Host and Join through the module's own host (native-host-b, hos_coop_host.h): the co-op server or the
+// invite code's join helper on the module's "coop host" thread, and this game's client connected to it.
+// No windows, no scripts; the menu shows its status (HostStatusLines).
+bool Busy() {
+    HosCoopStatus st{};
+    st.size = sizeof st;
+    CoopHookshot::HostMenu().Status(&st);
+    return g_coop_on || (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED);
 }
 
 void Host() {
-    if (g_coop_on) {
-        g_menu.SetStatus({"Co-op is on already in this game.", "To host or join another, quit the game and start it again."});
+    if (Busy()) {
+        g_menu.SetStatus({"Co-op is on already in this game: quit the game to host or join another."});
         g_sounds.push_back(Sound::kRefuse);
         return;
     }
-    const auto kit = FindKit();
-    if (!kit) {
-        g_menu.SetStatus({"No co-op kit found with this game (server\\coop_server.exe).",
-                          "Start the game from the kit (Host-Hookshot.bat), or put the kit's folder in coop-kit.txt."});
-        g_sounds.push_back(Sound::kRefuse);
-        return;
-    }
+    CoopHookshot::HostMenu().Leave();   // (a failed start: clear it)
     const CoopTitleMenu::Options o = g_menu.options();
-    const bool made = o.password.empty();
-    const std::string password = made ? coop::server::nat::make_password() : o.password;
-    const std::string options = ReadText(*kit / "coop-options.ini");
-    std::vector<std::string> args{"27510"};
-    const auto allow = CoopTitleMenu::IniGet(options, "server_allow");
-    if (allow && !allow->empty() && allow->find_first_not_of("0123456789./,") == std::string::npos) {
-        args.insert(args.end(), {"-Allow", *allow});
-    }
-    const auto bind = CoopTitleMenu::IniGet(options, "server_bind");
-    if (bind && !bind->empty() && bind->find_first_not_of("0123456789.") == std::string::npos) {
-        args.insert(args.end(), {"-Bind", *bind});
-    }
-    std::vector<std::pair<std::string, std::string>> env;
-    if (made) {
-        env.emplace_back("OOT_COOP_SESSION_PASSWORD", password);
-    }
-    g_clip_before = ClipboardText();
-    std::string why;
-    if (!LaunchKit(*kit, "start-server.cmd", args, env, "Co-op server", why)) {
-        LOG_ERROR(Core, "coop: title menu: host: {}", why);
-        g_menu.SetStatus({"The server did not start: " + why + "."});
-        g_sounds.push_back(Sound::kRefuse);
-        return;
-    }
-    if (!WriteCoopIni("127.0.0.1:27510", o.name, password)) {
-        g_menu.SetStatus({"coop.ini beside the game could not be written."});
-        g_sounds.push_back(Sound::kRefuse);
-        return;
-    }
     SetCoopEnvironment(o);
-    LOG_INFO(Core, "coop: title menu: host: the server started from {} (its own window, minimised); joining it",
-             Utf8Path(*kit));
-    g_watch_until_ms = NowMs() + 60000;
-    g_invite.clear();
-    g_doing = "Multiplayer: hosting";
+    HosCoopHostOptions h{};
+    h.size = sizeof h;
+    h.name = o.name.c_str();
+    h.password = o.password.empty() ? nullptr : o.password.c_str();   // none: a new random one, in the invite
+    h.port = 0;
+    h.upnp = o.upnp ? 1 : 0;
+    h.invite = 1;
+    h.pvp = o.pvp ? 1 : 0;
+    h.max_players = static_cast<std::uint8_t>(o.max_players);
+    if (!CoopHookshot::HostMenu().HostStart(&h)) {
+        g_menu.SetStatus(HostStatusLines());
+        g_sounds.push_back(Sound::kRefuse);
+        return;
+    }
+    LOG_INFO(Core, "coop: title menu: host: started (up to {} players)", o.max_players);
+    g_doing = "hosting";
     g_menu.ShowPage(Page::kHosting);
-    g_menu.SetStatus({"The server runs in its own window (minimised on the taskbar): keep it open while you play.",
-                      "Waiting for the invite code..."});
-    g_start_coop = true;
 }
 
 void Join(const std::string& text) {
-    if (g_coop_on) {
-        g_menu.SetStatus({"Co-op is on already in this game.", "To host or join another, quit the game and start it again."});
+    if (Busy()) {
+        g_menu.SetStatus({"Co-op is on already in this game: quit the game to host or join another."});
         g_sounds.push_back(Sound::kRefuse);
         return;
     }
@@ -437,45 +425,25 @@ void Join(const std::string& text) {
         g_sounds.push_back(Sound::kRefuse);
         return;
     }
+    CoopHookshot::HostMenu().Leave();
     const CoopTitleMenu::Options o = g_menu.options();
-    std::string server, password, shown;
-    if (const auto* inv = std::get_if<CoopTitleMenu::JoinInvite>(&target)) {
-        const auto kit = FindKit();
-        if (!kit) {
-            g_menu.SetStatus({"No co-op kit found with this game (server\\coop_server.exe): an invite code needs its join helper."});
-            g_sounds.push_back(Sound::kRefuse);
-            return;
-        }
-        std::string why;
-        if (!LaunchKit(*kit, "start-join.cmd", {"-HostAddress", inv->host, "-GamePort", "27512"},
-                       {{"OOT_COOP_JOIN_PASSWORD", inv->password}}, "Co-op join helper", why)) {
-            LOG_ERROR(Core, "coop: title menu: join: {}", why);
-            g_menu.SetStatus({"The join helper did not start: " + why + "."});
-            g_sounds.push_back(Sound::kRefuse);
-            return;
-        }
-        server = "127.0.0.1:27512";
-        password = inv->password;
-        shown = "the host (through the join helper window, minimised)";
-    } else {
-        const auto& a = std::get<CoopTitleMenu::JoinAddress>(target);
-        server = a.server;
-        password = a.password;
-        shown = a.server;
-    }
-    if (!WriteCoopIni(server, o.name, password)) {
-        g_menu.SetStatus({"coop.ini beside the game could not be written."});
+    SetCoopEnvironment(o);
+    const bool invite = std::holds_alternative<CoopTitleMenu::JoinInvite>(target);
+    const std::string where = invite ? text : std::get<CoopTitleMenu::JoinAddress>(target).server;
+    const std::string password = invite ? std::string() : std::get<CoopTitleMenu::JoinAddress>(target).password;
+    HosCoopJoinOptions j{};
+    j.size = sizeof j;
+    j.name = o.name.c_str();
+    j.target = where.c_str();
+    j.password = password.empty() ? nullptr : password.c_str();
+    if (!CoopHookshot::HostMenu().Join(&j)) {
+        g_menu.SetStatus(HostStatusLines());
         g_sounds.push_back(Sound::kRefuse);
         return;
     }
-    SetCoopEnvironment(o);
-    LOG_INFO(Core, "coop: title menu: join: {}", std::holds_alternative<CoopTitleMenu::JoinInvite>(target)
-                                                    ? std::string("an invite code, through the join helper")
-                                                    : "the address " + server);
-    g_doing = "Multiplayer: joined";
+    LOG_INFO(Core, "coop: title menu: join: {}", invite ? std::string("an invite code") : "the address " + where);
+    g_doing = "joined";
     g_menu.ShowPage(Page::kJoining);
-    g_menu.SetStatus({"Joining " + shown + "...", "Choose your file and play: the others show up when connected."});
-    g_start_coop = true;
 }
 
 void Save() {
@@ -516,13 +484,15 @@ void Act(const Request& r) {
     case Request::Kind::kPaste:
         g_menu.Paste(ClipboardText());
         break;
-    case Request::Kind::kCopyInvite:
-        if (g_invite.empty()) {
-            g_menu.SetStatus({"No invite code yet: the server window shows it when it has one."});
-        } else if (SetClipboardText(g_invite)) {
-            g_menu.SetStatus({"Invite code copied: " + g_invite, "Send it to your friends; they choose Join a game and paste it."});
+    case Request::Kind::kCopyInvite: {
+        const std::string invite = HostInvite();
+        if (invite.empty()) {
+            g_menu.SetStatus({"No invite code yet."});
+        } else if (SetClipboardText(invite)) {
+            g_menu.SetStatus({"Invite code copied: " + invite, "Send it to your friends; they choose Join and paste it."});
         }
         break;
+    }
     }
 }
 
@@ -540,44 +510,10 @@ void OpenMenu() {
     g_menu.Open(ReadOptions());
     g_sounds.push_back(Sound::kOpen);
     if (g_coop_on) {
-        g_menu.SetStatus({g_doing.empty() ? "Co-op is on in this game." : g_doing.substr(13) == "hosting"
-                                                                              ? "You are hosting."
-                                                                              : "You joined a game."});
+        g_menu.SetStatus({g_doing.empty() ? "Co-op is on in this game." : g_doing == "hosting" ? "You are hosting."
+                                                                                              : "You joined a game."});
     }
     LOG_INFO(Core, "coop: title menu: opened");
-}
-
-// The server's invite code, once it shows on the clipboard (start-server.ps1
-// copies it there; it never writes it to a file).
-void WatchInvite() {
-    if (g_watch_until_ms == 0 || !g_invite.empty()) {
-        return;
-    }
-    if (NowMs() > g_watch_until_ms) {
-        g_watch_until_ms = 0;
-        g_menu.SetStatus({"The server window shows the invite code (or an address to send): open it from the taskbar."});
-        return;
-    }
-    static std::uint64_t next = 0;
-    if (NowMs() < next) {
-        return;
-    }
-    next = NowMs() + 500;
-    const std::string clip = ClipboardText();
-    if (clip.empty() || clip == g_clip_before) {
-        return;
-    }
-    const auto r = coop::server::nat::read_invite(clip);
-    if (r.error != coop::server::nat::CodeError::kOk) {
-        return;
-    }
-    g_invite = clip.substr(0, clip.find_first_of("\r\n"));
-    g_watch_until_ms = 0;
-    LOG_INFO(Core, "coop: title menu: host: the invite code is on the clipboard");
-    if (g_menu.page() == Page::kHosting) {
-        g_menu.SetStatus({"Invite code (copied to the clipboard):", g_invite,
-                          "Send it to your friends; they choose Join a game and paste it."});
-    }
 }
 
 void LogButtons(std::uint64_t screen) {
@@ -819,7 +755,7 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
             g_focus_logged = f;
             LOG_INFO(Core, "coop: title menu: the title's focus is on button {}", f);
         }
-        WatchInvite();
+        RefreshStatus();
     }
     PlaySounds(ctx);
 }
@@ -827,7 +763,7 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
 void OnFrame(void* ctx) {
     {
         std::lock_guard lock(g_mutex);
-        WatchInvite();
+        RefreshStatus();
     }
     PlaySounds(ctx);
 }
@@ -969,21 +905,9 @@ std::optional<CoopDraw::TitleView> View() {
     if (!HasScratch() || !TitleUp() || g_rows) {   // (the title's own rows: no prompt)
         return std::nullopt;
     }
-    return CoopDraw::TitleView{g_doing.empty() ? std::string("Multiplayer") : g_doing, std::nullopt};
+    return CoopDraw::TitleView{g_doing.empty() ? std::string("Multiplayer") : "Multiplayer: " + g_doing,
+                              std::nullopt};
 }
 
-bool TakeStartCoop() {
-    return g_start_coop.exchange(false);
-}
-
-void CoopStarted(bool on) {
-    std::lock_guard lock(g_mutex);
-    g_coop_on = on;
-    if (!on) {
-        g_doing.clear();
-        g_menu.SetStatus({"Co-op did not start: hookshot_log.txt says why.", "Quit the game and start it again to try once more."});
-        g_sounds.push_back(Sound::kRefuse);
-    }
-}
 
 }  // namespace CoopTitle

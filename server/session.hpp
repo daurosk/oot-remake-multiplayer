@@ -46,6 +46,9 @@ std::optional<AddressRange> parse_address_range(std::string_view text);
 // number with the first dotted part highest.
 std::uint32_t ipv4_of(std::uint32_t enet_host);
 
+// Players a server takes unless told otherwise (coop_server --max-players).
+inline constexpr std::uint8_t kDefaultMaxPlayers = 4;
+
 struct SessionConfig {
   // The game build every player must run. Empty: the first player to join
   // decides it, and it is forgotten again when the session empties.
@@ -57,6 +60,23 @@ struct SessionConfig {
   // both key shares; the traffic keys come from it too. Required: empty, every
   // HELLO is refused (there is no plain way in, docs/protocol.md).
   std::string join_password;
+  // Most players at once (coop_server --max-players), 1 to protocol::kMaxPlayers;
+  // one more is told the server is full. 4 until the game's side (puppets,
+  // HUD, tables) takes 16; the protocol already does.
+  std::uint8_t max_players = kDefaultMaxPlayers;
+  // Interest (16 players, docs/protocol.md "Who gets which stream"): each
+  // PLAYER_SAMPLE and PLAYER_POSE goes to a player by where the two are.
+  // Same scene within near_distance (game units), or either place unknown:
+  // all of them. Same scene, farther: every far_pose_every-th pose (samples
+  // all: they are small). Another scene: every other_scene_sample_every-th
+  // sample (the player list, markers) and no poses (nothing to draw).
+  float near_distance = 2000.0f;
+  std::uint8_t far_pose_every = 3;
+  std::uint8_t other_scene_sample_every = 6;
+  // Most PLAYER_POSE bytes a second the server sends everyone together (the
+  // host's upload), shared evenly by the players; past a player's share its
+  // poses wait for the next one. 0: no cap.
+  std::uint32_t pose_upload_bytes_per_second = 0;
   // PvP (coop_server --pvp): players hurt each other. The host may change it
   // in the session (PVP_MODE); every player gets the server's value.
   bool pvp = false;
@@ -332,7 +352,13 @@ struct Stats {
   std::uint64_t spawns_replayed = 0;      // OBJECT_SPAWN sent again to a player entering
   std::uint64_t owners_refreshed = 0;     // OBJECT_OWNER repeated (owner_refresh_us)
   std::uint64_t owners_held = 0;          // objects given their first owner after owner_hold_us
-  std::uint64_t stale_scenes = 0;         // a late message's old scene, not taken back
+  std::uint64_t stale_scenes = 0;
+  // Interest (SessionConfig::near_distance): streamed messages not sent to a
+  // player (far, another scene), poses held back by the upload cap, and the
+  // stream bytes that were sent.
+  std::uint64_t interest_skipped = 0;
+  std::uint64_t upload_capped = 0;
+  std::uint64_t stream_bytes = 0;         // a late message's old scene, not taken back
   std::uint64_t group_links = 0;          // OBJECT_GROUP entries taken
   std::uint64_t group_refused = 0;        // OBJECT_GROUP entries turned away
   std::uint64_t late_removes = 0;         // a kill from the owner before, taken
@@ -428,7 +454,7 @@ class Session {
     // HELLO: the token its REJOIN_CLAIM showed, if any.
     protocol::RejoinTokenBytes rejoin_token{};
     std::optional<protocol::RejoinTokenBytes> rejoin_claim;
-    std::uint8_t number = 0;  // 1 to 4 once joined
+    std::uint8_t number = 0;  // 1 to max_players once joined
     std::string nickname;
     // The scene the player is in, from its latest OBJECT_PRESENT or
     // PLAYER_SAMPLE scene; empty while not known.
@@ -442,6 +468,12 @@ class Session {
     // Where its Link is, from PLAYER_SAMPLE; forgotten at a scene change.
     std::optional<protocol::Vec3> position;
     std::uint64_t position_at = 0;
+    // As a receiver: how many samples and poses of each sender it was due
+    // (interest counts every n-th), and its share of the pose upload cap.
+    std::array<std::uint32_t, protocol::kMaxPlayers + 1> samples_due{};
+    std::array<std::uint32_t, protocol::kMaxPlayers + 1> poses_due{};
+    double upload_budget = 0;
+    std::uint64_t upload_time = 0;
     // PLAYER_STATUS bits, and since when it is paused or dead (0: it is not).
     std::uint8_t status = 0;
     std::uint64_t paused_since = 0;
@@ -627,10 +659,14 @@ class Session {
                      const std::string& why = {});
   std::optional<ConnectionId> holder_of(const std::string& nickname) const;
   std::uint8_t free_number(std::uint8_t preferred = 0) const;
+  std::uint8_t max_players() const;  // config_.max_players, 1 to kMaxPlayers
 
   void send(ConnectionId to, std::uint8_t channel, const protocol::Message& m);
   void send_to_others(ConnectionId except, std::uint8_t channel,
                       const protocol::Message& m);
+  // PLAYER_SAMPLE and PLAYER_POSE: to each other player by interest.
+  void send_streamed(ConnectionId from, const Connection& sender, std::uint8_t channel,
+                     const protocol::Message& m, std::uint64_t now_us);
   void log(const std::string& line) const;
 
   SessionConfig config_;

@@ -4,12 +4,11 @@
 // game's UITitleScreen is up (hos_coop_title) and hands it the pad first
 // (hos_coop_pad). While the title is up a "(-) Multiplayer" prompt shows at
 // the bottom left; Minus opens the menu (coop_title_menu.h), drawn in the
-// game look, with the game's own UI sounds. Host starts the kit's server
-// (start-server.cmd, minimised: UPnP, the invite code, as Host.bat), Join
-// starts the kit's join helper for an invite code (start-join.cmd) or joins an
-// address; both write coop.ini and then co-op starts in this game, without a
-// restart. Settings writes coop.ini and the kit's coop-options.ini.
-// The module stays loaded for the menu when coop.ini names no server.
+// game look, with the game's own UI sounds. Host and Join go through the
+// module's own host (native-host-b, hos_coop_host.h: the server or the invite
+// code's join helper inside the game, no windows), then this game's client
+// connects. Settings writes coop.ini and the kit's coop-options.ini.
+// The module stays loaded, co-op idle, when coop.ini names no server.
 #pragma once
 
 #include <cstdint>
@@ -42,9 +41,5 @@ bool KeysTaken();
 // What to draw: the prompt or the menu; nothing when the title is not up.
 std::optional<CoopDraw::TitleView> View();
 
-// Host or Join wrote coop.ini: true once, on the thread that may start
-// co-op (the module's frame); then CoopStarted says how that went.
-bool TakeStartCoop();
-void CoopStarted(bool on);
 
 }  // namespace CoopTitle

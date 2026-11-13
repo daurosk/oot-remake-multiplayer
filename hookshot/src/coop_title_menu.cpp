@@ -150,6 +150,7 @@ enum SettingsRow : std::size_t {
     kChatKey,
     kShowPlayers,
     kPvp,
+    kMaxPlayersRow,
     kUpnp,
     kPassword,
     kDebugPanel,
@@ -304,6 +305,10 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     }
     o.debug_panel = On(IniGet(options_ini, "LICHII_COOP_DEBUG_PANEL"));
     o.cheats = On(IniGet(options_ini, "LICHII_COOP_CHEATS"));
+    if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
+        std::all_of(v->begin(), v->end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        o.max_players = std::clamp(std::stoi(*v), kMinPlayers, kMaxPlayers);
+    }
     return o;
 }
 
@@ -320,6 +325,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
+    o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
     options_ini = std::move(o);
 }
 
@@ -661,6 +667,11 @@ Sound Menu::Change(int step) {
     case kPvp:
         options_.pvp = !options_.pvp;
         return Sound::kMove;
+    case kMaxPlayersRow: {
+        const int span = kMaxPlayers - kMinPlayers + 1;
+        options_.max_players = kMinPlayers + (options_.max_players - kMinPlayers + step % span + span) % span;
+        return Sound::kMove;
+    }
     case kUpnp:
         options_.upnp = !options_.upnp;
         return Sound::kMove;
@@ -764,6 +775,7 @@ View Menu::view() const {
         add("Chat key", options_.chat_key, true);
         add("Always show the players", OnOff(options_.show_players), true);
         add("PvP when you host", OnOff(options_.pvp), true);
+        add("Players when you host", std::to_string(options_.max_players), true);
         add("Router port forward (UPnP)", OnOff(options_.upnp), true);
         add("Join password when you host",
             options_.password.empty() && !(editing_ && selected_ == kPassword) ? std::string("New each session")

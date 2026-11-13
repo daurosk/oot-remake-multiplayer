@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "coop_settings.h"
+
 namespace Core {
 class System;
 }
@@ -26,6 +28,16 @@ void OnFrame(Core::System& system);
 // Says goodbye to the server and joins the network thread. Call once, when
 // the program closes (after emulation has stopped).
 void Shutdown();
+
+// Hookshot's menu (hookshot/src/coop_host_menu.h): starts co-op with these
+// settings, not coop.ini's. False when co-op runs already, after Shutdown,
+// for a code mod, or when the client could not start. Start() before it
+// does not connect anywhere when coop.ini names no server.
+bool Begin(Settings settings);
+// Says goodbye and stops what Begin started; Begin may run again. The ended
+// session is kept until Shutdown, so a frame or the overlay still holding
+// it stays valid. For the title screen: puppets the game made stay.
+void End();
 
 // What the co-op window shows: one line of text each. Empty when co-op is
 // off. Any thread.

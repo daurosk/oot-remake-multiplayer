@@ -6,7 +6,7 @@ How the AI sessions that build co-op are organised. The live state (who is runni
 
 | Role | How many | What it does | What it never does |
 |---|---|---|---|
-| Owner (Caleb) | 1 | Decides the open questions and starts the first coordinator. | |
+| Owner (Alex) | 1 | Decides the open questions and starts the first coordinator. | |
 | Coordinator | 1 or 2 (each on its own account; who runs what is in `..\coord-multiplayer\`) | Reports to the owner. Plans each chunk of work, writes the briefs, starts, steers, replaces and stops workers, reviewers and the integrator. Opens pull requests and merges. Keeps the handoff and the worker table current. | Writes product code. Reads whole diffs or long logs (it sends a worker instead). Lets two workers touch the same files. |
 | Worker | As many as the work needs | One task from one brief, in its own worktree on its own branch, named by its topic in lowercase with hyphens (`host-sampler`). Writes code, unit tests and docs, pushes, lets CI build and test it, and writes its report with a "check in game" list. | Builds the emulator, runs the game or takes the build lock. Starts other sessions or subagents. Merges. Edits `main` or another worker's files. |
 | Reviewer | One per branch or pull request | Reviews one branch it did not write (below) and writes what must change. | Reviews its own work. |

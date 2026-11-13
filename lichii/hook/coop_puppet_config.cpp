@@ -16,7 +16,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
                                      std::vector<std::string>* log, const PackTunicsFn& pack_tunics) {
     CoopPuppet::PlannerSettings settings;
     // The test puppet has its own switch: the logs alone must not put a
-    // second Link in the game (Caleb's run of 2026-11-09 with the logs on).
+    // second Link in the game (Alex's run of 2026-11-09 with the logs on).
     settings.debug = On(env("LICHII_COOP_TEST_PUPPET"));
     settings.debug_anim = On(env("LICHII_COOP_DEBUG_ANIM"));
     if (auto actor = env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {

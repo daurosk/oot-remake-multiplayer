@@ -1169,15 +1169,16 @@ TEST_CASE("native boss sync: an object sample carries a boss's brain and action 
   s.state.bsa->recent = {BossChange{5, BossBrain{3, true}}, BossChange{6, a}, BossChange{7, BossBrain{2, false}}};
   REQUIRE(decode(must_encode(s), m) == Error::none);
   CHECK(std::get<ObjectSample>(m) == s);
+  const std::vector<BossChange> kept_recent = s.state.bsa->recent;
   for (const auto& recent : {std::vector<BossChange>{BossChange{6, BossBrain{}}, BossChange{6, BossBrain{}}},
                              std::vector<BossChange>{BossChange{8, BossBrain{}}},
                              std::vector<BossChange>{BossChange{0, BossBrain{}}},
                              std::vector<BossChange>(kMaxBossChanges + 1, BossChange{1, BossBrain{}})}) {
     Bytes refused;
-    ObjectSample bad_recent = s;
-    bad_recent.state.bsa->recent = recent;
-    CHECK(encode(bad_recent, refused) == Error::bad_value);
+    s.state.bsa->recent = recent;  // (in place: a copy of s made gcc 15 see the copy's vector as maybe uninitialized)
+    CHECK(encode(s, refused) == Error::bad_value);
   }
+  s.state.bsa->recent = kept_recent;
   // No bsa component: none after decoding (older senders).
   Message plain;
   REQUIRE(decode(must_encode(ObjectSample{0, test::kPlacedId, 3, {}}), plain) == Error::none);

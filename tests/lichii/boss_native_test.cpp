@@ -125,7 +125,7 @@ TEST_CASE("native boss: a copy runs as before until the owner's state comes, the
     t.SetOn(true, true);
     t.Publish({Gohma(Role::copy)});
     CHECK_FALSE(t.OnBrainVerb(kBsa, 2, false, false));  // no owner's state yet
-    t.Receive(kActor, BossBsa{5, 4, std::nullopt});
+    t.Receive(kActor, BossBsa{5, 4, std::nullopt, {}});
     CHECK(t.OnBrainVerb(kBsa, 2, false, false));   // its own: skipped
     CHECK_FALSE(t.OnBrainVerb(kBsa, 4, true, true));  // our call: runs
     CHECK(t.Totals().copy_skipped == 1);
@@ -140,12 +140,12 @@ TEST_CASE("native boss: a copy runs as before until the owner's state comes, the
     CHECK_FALSE(t.Step(g, true, 0, kMain));
     CHECK(t.Totals().brain_applied == 1);
     // The same state again (each sample has it): nothing new.
-    t.Receive(kActor, BossBsa{5, 4, std::nullopt});
+    t.Receive(kActor, BossBsa{5, 4, std::nullopt, {}});
     CHECK_FALSE(t.Step(g, false, 0, kMain));
     // Already at that verb in the game: no call.
     const std::int32_t at = 6;
     g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
-    t.Receive(kActor, BossBsa{6, 6, std::nullopt});
+    t.Receive(kActor, BossBsa{6, 6, std::nullopt, {}});
     CHECK_FALSE(t.Step(g, false, 0, kMain));
 }
 
@@ -154,7 +154,7 @@ TEST_CASE("native boss: a copy's action waits for its own node, then is asked wi
     t.SetOn(true, true);
     t.Publish({Gohma(Role::copy)});
     BossAction a = *ActionFromRequest(GameRequest(11, 0xdead));
-    t.Receive(kActor, BossBsa{1, 2, a});
+    t.Receive(kActor, BossBsa{1, 2, a, {}});
     FakeGuest g;
     const std::int32_t verb = 2;
     g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);  // (brain verb already the owner's)
@@ -182,7 +182,7 @@ TEST_CASE("native boss: a hand-over keeps the state, and switches off leave the 
     Table t;
     t.SetOn(true, true);
     t.Publish({Gohma(Role::copy)});
-    t.Receive(kActor, BossBsa{8, 4, std::nullopt});
+    t.Receive(kActor, BossBsa{8, 4, std::nullopt, {}});
     t.Publish({Gohma(Role::owner)});  // the boss is ours now
     CHECK_FALSE(t.OnBrainVerb(kBsa, 5, false, false));  // our game runs it
     auto s = t.OwnerState(kActor);
@@ -206,7 +206,7 @@ TEST_CASE("native boss: a hand-over keeps the state, and switches off leave the 
     Table brain;
     brain.SetOn(true, false);
     brain.Publish({Gohma(Role::copy)});
-    brain.Receive(kActor, BossBsa{1, 2, std::nullopt});
+    brain.Receive(kActor, BossBsa{1, 2, std::nullopt, {}});
     CHECK_FALSE(brain.OnActionVerb(kBsa, GameRequest(3, kNode), true, false));
     CHECK(brain.OnBrainVerb(kBsa, 3, false, false));
 }
@@ -216,7 +216,7 @@ TEST_CASE("native boss: the request block is asked again for a new game, not for
     t.SetOn(true, true);
     t.Publish({Gohma(Role::copy)});
     t.OnActionVerb(kBsa, GameRequest(12, kNode), true, false);  // (its node; no owner's state yet: runs)
-    t.Receive(kActor, BossBsa{1, 2, *ActionFromRequest(GameRequest(11, 0))});
+    t.Receive(kActor, BossBsa{1, 2, *ActionFromRequest(GameRequest(11, 0)), {}});
     FakeGuest g;
     const std::int32_t verb = 2;
     g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
@@ -226,14 +226,14 @@ TEST_CASE("native boss: the request block is asked again for a new game, not for
     REQUIRE(t.Step(g, true, kBlock, kMain));  // the action, from the block
     CHECK_FALSE(t.Step(g, true, 0, kMain));
     // A new owner's action in the same game: the same block.
-    t.Receive(kActor, BossBsa{2, 2, *ActionFromRequest(GameRequest(13, 0))});
+    t.Receive(kActor, BossBsa{2, 2, *ActionFromRequest(GameRequest(13, 0)), {}});
     c = t.Step(g, false, 0, kMain);
     REQUIRE(c);
     CHECK(c->function == kMain + addr::kRequestActionVerb);
     CHECK(c->x[1] == kBlock);
     CHECK_FALSE(t.Step(g, true, 0, kMain));
     // Another game (main moved): a block of its own first.
-    t.Receive(kActor, BossBsa{3, 2, *ActionFromRequest(GameRequest(14, 0))});
+    t.Receive(kActor, BossBsa{3, 2, *ActionFromRequest(GameRequest(14, 0)), {}});
     c = t.Step(g, false, 0, kMain + 0x100000);
     REQUIRE(c);
     CHECK(c->function == kMain + 0x100000 + addr::kMalloc);
@@ -245,7 +245,7 @@ TEST_CASE("native boss: a copy boss's own minion is not made, the owner's own is
     t.SetOn(true, true);
     t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_Dodongo"}});
     CHECK_FALSE(t.CopyMakes("Enemy_DungeonBoss_Dodongo"));  // no owner's verbs yet: as before
-    t.Receive(kActor, BossBsa{1, 2, std::nullopt});
+    t.Receive(kActor, BossBsa{1, 2, std::nullopt, {}});
     CHECK(t.CopyMakes("Enemy_DungeonBoss_Dodongo"));
     CHECK_FALSE(t.CopyMakes("Enemy_DungeonBoss_Gohma"));
     CHECK_FALSE(t.CopyMakes(""));  // (no minion)

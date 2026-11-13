@@ -3,6 +3,7 @@
 
 #include "coop_camera.h"
 #include "coop_colors.h"
+#include "coop_local_game.h"
 #include "coop_pose.h"
 
 #include <algorithm>
@@ -1762,6 +1763,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             .count());
     g_planner->SetFailedTunics(g_director->FailedTunics());
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
+    if (main_base != 0) CoopLocalGame::AddTargets(input);   // local co-op's players (coop_local_game.h)
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));
 }

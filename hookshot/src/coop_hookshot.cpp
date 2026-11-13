@@ -43,6 +43,8 @@
 #include "coop_hud.h"
 #include "coop_hud_hearts.h"
 #include "coop_live_events.h"
+#include "coop_local_game.h"
+#include "coop_player_input.h"
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
@@ -54,6 +56,7 @@
 #include "core/core.h"
 #include "coop_host_menu.h"
 #include "hos_coop_api.h"
+#include "hos_coop_pads.h"
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
 
@@ -806,6 +809,11 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
         return 0;
     }
+    if (id == CoopPlayerInput::kWrapButtons || id == CoopPlayerInput::kWrapSticks ||
+        id == CoopPlayerInput::kWrapControllerGet) {
+        CoopLocalGame::Wrap(id, phase, x);   // local co-op: an extra player's Player reads its own controller
+        return 0;
+    }
     if (id == HOS_COOP_WRAP_EVENT_REQUEST) {
         // The game asks for an event: its name at the request (phase 0: x1 is the request), whether the manager took
         // it after the game's function (phase 1: x0). Both on the same game thread, one after the other.
@@ -900,6 +908,49 @@ void DrawWithLook(const HosCoopDraw& d) {
     CoopDraw::Draw(d, DrawScene(), g_look_state.load() == kLookOn ? g_look : CoopDraw::Look{});
 }
 
+// Local co-op (coop_local_game.h): the exe's pads (patch 0010, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.
+// An exe without them: CoopLocal says NotSupported. LICHII_COOP_LOCAL=<pad slot> starts a second player on that pad
+// at the first frame in play, without the menu (tests).
+void UseLocalPads() {
+#ifdef _WIN32
+    const HMODULE exe = GetModuleHandleW(nullptr);
+    const auto find = [exe](const char* name) { return reinterpret_cast<void*>(GetProcAddress(exe, name)); };
+#else
+    const auto find = [](const char* name) { return dlsym(RTLD_DEFAULT, name); };
+#endif
+    const auto info = reinterpret_cast<hos_coop_pad_info_fn>(find(HOS_COOP_PAD_INFO));
+    const auto take = reinterpret_cast<hos_coop_pad_take_fn>(find(HOS_COOP_PAD_TAKE));
+    CoopLocalGame::Deps deps;
+    if (info && take) {
+        deps.pads = [info] {
+            std::vector<CoopLocalGame::Pad> pads;
+            for (int slot = 0; slot < 64; slot++) {
+                char name[64] = {};
+                std::uint32_t serial = 0;
+                int npad = 0;
+                const int there = info(slot, &serial, name, sizeof name, &npad);
+                if (there < 0) break;
+                if (there > 0) pads.push_back({slot, serial, name, npad});
+            }
+            return pads;
+        };
+        deps.take = [take](int slot, std::uint32_t serial, int npad) { return take(slot, serial, npad) != 0; };
+    }
+    deps.wraps = [] {
+        return HasWrap(CoopPlayerInput::kWrapButtons) && HasWrap(CoopPlayerInput::kWrapSticks) &&
+               HasWrap(CoopPlayerInput::kWrapControllerGet);
+    };
+    deps.slots = [] { return CoopPuppet::TheDirector().Slots(); };
+    deps.read = [](std::uint64_t address, void* out, std::size_t size) { return CoopRuntime::Read(address, out, size); };
+    deps.log = [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); };
+    LOG_INFO(Core, "coop: local co-op: {}", info && take ? "this Hookshot gives the module its pads (patch 0010)"
+                                                          : "this Hookshot has no pads for local co-op (patch 0010)");
+    CoopLocalGame::Install(std::move(deps));
+    if (const char* slot = std::getenv("LICHII_COOP_LOCAL"); slot && *slot) {
+        CoopLocalGame::AutoStart(std::atoi(slot));
+    }
+}
+
 }  // namespace CoopHookshot
 
 extern "C" {
@@ -935,6 +986,7 @@ void UseSaveSwitch() {
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
+    CoopHookshot::UseLocalPads();
     return 1;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {

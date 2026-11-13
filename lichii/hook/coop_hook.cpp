@@ -76,6 +76,7 @@
 #include "coop_story.h"
 #include "coop_quests.h"
 #include "coop_live_events.h"
+#include "coop_local_game.h"
 #include "coop_shared_scenes.h"
 #include "coop_objects.h"
 #include "coop_ocarina_sound.h"
@@ -829,6 +830,9 @@ public:
                 return shown;
             });
         }
+        // Local co-op (coop_local_game.h): the first Link this frame, then its Core's step, before the puppets are planned.
+        CoopLocalGame::Frame({view.game && view.scene.has_value(), view.position,
+                              view.age == coop::protocol::Age::adult});
         CoopPuppet::Publish(view.game ? base_ : 0, view.scene, view.position, event,
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         // Our Ocarina's notes for the other games (issue 152, coop_ocarina_sound.h).

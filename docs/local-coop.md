@@ -1,7 +1,8 @@
 # Local co-op (split screen)
 
-Status: in work, not in any release. What is in the code today is the layout maths and the
-switchboard the menu talks to (below), with unit tests. Nothing here has run in the game yet.
+Status: in work, not in any release. What is in the code today: the layout maths, the switchboard
+the menu talks to, and the second player's own Player and controller on Hookshot (below), with unit
+tests. Nothing here has run in the game yet. The views (one picture per player) come next.
 
 ## The goal
 
@@ -17,7 +18,7 @@ full picture.
 | Part | How |
 |---|---|
 | Players | Each local player after the first is the game's own `Player_Child` / `Player_Adult`, made as the other players' real Link is (the native player work) and run by the game's own player code. |
-| Input | The Player reads its pad in two small functions; a local player's reads are answered from its own device. The first player keeps every device nobody else took. |
+| Input | The game's own controller code: a pad a local player takes is the game's Npad No.2 to No.4, and that player's Player asks the game for that controller (below). The first player keeps every device nobody else took. |
 | Views | The game's renderer draws in layers; the world is the layer `Main_3D_0`, and layer numbers 1 to 4 are free. The plan is one more world layer and one more camera per local player, each with its own part of the picture, made the game's own way, so culling and drawing per view are the engine's, and everything per scene is done once. |
 | HUD | The first player keeps the game's HUD inside their view. The others get co-op's own HUD (hearts and items) first. |
 | Online | One connection; every local player joins as their own player through it (types 460 to 469, [protocol.md](protocol.md#local-players-protocol-11)). |
@@ -25,6 +26,35 @@ full picture.
 The facts this stands on were read from the game's code (build `e0f3ccfa`), not yet seen in play:
 where a second world layer keeps its camera and viewport, and the camera actor's name, come from a
 first run with a log.
+
+## The second player (Hookshot)
+
+`lichii/hook/coop_local_game.{h,cpp}` is `CoopLocal::Game` on Hookshot; `coop_local_input.h` is the
+input routing, with no game code (`tests/lichii/local_game_test.cpp`).
+
+- **The Player.** Local player k (2 to 4 on screen, 1 to 3 in the code) is a target of the puppet
+  Director with the number 17 - k (16, 15, 14) while there is no session to give it one, made
+  beside the first Link as `Player_<Age>` and then left to the game's player code
+  ([native-player.md](native-player.md)). After a scene change the Director makes it again, and the
+  input follows the new actor.
+- **The pad** (Hookshot patch 0010, `host/pad_sdl.c`, `host/nn_hid.c`): the exe exports
+  `hos_coop_pad_info`, `hos_coop_pad_read` and `hos_coop_pad_take`
+  (`hookshot/src/hos_coop_pads.h`), found by name as patch 0008's. A taken pad leaves the first
+  player's merged pad, its rumble stops, and the game's reads of Npad No.(k+1) get it (with the
+  menu's button binds). The keyboard and mouse stay the first player's. Without the patch, local
+  co-op is not offered.
+- **The read.** The Player's two pad reads (wraps 16 and 17) ask the controller manager's
+  getController (main+0x3b25e00, wrap 19) for controller 0. While the Player of local player k
+  reads, that ask becomes controller k, if the manager has one; every other reader (menus, the
+  Ocarina, the first Link) still gets controller 0. So the game makes its own held, pressed and
+  released words for that pad.
+- **Not yet seen in a run:** that the game reads Npad No.2 once its style says connected (the log
+  says `hid: the game supports npads ...` and `hid: the game reads npad 0x1`), that the manager's
+  controller k is Npad No.(k+1), and that controller 0 does not follow every Npad (else the second
+  pad would move both Links). If the manager has no controller k, the log says
+  `local co-op: player 2: the game has no controller 1` and the second Link follows the first pad.
+- **Test switch:** `LICHII_COOP_LOCAL=<pad slot>` starts player 2 on that pad at the first frame in
+  play, without the menu.
 
 ## The views
 

@@ -307,3 +307,25 @@ TEST_CASE("save transfer: the folder is chosen again for each session, never wit
   CHECK_FALSE(decide_again(true, true, true));    // Link in the game: no switch
   CHECK_FALSE(decide_again(false, true, false));  // nothing chosen yet
 }
+
+TEST_CASE("save transfer: two Join sessions in one run each ask once and get the save") {
+  const Bytes packed = save::pack(Slot(2));
+  save::GuestSession s;
+  for (int session = 0; session < 2; ++session) {
+    if (session == 1) {
+      CHECK(coop::host::save::decide_again(true, true, false));
+      s = save::GuestSession{};   // (CoopSave: what decide_again resets)
+    }
+    CHECK_FALSE(s.asked);   // this session's ask has not gone out: it will
+    CHECK_FALSE(s.ready);
+    s.asked = true;         // the ask goes out once
+    const auto parts = save::split(packed, 20 + static_cast<std::uint32_t>(session), proto::SaveReason::join, 1);
+    std::size_t completes = 0;
+    for (const auto& p : parts) {
+      if (s.assembler.add(Relayed(p, 1), 1) == save::Assembler::Result::complete) ++completes;
+    }
+    CHECK(completes == 1);
+    CHECK(s.assembler.take() == packed);
+    s.ready = true;
+  }
+}

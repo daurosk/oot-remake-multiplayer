@@ -38,24 +38,20 @@ bool g_use = false;
 std::mutex g_mutex;  // everything below; the game's file service and the network thread
 fs::path g_dir;      // the folder the game opened for its account save
 save::Planner g_planner;
-save::Assembler g_assembler;
-std::optional<save::SaveSlot> g_unwritten;  // a guest's slot that came before the game opened its save
+// This session's guest save state (save::GuestSession): fresh for each session (decide_again).
+save::GuestSession g_guest;
 std::deque<proto::SavePart> g_outbox;       // the host's parts, a frame each
 std::uint32_t g_next_id = 0;
-bool g_asked = false;  // this run's ask went out (once a run: later saves come as host_load)
 bool g_said_own = false;
 // Issue 106: on the clock, not presented frames (high refresh presents up to
 // 2.75 times as many).
-std::uint64_t g_last_part_us = 0;  // a guest's last SAVE_PART
 CoopEvery::Every g_folder_every{CoopEvery::kHalfSecondUs};
-bool g_said_stuck = false;
 std::string g_notice;
 std::function<std::string()> g_root;                    // SetSwitch (Hookshot)
 std::function<bool(const std::string&)> g_remount;
 bool g_in_game = false;
 bool g_decided = false;   // the run-time choice is made (for this session: save::decide_again)
 const void* g_decided_client = nullptr;   // the session's client it was made for
-bool g_ready = false;     // the host's save written into our co-op folder
 
 // Unset, or "1"/"0": the environment's LICHII_COOP_HOST_SAVE.
 std::optional<bool> EnvChoice() {
@@ -103,8 +99,8 @@ void SwitchFrame(coop::net::Client& client) {
         const bool over = &client != g_decided_client || st == coop::net::State::idle ||
                           st == coop::net::State::stopped || st == coop::net::State::refused;
         if (save::decide_again(g_decided, over, g_in_game)) {
-            g_decided = false;   // the next session (the title menu's Host after a Join) decides again
-            g_ready = false;
+            g_decided = false;   // the next session (the title menu's Host after a Join, a rejoin) decides again
+            g_guest = save::GuestSession{};   // and asks for the host's save again: everything of the last one goes
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
         }
     }
@@ -153,9 +149,9 @@ void WriteSlot(const save::SaveSlot& slot) {
     const auto own = save::own_dir_of(g_dir);
     switch (save::write_coop_save(g_dir, slot, own)) {
     case save::WriteResult::written:
-        g_ready = true;
+        g_guest.ready = true;
         LOG_INFO(Core, "coop: save: the host's save written to {}", g_dir.string());
-        g_notice = g_assembler.reason() == proto::SaveReason::host_load
+        g_notice = g_guest.assembler.reason() == proto::SaveReason::host_load
                        ? "The host loaded a save. Load it from your co-op save to stand where it starts "
                          "(your progress already follows the host)."
                        : "The host's save is ready: load it (Continue, or Load Game, newest save).";
@@ -192,7 +188,7 @@ void NoteInGame(bool in_game) {
 
 bool HostSaveReady() {
     std::lock_guard lock(g_mutex);
-    return g_ready;
+    return g_guest.ready;
 }
 
 std::string SaveDirectory(const std::string& path, bool account_save) {
@@ -225,9 +221,9 @@ void NoteSaveDirLocked(const fs::path& real_path) {
     }
     g_dir = dir;
     LOG_INFO(Core, "coop: save: the game's save folder is {}", g_dir.string());
-    if (g_unwritten && save::is_coop_dir(g_dir)) {
-        WriteSlot(*g_unwritten);
-        g_unwritten.reset();
+    if (g_guest.unwritten && save::is_coop_dir(g_dir)) {
+        WriteSlot(*g_guest.unwritten);
+        g_guest.unwritten.reset();
     }
 }
 }  // namespace
@@ -257,9 +253,9 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     if (part == nullptr) {
         return;
     }
-    g_last_part_us = CoopEvery::NowUs();
-    g_said_stuck = false;
-    switch (g_assembler.add(*part, client.host_number())) {
+    g_guest.last_part_us = CoopEvery::NowUs();
+    g_guest.said_stuck = false;
+    switch (g_guest.assembler.add(*part, client.host_number())) {
     case save::Assembler::Result::partial:
         return;
     case save::Assembler::Result::refused:
@@ -274,7 +270,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     case save::Assembler::Result::complete:
         break;
     }
-    const auto packed = g_assembler.take();
+    const auto packed = g_guest.assembler.take();
     const auto slot = save::unpack(packed);
     if (!slot) {
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) is not a save slot", part->transfer_id);
@@ -284,7 +280,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
              part->reason == proto::SaveReason::host_load ? "the host loaded a save" : "asked on joining",
              part->transfer_id);
     if (g_dir.empty()) {
-        g_unwritten = *slot;  // written when the game opens its save folder
+        g_guest.unwritten = *slot;  // written when the game opens its save folder
         return;
     }
     WriteSlot(*slot);
@@ -301,17 +297,17 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
         g_outbox.clear();
         // A transfer that stopped part way (a part lost): said once; the next
         // save the host sends starts again.
-        if (!g_said_stuck && g_assembler.received() != 0 &&
-            g_assembler.received() < g_assembler.count() &&
-            CoopEvery::NowUs() - g_last_part_us > CoopEvery::kSaveStuckUs) {
-            g_said_stuck = true;
+        if (!g_guest.said_stuck && g_guest.assembler.received() != 0 &&
+            g_guest.assembler.received() < g_guest.assembler.count() &&
+            CoopEvery::NowUs() - g_guest.last_part_us > CoopEvery::kSaveStuckUs) {
+            g_guest.said_stuck = true;
             LOG_WARNING(Core, "coop: save: the host's save (transfer {}) stopped at part {} of {} "
                               "for 10 s; waiting for the next one",
-                        g_assembler.transfer_id(), g_assembler.received(), g_assembler.count());
+                        g_guest.assembler.transfer_id(), g_guest.assembler.received(), g_guest.assembler.count());
         }
-        if (!g_asked && (g_root ? g_use : UseCoopFolder())) {
-            g_asked = client.send(proto::Message{proto::SaveAsk{}});
-            if (g_asked) {
+        if (!g_guest.asked && (g_root ? g_use : UseCoopFolder())) {
+            g_guest.asked = client.send(proto::Message{proto::SaveAsk{}});
+            if (g_guest.asked) {
                 LOG_INFO(Core, "coop: save: asked the host (player {}) for its save", client.host_number());
             }
         }

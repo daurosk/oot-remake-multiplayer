@@ -192,6 +192,18 @@ FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connec
 // the game: no switch then).
 bool decide_again(bool decided, bool over, bool in_game);
 
+// A guest's save state for ONE session (CoopSave): the ask sent, the parts coming in, a slot that came before the
+// save folder was open, whether the host's save is written, the "stuck" note said. A new session starts from a
+// fresh one (GuestSession{}), so a second Join in the same run asks again and gets the save again.
+struct GuestSession {
+  Assembler assembler;
+  std::optional<SaveSlot> unwritten;
+  bool asked = false;
+  bool ready = false;
+  bool said_stuck = false;
+  std::uint64_t last_part_us = 0;
+};
+
 // The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest
 // switching to it must not find an older host's save and load that). Refuses a folder that is not a co-op one.
 // Returns the folders removed, or -1.

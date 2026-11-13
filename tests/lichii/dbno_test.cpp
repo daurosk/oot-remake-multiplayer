@@ -109,7 +109,7 @@ struct Game {
 
 }  // namespace
 
-TEST_CASE("dbno guard: a hit that would kill leaves a quarter heart; one that would not is the game's") {
+TEST_CASE("dbno guard: a hit that would kill leaves a quarter heart, one that would not is the game's") {
     CHECK(Guarded(Guard::last_stand, 12, 4).sum == 4);
     CHECK_FALSE(Guarded(Guard::last_stand, 12, 4).lethal);
     CHECK(Guarded(Guard::last_stand, 12, 11).sum == 11);
@@ -174,7 +174,7 @@ TEST_CASE("dbno guard: the game's thread and the frame's may run at once") {
     CHECK(lethal_seen == 1);
 }
 
-TEST_CASE("dbno: up with a teammate up the guard is the last stand; alone, off or unhooked it is off") {
+TEST_CASE("dbno: up with a teammate up the guard is the last stand, alone, off or unhooked it is off") {
     Game g;
     CHECK(g.Step().guard == Guard::last_stand);
     CHECK(g.Step().state == State::up);
@@ -256,11 +256,11 @@ TEST_CASE("dbno: bled out is out, the life goes, and the game's death runs") {
     CHECK(g.Step().guard == Guard::last_stand);
 }
 
-TEST_CASE("dbno: out and the write did not hold: written again; a fairy brings him back") {
+TEST_CASE("dbno: out and the write did not hold: written again, a fairy brings him back") {
     Game g;
     g.rules.bleed_s = 10;
     g.Down();
-    g.Run(10 * kS + kFrame);
+    g.Run(10 * kS);  // the bleed-out's last frame: out, life written 0
     REQUIRE(g.machine.Now() == State::out);
     g.life = 1;  // the game put it back before it looked
     int writes = 0;
@@ -409,7 +409,7 @@ TEST_CASE("dbno: two revivers: whoever began goes on, then the lower number") {
     CHECK(o.progress > 0.0f);  // the ring is the downed player's: it goes on
 }
 
-TEST_CASE("dbno: nobody left standing for three seconds is out; a moment of it is not") {
+TEST_CASE("dbno: nobody left standing for three seconds is out, a moment of it is not") {
     Game g;
     g.Down();
     g.team[0].state = State::downed;
@@ -423,7 +423,7 @@ TEST_CASE("dbno: nobody left standing for three seconds is out; a moment of it i
     CHECK(g.life == 0);
 }
 
-TEST_CASE("dbno: the connection drops while down: nobody can come, so out; nothing is sent meanwhile") {
+TEST_CASE("dbno: the connection drops while down: nobody can come, so out, nothing is sent meanwhile") {
     Game g;
     g.Down();
     g.sent.clear();
@@ -464,7 +464,7 @@ TEST_CASE("dbno: the game takes the life anyway (a script, a pit): out, with no 
     CHECK(g.Step().state == State::up);
 }
 
-TEST_CASE("dbno: a load takes no time off; twenty seconds with no Link is the title screen") {
+TEST_CASE("dbno: a load takes no time off, twenty seconds with no Link is the title screen") {
     Game g;
     g.Down();
     const std::uint64_t left = g.Step().left_us;
@@ -606,7 +606,7 @@ TEST_CASE("dbno reviver: nobody in reach, another scene, or not able: no target 
     CHECK_FALSE(r.Frame(kS, true, true, {0, 0, 0}, scene, {}).send);
 }
 
-TEST_CASE("dbno reviver: the nearest is the target; it stays ours a little past the reach; a change lets go first") {
+TEST_CASE("dbno reviver: the nearest is the target, it stays ours a little past the reach, a change lets go first") {
     CoopDbno::Reviver r;
     const std::optional<std::string> scene = "spot00";
     std::vector<CoopDbno::Fallen> fallen{{2, "spot00", {2, 0, 0}}, {3, "spot00", {1, 0, 0}}};
@@ -650,7 +650,7 @@ TEST_CASE("dbno reviver: the nearest is the target; it stays ours a little past 
     CHECK(r.Frame(now, true, false, {0, 0, 0}, scene, tie).target == 4);
 }
 
-TEST_CASE("dbno pad: a downed player keeps pause, the camera and a slow stick; a reviver loses A only") {
+TEST_CASE("dbno pad: a downed player keeps pause, the camera and a slow stick, a reviver loses A only") {
     using CoopDbno::Pad;
     namespace pad = CoopDbno::pad;
     const std::uint64_t everything = 0xFFFFFFull;

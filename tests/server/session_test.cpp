@@ -3724,6 +3724,110 @@ TEST_CASE("pvp: only the host changes it, for everyone, and an empty session goe
   CHECK_FALSE(h.session.pvp());
 }
 
+TEST_CASE("dbno: on by default and told at join, only the host changes it") {
+  Harness h;
+  CHECK(h.session.dbno().on);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  CHECK(messages_of<DbnoMode>(h, 2) == std::vector<DbnoMode>{DbnoMode{}});
+  h.clear();
+  DbnoMode want{0, true, 60, 20, 8};
+  h.receive(2, want, kChannelSession);  // a guest cannot
+  CHECK(h.session.dbno() == DbnoMode{});
+  CHECK(only_message_to<DbnoMode>(h, 2) == DbnoMode{});
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().dbno_mode_refused == 1);
+  h.clear();
+  h.receive(1, want, kChannelSession);
+  const DbnoMode set{1, true, 60, 20, 8};
+  CHECK(h.session.dbno() == set);
+  CHECK(only_message_to<DbnoMode>(h, 1) == set);
+  CHECK(only_message_to<DbnoMode>(h, 2) == set);
+  // The same again: only the host is answered.
+  h.clear();
+  h.receive(1, want, kChannelSession);
+  CHECK(only_message_to<DbnoMode>(h, 1) == set);
+  CHECK(h.to(2).empty());
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_of<DbnoMode>(h, 3) == std::vector<DbnoMode>{set});
+  for (ConnectionId id : {1u, 2u, 3u}) h.session.disconnected(id, h.now);
+  h.collect();
+  CHECK(h.session.dbno() == DbnoMode{});
+}
+
+TEST_CASE("dbno: --dbno off is told at join as off") {
+  SessionConfig config;
+  config.dbno.on = false;
+  Harness h(config);
+  h.join(1, "Link");
+  CHECK(messages_of<DbnoMode>(h, 1) == std::vector<DbnoMode>{DbnoMode{0, false}});
+}
+
+TEST_CASE("dbno: a revive goes to its downed player only, while the mode is on") {
+  SessionConfig config;
+  Harness h(config);
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(2, DbnoRevive{0, 1, true}, kChannelSession);
+  CHECK(only_message_to<DbnoRevive>(h, 1) == DbnoRevive{2, 1, true});
+  CHECK(h.to(3).empty());
+  CHECK(h.session.stats().dbno_revives_relayed == 1);
+  h.clear();
+  h.receive(2, DbnoRevive{0, 2, true}, kChannelSession);  // itself
+  h.receive(2, DbnoRevive{0, 4, true}, kChannelSession);  // nobody
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().dbno_revives_dropped == 2);
+  h.receive(1, DbnoMode{0, false}, kChannelSession);
+  h.clear();
+  h.receive(2, DbnoRevive{0, 1, true}, kChannelSession);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().dbno_revives_dropped == 3);
+}
+
+TEST_CASE("dbno: a state is relayed to everyone else") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+  CHECK(only_message_to<DbnoStatus>(h, 2) == DbnoStatus{1, DbnoState::downed, 400, 0, 0});
+  CHECK(h.to(1).empty());
+}
+
+TEST_CASE("dbno: a downed owner gives its enemy up, even in a fight, and is not given one") {
+  OwnerHarness h;
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  SUBCASE("downed") {
+    h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.run(250'000);
+    CHECK(h.asks() == 1);
+  }
+  SUBCASE("up again before: it stays") {
+    h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.receive(1, DbnoStatus{0, DbnoState::up, 0, 0, 0}, kChannelSession);
+    h.run(250'000);
+    CHECK(h.asks() == 0);
+  }
+  SUBCASE("everyone else is downed too: it stays") {
+    h.receive(2, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.run(kSecond);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("dbno: a downed player is not given an enemy by the distance rule") {
+  OwnerHarness h;
+  h.stand(1, 50);
+  h.stand(2, 5);
+  h.receive(2, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+  h.run(5 * kSecond);
+  CHECK(h.asks() == 0);
+}
+
 // Issue 151 (fishing-3): a fish goes to the game whose lure is nearest it.
 namespace {
 FishLure lure_at(std::uint16_t cm, std::uint8_t flags = 0) {

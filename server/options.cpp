@@ -115,6 +115,17 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       ++i;
+    } else if (arg == "--dbno") {
+      const std::string value = has_value ? args[i + 1] : std::string();
+      if (value == "on" || value == "1" || value == "yes") {
+        line.dbno = true;
+      } else if (value == "off" || value == "0" || value == "no") {
+        line.dbno = false;
+      } else {
+        error = "--dbno needs on or off";
+        return std::nullopt;
+      }
+      ++i;
     } else if (arg == "--password" || arg == "--password-env") {
       if (!has_value || args[i + 1].empty()) {
         error = arg + " needs a value";
@@ -190,6 +201,7 @@ const char* usage() {
          "                   [--game-build ID] [--max-players N] [--max-half-open N]\n"
          "                   [--pose-upload-kbps N] [--run-for-ms N]\n"
          "                   [--password TEXT | --password-env NAME] [--pvp on|off]\n"
+         "                   [--dbno on|off]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
          "                   example its Hamachi or Radmin address (default: all)\n"
@@ -228,7 +240,10 @@ const char* usage() {
          "  --join ADDRESS:PORT [--game-port N]  Join.bat's helper for an invite\n"
          "                   code: the game connects to 127.0.0.1:N (27512)\n"
          "  --pvp on|off     players can hurt each other (default: off); the\n"
-         "                   host can change it in the game with /pvp\n";
+         "                   host can change it in the game with /pvp\n"
+         "  --dbno on|off    down but not out: a player at no hearts crawls and\n"
+         "                   can be revived (default: on); the host can change\n"
+         "                   it in the game with /dbno\n";
 }
 
 }  // namespace coop::server

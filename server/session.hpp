@@ -98,6 +98,9 @@ struct SessionConfig {
   // messages a second) stay well under them.
   std::uint32_t reliable_per_second = 60;
   std::uint32_t unreliable_per_second = 240;
+  // VOICE_FRAME (channel 5) has a budget of its own, so talking never takes
+  // the poses' and samples' messages: 50 frames a second, bursts of twice.
+  std::uint32_t voice_per_second = 60;
   // Most message bytes a player may send a second, both kinds together, with
   // bursts of up to twice that. The message counts alone let a player relay
   // 300 messages of up to 64 KB a second (19 MB/s) to every other player; the
@@ -210,6 +213,17 @@ struct SessionConfig {
   std::uint64_t owner_dead_us = 10'000'000;
   // A player position older than this is not used for distances.
   std::uint64_t position_stale_us = 5'000'000;
+  // Proximity voice (docs/protocol.md, "Voice"): VOICE_FRAME goes to the
+  // players in the sender's scene whose Link is within this of the sender's,
+  // in metres; 0: the whole scene. A player whose place is not known (or is
+  // stale) hears the whole scene. The games fade a voice out to silence at
+  // their own range (default 30 m), so this is a little larger.
+  float voice_range_m = 35.0f;
+  // At most this many voices reach one player at once (the first to start
+  // talking keep it until they stop or are quiet voice_quiet_us); 0: no cap.
+  // Bounds the host's upload with 16 players in one room.
+  std::uint32_t voice_max_speakers = 4;
+  std::uint64_t voice_quiet_us = 400'000;
   // How often tick runs the ownership rules.
   std::uint64_t ownership_check_us = 250'000;
   // Every this often a player's OBJECT_PRESENT is answered with OBJECT_OWNER
@@ -272,6 +286,11 @@ struct Stats {
   std::uint64_t after_refused = 0;   // packets from a connection being closed
   std::uint64_t rate_limited = 0;    // over a player's message rate
   std::uint64_t relayed = 0;         // messages passed on (once per message)
+  // Proximity voice. Relayed ones count in relayed too.
+  std::uint64_t voice_relayed = 0;      // VOICE_FRAME passed on (once per frame)
+  std::uint64_t voice_out_of_range = 0; // a listener left out: too far from the speaker
+  std::uint64_t voice_unplaced = 0;     // from a player whose scene is not known yet: dropped
+  std::uint64_t voice_capped = 0;       // a listener left out: voice_max_speakers others were talking
   // PvP (docs/protocol.md, "PvP"). Relayed ones count in relayed too.
   std::uint64_t pvp_hits_relayed = 0;   // PVP_HIT passed on to its victim
   std::uint64_t pvp_hits_dropped = 0;   // PVP_HIT while PvP is off, or to nobody
@@ -439,6 +458,10 @@ class Session {
     // Message budgets for the rate limits, in messages, refilled with time.
     double reliable_budget = 0;
     double unreliable_budget = 0;
+    double voice_budget = 0;
+    // Proximity voice: the speakers this player hears now, by number, and
+    // when each one's last frame was passed on (voice_max_speakers).
+    std::map<std::uint8_t, std::uint64_t> voices_heard;
     double byte_budget = 0;
     std::uint64_t budget_time = 0;
     std::optional<std::uint32_t> address;
@@ -565,6 +588,8 @@ class Session {
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
   void on_object_group(ConnectionId id, Connection& c, const protocol::ObjectGroup& g);
   void on_fish_lure(Connection& c, const protocol::FishLure& m, std::uint64_t now_us);
+  // Proximity voice: to the others in the speaker's scene within voice_range_m.
+  void on_voice(ConnectionId id, const Connection& c, protocol::VoiceFrame& m, std::uint64_t now_us);
   // A fish's owner by the lures (issue 151): asks it over when another game's
   // lure is clearly better than its owner's.
   // unfit: its owner's game stands still (unfit_owner).

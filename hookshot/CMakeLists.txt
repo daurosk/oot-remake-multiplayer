@@ -36,6 +36,10 @@ target_compile_definitions(hookshot_coop PRIVATE LICHII_COOP COOP_HOOKSHOT)
 target_link_libraries(hookshot_coop PRIVATE coop coop_net coop_host coop_presence coop_overlay coop_server_lib
                       fmt::fmt coop_warnings)
 set_target_properties(hookshot_coop PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden)
+# Proximity voice (docs/voice.md): the two exports Hookshot's mixer looks for
+# (hos_coop_voice.h, our patch 0009) and the game-free voice library.
+target_sources(hookshot_coop PRIVATE src/coop_voice_hookshot.cpp)
+target_link_libraries(hookshot_coop PRIVATE coop_voice)
 if(MSVC)
   # The emulator's own code builds with these off too (lichii/README.md).
   target_compile_options(hookshot_coop PRIVATE /wd4456 /wd4457 /wd4458 /wd4459 /bigobj)

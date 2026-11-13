@@ -59,6 +59,15 @@ TEST_CASE("hookshot: the API header in our patch is hookshot/src's") {
     CHECK(NewFile(Patch(), "host/hos_coop_api.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_api.h"));
 }
 
+TEST_CASE("hookshot: the voice header in patch 0009 is hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0009-coop-voice.patch");
+    CHECK(NewFile(patch, "host/hos_coop_voice.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_voice.h"));
+    // The mixer's hunk and the module's exports it looks for.
+    CHECK(patch.find("hos_coop_voice_mix(ch, vn, FRAME);") != std::string::npos);
+    CHECK(patch.find("\"hos_coop_voice_attach\"") != std::string::npos);
+    CHECK(patch.find("\"hos_coop_voice_render\"") != std::string::npos);
+}
+
 TEST_CASE("hookshot: the patch's hook sites are the emulator cave's") {
     const std::string hooks = NewFile(Patch(), "nx2/coop_hooks.py");
     // The frame hook goes after the `mov x0, x20` before each of the cave's calls.

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -339,6 +340,8 @@ void SetCoopEnvironment(const CoopTitleMenu::Options& o) {
 
 bool g_copied = false;   // this session's invite code was put on the clipboard
 std::string g_answer_note;  // what became of the friend's answer code the host pasted ("" when none)
+std::string g_join_text;    // the code (or address) this join used: remembered once connected
+bool g_join_saved = false;
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). The invite code goes on the
 // clipboard by itself, once, as soon as there is one: the host has nothing to copy or type.
@@ -354,6 +357,19 @@ std::vector<std::string> HostStatusLines() {
     v.invite_done = st.invite_done != 0;
     v.invite = st.invite;
     v.answer = st.answer;
+    if (!v.host && v.state == HOS_COOP_CONNECTED && !g_join_saved && !g_join_text.empty()) {
+        g_join_saved = true;   // Join offers "Join <host> again" next time
+        std::string host = "your friend";
+        for (const auto& row : CoopHook::PlayerList()) {
+            if (row.number == 1 && !row.self && !row.name.empty()) {
+                host = row.name;
+            }
+        }
+        std::string coop = ReadText(CoopIni());
+        coop = CoopTitleMenu::IniSet(coop, "last_invite", g_join_text, true);
+        coop = CoopTitleMenu::IniSet(coop, "last_host", host, true);
+        WriteText(CoopIni(), coop);
+    }
     if (v.host && !v.invite.empty() && !g_copied) {
         g_copied = SetClipboardText(v.invite);
         LOG_INFO(Core, "coop: title menu: host: the invite code is on the clipboard{}", g_copied ? "" : " (it could not be)");
@@ -493,6 +509,8 @@ void Join(const std::string& text) {
     }
     LOG_INFO(Core, "coop: title menu: join: {}", invite ? std::string("an invite code") : "the address " + where);
     g_doing = "joined";
+    g_join_text = std::string(text);
+    g_join_saved = false;
     g_menu.ShowPage(Page::kJoining);
     g_menu.SetStatus(HostStatusLines());
 }
@@ -881,8 +899,13 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                 Host();
             } else if (f == kFirstRow + 1) {
                 g_menu.Open(options, Page::kJoin);
-                const std::string clip = ClipboardText();   // a friend's code copied already: ready to press OK
-                if (coop::server::nat::looks_like_code(clip)) {
+                const std::string coop = ReadText(CoopIni());
+                const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
+                if (last && !last->empty()) {   // "Join <host> again", first
+                    g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), *last);
+                }
+                const std::string clip = ClipboardText();   // a new code copied already: ready to press OK
+                if (coop::server::nat::looks_like_code(clip) && (!last || clip.find(*last) == std::string::npos)) {
                     g_menu.Paste(clip);
                 }
             } else {
@@ -948,6 +971,27 @@ bool Char(std::uint32_t cp) {
 bool KeysTaken() {
     std::lock_guard lock(g_mutex);
     return g_menu.open();
+}
+
+std::string ClientId() {
+    static std::mutex m;
+    std::lock_guard lock(m);
+    static std::string id;
+    if (!id.empty()) {
+        return id;
+    }
+    std::string coop = ReadText(CoopIni());
+    if (const auto have = CoopTitleMenu::IniGet(coop, "client_id"); have && have->size() >= 16) {
+        id = *have;
+        return id;
+    }
+    std::random_device rd;
+    for (int i = 0; i < 4; ++i) {
+        id += fmt::format("{:08x}", rd());
+    }
+    coop = CoopTitleMenu::IniSet(coop, "client_id", id, true);
+    WriteText(CoopIni(), coop);
+    return id;
 }
 
 std::optional<CoopDraw::TitleView> View() {

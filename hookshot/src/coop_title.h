@@ -38,6 +38,10 @@ bool Key(std::uint32_t vk, bool repeat);
 bool Char(std::uint32_t cp);
 // The menu has the keyboard (the game reads no keys).
 bool KeysTaken();
+// This PC's own id for rejoining (coop.ini client_id, made once): the module's
+// join helper uses the same nonce and port for the same invite with it.
+std::string ClientId();
+
 // What to draw: the prompt or the menu; nothing when the title is not up.
 std::optional<CoopDraw::TitleView> View();
 

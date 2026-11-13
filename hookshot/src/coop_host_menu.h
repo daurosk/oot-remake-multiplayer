@@ -45,6 +45,9 @@ struct Hooks {
     std::optional<std::vector<coop::server::nat::Addr>> stun_servers;
     bool allow_private = false;
     std::uint16_t helper_port = 27512;
+    // This PC's own id (coop.ini client_id): with it a join by invite code uses
+    // the same helper nonce and port each time (RejoinIds). Empty: random.
+    std::function<std::string()> client_id;
     std::uint64_t direct_ms = 3000;
 };
 
@@ -98,6 +101,14 @@ private:
     std::deque<std::string> answers_;  // pasted, for the host thread
     HosCoopStatus status_{};
 };
+
+// The helper nonce and public port for joining `host` with `password` from the PC
+// `client_id`: the same each time (a rejoin), different for another PC or invite.
+struct RejoinId {
+    coop::server::nat::Nonce nonce{};
+    std::uint16_t public_port = 0;   // 40000 to 59999
+};
+RejoinId RejoinIds(const std::string& client_id, const std::string& password, coop::server::nat::Addr host);
 
 // Copies `text` into a fixed C string, cut to fit, always ended.
 void CopyText(char* out, std::size_t size, const std::string& text);

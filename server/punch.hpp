@@ -88,6 +88,13 @@ struct HostConfig {
   std::uint64_t stun_wait_ms = 3000;
   std::uint64_t punch_ms = 10'000;          // how long the server punches after a paste
   std::uint64_t answer_life_ms = 600'000;   // how long it answers that friend's punches
+  // The game's own host (the title menu): a friend whose answer code was taken
+  // once is remembered while the server runs, and gets a punch every
+  // keep_punch_ms after the first burst, so the way through both routers
+  // stays open and a rejoin (the same helper nonce and port, join_helper.hpp)
+  // gets in with no new answer code. coop_server keeps the 10 minutes.
+  bool remember_friends = false;
+  std::uint64_t keep_punch_ms = 2000;
 };
 
 class HostRendezvous {

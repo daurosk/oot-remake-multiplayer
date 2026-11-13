@@ -493,6 +493,8 @@ void Menu::Open(const Options& options, Page page) {
     request_.reset();
     direct_ = page != Page::kMain && page != Page::kClosed;
     join_.clear();   // (a code from an earlier try: the player pastes the newest)
+    rejoin_host_.clear();
+    rejoin_code_.clear();
     Go(page == Page::kClosed ? Page::kMain : page);
 }
 
@@ -511,6 +513,14 @@ void Menu::ShowPage(Page page) {
     Go(page);
 }
 
+void Menu::SetRejoin(std::string host, std::string code) {
+    rejoin_host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
+    rejoin_code_ = std::string(Trim(code));
+    if (page_ == Page::kJoin) {
+        selected_ = 0;
+    }
+}
+
 void Menu::SetStatus(std::vector<std::string> lines) {
     status_ = std::move(lines);
 }
@@ -526,7 +536,7 @@ std::size_t Menu::RowCount() const {
     case Page::kMain:
         return kMainRows;
     case Page::kJoin:
-        return kJoinRows;
+        return kJoinRows + JoinOffset();
     case Page::kSettings:
         return kSettingsRows;
     case Page::kHosting:
@@ -623,7 +633,12 @@ Sound Menu::Decide() {
             return Sound::kBack;
         }
     case Page::kJoin:
-        switch (selected_) {
+        if (JoinOffset() != 0 && selected_ == 0) {   // Join <host> again: the last code, one press
+            status_ = {"Joining..."};
+            request_ = Request{Request::Kind::kJoin, rejoin_code_};
+            return Sound::kStart;
+        }
+        switch (selected_ - JoinOffset()) {
         case kField:   // A on the code: paste it
             request_ = Request{Request::Kind::kPaste, {}};
             return Sound::kDecide;
@@ -745,7 +760,7 @@ bool Menu::Paste(std::string_view text) {
     const std::string line = OneLine(text);
     if (t == &join_) {
         join_ = line.substr(0, 300);
-        selected_ = kJoinNow;
+        selected_ = kJoinNow + JoinOffset();
         status_.clear();
         return true;
     }
@@ -785,7 +800,11 @@ View Menu::view() const {
         break;
     case Page::kJoin:
         v.title = "Join";
-        add("Your friend's code", join_.empty() ? std::string("(press A to paste it)") : join_);
+        if (JoinOffset() != 0) {
+            add("Join " + rejoin_host_ + " again");
+        }
+        add(JoinOffset() != 0 ? "Or a new code" : "Your friend's code",
+            join_.empty() ? std::string("(press A to paste it)") : join_);
         v.rows.back().editing = true;
         add("OK");
         add("Cancel");

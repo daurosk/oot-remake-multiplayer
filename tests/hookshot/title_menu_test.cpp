@@ -432,3 +432,34 @@ TEST_CASE("title menu: the host's player count, 2 to 16, round the ends, read an
     CHECK(Options::Read("", "max_players = 40\r\n").max_players == 16);
     CHECK(Options::Read("", "max_players = x\r\n").max_players == 4);
 }
+
+TEST_CASE("title menu: Join offers the last host again first, one press") {
+    Menu m;
+    m.Open(Options{}, Page::kJoin);
+    m.SetRejoin("Saria", "ABCDE-FGHJK");
+    auto v = m.view();
+    REQUIRE(v.rows.size() == 4);
+    CHECK(v.rows[0].label == "Join Saria again");
+    CHECK(v.rows[0].selected);
+    CHECK(v.rows[1].label == "Or a new code");
+    CHECK(m.Press(Input::kDecide) == Sound::kStart);
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kJoin);
+    CHECK(r->text == "ABCDE-FGHJK");
+    // a new code still works under it
+    m.Open(Options{}, Page::kJoin);
+    m.SetRejoin("", "ABCDE-FGHJK");
+    CHECK(m.view().rows[0].label == "Join your friend again");
+    CHECK(m.Paste("QWERT-YUPAS"));
+    CHECK(m.view().rows[m.selected()].label == "OK");
+    CHECK(m.Press(Input::kDecide) == Sound::kStart);
+    CHECK(m.TakeRequest()->text == "QWERT-YUPAS");
+    m.Press(Input::kDown);
+    CHECK(m.Press(Input::kDecide) == Sound::kBack);   // Cancel
+    CHECK_FALSE(m.open());
+    // no last code: no such row
+    m.Open(Options{}, Page::kJoin);
+    m.SetRejoin("Saria", "");
+    CHECK(m.view().rows[0].label == "Your friend's code");
+}

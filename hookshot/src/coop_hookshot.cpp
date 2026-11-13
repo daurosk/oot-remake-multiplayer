@@ -259,6 +259,7 @@ CoopHostMenu::Menu& HostMenu() {
             return CoopHook::Begin(std::move(s));
         };
         h.disconnect = [] { CoopHook::End(); };
+        h.client_id = [] { return CoopTitle::ClientId(); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {
             const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";

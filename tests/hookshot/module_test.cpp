@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "coop_boss_native.h"
 #include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
@@ -464,4 +465,29 @@ TEST_CASE("hookshot: the boss wraps take the next ids of the one wrap space (nat
     CHECK(HOS_COOP_WRAP_BRAIN_VERB == HOS_COOP_WRAP_EVENT_REQUEST + 1);
     CHECK(HOS_COOP_WRAP_ACTION_VERB == HOS_COOP_WRAP_BRAIN_VERB + 1);
     CHECK(HOS_COOP_WRAP_ACTION_VERB < 64);  // (one bit each in HELLO's b)
+}
+
+TEST_CASE("hookshot: patch 0013 adds the two boss rows to the wrap table, with the module's ids and addresses") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0013-coop-boss-wraps.patch");
+    // Hookshot's copy of the ids is the module's file.
+    CHECK(NewFile(patch, "host/hos_coop_bosses.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_bosses.h"));
+    // The rows: the id, the function the module calls for a copy, and its first words (checked by the lift).
+    char row[96];
+    std::snprintf(row, sizeof row, "+    (%u, 0x%llx, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),",
+                  HOS_COOP_WRAP_BRAIN_VERB, static_cast<unsigned long long>(CoopBossNative::addr::kSetBrainVerb));
+    CHECK(patch.find(row) != std::string::npos);
+    std::snprintf(row, sizeof row, "+    (%u, 0x%llx, (0xd503237f, 0xd10743ff, 0xa9187bfd, 0xf900cbfc)),",
+                  HOS_COOP_WRAP_ACTION_VERB, static_cast<unsigned long long>(CoopBossNative::addr::kRequestActionVerb));
+    CHECK(patch.find(row) != std::string::npos);
+    // It changes the table only (no lift code, no host code): the wrap machinery stays patch 0005's.
+    CHECK(patch.find("diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py") != std::string::npos);
+    std::size_t files = 0;
+    for (std::size_t at = patch.find("\ndiff --git "); at != std::string::npos;
+         at = patch.find("\ndiff --git ", at + 1)) {
+        ++files;
+    }
+    CHECK(files == 2);
+    // The table's file is patch 0005's: 0013 applies after it.
+    CHECK(ReadFile(kRepo / "hookshot" / "patches" / "0005-coop-world-hooks.patch")
+              .find("+++ b/nx2/coop_world_wraps.py") != std::string::npos);
 }

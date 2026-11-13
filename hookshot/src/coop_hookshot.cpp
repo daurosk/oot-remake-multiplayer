@@ -991,7 +991,7 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
             return 0;
         }
-        if (!t.OnActionVerb(x[0], r, t_own_call)) {
+        if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call)) {
             return 0;
         }
         // Skipped: the result its callers pass up is what the game gives for a request it took (0, its main path

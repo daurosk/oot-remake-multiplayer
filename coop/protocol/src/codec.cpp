@@ -670,24 +670,31 @@ Error check_object_state(const ObjectState& s) {
       }
     }
   }
-  if (s.bsa && s.bsa->action) {
-    for (const auto& p : s.bsa->action->places) {
-      if (p && !all_finite(*p)) return Error::bad_value;
+  if (s.bsa) {
+    const auto finite = [](const BossAction& a) {
+      for (const auto& p : a.places) {
+        if (p && !all_finite(*p)) return false;
+      }
+      return !a.extra || all_finite(*a.extra);
+    };
+    if (s.bsa->action && !finite(*s.bsa->action)) return Error::bad_value;
+    if (s.bsa->recent.size() > kMaxBossChanges) return Error::bad_value;
+    std::uint32_t before = 0;
+    for (const BossChange& c : s.bsa->recent) {
+      if (c.seq == 0 || c.seq <= before || c.seq > s.bsa->seq) return Error::bad_value;
+      before = c.seq;
+      if (const auto* a = std::get_if<BossAction>(&c.what); a != nullptr && !finite(*a)) {
+        return Error::bad_value;
+      }
     }
-    if (s.bsa->action->extra && !all_finite(*s.bsa->action->extra)) return Error::bad_value;
   }
   return Error::none;
 }
 
-// Component 20, a boss's brain and action verbs (BossBsa). The
-// action's optional parts are named by one bit each in a mask byte.
-void write_bsa(const BossBsa& b, Writer& w) {
-  w.u32(b.seq);
-  w.u32(static_cast<std::uint32_t>(b.brain_verb));
-  w.u8(b.brain_force ? 1 : 0);
-  w.u8(b.action ? 1 : 0);
-  if (!b.action) return;
-  const BossAction& a = *b.action;
+// Component 20, a boss's brain and action verbs (BossBsa). An action's
+// optional parts are named by one bit each in a mask byte (bits 0 to 2 the
+// places, 3 the extra pair, 4 "the verb changed").
+void write_boss_action(const BossAction& a, Writer& w) {
   w.u32(static_cast<std::uint32_t>(a.verb));
   w.u32(static_cast<std::uint32_t>(a.slot));
   w.u16(a.flags);
@@ -696,6 +703,7 @@ void write_bsa(const BossBsa& b, Writer& w) {
     if (a.places[i]) mask |= static_cast<std::uint8_t>(1u << i);
   }
   if (a.extra) mask |= 1u << 3;
+  if (a.changed) mask |= 1u << 4;
   w.u8(mask);
   for (const auto& p : a.places) {
     if (p) {
@@ -704,6 +712,25 @@ void write_bsa(const BossBsa& b, Writer& w) {
   }
   if (a.extra) {
     for (float f : *a.extra) w.f32(f);
+  }
+}
+
+void write_bsa(const BossBsa& b, Writer& w) {
+  w.u32(b.seq);
+  w.u32(static_cast<std::uint32_t>(b.brain_verb));
+  w.u8(b.action ? 1 : 0);
+  if (b.action) write_boss_action(*b.action, w);
+  w.u8(static_cast<std::uint8_t>(b.recent.size()));
+  for (const BossChange& c : b.recent) {
+    w.u32(c.seq);
+    if (const auto* brain = std::get_if<BossBrain>(&c.what)) {
+      w.u8(0);
+      w.u32(static_cast<std::uint32_t>(brain->verb));
+      w.u8(brain->force ? 1 : 0);
+    } else {
+      w.u8(1);
+      write_boss_action(std::get<BossAction>(c.what), w);
+    }
   }
 }
 
@@ -1367,6 +1394,27 @@ Error read_object_id(Reader& r, ObjectId& id) {
   return check_object_id(id);
 }
 
+// A boss's action (write_boss_action): verb, slot, flags, the mask byte, then
+// the places and the extra pair the mask names.
+Error read_boss_action(Reader& c, BossAction& a) {
+  std::uint32_t verb = 0;
+  std::uint32_t slot = 0;
+  std::uint8_t mask = 0;
+  COOP_READ(c.u32(verb));
+  COOP_READ(c.u32(slot));
+  COOP_READ(c.u16(a.flags));
+  COOP_READ(c.u8(mask));
+  if (mask > 0x1f) return Error::bad_value;
+  a.verb = static_cast<std::int32_t>(verb);
+  a.slot = static_cast<std::int32_t>(slot);
+  for (std::size_t i = 0; i < a.places.size(); ++i) {
+    if (mask & (1u << i)) COOP_TRY(read_floats(c, a.places[i].emplace()));
+  }
+  if (mask & (1u << 3)) COOP_TRY(read_floats(c, a.extra.emplace()));
+  a.changed = (mask & (1u << 4)) != 0;
+  return Error::none;
+}
+
 Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& known) {
   known = true;
   switch (id) {
@@ -1425,31 +1473,34 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
     case ObjectComponent::bsa: {
       BossBsa& b = s.bsa.emplace();
       std::uint32_t verb = 0;
-      std::uint8_t force = 0;
       std::uint8_t has_action = 0;
+      std::uint8_t count = 0;
       COOP_READ(c.u32(b.seq));
       COOP_READ(c.u32(verb));
-      COOP_READ(c.u8(force));
       COOP_READ(c.u8(has_action));
-      if (force > 1 || has_action > 1) return Error::bad_value;
+      if (has_action > 1) return Error::bad_value;
       b.brain_verb = static_cast<std::int32_t>(verb);
-      b.brain_force = force != 0;
-      if (has_action == 0) return Error::none;
-      BossAction& a = b.action.emplace();
-      std::uint32_t action_verb = 0;
-      std::uint32_t slot = 0;
-      std::uint8_t mask = 0;
-      COOP_READ(c.u32(action_verb));
-      COOP_READ(c.u32(slot));
-      COOP_READ(c.u16(a.flags));
-      COOP_READ(c.u8(mask));
-      if (mask > 0x0f) return Error::bad_value;
-      a.verb = static_cast<std::int32_t>(action_verb);
-      a.slot = static_cast<std::int32_t>(slot);
-      for (std::size_t i = 0; i < a.places.size(); ++i) {
-        if (mask & (1u << i)) COOP_TRY(read_floats(c, a.places[i].emplace()));
+      if (has_action != 0) COOP_TRY(read_boss_action(c, b.action.emplace()));
+      COOP_READ(c.u8(count));
+      if (count > kMaxBossChanges) return Error::bad_value;
+      std::uint32_t before = 0;
+      for (std::uint8_t i = 0; i < count; ++i) {
+        BossChange& change = b.recent.emplace_back();
+        std::uint8_t kind = 0;
+        COOP_READ(c.u32(change.seq));
+        COOP_READ(c.u8(kind));
+        if (change.seq == 0 || change.seq <= before || change.seq > b.seq || kind > 1) return Error::bad_value;
+        before = change.seq;
+        if (kind == 0) {
+          std::uint8_t force = 0;
+          COOP_READ(c.u32(verb));
+          COOP_READ(c.u8(force));
+          if (force > 1) return Error::bad_value;
+          change.what = BossBrain{static_cast<std::int32_t>(verb), force != 0};
+        } else {
+          COOP_TRY(read_boss_action(c, change.what.emplace<BossAction>()));
+        }
       }
-      if (mask & (1u << 3)) COOP_TRY(read_floats(c, a.extra.emplace()));
       return Error::none;
     }
   }

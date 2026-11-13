@@ -745,11 +745,19 @@ struct SlotAnimation {
 inline constexpr std::size_t kMaxObjectSlots = 8;
 inline constexpr std::uint8_t kMaxSlotIndex = 31;
 
-// Native boss sync (docs/dungeons-boss.md, "Native boss sync"): the owner's last brain
-// verb and action verb request of a boss (the game's BSA component), so the
-// other games put the same ones into their copy through the game's own
-// functions. An optional component: an older build skips it. seq counts the
-// owner's changes for this boss (a copy applies each seq once).
+// Native boss sync (docs/dungeons-boss.md, "Native boss sync"): what the
+// owner's game did to a boss's BSA component (the game's brain and action
+// verbs), so the other games do the same to their copy through the game's own
+// functions. An optional component: an older build skips it.
+// - A change is one call of the owner's game: a brain verb set (verb, force)
+//   or an action verb request. seq counts them for this boss, from 1.
+// - recent holds the newest kMaxBossChanges changes, oldest first, in every
+//   sample, so a lost sample loses none and a copy makes every change once,
+//   in the owner's order.
+// - brain_verb and action are the state now (the verb the owner's boss has,
+//   the last action asked): where a copy starts (it joined, the owner
+//   changed, or it missed more than recent holds), and what it is put back
+//   to when it differs for long.
 struct BossAction {
   std::int32_t verb = 0;
   std::int32_t slot = 0;
@@ -758,13 +766,26 @@ struct BossAction {
   // (the game marks a missing one NaN), and its pair of extra values.
   std::array<std::optional<Vec3>, 3> places{};
   std::optional<std::array<float, 2>> extra;
+  bool changed = true;  // the game's own "the verb changed" argument
   bool operator==(const BossAction&) const = default;
 };
-struct BossBsa {
+struct BossBrain {
+  std::int32_t verb = 0;
+  bool force = false;
+  bool operator==(const BossBrain&) const = default;
+};
+struct BossChange {
   std::uint32_t seq = 0;
+  std::variant<BossBrain, BossAction> what;
+  bool operator==(const BossChange&) const = default;
+};
+inline constexpr std::size_t kMaxBossChanges = 8;
+struct BossBsa {
+  std::uint32_t seq = 0;  // the owner's changes so far (the newest one's seq)
   std::int32_t brain_verb = 0;
-  bool brain_force = false;
   std::optional<BossAction> action;
+  // At most kMaxBossChanges, seqs rising by one or more, none above seq.
+  std::vector<BossChange> recent;
   bool operator==(const BossBsa&) const = default;
 };
 

@@ -2753,7 +2753,7 @@ TEST_CASE("objects: a boss's brain and action verbs go with its samples, a new o
     Sync owner;
     Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
     e.animation = proto::Animation{"Wait", 0.0f, 1.0f};
-    e.bsa = proto::BossBsa{1, 2, false, std::nullopt};
+    e.bsa = proto::BossBsa{1, 2, std::nullopt, {}};
     Tick(owner, 0, {e});
     const proto::ObjectId id = *owner.IdOf(0x100);
     Own(owner, id, 1, 4);
@@ -2764,7 +2764,7 @@ TEST_CASE("objects: a boss's brain and action verbs go with its samples, a new o
     // Nothing new, standing still: no sample (until the still one, 1 s).
     CHECK(All<proto::ObjectSample>(Tick(owner, 100 * kMs, {e})).empty());
     // A new verb (seq 2), nothing else changed: a sample at the next 50 ms step.
-    e.bsa = proto::BossBsa{2, 3, true, std::nullopt};
+    e.bsa = proto::BossBsa{2, 3, std::nullopt, {}};
     auto changed = All<proto::ObjectSample>(Tick(owner, 200 * kMs, {e}));
     REQUIRE(changed.size() == 1);
     CHECK(changed[0].state.bsa->seq == 2);

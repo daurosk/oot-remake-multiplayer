@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Native boss sync on Hookshot (oot-remake-multiplayer, docs/dungeons-boss.md "Native boss sync").
 
-   Two more wrapped game functions for the one hook table (hs-build-speed; the same rows as patch 0005's WRAPS, ids in
-   the one wrap space of hos_coop_world.h). The module's hos_coop_wrap gets them; Hookshot announces each wrap its build
-   has in HOS_COOP_WORLD_HELLO's bits, and the module turns boss sync on only when both are there. Rows (nx2 form):
+   Two wrapped game functions more in the one wrap table (patch 0005's nx2/coop_world_wraps.py WRAPS; the ids are in
+   the one wrap space of hos_coop_world.h). Patch 0013 adds their rows and this file (Hookshot's host/hos_coop_bosses.h
+   is the same file). The module's hos_coop_wrap gets them; Hookshot announces each wrap its build has in
+   HOS_COOP_WORLD_HELLO's bits, and the module turns boss sync on only when both are there. The rows:
      (4, 0x6733b0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),  # pacibsp; stp x29, x30; str x21; stp x20, x19
      (5, 0xc08f0,  (0xd503237f, 0xd10743ff, 0xa9187bfd, 0xf900cbfc)),  # pacibsp; sub sp, #0x1d0; stp x29, x30; str x28
    Phase 0 may return 1 (skip); the module then sets x0 to the result: 0x6733b0 returns nothing its callers read (0 is

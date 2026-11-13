@@ -1146,7 +1146,7 @@ TEST_CASE("issue 150: an object sample carries a boss's other AS slots") {
 TEST_CASE("native boss sync: an object sample carries a boss's brain and action verbs") {
   ObjectSample s{0, test::kPlacedId, 3, {}};
   s.state.time = {5, 1};
-  s.state.bsa = BossBsa{7, 2, true, std::nullopt};
+  s.state.bsa = BossBsa{7, 2, std::nullopt, {}};
   Message m;
   REQUIRE(decode(must_encode(s), m) == Error::none);
   CHECK(std::get<ObjectSample>(m) == s);
@@ -1158,10 +1158,24 @@ TEST_CASE("native boss sync: an object sample carries a boss's brain and action 
   a.places[0] = Vec3{1.0f, 2.0f, 3.0f};
   a.places[2] = Vec3{-4.0f, 5.5f, 0.0f};
   a.extra = std::array<float, 2>{0.5f, 30.0f};
+  a.changed = false;
   s.state.bsa->action = a;
   REQUIRE(decode(must_encode(s), m) == Error::none);
   CHECK(std::get<ObjectSample>(m) == s);
   CHECK_FALSE(std::get<ObjectSample>(m).state.bsa->action->places[1]);
+  // The newest changes, brain and action, in order (seqs rising, none above seq).
+  s.state.bsa->recent = {BossChange{5, BossBrain{3, true}}, BossChange{6, a}, BossChange{7, BossBrain{2, false}}};
+  REQUIRE(decode(must_encode(s), m) == Error::none);
+  CHECK(std::get<ObjectSample>(m) == s);
+  for (const auto& recent : {std::vector<BossChange>{BossChange{6, BossBrain{}}, BossChange{6, BossBrain{}}},
+                             std::vector<BossChange>{BossChange{8, BossBrain{}}},
+                             std::vector<BossChange>{BossChange{0, BossBrain{}}},
+                             std::vector<BossChange>(kMaxBossChanges + 1, BossChange{1, BossBrain{}})}) {
+    Bytes refused;
+    ObjectSample bad_recent = s;
+    bad_recent.state.bsa->recent = recent;
+    CHECK(encode(bad_recent, refused) == Error::bad_value);
+  }
   // No bsa component: none after decoding (older senders).
   Message plain;
   REQUIRE(decode(must_encode(ObjectSample{0, test::kPlacedId, 3, {}}), plain) == Error::none);
@@ -1172,13 +1186,16 @@ TEST_CASE("native boss sync: an object sample carries a boss's brain and action 
   bad.state.bsa->action->places[1] = Vec3{std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
   CHECK(encode(bad, out) == Error::bad_value);
   CHECK(out.empty());
-  // Refused on decode: a force byte other than 0 or 1.
+  // Refused on decode: a has-action byte other than 0 or 1, too many changes.
   ObjectSample plain_bsa{0, test::kPlacedId, 3, {}};
   plain_bsa.state.time = {5, 1};
-  plain_bsa.state.bsa = BossBsa{1, 2, false, std::nullopt};
+  plain_bsa.state.bsa = BossBsa{1, 2, std::nullopt, {}};
   Bytes b = must_encode(plain_bsa);
   REQUIRE_GE(b.size(), 2u);
-  b[b.size() - 2] = 2;  // (the force byte: seq, verb, force, has-action last)
+  b[b.size() - 2] = 2;  // (the has-action byte: seq, verb, has-action, count last)
+  CHECK(decode_bytes(b) == Error::bad_value);
+  b[b.size() - 2] = 0;
+  b[b.size() - 1] = static_cast<std::uint8_t>(kMaxBossChanges + 1);  // (the count)
   CHECK(decode_bytes(b) == Error::bad_value);
 }
 

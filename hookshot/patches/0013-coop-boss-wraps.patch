@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Fri, 13 Nov 2026 00:40:00 -0900
+Subject: [PATCH] Co-op boss wraps: a BSA component's brain and action verbs
+ to the module
+
+Two more wrapped game functions in patch 0005's table
+(nx2/coop_world_wraps.py WRAPS; their ids in host/hos_coop_bosses.h), for
+native boss sync (oot-remake-multiplayer's docs/dungeons-boss.md):
+- 4: main+0x6733b0, the BSA component's "set brain verb" (a boss's phase);
+- 5: main+0xc08f0, the BSA component's "request action verb" (its move).
+The owner's game runs a boss; the module sends each of these calls and puts
+them into the other games' copies through the same two functions, whose own
+calls it skips there (phase 0 answers 1). Nothing else changes: the wrap
+machinery, the checks (build id, first words) and the hello's bits are 0005's.
+---
+ host/hos_coop_bosses.h  | 23 +++++++++++++++++++++++
+ nx2/coop_world_wraps.py |  8 ++++++++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/host/hos_coop_bosses.h b/host/hos_coop_bosses.h
+new file mode 100644
+index 0000000..dc48c75
+--- /dev/null
++++ b/host/hos_coop_bosses.h
+@@ -0,0 +1,23 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   Native boss sync on Hookshot (oot-remake-multiplayer, docs/dungeons-boss.md "Native boss sync").
++
++   Two wrapped game functions more in the one wrap table (patch 0005's nx2/coop_world_wraps.py WRAPS; the ids are in
++   the one wrap space of hos_coop_world.h). Patch 0013 adds their rows and this file (Hookshot's host/hos_coop_bosses.h
++   is the same file). The module's hos_coop_wrap gets them; Hookshot announces each wrap its build has in
++   HOS_COOP_WORLD_HELLO's bits, and the module turns boss sync on only when both are there. The rows:
++     (4, 0x6733b0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),  # pacibsp; stp x29, x30; str x21; stp x20, x19
++     (5, 0xc08f0,  (0xd503237f, 0xd10743ff, 0xa9187bfd, 0xf900cbfc)),  # pacibsp; sub sp, #0x1d0; stp x29, x30; str x28
++   Phase 0 may return 1 (skip); the module then sets x0 to the result: 0x6733b0 returns nothing its callers read (0 is
++   set anyway), 0xc08f0 returns 0 for a request it took (main+0xc10f4; 2 and 3 on its refusal paths), and 5 of its 9
++   callers pass that up to their AI node, so a skipped request gives 0, as a taken one. Plain C. */
++#ifndef HOS_COOP_BOSSES_H
++#define HOS_COOP_BOSSES_H
++
++/* main+0x6733b0, the BSA component's "set brain verb" (13 callers: the AI node OneShotBSABrainVerbSetter, the plug
++   setter, death, events): x0 the BSA ([[actor+0x270]+0x188]), w1 the verb, w2 force (bit 0), x3 the asking node. */
++#define HOS_COOP_WRAP_BRAIN_VERB 4u
++/* main+0xc08f0, the BSA component's "request action verb" (9 callers: ExecuteBSASetActionVerb and the other
++   ExecuteBSA* nodes): x0 the BSA, x1 the request (0x60 bytes, coop_boss_native.h addr), w2 1 when the verb changed. */
++#define HOS_COOP_WRAP_ACTION_VERB 5u
++
++#endif
+diff --git a/nx2/coop_world_wraps.py b/nx2/coop_world_wraps.py
+index 8877d6c..03c7d91 100644
+--- a/nx2/coop_world_wraps.py
++++ b/nx2/coop_world_wraps.py
+@@ -24,6 +24,14 @@ WRAPS = (
+     # oot_patches.py adds a line at this function's head (the opening skip): that edits the function's own text, which
+     # a wrap leaves as it is, so both hold
+     (3, 0xd7a820, (0xb940b808, 0x37580808, 0xd503237f, 0xd10103ff)),   # ldr w8, [x0, #0xb8]; tbnz; pacibsp; sub sp
++    # HOS_COOP_WRAP_BRAIN_VERB (patch 0013): a BSA component's brain verb is set (13 callers: the AI node
++    # OneShotBSABrainVerbSetter, the plug setter, death, events). x0 the BSA, w1 the verb, w2 force, x3 the asking node.
++    # A boss's phase: the module sends the owner's and puts it into the other games' copies of that boss
++    (4, 0x6733b0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),   # pacibsp; stp x29, x30; str x21; stp x20, x19
++    # HOS_COOP_WRAP_ACTION_VERB (patch 0013): a BSA component is asked for an action verb (9 callers, the ExecuteBSA*
++    # AI nodes). x0 the BSA, x1 the request (0x60 bytes), w2 1 when the verb changed; returns 0 when taken. A boss's
++    # move: the same sharing
++    (5, 0xc08f0, (0xd503237f, 0xd10743ff, 0xa9187bfd, 0xf900cbfc)),   # pacibsp; sub sp, #0x1d0; stp x29, x30; str x28
+ )
+ 
+ 
+-- 
+2.47.0
+

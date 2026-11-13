@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_boss_native.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
 #include <utility>
+#include <variant>
 
 namespace CoopBossNative {
 
@@ -143,8 +145,9 @@ void Table::Publish(const std::vector<Boss>& bosses) {
         Entry e;
         if (const auto it = by_bsa_.find(b.bsa); it != by_bsa_.end() && it->second.actor == b.actor) {
             e = std::move(it->second);
-            if (e.role != b.role) {
+            if (e.role != b.role || (b.role == Role::copy && e.owner != b.owner)) {
                 Note(b.name + ": now " + (b.role == Role::owner ? "ours: our game runs it (sends its verbs)"
+                                          : e.role == Role::copy ? "a copy of a new owner: it waits for that owner's state"
                                                                  : "a copy: it takes the owner's verbs"));
                 // Ours from here: we go on from where the copy is (the owner's
                 // last verbs were put in). A copy: wait for the owner's state.
@@ -153,7 +156,9 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                     e.mine = *e.wanted;
                 }
                 e.wanted.reset();
-                e.brain_due = e.action_due = false;
+                e.due.clear();
+                e.queued_seq = 0;
+                e.drift = 0;
             }
         } else {
             e.actor = b.actor;
@@ -162,6 +167,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
         }
         e.role = b.role;
         e.name = b.name;
+        e.owner = b.owner;
         next.emplace(b.bsa, std::move(e));
     }
     by_bsa_ = std::move(next);
@@ -182,9 +188,7 @@ bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool o
     }
     if (e->role == Role::owner) {
         e->mine.brain_verb = verb;
-        e->mine.brain_force = force;
-        ++e->mine.seq;
-        e->have_mine = true;
+        Record(*e, BossBrain{verb, force});
         ++counts_.owner_brain;
         return false;
     }
@@ -195,7 +199,7 @@ bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool o
     return true;
 }
 
-bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool own) {
+bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own) {
     std::unique_lock lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
         ++counts_.busy;
@@ -211,9 +215,9 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool own) {
     if (e->role == Role::owner) {
         bool plug = false;
         if (auto a = ActionFromRequest(request, &plug)) {
-            e->mine.action = std::move(*a);
-            ++e->mine.seq;
-            e->have_mine = true;
+            a->changed = changed;
+            e->mine.action = *a;
+            Record(*e, std::move(*a));
             ++counts_.owner_action;
             if (plug) {
                 ++counts_.plug_actions;
@@ -236,6 +240,26 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool own) {
     }
     ++counts_.copy_skipped;
     return true;
+}
+
+void Table::Record(Entry& e, std::variant<BossBrain, BossAction> what) {
+    ++e.mine.seq;
+    e.mine.recent.push_back(BossChange{e.mine.seq, std::move(what)});
+    if (e.mine.recent.size() > coop::protocol::kMaxBossChanges) {
+        e.mine.recent.erase(e.mine.recent.begin());
+    }
+    e.have_mine = true;
+}
+
+void Table::Resync(Entry& e, const BossBsa& state) {
+    // The state now: the brain verb, then the last action asked (both made
+    // only when the copy is not so already, see Step).
+    e.due.clear();
+    e.due.push_back({BossChange{state.seq, BossBrain{state.brain_verb, true}}, true});
+    if (actions_on_ && state.action) {
+        e.due.push_back({BossChange{state.seq, *state.action}, true});
+    }
+    e.queued_seq = state.seq;
 }
 
 bool Table::CopyMakes(std::string_view maker) {
@@ -274,15 +298,36 @@ void Table::Receive(std::uint64_t actor, const BossBsa& state) {
         return;
     }
     const bool first = !e->wanted;
-    if (!first && state.seq == e->wanted->seq) {
-        return;  // the same state again (every sample carries it)
+    if (!first && state.seq <= e->wanted->seq) {
+        // The same state again (every sample carries it), or an older sample
+        // after a newer one. One owner's seq only rises: a new owner is seen
+        // in Publish, which makes the next state a first one.
+        return;
     }
-    // A smaller seq is a new owner's count (a hand-over): taken as new.
-    const bool brain_new = first || e->wanted->brain_verb != state.brain_verb;
-    const bool action_new = state.action && (first || e->wanted->action != state.action);
     e->wanted = state;
-    e->brain_due = e->brain_due || brain_new;
-    e->action_due = actions_on_ && (e->action_due || action_new);
+    // The changes after the newest one queued here, in the owner's order.
+    // All of them are held when the oldest held is at most the one after ours.
+    const auto next = std::find_if(state.recent.begin(), state.recent.end(),
+                                   [&](const BossChange& c) { return c.seq > e->queued_seq; });
+    const bool joined = !state.recent.empty() && state.recent.front().seq <= e->queued_seq + 1;
+    if (first || !joined) {
+        // First state (of this owner), or more missed than a sample holds:
+        // from the state now.
+        if (!first) {
+            ++counts_.resyncs;
+            Note(e->name + ": started again from the owner's state (seq " + std::to_string(state.seq) + ")");
+        }
+        Resync(*e, state);
+    } else {
+        for (auto it = next; it != state.recent.end(); ++it) {
+            if (!actions_on_ && std::holds_alternative<BossAction>(it->what)) {
+                continue;
+            }
+            e->due.push_back({*it, false});
+        }
+        e->queued_seq = state.seq;
+    }
+    e->drift = 0;
     if (first) {
         Note(e->name + ": the owner's verbs came (brain " + std::to_string(state.brain_verb) +
              "): the copy's own brain is skipped from now");
@@ -331,25 +376,29 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         if (e.role != Role::copy || !e.wanted) {
             continue;
         }
-        if (e.brain_due) {
-            e.brain_due = false;
-            std::int32_t now = 0;
-            const bool there = guest.Read(bsa + addr::kBsaBrainVerb, &now, sizeof now) && now == e.wanted->brain_verb;
-            if (!there) {
+        std::int32_t now = 0;
+        const bool read = guest.Read(bsa + addr::kBsaBrainVerb, &now, sizeof now);
+        while (!e.due.empty()) {
+            const Entry::Due& d = e.due.front();
+            if (const auto* brain = std::get_if<BossBrain>(&d.change.what)) {
+                if (d.resync && read && now == brain->verb) {
+                    e.due.pop_front();  // already so
+                    continue;
+                }
                 CoopPuppet::Call c;
                 c.function = main_base + addr::kSetBrainVerb;
                 c.x[0] = bsa;
-                c.x[1] = static_cast<std::uint32_t>(e.wanted->brain_verb);
+                c.x[1] = static_cast<std::uint32_t>(brain->verb);
                 c.x[2] = 1;  // force: the change is the owner's, already decided
                 c.x[3] = 0;  // (the asking node: not read by the function)
+                e.due.pop_front();
                 pending_ = Pending::brain;
                 return c;
             }
-        }
-        if (e.action_due && e.wanted->action) {
+            const BossAction& action = std::get<BossAction>(d.change.what);
             if (e.own_node == 0) {
-                ++counts_.action_waiting;  // (asked again next frame)
-                continue;
+                ++counts_.action_waiting;  // (asked again next frame; the changes after it wait too)
+                break;
             }
             if (block_ == 0) {
                 if (allocating_) {
@@ -362,18 +411,30 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
                 pending_ = Pending::malloc;
                 return c;
             }
-            const Request r = RequestFromAction(*e.wanted->action, e.own_node);
+            const Request r = RequestFromAction(action, e.own_node);
             if (!guest.Write(block_, r.data(), r.size())) {
-                continue;
+                break;
             }
-            e.action_due = false;
             CoopPuppet::Call c;
             c.function = main_base + addr::kRequestActionVerb;
             c.x[0] = bsa;
             c.x[1] = block_;
-            c.x[2] = 1;  // changed: the owner's new action
+            c.x[2] = action.changed ? 1 : 0;
+            e.due.pop_front();
             pending_ = Pending::action;
             return c;
+        }
+        if (!e.due.empty() || !read || now == e.wanted->brain_verb) {
+            e.drift = 0;
+            continue;
+        }
+        // Nothing queued and the copy's phase is not the owner's: put back
+        // after kDriftSteps (a change of its own that the game made where no
+        // wrap sees it, or one of ours it refused).
+        if (++e.drift >= kDriftSteps) {
+            e.drift = 0;
+            ++counts_.drift_fixes;
+            e.due.push_back({BossChange{e.wanted->seq, BossBrain{e.wanted->brain_verb, true}}, true});
         }
     }
     return std::nullopt;

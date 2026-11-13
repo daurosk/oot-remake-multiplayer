@@ -1293,7 +1293,8 @@ public:
                 const std::optional<u8> owner = sync_.OwnerOf(s.address);
                 if (owner && *owner != 0) {
                     list.push_back({s.address, s.bsa_component,
-                                    *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name});
+                                    *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
+                                    *owner});
                 }
             }
             TheBossMain().store(main_);

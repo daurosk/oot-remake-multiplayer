@@ -1,4 +1,4 @@
-From 9a763ff61d2b716d2b708584e046cf95a7df25ae Mon Sep 17 00:00:00 2001
+From 7ece4a7f76e145eeaea349187e25f6c33615b6eb Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 18:34:41 -0900
 Subject: [PATCH] Co-op host save: the account save's folder and a re-mount,
@@ -17,7 +17,7 @@ module, or with a host, the game's own save folder is used as before.
  1 file changed, 30 insertions(+)
 
 diff --git a/host/nn_fs.c b/host/nn_fs.c
-index 4117a615..5b0226bf 100644
+index f20cfee5..4c71587d 100644
 --- a/host/nn_fs.c
 +++ b/host/nn_fs.c
 @@ -255,6 +255,7 @@ int hos_fs_save_root(char *out, size_t cap) {

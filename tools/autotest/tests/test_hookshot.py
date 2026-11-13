@@ -500,7 +500,7 @@ class RunTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             for x in "AB":
                 os.makedirs(os.path.join(tmp, x, "autotest-save", "u"))
-                open(os.path.join(tmp, x, "hookshot.exe" if hs.WINDOWS else "hookshot"), "w").close()
+                open(os.path.join(tmp, x, "longshot.exe" if hs.WINDOWS else "longshot"), "w").close()
                 fakes["coop-auto-" + x if hs.WINDOWS else os.path.join(tmp, "out", "control-%s.sock" % x)] = \
                     FakeGame(clock=Clock())
                 fakes[list(fakes)[-1]].presses_to_play = 1

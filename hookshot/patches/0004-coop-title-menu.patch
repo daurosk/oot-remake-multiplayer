@@ -1,4 +1,4 @@
-From 12a050a422ae3ed3b27db9528143f88a5f99995f Mon Sep 17 00:00:00 2001
+From d744ab9fa4cb15b99ef89f8c4333843ba623daf7 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:18:16 -0900
 Subject: [PATCH] Co-op title menu: the title screen's hooks, the pad first,
@@ -27,7 +27,7 @@ older module works as before.
  create mode 100644 nx2/coop_title_hooks.py
 
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
-index 63de418..edae1a3 100644
+index 63de418a..edae1a3d 100644
 --- a/host/coop_bridge.c
 +++ b/host/coop_bridge.c
 @@ -65,6 +65,7 @@ static int bridge_call(void *ctx, const HosCoopCall *k, uint64_t *x0) {
@@ -92,7 +92,7 @@ index 63de418..edae1a3 100644
  void hos_coop_present(void) {
      if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2) coop_frame(NULL, HOS_COOP_SITE_PRESENT);
 diff --git a/host/hos_coop_api.h b/host/hos_coop_api.h
-index 9e2075c..bc47834 100644
+index 9e2075c4..bc47834c 100644
 --- a/host/hos_coop_api.h
 +++ b/host/hos_coop_api.h
 @@ -51,6 +51,11 @@ typedef struct HosCoopApi {
@@ -125,10 +125,10 @@ index 9e2075c..bc47834 100644
  
  #endif
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 054caa5..8e0476b 100644
+index d3f5bf31..02598424 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
-@@ -1105,6 +1105,8 @@ static void npad_states(Ctx *c) {
+@@ -1113,6 +1113,8 @@ static void npad_states(Ctx *c) {
      if (connected) buttons = hos_title_input(buttons);
      uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
      if (connected) buttons = hos_frame_step_buttons(buttons);
@@ -138,7 +138,7 @@ index 054caa5..8e0476b 100644
      const uint64_t word = oc_pad_word(buttons);   /* (while the game waits for a note button, the five are the controls: oc_notes) */
      if (connected) __atomic_store_n(&hos_coop_pad, word, __ATOMIC_RELAXED);
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
-index 52a19bc..cd87977 100644
+index 52a19bc9..cd87977f 100644
 --- a/nx2/coop_hooks.py
 +++ b/nx2/coop_hooks.py
 @@ -62,4 +62,6 @@ def install(lifter, img, build_id):
@@ -150,7 +150,7 @@ index 52a19bc..cd87977 100644
      return len(FRAME_SITES) + 1
 diff --git a/nx2/coop_title_hooks.py b/nx2/coop_title_hooks.py
 new file mode 100644
-index 0000000..07f6e8f
+index 00000000..07f6e8f5
 --- /dev/null
 +++ b/nx2/coop_title_hooks.py
 @@ -0,0 +1,48 @@
@@ -202,6 +202,3 @@ index 0000000..07f6e8f
 +        lifter.after[pc] = (lifter.after[pc] + "\n" if pc in lifter.after else "") + TEXT % (reg, event)
 +    print("co-op title menu: hooks at main+%#x, main+%#x and main+%#x" % tuple(s[0] for s in SITES))
 +    return len(SITES)
--- 
-2.56.0.windows.4
-

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // What the Multiplayer tab (coop_pause.h) and the title screen (coop_title.h)
 // both need of this PC, in hookshot_coop.dll: the process's variables, the
-// settings files (coop.ini beside hookshot.exe, the kit's coop-options.ini),
+// settings files (coop.ini beside longshot.exe, the kit's coop-options.ini),
 // the clipboard and this PC's addresses. Moved here from coop_title.cpp when
 // the menu moved into Hookshot's pause menu.
 #pragma once
@@ -29,11 +29,11 @@ std::string ReadText(const std::filesystem::path& p);
 bool WriteText(const std::filesystem::path& p, const std::string& text);
 
 // The kit this game belongs to: OOT_COOP_KIT, the first line of coop-kit.txt
-// beside hookshot.exe, or the nearest folder above the game that has
+// beside longshot.exe, or the nearest folder above the game that has
 // server\coop_server.exe and start-server.cmd (the kit's hookshot\game\). On Linux:
 // server/coop_server and coop-options.ini (the Linux kit's data/, its game in data/game/).
 std::optional<std::filesystem::path> FindKit();
-// coop.ini beside hookshot.exe.
+// coop.ini beside longshot.exe.
 std::filesystem::path CoopIni();
 
 // The settings as the two files have them; a first-time player with no name

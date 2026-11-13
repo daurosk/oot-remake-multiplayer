@@ -99,13 +99,19 @@ void SwitchFrame(coop::net::Client& client) {
     }
     if (g_decided || g_dir.empty()) return;
     const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
-    const auto choice = save::folder_choice(EnvChoice(), true, connected, connected && client.is_host(), g_in_game);
+    const auto choice = save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
     if (choice == save::FolderChoice::wait) return;
     g_decided = true;
     const bool coop_now = save::is_coop_dir(g_dir);
     const fs::path want = choice == save::FolderChoice::coop
                               ? (coop_now ? g_dir : fs::path(g_dir.string() + std::string(save::kCoopSuffix)))
                               : (coop_now ? save::own_dir_of(g_dir) : g_dir);
+    if (choice == save::FolderChoice::coop) {
+        // Empty until the host's save comes: an older host's save there must not be the one loaded.
+        if (const int n = save::clear_coop_slots(want); n > 0) {
+            LOG_INFO(Core, "coop: save: {} older slot(s) taken out of {}", n, want.string());
+        }
+    }
     if (want != g_dir) {
         if (!g_remount(want.string())) {
             LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}",

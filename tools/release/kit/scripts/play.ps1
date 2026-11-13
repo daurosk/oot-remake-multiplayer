@@ -378,7 +378,8 @@ foreach ($key in $options.Keys) {
 # The host's save (issue 167): a join (an address or an invite code, whose server is 127.0.0.1) plays from the
 # co-op save folder the host's save comes into; a host from its own saves. Not from coop.ini's address: an old
 # friend's address there says nothing about this start. coop-options.ini may set it itself.
-if (-not $env:LICHII_COOP_HOST_SAVE) {
+# (not on Hookshot: there the session's role decides, as the title menu may Host or Join after this start)
+if (-not $Hookshot -and -not $env:LICHII_COOP_HOST_SAVE) {
     if ($Mode -eq 'join' -or $inviteJoin) { $env:LICHII_COOP_HOST_SAVE = '1' } elseif ($Mode -eq 'host') { $env:LICHII_COOP_HOST_SAVE = '0' }
 }
 # No colour chosen: the colour of the player number you will most likely get, for your own Link too

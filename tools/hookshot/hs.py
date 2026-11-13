@@ -468,6 +468,11 @@ def pid_alive(pid):
         return False
 
 
+def host_id():
+    """This PC in a lock's owner.txt: a short hash of its name, so the file never holds the PC name."""
+    return hashlib.sha256(socket.gethostname().encode("utf-8")).hexdigest()[:12]
+
+
 def lock_info(folder):
     """owner.txt of a lock folder as a dict ({} when missing or unreadable)."""
     try:
@@ -484,7 +489,7 @@ def lock_stale(folder, max_age_h=4.0, now=None, alive=pid_alive):
     t = info.get("time") or os.path.getmtime(folder)
     if now - t > max_age_h * 3600:
         return "older than %g h" % max_age_h
-    if info.get("host") == socket.gethostname() and info.get("pid") and not alive(int(info["pid"])):
+    if info.get("host") in (host_id(), socket.gethostname()) and info.get("pid") and not alive(int(info["pid"])):
         return "owner pid %s is gone" % info["pid"]
     return ""
 
@@ -523,7 +528,7 @@ def lock_acquire(root, which, owner, wait=0.0, max_age_h=4.0, alive=pid_alive, s
             try:
                 os.mkdir(path)
                 with open(os.path.join(path, "owner.txt"), "w", encoding="utf-8") as f:
-                    json.dump({"owner": owner, "pid": pid or None, "host": socket.gethostname(), "time": clock()}, f)
+                    json.dump({"owner": owner, "pid": pid or None, "host": host_id(), "time": clock()}, f)
                 say("lock: %s taken by %s" % (name, owner))
                 return True
             except FileExistsError:

@@ -69,11 +69,35 @@ std::optional<std::uint32_t> Parse(std::string_view text) {
             return n.rgb;
         }
     }
+    // rgb(255, 128, 32) / rgba(...), as colour pickers copy it.
+    if (text.size() > 5 && (text.substr(0, 4) == "rgb(" || text.substr(0, 5) == "rgba(") && text.back() == ')') {
+        std::string_view inside = text.substr(text.find('(') + 1);
+        inside.remove_suffix(1);
+        std::uint32_t rgb = 0;
+        for (int part = 0; part < 3; ++part) {
+            while (!inside.empty() && inside.front() == ' ') inside.remove_prefix(1);
+            int value = 0, digits = 0;
+            while (!inside.empty() && inside.front() >= '0' && inside.front() <= '9' && digits < 4) {
+                value = value * 10 + (inside.front() - '0');
+                inside.remove_prefix(1);
+                ++digits;
+            }
+            while (!inside.empty() && inside.front() == ' ') inside.remove_prefix(1);
+            if (digits == 0 || value > 255) return std::nullopt;
+            if (part < 2) {
+                if (inside.empty() || inside.front() != ',') return std::nullopt;
+                inside.remove_prefix(1);
+            }
+            rgb = (rgb << 8) | static_cast<std::uint32_t>(value);
+        }
+        return rgb;
+    }
     if (!text.empty() && text.front() == '#') {
         text.remove_prefix(1);
-    } else if (text.size() == 8 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+    } else if ((text.size() == 8 || text.size() == 10) && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
         text.remove_prefix(2);   // 0xRRGGBB
     }
+    if (text.size() == 8) text.remove_suffix(2);   // RRGGBBAA, as colour pickers copy it: the alpha dropped
     if (text.size() == 3) {   // #RGB: each digit twice
         std::uint32_t rgb = 0;
         for (const char c : text) {

@@ -360,8 +360,9 @@ $KitTunicColors = [ordered]@{ red = 0xFF3030; orange = 0xFF8020; yellow = 0xFFC0
 function Get-KitTunic([string]$Color) {
     if (-not $Color) { return '' }
     $c = $Color.Trim().Trim('"', "'").Trim().ToLowerInvariant()
-    if ($c -match '^0x([0-9a-f]{6})$') { $c = '#' + $Matches[1] }
-    if ($c -match '^#([0-9a-f])([0-9a-f])([0-9a-f])$') { $c = '#' + $Matches[1] * 2 + $Matches[2] * 2 + $Matches[3] * 2 }
+    if ((Get-Command ConvertTo-CoopColor -ErrorAction SilentlyContinue) -and (ConvertTo-CoopColor $c)) {
+        $c = (ConvertTo-CoopColor $c).ToLowerInvariant()   # (0x, #RGB, #RRGGBBAA, rgb(): coop-ini.ps1)
+    }
     $named = @{ brown = 0x8B5A2B; gray = 0xA0A0A0; grey = 0xA0A0A0 }
     if ($KitTunicColors.Contains($c)) { $rgb = $KitTunicColors[$c] }
     elseif ($named.ContainsKey($c)) { $rgb = $named[$c] }

@@ -36,7 +36,11 @@ function ConvertTo-CoopColor([string]$Value) {
     if (-not $Value) { return '' }
     $v = $Value.Trim().Trim('"', "'").Trim()
     if ($CoopColorNames -contains $v.ToLowerInvariant()) { return $v.ToLowerInvariant() }
-    if ($v -match '^(?:#|0x)?([0-9A-Fa-f]{6})$') { return '#' + $Matches[1].ToUpperInvariant() }
+    if ($v -match '^(?:#|0x)?([0-9A-Fa-f]{6})(?:[0-9A-Fa-f]{2})?$') { return '#' + $Matches[1].ToUpperInvariant() }   # (an alpha after it: dropped)
+    if ($v -match '^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,[^)]*)?\)$') {
+        $p = @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3])
+        if (($p | Where-Object { $_ -gt 255 }).Count -eq 0) { return '#{0:X2}{1:X2}{2:X2}' -f $p[0], $p[1], $p[2] }
+    }
     if ($v -match '^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$') {
         return ('#' + $Matches[1] + $Matches[1] + $Matches[2] + $Matches[2] + $Matches[3] + $Matches[3]).ToUpperInvariant()
     }

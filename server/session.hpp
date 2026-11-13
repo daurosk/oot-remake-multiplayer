@@ -185,7 +185,7 @@ struct SessionConfig {
   // and only the owner's game runs the boss right (the other copies follow
   // its pose), and the boss then turns on that player. 0: off.
   std::uint64_t boss_hitter_cooldown_us = 8'000'000;
-  // gohma-sync (issue 150, Caleb's play-test 2026-11-12): only a stun (a
+  // gohma-sync (issue 150, dauro's play-test 2026-11-12): only a stun (a
   // DAMAGE of 0: the stun is in the hitter's game alone) hands a boss over.
   // A hit that takes life is passed to the owner and the boss stays: every
   // hand-over ran the new owner's AI from a copy whose phase, eye guard and

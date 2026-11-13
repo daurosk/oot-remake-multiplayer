@@ -1,0 +1,47 @@
+# lock-open (locked doors, sync-coverage check 7; branch door-unlock): both games load into the
+# Water Temple entrance. A gets one small key (setflag), is put at the top floor's west door
+# (locks 0x245948bc6d57c9e0 and 0xb2d8d82145ce4d26 at -20.83 119.30 -4.50), opens it (A at the
+# door) and walks through. B waits at the entrance, is then put at the same door, presses A and
+# walks through.
+# Pass, A: "world: ... Obj_DoorChainLock_A_01 broken here (gone next to Link): sent" (both locks),
+# Link behind the door at a-opened (x under -22). Pass, B (default, the lock stays): "one key lent
+# to open it", then "lock opened here with the lent key", B's last goto does not time out, and
+# both games' DungeonInfo.WaterTemple.SmallKeyNum end at 0. With LICHII_COOP_LOCK_DELETE=1: B's
+# two locks are deleted ("broken by another player", "still stands after the break: deleted") and
+# B's goto shows whether the door opens with its lock deleted (not known yet).
+# Runs of 2026-11-12 (build before door-unlock, locks deleted): A's part passed twice; B's `place`
+# left B falling into the water at -15 12 both times (also when given twice), so B never reached
+# the door: B's part is unproven and the script needs another way to bring B there (a goto along
+# the top floor, or B loading later).
+#! noload
+#! start coop: test warp done
+#! timeout 400
+mark start
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1200               # the title screen
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark in
+setflag DungeonInfo.WaterTemple.SmallKeyNum 1
+wait 120
+place -19.6 119.4 -4.5
+wait 150
+goto -20.4 -4.5 0.3 90     # up to the door (it stops Link at about -20.1)
+wait 30
+mark a-at-lock
+press A 12
+wait 90
+press A 12
+wait 360
+mark a-opened
+goto -26.0 -4.5 1.5 300
+wait 60
+mark a-through
+wait 1500
+mark end

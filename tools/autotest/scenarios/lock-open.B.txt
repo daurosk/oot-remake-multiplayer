@@ -1,0 +1,32 @@
+# lock-open: B. See lock-open.A.txt.
+mark start
+warp WaterTemple WaterTemple_FromLakeHylia
+wait 1200
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark in
+wait 1500               # A opens the lock; B is at the entrance, far from it
+mark b-far
+place -19.6 119.4 -4.5
+wait 150
+place -19.6 119.4 -4.5     # again: in the run of 2026-11-12 the first one left B falling at -15 12
+wait 150
+goto -20.4 -4.5 0.3 90     # up to the door (it stops Link at about -20.1)
+wait 30
+mark b-at-lock
+press A 12
+wait 90
+press A 12
+wait 360
+mark b-opened
+goto -26.0 -4.5 1.5 300
+wait 60
+mark b-through
+wait 300
+mark end

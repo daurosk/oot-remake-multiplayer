@@ -567,13 +567,18 @@ TEST_CASE("teleport: the next-to move stays in our room of a dungeon (issue 197)
     CHECK(CheckMove(none, "InsideTheDekuTree", entrance, Vec{6.0f, 0.0f, 6.0f}) == MoveCheck::ok);
     // Outside dungeons any move (teleport-other: Kakariko -> Graveyard passes).
     CHECK(CheckMove(none, "KakarikoVillage_Child", entrance, slingshot_room) == MoveCheck::ok);
+    // door-unlock: refused only right after a load. A /teleport within the scene we are in
+    // goes to any room of the dungeon (a player shut out by a door another player went through).
+    CHECK(CheckMove(rooms, "InsideTheDekuTree", entrance, slingshot_room, true) == MoveCheck::other_room);
+    CHECK(CheckMove(rooms, "InsideTheDekuTree", entrance, slingshot_room, false) == MoveCheck::ok);
+    CHECK(CheckMove(none, "InsideTheDekuTree", entrance, slingshot_room, false) == MoveCheck::ok);
 }
 
 TEST_CASE("teleport: the not-moved line says entrance only after a scene change (issue 197)") {
     using CoopTeleport::MoveCheck;
     using CoopTeleport::NotMovedLine;
     CHECK(NotMovedLine(MoveCheck::other_room, "Saria", true) ==
-          "teleport: Saria is in another room of this dungeon; you are at its entrance: walk there");
+          "teleport: Saria is in another room of this dungeon; you are at its entrance: type /teleport again, or walk there");
     CHECK(NotMovedLine(MoveCheck::other_room, "Saria", false) ==
           "teleport: Saria is in another room of this dungeon; walk there");
     CHECK(NotMovedLine(MoveCheck::too_far, "Saria", false).find("no room table") != std::string::npos);

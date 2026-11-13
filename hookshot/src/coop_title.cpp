@@ -22,6 +22,7 @@
 #include "coop_hook.h"
 #include "coop_hookshot.h"
 #include "coop_runtime.h"
+#include "coop_save.h"
 #include "coop_title_menu.h"
 #include "nat_codes.hpp"
 
@@ -91,7 +92,8 @@ bool g_native = false;   // LICHII_COOP_TITLE_NATIVE=1: the 4th title button (Pa
 std::atomic<std::uint64_t> g_screen{0};
 std::atomic<std::uint64_t> g_last_step_ms{0};
 std::atomic<bool> g_step_seen{false};
-std::atomic<bool> g_rows{false};   // the title has our three rows (the puppet pack's Title_00), texts set
+std::atomic<bool> g_rows{false};
+std::atomic<bool> g_focus_continue{false};   // the title has our three rows (the puppet pack's Title_00), texts set
 
 std::mutex g_mutex;   // everything below
 CoopTitleMenu::Menu g_menu;
@@ -341,6 +343,9 @@ void SetCoopEnvironment(const CoopTitleMenu::Options& o) {
 bool g_copied = false;   // this session's invite code was put on the clipboard
 std::string g_answer_note;  // what became of the friend's answer code the host pasted ("" when none)
 std::string g_join_text;    // the code (or address) this join used: remembered once connected
+CoopTitleMenu::AutoLoad g_autoload;   // Join -> the host's save loaded in one step
+constexpr int kContinueButton = 2;    // Pa_Button_02 is Continue (OpenTitle.module.ainb: label 0001)
+constexpr std::uint64_t kFocus = 0x8088ffc0;   // the screens' focus setter (screen, button, 0): Hookshot's oot_menu.c
 bool g_join_saved = false;
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). The invite code goes on the
@@ -369,6 +374,10 @@ std::vector<std::string> HostStatusLines() {
         coop = CoopTitleMenu::IniSet(coop, "last_invite", g_join_text, true);
         coop = CoopTitleMenu::IniSet(coop, "last_host", host, true);
         WriteText(CoopIni(), coop);
+        // The host's save next, in one step (AutoLoad): the dialog goes, the title shows what happens.
+        g_autoload.Start(NowMs(), host);
+        g_menu.Close();   // (no press to keep from the game: the presses that follow are AutoLoad's)
+        LOG_INFO(Core, "coop: title menu: joined: loading the host's save when it is here");
     }
     if (v.host && !v.invite.empty() && !g_copied) {
         g_copied = SetClipboardText(v.invite);
@@ -816,6 +825,21 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
                      count, kFirstRow + static_cast<int>(kRowLabels.size()));
         }
     }
+    if (event == HOS_COOP_TITLE_STEP && g_focus_continue.exchange(false) && ctx != nullptr) {
+        // The cursor to Continue for the host's save (AutoLoad), as the game's own screens move it.
+        std::int32_t count = 0;
+        CoopRuntime::Read(screen + kTitleCount, &count, sizeof count);
+        const std::uint64_t button =
+            count > kContinueButton ? Read64(Read64(screen + kTitleButtons) + 8ull * kContinueButton) : 0;
+        if (button != 0) {
+            HosCoopCall k{};
+            k.function = kFocus;
+            k.x[0] = screen, k.x[1] = button, k.x[2] = 0;
+            std::uint64_t x0 = 0;
+            g_api->call(ctx, &k, &x0);
+            LOG_INFO(Core, "coop: title menu: the cursor on Continue for the host's save");
+        }
+    }
     if (event == HOS_COOP_TITLE_STEP) {
         if (!g_step_seen.exchange(true)) {
             LOG_INFO(Core, "coop: title menu: the title screen's step runs");
@@ -840,8 +864,30 @@ void OnFrame(void* ctx) {
     PlaySounds(ctx);
 }
 
+// Link is in the game: this game's own row has a scene (CoopHook::PlayerList).
+bool InGame() {
+    for (const auto& row : CoopHook::PlayerList()) {
+        if (row.self) {
+            return row.scene.has_value() && !row.scene->empty();
+        }
+    }
+    return false;
+}
+
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     std::lock_guard lock(g_mutex);
+    if (g_autoload.active()) {
+        const auto tick = g_autoload.Step(NowMs(), CoopSave::HostSaveReady(), TitleUp(), InGame());
+        if (tick.focus_continue) {
+            g_focus_continue = true;   // (made at the title's next step, with its game context)
+        }
+        if (tick.press_a) {
+            buttons |= kA;
+        }
+        if (!g_autoload.active()) {
+            LOG_INFO(Core, "coop: title menu: host's save: {}", g_autoload.Line().empty() ? "loaded" : g_autoload.Line());
+        }
+    }
     const std::uint64_t dirs = Directions(buttons, stick);
     const std::uint64_t word = (buttons & ~(kLeft | kUp | kRight | kDown)) | dirs;
     const std::uint64_t down = word & ~g_pad_last;
@@ -1005,6 +1051,9 @@ std::optional<CoopDraw::TitleView> View() {
             }
         }
         return CoopDraw::TitleView{"", std::move(v)};
+    }
+    if (const std::string line = g_autoload.Line(); !line.empty() && HasScratch() && TitleUp()) {
+        return CoopDraw::TitleView{line, std::nullopt};   // ("Loading Saria's save...")
     }
     if (!HasScratch() || !TitleUp() || g_rows) {   // (the title's own rows: no prompt)
         return std::nullopt;

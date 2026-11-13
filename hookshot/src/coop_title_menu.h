@@ -141,6 +141,40 @@ struct HostView {
 };
 std::vector<std::string> PlainStatus(const HostView& v);
 
+// After Join connects: the host's save (lichii/hook/coop_save.h, the co-op
+// folder) is loaded in one step, with no Continue to find. Wait until the
+// host's save is in this game's co-op folder, then put the title's cursor on
+// Continue (the co-op folder holds only the host's save) and press A every
+// kPressEveryMs until Link is in the game (the file list and its question
+// take the same A). Gives up after a while with a line saying what to do.
+class AutoLoad {
+public:
+    static constexpr std::uint64_t kWaitSaveMs = 60000;   // for the host's save to arrive
+    static constexpr std::uint64_t kLoadMs = 30000;       // for the presses to get Link into the game
+    static constexpr std::uint64_t kPressEveryMs = 1200;
+    static constexpr std::uint64_t kPressHoldMs = 120;
+
+    void Start(std::uint64_t now_ms, std::string host);
+    void Stop() { phase_ = Phase::kOff; }
+    bool active() const { return phase_ == Phase::kWait || phase_ == Phase::kLoad; }
+    // One look: whether A is held now, and whether the cursor should go to Continue (once).
+    struct Tick {
+        bool press_a = false;
+        bool focus_continue = false;
+    };
+    Tick Step(std::uint64_t now_ms, bool host_save_ready, bool title_up, bool in_game);
+    // What the player sees (bottom left of the title); "" when nothing.
+    std::string Line() const;
+
+private:
+    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kStuck };
+    Phase phase_ = Phase::kOff;
+    std::string host_;
+    std::uint64_t since_ = 0;
+    std::uint64_t next_press_ = 0;
+    bool focused_ = false;
+};
+
 // ---------------------------------------------------------------------------
 // The menu.
 

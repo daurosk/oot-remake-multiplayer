@@ -16,7 +16,7 @@
 #  - No "do not hold" line. Shots s1..s4: each lift at the same height in A and B (compare the lift
 #    under A's Link against the same lift in B's view). FAIL: keep both logs (the word picked is in them).
 #  - Inconclusive if no "+ Obj_DodongoCave_MoveFloor" line (the room did not load at the place: then
-#    warp to DodongoCavern EntrancePos and walk north by hand as a DAURO TEST).
+#    warp to DodongoCavern EntrancePos and walk north by hand as an ALEX TEST).
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1

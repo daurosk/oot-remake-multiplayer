@@ -447,6 +447,15 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
 - **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
 
+### Mods (protocol 11, `MOD_LIST`, `MOD_SETTINGS`)
+
+Types 490 to 499 (modloader-b; 490 and 491 used). Both on the session channel, from any player; see [mods.md](mods.md), "Mods in co-op".
+
+- `MOD_LIST` (490): the mods a game runs that every player needs alike (mod.json `"coop"` not `"own"`), in its load order: u8 player, u8 count (0 to 32), then per mod str id (1 to 48 of `a-z 0-9 . _ -`, not starting with one of `. _ -`; unique), str version (0 to 32 chars), 16 bytes hash (BLAKE2b of the mod's game files and code; all zero: not known). A game sends it once per connection, when it has hashed its mods. The server writes the sender's number, keeps each player's last one, relays it to the others and gives a joiner everyone else's (after `HOST`). Each game compares its own list with the host's; the order is not compared.
+- `MOD_SETTINGS` (491): the host's values of its mods' `"shared"` settings, all of them each time: u8 player, u8 count (0 to 32), then str mod id, str key (1 to 32 of `a-z 0-9 _`; a mod id and key once), str value (0 to 256 chars). Taken from the host only (`mod_settings_refused` counts the others); the server keeps the last one, relays it and gives it to each joiner; kept when the host leaves until the new host sends its own; forgotten when the session empties. A guest's game shows these values locked and uses them (the randomizer's seed).
+
+A build without protocol 11 does not know 490 and 491; all players need the same release.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.

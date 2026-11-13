@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "coop_mods.h"
+#include "coop_rando.h"
 #include "hos_coop_draw.h"
 
 namespace CoopModsRuntime {
@@ -19,6 +20,7 @@ void Stop();
 
 // nullptr before Start.
 CoopMods::Loader* Loader();
+CoopRando::Rando* Rando();  // the built-in randomizer: its status line for the tab
 
 // The module's exports' parts. Each is cheap when no code mod registered for it.
 void Frame();                                   // the calc thread, every frame (HOS_COOP_SITE_FRAME)

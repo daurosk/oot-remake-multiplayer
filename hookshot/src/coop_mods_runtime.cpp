@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <cstdlib>
 #include <memory>
@@ -16,6 +17,7 @@
 
 #include "coop_mod_plugins.h"
 #include "coop_mod_share.h"
+#include "coop_rando.h"
 #include "coop_runtime.h"
 
 #ifdef _WIN32
@@ -36,6 +38,7 @@ namespace {
 
 std::unique_ptr<CoopMods::Loader> g_loader;
 std::unique_ptr<CoopModPlugins::Host> g_host;
+std::unique_ptr<CoopRando::Rando> g_rando;  // the built-in randomizer (coop_rando.h)
 std::atomic<bool> g_pending{false};  // the code mods start at the next frame
 std::atomic<bool> g_running{false};
 std::atomic<std::uint64_t> g_hooks{0};
@@ -179,6 +182,16 @@ void Start() {
         ModsRoot(), CoopMods::Loader::Hooks{[](const std::string& l) { CoopRuntime::Log("coop: mods: " + l); },
                                             ThisProcess()});
     g_loader->Start();
+    CoopRando::Rando::Hooks rando;
+    rando.log = [](const std::string& l) { CoopRuntime::Log("coop: mods: " + l); };
+    rando.game_dir = CoopRuntime::GameDir();
+    rando.run = CoopRando::RunProgram;
+    rando.entropy = [] {
+        return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) * 31 +
+               ThisProcess();
+    };
+    g_rando = std::make_unique<CoopRando::Rando>(*g_loader, std::move(rando));
+    g_rando->Start();  // before the list for co-op is made: it may switch seeds
     StartSharing();
     if (Env("LICHII_COOP_MODS_CODE") == "0") {
         CoopRuntime::Log("coop: mods: code mods not loaded (LICHII_COOP_MODS_CODE=0)");
@@ -205,6 +218,9 @@ void Stop() {
     }
     g_pending = false;
     g_running = false;
+    if (g_rando) {
+        g_rando->Wait();  // a seed being built is finished (OOTRR takes about a minute at most)
+    }
     if (g_host) {
         g_host->Stop();  // the host and the loader stay: a game thread may still be in a call
     }
@@ -212,6 +228,10 @@ void Stop() {
 
 CoopMods::Loader* Loader() {
     return g_loader.get();
+}
+
+CoopRando::Rando* Rando() {
+    return g_rando.get();
 }
 
 void Frame() {
